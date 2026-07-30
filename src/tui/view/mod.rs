@@ -10,6 +10,7 @@ pub mod line;
 pub mod notes;
 pub mod overlay;
 pub mod preview;
+pub mod progress;
 pub mod settings;
 pub mod status;
 

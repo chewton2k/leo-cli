@@ -11,11 +11,17 @@
 //! the `String` we wrap ever reaches us. Treat zeroization here as reducing
 //! exposure, not eliminating it.
 
+use std::collections::HashMap;
+use std::sync::Mutex;
+
 use anyhow::Result;
 use zeroize::Zeroizing;
 
 /// Service name under which all leo credentials are filed in the OS keychain.
 pub const SERVICE: &str = "leo";
+
+/// Account name used only to ask whether a backend answers at all.
+const PROBE: &str = "__leo_probe__";
 
 /// A secret value held in memory. The only safe ways to render this type are
 /// its `Debug` and `Display` impls, both of which show `redact()`'s output —
@@ -101,6 +107,35 @@ pub fn resolve(provider: &str, key_env: Option<&str>, store: &dyn SecretStore) -
     }
 }
 
+/// Reads already served this process, so the keychain is asked at most once per
+/// provider per run.
+///
+/// macOS prompts for permission on each access when the binary's signature does
+/// not match the entry's ACL, and leo reads several providers in a row — the
+/// provider screen alone touches every configured one. Without this, opening it
+/// meant a dozen consecutive permission dialogs.
+///
+/// A cache is safe here because writes go through the same type and update it:
+/// nothing else in the process can change a keychain entry behind our back, and
+/// an entry changed by another application mid-session is not worth a prompt
+/// storm to notice.
+static CACHE: Mutex<Option<HashMap<String, Option<String>>>> = Mutex::new(None);
+
+fn cached(account: &str) -> Option<Option<Secret>> {
+    let guard = CACHE.lock().ok()?;
+    let map = guard.as_ref()?;
+    map.get(account)
+        .map(|v| v.as_ref().map(|s| Secret(Zeroizing::new(s.clone()))))
+}
+
+fn remember(account: &str, value: Option<&str>) {
+    if let Ok(mut guard) = CACHE.lock() {
+        guard
+            .get_or_insert_with(HashMap::new)
+            .insert(account.to_string(), value.map(str::to_string));
+    }
+}
+
 /// The real OS keychain: macOS Keychain, Windows Credential Manager, or Linux
 /// Secret Service, selected by the `keyring` crate's default feature.
 ///
@@ -117,9 +152,20 @@ impl KeyringStore {
 
 impl SecretStore for KeyringStore {
     fn get(&self, account: &str) -> Result<Option<Secret>> {
+        if let Some(hit) = cached(account) {
+            return Ok(hit);
+        }
         match Self::entry(account)?.get_password() {
-            Ok(secret) => Ok(Some(Secret(Zeroizing::new(secret)))),
-            Err(keyring::Error::NoEntry) => Ok(None),
+            Ok(secret) => {
+                remember(account, Some(&secret));
+                Ok(Some(Secret(Zeroizing::new(secret))))
+            }
+            Err(keyring::Error::NoEntry) => {
+                // Remember the absence too: a provider with no key is read just
+                // as often as one with a key.
+                remember(account, None);
+                Ok(None)
+            }
             // `keyring_core::Error::BadEncoding(Vec<u8>)` and `BadDataFormat`
             // carry the raw credential bytes and derive `Debug`. We are safe
             // here only because `anyhow::Error`'s `Display` (which `e.into()`
@@ -133,21 +179,31 @@ impl SecretStore for KeyringStore {
 
     fn set(&self, account: &str, secret: &str) -> Result<()> {
         Self::entry(account)?.set_password(secret)?;
+        remember(account, Some(secret));
         Ok(())
     }
 
     fn delete(&self, account: &str) -> Result<()> {
-        match Self::entry(account)?.delete_credential() {
+        let result = match Self::entry(account)?.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(e) => Err(e.into()),
-        }
+        };
+        // Whether or not the delete found anything, there is no key now.
+        remember(account, None);
+        result
     }
 
     fn available(&self) -> bool {
-        // A probe read against a name we never write. NoEntry means the
-        // backend answered, which is what we are testing for.
-        matches!(
-            Self::entry("__leo_probe__").and_then(|e| {
+        // A probe read against a name we never write. NoEntry means the backend
+        // answered, which is what we are testing for. Cached like any other
+        // read, so asking repeatedly costs nothing.
+        // A cached probe entry means the backend answered once, which is all
+        // this reports.
+        if cached(PROBE).is_some() {
+            return true;
+        }
+        let answered = matches!(
+            Self::entry(PROBE).and_then(|e| {
                 match e.get_password() {
                     Ok(_) => Ok(()),
                     Err(keyring::Error::NoEntry) => Ok(()),
@@ -155,7 +211,11 @@ impl SecretStore for KeyringStore {
                 }
             }),
             Ok(())
-        )
+        );
+        if answered {
+            remember(PROBE, None);
+        }
+        answered
     }
 }
 
@@ -261,6 +321,50 @@ mod tests {
         let expected = redact("sk-or-v1-supersecretvalue");
         assert!(debug_shown.contains(&expected));
         assert!(display_shown.contains(&expected));
+    }
+
+    /// The bug this guards: macOS prompts for permission on every keychain
+    /// access, and the provider screen reads every configured provider. Without
+    /// caching, opening it meant a dialog per provider.
+    #[test]
+    fn repeated_reads_of_the_same_account_hit_the_cache_once() {
+        // Exercised through the cache helpers directly: the real keychain is
+        // never touched by tests.
+        let account = "leo_test_cache_account";
+        assert!(cached(account).is_none(), "nothing cached yet");
+
+        remember(account, Some("a-key"));
+        let first = cached(account).expect("a cached entry");
+        assert_eq!(first.map(|s| s.as_str().to_string()), Some("a-key".to_string()));
+        // Still cached: a second read does not need the backend.
+        assert!(cached(account).is_some());
+
+        // An absent key is remembered too, since a provider with no key is read
+        // just as often as one with a key.
+        let missing = "leo_test_cache_missing";
+        remember(missing, None);
+        let hit = cached(missing).expect("the absence is cached");
+        assert!(hit.is_none());
+    }
+
+    /// Storing or removing a key must not leave a stale cache behind, or the
+    /// provider screen would keep showing the old state.
+    #[test]
+    fn writing_updates_the_cache_rather_than_invalidating_it_lazily() {
+        let account = "leo_test_cache_write";
+        remember(account, None);
+        assert!(cached(account).unwrap().is_none());
+
+        // What `set` does after a successful write.
+        remember(account, Some("new-key"));
+        assert_eq!(
+            cached(account).unwrap().map(|s| s.as_str().to_string()),
+            Some("new-key".to_string())
+        );
+
+        // What `delete` does.
+        remember(account, None);
+        assert!(cached(account).unwrap().is_none());
     }
 
     #[test]

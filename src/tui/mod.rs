@@ -90,6 +90,10 @@ pub struct App {
     finder: Option<Finder>,
     /// The provider screen's rows and selection, live only while it is open.
     settings: Option<SettingsScreen>,
+    /// Foreground work the user is waiting on, shown in the status line.
+    busy: Option<(view::progress::Progress, Instant)>,
+    /// Set when the next frame should repaint every cell rather than a diff.
+    repaint: bool,
     quit: bool,
 }
 
@@ -116,8 +120,10 @@ struct Recording {
     job: Job,
     /// What to do with the transcript when it finishes.
     req: ListenRequest,
-    /// Status-line label from the worker.
-    label: String,
+    /// What the worker is doing, and how far along when that is knowable.
+    progress: view::progress::Progress,
+    /// When the current step started, for the elapsed clock and the spinner.
+    since: Instant,
     /// The condensed bullet stream, which is what the preview shows: a raw
     /// transcript is not readable while you are still listening.
     condensed: String,
@@ -147,6 +153,8 @@ impl App {
             help_scroll: 0,
             finder: None,
             settings: None,
+            busy: None,
+            repaint: false,
             quit: false,
         }
     }
@@ -295,7 +303,9 @@ impl App {
                             // finishes must not look like a second command.
                             if !rec.job.stop_requested() {
                                 rec.job.request_stop();
-                                rec.label = "Finishing".to_string();
+                                rec.progress =
+                                    view::progress::Progress::spinner("Finishing the recording");
+                                rec.since = Instant::now();
                                 self.say(Kind::Dim, "Stopping...");
                             }
                             return Ok(());
@@ -405,9 +415,14 @@ impl App {
                 Ok(())
             }
 
+            // Reload also forces a full repaint. Anything that wrote to the
+            // terminal behind ratatui's back leaves its cell diff out of step
+            // with the screen, and this is the one key a user will try when the
+            // display looks wrong.
             Intent::Reload => {
                 self.store = Store::load_from(&self.store.notes_dir.clone())?;
                 self.resync();
+                self.repaint = true;
                 self.say(Kind::Dim, "Reloaded.");
                 Ok(())
             }
@@ -595,7 +610,8 @@ impl App {
                 self.recording = Some(Recording {
                     job: task::start_listen(req.screen),
                     req,
-                    label: "Starting".to_string(),
+                    progress: view::progress::Progress::spinner("Starting"),
+                    since: Instant::now(),
                     condensed: String::new(),
                     raw: String::new(),
                     show_raw: false,
@@ -1042,18 +1058,36 @@ impl App {
         }
 
         let mut finished: Option<String> = None;
+        let mut structured: Option<(Option<String>, String)> = None;
         let mut failure: Option<String> = None;
         let mut fallbacks: Vec<String> = Vec::new();
 
         for event in events {
             match event {
-                TaskEvent::Started { label } | TaskEvent::Progress { label } => rec.label = label,
+                TaskEvent::Started { label } => {
+                    rec.progress = view::progress::Progress::spinner(label);
+                    rec.since = Instant::now();
+                }
+                TaskEvent::Progress { label, steps } => {
+                    // Restart the clock when the kind of work changes, so the
+                    // elapsed time answers "how long has this step taken".
+                    if rec.progress.label != label {
+                        rec.since = Instant::now();
+                    }
+                    rec.progress = match steps {
+                        Some((done, total)) => {
+                            view::progress::Progress::steps(label, done, total)
+                        }
+                        None => view::progress::Progress::spinner(label),
+                    };
+                }
                 TaskEvent::Transcript(text) => rec.raw = text,
                 TaskEvent::LiveNote(text) => rec.condensed = text,
                 TaskEvent::ProviderFallback { from, to } => {
                     fallbacks.push(format!("{from} unavailable, using {to}"))
                 }
                 TaskEvent::Finished { transcript } => finished = Some(transcript),
+                TaskEvent::Structured { title, body } => structured = Some((title, body)),
                 TaskEvent::Failed(e) => failure = Some(e),
             }
         }
@@ -1068,14 +1102,38 @@ impl App {
             return Ok(true);
         }
 
+        // The recording is done; structuring is another request, so it runs on
+        // its own thread and the UI keeps animating.
         if let Some(transcript) = finished {
             let rec = self.recording.take().expect("checked above");
-            self.say(Kind::Dim, "Structuring notes...");
-            // Draw once before blocking, so the user sees why the UI paused.
-            terminal.draw(|frame| self.draw(frame))?;
-            let outcome =
-                action::apply_transcript(&mut self.store, &rec.req, &transcript, &RealAi);
-            match outcome {
+            if transcript.trim().is_empty() {
+                self.say(Kind::Dim, "No speech detected.");
+                return Ok(true);
+            }
+            let existing = rec
+                .req
+                .append_to
+                .as_deref()
+                .and_then(|target| self.store.find_by_index_or_prefix(target))
+                .map(|n| n.body.clone());
+            self.recording = Some(Recording {
+                job: task::start_structuring(transcript, existing),
+                req: rec.req,
+                progress: view::progress::Progress::spinner("Structuring notes"),
+                since: Instant::now(),
+                condensed: rec.condensed,
+                raw: rec.raw,
+                show_raw: rec.show_raw,
+            });
+            return Ok(true);
+        }
+
+        // Structuring finished: write the note here, on the thread that owns the
+        // store.
+        if let Some((title, body)) = structured {
+            let rec = self.recording.take().expect("checked above");
+            let ready = ReadyNote { title, body };
+            match action::apply_transcript(&mut self.store, &rec.req, "ready", &ready) {
                 Ok(outcome) => self.absorb(outcome, terminal)?,
                 Err(e) => self.say(Kind::Bad, e.to_string()),
             }
@@ -1142,12 +1200,23 @@ impl App {
             self.cmd.cursor(),
             ghost.as_deref(),
         );
+        // A job's progress replaces the plain busy label, so the user can see
+        // both that something is happening and how far along it is.
+        let busy = self
+            .recording
+            .as_ref()
+            .map(|r| view::progress::render(&r.progress, r.since.elapsed()))
+            .or_else(|| {
+                self.busy
+                    .as_ref()
+                    .map(|(p, since)| view::progress::render(p, since.elapsed()))
+            });
         view::status::render_status(
             frame,
             f.status,
             &self.current_dir,
             self.live_message(),
-            self.recording.as_ref().map(|r| r.label.as_str()),
+            busy.as_deref(),
         );
 
         match &self.mode {
@@ -1222,6 +1291,34 @@ fn resume<B: TuiBackend>(terminal: &mut Terminal<B>) -> Result<()> {
     Ok(())
 }
 
+/// An [`action::Ai`] whose answer is already known.
+///
+/// Structuring happens on a worker thread, but the note is written on the main
+/// thread — and the writing logic (titles, tags, appending, saving) already
+/// lives behind the `Ai` seam in `action`. Feeding the finished text back
+/// through that seam reuses all of it instead of duplicating it here.
+struct ReadyNote {
+    title: Option<String>,
+    body: String,
+}
+
+impl action::Ai for ReadyNote {
+    fn expand_prompts(&self, body: &str, _title: &str) -> Result<(String, usize)> {
+        Ok((body.to_string(), 0))
+    }
+
+    fn structure(&self, _transcript: &str) -> Result<(String, String)> {
+        Ok((
+            self.title.clone().unwrap_or_else(|| "Untitled Notes".to_string()),
+            self.body.clone(),
+        ))
+    }
+
+    fn structure_append(&self, _transcript: &str, _existing: &str) -> Result<String> {
+        Ok(self.body.clone())
+    }
+}
+
 /// Move a list selection, saturating at both ends rather than wrapping — a
 /// wrap makes `j` on the last item feel like a jump.
 fn step(current: usize, len: usize, intent: Intent) -> usize {
@@ -1273,6 +1370,15 @@ pub fn run() -> Result<()> {
 
 fn event_loop<B: TuiBackend>(terminal: &mut Terminal<B>, mut app: App) -> Result<()> {
     while !app.quit {
+        if std::mem::take(&mut app.repaint) {
+            // Blank both buffers so the next draw writes every cell.
+            terminal.swap_buffers();
+            terminal.swap_buffers();
+            // Clear through the backend rather than `Terminal::clear`, which
+            // queries the cursor position and blocks on the terminal's reply.
+            use ratatui::backend::ClearType;
+            terminal.backend_mut().clear_region(ClearType::All)?;
+        }
         terminal.draw(|frame| app.draw(frame))?;
 
         if !event::poll(TICK)? {
@@ -1636,6 +1742,102 @@ mod tests {
             )),
             other => panic!("expected a note confirmation, got {other:?}"),
         }
+    }
+
+    /// The finished text is written through the same seam a live model would
+    /// use, so titles, tags and appending behave identically.
+    #[test]
+    fn a_ready_note_is_written_through_the_normal_path() {
+        let (mut app, _d) = temp_app();
+        let before = app.store.notes.len();
+        let req = crate::action::ListenRequest {
+            screen: false,
+            title: None,
+            append_to: None,
+            dir: String::new(),
+        };
+        let ready = ReadyNote {
+            title: Some("Lecture 4".to_string()),
+            body: "- a point".to_string(),
+        };
+
+        let outcome =
+            action::apply_transcript(&mut app.store, &req, "ready", &ready).unwrap();
+        assert!(outcome.dirty);
+        assert_eq!(app.store.notes.len(), before + 1);
+        let note = app.store.find_by_title("Lecture 4").first().copied().unwrap();
+        assert_eq!(note.body, "- a point");
+        assert_eq!(note.tags, vec!["listen"]);
+    }
+
+    #[test]
+    fn a_ready_note_without_a_title_still_saves() {
+        let (mut app, _d) = temp_app();
+        let req = crate::action::ListenRequest {
+            screen: false,
+            title: None,
+            append_to: None,
+            dir: String::new(),
+        };
+        let ready = ReadyNote { title: None, body: "- body".to_string() };
+        action::apply_transcript(&mut app.store, &req, "ready", &ready).unwrap();
+        assert_eq!(app.store.find_by_title("Untitled Notes").len(), 1);
+    }
+
+    /// A user-supplied title still wins over whatever the model produced.
+    #[test]
+    fn a_ready_note_respects_a_title_the_user_chose() {
+        let (mut app, _d) = temp_app();
+        let req = crate::action::ListenRequest {
+            screen: false,
+            title: Some("My Title".to_string()),
+            append_to: None,
+            dir: String::new(),
+        };
+        let ready = ReadyNote {
+            title: Some("Model Title".to_string()),
+            body: "- body".to_string(),
+        };
+        action::apply_transcript(&mut app.store, &req, "ready", &ready).unwrap();
+        assert_eq!(app.store.find_by_title("My Title").len(), 1);
+        assert!(app.store.find_by_title("Model Title").is_empty());
+    }
+
+    /// Waiting must look like waiting: a spinner and a clock for unknown work,
+    /// a real bar when the step count is known.
+    #[test]
+    fn foreground_work_renders_a_progress_indicator() {
+        let (mut app, _d) = temp_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(110, 14)).unwrap();
+
+        app.busy = Some((
+            view::progress::Progress::spinner("Structuring notes"),
+            Instant::now(),
+        ));
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        let out = terminal.backend().to_string();
+        assert!(out.contains("Structuring notes"), "{out}");
+        assert!(out.contains("00:00"), "no clock: {out}");
+
+        app.busy = Some((
+            view::progress::Progress::steps("Transcribing", 3, 8),
+            Instant::now(),
+        ));
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        let out = terminal.backend().to_string();
+        assert!(out.contains("3/8"), "no step count: {out}");
+        assert!(out.contains('█'), "no bar: {out}");
+    }
+
+    #[test]
+    fn with_nothing_running_the_status_line_has_no_indicator() {
+        let (app, _d) = temp_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(110, 14)).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        let out = terminal.backend().to_string();
+        assert!(!out.contains('█'), "a bar with no work: {out}");
     }
 
     #[test]

@@ -132,11 +132,17 @@ fn cut_chunk(
     Ok(out)
 }
 
+/// Somewhere to report chunk progress, so a long transcription can drive a real
+/// progress bar instead of a spinner. `None` on the CLI, where the chunk lines
+/// are printed instead.
+type ProgressSink<'a> = Option<&'a (dyn Fn(usize, usize) + Send + Sync)>;
+
 /// Transcribe one file with one provider, chunking only if that provider has a
 /// size limit the file exceeds.
-fn transcribe_with(
+fn transcribe_with_progress(
     provider: &dyn TranscribeProvider,
     audio_path: &Path,
+    progress: ProgressSink<'_>,
 ) -> Result<String, ProviderError> {
     let file_size = std::fs::metadata(audio_path)
         .map_err(|e| ProviderError::Fatal(format!("cannot stat audio: {e}")))?
@@ -185,7 +191,12 @@ fn transcribe_with(
             break;
         }
 
-        crate::diag::warn(format!("transcribing chunk {}/{}", i + 1, chunks.len()));
+        match progress {
+            Some(report) => report(i + 1, chunks.len()),
+            None => {
+                crate::diag::warn(format!("transcribing chunk {}/{}", i + 1, chunks.len()))
+            }
+        }
         let result = provider.transcribe(&path);
         let _ = std::fs::remove_file(&path);
 
@@ -219,7 +230,22 @@ pub fn run(
     audio_path: &Path,
 ) -> Result<ChainOutcome<String>> {
     let providers = build_transcribe_chain(cfg, store);
-    run_transcribe_chain(providers, audio_path, transcribe_with)
+    run_transcribe_chain(providers, audio_path, |p, path| {
+        transcribe_with_progress(p, path, None)
+    })
+}
+
+/// Transcribe, reporting chunk progress as `(done, total)`.
+pub fn run_with_progress(
+    cfg: &Config,
+    store: &dyn SecretStore,
+    audio_path: &Path,
+    progress: &(dyn Fn(usize, usize) + Send + Sync),
+) -> Result<ChainOutcome<String>> {
+    let providers = build_transcribe_chain(cfg, store);
+    run_transcribe_chain(providers, audio_path, |p, path| {
+        transcribe_with_progress(p, path, Some(progress))
+    })
 }
 
 #[cfg(test)]

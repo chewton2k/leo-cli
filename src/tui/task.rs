@@ -20,6 +20,8 @@ use crate::listen::Recorder;
 /// free models on OpenRouter burn the whole allowance before emitting any
 /// content.
 const CONDENSE_MAX_TOKENS: u32 = 1200;
+/// Token budget for structuring a whole transcript into a note.
+const STRUCTURE_MAX_TOKENS: u32 = 4096;
 /// How often the worker wakes to check the clock and the stop flag.
 const POLL: Duration = Duration::from_millis(250);
 
@@ -27,7 +29,10 @@ const POLL: Duration = Duration::from_millis(250);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskEvent {
     Started { label: String },
-    Progress { label: String },
+    /// What is happening now, and how far along it is when that is knowable.
+    /// `steps` drives a real progress bar; `None` means an unknown duration, so
+    /// the UI shows a spinner instead of inventing a percentage.
+    Progress { label: String, steps: Option<(usize, usize)> },
     /// The full raw transcript so far.
     Transcript(String),
     /// The full condensed bullet stream so far.
@@ -36,6 +41,9 @@ pub enum TaskEvent {
     ProviderFallback { from: String, to: String },
     /// The job finished and produced this transcript for the App to save.
     Finished { transcript: String },
+    /// A transcript has been structured into a note. `title` is `None` when the
+    /// result is being appended to an existing note.
+    Structured { title: Option<String>, body: String },
     Failed(String),
 }
 
@@ -68,7 +76,12 @@ impl Job {
         loop {
             match self.rx.try_recv() {
                 Ok(event) => {
-                    if matches!(event, TaskEvent::Finished { .. } | TaskEvent::Failed(_)) {
+                    if matches!(
+                        event,
+                        TaskEvent::Finished { .. }
+                            | TaskEvent::Failed(_)
+                            | TaskEvent::Structured { .. }
+                    ) {
                         self.done = true;
                     }
                     out.push(event);
@@ -82,6 +95,72 @@ impl Job {
             }
         }
         out
+    }
+}
+
+/// Turn a transcript into a note body on a worker thread.
+///
+/// The request takes seconds to tens of seconds, and doing it on the event loop
+/// froze the whole UI — no spinner, no clock, no way to tell the difference
+/// between working and hung. `existing` is the body to append to, when this is
+/// an append rather than a new note.
+pub fn start_structuring(transcript: String, existing: Option<String>) -> Job {
+    let (tx, rx) = mpsc::channel();
+    let stop = Arc::new(AtomicBool::new(false));
+
+    thread::spawn(move || {
+        let _ = tx.send(TaskEvent::Progress {
+            label: "Structuring notes".to_string(),
+            steps: None,
+        });
+
+        let result = match &existing {
+            Some(body) => crate::ai::chat_outcome(
+                crate::ai::chat::build_append_prompt(&transcript, body),
+                STRUCTURE_MAX_TOKENS,
+            )
+            .map(|outcome| (None, outcome)),
+            None => crate::ai::chat_outcome(
+                crate::ai::chat::build_structure_prompt(&transcript),
+                STRUCTURE_MAX_TOKENS,
+            )
+            .map(|outcome| {
+                let (title, body) = crate::ai::chat::split_title_body(&outcome.value);
+                (Some(title), chain_with_value(outcome, body))
+            }),
+        };
+
+        match result {
+            Ok((title, outcome)) => {
+                for f in &outcome.fallbacks {
+                    let _ = tx.send(TaskEvent::ProviderFallback {
+                        from: f.from.clone(),
+                        to: f.to.clone(),
+                    });
+                }
+                let _ = tx.send(TaskEvent::Structured {
+                    title,
+                    body: outcome.value.trim().to_string(),
+                });
+            }
+            Err(e) => {
+                let _ = tx.send(TaskEvent::Failed(e.to_string()));
+            }
+        }
+    });
+
+    Job { rx, stop, done: false }
+}
+
+/// Replace an outcome's value, keeping the provider and fallback trail.
+fn chain_with_value(
+    outcome: crate::ai::chain::ChainOutcome<String>,
+    value: String,
+) -> crate::ai::chain::ChainOutcome<String> {
+    crate::ai::chain::ChainOutcome {
+        value,
+        provider: outcome.provider,
+        fallbacks: outcome.fallbacks,
     }
 }
 
@@ -174,6 +253,7 @@ pub fn start_listen(screen: bool) -> Job {
             let secs = recorder.elapsed().as_secs();
             let _ = tx.send(TaskEvent::Progress {
                 label: format!("Recording {:02}:{:02}", secs / 60, secs % 60),
+                steps: None,
             });
 
             if last_roll.elapsed() < live::ROLL_INTERVAL {
@@ -190,11 +270,23 @@ pub fn start_listen(screen: bool) -> Job {
         // single pass over the finished file, matching non-live behavior. If
         // that fails, fall back to the rolling text rather than losing the
         // recording entirely.
-        let _ = tx.send(TaskEvent::Progress { label: "Transcribing".to_string() });
+        let _ = tx.send(TaskEvent::Progress {
+            label: "Transcribing the recording".to_string(),
+            steps: None,
+        });
 
         let final_transcript = match recorder.stop() {
             Ok(path) => {
-                let result = crate::ai::transcribe_outcome(&path);
+                let report = tx.clone();
+                let result = crate::ai::transcribe_outcome_with_progress(
+                    &path,
+                    &move |done, total| {
+                        let _ = report.send(TaskEvent::Progress {
+                            label: "Transcribing the recording".to_string(),
+                            steps: Some((done, total)),
+                        });
+                    },
+                );
                 let _ = std::fs::remove_file(&path);
                 match result {
                     Ok(outcome) => {
@@ -276,6 +368,7 @@ fn roll_once(source: &Path, state: &mut Live, tx: &mpsc::Sender<TaskEvent>) {
         Err(e) => {
             let _ = tx.send(TaskEvent::Progress {
                 label: format!("Transcription retrying ({e})"),
+                steps: None,
             });
         }
     }
@@ -324,6 +417,7 @@ fn condense_if_due(state: &mut Live, tx: &mpsc::Sender<TaskEvent>) {
             state.last_condense = Instant::now();
             let _ = tx.send(TaskEvent::Progress {
                 label: format!("Condensing retrying ({e})"),
+                steps: None,
             });
         }
     }

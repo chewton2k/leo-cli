@@ -130,7 +130,7 @@ fn collect_notes(notes_dir: &Path, dir: &Path, notes: &mut Vec<Note>) -> Result<
             let relative = path.strip_prefix(notes_dir).context("path outside notes_dir")?;
             match parse_note_from_markdown(&content, relative) {
                 Ok(note) => notes.push(note),
-                Err(e) => eprintln!("warn: skipping {}: {e}", path.display()),
+                Err(e) => crate::diag::warn(format!("skipping {}: {e}", path.display())),
             }
         }
     }
@@ -212,7 +212,9 @@ impl Store {
         // Auto-commit if git repo is initialized (non-fatal — notes are saved regardless)
         if crate::sync::is_initialized(&self.notes_dir) {
             if let Err(e) = crate::sync::auto_commit(&self.notes_dir) {
-                eprintln!("warn: sync auto-commit failed: {e}");
+                // Every save reaches here, including from the TUI, so this must
+                // never write to the terminal directly.
+                crate::diag::warn(format!("sync auto-commit failed: {e}"));
             }
         }
 
@@ -542,7 +544,7 @@ fn migrate_from_json(old_path: &Path, notes_dir: &Path) -> Result<()> {
 
     fs::rename(old_path, old_path.with_extension("json.bak"))?;
 
-    println!("Migrated {count} notes to {}", notes_dir.display());
+    crate::diag::warn(format!("migrated {count} notes to {}", notes_dir.display()));
     Ok(())
 }
 

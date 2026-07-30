@@ -17,10 +17,18 @@ const STRUCTURE_MAX_TOKENS: u32 = 4096;
 /// Token budget for expanding one inline @leo prompt.
 const EXPAND_MAX_TOKENS: u32 = 2000;
 
-/// Print each degradation so a silent downgrade is never invisible.
+/// Report each degradation so a silent downgrade is never invisible.
+///
+/// Goes through `diag` rather than printing: these functions run on the main
+/// thread while the TUI owns the screen, and a stray write there does lasting
+/// damage — it desynchronizes ratatui's cell diff, after which unchanged cells
+/// are never repainted and stale text stays on screen until a full redraw.
 fn report(outcome: &chain::ChainOutcome<String>) {
     for f in &outcome.fallbacks {
-        eprintln!("  {} unavailable, using {} ({})", f.from, f.to, f.reason);
+        crate::diag::warn(format!(
+            "{} unavailable, using {} ({})",
+            f.from, f.to, f.reason
+        ));
     }
 }
 
@@ -37,6 +45,15 @@ fn context() -> (Config, KeyringStore) {
 pub fn transcribe_outcome(audio_path: &Path) -> Result<chain::ChainOutcome<String>> {
     let (cfg, store) = context();
     transcribe::run(&cfg, &store, audio_path)
+}
+
+/// Transcribe, reporting chunk progress so a caller can draw a bar.
+pub fn transcribe_outcome_with_progress(
+    audio_path: &Path,
+    progress: &(dyn Fn(usize, usize) + Send + Sync),
+) -> Result<chain::ChainOutcome<String>> {
+    let (cfg, store) = context();
+    transcribe::run_with_progress(&cfg, &store, audio_path, progress)
 }
 
 /// One chat completion through the configured chain, without printing.
