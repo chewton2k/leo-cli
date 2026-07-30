@@ -8,6 +8,7 @@
 pub mod cmdline;
 pub mod complete;
 pub mod keys;
+pub mod settings;
 pub mod task;
 pub mod view;
 
@@ -28,9 +29,11 @@ use crate::action::{
 };
 use crate::store::Store;
 use cmdline::{CmdLine, CmdOutcome};
+use crate::config::edit::Task;
 use complete::{Completion, NoteChoice, Sources};
 use task::{Job, TaskEvent};
 use view::overlay::{Choice, Finder};
+use view::settings::Row as SettingsRow;
 use keys::{Intent, Pane};
 use view::dirs::DirRow;
 use view::notes::NoteRow;
@@ -59,6 +62,7 @@ enum Mode {
     Help,
     Confirm { prompt: String, on_yes: ConfirmedAction },
     Find,
+    Settings,
 }
 
 pub struct App {
@@ -84,7 +88,17 @@ pub struct App {
     /// Scroll offset for the help overlay.
     help_scroll: u16,
     finder: Option<Finder>,
+    /// The provider screen's rows and selection, live only while it is open.
+    settings: Option<SettingsScreen>,
     quit: bool,
+}
+
+/// The provider screen's state. Rows are rebuilt from config after every edit,
+/// so what is on screen is always what is in the file.
+struct SettingsScreen {
+    rows: Vec<SettingsRow>,
+    selected: usize,
+    status: Option<String>,
 }
 
 /// Tab cycling: the candidates for one token and how far through them the user
@@ -132,6 +146,7 @@ impl App {
             completing: None,
             help_scroll: 0,
             finder: None,
+            settings: None,
             quit: false,
         }
     }
@@ -238,6 +253,11 @@ impl App {
             Mode::Find => {
                 self.mode = Mode::Find;
                 self.on_find_key(key)
+            }
+
+            Mode::Settings => {
+                self.mode = Mode::Settings;
+                self.on_settings_key(key, terminal)
             }
 
             Mode::Command => {
@@ -359,6 +379,11 @@ impl App {
             Intent::OpenFinder => {
                 self.finder = Some(Finder::open(self.all_note_choices()));
                 self.mode = Mode::Find;
+                Ok(())
+            }
+
+            Intent::OpenSettings => {
+                self.open_settings(None);
                 Ok(())
             }
 
@@ -633,6 +658,162 @@ impl App {
             Err(e) => {
                 self.say(Kind::Bad, e.to_string());
                 Ok(())
+            }
+        }
+    }
+
+
+    // ── the provider screen ─────────────────────────────────────────────────
+
+    /// Open or rebuild the provider screen. Rows come from the config file and
+    /// the keychain every time, so an edit made here or in `$EDITOR` shows up
+    /// immediately rather than going stale.
+    fn open_settings(&mut self, status: Option<String>) {
+        let keep = self.settings.as_ref().map(|s| s.selected).unwrap_or(0);
+        let cfg = crate::config::Config::load();
+        let rows = settings::rows(&cfg, &crate::config::secret::KeyringStore);
+        let selected = if keep == 0 || keep >= rows.len() {
+            view::settings::first_selectable(&rows)
+        } else {
+            keep
+        };
+        self.settings = Some(SettingsScreen { rows, selected, status });
+        self.mode = Mode::Settings;
+    }
+
+    fn selected_provider(&self) -> Option<(String, Task, bool)> {
+        let screen = self.settings.as_ref()?;
+        let row = screen.rows.get(screen.selected)?;
+        let name = row.provider_name()?.to_string();
+        let task = row.task()?;
+        let in_chain = matches!(row, SettingsRow::Member { .. });
+        Some((name, task, in_chain))
+    }
+
+    fn on_settings_key<B: TuiBackend>(
+        &mut self,
+        key: event::KeyEvent,
+        terminal: &mut Terminal<B>,
+    ) -> Result<()> {
+        // Esc and Ctrl-S both close, so the key that opened it also closes it.
+        let ctrl = key.modifiers.contains(event::KeyModifiers::CONTROL);
+        if key.code == event::KeyCode::Esc || (ctrl && key.code == event::KeyCode::Char('s')) {
+            self.settings = None;
+            self.mode = Mode::Normal;
+            return Ok(());
+        }
+
+        let Some((name, task, in_chain)) = self.selected_provider() else {
+            // Nothing actionable is selected; only movement and closing apply.
+            if let Some(screen) = self.settings.as_mut() {
+                match key.code {
+                    event::KeyCode::Char('j') | event::KeyCode::Down => {
+                        screen.selected = view::settings::step(&screen.rows, screen.selected, 1);
+                    }
+                    event::KeyCode::Char('k') | event::KeyCode::Up => {
+                        screen.selected = view::settings::step(&screen.rows, screen.selected, -1);
+                    }
+                    _ => {}
+                }
+            }
+            return Ok(());
+        };
+
+        match key.code {
+            event::KeyCode::Char('j') | event::KeyCode::Down => {
+                if let Some(screen) = self.settings.as_mut() {
+                    screen.selected = view::settings::step(&screen.rows, screen.selected, 1);
+                }
+            }
+            event::KeyCode::Char('k') | event::KeyCode::Up => {
+                if let Some(screen) = self.settings.as_mut() {
+                    screen.selected = view::settings::step(&screen.rows, screen.selected, -1);
+                }
+            }
+
+            // Reorder. Capital J/K, so a mistyped movement key cannot silently
+            // rewrite the user's config.
+            event::KeyCode::Char('J') => {
+                let changed = settings::reorder(task, &name, 1)?;
+                self.after_settings_change(changed);
+            }
+            event::KeyCode::Char('K') => {
+                let changed = settings::reorder(task, &name, -1)?;
+                self.after_settings_change(changed);
+            }
+
+            event::KeyCode::Char('a') if !in_chain => {
+                let changed = settings::add_to_chain(task, &name)?;
+                self.after_settings_change(changed);
+            }
+            event::KeyCode::Char('d') if in_chain => {
+                let changed = settings::remove_from_chain(task, &name)?;
+                self.after_settings_change(changed);
+            }
+
+            // Storing a key needs a prompt with echo disabled, which needs the
+            // real terminal, so drop out of the TUI for it. `l` rather than `k`
+            // because `k` moves the selection.
+            event::KeyCode::Char('l') => {
+                let target = name.clone();
+                let out = self.outside(terminal, || {
+                    crate::run_model(crate::action::ModelAction::Login { name: target })
+                })?;
+                let status = match out {
+                    Ok(()) => format!("stored a key for {name}"),
+                    Err(e) => e.to_string(),
+                };
+                self.open_settings(Some(status));
+            }
+
+            // Removing a key needs no prompt, so it happens in place.
+            event::KeyCode::Char('x') => {
+                let status = match crate::run_model(crate::action::ModelAction::Logout {
+                    name: name.clone(),
+                }) {
+                    Ok(()) => format!("removed the key for {name}"),
+                    Err(e) => e.to_string(),
+                };
+                self.open_settings(Some(status));
+            }
+
+            // One small request. Blocking, so say what is happening first.
+            event::KeyCode::Char('t') => {
+                if let Some(screen) = self.settings.as_mut() {
+                    screen.status = Some(format!("testing {name}..."));
+                }
+                terminal.draw(|frame| self.draw(frame))?;
+                let status = match crate::test_provider(&name) {
+                    Ok(report) => report,
+                    Err(e) => format!("{name}: {e}"),
+                };
+                self.open_settings(Some(status));
+            }
+
+            event::KeyCode::Char('e') => {
+                let out = self.outside(terminal, || {
+                    crate::run_config(crate::action::ConfigAction::Edit)
+                })?;
+                let status = match out {
+                    Ok(()) => None,
+                    Err(e) => Some(e.to_string()),
+                };
+                self.open_settings(status);
+            }
+
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Reload the screen after an edit, or report that nothing changed.
+    fn after_settings_change(&mut self, changed: settings::Changed) {
+        match changed {
+            settings::Changed::Yes(message) => self.open_settings(Some(message)),
+            settings::Changed::No => {
+                if let Some(screen) = self.settings.as_mut() {
+                    screen.status = Some("nothing to change".to_string());
+                }
             }
         }
     }
@@ -939,6 +1120,17 @@ impl App {
             Mode::Find => {
                 if let Some(finder) = &self.finder {
                     view::overlay::render(frame, frame.area(), finder);
+                }
+            }
+            Mode::Settings => {
+                if let Some(screen) = &self.settings {
+                    view::settings::render(
+                        frame,
+                        frame.area(),
+                        &screen.rows,
+                        screen.selected,
+                        screen.status.as_deref(),
+                    );
                 }
             }
             _ => {}

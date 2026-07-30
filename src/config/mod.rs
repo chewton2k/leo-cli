@@ -1,3 +1,4 @@
+pub mod edit;
 pub mod provider;
 pub mod secret;
 

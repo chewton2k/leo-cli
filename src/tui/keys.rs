@@ -45,6 +45,8 @@ pub enum Intent {
     OpenCommand { seed: &'static str },
     /// Open the fuzzy finder overlay.
     OpenFinder,
+    /// Open the provider and settings screen.
+    OpenSettings,
     ToggleHelp,
     /// Leave whatever overlay or mode is active.
     Cancel,
@@ -60,6 +62,7 @@ pub fn normal(key: KeyEvent, focus: Pane) -> Intent {
     if ctrl {
         return match key.code {
             KeyCode::Char('p') => Intent::OpenFinder,
+            KeyCode::Char('s') => Intent::OpenSettings,
             KeyCode::Char('c') => Intent::Quit,
             KeyCode::Char('d') => Intent::ScrollDown,
             KeyCode::Char('u') => Intent::ScrollUp,
@@ -144,6 +147,7 @@ mod tests {
             (key('?'), Intent::ToggleHelp),
             (code(KeyCode::Enter), Intent::Open),
             (ctrl('p'), Intent::OpenFinder),
+            (ctrl('s'), Intent::OpenSettings),
         ];
         for (k, expected) in cases {
             assert_eq!(normal(*k, Pane::Notes), *expected, "for {k:?}");

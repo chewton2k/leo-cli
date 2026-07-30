@@ -189,10 +189,25 @@ Once initialized, every save commits automatically.
 
 ## AI providers
 
-Press `Ctrl-S` for the provider screen. It shows both chains — one for chat, one
-for transcription — with each provider's model and whether it has a key. From
-there you can add a key, test a provider, reorder the chain, or open the config
-file.
+Press `Ctrl-S` for the provider screen. It lists both chains — one for chat, one
+for transcription — with each provider's model and whether it has a key, and
+below them everything else that is configured but unused.
+
+| Key | On the provider screen |
+|-----|------------------------|
+| `j` / `k` | Move between providers |
+| `l` | Store an API key (typing is hidden) |
+| `x` | Remove a stored key |
+| `t` | Send one small request to check it works |
+| `J` / `K` | Change priority within a chain |
+| `a` | Add the selected provider to its chain |
+| `d` | Drop it from the chain (it stays configured) |
+| `e` | Open the config file in `$EDITOR` |
+| `Esc` | Close |
+
+A filled dot means leo would use that provider right now. A hollow one means it
+is configured but not usable yet — usually a missing key, a binary that is not
+installed, or a local server that is not running.
 
 Providers are tried in order, and unavailable ones are skipped silently, so it
 is fine to list more than you have. That means a laptop with Ollama installed

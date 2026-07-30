@@ -414,6 +414,52 @@ fn build_one_transcriber(
     }
 }
 
+/// Send one minimal request to a provider and report what happened.
+///
+/// Returns the report rather than printing it, so the CLI can print it and the
+/// provider screen can show it in its status line. Transcription providers are
+/// only checked for reachability: exercising one needs audio, and a test that
+/// records from the microphone is not a test anyone wants to run twice.
+pub fn test_provider(name: &str) -> Result<String> {
+    let cfg = Config::load();
+    let store = KeyringStore;
+    let Some(pc) = cfg.provider(name) else {
+        anyhow::bail!("no provider named '{name}' in your config");
+    };
+
+    let started = std::time::Instant::now();
+    match pc.kind {
+        Some(config::provider::ProviderKind::Openai) => {
+            let key = resolve(name, pc.key_env.as_deref(), &store);
+            let p = ai::provider::openai::OpenAiChat::new(name.to_string(), pc, key);
+            if !p.available() {
+                anyhow::bail!("{}", p.unavailable_reason());
+            }
+            use ai::provider::ChatProvider;
+            let reply = p
+                .complete(&ai::provider::ChatRequest {
+                    prompt: "Reply with the single word: ok".to_string(),
+                    temperature: 0.0,
+                    max_tokens: 16,
+                })
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let reply = reply.trim().replace('\n', " ");
+            // A reasoning model can answer at length; one line is enough here.
+            let reply: String = reply.chars().take(60).collect();
+            Ok(format!(
+                "{name} responded in {:?}: {reply}",
+                started.elapsed()
+            ))
+        }
+        Some(_) => match build_one_transcriber(name, pc, &store) {
+            Some(p) if p.available() => Ok(format!("{name} is reachable")),
+            Some(p) => anyhow::bail!("{}", p.unavailable_reason()),
+            None => anyhow::bail!("provider '{name}' could not be built"),
+        },
+        None => anyhow::bail!("provider '{name}' has no `kind`"),
+    }
+}
+
 pub fn run_model(command: action::ModelAction) -> Result<()> {
     let cfg = Config::load();
     let store = KeyringStore;
@@ -463,53 +509,11 @@ pub fn run_model(command: action::ModelAction) -> Result<()> {
         }
 
         action::ModelAction::Test { name } => {
-            let Some(pc) = cfg.provider(&name) else {
-                anyhow::bail!("no provider named '{name}' in your config");
-            };
-
-            let started = std::time::Instant::now();
-            let result = match pc.kind {
-                Some(config::provider::ProviderKind::Openai) => {
-                    let key = resolve(&name, pc.key_env.as_deref(), &store);
-                    let p = ai::provider::openai::OpenAiChat::new(name.clone(), pc, key);
-                    if !p.available() {
-                        anyhow::bail!("{}", p.unavailable_reason());
-                    }
-                    use ai::provider::ChatProvider;
-                    p.complete(&ai::provider::ChatRequest {
-                        prompt: "Reply with the single word: ok".to_string(),
-                        temperature: 0.0,
-                        max_tokens: 16,
-                    })
-                    .map(|s| s.trim().to_string())
-                    .map_err(|e| anyhow::anyhow!("{e}"))
-                }
-                Some(_) => {
-                    // Transcription providers need audio; check reachability
-                    // only, so testing one costs nothing and needs no mic.
-                    match build_one_transcriber(&name, pc, &store) {
-                        Some(p) if p.available() => Ok("available".to_string()),
-                        Some(p) => anyhow::bail!("{}", p.unavailable_reason()),
-                        None => anyhow::bail!("provider '{name}' could not be built"),
-                    }
-                }
-                None => anyhow::bail!("provider '{name}' has no `kind`"),
-            };
-
-            match result {
-                Ok(reply) => {
-                    println!(
-                        "  {} {name} responded in {:?}: {reply}",
-                        "ok".green(),
-                        started.elapsed()
-                    );
-                    Ok(())
-                }
-                Err(e) => {
-                    println!("  {} {name}: {e}", "failed".red());
-                    Ok(())
-                }
+            match test_provider(&name) {
+                Ok(report) => println!("  {} {report}", "ok".green()),
+                Err(e) => println!("  {} {name}: {e}", "failed".red()),
             }
+            Ok(())
         }
 
         action::ModelAction::Login { name } => {

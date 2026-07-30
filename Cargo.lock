@@ -1714,6 +1714,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "toml",
+ "toml_edit",
  "tower-http",
  "uuid",
  "zeroize",
@@ -3396,6 +3397,7 @@ dependencies = [
  "indexmap",
  "toml_datetime",
  "toml_parser",
+ "toml_writer",
  "winnow",
 ]
 

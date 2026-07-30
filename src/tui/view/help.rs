@@ -111,6 +111,11 @@ pub const SECTIONS: &[Section] = &[
         title: "Providers and settings",
         entries: &[
             e("Ctrl-S", "the provider screen"),
+            e("  l / x", "on that screen: store / remove a key"),
+            e("  t", "on that screen: test a provider"),
+            e("  J / K", "on that screen: change priority"),
+            e("  a / d", "on that screen: add to / drop from a chain"),
+            e("  e", "on that screen: open config.toml"),
             e(":model list", "chains, models, and key status"),
             e(":model login <p>", "store a key in the OS keychain"),
             e(":model test <p>", "one small request to check it"),
