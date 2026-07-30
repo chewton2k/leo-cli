@@ -81,6 +81,8 @@ pub struct App {
     recording: Option<Recording>,
     /// Tab-completion state, live only while cycling.
     completing: Option<Cycle>,
+    /// Scroll offset for the help overlay.
+    help_scroll: u16,
     finder: Option<Finder>,
     quit: bool,
 }
@@ -128,6 +130,7 @@ impl App {
             pinned: None,
             recording: None,
             completing: None,
+            help_scroll: 0,
             finder: None,
             quit: false,
         }
@@ -195,9 +198,40 @@ impl App {
                 Ok(())
             }
 
-            // Any key closes help, including `?` again — it is a toggle.
+            // Help scrolls with the same keys as everything else; any other
+            // key closes it, `?` included, since it is a toggle.
             Mode::Help => {
-                self.mode = Mode::Normal;
+                let page = 10;
+                match key.code {
+                    event::KeyCode::Char('j') | event::KeyCode::Down => {
+                        self.mode = Mode::Help;
+                        self.help_scroll = self.help_scroll.saturating_add(1);
+                    }
+                    event::KeyCode::Char('k') | event::KeyCode::Up => {
+                        self.mode = Mode::Help;
+                        self.help_scroll = self.help_scroll.saturating_sub(1);
+                    }
+                    event::KeyCode::PageDown | event::KeyCode::Char(' ') => {
+                        self.mode = Mode::Help;
+                        self.help_scroll = self.help_scroll.saturating_add(page);
+                    }
+                    event::KeyCode::PageUp => {
+                        self.mode = Mode::Help;
+                        self.help_scroll = self.help_scroll.saturating_sub(page);
+                    }
+                    event::KeyCode::Char('g') => {
+                        self.mode = Mode::Help;
+                        self.help_scroll = 0;
+                    }
+                    event::KeyCode::Char('G') => {
+                        self.mode = Mode::Help;
+                        self.help_scroll = view::help::line_count() as u16;
+                    }
+                    _ => {
+                        self.mode = Mode::Normal;
+                        self.help_scroll = 0;
+                    }
+                }
                 Ok(())
             }
 
@@ -330,6 +364,7 @@ impl App {
 
             Intent::ToggleHelp => {
                 self.mode = Mode::Help;
+                self.help_scroll = 0;
                 Ok(())
             }
 
@@ -482,6 +517,7 @@ impl App {
 
             Effect::ShowHelp => {
                 self.mode = Mode::Help;
+                self.help_scroll = 0;
                 Ok(())
             }
 
@@ -896,7 +932,7 @@ impl App {
         );
 
         match &self.mode {
-            Mode::Help => view::help::render_help(frame, frame.area()),
+            Mode::Help => view::help::render_help(frame, frame.area(), self.help_scroll),
             Mode::Confirm { prompt, .. } => {
                 view::help::render_confirm(frame, frame.area(), prompt)
             }

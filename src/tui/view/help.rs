@@ -1,4 +1,8 @@
-//! The help overlay and the confirmation prompt: two centered modals.
+//! The help overlay and the confirmation prompt.
+//!
+//! Help is grouped by task and scrollable, because the flat list it replaced
+//! overflowed anything shorter than a full-height terminal and silently hid its
+//! own last rows.
 
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -17,65 +21,175 @@ pub fn centered(area: Rect, width: u16, height: u16) -> Rect {
     cell
 }
 
-/// The keymap, plus the `:` verbs. Shown by `?`.
-pub const KEYS: &[(&str, &str)] = &[
-    ("j / k", "move down / up"),
-    ("g / G", "first / last"),
-    ("h / l", "switch pane"),
-    ("Enter", "open directory, or focus the body"),
-    ("x", "toggle the first open checkbox"),
-    ("e", "edit in $EDITOR"),
-    ("D", "delete (asks first)"),
-    (":", "command line"),
-    ("/", "search"),
-    ("Tab", "complete on the : line"),
-    ("Ctrl-P", "fuzzy find a note"),
-    ("Ctrl-D / Ctrl-U", "scroll the preview"),
-    ("Ctrl-R", "reload from disk"),
-    ("Enter", "while recording: stop and save"),
-    ("t", "while recording: raw text or bullets"),
-    ("?", "this help"),
-    ("q", "quit"),
+/// One row of help: a key or command, and what it does. An empty `what` marks a
+/// section heading.
+pub struct Entry {
+    pub key: &'static str,
+    pub what: &'static str,
+}
+
+pub struct Section {
+    pub title: &'static str,
+    pub entries: &'static [Entry],
+}
+
+const fn e(key: &'static str, what: &'static str) -> Entry {
+    Entry { key, what }
+}
+
+/// Help content, grouped the way someone looks for it.
+pub const SECTIONS: &[Section] = &[
+    Section {
+        title: "Moving around",
+        entries: &[
+            e("j / k", "down / up"),
+            e("g / G", "first / last"),
+            e("h / l", "switch pane: dirs, notes, body"),
+            e("Enter", "open a directory, or focus the note body"),
+            e("Ctrl-D / Ctrl-U", "scroll the note"),
+            e("Ctrl-P", "fuzzy-find a note in any directory"),
+            e("Ctrl-R", "reload from disk"),
+            e("Esc", "close an overlay, or unpin output"),
+            e("?", "this help"),
+            e("q", "quit"),
+        ],
+    },
+    Section {
+        title: "Acting on the selected note",
+        entries: &[
+            e("x", "toggle its first unchecked box"),
+            e("e", "edit it in $EDITOR"),
+            e("D", "delete it (asks first)"),
+        ],
+    },
+    Section {
+        title: "The : line",
+        entries: &[
+            e(":", "start a command"),
+            e("/", "shortcut for :search"),
+            e("Tab", "complete verbs, notes, dirs, tags, formats"),
+            e("Up / Down", "previous commands"),
+            e("Ctrl-W / Ctrl-U", "delete a word / the line"),
+        ],
+    },
+    Section {
+        title: "Notes",
+        entries: &[
+            e(":new [title]", "create, opening $EDITOR"),
+            e(":view <note>", "show it"),
+            e(":edit <note>", "edit it"),
+            e(":delete <note>", "delete it"),
+            e(":list [#tag] [N]", "list, by tag or capped at N"),
+            e(":search [-f] <q>", "titles, or -f for bodies too"),
+            e(":check <note> <N>", "toggle checkbox N"),
+            e(":tags", "every tag, with counts"),
+            e(":remind <text>", "add to the reminder note"),
+        ],
+    },
+    Section {
+        title: "Directories",
+        entries: &[
+            e(":mkdir <name>", "create one"),
+            e(":cd <dir>", "enter it; .. up, / root"),
+            e(":pwd", "where am I"),
+            e(":mv <note>... <dir>", "move notes into it"),
+            e(":rmdir <name>", "remove an empty one"),
+        ],
+    },
+    Section {
+        title: "AI",
+        entries: &[
+            e(":listen [title]", "record; live notes appear as you talk"),
+            e(":listen add <note>", "record, appending to a note"),
+            e(":listen --screen", "capture system audio"),
+            e("t", "while recording: raw text or bullets"),
+            e("Enter", "while recording: stop and save"),
+            e(":ask <note>", "expand its @leo lines in place"),
+        ],
+    },
+    Section {
+        title: "Providers and settings",
+        entries: &[
+            e("Ctrl-S", "the provider screen"),
+            e(":model list", "chains, models, and key status"),
+            e(":model login <p>", "store a key in the OS keychain"),
+            e(":model test <p>", "one small request to check it"),
+            e(":config edit", "open config.toml in $EDITOR"),
+        ],
+    },
+    Section {
+        title: "Elsewhere",
+        entries: &[
+            e(":export <note> <fmt>", "txt md html docx pdf rtf odt"),
+            e(":sync <sub>", "init, connect, push, pull, status"),
+            e("leo serve", "read notes from your phone (shell only)"),
+        ],
+    },
 ];
 
-pub const VERBS_HELP: &str = "\
-: new [title]        : list [#tag] [N]    : view <note>
-: edit <note>        : delete <note>      : check <note> <N>
-: search [-f] <q>    : tags               : remind <text>
-: listen [title]     : listen add <note>  : ask <note>
-: export <note> <fmt>: mkdir <name>       : cd <dir>
-: mv <note>... <dir> : rmdir <name>       : pwd
-: sync <init|connect|push|pull|status>
-: model <list|test|login|logout> <provider>
-: config <edit|path>";
+/// Every documented key or command, flattened. The manual's tests assert
+/// against this so a binding cannot be added without being documented in both
+/// places — which is the only consumer, hence the allow.
+#[allow(dead_code)]
+pub fn all_keys() -> Vec<&'static str> {
+    SECTIONS
+        .iter()
+        .flat_map(|s| s.entries.iter().map(|e| e.key))
+        .collect()
+}
 
-pub fn render_help(frame: &mut Frame, area: Rect) {
-    let mut lines: Vec<TuiLine> = vec![TuiLine::from(Span::styled(
-        "keys",
-        Style::default().add_modifier(Modifier::BOLD),
-    ))];
-    for (key, what) in KEYS {
-        lines.push(TuiLine::from(vec![
-            Span::styled(format!("  {key:<16}"), Style::default().fg(Color::Cyan)),
-            Span::raw(*what),
-        ]));
+/// Build the rendered lines, so scrolling and height can be computed from the
+/// same content that gets drawn.
+fn help_lines() -> Vec<TuiLine<'static>> {
+    let mut lines = Vec::new();
+    for (i, section) in SECTIONS.iter().enumerate() {
+        if i > 0 {
+            lines.push(TuiLine::from(""));
+        }
+        lines.push(TuiLine::from(Span::styled(
+            format!(" {}", section.title),
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        )));
+        for entry in section.entries {
+            lines.push(TuiLine::from(vec![
+                Span::styled(
+                    format!("  {:<20}", entry.key),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(entry.what),
+            ]));
+        }
     }
-    lines.push(TuiLine::from(""));
-    lines.push(TuiLine::from(Span::styled(
-        "commands",
-        Style::default().add_modifier(Modifier::BOLD),
-    )));
-    for line in VERBS_HELP.lines() {
-        lines.push(TuiLine::from(Span::raw(format!("  {line}"))));
-    }
-    lines.push(TuiLine::from(""));
-    lines.push(TuiLine::from(Span::styled(
-        "  Esc or ? to close",
-        Style::default().add_modifier(Modifier::DIM),
-    )));
+    lines
+}
 
-    let height = lines.len() as u16 + 2;
-    let box_area = centered(area, 72, height);
+/// Total content height, for clamping the caller's scroll offset.
+pub fn line_count() -> usize {
+    help_lines().len()
+}
+
+/// Draw help. `scroll` is a line offset the caller owns, so j/k work here the
+/// same as everywhere else.
+pub fn render_help(frame: &mut Frame, area: Rect, scroll: u16) {
+    let lines = help_lines();
+
+    // Leave a margin so the overlay reads as a panel rather than a takeover.
+    let box_area = centered(area, 66.min(area.width), area.height.saturating_sub(2).max(5));
+    let inner_height = box_area.height.saturating_sub(2) as usize;
+
+    let max_scroll = lines.len().saturating_sub(inner_height) as u16;
+    let scroll = scroll.min(max_scroll);
+
+    let more = if max_scroll > 0 {
+        format!(
+            " help  {}-{} of {} · j/k scroll · any other key closes ",
+            scroll as usize + 1,
+            (scroll as usize + inner_height).min(lines.len()),
+            lines.len()
+        )
+    } else {
+        " help  ·  any key closes ".to_string()
+    };
 
     frame.render_widget(Clear, box_area);
     frame.render_widget(
@@ -84,15 +198,16 @@ pub fn render_help(frame: &mut Frame, area: Rect) {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(Color::Cyan))
-                    .title("help"),
+                    .title(more),
             )
+            .scroll((scroll, 0))
             .wrap(Wrap { trim: false }),
         box_area,
     );
 }
 
-/// A yes/no prompt. Destructive actions route through this rather than acting
-/// on a single key press.
+/// A yes/no prompt. Destructive actions route through this rather than acting on
+/// a single key press.
 pub fn render_confirm(frame: &mut Frame, area: Rect, prompt: &str) {
     let box_area = centered(area, (prompt.len() as u16 + 14).min(area.width), 5);
     frame.render_widget(Clear, box_area);
@@ -131,7 +246,6 @@ mod tests {
         assert_eq!(c.height, 10);
     }
 
-    /// A box larger than the terminal must shrink instead of overflowing.
     #[test]
     fn an_oversized_box_is_clamped_to_the_area() {
         let area = Rect::new(0, 0, 20, 6);
@@ -141,27 +255,130 @@ mod tests {
     }
 
     #[test]
-    fn help_lists_the_documented_keys() {
+    fn every_entry_has_both_a_key_and_a_description() {
+        for section in SECTIONS {
+            assert!(!section.title.trim().is_empty());
+            assert!(!section.entries.is_empty(), "{} is empty", section.title);
+            for entry in section.entries {
+                assert!(!entry.key.trim().is_empty(), "{}: blank key", section.title);
+                assert!(
+                    !entry.what.trim().is_empty(),
+                    "{}: {} has no description",
+                    section.title,
+                    entry.key
+                );
+            }
+        }
+    }
+
+    /// Help is grouped, and the grouping is the point — a single section would
+    /// be the flat list this replaced.
+    #[test]
+    fn help_is_grouped_into_several_sections() {
+        assert!(SECTIONS.len() >= 6, "only {} sections", SECTIONS.len());
+    }
+
+    /// Every key the keymap actually handles must be findable in help. This is
+    /// the check that catches a binding added to keys.rs and never documented.
+    #[test]
+    fn every_bound_key_appears_somewhere_in_help() {
+        let text: String = help_lines().iter().map(|l| l.to_string()).collect();
+        for key in [
+            "j", "k", "g", "G", "h", "l", "Enter", "x", "e", "D", ":", "/", "Tab", "Ctrl-P",
+            "Ctrl-S", "Ctrl-D", "Ctrl-U", "Ctrl-R", "Esc", "t", "?", "q",
+        ] {
+            assert!(text.contains(key), "help never shows the {key} key");
+        }
+    }
+
+    /// Flattened view of every documented key, for other modules' tests.
+    #[test]
+    fn the_flattened_key_list_is_not_empty() {
+        assert!(all_keys().len() >= 20, "only {} keys", all_keys().len());
+    }
+
+    /// Every verb in the vocabulary should be discoverable here, since this is
+    /// what `?` shows. `env` is legacy and deliberately hidden.
+    #[test]
+    fn every_command_verb_appears_in_help() {
+        let text: String = help_lines().iter().map(|l| l.to_string()).collect();
+        for (verb, _aliases) in crate::action::VERBS {
+            if matches!(*verb, "env" | "clear" | "help" | "quit" | "pwd") {
+                continue;
+            }
+            assert!(text.contains(verb), "help never mentions `{verb}`");
+        }
+    }
+
+    #[test]
+    fn renders_the_first_section_at_the_top() {
         let mut t = Terminal::new(TestBackend::new(80, 40)).unwrap();
-        t.draw(|f| render_help(f, f.area())).unwrap();
+        t.draw(|f| render_help(f, f.area(), 0)).unwrap();
         let out = t.backend().to_string();
-        for probe in ["switch pane", "fuzzy find", "command line", "quit"] {
-            assert!(out.contains(probe), "help is missing {probe:?}:\n{out}");
-        }
+        assert!(out.contains("Moving around"), "{out}");
+        assert!(out.contains("switch pane"), "{out}");
+    }
+
+    /// Scrolling is what makes the later sections reachable in a short
+    /// terminal, which the previous flat list could not do.
+    #[test]
+    fn scrolling_reveals_later_sections() {
+        let mut t = Terminal::new(TestBackend::new(80, 14)).unwrap();
+
+        t.draw(|f| render_help(f, f.area(), 0)).unwrap();
+        let top = t.backend().to_string();
+
+        t.draw(|f| render_help(f, f.area(), line_count() as u16)).unwrap();
+        let bottom = t.backend().to_string();
+
+        assert_ne!(top, bottom, "scrolling changed nothing");
+        assert!(top.contains("Moving around"));
+        assert!(bottom.contains("serve"), "the last section is unreachable:\n{bottom}");
     }
 
     #[test]
-    fn every_key_row_has_a_description() {
-        for (key, what) in KEYS {
-            assert!(!key.trim().is_empty());
-            assert!(!what.trim().is_empty(), "{key} has no description");
-        }
+    fn the_title_reports_the_scroll_position_when_there_is_more_to_see() {
+        let mut t = Terminal::new(TestBackend::new(80, 12)).unwrap();
+        t.draw(|f| render_help(f, f.area(), 0)).unwrap();
+        let out = t.backend().to_string();
+        assert!(out.contains("of "), "no position indicator: {out}");
+        assert!(out.contains("j/k"), "no scroll hint: {out}");
+    }
+
+    /// The indicator must be a well-formed range, and the last page must end at
+    /// the true line count rather than running past it.
+    #[test]
+    fn the_position_indicator_is_a_well_formed_range() {
+        let total = line_count();
+        let mut t = Terminal::new(TestBackend::new(80, 12)).unwrap();
+
+        t.draw(|f| render_help(f, f.area(), 0)).unwrap();
+        let top = t.backend().to_string();
+        assert!(top.contains(&format!("1-8 of {total}")), "got: {top}");
+
+        // Scrolled to the end: the window ends exactly at the last line.
+        t.draw(|f| render_help(f, f.area(), 9999)).unwrap();
+        let bottom = t.backend().to_string();
+        assert!(
+            bottom.contains(&format!("-{total} of {total}")),
+            "last page should end at {total}: {bottom}"
+        );
     }
 
     #[test]
-    fn help_in_a_small_terminal_does_not_panic() {
-        let mut t = Terminal::new(TestBackend::new(24, 6)).unwrap();
-        t.draw(|f| render_help(f, f.area())).unwrap();
+    fn scrolling_past_the_end_is_clamped_rather_than_blank() {
+        let mut t = Terminal::new(TestBackend::new(80, 40)).unwrap();
+        t.draw(|f| render_help(f, f.area(), 9999)).unwrap();
+        // Something is still on screen.
+        assert!(t.backend().to_string().contains("serve"));
+    }
+
+    #[test]
+    fn help_in_a_tiny_terminal_does_not_panic() {
+        for (w, h) in [(24, 6), (10, 4), (40, 3), (200, 60)] {
+            let mut t = Terminal::new(TestBackend::new(w, h)).unwrap();
+            t.draw(|f| render_help(f, f.area(), 0)).unwrap();
+        }
     }
 
     #[test]

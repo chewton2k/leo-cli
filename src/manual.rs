@@ -60,7 +60,9 @@ The screen has three panes: directories, notes, and the selected note.
 | `Enter` | Open a directory, or focus the note body |
 | `Ctrl-D` / `Ctrl-U` | Scroll this note |
 | `Ctrl-P` | Fuzzy-find any note, in any directory |
+| `Ctrl-S` | Providers and settings |
 | `Ctrl-R` | Reload from disk |
+| `Esc` | Close an overlay, or clear pinned output |
 | `?` | Help |
 | `q` | Quit |
 
@@ -75,7 +77,8 @@ matches loosely — `:view grtrv` finds "Graph traversals".
 
 When you complete a note by title, leo substitutes its number for you.
 
-Press `/` as a shortcut for `:search `.
+Press `/` as a shortcut for `:search `. `Up` and `Down` walk back through
+commands you have already run, and `Ctrl-W` deletes a word, `Ctrl-U` the line.
 
 ## Writing notes
 
@@ -336,8 +339,9 @@ mod tests {
     #[test]
     fn the_manual_documents_every_key_in_the_help_table() {
         let body = manual_body();
-        for (key, _what) in crate::tui::view::help::KEYS {
-            // Keys are written with backticks in the manual's tables.
+        for key in crate::tui::view::help::all_keys() {
+            // Keys are written with backticks in the manual's tables, and
+            // commands appear as `:verb`, so compare on the first token.
             let first = key.split(' ').next().unwrap_or(key);
             assert!(
                 body.contains(first),
