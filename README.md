@@ -113,6 +113,7 @@ note titles, directories, tags, and formats.
 | `/` | Search |
 | `Tab` | Complete on the `:` line |
 | `Ctrl-P` | Fuzzy find a note across all directories |
+| `Ctrl-S` | Providers and settings |
 | `Ctrl-D` / `Ctrl-U` | Scroll the preview |
 | `Ctrl-R` | Reload from disk |
 | `?` | Help |
@@ -121,6 +122,10 @@ note titles, directories, tags, and formats.
 Notes are numbered in the pane, so `:view 2`, `:edit 2`, and `:delete 2` all
 refer to what you can see. Tab completion accepts a title and fills in the
 number for you: type `:view owner` and press Tab.
+
+Your first run creates one note called **leo manual** with the whole command
+reference in it. It is an ordinary note, so you can search it, scroll it, and
+delete it when you are done — it will not come back.
 
 ## Commands
 
@@ -269,36 +274,87 @@ The `@leo` line is replaced with the AI's answer inline. Works on the `:` line a
 
 Formats: `txt`, `md`, `html`, `docx`, `pdf`, `rtf`, `odt` (last four need Pandoc).
 
-### Model providers
+### Providers and settings
 
-Inspect and manage the AI providers behind `listen` and `ask`:
+Press `Ctrl-S` for the provider screen. It lists both chains — one for chat, one
+for transcription — in the order they are tried, with each provider's model and
+whether it has a key, and below them everything else that is configured:
+
+```
+┌ providers ──────────────────────────────────────────────────────────────┐
+│ chat chain                                                              │
+│   1. ● ollama          qwen3:8b              no key needed              │
+│   2. ○ openrouter      openrouter/free       no key — press l           │
+│ transcribe chain                                                        │
+│   1. ○ whisper_cpp     (default)             no key needed              │
+│   2. ● groq            whisper-large-v3-turbo key …nx29                 │
+│ also configured                                                         │
+│      gemini            gemini-2.5-flash      no key — press l           │
+│      lmstudio          local-model           no key needed              │
+└─────────────────────────────────────────────────────────────────────────┘
+ l login · x remove key · t test · J/K reorder · a add · d drop · e edit file
+```
+
+A filled dot means leo would use that provider right now. A hollow one means it
+is configured but not usable yet — a missing key, a binary that is not
+installed, or a local server that is not running.
+
+| Key | What it does |
+|-----|-------------|
+| `j` / `k` | Move between providers |
+| `l` | Store an API key (typing is hidden) |
+| `x` | Remove a stored key |
+| `t` | Send one small request to check it works |
+| `J` / `K` | Change priority within a chain |
+| `a` | Add the selected provider to its chain |
+| `d` | Drop it from the chain (it stays configured) |
+| `e` | Open `config.toml` in `$EDITOR` |
+
+The same things work from a shell:
 
 ```sh
 leo model list                 # both chains, models, and credential status
 leo model test openrouter      # one minimal request to check it works
-leo model login openrouter     # store a key in the OS keychain (echo disabled)
+leo model login openrouter      # store a key in the OS keychain (echo disabled)
 leo model logout openrouter    # remove it
 leo config path                # where config.toml lives
-leo config edit                # create/open config.toml in $EDITOR
+leo config edit                # open it in $EDITOR
 ```
 
-`config.toml` holds the fallback chains and provider definitions:
+### Adding a provider
+
+`config.toml` ships with 16 providers already defined — Ollama, OpenRouter, LM
+Studio, llama.cpp, vLLM, Groq, Cerebras, Gemini, Mistral, OpenAI, DeepSeek,
+Together, xAI, whisper.cpp, and two more for transcription. Only the free ones
+are wired into a chain; the rest are one keypress away on the provider screen.
+
+Adding your own is four lines of TOML and no code, as long as it speaks a
+protocol leo already knows:
+
+```toml
+[providers.my-provider]
+kind = "openai"                       # OpenAI-compatible chat completions
+base_url = "https://api.example.com/v1"
+model = "some-model-id"
+key_env = "EXAMPLE_API_KEY"           # omit entirely for a local server
+```
+
+Then add its name to a chain:
 
 ```toml
 [chat]
-chain = ["ollama", "openrouter"]
-
-[transcribe]
-chain = ["whisper_cpp", "groq", "hf"]
-
-[providers.ollama]
-kind = "openai"                # any OpenAI-compatible endpoint
-base_url = "http://localhost:11434/v1"
-model = "qwen3:8b"
+chain = ["ollama", "my-provider"]
 ```
 
-Keys never go in this file — they live in your OS keychain, or in env vars
-(`OPENROUTER_API_KEY`, `GROQ_API_KEY`, `HF_API_KEY`), which take precedence.
+The four protocols are `openai` (chat, and almost everything speaks it),
+`whisper_cpp` (a local binary), `groq` (any OpenAI-compatible
+`/audio/transcriptions` endpoint, including OpenAI's own), and `hf` (Hugging
+Face inference).
+
+Keys never go in this file — they live in your OS keychain, or in env vars,
+which take precedence. Reordering a chain or toggling a provider from the
+provider screen rewrites only that one line, so your comments and formatting
+survive.
 
 ### Serve
 
