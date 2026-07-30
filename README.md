@@ -31,8 +31,9 @@ leo model list               # check what's configured
 
 `leo model login` reads the key with echo disabled, so it never appears on
 screen or in your shell history, and offers to import an existing `.env` value
-if it finds one. `leo model list` shows only the last four characters of any
-key.
+if it finds one. `leo model list` reports only whether a key is stored, never the
+key — and never reads it, since on macOS reading a keychain item can cost a
+permission prompt.
 
 Tune providers and fallback order in `leo config edit`. Providers are tried in
 order and unavailable ones (no key, no binary, closed port) are skipped
@@ -288,7 +289,7 @@ whether it has a key, and below them everything else that is configured:
 │   2. ○ openrouter      openrouter/free       no key — press l           │
 │ transcribe chain                                                        │
 │   1. ○ whisper_cpp     (default)             no key needed              │
-│   2. ● groq            whisper-large-v3-turbo key …nx29                 │
+│   2. ● groq            whisper-large-v3-turbo key stored                │
 │ also configured                                                         │
 │      gemini            gemini-2.5-flash      no key — press l           │
 │      lmstudio          local-model           no key needed              │
@@ -353,7 +354,8 @@ The four protocols are `openai` (chat, and almost everything speaks it),
 Face inference).
 
 Keys never go in this file — they live in your OS keychain, or in env vars,
-which take precedence. Reordering a chain or toggling a provider from the
+which take precedence. All of them share one keychain item, so macOS asks for
+permission at most once rather than once per provider. Reordering a chain or toggling a provider from the
 provider screen rewrites only that one line, so your comments and formatting
 survive.
 
