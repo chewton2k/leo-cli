@@ -374,14 +374,16 @@ mod tests {
     }
 
     fn config_with(providers: Vec<(&str, ProviderConfig)>, chat: Vec<&str>) -> Config {
-        let mut config = Config::default();
-        config.providers = providers
-            .into_iter()
-            .map(|(n, p)| (n.to_string(), p))
-            .collect();
-        config.chat.chain = chat.into_iter().map(String::from).collect();
-        config.transcribe.chain = vec![];
-        config
+        Config {
+            providers: providers
+                .into_iter()
+                .map(|(n, p)| (n.to_string(), p))
+                .collect(),
+            chat: crate::config::provider::TaskChain {
+                chain: chat.into_iter().map(String::from).collect(),
+            },
+            transcribe: crate::config::provider::TaskChain { chain: vec![] },
+        }
     }
 
     #[test]

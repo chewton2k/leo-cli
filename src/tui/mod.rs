@@ -1892,16 +1892,9 @@ mod tests {
         // A config with no usable providers at all.
         let lines = {
             let config = crate::config::Config {
-                chat: crate::config::provider::TaskChain {
-                    chain: vec![],
-                    ..Default::default()
-                },
-                transcribe: crate::config::provider::TaskChain {
-                    chain: vec![],
-                    ..Default::default()
-                },
+                chat: crate::config::provider::TaskChain { chain: vec![] },
+                transcribe: crate::config::provider::TaskChain { chain: vec![] },
                 providers: Default::default(),
-                ..Default::default()
             };
             let checks =
                 crate::health::recording(&config, &crate::config::secret::MemoryStore::default());

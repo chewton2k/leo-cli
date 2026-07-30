@@ -125,6 +125,15 @@ pub fn save_document(path: &std::path::Path, doc: &DocumentMut) -> Result<()> {
 mod tests {
     use super::*;
 
+    /// Write a config to a temp file so it can be read back through the real
+    /// load path, which is what merges in the providers leo ships with.
+    fn write_temp(text: &str) -> std::path::PathBuf {
+        let dir = Box::leak(Box::new(tempfile::tempdir().unwrap()));
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, text).unwrap();
+        path
+    }
+
     fn doc() -> DocumentMut {
         crate::config::Config::default_toml().parse::<DocumentMut>().unwrap()
     }
@@ -142,29 +151,43 @@ mod tests {
     /// The whole reason for `toml_edit`: an edit must not cost the user the
     /// comments that explain the file.
     #[test]
-    fn rewriting_a_chain_preserves_comments_and_other_providers() {
+    fn rewriting_a_chain_preserves_comments_and_the_rest_of_the_file() {
         let mut d = doc();
         let before = d.to_string();
-        assert!(before.contains("# Local, free, private"));
+        assert!(before.contains("Keys do NOT belong in this file"));
 
         write_chain(&mut d, Task::Chat, &["groq_chat".to_string()]);
         let after = d.to_string();
 
         assert!(after.contains("chain = [\"groq_chat\"]"), "{after}");
         // Comments survive.
-        assert!(after.contains("# Local, free, private"));
         assert!(after.contains("Keys do NOT belong in this file"));
-        // Every provider table survives.
-        for provider in ["ollama", "openrouter", "whisper_cpp", "xai", "gemini"] {
-            assert!(
-                after.contains(&format!("[providers.{provider}]")),
-                "lost [providers.{provider}]"
-            );
-        }
+        assert!(after.contains("Press Ctrl-S"), "{after}");
         // And the transcribe chain is untouched.
         assert_eq!(
             read_chain(&d, Task::Transcribe),
             vec!["whisper_cpp", "groq", "hf"]
+        );
+    }
+
+    /// A chain may name a provider that has no block in the file, because most
+    /// providers are built in. Writing such a chain must still produce a config
+    /// that resolves it.
+    #[test]
+    fn a_chain_can_name_a_provider_absent_from_the_file() {
+        let mut d = doc();
+        write_chain(&mut d, Task::Chat, &["gemini".to_string()]);
+        let text = d.to_string();
+        assert!(
+            !text.contains("[providers.gemini]"),
+            "gemini should not need a block"
+        );
+
+        let cfg = crate::config::Config::load_from(&write_temp(&text));
+        assert_eq!(cfg.chat.chain, vec!["gemini"]);
+        assert!(
+            cfg.provider("gemini").is_some(),
+            "a chained built-in did not resolve"
         );
     }
 

@@ -26,19 +26,94 @@ const DEFAULT_TRANSCRIBE_CHAIN: [&str; 3] = ["whisper_cpp", "groq", "hf"];
 
 impl Default for Config {
     fn default() -> Self {
-        Config::parse(&Config::default_toml())
+        Config::parse_with_built_ins(&Config::default_toml())
             .expect("built-in default config must parse")
     }
 }
 
 impl Config {
+    /// Parse exactly what the text says, with no built-ins added. `load_from`
+    /// is what a user's config goes through; this stays literal so a caller can
+    /// reason about one file in isolation.
     pub fn parse(text: &str) -> Result<Config> {
         toml::from_str(text).context("failed to parse leo config")
     }
 
-    /// The config written on first run. Comments explain each knob, because
-    /// this file is the primary UI for the model layer.
+    /// Parse a user's config and add the providers leo ships with.
+    fn parse_with_built_ins(text: &str) -> Result<Config> {
+        let mut config = Config::parse(text)?;
+        config.merge_built_in_providers();
+        Ok(config)
+    }
+
+    /// Add every provider leo ships with that the file does not already define.
+    ///
+    /// The file wins on a name collision, so overriding a built-in is a matter
+    /// of writing a block with the same name — no need to copy the other
+    /// seventeen to keep them.
+    fn merge_built_in_providers(&mut self) {
+        let built_in: Config = match toml::from_str(&Config::built_in_toml()) {
+            Ok(config) => config,
+            // Unreachable in a shipped binary: a test asserts it parses.
+            Err(e) => {
+                crate::diag::warn(format!("built-in providers are unparsable: {e}"));
+                return;
+            }
+        };
+        for (name, provider) in built_in.providers {
+            self.providers.entry(name).or_insert(provider);
+        }
+    }
+
+    /// The file written on first run: the two lines a user actually tunes, and
+    /// a pointer to where everything else lives.
+    ///
+    /// Short on purpose. Every provider leo supports is available whether or not
+    /// it appears here, so the file holds decisions rather than an inventory.
     pub fn default_toml() -> String {
+        format!(
+            r#"# leo configuration.
+#
+# Keys do NOT belong in this file. Run `leo model login <provider>` to store one
+# in your OS keychain, or press Ctrl-S inside leo for the same thing with a menu.
+#
+# These two lines are the ones worth tuning: providers are tried in order, and
+# unavailable ones — no key, no binary, closed port — are skipped without
+# complaint. So a laptop with Ollama running uses it for free and reaches for the
+# cloud only when it is not.
+
+[chat]
+chain = [{chat}]
+
+[transcribe]
+chain = [{transcribe}]
+
+# Eighteen providers are already known to leo and need no entry here: ollama,
+# openrouter, lmstudio, llamacpp, vllm, groq_chat, cerebras, gemini, mistral,
+# openai, deepseek, together, xai, whisper_cpp, groq, hf, openai_whisper,
+# local_whisper_server. Press Ctrl-S to see them all and add one to a chain.
+#
+# To add your own, or to override one of the above, name it here:
+#
+#   [providers.my-provider]
+#   kind = "openai"                        # or whisper_cpp, groq, hf
+#   base_url = "https://api.example.com/v1"
+#   model = "some-model-id"
+#   key_env = "EXAMPLE_API_KEY"            # omit entirely for a local server
+"#,
+            chat = quoted_list(&DEFAULT_CHAT_CHAIN),
+            transcribe = quoted_list(&DEFAULT_TRANSCRIBE_CHAIN),
+        )
+    }
+
+    /// Every provider leo knows how to talk to.
+    ///
+    /// Built in rather than written to disk: eighteen commented blocks made the
+    /// file 174 lines, so `config edit` opened a wall of text the user had to
+    /// scroll past to reach the two lines they came for. These are merged in at
+    /// load time, so they all still work and all still appear on the provider
+    /// screen — a user's own block of the same name simply wins.
+    fn built_in_toml() -> String {
         format!(
             r#"# leo configuration.
 #
@@ -245,7 +320,7 @@ model = "Systran/faster-whisper-small"
 
     pub fn load_from(path: &std::path::Path) -> Config {
         let mut cfg = match std::fs::read_to_string(path) {
-            Ok(text) => match Config::parse(&text) {
+            Ok(text) => match Config::parse_with_built_ins(&text) {
                 Ok(cfg) => cfg,
                 Err(e) => {
                     crate::diag::warn(format!(
@@ -426,11 +501,84 @@ model_path = "~/.leo/models/ggml-base.en.bin"
         );
     }
 
+    /// An empty file means "no opinion about chains", not "no providers": every
+    /// provider leo ships with is still known, which is what lets the shipped
+    /// file stay short.
     #[test]
-    fn empty_config_yields_empty_chains() {
-        let cfg = Config::parse("").unwrap();
+    fn an_empty_config_has_no_chains_but_still_knows_every_provider() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "").unwrap();
+        let cfg = Config::load_from(&path);
         assert!(cfg.chat.chain.is_empty());
-        assert!(cfg.providers.is_empty());
+        assert!(
+            cfg.providers.len() >= 15,
+            "built-ins were not merged: {} providers",
+            cfg.providers.len()
+        );
+        assert!(cfg.providers.contains_key("ollama"));
+        assert!(cfg.providers.contains_key("whisper_cpp"));
+    }
+
+    /// The file the user gets must be short enough to read. The inventory of
+    /// providers lives in code precisely so this stays small.
+    #[test]
+    fn the_shipped_config_is_short() {
+        let text = Config::default_toml();
+        let lines = text.lines().count();
+        assert!(lines < 40, "the shipped config grew to {lines} lines");
+        // And it must not have turned back into an inventory. The commented
+        // example of how to add one is fine; a real block is not.
+        let real_blocks = text
+            .lines()
+            .filter(|l| l.trim_start().starts_with("[providers."))
+            .count();
+        assert_eq!(real_blocks, 0, "provider blocks are back in the shipped file");
+        // It still has to be a working config.
+        let cfg = Config::parse(&text).unwrap();
+        assert_eq!(cfg.chat.chain, DEFAULT_CHAT_CHAIN);
+        assert_eq!(cfg.transcribe.chain, DEFAULT_TRANSCRIBE_CHAIN);
+    }
+
+    /// A user's own block must win over the built-in of the same name, so
+    /// overriding one provider does not mean copying the other seventeen.
+    #[test]
+    fn a_user_block_overrides_the_built_in_of_the_same_name() {
+        let cfg = Config::parse_with_built_ins(
+            r#"
+[chat]
+chain = ["ollama"]
+
+[providers.ollama]
+kind = "openai"
+base_url = "http://localhost:9999/v1"
+model = "my-own-model"
+"#,
+        )
+        .unwrap();
+        let ollama = cfg.provider("ollama").expect("ollama");
+        assert_eq!(ollama.model.as_deref(), Some("my-own-model"));
+        assert_eq!(
+            ollama.base_url.as_deref(),
+            Some("http://localhost:9999/v1"),
+            "the built-in overwrote the user's block"
+        );
+        // And the others are still there.
+        assert!(cfg.providers.contains_key("openrouter"));
+    }
+
+    /// The built-in table has to parse, since every load path merges it.
+    #[test]
+    fn the_built_in_provider_table_parses() {
+        let built_in: Config = toml::from_str(&Config::built_in_toml()).unwrap();
+        assert!(
+            built_in.providers.len() >= 15,
+            "only {} built-in providers",
+            built_in.providers.len()
+        );
+        for name in ["ollama", "openrouter", "whisper_cpp", "groq", "hf"] {
+            assert!(built_in.providers.contains_key(name), "missing {name}");
+        }
     }
 
     #[test]
@@ -564,7 +712,7 @@ kind = "telepathy"
     #[test]
     fn default_config_round_trips_through_toml() {
         let text = Config::default_toml();
-        let parsed = Config::parse(&text).unwrap();
+        let parsed = Config::parse_with_built_ins(&text).unwrap();
         assert_eq!(parsed.chat.chain, Config::default().chat.chain);
         assert_eq!(
             parsed.providers["openrouter"].model,
