@@ -108,7 +108,7 @@ note titles, directories, tags, and formats.
 | `Enter` | Open a directory, or focus the note body |
 | `x` | Toggle the first open checkbox |
 | `e` | Edit the note in `$EDITOR` |
-| `D` | Delete the note (asks first) |
+| `D` | Delete the note, or the directory when the dirs pane has focus (asks first) |
 | `:` | Command line |
 | `/` | Search |
 | `Tab` | Complete on the `:` line |
@@ -166,6 +166,7 @@ Organize notes into directories:
 | `pwd` | Show current directory |
 | `mv <note>... <dir>` | Move notes to a directory |
 | `rmdir <name>` | Remove an empty directory |
+| `rmdir -r <name>` | Remove a directory and everything in it (asks first) |
 
 ### Creating notes
 

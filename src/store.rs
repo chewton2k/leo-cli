@@ -442,6 +442,59 @@ impl Store {
         self.directories.len() < before
     }
 
+    /// What a recursive delete of `path` would remove: notes and directories,
+    /// counting everything nested inside it.
+    ///
+    /// Exists so the confirmation prompt can state the blast radius before the
+    /// user commits to it, rather than after.
+    pub fn dir_contents(&self, path: &str) -> (usize, usize) {
+        let path = path.trim_matches('/');
+        if path.is_empty() {
+            return (0, 0);
+        }
+        let prefix = format!("{path}/");
+        let notes = self
+            .notes
+            .iter()
+            .filter(|n| n.directory == path || n.directory.starts_with(&prefix))
+            .count();
+        // The directory itself plus anything below it.
+        let dirs = self
+            .directories
+            .iter()
+            .filter(|d| *d == path || d.starts_with(&prefix))
+            .count();
+        (notes, dirs)
+    }
+
+    /// Delete a directory and everything in it. Returns the counts removed.
+    ///
+    /// Separate from [`Store::delete_dir`], which refuses a non-empty directory:
+    /// removing a tree of notes should take a deliberately different call, not a
+    /// flag on the safe one.
+    pub fn delete_dir_recursive(&mut self, path: &str) -> (usize, usize) {
+        let path = path.trim_matches('/');
+        if path.is_empty() {
+            // Refuse the root: there is no undo, and "delete everything" is not
+            // what any single keypress should mean.
+            return (0, 0);
+        }
+        let prefix = format!("{path}/");
+
+        let notes_before = self.notes.len();
+        self.notes
+            .retain(|n| !(n.directory == path || n.directory.starts_with(&prefix)));
+
+        let dirs_before = self.directories.len();
+        self.directories
+            .retain(|d| d != path && !d.starts_with(&prefix));
+
+        (
+            notes_before - self.notes.len(),
+            dirs_before - self.directories.len(),
+        )
+    }
+
     pub fn move_note(&mut self, id_prefix: &str, new_dir: &str) -> Option<String> {
         let note = self.find_note_mut(id_prefix)?;
         note.directory = new_dir.to_string();
@@ -514,6 +567,105 @@ mod tests {
                 .unwrap()
                 .with_timezone(&chrono::Utc),
         }
+    }
+
+    fn store_with_tree() -> (Store, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::load_from(&dir.path().join("notes")).unwrap();
+        store.create_dir("cs130");
+        store.create_dir("cs130/lec");
+        store.create_dir("cs162");
+        store.create_note("Root note", "b", vec![], "").unwrap();
+        store.create_note("In cs130", "b", vec![], "cs130").unwrap();
+        store.create_note("In lec 1", "b", vec![], "cs130/lec").unwrap();
+        store.create_note("In lec 2", "b", vec![], "cs130/lec").unwrap();
+        store.create_note("In cs162", "b", vec![], "cs162").unwrap();
+        store.save().unwrap();
+        (store, dir)
+    }
+
+    #[test]
+    fn dir_contents_counts_everything_nested() {
+        let (store, _d) = store_with_tree();
+        // cs130 itself, cs130/lec, and the three notes between them.
+        assert_eq!(store.dir_contents("cs130"), (3, 2));
+        assert_eq!(store.dir_contents("cs130/lec"), (2, 1));
+        assert_eq!(store.dir_contents("cs162"), (1, 1));
+        // An unknown directory has nothing in it.
+        assert_eq!(store.dir_contents("nope"), (0, 0));
+        // The root is never reported as deletable.
+        assert_eq!(store.dir_contents(""), (0, 0));
+    }
+
+    /// A sibling directory whose name merely starts with the same letters must
+    /// not be swept up: "cs13" is not a parent of "cs130".
+    #[test]
+    fn dir_contents_matches_path_segments_not_string_prefixes() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::load_from(&dir.path().join("notes")).unwrap();
+        store.create_dir("cs13");
+        store.create_dir("cs130");
+        store.create_note("In cs130", "b", vec![], "cs130").unwrap();
+
+        assert_eq!(store.dir_contents("cs13"), (0, 1), "cs130 is not inside cs13");
+        assert_eq!(store.dir_contents("cs130"), (1, 1));
+    }
+
+    #[test]
+    fn deleting_a_directory_recursively_removes_its_notes_and_subdirectories() {
+        let (mut store, _d) = store_with_tree();
+
+        let (notes, dirs) = store.delete_dir_recursive("cs130");
+        assert_eq!((notes, dirs), (3, 2));
+
+        assert!(!store.dir_exists("cs130"));
+        assert!(!store.dir_exists("cs130/lec"));
+        // Untouched neighbours.
+        assert!(store.dir_exists("cs162"));
+        assert_eq!(store.notes.len(), 2);
+        assert!(store.find_by_title("Root note").len() == 1);
+        assert!(store.find_by_title("In cs162").len() == 1);
+
+        // And it survives a reload: the files are gone from disk.
+        store.save().unwrap();
+        let reloaded = Store::load_from(&store.notes_dir).unwrap();
+        assert_eq!(reloaded.notes.len(), 2);
+        assert!(!reloaded.dir_exists("cs130"));
+    }
+
+    #[test]
+    fn deleting_a_leaf_directory_leaves_its_parent() {
+        let (mut store, _d) = store_with_tree();
+        assert_eq!(store.delete_dir_recursive("cs130/lec"), (2, 1));
+        assert!(store.dir_exists("cs130"), "the parent must survive");
+        assert_eq!(store.find_by_title("In cs130").len(), 1);
+    }
+
+    /// "Delete everything" is not something any keypress should be able to mean.
+    #[test]
+    fn the_root_cannot_be_deleted_recursively() {
+        let (mut store, _d) = store_with_tree();
+        assert_eq!(store.delete_dir_recursive(""), (0, 0));
+        assert_eq!(store.delete_dir_recursive("/"), (0, 0));
+        assert_eq!(store.notes.len(), 5, "nothing was removed");
+        assert!(store.dir_exists("cs130"));
+    }
+
+    #[test]
+    fn deleting_an_unknown_directory_removes_nothing() {
+        let (mut store, _d) = store_with_tree();
+        assert_eq!(store.delete_dir_recursive("ghost"), (0, 0));
+        assert_eq!(store.notes.len(), 5);
+    }
+
+    /// The safe delete still refuses a non-empty directory, so the recursive one
+    /// is the only way to lose notes.
+    #[test]
+    fn the_non_recursive_delete_still_refuses_a_non_empty_directory() {
+        let (mut store, _d) = store_with_tree();
+        assert!(!store.delete_dir("cs130"));
+        assert!(store.dir_exists("cs130"));
+        assert_eq!(store.notes.len(), 5);
     }
 
     #[test]

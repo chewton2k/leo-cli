@@ -365,9 +365,15 @@ impl App {
                 None => Ok(()),
             },
 
-            Intent::DeleteSelected => match self.selected_ref() {
-                Some(note) => self.run_action(Action::Delete { note }, terminal),
-                None => Ok(()),
+            // `D` deletes whatever is selected, which depends on the focused
+            // pane: a note in the notes pane, a whole directory in the dirs
+            // pane. Both confirm first.
+            Intent::DeleteSelected => match self.focus {
+                Pane::Dirs => self.delete_selected_dir(terminal),
+                _ => match self.selected_ref() {
+                    Some(note) => self.run_action(Action::Delete { note }, terminal),
+                    None => Ok(()),
+                },
             },
 
             Intent::OpenCommand { seed } => {
@@ -429,6 +435,24 @@ impl App {
                 _ => {}
             },
         }
+    }
+
+    /// `D` in the dirs pane: delete that directory and everything in it.
+    fn delete_selected_dir<B: TuiBackend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
+        let rows = self.dir_rows();
+        let Some(row) = rows.get(self.dir_sel) else {
+            return Ok(());
+        };
+        // ".." is a way to navigate, not a directory of its own; deleting the
+        // parent from inside it would be a surprising thing for `D` to do.
+        if row.target == ".." {
+            self.say(Kind::Dim, "Move into a directory to delete it, or press h then D.");
+            return Ok(());
+        }
+        self.run_action(
+            Action::Rmdir { name: row.target.clone(), recursive: true },
+            terminal,
+        )
     }
 
     /// Enter: open the selected directory, or move focus onto the body.
@@ -1512,6 +1536,106 @@ mod tests {
         crate::diag::clear();
         assert!(!app.pump_diagnostics());
         crate::diag::set_quiet(false);
+    }
+
+    /// `D` means "delete what is selected", so which pane has focus decides
+    /// whether that is a note or a whole directory.
+    #[test]
+    fn d_in_the_dirs_pane_asks_to_delete_the_directory() {
+        let (mut app, _d) = temp_app();
+        app.focus = Pane::Dirs;
+        // temp_app builds cs130 with one note in it.
+        app.dir_sel = 0;
+
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(90, 24)).unwrap();
+        app.on_intent(Intent::DeleteSelected, &mut terminal).unwrap();
+
+        match &app.mode {
+            Mode::Confirm { prompt, on_yes } => {
+                assert!(prompt.contains("cs130/"), "prompt: {prompt}");
+                assert!(prompt.contains("1 note"), "prompt: {prompt}");
+                assert_eq!(
+                    *on_yes,
+                    crate::action::ConfirmedAction::DeleteDir { path: "cs130".to_string() }
+                );
+            }
+            other => panic!("expected a confirmation, got {other:?}"),
+        }
+        // Still there until confirmed.
+        assert!(app.store.dir_exists("cs130"));
+    }
+
+    #[test]
+    fn confirming_in_the_dirs_pane_removes_the_directory_and_its_notes() {
+        let (mut app, _d) = temp_app();
+        app.focus = Pane::Dirs;
+        app.dir_sel = 0;
+        let notes_before = app.store.notes.len();
+
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(90, 24)).unwrap();
+        app.on_intent(Intent::DeleteSelected, &mut terminal).unwrap();
+        let yes = event::KeyEvent::new(event::KeyCode::Char('y'), event::KeyModifiers::NONE);
+        app.on_key(yes, &mut terminal).unwrap();
+
+        assert!(!app.store.dir_exists("cs130"));
+        assert_eq!(app.store.notes.len(), notes_before - 1);
+        assert_eq!(app.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn declining_the_confirmation_keeps_the_directory() {
+        let (mut app, _d) = temp_app();
+        app.focus = Pane::Dirs;
+        app.dir_sel = 0;
+        let notes_before = app.store.notes.len();
+
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(90, 24)).unwrap();
+        app.on_intent(Intent::DeleteSelected, &mut terminal).unwrap();
+        let no = event::KeyEvent::new(event::KeyCode::Char('n'), event::KeyModifiers::NONE);
+        app.on_key(no, &mut terminal).unwrap();
+
+        assert!(app.store.dir_exists("cs130"));
+        assert_eq!(app.store.notes.len(), notes_before);
+    }
+
+    /// `..` is navigation, not a directory to destroy.
+    #[test]
+    fn d_on_the_parent_entry_deletes_nothing() {
+        let (mut app, _d) = temp_app();
+        app.current_dir = "cs130".to_string();
+        app.focus = Pane::Dirs;
+        app.dir_sel = 0; // the ".." row
+        assert_eq!(app.dir_rows()[0].target, "..");
+
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(90, 24)).unwrap();
+        app.on_intent(Intent::DeleteSelected, &mut terminal).unwrap();
+
+        assert_eq!(app.mode, Mode::Normal, "no confirmation was raised");
+        assert!(app.store.dir_exists("cs130"));
+    }
+
+    /// The notes pane keeps its old meaning.
+    #[test]
+    fn d_in_the_notes_pane_still_targets_a_note() {
+        let (mut app, _d) = temp_app();
+        app.focus = Pane::Notes;
+        select_titled(&mut app, "Rust ownership");
+
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(90, 24)).unwrap();
+        app.on_intent(Intent::DeleteSelected, &mut terminal).unwrap();
+
+        match &app.mode {
+            Mode::Confirm { on_yes, .. } => assert!(matches!(
+                on_yes,
+                crate::action::ConfirmedAction::DeleteNote { .. }
+            )),
+            other => panic!("expected a note confirmation, got {other:?}"),
+        }
     }
 
     #[test]

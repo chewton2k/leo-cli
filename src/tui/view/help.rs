@@ -60,6 +60,7 @@ pub const SECTIONS: &[Section] = &[
             e("x", "toggle its first unchecked box"),
             e("e", "edit it in $EDITOR"),
             e("D", "delete it (asks first)"),
+            e("D", "in the dirs pane: delete that whole directory"),
         ],
     },
     Section {
@@ -94,6 +95,7 @@ pub const SECTIONS: &[Section] = &[
             e(":pwd", "where am I"),
             e(":mv <note>... <dir>", "move notes into it"),
             e(":rmdir <name>", "remove an empty one"),
+            e(":rmdir -r <name>", "remove it and everything in it"),
         ],
     },
     Section {
@@ -173,6 +175,22 @@ pub fn line_count() -> usize {
     help_lines().len()
 }
 
+/// How many terminal rows the content occupies once wrapped to `width`.
+///
+/// `Paragraph::scroll` counts *rendered* rows, not logical lines, so clamping
+/// against `line_count()` leaves the last section unreachable whenever anything
+/// wrapped — which is what hid the final section on a narrow overlay.
+fn wrapped_rows(width: u16) -> usize {
+    let width = width.max(1) as usize;
+    help_lines()
+        .iter()
+        .map(|line| {
+            let len = line.to_string().chars().count();
+            len.div_ceil(width).max(1)
+        })
+        .sum()
+}
+
 /// Draw help. `scroll` is a line offset the caller owns, so j/k work here the
 /// same as everywhere else.
 pub fn render_help(frame: &mut Frame, area: Rect, scroll: u16) {
@@ -181,16 +199,18 @@ pub fn render_help(frame: &mut Frame, area: Rect, scroll: u16) {
     // Leave a margin so the overlay reads as a panel rather than a takeover.
     let box_area = centered(area, 66.min(area.width), area.height.saturating_sub(2).max(5));
     let inner_height = box_area.height.saturating_sub(2) as usize;
+    let inner_width = box_area.width.saturating_sub(2);
 
-    let max_scroll = lines.len().saturating_sub(inner_height) as u16;
+    let total = wrapped_rows(inner_width);
+    let max_scroll = total.saturating_sub(inner_height) as u16;
     let scroll = scroll.min(max_scroll);
 
     let more = if max_scroll > 0 {
         format!(
             " help  {}-{} of {} · j/k scroll · any other key closes ",
             scroll as usize + 1,
-            (scroll as usize + inner_height).min(lines.len()),
-            lines.len()
+            (scroll as usize + inner_height).min(total),
+            total
         )
     } else {
         " help  ·  any key closes ".to_string()
@@ -354,20 +374,33 @@ mod tests {
     /// the true line count rather than running past it.
     #[test]
     fn the_position_indicator_is_a_well_formed_range() {
-        let total = line_count();
+        // A 12-row terminal leaves 8 content rows inside the centered box, and
+        // the box is 66 wide so the content wraps to 64 columns.
+        let total = wrapped_rows(64);
         let mut t = Terminal::new(TestBackend::new(80, 12)).unwrap();
 
         t.draw(|f| render_help(f, f.area(), 0)).unwrap();
         let top = t.backend().to_string();
         assert!(top.contains(&format!("1-8 of {total}")), "got: {top}");
 
-        // Scrolled to the end: the window ends exactly at the last line.
+        // Scrolled to the end: the window ends exactly at the last row.
         t.draw(|f| render_help(f, f.area(), 9999)).unwrap();
         let bottom = t.backend().to_string();
         assert!(
             bottom.contains(&format!("-{total} of {total}")),
             "last page should end at {total}: {bottom}"
         );
+    }
+
+    /// Wrapping is why the clamp cannot use the logical line count: an entry
+    /// longer than the overlay is two rows on screen but one line in the table.
+    #[test]
+    fn wrapped_rows_never_undercounts_the_logical_lines() {
+        assert!(wrapped_rows(64) >= line_count());
+        // Narrower means more wrapping, never less.
+        assert!(wrapped_rows(20) > wrapped_rows(64));
+        // A degenerate width must not divide by zero.
+        assert!(wrapped_rows(0) > 0);
     }
 
     #[test]
@@ -394,4 +427,5 @@ mod tests {
         assert!(out.contains("Delete Rust ownership?"), "{out}");
         assert!(out.contains("y to confirm"), "{out}");
     }
+
 }

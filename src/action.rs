@@ -69,6 +69,9 @@ pub enum Action {
     },
     Rmdir {
         name: String,
+        /// Remove the directory's notes and subdirectories too. Always asks
+        /// first, since nothing else in leo destroys more than one note at once.
+        recursive: bool,
     },
     Sync(SyncAction),
     Model(ModelAction),
@@ -216,6 +219,8 @@ pub enum EditTarget {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfirmedAction {
     DeleteNote { id: String, title: String },
+    /// Delete a directory and everything inside it.
+    DeleteDir { path: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -645,12 +650,21 @@ pub fn parse(line: &str) -> Parsed {
             })
         }
 
+        // `-r` mirrors the shell, where recursive removal is also opt-in.
         "rmdir" => {
-            let name = joined().trim().to_string();
+            let recursive = args.iter().any(|a| a == "-r" || a == "--recursive");
+            let name = args
+                .iter()
+                .filter(|a| a.as_str() != "-r" && a.as_str() != "--recursive")
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .trim()
+                .to_string();
             if name.is_empty() {
-                usage("rmdir <name>")
+                usage("rmdir [-r] <name>")
             } else {
-                act(Action::Rmdir { name })
+                act(Action::Rmdir { name, recursive })
             }
         }
 
@@ -735,7 +749,7 @@ pub fn apply(
         Action::Cd { path } => Ok(cd(store, &path, ctx.current_dir)),
         Action::Pwd => Ok(pwd(ctx.current_dir)),
         Action::Mv { notes, dir } => mv(store, &notes, &dir, ctx.numbering),
-        Action::Rmdir { name } => rmdir(store, &name, ctx.current_dir),
+        Action::Rmdir { name, recursive } => rmdir(store, &name, recursive, ctx.current_dir),
         Action::Sync(a) => Ok(Outcome::effect(Effect::Sync(a))),
         Action::Model(a) => Ok(Outcome::effect(Effect::Model(a))),
         Action::Config(a) => Ok(Outcome::effect(Effect::Config(a))),
@@ -1088,16 +1102,54 @@ fn mv(store: &mut Store, notes: &[String], dir: &str, numbering: &[String]) -> R
     Ok(Outcome { dirty: moved > 0, ..Outcome::lines(lines) })
 }
 
-fn rmdir(store: &mut Store, name: &str, current_dir: &str) -> Result<Outcome> {
+fn rmdir(store: &mut Store, name: &str, recursive: bool, current_dir: &str) -> Result<Outcome> {
     let full = under(current_dir, name);
     if !store.dir_exists(&full) {
         return Ok(Outcome::line(Line::bad(format!("No such directory: {full}/"))));
     }
+
+    if recursive {
+        let (notes, dirs) = store.dir_contents(&full);
+        // An empty directory needs no warning, so delete it outright.
+        if notes == 0 && dirs <= 1 {
+            store.delete_dir_recursive(&full);
+            store.save()?;
+            return Ok(Outcome {
+                dirty: true,
+                ..Outcome::line(Line::dim(format!("Removed {full}/")))
+            });
+        }
+        // Otherwise say exactly what will be lost before asking.
+        let mut what = Vec::new();
+        if notes > 0 {
+            what.push(format!("{notes} note{}", plural(notes)));
+        }
+        if dirs > 1 {
+            what.push(format!("{} subdirector{}", dirs - 1, if dirs - 1 == 1 { "y" } else { "ies" }));
+        }
+        return Ok(Outcome::effect(Effect::Confirm {
+            prompt: format!("Delete {full}/ and its {}?", what.join(" and ")),
+            on_yes: ConfirmedAction::DeleteDir { path: full },
+        }));
+    }
+
     if store.delete_dir(&full) {
         store.save()?;
         Ok(Outcome { dirty: true, ..Outcome::line(Line::dim(format!("Removed {full}/"))) })
     } else {
-        Ok(Outcome::line(Line::bad("Directory is not empty.")))
+        // Name the way out rather than just refusing.
+        Ok(Outcome::line(Line::bad(format!(
+            "{full}/ is not empty — use `rmdir -r {name}` to delete it and its contents"
+        ))))
+    }
+}
+
+/// "s" unless there is exactly one.
+fn plural(n: usize) -> &'static str {
+    if n == 1 {
+        ""
+    } else {
+        "s"
     }
 }
 
@@ -1181,6 +1233,22 @@ pub fn apply_confirmed(store: &mut Store, action: &ConfirmedAction) -> Result<Ou
             } else {
                 Ok(Outcome::line(Line::bad("Nothing deleted.")))
             }
+        }
+
+        ConfirmedAction::DeleteDir { path } => {
+            let (notes, dirs) = store.delete_dir_recursive(path);
+            if notes == 0 && dirs == 0 {
+                return Ok(Outcome::line(Line::bad("Nothing deleted.")));
+            }
+            store.save()?;
+            let mut parts = vec![format!("Removed {path}/")];
+            if notes > 0 {
+                parts.push(format!("with {notes} note{}", plural(notes)));
+            }
+            Ok(Outcome {
+                dirty: true,
+                ..Outcome::line(Line::good(parts.join(" ")))
+            })
         }
     }
 }
@@ -1599,6 +1667,23 @@ mod parse_tests {
     }
 
     #[test]
+    fn rmdir_takes_an_opt_in_recursive_flag() {
+        assert_eq!(
+            act("rmdir cs130"),
+            Action::Rmdir { name: "cs130".to_string(), recursive: false }
+        );
+        for line in ["rmdir -r cs130", "rmdir cs130 -r", "rmdir --recursive cs130"] {
+            assert_eq!(
+                act(line),
+                Action::Rmdir { name: "cs130".to_string(), recursive: true },
+                "for {line:?}"
+            );
+        }
+        // The flag alone is not a directory name.
+        assert!(matches!(parse("rmdir -r"), Parsed::Usage(_)));
+    }
+
+    #[test]
     fn usage_is_returned_for_verbs_missing_a_required_argument() {
         for line in ["view", "edit", "delete", "ask", "mkdir", "rmdir", "export 1"] {
             assert!(
@@ -1957,7 +2042,7 @@ mod handler_tests {
         seed(&mut store, "Nested", "b", "cs130");
 
         let out = apply(
-            Action::Rmdir { name: "cs130".to_string() },
+            Action::Rmdir { name: "cs130".to_string(), recursive: false },
             &mut store,
             ctx("", &[]),
             &FakeAi::default(),
@@ -1965,6 +2050,103 @@ mod handler_tests {
         .unwrap();
         assert!(out.text().contains("not empty"), "got: {}", out.text());
         assert!(store.dir_exists("cs130"));
+    }
+
+    /// Deleting a directory with notes in it must ask first, and the prompt has
+    /// to say how much is at stake — this is the only action in leo that can
+    /// destroy more than one note.
+    #[test]
+    fn a_recursive_rmdir_asks_before_deleting_and_names_the_damage() {
+        let (mut store, _d) = temp_store();
+        store.create_dir("cs130");
+        store.create_dir("cs130/lec");
+        seed(&mut store, "One", "b", "cs130");
+        seed(&mut store, "Two", "b", "cs130/lec");
+
+        let out = apply(
+            Action::Rmdir { name: "cs130".to_string(), recursive: true },
+            &mut store,
+            ctx("", &[]),
+            &FakeAi::default(),
+        )
+        .unwrap();
+
+        match out.effect {
+            Effect::Confirm { prompt, on_yes } => {
+                assert!(prompt.contains("cs130/"), "prompt: {prompt}");
+                assert!(prompt.contains("2 notes"), "prompt: {prompt}");
+                assert!(prompt.contains("1 subdirectory"), "prompt: {prompt}");
+                assert_eq!(on_yes, ConfirmedAction::DeleteDir { path: "cs130".to_string() });
+            }
+            other => panic!("expected a confirmation, got {other:?}"),
+        }
+        // Nothing is gone yet.
+        assert!(store.dir_exists("cs130"));
+        assert_eq!(store.notes.len(), 2);
+    }
+
+    #[test]
+    fn confirming_removes_the_directory_and_its_contents() {
+        let (mut store, _d) = temp_store();
+        store.create_dir("cs130");
+        store.create_dir("cs130/lec");
+        seed(&mut store, "One", "b", "cs130");
+        seed(&mut store, "Two", "b", "cs130/lec");
+        seed(&mut store, "Elsewhere", "b", "");
+
+        let out = apply_confirmed(
+            &mut store,
+            &ConfirmedAction::DeleteDir { path: "cs130".to_string() },
+        )
+        .unwrap();
+
+        assert!(out.dirty);
+        assert!(out.text().contains("2 notes"), "got: {}", out.text());
+        assert!(!store.dir_exists("cs130"));
+        assert!(!store.dir_exists("cs130/lec"));
+        assert_eq!(store.notes.len(), 1, "the unrelated note survives");
+
+        let reloaded = Store::load_from(&store.notes_dir).unwrap();
+        assert_eq!(reloaded.notes.len(), 1);
+    }
+
+    /// An empty directory is not worth a prompt.
+    #[test]
+    fn a_recursive_rmdir_on_an_empty_directory_just_does_it() {
+        let (mut store, _d) = temp_store();
+        store.create_dir("empty");
+
+        let out = apply(
+            Action::Rmdir { name: "empty".to_string(), recursive: true },
+            &mut store,
+            ctx("", &[]),
+            &FakeAi::default(),
+        )
+        .unwrap();
+
+        assert_eq!(out.effect, Effect::None);
+        assert!(out.dirty);
+        assert!(!store.dir_exists("empty"));
+    }
+
+    /// The plain form still refuses, but now says how to proceed.
+    #[test]
+    fn a_plain_rmdir_on_a_full_directory_points_at_the_recursive_form() {
+        let (mut store, _d) = temp_store();
+        store.create_dir("cs130");
+        seed(&mut store, "One", "b", "cs130");
+
+        let out = apply(
+            Action::Rmdir { name: "cs130".to_string(), recursive: false },
+            &mut store,
+            ctx("", &[]),
+            &FakeAi::default(),
+        )
+        .unwrap();
+
+        assert!(out.text().contains("rmdir -r cs130"), "got: {}", out.text());
+        assert!(store.dir_exists("cs130"));
+        assert_eq!(store.notes.len(), 1);
     }
 
     #[test]

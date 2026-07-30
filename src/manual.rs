@@ -150,8 +150,12 @@ Write checkboxes as `- [ ] thing`. Then:
 | `:pwd` | Where am I |
 | `:mv <note>... <dir>` | Move one or more notes |
 | `:rmdir <name>` | Remove an empty directory |
+| `:rmdir -r <name>` | Remove a directory and everything inside it |
 
 Selecting a directory in the left pane and pressing `Enter` is the same as `cd`.
+Pressing `D` there deletes that directory and everything in it — it tells you how
+many notes that is and waits for you to confirm. In the notes pane, `D` deletes
+just the selected note.
 
 `:list` shows only the current directory. Search and `Ctrl-P` always look
 everywhere.
