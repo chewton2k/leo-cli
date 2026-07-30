@@ -3,6 +3,7 @@ mod ai;
 mod config;
 mod diag;
 mod export;
+mod health;
 mod listen;
 mod manual;
 mod notes;
@@ -14,7 +15,7 @@ mod web;
 
 use std::io::IsTerminal;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
 
@@ -132,7 +133,11 @@ enum Commands {
         port: u16,
     },
 
-    /// Open the .env config file to set API keys
+    /// Check what works on this machine and what to install
+    Doctor,
+
+    /// Retired. Keys live in the OS keychain; use `leo model login`.
+    #[command(hide = true)]
     Env,
 
     /// Sync notes via git / GitHub
@@ -238,7 +243,17 @@ fn main() -> Result<()> {
         Some(Commands::Serve { port }) => {
             tokio::runtime::Runtime::new()?.block_on(web::serve(port))
         }
-        Some(Commands::Env) => open_env_file(),
+        // Kept only so the name explains itself instead of erroring. It used to
+        // write a plaintext `.env`, whose vars take precedence over the
+        // keychain — so a file made months ago could silently shadow a key
+        // stored the recommended way.
+        Some(Commands::Env) => {
+            println!("  `leo env` is gone: keys live in your OS keychain now.");
+            println!("  Store one with `leo model login <provider>`.");
+            println!("  Env vars still work and still take precedence, for CI.");
+            Ok(())
+        }
+        Some(Commands::Doctor) => run_doctor(),
         Some(Commands::Sync { command }) => run_sync(command),
         Some(Commands::Model { command }) => run_model(command.into()),
         Some(Commands::Config { command }) => run_config(command.into()),
@@ -306,6 +321,7 @@ fn run_command(cmd: Commands) -> Result<()> {
         Commands::Ask { id } => action::Action::Ask { note: id },
 
         Commands::Serve { .. }
+        | Commands::Doctor
         | Commands::Env
         | Commands::Sync { .. }
         | Commands::Model { .. }
@@ -353,8 +369,7 @@ fn absorb_cli(
         | action::Effect::Quit
         | action::Effect::Sync(_)
         | action::Effect::Model(_)
-        | action::Effect::Config(_)
-        | action::Effect::Env => return Ok(()),
+        | action::Effect::Config(_) => return Ok(()),
     };
 
     shell::render(&next.lines);
@@ -463,6 +478,57 @@ pub fn test_provider(name: &str) -> Result<String> {
         },
         None => anyhow::bail!("provider '{name}' has no `kind`"),
     }
+}
+
+/// `leo doctor` — one command that says what works here and what to run.
+///
+/// Exists because the alternative is a user discovering each missing dependency
+/// the moment they try to use it, one failure at a time.
+pub fn run_doctor() -> Result<()> {
+    use health::State;
+
+    let config = Config::load();
+    let checks = health::report(&config, &config::secret::KeyringStore);
+
+    println!();
+    let mut missing = 0;
+    for check in &checks {
+        let (mark, label) = match &check.state {
+            State::Ready => ("ok  ", "".to_string()),
+            State::Warn { note } => ("note", note.clone()),
+            State::Missing { .. } => {
+                missing += 1;
+                ("no  ", String::new())
+            }
+        };
+        let detail = check
+            .detail
+            .as_deref()
+            .map(|d| format!(" — {d}"))
+            .unwrap_or_default();
+        println!("  {mark} {}{detail}", check.what);
+        if !label.is_empty() {
+            println!("       {label}");
+        }
+        if let State::Missing { fix } = &check.state {
+            println!("       needed for {}", check.needed_for);
+            for line in fix.lines() {
+                println!("       {}", line.trim());
+            }
+        }
+    }
+
+    println!();
+    if missing == 0 {
+        println!("  Everything leo can use is available.");
+    } else {
+        println!(
+            "  {missing} thing{} missing. Notes, search, export to text and sync work regardless.",
+            if missing == 1 { " is" } else { "s are" }
+        );
+    }
+    println!();
+    Ok(())
 }
 
 pub fn run_model(command: action::ModelAction) -> Result<()> {
@@ -591,42 +657,6 @@ pub fn run_config(command: action::ConfigAction) -> Result<()> {
             Ok(())
         }
     }
-}
-
-pub fn open_env_file() -> Result<()> {
-    let env_path = dirs::data_dir()
-        .context("Could not determine user data directory")?
-        .join("leo")
-        .join(".env");
-
-    if let Some(parent) = env_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    if !env_path.exists() {
-        std::fs::write(
-            &env_path,
-            "# leo API keys\n\
-             # Get your OpenRouter key at https://openrouter.ai/keys\n\
-             OPENROUTER_API_KEY=\n\
-             \n\
-             # Get your Hugging Face key at https://huggingface.co/settings/tokens\n\
-             HF_API_KEY=\n\
-             \n\
-             # Get your Groq key at https://console.groq.com/keys (fallback transcription)\n\
-             GROQ_API_KEY=\n",
-        )?;
-    }
-
-    let editor = std::env::var("EDITOR")
-        .or_else(|_| std::env::var("VISUAL"))
-        .unwrap_or_else(|_| "vim".to_string());
-
-    std::process::Command::new(&editor)
-        .arg(&env_path)
-        .status()?;
-
-    Ok(())
 }
 
 #[cfg(test)]

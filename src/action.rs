@@ -76,9 +76,6 @@ pub enum Action {
     Sync(SyncAction),
     Model(ModelAction),
     Config(ConfigAction),
-    /// The legacy plaintext `.env` editor. Retained so existing muscle memory
-    /// keeps working; `model login` is the recommended path.
-    Env,
     Help,
     Clear,
     Quit,
@@ -117,6 +114,13 @@ pub enum Parsed {
     Usage(String),
     /// Unrecognized verb.
     Unknown(String),
+    /// A verb that used to exist. Named so the answer is "here is the
+    /// replacement" rather than "unknown command", which reads like a typo.
+    Retired {
+        verb: &'static str,
+        replacement: &'static str,
+        why: &'static str,
+    },
 }
 
 // ── Output ──────────────────────────────────────────────────────────────────
@@ -196,7 +200,6 @@ pub enum Effect {
     /// Provider management, which prompts for a key with echo disabled.
     Model(ModelAction),
     Config(ConfigAction),
-    Env,
 }
 
 /// A pending editor session. `seed` is written to `path` before `$EDITOR` opens
@@ -415,7 +418,6 @@ pub const VERBS: &[(&str, &[&str])] = &[
     ("sync", &[]),
     ("model", &[]),
     ("config", &[]),
-    ("env", &[]),
     ("clear", &[]),
     ("help", &["h", "?"]),
     ("quit", &["exit", "q"]),
@@ -703,10 +705,17 @@ pub fn parse(line: &str) -> Parsed {
             _ => usage("config <edit | path>"),
         },
 
-        "env" => act(Action::Env),
         "clear" => act(Action::Clear),
         "help" | "h" | "?" => act(Action::Help),
         "quit" | "exit" | "q" => act(Action::Quit),
+
+        // Retired, but still in muscle memory and in old notes: say where the
+        // replacement is rather than "unknown command".
+        "env" => Parsed::Retired {
+            verb: "env",
+            replacement: "model login <provider>",
+            why: "keys live in your OS keychain now, not a plaintext file",
+        },
 
         _ => Parsed::Unknown(verb),
     }
@@ -753,7 +762,6 @@ pub fn apply(
         Action::Sync(a) => Ok(Outcome::effect(Effect::Sync(a))),
         Action::Model(a) => Ok(Outcome::effect(Effect::Model(a))),
         Action::Config(a) => Ok(Outcome::effect(Effect::Config(a))),
-        Action::Env => Ok(Outcome::effect(Effect::Env)),
         Action::Help => Ok(Outcome::effect(Effect::ShowHelp)),
         Action::Clear => Ok(Outcome::effect(Effect::ClearScreen)),
         Action::Quit => Ok(Outcome::effect(Effect::Quit)),
@@ -2601,6 +2609,35 @@ mod handler_tests {
         );
     }
 
+    /// A retired verb must point at its replacement. Answering "unknown
+    /// command" would read like a typo and send the user hunting.
+    #[test]
+    fn the_retired_env_verb_names_its_replacement() {
+        match parse("env") {
+            Parsed::Retired {
+                verb,
+                replacement,
+                why,
+            } => {
+                assert_eq!(verb, "env");
+                assert!(replacement.contains("model login"), "{replacement}");
+                assert!(why.contains("keychain"), "{why}");
+            }
+            other => panic!("expected Retired, got {other:?}"),
+        }
+    }
+
+    /// It must also be gone from the vocabulary, so it stops appearing in
+    /// completion and help.
+    #[test]
+    fn env_is_no_longer_a_verb() {
+        assert!(
+            !VERBS.iter().any(|(v, aliases)| *v == "env"
+                || aliases.contains(&"env")),
+            "env is still in the verb table"
+        );
+    }
+
     // ── shell-delegated actions ─────────────────────────────────────────────
 
     #[test]
@@ -2611,7 +2648,6 @@ mod handler_tests {
             (Action::Sync(SyncAction::Push), Effect::Sync(SyncAction::Push)),
             (Action::Model(ModelAction::List), Effect::Model(ModelAction::List)),
             (Action::Config(ConfigAction::Path), Effect::Config(ConfigAction::Path)),
-            (Action::Env, Effect::Env),
             (Action::Help, Effect::ShowHelp),
             (Action::Clear, Effect::ClearScreen),
             (Action::Quit, Effect::Quit),

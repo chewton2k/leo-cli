@@ -123,6 +123,23 @@ pub fn resolve(provider: &str, key_env: Option<&str>, store: &dyn SecretStore) -
 /// and "Always Allow" ends it for good.
 const BUNDLE_ACCOUNT: &str = "credentials";
 
+/// Whether an error means "there is no credential store here" rather than
+/// "the credential store failed".
+///
+/// A headless Linux box with no Secret Service, a container, or a macOS account
+/// with no login keychain all land here. None of them are errors: leo's
+/// non-AI features do not need a key, and the AI ones can read env vars.
+fn backend_is_absent(e: &anyhow::Error) -> bool {
+    let text = e.to_string().to_lowercase();
+    text.contains("no default keychain")
+        || text.contains("default keychain could not be found")
+        || text.contains("no such file or directory")
+        || text.contains("was not provided by any")
+        || text.contains("org.freedesktop.secrets")
+        || text.contains("secretservice")
+        || text.contains("no storage access")
+}
+
 /// provider name -> key. `BTreeMap` so the stored JSON is stable and diffable.
 type Bundle = std::collections::BTreeMap<String, String>;
 
@@ -174,6 +191,11 @@ impl KeyringStore {
                 Bundle::new()
             }),
             Ok(None) => Bundle::new(),
+            // A backend that is absent rather than broken is not a problem worth
+            // reporting: a machine with no keychain simply has no stored keys,
+            // and leo works without any. Saying so would make the first command
+            // a new user runs look like a failure.
+            Err(e) if backend_is_absent(&e) => Bundle::new(),
             Err(e) => {
                 crate::diag::warn(format!("could not read stored credentials: {e}"));
                 Bundle::new()
@@ -458,6 +480,39 @@ mod tests {
         // The store maps that error to an empty bundle rather than panicking;
         // this asserts the shape it falls back to.
         assert!(Bundle::new().is_empty());
+    }
+
+    /// The first command a new user runs must not look like a failure. A machine
+    /// with no keychain at all has no stored keys, which is a fact, not an error.
+    #[test]
+    fn a_missing_credential_store_is_not_reported_as_an_error() {
+        for absent in [
+            "Platform failure: A default keychain could not be found.",
+            "Platform secure storage failure: no such file or directory",
+            "The name org.freedesktop.secrets was not provided by any .service files",
+            "No storage access: SecretService unavailable",
+        ] {
+            assert!(
+                backend_is_absent(&anyhow::anyhow!(absent)),
+                "should be treated as absent: {absent}"
+            );
+        }
+    }
+
+    /// A store that is present but genuinely failing must still be reported,
+    /// otherwise a real problem becomes silent key loss.
+    #[test]
+    fn a_broken_credential_store_is_still_reported() {
+        for real in [
+            "Platform failure: authorization denied by the user",
+            "invalid utf-8 in the stored value",
+            "keychain item is corrupt",
+        ] {
+            assert!(
+                !backend_is_absent(&anyhow::anyhow!(real)),
+                "should be reported: {real}"
+            );
+        }
     }
 
     /// `has` must answer without reading the value, since a read is what costs

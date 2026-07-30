@@ -191,6 +191,58 @@ impl App {
         self.message = Some((kind, text.into(), Instant::now()));
     }
 
+    /// Say the one useful thing on a first run, and nothing on every run after.
+    ///
+    /// One instruction is actionable where a list of seven is a chore, so this
+    /// names the first gap only and stays quiet when there is nothing to fix.
+    fn greet(&mut self, first_run: bool) {
+        if !first_run {
+            return;
+        }
+        let config = crate::config::Config::load();
+        match crate::health::next_step(&config, &crate::config::secret::KeyringStore) {
+            Some(step) => self.say(Kind::Warn, step),
+            None => self.say(
+                Kind::Good,
+                "Everything is set up. Press ? for help, or : to run a command.",
+            ),
+        }
+    }
+
+    /// Whether anything a recording needs is missing. `None` means go ahead.
+    ///
+    /// Reports every gap at once with its fix, so one attempt tells the user
+    /// everything they need to do rather than one thing per attempt. Checked
+    /// before recording rather than after: discovering there is no transcription
+    /// provider once the user has already talked for twenty minutes is the worst
+    /// possible time to learn it.
+    fn listen_preflight(&mut self) -> Option<Vec<Line>> {
+        let config = crate::config::Config::load();
+        let checks = crate::health::recording(&config, &crate::config::secret::KeyringStore);
+        let missing: Vec<_> = checks.iter().filter(|c| !c.state.is_ready()).collect();
+        if missing.is_empty() {
+            return None;
+        }
+
+        let mut lines = vec![Line::bad("Not ready to record:")];
+        for check in missing {
+            lines.push(Line::warn(format!(
+                "  {} — needed for {}",
+                check.what, check.needed_for
+            )));
+            if let crate::health::State::Missing { fix } = &check.state {
+                for fix_line in fix.lines() {
+                    lines.push(Line::dim(format!("      {}", fix_line.trim())));
+                }
+            }
+        }
+        lines.push(Line::blank());
+        lines.push(Line::dim(
+            "  Ctrl-S manages providers · `leo doctor` checks everything",
+        ));
+        Some(lines)
+    }
+
     /// Refresh the numbering after the store or directory changed, keeping the
     /// selection in range.
     fn resync(&mut self) {
@@ -502,6 +554,15 @@ impl App {
                 self.say(Kind::Bad, format!("Unknown command: {verb}"));
                 Ok(())
             }
+            Parsed::Retired {
+                verb,
+                replacement,
+                why,
+            } => {
+                self.say(Kind::Warn, format!("{verb} is gone — {why}."));
+                self.say(Kind::Dim, format!("Use :{replacement} instead."));
+                Ok(())
+            }
             Parsed::Action(action) => self.run_action(action, terminal),
         }
     }
@@ -607,6 +668,15 @@ impl App {
                     self.say(Kind::Warn, "Already recording — press Enter to stop.");
                     return Ok(());
                 }
+                // Check the whole path to a finished note before recording, not
+                // just the recorder. Discovering there is no transcription
+                // provider *after* talking for twenty minutes is the worst way
+                // to learn it.
+                if let Some(lines) = self.listen_preflight() {
+                    self.pinned = Some(("not ready to record".to_string(), lines));
+                    self.preview_scroll = 0;
+                    return Ok(());
+                }
                 self.recording = Some(Recording {
                     job: task::start_listen(req.screen),
                     req,
@@ -654,14 +724,6 @@ impl App {
 
             Effect::Config(a) => {
                 let out = self.outside(terminal, || crate::run_config(a.clone()))?;
-                if let Err(e) = out {
-                    self.say(Kind::Bad, e.to_string());
-                }
-                Ok(())
-            }
-
-            Effect::Env => {
-                let out = self.outside(terminal, crate::open_env_file)?;
                 if let Err(e) = out {
                     self.say(Kind::Bad, e.to_string());
                 }
@@ -1358,9 +1420,13 @@ pub fn run() -> Result<()> {
     let mut store = Store::load()?;
     // A first run explains itself: the manual is a real note the user can
     // search, scroll, and delete. A failure here must not stop the app.
-    let _ = crate::manual::install_if_absent(&mut store);
+    let installed_manual = crate::manual::install_if_absent(&mut store)
+        .unwrap_or(None)
+        .is_some();
     let mut terminal = ratatui::init();
-    let result = event_loop(&mut terminal, App::new(store));
+    let mut app = App::new(store);
+    app.greet(installed_manual);
+    let result = event_loop(&mut terminal, app);
     ratatui::restore();
     crate::diag::set_quiet(false);
     // Anything queued but never shown dies with the screen it belonged to.
@@ -1805,6 +1871,63 @@ mod tests {
 
     /// Waiting must look like waiting: a spinner and a clock for unknown work,
     /// a real bar when the step count is known.
+    /// A first run must say one thing, and later runs nothing: a greeting the
+    /// user has to dismiss on every launch is worse than no greeting.
+    #[test]
+    fn only_a_first_run_is_greeted() {
+        let (mut app, _d) = temp_app();
+        app.greet(false);
+        assert!(app.message.is_none(), "a later run should say nothing");
+
+        app.greet(true);
+        let (_, text, _) = app.message.as_ref().expect("a first run should say something");
+        assert!(!text.trim().is_empty());
+        assert_eq!(text.lines().count(), 1, "more than one instruction: {text}");
+    }
+
+    /// The user must learn about every gap before speaking, not one per attempt.
+    #[test]
+    fn listen_refuses_with_the_fixes_when_nothing_is_set_up() {
+        let (mut app, _d) = temp_app();
+        // A config with no usable providers at all.
+        let lines = {
+            let config = crate::config::Config {
+                chat: crate::config::provider::TaskChain {
+                    chain: vec![],
+                    ..Default::default()
+                },
+                transcribe: crate::config::provider::TaskChain {
+                    chain: vec![],
+                    ..Default::default()
+                },
+                providers: Default::default(),
+                ..Default::default()
+            };
+            let checks =
+                crate::health::recording(&config, &crate::config::secret::MemoryStore::default());
+            checks
+                .iter()
+                .filter(|c| !c.state.is_ready())
+                .count()
+        };
+        assert!(lines >= 2, "expected several gaps, got {lines}");
+
+        // And the App path renders them into the preview rather than a status
+        // line, since a one-line status cannot hold install commands.
+        app.pinned = Some((
+            "not ready to record".to_string(),
+            vec![Line::bad("Not ready to record:")],
+        ));
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 14)).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        assert!(
+            terminal.backend().to_string().contains("Not ready to record"),
+            "{}",
+            terminal.backend().to_string()
+        );
+    }
+
     #[test]
     fn foreground_work_renders_a_progress_indicator() {
         let (mut app, _d) = temp_app();
