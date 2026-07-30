@@ -41,8 +41,26 @@ silently, so listing more providers than you have installed is fine.
 
 API keys are only required for AI features (`listen`, `ask`). All other commands work without them.
 
-The older `leo env` command still works and writes a plaintext `.env`; env vars
-take precedence over the keychain, which is useful in CI.
+Env vars still work and still take precedence over the keychain, which is useful
+in CI. `leo env`, which wrote a plaintext `.env`, is gone: a file made months ago
+could silently shadow a key stored the recommended way.
+
+Not sure what is working? `leo doctor` says so, and prints the command that fixes
+anything missing:
+
+```sh
+leo doctor
+  ok   config file — ~/Library/Application Support/leo/config.toml
+  ok   a chat model — using ollama
+  no   a transcription model — tried whisper_cpp, groq
+       needed for turning speech into text
+       brew install whisper-cpp   (free, local)
+       or: leo model login groq   (free tier)
+  ok   sox
+  no   pandoc
+       needed for export to docx, pdf, rtf, odt
+       brew install pandoc
+```
 
 
 ### Troubleshooting Installation
@@ -116,7 +134,7 @@ note titles, directories, tags, and formats.
 | `Ctrl-P` | Fuzzy find a note across all directories |
 | `Ctrl-S` | Providers and settings |
 | `Ctrl-D` / `Ctrl-U` | Scroll the preview |
-| `Ctrl-R` | Reload from disk |
+| `Ctrl-R` | Reload from disk, and repaint the screen |
 | `?` | Help |
 | `q` | Quit |
 
@@ -124,9 +142,9 @@ Notes are numbered in the pane, so `:view 2`, `:edit 2`, and `:delete 2` all
 refer to what you can see. Tab completion accepts a title and fills in the
 number for you: type `:view owner` and press Tab.
 
-Your first run creates one note called **leo manual** with the whole command
-reference in it. It is an ordinary note, so you can search it, scroll it, and
-delete it when you are done — it will not come back.
+Your first run creates one note called **leo manual** — a one-screen quickstart,
+not a full reference, since `?` is always a keypress away. It is an ordinary
+note, so you can search it, edit it, and delete it; it will not come back.
 
 ## Commands
 
@@ -136,17 +154,22 @@ Type these on the `:` line, or use them as CLI subcommands.
 
 | Command | What it does | Shortcut |
 |---------|-------------|----------|
-| `new [title]` | Create a note (opens `$EDITOR`) | `n` |
-| `list [#tag] [N]` | List notes, optionally filter by tag or limit count | `ls`, `l` |
-| `view <note>` | View a note | `v` |
+| `new [title]` | Create a note (opens `$EDITOR`) | |
+| `list [#tag] [N]` | List notes, optionally filter by tag or limit count | `ls` |
+| `view <note>` | View a note | |
 | `edit <note>` | Edit a note in `$EDITOR` | `e` |
-| `delete <note>` | Delete a note | `rm`, `del`, `d` |
+| `delete <note>` | Delete a note | `rm` |
 | `check <note> <N>` | Toggle checkbox N | `x` |
-| `search <query>` | Search note titles | `find` |
+| `search <query>` | Search note titles | |
 | `search -f <query>` | Full-text search (titles + bodies) | |
 | `tags` | Show all tags with counts | |
 
 `<note>` can be a pane number (`view 1`), an ID prefix (`view 3f2a`), or a unique part of the title (`view ownership`).
+
+Each command has one name, give or take the few that come from a shell (`ls`,
+`rm`) or match the key that does the same thing in the panes (`e`, `x`). Older
+abbreviations like `d`, `rem` and `exp` were removed; typing one tells you what
+replaced it.
 
 ### Directories
 
@@ -321,17 +344,21 @@ leo model login openrouter      # store a key in the OS keychain (echo disabled)
 leo model logout openrouter    # remove it
 leo config path                # where config.toml lives
 leo config edit                # open it in $EDITOR
+leo doctor                     # what works here, and what to install
 ```
 
 ### Adding a provider
 
-`config.toml` ships with 16 providers already defined — Ollama, OpenRouter, LM
-Studio, llama.cpp, vLLM, Groq, Cerebras, Gemini, Mistral, OpenAI, DeepSeek,
-Together, xAI, whisper.cpp, and two more for transcription. Only the free ones
-are wired into a chain; the rest are one keypress away on the provider screen.
+leo knows 18 providers without any of them appearing in your config — Ollama,
+OpenRouter, LM Studio, llama.cpp, vLLM, Groq, Cerebras, Gemini, Mistral, OpenAI,
+DeepSeek, Together, xAI, whisper.cpp, and four more for transcription. Only the
+free ones are wired into a chain; the rest are one keypress away on the provider
+screen. `config.toml` itself is 28 lines, because it holds your decisions rather
+than an inventory.
 
-Adding your own is four lines of TOML and no code, as long as it speaks a
-protocol leo already knows:
+Adding your own — or overriding one of the built-ins, by using its name — is
+four lines of TOML and no code, as long as it speaks a protocol leo already
+knows:
 
 ```toml
 [providers.my-provider]

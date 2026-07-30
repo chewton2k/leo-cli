@@ -554,13 +554,18 @@ impl App {
                 self.say(Kind::Bad, format!("Unknown command: {verb}"));
                 Ok(())
             }
+            // One line, not two: the status line holds a single message, so a
+            // second call would silently replace the first and the user would
+            // see the replacement without ever learning what happened.
             Parsed::Retired {
                 verb,
                 replacement,
                 why,
             } => {
-                self.say(Kind::Warn, format!("{verb} is gone — {why}."));
-                self.say(Kind::Dim, format!("Use :{replacement} instead."));
+                self.say(
+                    Kind::Warn,
+                    format!("`{verb}` is gone — use `:{replacement}` ({why})."),
+                );
                 Ok(())
             }
             Parsed::Action(action) => self.run_action(action, terminal),
@@ -1871,6 +1876,26 @@ mod tests {
 
     /// Waiting must look like waiting: a spinner and a clock for unknown work,
     /// a real bar when the step count is known.
+    /// A retired name must explain itself in ONE message: the status line holds
+    /// a single one, so a two-part explanation loses its first half.
+    #[test]
+    fn a_retired_command_explains_itself_in_one_message() {
+        let (mut app, _d) = temp_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 14)).unwrap();
+
+        app.run_line("d 1", &mut terminal).unwrap();
+        let (kind, text, _) = app.message.as_ref().expect("a message");
+        assert_eq!(*kind, Kind::Warn);
+        assert!(text.contains("`d`"), "does not name the old command: {text}");
+        assert!(text.contains(":delete"), "does not name the replacement: {text}");
+
+        app.run_line("env", &mut terminal).unwrap();
+        let (_, text, _) = app.message.as_ref().expect("a message");
+        assert!(text.contains("model login"), "{text}");
+        assert!(text.contains("keychain"), "does not say why: {text}");
+    }
+
     /// A first run must say one thing, and later runs nothing: a greeting the
     /// user has to dismiss on every launch is worse than no greeting.
     #[test]
