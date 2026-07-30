@@ -230,6 +230,8 @@ fn main() -> Result<()> {
         dotenvy::from_path(data_dir.join("leo").join(".env")).ok();
     }
     dotenvy::dotenv().ok();
+    // One-time move of per-provider keychain items into a single item.
+    Config::load().migrate_credentials_once();
     let cli = Cli::parse();
 
     match cli.command {
@@ -371,6 +373,9 @@ fn run_sync(command: SyncCommands) -> Result<()> {
 }
 
 /// Describe where a provider's credential comes from — never what it is.
+///
+/// Asks whether a key exists rather than reading it. Reading is what can cost a
+/// keychain permission dialog, and this runs for every provider in both chains.
 fn describe_credential(provider: &str, key_env: Option<&str>, store: &dyn SecretStore) -> String {
     let Some(var) = key_env else {
         return "no key needed".to_string();
@@ -380,11 +385,10 @@ fn describe_credential(provider: &str, key_env: Option<&str>, store: &dyn Secret
             return format!("key from env {var} ({})", redact(&v));
         }
     }
-    // `None` for key_env here on purpose: the env var was just checked above,
-    // so this call is only asking the keychain.
-    match resolve(provider, None, store) {
-        Some(secret) => format!("key in keychain ({})", redact(secret.as_str())),
-        None => format!("no key (run `leo model login {provider}`)"),
+    if store.has(provider) {
+        "key in keychain".to_string()
+    } else {
+        format!("no key (run `leo model login {provider}`)")
     }
 }
 
@@ -643,8 +647,11 @@ mod cli_tests {
         assert!(s.contains("no key"), "got: {s}");
     }
 
+    /// A stored key is reported as present, with no preview of its value: even
+    /// the last four characters would require reading it, and a read can cost
+    /// the user a keychain permission dialog.
     #[test]
-    fn describes_a_stored_credential_without_revealing_it() {
+    fn describes_a_stored_credential_without_reading_it() {
         let _guard = ENV_LOCK.lock().unwrap();
         std::env::remove_var("LEO_TEST_DESC_B");
         let store = MemoryStore::default();
@@ -652,8 +659,8 @@ mod cli_tests {
 
         let s = describe_credential("openrouter", Some("LEO_TEST_DESC_B"), &store);
         assert!(s.contains("keychain"), "got: {s}");
-        assert!(s.contains("9999"), "should show last four: {s}");
         assert!(!s.contains("supersecret"), "LEAKED THE KEY: {s}");
+        assert!(!s.contains("9999"), "the value must not be read at all: {s}");
     }
 
     #[test]

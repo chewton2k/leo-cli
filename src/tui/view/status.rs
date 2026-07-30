@@ -1,7 +1,7 @@
 //! The `:` line and the status line beneath it.
 
 use ratatui::layout::{Position, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line as TuiLine, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
@@ -9,6 +9,8 @@ use ratatui::Frame;
 use crate::action::Kind;
 
 use super::line::style_for;
+
+use super::theme;
 
 /// Draw the command line. When `active`, the terminal cursor is placed in it so
 /// the user sees a real caret rather than a drawn one.
@@ -33,7 +35,7 @@ pub fn render_command(
     }
 
     let mut spans = vec![
-        Span::styled(":", Style::default().fg(Color::Cyan)),
+        Span::styled(":", Style::default().fg(theme::ACCENT)),
         Span::raw(text.to_string()),
     ];
     if let Some(ghost) = ghost {
@@ -62,13 +64,13 @@ pub fn render_status(
     let where_ = if dir.is_empty() { "/".to_string() } else { format!("/{dir}") };
     let mut spans = vec![Span::styled(
         format!(" {where_} "),
-        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        Style::default().fg(theme::ACCENT).add_modifier(Modifier::BOLD),
     )];
 
     if let Some(label) = busy {
         spans.push(Span::styled(
             format!("• {label} "),
-            Style::default().fg(Color::Yellow),
+            Style::default().fg(theme::WARN),
         ));
     }
 

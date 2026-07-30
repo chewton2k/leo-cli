@@ -14,13 +14,17 @@ use ratatui::Frame;
 use super::help::centered;
 use crate::config::edit::Task;
 
+use super::theme;
+
 /// Where a provider's credential comes from, or why it has none.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Credential {
     /// Nothing to authenticate — a local server or binary.
     NotNeeded,
-    /// Stored in the OS keychain, shown as its last four characters.
-    Keychain(String),
+    /// Stored in the OS keychain. Deliberately carries no preview of the value:
+    /// showing even the last four characters would mean reading the secret, and
+    /// on macOS every read of a keychain item can cost a permission dialog.
+    Stored,
     /// Coming from an environment variable, which wins over the keychain.
     Env { var: String, redacted: String },
     /// Declared but absent.
@@ -83,17 +87,17 @@ fn credential_span(credential: &Credential) -> Span<'static> {
             "no key needed".to_string(),
             Style::default().add_modifier(Modifier::DIM),
         ),
-        Credential::Keychain(tail) => Span::styled(
-            format!("key {tail}"),
-            Style::default().fg(Color::Green),
+        Credential::Stored => Span::styled(
+            "key stored".to_string(),
+            Style::default().fg(theme::GOOD),
         ),
         Credential::Env { var, redacted } => Span::styled(
             format!("env {var} {redacted}"),
-            Style::default().fg(Color::Yellow),
+            Style::default().fg(theme::WARN),
         ),
         Credential::Missing => Span::styled(
             "no key — press l".to_string(),
-            Style::default().fg(Color::Red),
+            Style::default().fg(theme::BAD),
         ),
     }
 }
@@ -102,12 +106,12 @@ fn item(row: &Row) -> ListItem<'static> {
     match row {
         Row::Header(task) => ListItem::new(TuiLine::from(Span::styled(
             format!(" {} chain", task.label()),
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default().fg(theme::ACCENT).add_modifier(Modifier::BOLD),
         ))),
 
         Row::AvailableHeader => ListItem::new(TuiLine::from(Span::styled(
             " also configured".to_string(),
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default().fg(theme::ACCENT).add_modifier(Modifier::BOLD),
         ))),
 
         Row::Member { position, name, model, credential, ready, .. } => {
@@ -162,7 +166,7 @@ pub fn render(frame: &mut Frame, area: Rect, rows: &[Row], selected: usize, stat
     frame.render_widget(
         Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan))
+            .border_style(Style::default().fg(theme::ACCENT))
             .title(" providers "),
         box_area,
     );
@@ -195,7 +199,7 @@ pub fn render(frame: &mut Frame, area: Rect, rows: &[Row], selected: usize, stat
         frame.render_widget(
             Paragraph::new(Span::styled(
                 format!(" {status}"),
-                Style::default().fg(Color::Yellow),
+                Style::default().fg(theme::WARN),
             )),
             status_area,
         );
@@ -253,7 +257,7 @@ mod tests {
                 position: 2,
                 name: "openrouter".to_string(),
                 model: "openrouter/free".to_string(),
-                credential: Credential::Keychain("…42ef".to_string()),
+                credential: Credential::Stored,
                 ready: true,
             },
             Row::Header(Task::Transcribe),
@@ -321,7 +325,7 @@ mod tests {
         assert!(out.contains("ollama"), "{out}");
         assert!(out.contains("qwen3:8b"), "{out}");
         assert!(out.contains("no key needed"), "{out}");
-        assert!(out.contains("…42ef"), "{out}");
+        assert!(out.contains("key stored"), "{out}");
         assert!(out.contains("no key"), "{out}");
         assert!(out.contains("transcribe chain"), "{out}");
         assert!(out.contains("also configured"), "{out}");
@@ -347,11 +351,11 @@ mod tests {
         assert!(t.backend().to_string().contains("responded in 812ms"));
     }
 
-    /// A key value must never reach the screen — only its last characters.
+    /// A key value must never reach the screen.
     #[test]
     fn a_credential_renders_without_its_value() {
         let secret = "sk-or-v1-supersecretvalue";
-        let rendered = credential_span(&Credential::Keychain("…alue".to_string()));
+        let rendered = credential_span(&Credential::Stored);
         assert!(!rendered.content.contains(secret));
         assert!(!rendered.content.contains("supersecret"));
 

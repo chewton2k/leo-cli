@@ -10,6 +10,8 @@ use ratatui::text::{Line as TuiLine, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 
+use super::theme;
+
 /// Center a box of the given size inside `area`.
 pub fn centered(area: Rect, width: u16, height: u16) -> Rect {
     let [row] = Layout::vertical([Constraint::Length(height.min(area.height))])
@@ -155,7 +157,7 @@ fn help_lines() -> Vec<TuiLine<'static>> {
         }
         lines.push(TuiLine::from(Span::styled(
             format!(" {}", section.title),
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default().fg(theme::ACCENT).add_modifier(Modifier::BOLD),
         )));
         for entry in section.entries {
             lines.push(TuiLine::from(vec![
@@ -222,7 +224,7 @@ pub fn render_help(frame: &mut Frame, area: Rect, scroll: u16) {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Cyan))
+                    .border_style(Style::default().fg(theme::ACCENT))
                     .title(more),
             )
             .scroll((scroll, 0))

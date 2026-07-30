@@ -8,7 +8,7 @@ use anyhow::Result;
 
 use crate::config::edit::{self, Task};
 use crate::config::provider::ProviderKind;
-use crate::config::secret::{redact, resolve, SecretStore};
+use crate::config::secret::{redact, SecretStore};
 use crate::config::Config;
 use crate::tui::view::settings::{Credential, Row};
 
@@ -23,11 +23,11 @@ fn task_for(kind: Option<ProviderKind>) -> Task {
 }
 
 /// Describe where a provider's credential comes from, without revealing it.
-fn credential_for(
-    name: &str,
-    key_env: Option<&str>,
-    store: &dyn SecretStore,
-) -> Credential {
+///
+/// Asks whether a key exists rather than reading it: this runs for every
+/// provider on the screen, and on a real keychain each *read* can cost a
+/// permission dialog while an existence check does not.
+fn credential_for(name: &str, key_env: Option<&str>, store: &dyn SecretStore) -> Credential {
     let Some(var) = key_env else {
         return Credential::NotNeeded;
     };
@@ -39,11 +39,10 @@ fn credential_for(
             };
         }
     }
-    // `None` for the env name on purpose: it was just checked, so this asks
-    // only the keychain.
-    match resolve(name, None, store) {
-        Some(secret) => Credential::Keychain(redact(secret.as_str())),
-        None => Credential::Missing,
+    if store.has(name) {
+        Credential::Stored
+    } else {
+        Credential::Missing
     }
 }
 
@@ -287,7 +286,7 @@ key_env = "LEO_TEST_SETTINGS_CB"
     }
 
     #[test]
-    fn a_stored_key_shows_as_keychain_and_a_missing_one_says_so() {
+    fn a_stored_key_shows_as_stored_and_a_missing_one_says_so() {
         let _guard = ENV_LOCK.lock().unwrap();
         std::env::remove_var("LEO_TEST_SETTINGS_OR");
         std::env::remove_var("LEO_TEST_SETTINGS_GROQ");
@@ -298,7 +297,7 @@ key_env = "LEO_TEST_SETTINGS_CB"
 
         match &rows[2] {
             Row::Member { credential, .. } => {
-                assert_eq!(*credential, Credential::Keychain("…9999".to_string()));
+                assert_eq!(*credential, Credential::Stored);
             }
             other => panic!("expected a member, got {other:?}"),
         }

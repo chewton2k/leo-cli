@@ -8,12 +8,14 @@
 use nucleo::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo::Matcher;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line as TuiLine, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 
 use super::help::centered;
+
+use super::theme;
 
 /// One searchable note. `label` is what is matched and shown: the title plus
 /// its directory, so two notes with the same title are distinguishable.
@@ -104,7 +106,7 @@ pub fn render(frame: &mut Frame, area: Rect, finder: &Finder) {
     frame.render_widget(
         Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan))
+            .border_style(Style::default().fg(theme::ACCENT))
             .title("find note"),
         box_area,
     );
@@ -120,7 +122,7 @@ pub fn render(frame: &mut Frame, area: Rect, finder: &Finder) {
 
     frame.render_widget(
         Paragraph::new(TuiLine::from(vec![
-            Span::styled("› ", Style::default().fg(Color::Cyan)),
+            Span::styled("› ", Style::default().fg(theme::ACCENT)),
             Span::raw(finder.query().to_string()),
         ])),
         query_area,

@@ -13,6 +13,7 @@ pub mod preview;
 pub mod progress;
 pub mod settings;
 pub mod status;
+pub mod theme;
 
 use ratatui::layout::{Constraint, Layout, Rect};
 

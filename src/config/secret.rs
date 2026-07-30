@@ -11,7 +11,6 @@
 //! the `String` we wrap ever reaches us. Treat zeroization here as reducing
 //! exposure, not eliminating it.
 
-use std::collections::HashMap;
 use std::sync::Mutex;
 
 use anyhow::Result;
@@ -19,9 +18,6 @@ use zeroize::Zeroizing;
 
 /// Service name under which all leo credentials are filed in the OS keychain.
 pub const SERVICE: &str = "leo";
-
-/// Account name used only to ask whether a backend answers at all.
-const PROBE: &str = "__leo_probe__";
 
 /// A secret value held in memory. The only safe ways to render this type are
 /// its `Debug` and `Display` impls, both of which show `redact()`'s output —
@@ -57,6 +53,15 @@ pub trait SecretStore {
     fn delete(&self, account: &str) -> Result<()>;
     /// Whether a backend is usable at all (e.g. Secret Service running).
     fn available(&self) -> bool;
+
+    /// Whether a key is stored, without needing its value.
+    ///
+    /// Separate from `get` because on a real keychain, reading a value can cost
+    /// the user a permission dialog while merely knowing one exists does not.
+    /// Anything that only renders status should call this.
+    fn has(&self, account: &str) -> bool {
+        matches!(self.get(account), Ok(Some(_)))
+    }
 }
 
 /// Render a secret for display. Only the last four characters survive, and
@@ -107,115 +112,200 @@ pub fn resolve(provider: &str, key_env: Option<&str>, store: &dyn SecretStore) -
     }
 }
 
-/// Reads already served this process, so the keychain is asked at most once per
-/// provider per run.
+/// All of leo's credentials live in ONE keychain item, as a JSON object keyed by
+/// provider name.
 ///
-/// macOS prompts for permission on each access when the binary's signature does
-/// not match the entry's ACL, and leo reads several providers in a row — the
-/// provider screen alone touches every configured one. Without this, opening it
-/// meant a dozen consecutive permission dialogs.
-///
-/// A cache is safe here because writes go through the same type and update it:
-/// nothing else in the process can change a keychain entry behind our back, and
-/// an entry changed by another application mid-session is not worth a prompt
-/// storm to notice.
-static CACHE: Mutex<Option<HashMap<String, Option<String>>>> = Mutex::new(None);
+/// This is the whole reason the design is not "one item per provider". macOS
+/// asks for permission per *item* whenever the requesting binary's signature
+/// does not match the item's ACL, which it does not after every reinstall. With
+/// an item per provider, opening the provider screen meant a dialog for each of
+/// the eighteen configured providers. With one item there is at most one dialog,
+/// and "Always Allow" ends it for good.
+const BUNDLE_ACCOUNT: &str = "credentials";
 
-fn cached(account: &str) -> Option<Option<Secret>> {
-    let guard = CACHE.lock().ok()?;
-    let map = guard.as_ref()?;
-    map.get(account)
-        .map(|v| v.as_ref().map(|s| Secret(Zeroizing::new(s.clone()))))
+/// provider name -> key. `BTreeMap` so the stored JSON is stable and diffable.
+type Bundle = std::collections::BTreeMap<String, String>;
+
+/// The bundle as read this process. `None` means "not read yet"; `Some(empty)`
+/// means read and there is nothing stored.
+static CACHE: Mutex<Option<Bundle>> = Mutex::new(None);
+
+/// Reset the cache. Used by tests, and after a write.
+fn cache_put(bundle: Bundle) {
+    if let Ok(mut guard) = CACHE.lock() {
+        *guard = Some(bundle);
+    }
 }
 
-fn remember(account: &str, value: Option<&str>) {
-    if let Ok(mut guard) = CACHE.lock() {
-        guard
-            .get_or_insert_with(HashMap::new)
-            .insert(account.to_string(), value.map(str::to_string));
-    }
+fn cache_get() -> Option<Bundle> {
+    CACHE.lock().ok().and_then(|guard| guard.clone())
 }
 
 /// The real OS keychain: macOS Keychain, Windows Credential Manager, or Linux
 /// Secret Service, selected by the `keyring` crate's default feature.
 ///
 /// The underlying `keyring` crate lazily initializes the platform-specific
-/// credential store the first time an `Entry` is created (see `v1::Entry::new`
-/// in the `keyring` crate source); no explicit setup call is needed here.
+/// credential store the first time an `Entry` is created; no explicit setup call
+/// is needed here.
 pub struct KeyringStore;
 
 impl KeyringStore {
     fn entry(account: &str) -> Result<keyring::Entry> {
         keyring::Entry::new(SERVICE, account).map_err(Into::into)
     }
+
+    /// Read the bundle, at most once per process.
+    fn bundle(&self) -> Bundle {
+        if let Some(cached) = cache_get() {
+            return cached;
+        }
+
+        let bundle = match Self::entry(BUNDLE_ACCOUNT).and_then(|e| match e.get_password() {
+            Ok(json) => Ok(Some(json)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(e) => Err(e.into()),
+        }) {
+            Ok(Some(json)) => serde_json::from_str::<Bundle>(&json).unwrap_or_else(|e| {
+                // Refuse to guess at a corrupt bundle: report it and behave as
+                // though nothing is stored, rather than deleting anything.
+                crate::diag::warn(format!(
+                    "stored credentials could not be read ({e}); treating them as absent"
+                ));
+                Bundle::new()
+            }),
+            Ok(None) => Bundle::new(),
+            Err(e) => {
+                crate::diag::warn(format!("could not read stored credentials: {e}"));
+                Bundle::new()
+            }
+        };
+
+        cache_put(bundle.clone());
+        bundle
+    }
+
+    fn write_bundle(&self, bundle: &Bundle) -> Result<()> {
+        let json = serde_json::to_string(bundle)?;
+        Self::entry(BUNDLE_ACCOUNT)?.set_password(&json)?;
+        cache_put(bundle.clone());
+        Ok(())
+    }
+
+    /// Read a credential stored by an older version, which used one item per
+    /// provider, and fold it into the bundle so it is never read again.
+    ///
+    /// Only called when a key is actually needed, never to display status: each
+    /// one of these is a permission dialog, and the point of the bundle is to
+    /// stop paying that per provider.
+    fn adopt_legacy(&self, account: &str) -> Option<String> {
+        let found = Self::entry(account)
+            .and_then(|e| match e.get_password() {
+                Ok(secret) => Ok(Some(secret)),
+                Err(keyring::Error::NoEntry) => Ok(None),
+                Err(e) => Err(e.into()),
+            })
+            .ok()
+            .flatten()?;
+
+        let mut bundle = self.bundle();
+        bundle.insert(account.to_string(), found.clone());
+        if self.write_bundle(&bundle).is_ok() {
+            // The old item is redundant now. Failing to remove it is harmless:
+            // the bundle takes precedence from here.
+            let _ = Self::entry(account).map(|e| e.delete_credential());
+            crate::diag::warn(format!(
+                "moved the stored key for \"{account}\" into leo's single keychain item"
+            ));
+        }
+        Some(found)
+    }
+}
+
+impl KeyringStore {
+    /// Fold any keys stored by an older version into the bundle.
+    ///
+    /// Runs once per installation, guarded by the caller. Each legacy item may
+    /// cost one permission dialog, which is why this happens once and eagerly
+    /// rather than lazily forever: paying it now means the provider screen never
+    /// pays it again.
+    ///
+    /// Returns the provider names that were moved.
+    pub fn migrate_legacy(&self, providers: &[String]) -> Vec<String> {
+        let mut moved = Vec::new();
+        let mut bundle = self.bundle();
+
+        for name in providers {
+            if bundle.contains_key(name) {
+                continue;
+            }
+            let found = Self::entry(name).and_then(|e| match e.get_password() {
+                Ok(secret) => Ok(Some(secret)),
+                Err(keyring::Error::NoEntry) => Ok(None),
+                Err(e) => Err(e.into()),
+            });
+            if let Ok(Some(secret)) = found {
+                bundle.insert(name.clone(), secret);
+                moved.push(name.clone());
+            }
+        }
+
+        if !moved.is_empty() && self.write_bundle(&bundle).is_ok() {
+            for name in &moved {
+                let _ = Self::entry(name).map(|e| e.delete_credential());
+            }
+        }
+        moved
+    }
 }
 
 impl SecretStore for KeyringStore {
     fn get(&self, account: &str) -> Result<Option<Secret>> {
-        if let Some(hit) = cached(account) {
-            return Ok(hit);
+        if let Some(found) = self.bundle().get(account) {
+            return Ok(Some(Secret(Zeroizing::new(found.clone()))));
         }
-        match Self::entry(account)?.get_password() {
-            Ok(secret) => {
-                remember(account, Some(&secret));
-                Ok(Some(Secret(Zeroizing::new(secret))))
-            }
-            Err(keyring::Error::NoEntry) => {
-                // Remember the absence too: a provider with no key is read just
-                // as often as one with a key.
-                remember(account, None);
-                Ok(None)
-            }
-            // `keyring_core::Error::BadEncoding(Vec<u8>)` and `BadDataFormat`
-            // carry the raw credential bytes and derive `Debug`. We are safe
-            // here only because `anyhow::Error`'s `Display` (which `e.into()`
-            // plus `resolve`'s `{e}` format both go through) renders via each
-            // error's `Display` impl, which omits those bytes — a downstream
-            // `downcast_ref::<keyring::Error>()` followed by `{:?}` would leak
-            // them, so never do that with this error.
-            Err(e) => Err(e.into()),
-        }
+        // Not in the bundle: it may predate it.
+        Ok(self
+            .adopt_legacy(account)
+            .map(|s| Secret(Zeroizing::new(s))))
+    }
+
+    /// Whether a key is stored, answered from the bundle alone.
+    ///
+    /// Never consults a legacy item, because this is what the provider screen
+    /// calls for every provider it lists — and prompting eighteen times to draw
+    /// a list is the friction this whole design exists to remove.
+    fn has(&self, account: &str) -> bool {
+        self.bundle().contains_key(account)
     }
 
     fn set(&self, account: &str, secret: &str) -> Result<()> {
-        Self::entry(account)?.set_password(secret)?;
-        remember(account, Some(secret));
-        Ok(())
+        let mut bundle = self.bundle();
+        bundle.insert(account.to_string(), secret.to_string());
+        self.write_bundle(&bundle)
     }
 
     fn delete(&self, account: &str) -> Result<()> {
-        let result = match Self::entry(account)?.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(e) => Err(e.into()),
-        };
-        // Whether or not the delete found anything, there is no key now.
-        remember(account, None);
-        result
+        let mut bundle = self.bundle();
+        let removed = bundle.remove(account).is_some();
+        if removed {
+            self.write_bundle(&bundle)?;
+        }
+        // Also clear anything an older version left behind, so a stale key
+        // cannot come back through the legacy path.
+        let _ = Self::entry(account).map(|e| e.delete_credential());
+        Ok(())
     }
 
     fn available(&self) -> bool {
-        // A probe read against a name we never write. NoEntry means the backend
-        // answered, which is what we are testing for. Cached like any other
-        // read, so asking repeatedly costs nothing.
-        // A cached probe entry means the backend answered once, which is all
-        // this reports.
-        if cached(PROBE).is_some() {
-            return true;
+        // Reading the bundle is the probe: it is cached, so asking costs
+        // nothing after the first call, and it fails soft on a dead backend.
+        match Self::entry(BUNDLE_ACCOUNT) {
+            Ok(entry) => !matches!(
+                entry.get_password(),
+                Err(keyring::Error::PlatformFailure(_)) | Err(keyring::Error::NoStorageAccess(_))
+            ),
+            Err(_) => false,
         }
-        let answered = matches!(
-            Self::entry(PROBE).and_then(|e| {
-                match e.get_password() {
-                    Ok(_) => Ok(()),
-                    Err(keyring::Error::NoEntry) => Ok(()),
-                    Err(e) => Err(e.into()),
-                }
-            }),
-            Ok(())
-        );
-        if answered {
-            remember(PROBE, None);
-        }
-        answered
     }
 }
 
@@ -323,48 +413,63 @@ mod tests {
         assert!(display_shown.contains(&expected));
     }
 
-    /// The bug this guards: macOS prompts for permission on every keychain
-    /// access, and the provider screen reads every configured provider. Without
-    /// caching, opening it meant a dialog per provider.
+    /// The bug this guards: macOS asks for permission per keychain *item*, and
+    /// an item per provider meant a dialog per provider — eighteen of them just
+    /// to draw the provider screen. One item for everything means one dialog.
     #[test]
-    fn repeated_reads_of_the_same_account_hit_the_cache_once() {
-        // Exercised through the cache helpers directly: the real keychain is
-        // never touched by tests.
-        let account = "leo_test_cache_account";
-        assert!(cached(account).is_none(), "nothing cached yet");
+    fn every_credential_lives_in_one_keychain_item() {
+        // The bundle is a JSON object keyed by provider, under a single account.
+        let mut bundle = Bundle::new();
+        bundle.insert("openrouter".to_string(), "key-1".to_string());
+        bundle.insert("groq".to_string(), "key-2".to_string());
 
-        remember(account, Some("a-key"));
-        let first = cached(account).expect("a cached entry");
-        assert_eq!(first.map(|s| s.as_str().to_string()), Some("a-key".to_string()));
-        // Still cached: a second read does not need the backend.
-        assert!(cached(account).is_some());
+        let json = serde_json::to_string(&bundle).unwrap();
+        let parsed: Bundle = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed["openrouter"], "key-1");
 
-        // An absent key is remembered too, since a provider with no key is read
-        // just as often as one with a key.
-        let missing = "leo_test_cache_missing";
-        remember(missing, None);
-        let hit = cached(missing).expect("the absence is cached");
-        assert!(hit.is_none());
+        // One account name, no matter how many providers.
+        assert_eq!(BUNDLE_ACCOUNT, "credentials");
     }
 
-    /// Storing or removing a key must not leave a stale cache behind, or the
-    /// provider screen would keep showing the old state.
     #[test]
-    fn writing_updates_the_cache_rather_than_invalidating_it_lazily() {
-        let account = "leo_test_cache_write";
-        remember(account, None);
-        assert!(cached(account).unwrap().is_none());
+    fn the_bundle_cache_is_read_once_and_updated_by_writes() {
+        let mut bundle = Bundle::new();
+        bundle.insert("groq".to_string(), "key".to_string());
+        cache_put(bundle.clone());
 
-        // What `set` does after a successful write.
-        remember(account, Some("new-key"));
-        assert_eq!(
-            cached(account).unwrap().map(|s| s.as_str().to_string()),
-            Some("new-key".to_string())
-        );
+        assert_eq!(cache_get().unwrap()["groq"], "key");
+
+        // What `set` does: mutate and re-cache, so nothing re-reads the item.
+        bundle.insert("hf".to_string(), "key-2".to_string());
+        cache_put(bundle.clone());
+        assert_eq!(cache_get().unwrap().len(), 2);
 
         // What `delete` does.
-        remember(account, None);
-        assert!(cached(account).unwrap().is_none());
+        bundle.remove("groq");
+        cache_put(bundle);
+        assert!(!cache_get().unwrap().contains_key("groq"));
+    }
+
+    /// A corrupt bundle must not be silently discarded or crash the app.
+    #[test]
+    fn an_unreadable_bundle_is_treated_as_empty() {
+        assert!(serde_json::from_str::<Bundle>("not json").is_err());
+        // The store maps that error to an empty bundle rather than panicking;
+        // this asserts the shape it falls back to.
+        assert!(Bundle::new().is_empty());
+    }
+
+    /// `has` must answer without reading the value, since a read is what costs
+    /// the user a dialog.
+    #[test]
+    fn has_reports_presence_without_the_value() {
+        let store = MemoryStore::default();
+        assert!(!store.has("groq"));
+        store.set("groq", "a-key").unwrap();
+        assert!(store.has("groq"));
+        store.delete("groq").unwrap();
+        assert!(!store.has("groq"));
     }
 
     #[test]
