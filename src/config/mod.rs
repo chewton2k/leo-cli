@@ -39,49 +39,180 @@ impl Config {
     /// this file is the primary UI for the model layer.
     pub fn default_toml() -> String {
         format!(
-            r#"# leo model configuration.
-# Secrets do NOT belong here — run `leo model login <provider>` to store an
-# API key in your OS keychain instead.
+            r#"# leo configuration.
+#
+# Keys do NOT belong in this file. Run `leo model login <provider>` to put one
+# in your OS keychain, or press Ctrl-S inside leo for the same thing with a menu.
+#
+# Providers are tried in order and unavailable ones — no key, no binary, closed
+# port — are skipped without complaint. Listing more than you have is the point:
+# a laptop with Ollama running uses it for free and falls back to the cloud only
+# when it is not running.
 
-# Providers are tried in order. Unavailable ones (no key, no binary, closed
-# port) are skipped silently, so you can list more than you have installed.
 [chat]
 chain = [{chat}]
 
 [transcribe]
 chain = [{transcribe}]
 
-# kind = "openai" speaks the OpenAI chat-completions protocol, so it covers
-# OpenRouter, Ollama, LM Studio, llama.cpp server, vLLM, Groq chat, and more.
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Chat providers
+#
+#  kind = "openai" means "speaks the OpenAI chat-completions protocol", which
+#  is nearly everything. Adding a provider is four lines and no code:
+#
+#      [providers.pick-a-name]
+#      kind = "openai"
+#      base_url = "https://.../v1"
+#      model = "the-model-id"
+#      key_env = "SOME_API_KEY"    # omit for a local server needing no key
+#
+#  Then add that name to the [chat] chain above.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Local, free, private. `brew install ollama && ollama pull qwen3:8b`
 [providers.ollama]
 kind = "openai"
 base_url = "http://localhost:11434/v1"
 model = "qwen3:8b"
 max_tokens = 4096
 
+# Free cloud models. `leo model login openrouter`
+# "openrouter/free" is a router over OpenRouter's zero-cost models, so it
+# survives individual models being retired.
 [providers.openrouter]
 kind = "openai"
 base_url = "https://openrouter.ai/api/v1"
-# "openrouter/free" is a router across OpenRouter's zero-cost models. Naming
-# the router rather than one model survives individual models being retired.
 model = "openrouter/free"
 key_env = "OPENROUTER_API_KEY"
 max_tokens = 4096
 
+# Everything below is defined and ready: add the name to a chain above, and run
+# `leo model login <name>` if it needs a key.
+
+# Local servers — no key, nothing to sign up for.
+[providers.lmstudio]
+kind = "openai"
+base_url = "http://localhost:1234/v1"
+model = "local-model"
+max_tokens = 4096
+
+[providers.llamacpp]
+kind = "openai"
+base_url = "http://localhost:8080/v1"
+model = "local-model"
+max_tokens = 4096
+
+[providers.vllm]
+kind = "openai"
+base_url = "http://localhost:8000/v1"
+model = "local-model"
+max_tokens = 4096
+
+# Cloud providers with a free tier.
+[providers.groq_chat]
+kind = "openai"
+base_url = "https://api.groq.com/openai/v1"
+model = "llama-3.3-70b-versatile"
+key_env = "GROQ_API_KEY"
+max_tokens = 4096
+
+[providers.cerebras]
+kind = "openai"
+base_url = "https://api.cerebras.ai/v1"
+model = "llama-3.3-70b"
+key_env = "CEREBRAS_API_KEY"
+max_tokens = 4096
+
+[providers.gemini]
+kind = "openai"
+base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+model = "gemini-2.5-flash"
+key_env = "GEMINI_API_KEY"
+max_tokens = 4096
+
+[providers.mistral]
+kind = "openai"
+base_url = "https://api.mistral.ai/v1"
+model = "mistral-small-latest"
+key_env = "MISTRAL_API_KEY"
+max_tokens = 4096
+
+# Paid. Check pricing before putting these in a chain.
+[providers.openai]
+kind = "openai"
+base_url = "https://api.openai.com/v1"
+model = "gpt-4o-mini"
+key_env = "OPENAI_API_KEY"
+max_tokens = 4096
+
+[providers.deepseek]
+kind = "openai"
+base_url = "https://api.deepseek.com/v1"
+model = "deepseek-chat"
+key_env = "DEEPSEEK_API_KEY"
+max_tokens = 4096
+
+[providers.together]
+kind = "openai"
+base_url = "https://api.together.xyz/v1"
+model = "meta-llama/Llama-3.3-70B-Instruct-Turbo"
+key_env = "TOGETHER_API_KEY"
+max_tokens = 4096
+
+[providers.xai]
+kind = "openai"
+base_url = "https://api.x.ai/v1"
+model = "grok-3-mini"
+key_env = "XAI_API_KEY"
+max_tokens = 4096
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Transcription providers
+#
+#  kind = "whisper_cpp"  a local binary. No request-size limit, so no chunking.
+#  kind = "groq"         any OpenAI-compatible /audio/transcriptions endpoint,
+#                        including OpenAI's own — point base_url wherever.
+#  kind = "hf"           Hugging Face inference.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Local, free, private, and unbounded in length.
+# `brew install whisper-cpp`, then fetch a model:
+#   mkdir -p ~/.leo/models && curl -L -o ~/.leo/models/ggml-base.en.bin \
+#     https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
 [providers.whisper_cpp]
 kind = "whisper_cpp"
 bin = "whisper-cli"
 model_path = "~/.leo/models/ggml-base.en.bin"
 
+# Free tier, fast. `leo model login groq`
 [providers.groq]
 kind = "groq"
+base_url = "https://api.groq.com/openai/v1"
 model = "whisper-large-v3-turbo"
 key_env = "GROQ_API_KEY"
 
+# `leo model login hf`
 [providers.hf]
 kind = "hf"
 model = "openai/whisper-large-v3-turbo"
 key_env = "HF_API_KEY"
+
+# Paid. Same protocol as Groq, different host.
+[providers.openai_whisper]
+kind = "groq"
+base_url = "https://api.openai.com/v1"
+model = "whisper-1"
+key_env = "OPENAI_API_KEY"
+
+# A local whisper server copying OpenAI's shape (speaches, faster-whisper-server,
+# whisper.cpp's own server). No key needed.
+[providers.local_whisper_server]
+kind = "groq"
+base_url = "http://localhost:8000/v1"
+model = "Systran/faster-whisper-small"
 "#,
             chat = quoted_list(&DEFAULT_CHAT_CHAIN),
             transcribe = quoted_list(&DEFAULT_TRANSCRIBE_CHAIN),
@@ -290,6 +421,100 @@ kind = "telepathy"
             .filter_map(|p| p.model.as_deref())
             .collect();
         assert!(!models.contains(&"google/gemini-2.5-flash"));
+    }
+
+    /// The shipped config is the primary UI for the model layer, so every
+    /// provider in it must be usable as written, not just parseable.
+    #[test]
+    fn every_shipped_provider_is_complete_enough_to_build() {
+        let cfg = Config::default();
+        assert!(cfg.providers.len() >= 15, "only {} providers", cfg.providers.len());
+
+        for (name, p) in &cfg.providers {
+            let kind = p.kind.unwrap_or_else(|| panic!("{name} has no kind"));
+            match kind {
+                ProviderKind::Openai => {
+                    assert!(p.base_url.is_some(), "{name} has no base_url");
+                    assert!(p.model.is_some(), "{name} has no model");
+                    // A remote endpoint without a key_env could never
+                    // authenticate; a local one must not demand a key.
+                    let local = p
+                        .base_url
+                        .as_deref()
+                        .map(|u| u.contains("localhost") || u.contains("127.0.0.1"))
+                        .unwrap_or(false);
+                    assert_eq!(
+                        p.key_env.is_none(),
+                        local,
+                        "{name}: key_env presence should match whether it is local"
+                    );
+                }
+                ProviderKind::Groq | ProviderKind::Hf => {
+                    assert!(p.model.is_some(), "{name} has no model");
+                }
+                ProviderKind::WhisperCpp => {
+                    assert!(p.bin.is_some(), "{name} has no bin");
+                    assert!(p.model_path.is_some(), "{name} has no model_path");
+                }
+            }
+        }
+    }
+
+    /// Every provider named in a chain must exist, or the chain silently
+    /// shortens and the user gets a mysterious "no provider available".
+    #[test]
+    fn every_chain_entry_names_a_defined_provider() {
+        let cfg = Config::default();
+        for name in cfg.chat.chain.iter().chain(cfg.transcribe.chain.iter()) {
+            assert!(cfg.providers.contains_key(name), "chain names unknown {name}");
+        }
+    }
+
+    /// The defaults must stay free. A paid provider is offered in the file but
+    /// never wired into a chain without the user asking.
+    #[test]
+    fn no_paid_provider_is_enabled_by_default() {
+        let cfg = Config::default();
+        for paid in ["openai", "deepseek", "together", "xai", "openai_whisper"] {
+            assert!(
+                cfg.providers.contains_key(paid),
+                "{paid} should be offered in the file"
+            );
+            assert!(
+                !cfg.chat.chain.contains(&paid.to_string())
+                    && !cfg.transcribe.chain.contains(&paid.to_string()),
+                "{paid} bills, so it must not be in a default chain"
+            );
+        }
+    }
+
+    /// Two providers sharing one key_env is fine and intentional (groq chat and
+    /// groq transcription), but a typo'd variable name is not detectable later,
+    /// so pin the spellings.
+    #[test]
+    fn key_env_names_follow_the_provider_convention() {
+        let cfg = Config::default();
+        for (name, p) in &cfg.providers {
+            if let Some(var) = &p.key_env {
+                assert!(
+                    var.chars().all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit()),
+                    "{name}: {var} is not a conventional env var name"
+                );
+                assert!(var.ends_with("_API_KEY"), "{name}: {var} should end in _API_KEY");
+            }
+        }
+    }
+
+    #[test]
+    fn the_shipped_file_explains_how_to_add_a_provider() {
+        let text = Config::default_toml();
+        // The file is the documentation, so these have to be present.
+        assert!(text.contains("leo model login"));
+        assert!(text.contains("kind = \"openai\""));
+        assert!(text.contains("[chat]"));
+        assert!(text.contains("[transcribe]"));
+        // And it must warn that keys do not belong in it.
+        assert!(text.to_lowercase().contains("keys do not belong"));
     }
 
     #[test]

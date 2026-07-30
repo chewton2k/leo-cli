@@ -3,6 +3,7 @@ mod ai;
 mod config;
 mod export;
 mod listen;
+mod manual;
 mod notes;
 mod shell;
 mod store;
@@ -256,6 +257,9 @@ fn main() -> Result<()> {
 /// confirmation — are handled here rather than in the vocabulary.
 fn run_command(cmd: Commands) -> Result<()> {
     let mut store = store::Store::load()?;
+    // Also on the CLI path, so `leo list` right after installing shows the
+    // manual rather than an empty store.
+    let _ = manual::install_if_absent(&mut store);
     let ai = action::RealAi;
     // Scripting has no "last list", so references resolve against the default
     // sorted list — the same numbering `leo list` prints.

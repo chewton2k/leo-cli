@@ -981,7 +981,10 @@ fn first_open_checkbox(body: &str) -> Option<usize> {
 /// Run the TUI. `ratatui::init` installs a panic hook that restores the
 /// terminal, so a panic cannot leave the user in raw mode.
 pub fn run() -> Result<()> {
-    let store = Store::load()?;
+    let mut store = Store::load()?;
+    // A first run explains itself: the manual is a real note the user can
+    // search, scroll, and delete. A failure here must not stop the app.
+    let _ = crate::manual::install_if_absent(&mut store);
     let mut terminal = ratatui::init();
     let result = event_loop(&mut terminal, App::new(store));
     ratatui::restore();
