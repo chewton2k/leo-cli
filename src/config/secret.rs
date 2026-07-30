@@ -93,9 +93,9 @@ pub fn resolve(provider: &str, key_env: Option<&str>, store: &dyn SecretStore) -
     match store.get(provider) {
         Ok(secret) => secret,
         Err(e) => {
-            eprintln!(
-                "  config: could not read stored credential for provider \"{provider}\": {e}"
-            );
+            crate::diag::warn(format!(
+                "could not read the stored credential for \"{provider}\": {e}"
+            ));
             None
         }
     }

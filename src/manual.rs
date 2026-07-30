@@ -18,13 +18,39 @@ const MANUAL_VERSION: u32 = 1;
 const MARKER: &str = ".manual-installed";
 pub const MANUAL_TITLE: &str = "leo manual";
 
+/// Where the marker lives: the data directory, one level above `notes/`.
+///
+/// Deliberately not inside the notes directory. That directory is what `sync`
+/// pushes to the user's git remote, so a marker there gets committed and
+/// travels between machines — which also means a second machine would think the
+/// manual was already installed and never create it.
+fn marker_path(notes_dir: &std::path::Path) -> std::path::PathBuf {
+    match notes_dir.parent() {
+        Some(parent) => parent.join(MARKER),
+        // No parent is not a real layout, but falling back keeps this
+        // infallible rather than skipping the manual entirely.
+        None => notes_dir.join(MARKER),
+    }
+}
+
 /// Create the manual note if this store has never had one.
 ///
 /// Returns the new note's ID when one was created. Failure is never fatal: a
 /// read-only data directory should not stop the app from starting, so the
 /// caller ignores the error.
 pub fn install_if_absent(store: &mut Store) -> Result<Option<String>> {
-    let marker = store.notes_dir.join(MARKER);
+    let marker = marker_path(&store.notes_dir);
+
+    // Earlier versions wrote the marker inside the notes directory, where it
+    // ended up in the user's git history. Move it out, so the next sync stops
+    // carrying it, and treat it as already installed either way.
+    let legacy = store.notes_dir.join(MARKER);
+    if legacy.exists() {
+        let version = std::fs::read_to_string(&legacy).unwrap_or_default();
+        let _ = std::fs::write(&marker, version.trim());
+        let _ = std::fs::remove_file(&legacy);
+    }
+
     if let Ok(text) = std::fs::read_to_string(&marker) {
         if text.trim().parse::<u32>().unwrap_or(0) >= MANUAL_VERSION {
             return Ok(None);
@@ -34,6 +60,9 @@ pub fn install_if_absent(store: &mut Store) -> Result<Option<String>> {
     let note = store.create_note(MANUAL_TITLE, manual_body(), vec!["manual".to_string()], "")?;
     let id = note.id.clone();
     store.save()?;
+    if let Some(parent) = marker.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     std::fs::write(&marker, MANUAL_VERSION.to_string())?;
     Ok(Some(id))
 }
@@ -321,7 +350,7 @@ mod tests {
         install_if_absent(&mut store).unwrap();
 
         // Simulate a marker written by an older release.
-        std::fs::write(store.notes_dir.join(MARKER), "0").unwrap();
+        std::fs::write(marker_path(&store.notes_dir), "0").unwrap();
         assert!(install_if_absent(&mut store).unwrap().is_some());
     }
 
@@ -329,8 +358,41 @@ mod tests {
     fn a_corrupt_marker_is_treated_as_absent_rather_than_crashing() {
         let (mut store, _d) = temp_store();
         std::fs::create_dir_all(&store.notes_dir).unwrap();
-        std::fs::write(store.notes_dir.join(MARKER), "not a number").unwrap();
+        std::fs::write(marker_path(&store.notes_dir), "not a number").unwrap();
         assert!(install_if_absent(&mut store).unwrap().is_some());
+    }
+
+    /// The marker must not sit in the directory `sync` pushes: it is leo's
+    /// bookkeeping, not a note, and committing it also makes a second machine
+    /// think the manual is already installed.
+    #[test]
+    fn the_marker_lives_outside_the_synced_notes_directory() {
+        let (mut store, _d) = temp_store();
+        install_if_absent(&mut store).unwrap();
+
+        assert!(
+            !store.notes_dir.join(MARKER).exists(),
+            "the marker is inside the synced notes directory"
+        );
+        assert!(marker_path(&store.notes_dir).exists());
+        assert_eq!(marker_path(&store.notes_dir).parent(), store.notes_dir.parent());
+    }
+
+    /// An install that already has the old marker keeps working, and the stray
+    /// file is cleaned out of the notes directory.
+    #[test]
+    fn a_legacy_marker_is_migrated_out_of_the_notes_directory() {
+        let (mut store, _d) = temp_store();
+        std::fs::create_dir_all(&store.notes_dir).unwrap();
+        std::fs::write(store.notes_dir.join(MARKER), MANUAL_VERSION.to_string()).unwrap();
+
+        // Already installed, so no second manual...
+        assert_eq!(install_if_absent(&mut store).unwrap(), None);
+        assert!(store.notes.is_empty());
+        // ...and the stray file is gone, with the version preserved.
+        assert!(!store.notes_dir.join(MARKER).exists());
+        let moved = std::fs::read_to_string(marker_path(&store.notes_dir)).unwrap();
+        assert_eq!(moved.trim(), MANUAL_VERSION.to_string());
     }
 
     /// The manual is the primary documentation, so every command surface has to

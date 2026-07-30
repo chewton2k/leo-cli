@@ -1,6 +1,7 @@
 mod action;
 mod ai;
 mod config;
+mod diag;
 mod export;
 mod listen;
 mod manual;

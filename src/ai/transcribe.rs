@@ -167,12 +167,12 @@ fn transcribe_with(
         return provider.transcribe(audio_path);
     }
 
-    eprintln!(
-        "  Long recording (~{}min), splitting into {} chunks for {}...",
+    crate::diag::warn(format!(
+        "long recording (~{}min), splitting into {} chunks for {}",
         duration / 60,
         chunks.len(),
         provider.name()
-    );
+    ));
 
     let mut full = String::new();
     for (i, spec) in chunks.iter().enumerate() {
@@ -185,7 +185,7 @@ fn transcribe_with(
             break;
         }
 
-        eprintln!("  Transcribing chunk {}/{}...", i + 1, chunks.len());
+        crate::diag::warn(format!("transcribing chunk {}/{}", i + 1, chunks.len()));
         let result = provider.transcribe(&path);
         let _ = std::fs::remove_file(&path);
 

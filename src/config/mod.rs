@@ -235,7 +235,7 @@ model = "Systran/faster-whisper-small"
         match Config::config_path() {
             Ok(path) => Config::load_from(&path),
             Err(e) => {
-                eprintln!("  config: {e}; using defaults");
+                crate::diag::warn(format!("config: {e}; using defaults"));
                 let mut cfg = Config::default();
                 cfg.apply_env_overrides();
                 cfg
@@ -248,7 +248,10 @@ model = "Systran/faster-whisper-small"
             Ok(text) => match Config::parse(&text) {
                 Ok(cfg) => cfg,
                 Err(e) => {
-                    eprintln!("  config: {} is invalid ({e}); using defaults", path.display());
+                    crate::diag::warn(format!(
+                        "config: {} is invalid ({e}); using defaults",
+                        path.display()
+                    ));
                     Config::default()
                 }
             },
@@ -287,9 +290,9 @@ model = "Systran/faster-whisper-small"
                 if self.providers.contains_key(name) {
                     self.chat.chain = vec![name.to_string()];
                 } else {
-                    eprintln!(
-                        "  config: LEO_CHAT_PROVIDER names unknown provider \"{name}\"; ignoring"
-                    );
+                    crate::diag::warn(format!(
+                        "config: LEO_CHAT_PROVIDER names unknown provider \"{name}\"; ignoring"
+                    ));
                 }
             }
         }
@@ -299,9 +302,9 @@ model = "Systran/faster-whisper-small"
                 if self.providers.contains_key(name) {
                     self.transcribe.chain = vec![name.to_string()];
                 } else {
-                    eprintln!(
-                        "  config: LEO_TRANSCRIBE_PROVIDER names unknown provider \"{name}\"; ignoring"
-                    );
+                    crate::diag::warn(format!(
+                        "config: LEO_TRANSCRIBE_PROVIDER names unknown provider \"{name}\"; ignoring"
+                    ));
                 }
             }
         }
@@ -310,9 +313,9 @@ model = "Systran/faster-whisper-small"
                 if let Some(provider) = self.providers.get_mut(&first) {
                     provider.model = Some(model);
                 } else {
-                    eprintln!(
-                        "  config: LEO_CHAT_MODEL set but chat provider \"{first}\" has no [providers] block; ignoring"
-                    );
+                    crate::diag::warn(format!(
+                        "config: LEO_CHAT_MODEL set but chat provider \"{first}\" has no [providers] block; ignoring"
+                    ));
                 }
             }
         }
@@ -321,8 +324,8 @@ model = "Systran/faster-whisper-small"
             if let Some(provider) = self.providers.get_mut("openrouter") {
                 provider.model = Some(model);
             } else {
-                eprintln!(
-                    "  config: OPENROUTER_CHAT_MODEL set but there is no \"openrouter\" [providers] block; ignoring"
+                crate::diag::warn(
+                    "config: OPENROUTER_CHAT_MODEL set but there is no \"openrouter\" [providers] block; ignoring",
                 );
             }
         }

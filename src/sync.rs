@@ -21,7 +21,7 @@ pub fn init(notes_dir: &Path) -> Result<()> {
 
     let gitignore = notes_dir.join(".gitignore");
     if !gitignore.exists() {
-        fs::write(&gitignore, "*.wav\n*.bak\n")?;
+        fs::write(&gitignore, GITIGNORE)?;
     }
 
     // Commit any existing files (e.g. migrated notes)
@@ -42,18 +42,33 @@ pub fn connect(notes_dir: &Path, url: &str) -> Result<()> {
     Ok(())
 }
 
+/// These three are what a user explicitly asked for, so their output is the
+/// answer — print it. Callers that hold a full-screen UI run them with the
+/// terminal handed back, so there is nothing to smear.
 pub fn push(notes_dir: &Path) -> Result<()> {
-    run_git(notes_dir, &["push", "-u", "origin", "main"])
+    print_output(run_git(notes_dir, &["push", "-u", "origin", "main"])?);
+    Ok(())
 }
 
 pub fn pull(notes_dir: &Path) -> Result<()> {
-    run_git(notes_dir, &["pull", "origin", "main"])
+    print_output(run_git(notes_dir, &["pull", "origin", "main"])?);
+    Ok(())
 }
 
 pub fn status(notes_dir: &Path) -> Result<()> {
-    run_git(notes_dir, &["status"])
+    print_output(run_git(notes_dir, &["status"])?);
+    Ok(())
 }
 
+fn print_output(output: String) {
+    let text = output.trim_end();
+    if !text.is_empty() {
+        println!("{text}");
+    }
+}
+
+/// Commit whatever changed. Runs from `Store::save`, so it must never print:
+/// the caller may be a full-screen UI.
 pub fn auto_commit(notes_dir: &Path) -> Result<()> {
     run_git(notes_dir, &["add", "."])?;
 
@@ -61,8 +76,9 @@ pub fn auto_commit(notes_dir: &Path) -> Result<()> {
     let has_changes = !Command::new("git")
         .args(["diff", "--cached", "--quiet"])
         .current_dir(notes_dir)
-        .status()
+        .output()
         .context("failed to run git diff --cached")?
+        .status
         .success();
 
     if has_changes {
@@ -71,16 +87,36 @@ pub fn auto_commit(notes_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-fn run_git(dir: &Path, args: &[&str]) -> Result<()> {
-    let status = Command::new("git")
+/// Files inside the notes directory that are leo's business, not the user's
+/// notes, and so must never be pushed to their remote.
+const GITIGNORE: &str = "*.wav\n*.bak\n.manual-installed\n";
+
+/// Run git and capture what it says.
+///
+/// Capturing rather than inheriting is the whole point: `auto_commit` runs on
+/// every save, including while the TUI owns the terminal, and git's "2 files
+/// changed" chatter printed straight onto the alternate screen. Callers that
+/// want the output show it themselves.
+fn run_git(dir: &Path, args: &[&str]) -> Result<String> {
+    let output = Command::new("git")
         .args(args)
         .current_dir(dir)
-        .status()
+        .output()
         .context("failed to run git — is git installed?")?;
-    if !status.success() {
-        anyhow::bail!("git {} exited with {}", args.join(" "), status);
+
+    if !output.status.success() {
+        // git puts failures on stderr; include them so the error is actionable
+        // rather than just a status code.
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let detail = if stderr.is_empty() {
+            String::new()
+        } else {
+            format!(": {stderr}")
+        };
+        anyhow::bail!("git {} failed{detail}", args.join(" "));
     }
-    Ok(())
+
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 #[cfg(test)]
@@ -123,6 +159,56 @@ mod tests {
         init(&notes_dir).unwrap();
 
         auto_commit(&notes_dir).unwrap();
+    }
+
+    /// The bug this guards: git's commit summary printed onto the TUI's
+    /// alternate screen on every save. Nothing in the auto-commit path may
+    /// write to stdout or stderr.
+    #[test]
+    fn auto_commit_captures_git_output_instead_of_inheriting_it() {
+        let tmp = TempDir::new().unwrap();
+        let notes_dir = tmp.path().join("notes");
+        std::fs::create_dir_all(&notes_dir).unwrap();
+        init(&notes_dir).unwrap();
+        std::fs::write(notes_dir.join("a.md"), "content").unwrap();
+
+        // `git add` and `git commit` both go through run_git, which returns
+        // their output as a String rather than letting it reach the terminal.
+        let added = run_git(&notes_dir, &["add", "."]).unwrap();
+        assert!(added.is_empty(), "git add should be silent");
+
+        let committed = run_git(&notes_dir, &["commit", "-m", "x"]).unwrap();
+        assert!(
+            committed.contains("1 file changed") || committed.contains("a.md"),
+            "the summary must be returned, not printed: {committed:?}"
+        );
+    }
+
+    #[test]
+    fn a_failed_git_command_reports_what_git_said() {
+        let tmp = TempDir::new().unwrap();
+        // Not a repo, so this fails.
+        let err = run_git(tmp.path(), &["log"]).unwrap_err().to_string();
+        assert!(err.contains("git log failed"), "got: {err}");
+        assert!(
+            err.to_lowercase().contains("repository") || err.contains(':'),
+            "the error should carry git's own message: {err}"
+        );
+    }
+
+    /// leo's own marker files live in the notes directory but are not notes,
+    /// so a fresh repo must not push them.
+    #[test]
+    fn the_gitignore_covers_leos_own_files() {
+        let tmp = TempDir::new().unwrap();
+        let notes_dir = tmp.path().join("notes");
+        std::fs::create_dir_all(&notes_dir).unwrap();
+        init(&notes_dir).unwrap();
+
+        let gitignore = std::fs::read_to_string(notes_dir.join(".gitignore")).unwrap();
+        assert!(gitignore.contains(".manual-installed"));
+        assert!(gitignore.contains("*.wav"));
+        assert!(gitignore.contains("*.bak"));
     }
 
     #[test]

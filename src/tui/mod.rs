@@ -991,6 +991,20 @@ impl App {
         self.focus = Pane::Notes;
     }
 
+    /// Surface anything the layers below queued while they had no terminal.
+    /// Returns true when a message arrived, so the caller can redraw.
+    fn pump_diagnostics(&mut self) -> bool {
+        let messages = crate::diag::drain();
+        let last = messages.into_iter().next_back();
+        match last {
+            Some(message) => {
+                self.say(Kind::Warn, message);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Absorb whatever the worker has sent since the last tick. Returns true
     /// when something changed and a redraw is warranted.
     fn pump_tasks<B: TuiBackend>(&mut self, terminal: &mut Terminal<B>) -> Result<bool> {
@@ -1150,6 +1164,13 @@ impl App {
 /// again instead would stack a second panic hook and build a second terminal
 /// over the live one.
 fn suspend<B: TuiBackend>(terminal: &mut Terminal<B>) -> Result<()> {
+    // The shell owns the terminal from here, so diagnostics may print again —
+    // and anything already queued is worth showing alongside whatever the
+    // suspended command prints.
+    crate::diag::set_quiet(false);
+    for message in crate::diag::drain() {
+        eprintln!("  {message}");
+    }
     disable_raw_mode()?;
     execute!(std::io::stdout(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
@@ -1166,6 +1187,7 @@ fn suspend<B: TuiBackend>(terminal: &mut Terminal<B>) -> Result<()> {
 /// hangs or errors the app out on resume. Resetting the buffers needs no
 /// round trip.
 fn resume<B: TuiBackend>(terminal: &mut Terminal<B>) -> Result<()> {
+    crate::diag::set_quiet(true);
     enable_raw_mode()?;
     execute!(std::io::stdout(), EnterAlternateScreen, Clear(ClearType::All))?;
     // Two swaps reset both buffers, so the next diff has nothing to compare
@@ -1209,6 +1231,9 @@ fn first_open_checkbox(body: &str) -> Option<usize> {
 /// Run the TUI. `ratatui::init` installs a panic hook that restores the
 /// terminal, so a panic cannot leave the user in raw mode.
 pub fn run() -> Result<()> {
+    // Nothing below the UI may write to the terminal while the panes own it:
+    // a stray line lands on top of them and stays until the next full repaint.
+    crate::diag::set_quiet(true);
     let mut store = Store::load()?;
     // A first run explains itself: the manual is a real note the user can
     // search, scroll, and delete. A failure here must not stop the app.
@@ -1216,6 +1241,9 @@ pub fn run() -> Result<()> {
     let mut terminal = ratatui::init();
     let result = event_loop(&mut terminal, App::new(store));
     ratatui::restore();
+    crate::diag::set_quiet(false);
+    // Anything queued but never shown dies with the screen it belonged to.
+    crate::diag::clear();
     result
 }
 
@@ -1224,8 +1252,10 @@ fn event_loop<B: TuiBackend>(terminal: &mut Terminal<B>, mut app: App) -> Result
         terminal.draw(|frame| app.draw(frame))?;
 
         if !event::poll(TICK)? {
-            // No input: give the worker a chance to report progress.
+            // No input: give the worker a chance to report progress, and pick up
+            // anything the lower layers queued.
             app.pump_tasks(terminal)?;
+            app.pump_diagnostics();
             continue;
         }
         match event::read()? {
@@ -1236,6 +1266,7 @@ fn event_loop<B: TuiBackend>(terminal: &mut Terminal<B>, mut app: App) -> Result
             _ => {}
         }
         app.pump_tasks(terminal)?;
+        app.pump_diagnostics();
     }
     Ok(())
 }
@@ -1447,6 +1478,40 @@ mod tests {
             "body: {}",
             app.store.find_note(&id).unwrap().body
         );
+    }
+
+    /// The bug this guards: work below the UI printed to stdout while the panes
+    /// owned the screen, so git's commit summary and config warnings landed on
+    /// top of the notes list. They now arrive as status-line messages instead.
+    #[test]
+    fn a_background_warning_becomes_a_status_message_not_terminal_output() {
+        let (mut app, _d) = temp_app();
+        crate::diag::set_quiet(true);
+        crate::diag::clear();
+
+        crate::diag::warn("could not read the stored credential for \"groq\"");
+        assert!(app.pump_diagnostics(), "the warning was not picked up");
+
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 12)).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        let out = terminal.backend().to_string();
+        assert!(
+            out.contains("could not read the stored credential"),
+            "the warning never reached the status line:\n{out}"
+        );
+
+        crate::diag::set_quiet(false);
+        crate::diag::clear();
+    }
+
+    #[test]
+    fn pumping_with_nothing_queued_reports_no_change() {
+        let (mut app, _d) = temp_app();
+        crate::diag::set_quiet(true);
+        crate::diag::clear();
+        assert!(!app.pump_diagnostics());
+        crate::diag::set_quiet(false);
     }
 
     #[test]
