@@ -397,30 +397,62 @@ macro_rules! resolve_or_return {
 
 /// All verbs and their aliases, in help order. The completion engine reads
 /// this too, so a new verb becomes completable for free.
+/// An alias earns its place by being something a user already types, not by
+/// saving a keystroke. Three kinds survive:
+///
+/// * shell muscle memory — `ls`, `rm`, `mv`, `exit`, `q`;
+/// * the same letter as the key that does it in the panes — `e`, `x`, `?`;
+/// * nothing else.
+///
+/// Seventeen aliases became six. The rest were a second name to learn for no
+/// gain, and some actively misled: `l` listed notes here while moving between
+/// panes there, and `d` deleted a note here while dropping a provider from a
+/// chain on the settings screen.
 pub const VERBS: &[(&str, &[&str])] = &[
-    ("new", &["n"]),
-    ("list", &["ls", "l"]),
-    ("view", &["v"]),
+    ("new", &[]),
+    ("list", &["ls"]),
+    ("view", &[]),
     ("edit", &["e"]),
-    ("delete", &["rm", "del", "d"]),
-    ("check", &["uncheck", "x"]),
-    ("search", &["find"]),
+    ("delete", &["rm"]),
+    ("check", &["x"]),
+    ("search", &[]),
     ("tags", &[]),
-    ("remind", &["rem"]),
-    ("listen", &["rec"]),
-    ("ask", &["expand"]),
-    ("export", &["exp"]),
+    ("remind", &[]),
+    ("listen", &[]),
+    ("ask", &[]),
+    ("export", &[]),
     ("mkdir", &[]),
     ("cd", &[]),
     ("pwd", &[]),
-    ("mv", &["move"]),
+    ("mv", &[]),
     ("rmdir", &[]),
     ("sync", &[]),
     ("model", &[]),
     ("config", &[]),
     ("clear", &[]),
-    ("help", &["h", "?"]),
+    ("help", &["?"]),
     ("quit", &["exit", "q"]),
+];
+
+/// Aliases that used to work, and what to type instead.
+///
+/// Removing a word someone has in their fingers is only kind if the removal
+/// explains itself. "Unknown command: d" reads like a typo and sends the user
+/// hunting; naming the replacement costs one line.
+pub const RETIRED: &[(&str, &str)] = &[
+    ("l", "list"),
+    ("d", "delete"),
+    ("del", "delete"),
+    ("n", "new"),
+    ("v", "view"),
+    ("rem", "remind"),
+    ("rec", "listen"),
+    ("exp", "export"),
+    ("move", "mv"),
+    ("h", "help"),
+    ("find", "search"),
+    ("expand", "ask"),
+    ("uncheck", "check"),
 ];
 
 /// Every word that can start a command, canonical names and aliases alike.
@@ -500,11 +532,11 @@ pub fn parse(line: &str) -> Parsed {
     let act = |a: Action| Parsed::Action(a);
 
     match verb.as_str() {
-        "new" | "n" => act(Action::New {
+        "new" => act(Action::New {
             title: if args.is_empty() { None } else { Some(joined()) },
         }),
 
-        "list" | "ls" | "l" => {
+        "list" | "ls" => {
             let mut tag = None;
             let mut limit = 20;
             for arg in args {
@@ -517,7 +549,7 @@ pub fn parse(line: &str) -> Parsed {
             act(Action::List { tag, limit })
         }
 
-        "view" | "v" => {
+        "view" => {
             if args.is_empty() {
                 usage("view <note>")
             } else {
@@ -533,7 +565,7 @@ pub fn parse(line: &str) -> Parsed {
             }
         }
 
-        "delete" | "rm" | "del" | "d" => {
+        "delete" | "rm" => {
             if args.is_empty() {
                 usage("delete <note>")
             } else {
@@ -543,7 +575,7 @@ pub fn parse(line: &str) -> Parsed {
 
         // The checkbox number is the last token, so everything before it is the
         // note reference — a title with spaces still resolves.
-        "check" | "uncheck" | "x" => {
+        "check" | "x" => {
             if args.len() < 2 {
                 return usage("check <note> <checkbox number>");
             }
@@ -556,7 +588,7 @@ pub fn parse(line: &str) -> Parsed {
             }
         }
 
-        "search" | "find" => {
+        "search" => {
             let full_text = args.first().map(|s| s == "-f").unwrap_or(false);
             let rest = if full_text { &args[1..] } else { args };
             let query = rest.join(" ");
@@ -567,7 +599,7 @@ pub fn parse(line: &str) -> Parsed {
             }
         }
 
-        "remind" | "rem" => {
+        "remind" => {
             if args.is_empty() {
                 return usage("remind <what to remember>");
             }
@@ -586,7 +618,7 @@ pub fn parse(line: &str) -> Parsed {
             }
         }
 
-        "listen" | "rec" => {
+        "listen" => {
             let screen = args.iter().any(|a| a == "--screen");
             let rest: Vec<String> =
                 args.iter().filter(|a| a.as_str() != "--screen").cloned().collect();
@@ -609,7 +641,7 @@ pub fn parse(line: &str) -> Parsed {
         }
 
         // Format is the last token; the note reference is everything before it.
-        "export" | "exp" => {
+        "export" => {
             if args.len() < 2 {
                 return usage("export <note> <format>   (txt, md, html, docx, pdf, rtf, odt)");
             }
@@ -619,7 +651,7 @@ pub fn parse(line: &str) -> Parsed {
             })
         }
 
-        "ask" | "expand" => {
+        "ask" => {
             if args.is_empty() {
                 usage("ask <note>")
             } else {
@@ -642,7 +674,7 @@ pub fn parse(line: &str) -> Parsed {
 
         "pwd" => act(Action::Pwd),
 
-        "mv" | "move" => {
+        "mv" => {
             if args.len() < 2 {
                 return usage("mv <note>... <directory>");
             }
@@ -706,7 +738,7 @@ pub fn parse(line: &str) -> Parsed {
         },
 
         "clear" => act(Action::Clear),
-        "help" | "h" | "?" => act(Action::Help),
+        "help" | "?" => act(Action::Help),
         "quit" | "exit" | "q" => act(Action::Quit),
 
         // Retired, but still in muscle memory and in old notes: say where the
@@ -717,7 +749,14 @@ pub fn parse(line: &str) -> Parsed {
             why: "keys live in your OS keychain now, not a plaintext file",
         },
 
-        _ => Parsed::Unknown(verb),
+        _ => match RETIRED.iter().find(|(alias, _)| *alias == verb.as_str()) {
+            Some((alias, replacement)) => Parsed::Retired {
+                verb: alias,
+                replacement,
+                why: "one name per command now, so there is less to learn",
+            },
+            None => Parsed::Unknown(verb),
+        },
     }
 }
 
@@ -1432,24 +1471,11 @@ mod parse_tests {
     /// contract with the old REPL.
     #[test]
     fn every_alias_maps_to_the_same_action_as_its_canonical_verb() {
-        let pairs: &[(&str, &str)] = &[
-            ("n Note", "new Note"),
+        let pairs = [
             ("ls", "list"),
-            ("l", "list"),
-            ("v 1", "view 1"),
             ("e 1", "edit 1"),
             ("rm 1", "delete 1"),
-            ("del 1", "delete 1"),
-            ("d 1", "delete 1"),
-            ("uncheck 1 2", "check 1 2"),
             ("x 1 2", "check 1 2"),
-            ("find rust", "search rust"),
-            ("rem call mom", "remind call mom"),
-            ("rec", "listen"),
-            ("expand 1", "ask 1"),
-            ("exp 1 md", "export 1 md"),
-            ("move 1 cs130", "mv 1 cs130"),
-            ("h", "help"),
             ("?", "help"),
             ("exit", "quit"),
             ("q", "quit"),
@@ -1461,6 +1487,50 @@ mod parse_tests {
                 "alias {alias:?} should parse like {canonical:?}"
             );
         }
+    }
+
+    /// A retired alias must name its replacement. Removing a word someone has in
+    /// their fingers is only kind if the removal explains itself; "unknown
+    /// command: d" reads like a typo.
+    #[test]
+    fn every_retired_alias_names_a_real_replacement() {
+        for (alias, replacement) in RETIRED {
+            match parse(alias) {
+                Parsed::Retired {
+                    verb,
+                    replacement: named,
+                    ..
+                } => {
+                    assert_eq!(verb, *alias);
+                    assert_eq!(named, *replacement);
+                    // The replacement has to be something that actually parses.
+                    assert!(
+                        !matches!(parse(named), Parsed::Unknown(_) | Parsed::Retired { .. }),
+                        "{alias} points at {named}, which is not a verb"
+                    );
+                }
+                other => panic!("{alias} should be retired, got {other:?}"),
+            }
+        }
+    }
+
+    /// A retired alias must not also be live, or the table contradicts itself.
+    #[test]
+    fn no_retired_alias_is_still_in_the_verb_table() {
+        for (alias, _) in RETIRED {
+            assert!(
+                !all_verb_words().contains(alias),
+                "{alias} is both retired and live"
+            );
+        }
+    }
+
+    /// The point of the prune: one name per command, give or take the few that
+    /// come from the shell or mirror a key.
+    #[test]
+    fn the_vocabulary_stays_small() {
+        let aliases: usize = VERBS.iter().map(|(_, a)| a.len()).sum();
+        assert!(aliases <= 8, "aliases crept back up to {aliases}");
     }
 
     #[test]

@@ -14,7 +14,7 @@ use anyhow::Result;
 use crate::store::Store;
 
 /// Bump when the manual's content changes enough to be worth re-offering.
-const MANUAL_VERSION: u32 = 1;
+const MANUAL_VERSION: u32 = 2;
 const MARKER: &str = ".manual-installed";
 pub const MANUAL_TITLE: &str = "leo manual";
 
@@ -57,8 +57,28 @@ pub fn install_if_absent(store: &mut Store) -> Result<Option<String>> {
         }
     }
 
-    let note = store.create_note(MANUAL_TITLE, manual_body(), vec!["manual".to_string()], "")?;
-    let id = note.id.clone();
+    // On a version bump, rewrite the note the user already has rather than
+    // adding a second one beside it. A user who deleted theirs is not given
+    // another: the marker below records the attempt either way.
+    let existing = store
+        .notes
+        .iter()
+        .find(|n| n.title == MANUAL_TITLE && n.tags.iter().any(|t| t == "manual"))
+        .map(|n| n.id.clone());
+
+    let id = match existing {
+        Some(id) => {
+            if let Some(note) = store.find_note_mut(&id) {
+                note.body = manual_body();
+                note.updated_at = chrono::Utc::now();
+            }
+            id
+        }
+        None => store
+            .create_note(MANUAL_TITLE, manual_body(), vec!["manual".to_string()], "")?
+            .id
+            .clone(),
+    };
     store.save()?;
     if let Some(parent) = marker.parent() {
         std::fs::create_dir_all(parent)?;
@@ -67,221 +87,59 @@ pub fn install_if_absent(store: &mut Store) -> Result<Option<String>> {
     Ok(Some(id))
 }
 
-/// The manual itself. Organized by task, because the reader is looking for "how
-/// do I move a note", not for an alphabetical list of verbs.
+/// The manual itself: one screen, then a pointer to the rest.
+///
+/// Deliberately not a full reference. `?` already holds every key and every
+/// command, grouped and scrollable, and duplicating it here made the largest
+/// note most users own — permanently sitting at the top of their list. This
+/// answers "what do I do now" and says where the rest is.
 pub fn manual_body() -> String {
     format!(
-        r#"Welcome. This note is the manual — it lives in your notes, so you can
-search it, scroll it, and delete it when you no longer need it.
+        r#"This note is the manual. It is an ordinary note, so you can search it,
+edit it, or delete it — it will not come back.
 
-Everything below works in two places: on the `:` line in this interface, and as
-a `leo <command>` subcommand in your shell.
+## The one-minute version
 
-## Getting around
+Three panes: directories, your notes, and the selected note. `j`/`k` move,
+`h`/`l` switch panes, `Enter` opens. `e` edits the note in your editor, `x`
+ticks the first open checkbox, `D` deletes.
 
-The screen has three panes: directories, notes, and the selected note.
-
-| Key | What it does |
-|-----|--------------|
-| `j` / `k` | Move down / up |
-| `g` / `G` | Jump to first / last |
-| `h` / `l` | Move between panes |
-| `Enter` | Open a directory, or focus the note body |
-| `Ctrl-D` / `Ctrl-U` | Scroll this note |
-| `Ctrl-P` | Fuzzy-find any note, in any directory |
-| `Ctrl-S` | Providers and settings |
-| `Ctrl-R` | Reload from disk |
-| `Esc` | Close an overlay, or clear pinned output |
-| `?` | Help |
-| `q` | Quit |
-
-Notes are numbered in the middle pane. Those numbers are what commands take, so
-`:view 2` opens the second note in the list.
-
-## The `:` line
-
-Press `:` to type a command. Press `Tab` to complete: it knows verbs, note
-titles, directory names, tags, provider names, and export formats, and it
-matches loosely — `:view grtrv` finds "Graph traversals".
-
-When you complete a note by title, leo substitutes its number for you.
-
-Press `/` as a shortcut for `:search `. `Up` and `Down` walk back through
-commands you have already run, and `Ctrl-W` deletes a word, `Ctrl-U` the line.
-
-## Writing notes
-
-| Command | What it does |
-|---------|--------------|
-| `:new [title]` | Create a note. Opens your `$EDITOR` |
-| `:edit <note>` | Edit a note in `$EDITOR` |
-| `:view <note>` | Show a note |
-| `:delete <note>` | Delete a note. Asks first |
-| `:list [#tag] [N]` | List notes, optionally by tag or capped at N |
-| `:search <query>` | Search titles |
-| `:search -f <query>` | Search titles and bodies |
-| `:tags` | Every tag, with counts |
-
-Shortcuts: `n`, `e`, `v`, `rm`, `ls`, `find`. `D` deletes the selected note
-without typing anything.
-
-`<note>` accepts a list number (`2`), an ID prefix (`3f2a`), or a distinctive
-part of the title (`ownership`).
-
-Notes are plain Markdown files with a small YAML header. Nothing is locked in —
-you can edit them with any editor, and `sync` pushes them to GitHub as-is.
-
-## Checklists
-
-Write checkboxes as `- [ ] thing`. Then:
-
-- `x` toggles the first unchecked box in the selected note
-- `:check <note> <N>` toggles box number N
-
-- [ ] Try toggling this box with `x`
-- [x] This one is already done
-
-## Directories
-
-| Command | What it does |
-|---------|--------------|
-| `:mkdir <name>` | Create a directory |
-| `:cd <dir>` | Enter it. `..` goes up, `/` goes to the root |
-| `:pwd` | Where am I |
-| `:mv <note>... <dir>` | Move one or more notes |
-| `:rmdir <name>` | Remove an empty directory |
-| `:rmdir -r <name>` | Remove a directory and everything inside it |
-
-Selecting a directory in the left pane and pressing `Enter` is the same as `cd`.
-Pressing `D` there deletes that directory and everything in it — it tells you how
-many notes that is and waits for you to confirm. In the notes pane, `D` deletes
-just the selected note.
-
-`:list` shows only the current directory. Search and `Ctrl-P` always look
-everywhere.
-
-## Reminders
+Anything that takes an argument goes on the `:` line:
 
 ```
-:remind me to buy milk
+:new Rust ownership        create a note
+:search borrow             find one
+:mkdir cs130               make a directory
+:mv 2 cs130                move note 2 into it
 ```
 
-Reminders collect as checkboxes in one note tagged `#reminder`. Toggle them like
-any other checkbox.
+`Tab` completes titles, directories and tags. Notes are numbered as you see
+them, so `:view 2` means the second one in the pane.
 
-## Recording a lecture
+## Press `?` for everything else
 
-```
-:listen                    start recording
-:listen Lecture 4          ...with a title you choose
-:listen add 2              ...appending to note 2 instead of creating one
-:listen --screen           capture system audio instead of the microphone
-```
+That help screen is the full reference — every key, every command, grouped and
+scrollable. It is always one keypress away, which is why this note is short.
 
-While recording, the right pane fills with short bullets summarizing what has
-been said so far. Press `t` to switch to the raw transcript, and `Enter` to
-stop.
+## Talking instead of typing
 
-Stopping is not cancelling. The finished recording is transcribed in one pass and
-saved as a note, so the result does not depend on what the live view managed to
-catch.
+`:listen` records and turns speech into structured notes. Press `t` while it
+runs to see the raw transcript, `Enter` to stop. Writing `@leo <question>` in a
+note and running `:ask` replaces that line with an answer.
 
-Needs SoX (`brew install sox`) and one working transcription provider.
+Both need a model. `Ctrl-S` shows which ones are set up and lets you add one;
+`leo doctor` in a shell reports anything missing along with the command that
+installs it.
 
-## Asking questions inside a note
+## Your notes are just files
 
-Write a line starting with `@leo` anywhere in a note:
+Plain markdown, one file per note, in `{notes_dir}`. `:sync init` then
+`:sync connect <url>` backs them up to git; after that every save commits.
+`:export 1 pdf` writes a copy elsewhere.
 
-```
-@leo what is the difference between Box and Rc?
-```
-
-Then run `:ask <note>`. Each `@leo` line is replaced by the answer, in place.
-Saving a note you edited with `e` does this automatically.
-
-## Exporting
-
-```
-:export <note> md
-```
-
-Formats: `txt`, `md`, `html`, `docx`, `pdf`, `rtf`, `odt`. The last four need
-Pandoc (`brew install pandoc`). Files land on your Desktop.
-
-## Backing up to GitHub
-
-```
-:sync init                 make the notes directory a git repo
-:sync connect <url>        point it at a remote
-:sync push                 send notes up
-:sync pull                 bring notes down
-:sync status               what changed
-```
-
-Once initialized, every save commits automatically.
-
-## AI providers
-
-Press `Ctrl-S` for the provider screen. It lists both chains — one for chat, one
-for transcription — with each provider's model and whether it has a key, and
-below them everything else that is configured but unused.
-
-| Key | On the provider screen |
-|-----|------------------------|
-| `j` / `k` | Move between providers |
-| `l` | Store an API key (typing is hidden) |
-| `x` | Remove a stored key |
-| `t` | Send one small request to check it works |
-| `J` / `K` | Change priority within a chain |
-| `a` | Add the selected provider to its chain |
-| `d` | Drop it from the chain (it stays configured) |
-| `e` | Open the config file in `$EDITOR` |
-| `Esc` | Close |
-
-A filled dot means leo would use that provider right now. A hollow one means it
-is configured but not usable yet — usually a missing key, a binary that is not
-installed, or a local server that is not running.
-
-Providers are tried in order, and unavailable ones are skipped silently, so it
-is fine to list more than you have. That means a laptop with Ollama installed
-uses it for free and falls back to a cloud provider only when Ollama is not
-running.
-
-```
-:model list                what is configured, and what has a key
-:model login <provider>    store an API key in your OS keychain
-:model test <provider>     one small request, to check it works
-:config edit               open the config file in $EDITOR
-```
-
-Keys go in your operating system's keychain, never in a file in this directory.
-
-Nothing here requires an API key if you run models locally:
-
-```
-brew install ollama whisper-cpp
-ollama pull qwen3:8b
-```
-
-## Reading notes from your phone
-
-```
-leo serve --port 3131
-```
-
-Opens a small web page with a QR code, on your local network. It has no
-password, so only do this on a network you trust.
-
-## Where things live
-
-- Notes: `{notes_dir}`
-- Settings: `{config_path}`
-- Keys: your OS keychain, under the service name `leo`
-
----
-
-That is everything. Delete this note whenever you like — it will not come back.
-Press `?` for the short version at any time."#,
+Settings live in `{config_path}`. API keys never do — they go in your OS
+keychain, via `Ctrl-S` or `leo model login`.
+"#,
         notes_dir = "<data dir>/leo/notes/",
         config_path = "<config dir>/leo/config.toml",
     )
@@ -401,50 +259,85 @@ mod tests {
 
     /// The manual is the primary documentation, so every command surface has to
     /// appear in it. A new verb that never gets documented is a real bug.
+    /// The manual is a quickstart, not a reference. The reference is `?`, and
+    /// duplicating it here made the largest note most users own.
     #[test]
-    fn the_manual_documents_every_command_verb() {
+    fn the_manual_fits_on_a_screen_or_two() {
         let body = manual_body();
-        for (canonical, _aliases) in crate::action::VERBS {
-            // `env` is legacy and deliberately undocumented; `clear` and `help`
-            // are UI affordances covered by the key table.
-            if matches!(*canonical, "env" | "clear" | "help" | "quit") {
-                continue;
-            }
-            assert!(
-                body.contains(canonical),
-                "the manual never mentions `{canonical}`"
-            );
+        let lines = body.lines().count();
+        assert!(lines <= 60, "the manual grew back to {lines} lines");
+    }
+
+    /// Short is only acceptable if the full reference is discoverable from it.
+    #[test]
+    fn the_manual_points_at_the_full_reference() {
+        let body = manual_body();
+        assert!(body.contains("`?`"), "never mentions the help key");
+        assert!(body.contains("Ctrl-S"), "never mentions the provider screen");
+        assert!(body.contains("leo doctor"), "never mentions doctor");
+    }
+
+    /// The handful of things a first-time user needs on day one must be here,
+    /// even though the exhaustive list is not.
+    #[test]
+    fn the_manual_covers_the_day_one_commands() {
+        let body = manual_body();
+        for verb in ["new", "search", "mkdir", "mv", "listen", "ask", "sync", "export"] {
+            assert!(body.contains(verb), "the manual never mentions `{verb}`");
+        }
+        // And the keys someone needs before they find the help screen.
+        for key in ["j", "k", "Enter", "Tab", "e", "x", "D"] {
+            assert!(body.contains(key), "the manual never mentions the {key} key");
         }
     }
 
+    /// No stale instructions: a command the manual names must still exist.
     #[test]
-    fn the_manual_documents_every_key_in_the_help_table() {
+    fn the_manual_names_no_retired_command() {
         let body = manual_body();
-        for key in crate::tui::view::help::all_keys() {
-            // Keys are written with backticks in the manual's tables, and
-            // commands appear as `:verb`, so compare on the first token.
-            let first = key.split(' ').next().unwrap_or(key);
+        for (alias, _) in crate::action::RETIRED {
+            // Checked as a `:` command, since short aliases like `e` and `x`
+            // appear as prose elsewhere.
             assert!(
-                body.contains(first),
-                "the manual never mentions the `{key}` key"
+                !body.contains(&format!(":{alias} ")) && !body.contains(&format!(":{alias}\n")),
+                "the manual still tells the user to run `:{alias}`"
             );
         }
+        assert!(!body.contains("leo env"), "the manual still mentions leo env");
     }
 
     #[test]
     fn the_manual_has_scrollable_structure_rather_than_one_wall_of_text() {
         let body = manual_body();
         let headings = body.lines().filter(|l| l.starts_with("## ")).count();
-        assert!(headings >= 8, "only {headings} sections");
-        // Tables and fenced examples are what make it skimmable.
-        assert!(body.contains("| Key | What it does |"));
-        assert!(body.contains("```"));
+        assert!(headings >= 4, "only {headings} sections");
+        assert!(body.contains("```"), "no examples to copy");
     }
 
     #[test]
-    fn the_manual_mentions_where_keys_are_stored_and_that_it_is_not_a_file() {
+    fn the_manual_says_keys_go_in_the_keychain_and_not_a_file() {
         let body = manual_body().to_lowercase();
         assert!(body.contains("keychain"));
-        assert!(body.contains("never in a file"));
+        assert!(body.contains("never"), "does not say keys are never in the file");
+    }
+
+    /// A version bump must rewrite the note the user already has rather than
+    /// leaving two manuals side by side.
+    #[test]
+    fn a_new_manual_version_replaces_the_old_note() {
+        let (mut store, _d) = temp_store();
+        let first = install_if_absent(&mut store).unwrap().unwrap();
+
+        // Simulate an older release's marker, and an older body.
+        std::fs::write(marker_path(&store.notes_dir), "1").unwrap();
+        if let Some(note) = store.find_note_mut(&first) {
+            note.body = "old text".to_string();
+        }
+        store.save().unwrap();
+
+        let second = install_if_absent(&mut store).unwrap().unwrap();
+        assert_eq!(second, first, "a second manual was created");
+        assert_eq!(store.notes.len(), 1, "two manuals now exist");
+        assert!(store.find_note(&first).unwrap().body.contains("one-minute"));
     }
 }

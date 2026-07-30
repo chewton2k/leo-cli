@@ -124,6 +124,7 @@ pub const SECTIONS: &[Section] = &[
             e(":model login <p>", "store a key in the OS keychain"),
             e(":model test <p>", "one small request to check it"),
             e(":config edit", "open config.toml in $EDITOR"),
+            e("leo doctor", "what works here, and what to install"),
         ],
     },
     Section {
@@ -132,6 +133,7 @@ pub const SECTIONS: &[Section] = &[
             e(":export <note> <fmt>", "txt md html docx pdf rtf odt"),
             e(":sync <sub>", "init, connect, push, pull, status"),
             e("leo serve", "read notes from your phone (shell only)"),
+            e("Ctrl-R", "reload from disk, and repaint the screen"),
         ],
     },
 ];
@@ -324,17 +326,41 @@ mod tests {
         assert!(all_keys().len() >= 20, "only {} keys", all_keys().len());
     }
 
-    /// Every verb in the vocabulary should be discoverable here, since this is
-    /// what `?` shows. `env` is legacy and deliberately hidden.
+    /// Every verb must be discoverable here. This is now the *only* full
+    /// reference — the manual note was cut to a quickstart that points at `?` —
+    /// so a gap here is a gap everywhere.
     #[test]
     fn every_command_verb_appears_in_help() {
         let text: String = help_lines().iter().map(|l| l.to_string()).collect();
         for (verb, _aliases) in crate::action::VERBS {
-            if matches!(*verb, "env" | "clear" | "help" | "quit" | "pwd") {
+            // `clear`, `help` and `quit` are single keys documented as keys;
+            // `pwd` is what the status line already shows.
+            if matches!(*verb, "clear" | "help" | "quit" | "pwd") {
                 continue;
             }
             assert!(text.contains(verb), "help never mentions `{verb}`");
         }
+    }
+
+    /// And no retired name may linger, or the reference teaches a command that
+    /// no longer works.
+    #[test]
+    fn no_retired_command_appears_in_help() {
+        let text: String = help_lines().iter().map(|l| l.to_string()).collect();
+        for (alias, _) in crate::action::RETIRED {
+            assert!(
+                !text.contains(&format!(":{alias} ")),
+                "help still documents `:{alias}`"
+            );
+        }
+        assert!(!text.contains("leo env"), "help still documents leo env");
+    }
+
+    /// The one command that diagnoses a broken setup has to be findable.
+    #[test]
+    fn help_mentions_doctor() {
+        let text: String = help_lines().iter().map(|l| l.to_string()).collect();
+        assert!(text.contains("leo doctor"));
     }
 
     #[test]
