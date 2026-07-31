@@ -178,8 +178,6 @@ enum ModelCommands {
         /// Provider name from your config
         name: String,
     },
-    /// Move keys stored in an old keychain entry into leo's credentials file
-    Import,
 }
 
 #[derive(Subcommand)]
@@ -199,7 +197,6 @@ impl From<ModelCommands> for action::ModelAction {
             ModelCommands::Test { name } => action::ModelAction::Test { name },
             ModelCommands::Login { name } => action::ModelAction::Login { name },
             ModelCommands::Logout { name } => action::ModelAction::Logout { name },
-            ModelCommands::Import => action::ModelAction::Import,
         }
     }
 }
@@ -630,57 +627,6 @@ pub fn run_model(command: action::ModelAction) -> Result<()> {
             }
             store.set(&name, secret.trim())?;
             println!("  {} stored for {name}.", "ok".green());
-            Ok(())
-        }
-
-        // The one place that reads the OS keychain, and only because the user
-        // asked. macOS may prompt once here — that is the last time, because
-        // what comes out is written to a file leo can read without asking.
-        action::ModelAction::Import => {
-            let keychain = config::secret::KeyringStore;
-            let names: Vec<String> = cfg
-                .providers
-                .iter()
-                .filter(|(_, p)| p.key_env.is_some())
-                .map(|(name, _)| name.clone())
-                .collect();
-
-            println!();
-            println!("  Reading the keychain. macOS may ask for permission once.");
-            let mut moved = Vec::new();
-            for name in &names {
-                if let Ok(Some(secret)) = keychain.get(name) {
-                    store.set(name, secret.as_str())?;
-                    moved.push(name.clone());
-                }
-            }
-            // Also anything an older layout left in per-provider items.
-            for name in keychain.migrate_legacy(&names) {
-                if let Ok(Some(secret)) = keychain.get(&name) {
-                    store.set(&name, secret.as_str())?;
-                    if !moved.contains(&name) {
-                        moved.push(name);
-                    }
-                }
-            }
-
-            println!();
-            if moved.is_empty() {
-                println!("  {}", "Nothing was stored in the keychain.".yellow());
-                println!("  Use `leo model login <provider>` to store a key.");
-            } else {
-                for name in &moved {
-                    println!("  {} {name}", "moved".green());
-                }
-                println!();
-                match config::file_store::FileStore::new() {
-                    Ok(f) => println!("  Now in {} (readable only by you).", f.path().display()),
-                    Err(_) => println!("  Now in leo's credentials file."),
-                }
-                println!("  You can delete leo's keychain entry: it is no longer read.");
-                println!("  {}", "macOS will not ask again.".green());
-            }
-            println!();
             Ok(())
         }
 

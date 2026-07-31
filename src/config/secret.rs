@@ -265,89 +265,20 @@ impl KeyringStore {
         Ok(())
     }
 
-    /// Read a credential stored by an older version, which used one item per
-    /// provider, and fold it into the bundle so it is never read again.
-    ///
-    /// Only called when a key is actually needed, never to display status: each
-    /// one of these is a permission dialog, and the point of the bundle is to
-    /// stop paying that per provider.
-    fn adopt_legacy(&self, account: &str) -> Option<String> {
-        let found = Self::entry(account)
-            .and_then(|e| match e.get_password() {
-                Ok(secret) => Ok(Some(secret)),
-                Err(keyring::Error::NoEntry) => Ok(None),
-                Err(e) => Err(e.into()),
-            })
-            .ok()
-            .flatten()?;
-
-        let mut bundle = self.bundle();
-        bundle.insert(account.to_string(), found.clone());
-        if self.write_bundle(&bundle).is_ok() {
-            // The old item is redundant now. Failing to remove it is harmless:
-            // the bundle takes precedence from here.
-            let _ = Self::entry(account).map(|e| e.delete_credential());
-            crate::diag::warn(format!(
-                "moved the stored key for \"{account}\" into leo's single keychain item"
-            ));
-        }
-        Some(found)
-    }
-}
-
-impl KeyringStore {
-    /// Fold any keys stored by an older version into the bundle.
-    ///
-    /// Runs once per installation, guarded by the caller. Each legacy item may
-    /// cost one permission dialog, which is why this happens once and eagerly
-    /// rather than lazily forever: paying it now means the provider screen never
-    /// pays it again.
-    ///
-    /// Returns the provider names that were moved.
-    pub fn migrate_legacy(&self, providers: &[String]) -> Vec<String> {
-        let mut moved = Vec::new();
-        let mut bundle = self.bundle();
-
-        for name in providers {
-            if bundle.contains_key(name) {
-                continue;
-            }
-            let found = Self::entry(name).and_then(|e| match e.get_password() {
-                Ok(secret) => Ok(Some(secret)),
-                Err(keyring::Error::NoEntry) => Ok(None),
-                Err(e) => Err(e.into()),
-            });
-            if let Ok(Some(secret)) = found {
-                bundle.insert(name.clone(), secret);
-                moved.push(name.clone());
-            }
-        }
-
-        if !moved.is_empty() && self.write_bundle(&bundle).is_ok() {
-            for name in &moved {
-                let _ = Self::entry(name).map(|e| e.delete_credential());
-            }
-        }
-        moved
-    }
 }
 
 impl SecretStore for KeyringStore {
     fn get(&self, account: &str) -> Result<Option<Secret>> {
-        if let Some(found) = self.bundle().get(account) {
-            return Ok(Some(Secret(Zeroizing::new(found.clone()))));
-        }
-        // Not in the bundle: it may predate it.
         Ok(self
-            .adopt_legacy(account)
-            .map(|s| Secret(Zeroizing::new(s))))
+            .bundle()
+            .get(account)
+            .map(|found| Secret(Zeroizing::new(found.clone()))))
     }
 
-    /// Whether a key is stored, answered from the bundle alone.
+    /// Whether a key is stored, without reading its value.
     ///
-    /// Never consults a legacy item, because this is what the provider screen
-    /// calls for every provider it lists — and prompting eighteen times to draw
-    /// a list is the friction this whole design exists to remove.
+    /// The provider screen calls this for every provider it lists, and on a
+    /// keychain a *read* is what can cost a permission dialog.
     fn has(&self, account: &str) -> bool {
         self.bundle().contains_key(account)
     }

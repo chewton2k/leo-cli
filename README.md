@@ -47,9 +47,6 @@ have encryption at rest and do not mind the prompts, set `LEO_USE_KEYCHAIN=1`.
 If you would rather store nothing at all, use env vars — they take precedence
 over both.
 
-Upgrading from a version that used the keychain? `leo model import` moves the
-keys across. It asks for permission once, and that is the last time.
-
 Tune providers and fallback order in `leo config edit`. Providers are tried in
 order and unavailable ones (no key, no binary, closed port) are skipped
 silently, so listing more providers than you have installed is fine.
@@ -356,7 +353,6 @@ The same things work from a shell:
 leo model list                 # both chains, models, and credential status
 leo model test openrouter      # one minimal request to check it works
 leo model login openrouter     # store a key (echo disabled)
-leo model import               # move keys out of an old keychain entry
 leo model logout openrouter    # remove it
 leo config path                # where config.toml lives
 leo config edit                # open it in $EDITOR

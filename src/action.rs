@@ -96,8 +96,6 @@ pub enum ModelAction {
     Test { name: String },
     Login { name: String },
     Logout { name: String },
-    /// Move keys out of the OS keychain and into leo's credentials file.
-    Import,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
