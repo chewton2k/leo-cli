@@ -470,6 +470,7 @@ mod tests {
                 chain: chat.into_iter().map(String::from).collect(),
             },
             transcribe: crate::config::provider::TaskChain { chain: vec![] },
+            theme: Default::default(),
         }
     }
 

@@ -106,7 +106,7 @@ pub fn render(frame: &mut Frame, area: Rect, finder: &Finder) {
     frame.render_widget(
         Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme::ACCENT))
+            .border_style(Style::default().fg(theme::accent()))
             .title("find note"),
         box_area,
     );
@@ -122,7 +122,7 @@ pub fn render(frame: &mut Frame, area: Rect, finder: &Finder) {
 
     frame.render_widget(
         Paragraph::new(TuiLine::from(vec![
-            Span::styled("› ", Style::default().fg(theme::ACCENT)),
+            Span::styled("› ", Style::default().fg(theme::accent())),
             Span::raw(finder.query().to_string()),
         ])),
         query_area,

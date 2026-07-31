@@ -159,7 +159,7 @@ fn help_lines() -> Vec<TuiLine<'static>> {
         }
         lines.push(TuiLine::from(Span::styled(
             format!(" {}", section.title),
-            Style::default().fg(theme::ACCENT).add_modifier(Modifier::BOLD),
+            Style::default().fg(theme::accent()).add_modifier(Modifier::BOLD),
         )));
         for entry in section.entries {
             lines.push(TuiLine::from(vec![
@@ -226,7 +226,7 @@ pub fn render_help(frame: &mut Frame, area: Rect, scroll: u16) {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(theme::ACCENT))
+                    .border_style(Style::default().fg(theme::accent()))
                     .title(more),
             )
             .scroll((scroll, 0))

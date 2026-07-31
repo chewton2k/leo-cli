@@ -89,15 +89,15 @@ fn credential_span(credential: &Credential) -> Span<'static> {
         ),
         Credential::Stored => Span::styled(
             "key stored".to_string(),
-            Style::default().fg(theme::GOOD),
+            Style::default().fg(theme::good()),
         ),
         Credential::Env { var, redacted } => Span::styled(
             format!("env {var} {redacted}"),
-            Style::default().fg(theme::WARN),
+            Style::default().fg(theme::warn()),
         ),
         Credential::Missing => Span::styled(
             "no key — press l".to_string(),
-            Style::default().fg(theme::BAD),
+            Style::default().fg(theme::bad()),
         ),
     }
 }
@@ -106,12 +106,12 @@ fn item(row: &Row) -> ListItem<'static> {
     match row {
         Row::Header(task) => ListItem::new(TuiLine::from(Span::styled(
             format!(" {} chain", task.label()),
-            Style::default().fg(theme::ACCENT).add_modifier(Modifier::BOLD),
+            Style::default().fg(theme::accent()).add_modifier(Modifier::BOLD),
         ))),
 
         Row::AvailableHeader => ListItem::new(TuiLine::from(Span::styled(
             " also configured".to_string(),
-            Style::default().fg(theme::ACCENT).add_modifier(Modifier::BOLD),
+            Style::default().fg(theme::accent()).add_modifier(Modifier::BOLD),
         ))),
 
         Row::Member { position, name, model, credential, ready, .. } => {
@@ -166,7 +166,7 @@ pub fn render(frame: &mut Frame, area: Rect, rows: &[Row], selected: usize, stat
     frame.render_widget(
         Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme::ACCENT))
+            .border_style(Style::default().fg(theme::accent()))
             .title(" providers "),
         box_area,
     );
@@ -199,7 +199,7 @@ pub fn render(frame: &mut Frame, area: Rect, rows: &[Row], selected: usize, stat
         frame.render_widget(
             Paragraph::new(Span::styled(
                 format!(" {status}"),
-                Style::default().fg(theme::WARN),
+                Style::default().fg(theme::warn()),
             )),
             status_area,
         );

@@ -2,6 +2,7 @@ pub mod edit;
 pub mod file_store;
 pub mod provider;
 pub mod secret;
+pub mod theme;
 
 use std::collections::BTreeMap;
 
@@ -18,6 +19,8 @@ pub struct Config {
     pub transcribe: TaskChain,
     #[serde(default)]
     pub providers: BTreeMap<String, ProviderConfig>,
+    #[serde(default)]
+    pub theme: theme::ThemeConfig,
 }
 
 /// Default chat chain: local first (free, private), cloud second.

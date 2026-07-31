@@ -9,6 +9,7 @@ pub mod help;
 pub mod line;
 pub mod notes;
 pub mod overlay;
+pub mod markdown;
 pub mod preview;
 pub mod progress;
 pub mod settings;

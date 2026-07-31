@@ -35,7 +35,7 @@ pub fn render_command(
     }
 
     let mut spans = vec![
-        Span::styled(":", Style::default().fg(theme::ACCENT)),
+        Span::styled(":", Style::default().fg(theme::accent())),
         Span::raw(text.to_string()),
     ];
     if let Some(ghost) = ghost {
@@ -53,38 +53,191 @@ pub fn render_command(
     frame.set_cursor_position(Position::new(x.min(area.x + area.width.saturating_sub(1)), area.y));
 }
 
-/// One line of transient state: where we are, and what just happened.
+/// What the right-hand side of the bar reports.
+///
+/// Passed in rather than computed here so the view stays a view: the counts come
+/// from the store, which this module has no business reaching into.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Counts {
+    /// Notes in the current listing.
+    pub notes: usize,
+    /// Words in the selected note, or none when nothing is selected.
+    pub words: Option<usize>,
+}
+
+/// The status bar: where we are, what just happened, and what is here.
+///
+/// Drawn as a filled bar rather than text on the terminal background. The
+/// difference is not decoration — a bar gives the interface a bottom edge, so the
+/// panes read as a window instead of text that happens to stop.
 pub fn render_status(
     frame: &mut Frame,
     area: Rect,
     dir: &str,
     message: Option<(Kind, &str)>,
     busy: Option<&str>,
+    counts: Counts,
 ) {
-    let where_ = if dir.is_empty() { "/".to_string() } else { format!("/{dir}") };
-    let mut spans = vec![Span::styled(
+    let bar = Style::default().bg(theme::bar());
+
+    // Fill first: every cell gets the background, including the gap in the
+    // middle, or the bar would appear as two disconnected patches.
+    frame.render_widget(ratatui::widgets::Block::default().style(bar), area);
+
+    let where_ = if dir.is_empty() {
+        "/".to_string()
+    } else {
+        format!("/{dir}")
+    };
+    let mut left = vec![Span::styled(
         format!(" {where_} "),
-        Style::default().fg(theme::ACCENT).add_modifier(Modifier::BOLD),
+        bar.fg(theme::accent()).add_modifier(Modifier::BOLD),
     )];
 
     if let Some(label) = busy {
-        spans.push(Span::styled(
-            format!("• {label} "),
-            Style::default().fg(theme::WARN),
-        ));
+        left.push(Span::styled(format!("{label} "), bar.fg(theme::warn())));
     }
 
     if let Some((kind, text)) = message {
-        spans.push(Span::styled(text.to_string(), style_for(kind)));
+        // Keep the message's intent colour, but on the bar's background.
+        let style = style_for(kind).bg(theme::bar());
+        left.push(Span::styled(text.to_string(), style));
     }
 
-    frame.render_widget(Paragraph::new(TuiLine::from(spans)), area);
+    let right = summary(counts);
+    let left_width: usize = left.iter().map(|s| s.content.chars().count()).sum();
+    let right_width = right.chars().count();
+
+    frame.render_widget(Paragraph::new(TuiLine::from(left)).style(bar), area);
+
+    // Only draw the counts if they fit without colliding with the message.
+    if right_width > 0 && left_width + right_width + 2 <= area.width as usize {
+        let x = area.x + area.width - right_width as u16 - 1;
+        let right_area = Rect::new(x, area.y, right_width as u16, 1);
+        frame.render_widget(
+            Paragraph::new(TuiLine::from(Span::styled(
+                right,
+                bar.add_modifier(Modifier::DIM),
+            )))
+            .style(bar),
+            right_area,
+        );
+    }
+}
+
+/// The right-hand summary: note count, and the selected note's length.
+///
+/// Pluralised, because "1 notes" is the kind of detail that makes software feel
+/// unfinished.
+fn summary(counts: Counts) -> String {
+    let notes = match counts.notes {
+        1 => "1 note".to_string(),
+        n => format!("{n} notes"),
+    };
+    match counts.words {
+        Some(1) => format!("{notes} · 1 word"),
+        Some(w) => format!("{notes} · {w} words"),
+        None => notes,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use ratatui::{backend::TestBackend, Terminal};
+
+    fn counts(notes: usize, words: Option<usize>) -> Counts {
+        Counts { notes, words }
+    }
+
+    /// The bar must be a bar: every cell carries the background, or it looks like
+    /// two disconnected patches of colour.
+    #[test]
+    fn the_status_bar_is_filled_all_the_way_across() {
+        let mut t = Terminal::new(TestBackend::new(40, 1)).unwrap();
+        t.draw(|f| render_status(f, f.area(), "cs130", None, None, counts(3, None)))
+            .unwrap();
+
+        let buffer = t.backend().buffer().clone();
+        for x in 0..40 {
+            assert_eq!(
+                buffer[(x, 0)].style().bg,
+                Some(theme::bar()),
+                "cell {x} has no bar background"
+            );
+        }
+    }
+
+    #[test]
+    fn the_bar_shows_where_we_are_and_what_is_here() {
+        let mut t = Terminal::new(TestBackend::new(50, 1)).unwrap();
+        t.draw(|f| render_status(f, f.area(), "cs130", None, None, counts(3, Some(120))))
+            .unwrap();
+        let out = t.backend().to_string();
+        assert!(out.contains("/cs130"), "{out}");
+        assert!(out.contains("3 notes"), "{out}");
+        assert!(out.contains("120 words"), "{out}");
+    }
+
+    #[test]
+    fn the_root_directory_reads_as_a_slash() {
+        let mut t = Terminal::new(TestBackend::new(30, 1)).unwrap();
+        t.draw(|f| render_status(f, f.area(), "", None, None, counts(0, None)))
+            .unwrap();
+        assert!(t.backend().to_string().contains('/'));
+    }
+
+    #[test]
+    fn counts_are_pluralised() {
+        assert_eq!(summary(counts(1, None)), "1 note");
+        assert_eq!(summary(counts(2, None)), "2 notes");
+        assert_eq!(summary(counts(0, None)), "0 notes");
+        assert_eq!(summary(counts(1, Some(1))), "1 note · 1 word");
+        assert_eq!(summary(counts(2, Some(9))), "2 notes · 9 words");
+    }
+
+    /// A long message must not be overwritten by the counts, nor overflow.
+    #[test]
+    fn the_counts_give_way_to_a_long_message() {
+        let mut t = Terminal::new(TestBackend::new(30, 1)).unwrap();
+        let long = "a message long enough to fill the whole bar and then some";
+        t.draw(|f| {
+            render_status(
+                f,
+                f.area(),
+                "somewhere",
+                Some((Kind::Good, long)),
+                None,
+                counts(42, Some(999)),
+            )
+        })
+        .unwrap();
+        let out = t.backend().to_string();
+        assert!(!out.contains("42 notes"), "counts collided with the message: {out}");
+    }
+
+    #[test]
+    fn a_message_keeps_its_intent_colour_on_the_bar() {
+        let mut t = Terminal::new(TestBackend::new(40, 1)).unwrap();
+        t.draw(|f| {
+            render_status(f, f.area(), "", Some((Kind::Bad, "failed")), None, counts(1, None))
+        })
+        .unwrap();
+        let buffer = t.backend().buffer().clone();
+        let has_bad = (0..40).any(|x| buffer[(x, 0)].style().fg == Some(theme::bad()));
+        assert!(has_bad, "an error message lost its colour on the bar");
+    }
+
+    #[test]
+    fn a_narrow_terminal_does_not_panic() {
+        for width in [1, 2, 3, 8] {
+            let mut t = Terminal::new(TestBackend::new(width, 1)).unwrap();
+            t.draw(|f| {
+                render_status(f, f.area(), "deep/directory", None, Some("Working"), counts(9, Some(9)))
+            })
+            .unwrap();
+        }
+    }
 
     #[test]
     fn an_inactive_command_line_shows_the_key_hints() {
@@ -121,7 +274,7 @@ mod tests {
     fn the_status_line_shows_the_directory_and_the_last_message() {
         let mut t = Terminal::new(TestBackend::new(60, 1)).unwrap();
         t.draw(|f| {
-            render_status(f, f.area(), "cs130/lec", Some((Kind::Good, "Created abc")), None)
+            render_status(f, f.area(), "cs130/lec", Some((Kind::Good, "Created abc")), None, Counts::default())
         })
         .unwrap();
         let out = t.backend().to_string();
@@ -132,14 +285,14 @@ mod tests {
     #[test]
     fn the_root_directory_shows_as_a_slash() {
         let mut t = Terminal::new(TestBackend::new(20, 1)).unwrap();
-        t.draw(|f| render_status(f, f.area(), "", None, None)).unwrap();
+        t.draw(|f| render_status(f, f.area(), "", None, None, Counts::default())).unwrap();
         assert!(t.backend().to_string().contains(" / "), "{}", t.backend().to_string());
     }
 
     #[test]
     fn a_busy_label_is_visible_alongside_the_message() {
         let mut t = Terminal::new(TestBackend::new(60, 1)).unwrap();
-        t.draw(|f| render_status(f, f.area(), "", None, Some("Recording 00:12"))).unwrap();
+        t.draw(|f| render_status(f, f.area(), "", None, Some("Recording 00:12"), Counts::default())).unwrap();
         assert!(t.backend().to_string().contains("Recording 00:12"));
     }
 }

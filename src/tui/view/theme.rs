@@ -1,61 +1,92 @@
-//! The palette.
+//! The palette the views draw with.
 //!
-//! One place for the accent color so panes, overlays and the command line agree,
-//! and so changing it is a one-line edit rather than a hunt through every view.
+//! Set once from config at startup, then read by every view, so changing a colour
+//! is a config edit rather than a hunt through twelve files. Parsing lives in
+//! [`crate::config::theme`]; this is only the handoff to ratatui.
+
+use std::sync::OnceLock;
 
 use ratatui::style::Color;
 
-/// The accent: borders, titles, section headings, the `:` prompt.
+use crate::config::theme::{Palette, Rgb};
+
+static PALETTE: OnceLock<Palette> = OnceLock::new();
+
+/// Install the user's palette. Called once, before the first frame.
 ///
-/// A true-color orange rather than an ANSI slot, so it renders the same in every
-/// terminal instead of picking up whatever the user's scheme assigns to cyan or
-/// yellow.
-pub const ACCENT: Color = Color::Rgb(217, 119, 87);
+/// Later calls are ignored rather than panicking: a second call would mean two
+/// interfaces in one process, which does not happen, and a panic in a paint path
+/// is a poor way to find that out.
+pub fn init(palette: Palette) {
+    let _ = PALETTE.set(palette);
+}
 
-/// A dimmer accent, for the border of a pane that does not have focus.
-pub const ACCENT_MUTED: Color = Color::Rgb(140, 82, 63);
+fn palette() -> &'static Palette {
+    // Falling back to the default keeps tests and any pre-init paint working.
+    PALETTE.get_or_init(Palette::default)
+}
 
-/// Used where something needs attention but is not an error.
-pub const WARN: Color = Color::Rgb(214, 161, 74);
+fn to_color(rgb: Rgb) -> Color {
+    Color::Rgb(rgb.r, rgb.g, rgb.b)
+}
+
+/// Borders with focus, titles, headings, the `:` prompt.
+pub fn accent() -> Color {
+    to_color(palette().accent)
+}
+
+/// Borders without focus: the accent's hue, darker, so the frame reads as one
+/// palette rather than one lit pane and two grey ones.
+pub fn accent_muted() -> Color {
+    to_color(palette().accent_muted)
+}
+
+/// The status bar's background.
+pub fn bar() -> Color {
+    to_color(palette().bar)
+}
+
+/// Attention, but not failure.
+pub fn warn() -> Color {
+    to_color(palette().warn)
+}
 
 /// Confirmed, healthy, done.
-pub const GOOD: Color = Color::Rgb(122, 162, 108);
+pub fn good() -> Color {
+    to_color(palette().good)
+}
 
 /// Failed.
-pub const BAD: Color = Color::Rgb(199, 88, 78);
+pub fn bad() -> Color {
+    to_color(palette().bad)
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// True color, so the accent does not inherit the terminal's idea of a
-    /// named color.
+    /// True colour, so nothing inherits the terminal's idea of a named colour.
     #[test]
-    fn every_color_is_specified_as_rgb() {
-        for color in [ACCENT, ACCENT_MUTED, WARN, GOOD, BAD] {
-            assert!(
-                matches!(color, Color::Rgb(..)),
-                "{color:?} is not a true-color value"
-            );
+    fn every_colour_is_true_colour() {
+        for color in [accent(), accent_muted(), bar(), warn(), good(), bad()] {
+            assert!(matches!(color, Color::Rgb(..)), "{color:?} is not true colour");
         }
     }
 
     #[test]
-    fn the_accent_is_orange_and_its_muted_form_is_darker() {
-        let (Color::Rgb(r, g, b), Color::Rgb(mr, mg, mb)) = (ACCENT, ACCENT_MUTED) else {
-            panic!("expected rgb colors");
-        };
-        // Red dominant, green above blue: an orange rather than a pink or brown.
-        assert!(r > g && g > b, "not orange: {r},{g},{b}");
-        // The muted form is the same hue, darker.
-        assert!(mr < r && mg < g && mb < b, "muted is not darker");
-        assert!(mr > mg && mg > mb, "muted lost the hue");
+    fn the_default_accent_is_orange_and_the_frame_recedes_behind_it() {
+        let p = Palette::default();
+        assert!(p.accent.r > p.accent.g && p.accent.g > p.accent.b, "not orange");
+        // Focused border brightest, unfocused dimmer, bar dimmest.
+        assert!(p.accent.luminance() > p.accent_muted.luminance());
+        assert!(p.accent_muted.luminance() > p.bar.luminance());
     }
 
     #[test]
-    fn the_status_colors_stay_distinguishable_from_the_accent() {
-        assert_ne!(GOOD, ACCENT);
-        assert_ne!(BAD, ACCENT);
-        assert_ne!(WARN, ACCENT);
+    fn status_colours_stay_distinct_from_the_accent() {
+        let p = Palette::default();
+        assert_ne!(p.good, p.accent);
+        assert_ne!(p.bad, p.accent);
+        assert_ne!(p.warn, p.accent);
     }
 }

@@ -187,6 +187,17 @@ impl App {
         self.numbering.len()
     }
 
+    /// What the status bar reports on the right: how much is here.
+    fn counts(&self) -> view::status::Counts {
+        view::status::Counts {
+            notes: self.note_count(),
+            words: self
+                .selected_id()
+                .and_then(|id| self.store.find_note(id))
+                .map(|note| note.body.split_whitespace().count()),
+        }
+    }
+
     fn say(&mut self, kind: Kind, text: impl Into<String>) {
         self.message = Some((kind, text.into(), Instant::now()));
     }
@@ -1291,6 +1302,7 @@ impl App {
             &self.current_dir,
             self.live_message(),
             busy.as_deref(),
+            self.counts(),
         );
 
         match &self.mode {
@@ -1429,6 +1441,8 @@ pub fn run() -> Result<()> {
     // Nothing below the UI may write to the terminal while the panes own it:
     // a stray line lands on top of them and stays until the next full repaint.
     crate::diag::set_quiet(true);
+    // Before the first frame, so nothing is painted in the wrong colours.
+    view::theme::init(crate::config::Config::load().theme.palette());
     let mut store = Store::load()?;
     // A first run explains itself: the manual is a real note the user can
     // search, scroll, and delete. A failure here must not stop the app.
@@ -1927,6 +1941,7 @@ mod tests {
                 chat: crate::config::provider::TaskChain { chain: vec![] },
                 transcribe: crate::config::provider::TaskChain { chain: vec![] },
                 providers: Default::default(),
+                theme: Default::default(),
             };
             let checks =
                 crate::health::recording(&config, &crate::config::secret::MemoryStore::default(), true);

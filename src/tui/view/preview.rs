@@ -2,8 +2,7 @@
 //! recording.
 
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line as TuiLine, Span};
+use ratatui::text::Line as TuiLine;
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use ratatui::Frame;
 
@@ -20,27 +19,13 @@ pub enum Preview<'a> {
     Lines { title: String, lines: &'a [crate::action::Line] },
 }
 
-/// Style a body line by its markdown-ish shape, so checkboxes and headings are
-/// scannable without a full markdown renderer.
-fn styled(line: &str) -> TuiLine<'static> {
-    let trimmed = line.trim_start();
-    let style = if trimmed.starts_with("- [x]") || trimmed.starts_with("- [X]") {
-        Style::default().add_modifier(Modifier::DIM | Modifier::CROSSED_OUT)
-    } else if trimmed.starts_with("- [ ]") {
-        Style::default()
-    } else if trimmed.starts_with('#') {
-        Style::default().add_modifier(Modifier::BOLD)
-    } else {
-        Style::default()
-    };
-    TuiLine::from(Span::styled(line.to_string(), style))
-}
-
 pub fn render(frame: &mut Frame, area: Rect, preview: &Preview<'_>, scroll: u16, focused: bool) {
     let (title, lines): (String, Vec<TuiLine>) = match preview {
         Preview::Empty => ("preview".to_string(), Vec::new()),
-        Preview::Note(n) => (n.title.clone(), n.body.lines().map(styled).collect()),
-        Preview::Text { title, body } => (title.clone(), body.lines().map(styled).collect()),
+        // Markdown, so a note looks the way it was written rather than like a
+        // text dump: headings in the accent, checkboxes as boxes, code receding.
+        Preview::Note(n) => (n.title.clone(), super::markdown::render(&n.body)),
+        Preview::Text { title, body } => (title.clone(), super::markdown::render(body)),
         Preview::Lines { title, lines } => (
             title.clone(),
             lines.iter().map(super::line::to_tui).collect(),
@@ -109,20 +94,18 @@ mod tests {
         assert_eq!(clamp_scroll(2, 100, 6), 2);
     }
 
+    /// The wiring, not the rendering: markdown details are tested next door, but
+    /// something has to catch the preview drawing raw text again.
     #[test]
-    fn checked_boxes_are_struck_through_and_headings_bold() {
-        assert!(styled("- [x] done").style_or_default().add_modifier.contains(Modifier::CROSSED_OUT));
-        assert!(styled("## Heading").style_or_default().add_modifier.contains(Modifier::BOLD));
-        assert!(!styled("- [ ] todo").style_or_default().add_modifier.contains(Modifier::CROSSED_OUT));
-    }
+    fn a_note_body_goes_through_the_markdown_renderer() {
+        let note = Note::new("T", "## Heading\n- [x] done\n", vec![], "");
+        let mut terminal = Terminal::new(TestBackend::new(40, 8)).unwrap();
+        terminal
+            .draw(|f| render(f, f.area(), &Preview::Note(&note), 0, true))
+            .unwrap();
+        let out = terminal.backend().to_string();
 
-    /// Helper: the style of a single-span line.
-    trait StyleOf {
-        fn style_or_default(&self) -> Style;
-    }
-    impl StyleOf for TuiLine<'_> {
-        fn style_or_default(&self) -> Style {
-            self.spans.first().map(|s| s.style).unwrap_or_default()
-        }
+        assert!(!out.contains("##"), "hashes reached the screen: {out}");
+        assert!(out.contains('☑'), "no rendered checkbox: {out}");
     }
 }

@@ -11,10 +11,10 @@ pub fn style_for(kind: Kind) -> Style {
     match kind {
         Kind::Plain | Kind::Blank => Style::default(),
         Kind::Dim => Style::default().add_modifier(Modifier::DIM),
-        Kind::Good => Style::default().fg(theme::GOOD),
-        Kind::Warn => Style::default().fg(theme::WARN),
-        Kind::Bad => Style::default().fg(theme::BAD),
-        Kind::Dir => Style::default().fg(theme::ACCENT).add_modifier(Modifier::BOLD),
+        Kind::Good => Style::default().fg(theme::good()),
+        Kind::Warn => Style::default().fg(theme::warn()),
+        Kind::Bad => Style::default().fg(theme::bad()),
+        Kind::Dir => Style::default().fg(theme::accent()).add_modifier(Modifier::BOLD),
     }
 }
 
@@ -28,9 +28,9 @@ pub fn to_tui(line: &Line) -> TuiLine<'static> {
 /// pane and two grey ones.
 pub fn border(focused: bool) -> Style {
     if focused {
-        Style::default().fg(theme::ACCENT)
+        Style::default().fg(theme::accent())
     } else {
-        Style::default().fg(theme::ACCENT_MUTED)
+        Style::default().fg(theme::accent_muted())
     }
 }
 
@@ -50,10 +50,10 @@ mod tests {
 
     #[test]
     fn each_kind_gets_a_distinct_intent() {
-        assert_eq!(style_for(Kind::Good).fg, Some(theme::GOOD));
-        assert_eq!(style_for(Kind::Bad).fg, Some(theme::BAD));
-        assert_eq!(style_for(Kind::Warn).fg, Some(theme::WARN));
-        assert_eq!(style_for(Kind::Dir).fg, Some(theme::ACCENT));
+        assert_eq!(style_for(Kind::Good).fg, Some(theme::good()));
+        assert_eq!(style_for(Kind::Bad).fg, Some(theme::bad()));
+        assert_eq!(style_for(Kind::Warn).fg, Some(theme::warn()));
+        assert_eq!(style_for(Kind::Dir).fg, Some(theme::accent()));
         assert!(style_for(Kind::Dim).add_modifier.contains(Modifier::DIM));
         assert_eq!(style_for(Kind::Plain), Style::default());
     }
@@ -63,8 +63,8 @@ mod tests {
         assert_ne!(border(true), border(false));
         assert_ne!(selection(true), selection(false));
         // Both borders use the accent hue, so the frame reads as one palette.
-        assert_eq!(border(true).fg, Some(theme::ACCENT));
-        assert_eq!(border(false).fg, Some(theme::ACCENT_MUTED));
+        assert_eq!(border(true).fg, Some(theme::accent()));
+        assert_eq!(border(false).fg, Some(theme::accent_muted()));
     }
 
     #[test]
