@@ -44,6 +44,11 @@ pub enum TaskEvent {
     /// A transcript has been structured into a note. `title` is `None` when the
     /// result is being appended to an existing note.
     Structured { title: Option<String>, body: String },
+    /// Answer text as it arrives, accumulated. Shown in the preview so a slow
+    /// model reads as working rather than hung.
+    Streaming(String),
+    /// A note's `@leo` prompts have been expanded; the App writes it back.
+    Expanded { note: String, body: String, count: usize },
     Failed(String),
 }
 
@@ -96,6 +101,58 @@ impl Job {
         }
         out
     }
+}
+
+/// Expand a note's `@leo` prompts on a worker thread, streaming the answer.
+///
+/// On the worker rather than the main thread because this is the one action that
+/// could take a minute: it used to run inline, which froze the whole interface
+/// with no way to tell working from hung.
+pub fn start_ask(note: String, title: String, body: String) -> Job {
+    let (tx, rx) = mpsc::channel();
+    let stop = Arc::new(AtomicBool::new(false));
+
+    thread::spawn(move || {
+        let _ = tx.send(TaskEvent::Started {
+            label: "Asking".to_string(),
+        });
+
+        // Accumulated answer text, reset when the chain falls through to another
+        // provider: what came before belongs to the provider that just failed.
+        let shown = Arc::new(std::sync::Mutex::new(String::new()));
+
+        let result = {
+            let (shown, tx) = (Arc::clone(&shown), tx.clone());
+            let mut on_fragment = |fragment: &str| {
+                if let Ok(mut text) = shown.lock() {
+                    text.push_str(fragment);
+                    let _ = tx.send(TaskEvent::Streaming(text.clone()));
+                }
+            };
+            let shown_restart = Arc::clone(&shown);
+            let mut on_restart = move || {
+                if let Ok(mut text) = shown_restart.lock() {
+                    text.clear();
+                }
+            };
+            crate::ai::expand_prompts_streaming(&body, &title, &mut on_fragment, &mut on_restart)
+        };
+
+        match result {
+            Ok((expanded, count)) => {
+                let _ = tx.send(TaskEvent::Expanded {
+                    note,
+                    body: expanded,
+                    count,
+                });
+            }
+            Err(e) => {
+                let _ = tx.send(TaskEvent::Failed(e.to_string()));
+            }
+        }
+    });
+
+    Job { rx, stop, done: false }
 }
 
 /// Turn a transcript into a note body on a worker thread.

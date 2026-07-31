@@ -32,6 +32,38 @@ pub fn run_chat_chain(
     providers: Vec<Box<dyn ChatProvider>>,
     req: &ChatRequest,
 ) -> Result<ChainOutcome<String>> {
+    run_chat_chain_with(providers, req, &mut |p, r| p.complete(r), &mut || {})
+}
+
+/// The same fallback policy, streaming.
+///
+/// `on_restart` fires when the chain moves to another provider, because anything
+/// already handed to the caller came from the provider that just failed and has
+/// to be thrown away — otherwise a fallback would leave the first provider's
+/// half-answer glued to the second's whole one.
+pub fn run_chat_chain_streaming(
+    providers: Vec<Box<dyn ChatProvider>>,
+    req: &ChatRequest,
+    on_fragment: &mut dyn FnMut(&str),
+    on_restart: &mut dyn FnMut(),
+) -> Result<ChainOutcome<String>> {
+    run_chat_chain_with(
+        providers,
+        req,
+        &mut |p, r| p.complete_streaming(r, on_fragment),
+        on_restart,
+    )
+}
+
+/// The fallback policy itself, with the attempt left to the caller so the
+/// streaming and non-streaming paths cannot drift apart on which errors are
+/// fatal and which move on.
+fn run_chat_chain_with(
+    providers: Vec<Box<dyn ChatProvider>>,
+    req: &ChatRequest,
+    attempt: &mut dyn FnMut(&dyn ChatProvider, &ChatRequest) -> Result<String, ProviderError>,
+    on_restart: &mut dyn FnMut(),
+) -> Result<ChainOutcome<String>> {
     if providers.is_empty() {
         bail!("no chat providers configured — check the [chat] chain in your leo config");
     }
@@ -53,6 +85,8 @@ pub fn run_chat_chain(
                 to: p.name().to_string(),
                 reason,
             });
+            // Whatever the failed provider produced is not part of this answer.
+            on_restart();
         }
 
         // Provider config wins over the caller's request: when a provider
@@ -64,7 +98,7 @@ pub fn run_chat_chain(
             effective_req.max_tokens = max_tokens;
         }
 
-        match p.complete(&effective_req) {
+        match attempt(p.as_ref(), &effective_req) {
             Ok(value) => {
                 return Ok(ChainOutcome {
                     value,
@@ -494,5 +528,149 @@ mod tests {
             !msg.contains("every transcription provider failed"),
             "got: {msg}"
         );
+    }
+
+    // ── streaming ───────────────────────────────────────────────────────────
+
+    /// A provider that streams in pieces, then succeeds.
+    struct Streamer {
+        name: String,
+        pieces: Vec<&'static str>,
+    }
+
+    impl ChatProvider for Streamer {
+        fn complete(&self, _req: &ChatRequest) -> Result<String, ProviderError> {
+            Ok(self.pieces.concat())
+        }
+        fn complete_streaming(
+            &self,
+            _req: &ChatRequest,
+            sink: crate::ai::provider::Sink<'_>,
+        ) -> Result<String, ProviderError> {
+            for piece in &self.pieces {
+                sink(piece);
+            }
+            Ok(self.pieces.concat())
+        }
+        fn available(&self) -> bool {
+            true
+        }
+        fn name(&self) -> &str {
+            &self.name
+        }
+    }
+
+    /// A provider that emits something, then fails — the case that makes the
+    /// restart signal necessary.
+    struct HalfThenFail {
+        name: String,
+    }
+
+    impl ChatProvider for HalfThenFail {
+        fn complete(&self, _req: &ChatRequest) -> Result<String, ProviderError> {
+            Err(ProviderError::Retryable("boom".into()))
+        }
+        fn complete_streaming(
+            &self,
+            _req: &ChatRequest,
+            sink: crate::ai::provider::Sink<'_>,
+        ) -> Result<String, ProviderError> {
+            sink("half an ans");
+            Err(ProviderError::Retryable("boom".into()))
+        }
+        fn available(&self) -> bool {
+            true
+        }
+        fn name(&self) -> &str {
+            &self.name
+        }
+    }
+
+    #[test]
+    fn streaming_delivers_fragments_and_returns_the_whole_answer() {
+        let providers: Vec<Box<dyn ChatProvider>> = vec![Box::new(Streamer {
+            name: "s".into(),
+            pieces: vec!["Own", "ership", " moves."],
+        })];
+
+        let mut seen = Vec::new();
+        let outcome = run_chat_chain_streaming(
+            providers,
+            &req(),
+            &mut |f| seen.push(f.to_string()),
+            &mut || {},
+        )
+        .unwrap();
+
+        assert_eq!(seen, ["Own", "ership", " moves."]);
+        assert_eq!(outcome.value, "Ownership moves.");
+    }
+
+    /// The reason `on_restart` exists: text from a provider that then failed is
+    /// not part of the answer, and leaving it would glue half of one reply to all
+    /// of another.
+    #[test]
+    fn falling_through_tells_the_caller_to_discard_what_it_showed() {
+        let providers: Vec<Box<dyn ChatProvider>> = vec![
+            Box::new(HalfThenFail { name: "first".into() }),
+            Box::new(Streamer {
+                name: "second".into(),
+                pieces: vec!["the real answer"],
+            }),
+        ];
+
+        // One buffer, two closures: the restart clears what the fragments wrote,
+        // which is exactly the interplay under test.
+        let shown = std::cell::RefCell::new(String::new());
+        let restarts = std::cell::Cell::new(0);
+        let outcome = run_chat_chain_streaming(
+            providers,
+            &req(),
+            &mut |f| shown.borrow_mut().push_str(f),
+            &mut || {
+                restarts.set(restarts.get() + 1);
+                shown.borrow_mut().clear();
+            },
+        )
+        .unwrap();
+
+        assert_eq!(restarts.get(), 1, "the caller was not told to start over");
+        assert_eq!(
+            shown.into_inner(),
+            "the real answer",
+            "stale text survived the fallback"
+        );
+        assert_eq!(outcome.value, "the real answer");
+        assert_eq!(outcome.provider, "second");
+        assert_eq!(outcome.fallbacks.len(), 1);
+    }
+
+    /// A provider that cannot stream must still work, answering in one piece.
+    #[test]
+    fn a_non_streaming_provider_still_answers_through_the_streaming_path() {
+        struct Plain;
+        impl ChatProvider for Plain {
+            fn complete(&self, _req: &ChatRequest) -> Result<String, ProviderError> {
+                Ok("all at once".into())
+            }
+            fn available(&self) -> bool {
+                true
+            }
+            fn name(&self) -> &str {
+                "plain"
+            }
+        }
+
+        let mut seen = Vec::new();
+        let outcome = run_chat_chain_streaming(
+            vec![Box::new(Plain)],
+            &req(),
+            &mut |f| seen.push(f.to_string()),
+            &mut || {},
+        )
+        .unwrap();
+
+        assert_eq!(seen, ["all at once"]);
+        assert_eq!(outcome.value, "all at once");
     }
 }

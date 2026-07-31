@@ -101,6 +101,24 @@ pub fn complete(
     run_chat_chain(providers, &req)
 }
 
+/// The same completion, delivered as it arrives.
+pub fn complete_streaming(
+    cfg: &Config,
+    store: &dyn SecretStore,
+    prompt: String,
+    max_tokens: u32,
+    on_fragment: &mut dyn FnMut(&str),
+    on_restart: &mut dyn FnMut(),
+) -> Result<ChainOutcome<String>> {
+    let providers = build_chat_chain(cfg, store);
+    let req = ChatRequest {
+        prompt,
+        temperature: TEMPERATURE,
+        max_tokens,
+    };
+    crate::ai::chain::run_chat_chain_streaming(providers, &req, on_fragment, on_restart)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

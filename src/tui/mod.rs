@@ -92,6 +92,8 @@ pub struct App {
     left: LeftPane,
     /// Notes recently looked at, most recent first.
     recent: recent::Recent,
+    /// A running `:ask`, with the answer so far.
+    asking: Option<Asking>,
     note_sel: usize,
     dir_sel: usize,
     focus: Pane,
@@ -162,6 +164,7 @@ impl App {
             filter: None,
             left: LeftPane::Dirs,
             recent: recent::Recent::load(),
+            asking: None,
             store,
             current_dir,
             numbering,
@@ -918,6 +921,46 @@ impl App {
     }
 
     fn run_action<B: TuiBackend>(&mut self, action: Action, terminal: &mut Terminal<B>) -> Result<()> {
+        // `ask` is the one action that can take a minute. Run it on a worker and
+        // stream the answer: inline, it froze the interface with nothing to say
+        // whether the model was thinking or the request had died.
+        if let Action::Ask { note } = &action {
+            if self.asking.is_some() {
+                self.say(Kind::Warn, "Already asking — one at a time.");
+                return Ok(());
+            }
+            let resolved = action::resolve(note, &self.store, &self.numbering);
+            let action::Resolved::One(id) = resolved else {
+                // Ambiguous or missing: let the ordinary handler explain, since
+                // it already words those cases well.
+                return self.run_action_inline(action, terminal);
+            };
+            let Some(target) = self.store.find_note(&id) else {
+                return self.run_action_inline(action, terminal);
+            };
+            let (title, body) = (target.title.clone(), target.body.clone());
+            if !body.lines().any(|l| action::is_leo_prompt(l).is_some()) {
+                self.say(Kind::Dim, "No @leo prompts found in this note.");
+                return Ok(());
+            }
+
+            self.asking = Some(Asking {
+                job: task::start_ask(note.clone(), title, body),
+                note: note.clone(),
+                progress: view::progress::Progress::spinner("Asking"),
+                since: Instant::now(),
+                text: String::new(),
+            });
+            return Ok(());
+        }
+        self.run_action_inline(action, terminal)
+    }
+
+    fn run_action_inline<B: TuiBackend>(
+        &mut self,
+        action: Action,
+        terminal: &mut Terminal<B>,
+    ) -> Result<()> {
         let outcome = match action::apply(
             action,
             &mut self.store,
@@ -1459,7 +1502,81 @@ impl App {
 
     /// Absorb whatever the worker has sent since the last tick. Returns true
     /// when something changed and a redraw is warranted.
+    /// Drain the streaming `:ask` job, if one is running.
+    fn pump_ask<B: TuiBackend>(&mut self, terminal: &mut Terminal<B>) -> Result<bool> {
+        let Some(ask) = self.asking.as_mut() else {
+            return Ok(false);
+        };
+
+        let events = ask.job.drain();
+        if events.is_empty() && !ask.job.is_done() {
+            return Ok(false);
+        }
+
+        let mut expanded: Option<(String, String, usize)> = None;
+        let mut failure: Option<String> = None;
+        let mut fallbacks: Vec<String> = Vec::new();
+
+        for event in events {
+            match event {
+                TaskEvent::Started { label } => {
+                    ask.progress = view::progress::Progress::spinner(label);
+                    ask.since = Instant::now();
+                }
+                TaskEvent::Streaming(text) => ask.text = text,
+                TaskEvent::Expanded { note, body, count } => {
+                    expanded = Some((note, body, count))
+                }
+                TaskEvent::ProviderFallback { from, to } => {
+                    fallbacks.push(format!("{from} → {to}"))
+                }
+                TaskEvent::Failed(e) => failure = Some(e),
+                _ => {}
+            }
+        }
+
+        for note in fallbacks {
+            self.say(Kind::Warn, note);
+        }
+
+        if let Some(e) = failure {
+            self.asking = None;
+            self.say(Kind::Bad, e);
+            return Ok(true);
+        }
+
+        if let Some((note, body, count)) = expanded {
+            self.asking = None;
+            if count == 0 {
+                self.say(Kind::Dim, "Nothing could be expanded.");
+                return Ok(true);
+            }
+            // Written through the ordinary handler, with the answer already in
+            // hand, so saving and the message are identical to the CLI path.
+            let answered = PreExpanded {
+                body: body.clone(),
+                count,
+            };
+            let outcome = action::apply(
+                Action::Ask { note },
+                &mut self.store,
+                Ctx {
+                    current_dir: &self.current_dir,
+                    numbering: &self.numbering,
+                },
+                &answered,
+            )?;
+            self.absorb(outcome, terminal)?;
+            return Ok(true);
+        }
+
+        Ok(true)
+    }
+
     fn pump_tasks<B: TuiBackend>(&mut self, terminal: &mut Terminal<B>) -> Result<bool> {
+        if self.pump_ask(terminal)? {
+            return Ok(true);
+        }
         let Some(rec) = self.recording.as_mut() else {
             return Ok(false);
         };
@@ -1501,6 +1618,8 @@ impl App {
                 TaskEvent::Finished { transcript } => finished = Some(transcript),
                 TaskEvent::Structured { title, body } => structured = Some((title, body)),
                 TaskEvent::Failed(e) => failure = Some(e),
+                // The ask job's events; not this job's business.
+                TaskEvent::Streaming(_) | TaskEvent::Expanded { .. } => {}
             }
         }
 
@@ -1592,10 +1711,21 @@ impl App {
         );
 
         let selected_note = self.selected_id().and_then(|id| self.store.find_note(id));
-        let preview = match (&self.recording, &self.pinned, selected_note) {
+        // An answer arriving owns the preview: watching it appear is the point of
+        // streaming, and it replaces the note only until it is saved into it.
+        let streaming = self
+            .asking
+            .as_ref()
+            .filter(|a| !a.text.trim().is_empty())
+            .map(|a| Preview::Text {
+                title: "answering…".to_string(),
+                body: a.text.clone(),
+            });
+        let preview = match (streaming, &self.recording, &self.pinned, selected_note) {
+            (Some(live), ..) => live,
             // A live recording owns the preview: that stream is the reason the
             // feature exists.
-            (Some(rec), _, _) => {
+            (None, Some(rec), _, _) => {
                 let (title, body) = if rec.show_raw {
                     ("live transcript (t for notes)", rec.raw.clone())
                 } else if rec.condensed.is_empty() {
@@ -1605,9 +1735,11 @@ impl App {
                 };
                 Preview::Text { title: title.to_string(), body }
             }
-            (None, Some((title, lines)), _) => Preview::Lines { title: title.clone(), lines },
-            (None, None, Some(note)) => Preview::Note(note),
-            (None, None, None) => Preview::Empty,
+            (None, None, Some((title, lines)), _) => {
+                Preview::Lines { title: title.clone(), lines }
+            }
+            (None, None, None, Some(note)) => Preview::Note(note),
+            (None, None, None, None) => Preview::Empty,
         };
         view::preview::render(
             frame,
@@ -1636,9 +1768,14 @@ impl App {
         // A job's progress replaces the plain busy label, so the user can see
         // both that something is happening and how far along it is.
         let busy = self
-            .recording
+            .asking
             .as_ref()
-            .map(|r| view::progress::render(&r.progress, r.since.elapsed()))
+            .map(|a| view::progress::render(&a.progress, a.since.elapsed()))
+            .or_else(|| {
+                self.recording
+                    .as_ref()
+                    .map(|r| view::progress::render(&r.progress, r.since.elapsed()))
+            })
             .or_else(|| {
                 self.busy
                     .as_ref()
@@ -1751,6 +1888,41 @@ impl action::Ai for ReadyNote {
     fn structure_append(&self, _transcript: &str, _existing: &str) -> Result<String> {
         Ok(self.body.clone())
     }
+}
+
+/// An answer already in hand, for writing back through the ordinary handler.
+///
+/// Distinct from [`ReadyNote`], whose `expand_prompts` deliberately echoes its
+/// input: that one exists for the listen path, where nothing was expanded. Using
+/// it here wrote the note back unchanged, which is the bug this type fixes.
+struct PreExpanded {
+    body: String,
+    count: usize,
+}
+
+impl action::Ai for PreExpanded {
+    fn expand_prompts(&self, _body: &str, _title: &str) -> Result<(String, usize)> {
+        Ok((self.body.clone(), self.count))
+    }
+
+    fn structure(&self, _transcript: &str) -> Result<(String, String)> {
+        anyhow::bail!("structuring is not this type's job")
+    }
+
+    fn structure_append(&self, _transcript: &str, _existing: &str) -> Result<String> {
+        anyhow::bail!("structuring is not this type's job")
+    }
+}
+
+/// A running `:ask`.
+struct Asking {
+    job: task::Job,
+    /// The note reference the user gave, passed back to the handler that saves.
+    note: String,
+    progress: view::progress::Progress,
+    since: Instant,
+    /// The answer so far, shown while it arrives.
+    text: String,
 }
 
 /// Move a list selection, saturating at both ends rather than wrapping — a
@@ -2273,6 +2445,93 @@ mod tests {
         let (_, text, _) = app.message.as_ref().expect("a message");
         assert!(text.contains("model login"), "{text}");
         assert!(text.contains("keychain"), "does not say why: {text}");
+    }
+
+    // ── streaming ask ───────────────────────────────────────────────────────
+
+    /// The bug this guards: the write-back used ReadyNote, whose expand_prompts
+    /// echoes its input, so the answer was streamed to the screen and then thrown
+    /// away when the note was saved.
+    #[test]
+    fn an_answer_is_written_back_and_not_echoed() {
+        let expanded = PreExpanded {
+            body: "the answer".to_string(),
+            count: 1,
+        };
+        let (body, count) = action::Ai::expand_prompts(&expanded, "@leo question", "T").unwrap();
+        assert_eq!(body, "the answer", "the original body was returned instead");
+        assert_eq!(count, 1);
+
+        // And the listen path's type still echoes, which is what it is for.
+        let ready = ReadyNote {
+            title: None,
+            body: "structured".to_string(),
+        };
+        let (body, _) = action::Ai::expand_prompts(&ready, "unchanged", "T").unwrap();
+        assert_eq!(body, "unchanged");
+    }
+
+    /// A note with no prompts must not start a job at all.
+    #[test]
+    fn asking_a_note_without_prompts_starts_nothing() {
+        let (mut app, _d) = temp_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 16)).unwrap();
+
+        let id = app.selected_id().cloned().unwrap();
+        assert!(
+            !app.store.find_note(&id).unwrap().body.contains("@leo"),
+            "fixture note should have no prompts"
+        );
+
+        app.run_action(Action::Ask { note: "1".to_string() }, &mut terminal)
+            .unwrap();
+        assert!(app.asking.is_none(), "a job was started with nothing to ask");
+        let (_, message, _) = app.message.as_ref().expect("a message");
+        assert!(message.contains("No @leo prompts"), "{message}");
+    }
+
+    /// Two asks at once would race to write the same note.
+    #[test]
+    fn a_second_ask_is_refused_while_one_is_running() {
+        let (mut app, _d) = temp_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 16)).unwrap();
+
+        // Stand in for a running job without making a request.
+        app.asking = Some(Asking {
+            job: task::start_ask(String::new(), String::new(), String::new()),
+            note: "1".to_string(),
+            progress: view::progress::Progress::spinner("Asking"),
+            since: Instant::now(),
+            text: String::new(),
+        });
+
+        app.run_action(Action::Ask { note: "1".to_string() }, &mut terminal)
+            .unwrap();
+        let (_, message, _) = app.message.as_ref().expect("a message");
+        assert!(message.contains("one at a time"), "{message}");
+    }
+
+    /// Text arriving must show in the preview, or streaming is invisible.
+    #[test]
+    fn a_streaming_answer_appears_in_the_preview() {
+        let (mut app, _d) = temp_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 16)).unwrap();
+
+        app.asking = Some(Asking {
+            job: task::start_ask(String::new(), String::new(), String::new()),
+            note: "1".to_string(),
+            progress: view::progress::Progress::spinner("Asking"),
+            since: Instant::now(),
+            text: "ownership means".to_string(),
+        });
+
+        terminal.draw(|f| app.draw(f)).unwrap();
+        let out = terminal.backend().to_string();
+        assert!(out.contains("ownership means"), "{out}");
+        assert!(out.contains("answering"), "no indication it is still arriving: {out}");
     }
 
     // ── recent notes ────────────────────────────────────────────────────────

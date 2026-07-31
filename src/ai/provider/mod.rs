@@ -10,8 +10,26 @@ pub struct ChatRequest {
     pub max_tokens: u32,
 }
 
+/// Somewhere to send text as it arrives.
+///
+/// A callback rather than a channel so a provider stays independent of how the
+/// caller wants to display things — the TUI feeds a worker channel, the CLI
+/// prints, and tests collect into a string.
+pub type Sink<'a> = &'a mut dyn FnMut(&str);
+
 pub trait ChatProvider {
     fn complete(&self, req: &ChatRequest) -> ProviderResult<String>;
+
+    /// Complete, calling `sink` with each fragment as it arrives.
+    ///
+    /// The default answers in one piece once the whole response is in, so a
+    /// provider that cannot stream still works everywhere streaming is used —
+    /// a local binary, for instance, has nothing to stream.
+    fn complete_streaming(&self, req: &ChatRequest, sink: Sink<'_>) -> ProviderResult<String> {
+        let text = self.complete(req)?;
+        sink(&text);
+        Ok(text)
+    }
     /// A cheap, local precondition check: key present, binary on PATH, port
     /// open. Performs no inference and makes no billable call.
     fn available(&self) -> bool;

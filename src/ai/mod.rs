@@ -84,6 +84,57 @@ pub fn chat_outcome(prompt: String, max_tokens: u32) -> Result<chain::ChainOutco
     chat::complete(&cfg, &store, prompt, max_tokens)
 }
 
+/// Expand every `@leo` line, reporting text as it arrives.
+///
+/// `on_fragment` receives the answer in pieces and `on_restart` says to discard
+/// what came before, which happens when the chain falls through to another
+/// provider. Returns the rewritten body and how many prompts were expanded, the
+/// same as the non-streaming path, so the caller saves the note identically.
+pub fn expand_prompts_streaming(
+    body: &str,
+    title: &str,
+    on_fragment: &mut dyn FnMut(&str),
+    on_restart: &mut dyn FnMut(),
+) -> Result<(String, usize)> {
+    let (cfg, store) = context();
+    let lines: Vec<&str> = body.lines().collect();
+    let mut result: Vec<String> = Vec::with_capacity(lines.len());
+    let mut count = 0;
+
+    for (i, &line) in lines.iter().enumerate() {
+        let Some(question) = crate::action::is_leo_prompt(line) else {
+            result.push(line.to_string());
+            continue;
+        };
+
+        // The same window of surrounding lines the non-streaming path uses.
+        let before = lines[i.saturating_sub(5)..i].join("\n");
+        let after_end = (i + 6).min(lines.len());
+        let after = lines[(i + 1)..after_end].join("\n");
+        let local_context = format!("{before}\n{after}");
+
+        let prompt = chat::build_expand_prompt(question, &local_context, title, body);
+        match chat::complete_streaming(
+            &cfg,
+            &store,
+            prompt,
+            EXPAND_MAX_TOKENS,
+            on_fragment,
+            on_restart,
+        ) {
+            Ok(outcome) if !outcome.value.trim().is_empty() => {
+                result.push(outcome.value.trim().to_string());
+                count += 1;
+            }
+            // A prompt that could not be answered stays as it was, so nothing is
+            // lost and the user can try again.
+            _ => result.push(line.to_string()),
+        }
+    }
+
+    Ok((result.join("\n"), count))
+}
+
 /// Transcribe an audio file of any length through the configured chain.
 pub fn transcribe(audio_path: &Path) -> Result<String> {
     let outcome = transcribe_outcome(audio_path)?;
