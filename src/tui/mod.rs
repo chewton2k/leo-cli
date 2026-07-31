@@ -15,12 +15,16 @@ pub mod view;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use ratatui::crossterm::event::{self, Event, KeyEventKind};
+use ratatui::crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind, MouseButton, MouseEvent,
+    MouseEventKind,
+};
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use ratatui::backend::Backend;
+use ratatui::layout::Rect;
 use ratatui::{Frame, Terminal};
 
 use crate::action::{
@@ -288,6 +292,99 @@ impl App {
     }
 
     // ── input ───────────────────────────────────────────────────────────────
+
+    /// Clicks and the scroll wheel.
+    ///
+    /// Deliberately limited to selecting and scrolling. A click cannot delete,
+    /// edit or open anything: mouse input has no modifier discipline and no
+    /// confirmation habit, so the safe half is the useful half. Everything here
+    /// has a keyboard equivalent, and nothing here is the only way to do it.
+    fn on_mouse<B: TuiBackend>(
+        &mut self,
+        mouse: MouseEvent,
+        terminal: &mut Terminal<B>,
+    ) -> Result<()> {
+        // Overlays own the whole screen; a click behind one would act on
+        // something the user cannot see.
+        if !matches!(self.mode, Mode::Normal) {
+            return Ok(());
+        }
+
+        let area = terminal.size().map(|s| Rect::new(0, 0, s.width, s.height))?;
+        let frames = view::layout(area);
+        let column = mouse.column;
+        let row = mouse.row;
+
+        let in_pane = |rect: Rect| {
+            column >= rect.x
+                && column < rect.x + rect.width
+                && row >= rect.y
+                && row < rect.y + rect.height
+        };
+
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                if in_pane(frames.dirs) {
+                    self.focus = Pane::Dirs;
+                    let rows = self.dir_rows();
+                    if let Some(index) =
+                        view::notes::row_at(frames.dirs, row, self.dir_sel, rows.len())
+                    {
+                        self.dir_sel = index;
+                    }
+                } else if in_pane(frames.notes) {
+                    self.focus = Pane::Notes;
+                    let total = self.note_count();
+                    if let Some(index) =
+                        view::notes::row_at(frames.notes, row, self.note_sel, total)
+                    {
+                        self.note_sel = index;
+                        // Clicking a note is opening it, as far as the recent
+                        // list is concerned.
+                        self.pinned = None;
+                    }
+                } else if in_pane(frames.preview) {
+                    self.focus = Pane::Preview;
+                }
+                Ok(())
+            }
+            // The wheel acts on whatever is under the pointer, not on what has
+            // focus: that is what every other application does.
+            MouseEventKind::ScrollDown => {
+                self.wheel(&frames, column, row, Intent::Down);
+                Ok(())
+            }
+            MouseEventKind::ScrollUp => {
+                self.wheel(&frames, column, row, Intent::Up);
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// Scroll whatever is under the pointer, which is not necessarily what has
+    /// focus — that is what every other application does.
+    fn wheel(&mut self, frames: &view::Frames, column: u16, row: u16, direction: Intent) {
+        let inside = |rect: Rect| {
+            column >= rect.x
+                && column < rect.x + rect.width
+                && row >= rect.y
+                && row < rect.y + rect.height
+        };
+
+        if inside(frames.preview) {
+            self.preview_scroll = match direction {
+                Intent::Down => self.preview_scroll.saturating_add(1),
+                _ => self.preview_scroll.saturating_sub(1),
+            };
+        } else if inside(frames.notes) {
+            self.note_sel = step(self.note_sel, self.note_count(), direction);
+            self.preview_scroll = 0;
+            self.pinned = None;
+        } else if inside(frames.dirs) {
+            self.dir_sel = step(self.dir_sel, self.dir_rows().len(), direction);
+        }
+    }
 
     fn on_key<B: TuiBackend>(&mut self, key: event::KeyEvent, terminal: &mut Terminal<B>) -> Result<()> {
         match std::mem::replace(&mut self.mode, Mode::Normal) {
@@ -1469,9 +1566,15 @@ pub fn run() -> Result<()> {
         .unwrap_or(None)
         .is_some();
     let mut terminal = ratatui::init();
+    // Mouse reporting is opt-in per terminal. Failing to enable it is not fatal:
+    // every key still works, which is how leo is mostly driven.
+    let mouse = execute!(std::io::stdout(), EnableMouseCapture).is_ok();
     let mut app = App::new(store);
     app.greet(installed_manual);
     let result = event_loop(&mut terminal, app);
+    if mouse {
+        let _ = execute!(std::io::stdout(), DisableMouseCapture);
+    }
     ratatui::restore();
     crate::diag::set_quiet(false);
     // Anything queued but never shown dies with the screen it belonged to.
@@ -1504,6 +1607,7 @@ fn event_loop<B: TuiBackend>(terminal: &mut Terminal<B>, mut app: App) -> Result
             Event::Key(key) if key.kind == KeyEventKind::Press => {
                 app.on_key(key, terminal)?;
             }
+            Event::Mouse(mouse) => app.on_mouse(mouse, terminal)?,
             _ => {}
         }
         app.pump_tasks(terminal)?;
@@ -1934,6 +2038,145 @@ mod tests {
         let (_, text, _) = app.message.as_ref().expect("a message");
         assert!(text.contains("model login"), "{text}");
         assert!(text.contains("keychain"), "does not say why: {text}");
+    }
+
+    // ── mouse ───────────────────────────────────────────────────────────────
+
+    fn click(column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            modifiers: ratatui::crossterm::event::KeyModifiers::NONE,
+        }
+    }
+
+    fn wheel_event(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: ratatui::crossterm::event::KeyModifiers::NONE,
+        }
+    }
+
+    /// Clicking a pane focuses it, so the keyboard picks up where the mouse left
+    /// off rather than acting on a different pane than the one just clicked.
+    #[test]
+    fn clicking_a_pane_focuses_it() {
+        let (mut app, _d) = temp_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
+        terminal.draw(|f| app.draw(f)).unwrap();
+        let frames = view::layout(Rect::new(0, 0, 100, 20));
+
+        app.on_mouse(click(frames.dirs.x + 2, frames.dirs.y + 1), &mut terminal)
+            .unwrap();
+        assert_eq!(app.focus, Pane::Dirs);
+
+        app.on_mouse(click(frames.preview.x + 2, frames.preview.y + 1), &mut terminal)
+            .unwrap();
+        assert_eq!(app.focus, Pane::Preview);
+
+        app.on_mouse(click(frames.notes.x + 2, frames.notes.y + 1), &mut terminal)
+            .unwrap();
+        assert_eq!(app.focus, Pane::Notes);
+    }
+
+    #[test]
+    fn clicking_a_note_selects_that_note() {
+        let (mut app, _d) = temp_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
+        terminal.draw(|f| app.draw(f)).unwrap();
+        let frames = view::layout(Rect::new(0, 0, 100, 20));
+        assert!(app.note_count() >= 2, "fixture needs two notes");
+
+        // The second row inside the pane is the second note.
+        app.on_mouse(click(frames.notes.x + 3, frames.notes.y + 2), &mut terminal)
+            .unwrap();
+        assert_eq!(app.note_sel, 1);
+
+        // And back to the first.
+        app.on_mouse(click(frames.notes.x + 3, frames.notes.y + 1), &mut terminal)
+            .unwrap();
+        assert_eq!(app.note_sel, 0);
+    }
+
+    /// A click on a border must not move the selection.
+    #[test]
+    fn clicking_a_border_leaves_the_selection_alone() {
+        let (mut app, _d) = temp_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
+        terminal.draw(|f| app.draw(f)).unwrap();
+        let frames = view::layout(Rect::new(0, 0, 100, 20));
+
+        app.note_sel = 1;
+        app.on_mouse(click(frames.notes.x + 3, frames.notes.y), &mut terminal)
+            .unwrap();
+        assert_eq!(app.note_sel, 1, "the border moved the selection");
+    }
+
+    /// The wheel acts on what is under the pointer, not on what has focus.
+    #[test]
+    fn the_wheel_scrolls_the_pane_under_the_pointer() {
+        let (mut app, _d) = temp_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
+        terminal.draw(|f| app.draw(f)).unwrap();
+        let frames = view::layout(Rect::new(0, 0, 100, 20));
+
+        // Focus is on the notes pane; the pointer is over the preview.
+        app.focus = Pane::Notes;
+        let before = app.note_sel;
+        app.on_mouse(
+            wheel_event(MouseEventKind::ScrollDown, frames.preview.x + 2, frames.preview.y + 2),
+            &mut terminal,
+        )
+        .unwrap();
+        assert_eq!(app.preview_scroll, 1, "the preview did not scroll");
+        assert_eq!(app.note_sel, before, "the wheel moved the wrong pane");
+
+        // Over the notes pane, it moves the selection.
+        app.on_mouse(
+            wheel_event(MouseEventKind::ScrollDown, frames.notes.x + 2, frames.notes.y + 2),
+            &mut terminal,
+        )
+        .unwrap();
+        assert_eq!(app.note_sel, before + 1);
+    }
+
+    #[test]
+    fn scrolling_up_at_the_top_stays_put() {
+        let (mut app, _d) = temp_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
+        terminal.draw(|f| app.draw(f)).unwrap();
+        let frames = view::layout(Rect::new(0, 0, 100, 20));
+
+        app.on_mouse(
+            wheel_event(MouseEventKind::ScrollUp, frames.preview.x + 2, frames.preview.y + 2),
+            &mut terminal,
+        )
+        .unwrap();
+        assert_eq!(app.preview_scroll, 0);
+    }
+
+    /// A click behind an overlay would act on something the user cannot see.
+    #[test]
+    fn a_click_is_ignored_while_an_overlay_is_open() {
+        let (mut app, _d) = temp_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
+        terminal.draw(|f| app.draw(f)).unwrap();
+        let frames = view::layout(Rect::new(0, 0, 100, 20));
+
+        app.mode = Mode::Help;
+        app.focus = Pane::Notes;
+        app.on_mouse(click(frames.dirs.x + 2, frames.dirs.y + 1), &mut terminal)
+            .unwrap();
+        assert_eq!(app.focus, Pane::Notes, "a click reached through the help screen");
     }
 
     /// `u` must reverse the key that did the damage, through the same stack the

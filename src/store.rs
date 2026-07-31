@@ -409,6 +409,10 @@ impl Store {
     }
 
     /// Whether there is anything to take back.
+    ///
+    /// Used by tests to assert that a no-op records nothing; the handler asks
+    /// [`Store::undo`] directly, since it needs the description anyway.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn can_undo(&self) -> bool {
         !self.undo.is_empty()
     }

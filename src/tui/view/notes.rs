@@ -77,19 +77,113 @@ pub fn render(
         return;
     }
 
+    let inner = block.inner(area);
     let list = List::new(rows.iter().map(item).collect::<Vec<_>>())
         .block(block)
         .highlight_style(selection(focused));
 
     let mut state = ListState::default();
     state.select(Some(selected.min(rows.len() - 1)));
+    // Set the offset explicitly rather than letting the widget derive one, so
+    // that a click can be mapped back to a row with the same arithmetic.
+    *state.offset_mut() = first_visible(selected, rows.len(), inner.height);
     frame.render_stateful_widget(list, area, &mut state);
+}
+
+/// Index of the topmost visible row.
+///
+/// Shared by rendering and hit-testing: if a click used different arithmetic
+/// from the paint, clicking a scrolled list would select the wrong note.
+pub fn first_visible(selected: usize, total: usize, height: u16) -> usize {
+    let height = height as usize;
+    if height == 0 || total <= height {
+        return 0;
+    }
+    let last_possible = total - height;
+    // Keep the selection on screen, scrolling no further than the end.
+    selected.saturating_sub(height - 1).min(last_possible)
+}
+
+/// Which row a click at `row` lands on, given the pane's area.
+///
+/// `None` when the click was on a border or past the last row, so a stray click
+/// moves nothing rather than jumping to the end.
+pub fn row_at(area: Rect, row: u16, selected: usize, total: usize) -> Option<usize> {
+    let inner_top = area.y + 1;
+    let inner_height = area.height.saturating_sub(2);
+    if row < inner_top || row >= inner_top + inner_height {
+        return None;
+    }
+    let index = first_visible(selected, total, inner_height) + (row - inner_top) as usize;
+    (index < total).then_some(index)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use ratatui::{backend::TestBackend, Terminal};
+
+    // ── hit testing ─────────────────────────────────────────────────────────
+
+    /// A short list never scrolls, so the first row is always the first item.
+    #[test]
+    fn a_list_that_fits_starts_at_the_top() {
+        assert_eq!(first_visible(0, 3, 10), 0);
+        assert_eq!(first_visible(2, 3, 10), 0);
+        assert_eq!(first_visible(0, 10, 10), 0);
+    }
+
+    /// A long list scrolls just enough to keep the selection visible, and never
+    /// past the end — a window showing blank rows below the last item is the bug
+    /// this prevents.
+    #[test]
+    fn a_long_list_scrolls_to_hold_the_selection_without_overshooting() {
+        // 100 items, 10 rows.
+        assert_eq!(first_visible(0, 100, 10), 0);
+        assert_eq!(first_visible(9, 100, 10), 0, "the tenth item still fits");
+        assert_eq!(first_visible(10, 100, 10), 1);
+        assert_eq!(first_visible(99, 100, 10), 90, "the last item sits on the last row");
+        // Beyond the end cannot scroll further.
+        assert_eq!(first_visible(500, 100, 10), 90);
+    }
+
+    #[test]
+    fn a_zero_height_pane_has_no_offset_and_does_not_panic() {
+        assert_eq!(first_visible(5, 100, 0), 0);
+    }
+
+    /// The click-to-row mapping must agree with the paint, or clicking a scrolled
+    /// list selects the wrong note — silently, which is the worst kind.
+    #[test]
+    fn a_click_maps_to_the_row_that_was_drawn() {
+        // A pane 12 rows tall has 10 usable rows between its borders.
+        let area = Rect::new(0, 0, 30, 12);
+
+        // Unscrolled: the first inner row is item 0.
+        assert_eq!(row_at(area, 1, 0, 100), Some(0));
+        assert_eq!(row_at(area, 5, 0, 100), Some(4));
+        assert_eq!(row_at(area, 10, 0, 100), Some(9));
+
+        // Scrolled: selection 50 puts item 41 on the first row.
+        let offset = first_visible(50, 100, 10);
+        assert_eq!(offset, 41);
+        assert_eq!(row_at(area, 1, 50, 100), Some(41));
+        assert_eq!(row_at(area, 10, 50, 100), Some(50), "the selected row");
+    }
+
+    /// A click on a border or past the last item must move nothing rather than
+    /// jumping somewhere arbitrary.
+    #[test]
+    fn a_click_outside_the_rows_selects_nothing() {
+        let area = Rect::new(0, 0, 30, 12);
+        assert_eq!(row_at(area, 0, 0, 100), None, "top border");
+        assert_eq!(row_at(area, 11, 0, 100), None, "bottom border");
+        assert_eq!(row_at(area, 50, 0, 100), None, "outside the pane");
+        // Three items in a ten-row pane: rows four onwards are empty.
+        assert_eq!(row_at(area, 3, 0, 3), Some(2));
+        assert_eq!(row_at(area, 4, 0, 3), None, "past the last item");
+        assert_eq!(row_at(area, 1, 0, 0), None, "empty list");
+    }
 
     /// An empty pane must say what to do. A blank one is indistinguishable from
     /// a broken one, which is how leo read to new users.
