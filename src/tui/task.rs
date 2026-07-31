@@ -164,6 +164,15 @@ fn chain_with_value(
     }
 }
 
+/// What to say when a recording contains no sound at all.
+///
+/// Names the cause rather than the symptom: on macOS a denied microphone
+/// permission is not an error — `rec` succeeds and every sample is zero — so
+/// this is nearly always a permission that was never granted.
+const SILENT_RECORDING: &str = "No sound was recorded. macOS may not be letting \
+     this terminal use the microphone: System Settings > Privacy & Security > \
+     Microphone, then restart the terminal. `leo doctor` re-checks it.";
+
 /// Read a WAV's duration in whole seconds via sox.
 fn wav_secs(path: &Path) -> Option<u64> {
     let out = std::process::Command::new("sox")
@@ -213,6 +222,12 @@ fn cut(source: &Path, slice: live::Slice) -> Option<PathBuf> {
 
 /// State the two loops share across iterations.
 struct Live {
+    /// Current gap between slices. Grows on failure, resets on success.
+    interval: std::time::Duration,
+    /// Consecutive slices that contained no sound.
+    silent_slices: usize,
+    /// Whether the user has already been told the microphone is not heard.
+    warned_silent: bool,
     transcript: String,
     condensed: String,
     /// Where the rolling loop has transcribed up to, in seconds.
@@ -238,14 +253,26 @@ pub fn start_listen(screen: bool) -> Job {
         };
         let _ = tx.send(TaskEvent::Started { label: "Recording".to_string() });
 
+        // Resolve credentials while the first few seconds of audio accumulate.
+        // A keychain read can take a very long time, and paying it inside the
+        // rolling loop stalls transcription with nothing on screen to explain
+        // the silence — which is exactly how live transcription came to look
+        // like it did not work at all.
+        crate::ai::warm_credentials();
+
         let mut state = Live {
             transcript: String::new(),
             condensed: String::new(),
             cursor: 0,
             pending_words: 0,
             last_condense: Instant::now(),
+            interval: live::ROLL_INTERVAL,
+            silent_slices: 0,
+            warned_silent: false,
         };
-        let mut last_roll = Instant::now();
+        // Due immediately: the first words should appear as soon as there is
+        // enough audio to cut, not one interval later.
+        let mut last_roll = Instant::now() - live::ROLL_INTERVAL;
 
         while !worker_stop.load(Ordering::Relaxed) {
             thread::sleep(POLL);
@@ -256,7 +283,7 @@ pub fn start_listen(screen: bool) -> Job {
                 steps: None,
             });
 
-            if last_roll.elapsed() < live::ROLL_INTERVAL {
+            if last_roll.elapsed() < state.interval {
                 continue;
             }
             last_roll = Instant::now();
@@ -277,6 +304,17 @@ pub fn start_listen(screen: bool) -> Job {
 
         let final_transcript = match recorder.stop() {
             Ok(path) => {
+                // A recording with no sound in it must not be transcribed. The
+                // result would be invented text saved as a note, which is worse
+                // than an error: it looks like leo mis-heard rather than never
+                // heard anything.
+                let level = crate::listen::peak_amplitude(&path).unwrap_or(1.0);
+                if live::is_silent(level) {
+                    let _ = std::fs::remove_file(&path);
+                    let _ = tx.send(TaskEvent::Failed(SILENT_RECORDING.to_string()));
+                    return;
+                }
+
                 let report = tx.clone();
                 let result = crate::ai::transcribe_outcome_with_progress(
                     &path,
@@ -345,6 +383,30 @@ fn roll_once(source: &Path, state: &mut Live, tx: &mpsc::Sender<TaskEvent>) {
     };
     let _ = std::fs::remove_file(&snap);
 
+    // Never send silence. Whisper does not answer it with an empty string; it
+    // invents filler, and "Thank you." is its favourite — which is how someone
+    // saying "hello, my name is…" into a microphone macOS had muted got back
+    // "thank you". Skipping also costs nothing, so idle stretches are free.
+    let level = crate::listen::peak_amplitude(&slice_path).unwrap_or(1.0);
+    if live::is_silent(level) {
+        let _ = std::fs::remove_file(&slice_path);
+        state.cursor = recorded;
+        state.silent_slices += 1;
+        // Two silent slices in a row is a quiet room. Sustained silence while
+        // the user believes they are being recorded is a broken microphone, and
+        // saying so is the whole difference between "leo is broken" and "macOS
+        // needs to be told yes".
+        if state.silent_slices >= 4 && !state.warned_silent {
+            state.warned_silent = true;
+            let _ = tx.send(TaskEvent::ProviderFallback {
+                from: "no sound from the microphone".to_string(),
+                to: "check System Settings > Privacy & Security > Microphone".to_string(),
+            });
+        }
+        return;
+    }
+    state.silent_slices = 0;
+
     let result = crate::ai::transcribe_outcome(&slice_path);
     let _ = std::fs::remove_file(&slice_path);
 
@@ -356,16 +418,27 @@ fn roll_once(source: &Path, state: &mut Live, tx: &mpsc::Sender<TaskEvent>) {
                     to: f.to.clone(),
                 });
             }
+            state.interval = live::ROLL_INTERVAL;
+            state.cursor = recorded;
+
+            // Audio loud enough to pass the level check can still be too quiet
+            // to transcribe, and comes back as the same invented filler.
+            if live::is_silence_artifact(&outcome.value) {
+                return;
+            }
+
             let before = state.transcript.split_whitespace().count();
             state.transcript = live::stitch(&state.transcript, &outcome.value);
             let after = state.transcript.split_whitespace().count();
             state.pending_words += after.saturating_sub(before);
-            state.cursor = recorded;
             let _ = tx.send(TaskEvent::Transcript(state.transcript.clone()));
         }
         // A failed slice is not fatal: the cursor stays put so the next pass
-        // covers the same audio again.
+        // covers the same audio again. Back off, though — at a three-second
+        // cadence, retrying a rate-limited provider at full speed is what keeps
+        // it rate-limited.
         Err(e) => {
+            state.interval = live::backoff(state.interval);
             let _ = tx.send(TaskEvent::Progress {
                 label: format!("Transcription retrying ({e})"),
                 steps: None,
@@ -425,6 +498,65 @@ fn condense_if_due(state: &mut Live, tx: &mpsc::Sender<TaskEvent>) {
 
 #[cfg(test)]
 mod tests {
+    /// Where does the first request's latency go?
+
+
+    /// End-to-end proof that text arrives *while* recording, not only after.
+    ///
+    /// Ignored by default: it makes real transcription requests. Run with
+    /// `LEO_FAKE_AUDIO=<wav> cargo test live_streams -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn live_streams_text_during_recording() {
+        if std::env::var("LEO_FAKE_AUDIO").is_err() {
+            panic!("set LEO_FAKE_AUDIO to a wav of speech");
+        }
+        let mut job = super::start_listen(false);
+
+        let started = std::time::Instant::now();
+        let mut first_text_at = None;
+        let mut transcripts = Vec::new();
+
+        // Watch for 13 seconds of a ~14 second recording.
+        while started.elapsed() < std::time::Duration::from_secs(16) {
+            for event in job.drain() {
+                match event {
+                    TaskEvent::Transcript(text) => {
+                        if first_text_at.is_none() {
+                            first_text_at = Some(started.elapsed());
+                        }
+                        println!("[{:>5.1}s] {text}", started.elapsed().as_secs_f64());
+                        transcripts.push(text);
+                    }
+                    TaskEvent::Progress { label, .. } => {
+                        if label.contains("retrying") {
+                            println!("[{:>5.1}s] {label}", started.elapsed().as_secs_f64());
+                        }
+                    }
+                    TaskEvent::ProviderFallback { from, to } => {
+                        println!("[{:>5.1}s] fallback: {from} -> {to}", started.elapsed().as_secs_f64());
+                    }
+                    _ => {}
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        job.request_stop();
+
+        let first = first_text_at.expect("no transcript arrived while recording");
+        println!("first text after {:.1}s, {} updates", first.as_secs_f64(), transcripts.len());
+        assert!(
+            first < std::time::Duration::from_secs(8),
+            "first text took {:.1}s — not live",
+            first.as_secs_f64()
+        );
+        assert!(
+            transcripts.len() >= 2,
+            "only {} update(s); text should build up as speech continues",
+            transcripts.len()
+        );
+    }
+
     use super::*;
 
     /// A job whose worker never starts still drains cleanly and reports done,

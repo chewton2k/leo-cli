@@ -11,9 +11,29 @@
 
 use std::time::Duration;
 
-/// How often a new slice is cut from the growing recording. Shorter means
-/// lower latency but more requests against a free tier.
-pub const ROLL_INTERVAL: Duration = Duration::from_secs(15);
+/// How often a new slice is cut from the growing recording.
+///
+/// Three seconds, so words appear while the speaker is still talking. It was
+/// fifteen, which also meant the *first* text arrived fifteen seconds in — long
+/// enough that a user who said one sentence and stopped saw nothing at all and
+/// reasonably concluded the feature was broken.
+///
+/// The cost of a short interval is requests: roughly twenty a minute of
+/// continuous speech. Two things keep that in check — silent slices are never
+/// sent at all, and a failure backs the interval off ([`backoff`]) rather than
+/// hammering a rate-limited provider.
+pub const ROLL_INTERVAL: Duration = Duration::from_secs(3);
+
+/// Ceiling for the backoff after repeated failures.
+pub const MAX_ROLL_INTERVAL: Duration = Duration::from_secs(24);
+
+/// How loud a slice must be before it is worth transcribing, as a fraction of
+/// full scale.
+///
+/// Digital silence is not the same as a quiet room: a live microphone in a
+/// silent room still reads around 0.001, while a muted or unpermitted one reads
+/// below 0.0001. This sits between them.
+pub const SILENCE_CEILING: f64 = 0.0005;
 /// How far back each slice starts before the previous cursor, so a word spoken
 /// across a boundary is not cut in half. The overlap is removed from the text
 /// again by [`stitch`].
@@ -47,6 +67,58 @@ const MIN_MULTI_WORD_CHARS: usize = 5;
 /// words repeat by coincidence constantly ("the", "and", "of"), and dropping
 /// one on that basis loses speech, so a lone word must be distinctive.
 const MIN_SINGLE_WORD_CHARS: usize = 8;
+
+/// The interval to wait after a failure, doubling up to [`MAX_ROLL_INTERVAL`].
+///
+/// A three-second cadence is only affordable while requests succeed. Against a
+/// rate-limited provider, retrying at the same pace makes the limit permanent,
+/// so each failure halves the request rate until it recovers.
+pub fn backoff(current: Duration) -> Duration {
+    let doubled = current.saturating_mul(2);
+    if doubled > MAX_ROLL_INTERVAL {
+        MAX_ROLL_INTERVAL
+    } else {
+        doubled
+    }
+}
+
+/// Whether a measured peak amplitude means "nothing was said".
+///
+/// Sending silence to Whisper is worse than sending nothing: it does not return
+/// an empty string, it invents plausible filler. "Thank you." and "Thanks for
+/// watching!" are its favourites, which is how a user saying "hello, my name
+/// is…" into a microphone macOS had muted got back "thank you".
+pub fn is_silent(peak_amplitude: f64) -> bool {
+    peak_amplitude < SILENCE_CEILING
+}
+
+/// Whether a transcription is one of Whisper's silence artifacts rather than
+/// speech.
+///
+/// A second line of defence behind [`is_silent`], for audio quiet enough to
+/// hallucinate on but loud enough to pass the level check. Only an exact whole
+/// output counts: someone can genuinely say "thank you", but they rarely say it
+/// as the entire contents of a slice that contained nothing else.
+pub fn is_silence_artifact(text: &str) -> bool {
+    const ARTIFACTS: &[&str] = &[
+        "thank you",
+        "thank you.",
+        "thanks for watching",
+        "thanks for watching!",
+        "thank you for watching",
+        "thank you very much",
+        "please subscribe",
+        "you",
+        "bye",
+        "bye.",
+        ".",
+        "[blank_audio]",
+        "(silence)",
+        "[silence]",
+    ];
+    let cleaned = text.trim().to_lowercase();
+    ARTIFACTS.contains(&cleaned.as_str())
+}
 
 /// Where the next slice should start and how long it should be.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -183,6 +255,74 @@ mod tests {
     use super::*;
 
     // ── slicing ─────────────────────────────────────────────────────────────
+
+    /// The bug this guards: the first slice used to be due one full interval
+    /// after recording began, so a user who said one sentence and stopped saw
+    /// nothing and concluded the feature was broken.
+    #[test]
+    fn the_roll_interval_is_short_enough_to_feel_live() {
+        assert!(
+            ROLL_INTERVAL <= Duration::from_secs(5),
+            "a {}s cadence is not live",
+            ROLL_INTERVAL.as_secs()
+        );
+    }
+
+    #[test]
+    fn backoff_doubles_and_then_stops_at_the_ceiling() {
+        assert_eq!(backoff(Duration::from_secs(3)), Duration::from_secs(6));
+        assert_eq!(backoff(Duration::from_secs(6)), Duration::from_secs(12));
+        assert_eq!(backoff(MAX_ROLL_INTERVAL), MAX_ROLL_INTERVAL);
+        // And it never runs away, however many failures pile up.
+        let mut interval = ROLL_INTERVAL;
+        for _ in 0..50 {
+            interval = backoff(interval);
+        }
+        assert_eq!(interval, MAX_ROLL_INTERVAL);
+    }
+
+    /// Real measurements: a muted or unpermitted microphone reads at digital
+    /// silence, a quiet room reads above it, and speech is far above.
+    #[test]
+    fn silence_is_told_apart_from_a_quiet_room_and_from_speech() {
+        // Measured from a macOS mic with permission denied, and from a
+        // synthesised silent WAV — both 0.000031.
+        assert!(is_silent(0.000031), "digital silence read as sound");
+        assert!(is_silent(0.0));
+        // A live mic in a quiet room.
+        assert!(!is_silent(0.002), "a quiet room read as silence");
+        // Measured from `say` output.
+        assert!(!is_silent(0.784), "speech read as silence");
+    }
+
+    /// Whisper's invented filler must not reach the transcript.
+    #[test]
+    fn whispers_silence_artifacts_are_recognized() {
+        for artifact in [
+            "Thank you.",
+            "thank you",
+            "  Thanks for watching! ",
+            "[BLANK_AUDIO]",
+            ".",
+            "you",
+        ] {
+            assert!(is_silence_artifact(artifact), "missed {artifact:?}");
+        }
+    }
+
+    /// And real speech must survive, including a sentence that merely contains
+    /// one of those phrases.
+    #[test]
+    fn real_speech_is_not_mistaken_for_an_artifact() {
+        for speech in [
+            "Hello, my name is Charlton",
+            "thank you for the explanation, that makes sense",
+            "So thank you. Next, the ownership rules.",
+            "Thanks for watching the lecture recording I made yesterday",
+        ] {
+            assert!(!is_silence_artifact(speech), "dropped real speech: {speech:?}");
+        }
+    }
 
     #[test]
     fn the_first_slice_starts_at_zero() {

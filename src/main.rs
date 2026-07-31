@@ -19,7 +19,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
 
-use config::secret::{redact, resolve, KeyringStore, SecretStore};
+use config::secret::{redact, resolve, SecretStore};
 use config::Config;
 
 /// leo — notes for programmers.
@@ -136,7 +136,7 @@ enum Commands {
     /// Check what works on this machine and what to install
     Doctor,
 
-    /// Retired. Keys live in the OS keychain; use `leo model login`.
+    /// Retired. Use `leo model login`, which stores keys for you.
     #[command(hide = true)]
     Env,
 
@@ -168,12 +168,15 @@ enum ModelCommands {
         /// Provider name from your config
         name: String,
     },
-    /// Store a provider's API key in your OS keychain
+    /// Store a provider's API key (kept in a file only you can read)
     Login {
         /// Provider name from your config
         name: String,
     },
-    /// Remove a provider's API key from your OS keychain
+    /// Remove a provider's stored API key
+    /// Move keys stored in the OS keychain into leo's credentials file
+    Import,
+
     Logout {
         /// Provider name from your config
         name: String,
@@ -197,6 +200,7 @@ impl From<ModelCommands> for action::ModelAction {
             ModelCommands::Test { name } => action::ModelAction::Test { name },
             ModelCommands::Login { name } => action::ModelAction::Login { name },
             ModelCommands::Logout { name } => action::ModelAction::Logout { name },
+            ModelCommands::Import => action::ModelAction::Import,
         }
     }
 }
@@ -235,8 +239,6 @@ fn main() -> Result<()> {
         dotenvy::from_path(data_dir.join("leo").join(".env")).ok();
     }
     dotenvy::dotenv().ok();
-    // One-time move of per-provider keychain items into a single item.
-    Config::load().migrate_credentials_once();
     let cli = Cli::parse();
 
     match cli.command {
@@ -248,7 +250,7 @@ fn main() -> Result<()> {
         // keychain — so a file made months ago could silently shadow a key
         // stored the recommended way.
         Some(Commands::Env) => {
-            println!("  `leo env` is gone: keys live in your OS keychain now.");
+            println!("  `leo env` is gone: `leo model login` stores keys for you.");
             println!("  Store one with `leo model login <provider>`.");
             println!("  Env vars still work and still take precedence, for CI.");
             Ok(())
@@ -390,7 +392,8 @@ fn run_sync(command: SyncCommands) -> Result<()> {
 /// Describe where a provider's credential comes from — never what it is.
 ///
 /// Asks whether a key exists rather than reading it. Reading is what can cost a
-/// keychain permission dialog, and this runs for every provider in both chains.
+/// permission dialog on a keychain, and this runs for every provider in both
+/// chains.
 fn describe_credential(provider: &str, key_env: Option<&str>, store: &dyn SecretStore) -> String {
     let Some(var) = key_env else {
         return "no key needed".to_string();
@@ -401,7 +404,7 @@ fn describe_credential(provider: &str, key_env: Option<&str>, store: &dyn Secret
         }
     }
     if store.has(provider) {
-        "key in keychain".to_string()
+        "key stored".to_string()
     } else {
         format!("no key (run `leo model login {provider}`)")
     }
@@ -442,7 +445,7 @@ fn build_one_transcriber(
 /// records from the microphone is not a test anyone wants to run twice.
 pub fn test_provider(name: &str) -> Result<String> {
     let cfg = Config::load();
-    let store = KeyringStore;
+    let store = config::secret::default_store();
     let Some(pc) = cfg.provider(name) else {
         anyhow::bail!("no provider named '{name}' in your config");
     };
@@ -488,7 +491,7 @@ pub fn run_doctor() -> Result<()> {
     use health::State;
 
     let config = Config::load();
-    let checks = health::report(&config, &config::secret::KeyringStore);
+    let checks = health::report(&config, config::secret::default_store().as_ref());
 
     println!();
     let mut missing = 0;
@@ -533,14 +536,14 @@ pub fn run_doctor() -> Result<()> {
 
 pub fn run_model(command: action::ModelAction) -> Result<()> {
     let cfg = Config::load();
-    let store = KeyringStore;
+    let store = config::secret::default_store();
 
     match command {
         action::ModelAction::List => {
             if !store.available() {
                 println!(
                     "  {}",
-                    "keychain unavailable on this system — keys must come from env vars".yellow()
+                    "no credential store available — keys must come from env vars".yellow()
                 );
             }
 
@@ -603,7 +606,7 @@ pub fn run_model(command: action::ModelAction) -> Result<()> {
                 if let Ok(existing) = std::env::var(var) {
                     if !existing.trim().is_empty() {
                         println!("  Found {var} in your environment ({}).", redact(&existing));
-                        print!("  Import it into the keychain? [Y/n] ");
+                        print!("  Store it for you? [Y/n] ");
                         use std::io::Write;
                         std::io::stdout().flush().ok();
                         let mut answer = String::new();
@@ -628,6 +631,57 @@ pub fn run_model(command: action::ModelAction) -> Result<()> {
             }
             store.set(&name, secret.trim())?;
             println!("  {} stored for {name}.", "ok".green());
+            Ok(())
+        }
+
+        // The one place that reads the OS keychain, and only because the user
+        // asked. macOS may prompt once here — that is the last time, because
+        // what comes out is written to a file leo can read without asking.
+        action::ModelAction::Import => {
+            let keychain = config::secret::KeyringStore;
+            let names: Vec<String> = cfg
+                .providers
+                .iter()
+                .filter(|(_, p)| p.key_env.is_some())
+                .map(|(name, _)| name.clone())
+                .collect();
+
+            println!();
+            println!("  Reading the keychain. macOS may ask for permission once.");
+            let mut moved = Vec::new();
+            for name in &names {
+                if let Ok(Some(secret)) = keychain.get(name) {
+                    store.set(name, secret.as_str())?;
+                    moved.push(name.clone());
+                }
+            }
+            // Also anything an older layout left in per-provider items.
+            for name in keychain.migrate_legacy(&names) {
+                if let Ok(Some(secret)) = keychain.get(&name) {
+                    store.set(&name, secret.as_str())?;
+                    if !moved.contains(&name) {
+                        moved.push(name);
+                    }
+                }
+            }
+
+            println!();
+            if moved.is_empty() {
+                println!("  {}", "Nothing was stored in the keychain.".yellow());
+                println!("  Use `leo model login <provider>` to store a key.");
+            } else {
+                for name in &moved {
+                    println!("  {} {name}", "moved".green());
+                }
+                println!();
+                match config::file_store::FileStore::new() {
+                    Ok(f) => println!("  Now in {} (readable only by you).", f.path().display()),
+                    Err(_) => println!("  Now in leo's credentials file."),
+                }
+                println!("  You can delete leo's keychain entry: it is no longer read.");
+                println!("  {}", "macOS will not ask again.".green());
+            }
+            println!();
             Ok(())
         }
 
@@ -688,7 +742,7 @@ mod cli_tests {
         store.set("openrouter", "sk-or-v1-supersecret9999").unwrap();
 
         let s = describe_credential("openrouter", Some("LEO_TEST_DESC_B"), &store);
-        assert!(s.contains("keychain"), "got: {s}");
+        assert!(s.contains("stored"), "got: {s}");
         assert!(!s.contains("supersecret"), "LEAKED THE KEY: {s}");
         assert!(!s.contains("9999"), "the value must not be read at all: {s}");
     }

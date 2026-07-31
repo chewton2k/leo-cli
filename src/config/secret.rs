@@ -28,6 +28,10 @@ pub const SERVICE: &str = "leo";
 pub struct Secret(Zeroizing<String>);
 
 impl Secret {
+    pub fn new(value: Zeroizing<String>) -> Self {
+        Secret(value)
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -61,6 +65,26 @@ pub trait SecretStore {
     /// Anything that only renders status should call this.
     fn has(&self, account: &str) -> bool {
         matches!(self.get(account), Ok(Some(_)))
+    }
+}
+
+/// So a `Box<dyn SecretStore>` can be passed anywhere a store is expected,
+/// which is what choosing the backend at runtime requires.
+impl SecretStore for Box<dyn SecretStore> {
+    fn get(&self, account: &str) -> Result<Option<Secret>> {
+        (**self).get(account)
+    }
+    fn has(&self, account: &str) -> bool {
+        (**self).has(account)
+    }
+    fn set(&self, account: &str, secret: &str) -> Result<()> {
+        (**self).set(account, secret)
+    }
+    fn delete(&self, account: &str) -> Result<()> {
+        (**self).delete(account)
+    }
+    fn available(&self) -> bool {
+        (**self).available()
     }
 }
 
@@ -108,6 +132,34 @@ pub fn resolve(provider: &str, key_env: Option<&str>, store: &dyn SecretStore) -
                 "could not read the stored credential for \"{provider}\": {e}"
             ));
             None
+        }
+    }
+}
+
+/// The store leo uses for credentials.
+///
+/// A file by default, not the OS keychain. On macOS a keychain item records the
+/// binary that created it and asks permission whenever a different one reads it,
+/// and every `cargo install` produces a different binary — so the prompt came
+/// back after every upgrade, once per provider, with no way to answer it for
+/// good. That is not a trade a note-taking tool should ask its user to make.
+///
+/// `LEO_USE_KEYCHAIN=1` opts back in for anyone who prefers encryption at rest
+/// and does not mind the prompts. Env vars still beat both.
+///
+/// Returned boxed because the two implementations are different types and the
+/// choice is made at runtime.
+pub fn default_store() -> Box<dyn SecretStore> {
+    if std::env::var("LEO_USE_KEYCHAIN").is_ok_and(|v| v != "0" && !v.is_empty()) {
+        return Box::new(KeyringStore);
+    }
+    match crate::config::file_store::FileStore::new() {
+        Ok(store) => Box::new(store),
+        // No config directory is a genuinely broken environment; the keychain is
+        // a better answer than pretending nothing is stored.
+        Err(e) => {
+            crate::diag::warn(format!("could not locate the credentials file ({e})"));
+            Box::new(KeyringStore)
         }
     }
 }

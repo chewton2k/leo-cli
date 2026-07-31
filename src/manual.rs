@@ -137,8 +137,8 @@ Plain markdown, one file per note, in `{notes_dir}`. `:sync init` then
 `:sync connect <url>` backs them up to git; after that every save commits.
 `:export 1 pdf` writes a copy elsewhere.
 
-Settings live in `{config_path}`. API keys never do — they go in your OS
-keychain, via `Ctrl-S` or `leo model login`.
+Settings live in `{config_path}`. API keys never do — `Ctrl-S` or
+`leo model login` keeps those in a separate file only your account can read.
 "#,
         notes_dir = "<data dir>/leo/notes/",
         config_path = "<config dir>/leo/config.toml",
@@ -314,11 +314,18 @@ mod tests {
         assert!(body.contains("```"), "no examples to copy");
     }
 
+    /// The manual must say keys are kept apart from the config, and that the
+    /// place they live is private — that is the whole security story a user
+    /// needs from a quickstart.
     #[test]
-    fn the_manual_says_keys_go_in_the_keychain_and_not_a_file() {
+    fn the_manual_says_keys_are_kept_separately_and_privately() {
         let body = manual_body().to_lowercase();
-        assert!(body.contains("keychain"));
-        assert!(body.contains("never"), "does not say keys are never in the file");
+        assert!(body.contains("never"), "does not say keys are never in the config");
+        assert!(
+            body.contains("only your account can read")
+                || body.contains("only you can read"),
+            "does not say the store is private"
+        );
     }
 
     /// A version bump must rewrite the note the user already has rather than

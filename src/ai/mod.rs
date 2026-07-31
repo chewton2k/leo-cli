@@ -9,7 +9,6 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use crate::config::secret::KeyringStore;
 use crate::config::Config;
 
 /// Token budget for full note structuring.
@@ -32,8 +31,8 @@ fn report(outcome: &chain::ChainOutcome<String>) {
     }
 }
 
-fn context() -> (Config, KeyringStore) {
-    (Config::load(), KeyringStore)
+fn context() -> (Config, Box<dyn crate::config::secret::SecretStore>) {
+    (Config::load(), crate::config::secret::default_store())
 }
 
 /// Transcribe an audio file of any length through the configured chain,
@@ -42,6 +41,29 @@ fn context() -> (Config, KeyringStore) {
 /// Callers that own a terminal print the fallbacks; the TUI turns them into
 /// status-line events instead, since an `eprintln!` would smear ink across the
 /// alternate screen.
+/// Resolve every credential the AI chains might need, discarding the values.
+///
+/// Called before live transcription starts. Reading a credential is not free:
+/// the OS keychain can take a long time to answer — over a hundred seconds when
+/// macOS decides to ask permission — and paying that inside the rolling loop
+/// stalls it completely, with nothing on screen to say why. Paying it up front
+/// costs nothing the user notices, because the recorder is already running and
+/// no audio is lost, and the read is cached for the rest of the process.
+pub fn warm_credentials() {
+    let config = crate::config::Config::load();
+    let store = crate::config::secret::default_store();
+    let names = config
+        .transcribe
+        .chain
+        .iter()
+        .chain(config.chat.chain.iter());
+    for name in names {
+        if let Some(provider) = config.provider(name) {
+            let _ = crate::config::secret::resolve(name, provider.key_env.as_deref(), store.as_ref());
+        }
+    }
+}
+
 pub fn transcribe_outcome(audio_path: &Path) -> Result<chain::ChainOutcome<String>> {
     let (cfg, store) = context();
     transcribe::run(&cfg, &store, audio_path)
@@ -112,3 +134,4 @@ pub fn expand_prompt(
     report(&outcome);
     Ok(outcome.value.trim().to_string())
 }
+

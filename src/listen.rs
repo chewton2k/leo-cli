@@ -204,7 +204,10 @@ fn require_sox() -> Result<()> {
 /// where recording has to run alongside a live event loop and the same growing
 /// file has to be readable for rolling transcription.
 pub struct Recorder {
-    child: std::process::Child,
+    /// `None` when the audio is being replayed from a file instead of captured.
+    child: Option<std::process::Child>,
+    /// Set to stop a replay thread.
+    replaying: Option<Arc<AtomicBool>>,
     path: PathBuf,
     started: Instant,
 }
@@ -216,6 +219,15 @@ impl Recorder {
 
         let path = recording_path();
         let _ = std::fs::remove_file(&path);
+
+        // A microphone cannot be scripted, so live transcription had no way to
+        // be verified end to end — and a mic that macOS has silenced looks
+        // identical to a quiet room. `LEO_FAKE_AUDIO=<wav>` replays a file at
+        // real-time pace into the same growing WAV the rolling loop reads, so
+        // the whole path can be exercised without speaking.
+        if let Ok(source) = std::env::var("LEO_FAKE_AUDIO") {
+            return Recorder::replay(std::path::Path::new(&source), path);
+        }
 
         let device = if screen {
             Some(std::env::var("LEO_SCREEN_DEVICE").unwrap_or_else(|_| "BlackHole 2ch".to_string()))
@@ -245,7 +257,60 @@ impl Recorder {
                 None => "Failed to start recording".to_string(),
             })?;
 
-        Ok(Recorder { child, path, started: Instant::now() })
+        Ok(Recorder {
+            child: Some(child),
+            replaying: None,
+            path,
+            started: Instant::now(),
+        })
+    }
+
+    /// Replay a WAV into `dest` at real-time pace, imitating `rec`.
+    ///
+    /// Writes a header claiming zero length, exactly as `rec` does while still
+    /// recording, so the reader's header repair is exercised too rather than
+    /// bypassed.
+    pub(crate) fn replay(source: &std::path::Path, dest: PathBuf) -> Result<Recorder> {
+        let audio = std::fs::read(source)
+            .with_context(|| format!("could not read {}", source.display()))?;
+        let data_at = find_data_chunk(&audio)
+            .with_context(|| format!("{} is not a WAV file", source.display()))?;
+
+        // Header with DataSize left at zero.
+        let mut header = audio[..data_at].to_vec();
+        let len = header.len();
+        header[len - 4..].copy_from_slice(&0u32.to_le_bytes());
+        if len >= 8 {
+            header[4..8].copy_from_slice(&0u32.to_le_bytes());
+        }
+        std::fs::write(&dest, &header)?;
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let worker_stop = Arc::clone(&stop);
+        let target = dest.clone();
+        std::thread::spawn(move || {
+            use std::io::Write;
+            // 16 kHz, mono, 16-bit — the format leo records in.
+            const BYTES_PER_SEC: usize = 32_000;
+            const STEP: usize = BYTES_PER_SEC / 10;
+            let body = &audio[data_at..];
+            let mut written = 0;
+            while written < body.len() && !worker_stop.load(Ordering::Relaxed) {
+                let end = (written + STEP).min(body.len());
+                if let Ok(mut file) = std::fs::OpenOptions::new().append(true).open(&target) {
+                    let _ = file.write_all(&body[written..end]);
+                }
+                written = end;
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        });
+
+        Ok(Recorder {
+            child: None,
+            replaying: Some(stop),
+            path: dest,
+            started: Instant::now(),
+        })
     }
 
     pub fn elapsed(&self) -> std::time::Duration {
@@ -260,8 +325,13 @@ impl Recorder {
 
     /// Stop recording and finalize the file. Returns the finished WAV.
     pub fn stop(mut self) -> Result<PathBuf> {
-        self.child.kill().ok();
-        self.child.wait().ok();
+        if let Some(child) = self.child.as_mut() {
+            child.kill().ok();
+            child.wait().ok();
+        }
+        if let Some(stop) = &self.replaying {
+            stop.store(true, Ordering::Relaxed);
+        }
         repair_wav_header(&self.path);
 
         if !self.path.exists() || std::fs::metadata(&self.path)?.len() < 100 {
@@ -277,6 +347,77 @@ impl Recorder {
 /// Used for the finished file and, during live transcription, for a copy of the
 /// growing one — a slice cut from a header that claims zero length yields
 /// nothing.
+/// Byte offset of the start of a WAV's sample data.
+fn find_data_chunk(bytes: &[u8]) -> Option<usize> {
+    // Walk the chunk list rather than assuming a 44-byte header: `say` and sox
+    // both emit files with extra chunks before `data`.
+    let mut i = 12;
+    while i + 8 <= bytes.len() {
+        let id = &bytes[i..i + 4];
+        let size = u32::from_le_bytes(bytes[i + 4..i + 8].try_into().ok()?) as usize;
+        if id == b"data" {
+            return Some(i + 8);
+        }
+        i += 8 + size + (size % 2);
+    }
+    None
+}
+
+/// The peak amplitude of a WAV, as a fraction of full scale.
+///
+/// Used to tell "nobody spoke" apart from "the microphone is not being heard" —
+/// and to avoid sending silence to a transcriber that answers it with invented
+/// text rather than nothing.
+pub fn peak_amplitude(path: &std::path::Path) -> Option<f64> {
+    // `sox stat` writes its report to stderr, one `Label: value` per line.
+    let out = Command::new("sox")
+        .arg(path)
+        .arg("-n")
+        .arg("stat")
+        .output()
+        .ok()?;
+    let report = String::from_utf8_lossy(&out.stderr);
+    for line in report.lines() {
+        if let Some(rest) = line.trim().strip_prefix("Maximum amplitude:") {
+            return rest.trim().parse::<f64>().ok().map(f64::abs);
+        }
+    }
+    None
+}
+
+/// Record a short sample and report its peak amplitude, to check the microphone
+/// is actually heard.
+///
+/// On macOS a denied microphone permission is not an error: `rec` succeeds and
+/// the samples are all zero. Nothing downstream can tell that from a silent
+/// room, so the only way to find out is to look at the numbers.
+pub fn microphone_peak(seconds: f64) -> Option<f64> {
+    let probe = std::env::temp_dir().join(format!("leo-mic-probe-{}.wav", std::process::id()));
+    let ok = Command::new("rec")
+        .args([
+            "-q",
+            "-r",
+            "16000",
+            "-c",
+            "1",
+            "-b",
+            "16",
+            &probe.to_string_lossy(),
+            "trim",
+            "0",
+            &seconds.to_string(),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    let level = if ok { peak_amplitude(&probe) } else { None };
+    let _ = std::fs::remove_file(&probe);
+    level
+}
+
 pub fn repair_wav_header(path: &std::path::Path) {
     let fixed = path.with_extension("fixed.wav");
     let ok = Command::new("sox")
@@ -299,6 +440,88 @@ pub fn repair_wav_header(path: &std::path::Path) {
 
 #[cfg(test)]
 mod tests {
+    /// The replay hook must produce a *growing* WAV that the rolling loop can
+    /// read, or live transcription has no way to be tested at all.
+    #[test]
+    fn the_replay_hook_grows_a_readable_wav() {
+        if !crate::health::on_path("sox") {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("tone.wav");
+        let ok = std::process::Command::new("sox")
+            .args(["-n", "-r", "16000", "-c", "1", "-b", "16"])
+            .arg(&source)
+            .args(["synth", "3", "sine", "440"])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        assert!(ok, "could not synthesise a source");
+
+        let dest = dir.path().join("growing.wav");
+        let recorder = Recorder::replay(&source, dest.clone()).expect("replay started");
+
+        let first = std::fs::metadata(&dest).unwrap().len();
+        std::thread::sleep(std::time::Duration::from_millis(600));
+        let second = std::fs::metadata(&dest).unwrap().len();
+        assert!(second > first, "the file did not grow: {first} -> {second}");
+
+        // And a header-repaired copy reports a real duration, which is what the
+        // rolling loop depends on.
+        let snap = dir.path().join("snap.wav");
+        std::fs::copy(&dest, &snap).unwrap();
+        repair_wav_header(&snap);
+        let level = peak_amplitude(&snap).expect("a level");
+        assert!(!crate::ai::live::is_silent(level), "replayed audio read silent");
+
+        let finished = recorder.stop().expect("a finished file");
+        assert!(finished.exists());
+    }
+
+    /// The level check has to agree with what sox reports, since the whole
+    /// silence defence rests on it.
+    #[test]
+    fn peak_amplitude_reads_silence_and_sound_apart() {
+        // Skip where sox is not installed rather than failing the suite.
+        if !crate::health::on_path("sox") {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+
+        let silent = dir.path().join("silent.wav");
+        let ok = std::process::Command::new("sox")
+            .args(["-n", "-r", "16000", "-c", "1", "-b", "16"])
+            .arg(&silent)
+            .args(["trim", "0", "1"])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        assert!(ok, "could not synthesise a silent wav");
+        let level = peak_amplitude(&silent).expect("a level for a silent file");
+        assert!(
+            crate::ai::live::is_silent(level),
+            "synthesised silence measured {level}"
+        );
+
+        // A tone stands in for speech: the point is that it is not silence.
+        let tone = dir.path().join("tone.wav");
+        let ok = std::process::Command::new("sox")
+            .args(["-n", "-r", "16000", "-c", "1", "-b", "16"])
+            .arg(&tone)
+            .args(["synth", "1", "sine", "440"])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        assert!(ok, "could not synthesise a tone");
+        let level = peak_amplitude(&tone).expect("a level for a tone");
+        assert!(!crate::ai::live::is_silent(level), "a tone measured {level}");
+    }
+
+    #[test]
+    fn a_missing_file_has_no_level_rather_than_a_wrong_one() {
+        assert!(peak_amplitude(std::path::Path::new("/nonexistent/nope.wav")).is_none());
+    }
+
     use super::*;
 
     #[test]

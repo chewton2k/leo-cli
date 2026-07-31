@@ -1,4 +1,5 @@
 pub mod edit;
+pub mod file_store;
 pub mod provider;
 pub mod secret;
 
@@ -406,46 +407,6 @@ model = "Systran/faster-whisper-small"
         }
     }
 
-    /// Move credentials stored by an older version into leo's single keychain
-    /// item, once per installation.
-    ///
-    /// Older versions wrote one item per provider, and macOS asks for permission
-    /// per item — which turned opening the provider screen into a dozen dialogs.
-    /// Doing this once, eagerly, is what makes that stop.
-    pub fn migrate_credentials_once(&self) {
-        let marker = match Self::config_path() {
-            Ok(path) => path.with_file_name(".credentials-merged"),
-            Err(_) => return,
-        };
-        if marker.exists() {
-            return;
-        }
-
-        // Only provider names leo knows about, so this cannot go fishing through
-        // the user's keychain for unrelated items.
-        let names: Vec<String> = self
-            .providers
-            .iter()
-            .filter(|(_, p)| p.key_env.is_some())
-            .map(|(name, _)| name.clone())
-            .collect();
-
-        let moved = secret::KeyringStore.migrate_legacy(&names);
-        if !moved.is_empty() {
-            crate::diag::warn(format!(
-                "moved {} saved key{} into leo's single keychain item, so macOS stops asking per provider",
-                moved.len(),
-                if moved.len() == 1 { "" } else { "s" }
-            ));
-        }
-        // Record the attempt either way: a user with no stored keys should not
-        // re-scan on every launch.
-        if let Some(parent) = marker.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let _ = std::fs::write(&marker, "1");
-    }
-
     pub fn provider(&self, name: &str) -> Option<&ProviderConfig> {
         self.providers.get(name)
     }
@@ -506,6 +467,9 @@ model_path = "~/.leo/models/ggml-base.en.bin"
     /// file stay short.
     #[test]
     fn an_empty_config_has_no_chains_but_still_knows_every_provider() {
+        // `load_from` applies env overrides, and other tests set them; without
+        // this the chain can arrive non-empty depending on interleaving.
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
         std::fs::write(&path, "").unwrap();

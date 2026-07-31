@@ -127,11 +127,54 @@ fn port_open(base_url: &str) -> bool {
     TcpStream::connect_timeout(&SocketAddr::new(ip, port), Duration::from_millis(300)).is_ok()
 }
 
+/// Whether the microphone is actually heard, by recording a fraction of a
+/// second and looking at the samples.
+///
+/// Worth the half second because on macOS a denied microphone permission is not
+/// an error: `rec` succeeds and every sample is zero. Nothing downstream can
+/// tell that from a quiet room, so a user gets a transcript of invented text
+/// instead of a reason. Probing also makes macOS raise its permission prompt,
+/// which is the fix.
+pub fn microphone() -> Check {
+    if !on_path("rec") {
+        return Check::missing("microphone", "recording audio", install_hint("sox"));
+    }
+    match crate::listen::microphone_peak(0.4) {
+        Some(peak) if crate::ai::live::is_silent(peak) => Check {
+            what: "microphone".to_string(),
+            needed_for: "recording audio".to_string(),
+            state: State::Missing {
+                fix: "System Settings > Privacy & Security > Microphone — allow \
+                      your terminal, then restart it"
+                    .to_string(),
+            },
+            detail: Some("recorded silence; the mic is not being heard".to_string()),
+        },
+        Some(peak) => Check::ready(
+            "microphone",
+            "recording audio",
+            Some(format!("hearing input (peak {peak:.3})")),
+        ),
+        None => Check {
+            what: "microphone".to_string(),
+            needed_for: "recording audio".to_string(),
+            state: State::Warn {
+                note: "could not be tested".to_string(),
+            },
+            detail: None,
+        },
+    }
+}
+
 /// Everything needed to record speech into a note.
 ///
 /// Separate from the full report so `listen` can check it before recording
 /// rather than failing partway through.
-pub fn recording(config: &Config, store: &dyn SecretStore) -> Vec<Check> {
+/// `microphone` is only meaningful when the audio comes from a microphone:
+/// `--screen` captures system output through a loopback device, and the replay
+/// hook reads a file, so probing the mic for either would block a recording
+/// that would have worked.
+pub fn recording(config: &Config, store: &dyn SecretStore, uses_microphone: bool) -> Vec<Check> {
     let mut checks = Vec::new();
 
     checks.push(if on_path("rec") {
@@ -140,6 +183,10 @@ pub fn recording(config: &Config, store: &dyn SecretStore) -> Vec<Check> {
         Check::missing("sox", "recording audio", install_hint("sox"))
     });
 
+    // Only probe once sox exists, or the probe just repeats that.
+    if uses_microphone && checks.first().is_some_and(|c| c.state.is_ready()) {
+        checks.push(microphone());
+    }
     checks.push(chain_check(config, Chain::Transcribe, store));
     checks.push(chain_check(config, Chain::Chat, store));
     checks
@@ -303,6 +350,10 @@ pub fn report(config: &Config, store: &dyn SecretStore) -> Vec<Check> {
         Check::missing("sox", "recording audio for listen", install_hint("sox"))
     });
 
+    if on_path("rec") {
+        checks.push(microphone());
+    }
+
     checks.push(if on_path("pandoc") {
         Check::ready("pandoc", "export to docx, pdf, rtf, odt", None)
     } else {
@@ -319,19 +370,55 @@ pub fn report(config: &Config, store: &dyn SecretStore) -> Vec<Check> {
         Check::missing("git", "sync to GitHub", install_hint("git"))
     });
 
-    checks.push(match store.available() {
-        true => Check::ready("OS keychain", "storing API keys", None),
-        false => Check {
-            what: "OS keychain".to_string(),
+    checks.push(credentials_check());
+
+    checks
+}
+
+/// Where credentials are kept, and whether the file is readable by anyone else.
+///
+/// Worth reporting because the choice of a file over the keychain trades
+/// encryption at rest for filesystem permissions — so those permissions are the
+/// protection, and an unchecked assumption is not one.
+fn credentials_check() -> Check {
+    use crate::config::file_store::FileStore;
+
+    if std::env::var("LEO_USE_KEYCHAIN").is_ok_and(|v| v != "0" && !v.is_empty()) {
+        return Check::ready(
+            "credentials",
+            "storing API keys",
+            Some("OS keychain (LEO_USE_KEYCHAIN is set)".to_string()),
+        );
+    }
+
+    match FileStore::new() {
+        // Tighten it rather than only complaining: leo created this file, and a
+        // loose mode is a bug in an older leo, not a decision the user made.
+        Ok(file) if !file.is_private() && !file.make_private() => Check {
+            what: "credentials".to_string(),
             needed_for: "storing API keys".to_string(),
             state: State::Warn {
-                note: "not available here; use env vars instead".to_string(),
+                note: format!(
+                    "{} is readable by other accounts on this machine",
+                    file.path().display()
+                ),
+            },
+            detail: Some(format!("chmod 600 {}", file.path().display())),
+        },
+        Ok(file) => Check::ready(
+            "credentials",
+            "storing API keys",
+            Some(format!("{} — only you can read it", file.path().display())),
+        ),
+        Err(e) => Check {
+            what: "credentials".to_string(),
+            needed_for: "storing API keys".to_string(),
+            state: State::Warn {
+                note: format!("no location for a credentials file: {e}"),
             },
             detail: None,
         },
-    });
-
-    checks
+    }
 }
 
 /// The single most useful thing to do next, or `None` when nothing is missing.
@@ -523,6 +610,23 @@ mod tests {
         }
     }
 
+    /// Screen capture does not go through the microphone, so a silent mic must
+    /// not block it. Nor must a replayed file.
+    #[test]
+    fn screen_capture_is_not_blocked_by_the_microphone() {
+        let config = config_with(vec![], vec![]);
+        let with_mic = recording(&config, &store(), true);
+        let without = recording(&config, &store(), false);
+        assert!(
+            !without.iter().any(|c| c.what == "microphone"),
+            "screen capture probed the microphone"
+        );
+        // And the mic case still can, when sox is present.
+        if on_path("rec") {
+            assert!(with_mic.iter().any(|c| c.what == "microphone"));
+        }
+    }
+
     #[test]
     fn install_hints_are_platform_specific() {
         let hint = install_hint("sox");
@@ -572,7 +676,7 @@ mod tests {
     #[test]
     fn the_recording_preflight_covers_audio_and_both_models() {
         let config = config_with(vec![], vec![]);
-        let checks = recording(&config, &store());
+        let checks = recording(&config, &store(), true);
         let subjects: Vec<&str> = checks.iter().map(|c| c.what.as_str()).collect();
         assert!(subjects.contains(&"sox"), "{subjects:?}");
         assert!(subjects.contains(&"a transcription model"), "{subjects:?}");

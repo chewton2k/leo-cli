@@ -21,7 +21,7 @@ brew install ollama whisper-cpp
 ollama pull qwen3:8b
 ```
 
-Otherwise, store a key in your OS keychain — not a plaintext file:
+Otherwise, store a key once and leo remembers it:
 
 ```sh
 leo model login openrouter   # free models via openrouter/free
@@ -29,11 +29,26 @@ leo model login groq         # free Whisper transcription
 leo model list               # check what's configured
 ```
 
-`leo model login` reads the key with echo disabled, so it never appears on
-screen or in your shell history, and offers to import an existing `.env` value
-if it finds one. `leo model list` reports only whether a key is stored, never the
-key — and never reads it, since on macOS reading a keychain item can cost a
-permission prompt.
+`leo model login` reads the key with echo disabled, so it never appears on screen
+or in your shell history. `leo model list` reports only whether a key is stored,
+never the key itself.
+
+Keys are kept in `credentials.json` beside your config, with mode `0600` in a
+`0700` directory — readable by your account and nothing else. leo does **not**
+use the macOS keychain by default, and that is deliberate: a keychain item
+records which binary created it and asks permission whenever a different one
+reads it, so every `cargo install` brought the dialog back, once per provider,
+with no way to answer it for good.
+
+The trade-off, stated plainly: the file is not encrypted, so anything running as
+you can read it. That is the same arrangement as `~/.aws/credentials` and `gh`'s
+token file, and on macOS FileVault still encrypts it at rest. If you would rather
+have encryption at rest and do not mind the prompts, set `LEO_USE_KEYCHAIN=1`.
+If you would rather store nothing at all, use env vars — they take precedence
+over both.
+
+Upgrading from a version that used the keychain? `leo model import` moves the
+keys across. It asks for permission once, and that is the last time.
 
 Tune providers and fallback order in `leo config edit`. Providers are tried in
 order and unavailable ones (no key, no binary, closed port) are skipped
@@ -340,7 +355,8 @@ The same things work from a shell:
 ```sh
 leo model list                 # both chains, models, and credential status
 leo model test openrouter      # one minimal request to check it works
-leo model login openrouter      # store a key in the OS keychain (echo disabled)
+leo model login openrouter     # store a key (echo disabled)
+leo model import               # move keys out of an old keychain entry
 leo model logout openrouter    # remove it
 leo config path                # where config.toml lives
 leo config edit                # open it in $EDITOR
@@ -380,9 +396,8 @@ The four protocols are `openai` (chat, and almost everything speaks it),
 `/audio/transcriptions` endpoint, including OpenAI's own), and `hf` (Hugging
 Face inference).
 
-Keys never go in this file — they live in your OS keychain, or in env vars,
-which take precedence. All of them share one keychain item, so macOS asks for
-permission at most once rather than once per provider. Reordering a chain or toggling a provider from the
+Keys never go in this file — they live in `credentials.json` beside it, or in env
+vars, which take precedence. Reordering a chain or toggling a provider from the
 provider screen rewrites only that one line, so your comments and formatting
 survive.
 

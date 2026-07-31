@@ -200,7 +200,7 @@ impl App {
             return;
         }
         let config = crate::config::Config::load();
-        match crate::health::next_step(&config, &crate::config::secret::KeyringStore) {
+        match crate::health::next_step(&config, crate::config::secret::default_store().as_ref()) {
             Some(step) => self.say(Kind::Warn, step),
             None => self.say(
                 Kind::Good,
@@ -216,9 +216,16 @@ impl App {
     /// before recording rather than after: discovering there is no transcription
     /// provider once the user has already talked for twenty minutes is the worst
     /// possible time to learn it.
-    fn listen_preflight(&mut self) -> Option<Vec<Line>> {
+    fn listen_preflight(&mut self, screen: bool) -> Option<Vec<Line>> {
         let config = crate::config::Config::load();
-        let checks = crate::health::recording(&config, &crate::config::secret::KeyringStore);
+        // Screen capture and the replay hook do not use the microphone, so
+        // probing it would refuse a recording that would have worked.
+        let uses_microphone = !screen && std::env::var("LEO_FAKE_AUDIO").is_err();
+        let checks = crate::health::recording(
+            &config,
+            crate::config::secret::default_store().as_ref(),
+            uses_microphone,
+        );
         let missing: Vec<_> = checks.iter().filter(|c| !c.state.is_ready()).collect();
         if missing.is_empty() {
             return None;
@@ -677,7 +684,7 @@ impl App {
                 // just the recorder. Discovering there is no transcription
                 // provider *after* talking for twenty minutes is the worst way
                 // to learn it.
-                if let Some(lines) = self.listen_preflight() {
+                if let Some(lines) = self.listen_preflight(req.screen) {
                     self.pinned = Some(("not ready to record".to_string(), lines));
                     self.preview_scroll = 0;
                     return Ok(());
@@ -778,7 +785,7 @@ impl App {
     fn open_settings(&mut self, status: Option<String>) {
         let keep = self.settings.as_ref().map(|s| s.selected).unwrap_or(0);
         let cfg = crate::config::Config::load();
-        let rows = settings::rows(&cfg, &crate::config::secret::KeyringStore);
+        let rows = settings::rows(&cfg, crate::config::secret::default_store().as_ref());
         let selected = if keep == 0 || keep >= rows.len() {
             view::settings::first_selectable(&rows)
         } else {
@@ -1922,7 +1929,7 @@ mod tests {
                 providers: Default::default(),
             };
             let checks =
-                crate::health::recording(&config, &crate::config::secret::MemoryStore::default());
+                crate::health::recording(&config, &crate::config::secret::MemoryStore::default(), true);
             checks
                 .iter()
                 .filter(|c| !c.state.is_ready())
