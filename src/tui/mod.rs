@@ -245,6 +245,28 @@ impl App {
             .collect()
     }
 
+    /// Show a note by id, wherever it lives.
+    ///
+    /// Selects it when the current listing contains it, and pins it into the
+    /// preview when it does not — the user asked for that note, not for a place.
+    fn open_note(&mut self, id: &str) {
+        match self.numbering.iter().position(|n| n == id) {
+            Some(position) => {
+                self.note_sel = position;
+                self.preview_scroll = 0;
+                self.pinned = None;
+            }
+            None => {
+                if let Some(note) = self.store.find_note(id) {
+                    let (title, body) = (note.title.clone(), note.body.clone());
+                    self.pinned = Some((title, body.lines().map(Line::plain).collect()));
+                    self.preview_scroll = 0;
+                }
+            }
+        }
+        self.recent.touch(id);
+    }
+
     /// Jump to the next entry in the recent list, wrapping.
     ///
     /// Cycling rather than presenting a menu: with five entries, pressing a key
@@ -431,14 +453,22 @@ impl App {
         mouse: MouseEvent,
         terminal: &mut Terminal<B>,
     ) -> Result<()> {
-        // Overlays own the whole screen; a click behind one would act on
-        // something the user cannot see.
+        let area = terminal.size().map(|s| Rect::new(0, 0, s.width, s.height))?;
+
+        // The profile page owns the whole screen when it is open, so clicks
+        // belong to it. Anything else with an overlay up ignores them: a click
+        // behind one would act on something the user cannot see.
+        if matches!(self.mode, Mode::Settings) {
+            return self.on_settings_mouse(mouse, area);
+        }
         if !matches!(self.mode, Mode::Normal) {
             return Ok(());
         }
 
-        let area = terminal.size().map(|s| Rect::new(0, 0, s.width, s.height))?;
-        let frames = view::layout(area);
+        // The same geometry that was painted: `layout` alone omits the tab row,
+        // so every pane would be one line out whenever the strip is showing.
+        let tabs = self.tabs();
+        let frames = view::layout_with_tabs(area, !tabs.is_empty());
         let column = mouse.column;
         let row = mouse.row;
 
@@ -451,6 +481,26 @@ impl App {
 
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
+                // The tab strip: clicking a tab opens that note, which is what a
+                // row of tabs is for.
+                if frames.tabs.height > 0 && row == frames.tabs.y {
+                    if let Some(index) = view::tabs::tab_at(&tabs, column) {
+                        // `tabs` and the recent list are in the same order, and
+                        // both skip notes that no longer exist.
+                        let ids: Vec<String> = self
+                            .recent
+                            .ids()
+                            .iter()
+                            .filter(|id| self.store.find_note(id).is_some())
+                            .cloned()
+                            .collect();
+                        if let Some(target) = ids.get(index).cloned() {
+                            self.open_note(&target);
+                        }
+                    }
+                    return Ok(());
+                }
+
                 if in_pane(frames.dirs) {
                     self.focus = Pane::Dirs;
                     let rows = self.dir_rows();
@@ -483,6 +533,45 @@ impl App {
             }
             MouseEventKind::ScrollUp => {
                 self.wheel(&frames, column, row, Intent::Up);
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// Clicks and the wheel on the profile page.
+    ///
+    /// Selection only, like the panes: choosing a row still takes Enter, so a
+    /// stray click cannot rewrite a chain or start a git repo.
+    fn on_settings_mouse(&mut self, mouse: MouseEvent, area: Rect) -> Result<()> {
+        let Some(screen) = self.settings.as_mut() else {
+            return Ok(());
+        };
+
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                let list = view::settings::list_area(area);
+                let Some(index) = view::settings::row_at(
+                    list,
+                    mouse.row,
+                    screen.selected,
+                    screen.rows.len(),
+                ) else {
+                    return Ok(());
+                };
+                // Land on something actionable: clicking a heading should move to
+                // the nearest row that does something rather than nothing.
+                if screen.rows.get(index).is_some_and(|r| r.selectable()) {
+                    screen.selected = index;
+                }
+                Ok(())
+            }
+            MouseEventKind::ScrollDown => {
+                screen.selected = view::settings::step(&screen.rows, screen.selected, 1);
+                Ok(())
+            }
+            MouseEventKind::ScrollUp => {
+                screen.selected = view::settings::step(&screen.rows, screen.selected, -1);
                 Ok(())
             }
             _ => Ok(()),
@@ -1227,13 +1316,23 @@ impl App {
                 }
                 Ok(())
             }
-            A::SyncConnect => {
+            A::SyncConnect { current } => {
                 // The URL has to be typed, so hand over to the `:` line rather
-                // than inventing a second text input on this screen.
+                // than inventing a second text input on this screen. The existing
+                // URL is prefilled so changing one character does not mean
+                // retyping the whole thing.
                 self.settings = None;
                 self.mode = Mode::Command;
-                self.cmd.open("sync connect ");
-                self.say(Kind::Dim, "Paste the repository URL, then Enter.");
+                match &current {
+                    Some(url) => {
+                        self.cmd.open(&format!("sync connect {url}"));
+                        self.say(Kind::Dim, "Edit the URL, then Enter.");
+                    }
+                    None => {
+                        self.cmd.open("sync connect ");
+                        self.say(Kind::Dim, "Paste the repository URL, then Enter.");
+                    }
+                }
                 Ok(())
             }
             A::SyncPush | A::SyncPull => {
@@ -3097,6 +3196,81 @@ mod tests {
         )
         .unwrap();
         assert_eq!(app.preview_scroll, 0);
+    }
+
+    /// The profile page owns the screen when it is open, so clicks belong to it.
+    /// Ignoring them made the page look broken to anyone who reached for the
+    /// mouse.
+    #[test]
+    fn clicking_a_row_on_the_profile_page_selects_it() {
+        let (mut app, _d) = temp_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+
+        app.on_intent(Intent::OpenSettings, &mut terminal).unwrap();
+        terminal.draw(|f| app.draw(f)).unwrap();
+        let before = app.settings.as_ref().unwrap().selected;
+
+        // Aim at the next row that does something, wherever that is.
+        let area = Rect::new(0, 0, 100, 30);
+        let list = view::settings::list_area(area);
+        let target = view::settings::step(&app.settings.as_ref().unwrap().rows, before, 1);
+        assert_ne!(target, before, "fixture has only one selectable row");
+        app.on_mouse(click(list.x + 4, list.y + target as u16), &mut terminal)
+            .unwrap();
+
+        let after = app.settings.as_ref().unwrap().selected;
+        assert_ne!(after, before, "the click did not move the selection");
+        assert!(
+            app.settings.as_ref().unwrap().rows[after].selectable(),
+            "the click landed on a row that does nothing"
+        );
+    }
+
+    #[test]
+    fn the_wheel_moves_the_profile_selection() {
+        let (mut app, _d) = temp_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+
+        app.on_intent(Intent::OpenSettings, &mut terminal).unwrap();
+        let before = app.settings.as_ref().unwrap().selected;
+        app.on_mouse(wheel_event(MouseEventKind::ScrollDown, 50, 10), &mut terminal)
+            .unwrap();
+        assert!(app.settings.as_ref().unwrap().selected > before);
+    }
+
+    /// A row of tabs the user cannot click is not really a row of tabs.
+    #[test]
+    fn clicking_a_tab_opens_that_note() {
+        let (mut app, _d) = temp_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
+
+        // Visit two notes so the strip has two tabs.
+        app.remember_visit();
+        let first = app.selected_id().cloned().unwrap();
+        app.on_intent(Intent::Down, &mut terminal).unwrap();
+        let second = app.selected_id().cloned().unwrap();
+        assert_eq!(app.tabs().len(), 2);
+
+        terminal.draw(|f| app.draw(f)).unwrap();
+        let frames = view::layout_with_tabs(Rect::new(0, 0, 100, 20), true);
+
+        // The second tab is the note we came from; click it.
+        let tabs = app.tabs();
+        let column = {
+            let first_label = tabs[0].title.chars().count().min(18) + 2;
+            (first_label + 2) as u16
+        };
+        app.on_mouse(click(column, frames.tabs.y), &mut terminal).unwrap();
+
+        assert_eq!(
+            app.selected_id(),
+            Some(&first),
+            "clicking the second tab did not open that note"
+        );
+        assert_ne!(app.selected_id(), Some(&second));
     }
 
     /// A click behind an overlay would act on something the user cannot see.

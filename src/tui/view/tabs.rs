@@ -63,6 +63,24 @@ pub fn render(frame: &mut Frame, area: Rect, tabs: &[Tab]) {
     frame.render_widget(Paragraph::new(TuiLine::from(spans)), area);
 }
 
+/// Which tab is at `column`, if any.
+///
+/// Shares [`shorten`] and the same padding as [`render`], so a click lands on the
+/// tab the user actually sees rather than a neighbour.
+pub fn tab_at(tabs: &[Tab], column: u16) -> Option<usize> {
+    let mut x = 0usize;
+    for (index, tab) in tabs.iter().enumerate() {
+        let label = shorten(&tab.title);
+        // " label " plus the separator that follows it.
+        let width = label.chars().count() + 2;
+        if (column as usize) >= x && (column as usize) < x + width {
+            return Some(index);
+        }
+        x += width + 1;
+    }
+    None
+}
+
 /// Cut a long title with an ellipsis, counting characters rather than bytes so a
 /// multi-byte title cannot be split mid-character.
 fn shorten(title: &str) -> String {
@@ -151,6 +169,27 @@ mod tests {
         let out = drawn(&[], 30);
         let contents: String = out.chars().filter(|c| !matches!(c, '"' | '\n')).collect();
         assert!(contents.trim().is_empty(), "{out:?}");
+    }
+
+    /// A click has to land on the tab under the pointer, using the same widths
+    /// the paint used.
+    #[test]
+    fn a_click_finds_the_tab_under_it() {
+        let tabs = [tab("Alpha", true), tab("Beta", false), tab("Gamma", false)];
+        // " Alpha " occupies columns 0..7, then a separator at 7.
+        assert_eq!(tab_at(&tabs, 0), Some(0));
+        assert_eq!(tab_at(&tabs, 3), Some(0));
+        assert_eq!(tab_at(&tabs, 6), Some(0));
+        assert_eq!(tab_at(&tabs, 7), None, "the separator belongs to no tab");
+        assert_eq!(tab_at(&tabs, 8), Some(1));
+        assert_eq!(tab_at(&tabs, 13), Some(1));
+        assert_eq!(tab_at(&tabs, 15), Some(2));
+        assert_eq!(tab_at(&tabs, 200), None, "past the last tab");
+    }
+
+    #[test]
+    fn a_click_on_an_empty_strip_finds_nothing() {
+        assert_eq!(tab_at(&[], 0), None);
     }
 
     #[test]

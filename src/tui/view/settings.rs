@@ -79,8 +79,10 @@ pub enum SettingAction {
     NextTheme,
     /// Start a git repo in the notes directory.
     SyncInit,
-    /// Ask for a remote URL and connect it.
-    SyncConnect,
+    /// Ask for a remote URL and connect it. Carries the current one, when there
+    /// is one, so the prompt can prefill it for editing rather than making the
+    /// user retype a URL to change one character of it.
+    SyncConnect { current: Option<String> },
     SyncPush,
     SyncPull,
     /// Open config.toml in `$EDITOR`.
@@ -93,7 +95,8 @@ impl SettingAction {
         match self {
             SettingAction::NextTheme => "Enter cycles the colour",
             SettingAction::SyncInit => "Enter starts backing up to git",
-            SettingAction::SyncConnect => "Enter asks for a GitHub URL",
+            SettingAction::SyncConnect { current: None } => "Enter asks for a GitHub URL",
+            SettingAction::SyncConnect { .. } => "Enter changes where notes are backed up",
             SettingAction::SyncPush => "Enter pushes now",
             SettingAction::SyncPull => "Enter pulls now",
             SettingAction::EditConfig => "Enter opens config.toml",
@@ -243,12 +246,39 @@ fn hints_for(row: Option<&Row>) -> String {
     }
 }
 
-pub fn render(frame: &mut Frame, area: Rect, rows: &[Row], selected: usize, status: Option<&str>) {
-    let box_area = centered(
+/// The box the page is drawn in, shared by the paint and by hit-testing.
+fn page_area(area: Rect) -> Rect {
+    centered(
         area,
         area.width.saturating_sub(4).max(40),
         area.height.saturating_sub(2).max(6),
-    );
+    )
+}
+
+/// Where the rows are drawn, for mapping a click back to one.
+pub fn list_area(area: Rect) -> Rect {
+    let box_area = page_area(area);
+    Rect {
+        x: box_area.x + 1,
+        y: box_area.y + 1,
+        width: box_area.width.saturating_sub(2),
+        // Two rows at the bottom belong to the status and the hints.
+        height: box_area.height.saturating_sub(4),
+    }
+}
+
+/// Which row a click at `row` lands on. `None` outside the list.
+pub fn row_at(list: Rect, row: u16, selected: usize, total: usize) -> Option<usize> {
+    if row < list.y || row >= list.y + list.height {
+        return None;
+    }
+    let offset = crate::tui::view::notes::first_visible(selected, total, list.height);
+    let index = offset + (row - list.y) as usize;
+    (index < total).then_some(index)
+}
+
+pub fn render(frame: &mut Frame, area: Rect, rows: &[Row], selected: usize, status: Option<&str>) {
+    let box_area = page_area(area);
 
     frame.render_widget(Clear, box_area);
     frame.render_widget(
@@ -276,6 +306,10 @@ pub fn render(frame: &mut Frame, area: Rect, rows: &[Row], selected: usize, stat
     let mut state = ListState::default();
     if !rows.is_empty() {
         state.select(Some(selected.min(rows.len() - 1)));
+        // The same offset `row_at` assumes, so a click on a scrolled page lands
+        // on the row the user is looking at.
+        *state.offset_mut() =
+            crate::tui::view::notes::first_visible(selected, rows.len(), list_area.height);
     }
     frame.render_stateful_widget(
         List::new(items).highlight_style(Style::default().add_modifier(Modifier::REVERSED)),
@@ -451,7 +485,8 @@ mod tests {
         for action in [
             SettingAction::NextTheme,
             SettingAction::SyncInit,
-            SettingAction::SyncConnect,
+            SettingAction::SyncConnect { current: None },
+            SettingAction::SyncConnect { current: Some("https://example.com/r.git".into()) },
             SettingAction::SyncPush,
             SettingAction::SyncPull,
             SettingAction::EditConfig,

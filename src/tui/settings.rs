@@ -179,9 +179,15 @@ fn backup_rows(notes_dir: &std::path::Path) -> Vec<Row> {
 
     match crate::sync::remote_url(notes_dir) {
         Some(url) => {
-            rows.push(Row::Fact {
+            // A setting, not a fact: a remote that cannot be changed from the
+            // page that shows it is a dead end, and moving a repository is an
+            // ordinary thing to do.
+            rows.push(Row::Setting {
                 label: "remote".to_string(),
-                value: url,
+                value: url.clone(),
+                action: SettingAction::SyncConnect {
+                    current: Some(url),
+                },
             });
             let waiting = match crate::sync::unpushed(notes_dir) {
                 Some(0) => "everything is pushed".to_string(),
@@ -203,7 +209,7 @@ fn backup_rows(notes_dir: &std::path::Path) -> Vec<Row> {
         None => rows.push(Row::Setting {
             label: "remote".to_string(),
             value: "none — connect one".to_string(),
-            action: SettingAction::SyncConnect,
+            action: SettingAction::SyncConnect { current: None },
         }),
     }
 
@@ -597,6 +603,42 @@ model_path = "/nope"
         };
         assert_eq!(value, "not set up");
         assert_eq!(*action, SettingAction::SyncInit);
+    }
+
+    /// The gap this closes: a configured remote was shown as a fact, so the page
+    /// that displayed where notes were backed up gave no way to change it.
+    #[test]
+    fn a_configured_remote_can_be_changed_from_the_page() {
+        let dir = tempfile::tempdir().unwrap();
+        let notes = dir.path().join("notes");
+        std::fs::create_dir_all(&notes).unwrap();
+        if crate::sync::init(&notes).is_err() {
+            return; // no git on this machine
+        }
+        let url = "https://github.com/example/notes.git";
+        if crate::sync::connect(&notes, url).is_err() {
+            return;
+        }
+
+        let rows = backup_rows(&notes);
+        let remote = rows
+            .iter()
+            .find(|r| matches!(r, Row::Setting { label, .. } if label == "remote"))
+            .expect("the remote row is not a setting, so it cannot be changed");
+
+        let Row::Setting { value, action, .. } = remote else {
+            unreachable!()
+        };
+        assert_eq!(value, url);
+        // And it carries the current URL, so the prompt can prefill it rather
+        // than making the user retype a URL to change one character.
+        assert_eq!(
+            *action,
+            SettingAction::SyncConnect {
+                current: Some(url.to_string())
+            }
+        );
+        assert!(remote.selectable(), "the remote row cannot be selected");
     }
 
     #[test]
