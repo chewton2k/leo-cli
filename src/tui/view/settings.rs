@@ -76,6 +76,8 @@ pub enum Row {
 pub enum SettingAction {
     /// Cycle to the next theme preset.
     NextTheme,
+    /// Cycle when leo pushes on its own.
+    NextAutoPush,
     /// Start a git repo in the notes directory.
     SyncInit,
     /// Ask for a remote URL and connect it. Carries the current one, when there
@@ -93,6 +95,7 @@ impl SettingAction {
     pub fn describe(&self) -> &'static str {
         match self {
             SettingAction::NextTheme => "Enter cycles the colour",
+            SettingAction::NextAutoPush => "Enter changes when leo backs up",
             SettingAction::SyncInit => "Enter starts backing up to git",
             SettingAction::SyncConnect { current: None } => "Enter asks for a GitHub URL",
             SettingAction::SyncConnect { .. } => "Enter changes where notes are backed up",

@@ -471,6 +471,7 @@ mod tests {
             },
             transcribe: crate::config::provider::TaskChain { chain: vec![] },
             theme: Default::default(),
+            sync: Default::default(),
         }
     }
 

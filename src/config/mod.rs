@@ -2,6 +2,7 @@ pub mod edit;
 pub mod file_store;
 pub mod provider;
 pub mod secret;
+pub mod sync;
 pub mod theme;
 
 use std::collections::BTreeMap;
@@ -21,6 +22,8 @@ pub struct Config {
     pub providers: BTreeMap<String, ProviderConfig>,
     #[serde(default)]
     pub theme: theme::ThemeConfig,
+    #[serde(default)]
+    pub sync: sync::SyncConfig,
 }
 
 /// Default chat chain: local first (free, private), cloud second.
@@ -97,7 +100,14 @@ chain = [{transcribe}]
 # openai, deepseek, together, xai, whisper_cpp, groq, hf, openai_whisper,
 # local_whisper_server. Press Ctrl-S to see them all and add one to a chain.
 #
-# To add your own, or to override one of the above, name it here:
+# Backing up to git happens on every save once `:sync init` has run. Pushing is
+# separate, because it needs the network:
+#
+#   [sync]
+#   auto_push = "on_quit"    # off, on_quit, when_idle
+#   idle_secs = 45           # for when_idle: how long the notes must be quiet
+#
+# To add your own provider, or to override one of the above, name it here:
 #
 #   [providers.my-provider]
 #   kind = "openai"                        # or whisper_cpp, groq, hf

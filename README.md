@@ -479,7 +479,24 @@ leo sync pull
 leo sync status
 ```
 
-Notes are auto-committed on every save when a sync repo is initialized — no manual commits needed.
+Notes are committed on every save once a repo is initialized — no manual commits
+needed. Pushing is separate, because it needs the network, and leo will do it for
+you:
+
+```toml
+[sync]
+auto_push = "on_quit"     # off · on_quit · when_idle
+idle_secs = 45            # for when_idle: how long the notes must be quiet
+```
+
+`on_quit` is the default: one push on the way out, batching the session, with a
+line saying whether it worked. `when_idle` also pushes while you work, once the
+notes have been quiet for `idle_secs` — useful across two machines. Pushes are
+never closer together than twenty seconds however you configure it, they run on a
+background thread so nothing blocks, and a rejected push tells you to pull rather
+than merging on your behalf.
+
+The same setting is on the profile page, under backup, once a remote exists.
 
 ## Scripting
 

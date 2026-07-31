@@ -139,7 +139,8 @@ shell reports anything missing along with the command that installs it.
 ## Your notes are just files
 
 Plain markdown, one file per note, in `{notes_dir}`. `:sync init` then
-`:sync connect <url>` backs them up to git; after that every save commits.
+`:sync connect <url>` backs them up to git; after that every save commits, and
+leo pushes when you quit. `Ctrl-S` can make it push while you work instead.
 `:export 1 pdf` writes a copy elsewhere.
 
 ## Everything in one place

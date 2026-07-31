@@ -149,6 +149,7 @@ pub const SECTIONS: &[Section] = &[
         entries: &[
             e(":export <note> <fmt>", "txt md html docx pdf rtf odt"),
             e(":sync <sub>", "init, connect, push, pull, status"),
+            e("  automatically", "Ctrl-S: back up on quit, or when idle"),
             e("leo serve", "read notes from your phone (shell only)"),
             e("Ctrl-R", "reload from disk, and repaint the screen"),
         ],

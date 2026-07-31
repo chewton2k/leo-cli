@@ -131,7 +131,7 @@ pub fn rows(cfg: &Config, store: &dyn SecretStore, notes_dir: &std::path::Path) 
     }
 
     rows.extend(appearance_rows(cfg));
-    rows.extend(backup_rows(notes_dir));
+    rows.extend(backup_rows(notes_dir, cfg));
     rows.extend(storage_rows(notes_dir));
     rows
 }
@@ -165,7 +165,7 @@ fn appearance_rows(cfg: &Config) -> Vec<Row> {
 /// Sync was previously only reachable by typing `:sync init`, then
 /// `:sync connect <url>`, which meant the feature was invisible to anyone who had
 /// not read the README.
-fn backup_rows(notes_dir: &std::path::Path) -> Vec<Row> {
+fn backup_rows(notes_dir: &std::path::Path, cfg: &Config) -> Vec<Row> {
     let mut rows = vec![Row::Section("backup to github".to_string())];
 
     if !crate::sync::is_initialized(notes_dir) {
@@ -204,6 +204,13 @@ fn backup_rows(notes_dir: &std::path::Path) -> Vec<Row> {
                 label: "pull".to_string(),
                 value: "fetch and reload".to_string(),
                 action: SettingAction::SyncPull,
+            });
+            // Only offered once there is somewhere to push to: the setting means
+            // nothing without a remote.
+            rows.push(Row::Setting {
+                label: "automatically".to_string(),
+                value: cfg.sync.auto_push.label().to_string(),
+                action: SettingAction::NextAutoPush,
             });
         }
         None => rows.push(Row::Setting {
@@ -283,6 +290,34 @@ pub fn cycle_theme() -> Result<Changed> {
     Ok(Changed::Yes(format!(
         "Colour set to {next}. Restart leo to see it."
     )))
+}
+
+/// Switch when leo pushes on its own, and write it to the config.
+pub fn cycle_auto_push() -> Result<Changed> {
+    let (path, mut doc) = edit::load_document()?;
+
+    let current = doc
+        .get("sync")
+        .and_then(|t| t.get("auto_push"))
+        .and_then(|v| v.as_str())
+        .and_then(|s| match s {
+            "off" => Some(crate::config::sync::AutoPush::Off),
+            "on_quit" => Some(crate::config::sync::AutoPush::OnQuit),
+            "when_idle" => Some(crate::config::sync::AutoPush::WhenIdle),
+            _ => None,
+        })
+        .unwrap_or_default();
+    let next = current.next();
+
+    let table = doc
+        .entry("sync")
+        .or_insert(toml_edit::Item::Table(toml_edit::Table::new()));
+    if let Some(table) = table.as_table_mut() {
+        table.insert("auto_push", toml_edit::value(next.as_str()));
+    }
+
+    edit::save_document(&path, &doc)?;
+    Ok(Changed::Yes(format!("Backing up {}.", next.label())))
 }
 
 /// Move a chain member up or down and persist it. `delta` is -1 or 1.
@@ -596,7 +631,7 @@ model_path = "/nope"
     #[test]
     fn backup_offers_setup_when_there_is_no_repo() {
         let dir = tempfile::tempdir().unwrap();
-        let rows = backup_rows(dir.path());
+        let rows = backup_rows(dir.path(), &Config::default());
         assert_eq!(rows[0], Row::Section("backup to github".to_string()));
         let Row::Setting { value, action, .. } = &rows[1] else {
             panic!("expected a setting, got {:?}", rows[1]);
@@ -620,7 +655,7 @@ model_path = "/nope"
             return;
         }
 
-        let rows = backup_rows(&notes);
+        let rows = backup_rows(&notes, &Config::default());
         let remote = rows
             .iter()
             .find(|r| matches!(r, Row::Setting { label, .. } if label == "remote"))
@@ -639,6 +674,41 @@ model_path = "/nope"
             }
         );
         assert!(remote.selectable(), "the remote row cannot be selected");
+    }
+
+    /// The setting is only meaningful once there is a remote, and it has to be
+    /// changeable from the page that shows it.
+    #[test]
+    fn automatic_backup_is_offered_once_a_remote_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let notes = dir.path().join("notes");
+        std::fs::create_dir_all(&notes).unwrap();
+        if crate::sync::init(&notes).is_err() {
+            return;
+        }
+
+        // No remote yet: nothing to automate.
+        let rows = backup_rows(&notes, &Config::default());
+        assert!(
+            !rows.iter().any(|r| matches!(r, Row::Setting { action, .. }
+                if *action == SettingAction::NextAutoPush)),
+            "offered automatic backup with nowhere to push"
+        );
+
+        if crate::sync::connect(&notes, "https://github.com/example/n.git").is_err() {
+            return;
+        }
+        let rows = backup_rows(&notes, &Config::default());
+        let row = rows
+            .iter()
+            .find(|r| matches!(r, Row::Setting { action, .. }
+                if *action == SettingAction::NextAutoPush))
+            .expect("no automatic backup row");
+        let Row::Setting { value, .. } = row else {
+            unreachable!()
+        };
+        // The default is stated rather than left blank.
+        assert_eq!(value, crate::config::sync::AutoPush::default().label());
     }
 
     #[test]

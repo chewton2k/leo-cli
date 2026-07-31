@@ -42,16 +42,38 @@ pub fn connect(notes_dir: &Path, url: &str) -> Result<()> {
     Ok(())
 }
 
+/// The branch the notes repo is actually on.
+///
+/// Asked rather than assumed: `main` was hardcoded, so a repository created by an
+/// older git — or by anyone whose default is `master` — could not be pushed at
+/// all, and said "src refspec main does not match any" instead of saying so.
+pub fn current_branch(notes_dir: &Path) -> Result<String> {
+    let out = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(notes_dir)
+        .output()
+        .context("failed to run git rev-parse")?;
+    let branch = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if !out.status.success() || branch.is_empty() || branch == "HEAD" {
+        anyhow::bail!(
+            "the notes repository has no branch yet — save a note first, then push"
+        );
+    }
+    Ok(branch)
+}
+
 /// These three are what a user explicitly asked for, so their output is the
 /// answer — print it. Callers that hold a full-screen UI run them with the
 /// terminal handed back, so there is nothing to smear.
 pub fn push(notes_dir: &Path) -> Result<()> {
-    print_output(run_git(notes_dir, &["push", "-u", "origin", "main"])?);
+    let branch = current_branch(notes_dir)?;
+    print_output(run_git(notes_dir, &["push", "-u", "origin", &branch])?);
     Ok(())
 }
 
 pub fn pull(notes_dir: &Path) -> Result<()> {
-    print_output(run_git(notes_dir, &["pull", "origin", "main"])?);
+    let branch = current_branch(notes_dir)?;
+    print_output(run_git(notes_dir, &["pull", "origin", &branch])?);
     Ok(())
 }
 
@@ -261,5 +283,67 @@ mod tests {
             .unwrap();
         let log_str = String::from_utf8(log.stdout).unwrap();
         assert!(log_str.contains("update notes"), "expected commit, got: {log_str}");
+    }
+
+    /// The bug this guards: `main` was hardcoded, so a repo on any other branch
+    /// could not be pushed and blamed the refspec rather than saying so.
+    #[test]
+    fn the_branch_is_read_from_the_repository() {
+        let tmp = TempDir::new().unwrap();
+        let notes_dir = tmp.path().join("notes");
+        std::fs::create_dir_all(&notes_dir).unwrap();
+
+        // A repo whose branch is deliberately not `main`.
+        for args in [
+            vec!["init", "-q", "-b", "trunk"],
+            vec!["config", "user.email", "t@example.com"],
+            vec!["config", "user.name", "t"],
+        ] {
+            let ok = Command::new("git")
+                .args(&args)
+                .current_dir(&notes_dir)
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            if !ok {
+                return; // no git, or too old for -b
+            }
+        }
+        std::fs::write(notes_dir.join("a.md"), "x").unwrap();
+        for args in [vec!["add", "-A"], vec!["commit", "-qm", "x"]] {
+            Command::new("git")
+                .args(&args)
+                .current_dir(&notes_dir)
+                .output()
+                .unwrap();
+        }
+
+        assert_eq!(current_branch(&notes_dir).unwrap(), "trunk");
+    }
+
+    /// A repository with no commit yet has no branch to push, and should say that
+    /// rather than producing a refspec error.
+    #[test]
+    fn a_repo_with_no_commits_explains_itself() {
+        let tmp = TempDir::new().unwrap();
+        let notes_dir = tmp.path().join("notes");
+        std::fs::create_dir_all(&notes_dir).unwrap();
+        if init(&notes_dir).is_err() {
+            return;
+        }
+        // `init` commits, so remove the commit to reach the empty state.
+        let empty = tmp.path().join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        if !Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&empty)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+        {
+            return;
+        }
+        let err = current_branch(&empty).unwrap_err().to_string();
+        assert!(err.contains("no branch yet"), "{err}");
     }
 }

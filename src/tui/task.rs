@@ -49,6 +49,8 @@ pub enum TaskEvent {
     Streaming(String),
     /// A note's `@leo` prompts have been expanded; the App writes it back.
     Expanded { note: String, body: String, count: usize },
+    /// A background push finished.
+    Pushed,
     Failed(String),
 }
 
@@ -101,6 +103,36 @@ impl Job {
         }
         out
     }
+}
+
+/// Push the notes repository on a worker thread.
+///
+/// On a worker because a push is a network round trip: doing it on the event loop
+/// would freeze the interface for as long as the remote takes, which is exactly
+/// the thing an automatic feature must never do to someone who did not ask for it
+/// right now.
+pub fn start_push(notes_dir: std::path::PathBuf) -> Job {
+    let (tx, rx) = mpsc::channel();
+    let stop = Arc::new(AtomicBool::new(false));
+
+    thread::spawn(move || {
+        let _ = tx.send(TaskEvent::Started {
+            label: "Backing up".to_string(),
+        });
+        match crate::sync::push(&notes_dir) {
+            Ok(()) => {
+                let _ = tx.send(TaskEvent::Pushed);
+            }
+            // Reported, never retried in a loop: a rejected push usually means
+            // the remote moved on, and the fix is a pull the user should make
+            // deliberately rather than have leo guess at.
+            Err(e) => {
+                let _ = tx.send(TaskEvent::Failed(e.to_string()));
+            }
+        }
+    });
+
+    Job { rx, stop, done: false }
 }
 
 /// Expand a note's `@leo` prompts on a worker thread, streaming the answer.

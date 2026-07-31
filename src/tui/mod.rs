@@ -94,6 +94,14 @@ pub struct App {
     recent: recent::Recent,
     /// A running `:ask`, with the answer so far.
     asking: Option<Asking>,
+    /// When the notes last changed, for the idle trigger.
+    last_change: Instant,
+    /// A background push, and when the last one finished.
+    pushing: Option<(task::Job, view::progress::Progress, Instant)>,
+    last_push: Option<Instant>,
+    /// How many commits are waiting, refreshed when the notes change rather than
+    /// on every frame: it costs a git process.
+    unpushed: Option<usize>,
     note_sel: usize,
     dir_sel: usize,
     focus: Pane,
@@ -165,6 +173,10 @@ impl App {
             left: LeftPane::Dirs,
             recent: recent::Recent::load(),
             asking: None,
+            last_change: Instant::now(),
+            pushing: None,
+            last_push: None,
+            unpushed: None,
             store,
             current_dir,
             numbering,
@@ -243,6 +255,102 @@ impl App {
                 })
             })
             .collect()
+    }
+
+    // ── automatic backup ────────────────────────────────────────────────────
+
+    /// Record that the notes changed, restarting the quiet period.
+    fn note_changed(&mut self) {
+        self.last_change = Instant::now();
+        // Asked once per change rather than once per frame: it is a git process.
+        self.unpushed = crate::sync::unpushed(&self.store.notes_dir);
+    }
+
+    /// Start a background push when the policy says to.
+    ///
+    /// Called from the idle branch of the event loop, so it only ever runs when
+    /// the user is not typing.
+    fn maybe_auto_push(&mut self) {
+        let config = crate::config::Config::load().sync;
+        let when = crate::config::sync::PushWhen {
+            unpushed: self.unpushed,
+            quiet_for: self.last_change.elapsed(),
+            since_last_push: self.last_push.map(|at| at.elapsed()),
+            in_flight: self.pushing.is_some(),
+        };
+        if !crate::config::sync::should_push_now(&config, when) {
+            return;
+        }
+        self.pushing = Some((
+            task::start_push(self.store.notes_dir.clone()),
+            view::progress::Progress::spinner("Backing up"),
+            Instant::now(),
+        ));
+    }
+
+    /// Push on the way out, if the policy says to and anything is waiting.
+    ///
+    /// Synchronous and after the alternate screen is gone: quitting should not
+    /// return the prompt and then keep working invisibly, and the user is owed a
+    /// line saying whether their notes made it.
+    fn push_on_quit(&mut self) {
+        let config = crate::config::Config::load().sync;
+        // Asked fresh: the cached count is from the last change, and a background
+        // push may have cleared it since.
+        let unpushed = crate::sync::unpushed(&self.store.notes_dir);
+        if !crate::config::sync::should_push_on_quit(&config, unpushed) {
+            return;
+        }
+
+        let waiting = unpushed.unwrap_or(0);
+        println!(
+            "  backing up {waiting} change{}…",
+            if waiting == 1 { "" } else { "s" }
+        );
+        match crate::sync::push(&self.store.notes_dir) {
+            Ok(()) => println!("  backed up."),
+            Err(e) => {
+                println!("  backup failed: {e}");
+                println!("  your notes are committed locally; `leo sync push` retries.");
+            }
+        }
+    }
+
+    /// Drain a running background push.
+    fn pump_push(&mut self) {
+        let Some((job, _, _)) = self.pushing.as_mut() else {
+            return;
+        };
+        let events = job.drain();
+        if events.is_empty() && !job.is_done() {
+            return;
+        }
+
+        let mut done = false;
+        let mut failure = None;
+        for event in events {
+            match event {
+                TaskEvent::Pushed => done = true,
+                TaskEvent::Failed(e) => failure = Some(e),
+                _ => {}
+            }
+        }
+
+        if done {
+            self.pushing = None;
+            self.last_push = Some(Instant::now());
+            self.unpushed = crate::sync::unpushed(&self.store.notes_dir);
+            self.say(Kind::Dim, "Backed up.");
+        } else if let Some(e) = failure {
+            self.pushing = None;
+            // Recorded so the floor applies to failures too, or a broken remote
+            // means a git process every time the loop goes quiet.
+            self.last_push = Some(Instant::now());
+            self.say(
+                Kind::Warn,
+                format!("Backup failed: {e}. Try `:sync pull` then `:sync push`."),
+            );
+        }
     }
 
     /// Keep focus on something visible after a resize.
@@ -1129,6 +1237,12 @@ impl App {
 
     /// Apply an outcome's state changes, show its lines, and perform its effect.
     fn absorb<B: TuiBackend>(&mut self, outcome: Outcome, terminal: &mut Terminal<B>) -> Result<()> {
+        // Anything that changed the notes restarts the quiet period, and makes
+        // the waiting-commit count worth asking for again.
+        if outcome.dirty {
+            self.note_changed();
+        }
+
         if let Some(dir) = outcome.new_dir {
             self.current_dir = dir;
             self.note_sel = 0;
@@ -1350,6 +1464,12 @@ impl App {
     ) -> Result<()> {
         use view::settings::SettingAction as A;
         match action {
+            A::NextAutoPush => {
+                let changed = settings::cycle_auto_push()?;
+                self.after_settings_change(changed);
+                Ok(())
+            }
+
             A::NextTheme => {
                 let changed = settings::cycle_theme()?;
                 self.after_settings_change(changed);
@@ -1896,8 +2016,10 @@ impl App {
                 TaskEvent::Finished { transcript } => finished = Some(transcript),
                 TaskEvent::Structured { title, body } => structured = Some((title, body)),
                 TaskEvent::Failed(e) => failure = Some(e),
-                // The ask job's events; not this job's business.
-                TaskEvent::Streaming(_) | TaskEvent::Expanded { .. } => {}
+                // Other jobs' events; not this one's business.
+                TaskEvent::Streaming(_)
+                | TaskEvent::Expanded { .. }
+                | TaskEvent::Pushed => {}
             }
         }
 
@@ -2264,6 +2386,9 @@ pub fn run() -> Result<()> {
     }
     ratatui::restore();
     crate::diag::set_quiet(false);
+    // After the screen is handed back, so the push can say what it is doing on
+    // an ordinary terminal rather than painting over the panes on the way out.
+    app.push_on_quit();
     // Anything queued but never shown dies with the screen it belonged to.
     crate::diag::clear();
     result
@@ -2287,6 +2412,10 @@ fn event_loop<B: TuiBackend>(terminal: &mut Terminal<B>, app: &mut App) -> Resul
             // anything the lower layers queued.
             app.pump_tasks(terminal)?;
             app.pump_diagnostics();
+            // Only when there is no input to handle: an automatic backup must
+            // never compete with the user's typing.
+            app.pump_push();
+            app.maybe_auto_push();
             continue;
         }
         match event::read()? {
@@ -3349,6 +3478,59 @@ mod tests {
         assert_ne!(app.selected_id(), Some(&second));
     }
 
+    // ── automatic backup ────────────────────────────────────────────────────
+
+    /// Editing must restart the quiet period, or an idle push could fire in the
+    /// middle of a burst of writing.
+    #[test]
+    fn changing_a_note_restarts_the_quiet_period() {
+        let (mut app, _d) = temp_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
+
+        // Pretend the notes have been quiet for a while.
+        app.last_change = Instant::now() - std::time::Duration::from_secs(600);
+        assert!(app.last_change.elapsed() > std::time::Duration::from_secs(300));
+
+        // Any change resets it.
+        app.run_action(Action::Undo, &mut terminal).unwrap();
+        let id = app.selected_id().cloned().unwrap();
+        app.store.toggle_checkbox(&id, 1);
+        app.note_changed();
+        assert!(app.last_change.elapsed() < std::time::Duration::from_secs(5));
+    }
+
+    /// Nothing waiting must not start a push, or a quiet session runs git every
+    /// time the loop idles.
+    #[test]
+    fn no_push_is_started_when_nothing_is_waiting() {
+        let (mut app, _d) = temp_app();
+        app.unpushed = Some(0);
+        app.last_change = Instant::now() - std::time::Duration::from_secs(600);
+        app.maybe_auto_push();
+        assert!(app.pushing.is_none());
+
+        // Nor when there is no upstream at all, where a push would only fail.
+        app.unpushed = None;
+        app.maybe_auto_push();
+        assert!(app.pushing.is_none());
+    }
+
+    /// The store this fixture uses has no git repo, so the default policy must
+    /// leave it alone entirely.
+    #[test]
+    fn a_store_without_a_repo_is_never_pushed() {
+        let (mut app, _d) = temp_app();
+        app.note_changed();
+        assert_eq!(app.unpushed, None, "a store with no repo reported a count");
+        app.last_change = Instant::now() - std::time::Duration::from_secs(600);
+        app.maybe_auto_push();
+        assert!(app.pushing.is_none());
+
+        // And quitting does nothing rather than erroring.
+        app.push_on_quit();
+    }
+
     // ── responsive layout ───────────────────────────────────────────────────
 
     /// Narrowing the terminal must not leave focus on a pane that is gone: j and
@@ -3560,6 +3742,7 @@ mod tests {
                 transcribe: crate::config::provider::TaskChain { chain: vec![] },
                 providers: Default::default(),
                 theme: Default::default(),
+                sync: Default::default(),
             };
             let checks =
                 crate::health::recording(&config, &crate::config::secret::MemoryStore::default(), true);
