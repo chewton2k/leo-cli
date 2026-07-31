@@ -8,10 +8,24 @@
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line as TuiLine, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Paragraph, Wrap};
 use ratatui::Frame;
 
 use super::theme;
+
+/// Characters in a line, for working out how many rows it will wrap to.
+fn line_width(line: &TuiLine<'_>) -> usize {
+    line.spans.iter().map(|s| s.content.chars().count()).sum()
+}
+
+/// How many rows `width` characters occupy in a pane `available` wide.
+fn rows_for(width: usize, available: u16) -> u16 {
+    if available == 0 {
+        return 1;
+    }
+    let available = available as usize;
+    width.div_ceil(available).max(1) as u16
+}
 
 /// A message for an empty pane: what is going on, and what to press.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,12 +97,21 @@ pub fn render(frame: &mut Frame, area: Rect, hint: &Hint) {
         )),
     ];
 
-    // Two lines of text, centred in the available height.
-    let top = area.y + area.height.saturating_sub(2) / 2;
-    let centred = Rect::new(area.x, top, area.width, area.height.min(2));
+    // Wrapped, because the dirs pane is eighteen columns wide and a truncated
+    // instruction (":mkdir name to a") reads as a bug rather than a hint.
+    let needed = lines
+        .iter()
+        .map(|line| rows_for(line_width(line), area.width))
+        .sum::<u16>()
+        .max(1);
+    let height = needed.min(area.height);
+    let top = area.y + area.height.saturating_sub(height) / 2;
+    let centred = Rect::new(area.x, top, area.width, height);
 
     frame.render_widget(
-        Paragraph::new(lines).alignment(Alignment::Center),
+        Paragraph::new(lines)
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: true }),
         centred,
     );
 }
@@ -154,6 +177,33 @@ mod tests {
             })
             .unwrap();
         }
+    }
+
+    /// A truncated instruction reads as a bug. The dirs pane is eighteen columns
+    /// wide, so the hint has to wrap rather than run off the edge.
+    #[test]
+    fn a_hint_wraps_in_a_narrow_pane_rather_than_being_cut_off() {
+        let hint = Hint::no_directories();
+        // The inner width of an 18-column pane.
+        let out = drawn(&hint, 16, 8);
+        let text: String = out.chars().filter(|c| !matches!(c, '"' | '\n')).collect();
+
+        // Every word of the action survives somewhere on screen.
+        for word in [":mkdir", "name", "to", "add", "one"] {
+            assert!(text.contains(word), "lost {word:?} from:\n{out}");
+        }
+    }
+
+    #[test]
+    fn wrapping_arithmetic_counts_rows_not_characters() {
+        assert_eq!(rows_for(10, 20), 1);
+        assert_eq!(rows_for(20, 20), 1);
+        assert_eq!(rows_for(21, 20), 2);
+        assert_eq!(rows_for(40, 20), 2);
+        assert_eq!(rows_for(41, 20), 3);
+        // Degenerate widths must not divide by zero.
+        assert_eq!(rows_for(10, 0), 1);
+        assert_eq!(rows_for(0, 20), 1);
     }
 
     /// Centred, so it reads as a state rather than as content.

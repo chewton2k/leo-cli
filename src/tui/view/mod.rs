@@ -65,6 +65,17 @@ const TABS_MIN_HEIGHT: u16 = 12;
 /// Fixed width of the directories column.
 const DIRS_WIDTH: u16 = 18;
 
+/// Width of the notes list.
+///
+/// Fixed rather than proportional, because a list of titles does not get more
+/// useful with more room: it held a `Min` before and so absorbed every extra
+/// column, ending up wider than the pane showing the note itself. Wide enough for
+/// a three-digit number, a title of about thirty characters, and a tag.
+const NOTES_WIDTH: u16 = 34;
+
+/// Smallest useful preview. Below this a wrapped line is mostly hyphens.
+const PREVIEW_MIN: u16 = 24;
+
 /// How the panes are arranged at the current size.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Shape {
@@ -125,17 +136,21 @@ pub fn layout_with_tabs(area: Rect, tabs: bool, focus: Pane) -> Frames {
     let empty = Rect::new(body.x, body.y, 0, body.height);
     let (dirs, notes, preview) = match Shape::for_width(area.width) {
         Shape::Three => {
+            // The preview takes what is left, so extra width goes to the note
+            // rather than to whitespace beside its title.
             let [dirs, notes, preview] = Layout::horizontal([
                 Constraint::Length(DIRS_WIDTH),
-                Constraint::Min(24),
-                Constraint::Percentage(40),
+                Constraint::Length(NOTES_WIDTH),
+                Constraint::Min(PREVIEW_MIN),
             ])
             .areas(body);
             (dirs, notes, preview)
         }
         Shape::Two => {
+            // Same reasoning without the dirs column: the list gets what it
+            // needs and the note gets the rest.
             let [notes, preview] =
-                Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+                Layout::horizontal([Constraint::Length(NOTES_WIDTH), Constraint::Min(PREVIEW_MIN)])
                     .areas(body);
             (empty, notes, preview)
         }
@@ -202,8 +217,9 @@ mod tests {
         assert!(f.shows(Pane::Notes));
         assert!(f.shows(Pane::Preview));
         assert_eq!(f.dirs.width, DIRS_WIDTH);
-        // The notes pane keeps the remainder, which is what the user drives most.
-        assert!(f.notes.width >= 24, "notes pane is only {}", f.notes.width);
+        assert_eq!(f.notes.width, NOTES_WIDTH);
+        // The note itself takes the remainder.
+        assert_eq!(f.preview.width, 120 - DIRS_WIDTH - NOTES_WIDTH);
     }
 
     /// The dirs pane is the one to give up first: the current directory is in the
@@ -214,9 +230,38 @@ mod tests {
         assert!(!f.shows(Pane::Dirs));
         assert!(f.shows(Pane::Notes));
         assert!(f.shows(Pane::Preview));
-        // And the two that remain share the width evenly.
+        // The list keeps its fixed width and the note gets the rest.
         assert_eq!(f.notes.width + f.preview.width, 70);
-        assert!(f.notes.width.abs_diff(f.preview.width) <= 1);
+        assert_eq!(f.notes.width, NOTES_WIDTH);
+        assert!(f.preview.width > f.notes.width, "the note pane is the smaller one");
+    }
+
+    /// The pane showing the note must get the extra room, not the list of
+    /// titles. The list used to hold a `Min` and so absorbed every extra column,
+    /// ending up wider than the note itself at every size.
+    #[test]
+    fn extra_width_goes_to_the_note_not_the_list() {
+        let mut last_preview = 0;
+        for width in [90, 110, 130, 160, 200] {
+            let f = frames(width, 30, false);
+            assert_eq!(f.notes.width, NOTES_WIDTH, "the list grew at {width}");
+            assert!(
+                f.preview.width > f.notes.width,
+                "at {width} the list ({}) is wider than the note ({})",
+                f.notes.width,
+                f.preview.width
+            );
+            assert!(f.preview.width > last_preview, "the note pane did not grow");
+            last_preview = f.preview.width;
+        }
+    }
+
+    /// The list must still fit a number, a title and a tag.
+    #[test]
+    fn the_list_is_wide_enough_to_read() {
+        let f = frames(120, 30, false);
+        // Four columns for the number and a space, two for borders.
+        assert!(f.notes.width >= 30, "only {} columns for titles", f.notes.width);
     }
 
     /// At the narrowest size the focused pane takes the screen, so everything

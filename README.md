@@ -117,6 +117,9 @@ leo
 That opens the full-screen interface: directories on the left, your notes in the
 middle, the selected note on the right.
 
+The notes list keeps a fixed width — a list of titles gains nothing from more
+room — so every extra column goes to the note itself.
+
 The layout follows the terminal. Below about 90 columns the directories pane steps
 aside — the current directory is in the status bar and `:cd` still works — and on
 a genuinely narrow terminal the focused pane takes the screen, with `h` and `l`
