@@ -174,13 +174,12 @@ enum ModelCommands {
         name: String,
     },
     /// Remove a provider's stored API key
-    /// Move keys stored in the OS keychain into leo's credentials file
-    Import,
-
     Logout {
         /// Provider name from your config
         name: String,
     },
+    /// Move keys stored in an old keychain entry into leo's credentials file
+    Import,
 }
 
 #[derive(Subcommand)]
