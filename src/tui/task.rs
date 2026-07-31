@@ -498,9 +498,6 @@ fn condense_if_due(state: &mut Live, tx: &mpsc::Sender<TaskEvent>) {
 
 #[cfg(test)]
 mod tests {
-    /// Where does the first request's latency go?
-
-
     /// End-to-end proof that text arrives *while* recording, not only after.
     ///
     /// Ignored by default: it makes real transcription requests. Run with
