@@ -62,6 +62,8 @@ const TICK: Duration = Duration::from_millis(120);
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Mode {
     Normal,
+    /// Typing a filter. Every keystroke narrows the notes pane.
+    Filter,
     Command,
     Help,
     Confirm { prompt: String, on_yes: ConfirmedAction },
@@ -74,6 +76,9 @@ pub struct App {
     current_dir: String,
     /// Note IDs in pane order; index+1 is the number the `:` line accepts.
     numbering: Vec<String>,
+    /// The live filter, when one is set. `numbering` respects it, so the numbers
+    /// the user types always mean the rows the user can see.
+    filter: Option<String>,
     note_sel: usize,
     dir_sel: usize,
     focus: Pane,
@@ -141,6 +146,7 @@ impl App {
         let current_dir = String::new();
         let numbering = action::numbering_for(&store, &current_dir);
         App {
+            filter: None,
             store,
             current_dir,
             numbering,
@@ -197,6 +203,13 @@ impl App {
     /// directory is empty", and "the filter matched nothing" — and those need
     /// different advice.
     fn empty_hint(&self) -> view::empty::Hint {
+        // A filter that matched nothing is the most common empty pane, and the
+        // most misleading if it does not say so.
+        if let Some(query) = &self.filter {
+            if !query.trim().is_empty() {
+                return view::empty::Hint::no_matches(query);
+            }
+        }
         if self.current_dir.is_empty() {
             view::empty::Hint::no_notes()
         } else {
@@ -281,7 +294,12 @@ impl App {
     /// Refresh the numbering after the store or directory changed, keeping the
     /// selection in range.
     fn resync(&mut self) {
-        self.numbering = action::numbering_for(&self.store, &self.current_dir);
+        self.numbering = match &self.filter {
+            Some(query) => {
+                action::filtered_numbering(&self.store, &self.current_dir, query)
+            }
+            None => action::numbering_for(&self.store, &self.current_dir),
+        };
         if self.note_sel >= self.numbering.len() {
             self.note_sel = self.numbering.len().saturating_sub(1);
         }
@@ -388,6 +406,51 @@ impl App {
 
     fn on_key<B: TuiBackend>(&mut self, key: event::KeyEvent, terminal: &mut Terminal<B>) -> Result<()> {
         match std::mem::replace(&mut self.mode, Mode::Normal) {
+            // Filtering: every keystroke narrows the pane, so the result is
+            // visible while typing rather than after committing.
+            Mode::Filter => {
+                use event::KeyCode;
+                match key.code {
+                    KeyCode::Esc => {
+                        // Esc abandons the filter entirely, which is the only way
+                        // back to the full list without deleting each character.
+                        self.filter = None;
+                        self.resync();
+                        self.note_sel = 0;
+                    }
+                    KeyCode::Enter => {
+                        // Keep the filter, but hand the keyboard back to the
+                        // panes so j/k and D act on what is shown.
+                        let empty = self
+                            .filter
+                            .as_ref()
+                            .is_some_and(|q| q.trim().is_empty());
+                        if empty {
+                            self.filter = None;
+                            self.resync();
+                        }
+                    }
+                    KeyCode::Backspace => {
+                        if let Some(query) = self.filter.as_mut() {
+                            query.pop();
+                        }
+                        self.mode = Mode::Filter;
+                        self.resync();
+                        self.note_sel = 0;
+                    }
+                    KeyCode::Char(c) => {
+                        self.filter.get_or_insert_with(String::new).push(c);
+                        self.mode = Mode::Filter;
+                        self.resync();
+                        self.note_sel = 0;
+                    }
+                    _ => self.mode = Mode::Filter,
+                }
+                self.preview_scroll = 0;
+                self.pinned = None;
+                Ok(())
+            }
+
             Mode::Confirm { prompt, on_yes } => {
                 let yes = matches!(key.code, event::KeyCode::Char('y' | 'Y'));
                 if yes {
@@ -573,6 +636,14 @@ impl App {
             Intent::OpenCommand { seed } => {
                 self.cmd.open(seed);
                 self.mode = Mode::Command;
+                Ok(())
+            }
+
+            Intent::OpenFilter => {
+                self.filter = Some(String::new());
+                self.mode = Mode::Filter;
+                self.note_sel = 0;
+                self.resync();
                 Ok(())
             }
 
@@ -1364,6 +1435,7 @@ impl App {
             self.note_sel,
             self.focus == Pane::Notes,
             &empty_hint,
+            self.filter.as_deref(),
         );
 
         let selected_note = self.selected_id().and_then(|id| self.store.find_note(id));
@@ -1393,14 +1465,21 @@ impl App {
         );
 
         let ghost = self.ghost();
-        view::status::render_command(
-            frame,
-            f.command,
-            self.mode == Mode::Command,
-            self.cmd.text(),
-            self.cmd.cursor(),
-            ghost.as_deref(),
-        );
+        // While filtering, the command row belongs to the filter: it is a lens
+        // on the pane above rather than a command to run.
+        match (&self.mode, &self.filter) {
+            (Mode::Filter, Some(query)) => {
+                view::status::render_filter(frame, f.command, query, self.note_count())
+            }
+            _ => view::status::render_command(
+                frame,
+                f.command,
+                self.mode == Mode::Command,
+                self.cmd.text(),
+                self.cmd.cursor(),
+                ghost.as_deref(),
+            ),
+        }
         // A job's progress replaces the plain busy label, so the user can see
         // both that something is happening and how far along it is.
         let busy = self
@@ -2038,6 +2117,159 @@ mod tests {
         let (_, text, _) = app.message.as_ref().expect("a message");
         assert!(text.contains("model login"), "{text}");
         assert!(text.contains("keychain"), "does not say why: {text}");
+    }
+
+    // ── filtering ───────────────────────────────────────────────────────────
+
+    fn press(c: char) -> event::KeyEvent {
+        event::KeyEvent::new(event::KeyCode::Char(c), event::KeyModifiers::NONE)
+    }
+
+    fn press_code(code: event::KeyCode) -> event::KeyEvent {
+        event::KeyEvent::new(code, event::KeyModifiers::NONE)
+    }
+
+    /// The pane must narrow while typing, not after committing.
+    #[test]
+    fn typing_a_filter_narrows_the_pane_on_every_keystroke() {
+        let (mut app, _d) = temp_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 16)).unwrap();
+        let all = app.note_count();
+        assert!(all >= 2, "fixture needs several notes");
+
+        app.on_intent(Intent::OpenFilter, &mut terminal).unwrap();
+        assert_eq!(app.note_count(), all, "an empty filter hides nothing");
+
+        // "Rust ownership" is in the fixture; "Graph traversals" is not a match.
+        for c in "own".chars() {
+            app.on_key(press(c), &mut terminal).unwrap();
+        }
+        assert_eq!(app.note_count(), 1, "filter did not narrow the pane");
+        let id = app.selected_id().cloned().unwrap();
+        assert!(app.store.find_note(&id).unwrap().title.contains("ownership"));
+    }
+
+    /// The numbers the user types must mean the rows the user sees. If numbering
+    /// ignored the filter, `:delete 1` would delete something else.
+    #[test]
+    fn numbering_follows_the_filter() {
+        let (mut app, _d) = temp_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 16)).unwrap();
+
+        app.on_intent(Intent::OpenFilter, &mut terminal).unwrap();
+        for c in "own".chars() {
+            app.on_key(press(c), &mut terminal).unwrap();
+        }
+        assert_eq!(app.numbering.len(), 1);
+
+        let visible = app.store.find_note(&app.numbering[0]).unwrap().title.clone();
+        assert!(visible.contains("ownership"), "{visible}");
+    }
+
+    #[test]
+    fn backspace_widens_the_filter_again() {
+        let (mut app, _d) = temp_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 16)).unwrap();
+        let all = app.note_count();
+
+        app.on_intent(Intent::OpenFilter, &mut terminal).unwrap();
+        for c in "own".chars() {
+            app.on_key(press(c), &mut terminal).unwrap();
+        }
+        assert_eq!(app.note_count(), 1);
+
+        for _ in 0..3 {
+            app.on_key(press_code(event::KeyCode::Backspace), &mut terminal)
+                .unwrap();
+        }
+        assert_eq!(app.note_count(), all, "backspacing did not restore the list");
+    }
+
+    /// Esc is the only way back to the full list without deleting each character.
+    #[test]
+    fn esc_abandons_the_filter() {
+        let (mut app, _d) = temp_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 16)).unwrap();
+        let all = app.note_count();
+
+        app.on_intent(Intent::OpenFilter, &mut terminal).unwrap();
+        for c in "own".chars() {
+            app.on_key(press(c), &mut terminal).unwrap();
+        }
+        app.on_key(press_code(event::KeyCode::Esc), &mut terminal).unwrap();
+
+        assert!(app.filter.is_none(), "the filter survived Esc");
+        assert_eq!(app.note_count(), all);
+        assert!(matches!(app.mode, Mode::Normal));
+    }
+
+    /// Enter keeps the filter but hands the keyboard back, so j/k and D act on
+    /// what is shown.
+    #[test]
+    fn enter_keeps_the_filter_and_returns_to_the_panes() {
+        let (mut app, _d) = temp_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 16)).unwrap();
+
+        app.on_intent(Intent::OpenFilter, &mut terminal).unwrap();
+        for c in "own".chars() {
+            app.on_key(press(c), &mut terminal).unwrap();
+        }
+        app.on_key(press_code(event::KeyCode::Enter), &mut terminal).unwrap();
+
+        assert!(matches!(app.mode, Mode::Normal));
+        assert_eq!(app.filter.as_deref(), Some("own"));
+        assert_eq!(app.note_count(), 1);
+    }
+
+    /// Committing an empty filter should leave no filter at all, rather than an
+    /// invisible one that quietly changes the pane title.
+    #[test]
+    fn committing_an_empty_filter_clears_it() {
+        let (mut app, _d) = temp_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 16)).unwrap();
+
+        app.on_intent(Intent::OpenFilter, &mut terminal).unwrap();
+        app.on_key(press_code(event::KeyCode::Enter), &mut terminal).unwrap();
+        assert!(app.filter.is_none());
+    }
+
+    /// A filter matching nothing must say so, and say how to get out.
+    #[test]
+    fn a_filter_that_matches_nothing_says_so() {
+        let (mut app, _d) = temp_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 16)).unwrap();
+
+        app.on_intent(Intent::OpenFilter, &mut terminal).unwrap();
+        for c in "zzzz".chars() {
+            app.on_key(press(c), &mut terminal).unwrap();
+        }
+        assert_eq!(app.note_count(), 0);
+
+        terminal.draw(|f| app.draw(f)).unwrap();
+        let out = terminal.backend().to_string();
+        assert!(out.contains("zzzz"), "the query is not shown: {out}");
+        assert!(out.contains("Esc to clear"), "{out}");
+    }
+
+    /// Case must not matter, or the filter is a guessing game.
+    #[test]
+    fn filtering_ignores_case() {
+        let (mut app, _d) = temp_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 16)).unwrap();
+
+        app.on_intent(Intent::OpenFilter, &mut terminal).unwrap();
+        for c in "OWNER".chars() {
+            app.on_key(press(c), &mut terminal).unwrap();
+        }
+        assert_eq!(app.note_count(), 1);
     }
 
     // ── mouse ───────────────────────────────────────────────────────────────

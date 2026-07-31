@@ -1371,6 +1371,28 @@ pub fn numbering_for(store: &Store, dir: &str) -> Vec<String> {
         .collect()
 }
 
+/// The same numbering, narrowed to notes matching `query`.
+///
+/// Matches titles and tags rather than bodies: this runs on every keystroke, and
+/// a filter that suddenly matches a note whose title looks unrelated is more
+/// confusing than helpful. Full-text search is what `search -f` is for.
+///
+/// Case-insensitive, and a blank query matches everything, so an empty filter is
+/// the same as no filter.
+pub fn filtered_numbering(store: &Store, dir: &str, query: &str) -> Vec<String> {
+    let needle = query.trim().to_lowercase();
+    store
+        .list_notes_in_dir(dir, None, usize::MAX)
+        .iter()
+        .filter(|n| {
+            needle.is_empty()
+                || n.title.to_lowercase().contains(&needle)
+                || n.tags.iter().any(|t| t.to_lowercase().contains(&needle))
+        })
+        .map(|n| n.id.clone())
+        .collect()
+}
+
 // ── Frontmatter and @leo prompts ────────────────────────────────────────────
 
 /// Parse an editor buffer's `---` frontmatter block into (title, tags, body).

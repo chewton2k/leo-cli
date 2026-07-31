@@ -70,7 +70,8 @@ pub const SECTIONS: &[Section] = &[
         title: "The : line",
         entries: &[
             e(":", "start a command"),
-            e("/", "shortcut for :search"),
+            e("/", "filter the notes pane as you type"),
+            e("  Esc / Enter", "clear the filter / keep it and return"),
             e("Tab", "complete verbs, notes, dirs, tags, formats"),
             e("Up / Down", "previous commands"),
             e("Ctrl-W / Ctrl-U", "delete a word / the line"),

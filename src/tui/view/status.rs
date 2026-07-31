@@ -53,6 +53,35 @@ pub fn render_command(
     frame.set_cursor_position(Position::new(x.min(area.x + area.width.saturating_sub(1)), area.y));
 }
 
+/// Draw the live filter on the command line, with a real caret.
+///
+/// A separate line from the `:` prompt on purpose: `/` is not a command, it is a
+/// lens on the pane above, and showing the count keeps the effect visible while
+/// typing.
+pub fn render_filter(frame: &mut Frame, area: Rect, query: &str, matches: usize) {
+    let mut spans = vec![
+        Span::styled("/", Style::default().fg(theme::accent())),
+        Span::raw(query.to_string()),
+    ];
+    let summary = match matches {
+        0 => "  no matches".to_string(),
+        1 => "  1 match".to_string(),
+        n => format!("  {n} matches"),
+    };
+    spans.push(Span::styled(
+        summary,
+        Style::default().add_modifier(Modifier::DIM),
+    ));
+    frame.render_widget(Paragraph::new(TuiLine::from(spans)), area);
+
+    // +1 for the leading "/".
+    let x = area.x + 1 + query.chars().count() as u16;
+    frame.set_cursor_position(Position::new(
+        x.min(area.x + area.width.saturating_sub(1)),
+        area.y,
+    ));
+}
+
 /// What the right-hand side of the bar reports.
 ///
 /// Passed in rather than computed here so the view stays a view: the counts come
@@ -237,6 +266,32 @@ mod tests {
             })
             .unwrap();
         }
+    }
+
+    #[test]
+    fn the_filter_line_shows_the_query_and_how_many_matched() {
+        let mut t = Terminal::new(TestBackend::new(50, 1)).unwrap();
+        t.draw(|f| render_filter(f, f.area(), "owner", 3)).unwrap();
+        let out = t.backend().to_string();
+        assert!(out.contains("/owner"), "{out}");
+        assert!(out.contains("3 matches"), "{out}");
+    }
+
+    #[test]
+    fn the_filter_line_pluralises_and_says_when_nothing_matched() {
+        let mut t = Terminal::new(TestBackend::new(50, 1)).unwrap();
+        t.draw(|f| render_filter(f, f.area(), "zzz", 0)).unwrap();
+        assert!(t.backend().to_string().contains("no matches"));
+
+        let mut t = Terminal::new(TestBackend::new(50, 1)).unwrap();
+        t.draw(|f| render_filter(f, f.area(), "a", 1)).unwrap();
+        assert!(t.backend().to_string().contains("1 match"));
+    }
+
+    #[test]
+    fn a_long_filter_query_does_not_panic() {
+        let mut t = Terminal::new(TestBackend::new(12, 1)).unwrap();
+        t.draw(|f| render_filter(f, f.area(), &"x".repeat(80), 0)).unwrap();
     }
 
     #[test]

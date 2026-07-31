@@ -43,8 +43,10 @@ pub enum Intent {
     EditSelected,
     /// Delete the selected note, with confirmation.
     DeleteSelected,
-    /// Open the `:` line, optionally pre-filled (`/` seeds `search `).
+    /// Open the `:` line, optionally pre-filled.
     OpenCommand { seed: &'static str },
+    /// Start filtering the notes pane as the user types.
+    OpenFilter,
     /// Open the fuzzy finder overlay.
     OpenFinder,
     /// Open the provider and settings screen.
@@ -88,7 +90,7 @@ pub fn normal(key: KeyEvent, focus: Pane) -> Intent {
         KeyCode::Char('D') => Intent::DeleteSelected,
         KeyCode::Char(':') => Intent::OpenCommand { seed: "" },
         // `/` is a shorthand for the search verb, so one keymap entry covers it.
-        KeyCode::Char('/') => Intent::OpenCommand { seed: "search " },
+        KeyCode::Char('/') => Intent::OpenFilter,
         KeyCode::Char('?') => Intent::ToggleHelp,
         KeyCode::Esc => Intent::Cancel,
         // In the preview pane, space and the page keys scroll.
@@ -145,7 +147,7 @@ mod tests {
             (key('x'), Intent::ToggleCheckbox),
             (key('u'), Intent::Undo),
             (key(':'), Intent::OpenCommand { seed: "" }),
-            (key('/'), Intent::OpenCommand { seed: "search " }),
+            (key('/'), Intent::OpenFilter),
             (key('q'), Intent::Quit),
             (key('e'), Intent::EditSelected),
             (key('?'), Intent::ToggleHelp),

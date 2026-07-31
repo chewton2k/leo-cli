@@ -58,11 +58,16 @@ pub fn render(
     selected: usize,
     focused: bool,
     empty: &super::empty::Hint,
+    filter: Option<&str>,
 ) {
-    let title = if rows.is_empty() {
-        "notes".to_string()
-    } else {
-        format!("notes ({})", rows.len())
+    // Naming the filter in the title is what stops a narrowed pane from looking
+    // like a pane that lost its notes.
+    let title = match filter {
+        Some(query) if !query.trim().is_empty() => {
+            format!("notes matching \"{query}\" ({})", rows.len())
+        }
+        _ if rows.is_empty() => "notes".to_string(),
+        _ => format!("notes ({})", rows.len()),
     };
 
     let block = Block::default()
@@ -122,6 +127,30 @@ pub fn row_at(area: Rect, row: u16, selected: usize, total: usize) -> Option<usi
 mod tests {
     use super::*;
     use ratatui::{backend::TestBackend, Terminal};
+
+    /// A narrowed pane must say it is narrowed, or it looks like a pane that lost
+    /// its notes.
+    #[test]
+    fn a_filtered_pane_names_the_filter_in_its_title() {
+        let a = note("Rust ownership", &[]);
+        let r = rows(&[&a]);
+        let mut t = Terminal::new(TestBackend::new(48, 6)).unwrap();
+        t.draw(|f| {
+            render(
+                f,
+                f.area(),
+                &r,
+                0,
+                true,
+                &crate::tui::view::empty::Hint::no_notes(),
+                Some("own"),
+            )
+        })
+        .unwrap();
+        let out = t.backend().to_string();
+        assert!(out.contains("own"), "{out}");
+        assert!(out.contains("(1)"), "{out}");
+    }
 
     // ── hit testing ─────────────────────────────────────────────────────────
 
@@ -191,7 +220,7 @@ mod tests {
     fn an_empty_pane_shows_the_hint_it_was_given() {
         let mut t = Terminal::new(TestBackend::new(46, 8)).unwrap();
         let hint = crate::tui::view::empty::Hint::empty_directory();
-        t.draw(|f| render(f, f.area(), &[], 0, true, &hint)).unwrap();
+        t.draw(|f| render(f, f.area(), &[], 0, true, &hint, None)).unwrap();
         let out = t.backend().to_string();
 
         assert!(out.contains("Nothing in this directory"), "{out}");
@@ -224,7 +253,7 @@ mod tests {
         let a = note("Rust ownership", &["rust", "learning"]);
         let r = rows(&[&a]);
         let mut terminal = Terminal::new(TestBackend::new(50, 5)).unwrap();
-        terminal.draw(|f| render(f, f.area(), &r, 0, true, &crate::tui::view::empty::Hint::no_notes())).unwrap();
+        terminal.draw(|f| render(f, f.area(), &r, 0, true, &crate::tui::view::empty::Hint::no_notes(), None)).unwrap();
 
         let out = terminal.backend().to_string();
         assert!(out.contains("Rust ownership"), "{out}");
@@ -247,6 +276,7 @@ mod tests {
                     0,
                     false,
                     &crate::tui::view::empty::Hint::no_notes(),
+                    None,
                 )
             })
             .unwrap();
@@ -260,6 +290,6 @@ mod tests {
         let a = note(&"x".repeat(500), &[]);
         let r = rows(&[&a]);
         let mut terminal = Terminal::new(TestBackend::new(20, 4)).unwrap();
-        terminal.draw(|f| render(f, f.area(), &r, 0, true, &crate::tui::view::empty::Hint::no_notes())).unwrap();
+        terminal.draw(|f| render(f, f.area(), &r, 0, true, &crate::tui::view::empty::Hint::no_notes(), None)).unwrap();
     }
 }
