@@ -8,6 +8,7 @@
 pub mod cmdline;
 pub mod complete;
 pub mod keys;
+mod recent;
 pub mod settings;
 pub mod task;
 pub mod view;
@@ -58,6 +59,14 @@ const MESSAGE_TTL: Duration = Duration::from_secs(6);
 /// promptly, long enough not to spin the CPU.
 const TICK: Duration = Duration::from_millis(120);
 
+/// What the left pane lists. Directories and tags are two ways to slice the same
+/// notes, and both deserve to be navigable rather than only typeable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LeftPane {
+    Dirs,
+    Tags,
+}
+
 /// Which input surface is active.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Mode {
@@ -79,6 +88,10 @@ pub struct App {
     /// The live filter, when one is set. `numbering` respects it, so the numbers
     /// the user types always mean the rows the user can see.
     filter: Option<String>,
+    /// Whether the left pane lists directories or tags.
+    left: LeftPane,
+    /// Notes recently looked at, most recent first.
+    recent: recent::Recent,
     note_sel: usize,
     dir_sel: usize,
     focus: Pane,
@@ -147,6 +160,8 @@ impl App {
         let numbering = action::numbering_for(&store, &current_dir);
         App {
             filter: None,
+            left: LeftPane::Dirs,
+            recent: recent::Recent::load(),
             store,
             current_dir,
             numbering,
@@ -172,7 +187,20 @@ impl App {
     // ── derived view data ───────────────────────────────────────────────────
 
     fn dir_rows(&self) -> Vec<DirRow> {
-        view::dirs::rows(&self.current_dir, &self.store.subdirs(&self.current_dir))
+        match self.left {
+            LeftPane::Dirs => {
+                view::dirs::rows(&self.current_dir, &self.store.subdirs(&self.current_dir))
+            }
+            LeftPane::Tags => view::dirs::tag_rows(&self.store.tags()),
+        }
+    }
+
+    /// The left pane's title and empty state, which differ by what it lists.
+    fn left_pane_labels(&self) -> (&'static str, view::empty::Hint) {
+        match self.left {
+            LeftPane::Dirs => ("dirs", view::empty::Hint::no_directories()),
+            LeftPane::Tags => ("tags", view::empty::Hint::no_tags()),
+        }
     }
 
     fn note_rows(&self) -> Vec<NoteRow> {
@@ -186,6 +214,84 @@ impl App {
 
     fn selected_id(&self) -> Option<&String> {
         self.numbering.get(self.note_sel)
+    }
+
+    /// Remember the selected note as recently visited.
+    ///
+    /// Called when the selection settles rather than on every keystroke of j/k:
+    /// scrolling past a note is not visiting it, and recording it would fill the
+    /// list with notes the user never looked at.
+    fn remember_visit(&mut self) {
+        if let Some(id) = self.selected_id().cloned() {
+            self.recent.touch(&id);
+        }
+    }
+
+    /// The recent-notes strip, most recent first.
+    fn tabs(&self) -> Vec<view::tabs::Tab> {
+        let current = self.selected_id();
+        self.recent
+            .ids()
+            .iter()
+            .filter_map(|id| {
+                self.store.find_note(id).map(|note| view::tabs::Tab {
+                    title: note.title.clone(),
+                    current: Some(id) == current,
+                })
+            })
+            .collect()
+    }
+
+    /// Jump to the next entry in the recent list, wrapping.
+    ///
+    /// Cycling rather than presenting a menu: with five entries, pressing a key
+    /// twice is faster than reading a list, and it matches how editors move
+    /// between recent tabs.
+    fn jump_recent(&mut self) {
+        let store = &self.store;
+        self.recent.retain_existing(|id| store.find_note(id).is_some());
+        if self.recent.is_empty() {
+            self.say(Kind::Dim, "No notes visited yet.");
+            return;
+        }
+
+        let current = self.selected_id().cloned();
+        // The next entry that is not where we already are.
+        let target = self
+            .recent
+            .ids()
+            .iter()
+            .find(|id| Some(*id) != current.as_ref())
+            .cloned();
+
+        let Some(target) = target else {
+            self.say(Kind::Dim, "Only this note has been visited.");
+            return;
+        };
+
+        match self.numbering.iter().position(|id| id == &target) {
+            Some(position) => {
+                self.note_sel = position;
+                self.preview_scroll = 0;
+                self.pinned = None;
+            }
+            // Not in the current listing: show it anyway rather than refusing,
+            // since the user asked for that note and not for a place.
+            None => {
+                if let Some(note) = self.store.find_note(&target) {
+                    let title = note.title.clone();
+                    let body = note.body.clone();
+                    self.pinned = Some((title, body.lines().map(Line::plain).collect()));
+                    self.preview_scroll = 0;
+                }
+            }
+        }
+
+        if let Some(note) = self.store.find_note(&target) {
+            let title = note.title.clone();
+            self.recent.touch(&target);
+            self.say(Kind::Dim, format!("← {title}"));
+        }
     }
 
     /// The 1-based number of the selection, as a `:` line argument.
@@ -576,6 +682,7 @@ impl App {
 
             Intent::Down | Intent::Up | Intent::First | Intent::Last => {
                 self.move_selection(intent);
+                self.remember_visit();
                 Ok(())
             }
 
@@ -597,7 +704,28 @@ impl App {
                 Ok(())
             }
 
-            Intent::Open => self.open(terminal),
+            Intent::Open => {
+                let opened = self.open(terminal);
+                self.remember_visit();
+                opened
+            }
+
+            // The left pane has two things to show and one column to show them
+            // in, so it toggles rather than taking a fourth pane.
+            Intent::JumpRecent => {
+                self.jump_recent();
+                Ok(())
+            }
+
+            Intent::ToggleLeftPane => {
+                self.left = match self.left {
+                    LeftPane::Dirs => LeftPane::Tags,
+                    LeftPane::Tags => LeftPane::Dirs,
+                };
+                self.dir_sel = 0;
+                self.focus = Pane::Dirs;
+                Ok(())
+            }
 
             // Undo goes through the same handler the `:` line uses, so there is
             // one stack and one set of semantics rather than two.
@@ -733,8 +861,22 @@ impl App {
                 let Some(row) = rows.get(self.dir_sel) else {
                     return Ok(());
                 };
-                let path = row.target.clone();
-                self.run_action(Action::Cd { path }, terminal)
+                let target = row.target.clone();
+
+                match self.left {
+                    LeftPane::Dirs => self.run_action(Action::Cd { path: target }, terminal),
+                    // Opening a tag narrows the notes pane to it, reusing the
+                    // filter rather than inventing a second kind of narrowing —
+                    // so Esc clears a tag the same way it clears a search.
+                    LeftPane::Tags => {
+                        self.filter = Some(target.clone());
+                        self.note_sel = 0;
+                        self.resync();
+                        self.focus = Pane::Notes;
+                        self.say(Kind::Dim, format!("Showing #{target}. Esc clears it."));
+                        Ok(())
+                    }
+                }
             }
             Pane::Notes => {
                 self.focus = Pane::Preview;
@@ -1421,12 +1563,23 @@ impl App {
     // ── rendering ───────────────────────────────────────────────────────────
 
     fn draw(&self, frame: &mut Frame) {
-        let f = view::layout(frame.area());
+        let tabs = self.tabs();
+        let f = view::layout_with_tabs(frame.area(), !tabs.is_empty());
+        view::tabs::render(frame, f.tabs, &tabs);
 
         let dir_rows = self.dir_rows();
         let note_rows = self.note_rows();
 
-        view::dirs::render(frame, f.dirs, &dir_rows, self.dir_sel, self.focus == Pane::Dirs);
+        let (left_title, left_empty) = self.left_pane_labels();
+        view::dirs::render(
+            frame,
+            f.dirs,
+            &dir_rows,
+            self.dir_sel,
+            self.focus == Pane::Dirs,
+            left_title,
+            &left_empty,
+        );
         let empty_hint = self.empty_hint();
         view::notes::render(
             frame,
@@ -1650,7 +1803,10 @@ pub fn run() -> Result<()> {
     let mouse = execute!(std::io::stdout(), EnableMouseCapture).is_ok();
     let mut app = App::new(store);
     app.greet(installed_manual);
-    let result = event_loop(&mut terminal, app);
+    let result = event_loop(&mut terminal, &mut app);
+    // Persist the recent list so the strip survives a restart, which is the
+    // difference between a convenience and a novelty.
+    app.recent.save();
     if mouse {
         let _ = execute!(std::io::stdout(), DisableMouseCapture);
     }
@@ -1661,7 +1817,7 @@ pub fn run() -> Result<()> {
     result
 }
 
-fn event_loop<B: TuiBackend>(terminal: &mut Terminal<B>, mut app: App) -> Result<()> {
+fn event_loop<B: TuiBackend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> {
     while !app.quit {
         if std::mem::take(&mut app.repaint) {
             // Blank both buffers so the next draw writes every cell.
@@ -2117,6 +2273,159 @@ mod tests {
         let (_, text, _) = app.message.as_ref().expect("a message");
         assert!(text.contains("model login"), "{text}");
         assert!(text.contains("keychain"), "does not say why: {text}");
+    }
+
+    // ── recent notes ────────────────────────────────────────────────────────
+
+    /// Moving the selection is visiting a note, and the strip must show it.
+    #[test]
+    fn visiting_notes_builds_the_recent_strip() {
+        let (mut app, _d) = temp_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 16)).unwrap();
+        assert!(app.note_count() >= 2);
+
+        app.on_intent(Intent::Down, &mut terminal).unwrap();
+        app.on_intent(Intent::Up, &mut terminal).unwrap();
+
+        let tabs = app.tabs();
+        assert_eq!(tabs.len(), 2, "both visited notes should be listed");
+        // The note on screen is the current tab, and it is first.
+        assert!(tabs[0].current, "the current note is not marked");
+
+        terminal.draw(|f| app.draw(f)).unwrap();
+        let out = terminal.backend().to_string();
+        let title = app
+            .store
+            .find_note(app.selected_id().unwrap())
+            .unwrap()
+            .title
+            .clone();
+        assert!(out.contains(title.split(' ').next().unwrap()), "{out}");
+    }
+
+    /// Tab returns to the previous note, which is the whole point of the list.
+    #[test]
+    fn tab_jumps_back_to_the_previous_note() {
+        let (mut app, _d) = temp_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 16)).unwrap();
+
+        app.remember_visit();
+        let first = app.selected_id().cloned().unwrap();
+        app.on_intent(Intent::Down, &mut terminal).unwrap();
+        let second = app.selected_id().cloned().unwrap();
+        assert_ne!(first, second);
+
+        app.on_intent(Intent::JumpRecent, &mut terminal).unwrap();
+        assert_eq!(app.selected_id(), Some(&first), "Tab did not go back");
+
+        // And again returns to where we came from.
+        app.on_intent(Intent::JumpRecent, &mut terminal).unwrap();
+        assert_eq!(app.selected_id(), Some(&second));
+    }
+
+    #[test]
+    fn tab_with_nothing_visited_says_so_rather_than_doing_nothing() {
+        let (mut app, _d) = temp_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 16)).unwrap();
+        app.recent = crate::tui::recent::Recent::default();
+
+        app.on_intent(Intent::JumpRecent, &mut terminal).unwrap();
+        let (_, message, _) = app.message.as_ref().expect("a message");
+        assert!(message.contains("No notes visited"), "{message}");
+    }
+
+    /// A deleted note must not linger in the strip as a row that does nothing.
+    #[test]
+    fn a_deleted_note_leaves_the_recent_strip() {
+        let (mut app, _d) = temp_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 16)).unwrap();
+
+        app.remember_visit();
+        let id = app.selected_id().cloned().unwrap();
+        app.on_intent(Intent::Down, &mut terminal).unwrap();
+        assert_eq!(app.tabs().len(), 2);
+
+        app.store.delete_note(&id);
+        app.resync();
+        assert_eq!(app.tabs().len(), 1, "the deleted note is still listed");
+    }
+
+    /// The strip must not take a row when it is empty.
+    #[test]
+    fn the_strip_costs_no_space_until_a_note_is_visited() {
+        let (mut app, _d) = temp_app();
+        app.recent = crate::tui::recent::Recent::default();
+
+        let with_none = view::layout_with_tabs(Rect::new(0, 0, 80, 20), false);
+        let with_some = view::layout_with_tabs(Rect::new(0, 0, 80, 20), true);
+        assert_eq!(with_none.tabs.height, 0);
+        assert_eq!(with_some.tabs.height, 1);
+        // And the panes get the row back.
+        assert!(with_none.dirs.height > with_some.dirs.height);
+    }
+
+    // ── tags ────────────────────────────────────────────────────────────────
+
+    /// The left pane has one column and two things to show, so it toggles.
+    #[test]
+    fn t_switches_the_left_pane_between_directories_and_tags() {
+        let (mut app, _d) = temp_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 16)).unwrap();
+
+        terminal.draw(|f| app.draw(f)).unwrap();
+        assert!(terminal.backend().to_string().contains("dirs"));
+
+        app.on_intent(Intent::ToggleLeftPane, &mut terminal).unwrap();
+        terminal.draw(|f| app.draw(f)).unwrap();
+        let out = terminal.backend().to_string();
+        assert!(out.contains("tags"), "{out}");
+        // The fixture tags a note "rust", so the tag and its count are listed.
+        assert!(out.contains("#rust"), "{out}");
+
+        app.on_intent(Intent::ToggleLeftPane, &mut terminal).unwrap();
+        terminal.draw(|f| app.draw(f)).unwrap();
+        assert!(terminal.backend().to_string().contains("dirs"));
+    }
+
+    /// Opening a tag narrows the notes pane, through the same filter a search
+    /// uses — so Esc clears a tag the same way it clears a search.
+    #[test]
+    fn opening_a_tag_filters_the_notes_pane() {
+        let (mut app, _d) = temp_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 16)).unwrap();
+        let all = app.note_count();
+
+        app.on_intent(Intent::ToggleLeftPane, &mut terminal).unwrap();
+        app.on_intent(Intent::Open, &mut terminal).unwrap();
+
+        assert_eq!(app.filter.as_deref(), Some("rust"));
+        assert!(app.note_count() < all, "the tag did not narrow anything");
+        assert_eq!(app.focus, Pane::Notes, "focus should follow the notes");
+
+        // Every listed note actually carries the tag.
+        for id in &app.numbering {
+            let note = app.store.find_note(id).unwrap();
+            assert!(note.tags.iter().any(|t| t == "rust"), "{:?}", note.tags);
+        }
+    }
+
+    #[test]
+    fn toggling_to_tags_resets_the_selection_so_it_cannot_dangle() {
+        let (mut app, _d) = temp_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 16)).unwrap();
+
+        app.dir_sel = 5;
+        app.on_intent(Intent::ToggleLeftPane, &mut terminal).unwrap();
+        assert_eq!(app.dir_sel, 0);
+        // And drawing with the new listing does not panic.
+        terminal.draw(|f| app.draw(f)).unwrap();
     }
 
     // ── filtering ───────────────────────────────────────────────────────────

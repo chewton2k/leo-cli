@@ -15,12 +15,16 @@ pub mod preview;
 pub mod progress;
 pub mod settings;
 pub mod status;
+pub mod tabs;
 pub mod theme;
 
 use ratatui::layout::{Constraint, Layout, Rect};
 
 /// Where each piece of the screen goes.
 pub struct Frames {
+    /// The strip of recent notes. Zero height when there are none, so an unused
+    /// feature costs no space.
+    pub tabs: Rect,
     pub dirs: Rect,
     pub notes: Rect,
     pub preview: Rect,
@@ -35,7 +39,14 @@ pub struct Frames {
 /// The dirs pane gets a fixed narrow column and the preview a proportional
 /// share, so the notes list — the pane the user drives most — keeps the rest.
 pub fn layout(area: Rect) -> Frames {
-    let [body, command, status] = Layout::vertical([
+    layout_with_tabs(area, false)
+}
+
+/// `tabs` reserves a row at the top for the recent-notes strip.
+pub fn layout_with_tabs(area: Rect, tabs: bool) -> Frames {
+    let tab_height = if tabs { 1 } else { 0 };
+    let [tabs_area, body, command, status] = Layout::vertical([
+        Constraint::Length(tab_height),
         Constraint::Min(3),
         Constraint::Length(1),
         Constraint::Length(1),
@@ -49,7 +60,7 @@ pub fn layout(area: Rect) -> Frames {
     ])
     .areas(body);
 
-    Frames { dirs, notes, preview, command, status }
+    Frames { tabs: tabs_area, dirs, notes, preview, command, status }
 }
 
 #[cfg(test)]

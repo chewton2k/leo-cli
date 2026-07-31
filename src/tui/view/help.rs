@@ -70,6 +70,7 @@ pub const SECTIONS: &[Section] = &[
         title: "The : line",
         entries: &[
             e(":", "start a command"),
+            e("t", "left pane: directories or tags"),
             e("/", "filter the notes pane as you type"),
             e("  Esc / Enter", "clear the filter / keep it and return"),
             e("Tab", "complete verbs, notes, dirs, tags, formats"),

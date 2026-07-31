@@ -47,6 +47,10 @@ pub enum Intent {
     OpenCommand { seed: &'static str },
     /// Start filtering the notes pane as the user types.
     OpenFilter,
+    /// Switch the left pane between directories and tags.
+    ToggleLeftPane,
+    /// Jump back to a recently visited note.
+    JumpRecent,
     /// Open the fuzzy finder overlay.
     OpenFinder,
     /// Open the provider and settings screen.
@@ -86,6 +90,9 @@ pub fn normal(key: KeyEvent, focus: Pane) -> Intent {
         KeyCode::Enter => Intent::Open,
         KeyCode::Char('x') => Intent::ToggleCheckbox,
         KeyCode::Char('u') => Intent::Undo,
+        KeyCode::Char('t') => Intent::ToggleLeftPane,
+        // Tab, the way editors move between recent files.
+        KeyCode::Tab => Intent::JumpRecent,
         KeyCode::Char('e') => Intent::EditSelected,
         KeyCode::Char('D') => Intent::DeleteSelected,
         KeyCode::Char(':') => Intent::OpenCommand { seed: "" },
@@ -146,6 +153,11 @@ mod tests {
             (key('l'), Intent::FocusRight),
             (key('x'), Intent::ToggleCheckbox),
             (key('u'), Intent::Undo),
+            (key('t'), Intent::ToggleLeftPane),
+            (
+                KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+                Intent::JumpRecent,
+            ),
             (key(':'), Intent::OpenCommand { seed: "" }),
             (key('/'), Intent::OpenFilter),
             (key('q'), Intent::Quit),
