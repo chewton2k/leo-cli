@@ -38,11 +38,10 @@ pub struct Frames {
 ///
 /// The dirs pane gets a fixed narrow column and the preview a proportional
 /// share, so the notes list — the pane the user drives most — keeps the rest.
-pub fn layout(area: Rect) -> Frames {
-    layout_with_tabs(area, false)
-}
-
 /// `tabs` reserves a row at the top for the recent-notes strip.
+///
+/// The only way to compute the layout, deliberately: a variant that omitted the
+/// tab row existed for one commit and put every click one line out.
 pub fn layout_with_tabs(area: Rect, tabs: bool) -> Frames {
     let tab_height = if tabs { 1 } else { 0 };
     let [tabs_area, body, command, status] = Layout::vertical([
@@ -69,7 +68,7 @@ mod tests {
 
     #[test]
     fn layout_reserves_one_line_each_for_the_command_and_status_lines() {
-        let f = layout(Rect::new(0, 0, 100, 30));
+        let f = layout_with_tabs(Rect::new(0, 0, 100, 30), false);
         assert_eq!(f.command.height, 1);
         assert_eq!(f.status.height, 1);
         // The status line is the last row.
@@ -79,7 +78,7 @@ mod tests {
 
     #[test]
     fn the_three_panes_tile_the_body_without_gaps() {
-        let f = layout(Rect::new(0, 0, 100, 30));
+        let f = layout_with_tabs(Rect::new(0, 0, 100, 30), false);
         assert_eq!(f.dirs.x, 0);
         assert_eq!(f.notes.x, f.dirs.x + f.dirs.width);
         assert_eq!(f.preview.x, f.notes.x + f.notes.width);
@@ -94,7 +93,7 @@ mod tests {
     #[test]
     fn a_tiny_terminal_still_lays_out() {
         for (w, h) in [(20, 5), (40, 3), (10, 4), (200, 60)] {
-            let f = layout(Rect::new(0, 0, w, h));
+            let f = layout_with_tabs(Rect::new(0, 0, w, h), false);
             assert!(f.command.height <= 1);
             assert!(f.dirs.width <= w);
             assert!(f.preview.x + f.preview.width <= w);

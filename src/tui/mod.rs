@@ -3077,6 +3077,13 @@ mod tests {
 
     // ── mouse ───────────────────────────────────────────────────────────────
 
+    /// The geometry the app is actually painting, which depends on whether the
+    /// tab strip is showing. Computing it any other way in a test is how the
+    /// off-by-one row bug went unnoticed.
+    fn frames_for(app: &App, width: u16, height: u16) -> view::Frames {
+        view::layout_with_tabs(Rect::new(0, 0, width, height), !app.tabs().is_empty())
+    }
+
     fn click(column: u16, row: u16) -> MouseEvent {
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
@@ -3103,7 +3110,7 @@ mod tests {
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
         terminal.draw(|f| app.draw(f)).unwrap();
-        let frames = view::layout(Rect::new(0, 0, 100, 20));
+        let frames = frames_for(&app, 100, 20);
 
         app.on_mouse(click(frames.dirs.x + 2, frames.dirs.y + 1), &mut terminal)
             .unwrap();
@@ -3124,7 +3131,7 @@ mod tests {
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
         terminal.draw(|f| app.draw(f)).unwrap();
-        let frames = view::layout(Rect::new(0, 0, 100, 20));
+        let frames = frames_for(&app, 100, 20);
         assert!(app.note_count() >= 2, "fixture needs two notes");
 
         // The second row inside the pane is the second note.
@@ -3145,7 +3152,7 @@ mod tests {
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
         terminal.draw(|f| app.draw(f)).unwrap();
-        let frames = view::layout(Rect::new(0, 0, 100, 20));
+        let frames = frames_for(&app, 100, 20);
 
         app.note_sel = 1;
         app.on_mouse(click(frames.notes.x + 3, frames.notes.y), &mut terminal)
@@ -3160,7 +3167,7 @@ mod tests {
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
         terminal.draw(|f| app.draw(f)).unwrap();
-        let frames = view::layout(Rect::new(0, 0, 100, 20));
+        let frames = frames_for(&app, 100, 20);
 
         // Focus is on the notes pane; the pointer is over the preview.
         app.focus = Pane::Notes;
@@ -3188,7 +3195,7 @@ mod tests {
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
         terminal.draw(|f| app.draw(f)).unwrap();
-        let frames = view::layout(Rect::new(0, 0, 100, 20));
+        let frames = frames_for(&app, 100, 20);
 
         app.on_mouse(
             wheel_event(MouseEventKind::ScrollUp, frames.preview.x + 2, frames.preview.y + 2),
@@ -3280,7 +3287,7 @@ mod tests {
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
         terminal.draw(|f| app.draw(f)).unwrap();
-        let frames = view::layout(Rect::new(0, 0, 100, 20));
+        let frames = frames_for(&app, 100, 20);
 
         app.mode = Mode::Help;
         app.focus = Pane::Notes;
