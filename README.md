@@ -131,6 +131,10 @@ Move with `j`/`k`, switch panes with `h`/`l`, and press `?` for help at any
 time. Anything that takes an argument goes on the `:` line, where Tab completes
 note titles, directories, tags, and formats.
 
+The note body is rendered rather than printed: headings in the accent colour,
+checkboxes as boxes with finished items struck through, code receding behind its
+fence. Along the top, the notes you were last looking at, like an editor's tabs.
+
 | Key | What it does |
 |-----|-------------|
 | `j` / `k` | Move down / up |
@@ -140,15 +144,24 @@ note titles, directories, tags, and formats.
 | `x` | Toggle the first open checkbox |
 | `e` | Edit the note in `$EDITOR` |
 | `D` | Delete the note, or the directory when the dirs pane has focus (asks first) |
+| `u` | Undo the last delete, move or tick |
+| `/` | Filter the notes pane as you type (`Esc` clears) |
+| `t` | Switch the left pane between directories and tags |
+| `Tab` | Jump back to a recently visited note |
 | `:` | Command line |
-| `/` | Search |
-| `Tab` | Complete on the `:` line |
 | `Ctrl-P` | Fuzzy find a note across all directories |
-| `Ctrl-S` | Providers and settings |
+| `Ctrl-S` | Your profile: models, keys, colour, backup |
 | `Ctrl-D` / `Ctrl-U` | Scroll the preview |
 | `Ctrl-R` | Reload from disk, and repaint the screen |
 | `?` | Help |
 | `q` | Quit |
+
+The mouse works as well: click a pane to focus it, click a row to select it, and
+the wheel scrolls whatever is under the pointer. Everything it does has a
+keyboard equivalent.
+
+Deleting is reversible. `u` takes back the last delete, move or checkbox tick,
+including a recursive directory delete, for the last 32 changes of a session.
 
 Notes are numbered in the pane, so `:view 2`, `:edit 2`, and `:delete 2` all
 refer to what you can see. Tab completion accepts a title and fills in the
@@ -297,7 +310,11 @@ Write `@leo` questions directly in a note and expand them with `ask`:
   Updated "Rust ownership notes" 3f2a1b4c
 ```
 
-The `@leo` line is replaced with the AI's answer inline. Works on the `:` line and as a CLI subcommand (`leo ask <id>`). Also triggers automatically when saving a note in `edit` if any `@leo` lines are present.
+The `@leo` line is replaced with the AI's answer inline. In the interface the
+answer appears as it arrives, on a background thread, so the panes stay usable
+while a slow model thinks. Works on the `:` line and as a CLI subcommand
+(`leo ask <id>`), and triggers automatically when saving a note in `edit` if any
+`@leo` lines are present.
 
 **Requires:** one working chat provider — a running `ollama`, or
 `leo model login openrouter`.
@@ -311,11 +328,11 @@ The `@leo` line is replaced with the AI's answer inline. Works on the `:` line a
 
 Formats: `txt`, `md`, `html`, `docx`, `pdf`, `rtf`, `odt` (last four need Pandoc).
 
-### Providers and settings
+### Your profile
 
-Press `Ctrl-S` for the provider screen. It lists both chains — one for chat, one
-for transcription — in the order they are tried, with each provider's model and
-whether it has a key, and below them everything else that is configured:
+Press `Ctrl-S`. Everything configurable is on one page: both model chains in the
+order they are tried, the interface colour, backup to GitHub, and where notes,
+settings and keys live on disk. Enter changes whatever is selected.
 
 ```
 ┌ providers ──────────────────────────────────────────────────────────────┐
@@ -338,7 +355,7 @@ installed, or a local server that is not running.
 
 | Key | What it does |
 |-----|-------------|
-| `j` / `k` | Move between providers |
+| `j` / `k` | Move between rows |
 | `l` | Store an API key (typing is hidden) |
 | `x` | Remove a stored key |
 | `t` | Send one small request to check it works |
@@ -346,6 +363,27 @@ installed, or a local server that is not running.
 | `a` | Add the selected provider to its chain |
 | `d` | Drop it from the chain (it stays configured) |
 | `e` | Open `config.toml` in `$EDITOR` |
+| `Enter` | On a setting: change the colour, or set up GitHub backup |
+
+The footer describes whatever is selected, so the keys above only appear when
+they mean something.
+
+### Colour
+
+The interface takes its accent from `config.toml`, or from `Enter` on the colour
+row of the profile page:
+
+```toml
+[theme]
+preset = "orange"      # orange, blue, green, purple, pink, mono
+```
+
+Or name a colour directly, and the rest of the palette follows it:
+
+```toml
+[theme]
+accent = "#588dd9"
+```
 
 The same things work from a shell:
 

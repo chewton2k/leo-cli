@@ -102,7 +102,8 @@ edit it, or delete it — it will not come back.
 
 Three panes: directories, your notes, and the selected note. `j`/`k` move,
 `h`/`l` switch panes, `Enter` opens. `e` edits the note in your editor, `x`
-ticks the first open checkbox, `D` deletes.
+ticks the first open checkbox, `D` deletes and `u` undoes. The mouse works too:
+click a pane or a row, scroll with the wheel.
 
 Anything that takes an argument goes on the `:` line:
 
@@ -116,6 +117,10 @@ Anything that takes an argument goes on the `:` line:
 `Tab` completes titles, directories and tags. Notes are numbered as you see
 them, so `:view 2` means the second one in the pane.
 
+`/` filters the list as you type and `Esc` clears it. `t` switches the left pane
+between directories and tags, so you can pick a tag and see only those notes.
+Along the top, the notes you were last looking at; `Tab` goes back to one.
+
 ## Press `?` for everything else
 
 That help screen is the full reference — every key, every command, grouped and
@@ -127,15 +132,21 @@ scrollable. It is always one keypress away, which is why this note is short.
 runs to see the raw transcript, `Enter` to stop. Writing `@leo <question>` in a
 note and running `:ask` replaces that line with an answer.
 
-Both need a model. `Ctrl-S` shows which ones are set up and lets you add one;
-`leo doctor` in a shell reports anything missing along with the command that
-installs it.
+Both need a model, and the answer appears as it arrives rather than all at once.
+`Ctrl-S` shows which models are set up and lets you add one; `leo doctor` in a
+shell reports anything missing along with the command that installs it.
 
 ## Your notes are just files
 
 Plain markdown, one file per note, in `{notes_dir}`. `:sync init` then
 `:sync connect <url>` backs them up to git; after that every save commits.
 `:export 1 pdf` writes a copy elsewhere.
+
+## Everything in one place
+
+`Ctrl-S` is your profile: both model chains and their keys, the interface colour,
+backup to GitHub, and where everything lives on disk. Enter on a row changes it —
+including setting up git backup, which used to need two typed commands.
 
 Settings live in `{config_path}`. API keys never do — `Ctrl-S` or
 `leo model login` keeps those in a separate file only your account can read.

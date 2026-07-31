@@ -2089,6 +2089,10 @@ pub fn run() -> Result<()> {
     // every key still works, which is how leo is mostly driven.
     let mouse = execute!(std::io::stdout(), EnableMouseCapture).is_ok();
     let mut app = App::new(store);
+    // The note on screen at startup has been looked at, so it belongs in the
+    // recent list. Without this the first Tab has only one entry — the note the
+    // user is already on — and answers "only this note has been visited".
+    app.remember_visit();
     app.greet(installed_manual);
     let result = event_loop(&mut terminal, &mut app);
     // Persist the recent list so the strip survives a restart, which is the
@@ -2695,6 +2699,25 @@ mod tests {
         // And again returns to where we came from.
         app.on_intent(Intent::JumpRecent, &mut terminal).unwrap();
         assert_eq!(app.selected_id(), Some(&second));
+    }
+
+    /// The note on screen at startup counts as visited, or the first Tab has
+    /// only the current note to offer and refuses.
+    #[test]
+    fn the_note_on_screen_at_startup_is_recorded_as_visited() {
+        let (mut app, _d) = temp_app();
+        app.recent = crate::tui::recent::Recent::default();
+
+        app.remember_visit();
+        assert_eq!(app.recent.ids().len(), 1);
+
+        // So after moving once, Tab has somewhere to go back to.
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 16)).unwrap();
+        let first = app.selected_id().cloned().unwrap();
+        app.on_intent(Intent::Down, &mut terminal).unwrap();
+        app.on_intent(Intent::JumpRecent, &mut terminal).unwrap();
+        assert_eq!(app.selected_id(), Some(&first));
     }
 
     #[test]
