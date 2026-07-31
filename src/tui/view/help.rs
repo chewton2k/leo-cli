@@ -62,6 +62,7 @@ pub const SECTIONS: &[Section] = &[
             e("x", "toggle its first unchecked box"),
             e("e", "edit it in $EDITOR"),
             e("D", "delete it (asks first)"),
+            e("u", "undo the last delete, move or tick"),
             e("D", "in the dirs pane: delete that whole directory"),
         ],
     },

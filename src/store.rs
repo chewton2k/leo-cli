@@ -139,11 +139,57 @@ fn collect_notes(notes_dir: &Path, dir: &Path, notes: &mut Vec<Note>) -> Result<
 
 // ── Store ───────────────────────────────────────────────────────────────────
 
+/// A change that can be taken back.
+///
+/// Restoring whole `Note` values rather than replaying an inverse operation: a
+/// deleted note must come back with its original id, timestamps and body, and an
+/// inverse `create` would not do that.
+#[derive(Debug, Clone)]
+pub enum Undoable {
+    /// Notes that were removed, and directories that went with them. Covers both
+    /// a single note and a recursive directory delete, because the difference is
+    /// only how many notes are in the list.
+    Deleted {
+        notes: Vec<Note>,
+        directories: Vec<String>,
+        what: String,
+    },
+    /// A note that moved, and where it came from.
+    Moved { id: String, from: String, title: String },
+    /// A checkbox that was toggled. Toggling is its own inverse.
+    Toggled { id: String, n: usize, title: String },
+}
+
+impl Undoable {
+    /// What to tell the user was undone.
+    pub fn describe(&self) -> String {
+        match self {
+            Undoable::Deleted { what, .. } => format!("Restored {what}"),
+            Undoable::Moved { title, from, .. } => {
+                let place = if from.is_empty() { "/".to_string() } else { format!("/{from}") };
+                format!("Moved \"{title}\" back to {place}")
+            }
+            Undoable::Toggled { title, n, .. } => {
+                format!("Un-toggled box {n} in \"{title}\"")
+            }
+        }
+    }
+}
+
+/// How many changes can be taken back.
+///
+/// Deep enough to cover a mistake noticed a few actions later, shallow enough
+/// that the deleted notes it holds are not a memory leak in disguise.
+const UNDO_DEPTH: usize = 32;
+
 /// Persistent store backed by per-note .md files in a directory.
 pub struct Store {
     pub notes: Vec<Note>,
     pub directories: Vec<String>,
     pub notes_dir: PathBuf,
+    /// Most recent change last. Not persisted: undo covers a session, and a
+    /// deletion that survived a restart is a decision the user has lived with.
+    undo: Vec<Undoable>,
 }
 
 impl Store {
@@ -173,6 +219,7 @@ impl Store {
         let mut notes = Vec::new();
         collect_notes(notes_dir, notes_dir, &mut notes)?;
         Ok(Store {
+            undo: Vec::new(),
             notes,
             directories,
             notes_dir: notes_dir.to_path_buf(),
@@ -333,9 +380,73 @@ impl Store {
 
     /// Delete a note by ID prefix; returns true if removed.
     pub fn delete_note(&mut self, id_prefix: &str) -> bool {
-        let before = self.notes.len();
-        self.notes.retain(|n| !n.id.starts_with(id_prefix));
-        self.notes.len() < before
+        let (removed, kept): (Vec<Note>, Vec<Note>) = std::mem::take(&mut self.notes)
+            .into_iter()
+            .partition(|n| n.id.starts_with(id_prefix));
+        self.notes = kept;
+
+        if removed.is_empty() {
+            return false;
+        }
+        let what = match removed.as_slice() {
+            [one] => format!("\"{}\"", one.title),
+            many => format!("{} notes", many.len()),
+        };
+        self.remember(Undoable::Deleted {
+            notes: removed,
+            directories: Vec::new(),
+            what,
+        });
+        true
+    }
+
+    /// Push a change onto the undo stack, discarding the oldest when full.
+    fn remember(&mut self, change: Undoable) {
+        if self.undo.len() == UNDO_DEPTH {
+            self.undo.remove(0);
+        }
+        self.undo.push(change);
+    }
+
+    /// Whether there is anything to take back.
+    pub fn can_undo(&self) -> bool {
+        !self.undo.is_empty()
+    }
+
+    /// Take back the most recent change, returning what was done.
+    ///
+    /// `None` when there is nothing to undo, so the caller can say so rather
+    /// than silently doing nothing.
+    pub fn undo(&mut self) -> Option<String> {
+        let change = self.undo.pop()?;
+        let described = change.describe();
+
+        match change {
+            Undoable::Deleted { notes, directories, .. } => {
+                for dir in directories {
+                    if !self.directories.contains(&dir) {
+                        self.directories.push(dir);
+                    }
+                }
+                self.notes.extend(notes);
+                // Restored notes go back in the order the store keeps.
+                self.notes.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+            }
+            Undoable::Moved { id, from, .. } => {
+                if let Some(note) = self.find_note_mut(&id) {
+                    note.directory = from;
+                    note.updated_at = Utc::now();
+                }
+            }
+            Undoable::Toggled { id, n, .. } => {
+                // A toggle is its own inverse, so this must not record itself.
+                if let Some(note) = self.find_note_mut(&id) {
+                    note.toggle_checkbox(n);
+                }
+            }
+        }
+
+        Some(described)
     }
 
     /// Search notes. If `full_text` is false, only title is searched.
@@ -377,7 +488,10 @@ impl Store {
     /// Toggle the Nth checkbox in a note. Returns the new state text.
     pub fn toggle_checkbox(&mut self, id_prefix: &str, n: usize) -> Option<String> {
         let note = self.find_note_mut(id_prefix)?;
-        note.toggle_checkbox(n)
+        let (id, title) = (note.id.clone(), note.title.clone());
+        let label = note.toggle_checkbox(n)?;
+        self.remember(Undoable::Toggled { id, n, title });
+        Some(label)
     }
 
     // ── Directory operations ───────────────────────────────────────────────
@@ -477,31 +591,46 @@ impl Store {
     pub fn delete_dir_recursive(&mut self, path: &str) -> (usize, usize) {
         let path = path.trim_matches('/');
         if path.is_empty() {
-            // Refuse the root: there is no undo, and "delete everything" is not
-            // what any single keypress should mean.
+            // Refuse the root. "Delete everything" is not what any single
+            // keypress should mean, undo or no undo.
             return (0, 0);
         }
         let prefix = format!("{path}/");
 
-        let notes_before = self.notes.len();
-        self.notes
-            .retain(|n| !(n.directory == path || n.directory.starts_with(&prefix)));
+        let (removed_notes, kept): (Vec<Note>, Vec<Note>) = std::mem::take(&mut self.notes)
+            .into_iter()
+            .partition(|n| n.directory == path || n.directory.starts_with(&prefix));
+        self.notes = kept;
 
-        let dirs_before = self.directories.len();
-        self.directories
-            .retain(|d| d != path && !d.starts_with(&prefix));
+        let (removed_dirs, kept_dirs): (Vec<String>, Vec<String>) =
+            std::mem::take(&mut self.directories)
+                .into_iter()
+                .partition(|d| d == path || d.starts_with(&prefix));
+        self.directories = kept_dirs;
 
-        (
-            notes_before - self.notes.len(),
-            dirs_before - self.directories.len(),
-        )
+        let counts = (removed_notes.len(), removed_dirs.len());
+        if counts != (0, 0) {
+            self.remember(Undoable::Deleted {
+                notes: removed_notes,
+                directories: removed_dirs,
+                what: format!("/{path}"),
+            });
+        }
+        counts
     }
 
     pub fn move_note(&mut self, id_prefix: &str, new_dir: &str) -> Option<String> {
         let note = self.find_note_mut(id_prefix)?;
+        let from = note.directory.clone();
+        let (id, title) = (note.id.clone(), note.title.clone());
         note.directory = new_dir.to_string();
         note.updated_at = Utc::now();
-        Some(note.title.clone())
+        self.remember(Undoable::Moved {
+            id,
+            from,
+            title: title.clone(),
+        });
+        Some(title)
     }
 }
 
@@ -552,6 +681,7 @@ fn migrate_from_json(old_path: &Path, notes_dir: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use crate::notes::Note;
 
@@ -699,7 +829,7 @@ mod tests {
     fn test_note_path_root() {
         let tmp = tempfile::TempDir::new().unwrap();
         let notes_dir = tmp.path().join("notes");
-        let store = Store { notes: vec![], directories: vec![], notes_dir: notes_dir.clone() };
+        let store = Store { notes: vec![], directories: vec![], notes_dir: notes_dir.clone(), undo: Vec::new() };
         let note = make_note();
         assert_eq!(
             store.note_path(&note),
@@ -711,7 +841,7 @@ mod tests {
     fn test_note_path_subdir() {
         let tmp = tempfile::TempDir::new().unwrap();
         let notes_dir = tmp.path().join("notes");
-        let store = Store { notes: vec![], directories: vec![], notes_dir: notes_dir.clone() };
+        let store = Store { notes: vec![], directories: vec![], notes_dir: notes_dir.clone(), undo: Vec::new() };
         let mut note = make_note();
         note.directory = "cs162/lec".to_string();
         assert_eq!(
@@ -761,6 +891,7 @@ mod tests {
         let notes_dir = tmp.path().join("notes");
         std::fs::create_dir_all(&notes_dir).unwrap();
         let store = Store {
+            undo: Vec::new(),
             notes: vec![make_note()],
             directories: vec![],
             notes_dir: notes_dir.clone(),
@@ -779,6 +910,7 @@ mod tests {
         std::fs::write(&orphan, "---\nid: deadbeef-0000-0000-0000-000000000000\ntitle: Old\ntags: []\ncreated_at: '2026-01-01T00:00:00Z'\nupdated_at: '2026-01-01T00:00:00Z'\n---\n\nbody").unwrap();
 
         let store = Store {
+            undo: Vec::new(),
             notes: vec![make_note()],
             directories: vec![],
             notes_dir: notes_dir.clone(),
@@ -826,6 +958,7 @@ mod tests {
 
         let note = make_note();
         let store = Store {
+            undo: Vec::new(),
             notes: vec![note.clone()],
             directories: vec![],
             notes_dir: notes_dir.clone(),
@@ -836,6 +969,7 @@ mod tests {
         let mut moved = note.clone();
         moved.directory = "ideas".to_string();
         let store2 = Store {
+            undo: Vec::new(),
             notes: vec![moved],
             directories: vec!["ideas".to_string()],
             notes_dir: notes_dir.clone(),
@@ -858,6 +992,7 @@ mod tests {
         crate::sync::init(&notes_dir).unwrap();
 
         let store = Store {
+            undo: Vec::new(),
             notes: vec![make_note()],
             directories: vec![],
             notes_dir: notes_dir.clone(),
@@ -874,5 +1009,200 @@ mod tests {
             log_str.contains("update notes"),
             "expected auto-commit, got: {log_str}"
         );
+    }
+
+    // ── undo ────────────────────────────────────────────────────────────────
+
+    /// An empty store in a temporary directory.
+    fn temp_store() -> (Store, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::load_from(&dir.path().join("notes")).unwrap();
+        (store, dir)
+    }
+
+
+    /// The whole point: a deleted note comes back as it was, not as a copy.
+    #[test]
+    fn undoing_a_delete_restores_the_note_exactly() {
+        let (mut store, _d) = temp_store();
+        let note = store.create_note("Keep me", "body text", vec!["tag".into()], "").unwrap();
+        let (id, created, updated) = (note.id.clone(), note.created_at, note.updated_at);
+
+        assert!(store.delete_note(&id));
+        assert!(store.find_note(&id).is_none());
+
+        let described = store.undo().expect("something to undo");
+        assert!(described.contains("Keep me"), "{described}");
+
+        let back = store.find_note(&id).expect("the note is back");
+        assert_eq!(back.title, "Keep me");
+        assert_eq!(back.body, "body text");
+        assert_eq!(back.tags, vec!["tag"]);
+        // Same identity and timestamps: a restored note is the original, not a
+        // new note that happens to look similar.
+        assert_eq!(back.id, id);
+        assert_eq!(back.created_at, created);
+        assert_eq!(back.updated_at, updated);
+    }
+
+    /// The scariest action must be the most reversible.
+    #[test]
+    fn undoing_a_recursive_directory_delete_restores_everything() {
+        let (mut store, _d) = temp_store();
+        store.create_dir("cs130");
+        store.create_dir("cs130/week1");
+        store.create_note("A", "a", vec![], "cs130").unwrap();
+        store.create_note("B", "b", vec![], "cs130/week1").unwrap();
+        store.create_note("Elsewhere", "e", vec![], "").unwrap();
+
+        let (notes, dirs) = store.delete_dir_recursive("cs130");
+        assert_eq!((notes, dirs), (2, 2));
+        assert_eq!(store.notes.len(), 1, "only the outside note should remain");
+
+        let described = store.undo().expect("something to undo");
+        assert!(described.contains("/cs130"), "{described}");
+        assert_eq!(store.notes.len(), 3);
+        assert!(store.dir_exists("cs130"));
+        assert!(store.dir_exists("cs130/week1"));
+        // And each note is back where it lived.
+        let a = store.find_by_title("A").first().map(|n| n.directory.clone());
+        assert_eq!(a.as_deref(), Some("cs130"));
+    }
+
+    #[test]
+    fn undoing_a_move_puts_a_note_back() {
+        let (mut store, _d) = temp_store();
+        store.create_dir("cs130");
+        let id = store.create_note("Wanderer", "b", vec![], "").unwrap().id.clone();
+
+        store.move_note(&id, "cs130");
+        assert_eq!(store.find_note(&id).unwrap().directory, "cs130");
+
+        let described = store.undo().unwrap();
+        assert!(described.contains("Wanderer"), "{described}");
+        assert_eq!(store.find_note(&id).unwrap().directory, "");
+    }
+
+    #[test]
+    fn undoing_a_checkbox_toggle_unticks_it() {
+        let (mut store, _d) = temp_store();
+        let id = store
+            .create_note("Tasks", "- [ ] one\n- [ ] two", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+
+        store.toggle_checkbox(&id, 1);
+        assert!(store.find_note(&id).unwrap().body.contains("- [x] one"));
+
+        store.undo().expect("something to undo");
+        assert!(
+            store.find_note(&id).unwrap().body.contains("- [ ] one"),
+            "{}",
+            store.find_note(&id).unwrap().body
+        );
+    }
+
+    /// Undo must not undo itself: one press, one step back.
+    #[test]
+    fn undoing_does_not_stack_its_own_inverse() {
+        let (mut store, _d) = temp_store();
+        let id = store.create_note("Tasks", "- [ ] one", vec![], "").unwrap().id.clone();
+
+        store.toggle_checkbox(&id, 1);
+        assert!(store.can_undo());
+        store.undo();
+        assert!(!store.can_undo(), "undo pushed its own inverse onto the stack");
+    }
+
+    #[test]
+    fn undo_steps_back_through_several_changes_newest_first() {
+        let (mut store, _d) = temp_store();
+        let a = store.create_note("A", "a", vec![], "").unwrap().id.clone();
+        let b = store.create_note("B", "b", vec![], "").unwrap().id.clone();
+
+        store.delete_note(&a);
+        store.delete_note(&b);
+        assert!(store.notes.is_empty());
+
+        store.undo();
+        assert!(store.find_note(&b).is_some(), "B was deleted last, so it returns first");
+        assert!(store.find_note(&a).is_none());
+
+        store.undo();
+        assert!(store.find_note(&a).is_some());
+        assert!(!store.can_undo());
+    }
+
+    #[test]
+    fn undoing_nothing_says_so_rather_than_doing_nothing_silently() {
+        let (mut store, _d) = temp_store();
+        assert!(!store.can_undo());
+        assert!(store.undo().is_none());
+    }
+
+    /// A failed delete must not leave a no-op on the stack, or `u` would appear
+    /// to do nothing.
+    #[test]
+    fn a_delete_that_matched_nothing_records_nothing() {
+        let (mut store, _d) = temp_store();
+        store.create_note("A", "a", vec![], "").unwrap();
+        assert!(!store.delete_note("does-not-exist"));
+        assert!(!store.can_undo());
+    }
+
+    #[test]
+    fn refusing_to_delete_the_root_records_nothing() {
+        let (mut store, _d) = temp_store();
+        store.create_note("A", "a", vec![], "").unwrap();
+        assert_eq!(store.delete_dir_recursive(""), (0, 0));
+        assert!(!store.can_undo());
+    }
+
+    /// The stack is bounded, or a long session holds every note ever deleted.
+    #[test]
+    fn the_undo_stack_is_bounded_and_keeps_the_newest() {
+        let (mut store, _d) = temp_store();
+        let mut ids = Vec::new();
+        for i in 0..UNDO_DEPTH + 5 {
+            let id = store
+                .create_note(format!("N{i}"), "b", vec![], "")
+                .unwrap()
+                .id
+                .clone();
+            ids.push(id);
+        }
+        for id in &ids {
+            store.delete_note(id);
+        }
+
+        let mut undone = 0;
+        while store.undo().is_some() {
+            undone += 1;
+        }
+        assert_eq!(undone, UNDO_DEPTH, "the stack grew past its bound");
+        // The newest deletions are the ones that survived.
+        assert!(store.find_note(ids.last().unwrap()).is_some());
+        assert!(store.find_note(ids.first().unwrap()).is_none());
+    }
+
+    /// Restoring must survive a round trip to disk, or undo is a lie the moment
+    /// the store is saved.
+    #[test]
+    fn a_restored_note_is_written_back_to_disk() {
+        let (mut store, _d) = temp_store();
+        let id = store.create_note("Persisted", "body", vec![], "").unwrap().id.clone();
+        store.save().unwrap();
+
+        store.delete_note(&id);
+        store.save().unwrap();
+        assert!(Store::load_from(&store.notes_dir).unwrap().find_note(&id).is_none());
+
+        store.undo();
+        store.save().unwrap();
+        let reloaded = Store::load_from(&store.notes_dir).unwrap();
+        let back = reloaded.find_note(&id).expect("restored note missing from disk");
+        assert_eq!(back.title, "Persisted");
+        assert_eq!(back.body, "body");
     }
 }

@@ -76,6 +76,8 @@ pub enum Action {
     Sync(SyncAction),
     Model(ModelAction),
     Config(ConfigAction),
+    /// Take back the most recent destructive change.
+    Undo,
     Help,
     Clear,
     Quit,
@@ -417,6 +419,7 @@ pub const VERBS: &[(&str, &[&str])] = &[
     ("check", &["x"]),
     ("search", &[]),
     ("tags", &[]),
+    ("undo", &["u"]),
     ("remind", &[]),
     ("listen", &[]),
     ("ask", &[]),
@@ -660,6 +663,7 @@ pub fn parse(line: &str) -> Parsed {
         }
 
         "tags" => act(Action::Tags),
+        "undo" | "u" => act(Action::Undo),
 
         "mkdir" => {
             let name = joined().trim().to_string();
@@ -793,6 +797,7 @@ pub fn apply(
         Action::Export { note, format } => export(store, &note, &format, ctx.numbering),
         Action::Ask { note } => ask(store, &note, ctx.numbering, ai),
         Action::Tags => Ok(tags(store)),
+        Action::Undo => Ok(undo(store)),
         Action::Mkdir { name } => mkdir(store, &name, ctx.current_dir),
         Action::Cd { path } => Ok(cd(store, &path, ctx.current_dir)),
         Action::Pwd => Ok(pwd(ctx.current_dir)),
@@ -1020,6 +1025,21 @@ fn ask(store: &mut Store, note: &str, numbering: &[String], ai: &dyn Ai) -> Resu
         dirty: true,
         ..Outcome::line(Line::good(format!("Updated \"{title}\" {short}")))
     })
+}
+
+/// `undo` — take back the last destructive change.
+///
+/// A handler rather than a TUI-only key, so the same step back works from the `:`
+/// line and reuses the store's stack instead of a second one.
+fn undo(store: &mut Store) -> Outcome {
+    match store.undo() {
+        Some(what) => Outcome {
+            lines: vec![Line::good(what)],
+            dirty: true,
+            ..Outcome::default()
+        },
+        None => Outcome::line(Line::dim("Nothing to undo.")),
+    }
 }
 
 fn tags(store: &Store) -> Outcome {

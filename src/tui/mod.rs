@@ -187,6 +187,19 @@ impl App {
         self.numbering.len()
     }
 
+    /// Why the notes pane is empty, and what to do about it.
+    ///
+    /// Only the app knows the difference between "no notes at all", "this
+    /// directory is empty", and "the filter matched nothing" — and those need
+    /// different advice.
+    fn empty_hint(&self) -> view::empty::Hint {
+        if self.current_dir.is_empty() {
+            view::empty::Hint::no_notes()
+        } else {
+            view::empty::Hint::empty_directory()
+        }
+    }
+
     /// What the status bar reports on the right: how much is here.
     fn counts(&self) -> view::status::Counts {
         view::status::Counts {
@@ -425,6 +438,10 @@ impl App {
             }
 
             Intent::Open => self.open(terminal),
+
+            // Undo goes through the same handler the `:` line uses, so there is
+            // one stack and one set of semantics rather than two.
+            Intent::Undo => self.run_action(Action::Undo, terminal),
 
             Intent::ToggleCheckbox => {
                 let Some(note_ref) = self.selected_ref() else {
@@ -1242,12 +1259,14 @@ impl App {
         let note_rows = self.note_rows();
 
         view::dirs::render(frame, f.dirs, &dir_rows, self.dir_sel, self.focus == Pane::Dirs);
+        let empty_hint = self.empty_hint();
         view::notes::render(
             frame,
             f.notes,
             &note_rows,
             self.note_sel,
             self.focus == Pane::Notes,
+            &empty_hint,
         );
 
         let selected_note = self.selected_id().and_then(|id| self.store.find_note(id));
@@ -1915,6 +1934,88 @@ mod tests {
         let (_, text, _) = app.message.as_ref().expect("a message");
         assert!(text.contains("model login"), "{text}");
         assert!(text.contains("keychain"), "does not say why: {text}");
+    }
+
+    /// `u` must reverse the key that did the damage, through the same stack the
+    /// `:` line uses.
+    #[test]
+    fn u_takes_back_a_delete_from_the_pane() {
+        let (mut app, _d) = temp_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(90, 14)).unwrap();
+
+        let before = app.note_count();
+        let id = app.selected_id().cloned().expect("a selection");
+        let title = app.store.find_note(&id).unwrap().title.clone();
+
+        // Delete without the prompt, the way the confirmed path does.
+        app.store.delete_note(&id);
+        app.resync();
+        assert_eq!(app.note_count(), before - 1);
+
+        app.on_intent(Intent::Undo, &mut terminal).unwrap();
+        assert_eq!(app.note_count(), before, "u did not restore the note");
+        assert!(app.store.find_note(&id).is_some());
+
+        // And it says what came back, rather than doing it silently.
+        let (_, message, _) = app.message.as_ref().expect("a message");
+        assert!(message.contains(&title), "{message}");
+    }
+
+    #[test]
+    fn u_with_nothing_to_undo_says_so() {
+        let (mut app, _d) = temp_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(90, 14)).unwrap();
+        app.on_intent(Intent::Undo, &mut terminal).unwrap();
+        let (_, message, _) = app.message.as_ref().expect("a message");
+        assert!(message.contains("Nothing to undo"), "{message}");
+    }
+
+    /// An empty pane must explain itself, and the explanation depends on where
+    /// the user is: "no notes yet" at the root is different advice from "this
+    /// directory is empty", which also needs the way out.
+    #[test]
+    fn an_empty_pane_explains_itself_differently_by_place() {
+        let (mut app, _d) = temp_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(90, 14)).unwrap();
+
+        // An empty root: the fixture ships notes, so clear them.
+        for id in app.numbering.clone() {
+            app.store.delete_note(&id);
+        }
+        app.resync();
+        assert_eq!(app.note_count(), 0);
+        terminal.draw(|f| app.draw(f)).unwrap();
+        let out = terminal.backend().to_string();
+        assert!(out.contains("No notes yet"), "{out}");
+        assert!(out.contains(":new"), "{out}");
+
+        // Inside a directory, where leaving matters as much as writing. A fresh
+        // one, since the fixture's directories have notes in them.
+        app.store.create_dir("scratch");
+        app.current_dir = "scratch".to_string();
+        app.resync();
+        terminal.draw(|f| app.draw(f)).unwrap();
+        let out = terminal.backend().to_string();
+        assert!(out.contains("Nothing in this directory"), "{out}");
+        assert!(out.contains("cd .."), "{out}");
+    }
+
+    /// And the preview says so rather than showing an empty box.
+    #[test]
+    fn an_empty_preview_says_nothing_is_selected() {
+        let (mut app, _d) = temp_app();
+        for id in app.numbering.clone() {
+            app.store.delete_note(&id);
+        }
+        app.resync();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(90, 14)).unwrap();
+        terminal.draw(|f| app.draw(f)).unwrap();
+        let out = terminal.backend().to_string();
+        assert!(out.contains("No note selected"), "{out}");
     }
 
     /// A first run must say one thing, and later runs nothing: a greeting the

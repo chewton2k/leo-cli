@@ -20,8 +20,19 @@ pub enum Preview<'a> {
 }
 
 pub fn render(frame: &mut Frame, area: Rect, preview: &Preview<'_>, scroll: u16, focused: bool) {
+    if matches!(preview, Preview::Empty) {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(border(focused))
+            .title("preview");
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        super::empty::render(frame, inner, &super::empty::Hint::no_selection());
+        return;
+    }
+
     let (title, lines): (String, Vec<TuiLine>) = match preview {
-        Preview::Empty => ("preview".to_string(), Vec::new()),
+        Preview::Empty => (String::new(), Vec::new()),
         // Markdown, so a note looks the way it was written rather than like a
         // text dump: headings in the accent, checkboxes as boxes, code receding.
         Preview::Note(n) => (n.title.clone(), super::markdown::render(&n.body)),

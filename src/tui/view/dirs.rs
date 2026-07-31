@@ -28,21 +28,25 @@ pub fn rows(current_dir: &str, children: &[String]) -> Vec<DirRow> {
 }
 
 pub fn render(frame: &mut Frame, area: Rect, rows: &[DirRow], selected: usize, focused: bool) {
-    let items: Vec<ListItem> = rows.iter().map(|r| ListItem::new(r.label.clone())).collect();
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(border(focused))
+        .title("dirs");
 
+    if rows.is_empty() {
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        super::empty::render(frame, inner, &super::empty::Hint::no_directories());
+        return;
+    }
+
+    let items: Vec<ListItem> = rows.iter().map(|r| ListItem::new(r.label.clone())).collect();
     let list = List::new(items)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(border(focused))
-                .title("dirs"),
-        )
+        .block(block)
         .highlight_style(selection(focused));
 
     let mut state = ListState::default();
-    if !rows.is_empty() {
-        state.select(Some(selected.min(rows.len() - 1)));
-    }
+    state.select(Some(selected.min(rows.len() - 1)));
     frame.render_stateful_widget(list, area, &mut state);
 }
 

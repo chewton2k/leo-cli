@@ -37,6 +37,8 @@ pub enum Intent {
     Open,
     /// Toggle the first unchecked checkbox of the selected note.
     ToggleCheckbox,
+    /// Take back the last destructive change.
+    Undo,
     /// Edit the selected note in `$EDITOR`.
     EditSelected,
     /// Delete the selected note, with confirmation.
@@ -81,6 +83,7 @@ pub fn normal(key: KeyEvent, focus: Pane) -> Intent {
         KeyCode::Char('l') | KeyCode::Right => Intent::FocusRight,
         KeyCode::Enter => Intent::Open,
         KeyCode::Char('x') => Intent::ToggleCheckbox,
+        KeyCode::Char('u') => Intent::Undo,
         KeyCode::Char('e') => Intent::EditSelected,
         KeyCode::Char('D') => Intent::DeleteSelected,
         KeyCode::Char(':') => Intent::OpenCommand { seed: "" },
@@ -140,6 +143,7 @@ mod tests {
             (key('h'), Intent::FocusLeft),
             (key('l'), Intent::FocusRight),
             (key('x'), Intent::ToggleCheckbox),
+            (key('u'), Intent::Undo),
             (key(':'), Intent::OpenCommand { seed: "" }),
             (key('/'), Intent::OpenCommand { seed: "search " }),
             (key('q'), Intent::Quit),
