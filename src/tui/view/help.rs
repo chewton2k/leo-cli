@@ -217,8 +217,10 @@ fn wrapped_rows(width: u16) -> usize {
 pub fn render_help(frame: &mut Frame, area: Rect, scroll: u16) {
     let lines = help_lines();
 
-    // Leave a margin so the overlay reads as a panel rather than a takeover.
-    let box_area = centered(area, 66.min(area.width), area.height.saturating_sub(2).max(5));
+    // The whole terminal: this is a reference, not a dialog, and a 66-column box
+    // cut the longer lines on a narrow terminal while showing fewer entries per
+    // page on a wide one.
+    let box_area = area;
     let inner_height = box_area.height.saturating_sub(2) as usize;
     let inner_width = box_area.width.saturating_sub(2);
 
@@ -419,14 +421,14 @@ mod tests {
     /// the true line count rather than running past it.
     #[test]
     fn the_position_indicator_is_a_well_formed_range() {
-        // A 12-row terminal leaves 8 content rows inside the centered box, and
-        // the box is 66 wide so the content wraps to 64 columns.
-        let total = wrapped_rows(64);
+        // Full screen now: a 12-row terminal leaves 10 content rows inside the
+        // border, and 80 columns wrap to 78.
+        let total = wrapped_rows(78);
         let mut t = Terminal::new(TestBackend::new(80, 12)).unwrap();
 
         t.draw(|f| render_help(f, f.area(), 0)).unwrap();
         let top = t.backend().to_string();
-        assert!(top.contains(&format!("1-8 of {total}")), "got: {top}");
+        assert!(top.contains(&format!("1-10 of {total}")), "got: {top}");
 
         // Scrolled to the end: the window ends exactly at the last row.
         t.draw(|f| render_help(f, f.area(), 9999)).unwrap();

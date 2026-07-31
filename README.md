@@ -117,6 +117,11 @@ leo
 That opens the full-screen interface: directories on the left, your notes in the
 middle, the selected note on the right.
 
+The layout follows the terminal. Below about 90 columns the directories pane steps
+aside — the current directory is in the status bar and `:cd` still works — and on
+a genuinely narrow terminal the focused pane takes the screen, with `h` and `l`
+moving between them. Resize and it reflows.
+
 ```
 ┌ dirs ────────┬ notes (3) ──────────────┬ Rust ownership ──────────┐
 │ cs130/       │   1 Graph traversals    │ ## Ownership             │

@@ -11,7 +11,6 @@ use ratatui::text::{Line as TuiLine, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 
-use super::help::centered;
 use crate::config::edit::Task;
 
 use super::theme;
@@ -247,12 +246,12 @@ fn hints_for(row: Option<&Row>) -> String {
 }
 
 /// The box the page is drawn in, shared by the paint and by hit-testing.
+///
+/// The whole terminal. This is a page rather than a dialog: it holds two chains,
+/// a colour, backup and four paths, and an inset box wasted rows on a margin
+/// while pushing the parts below the fold.
 fn page_area(area: Rect) -> Rect {
-    centered(
-        area,
-        area.width.saturating_sub(4).max(40),
-        area.height.saturating_sub(2).max(6),
-    )
+    area
 }
 
 /// Where the rows are drawn, for mapping a click back to one.

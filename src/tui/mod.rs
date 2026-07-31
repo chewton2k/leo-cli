@@ -245,6 +245,68 @@ impl App {
             .collect()
     }
 
+    /// Keep focus on something visible after a resize.
+    ///
+    /// Narrowing the terminal can drop the pane that had focus. In the one-pane
+    /// shape the focused pane is the one drawn, so any focus is valid; otherwise
+    /// focus falls back to the notes pane, which is the one always shown.
+    fn on_resize(&mut self, width: u16, height: u16) {
+        if view::Shape::for_width(width) == view::Shape::One {
+            return;
+        }
+        let frames = view::layout_with_tabs(
+            Rect::new(0, 0, width, height),
+            !self.tabs().is_empty(),
+            self.focus,
+        );
+        if !frames.shows(self.focus) {
+            self.focus = Pane::Notes;
+        }
+    }
+
+    /// The next pane in `direction` that is actually on screen.
+    ///
+    /// At narrow widths some panes are not drawn, and focusing one the user
+    /// cannot see would make the keyboard appear to stop working. In the
+    /// one-pane shape every pane is "visible" in turn, since the focused one is
+    /// the one that gets drawn — which is what keeps everything reachable.
+    fn next_visible_pane<B: TuiBackend>(
+        &self,
+        terminal: &Terminal<B>,
+        direction: isize,
+    ) -> Pane {
+        let Ok(size) = terminal.size() else {
+            return self.focus;
+        };
+        let area = Rect::new(0, 0, size.width, size.height);
+        let shape = view::Shape::for_width(size.width);
+
+        // One pane at a time: every step lands somewhere, because whichever pane
+        // has focus is the one drawn.
+        if shape == view::Shape::One {
+            return if direction < 0 {
+                self.focus.left()
+            } else {
+                self.focus.right()
+            };
+        }
+
+        let frames = view::layout_with_tabs(area, !self.tabs().is_empty(), self.focus);
+        let mut candidate = self.focus;
+        // At most three steps: past that we are back where we started.
+        for _ in 0..3 {
+            candidate = if direction < 0 {
+                candidate.left()
+            } else {
+                candidate.right()
+            };
+            if frames.shows(candidate) {
+                return candidate;
+            }
+        }
+        self.focus
+    }
+
     /// Show a note by id, wherever it lives.
     ///
     /// Selects it when the current listing contains it, and pins it into the
@@ -468,7 +530,7 @@ impl App {
         // The same geometry that was painted: `layout` alone omits the tab row,
         // so every pane would be one line out whenever the strip is showing.
         let tabs = self.tabs();
-        let frames = view::layout_with_tabs(area, !tabs.is_empty());
+        let frames = view::layout_with_tabs(area, !tabs.is_empty(), self.focus);
         let column = mouse.column;
         let row = mouse.row;
 
@@ -779,11 +841,11 @@ impl App {
             }
 
             Intent::FocusLeft => {
-                self.focus = self.focus.left();
+                self.focus = self.next_visible_pane(terminal, -1);
                 Ok(())
             }
             Intent::FocusRight => {
-                self.focus = self.focus.right();
+                self.focus = self.next_visible_pane(terminal, 1);
                 Ok(())
             }
 
@@ -1899,7 +1961,7 @@ impl App {
 
     fn draw(&self, frame: &mut Frame) {
         let tabs = self.tabs();
-        let f = view::layout_with_tabs(frame.area(), !tabs.is_empty());
+        let f = view::layout_with_tabs(frame.area(), !tabs.is_empty(), self.focus);
         view::tabs::render(frame, f.tabs, &tabs);
 
         let dir_rows = self.dir_rows();
@@ -2233,6 +2295,9 @@ fn event_loop<B: TuiBackend>(terminal: &mut Terminal<B>, app: &mut App) -> Resul
                 app.on_key(key, terminal)?;
             }
             Event::Mouse(mouse) => app.on_mouse(mouse, terminal)?,
+            // A resize can take away the pane that had focus, leaving j and k
+            // moving a selection the user cannot see.
+            Event::Resize(width, height) => app.on_resize(width, height),
             _ => {}
         }
         app.pump_tasks(terminal)?;
@@ -2854,8 +2919,8 @@ mod tests {
         let (mut app, _d) = temp_app();
         app.recent = crate::tui::recent::Recent::default();
 
-        let with_none = view::layout_with_tabs(Rect::new(0, 0, 80, 20), false);
-        let with_some = view::layout_with_tabs(Rect::new(0, 0, 80, 20), true);
+        let with_none = view::layout_with_tabs(Rect::new(0, 0, 80, 20), false, Pane::Notes);
+        let with_some = view::layout_with_tabs(Rect::new(0, 0, 80, 20), true, Pane::Notes);
         assert_eq!(with_none.tabs.height, 0);
         assert_eq!(with_some.tabs.height, 1);
         // And the panes get the row back.
@@ -3081,7 +3146,11 @@ mod tests {
     /// tab strip is showing. Computing it any other way in a test is how the
     /// off-by-one row bug went unnoticed.
     fn frames_for(app: &App, width: u16, height: u16) -> view::Frames {
-        view::layout_with_tabs(Rect::new(0, 0, width, height), !app.tabs().is_empty())
+        view::layout_with_tabs(
+            Rect::new(0, 0, width, height),
+            !app.tabs().is_empty(),
+            app.focus,
+        )
     }
 
     fn click(column: u16, row: u16) -> MouseEvent {
@@ -3262,7 +3331,7 @@ mod tests {
         assert_eq!(app.tabs().len(), 2);
 
         terminal.draw(|f| app.draw(f)).unwrap();
-        let frames = view::layout_with_tabs(Rect::new(0, 0, 100, 20), true);
+        let frames = view::layout_with_tabs(Rect::new(0, 0, 100, 20), true, Pane::Notes);
 
         // The second tab is the note we came from; click it.
         let tabs = app.tabs();
@@ -3278,6 +3347,94 @@ mod tests {
             "clicking the second tab did not open that note"
         );
         assert_ne!(app.selected_id(), Some(&second));
+    }
+
+    // ── responsive layout ───────────────────────────────────────────────────
+
+    /// Narrowing the terminal must not leave focus on a pane that is gone: j and
+    /// k would move a selection the user cannot see.
+    #[test]
+    fn a_resize_moves_focus_off_a_pane_that_disappeared() {
+        let (mut app, _d) = temp_app();
+        app.focus = Pane::Dirs;
+
+        // Wide enough for three panes: the directories pane is real.
+        app.on_resize(120, 30);
+        assert_eq!(app.focus, Pane::Dirs);
+
+        // Narrow enough to drop it.
+        app.on_resize(70, 24);
+        assert_eq!(app.focus, Pane::Notes, "focus stayed on a hidden pane");
+    }
+
+    /// In the one-pane shape every pane is reachable, so focus is never moved out
+    /// from under the user.
+    #[test]
+    fn a_resize_to_one_pane_leaves_focus_alone() {
+        let (mut app, _d) = temp_app();
+        app.focus = Pane::Preview;
+        app.on_resize(40, 20);
+        assert_eq!(app.focus, Pane::Preview);
+    }
+
+    /// `h` and `l` must not stop on a pane that is not drawn.
+    #[test]
+    fn focus_movement_skips_hidden_panes() {
+        let (mut app, _d) = temp_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(70, 24)).unwrap();
+
+        // Two-pane shape: notes and preview only.
+        app.focus = Pane::Notes;
+        app.on_intent(Intent::FocusLeft, &mut terminal).unwrap();
+        assert_eq!(app.focus, Pane::Notes, "focus moved onto the hidden dirs pane");
+
+        app.on_intent(Intent::FocusRight, &mut terminal).unwrap();
+        assert_eq!(app.focus, Pane::Preview);
+    }
+
+    /// At the narrowest size every pane is still reachable, which is what makes
+    /// the one-pane shape usable rather than merely small.
+    #[test]
+    fn every_pane_is_reachable_on_a_narrow_terminal() {
+        let (mut app, _d) = temp_app();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(40, 20)).unwrap();
+
+        app.focus = Pane::Notes;
+        app.on_intent(Intent::FocusLeft, &mut terminal).unwrap();
+        assert_eq!(app.focus, Pane::Dirs);
+        app.on_intent(Intent::FocusRight, &mut terminal).unwrap();
+        assert_eq!(app.focus, Pane::Notes);
+        app.on_intent(Intent::FocusRight, &mut terminal).unwrap();
+        assert_eq!(app.focus, Pane::Preview);
+
+        // And each one draws without panicking at that size.
+        for focus in [Pane::Dirs, Pane::Notes, Pane::Preview] {
+            app.focus = focus;
+            terminal.draw(|f| app.draw(f)).unwrap();
+        }
+    }
+
+    /// Every size must draw. Terminals report odd geometry mid-resize.
+    #[test]
+    fn the_whole_app_draws_at_any_size() {
+        let (mut app, _d) = temp_app();
+        for (w, h) in [(200, 60), (120, 30), (90, 24), (70, 20), (50, 16), (40, 10), (20, 6), (10, 3), (4, 2)] {
+            let mut terminal =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
+            terminal.draw(|f| app.draw(f)).unwrap();
+
+            // And with every overlay up, since those size themselves too.
+            for mode in [Mode::Help, Mode::Settings] {
+                app.mode = mode;
+                if matches!(app.mode, Mode::Settings) {
+                    app.on_intent(Intent::OpenSettings, &mut terminal).unwrap();
+                }
+                terminal.draw(|f| app.draw(f)).unwrap();
+            }
+            app.mode = Mode::Normal;
+        }
     }
 
     /// A click behind an overlay would act on something the user cannot see.
