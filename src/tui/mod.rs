@@ -946,7 +946,6 @@ impl App {
 
             self.asking = Some(Asking {
                 job: task::start_ask(note.clone(), title, body),
-                note: note.clone(),
                 progress: view::progress::Progress::spinner("Asking"),
                 since: Instant::now(),
                 text: String::new(),
@@ -1166,7 +1165,11 @@ impl App {
     fn open_settings(&mut self, status: Option<String>) {
         let keep = self.settings.as_ref().map(|s| s.selected).unwrap_or(0);
         let cfg = crate::config::Config::load();
-        let rows = settings::rows(&cfg, crate::config::secret::default_store().as_ref());
+        let rows = settings::rows(
+            &cfg,
+            crate::config::secret::default_store().as_ref(),
+            &self.store.notes_dir,
+        );
         let selected = if keep == 0 || keep >= rows.len() {
             view::settings::first_selectable(&rows)
         } else {
@@ -1185,6 +1188,94 @@ impl App {
         Some((name, task, in_chain))
     }
 
+    /// Perform a settings row's action.
+    ///
+    /// Each of these writes to the config or shells out to git, so they go
+    /// through the same code the `:` line uses rather than a parallel path.
+    fn run_setting<B: TuiBackend>(
+        &mut self,
+        action: view::settings::SettingAction,
+        terminal: &mut Terminal<B>,
+    ) -> Result<()> {
+        use view::settings::SettingAction as A;
+        match action {
+            A::NextTheme => {
+                let changed = settings::cycle_theme()?;
+                self.after_settings_change(changed);
+                // A new palette only shows after a repaint with it installed;
+                // the process-wide palette is set once, so say what happened
+                // rather than pretending it took effect.
+                Ok(())
+            }
+            A::EditConfig => {
+                let out = self
+                    .outside(terminal, || crate::run_config(action::ConfigAction::Edit))?;
+                if let Err(e) = out {
+                    self.say(Kind::Bad, e.to_string());
+                }
+                self.refresh_settings();
+                Ok(())
+            }
+            A::SyncInit => {
+                let dir = self.store.notes_dir.clone();
+                match crate::sync::init(&dir) {
+                    Ok(()) => {
+                        self.say(Kind::Good, "Git backup started. Connect a remote next.");
+                        self.refresh_settings();
+                    }
+                    Err(e) => self.say(Kind::Bad, e.to_string()),
+                }
+                Ok(())
+            }
+            A::SyncConnect => {
+                // The URL has to be typed, so hand over to the `:` line rather
+                // than inventing a second text input on this screen.
+                self.settings = None;
+                self.mode = Mode::Command;
+                self.cmd.open("sync connect ");
+                self.say(Kind::Dim, "Paste the repository URL, then Enter.");
+                Ok(())
+            }
+            A::SyncPush | A::SyncPull => {
+                let notes_dir = self.store.notes_dir.clone();
+                let push = matches!(action, A::SyncPush);
+                let out = self.outside(terminal, || {
+                    if push {
+                        crate::sync::push(&notes_dir)
+                    } else {
+                        crate::sync::pull(&notes_dir)
+                    }
+                })?;
+                match out {
+                    Ok(()) => {
+                        // A pull rewrites the notes on disk.
+                        self.store = Store::load_from(&self.store.notes_dir.clone())?;
+                        self.resync();
+                        self.refresh_settings();
+                    }
+                    Err(e) => self.say(Kind::Bad, e.to_string()),
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// Rebuild the rows after something on the page changed.
+    fn refresh_settings(&mut self) {
+        if self.settings.is_some() {
+            let cfg = crate::config::Config::load();
+            let rows = settings::rows(
+                &cfg,
+                crate::config::secret::default_store().as_ref(),
+                &self.store.notes_dir,
+            );
+            if let Some(screen) = self.settings.as_mut() {
+                screen.selected = screen.selected.min(rows.len().saturating_sub(1));
+                screen.rows = rows;
+            }
+        }
+    }
+
     fn on_settings_key<B: TuiBackend>(
         &mut self,
         key: event::KeyEvent,
@@ -1195,6 +1286,32 @@ impl App {
         if key.code == event::KeyCode::Esc || (ctrl && key.code == event::KeyCode::Char('s')) {
             self.settings = None;
             self.mode = Mode::Normal;
+            return Ok(());
+        }
+
+        // A settings row: appearance, backup, or where things live.
+        let selected_action = self
+            .settings
+            .as_ref()
+            .and_then(|s| s.rows.get(s.selected))
+            .and_then(|row| row.action().cloned());
+        if let Some(action) = selected_action {
+            if let Some(screen) = self.settings.as_mut() {
+                match key.code {
+                    event::KeyCode::Char('j') | event::KeyCode::Down => {
+                        screen.selected = view::settings::step(&screen.rows, screen.selected, 1);
+                        return Ok(());
+                    }
+                    event::KeyCode::Char('k') | event::KeyCode::Up => {
+                        screen.selected = view::settings::step(&screen.rows, screen.selected, -1);
+                        return Ok(());
+                    }
+                    _ => {}
+                }
+            }
+            if matches!(key.code, event::KeyCode::Enter) {
+                return self.run_setting(action, terminal);
+            }
             return Ok(());
         }
 
@@ -1917,8 +2034,6 @@ impl action::Ai for PreExpanded {
 /// A running `:ask`.
 struct Asking {
     job: task::Job,
-    /// The note reference the user gave, passed back to the handler that saves.
-    note: String,
     progress: view::progress::Progress,
     since: Instant,
     /// The answer so far, shown while it arrives.
@@ -2501,7 +2616,6 @@ mod tests {
         // Stand in for a running job without making a request.
         app.asking = Some(Asking {
             job: task::start_ask(String::new(), String::new(), String::new()),
-            note: "1".to_string(),
             progress: view::progress::Progress::spinner("Asking"),
             since: Instant::now(),
             text: String::new(),
@@ -2522,7 +2636,6 @@ mod tests {
 
         app.asking = Some(Asking {
             job: task::start_ask(String::new(), String::new(), String::new()),
-            note: "1".to_string(),
             progress: view::progress::Progress::spinner("Asking"),
             since: Instant::now(),
             text: "ownership means".to_string(),

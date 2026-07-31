@@ -54,7 +54,11 @@ impl Rgb {
         Self::new(s(self.r), s(self.g), s(self.b))
     }
 
-    /// Rough perceived brightness, 0.0–1.0. Used to keep a chosen accent legible.
+    /// Rough perceived brightness, 0.0–1.0.
+    ///
+    /// Used by tests to assert that the frame recedes behind the accent, which is
+    /// the one property of the derived palette worth pinning down.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn luminance(self) -> f32 {
         (0.299 * self.r as f32 + 0.587 * self.g as f32 + 0.114 * self.b as f32) / 255.0
     }

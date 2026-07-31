@@ -56,14 +56,52 @@ pub enum Row {
         /// Which chain it would join, inferred from its kind.
         task: Task,
     },
+    /// A plain section heading, for the parts of the page that are not chains.
+    Section(String),
+    /// A fact with no action: a path, a count, a version.
+    Fact { label: String, value: String },
+    /// Something that can be changed from this screen.
+    Setting {
+        label: String,
+        value: String,
+        /// What pressing Enter does, named so the row can say so.
+        action: SettingAction,
+    },
+}
+
+/// What a settings row does when chosen.
+///
+/// Named rather than a closure so the rows stay comparable and testable, and so
+/// the footer can describe the selected row's action.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SettingAction {
+    /// Cycle to the next theme preset.
+    NextTheme,
+    /// Start a git repo in the notes directory.
+    SyncInit,
+    /// Ask for a remote URL and connect it.
+    SyncConnect,
+    SyncPush,
+    SyncPull,
+    /// Open config.toml in `$EDITOR`.
+    EditConfig,
+}
+
+impl SettingAction {
+    /// What the footer says the selected row will do.
+    pub fn describe(&self) -> &'static str {
+        match self {
+            SettingAction::NextTheme => "Enter cycles the colour",
+            SettingAction::SyncInit => "Enter starts backing up to git",
+            SettingAction::SyncConnect => "Enter asks for a GitHub URL",
+            SettingAction::SyncPush => "Enter pushes now",
+            SettingAction::SyncPull => "Enter pulls now",
+            SettingAction::EditConfig => "Enter opens config.toml",
+        }
+    }
 }
 
 impl Row {
-    /// Headers are skipped when moving the selection: there is nothing to do to
-    /// a header, so stopping on one would just cost the user a keypress.
-    pub fn selectable(&self) -> bool {
-        matches!(self, Row::Member { .. } | Row::Unused { .. })
-    }
 
     pub fn provider_name(&self) -> Option<&str> {
         match self {
@@ -76,8 +114,27 @@ impl Row {
         match self {
             Row::Member { task, .. } | Row::Unused { task, .. } => Some(*task),
             Row::Header(task) => Some(*task),
-            Row::AvailableHeader => None,
+            _ => None,
         }
+    }
+
+    /// What choosing this row does, when it does anything.
+    pub fn action(&self) -> Option<&SettingAction> {
+        match self {
+            Row::Setting { action, .. } => Some(action),
+            _ => None,
+        }
+    }
+
+    /// Whether the selection should be able to land here.
+    ///
+    /// Headings and facts are there to be read; stopping on them would cost the
+    /// user a keypress for nothing.
+    pub fn selectable(&self) -> bool {
+        !matches!(
+            self,
+            Row::Header(_) | Row::AvailableHeader | Row::Section(_) | Row::Fact { .. }
+        )
     }
 }
 
@@ -139,6 +196,26 @@ fn item(row: &Row) -> ListItem<'static> {
             ]))
         }
 
+        Row::Section(title) => ListItem::new(TuiLine::from(Span::styled(
+            format!(" {title}"),
+            Style::default()
+                .fg(theme::accent())
+                .add_modifier(Modifier::BOLD),
+        ))),
+
+        Row::Fact { label, value } => ListItem::new(TuiLine::from(vec![
+            Span::raw(format!("     {label:<22}")),
+            Span::styled(
+                value.clone(),
+                Style::default().add_modifier(Modifier::DIM),
+            ),
+        ])),
+
+        Row::Setting { label, value, .. } => ListItem::new(TuiLine::from(vec![
+            Span::raw(format!("     {label:<22}")),
+            Span::styled(value.clone(), Style::default().fg(theme::warn())),
+        ])),
+
         Row::Unused { name, model, credential, .. } => ListItem::new(TuiLine::from(vec![
             Span::raw("     "),
             Span::raw(format!("{name:<22}")),
@@ -151,9 +228,20 @@ fn item(row: &Row) -> ListItem<'static> {
     }
 }
 
-/// The action hints, which double as the only documentation this screen needs.
-const HINTS: &str =
+/// The hints for a provider row, which double as the only documentation this
+/// screen needs.
+const PROVIDER_HINTS: &str =
     "l login · x remove key · t test · J/K reorder · a add · d drop · e edit file · Esc close";
+
+/// What the footer says, which depends on what is selected: the provider keys
+/// mean nothing on a theme row, and offering them there is how a screen starts
+/// feeling like a list of everything rather than a place to do something.
+fn hints_for(row: Option<&Row>) -> String {
+    match row.and_then(Row::action) {
+        Some(action) => format!("{} · Esc close", action.describe()),
+        None => PROVIDER_HINTS.to_string(),
+    }
+}
 
 pub fn render(frame: &mut Frame, area: Rect, rows: &[Row], selected: usize, status: Option<&str>) {
     let box_area = centered(
@@ -167,7 +255,7 @@ pub fn render(frame: &mut Frame, area: Rect, rows: &[Row], selected: usize, stat
         Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(theme::accent()))
-            .title(" providers "),
+            .title(" leo · profile "),
         box_area,
     );
 
@@ -207,7 +295,7 @@ pub fn render(frame: &mut Frame, area: Rect, rows: &[Row], selected: usize, stat
 
     frame.render_widget(
         Paragraph::new(Span::styled(
-            format!(" {HINTS}"),
+            format!(" {}", hints_for(rows.get(selected))),
             Style::default().add_modifier(Modifier::DIM),
         )),
         hint_area,
@@ -330,6 +418,98 @@ mod tests {
         assert!(out.contains("transcribe chain"), "{out}");
         assert!(out.contains("also configured"), "{out}");
         assert!(out.contains("cerebras"), "{out}");
+    }
+
+    /// The footer must describe what the selected row does: the provider keys
+    /// mean nothing on a theme row.
+    #[test]
+    fn the_footer_follows_the_selected_row() {
+        let provider = Row::Unused {
+            name: "groq".into(),
+            model: "m".into(),
+            credential: Credential::Missing,
+            task: Task::Transcribe,
+        };
+        assert!(hints_for(Some(&provider)).contains("login"));
+
+        let setting = Row::Setting {
+            label: "colour".into(),
+            value: "orange".into(),
+            action: SettingAction::NextTheme,
+        };
+        let hints = hints_for(Some(&setting));
+        assert!(hints.contains("cycles the colour"), "{hints}");
+        assert!(!hints.contains("login"), "{hints}");
+        // Every footer says how to leave.
+        assert!(hints.contains("Esc"), "{hints}");
+    }
+
+    /// Every action has to describe itself, or a row can be chosen with no idea
+    /// what it will do.
+    #[test]
+    fn every_action_describes_itself() {
+        for action in [
+            SettingAction::NextTheme,
+            SettingAction::SyncInit,
+            SettingAction::SyncConnect,
+            SettingAction::SyncPush,
+            SettingAction::SyncPull,
+            SettingAction::EditConfig,
+        ] {
+            let text = action.describe();
+            assert!(text.starts_with("Enter"), "{action:?}: {text}");
+            assert!(text.len() > 10, "{action:?}: {text}");
+        }
+    }
+
+    /// The whole page must render: providers, appearance, backup, storage.
+    #[test]
+    fn the_profile_page_renders_every_section() {
+        let rows = vec![
+            Row::Header(Task::Chat),
+            Row::Member {
+                task: Task::Chat,
+                position: 1,
+                name: "ollama".into(),
+                model: "qwen3:8b".into(),
+                credential: Credential::NotNeeded,
+                ready: true,
+            },
+            Row::Section("appearance".into()),
+            Row::Setting {
+                label: "colour".into(),
+                value: "orange  #d97757".into(),
+                action: SettingAction::NextTheme,
+            },
+            Row::Section("backup to github".into()),
+            Row::Setting {
+                label: "git backup".into(),
+                value: "not set up".into(),
+                action: SettingAction::SyncInit,
+            },
+            Row::Section("where things live".into()),
+            Row::Fact {
+                label: "notes".into(),
+                value: "/home/u/notes".into(),
+            },
+        ];
+
+        let mut t = Terminal::new(TestBackend::new(90, 20)).unwrap();
+        t.draw(|f| render(f, f.area(), &rows, 1, None)).unwrap();
+        let out = t.backend().to_string();
+
+        for expected in [
+            "profile",
+            "ollama",
+            "appearance",
+            "orange",
+            "backup to github",
+            "not set up",
+            "where things live",
+            "/home/u/notes",
+        ] {
+            assert!(out.contains(expected), "missing {expected:?}:\n{out}");
+        }
     }
 
     /// The hints are the only instructions on the screen, so they must render.

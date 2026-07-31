@@ -10,7 +10,7 @@ use crate::config::edit::{self, Task};
 use crate::config::provider::ProviderKind;
 use crate::config::secret::{redact, SecretStore};
 use crate::config::Config;
-use crate::tui::view::settings::{Credential, Row};
+use crate::tui::view::settings::{Credential, Row, SettingAction};
 
 /// Which chain a provider kind can serve. A transcription provider in the chat
 /// chain would be silently dropped by the chain builder, so the screen offers
@@ -48,7 +48,7 @@ fn credential_for(name: &str, key_env: Option<&str>, store: &dyn SecretStore) ->
 
 /// Build the screen: both chains in order, then everything else that is
 /// configured.
-pub fn rows(cfg: &Config, store: &dyn SecretStore) -> Vec<Row> {
+pub fn rows(cfg: &Config, store: &dyn SecretStore, notes_dir: &std::path::Path) -> Vec<Row> {
     let mut rows = Vec::new();
     let mut in_a_chain: Vec<&String> = Vec::new();
 
@@ -130,6 +130,107 @@ pub fn rows(cfg: &Config, store: &dyn SecretStore) -> Vec<Row> {
         }
     }
 
+    rows.extend(appearance_rows(cfg));
+    rows.extend(backup_rows(notes_dir));
+    rows.extend(storage_rows(notes_dir));
+    rows
+}
+
+/// The theme section: what colour the interface is, and how to change it.
+fn appearance_rows(cfg: &Config) -> Vec<Row> {
+    let palette = cfg.theme.palette();
+    let named = crate::config::theme::presets()
+        .into_iter()
+        .find(|(_, rgb)| *rgb == palette.accent)
+        .map(|(name, _)| name.to_string());
+
+    vec![
+        Row::Section("appearance".to_string()),
+        Row::Setting {
+            label: "colour".to_string(),
+            // The hex is what the config holds, so showing it makes the row and
+            // the file legible to each other.
+            value: match named {
+                Some(name) => format!("{name}  {}", palette.accent.to_hex()),
+                None => palette.accent.to_hex(),
+            },
+            action: SettingAction::NextTheme,
+        },
+    ]
+}
+
+/// The GitHub backup section: whether notes are backed up, where to, and how far
+/// behind.
+///
+/// Sync was previously only reachable by typing `:sync init`, then
+/// `:sync connect <url>`, which meant the feature was invisible to anyone who had
+/// not read the README.
+fn backup_rows(notes_dir: &std::path::Path) -> Vec<Row> {
+    let mut rows = vec![Row::Section("backup to github".to_string())];
+
+    if !crate::sync::is_initialized(notes_dir) {
+        rows.push(Row::Setting {
+            label: "git backup".to_string(),
+            value: "not set up".to_string(),
+            action: SettingAction::SyncInit,
+        });
+        return rows;
+    }
+
+    match crate::sync::remote_url(notes_dir) {
+        Some(url) => {
+            rows.push(Row::Fact {
+                label: "remote".to_string(),
+                value: url,
+            });
+            let waiting = match crate::sync::unpushed(notes_dir) {
+                Some(0) => "everything is pushed".to_string(),
+                Some(1) => "1 commit to push".to_string(),
+                Some(n) => format!("{n} commits to push"),
+                None => "no upstream branch yet".to_string(),
+            };
+            rows.push(Row::Setting {
+                label: "push".to_string(),
+                value: waiting,
+                action: SettingAction::SyncPush,
+            });
+            rows.push(Row::Setting {
+                label: "pull".to_string(),
+                value: "fetch and reload".to_string(),
+                action: SettingAction::SyncPull,
+            });
+        }
+        None => rows.push(Row::Setting {
+            label: "remote".to_string(),
+            value: "none — connect one".to_string(),
+            action: SettingAction::SyncConnect,
+        }),
+    }
+
+    rows
+}
+
+/// Where things are on disk. Facts rather than settings: leo decides these, and
+/// the user only needs to be able to find them.
+fn storage_rows(notes_dir: &std::path::Path) -> Vec<Row> {
+    let mut rows = vec![Row::Section("where things live".to_string())];
+    rows.push(Row::Fact {
+        label: "notes".to_string(),
+        value: notes_dir.display().to_string(),
+    });
+    if let Ok(path) = Config::config_path() {
+        rows.push(Row::Setting {
+            label: "settings".to_string(),
+            value: path.display().to_string(),
+            action: SettingAction::EditConfig,
+        });
+    }
+    if let Ok(file) = crate::config::file_store::FileStore::new() {
+        rows.push(Row::Fact {
+            label: "keys".to_string(),
+            value: format!("{} (only you can read it)", file.path().display()),
+        });
+    }
     rows
 }
 
@@ -140,6 +241,42 @@ pub enum Changed {
     No,
     /// The file changed; reload config and rebuild the rows. Carries a message.
     Yes(String),
+}
+
+/// Switch to the next colour preset and write it to the config.
+///
+/// Cycling rather than offering a list: there are six, and pressing a key until
+/// it looks right is faster than reading names. Writes `preset` and clears any
+/// explicit `accent`, so the choice on screen and the file agree.
+pub fn cycle_theme() -> Result<Changed> {
+    let (path, mut doc) = edit::load_document()?;
+
+    let presets: Vec<&str> = crate::config::theme::presets().keys().copied().collect();
+    let current = doc
+        .get("theme")
+        .and_then(|t| t.get("preset"))
+        .and_then(|p| p.as_str())
+        .unwrap_or("orange");
+    let next = presets
+        .iter()
+        .position(|p| *p == current)
+        .map(|i| presets[(i + 1) % presets.len()])
+        .unwrap_or(presets[0]);
+
+    let theme = doc
+        .entry("theme")
+        .or_insert(toml_edit::Item::Table(toml_edit::Table::new()));
+    if let Some(table) = theme.as_table_mut() {
+        table.insert("preset", toml_edit::value(next));
+        // An explicit accent would win over the preset, which would make this
+        // key appear to do nothing.
+        table.remove("accent");
+    }
+
+    edit::save_document(&path, &doc)?;
+    Ok(Changed::Yes(format!(
+        "Colour set to {next}. Restart leo to see it."
+    )))
 }
 
 /// Move a chain member up or down and persist it. `delta` is -1 or 1.
@@ -248,7 +385,7 @@ key_env = "LEO_TEST_SETTINGS_CB"
         for v in ["LEO_TEST_SETTINGS_OR", "LEO_TEST_SETTINGS_GROQ", "LEO_TEST_SETTINGS_CB"] {
             std::env::remove_var(v);
         }
-        let rows = rows(&small_config(), &MemoryStore::default());
+        let rows = rows(&small_config(), &MemoryStore::default(), std::path::Path::new("/tmp/leo-test-notes"));
 
         assert_eq!(rows[0], Row::Header(Task::Chat));
         assert_eq!(rows[1].provider_name(), Some("ollama"));
@@ -259,13 +396,14 @@ key_env = "LEO_TEST_SETTINGS_CB"
         // Everything configured but unchained shows up, so a user can see what
         // is available without opening the file.
         assert_eq!(rows[6].provider_name(), Some("cerebras"));
-        assert_eq!(rows.len(), 7);
+        // The provider part ends where the rest of the page begins.
+        assert!(matches!(rows[7], Row::Section(_)), "{:?}", rows[7]);
     }
 
     #[test]
     fn a_chain_position_is_shown_as_its_priority() {
         let _guard = ENV_LOCK.lock().unwrap();
-        let rows = rows(&small_config(), &MemoryStore::default());
+        let rows = rows(&small_config(), &MemoryStore::default(), std::path::Path::new("/tmp/leo-test-notes"));
         match &rows[2] {
             Row::Member { position, name, .. } => {
                 assert_eq!(*position, 2);
@@ -278,7 +416,7 @@ key_env = "LEO_TEST_SETTINGS_CB"
     #[test]
     fn a_keyless_local_provider_needs_no_credential() {
         let _guard = ENV_LOCK.lock().unwrap();
-        let rows = rows(&small_config(), &MemoryStore::default());
+        let rows = rows(&small_config(), &MemoryStore::default(), std::path::Path::new("/tmp/leo-test-notes"));
         match &rows[1] {
             Row::Member { credential, .. } => assert_eq!(*credential, Credential::NotNeeded),
             other => panic!("expected a member, got {other:?}"),
@@ -293,7 +431,7 @@ key_env = "LEO_TEST_SETTINGS_CB"
 
         let store = MemoryStore::default();
         store.set("openrouter", "sk-or-v1-secret9999").unwrap();
-        let rows = rows(&small_config(), &store);
+        let rows = rows(&small_config(), &store, std::path::Path::new("/tmp/leo-test-notes"));
 
         match &rows[2] {
             Row::Member { credential, .. } => {
@@ -316,7 +454,7 @@ key_env = "LEO_TEST_SETTINGS_CB"
         let store = MemoryStore::default();
         store.set("openrouter", "from-keychain-9999").unwrap();
 
-        let rows = rows(&small_config(), &store);
+        let rows = rows(&small_config(), &store, std::path::Path::new("/tmp/leo-test-notes"));
         std::env::remove_var("LEO_TEST_SETTINGS_OR");
 
         match &rows[2] {
@@ -335,7 +473,7 @@ key_env = "LEO_TEST_SETTINGS_CB"
     fn a_chain_entry_with_no_provider_block_is_shown_rather_than_hidden() {
         let _guard = ENV_LOCK.lock().unwrap();
         let cfg = Config::parse("[chat]\nchain = [\"ghost\"]\n").unwrap();
-        let rows = rows(&cfg, &MemoryStore::default());
+        let rows = rows(&cfg, &MemoryStore::default(), std::path::Path::new("/tmp/leo-test-notes"));
 
         match &rows[1] {
             Row::Member { name, model, ready, .. } => {
@@ -370,7 +508,7 @@ model_path = "/nope"
 "#,
         )
         .unwrap();
-        let rows = rows(&cfg, &MemoryStore::default());
+        let rows = rows(&cfg, &MemoryStore::default(), std::path::Path::new("/tmp/leo-test-notes"));
 
         let task_of = |name: &str| {
             rows.iter()
@@ -384,11 +522,98 @@ model_path = "/nope"
     }
 
     #[test]
-    fn an_empty_config_produces_only_headers() {
+    fn an_empty_config_produces_only_headers_and_the_rest_of_the_page() {
         let _guard = ENV_LOCK.lock().unwrap();
         let cfg = Config::parse("").unwrap();
-        let rows = rows(&cfg, &MemoryStore::default());
-        assert_eq!(rows, vec![Row::Header(Task::Chat), Row::Header(Task::Transcribe)]);
+        let rows = rows(&cfg, &MemoryStore::default(), std::path::Path::new("/tmp/leo-test-notes"));
+
+        // No providers, but both chain headers still say so.
+        let providers: Vec<&Row> = rows
+            .iter()
+            .filter(|r| r.provider_name().is_some())
+            .collect();
+        assert!(providers.is_empty(), "{providers:?}");
+        assert_eq!(rows[0], Row::Header(Task::Chat));
+        assert_eq!(rows[1], Row::Header(Task::Transcribe));
+
+        // And the page is more than providers: appearance, backup, storage.
+        let sections: Vec<&str> = rows
+            .iter()
+            .filter_map(|r| match r {
+                Row::Section(title) => Some(title.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(sections, ["appearance", "backup to github", "where things live"]);
+    }
+
+    /// Everything on the page must either do something or be worth reading, and
+    /// j/k must only stop on the rows that do something.
+    #[test]
+    fn only_actionable_rows_are_selectable() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let rows = rows(&small_config(), &MemoryStore::default(), std::path::Path::new("/tmp/leo-test-notes"));
+
+        for row in &rows {
+            match row {
+                Row::Header(_) | Row::AvailableHeader | Row::Section(_) | Row::Fact { .. } => {
+                    assert!(!row.selectable(), "{row:?} should not be selectable")
+                }
+                Row::Member { .. } | Row::Unused { .. } | Row::Setting { .. } => {
+                    assert!(row.selectable(), "{row:?} should be selectable")
+                }
+            }
+        }
+        // And every setting says what choosing it will do.
+        for row in rows.iter().filter(|r| matches!(r, Row::Setting { .. })) {
+            let action = row.action().expect("a setting with no action");
+            assert!(!action.describe().is_empty());
+        }
+    }
+
+    /// The colour row must name the preset when the accent matches one, since
+    /// "orange" is more use than a hex string.
+    #[test]
+    fn the_appearance_row_names_the_current_colour() {
+        let cfg = Config::parse("").unwrap();
+        let rows = appearance_rows(&cfg);
+        let Row::Setting { label, value, action } = &rows[1] else {
+            panic!("expected a setting, got {:?}", rows[1]);
+        };
+        assert_eq!(label, "colour");
+        assert!(value.contains("orange"), "{value}");
+        assert!(value.contains("#d97757"), "{value}");
+        assert_eq!(*action, SettingAction::NextTheme);
+    }
+
+    /// Sync was previously invisible unless the user had read the README.
+    #[test]
+    fn backup_offers_setup_when_there_is_no_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        let rows = backup_rows(dir.path());
+        assert_eq!(rows[0], Row::Section("backup to github".to_string()));
+        let Row::Setting { value, action, .. } = &rows[1] else {
+            panic!("expected a setting, got {:?}", rows[1]);
+        };
+        assert_eq!(value, "not set up");
+        assert_eq!(*action, SettingAction::SyncInit);
+    }
+
+    #[test]
+    fn storage_shows_where_notes_and_keys_live() {
+        let rows = storage_rows(std::path::Path::new("/tmp/leo-test-notes"));
+        let values: String = rows
+            .iter()
+            .map(|r| match r {
+                Row::Fact { label, value } | Row::Setting { label, value, .. } => {
+                    format!("{label}={value} ")
+                }
+                _ => String::new(),
+            })
+            .collect();
+        assert!(values.contains("notes=/tmp/leo-test-notes"), "{values}");
+        assert!(values.contains("config.toml"), "{values}");
+        assert!(values.contains("credentials.json"), "{values}");
     }
 
     #[test]
@@ -398,13 +623,13 @@ model_path = "/nope"
         let store = MemoryStore::default();
 
         // Without a key, openrouter is not ready.
-        let rows_before = rows(&small_config(), &store);
+        let rows_before = rows(&small_config(), &store, std::path::Path::new("/tmp/leo-test-notes"));
         let ready_before = matches!(&rows_before[2], Row::Member { ready: true, .. });
         assert!(!ready_before);
 
         // With one, it is.
         store.set("openrouter", "a-key").unwrap();
-        let rows_after = rows(&small_config(), &store);
+        let rows_after = rows(&small_config(), &store, std::path::Path::new("/tmp/leo-test-notes"));
         assert!(matches!(&rows_after[2], Row::Member { ready: true, .. }));
     }
 }

@@ -46,7 +46,8 @@ impl Recent {
         self.ids.retain(|id| exists(id));
     }
 
-    /// The nth entry, for jumping straight to it.
+    /// The nth entry. Used by tests; the app cycles with [`Recent::ids`].
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn nth(&self, index: usize) -> Option<&String> {
         self.ids.get(index)
     }

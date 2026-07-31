@@ -55,6 +55,39 @@ pub fn pull(notes_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// The configured remote URL, if any.
+///
+/// Read rather than inferred so the profile page can show where notes actually
+/// go — "sync is set up" is not useful without saying set up to what.
+pub fn remote_url(notes_dir: &Path) -> Option<String> {
+    let out = std::process::Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .current_dir(notes_dir)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let url = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!url.is_empty()).then_some(url)
+}
+
+/// How many commits are waiting to be pushed, when that can be determined.
+///
+/// `None` when there is no upstream yet, which is a different state from zero and
+/// should not be reported as "up to date".
+pub fn unpushed(notes_dir: &Path) -> Option<usize> {
+    let out = std::process::Command::new("git")
+        .args(["rev-list", "--count", "@{u}..HEAD"])
+        .current_dir(notes_dir)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+}
+
 pub fn status(notes_dir: &Path) -> Result<()> {
     print_output(run_git(notes_dir, &["status"])?);
     Ok(())
