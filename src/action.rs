@@ -1404,7 +1404,7 @@ pub fn apply_transcript(
 /// Recompute the note numbering after the store changed.
 pub fn numbering_for(store: &Store, dir: &str) -> Vec<String> {
     store
-        .list_notes_in_dir(dir, None, 20)
+        .list_notes_in_dir(dir, None, usize::MAX)
         .iter()
         .map(|n| n.id.clone())
         .collect()
@@ -2983,5 +2983,17 @@ mod handler_tests {
 
         assert_eq!(numbering_for(&store, ""), vec![root]);
         assert_eq!(numbering_for(&store, "cs130"), vec![nested]);
+    }
+
+    /// Every note gets a number, not only the twenty newest: the panes list the
+    /// whole directory, and `leo view 30` must work after `leo list --limit 50`.
+    #[test]
+    fn numbering_covers_every_note_in_the_directory() {
+        let (mut store, _d) = temp_store();
+        for i in 0..25 {
+            store.create_note(format!("Note {i}"), "", vec![], "").unwrap();
+        }
+        store.save().unwrap();
+        assert_eq!(numbering_for(&store, "").len(), 25);
     }
 }
