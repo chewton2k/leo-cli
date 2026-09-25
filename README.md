@@ -15,7 +15,7 @@ optional.
 2. [Your first notes](#2-your-first-notes)
 3. [Set up the AI](#3-set-up-the-ai)
 4. [Record a lecture](#4-record-a-lecture)
-5. [Ask questions inside a note](#5-ask-questions-inside-a-note)
+5. [Ask the AI about your notes](#5-ask-the-ai-about-your-notes)
 6. [Back up to GitHub](#6-back-up-to-github)
 7. [Read your notes on your phone](#7-read-your-notes-on-your-phone)
 8. [Use leo from a shell](#8-use-leo-from-a-shell)
@@ -278,7 +278,7 @@ as a note.
 
 ---
 
-## 5. Ask questions inside a note
+## 5. Ask the AI about your notes
 
 Write a question on its own line, starting with `@leo`:
 
@@ -298,6 +298,20 @@ BFS visits nodes level by level using a queue; DFS goes as deep as it can…
 ```
 
 Any `@leo` lines are also answered when you save a note from the editor.
+
+### Ask all your notes
+
+Type `/ask` followed by a question:
+
+```
+/ask what did we cover about graphs?
+```
+
+leo finds the notes most about it, in any directory, and the answer streams into
+the preview, naming the note each fact came from in brackets, like
+`[Graph traversals]`. If none of your notes mention it, leo says so rather than
+guessing. `Esc` closes the answer. From a shell: `leo ask "what did we cover
+about graphs?"`.
 
 ---
 

@@ -109,6 +109,33 @@ fn absorb_cli(
             return Ok(());
         }
 
+        action::Effect::AskNotes { question } => {
+            let notes: Vec<(String, String, String)> = store
+                .relevant(&question, 6)
+                .into_iter()
+                .map(|n| (n.title.clone(), n.directory.clone(), n.body.clone()))
+                .collect();
+            if notes.is_empty() {
+                println!("None of your notes mention that.");
+                return Ok(());
+            }
+            // Print as it arrives; a fallback to another provider starts again.
+            use std::io::Write;
+            let answer = ai::answer_from_notes(
+                &question,
+                &notes,
+                &mut |fragment| {
+                    print!("{fragment}");
+                    let _ = std::io::stdout().flush();
+                },
+                &mut || println!("\n(trying another provider)\n"),
+            )?;
+            if !answer.ends_with('\n') {
+                println!();
+            }
+            return Ok(());
+        }
+
         action::Effect::Edit(req) => shell::run_editor(store, req, ai)?,
         action::Effect::Confirm { prompt, on_yes } => {
             shell::confirm(store, &prompt, on_yes, force_delete)?

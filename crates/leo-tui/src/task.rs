@@ -51,6 +51,11 @@ pub enum TaskEvent {
     /// Answer text as it arrives, accumulated. Shown in the preview so a slow
     /// model reads as working rather than hung.
     Streaming(String),
+    /// A question across the notes has been answered.
+    Answered {
+        question: String,
+        text: String,
+    },
     /// A note's `@leo` prompts have been expanded; the App writes it back.
     Expanded {
         note: String,
@@ -126,6 +131,7 @@ impl Job {
                         TaskEvent::Finished { .. }
                             | TaskEvent::Failed(_)
                             | TaskEvent::Structured { .. }
+                            | TaskEvent::Answered { .. }
                     ) {
                         self.done = true;
                     }
@@ -230,6 +236,52 @@ pub fn start_ask(note: String, title: String, body: String) -> Job {
                 let _ = tx.send(TaskEvent::Failed(e.to_string()));
             }
         }
+    });
+
+    Job {
+        rx,
+        stop,
+        pause: Arc::new(AtomicBool::new(false)),
+        done: false,
+    }
+}
+
+/// Answer a question from `notes` — (title, directory, body) — on a worker
+/// thread, streaming the answer as it arrives.
+pub fn start_question(question: String, notes: Vec<(String, String, String)>) -> Job {
+    let (tx, rx) = mpsc::channel();
+    let stop = Arc::new(AtomicBool::new(false));
+
+    thread::spawn(move || {
+        let _ = tx.send(TaskEvent::Started {
+            label: "Asking your notes".to_string(),
+        });
+        let shown = Arc::new(std::sync::Mutex::new(String::new()));
+        let result = {
+            let (shown, tx) = (Arc::clone(&shown), tx.clone());
+            let mut on_fragment = |fragment: &str| {
+                if let Ok(mut text) = shown.lock() {
+                    text.push_str(fragment);
+                    let _ = tx.send(TaskEvent::Streaming(text.clone()));
+                }
+            };
+            let shown_restart = Arc::clone(&shown);
+            let mut on_restart = move || {
+                if let Ok(mut text) = shown_restart.lock() {
+                    text.clear();
+                }
+            };
+            leo_services::ai::answer_from_notes(
+                &question,
+                &notes,
+                &mut on_fragment,
+                &mut on_restart,
+            )
+        };
+        let _ = tx.send(match result {
+            Ok(text) => TaskEvent::Answered { question, text },
+            Err(e) => TaskEvent::Failed(e.to_string()),
+        });
     });
 
     Job {

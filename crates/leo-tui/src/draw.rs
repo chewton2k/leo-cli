@@ -40,7 +40,10 @@ impl App {
             .as_ref()
             .filter(|a| !a.text.trim().is_empty())
             .map(|a| Preview::Text {
-                title: "answering…".to_string(),
+                title: match &a.question {
+                    Some(q) => format!("answering from your notes: {q}"),
+                    None => "answering…".to_string(),
+                },
                 body: a.text.clone(),
             });
         let preview = match (streaming, &self.recording, &self.pinned, selected_note) {
@@ -54,6 +57,13 @@ impl App {
                 // The box is for typing, so it goes once the recording stops.
                 jot: (!rec.job.stop_requested()).then_some(rec.jot.as_str()),
             },
+            (None, None, _, _) if self.answer.is_some() => {
+                let (question, text) = self.answer.as_ref().expect("checked");
+                Preview::Text {
+                    title: format!("from your notes: {question} (Esc closes)"),
+                    body: text.clone(),
+                }
+            }
             (None, None, Some((title, lines)), _) => Preview::Lines {
                 title: title.clone(),
                 lines,

@@ -40,6 +40,6 @@ impl App {
             _ => self.mode = Mode::Filter,
         }
         self.preview_scroll = 0;
-        self.pinned = None;
+        self.unpin();
     }
 }

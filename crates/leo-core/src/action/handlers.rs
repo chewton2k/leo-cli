@@ -352,6 +352,15 @@ pub(super) fn ask(
     numbering: &[String],
     ai: &dyn Ai,
 ) -> Result<Outcome> {
+    // Words that name no note, and are more than one word, are a question for
+    // all of them.
+    if matches!(resolve(note, store, numbering), Resolved::None)
+        && note.trim().contains(char::is_whitespace)
+    {
+        return Ok(Outcome::effect(Effect::AskNotes {
+            question: note.trim().to_string(),
+        }));
+    }
     let id = resolve_or_return!(note, store, numbering);
     let (title, body) = {
         let n = store.find_note(&id).expect("resolve returned a live id");
@@ -1019,6 +1028,61 @@ mod handler_tests {
         )
         .unwrap();
         assert_eq!(out.select.as_deref(), Some(store.notes[0].id.as_str()));
+    }
+
+    /// `/ask` with words that are not a note's name is a question for all the
+    /// notes; the shell answers it, since that needs the AI.
+    #[test]
+    fn ask_with_a_question_asks_across_the_notes() {
+        let (mut store, _d) = temp_store();
+        seed(&mut store, "Graphs", "BFS", "");
+        let out = apply(
+            Action::Ask {
+                note: "what did we cover about graphs".into(),
+            },
+            &mut store,
+            ctx("", &[]),
+            &FakeAi::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            out.effect,
+            Effect::AskNotes {
+                question: "what did we cover about graphs".into()
+            }
+        );
+    }
+
+    /// A note's name still means that note's @leo lines, and one unknown word
+    /// is still a note that was not found.
+    #[test]
+    fn ask_with_a_note_name_or_one_word_is_unchanged() {
+        let (mut store, _d) = temp_store();
+        seed(&mut store, "Graph traversals", "no prompts here", "");
+        let named = apply(
+            Action::Ask {
+                note: "Graph traversals".into(),
+            },
+            &mut store,
+            ctx("", &[]),
+            &FakeAi::default(),
+        )
+        .unwrap();
+        assert!(named.text().contains("No @leo prompts"), "{}", named.text());
+        let unknown = apply(
+            Action::Ask {
+                note: "nosuchnote".into(),
+            },
+            &mut store,
+            ctx("", &[]),
+            &FakeAi::default(),
+        )
+        .unwrap();
+        assert!(
+            unknown.text().contains("No note found"),
+            "{}",
+            unknown.text()
+        );
     }
 
     // ── marked notes ────────────────────────────────────────────────────────

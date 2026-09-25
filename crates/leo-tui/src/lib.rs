@@ -132,6 +132,9 @@ pub struct App {
     /// Output shown in the preview instead of the selected note, keeping each
     /// line's styling. Cleared by Esc, by moving the selection, or by `clear`.
     pinned: Option<(String, Vec<Line>)>,
+    /// An answer from all the notes, shown in the preview until dismissed like
+    /// pinned output. Markdown, so it renders like a note.
+    answer: Option<(String, String)>,
     /// The running recording, if any.
     recording: Option<Recording>,
     /// Tab-completion state, live only while cycling.
@@ -275,6 +278,7 @@ impl App {
             preview_scroll: 0,
             message: None,
             pinned: None,
+            answer: None,
             recording: None,
             completing: None,
             help_scroll: 0,
@@ -441,7 +445,7 @@ impl App {
             Some(position) => {
                 self.note_sel = position;
                 self.preview_scroll = 0;
-                self.pinned = None;
+                self.unpin();
             }
             None => {
                 if let Some(note) = self.store.find_note(id) {
@@ -486,7 +490,7 @@ impl App {
             Some(position) => {
                 self.note_sel = position;
                 self.preview_scroll = 0;
-                self.pinned = None;
+                self.unpin();
             }
             // Not in the current listing: show it anyway rather than refusing,
             // since the user asked for that note and not for a place.
@@ -615,6 +619,12 @@ impl App {
 
     /// Refresh the numbering after the store or directory changed, keeping the
     /// selection in range.
+    /// Drop whatever output or answer is covering the preview.
+    fn unpin(&mut self) {
+        self.pinned = None;
+        self.answer = None;
+    }
+
     /// Recompute the numbering, keeping the selected note selected if it is
     /// still listed — an edit moves a note to the top, and the selection has to
     /// follow it rather than land on whatever slid into its old row.
@@ -965,7 +975,7 @@ impl App {
             // Esc also ends a search or a tag, leaving you on the note you
             // picked — in its own directory, since results come from anywhere.
             Intent::Cancel => {
-                self.pinned = None;
+                self.unpin();
                 self.mode = Mode::Normal;
                 if !self.marked.is_empty() {
                     self.marked.clear();
@@ -1008,7 +1018,7 @@ impl App {
                 self.note_sel = step(self.note_sel, len, intent);
                 // A new note means the old scroll position is meaningless.
                 self.preview_scroll = 0;
-                self.pinned = None;
+                self.unpin();
             }
             // A note with checkboxes steps between them; any other scrolls.
             Pane::Preview if !self.checkboxes().is_empty() => {
@@ -1097,7 +1107,7 @@ impl App {
         if let Some(pos) = self.numbering.iter().position(|n| n == id) {
             self.note_sel = pos;
         }
-        self.pinned = None;
+        self.unpin();
         self.preview_scroll = 0;
         self.focus = Pane::Notes;
     }
@@ -1179,6 +1189,7 @@ impl App {
 
             self.asking = Some(Asking {
                 job: task::start_ask(note.clone(), title, body),
+                question: None,
                 progress: view::progress::Progress::spinner("Asking"),
                 since: Instant::now(),
                 text: String::new(),
@@ -1230,7 +1241,7 @@ impl App {
             self.current_dir = dir;
             self.note_sel = 0;
             self.dir_sel = 0;
-            self.pinned = None;
+            self.unpin();
         }
 
         match outcome.selection {
@@ -1275,11 +1286,37 @@ impl App {
                 Ok(())
             }
 
+            Effect::AskNotes { question } => {
+                if self.asking.is_some() {
+                    self.say(Kind::Warn, "Already asking — one at a time.");
+                    return Ok(());
+                }
+                let notes: Vec<(String, String, String)> = self
+                    .store
+                    .relevant(&question, 6)
+                    .into_iter()
+                    .map(|n| (n.title.clone(), n.directory.clone(), n.body.clone()))
+                    .collect();
+                if notes.is_empty() {
+                    self.say(Kind::Dim, "None of your notes mention that.");
+                    return Ok(());
+                }
+                self.asking = Some(Asking {
+                    job: task::start_question(question.clone(), notes),
+                    question: Some(question),
+                    progress: view::progress::Progress::spinner("Asking your notes"),
+                    since: Instant::now(),
+                    text: String::new(),
+                });
+                self.unpin();
+                Ok(())
+            }
+
             Effect::ShowNote { id } => {
                 // Select it in the pane if it is visible, and focus the body.
                 if let Some(pos) = self.numbering.iter().position(|n| n == &id) {
                     self.note_sel = pos;
-                    self.pinned = None;
+                    self.unpin();
                 } else if let Some(note) = self.store.find_note(&id) {
                     // Not in the current directory's listing, so show it
                     // directly rather than silently doing nothing.
@@ -1322,7 +1359,7 @@ impl App {
                     return Ok(());
                 }
                 self.recording = Some(Recording::new(task::start_listen(req.screen), req));
-                self.pinned = None;
+                self.unpin();
                 self.say(
                     Kind::Dim,
                     "Recording — type a point and Enter to add it; Esc stops.",
@@ -1636,6 +1673,9 @@ impl action::Ai for PreExpanded {
 /// A running `:ask`.
 struct Asking {
     job: task::Job,
+    /// The question, when this is a question across all the notes rather than
+    /// a note's @leo lines.
+    question: Option<String>,
     progress: view::progress::Progress,
     since: Instant,
     /// The answer so far, shown while it arrives.

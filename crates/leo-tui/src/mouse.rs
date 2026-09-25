@@ -81,7 +81,7 @@ impl App {
                         self.note_sel = index;
                         // Clicking a note is opening it, as far as the recent
                         // list is concerned.
-                        self.pinned = None;
+                        self.unpin();
                     }
                 } else if in_pane(frames.preview) {
                     self.focus = Pane::Preview;
@@ -162,7 +162,7 @@ impl App {
         } else if inside(frames.notes) {
             self.note_sel = step(self.note_sel, self.note_count(), direction);
             self.preview_scroll = 0;
-            self.pinned = None;
+            self.unpin();
         } else if inside(frames.dirs) {
             self.dir_sel = step(self.dir_sel, self.dir_rows().len(), direction);
         }

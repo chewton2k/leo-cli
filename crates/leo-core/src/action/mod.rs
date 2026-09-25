@@ -207,6 +207,10 @@ pub enum Effect {
     ShowNote {
         id: String,
     },
+    /// Answer a question from all the notes. Needs the AI, so the shell does it.
+    AskNotes {
+        question: String,
+    },
     ShowHelp,
     Quit,
     /// Shell out to git. Streams its own output.

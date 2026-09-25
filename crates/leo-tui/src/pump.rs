@@ -32,6 +32,7 @@ impl App {
         }
 
         let mut expanded: Option<(String, String, usize)> = None;
+        let mut answered: Option<(String, String)> = None;
         let mut failure: Option<String> = None;
         let mut fallbacks: Vec<String> = Vec::new();
 
@@ -43,6 +44,7 @@ impl App {
                 }
                 TaskEvent::Streaming(text) => ask.text = text,
                 TaskEvent::Expanded { note, body, count } => expanded = Some((note, body, count)),
+                TaskEvent::Answered { question, text } => answered = Some((question, text)),
                 TaskEvent::ProviderFallback { from, to } => {
                     fallbacks.push(format!("{from} → {to}"))
                 }
@@ -58,6 +60,12 @@ impl App {
         if let Some(e) = failure {
             self.asking = None;
             self.say(Kind::Bad, e);
+            return Ok(true);
+        }
+
+        if let Some((question, text)) = answered {
+            self.asking = None;
+            self.answer = Some((question, text));
             return Ok(true);
         }
 
@@ -134,7 +142,10 @@ impl App {
                 TaskEvent::Structured { title, body } => structured = Some((title, body)),
                 TaskEvent::Failed(e) => failure = Some(e),
                 // Other jobs' events; not this one's business.
-                TaskEvent::Streaming(_) | TaskEvent::Expanded { .. } | TaskEvent::Pushed => {}
+                TaskEvent::Streaming(_)
+                | TaskEvent::Expanded { .. }
+                | TaskEvent::Answered { .. }
+                | TaskEvent::Pushed => {}
             }
         }
 

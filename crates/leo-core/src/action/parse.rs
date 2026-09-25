@@ -47,7 +47,12 @@ pub const VERBS: &[Verb] = &[
         "listen [title | add [note]] [--screen]",
         "record, and write notes from speech",
     ),
-    v("ask", &[], "ask [note]", "answer the note's @leo lines"),
+    v(
+        "ask",
+        &[],
+        "ask [note | question]",
+        "answer a note's @leo lines, or a question from all your notes",
+    ),
     v("mkdir", &[], "mkdir <name>", "a directory here"),
     v("cd", &[], "cd <dir>", "enter a directory; .. up, / root"),
     v(

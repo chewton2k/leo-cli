@@ -958,6 +958,7 @@ fn a_second_ask_is_refused_while_one_is_running() {
     // Stand in for a running job without making a request.
     app.asking = Some(Asking {
         job: task::start_ask(String::new(), String::new(), String::new()),
+        question: None,
         progress: view::progress::Progress::spinner("Asking"),
         since: Instant::now(),
         text: String::new(),
@@ -974,6 +975,39 @@ fn a_second_ask_is_refused_while_one_is_running() {
     assert!(message.contains("one at a time"), "{message}");
 }
 
+/// An answer from all the notes stays in the preview, rendered like a note,
+/// until Esc.
+#[test]
+fn an_answer_from_the_notes_is_shown_until_esc() {
+    let (mut app, _d) = temp_app();
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 20)).unwrap();
+    app.asking = Some(Asking {
+        job: task::Job::scripted(vec![TaskEvent::Answered {
+            question: "what is BFS?".to_string(),
+            text: "**Breadth-first** search [Graph traversals]".to_string(),
+        }]),
+        question: Some("what is BFS?".to_string()),
+        progress: view::progress::Progress::spinner("Asking your notes"),
+        since: Instant::now(),
+        text: String::new(),
+    });
+    app.pump_tasks(&mut terminal).unwrap();
+    assert!(app.asking.is_none());
+
+    terminal.draw(|f| app.draw(f)).unwrap();
+    let out = terminal.backend().to_string();
+    assert!(out.contains("what is BFS?"), "{out}");
+    assert!(
+        out.contains("Breadth-first search [Graph traversals]"),
+        "not rendered: {out}"
+    );
+
+    app.on_key(press_code(event::KeyCode::Esc), &mut terminal)
+        .unwrap();
+    terminal.draw(|f| app.draw(f)).unwrap();
+    assert!(!terminal.backend().to_string().contains("Breadth-first"));
+}
+
 /// Text arriving must show in the preview, or streaming is invisible.
 #[test]
 fn a_streaming_answer_appears_in_the_preview() {
@@ -982,6 +1016,7 @@ fn a_streaming_answer_appears_in_the_preview() {
 
     app.asking = Some(Asking {
         job: task::start_ask(String::new(), String::new(), String::new()),
+        question: None,
         progress: view::progress::Progress::spinner("Asking"),
         since: Instant::now(),
         text: "ownership means".to_string(),

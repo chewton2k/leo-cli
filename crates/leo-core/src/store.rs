@@ -464,6 +464,64 @@ impl Store {
         true
     }
 
+    /// The notes most about a question, best first, at most `limit`.
+    ///
+    /// Unlike [`Store::find`], a question's words need not all appear: each
+    /// meaningful word (three letters or more, not a filler word) scores a note
+    /// for appearing in its title, tags or text, and the best-scoring notes
+    /// win. A question whose words appear nowhere finds nothing.
+    pub fn relevant(&self, question: &str, limit: usize) -> Vec<&Note> {
+        const FILLER: &[&str] = &[
+            "the", "and", "for", "are", "was", "were", "what", "which", "who", "whom", "when",
+            "where", "why", "how", "did", "does", "do", "about", "with", "that", "this", "these",
+            "those", "from", "into", "have", "has", "had", "you", "your", "our", "can", "could",
+            "would", "should", "tell", "explain", "cover", "covered", "say", "said", "there",
+            "their", "they", "them", "then", "than", "been", "being", "any", "all", "some", "more",
+            "most", "also", "just", "not", "but", "out", "use", "used", "using", "give", "show",
+        ];
+        let words: Vec<String> = question
+            .to_lowercase()
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|w| w.len() >= 3 && !FILLER.contains(w))
+            .map(str::to_string)
+            .collect();
+        if words.is_empty() {
+            return Vec::new();
+        }
+
+        let mut scored: Vec<(usize, &Note)> = self
+            .notes
+            .iter()
+            .filter_map(|note| {
+                let title = note.title.to_lowercase();
+                let body = note.body.to_lowercase();
+                let score: usize = words
+                    .iter()
+                    .map(|w| {
+                        let mut s = 0;
+                        if title.contains(w.as_str()) {
+                            s += 3;
+                        }
+                        if note
+                            .tags
+                            .iter()
+                            .any(|t| t.to_lowercase().contains(w.as_str()))
+                        {
+                            s += 2;
+                        }
+                        if body.contains(w.as_str()) {
+                            s += 1;
+                        }
+                        s
+                    })
+                    .sum();
+                (score > 0).then_some((score, note))
+            })
+            .collect();
+        scored.sort_by(|(sa, a), (sb, b)| sb.cmp(sa).then(b.updated_at.cmp(&a.updated_at)));
+        scored.into_iter().take(limit).map(|(_, n)| n).collect()
+    }
+
     /// IDs that more than one note has.
     pub fn duplicate_ids(&self) -> Vec<String> {
         let mut seen = HashSet::new();
@@ -1410,6 +1468,66 @@ mod tests {
                 store.directories
             );
         }
+    }
+
+    // ── notes relevant to a question ────────────────────────────────────────
+
+    fn store_for_questions() -> (Store, tempfile::TempDir) {
+        let (mut store, d) = temp_store();
+        store
+            .create_note(
+                "Graph traversals",
+                "BFS uses a queue. DFS uses a stack.",
+                vec!["graphs".into()],
+                "cs130",
+            )
+            .unwrap();
+        store
+            .create_note(
+                "Lecture 4",
+                "Dijkstra finds shortest paths in weighted graphs.",
+                vec![],
+                "cs130",
+            )
+            .unwrap();
+        store
+            .create_note("Groceries", "milk, eggs, bread", vec![], "")
+            .unwrap();
+        (store, d)
+    }
+
+    fn titles_of(found: Vec<&Note>) -> Vec<String> {
+        found.iter().map(|n| n.title.clone()).collect()
+    }
+
+    /// A question is not a search: its words need not all match, and the
+    /// notes that match most come first.
+    #[test]
+    fn the_notes_most_about_a_question_come_first() {
+        let (store, _d) = store_for_questions();
+        let found = titles_of(store.relevant("what did we cover about graphs and BFS?", 5));
+        assert_eq!(
+            found.first().map(String::as_str),
+            Some("Graph traversals"),
+            "{found:?}"
+        );
+        assert!(found.contains(&"Lecture 4".to_string()), "{found:?}");
+        assert!(!found.contains(&"Groceries".to_string()), "{found:?}");
+    }
+
+    #[test]
+    fn filler_words_alone_find_nothing() {
+        let (store, _d) = store_for_questions();
+        assert!(store.relevant("what did we do about the", 5).is_empty());
+        assert!(store
+            .relevant("tell me about quantum chromodynamics", 5)
+            .is_empty());
+    }
+
+    #[test]
+    fn at_most_the_limit_is_returned() {
+        let (store, _d) = store_for_questions();
+        assert_eq!(store.relevant("graphs", 1).len(), 1);
     }
 
     /// The whole point: a deleted note comes back as it was, not as a copy.

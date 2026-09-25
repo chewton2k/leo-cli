@@ -191,6 +191,29 @@ Reply with the addition only: no preamble, no remarks after it, and do not wrap 
     Prompt { system, user }
 }
 
+/// The prompt that answers a question from a set of the user's notes, given as
+/// (title, directory, body).
+pub fn build_notes_question_prompt(question: &str, notes: &[(&str, &str, &str)]) -> Prompt {
+    // Enough of each note to answer from, while a handful still fits.
+    const PER_NOTE_CHARS: usize = 2000;
+    let system = "\
+You answer a question using only the user's own notes, given below.
+- Answer directly and concisely in Markdown.
+- After each fact, name the note it came from in square brackets, like [Graph traversals].
+- If the notes do not cover the question, say so plainly first; you may then add a short general answer, clearly marked as not from their notes.
+- Reply with the answer only: no preamble, no remarks after it, and do not wrap it in a code block."
+        .to_string();
+    let mut user = String::new();
+    for (title, dir, body) in notes {
+        let body: String = body.chars().take(PER_NOTE_CHARS).collect();
+        user.push_str(&format!(
+            "<note title=\"{title}\" directory=\"{dir}\">\n{body}\n</note>\n\n"
+        ));
+    }
+    user.push_str(&format!("<question>\n{question}\n</question>"));
+    Prompt { system, user }
+}
+
 /// The prompt that answers an `@leo` question written inside a note.
 pub fn build_expand_prompt(
     question: &str,
@@ -571,6 +594,45 @@ mod tests {
     fn no_length_means_no_markers() {
         assert_eq!(with_time_markers("a b c", 0), "a b c");
         assert_eq!(with_time_markers("", 600), "");
+    }
+
+    // ── a question across the notes ─────────────────────────────────────────
+
+    #[test]
+    fn a_question_across_notes_carries_each_note_and_asks_for_sources() {
+        let notes = [
+            ("Graph traversals", "cs130", "BFS uses a queue."),
+            ("Lecture 4", "", "Dijkstra finds shortest paths."),
+        ];
+        let p = build_notes_question_prompt("what is BFS?", &notes);
+        assert!(
+            p.user.contains("<question>\nwhat is BFS?\n</question>"),
+            "{}",
+            p.user
+        );
+        assert!(
+            p.user
+                .contains("<note title=\"Graph traversals\" directory=\"cs130\">"),
+            "{}",
+            p.user
+        );
+        assert!(p.user.contains("Dijkstra"));
+        assert!(p.system.contains("only"), "{}", p.system);
+        assert!(
+            p.system.contains("[Graph traversals]") || p.system.contains("brackets"),
+            "{}",
+            p.system
+        );
+        assert!(p.system.to_lowercase().contains("say so"), "{}", p.system);
+    }
+
+    /// A long note is trimmed so a handful of notes fits in one request.
+    #[test]
+    fn a_long_note_is_trimmed_in_the_question_prompt() {
+        let body = "word ".repeat(5000);
+        let notes = [("Long", "", body.as_str())];
+        let p = build_notes_question_prompt("q", &notes);
+        assert!(p.user.len() < 12_000, "{}", p.user.len());
     }
 
     // ── the @leo prompt ─────────────────────────────────────────────────────

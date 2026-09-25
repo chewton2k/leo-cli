@@ -16,6 +16,8 @@ use crate::config::Config;
 pub const STRUCTURE_MAX_TOKENS: u32 = 8192;
 /// Token budget for expanding one inline @leo prompt.
 const EXPAND_MAX_TOKENS: u32 = 2000;
+/// An answer drawn from several notes can run longer than one @leo answer.
+const ANSWER_MAX_TOKENS: u32 = 4096;
 
 /// Report each degradation so a silent downgrade is never invisible.
 ///
@@ -112,6 +114,30 @@ pub fn expand_prompts_streaming(
         .ok()
         .map(|outcome| chat::clean_reply(&outcome.value))
     }))
+}
+
+/// Answer a question from a set of notes, given as (title, directory, body),
+/// reporting text as it arrives.
+pub fn answer_from_notes(
+    question: &str,
+    notes: &[(String, String, String)],
+    on_fragment: &mut dyn FnMut(&str),
+    on_restart: &mut dyn FnMut(),
+) -> Result<String> {
+    let (cfg, store) = context();
+    let refs: Vec<(&str, &str, &str)> = notes
+        .iter()
+        .map(|(t, d, b)| (t.as_str(), d.as_str(), b.as_str()))
+        .collect();
+    let outcome = chat::complete_streaming(
+        &cfg,
+        &store,
+        chat::build_notes_question_prompt(question, &refs),
+        ANSWER_MAX_TOKENS,
+        on_fragment,
+        on_restart,
+    )?;
+    Ok(chat::clean_reply(&outcome.value))
 }
 
 /// Answer every `@leo` line in `body` with `answer`, which gets the question
