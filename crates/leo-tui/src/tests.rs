@@ -1715,3 +1715,68 @@ fn stepping_an_empty_list_stays_at_zero() {
         assert_eq!(step(0, 0, intent), 0);
     }
 }
+
+// ── a whole session ─────────────────────────────────────────────────────
+
+/// One sitting, the way someone actually uses leo: find a note from another
+/// directory, rename it, tick a box from the preview, mark two notes and move
+/// them, change their mind with undo — drawing the screen after every step —
+/// and then check what reached disk, from a fresh load.
+#[test]
+fn a_whole_session_ends_with_the_right_files_on_disk() {
+    let (mut app, dir) = temp_app();
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 30)).unwrap();
+    let draw = |app: &App, terminal: &mut ratatui::Terminal<ratatui::backend::TestBackend>| {
+        terminal.draw(|f| app.draw(f)).unwrap();
+        terminal.backend().to_string()
+    };
+    draw(&app, &mut terminal);
+
+    // Search from the top level finds a note inside cs130; Esc lands there.
+    app.on_key(press('/'), &mut terminal).unwrap();
+    for c in "nested".chars() {
+        app.on_key(press(c), &mut terminal).unwrap();
+    }
+    app.on_key(press_code(event::KeyCode::Enter), &mut terminal).unwrap();
+    app.on_key(press_code(event::KeyCode::Esc), &mut terminal).unwrap();
+    assert_eq!(app.current_dir, "cs130");
+    draw(&app, &mut terminal);
+
+    // r pre-fills the title; the edited line renames it.
+    app.on_intent(Intent::RenameSelected, &mut terminal).unwrap();
+    assert_eq!(app.cmd.text(), "rename Nested note");
+    app.mode = Mode::Normal;
+    app.run_line("rename Lecture 1", &mut terminal).unwrap();
+    assert!(draw(&app, &mut terminal).contains("Lecture 1"));
+
+    // Back to the top, tick the second box of the checklist from the preview.
+    app.run_line("cd /", &mut terminal).unwrap();
+    select_titled(&mut app, "Rust ownership");
+    app.focus = Pane::Preview;
+    app.on_intent(Intent::Down, &mut terminal).unwrap();
+    app.on_intent(Intent::ToggleCheckbox, &mut terminal).unwrap();
+    draw(&app, &mut terminal);
+
+    // Mark both top-level notes and move them; undo puts them back.
+    app.focus = Pane::Notes;
+    select_titled(&mut app, "Rust ownership");
+    app.on_key(press(' '), &mut terminal).unwrap();
+    select_titled(&mut app, "Graph traversals");
+    app.on_key(press(' '), &mut terminal).unwrap();
+    app.run_line("mv cs130", &mut terminal).unwrap();
+    assert_eq!(app.note_count(), 0, "the marked notes did not move");
+    draw(&app, &mut terminal);
+    app.on_intent(Intent::Undo, &mut terminal).unwrap();
+    assert_eq!(app.note_count(), 2, "one undo did not bring both back");
+    draw(&app, &mut terminal);
+
+    // What a fresh start would see.
+    let store = Store::load_from(&dir.path().join("notes")).unwrap();
+    let by_title = |t: &str| store.notes.iter().find(|n| n.title == t).unwrap_or_else(|| panic!("{t} is gone"));
+    assert_eq!(by_title("Lecture 1").directory, "cs130");
+    assert!(store.notes.iter().all(|n| n.title != "Nested note"));
+    assert_eq!(by_title("Rust ownership").directory, "");
+    assert_eq!(by_title("Graph traversals").directory, "");
+    assert!(by_title("Rust ownership").body.contains("- [ ] done"), "the tick from the preview was lost");
+}

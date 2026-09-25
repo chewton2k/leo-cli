@@ -64,6 +64,7 @@ tokio.workspace = true
 
 [dev-dependencies]
 leo-services = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true
 
 [profile.release]
 strip = true
