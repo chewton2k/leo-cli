@@ -87,42 +87,20 @@ pub const SECTIONS: &[Section] = &[
         ],
     },
     Section {
+        title: "While recording",
+        entries: &[
+            e("Enter", "stop and save"),
+            e("t", "raw text or bullets"),
+        ],
+    },
+    Section {
         title: "The : line",
         entries: &[
-            e(":", "start a command"),
-            e("Tab", "complete verbs, notes, dirs, tags, formats"),
+            e(":", "start a command; the commands are listed below"),
+            e("Tab", "complete verbs, notes, dirs, tags"),
             e("Up / Down", "previous commands"),
             e("Ctrl-W / Ctrl-U", "delete a word / the line"),
-        ],
-    },
-    Section {
-        title: "Notes",
-        entries: &[
-            e(":new [title]", "create, opening $EDITOR"),
-            e(":edit [note]", "edit it; no note means the selected one"),
-            e(":delete [note]", "delete it"),
-            e(":rename <title>", "retitle the selected note"),
-            e(":check <note> <N>", "toggle checkbox N"),
-        ],
-    },
-    Section {
-        title: "Directories",
-        entries: &[
-            e(":mkdir <name>", "create one"),
-            e(":cd <dir>", "enter it; .. up, / root"),
-            e(":mv [note...] <dir>", "move notes, or the selected one, into it"),
-            e("D", "in the dirs pane: remove it and everything in it"),
-        ],
-    },
-    Section {
-        title: "AI",
-        entries: &[
-            e(":listen [title]", "record; live notes appear as you talk"),
-            e(":listen add [note]", "record, appending to a note"),
-            e(":listen --screen", "capture system audio"),
-            e("t", "while recording: raw text or bullets"),
-            e("Enter", "while recording: stop and save"),
-            e(":ask [note]", "expand its @leo lines in place"),
+            e("[note]", "leave it out to mean the selected note"),
         ],
     },
     Section {
@@ -141,8 +119,7 @@ pub const SECTIONS: &[Section] = &[
     Section {
         title: "Elsewhere",
         entries: &[
-            e(":sync <sub>", "init, connect, push, pull, status"),
-            e("  automatically", "Ctrl-S: back up on quit, or when idle"),
+            e("backup", "Ctrl-S: back up on quit, or when idle"),
             e("leo serve", "read notes from your phone (shell only)"),
             e("Ctrl-R", "reload from disk, and repaint the screen"),
         ],
@@ -163,24 +140,35 @@ pub fn all_keys() -> Vec<&'static str> {
 /// Build the rendered lines, so scrolling and height can be computed from the
 /// same content that gets drawn.
 fn help_lines() -> Vec<TuiLine<'static>> {
+    let heading = |title: &str| {
+        TuiLine::from(Span::styled(
+            format!(" {title}"),
+            Style::default().fg(theme::accent()).add_modifier(Modifier::BOLD),
+        ))
+    };
+    let row = |key: String, what: &'static str| {
+        TuiLine::from(vec![
+            Span::styled(format!("  {key:<20}"), Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(what),
+        ])
+    };
+
     let mut lines = Vec::new();
     for (i, section) in SECTIONS.iter().enumerate() {
         if i > 0 {
             lines.push(TuiLine::from(""));
         }
-        lines.push(TuiLine::from(Span::styled(
-            format!(" {}", section.title),
-            Style::default().fg(theme::accent()).add_modifier(Modifier::BOLD),
-        )));
+        lines.push(heading(section.title));
         for entry in section.entries {
-            lines.push(TuiLine::from(vec![
-                Span::styled(
-                    format!("  {:<20}", entry.key),
-                    Style::default().add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(entry.what),
-            ]));
+            lines.push(row(entry.key.to_string(), entry.what));
         }
+    }
+
+    // Built from the verb table, so a command cannot exist without being here.
+    lines.push(TuiLine::from(""));
+    lines.push(heading("Commands"));
+    for verb in crate::action::VERBS {
+        lines.push(row(format!(":{}", verb.usage), verb.summary));
     }
     lines
 }
@@ -345,12 +333,12 @@ mod tests {
     #[test]
     fn every_command_verb_appears_in_help() {
         let text: String = help_lines().iter().map(|l| l.to_string()).collect();
-        for (verb, _aliases) in crate::action::VERBS {
-            // `help` and `quit` are single keys, documented as keys.
-            if matches!(*verb, "help" | "quit") {
-                continue;
-            }
-            assert!(text.contains(verb), "help never mentions `{verb}`");
+        for verb in crate::action::VERBS {
+            assert!(
+                text.contains(verb.usage),
+                "help never shows `{}`",
+                verb.usage
+            );
         }
     }
 
@@ -398,7 +386,7 @@ mod tests {
 
         assert_ne!(top, bottom, "scrolling changed nothing");
         assert!(top.contains("Moving around"));
-        assert!(bottom.contains("serve"), "the last section is unreachable:\n{bottom}");
+        assert!(bottom.contains(":quit"), "the last section is unreachable:\n{bottom}");
     }
 
     #[test]

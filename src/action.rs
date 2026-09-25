@@ -399,22 +399,46 @@ macro_rules! resolve_or_return {
 /// gain, and some actively misled: `l` listed notes here while moving between
 /// panes there, and `d` deleted a note here while dropping a provider from a
 /// chain on the settings screen.
-pub const VERBS: &[(&str, &[&str])] = &[
-    ("new", &[]),
-    ("edit", &["e"]),
-    ("delete", &["rm"]),
-    ("rename", &[]),
-    ("check", &["x"]),
-    ("undo", &["u"]),
-    ("listen", &[]),
-    ("ask", &[]),
-    ("mkdir", &[]),
-    ("cd", &[]),
-    ("mv", &[]),
-    ("sync", &[]),
-    ("help", &["?"]),
-    ("quit", &["exit", "q"]),
+pub const VERBS: &[Verb] = &[
+    v("new", &[], "new [title]", "a note here, opening $EDITOR"),
+    v("edit", &["e"], "edit [note]", "open a note in $EDITOR"),
+    v("delete", &["rm"], "delete [note]", "delete a note (asks first)"),
+    v("rename", &[], "rename <new title>", "retitle the selected note"),
+    v("check", &["x"], "check <note> <N>", "tick or untick checkbox N"),
+    v("undo", &["u"], "undo", "take back the last delete, move or tick"),
+    v("listen", &[], "listen [title | add [note]] [--screen]", "record, and write notes from speech"),
+    v("ask", &[], "ask [note]", "answer the note's @leo lines"),
+    v("mkdir", &[], "mkdir <name>", "a directory here"),
+    v("cd", &[], "cd <dir>", "enter a directory; .. up, / root"),
+    v("mv", &[], "mv [note...] <dir>", "move notes, or the selected one"),
+    v("sync", &[], "sync <init | connect <url> | push | pull | status>", "back up to git"),
+    v("help", &["?"], "help", "every key and command"),
+    v("quit", &["exit", "q"], "quit", "leave"),
 ];
+
+/// One `:` command: its name, the aliases that survived the prune, how to call
+/// it, and what it does. Help, the `:` menu and usage errors all read this.
+#[derive(Debug)]
+pub struct Verb {
+    pub name: &'static str,
+    pub aliases: &'static [&'static str],
+    pub usage: &'static str,
+    pub summary: &'static str,
+}
+
+const fn v(
+    name: &'static str,
+    aliases: &'static [&'static str],
+    usage: &'static str,
+    summary: &'static str,
+) -> Verb {
+    Verb { name, aliases, usage, summary }
+}
+
+/// The table row for a verb or one of its aliases.
+pub fn verb(word: &str) -> Option<&'static Verb> {
+    VERBS.iter().find(|v| v.name == word || v.aliases.contains(&word))
+}
 
 /// Words that used to work: what to use instead, and why it changed.
 ///
@@ -466,9 +490,9 @@ const ONE_SEARCH: &str = "one search now: / looks in every note, bodies and tags
 /// Every word that can start a command, canonical names and aliases alike.
 pub fn all_verb_words() -> Vec<&'static str> {
     let mut out = Vec::new();
-    for (canon, aliases) in VERBS {
-        out.push(*canon);
-        out.extend_from_slice(aliases);
+    for verb in VERBS {
+        out.push(verb.name);
+        out.extend_from_slice(verb.aliases);
     }
     out
 }
@@ -536,7 +560,9 @@ pub fn parse(line: &str) -> Parsed {
     let verb = tokens[0].to_lowercase();
     let args = &tokens[1..];
     let joined = || args.join(" ");
-    let usage = |s: &str| Parsed::Usage(s.to_string());
+    let usage = |name: &str| {
+        Parsed::Usage(self::verb(name).map(|v| v.usage).unwrap_or(name).to_string())
+    };
     let act = |a: Action| Parsed::Action(a);
 
     match verb.as_str() {
@@ -551,7 +577,7 @@ pub fn parse(line: &str) -> Parsed {
         // note reference — a title with spaces still resolves.
         "check" | "x" => {
             if args.len() < 2 {
-                return usage("check <note> <checkbox number>");
+                return usage("check");
             }
             match args.last().unwrap().parse::<usize>() {
                 Ok(index) if index >= 1 => act(Action::Check {
@@ -589,7 +615,7 @@ pub fn parse(line: &str) -> Parsed {
         // (see `fill_selected`), which is what the `r` key pre-fills this for.
         "rename" => {
             if args.is_empty() {
-                usage("rename <new title>")
+                usage("rename")
             } else {
                 act(Action::Rename { note: String::new(), title: joined() })
             }
@@ -598,7 +624,7 @@ pub fn parse(line: &str) -> Parsed {
         "mkdir" => {
             let name = joined().trim().to_string();
             if name.is_empty() {
-                usage("mkdir <name>")
+                usage("mkdir")
             } else {
                 act(Action::Mkdir { name })
             }
@@ -611,7 +637,7 @@ pub fn parse(line: &str) -> Parsed {
         // selected one.
         "mv" => {
             if args.is_empty() {
-                return usage("mv [note...] <directory>");
+                return usage("mv");
             }
             act(Action::Mv {
                 notes: args[..args.len() - 1].to_vec(),
@@ -623,12 +649,12 @@ pub fn parse(line: &str) -> Parsed {
             Some("init") => act(Action::Sync(SyncAction::Init)),
             Some("connect") => match args.get(1) {
                 Some(url) => act(Action::Sync(SyncAction::Connect { url: url.clone() })),
-                None => usage("sync connect <url>"),
+                None => Parsed::Usage("sync connect <url>".to_string()),
             },
             Some("push") => act(Action::Sync(SyncAction::Push)),
             Some("pull") => act(Action::Sync(SyncAction::Pull)),
             Some("status") => act(Action::Sync(SyncAction::Status)),
-            _ => usage("sync <init | connect <url> | push | pull | status>"),
+            _ => usage("sync"),
         },
 
         "help" | "?" => act(Action::Help),
@@ -1446,7 +1472,7 @@ mod parse_tests {
     /// come from the shell or mirror a key.
     #[test]
     fn the_vocabulary_stays_small() {
-        let aliases: usize = VERBS.iter().map(|(_, a)| a.len()).sum();
+        let aliases: usize = VERBS.iter().map(|v| v.aliases.len()).sum();
         assert!(aliases <= 8, "aliases crept back up to {aliases}");
     }
 
@@ -1609,6 +1635,28 @@ mod parse_tests {
                 "{line:?} should report usage"
             );
         }
+    }
+
+    /// The table is what help, the : menu and usage errors are built from, so
+    /// every row has to carry both.
+    #[test]
+    fn every_verb_has_a_usage_and_a_summary() {
+        for verb in VERBS {
+            assert!(
+                verb.usage.split_whitespace().next() == Some(verb.name),
+                "{}: usage {:?} does not start with the verb",
+                verb.name,
+                verb.usage
+            );
+            assert!(!verb.summary.is_empty(), "{} has no summary", verb.name);
+        }
+    }
+
+    /// A usage error quotes the table, so the two cannot disagree.
+    #[test]
+    fn usage_errors_come_from_the_table() {
+        assert_eq!(usage("mkdir"), verb("mkdir").unwrap().usage);
+        assert_eq!(usage("rename"), verb("rename").unwrap().usage);
     }
 
     #[test]
@@ -2623,8 +2671,7 @@ mod handler_tests {
     #[test]
     fn env_is_no_longer_a_verb() {
         assert!(
-            !VERBS.iter().any(|(v, aliases)| *v == "env"
-                || aliases.contains(&"env")),
+            !VERBS.iter().any(|v| v.name == "env" || v.aliases.contains(&"env")),
             "env is still in the verb table"
         );
     }
