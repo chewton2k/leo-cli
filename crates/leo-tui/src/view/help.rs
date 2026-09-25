@@ -98,7 +98,10 @@ pub const SECTIONS: &[Section] = &[
     Section {
         title: "While recording",
         entries: &[
-            e("type", "a point that matters; it leads the notes, in bold"),
+            e(
+                "type",
+                "a point, in the box under the transcript; it leads the note",
+            ),
             e("Enter", "add the point"),
             e("Esc", "stop and save"),
         ],

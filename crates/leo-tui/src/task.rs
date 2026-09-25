@@ -15,12 +15,6 @@ use std::time::{Duration, Instant};
 use leo_services::ai::live;
 use leo_services::listen::Recorder;
 
-/// Token budget for one condense pass. The answer is only 2-4 bullets, but the
-/// budget has to cover a reasoning model's hidden thinking too — too small and
-/// free models on OpenRouter burn the whole allowance before emitting any
-/// content.
-const CONDENSE_MAX_TOKENS: u32 = 1200;
-/// Token budget for structuring a whole transcript into a note.
 const STRUCTURE_MAX_TOKENS: u32 = 4096;
 /// How often the worker wakes to check the clock and the stop flag.
 const POLL: Duration = Duration::from_millis(250);
@@ -40,8 +34,6 @@ pub enum TaskEvent {
     },
     /// The full raw transcript so far.
     Transcript(String),
-    /// The full condensed bullet stream so far.
-    LiveNote(String),
     /// A provider degraded mid-job; shown once in the status line.
     ProviderFallback {
         from: String,
@@ -384,15 +376,11 @@ struct Live {
     /// Whether the user has already been told the microphone is not heard.
     warned_silent: bool,
     transcript: String,
-    condensed: String,
     /// Where the rolling loop has transcribed up to, in seconds.
     cursor: u64,
-    /// Raw words not yet condensed.
-    pending_words: usize,
-    last_condense: Instant,
 }
 
-/// Start recording with rolling transcription and a condense loop.
+/// Start recording with rolling transcription, sent to the App as it grows.
 pub fn start_listen(screen: bool) -> Job {
     let (tx, rx) = mpsc::channel();
     let stop = Arc::new(AtomicBool::new(false));
@@ -419,10 +407,7 @@ pub fn start_listen(screen: bool) -> Job {
 
         let mut state = Live {
             transcript: String::new(),
-            condensed: String::new(),
             cursor: 0,
-            pending_words: 0,
-            last_condense: Instant::now(),
             interval: live::ROLL_INTERVAL,
             silent_slices: 0,
             warned_silent: false,
@@ -445,7 +430,6 @@ pub fn start_listen(screen: bool) -> Job {
             }
             last_roll = Instant::now();
             roll_once(recorder.path(), &mut state, &tx);
-            condense_if_due(&mut state, &tx);
         }
 
         // Stopping is not cancelling: finish the recording and transcribe it
@@ -590,10 +574,7 @@ fn roll_once(source: &Path, state: &mut Live, tx: &mpsc::Sender<TaskEvent>) {
                 return;
             }
 
-            let before = state.transcript.split_whitespace().count();
             state.transcript = live::stitch(&state.transcript, &outcome.value);
-            let after = state.transcript.split_whitespace().count();
-            state.pending_words += after.saturating_sub(before);
             let _ = tx.send(TaskEvent::Transcript(state.transcript.clone()));
         }
         // A failed slice is not fatal: the cursor stays put so the next pass
@@ -604,55 +585,6 @@ fn roll_once(source: &Path, state: &mut Live, tx: &mpsc::Sender<TaskEvent>) {
             state.interval = live::backoff(state.interval);
             let _ = tx.send(TaskEvent::Progress {
                 label: format!("Transcription retrying ({e})"),
-                steps: None,
-            });
-        }
-    }
-}
-
-/// Condense the un-summarized tail into bullets, when enough has piled up.
-fn condense_if_due(state: &mut Live, tx: &mpsc::Sender<TaskEvent>) {
-    if !live::should_condense(state.pending_words, state.last_condense.elapsed()) {
-        return;
-    }
-
-    // Only the words not yet summarized go into the prompt.
-    let words: Vec<&str> = state.transcript.split_whitespace().collect();
-    let start = words.len().saturating_sub(state.pending_words);
-    let new_material = words[start..].join(" ");
-    if new_material.trim().is_empty() {
-        state.pending_words = 0;
-        return;
-    }
-
-    let prompt = live::condense_prompt(&new_material, &live::context_tail(&state.condensed));
-    match leo_services::ai::chat_outcome(prompt, CONDENSE_MAX_TOKENS) {
-        Ok(outcome) => {
-            for f in &outcome.fallbacks {
-                let _ = tx.send(TaskEvent::ProviderFallback {
-                    from: f.from.clone(),
-                    to: f.to.clone(),
-                });
-            }
-            let bullets = live::clean_bullets(&outcome.value);
-            if !bullets.is_empty() {
-                if !state.condensed.is_empty() {
-                    state.condensed.push('\n');
-                }
-                state.condensed.push_str(&bullets.join("\n"));
-                let _ = tx.send(TaskEvent::LiveNote(state.condensed.clone()));
-            }
-            // Consumed either way: a model that returned prose will not do
-            // better on a retry with the same input, and the raw text is
-            // still kept for the saved note.
-            state.pending_words = 0;
-            state.last_condense = Instant::now();
-        }
-        Err(e) => {
-            // Keep the words pending and try again next interval.
-            state.last_condense = Instant::now();
-            let _ = tx.send(TaskEvent::Progress {
-                label: format!("Condensing retrying ({e})"),
                 steps: None,
             });
         }

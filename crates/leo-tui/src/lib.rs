@@ -174,10 +174,8 @@ struct Recording {
     progress: view::progress::Progress,
     /// When the current step started, for the elapsed clock and the spinner.
     since: Instant,
-    /// The condensed bullet stream, which is what the preview shows: a raw
-    /// transcript is not readable while you are still listening, so it is
-    /// never shown.
-    condensed: String,
+    /// The rolling transcript so far, shown as it grows.
+    transcript: String,
     /// When recording began, for stamping typed points.
     started: Instant,
     /// The point being typed right now.
@@ -193,7 +191,7 @@ impl Recording {
             req,
             progress: view::progress::Progress::spinner("Starting"),
             since: Instant::now(),
-            condensed: String::new(),
+            transcript: String::new(),
             started: Instant::now(),
             jot: String::new(),
             jotted: Vec::new(),
@@ -212,27 +210,12 @@ impl Recording {
         }
     }
 
-    /// The preview while recording: typed points first, then the live stream.
-    fn live_body(&self) -> String {
-        let stream = if self.condensed.is_empty() {
-            "  listening...".to_string()
-        } else {
-            self.condensed.clone()
-        };
-        if self.jotted.is_empty() {
-            return stream;
-        }
-        let mut body = "## Your points\n".to_string();
-        for p in &self.jotted {
-            body.push_str(&format!(
-                "- **{}** ({})\n",
-                p.text,
-                leo_services::ai::chat::clock(p.at_secs)
-            ));
-        }
-        body.push('\n');
-        body.push_str(&stream);
-        body
+    /// Typed points as the preview lists them, with when each was typed.
+    fn point_lines(&self) -> Vec<String> {
+        self.jotted
+            .iter()
+            .map(|p| format!("{} ({})", p.text, leo_services::ai::chat::clock(p.at_secs)))
+            .collect()
     }
 }
 

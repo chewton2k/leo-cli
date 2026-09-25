@@ -47,9 +47,11 @@ impl App {
             (Some(live), ..) => live,
             // A live recording owns the preview: that stream is the reason the
             // feature exists.
-            (None, Some(rec), _, _) => Preview::Text {
-                title: "live notes".to_string(),
-                body: rec.live_body(),
+            (None, Some(rec), _, _) => Preview::Live {
+                points: rec.point_lines(),
+                transcript: &rec.transcript,
+                // The box is for typing, so it goes once the recording stops.
+                jot: (!rec.job.stop_requested()).then_some(rec.jot.as_str()),
             },
             (None, None, Some((title, lines)), _) => Preview::Lines {
                 title: title.clone(),
@@ -71,11 +73,7 @@ impl App {
         let ghost = self.ghost();
         // While filtering, the command row belongs to the filter: it is a lens
         // on the pane above rather than a command to run.
-        let jotting = self.recording.as_ref().filter(|r| !r.job.stop_requested());
         match (&self.mode, &self.filter) {
-            (Mode::Normal, _) if jotting.is_some() => {
-                view::status::render_jot(frame, f.command, &jotting.unwrap().jot)
-            }
             (Mode::Filter, Some(query)) => {
                 view::status::render_filter(frame, f.command, query, self.note_count())
             }

@@ -1,10 +1,9 @@
-//! Live transcription: two independent loops over a recording that is still
-//! being written.
+//! Live transcription over a recording that is still being written.
 //!
-//! The rolling loop cuts the tail off the growing WAV every
-//! [`ROLL_INTERVAL`] and sends it through the normal transcribe chain, so this
-//! works over Groq or a local whisper.cpp with no provider-specific code. The
-//! condense loop turns the accumulated raw text into a few readable bullets.
+//! The rolling loop cuts the tail off the growing WAV every [`ROLL_INTERVAL`]
+//! and sends it through the normal transcribe chain, so this works over Groq or
+//! a local whisper.cpp with no provider-specific code. The transcript is shown
+//! as it grows; there is no AI summary in between, which is what keeps it fast.
 //!
 //! Only the scheduling and text-stitching decisions live here, as pure
 //! functions; the caller (the TUI's worker thread) performs the effects.
@@ -38,14 +37,6 @@ pub const SILENCE_CEILING: f64 = 0.0005;
 /// across a boundary is not cut in half. The overlap is removed from the text
 /// again by [`stitch`].
 pub const OVERLAP: Duration = Duration::from_secs(1);
-/// Longest gap between condense passes.
-pub const CONDENSE_INTERVAL: Duration = Duration::from_secs(60);
-/// Condense early once this many new words have piled up, so a dense stretch
-/// of speech does not sit unread for a full interval.
-pub const CONDENSE_WORDS: usize = 400;
-/// How much prior context the condense prompt carries, in words. Enough for
-/// continuity, small enough to keep the request cheap.
-pub const CONTEXT_TAIL_WORDS: usize = 60;
 /// How many leading words of a new segment may be treated as repetition.
 ///
 /// Generous on purpose. The nominal overlap is one second — a handful of
@@ -214,47 +205,6 @@ pub fn stitch(previous: &str, segment: &str) -> String {
         return previous.trim_end().to_string();
     }
     format!("{} {}", previous.trim_end(), kept.join(" "))
-}
-
-/// Decide whether it is time to condense.
-pub fn should_condense(new_words: usize, since_last: Duration) -> bool {
-    new_words > 0 && (new_words >= CONDENSE_WORDS || since_last >= CONDENSE_INTERVAL)
-}
-
-/// The last `CONTEXT_TAIL_WORDS` words of what has already been condensed, so
-/// the next pass does not repeat itself.
-pub fn context_tail(condensed: &str) -> String {
-    let words: Vec<&str> = condensed.split_whitespace().collect();
-    let start = words.len().saturating_sub(CONTEXT_TAIL_WORDS);
-    words[start..].join(" ")
-}
-
-/// The prompt for one condense pass. Asks for very little, because this text is
-/// read while the user is still listening to something else.
-pub fn condense_prompt(new_material: &str, context: &str) -> String {
-    format!(
-        "You are taking live notes during a lecture. Summarize ONLY the new \
-         transcript below into 2-4 short markdown bullets.\n\n\
-         Rules:\n\
-         - Bullets only, each one line, no preamble and no heading\n\
-         - Do not repeat anything already covered in the earlier notes\n\
-         - Ignore transcription noise and filler speech\n\
-         - Prefer concrete facts, definitions, and action items\n\n\
-         Earlier notes (for context, do not repeat):\n{context}\n\n\
-         New transcript:\n{new_material}"
-    )
-}
-
-/// Keep only bullet lines from a condense response, so a chatty model cannot
-/// inject a preamble into the live view.
-pub fn clean_bullets(response: &str) -> Vec<String> {
-    response
-        .lines()
-        .map(str::trim)
-        .filter(|l| l.starts_with("- ") || l.starts_with("* "))
-        .map(|l| format!("- {}", l[2..].trim()))
-        .filter(|l| l.len() > 2)
-        .collect()
 }
 
 #[cfg(test)]
@@ -481,59 +431,5 @@ mod tests {
             transcript,
             "today we cover graphs and their traversals like BFS and DFS which uses a stack"
         );
-    }
-
-    // ── condense scheduling ─────────────────────────────────────────────────
-
-    #[test]
-    fn condensing_waits_for_either_enough_words_or_enough_time() {
-        assert!(!should_condense(10, Duration::from_secs(5)));
-        assert!(should_condense(10, CONDENSE_INTERVAL));
-        assert!(should_condense(CONDENSE_WORDS, Duration::from_secs(1)));
-    }
-
-    /// A silent stretch must not fire an empty condense request every minute.
-    #[test]
-    fn no_new_words_never_condenses() {
-        assert!(!should_condense(0, Duration::from_secs(600)));
-    }
-
-    #[test]
-    fn the_context_tail_is_bounded() {
-        let long = (0..500)
-            .map(|i| i.to_string())
-            .collect::<Vec<_>>()
-            .join(" ");
-        let tail = context_tail(&long);
-        assert_eq!(tail.split_whitespace().count(), CONTEXT_TAIL_WORDS);
-        assert!(tail.ends_with("499"), "the tail is the most recent words");
-        assert_eq!(context_tail(""), "");
-    }
-
-    #[test]
-    fn the_condense_prompt_carries_both_halves_and_asks_for_bullets() {
-        let p = condense_prompt("new speech here", "earlier bullets");
-        assert!(p.contains("new speech here"));
-        assert!(p.contains("earlier bullets"));
-        assert!(p.contains("2-4"));
-    }
-
-    // ── response cleaning ───────────────────────────────────────────────────
-
-    #[test]
-    fn only_bullet_lines_survive() {
-        let response = "Sure! Here are the notes:\n\n- first point\n* second point\n\nLet me know!";
-        assert_eq!(
-            clean_bullets(response),
-            vec!["- first point".to_string(), "- second point".to_string()]
-        );
-    }
-
-    #[test]
-    fn a_response_with_no_bullets_yields_nothing_rather_than_prose() {
-        assert!(clean_bullets("I could not hear anything useful.").is_empty());
-        assert!(clean_bullets("").is_empty());
-        // A bullet marker with no content is dropped too.
-        assert!(clean_bullets("- \n-  ").is_empty());
     }
 }

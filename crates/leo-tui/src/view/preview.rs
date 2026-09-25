@@ -17,7 +17,14 @@ use leo_core::notes::Note;
 pub enum Preview<'a> {
     Empty,
     Note(&'a Note),
-    /// Free text, used by the live transcription stream.
+    /// A recording in progress: the points typed so far, the transcript as it
+    /// grows, and — while recording — the point being typed.
+    Live {
+        points: Vec<String>,
+        transcript: &'a str,
+        jot: Option<&'a str>,
+    },
+    /// Free text: a streaming answer.
     Text {
         title: String,
         body: String,
@@ -41,6 +48,15 @@ pub fn render(
     cursor: Option<usize>,
     search: Option<&str>,
 ) {
+    if let Preview::Live {
+        points,
+        transcript,
+        jot,
+    } = preview
+    {
+        render_live(frame, area, points, transcript, *jot, focused);
+        return;
+    }
     if matches!(preview, Preview::Empty) {
         let block = Block::default()
             .borders(Borders::ALL)
@@ -53,7 +69,7 @@ pub fn render(
     }
 
     let (title, mut lines): (String, Vec<TuiLine>) = match preview {
-        Preview::Empty => (String::new(), Vec::new()),
+        Preview::Empty | Preview::Live { .. } => (String::new(), Vec::new()),
         // Markdown, so a note looks the way it was written rather than like a
         // text dump: headings in the accent, checkboxes as boxes, code receding.
         Preview::Note(n) => (n.title.clone(), super::markdown::render(&n.body)),
@@ -118,6 +134,118 @@ pub fn render(
         .scroll((scroll, 0));
 
     frame.render_widget(paragraph, area);
+}
+
+/// The recording view. The transcript is wrapped here rather than by the
+/// widget, so the newest words can be kept at the bottom of the pane as it
+/// grows; the typing box sits under it.
+fn render_live(
+    frame: &mut Frame,
+    area: Rect,
+    points: &[String],
+    transcript: &str,
+    jot: Option<&str>,
+    focused: bool,
+) {
+    use ratatui::layout::{Constraint, Layout, Position};
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(border(focused))
+        .title("live transcript");
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let box_height = if jot.is_some() { 3 } else { 0 };
+    let points_height = if points.is_empty() {
+        0
+    } else {
+        (points.len() as u16 + 2).min(inner.height / 3)
+    };
+    let [points_area, text_area, box_area] = Layout::vertical([
+        Constraint::Length(points_height),
+        Constraint::Min(0),
+        Constraint::Length(box_height),
+    ])
+    .areas(inner);
+
+    if points_height > 0 {
+        let accent = Style::default()
+            .fg(super::theme::accent())
+            .add_modifier(Modifier::BOLD);
+        let mut lines = vec![TuiLine::from(Span::styled("Your points", accent))];
+        for p in points.iter().rev().take(points_height as usize - 2).rev() {
+            lines.push(TuiLine::from(vec![
+                Span::raw("• "),
+                Span::styled(p.clone(), Style::default().add_modifier(Modifier::BOLD)),
+            ]));
+        }
+        frame.render_widget(Paragraph::new(lines), points_area);
+    }
+
+    let text = if transcript.trim().is_empty() {
+        vec![TuiLine::from(Span::styled(
+            "listening...",
+            Style::default().add_modifier(Modifier::DIM),
+        ))]
+    } else {
+        let rows = wrap(transcript, text_area.width as usize);
+        let skip = rows.len().saturating_sub(text_area.height as usize);
+        rows.into_iter().skip(skip).map(TuiLine::from).collect()
+    };
+    frame.render_widget(Paragraph::new(text), text_area);
+
+    if let Some(jot) = jot {
+        let jot_box = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(super::theme::accent()))
+            .title(" your point · Enter adds it · Esc stops ");
+        let field = jot_box.inner(box_area);
+        frame.render_widget(jot_box, box_area);
+        let shown = if jot.is_empty() {
+            Span::styled(
+                "type what matters — it leads the note, in bold",
+                Style::default().add_modifier(Modifier::DIM),
+            )
+        } else {
+            Span::raw(jot.to_string())
+        };
+        frame.render_widget(Paragraph::new(TuiLine::from(shown)), field);
+        let x = field.x + jot.chars().count() as u16;
+        frame.set_cursor_position(Position::new(
+            x.min(field.x + field.width.saturating_sub(1)),
+            field.y,
+        ));
+    }
+}
+
+/// Greedy word wrap to `width` columns; a word longer than a row is split.
+fn wrap(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut rows = Vec::new();
+    let mut row = String::new();
+    for word in text.split_whitespace() {
+        let mut word: Vec<char> = word.chars().collect();
+        while word.len() > width {
+            if !row.is_empty() {
+                rows.push(std::mem::take(&mut row));
+            }
+            rows.push(word.drain(..width).collect());
+        }
+        let word: String = word.into_iter().collect();
+        if row.is_empty() {
+            row = word;
+        } else if row.chars().count() + 1 + word.chars().count() <= width {
+            row.push(' ');
+            row.push_str(&word);
+        } else {
+            rows.push(std::mem::replace(&mut row, word));
+        }
+    }
+    if !row.is_empty() {
+        rows.push(row);
+    }
+    rows
 }
 
 /// Split each span of `line` around case-insensitive matches of `words`,

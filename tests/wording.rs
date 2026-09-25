@@ -39,9 +39,10 @@ const STALE: &[(&str, &str)] = &[
     (":config", "Ctrl-S"),
     ("Ctrl-P  fuzzy", "/"),
     ("press l", "press Enter"),
-    ("t for raw", "(live notes are always shown)"),
-    ("Tab for raw", "(live notes are always shown)"),
-    ("raw text", "(live notes are always shown)"),
+    ("t for raw", "(the live transcript is always shown)"),
+    ("Tab for raw", "(the live transcript is always shown)"),
+    ("raw text", "(the live transcript is always shown)"),
+    ("live notes", "live transcript"),
     ("search -f", "search"),
 ];
 

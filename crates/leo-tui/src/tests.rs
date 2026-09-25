@@ -430,14 +430,13 @@ fn typing_while_recording_jots_points() {
     assert!(rec.jot.is_empty());
 }
 
-/// Live notes are always what a recording shows: no key swaps them for the
-/// raw transcript, and Tab does nothing else while recording either.
+/// A recording shows the live transcript as it arrives — no AI summary in
+/// between — and Tab does nothing else while recording.
 #[test]
-fn a_recording_always_shows_the_live_notes() {
-    let (mut app, _d) = recording_app(vec![
-        TaskEvent::Transcript("the raw words as heard".to_string()),
-        TaskEvent::LiveNote("- the condensed bullet".to_string()),
-    ]);
+fn a_recording_shows_the_live_transcript() {
+    let (mut app, _d) = recording_app(vec![TaskEvent::Transcript(
+        "the words as heard".to_string(),
+    )]);
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
     app.pump_tasks(&mut terminal).unwrap();
     let selected = app.selected_id().cloned();
@@ -451,15 +450,52 @@ fn a_recording_always_shows_the_live_notes() {
 
     terminal.draw(|f| app.draw(f)).unwrap();
     let out = terminal.backend().to_string();
-    assert!(out.contains("the condensed bullet"), "{out}");
+    assert!(out.contains("live transcript"), "{out}");
+    assert!(out.contains("the words as heard"), "{out}");
+}
+
+/// The transcript only grows; the newest words are the ones on screen.
+#[test]
+fn the_newest_words_of_a_long_transcript_stay_in_view() {
+    let long = format!("{} ENDMARK", "word ".repeat(2000));
+    let (mut app, _d) = recording_app(vec![TaskEvent::Transcript(long)]);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
+    app.pump_tasks(&mut terminal).unwrap();
+    terminal.draw(|f| app.draw(f)).unwrap();
+    assert!(terminal.backend().to_string().contains("ENDMARK"));
+}
+
+/// The point being typed sits in its own box at the bottom of the live
+/// transcript, which says what Enter and Esc do.
+#[test]
+fn the_point_being_typed_sits_in_a_box_under_the_transcript() {
+    let (mut app, _d) = recording_app(vec![TaskEvent::Transcript(
+        "the lecture so far".to_string(),
+    )]);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
+    app.pump_tasks(&mut terminal).unwrap();
+    type_str(&mut app, "half a thought", &mut terminal);
+    terminal.draw(|f| app.draw(f)).unwrap();
+    let out = terminal.backend().to_string();
+    let lines: Vec<&str> = out.lines().collect();
+    let box_row = lines
+        .iter()
+        .position(|l| l.contains("half a thought"))
+        .expect("the typed text is not shown");
+    let transcript_row = lines
+        .iter()
+        .position(|l| l.contains("the lecture so far"))
+        .unwrap();
     assert!(
-        !out.contains("the raw words as heard"),
-        "the raw transcript is showing: {out}"
+        box_row > transcript_row,
+        "the box is not below the transcript:\n{out}"
     );
     assert!(
-        !out.contains("raw text"),
-        "something still offers the raw view: {out}"
+        lines[box_row - 1].contains("Enter") && lines[box_row - 1].contains("Esc"),
+        "the box does not say what Enter and Esc do:\n{out}"
     );
+    // The bottom line is free for the key hints again.
+    assert!(lines[lines.len() - 2].contains("Enter add point"), "{out}");
 }
 
 /// Esc stops, and a half-typed point is kept rather than lost.
@@ -476,7 +512,7 @@ fn esc_stops_and_keeps_a_half_typed_point() {
 }
 
 #[test]
-fn your_points_show_above_the_live_notes() {
+fn your_points_show_above_the_live_transcript() {
     let (mut app, _d) = recording_app(vec![]);
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
     type_str(&mut app, "BFS uses a queue", &mut terminal);

@@ -92,9 +92,10 @@ Everything except recording and `@leo` works without AI.
 
 ### Recording, with your own notes
 
-Press `R` (or `:listen`). The preview fills with bullets as you talk. **While it
-records, type the points you care about and press `Enter` after each one.** They
-show up as "Your points", and the finished note opens with a **Key points**
+Press `R` (or `:listen`). The preview shows the live transcript, updating every
+few seconds as you talk. **While it records, type the points you care about in
+the box under the transcript and press `Enter` after each one.** They show up as
+"Your points", and the finished note opens with a **Key points**
 section: every point you typed, in bold, with what was said about it around the
 time you typed it. `Esc` stops and saves.
 
