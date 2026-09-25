@@ -47,17 +47,10 @@ impl App {
             (Some(live), ..) => live,
             // A live recording owns the preview: that stream is the reason the
             // feature exists.
-            (None, Some(rec), _, _) => {
-                let title = if rec.show_raw {
-                    "live transcript (Tab for notes)"
-                } else {
-                    "live notes (Tab for raw text)"
-                };
-                Preview::Text {
-                    title: title.to_string(),
-                    body: rec.live_body(),
-                }
-            }
+            (None, Some(rec), _, _) => Preview::Text {
+                title: "live notes".to_string(),
+                body: rec.live_body(),
+            },
             (None, None, Some((title, lines)), _) => Preview::Lines {
                 title: title.clone(),
                 lines,

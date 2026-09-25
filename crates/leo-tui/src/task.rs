@@ -94,7 +94,7 @@ impl Job {
         self.done
     }
 
-    /// A job that has already sent `events` and ended, for driving the App
+    /// A job that has already sent `events` and is still running, for driving the App
     /// through a job's lifecycle in tests without a worker thread.
     #[cfg(test)]
     pub fn scripted(events: Vec<TaskEvent>) -> Job {
@@ -102,6 +102,9 @@ impl Job {
         for event in events {
             tx.send(event).unwrap();
         }
+        // A live worker keeps its sender until it finishes; dropping it here
+        // would read as the worker dying.
+        std::mem::forget(tx);
         Job {
             rx,
             stop: Arc::new(AtomicBool::new(false)),

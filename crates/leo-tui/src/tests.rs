@@ -428,16 +428,38 @@ fn typing_while_recording_jots_points() {
     assert_eq!(rec.jotted.len(), 1);
     assert_eq!(rec.jotted[0].text, "trees are graphs");
     assert!(rec.jot.is_empty());
-    assert!(!rec.show_raw, "t toggled the raw view instead of typing");
 }
 
+/// Live notes are always what a recording shows: no key swaps them for the
+/// raw transcript, and Tab does nothing else while recording either.
 #[test]
-fn tab_switches_raw_text_while_recording() {
-    let (mut app, _d) = recording_app(vec![]);
-    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
+fn a_recording_always_shows_the_live_notes() {
+    let (mut app, _d) = recording_app(vec![
+        TaskEvent::Transcript("the raw words as heard".to_string()),
+        TaskEvent::LiveNote("- the condensed bullet".to_string()),
+    ]);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
+    app.pump_tasks(&mut terminal).unwrap();
+    let selected = app.selected_id().cloned();
     app.on_key(press_code(event::KeyCode::Tab), &mut terminal)
         .unwrap();
-    assert!(app.recording.as_ref().unwrap().show_raw);
+    assert_eq!(
+        app.selected_id().cloned(),
+        selected,
+        "Tab jumped to another note"
+    );
+
+    terminal.draw(|f| app.draw(f)).unwrap();
+    let out = terminal.backend().to_string();
+    assert!(out.contains("the condensed bullet"), "{out}");
+    assert!(
+        !out.contains("the raw words as heard"),
+        "the raw transcript is showing: {out}"
+    );
+    assert!(
+        !out.contains("raw text"),
+        "something still offers the raw view: {out}"
+    );
 }
 
 /// Esc stops, and a half-typed point is kept rather than lost.

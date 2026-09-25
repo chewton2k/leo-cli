@@ -96,7 +96,7 @@ Press `R` (or `:listen`). The preview fills with bullets as you talk. **While it
 records, type the points you care about and press `Enter` after each one.** They
 show up as "Your points", and the finished note opens with a **Key points**
 section: every point you typed, in bold, with what was said about it around the
-time you typed it. `Tab` shows the raw transcript, `Esc` stops and saves.
+time you typed it. `Esc` stops and saves.
 
 ```
 :listen CS 101 Lecture     a title of your own

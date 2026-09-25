@@ -175,11 +175,9 @@ struct Recording {
     /// When the current step started, for the elapsed clock and the spinner.
     since: Instant,
     /// The condensed bullet stream, which is what the preview shows: a raw
-    /// transcript is not readable while you are still listening.
+    /// transcript is not readable while you are still listening, so it is
+    /// never shown.
     condensed: String,
-    /// The raw rolling transcript, behind a toggle.
-    raw: String,
-    show_raw: bool,
     /// When recording began, for stamping typed points.
     started: Instant,
     /// The point being typed right now.
@@ -196,8 +194,6 @@ impl Recording {
             progress: view::progress::Progress::spinner("Starting"),
             since: Instant::now(),
             condensed: String::new(),
-            raw: String::new(),
-            show_raw: false,
             started: Instant::now(),
             jot: String::new(),
             jotted: Vec::new(),
@@ -218,9 +214,7 @@ impl Recording {
 
     /// The preview while recording: typed points first, then the live stream.
     fn live_body(&self) -> String {
-        let stream = if self.show_raw {
-            self.raw.clone()
-        } else if self.condensed.is_empty() {
+        let stream = if self.condensed.is_empty() {
             "  listening...".to_string()
         } else {
             self.condensed.clone()
@@ -741,10 +735,9 @@ impl App {
                             rec.commit_jot();
                             return Ok(());
                         }
-                        event::KeyCode::Tab => {
-                            rec.show_raw = !rec.show_raw;
-                            return Ok(());
-                        }
+                        // Swallowed rather than jumping to a recent note, which
+                        // would pull the selection away mid-recording.
+                        event::KeyCode::Tab => return Ok(()),
                         event::KeyCode::Backspace => {
                             rec.jot.pop();
                             return Ok(());

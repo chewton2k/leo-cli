@@ -126,7 +126,8 @@ impl App {
                         None => view::progress::Progress::spinner(label),
                     };
                 }
-                TaskEvent::Transcript(text) => rec.raw = text,
+                // The raw transcript is the worker's fallback, never shown.
+                TaskEvent::Transcript(_) => {}
                 TaskEvent::LiveNote(text) => rec.condensed = text,
                 TaskEvent::ProviderFallback { from, to } => {
                     fallbacks.push(format!("{from} unavailable, using {to}"))

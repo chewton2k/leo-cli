@@ -90,7 +90,7 @@ pub fn render_jot(frame: &mut Frame, area: Rect, text: &str) {
     let mut spans = vec![Span::styled("✎ ", Style::default().fg(theme::accent()))];
     if text.is_empty() {
         spans.push(Span::styled(
-            "type what matters · Enter adds it · Tab raw text · Esc stops",
+            "type what matters · Enter adds it · Esc stops",
             Style::default().add_modifier(Modifier::DIM),
         ));
     } else {
