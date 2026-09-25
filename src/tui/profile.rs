@@ -24,13 +24,14 @@ impl App {
         self.mode = Mode::Settings;
     }
 
-    pub(super) fn selected_provider(&self) -> Option<(String, Task, bool)> {
+    pub(super) fn selected_provider(&self) -> Option<(String, Task, bool, settings::ProviderOp)> {
         let screen = self.settings.as_ref()?;
         let row = screen.rows.get(screen.selected)?;
         let name = row.provider_name()?.to_string();
         let task = row.task()?;
         let in_chain = matches!(row, SettingsRow::Member { .. });
-        Some((name, task, in_chain))
+        let primary = settings::primary_action(row.credential()?, in_chain);
+        Some((name, task, in_chain, primary))
     }
 
     /// Perform a settings row's action.
@@ -176,7 +177,7 @@ impl App {
             return Ok(());
         }
 
-        let Some((name, task, in_chain)) = self.selected_provider() else {
+        let Some((name, task, in_chain, primary)) = self.selected_provider() else {
             // Nothing actionable is selected; only movement and closing apply.
             if let Some(screen) = self.settings.as_mut() {
                 match key.code {
@@ -191,6 +192,17 @@ impl App {
             }
             return Ok(());
         };
+
+        let op = match key.code {
+            event::KeyCode::Enter => Some(primary),
+            event::KeyCode::Char('l') => Some(settings::ProviderOp::Login),
+            event::KeyCode::Char('t') => Some(settings::ProviderOp::Test),
+            event::KeyCode::Char('a') if !in_chain => Some(settings::ProviderOp::Add),
+            _ => None,
+        };
+        if let Some(op) = op {
+            return self.provider_op(op, &name, task, terminal);
+        }
 
         match key.code {
             event::KeyCode::Char('j') | event::KeyCode::Down => {
@@ -215,28 +227,9 @@ impl App {
                 self.after_settings_change(changed);
             }
 
-            event::KeyCode::Char('a') if !in_chain => {
-                let changed = settings::add_to_chain(task, &name)?;
-                self.after_settings_change(changed);
-            }
             event::KeyCode::Char('d') if in_chain => {
                 let changed = settings::remove_from_chain(task, &name)?;
                 self.after_settings_change(changed);
-            }
-
-            // Storing a key needs a prompt with echo disabled, which needs the
-            // real terminal, so drop out of the TUI for it. `l` rather than `k`
-            // because `k` moves the selection.
-            event::KeyCode::Char('l') => {
-                let target = name.clone();
-                let out = self.outside(terminal, || {
-                    crate::run_model(crate::action::ModelAction::Login { name: target })
-                })?;
-                let status = match out {
-                    Ok(()) => format!("stored a key for {name}"),
-                    Err(e) => e.to_string(),
-                };
-                self.open_settings(Some(status));
             }
 
             // Removing a key needs no prompt, so it happens in place.
@@ -246,19 +239,6 @@ impl App {
                 }) {
                     Ok(()) => format!("removed the key for {name}"),
                     Err(e) => e.to_string(),
-                };
-                self.open_settings(Some(status));
-            }
-
-            // One small request. Blocking, so say what is happening first.
-            event::KeyCode::Char('t') => {
-                if let Some(screen) = self.settings.as_mut() {
-                    screen.status = Some(format!("testing {name}..."));
-                }
-                terminal.draw(|frame| self.draw(frame))?;
-                let status = match crate::test_provider(&name) {
-                    Ok(report) => report,
-                    Err(e) => format!("{name}: {e}"),
                 };
                 self.open_settings(Some(status));
             }
@@ -275,6 +255,48 @@ impl App {
             }
 
             _ => {}
+        }
+        Ok(())
+    }
+
+    /// Log in to, add, or test the selected provider.
+    fn provider_op<B: TuiBackend>(
+        &mut self,
+        op: settings::ProviderOp,
+        name: &str,
+        task: Task,
+        terminal: &mut Terminal<B>,
+    ) -> Result<()> {
+        match op {
+            // Storing a key needs a prompt with echo disabled, which needs the
+            // real terminal, so drop out of the TUI for it.
+            settings::ProviderOp::Login => {
+                let target = name.to_string();
+                let out = self.outside(terminal, || {
+                    crate::run_model(crate::action::ModelAction::Login { name: target })
+                })?;
+                let status = match out {
+                    Ok(()) => format!("stored a key for {name}"),
+                    Err(e) => e.to_string(),
+                };
+                self.open_settings(Some(status));
+            }
+            settings::ProviderOp::Add => {
+                let changed = settings::add_to_chain(task, name)?;
+                self.after_settings_change(changed);
+            }
+            // One small request. Blocking, so say what is happening first.
+            settings::ProviderOp::Test => {
+                if let Some(screen) = self.settings.as_mut() {
+                    screen.status = Some(format!("testing {name}..."));
+                }
+                terminal.draw(|frame| self.draw(frame))?;
+                let status = match crate::test_provider(name) {
+                    Ok(report) => report,
+                    Err(e) => format!("{name}: {e}"),
+                };
+                self.open_settings(Some(status));
+            }
         }
         Ok(())
     }

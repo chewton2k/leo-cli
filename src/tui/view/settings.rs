@@ -115,6 +115,13 @@ impl Row {
         }
     }
 
+    pub fn credential(&self) -> Option<&Credential> {
+        match self {
+            Row::Member { credential, .. } | Row::Unused { credential, .. } => Some(credential),
+            _ => None,
+        }
+    }
+
     pub fn task(&self) -> Option<Task> {
         match self {
             Row::Member { task, .. } | Row::Unused { task, .. } => Some(*task),
@@ -158,7 +165,7 @@ fn credential_span(credential: &Credential) -> Span<'static> {
             Style::default().fg(theme::warn()),
         ),
         Credential::Missing => Span::styled(
-            "no key — press l".to_string(),
+            "no key — press Enter".to_string(),
             Style::default().fg(theme::bad()),
         ),
     }
@@ -167,7 +174,7 @@ fn credential_span(credential: &Credential) -> Span<'static> {
 fn item(row: &Row) -> ListItem<'static> {
     match row {
         Row::Header(task) => ListItem::new(TuiLine::from(Span::styled(
-            format!(" {} chain", task.label()),
+            format!(" {}", heading(*task)),
             Style::default().fg(theme::accent()).add_modifier(Modifier::BOLD),
         ))),
 
@@ -236,7 +243,15 @@ fn item(row: &Row) -> ListItem<'static> {
 /// The hints for a provider row, which double as the only documentation this
 /// screen needs.
 const PROVIDER_HINTS: &str =
-    "l login · x remove key · t test · J/K reorder · a add · d drop · e edit file · Esc close";
+    "Enter key/add/test · x remove key · J/K reorder · a add · d drop · e edit file · Esc close";
+
+/// A list's heading, in what it is for rather than how the code runs it.
+fn heading(task: Task) -> &'static str {
+    match task {
+        Task::Chat => "AI for writing — tried in order, first that works wins",
+        Task::Transcribe => "AI for speech — tried in order, first that works wins",
+    }
+}
 
 /// What the footer says, which depends on what is selected: the provider keys
 /// mean nothing on a theme row, and offering them there is how a screen starts
@@ -445,13 +460,14 @@ mod tests {
         t.draw(|f| render(f, f.area(), &rows(), 1, None)).unwrap();
         let out = t.backend().to_string();
 
-        assert!(out.contains("chat chain"), "{out}");
+        assert!(out.contains("AI for writing"), "{out}");
+        assert!(!out.contains("chain"), "the word chain is jargon: {out}");
         assert!(out.contains("ollama"), "{out}");
         assert!(out.contains("qwen3:8b"), "{out}");
         assert!(out.contains("no key needed"), "{out}");
         assert!(out.contains("key stored"), "{out}");
         assert!(out.contains("no key"), "{out}");
-        assert!(out.contains("transcribe chain"), "{out}");
+        assert!(out.contains("AI for speech"), "{out}");
         assert!(out.contains("also configured"), "{out}");
         assert!(out.contains("cerebras"), "{out}");
     }
@@ -466,7 +482,7 @@ mod tests {
             credential: Credential::Missing,
             task: Task::Transcribe,
         };
-        assert!(hints_for(Some(&provider)).contains("login"));
+        assert!(hints_for(Some(&provider)).contains("Enter"));
 
         let setting = Row::Setting {
             label: "colour".into(),
@@ -555,7 +571,7 @@ mod tests {
         let mut t = Terminal::new(TestBackend::new(110, 16)).unwrap();
         t.draw(|f| render(f, f.area(), &rows(), 1, None)).unwrap();
         let out = t.backend().to_string();
-        for hint in ["l login", "x remove key", "t test", "reorder", "Esc close"] {
+        for hint in ["Enter key/add/test", "x remove key", "reorder", "Esc close"] {
             assert!(out.contains(hint), "missing hint {hint:?}:\n{out}");
         }
     }

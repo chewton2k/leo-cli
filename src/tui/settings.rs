@@ -22,6 +22,23 @@ fn task_for(kind: Option<ProviderKind>) -> Task {
     }
 }
 
+/// Something that can be done to a provider row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderOp {
+    Login,
+    Add,
+    Test,
+}
+
+/// What Enter does on a provider row: the one thing it most needs.
+pub fn primary_action(credential: &Credential, in_chain: bool) -> ProviderOp {
+    match (credential, in_chain) {
+        (Credential::Missing, _) => ProviderOp::Login,
+        (_, false) => ProviderOp::Add,
+        (_, true) => ProviderOp::Test,
+    }
+}
+
 /// Describe where a provider's credential comes from, without revealing it.
 ///
 /// Asks whether a key exists rather than reading it: this runs for every
@@ -379,6 +396,17 @@ pub fn remove_from_chain(task: Task, name: &str) -> Result<Changed> {
 
 #[cfg(test)]
 mod tests {
+    /// Enter does the one thing a provider row most needs: a key when it has
+    /// none, joining a list when it is unused, otherwise a test.
+    #[test]
+    fn enter_on_a_provider_does_what_it_most_needs() {
+        use crate::tui::view::settings::Credential;
+        assert_eq!(primary_action(&Credential::Missing, true), ProviderOp::Login);
+        assert_eq!(primary_action(&Credential::Missing, false), ProviderOp::Login);
+        assert_eq!(primary_action(&Credential::Stored, false), ProviderOp::Add);
+        assert_eq!(primary_action(&Credential::NotNeeded, true), ProviderOp::Test);
+    }
+
     use super::*;
     use crate::config::secret::MemoryStore;
     use std::sync::Mutex;
