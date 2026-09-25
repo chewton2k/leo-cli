@@ -61,7 +61,7 @@ pub const SECTIONS: &[Section] = &[
     Section {
         title: "Finding things",
         entries: &[
-            e("/", "search every note: titles, bodies, tags"),
+            e("f", "find: search every note — titles, bodies, tags"),
             e("  #word", "only notes with that tag"),
             e(
                 "  results",
@@ -69,7 +69,7 @@ pub const SECTIONS: &[Section] = &[
             ),
             e("  Enter", "keep the results, and return to the panes"),
             e("  Esc", "clear it, staying on the note you picked"),
-            e("Ctrl-P", "the same as /"),
+            e("Ctrl-F", "the same as f"),
             e("t", "left pane: directories or tags"),
             e("  Enter", "on a tag: show only those notes"),
         ],
@@ -107,9 +107,12 @@ pub const SECTIONS: &[Section] = &[
         ],
     },
     Section {
-        title: "The : line",
+        title: "The / line",
         entries: &[
-            e(":", "start a command; the commands are listed below"),
+            e(
+                "/",
+                "start a command; the commands are listed below (: works too)",
+            ),
             e("Tab", "complete verbs, notes, dirs, tags"),
             e("Up / Down", "previous commands"),
             e("Ctrl-W / Ctrl-U", "delete a word / the line"),
@@ -192,7 +195,7 @@ fn help_lines() -> Vec<TuiLine<'static>> {
     lines.push(TuiLine::from(""));
     lines.push(heading("Commands"));
     for verb in leo_core::action::VERBS {
-        lines.push(row(format!(":{}", verb.usage), verb.summary));
+        lines.push(row(format!("/{}", verb.usage), verb.summary));
     }
     lines
 }
@@ -338,7 +341,7 @@ mod tests {
     fn every_bound_key_appears_somewhere_in_help() {
         let text: String = help_lines().iter().map(|l| l.to_string()).collect();
         for key in [
-            "j", "k", "g", "G", "h", "l", "Enter", "x", "e", "D", ":", "/", "Tab", "Ctrl-P",
+            "j", "k", "g", "G", "h", "l", "Enter", "x", "e", "D", "/", "f", "Tab", "Ctrl-F",
             "Ctrl-S", "Ctrl-D", "Ctrl-U", "Ctrl-R", "Esc", "t", "?", "q",
         ] {
             assert!(text.contains(key), "help never shows the {key} key");
@@ -373,8 +376,8 @@ mod tests {
         let text: String = help_lines().iter().map(|l| l.to_string()).collect();
         for (alias, _, _) in leo_core::action::RETIRED {
             assert!(
-                !text.contains(&format!(":{alias} ")),
-                "help still documents `:{alias}`"
+                !text.contains(&format!("/{alias} ")),
+                "help still documents `/{alias}`"
             );
         }
         assert!(!text.contains("leo env"), "help still documents leo env");
@@ -412,7 +415,7 @@ mod tests {
         assert_ne!(top, bottom, "scrolling changed nothing");
         assert!(top.contains("Moving around"));
         assert!(
-            bottom.contains(":quit"),
+            bottom.contains("/quit"),
             "the last section is unreachable:\n{bottom}"
         );
     }

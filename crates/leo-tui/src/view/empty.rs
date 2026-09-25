@@ -54,7 +54,7 @@ impl Hint {
     pub fn empty_directory() -> Self {
         Self::new(
             "Nothing in this directory",
-            "n for a note · :cd .. to leave",
+            "n for a note · /cd .. to leave",
         )
     }
 

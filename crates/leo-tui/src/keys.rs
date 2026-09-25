@@ -80,7 +80,7 @@ pub fn normal(key: KeyEvent, focus: Pane) -> Intent {
     if ctrl {
         return match key.code {
             // Ctrl-P was a separate finder; search now covers everywhere.
-            KeyCode::Char('p') => Intent::OpenFilter,
+            KeyCode::Char('f') => Intent::OpenFilter,
             KeyCode::Char('s') => Intent::OpenSettings,
             KeyCode::Char('c') => Intent::Quit,
             KeyCode::Char('d') => Intent::ScrollDown,
@@ -112,9 +112,9 @@ pub fn normal(key: KeyEvent, focus: Pane) -> Intent {
         KeyCode::Char('a') => Intent::AskSelected,
         KeyCode::Char('R') => Intent::Record,
         KeyCode::Char('D') => Intent::DeleteSelected,
-        KeyCode::Char(':') => Intent::OpenCommand { seed: "" },
-        // `/` is a shorthand for the search verb, so one keymap entry covers it.
-        KeyCode::Char('/') => Intent::OpenFilter,
+        // Commands start with `/`; `:` opens the same line for vim hands.
+        KeyCode::Char('/') | KeyCode::Char(':') => Intent::OpenCommand { seed: "" },
+        KeyCode::Char('f') => Intent::OpenFilter,
         KeyCode::Char('?') => Intent::ToggleHelp,
         KeyCode::Esc => Intent::Cancel,
         KeyCode::Char(' ') if focus == Pane::Notes => Intent::ToggleMark,
@@ -176,13 +176,13 @@ mod tests {
                 KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
                 Intent::JumpRecent,
             ),
-            (key(':'), Intent::OpenCommand { seed: "" }),
-            (key('/'), Intent::OpenFilter),
+            (key('/'), Intent::OpenCommand { seed: "" }),
+            (key('f'), Intent::OpenFilter),
             (key('q'), Intent::Quit),
             (key('e'), Intent::EditSelected),
             (key('?'), Intent::ToggleHelp),
             (code(KeyCode::Enter), Intent::Open),
-            (ctrl('p'), Intent::OpenFilter),
+            (ctrl('f'), Intent::OpenFilter),
             (ctrl('s'), Intent::OpenSettings),
         ];
         for (k, expected) in cases {
@@ -211,6 +211,22 @@ mod tests {
     fn space_marks_in_the_list_and_scrolls_in_the_preview() {
         assert_eq!(normal(key(' '), Pane::Notes), Intent::ToggleMark);
         assert_eq!(normal(key(' '), Pane::Preview), Intent::ScrollDown);
+    }
+
+    /// Commands start with `/`, the way they do in chat apps; `:` still opens
+    /// the same line for anyone with it in their fingers. Search is `f`.
+    #[test]
+    fn slash_starts_a_command_and_f_finds() {
+        assert_eq!(
+            normal(key('/'), Pane::Notes),
+            Intent::OpenCommand { seed: "" }
+        );
+        assert_eq!(
+            normal(key(':'), Pane::Notes),
+            Intent::OpenCommand { seed: "" }
+        );
+        assert_eq!(normal(key('f'), Pane::Notes), Intent::OpenFilter);
+        assert_eq!(normal(ctrl('f'), Pane::Notes), Intent::OpenFilter);
     }
 
     #[test]

@@ -34,7 +34,7 @@ pub fn render_command(
     }
 
     let mut spans = vec![
-        Span::styled(":", Style::default().fg(theme::accent())),
+        Span::styled("/", Style::default().fg(theme::accent())),
         Span::raw(text.to_string()),
     ];
     if let Some(ghost) = ghost {
@@ -47,7 +47,7 @@ pub fn render_command(
     }
     frame.render_widget(Paragraph::new(TuiLine::from(spans)), area);
 
-    // +1 for the leading ":".
+    // +1 for the leading "/".
     let x = area.x + 1 + cursor as u16;
     frame.set_cursor_position(Position::new(
         x.min(area.x + area.width.saturating_sub(1)),
@@ -55,14 +55,17 @@ pub fn render_command(
     ));
 }
 
+/// What the search line starts with.
+const FIND_PROMPT: &str = "find: ";
+
 /// Draw the live filter on the command line, with a real caret.
 ///
-/// A separate line from the `:` prompt on purpose: `/` is not a command, it is a
-/// lens on the pane above, and showing the count keeps the effect visible while
-/// typing.
+/// A separate line from the `/` prompt on purpose: search is not a command, it
+/// is a lens on the pane above, and showing the count keeps the effect visible
+/// while typing.
 pub fn render_filter(frame: &mut Frame, area: Rect, query: &str, matches: usize) {
     let mut spans = vec![
-        Span::styled("/", Style::default().fg(theme::accent())),
+        Span::styled(FIND_PROMPT, Style::default().fg(theme::accent())),
         Span::raw(query.to_string()),
     ];
     let summary = match matches {
@@ -76,8 +79,7 @@ pub fn render_filter(frame: &mut Frame, area: Rect, query: &str, matches: usize)
     ));
     frame.render_widget(Paragraph::new(TuiLine::from(spans)), area);
 
-    // +1 for the leading "/".
-    let x = area.x + 1 + query.chars().count() as u16;
+    let x = area.x + FIND_PROMPT.chars().count() as u16 + query.chars().count() as u16;
     frame.set_cursor_position(Position::new(
         x.min(area.x + area.width.saturating_sub(1)),
         area.y,
@@ -292,7 +294,7 @@ mod tests {
         let mut t = Terminal::new(TestBackend::new(50, 1)).unwrap();
         t.draw(|f| render_filter(f, f.area(), "owner", 3)).unwrap();
         let out = t.backend().to_string();
-        assert!(out.contains("/owner"), "{out}");
+        assert!(out.contains("find: owner"), "{out}");
         assert!(out.contains("3 matches"), "{out}");
     }
 
@@ -335,20 +337,20 @@ mod tests {
     }
 
     #[test]
-    fn an_active_command_line_shows_a_colon_and_the_text() {
+    fn an_active_command_line_shows_a_slash_and_the_text() {
         let mut t = Terminal::new(TestBackend::new(30, 1)).unwrap();
-        t.draw(|f| render_command(f, f.area(), true, "list", 4, None, &[]))
+        t.draw(|f| render_command(f, f.area(), true, "edit", 4, None, &[]))
             .unwrap();
-        assert!(t.backend().to_string().contains(":list"));
+        assert!(t.backend().to_string().contains("/edit"));
     }
 
     #[test]
     fn the_ghost_hint_follows_the_typed_text() {
         let mut t = Terminal::new(TestBackend::new(30, 1)).unwrap();
-        t.draw(|f| render_command(f, f.area(), true, "vie", 3, Some("w"), &[]))
+        t.draw(|f| render_command(f, f.area(), true, "ren", 3, Some("ame"), &[]))
             .unwrap();
         assert!(
-            t.backend().to_string().contains(":view"),
+            t.backend().to_string().contains("/rename"),
             "{}",
             t.backend().to_string()
         );

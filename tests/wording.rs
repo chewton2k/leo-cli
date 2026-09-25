@@ -44,6 +44,25 @@ const STALE: &[(&str, &str)] = &[
     ("raw text", "(the live transcript is always shown)"),
     ("live notes", "live transcript"),
     ("search -f", "search"),
+    // Commands start with `/` now, and `f` finds.
+    (":new", "/new"),
+    (":edit", "/edit"),
+    (":delete", "/delete"),
+    (":rename", "/rename"),
+    (":undo", "/undo"),
+    (":listen", "/listen"),
+    (":ask", "/ask"),
+    (":mkdir", "/mkdir"),
+    (":cd", "/cd"),
+    (":mv", "/mv"),
+    (":sync", "/sync"),
+    (":help", "/help"),
+    (":quit", "/quit"),
+    ("`:` line", "`/` line"),
+    ("the : line", "the / line"),
+    ("The : line", "The / line"),
+    ("Ctrl-P", "f, or Ctrl-F"),
+    ("the : menu", "the / menu"),
 ];
 
 fn root() -> PathBuf {

@@ -102,21 +102,21 @@ pub fn verb(word: &str) -> Option<&'static Verb> {
 /// Removing a word someone has in their fingers is only kind if the removal
 /// explains itself. "Unknown command: d" reads like a typo and sends the user
 /// hunting; naming the replacement costs one line. A replacement starting with
-/// `:` is a command; anything else is a key or a place on screen.
+/// `/` is a command; anything else is a key or a place on screen.
 pub const RETIRED: &[(&str, &str, &str)] = &[
     ("l", "the notes pane", LISTED),
     ("ls", "the notes pane", LISTED),
     ("list", "the notes pane", LISTED),
     ("v", "j and k", SHOWN),
     ("view", "j and k", SHOWN),
-    ("d", ":delete", ONE_NAME),
-    ("del", ":delete", ONE_NAME),
+    ("d", "/delete", ONE_NAME),
+    ("del", "/delete", ONE_NAME),
     ("n", "the n key", "it makes a note"),
     ("rec", "the R key", "it records"),
     ("move", "the m key", "it moves the selected note"),
     ("h", "?", ONE_NAME),
-    ("find", "/", ONE_SEARCH),
-    ("search", "/", ONE_SEARCH),
+    ("find", "the f key", ONE_SEARCH),
+    ("search", "the f key", ONE_SEARCH),
     ("expand", "the a key", "it asks about the selected note"),
     ("check", "the x key", TICKED),
     ("x", "the x key", TICKED),
@@ -155,7 +155,7 @@ pub(super) const GONE_REMIND: &str = "reminders were removed; a checklist note d
 pub(super) const GONE_EXPORT: &str = "export was removed; every note is already a Markdown file";
 pub(super) const TICKED: &str = "x ticks the first open box; in the preview, j/k pick one first";
 pub(super) const ONE_SEARCH: &str =
-    "one search now: / looks in every note, bodies and tags included";
+    "one search now: f looks in every note, bodies and tags included";
 
 /// Every word that can start a command, canonical names and aliases alike.
 pub fn all_verb_words() -> Vec<&'static str> {
@@ -218,6 +218,12 @@ pub fn strip_leo_prefix(tokens: &mut Vec<String>) {
 
 /// Parse one command line into an [`Action`].
 pub fn parse(line: &str) -> Parsed {
+    // The prompt shows `/` already; a typed one, or a `:` from habit, is noise.
+    let line = line.trim();
+    let line = line
+        .strip_prefix('/')
+        .or_else(|| line.strip_prefix(':'))
+        .unwrap_or(line);
     let mut tokens = tokenize(line.trim());
     if tokens.is_empty() {
         return Parsed::Empty;
@@ -421,7 +427,7 @@ mod parse_tests {
                     assert_eq!(said, *why);
                     assert!(!why.is_empty(), "{alias} retires without a reason");
                     // A `:` replacement has to be something that actually parses.
-                    if let Some(command) = instead.strip_prefix(':') {
+                    if let Some(command) = instead.strip_prefix('/') {
                         assert!(
                             !matches!(parse(command), Parsed::Unknown(_) | Parsed::Retired { .. }),
                             "{alias} points at {instead}, which is not a verb"
@@ -549,12 +555,20 @@ mod parse_tests {
         }
     }
 
-    /// There is one search, and it is `/`.
+    /// The prompt already shows `/`, but typing it again — or a `:` from habit —
+    /// must not turn the command into an unknown one.
     #[test]
-    fn search_and_find_point_at_slash() {
+    fn a_typed_slash_or_colon_prefix_is_ignored() {
+        assert_eq!(act("/edit 1"), act("edit 1"));
+        assert_eq!(act(":edit 1"), act("edit 1"));
+    }
+
+    /// There is one search, and it is `f`.
+    #[test]
+    fn search_and_find_point_at_the_f_key() {
         for word in ["search rust", "find rust"] {
             match parse(word) {
-                Parsed::Retired { replacement, .. } => assert_eq!(replacement, "/"),
+                Parsed::Retired { replacement, .. } => assert_eq!(replacement, "the f key"),
                 other => panic!("{word:?} should be retired, got {other:?}"),
             }
         }

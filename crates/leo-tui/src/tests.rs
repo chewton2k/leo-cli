@@ -199,7 +199,7 @@ fn the_frame_renders_the_completed_command_with_its_hint() {
     terminal.draw(|frame| app.draw(frame)).unwrap();
     let out = terminal.backend().to_string();
     assert!(
-        out.contains(":rename"),
+        out.contains("/rename"),
         "ghost hint is not rendered:\n{out}"
     );
 }
@@ -823,7 +823,7 @@ fn a_retired_command_explains_itself_in_one_message() {
         "does not name the old command: {text}"
     );
     assert!(
-        text.contains(":delete"),
+        text.contains("/delete"),
         "does not name the replacement: {text}"
     );
 
@@ -1951,7 +1951,7 @@ fn a_whole_session_ends_with_the_right_files_on_disk() {
     draw(&app, &mut terminal);
 
     // Search from the top level finds a note inside cs130; Esc lands there.
-    app.on_key(press('/'), &mut terminal).unwrap();
+    app.on_key(press('f'), &mut terminal).unwrap();
     for c in "nested".chars() {
         app.on_key(press(c), &mut terminal).unwrap();
     }

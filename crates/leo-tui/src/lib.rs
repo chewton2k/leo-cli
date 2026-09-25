@@ -1076,7 +1076,7 @@ impl App {
                 self.say(
                     Kind::Bad,
                     format!(
-                        "Unknown command: {verb} — the : menu lists them all, ? shows every key"
+                        "Unknown command: {verb} — press / for the menu of commands, ? for every key"
                     ),
                 );
                 Ok(())

@@ -14,7 +14,7 @@ use anyhow::Result;
 use crate::store::Store;
 
 /// Bump when the manual's content changes enough to be worth re-offering.
-const MANUAL_VERSION: u32 = 3;
+const MANUAL_VERSION: u32 = 4;
 const MARKER: &str = ".manual-installed";
 pub const MANUAL_TITLE: &str = "leo manual";
 
@@ -108,27 +108,27 @@ between panes. `?` shows every key and command.
 `j`/`k` move, `h`/`l` switch panes, `Enter` opens. `n` makes a note, `e` edits
 it, `r` renames it, `m` moves it, `D` deletes it, `u` undoes. `x` ticks a
 checkbox; in the preview, `j`/`k` pick which one. `Space` marks notes so `D`
-and `m` act on all of them. `/` searches every note, bodies and `#tags`
+and `m` act on all of them. `f` searches every note, bodies and `#tags`
 included, and `Esc` clears it. `Tab` goes back to a note you just visited.
 
-## The `:` line
+## The `/` line
 
 For anything that takes words. A menu shows every command as you type, and
 leaving the note out means the selected one:
 
 ```
-:new cs130/Lecture 4 #exam   a note in cs130, tagged exam
-:mkdir cs130                 a directory
-:mv cs130                    move the selected note there
-:sync                        back up now
+/new cs130/Lecture 4 #exam   a note in cs130, tagged exam
+/mkdir cs130                 a directory
+/mv cs130                    move the selected note there
+/sync                        back up now
 ```
 
 ## Talking instead of typing
 
-`R` (or `:listen`) records and turns speech into notes. While it runs, type the
+`R` (or `/listen`) records and turns speech into notes. While it runs, type the
 points that matter and press `Enter` after each: the finished note leads with
 them, in bold, with what was said about them. `Esc` stops. Write
-`@leo <question>` in a note and press `a` (or `:ask`) to get an answer in place.
+`@leo <question>` in a note and press `a` (or `/ask`) to get an answer in place.
 
 ## Setting up
 
@@ -288,7 +288,7 @@ mod tests {
     #[test]
     fn the_manual_covers_the_day_one_commands() {
         let body = manual_body();
-        for verb in ["new", "/", "mkdir", "mv", "listen", "ask", "sync"] {
+        for verb in ["new", "`f`", "mkdir", "mv", "listen", "ask", "sync"] {
             assert!(body.contains(verb), "the manual never mentions `{verb}`");
         }
         // And the keys someone needs before they find the help screen.
@@ -305,11 +305,11 @@ mod tests {
     fn the_manual_names_no_retired_command() {
         let body = manual_body();
         for (alias, _, _) in crate::action::RETIRED {
-            // Checked as a `:` command, since short aliases like `e` and `x`
+            // Checked as a `/` command, since short aliases like `e` and `x`
             // appear as prose elsewhere.
             assert!(
-                !body.contains(&format!(":{alias} ")) && !body.contains(&format!(":{alias}\n")),
-                "the manual still tells the user to run `:{alias}`"
+                !body.contains(&format!("/{alias} ")) && !body.contains(&format!("/{alias}\n")),
+                "the manual still tells the user to run `/{alias}`"
             );
         }
         assert!(

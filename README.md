@@ -38,7 +38,7 @@ opens the full reference.
 │ cs162/       │   2●Rust ownership      │ ☐ read the book          │
 │              │   3 Midterm plan        │ ☑ write notes            │
 └──────────────┴─────────────────────────┴──────────────────────────┘
-   n new   e edit   r rename   m move   x tick   Space mark   / find   ? help
+   n new   e edit   r rename   m move   x tick   Space mark   f find   ? help
  /cs130                                              3 notes · 212 words
 ```
 
@@ -54,30 +54,30 @@ opens the full reference.
 | `D` | Delete it (asks). In the directories pane, deletes the directory |
 | `Space` | Mark notes; `D` and `m` then act on all of them |
 | `u` | Undo the last delete, move or tick |
-| `/` | Search every note: titles, what is inside them, and `#tags`. Each result shows the line that matched, and the note highlights it. `Esc` clears |
+| `f` | Find: search every note: titles, what is inside them, and `#tags`. Each result shows the line that matched, and the note highlights it. `Esc` clears. `Ctrl-F` does the same |
 | `N` | New directory |
 | `R` | Record a note by talking (see below) |
 | `a` | Ask AI: answer the note's `@leo` lines |
 | `t` | Left pane: directories or tags |
 | `Tab` | Back to a recently visited note |
 | `Ctrl-S` | Your profile: AI providers and keys, colour, backup |
-| `:` | Command line — a menu lists every command as you type |
+| `/` | Command line — a menu lists every command as you type (`:` works too) |
 | `?` / `q` | Help / quit |
 
 The mouse works too: click to focus or select, scroll with the wheel.
 
-### The `:` line
+### The `/` line
 
-Most things are keys; the `:` line is for anything that takes words. Leave the
+Most things are keys; the `/` line is for anything that takes words. Leave the
 note out and a command means the selected one (or the marked ones).
 
 ```
-:new cs130/Lecture 4 #exam     a note in cs130, tagged exam
-:rename Graph traversals       retitle the selected note
-:mv cs162                      move the selected (or marked) notes
-:mkdir cs130                   a directory here
-:cd ..                         up a directory; / for the top
-:sync                          back up now
+/new cs130/Lecture 4 #exam     a note in cs130, tagged exam
+/rename Graph traversals       retitle the selected note
+/mv cs162                      move the selected (or marked) notes
+/mkdir cs130                   a directory here
+/cd ..                         up a directory; / for the top
+/sync                          back up now
 ```
 
 `Tab` completes commands, directories, note titles and tags. Typing a command
@@ -92,7 +92,7 @@ Everything except recording and `@leo` works without AI.
 
 ### Recording, with your own notes
 
-Press `R` (or `:listen`). The preview shows the live transcript, updating every
+Press `R` (or `/listen`). The preview shows the live transcript, updating every
 few seconds as you talk. **While it records, type the points you care about in
 the box under the transcript and press `Enter` after each one.** They show up as
 "Your points", and the finished note opens with a **Key points**
@@ -100,9 +100,9 @@ section: every point you typed, in bold, with what was said about it around the
 time you typed it. `Esc` stops and saves.
 
 ```
-:listen CS 101 Lecture     a title of your own
-:listen add                append to the selected note
-:listen --screen           record system audio instead of the microphone
+/listen CS 101 Lecture     a title of your own
+/listen add                append to the selected note
+/listen --screen           record system audio instead of the microphone
 ```
 
 Needs SoX (`brew install sox`) for recording.
@@ -129,7 +129,7 @@ leo sync
 
 The first time, it asks for the URL of an empty GitHub repository and sets
 everything up. After that, every save is committed, leo pushes when you quit, and
-`leo sync` (or `:sync`) backs up on demand by pulling, then pushing. `Ctrl-S` can
+`leo sync` (or `/sync`) backs up on demand by pulling, then pushing. `Ctrl-S` can
 make it push while you work instead.
 
 ## From a shell
@@ -174,7 +174,7 @@ and the compiler enforces that:
 
 | Crate | What it holds | Depends on |
 |-------|---------------|------------|
-| `crates/leo-core` | Notes, the on-disk store, git backup, the `:` command vocabulary and its handlers | — |
+| `crates/leo-core` | Notes, the on-disk store, git backup, the `/` command vocabulary and its handlers | — |
 | `crates/leo-services` | AI providers and fallback chains, config and credentials, recording, capability checks | core |
 | `crates/leo-tui` | The full-screen interface | core, services |
 | `crates/leo-web` | `leo serve` | core |

@@ -30,8 +30,8 @@ pub fn for_place(place: Place) -> &'static [(&'static str, &'static str)] {
             ("x", "tick"),
             ("Space", "mark"),
             ("D", "delete"),
-            ("/", "find"),
-            (":", "command"),
+            ("f", "find"),
+            ("/", "command"),
             ("?", "help"),
         ],
         Place::Dirs => &[
@@ -39,13 +39,13 @@ pub fn for_place(place: Place) -> &'static [(&'static str, &'static str)] {
             ("N", "new dir"),
             ("D", "delete dir"),
             ("t", "tags"),
-            (":", "command"),
+            ("/", "command"),
             ("?", "help"),
         ],
         Place::Tags => &[
             ("Enter", "show its notes"),
             ("t", "directories"),
-            ("/", "find"),
+            ("f", "find"),
             ("?", "help"),
         ],
         Place::Preview => &[
@@ -111,7 +111,7 @@ mod tests {
     #[test]
     fn the_notes_list_offers_the_everyday_keys() {
         let k = keys(Place::Notes);
-        for key in ["n", "e", "D", "/"] {
+        for key in ["n", "e", "D", "f", "/"] {
             assert!(k.contains(&key), "notes hints lack {key}: {k:?}");
         }
     }
