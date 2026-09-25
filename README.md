@@ -498,6 +498,9 @@ answers — then prints the fix for each problem it finds.
 
 ## Working on leo
 
+Contributions are welcome: [CONTRIBUTING.md](CONTRIBUTING.md) covers setting up,
+the tests, and what a change needs before it can be merged.
+
 The code is a Cargo workspace. Each crate may only depend on the ones above it,
 and the compiler enforces that:
 
