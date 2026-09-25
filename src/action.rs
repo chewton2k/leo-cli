@@ -400,7 +400,7 @@ macro_rules! resolve_or_return {
 /// panes there, and `d` deleted a note here while dropping a provider from a
 /// chain on the settings screen.
 pub const VERBS: &[Verb] = &[
-    v("new", &[], "new [title]", "a note here, opening $EDITOR"),
+    v("new", &[], "new [dir/][title] [#tag...]", "a note, opening $EDITOR"),
     v("edit", &["e"], "edit [note]", "open a note in $EDITOR"),
     v("delete", &["rm"], "delete [note]", "delete a note (asks first)"),
     v("rename", &[], "rename <new title>", "retitle the selected note"),
@@ -733,7 +733,7 @@ pub fn apply(
         Err(line) => return Ok(Outcome::line(line)),
     };
     match action {
-        Action::New { title } => Ok(new_note(title, ctx.current_dir)),
+        Action::New { title } => Ok(new_note(store, title, ctx.current_dir)),
         Action::List { tag, limit } => Ok(list(store, tag.as_deref(), limit, ctx.current_dir)),
         Action::View { note } => Ok(view(store, &note, ctx.numbering)),
         Action::Edit { note } => Ok(edit(store, &note, ctx.numbering)),
@@ -757,14 +757,39 @@ pub fn apply(
 }
 
 /// `new` — ask the shell to open an editor on a frontmatter template.
-fn new_note(title: Option<String>, dir: &str) -> Outcome {
-    let title = title.unwrap_or_default();
+fn new_note(store: &Store, line: Option<String>, current_dir: &str) -> Outcome {
+    let (dir, title, tags) = split_new(store, line.as_deref().unwrap_or(""), current_dir);
     let path = std::env::temp_dir().join(format!("leo-new-{}.md", uuid::Uuid::new_v4()));
     Outcome::effect(Effect::Edit(EditRequest {
-        seed: format!("---\ntitle: {title}\ntags: \n---\n"),
+        seed: format!("---\ntitle: {title}\ntags: {}\n---\n", tags.join(", ")),
         path,
-        target: EditTarget::NewNote { fallback_title: title, dir: dir.to_string() },
+        target: EditTarget::NewNote { fallback_title: title, dir },
     }))
+}
+
+/// Split `new`'s line into where the note goes, its title, and its tags.
+///
+/// `#word` is a tag. A leading `dir/` names a directory, relative to the
+/// current one, when that directory exists — or when nothing follows the slash,
+/// which asks for it to be made. Otherwise a slash is part of the title, so
+/// "TCP/IP basics" stays a title.
+pub fn split_new(store: &Store, line: &str, current_dir: &str) -> (String, String, Vec<String>) {
+    let (tags, words): (Vec<&str>, Vec<&str>) =
+        line.split_whitespace().partition(|w| w.len() > 1 && w.starts_with('#'));
+    let tags = tags.iter().map(|t| t[1..].to_string()).collect();
+
+    if let Some((prefix, first)) = words.first().and_then(|w| w.rsplit_once('/')) {
+        let dir = under(current_dir, prefix);
+        if !prefix.is_empty() && (first.is_empty() || store.dir_exists(&dir)) {
+            let title = std::iter::once(first)
+                .chain(words[1..].iter().copied())
+                .filter(|w| !w.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ");
+            return (dir, title, tags);
+        }
+    }
+    (current_dir.to_string(), words.join(" "), tags)
 }
 
 /// `list` — subdirectories first, then notes, and renumber.
@@ -1143,6 +1168,9 @@ pub fn apply_edit(
             } else {
                 parsed_title
             };
+            if !store.dir_exists(dir) {
+                store.create_dir(dir);
+            }
             let note = store.create_note(title, body, parsed_tags, dir)?;
             let short = note.id[..std::cmp::min(8, note.id.len())].to_string();
             store.save()?;
@@ -1859,6 +1887,71 @@ mod handler_tests {
         .unwrap();
         assert_eq!(out.effect, Effect::None);
         assert!(out.text().contains("No note selected"), "{}", out.text());
+    }
+
+    // ── new, with a place and tags ──────────────────────────────────────────
+
+    fn new_request(store: &mut Store, dir: &str, line: &str) -> EditRequest {
+        let title = Some(line.to_string());
+        match apply(Action::New { title }, store, ctx(dir, &[]), &FakeAi::default())
+            .unwrap()
+            .effect
+        {
+            Effect::Edit(req) => req,
+            other => panic!("expected an editor, got {other:?}"),
+        }
+    }
+
+    fn target_dir(req: &EditRequest) -> &str {
+        match &req.target {
+            EditTarget::NewNote { dir, .. } => dir,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// One line names where the note goes, its title and its tags.
+    #[test]
+    fn new_puts_the_note_in_a_named_directory_with_tags() {
+        let (mut store, _d) = temp_store();
+        store.create_dir("cs130");
+        let req = new_request(&mut store, "", "cs130/Lecture 4 #exam #graphs");
+        assert_eq!(target_dir(&req), "cs130");
+        assert!(req.seed.contains("title: Lecture 4\n"), "{}", req.seed);
+        assert!(req.seed.contains("tags: exam, graphs\n"), "{}", req.seed);
+    }
+
+    /// A slash in an ordinary title is not a directory.
+    #[test]
+    fn a_slash_in_a_title_stays_in_the_title() {
+        let (mut store, _d) = temp_store();
+        let req = new_request(&mut store, "", "TCP/IP basics");
+        assert_eq!(target_dir(&req), "");
+        assert!(req.seed.contains("title: TCP/IP basics\n"), "{}", req.seed);
+    }
+
+    /// A trailing slash asks for the directory even when it does not exist yet;
+    /// it is made when the note is saved, not before, so cancelling leaves
+    /// nothing behind.
+    #[test]
+    fn a_trailing_slash_makes_the_directory_on_save() {
+        let (mut store, _d) = temp_store();
+        let req = new_request(&mut store, "", "cs162/ Lecture 1");
+        assert_eq!(target_dir(&req), "cs162");
+        assert!(!store.dir_exists("cs162"), "made before the editor closed");
+
+        apply_edit(&mut store, &req.target, &format!("{}notes", req.seed), &FakeAi::default())
+            .unwrap();
+        assert!(store.dir_exists("cs162"));
+        assert_eq!(store.notes[0].directory, "cs162");
+        assert_eq!(store.notes[0].title, "Lecture 1");
+    }
+
+    #[test]
+    fn a_directory_is_relative_to_where_you_are() {
+        let (mut store, _d) = temp_store();
+        store.create_dir("cs130/lec");
+        let req = new_request(&mut store, "cs130", "lec/Week 2");
+        assert_eq!(target_dir(&req), "cs130/lec");
     }
 
     // ── resolution ──────────────────────────────────────────────────────────

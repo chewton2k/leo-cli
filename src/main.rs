@@ -34,7 +34,8 @@ struct Cli {
 enum Commands {
     /// Create a new note
     New {
-        /// Title of the note
+        /// Title, optionally led by an existing `dir/` and followed by #tags,
+        /// e.g. "cs130/Lecture 4 #exam"
         title: String,
 
         /// Body text
@@ -267,7 +268,12 @@ fn run_command(cmd: Commands) -> Result<()> {
 
     // `new --body` is a non-interactive create, with no editor round trip.
     if let Commands::New { title, body: Some(body), tags } = cmd {
-        let note = store.create_note(title, body, tags, "")?;
+        let (dir, title, mut named) = action::split_new(&store, &title, "");
+        named.extend(tags);
+        if !store.dir_exists(&dir) {
+            store.create_dir(&dir);
+        }
+        let note = store.create_note(title, body, named, &dir)?;
         let short = note.id[..8].to_string();
         store.save()?;
         println!("Created note {short}");
