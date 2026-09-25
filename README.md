@@ -179,9 +179,19 @@ and the compiler enforces that:
 | `crates/leo-web` | `leo serve` | core |
 | `leo` (the root) | `main.rs` and the `cli/` subcommands | all of them |
 
-`cargo test` from the root runs every crate's tests. Nothing in them touches the
-network or the real keychain: AI calls go through a trait with a test double, and
-`leo-services` has a `test-support` feature with an in-memory credential store.
+`cargo test` from the root runs every crate's unit tests plus `tests/e2e.rs`,
+which runs the real `leo` binary against a throwaway `LEO_HOME` — making,
+editing, searching and deleting notes, a backup to a local git repository, and
+`leo serve`. Nothing touches the network, your notes or your keychain: AI calls
+go through a trait with a test double, and `leo-services` has a `test-support`
+feature with an in-memory credential store.
+
+CI (`.github/workflows/ci.yml`) runs the tests on Linux and macOS, plus
+`cargo fmt --check`, `cargo clippy -D warnings`, and a check against the
+minimum Rust version, 1.88.
+
+`LEO_HOME=/some/dir leo` keeps notes, config and keys in that one directory,
+which is handy for trying changes without touching your real notes.
 
 ## License
 
