@@ -2,35 +2,80 @@
 
 > Notes for programmers — fast, local, plain-text, AI-powered.
 
-`leo` is a note manager that lives in your terminal. Your notes are Markdown
-files on disk. It can also record a lecture and turn it into notes while you
-type the points that matter, answer questions written inside a note, and back
-everything up to GitHub.
+`leo` is a note manager that lives in your terminal. Your notes are plain
+Markdown files on your disk. It can also record a lecture and turn it into
+structured notes while you type the points that matter, answer questions you
+write inside a note, and back everything up to GitHub.
 
-## Install
+This page walks you through setting it up, one feature at a time. Only the
+first two sections are needed to take notes; everything after that is
+optional.
+
+1. [Install leo](#1-install-leo)
+2. [Your first notes](#2-your-first-notes)
+3. [Set up the AI](#3-set-up-the-ai)
+4. [Record a lecture](#4-record-a-lecture)
+5. [Ask questions inside a note](#5-ask-questions-inside-a-note)
+6. [Back up to GitHub](#6-back-up-to-github)
+7. [Read your notes on your phone](#7-read-your-notes-on-your-phone)
+8. [Use leo from a shell](#8-use-leo-from-a-shell)
+9. [Reference](#9-reference)
+10. [Troubleshooting](#10-troubleshooting)
+
+---
+
+## 1. Install leo
+
+**You need:** Rust 1.88 or newer, and git.
+
+1. If you don't have Rust, install it from [rustup.rs](https://rustup.rs) (or
+   `brew install rust` on a Mac).
+2. Get the code and install it:
+
+   ```sh
+   git clone https://github.com/chewton2k/leo-cli
+   cd leo-cli
+   cargo install --path .
+   ```
+
+3. Check it worked:
+
+   ```sh
+   leo setup
+   ```
+
+   `leo setup` lists what works on this machine, what is missing, and the command
+   that installs each missing piece. Run it again any time something seems off.
+
+**If your shell says `leo: command not found`**, Cargo's bin directory is not on
+your PATH. Add this line to `~/.zshrc` (or `~/.bashrc`), then open a new
+terminal:
 
 ```sh
-git clone https://github.com/you/leo
-cd leo
-cargo install --path .
-leo setup
+export PATH="$HOME/.cargo/bin:$PATH"
 ```
 
-`leo setup` tells you what works on this machine, what is missing and the
-command that installs it, and offers to store an API key. Run it again whenever
-something seems off.
+**To update leo later**, pull the latest code and reinstall:
 
-If `leo` is not found after installing, add Cargo's bin directory to your PATH:
-`export PATH="$HOME/.cargo/bin:$PATH"` in `~/.zshrc` or `~/.bashrc`.
+```sh
+git pull
+cargo install --path . --force
+```
 
-Reinstall after changes with `cargo install --path . --force`. Uninstalling
-(`cargo uninstall leo`) never touches your notes.
+Uninstalling (`cargo uninstall leo`) never touches your notes.
 
-## Using it
+---
 
-Run `leo`. The window has three panes: directories, your notes, and the selected
-note. **The bottom line always shows the keys that work where you are**, and `?`
-opens the full reference.
+## 2. Your first notes
+
+Start the app:
+
+```sh
+leo
+```
+
+You get three panes — your directories, the notes in the current directory,
+and the selected note:
 
 ```
 ┌ dirs ────────┬ notes (3) ──────────────┬ Rust ownership ──────────┐
@@ -42,131 +87,350 @@ opens the full reference.
  /cs130                                              3 notes · 212 words
 ```
 
-### The keys you need
+**The line along the bottom always shows the keys that work where you are.**
+If you forget anything, look there, or press `?` for the full list.
 
-| Key | What it does |
-|-----|-------------|
-| `j` / `k`, `h` / `l` | Move; switch pane (arrows work too) |
-| `n` | New note here, in `$EDITOR` |
-| `e` | Edit the selected note |
-| `r` / `m` | Rename it / move it to another directory |
-| `x` | Tick its first open checkbox. In the preview, `j`/`k` pick a box first |
-| `D` | Delete it (asks). In the directories pane, deletes the directory |
-| `Space` | Mark notes; `D` and `m` then act on all of them |
-| `u` | Undo the last delete, move or tick |
-| `f` | Find: search every note: titles, what is inside them, and `#tags`. Each result shows the line that matched, and the note highlights it. `Esc` clears. `Ctrl-F` does the same |
-| `N` | New directory |
-| `R` | Record a note by talking (see below) |
-| `a` | Ask AI: answer the note's `@leo` lines |
-| `t` | Left pane: directories or tags |
-| `Tab` | Back to a recently visited note |
-| `Ctrl-S` | Your profile: AI providers and keys, colour, backup |
-| `/` | Command line — a menu lists every command as you type (`:` works too) |
-| `?` / `q` | Help / quit |
+Try this:
 
-The mouse works too: click to focus or select, scroll with the wheel.
+1. **Make a directory.** Press `N`, type `cs130`, press `Enter`.
+2. **Go into it.** Press `h` to move to the directories pane, `j`/`k` to select
+   `cs130/`, then `Enter`.
+3. **Write a note.** Press `n`. Your editor (`$EDITOR`) opens with a small
+   header:
 
-### The `/` line
+   ```markdown
+   ---
+   title: Lecture 1
+   tags: exam, graphs
+   ---
+   - BFS explores level by level
+   - [ ] review Dijkstra
+   ```
 
-Most things are keys; the `/` line is for anything that takes words. Leave the
-note out and a command means the selected one (or the marked ones).
+   Fill in a title, optional tags, and the note. Save and close the editor, and
+   the note appears in the list. An empty note is discarded.
+4. **Tick a checkbox.** With the note selected, press `x` to tick its first open
+   box. To tick a different one, press `l` to move into the note, `j`/`k` to
+   pick the box, then `x`.
+5. **Find something.** Press `f` and type. The search covers every note in every
+   directory: titles, the text inside notes, and `#tags`. Each result shows the
+   line that matched. Press `Enter` to keep the results, or `Esc` to clear the
+   search and jump to the note you picked.
+6. **Undo a mistake.** Press `u` to take back the last delete, move, or tick.
+
+Other everyday keys: `e` edits the selected note, `r` renames it, `m` moves it,
+`D` deletes it (it asks first), and `Space` marks several notes so `D` and `m`
+act on all of them at once.
+
+### Commands with `/`
+
+Anything that takes words goes on the command line. Press `/`: a menu lists
+every command, narrowing as you type, and `Tab` completes names, directories and
+tags. If you leave the note out, a command acts on the selected note (or on the
+marked ones).
 
 ```
-/new cs130/Lecture 4 #exam     a note in cs130, tagged exam
+/new cs130/Lecture 4 #exam     a note in cs130, tagged exam, in one step
 /rename Graph traversals       retitle the selected note
 /mv cs162                      move the selected (or marked) notes
 /mkdir cs130                   a directory here
-/cd ..                         up a directory; / for the top
-/sync                          back up now
+/cd ..                         up a directory; /cd / for the top
 ```
 
-`Tab` completes commands, directories, note titles and tags. Typing a command
-that was removed tells you what replaced it.
+---
 
-## AI features
+## 3. Set up the AI
 
-AI works with no keys at all if you run models locally
-(`brew install ollama whisper-cpp && ollama pull qwen3:8b`). Otherwise
-`leo setup` stores a key for a free cloud provider such as OpenRouter or Groq.
-Everything except recording and `@leo` works without AI.
+The AI turns recordings into notes (section 4) and answers questions inside
+notes (section 5). Everything else works without it.
 
-### Recording, with your own notes
+leo uses two kinds of AI:
 
-Press `R` (or `/listen`). The preview shows the live transcript, updating every
-few seconds as you talk. **While it records, type the points you care about in
-the box under the transcript and press `Enter` after each one.** They show up as
-"Your points", and the finished note opens with a **Key points**
-section: every point you typed, in bold, with what was said about it around the
-time you typed it. `Esc` stops and saves.
+- **AI for writing:** turns a transcript into structured notes, and answers
+  questions.
+- **AI for speech:** turns audio into a transcript.
+
+You can use free cloud services (easiest), models running on your own machine
+(free, private, and offline), or a mix of both. Pick **Option A** or **Option
+B**; you can add the other later.
+
+### Option A: free cloud services (easiest)
+
+1. **Get a key for writing, from OpenRouter.** Sign up at
+   [openrouter.ai](https://openrouter.ai) and create a key under
+   [Keys](https://openrouter.ai/keys). leo uses its free models by default.
+2. **Get a key for speech, from Groq.** Sign up at
+   [console.groq.com](https://console.groq.com) and create a key under
+   [API Keys](https://console.groq.com/keys).
+3. **Give the keys to leo.** Run:
+
+   ```sh
+   leo setup
+   ```
+
+   At the end it asks which provider to store a key for. Type `openrouter`,
+   paste the key (it is not shown as you type), then run `leo setup` again for
+   `groq`.
+
+   You can do the same from inside the app instead: press `Ctrl-S`, select the
+   provider, and press `Enter`.
+
+4. **Check it.** Run `leo setup` once more. The line near the bottom should say
+   `ready now: chat 1 / transcribe 1` or higher.
+
+### Option B: on your own machine (free and offline)
+
+1. **Writing: Ollama.**
+
+   ```sh
+   brew install ollama
+   ollama serve          # leave running, or open the Ollama app
+   ollama pull qwen3:8b  # in another terminal; a few GB
+   ```
+
+2. **Speech: whisper.cpp.**
+
+   ```sh
+   brew install whisper-cpp
+   mkdir -p ~/.leo/models
+   curl -L -o ~/.leo/models/ggml-base.en.bin \
+     https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
+   ```
+
+3. **Check it.** `leo setup` should now report both as ready.
+
+### How leo picks a provider
+
+Each kind of AI has a list of providers, tried in order: the first one that is
+ready gets the request, and if it fails, leo moves on to the next. By default
+writing tries Ollama, then OpenRouter; speech tries whisper.cpp, then Groq, then
+Hugging Face. So with both options set up, leo uses your own machine when
+Ollama is running and falls back to the cloud when it is not.
+
+`Ctrl-S` shows both lists. A filled dot `●` means that provider would be used
+right now. On a provider, `Enter` stores its key, adds it to its list, or sends
+a small test request. `J`/`K` change the order.
+
+---
+
+## 4. Record a lecture
+
+**You need:** SoX for recording (`brew install sox`), and the AI from section 3.
+
+**Allow the microphone (macOS, first time only).** Open System Settings →
+Privacy & Security → Microphone, turn it on for your terminal app (Terminal,
+iTerm, Ghostty…), then quit and reopen the terminal.
+
+To record:
+
+1. Select the directory the note should go in.
+2. Press `R` (or type `/listen`). The live transcript appears in the right-hand
+   pane, updating every few seconds as the speaker talks.
+3. **Type the points you care about** in the box under the transcript, and press
+   `Enter` after each one. They are listed above the transcript as "Your
+   points", with the time you typed them.
+4. Press `Esc` to stop. leo transcribes the whole recording again in one pass,
+   then writes the note.
+
+The finished note has:
+
+- a title and a 2–3 sentence summary;
+- a **Key points** section with every point you typed, in bold, each followed
+  by what was said about it at that moment;
+- sections for each topic, in the order they came up, with terms in bold where
+  they were defined, and formulas and code in code blocks;
+- extra explanation from the AI wherever the recording was patchy or the speaker
+  was vague, so the notes make sense on their own;
+- an **Action items** checklist, if tasks were mentioned.
+
+Speech-recognition mistakes in subject terms ("breath first search") are
+corrected. If you type points but nothing is heard, your points are still saved
+as a note.
+
+**Variations:**
 
 ```
-/listen CS 101 Lecture     a title of your own
-/listen add                append to the selected note
-/listen --screen           record system audio instead of the microphone
+/listen CS 101 Lecture 4     give the note your own title
+/listen add                  add to the selected note instead of making a new one
+/listen --screen             record your computer's audio (a video, a call)
 ```
 
-Needs SoX (`brew install sox`) for recording.
+**Recording computer audio** (`--screen`) needs a virtual audio device:
 
-### Questions inside a note
+1. `brew install blackhole-2ch`
+2. Open Audio MIDI Setup, add a **Multi-Output Device**, and tick both your
+   speakers and BlackHole 2ch.
+3. In Sound settings, set that Multi-Output Device as the output.
 
-Write `@leo <question>` on its own line, then press `a`. The answer appears under
-your question, which stays in the note as a bold **Q:** line, and streams in as
-it arrives. Saving a note from the editor does the same for any `@leo` lines in
-it.
+---
 
-### Providers
+## 5. Ask questions inside a note
 
-`Ctrl-S` lists the AI used for writing and for speech, each tried in order until
-one works. A filled dot means that provider would be used right now. `Enter` on
-a provider does what it needs: stores its key, adds it, or tests it. Adding a
-provider of your own is a few lines in `config.toml`, which `e` opens from that
-screen; the comments in the file show how.
+Write a question on its own line, starting with `@leo`:
 
-## Backup
+```markdown
+## Graphs
+- BFS explores level by level
+@leo how is BFS different from DFS?
+```
+
+With the note selected, press `a` (or type `/ask`). The answer streams in under
+your question, and the question stays in the note as a bold **Q:** line:
+
+```markdown
+**Q:** how is BFS different from DFS?
+
+BFS visits nodes level by level using a queue; DFS goes as deep as it can…
+```
+
+Any `@leo` lines are also answered when you save a note from the editor.
+
+---
+
+## 6. Back up to GitHub
+
+1. Create an **empty** repository on GitHub (no README, no .gitignore).
+2. Run:
+
+   ```sh
+   leo sync
+   ```
+
+   Paste the repository's URL when asked. leo sets up git in your notes
+   directory, connects it, and pushes.
+
+From then on:
+
+- every change is committed as you save;
+- leo pushes when you quit the app;
+- `leo sync` (or `/sync` in the app) backs up on demand: it pulls anything
+  newer from GitHub first, then pushes.
+
+To push while you work instead of on quit, press `Ctrl-S` and change **when leo
+backs up** on the backup row. You can also set up backup from that screen
+instead of running `leo sync`.
+
+---
+
+## 7. Read your notes on your phone
 
 ```sh
-leo sync
+leo serve
 ```
 
-The first time, it asks for the URL of an empty GitHub repository and sets
-everything up. After that, every save is committed, leo pushes when you quit, and
-`leo sync` (or `/sync`) backs up on demand by pulling, then pushing. `Ctrl-S` can
-make it push while you work instead.
+This prints a link and a QR code. Scan the code with a phone on the same Wi-Fi
+to read, edit and search your notes in the browser.
 
-## From a shell
+The link carries an access token: anyone on your network who has it can edit
+your notes, so only use this on networks you trust. Stop the server with
+`Ctrl-C`.
+
+---
+
+## 8. Use leo from a shell
+
+Every everyday action also works as a command, which is handy for scripts and
+quick captures:
 
 ```sh
 leo new "Quick thought" --body "Refactor auth" --tags todo
-leo new "cs130/Lecture 4 #exam"     # opens $EDITOR
+leo new "cs130/Lecture 4 #exam"     # opens your editor
 leo list --tag todo
-leo search "refactor"
+leo search "refactor"               # shows the line that matched
+leo view "Rust ownership"
 leo edit 3f2a
 leo delete 3f2a --force
 leo ask 3f2a
-leo serve                           # read and edit from your phone
+leo listen --title "Meeting notes"  # records until you press Enter
 ```
 
-A note can be named by its number in `leo list`, an ID prefix, or a unique part
-of its title.
+A note can be named by its number in `leo list`, the start of its ID, or a
+unique part of its title.
 
-`leo serve` prints a link and a QR code that carry an access token. Anyone on
-your network with that link can edit your notes, so use it on networks you
-trust.
+---
 
-## Where things live
+## 9. Reference
 
-Notes are Markdown files with a small YAML header, one per note, with
-directories mirrored on disk:
+### Keys
 
-| Platform | Path |
-|----------|------|
+| Key | What it does |
+|-----|-------------|
+| `j` / `k` | Move down / up (arrows work too) |
+| `h` / `l` | Switch pane |
+| `Enter` | Open a directory, or move into the note |
+| `n` / `N` | New note / new directory |
+| `e` | Edit the selected note |
+| `r` / `m` | Rename / move it |
+| `x` | Tick a checkbox |
+| `D` | Delete (asks first); in the directories pane, the whole directory |
+| `Space` | Mark notes, so `D` and `m` act on all of them |
+| `u` | Undo the last delete, move or tick |
+| `f` | Find: search every note (`Ctrl-F` too) |
+| `t` | Left pane: directories or tags |
+| `Tab` | Back to a recently visited note |
+| `R` | Record |
+| `a` | Answer the note's `@leo` questions |
+| `/` | Command line (`:` works too) |
+| `Ctrl-S` | Profile: AI providers, keys, colour, backup |
+| `?` / `q` | Help / quit |
+
+While recording: type a point, `Enter` adds it, `Esc` stops and saves.
+
+The mouse works too: click to focus or select, scroll with the wheel.
+
+### Where things live
+
+| Platform | Notes and settings |
+|----------|--------------------|
 | macOS | `~/Library/Application Support/leo/` |
-| Linux | `~/.local/share/leo/` |
+| Linux | `~/.local/share/leo/` (notes), `~/.config/leo/` (settings) |
 | Windows | `%APPDATA%\leo\` |
 
-Settings are in `config.toml` next to them. API keys are never in that file.
-They live in a store only your account can read, or in environment variables,
-which take precedence.
+Each note is a Markdown file with a small header, and directories are real
+directories. Settings are in `config.toml`; press `Ctrl-S` then `e` to open it.
+API keys are never stored in that file: they are kept in a separate file only
+your account can read.
+
+### Environment variables
+
+| Variable | What it does |
+|----------|--------------|
+| `LEO_HOME` | Keep notes, settings and keys in this one directory instead |
+| `OPENROUTER_API_KEY`, `GROQ_API_KEY`, `HF_API_KEY`, … | A provider's key; takes precedence over a stored one |
+| `LEO_CHAT_PROVIDER` / `LEO_TRANSCRIBE_PROVIDER` | Use only this provider for writing / speech |
+| `LEO_CHAT_MODEL` | Override the model of the first writing provider |
+| `LEO_USE_KEYCHAIN=1` | Store keys in the OS keychain instead of the key file |
+| `LEO_SCREEN_DEVICE` | The audio device for `--screen` (default `BlackHole 2ch`) |
+
+---
+
+## 10. Troubleshooting
+
+**"Not ready to record: microphone — recorded silence"**
+The microphone is not being heard. Check that your terminal is allowed in
+System Settings → Privacy & Security → Microphone (then restart the terminal).
+On a MacBook, the built-in microphone is off while the lid is closed, so use an
+external microphone or open the lid.
+
+**A recording's notes stop mid-sentence**
+The AI hit its length limit, and leo shows a warning saying so. Press `Ctrl-S`,
+then `e`, and raise `max_tokens` for that provider (8192 is plenty for an hour
+of lecture).
+
+**"No API key" or nothing happens when recording**
+Run `leo setup`: it says which kind of AI is missing and how to add it. Keys
+can also be added with `Ctrl-S`, then `Enter` on the provider.
+
+**`leo sync` fails**
+Make sure the GitHub repository is empty the first time, and that `git push`
+works from your terminal (a signed-in account or an SSH key). If the push is
+rejected, run `leo sync` again: it pulls first.
+
+**Anything else**
+Run `leo setup`. It checks everything leo depends on and prints the fix for
+each problem it finds.
+
+---
 
 ## Working on leo
 
@@ -181,18 +445,15 @@ and the compiler enforces that:
 | `crates/leo-web` | `leo serve` | core |
 | `leo` (the root) | `main.rs` and the `cli/` subcommands | all of them |
 
-`cargo test` from the root runs every crate's unit tests plus `tests/e2e.rs`,
-which runs the real `leo` binary against a throwaway `LEO_HOME` — making,
-editing, searching and deleting notes, a backup to a local git repository, and
-`leo serve`. Nothing touches the network, your notes or your keychain: AI calls
-go through a trait with a test double, and `leo-services` has a `test-support`
-feature with an in-memory credential store.
+`cargo test` from the root runs every crate's unit tests plus the end-to-end
+tests in `tests/`, which run the real `leo` binary against a throwaway
+`LEO_HOME`. Nothing touches the network, your notes or your keychain.
 
 CI (`.github/workflows/ci.yml`) runs the tests on Linux and macOS, plus
 `cargo fmt --check`, `cargo clippy -D warnings`, and a check against the
 minimum Rust version, 1.88.
 
-`LEO_HOME=/some/dir leo` keeps notes, config and keys in that one directory,
+`LEO_HOME=/some/dir leo` keeps notes, settings and keys in that one directory,
 which is handy for trying changes without touching your real notes.
 
 ## License
