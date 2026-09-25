@@ -314,6 +314,9 @@ pub(super) fn search(store: &Store, query: &str) -> Outcome {
             note.format_summary(),
             dir_info
         )));
+        if let Some(line) = note.matching_line(query) {
+            lines.push(Line::dim(format!("      … {line}")));
+        }
     }
     lines.push(Line::blank());
     Outcome {
@@ -1310,6 +1313,31 @@ mod handler_tests {
         )
         .unwrap();
         assert!(out.text().contains("Graphs"), "{}", out.text());
+    }
+
+    #[test]
+    fn search_shows_the_line_it_matched_inside_a_note() {
+        let (mut store, _d) = temp_store();
+        seed(
+            &mut store,
+            "Graphs",
+            "intro\nBFS explores level by level",
+            "",
+        );
+        let out = apply(
+            Action::Search {
+                query: "explores".to_string(),
+            },
+            &mut store,
+            ctx("", &[]),
+            &FakeAi::default(),
+        )
+        .unwrap();
+        assert!(
+            out.text().contains("BFS explores level by level"),
+            "{}",
+            out.text()
+        );
     }
 
     #[test]

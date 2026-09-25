@@ -7,6 +7,7 @@ use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use ratatui::Frame;
 
 use ratatui::style::{Modifier, Style};
+use ratatui::text::Span;
 
 use super::line::border;
 use super::markdown::{BOX_DONE, BOX_OPEN};
@@ -29,7 +30,8 @@ pub enum Preview<'a> {
 }
 
 /// `cursor` is the checkbox the preview's cursor is on, drawn reversed and kept
-/// in view.
+/// in view. `search` is the active search: its words are highlighted, and while
+/// the user has not scrolled, the first match is brought into view.
 pub fn render(
     frame: &mut Frame,
     area: Rect,
@@ -37,6 +39,7 @@ pub fn render(
     scroll: u16,
     focused: bool,
     cursor: Option<usize>,
+    search: Option<&str>,
 ) {
     if matches!(preview, Preview::Empty) {
         let block = Block::default()
@@ -61,7 +64,29 @@ pub fn render(
         ),
     };
     let line_count = lines.len();
+    let untouched = scroll == 0;
     let mut scroll = clamp_scroll(scroll, line_count, area.height);
+    let visible = area.height.saturating_sub(2).max(1);
+
+    let words = search
+        .map(leo_core::notes::search_words)
+        .unwrap_or_default();
+    if !words.is_empty() {
+        let mut first = None;
+        for (i, line) in lines.iter_mut().enumerate() {
+            let (marked, hit) = highlight(std::mem::take(line), &words);
+            *line = marked;
+            if hit && first.is_none() {
+                first = Some(i as u16);
+            }
+        }
+        // Two lines of context above the match, when the user has not scrolled.
+        if let (true, Some(row)) = (untouched, first) {
+            if row >= visible {
+                scroll = row.saturating_sub(2);
+            }
+        }
+    }
 
     if let Some(n) = cursor {
         let is_box = |l: &TuiLine| {
@@ -73,7 +98,6 @@ pub fn render(
             lines[row] = lines[row]
                 .clone()
                 .patch_style(Style::default().add_modifier(Modifier::REVERSED));
-            let visible = area.height.saturating_sub(2).max(1);
             let row = row as u16;
             if row < scroll {
                 scroll = row;
@@ -96,6 +120,54 @@ pub fn render(
     frame.render_widget(paragraph, area);
 }
 
+/// Split each span of `line` around case-insensitive matches of `words`,
+/// reversing the matched text. Returns the line and whether anything matched.
+fn highlight(line: TuiLine<'static>, words: &[String]) -> (TuiLine<'static>, bool) {
+    let mut hit = false;
+    let mut spans = Vec::new();
+    for span in line.spans {
+        let text = span.content.to_string();
+        let lower = text.to_lowercase();
+        // Byte offsets only line up when lowercasing kept every length.
+        if lower.len() != text.len() {
+            spans.push(span);
+            continue;
+        }
+        let mut ranges: Vec<(usize, usize)> = Vec::new();
+        for w in words {
+            let mut from = 0;
+            while let Some(i) = lower[from..].find(w.as_str()) {
+                ranges.push((from + i, from + i + w.len()));
+                from += i + w.len().max(1);
+            }
+        }
+        if ranges.is_empty() {
+            spans.push(span);
+            continue;
+        }
+        hit = true;
+        ranges.sort();
+        let mut at = 0;
+        for (start, end) in ranges {
+            if start < at {
+                continue;
+            }
+            if start > at {
+                spans.push(Span::styled(text[at..start].to_string(), span.style));
+            }
+            spans.push(Span::styled(
+                text[start..end].to_string(),
+                span.style.add_modifier(Modifier::REVERSED),
+            ));
+            at = end;
+        }
+        if at < text.len() {
+            spans.push(Span::styled(text[at..].to_string(), span.style));
+        }
+    }
+    (TuiLine { spans, ..line }, hit)
+}
+
 /// Clamp a scroll offset to something that still shows content.
 pub fn clamp_scroll(scroll: u16, line_count: usize, viewport_height: u16) -> u16 {
     let visible = viewport_height.saturating_sub(2); // borders
@@ -113,7 +185,7 @@ mod tests {
         let note = Note::new("Graphs", "- BFS\n- DFS", vec![], "");
         let mut terminal = Terminal::new(TestBackend::new(30, 6)).unwrap();
         terminal
-            .draw(|f| render(f, f.area(), &Preview::Note(&note), 0, true, None))
+            .draw(|f| render(f, f.area(), &Preview::Note(&note), 0, true, None, None))
             .unwrap();
 
         let out = terminal.backend().to_string();
@@ -125,7 +197,7 @@ mod tests {
     fn an_empty_preview_renders_the_placeholder_title() {
         let mut terminal = Terminal::new(TestBackend::new(20, 4)).unwrap();
         terminal
-            .draw(|f| render(f, f.area(), &Preview::Empty, 0, false, None))
+            .draw(|f| render(f, f.area(), &Preview::Empty, 0, false, None, None))
             .unwrap();
         assert!(terminal.backend().to_string().contains("preview"));
     }
@@ -135,7 +207,7 @@ mod tests {
         let note = Note::new("T", "line\n".repeat(3), vec![], "");
         let mut terminal = Terminal::new(TestBackend::new(20, 6)).unwrap();
         terminal
-            .draw(|f| render(f, f.area(), &Preview::Note(&note), 9999, true, None))
+            .draw(|f| render(f, f.area(), &Preview::Note(&note), 9999, true, None, None))
             .unwrap();
 
         assert_eq!(clamp_scroll(9999, 3, 6), 0, "3 lines fit in 4 rows");
@@ -149,7 +221,7 @@ mod tests {
         let note = Note::new("T", "- [ ] read\n- [x] done\n", vec![], "");
         let mut terminal = Terminal::new(TestBackend::new(30, 6)).unwrap();
         terminal
-            .draw(|f| render(f, f.area(), &Preview::Note(&note), 0, true, Some(1)))
+            .draw(|f| render(f, f.area(), &Preview::Note(&note), 0, true, Some(1), None))
             .unwrap();
         let buf = terminal.backend().buffer().clone();
         let row_of = |word: &str| {
@@ -179,6 +251,74 @@ mod tests {
         );
     }
 
+    fn modifiers_on(buf: &ratatui::buffer::Buffer, word: &str) -> Vec<Modifier> {
+        let mut out = Vec::new();
+        for y in 0..buf.area.height {
+            let line: String = (0..buf.area.width)
+                .map(|x| buf[(x, y)].symbol().to_string())
+                .collect();
+            if let Some(i) = line.find(word) {
+                let x = line[..i].chars().count() as u16;
+                out.push(buf[(x, y)].modifier);
+            }
+        }
+        out
+    }
+
+    /// The words a search matched stand out in the note, so it is obvious
+    /// why it was found.
+    #[test]
+    fn search_words_are_highlighted() {
+        let note = Note::new("T", "intro\nBFS explores level by level\n", vec![], "");
+        let mut t = Terminal::new(TestBackend::new(40, 8)).unwrap();
+        t.draw(|f| {
+            render(
+                f,
+                f.area(),
+                &Preview::Note(&note),
+                0,
+                true,
+                None,
+                Some("bfs"),
+            )
+        })
+        .unwrap();
+        let buf = t.backend().buffer().clone();
+        assert!(
+            modifiers_on(&buf, "BFS")
+                .iter()
+                .any(|m| m.contains(Modifier::REVERSED)),
+            "the match is not highlighted"
+        );
+        assert!(
+            !modifiers_on(&buf, "explores")
+                .iter()
+                .any(|m| m.contains(Modifier::REVERSED)),
+            "more than the match is highlighted"
+        );
+    }
+
+    /// A match far down a long note is scrolled into view.
+    #[test]
+    fn a_match_below_the_fold_is_brought_into_view() {
+        let body = format!("{}needle here\n", "filler\n".repeat(40));
+        let note = Note::new("T", body, vec![], "");
+        let mut t = Terminal::new(TestBackend::new(40, 10)).unwrap();
+        t.draw(|f| {
+            render(
+                f,
+                f.area(),
+                &Preview::Note(&note),
+                0,
+                true,
+                None,
+                Some("needle"),
+            )
+        })
+        .unwrap();
+        assert!(t.backend().to_string().contains("needle here"));
+    }
+
     /// The wiring, not the rendering: markdown details are tested next door, but
     /// something has to catch the preview drawing raw text again.
     #[test]
@@ -186,7 +326,7 @@ mod tests {
         let note = Note::new("T", "## Heading\n- [x] done\n", vec![], "");
         let mut terminal = Terminal::new(TestBackend::new(40, 8)).unwrap();
         terminal
-            .draw(|f| render(f, f.area(), &Preview::Note(&note), 0, true, None))
+            .draw(|f| render(f, f.area(), &Preview::Note(&note), 0, true, None, None))
             .unwrap();
         let out = terminal.backend().to_string();
 

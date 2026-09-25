@@ -72,6 +72,7 @@ impl App {
             self.preview_scroll,
             self.focus == Pane::Preview,
             self.checkbox_cursor(),
+            self.filter.as_deref().filter(|q| !q.trim().is_empty()),
         );
 
         let ghost = self.ghost();

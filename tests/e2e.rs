@@ -178,6 +178,20 @@ fn a_note_made_from_the_shell_is_listed_found_and_on_disk() {
 }
 
 #[test]
+fn search_prints_where_inside_the_note_it_matched() {
+    let leo = Leo::new();
+    leo.ok(&[
+        "new",
+        "Graphs",
+        "--body",
+        "intro\nBFS explores level by level",
+    ]);
+    let out = leo.ok(&["search", "explores"]);
+    assert!(out.contains("Graphs"), "{out}");
+    assert!(out.contains("BFS explores level by level"), "{out}");
+}
+
+#[test]
 fn new_puts_a_note_in_a_directory_with_tags() {
     let leo = Leo::new();
     leo.ok(&["new", "cs130/ Lecture 4 #exam", "--body", "graphs"]);

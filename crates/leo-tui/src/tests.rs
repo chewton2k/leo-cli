@@ -1248,6 +1248,45 @@ fn esc_clears_a_tag() {
     assert!(app.filter.is_none());
 }
 
+/// A search that matched inside a note shows the line it matched, so the
+/// result explains itself; one that matched the title needs no help.
+#[test]
+fn search_results_show_the_line_that_matched() {
+    let (mut app, _d) = temp_app();
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 20)).unwrap();
+    app.on_intent(Intent::OpenFilter, &mut terminal).unwrap();
+    for c in "bfs".chars() {
+        app.on_key(press(c), &mut terminal).unwrap();
+    }
+    terminal.draw(|f| app.draw(f)).unwrap();
+    let out = terminal.backend().to_string();
+    let row = out
+        .lines()
+        .find(|l| l.contains("1 Graph traversals"))
+        .expect("the result is listed");
+    assert!(
+        row.contains("- BFS"),
+        "no matched line beside the title: {row}"
+    );
+}
+
+#[test]
+fn a_title_match_shows_no_extra_line() {
+    let (mut app, _d) = temp_app();
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 20)).unwrap();
+    app.on_intent(Intent::OpenFilter, &mut terminal).unwrap();
+    for c in "graph".chars() {
+        app.on_key(press(c), &mut terminal).unwrap();
+    }
+    terminal.draw(|f| app.draw(f)).unwrap();
+    let out = terminal.backend().to_string();
+    let row = out
+        .lines()
+        .find(|l| l.contains("Graph traversals"))
+        .unwrap();
+    assert!(!row.contains("…"), "{row}");
+}
+
 /// Case must not matter, or the filter is a guessing game.
 #[test]
 fn filtering_ignores_case() {

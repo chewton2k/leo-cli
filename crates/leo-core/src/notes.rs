@@ -163,6 +163,22 @@ impl Note {
 
     /// Toggle the Nth checkbox (1-based). Returns the new state text, or None
     /// if no such checkbox exists.
+    /// The first body line holding any word of a search query, trimmed. Words
+    /// starting with `#` are tags, not text, so they never match here.
+    pub fn matching_line(&self, query: &str) -> Option<String> {
+        let words = search_words(query);
+        if words.is_empty() {
+            return None;
+        }
+        self.body
+            .lines()
+            .find(|line| {
+                let line = line.to_lowercase();
+                words.iter().any(|w| line.contains(w.as_str()))
+            })
+            .map(|line| line.trim().to_string())
+    }
+
     /// Each checkbox in the body, in order: true when ticked. The same lines
     /// [`Note::toggle_checkbox`] counts, so an index here is an index there.
     pub fn checkboxes(&self) -> Vec<bool> {
@@ -214,9 +230,42 @@ impl Note {
     }
 }
 
+/// The plain words of a search query, lowercased: what can match text. Words
+/// starting with `#` name tags and are left out.
+pub fn search_words(query: &str) -> Vec<String> {
+    query
+        .split_whitespace()
+        .filter(|w| !w.starts_with('#'))
+        .map(str::to_lowercase)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The line a search matched inside the note, so results can show where.
+    #[test]
+    fn matching_line_finds_the_first_body_line_with_a_search_word() {
+        let note = Note::new(
+            "Graphs",
+            "intro\n\n  BFS explores level by level\nDFS goes deep",
+            vec![],
+            "",
+        );
+        assert_eq!(
+            note.matching_line("bfs").as_deref(),
+            Some("BFS explores level by level")
+        );
+        // Any word of the query will do, and #tags are not body text.
+        assert_eq!(
+            note.matching_line("#exam deep").as_deref(),
+            Some("DFS goes deep")
+        );
+        assert_eq!(note.matching_line("#exam"), None);
+        assert_eq!(note.matching_line("nowhere"), None);
+        assert_eq!(note.matching_line(""), None);
+    }
 
     #[test]
     fn checkboxes_lists_each_box_in_order() {

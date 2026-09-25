@@ -54,7 +54,7 @@ opens the full reference.
 | `D` | Delete it (asks). In the directories pane, deletes the directory |
 | `Space` | Mark notes; `D` and `m` then act on all of them |
 | `u` | Undo the last delete, move or tick |
-| `/` | Search every note: titles, bodies, and `#tags`. `Esc` clears |
+| `/` | Search every note: titles, what is inside them, and `#tags`. Each result shows the line that matched, and the note highlights it. `Esc` clears |
 | `N` | New directory |
 | `R` | Record a note by talking (see below) |
 | `a` | Ask AI: answer the note's `@leo` lines |

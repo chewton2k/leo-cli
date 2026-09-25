@@ -305,8 +305,18 @@ impl App {
             .filter_map(|id| self.store.find_note(id))
             .collect();
         let mut rows = view::notes::rows(&notes, &self.current_dir);
-        for row in &mut rows {
+        let words = self
+            .filter
+            .as_deref()
+            .map(leo_core::notes::search_words)
+            .unwrap_or_default();
+        for (row, note) in rows.iter_mut().zip(&notes) {
             row.marked = self.marked.contains(&row.id);
+            // Only when the title does not already show why it was found.
+            let title = note.title.to_lowercase();
+            if !words.is_empty() && !words.iter().all(|w| title.contains(w.as_str())) {
+                row.snippet = note.matching_line(self.filter.as_deref().unwrap_or(""));
+            }
         }
         rows
     }

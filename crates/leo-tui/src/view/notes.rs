@@ -21,6 +21,9 @@ pub struct NoteRow {
     pub elsewhere: Option<String>,
     /// Marked with Space, so D and m will include it.
     pub marked: bool,
+    /// The line a search matched inside the note, when the title alone does
+    /// not explain why it was found.
+    pub snippet: Option<String>,
 }
 
 pub fn rows(notes: &[&Note], current_dir: &str) -> Vec<NoteRow> {
@@ -34,6 +37,7 @@ pub fn rows(notes: &[&Note], current_dir: &str) -> Vec<NoteRow> {
             tags: n.tags.clone(),
             elsewhere: (n.directory != current_dir).then(|| n.directory.clone()),
             marked: false,
+            snippet: None,
         })
         .collect()
 }
@@ -64,6 +68,12 @@ fn item(row: &NoteRow) -> ListItem<'static> {
     if !row.tags.is_empty() {
         spans.push(Span::styled(
             format!("  [{}]", row.tags.join(", ")),
+            Style::default().add_modifier(Modifier::DIM),
+        ));
+    }
+    if let Some(snippet) = &row.snippet {
+        spans.push(Span::styled(
+            format!("  … {snippet}"),
             Style::default().add_modifier(Modifier::DIM),
         ));
     }

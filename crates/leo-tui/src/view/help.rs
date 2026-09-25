@@ -63,6 +63,10 @@ pub const SECTIONS: &[Section] = &[
         entries: &[
             e("/", "search every note: titles, bodies, tags"),
             e("  #word", "only notes with that tag"),
+            e(
+                "  results",
+                "show the line that matched; the note lights it up",
+            ),
             e("  Enter", "keep the results, and return to the panes"),
             e("  Esc", "clear it, staying on the note you picked"),
             e("Ctrl-P", "the same as /"),
