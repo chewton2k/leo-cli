@@ -64,7 +64,8 @@ const STALE: &[(&str, &str)] = &[
     ("`:` line", "`/` line"),
     ("the : line", "the / line"),
     ("The : line", "The / line"),
-    ("Ctrl-P", "f, or Ctrl-F"),
+    ("Ctrl-P  fuzzy", "f, or Ctrl-F"),
+    ("Ctrl-P the same as", "Ctrl-F"),
     ("the : menu", "the / menu"),
 ];
 

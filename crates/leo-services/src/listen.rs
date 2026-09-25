@@ -347,6 +347,59 @@ impl Recorder {
     }
 }
 
+/// A stretch of a recording the user paused: when it started, and when it
+/// ended — `None` if the recording stopped while still paused.
+pub type Pause = (f64, Option<f64>);
+
+/// sox `trim` positions that keep the recording and drop the paused stretches.
+/// trim copies until the first position after 0, then alternates discarding
+/// and copying at each one after that.
+fn trim_positions(pauses: &[Pause]) -> Vec<String> {
+    let mut out = vec!["0".to_string()];
+    for (start, end) in pauses {
+        out.push(format!("={start:.3}"));
+        if let Some(end) = end {
+            out.push(format!("={end:.3}"));
+        }
+    }
+    out
+}
+
+/// Remove the paused stretches from a finished recording, so what was said
+/// while paused is never transcribed or sent anywhere. Returns the file to
+/// transcribe: the original when nothing was paused.
+pub fn cut_pauses(path: &std::path::Path, pauses: &[Pause]) -> Result<PathBuf> {
+    if pauses.is_empty() {
+        return Ok(path.to_path_buf());
+    }
+    let out = path.with_extension("kept.wav");
+    let status = Command::new("sox")
+        .arg(path)
+        .arg(&out)
+        .arg("trim")
+        .args(trim_positions(pauses))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .context("could not run sox to remove the paused parts")?;
+    if !status.success() || !out.exists() {
+        bail!("sox could not remove the paused parts of the recording");
+    }
+    let _ = std::fs::remove_file(path);
+    Ok(out)
+}
+
+/// A WAV's length in seconds, from sox.
+pub fn wav_seconds(path: &std::path::Path) -> Option<f64> {
+    let out = Command::new("sox")
+        .arg("--i")
+        .arg("-D")
+        .arg(path)
+        .output()
+        .ok()?;
+    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+}
+
 /// `rec` is killed before it can write the final DataSize field, leaving it
 /// zero. `sox --ignore-length` reads to EOF and writes a correct header.
 ///
@@ -485,6 +538,47 @@ mod tests {
 
         let finished = recorder.stop().expect("a finished file");
         assert!(finished.exists());
+    }
+
+    // ── pausing ─────────────────────────────────────────────────────────────
+
+    /// sox's trim alternates between copying and discarding at each position,
+    /// so the positions are the pause boundaries after a leading 0.
+    #[test]
+    fn paused_stretches_become_trim_positions() {
+        assert_eq!(
+            trim_positions(&[(10.0, Some(20.5))]),
+            vec!["0", "=10.000", "=20.500"]
+        );
+        // A pause still open when recording stopped discards to the end.
+        assert_eq!(
+            trim_positions(&[(10.0, Some(20.0)), (30.0, None)]),
+            vec!["0", "=10.000", "=20.000", "=30.000"]
+        );
+    }
+
+    #[test]
+    fn cutting_the_paused_stretches_out_of_a_recording() {
+        if !crate::health::on_path("sox") {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let wav = dir.path().join("rec.wav");
+        let ok = std::process::Command::new("sox")
+            .args(["-n", "-r", "16000", "-c", "1", "-b", "16"])
+            .arg(&wav)
+            .args(["synth", "3", "sine", "440"])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        assert!(ok);
+
+        let cut = cut_pauses(&wav, &[(1.0, Some(2.0))]).unwrap();
+        let secs = wav_seconds(&cut).expect("a length");
+        assert!((secs - 2.0).abs() < 0.05, "expected about 2s, got {secs}");
+
+        // Nothing paused: the recording is used as it is.
+        assert_eq!(cut_pauses(&wav, &[]).unwrap(), wav);
     }
 
     /// The level check has to agree with what sox reports, since the whole

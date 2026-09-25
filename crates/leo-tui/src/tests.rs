@@ -498,6 +498,48 @@ fn the_point_being_typed_sits_in_a_box_under_the_transcript() {
     assert!(lines[lines.len() - 2].contains("Enter add point"), "{out}");
 }
 
+fn ctrl(c: char) -> event::KeyEvent {
+    event::KeyEvent::new(event::KeyCode::Char(c), event::KeyModifiers::CONTROL)
+}
+
+/// Ctrl-P pauses a recording and resumes it; the screen says which it is.
+#[test]
+fn ctrl_p_pauses_and_resumes_a_recording() {
+    let (mut app, _d) = recording_app(vec![]);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
+
+    app.on_key(ctrl('p'), &mut terminal).unwrap();
+    assert!(app.recording.as_ref().unwrap().job.paused());
+    terminal.draw(|f| app.draw(f)).unwrap();
+    assert!(
+        terminal.backend().to_string().contains("paused"),
+        "{}",
+        terminal.backend()
+    );
+
+    app.on_key(ctrl('p'), &mut terminal).unwrap();
+    assert!(!app.recording.as_ref().unwrap().job.paused());
+    assert!(!app.recording.as_ref().unwrap().job.stop_requested());
+}
+
+/// A typed point is stamped with recording time, which leaves out pauses, so
+/// it lines up with the transcript once the paused parts are cut.
+#[test]
+fn a_points_time_leaves_out_paused_time() {
+    let (mut app, _d) = recording_app(vec![]);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
+    {
+        let rec = app.recording.as_mut().unwrap();
+        rec.started -= std::time::Duration::from_secs(130);
+        rec.paused_total = std::time::Duration::from_secs(100);
+    }
+    type_str(&mut app, "the point", &mut terminal);
+    app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
+        .unwrap();
+    let at = app.recording.as_ref().unwrap().jotted[0].at_secs;
+    assert!((29..=31).contains(&at), "stamped {at}s, expected about 30");
+}
+
 /// Esc stops, and a half-typed point is kept rather than lost.
 #[test]
 fn esc_stops_and_keeps_a_half_typed_point() {

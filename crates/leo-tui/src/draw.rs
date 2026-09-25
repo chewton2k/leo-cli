@@ -48,6 +48,7 @@ impl App {
             // A live recording owns the preview: that stream is the reason the
             // feature exists.
             (None, Some(rec), _, _) => Preview::Live {
+                paused: rec.job.paused(),
                 points: rec.point_lines(),
                 transcript: &rec.transcript,
                 // The box is for typing, so it goes once the recording stops.

@@ -174,7 +174,7 @@ impl App {
                 .as_deref()
                 .and_then(|target| self.store.find_by_index_or_prefix(target))
                 .map(|n| n.body.clone());
-            let length = rec.started.elapsed().as_secs();
+            let length = rec.recorded().as_secs();
             self.recording = Some(Recording {
                 job: task::start_structuring(transcript, existing, rec.jotted.clone(), length),
                 progress: view::progress::Progress::spinner("Structuring notes"),

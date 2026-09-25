@@ -178,6 +178,10 @@ struct Recording {
     transcript: String,
     /// When recording began, for stamping typed points.
     started: Instant,
+    /// Time spent paused so far, and since when if paused now: typed points
+    /// and the transcript's time markers count recording time only.
+    paused_total: std::time::Duration,
+    paused_since: Option<Instant>,
     /// The point being typed right now.
     jot: String,
     /// Points typed so far. They lead the finished notes, in bold.
@@ -193,8 +197,33 @@ impl Recording {
             since: Instant::now(),
             transcript: String::new(),
             started: Instant::now(),
+            paused_total: std::time::Duration::ZERO,
+            paused_since: None,
             jot: String::new(),
             jotted: Vec::new(),
+        }
+    }
+
+    /// How much has been recorded, leaving out pauses.
+    fn recorded(&self) -> std::time::Duration {
+        let paused = self.paused_total
+            + self
+                .paused_since
+                .map_or(std::time::Duration::ZERO, |t| t.elapsed());
+        self.started.elapsed().saturating_sub(paused)
+    }
+
+    /// Pause, or resume, the recording.
+    fn toggle_pause(&mut self) {
+        match self.paused_since.take() {
+            Some(since) => {
+                self.paused_total += since.elapsed();
+                self.job.set_paused(false);
+            }
+            None => {
+                self.paused_since = Some(Instant::now());
+                self.job.set_paused(true);
+            }
         }
     }
 
@@ -204,7 +233,7 @@ impl Recording {
         self.jot.clear();
         if !text.is_empty() {
             self.jotted.push(leo_services::ai::chat::Jotted {
-                at_secs: self.started.elapsed().as_secs(),
+                at_secs: self.recorded().as_secs(),
                 text,
             });
         }
@@ -716,6 +745,16 @@ impl App {
                         }
                         event::KeyCode::Enter => {
                             rec.commit_jot();
+                            return Ok(());
+                        }
+                        event::KeyCode::Char('p') if ctrl => {
+                            rec.toggle_pause();
+                            let word = if rec.job.paused() {
+                                "Paused — Ctrl-P resumes."
+                            } else {
+                                "Recording again."
+                            };
+                            self.say(Kind::Dim, word);
                             return Ok(());
                         }
                         // Swallowed rather than jumping to a recent note, which

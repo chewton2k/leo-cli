@@ -66,6 +66,8 @@ pub enum TaskEvent {
 pub struct Job {
     rx: Receiver<TaskEvent>,
     stop: Arc<AtomicBool>,
+    /// Set while a recording is paused. Only the listen worker reads it.
+    pause: Arc<AtomicBool>,
     done: bool,
 }
 
@@ -74,6 +76,15 @@ impl Job {
     /// not a cancel: audio already recorded is transcribed and saved.
     pub fn request_stop(&self) {
         self.stop.store(true, Ordering::Relaxed);
+    }
+
+    /// Pause or resume a recording.
+    pub fn set_paused(&self, paused: bool) {
+        self.pause.store(paused, Ordering::Relaxed);
+    }
+
+    pub fn paused(&self) -> bool {
+        self.pause.load(Ordering::Relaxed)
     }
 
     pub fn stop_requested(&self) -> bool {
@@ -99,6 +110,7 @@ impl Job {
         Job {
             rx,
             stop: Arc::new(AtomicBool::new(false)),
+            pause: Arc::new(AtomicBool::new(false)),
             done: false,
         }
     }
@@ -161,6 +173,7 @@ pub fn start_push(notes_dir: std::path::PathBuf) -> Job {
     Job {
         rx,
         stop,
+        pause: Arc::new(AtomicBool::new(false)),
         done: false,
     }
 }
@@ -222,6 +235,7 @@ pub fn start_ask(note: String, title: String, body: String) -> Job {
     Job {
         rx,
         stop,
+        pause: Arc::new(AtomicBool::new(false)),
         done: false,
     }
 }
@@ -297,6 +311,7 @@ pub fn start_structuring(
     Job {
         rx,
         stop,
+        pause: Arc::new(AtomicBool::new(false)),
         done: false,
     }
 }
@@ -387,6 +402,8 @@ pub fn start_listen(screen: bool) -> Job {
     let (tx, rx) = mpsc::channel();
     let stop = Arc::new(AtomicBool::new(false));
     let worker_stop = Arc::clone(&stop);
+    let pause = Arc::new(AtomicBool::new(false));
+    let worker_pause = Arc::clone(&pause);
 
     thread::spawn(move || {
         let recorder = match Recorder::start(screen) {
@@ -418,16 +435,46 @@ pub fn start_listen(screen: bool) -> Job {
         // enough audio to cut, not one interval later.
         let mut last_roll = Instant::now() - live::ROLL_INTERVAL;
 
+        // Paused stretches, in seconds into the file. The recorder keeps
+        // running through a pause; these are cut out before the final pass,
+        // and the live loop skips them.
+        let mut pauses: Vec<leo_services::listen::Pause> = Vec::new();
+        let mut paused_since: Option<f64> = None;
+
         while !worker_stop.load(Ordering::Relaxed) {
             thread::sleep(POLL);
 
-            let secs = recorder.elapsed().as_secs();
+            let now = recorder.elapsed().as_secs_f64();
+            match (worker_pause.load(Ordering::Relaxed), paused_since) {
+                (true, None) => paused_since = Some(now),
+                (false, Some(start)) => {
+                    pauses.push((start, Some(now)));
+                    paused_since = None;
+                    // Carry on from here, past the overlap, so nothing said
+                    // while paused reaches the live transcript.
+                    state.cursor = now.ceil() as u64 + live::OVERLAP.as_secs();
+                    last_roll = Instant::now() - state.interval;
+                }
+                _ => {}
+            }
+
+            let paused_for: f64 = pauses
+                .iter()
+                .map(|(start, end)| end.unwrap_or(now) - start)
+                .sum::<f64>()
+                + paused_since.map_or(0.0, |start| now - start);
+            let secs = (now - paused_for).max(0.0) as u64;
+            let state_word = if paused_since.is_some() {
+                "Paused"
+            } else {
+                "Recording"
+            };
             let _ = tx.send(TaskEvent::Progress {
-                label: format!("Recording {:02}:{:02}", secs / 60, secs % 60),
+                label: format!("{state_word} {:02}:{:02}", secs / 60, secs % 60),
                 steps: None,
             });
 
-            if last_roll.elapsed() < state.interval {
+            if paused_since.is_some() || last_roll.elapsed() < state.interval {
                 continue;
             }
             last_roll = Instant::now();
@@ -445,7 +492,14 @@ pub fn start_listen(screen: bool) -> Job {
             steps: None,
         });
 
-        let final_transcript = match recorder.stop() {
+        if let Some(start) = paused_since {
+            pauses.push((start, None));
+        }
+        let finished = recorder
+            .stop()
+            .and_then(|path| leo_services::listen::cut_pauses(&path, &pauses));
+
+        let final_transcript = match finished {
             Ok(path) => {
                 // A recording with no sound in it must not be transcribed. The
                 // result would be invented text saved as a note, which is worse
@@ -511,6 +565,7 @@ pub fn start_listen(screen: bool) -> Job {
     Job {
         rx,
         stop,
+        pause,
         done: false,
     }
 }
@@ -668,6 +723,7 @@ mod tests {
         let mut job = Job {
             rx,
             stop: Arc::new(AtomicBool::new(false)),
+            pause: Arc::new(AtomicBool::new(false)),
             done: false,
         };
         drop(tx);
@@ -681,6 +737,7 @@ mod tests {
         let mut job = Job {
             rx,
             stop: Arc::new(AtomicBool::new(false)),
+            pause: Arc::new(AtomicBool::new(false)),
             done: false,
         };
 
@@ -702,12 +759,23 @@ mod tests {
     }
 
     #[test]
+    fn pausing_is_visible_to_the_worker_and_can_be_undone() {
+        let job = Job::scripted(vec![]);
+        assert!(!job.paused());
+        job.set_paused(true);
+        assert!(job.paused());
+        job.set_paused(false);
+        assert!(!job.paused());
+    }
+
+    #[test]
     fn requesting_stop_is_visible_to_the_worker() {
         let (_tx, rx) = mpsc::channel();
         let stop = Arc::new(AtomicBool::new(false));
         let job = Job {
             rx,
             stop: Arc::clone(&stop),
+            pause: Arc::new(AtomicBool::new(false)),
             done: false,
         };
         assert!(!job.stop_requested());
@@ -722,6 +790,7 @@ mod tests {
         let mut job = Job {
             rx,
             stop: Arc::new(AtomicBool::new(false)),
+            pause: Arc::new(AtomicBool::new(false)),
             done: false,
         };
         tx.send(TaskEvent::Failed("no microphone".to_string()))

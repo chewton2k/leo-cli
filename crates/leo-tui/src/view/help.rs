@@ -103,6 +103,10 @@ pub const SECTIONS: &[Section] = &[
                 "a point, in the box under the transcript; it leads the note",
             ),
             e("Enter", "add the point"),
+            e(
+                "Ctrl-P",
+                "pause or resume; paused audio is never transcribed",
+            ),
             e("Esc", "stop and save"),
         ],
     },

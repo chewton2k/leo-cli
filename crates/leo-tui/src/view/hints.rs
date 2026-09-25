@@ -59,6 +59,7 @@ pub fn for_place(place: Place) -> &'static [(&'static str, &'static str)] {
         Place::Recording => &[
             ("type", "a point"),
             ("Enter", "add point"),
+            ("Ctrl-P", "pause"),
             ("Esc", "stop and save"),
         ],
     }

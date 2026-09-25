@@ -20,6 +20,7 @@ pub enum Preview<'a> {
     /// A recording in progress: the points typed so far, the transcript as it
     /// grows, and — while recording — the point being typed.
     Live {
+        paused: bool,
         points: Vec<String>,
         transcript: &'a str,
         jot: Option<&'a str>,
@@ -49,12 +50,13 @@ pub fn render(
     search: Option<&str>,
 ) {
     if let Preview::Live {
+        paused,
         points,
         transcript,
         jot,
     } = preview
     {
-        render_live(frame, area, points, transcript, *jot, focused);
+        render_live(frame, area, *paused, points, transcript, *jot, focused);
         return;
     }
     if matches!(preview, Preview::Empty) {
@@ -142,6 +144,7 @@ pub fn render(
 fn render_live(
     frame: &mut Frame,
     area: Rect,
+    paused: bool,
     points: &[String],
     transcript: &str,
     jot: Option<&str>,
@@ -152,7 +155,11 @@ fn render_live(
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(border(focused))
-        .title("live transcript");
+        .title(if paused {
+            "live transcript — paused (Ctrl-P resumes)"
+        } else {
+            "live transcript"
+        });
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -199,7 +206,7 @@ fn render_live(
         let jot_box = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(super::theme::accent()))
-            .title(" your point · Enter adds it · Esc stops ");
+            .title(" your point · Enter adds it · Ctrl-P pauses · Esc stops ");
         let field = jot_box.inner(box_area);
         frame.render_widget(jot_box, box_area);
         let shown = if jot.is_empty() {
