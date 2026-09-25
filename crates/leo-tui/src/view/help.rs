@@ -133,6 +133,7 @@ pub const SECTIONS: &[Section] = &[
             e("  e", "on that screen: open config.toml"),
             e("  Enter", "on a setting: change it, or set up git backup"),
             e("leo setup", "what works here; fixes what does not"),
+            e("leo doctor", "a full health scan: leo, notes, AI, backup"),
         ],
     },
     Section {

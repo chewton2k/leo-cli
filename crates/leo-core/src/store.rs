@@ -240,6 +240,11 @@ impl Store {
     }
 
     /// Load notes from a specific directory. Used directly in tests.
+    /// Where the notes live, without loading them.
+    pub fn notes_dir() -> Result<PathBuf> {
+        notes_dir_path()
+    }
+
     pub fn load_from(notes_dir: &Path) -> Result<Self> {
         fs::create_dir_all(notes_dir)?;
         let directories = load_directories(notes_dir)?;
@@ -440,6 +445,18 @@ impl Store {
             what,
         });
         true
+    }
+
+    /// IDs that more than one note has.
+    pub fn duplicate_ids(&self) -> Vec<String> {
+        let mut seen = HashSet::new();
+        let mut dupes: Vec<String> = Vec::new();
+        for note in &self.notes {
+            if !seen.insert(note.id.as_str()) && !dupes.contains(&note.id) {
+                dupes.push(note.id.clone());
+            }
+        }
+        dupes
     }
 
     /// Delete every note whose full ID is in `ids`, as one undoable change.
@@ -1344,6 +1361,18 @@ mod tests {
         assert!(std::fs::read_to_string(&broken)
             .unwrap()
             .contains("my words"));
+    }
+
+    /// Two note files with the same ID confuse every lookup by ID.
+    #[test]
+    fn duplicate_ids_are_found() {
+        let (mut store, _d) = temp_store();
+        store.create_note("A", "", vec![], "").unwrap();
+        store.create_note("B", "", vec![], "").unwrap();
+        assert!(store.duplicate_ids().is_empty());
+        let id = store.notes[0].id.clone();
+        store.notes[1].id = id.clone();
+        assert_eq!(store.duplicate_ids(), vec![id]);
     }
 
     /// The whole point: a deleted note comes back as it was, not as a copy.

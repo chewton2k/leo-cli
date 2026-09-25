@@ -10,7 +10,10 @@ use std::path::{Path, PathBuf};
 
 /// What users must no longer be told to type, and what replaced it.
 const STALE: &[(&str, &str)] = &[
-    ("leo doctor", "leo setup"),
+    ("leo model", "leo setup, or Ctrl-S"),
+    ("leo config path", "Ctrl-S, then e"),
+    ("`leo config`", "Ctrl-S, then e"),
+    ("leo env", "leo setup"),
     ("leo model login", "leo setup, or Ctrl-S"),
     ("leo model list", "leo setup"),
     ("leo config edit", "Ctrl-S, then e"),

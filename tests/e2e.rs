@@ -341,6 +341,32 @@ fn the_old_setup_aliases_are_gone() {
     }
 }
 
+/// `leo doctor` checks everything and says so by section; anything broken
+/// makes it exit non-zero, so a script can tell.
+#[test]
+fn doctor_scans_every_part_and_fails_when_something_is_broken() {
+    let leo = Leo::new();
+    leo.ok(&["new", "A note", "--body", "x"]);
+    std::fs::write(
+        leo.notes_dir().join("broken.md"),
+        "---\ntitle: [unclosed\n---\nmy words",
+    )
+    .unwrap();
+
+    let out = leo.cmd(&["doctor"]).output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    for heading in ["leo", "notes", "AI", "recording", "backup"] {
+        assert!(
+            text.lines().any(|l| l.trim() == heading),
+            "no {heading} section:\n{text}"
+        );
+    }
+    assert!(text.contains("broken.md"), "{text}");
+    assert!(!out.status.success(), "a broken note should fail the scan");
+    // Reading the notes must not have touched them.
+    assert!(leo.notes_dir().join("broken.md").exists());
+}
+
 // ── backup ──────────────────────────────────────────────────────────────────
 
 #[test]

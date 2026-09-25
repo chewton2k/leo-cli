@@ -11,7 +11,7 @@ use leo_services::{health, providers};
 /// `leo setup`: what works, where things live, and a key stored on the spot
 /// for anything the AI chains are missing.
 pub fn run() -> Result<()> {
-    doctor()?;
+    report()?;
     providers::model(providers::ModelAction::List)?;
 
     let store = store::Store::load()?;
@@ -39,40 +39,14 @@ pub fn run() -> Result<()> {
     Ok(())
 }
 
-pub fn doctor() -> Result<()> {
-    use health::State;
-
+/// The quick report `setup` opens with: what is installed and what is not.
+/// `leo doctor` is the thorough version.
+fn report() -> Result<()> {
     let config = Config::load();
     let checks = health::report(&config, config::secret::default_store().as_ref());
 
     println!();
-    let mut missing = 0;
-    for check in &checks {
-        let (mark, label) = match &check.state {
-            State::Ready => ("ok  ", "".to_string()),
-            State::Warn { note } => ("note", note.clone()),
-            State::Missing { .. } => {
-                missing += 1;
-                ("no  ", String::new())
-            }
-        };
-        let detail = check
-            .detail
-            .as_deref()
-            .map(|d| format!(" — {d}"))
-            .unwrap_or_default();
-        println!("  {mark} {}{detail}", check.what);
-        if !label.is_empty() {
-            println!("       {label}");
-        }
-        if let State::Missing { fix } = &check.state {
-            println!("       needed for {}", check.needed_for);
-            for line in fix.lines() {
-                println!("       {}", line.trim());
-            }
-        }
-    }
-
+    let missing = checks.iter().filter(|c| print_check(c)).count();
     println!();
     if missing == 0 {
         println!("  Everything leo can use is available.");
@@ -84,4 +58,35 @@ pub fn doctor() -> Result<()> {
     }
     println!();
     Ok(())
+}
+
+/// Print one check: ok, note, or no with what it is for and how to fix it.
+/// Returns whether it failed.
+pub(super) fn print_check(check: &health::Check) -> bool {
+    use health::State;
+    let mark = match &check.state {
+        State::Ready => "ok  ",
+        State::Warn { .. } => "note",
+        State::Missing { .. } => "no  ",
+    };
+    let detail = check
+        .detail
+        .as_deref()
+        .map(|d| format!(" — {d}"))
+        .unwrap_or_default();
+    println!("  {mark} {}{detail}", check.what);
+    match &check.state {
+        State::Ready => false,
+        State::Warn { note } => {
+            println!("       {note}");
+            false
+        }
+        State::Missing { fix } => {
+            println!("       needed for {}", check.needed_for);
+            for line in fix.lines() {
+                println!("       {}", line.trim());
+            }
+            true
+        }
+    }
 }

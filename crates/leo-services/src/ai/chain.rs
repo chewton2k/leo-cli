@@ -65,7 +65,9 @@ fn run_chat_chain_with(
     on_restart: &mut dyn FnMut(),
 ) -> Result<ChainOutcome<String>> {
     if providers.is_empty() {
-        bail!("no chat providers configured — check the [chat] chain in your leo config");
+        bail!(
+            "no chat providers configured — check the [chat] chain in config.toml (Ctrl-S, then e)"
+        );
     }
 
     let mut skipped: Vec<String> = Vec::new();
@@ -134,7 +136,7 @@ pub fn run_transcribe_chain(
     transcribe_with: impl Fn(&dyn TranscribeProvider, &Path) -> Result<String, ProviderError>,
 ) -> Result<ChainOutcome<String>> {
     if providers.is_empty() {
-        bail!("no transcription providers configured — check the [transcribe] chain in your leo config");
+        bail!("no transcription providers configured — check the [transcribe] chain in config.toml (Ctrl-S, then e)");
     }
 
     let mut skipped: Vec<String> = Vec::new();

@@ -355,6 +355,7 @@ leo edit 3f2a
 leo delete 3f2a --force
 leo ask 3f2a
 leo listen --title "Meeting notes"  # records until you press Enter
+leo doctor                          # full health scan; exits 1 if anything is broken
 ```
 
 A note can be named by its number in `leo list`, the start of its ID, or a
@@ -440,8 +441,10 @@ works from your terminal (a signed-in account or an SSH key). If the push is
 rejected, run `leo sync` again: it pulls first.
 
 **Anything else**
-Run `leo setup`. It checks everything leo depends on and prints the fix for
-each problem it finds.
+Run `leo doctor` for a full health scan. It checks leo itself, reads every note
+(and names any file it cannot read), tests each AI you use with one small
+request, listens to the microphone, and asks your GitHub backup whether it
+answers — then prints the fix for each problem it finds.
 
 ---
 

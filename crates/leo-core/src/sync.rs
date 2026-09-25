@@ -110,6 +110,62 @@ pub fn unpushed(notes_dir: &Path) -> Option<usize> {
     String::from_utf8_lossy(&out.stdout).trim().parse().ok()
 }
 
+/// How many files have changed since the last commit, or `None` when this is
+/// not a repository.
+pub fn uncommitted(notes_dir: &Path) -> Option<usize> {
+    let out = Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(notes_dir)
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).lines().count())
+}
+
+/// Whether the remote answers, without changing anything. Never waits on a
+/// password prompt, and gives up after fifteen seconds.
+pub fn remote_reachable(notes_dir: &Path) -> std::result::Result<(), String> {
+    let mut child = Command::new("git")
+        .args(["ls-remote", "--heads", "origin"])
+        .current_dir(notes_dir)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env(
+            "GIT_SSH_COMMAND",
+            "ssh -o BatchMode=yes -o ConnectTimeout=10",
+        )
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("could not run git: {e}"))?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return Ok(()),
+            Ok(Some(_)) => {
+                let mut err = String::new();
+                if let Some(mut stderr) = child.stderr.take() {
+                    use std::io::Read;
+                    let _ = stderr.read_to_string(&mut err);
+                }
+                let first = err
+                    .lines()
+                    .find(|l| !l.trim().is_empty())
+                    .unwrap_or("no answer");
+                return Err(first.trim().to_string());
+            }
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                return Err("no answer within 15 seconds".to_string());
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+}
+
 /// Back up now: pull what another machine pushed, then push. Says how to set
 /// backup up when it is not, rather than failing inside git.
 pub fn now(notes_dir: &Path) -> Result<()> {
@@ -226,6 +282,39 @@ mod tests {
         now(&notes).unwrap();
         // And the second one, which does pull, works too.
         now(&notes).unwrap();
+    }
+
+    /// Files changed outside leo, and not yet committed, are counted.
+    #[test]
+    fn uncommitted_changes_are_counted() {
+        let tmp = TempDir::new().unwrap();
+        init(tmp.path()).unwrap();
+        assert_eq!(uncommitted(tmp.path()), Some(0));
+        std::fs::write(tmp.path().join("a.md"), "x").unwrap();
+        std::fs::write(tmp.path().join("b.md"), "y").unwrap();
+        assert_eq!(uncommitted(tmp.path()), Some(2));
+        assert_eq!(uncommitted(&tmp.path().join("not-a-repo")), None);
+    }
+
+    #[test]
+    fn a_remote_that_answers_is_reachable_and_a_missing_one_is_not() {
+        let tmp = TempDir::new().unwrap();
+        let remote = tmp.path().join("remote.git");
+        let notes = tmp.path().join("notes");
+        std::fs::create_dir_all(&notes).unwrap();
+        assert!(Command::new("git")
+            .args(["init", "--bare", "-q"])
+            .arg(&remote)
+            .status()
+            .unwrap()
+            .success());
+        connect(&notes, remote.to_str().unwrap()).unwrap();
+        assert!(remote_reachable(&notes).is_ok());
+
+        let elsewhere = tmp.path().join("other");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        connect(&elsewhere, tmp.path().join("nowhere.git").to_str().unwrap()).unwrap();
+        assert!(remote_reachable(&elsewhere).is_err());
     }
 
     #[test]

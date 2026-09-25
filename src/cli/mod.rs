@@ -2,6 +2,7 @@
 //! subcommands. Each converts its arguments into the same `Action`s and
 //! provider calls the TUI uses, so the two cannot drift apart.
 
+mod doctor;
 mod notes;
 mod prompt;
 mod setup;
@@ -150,7 +151,7 @@ pub fn run(cli: Cli) -> Result<()> {
             tokio::runtime::Runtime::new()?.block_on(leo_web::serve(port))
         }
         Some(Commands::Setup) => setup::run(),
-        Some(Commands::Doctor) => setup::doctor(),
+        Some(Commands::Doctor) => doctor::run(),
         Some(Commands::Sync { command }) => sync::run(command),
         None => {
             if std::io::stdin().is_terminal() {

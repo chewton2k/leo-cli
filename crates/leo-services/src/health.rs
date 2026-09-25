@@ -41,7 +41,7 @@ pub struct Check {
 }
 
 impl Check {
-    fn ready(what: &str, needed_for: &str, detail: Option<String>) -> Self {
+    pub(crate) fn ready(what: &str, needed_for: &str, detail: Option<String>) -> Self {
         Self {
             what: what.to_string(),
             needed_for: needed_for.to_string(),
@@ -50,7 +50,7 @@ impl Check {
         }
     }
 
-    fn missing(what: &str, needed_for: &str, fix: &str) -> Self {
+    pub(crate) fn missing(what: &str, needed_for: &str, fix: &str) -> Self {
         Self {
             what: what.to_string(),
             needed_for: needed_for.to_string(),
@@ -203,7 +203,7 @@ impl Chain {
 
 /// Whether at least one provider in a chain is usable, and which one leo would
 /// reach for.
-fn chain_check(config: &Config, chain: Chain, store: &dyn SecretStore) -> Check {
+pub(crate) fn chain_check(config: &Config, chain: Chain, store: &dyn SecretStore) -> Check {
     let names = match chain {
         Chain::Chat => &config.chat.chain,
         Chain::Transcribe => &config.transcribe.chain,
@@ -287,7 +287,7 @@ fn is_loopback(url: &str) -> bool {
 
 /// The platform's install command for a tool, so the fix is copy-pasteable
 /// rather than "install sox".
-fn install_hint(tool: &str) -> &'static str {
+pub(crate) fn install_hint(tool: &str) -> &'static str {
     match (tool, cfg!(target_os = "macos"), cfg!(target_os = "windows")) {
         ("sox", true, _) => "brew install sox",
         ("sox", _, true) => "choco install sox",
@@ -349,7 +349,7 @@ pub fn report(config: &Config, store: &dyn SecretStore) -> Vec<Check> {
 /// Worth reporting because the choice of a file over the keychain trades
 /// encryption at rest for filesystem permissions — so those permissions are the
 /// protection, and an unchecked assumption is not one.
-fn credentials_check() -> Check {
+pub(crate) fn credentials_check() -> Check {
     use crate::config::file_store::FileStore;
 
     if std::env::var("LEO_USE_KEYCHAIN").is_ok_and(|v| v != "0" && !v.is_empty()) {
