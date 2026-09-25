@@ -15,7 +15,6 @@ use std::time::{Duration, Instant};
 use leo_services::ai::live;
 use leo_services::listen::Recorder;
 
-const STRUCTURE_MAX_TOKENS: u32 = 4096;
 /// How often the worker wakes to check the clock and the stop flag.
 const POLL: Duration = Duration::from_millis(250);
 
@@ -256,7 +255,7 @@ pub fn start_structuring(
                     &points,
                     length_secs,
                 ),
-                STRUCTURE_MAX_TOKENS,
+                leo_services::ai::STRUCTURE_MAX_TOKENS,
             )
             .map(|outcome| (None, outcome)),
             None => leo_services::ai::chat_outcome(
@@ -265,7 +264,7 @@ pub fn start_structuring(
                     &points,
                     length_secs,
                 ),
-                STRUCTURE_MAX_TOKENS,
+                leo_services::ai::STRUCTURE_MAX_TOKENS,
             )
             .map(|outcome| {
                 let (title, body) = leo_services::ai::chat::split_title_body(&outcome.value);

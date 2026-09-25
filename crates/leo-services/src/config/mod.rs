@@ -176,7 +176,7 @@ kind = "openai"
 base_url = "https://openrouter.ai/api/v1"
 model = "openrouter/free"
 key_env = "OPENROUTER_API_KEY"
-max_tokens = 4096
+max_tokens = 8192
 
 # Everything below is defined and ready: add the name to a chain above, and run
 # `leo setup` (or Ctrl-S, Enter) if it needs a key.
@@ -206,28 +206,28 @@ kind = "openai"
 base_url = "https://api.groq.com/openai/v1"
 model = "llama-3.3-70b-versatile"
 key_env = "GROQ_API_KEY"
-max_tokens = 4096
+max_tokens = 8192
 
 [providers.cerebras]
 kind = "openai"
 base_url = "https://api.cerebras.ai/v1"
 model = "llama-3.3-70b"
 key_env = "CEREBRAS_API_KEY"
-max_tokens = 4096
+max_tokens = 8192
 
 [providers.gemini]
 kind = "openai"
 base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
 model = "gemini-2.5-flash"
 key_env = "GEMINI_API_KEY"
-max_tokens = 4096
+max_tokens = 8192
 
 [providers.mistral]
 kind = "openai"
 base_url = "https://api.mistral.ai/v1"
 model = "mistral-small-latest"
 key_env = "MISTRAL_API_KEY"
-max_tokens = 4096
+max_tokens = 8192
 
 # Paid. Check pricing before putting these in a chain.
 [providers.openai]
@@ -235,28 +235,28 @@ kind = "openai"
 base_url = "https://api.openai.com/v1"
 model = "gpt-4o-mini"
 key_env = "OPENAI_API_KEY"
-max_tokens = 4096
+max_tokens = 8192
 
 [providers.deepseek]
 kind = "openai"
 base_url = "https://api.deepseek.com/v1"
 model = "deepseek-chat"
 key_env = "DEEPSEEK_API_KEY"
-max_tokens = 4096
+max_tokens = 8192
 
 [providers.together]
 kind = "openai"
 base_url = "https://api.together.xyz/v1"
 model = "meta-llama/Llama-3.3-70B-Instruct-Turbo"
 key_env = "TOGETHER_API_KEY"
-max_tokens = 4096
+max_tokens = 8192
 
 [providers.xai]
 kind = "openai"
 base_url = "https://api.x.ai/v1"
 model = "grok-3-mini"
 key_env = "XAI_API_KEY"
-max_tokens = 4096
+max_tokens = 8192
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -680,6 +680,38 @@ kind = "telepathy"
                     "{name}: {var} should end in _API_KEY"
                 );
             }
+        }
+    }
+
+    /// An hour of lecture makes a long note; cloud models can write one, and
+    /// a 4096-token cap cut it off mid-sentence. Local servers keep the lower
+    /// cap, since small local models have small contexts.
+    #[test]
+    fn cloud_chat_providers_allow_long_notes_and_local_ones_stay_modest() {
+        let cfg = Config::default();
+        for cloud in [
+            "openrouter",
+            "groq_chat",
+            "cerebras",
+            "gemini",
+            "mistral",
+            "openai",
+            "deepseek",
+            "together",
+            "xai",
+        ] {
+            assert_eq!(
+                cfg.provider(cloud).and_then(|p| p.max_tokens),
+                Some(8192),
+                "{cloud}"
+            );
+        }
+        for local in ["ollama", "lmstudio", "llamacpp", "vllm"] {
+            assert_eq!(
+                cfg.provider(local).and_then(|p| p.max_tokens),
+                Some(4096),
+                "{local}"
+            );
         }
     }
 

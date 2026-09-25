@@ -12,7 +12,8 @@ use anyhow::Result;
 use crate::config::Config;
 
 /// Token budget for full note structuring.
-const STRUCTURE_MAX_TOKENS: u32 = 4096;
+/// Room for a long lecture's notes, for a provider with no cap of its own.
+pub const STRUCTURE_MAX_TOKENS: u32 = 8192;
 /// Token budget for expanding one inline @leo prompt.
 const EXPAND_MAX_TOKENS: u32 = 2000;
 

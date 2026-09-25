@@ -88,6 +88,27 @@ enum Delta {
     Reasoning(String),
 }
 
+/// Why a streamed answer ended, from the chunk that says so.
+fn finish_reason(payload: &str) -> Option<String> {
+    let json: serde_json::Value = serde_json::from_str(payload.trim()).ok()?;
+    json["choices"][0]["finish_reason"]
+        .as_str()
+        .filter(|r| !r.is_empty())
+        .map(str::to_string)
+}
+
+/// What to tell the user when an answer stopped at the token limit. The text
+/// is still used — most of a note beats none — but it is cut off, and the fix
+/// is a setting they can change.
+fn cut_off_warning(name: &str, finish: &str, max_tokens: u32) -> Option<String> {
+    (finish == "length").then(|| {
+        format!(
+            "{name}: the answer hit its {max_tokens}-token limit and is cut off; \
+             raise max_tokens for {name} in config.toml (Ctrl-S, then e)"
+        )
+    })
+}
+
 /// Pull the text out of one SSE `data:` payload.
 ///
 /// Returns `None` for anything that is not text — keep-alives, the terminating
@@ -136,6 +157,7 @@ impl ChatProvider for OpenAiChat {
         // Held back rather than shown: only used if no content ever arrives,
         // which is how a reasoning model on a free tier sometimes replies.
         let mut reasoning = String::new();
+        let mut finish = String::new();
 
         let reader = BufReader::new(resp);
         for line in reader.lines() {
@@ -147,6 +169,9 @@ impl ChatProvider for OpenAiChat {
             let Some(payload) = line.strip_prefix("data:") else {
                 continue;
             };
+            if let Some(reason) = finish_reason(payload) {
+                finish = reason;
+            }
             match delta_text(payload) {
                 Some(Delta::Content(fragment)) => {
                     answer.push_str(&fragment);
@@ -158,6 +183,9 @@ impl ChatProvider for OpenAiChat {
         }
 
         if !answer.trim().is_empty() {
+            if let Some(note) = cut_off_warning(&self.name, &finish, req.max_tokens) {
+                leo_core::diag::warn(note);
+            }
             return Ok(answer);
         }
         // No answer, but the model said something: better than nothing, and the
@@ -216,7 +244,12 @@ impl ChatProvider for OpenAiChat {
             });
 
         match text {
-            Some(t) => Ok(t.to_string()),
+            Some(t) => {
+                if let Some(note) = cut_off_warning(&self.name, finish, req.max_tokens) {
+                    leo_core::diag::warn(note);
+                }
+                Ok(t.to_string())
+            }
             // Retryable, not fatal: an empty completion is this provider
             // failing to answer, and the next one in the chain may well do
             // better. Treating it as fatal would abort the whole chain over a
@@ -294,6 +327,32 @@ mod tests {
         let body = provider.body(&plain, false);
         assert_eq!(body["messages"].as_array().unwrap().len(), 1);
         assert_eq!(body["messages"][0]["role"], "user");
+    }
+
+    /// A reply that ran into the token limit is kept — most of a note beats
+    /// none — but the user is told it is cut off and what to raise.
+    #[test]
+    fn a_cut_off_answer_says_so_and_names_the_setting() {
+        let note = cut_off_warning("openrouter", "length", 4096).expect("a warning");
+        assert!(note.contains("openrouter"), "{note}");
+        assert!(note.contains("4096"), "{note}");
+        assert!(note.contains("max_tokens"), "{note}");
+        assert_eq!(cut_off_warning("openrouter", "stop", 4096), None);
+        assert_eq!(cut_off_warning("openrouter", "", 4096), None);
+    }
+
+    /// Streaming reports why it ended in the last chunk, not in the text.
+    #[test]
+    fn the_finish_reason_is_read_from_a_stream_chunk() {
+        assert_eq!(
+            finish_reason(r#"{"choices":[{"delta":{},"finish_reason":"length"}]}"#).as_deref(),
+            Some("length")
+        );
+        assert_eq!(
+            finish_reason(r#"{"choices":[{"delta":{"content":"hi"},"finish_reason":null}]}"#),
+            None
+        );
+        assert_eq!(finish_reason("[DONE]"), None);
     }
 
     #[test]
