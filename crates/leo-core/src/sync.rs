@@ -18,10 +18,8 @@ pub fn init(notes_dir: &Path) -> Result<()> {
 
     run_git(notes_dir, &["init", "-b", "main"]).context("git init failed — is git installed?")?;
 
-    let gitignore = notes_dir.join(".gitignore");
-    if !gitignore.exists() {
-        fs::write(&gitignore, GITIGNORE)?;
-    }
+    ensure_lines(&notes_dir.join(".gitignore"), GITIGNORE)?;
+    ensure_lines(&notes_dir.join(".gitattributes"), GITATTRIBUTES)?;
 
     // Commit any existing files (e.g. migrated notes)
     run_git(notes_dir, &["add", "."])?;
@@ -71,9 +69,23 @@ pub fn push(notes_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Pull, merging rather than rebasing whatever the user's git is set to, so a
+/// conflict never leaves the notes half-rebased. `--allow-unrelated-histories`
+/// is what lets a second computer, which started its own history, join a
+/// backup the first one made.
 pub fn pull(notes_dir: &Path) -> Result<()> {
     let branch = current_branch(notes_dir)?;
-    print_output(run_git(notes_dir, &["pull", "origin", &branch])?);
+    print_output(run_git(
+        notes_dir,
+        &[
+            "pull",
+            "--no-rebase",
+            "--no-edit",
+            "--allow-unrelated-histories",
+            "origin",
+            &branch,
+        ],
+    )?);
     Ok(())
 }
 
@@ -175,6 +187,7 @@ pub fn now(notes_dir: &Path) -> Result<()> {
     if remote_url(notes_dir).is_none() {
         anyhow::bail!("No remote to back up to. Run `leo sync connect <url>`, or press Ctrl-S.");
     }
+    prepare(notes_dir)?;
     // A new, empty repository has nothing to pull yet.
     if remote_has_branch(notes_dir)? {
         pull(notes_dir)?;
@@ -223,7 +236,63 @@ pub fn auto_commit(notes_dir: &Path) -> Result<()> {
 
 /// Files inside the notes directory that are leo's business, not the user's
 /// notes, and so must never be pushed to their remote.
-const GITIGNORE: &str = "*.wav\n*.bak\n.manual-installed\n";
+const GITIGNORE: &str = "*.wav\n*.bak\n.manual-installed\ndirectories.json\n";
+
+/// A note edited on two computers keeps both sides' lines rather than one
+/// side's edit being lost; the user tidies it, instead of it vanishing.
+const GITATTRIBUTES: &str = "*.md merge=union\n";
+
+/// Bring the repository's own files up to date: the ignore list, the merge
+/// rule for notes, and — for a repository made by an earlier version — no
+/// longer tracking the directory list, which is rebuilt from the notes on load
+/// and would otherwise conflict between every pair of computers.
+pub fn prepare(notes_dir: &Path) -> Result<()> {
+    ensure_lines(&notes_dir.join(".gitignore"), GITIGNORE)?;
+    ensure_lines(&notes_dir.join(".gitattributes"), GITATTRIBUTES)?;
+    run_git(
+        notes_dir,
+        &[
+            "rm",
+            "--cached",
+            "--quiet",
+            "--ignore-unmatch",
+            "directories.json",
+        ],
+    )?;
+    run_git(notes_dir, &["add", ".gitignore", ".gitattributes"])?;
+    let staged = !Command::new("git")
+        .args(["diff", "--cached", "--quiet"])
+        .current_dir(notes_dir)
+        .status()?
+        .success();
+    if staged {
+        run_git(
+            notes_dir,
+            &["commit", "-q", "-m", "leo: update backup settings"],
+        )?;
+    }
+    Ok(())
+}
+
+/// Add each of `wanted`'s lines to the file if it lacks them.
+fn ensure_lines(path: &Path, wanted: &str) -> Result<()> {
+    let mut text = fs::read_to_string(path).unwrap_or_default();
+    let mut changed = false;
+    for line in wanted.lines() {
+        if !text.lines().any(|l| l.trim() == line) {
+            if !text.is_empty() && !text.ends_with('\n') {
+                text.push('\n');
+            }
+            text.push_str(line);
+            text.push('\n');
+            changed = true;
+        }
+    }
+    if changed {
+        fs::write(path, text)?;
+    }
+    Ok(())
+}
 
 /// Run git and capture what it says.
 ///
@@ -315,6 +384,122 @@ mod tests {
         std::fs::create_dir_all(&elsewhere).unwrap();
         connect(&elsewhere, tmp.path().join("nowhere.git").to_str().unwrap()).unwrap();
         assert!(remote_reachable(&elsewhere).is_err());
+    }
+
+    /// Two computers backing up to one repository: the second one's notes
+    /// and the first one's must end up on both, rather than git refusing to
+    /// combine two separate histories.
+    #[test]
+    fn a_second_computer_joins_an_existing_backup() {
+        let tmp = TempDir::new().unwrap();
+        let remote = tmp.path().join("remote.git");
+        assert!(Command::new("git")
+            .args(["init", "--bare", "-q"])
+            .arg(&remote)
+            .status()
+            .unwrap()
+            .success());
+        let url = remote.to_str().unwrap();
+
+        // The first computer backs up a note.
+        let first = tmp.path().join("first");
+        std::fs::create_dir_all(&first).unwrap();
+        init(&first).unwrap();
+        std::fs::write(first.join("a.md"), "from the first computer").unwrap();
+        std::fs::write(first.join("directories.json"), "[\"cs130\"]").unwrap();
+        auto_commit(&first).unwrap();
+        connect(&first, url).unwrap();
+        now(&first).unwrap();
+
+        // The second already has notes of its own, and its own directory list.
+        let second = tmp.path().join("second");
+        std::fs::create_dir_all(&second).unwrap();
+        init(&second).unwrap();
+        std::fs::write(second.join("b.md"), "from the second computer").unwrap();
+        std::fs::write(second.join("directories.json"), "[\"cs162\"]").unwrap();
+        auto_commit(&second).unwrap();
+        connect(&second, url).unwrap();
+        now(&second).unwrap();
+
+        assert!(
+            second.join("a.md").exists(),
+            "the first computer's note did not arrive"
+        );
+        assert!(
+            second.join("b.md").exists(),
+            "the second computer's own note was lost"
+        );
+
+        // And back again: the first computer gets the second's note.
+        now(&first).unwrap();
+        assert!(first.join("b.md").exists());
+    }
+
+    /// Both computers changed different notes since they last agreed; newer
+    /// git refuses to pull without being told how to combine them.
+    #[test]
+    fn two_computers_that_both_changed_notes_combine_them() {
+        let tmp = TempDir::new().unwrap();
+        let remote = tmp.path().join("remote.git");
+        assert!(Command::new("git")
+            .args(["init", "--bare", "-q"])
+            .arg(&remote)
+            .status()
+            .unwrap()
+            .success());
+        let url = remote.to_str().unwrap();
+        let first = tmp.path().join("first");
+        std::fs::create_dir_all(&first).unwrap();
+        init(&first).unwrap();
+        std::fs::write(first.join("a.md"), "a").unwrap();
+        auto_commit(&first).unwrap();
+        connect(&first, url).unwrap();
+        now(&first).unwrap();
+        let second = tmp.path().join("second");
+        assert!(Command::new("git")
+            .args(["clone", "-q", "-b", "main", url])
+            .arg(&second)
+            .status()
+            .unwrap()
+            .success());
+
+        std::fs::write(first.join("from-first.md"), "1").unwrap();
+        auto_commit(&first).unwrap();
+        now(&first).unwrap();
+        std::fs::write(second.join("from-second.md"), "2").unwrap();
+        auto_commit(&second).unwrap();
+        now(&second).unwrap();
+
+        assert!(second.join("from-first.md").exists());
+    }
+
+    /// The directory list is rebuilt from the notes on every load, so it is
+    /// not backed up — it is the one file two computers would always fight
+    /// over. A note edited on both keeps both sides rather than losing one.
+    #[test]
+    fn the_backup_leaves_out_the_directory_list_and_merges_notes_by_union() {
+        let tmp = TempDir::new().unwrap();
+        init(tmp.path()).unwrap();
+        let ignore = std::fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
+        assert!(ignore.lines().any(|l| l == "directories.json"), "{ignore}");
+        let attributes = std::fs::read_to_string(tmp.path().join(".gitattributes")).unwrap();
+        assert!(attributes.contains("*.md merge=union"), "{attributes}");
+    }
+
+    /// A repository set up by an earlier version tracked the directory list;
+    /// the next backup stops tracking it, without deleting the file.
+    #[test]
+    fn an_older_backup_stops_tracking_the_directory_list() {
+        let tmp = TempDir::new().unwrap();
+        run_git(tmp.path(), &["init", "-q", "-b", "main"]).unwrap();
+        std::fs::write(tmp.path().join("directories.json"), "[]").unwrap();
+        run_git(tmp.path(), &["add", "."]).unwrap();
+        run_git(tmp.path(), &["commit", "-q", "-m", "old"]).unwrap();
+
+        prepare(tmp.path()).unwrap();
+        let tracked = run_git(tmp.path(), &["ls-files"]).unwrap();
+        assert!(!tracked.contains("directories.json"), "{tracked}");
+        assert!(tmp.path().join("directories.json").exists());
     }
 
     #[test]

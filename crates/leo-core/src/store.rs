@@ -251,6 +251,23 @@ impl Store {
         let mut notes = Vec::new();
         let mut unreadable = Vec::new();
         collect_notes(notes_dir, notes_dir, &mut notes, &mut unreadable)?;
+
+        // The directory list on disk only needs to remember empty directories:
+        // every note's directory, and its parents, is known from where it is.
+        let mut directories = directories;
+        for note in &notes {
+            let parts: Vec<&str> = note
+                .directory
+                .split('/')
+                .filter(|p| !p.is_empty())
+                .collect();
+            for i in 0..parts.len() {
+                let dir = parts[..=i].join("/");
+                if !directories.contains(&dir) {
+                    directories.push(dir);
+                }
+            }
+        }
         Ok(Store {
             unreadable,
             undo: Vec::new(),
@@ -1373,6 +1390,26 @@ mod tests {
         let id = store.notes[0].id.clone();
         store.notes[1].id = id.clone();
         assert_eq!(store.duplicate_ids(), vec![id]);
+    }
+
+    /// A note's directory is shown even if the directory list on disk never
+    /// heard of it — as after a backup brought in notes from another computer.
+    #[test]
+    fn directories_are_derived_from_where_notes_live() {
+        let (mut store, _d) = temp_store();
+        store.create_dir("cs130");
+        store.create_note("Deep", "x", vec![], "cs162/lec").unwrap();
+        store.save().unwrap();
+        std::fs::write(store.notes_dir.join("directories.json"), "[\"cs130\"]").unwrap();
+
+        let store = Store::load_from(&store.notes_dir).unwrap();
+        for dir in ["cs130", "cs162", "cs162/lec"] {
+            assert!(
+                store.dir_exists(dir),
+                "{dir} is missing: {:?}",
+                store.directories
+            );
+        }
     }
 
     /// The whole point: a deleted note comes back as it was, not as a copy.

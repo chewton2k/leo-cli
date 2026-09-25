@@ -1298,7 +1298,10 @@ impl App {
                     match &a {
                         SyncAction::Now => leo_core::sync::now(&notes_dir),
                         SyncAction::Init => leo_core::sync::init(&notes_dir),
-                        SyncAction::Connect { url } => leo_core::sync::connect(&notes_dir, url),
+                        // Connecting is the moment to back up: bring down any notes
+                        // already there, then send these.
+                        SyncAction::Connect { url } => leo_core::sync::connect(&notes_dir, url)
+                            .and_then(|()| leo_core::sync::now(&notes_dir)),
                         SyncAction::Push => leo_core::sync::push(&notes_dir),
                         SyncAction::Pull => leo_core::sync::pull(&notes_dir),
                         SyncAction::Status => leo_core::sync::status(&notes_dir),

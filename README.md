@@ -301,7 +301,8 @@ Any `@leo` lines are also answered when you save a note from the editor.
 
 ## 6. Back up to GitHub
 
-1. Create an **empty** repository on GitHub (no README, no .gitignore).
+1. Create an **empty** repository on GitHub (no README, no .gitignore). Make
+   it **private** unless you want your notes public.
 2. Run:
 
    ```sh
@@ -317,6 +318,11 @@ From then on:
 - leo pushes when you quit the app;
 - `leo sync` (or `/sync` in the app) backs up on demand: it pulls anything
   newer from GitHub first, then pushes.
+
+**On another computer:** install leo, run `leo sync`, and paste the same
+repository's URL. The notes already backed up come down, this computer's notes
+go up, and from then on both stay in step. If the same note was edited on both,
+leo keeps both versions' lines in it for you to tidy rather than losing either.
 
 To push while you work instead of on quit, press `Ctrl-S` and change **when leo
 backs up** on the backup row. You can also set up backup from that screen
@@ -436,8 +442,8 @@ Run `leo setup`: it says which kind of AI is missing and how to add it. Keys
 can also be added with `Ctrl-S`, then `Enter` on the provider.
 
 **`leo sync` fails**
-Make sure the GitHub repository is empty the first time, and that `git push`
-works from your terminal (a signed-in account or an SSH key). If the push is
+Check that `git push` works from your terminal (a signed-in account or an SSH
+key), and run `leo doctor`, which asks the repository whether it answers. If the push is
 rejected, run `leo sync` again: it pulls first.
 
 **Anything else**

@@ -35,7 +35,8 @@ fn sync_or_set_up(notes_dir: &std::path::Path) -> Result<()> {
     if !std::io::stdin().is_terminal() {
         return sync::now(notes_dir);
     }
-    println!("  Backup is not set up yet. Make an empty repository on GitHub, then");
+    println!("  Backup is not set up yet. Make an empty repository on GitHub — or, on a");
+    println!("  second computer, use the one your notes are already backed up to — then");
     let url = super::prompt::ask(
         "  paste its URL (e.g. git@github.com:you/notes.git), or Enter to skip: ",
     )?;
@@ -46,7 +47,8 @@ fn sync_or_set_up(notes_dir: &std::path::Path) -> Result<()> {
         sync::init(notes_dir)?;
     }
     sync::connect(notes_dir, &url)?;
-    sync::push(notes_dir)?;
+    // Pulls first, so notes already in the repository come down too.
+    sync::now(notes_dir)?;
     println!(
         "  {} Backed up. From now on, `leo sync` does it again.",
         "ok".green()

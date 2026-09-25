@@ -408,6 +408,39 @@ fn sync_backs_notes_up_to_a_git_remote() {
     );
 }
 
+/// Two computers, one backup: each ends up with both computers' notes.
+#[test]
+fn a_second_computer_joins_the_backup_and_both_share_notes() {
+    if !has_git() {
+        eprintln!("skipping: git is not installed");
+        return;
+    }
+    let laptop = Leo::new();
+    let desktop = Leo::new();
+    let remote = laptop.home.path().join("remote.git");
+    let init = Command::new("git")
+        .args(["init", "--bare", "-q"])
+        .arg(&remote)
+        .output()
+        .unwrap();
+    assert!(init.status.success(), "{}", describe(&init));
+    let url = remote.to_str().unwrap();
+
+    laptop.ok(&["new", "Written on the laptop", "--body", "one"]);
+    laptop.ok(&["sync", "connect", url]);
+    laptop.ok(&["sync"]);
+
+    desktop.ok(&["new", "Written on the desktop", "--body", "two"]);
+    desktop.ok(&["sync", "connect", url]);
+    desktop.ok(&["sync"]);
+    let listed = desktop.ok(&["list"]);
+    assert!(listed.contains("Written on the laptop"), "{listed}");
+    assert!(listed.contains("Written on the desktop"), "{listed}");
+
+    laptop.ok(&["sync"]);
+    assert!(laptop.ok(&["list"]).contains("Written on the desktop"));
+}
+
 #[test]
 fn sync_before_setup_says_what_to_do() {
     let leo = Leo::new();
