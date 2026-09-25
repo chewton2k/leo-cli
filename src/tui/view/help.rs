@@ -83,6 +83,7 @@ pub const SECTIONS: &[Section] = &[
             e("a", "ask AI: answer its @leo lines"),
             e("R", "record a new note by talking"),
             e("D", "delete it (asks first)"),
+            e("Space", "mark notes; D and m then act on all of them"),
             e("D", "in the dirs pane: delete that whole directory"),
             e("u", "undo the last delete, move or tick"),
         ],

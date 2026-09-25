@@ -16,16 +16,23 @@ pub struct Ctx<'a> {
     /// The note the user is looking at, which is what a command means when it
     /// names no note. `None` on the CLI, which has no selection.
     pub selected: Option<&'a str>,
+    /// Notes marked in the panes. When there are any, a command that names no
+    /// note means all of them rather than the selection.
+    pub marked: &'a [String],
 }
 
-/// Apply an action. The only entry point a shell needs.
-/// Put the selected note into an action that named none.
+/// Put the marked notes, or else the selected one, into an action that named
+/// none.
 ///
 /// A command that leaves its note out means the one on screen, so nobody has to
 /// read a number off the list to act on what they are already looking at. With
 /// nothing selected — always the case on the CLI — it says so instead of
 /// guessing.
-pub fn fill_selected(action: Action, selected: Option<&str>) -> std::result::Result<Action, Line> {
+pub fn fill_selected(
+    action: Action,
+    selected: Option<&str>,
+    marked: &[String],
+) -> std::result::Result<Action, Line> {
     let omitted = match &action {
         Action::Edit { note }
         | Action::Delete { note }
@@ -37,6 +44,13 @@ pub fn fill_selected(action: Action, selected: Option<&str>) -> std::result::Res
     };
     if !omitted {
         return Ok(action);
+    }
+    if !marked.is_empty() {
+        match action {
+            Action::Delete { .. } => return Ok(Action::DeleteMany { ids: marked.to_vec() }),
+            Action::Mv { dir, .. } => return Ok(Action::Mv { notes: marked.to_vec(), dir }),
+            _ => {}
+        }
     }
     let Some(id) = selected else {
         return Err(Line::bad(
@@ -55,13 +69,14 @@ pub fn fill_selected(action: Action, selected: Option<&str>) -> std::result::Res
     })
 }
 
+/// Apply an action. The only entry point a shell needs.
 pub fn apply(
     action: Action,
     store: &mut Store,
     ctx: Ctx<'_>,
     ai: &dyn Ai,
 ) -> Result<Outcome> {
-    let action = match fill_selected(action, ctx.selected) {
+    let action = match fill_selected(action, ctx.selected, ctx.marked) {
         Ok(action) => action,
         Err(line) => return Ok(Outcome::line(line)),
     };
@@ -71,6 +86,7 @@ pub fn apply(
         Action::View { note } => Ok(view(store, &note, ctx.numbering)),
         Action::Edit { note } => Ok(edit(store, &note, ctx.numbering)),
         Action::Delete { note } => Ok(delete(store, &note, ctx.numbering)),
+        Action::DeleteMany { ids } => Ok(delete_many(store, &ids)),
         Action::Check { note, index } => check(store, &note, index, ctx.numbering),
         Action::Search { query } => Ok(search(store, &query)),
         Action::Listen { title, append_to, screen } => {
@@ -200,6 +216,18 @@ pub(super) fn delete(store: &Store, note: &str, numbering: &[String]) -> Outcome
     Outcome::effect(Effect::Confirm {
         prompt: format!("Delete {title}?"),
         on_yes: ConfirmedAction::DeleteNote { id, title },
+    })
+}
+
+/// Delete several notes, asking once.
+pub(super) fn delete_many(store: &Store, ids: &[String]) -> Outcome {
+    let ids: Vec<String> = ids.iter().filter(|id| store.find_note(id).is_some()).cloned().collect();
+    if ids.is_empty() {
+        return Outcome::line(Line::dim("Nothing to delete."));
+    }
+    Outcome::effect(Effect::Confirm {
+        prompt: format!("Delete {} note{}?", ids.len(), plural(ids.len())),
+        on_yes: ConfirmedAction::DeleteNotes { ids },
     })
 }
 
@@ -401,29 +429,26 @@ pub(super) fn mv(store: &mut Store, notes: &[String], dir: &str, numbering: &[St
     }
 
     let mut lines = Vec::new();
-    let mut moved = 0;
+    let mut ids = Vec::new();
     for arg in notes {
-        let id = match resolve(arg, store, numbering) {
-            Resolved::One(id) => id,
-            other => {
-                lines.extend(unresolved(arg, other).lines);
-                continue;
-            }
-        };
-        match store.move_note(&id, dir) {
-            Some(title) => {
-                let dest = if dir.is_empty() { "/" } else { dir };
-                lines.push(Line::good(format!("Moved \"{title}\" to {dest}")));
-                moved += 1;
-            }
-            None => lines.push(Line::bad(format!("Failed to move note: {arg}"))),
+        match resolve(arg, store, numbering) {
+            Resolved::One(id) => ids.push(id),
+            other => lines.extend(unresolved(arg, other).lines),
         }
     }
 
-    if moved > 0 {
+    // One store call, so one `u` takes the whole move back.
+    let moved = store.move_notes(&ids, dir);
+    let dest = if dir.is_empty() { "/" } else { dir };
+    match moved.as_slice() {
+        [] => {}
+        [title] => lines.push(Line::good(format!("Moved \"{title}\" to {dest}"))),
+        many => lines.push(Line::good(format!("Moved {} notes to {dest}", many.len()))),
+    }
+    if !moved.is_empty() {
         store.save()?;
     }
-    Ok(Outcome { dirty: moved > 0, ..Outcome::lines(lines) })
+    Ok(Outcome { dirty: !moved.is_empty(), ..Outcome::lines(lines) })
 }
 
 pub(super) fn rmdir(store: &mut Store, name: &str, recursive: bool, current_dir: &str) -> Result<Outcome> {
@@ -562,6 +587,16 @@ pub fn apply_confirmed(store: &mut Store, action: &ConfirmedAction) -> Result<Ou
             }
         }
 
+        ConfirmedAction::DeleteNotes { ids } => {
+            let n = store.delete_notes(ids);
+            if n > 0 {
+                store.save()?;
+            }
+            Ok(Outcome {
+                dirty: n > 0,
+                ..Outcome::line(Line::good(format!("Deleted {n} note{}.", plural(n))))
+            })
+        }
         ConfirmedAction::DeleteDir { path } => {
             let (notes, dirs) = store.delete_dir_recursive(path);
             if notes == 0 && dirs == 0 {
@@ -697,7 +732,7 @@ mod handler_tests {
     }
 
     fn ctx<'a>(dir: &'a str, numbering: &'a [String]) -> Ctx<'a> {
-        Ctx { current_dir: dir, numbering, selected: None }
+        Ctx { current_dir: dir, numbering, selected: None, marked: &[] }
     }
 
     fn seed(store: &mut Store, title: &str, body: &str, dir: &str) -> String {
@@ -707,7 +742,7 @@ mod handler_tests {
     }
 
     fn ctx_selected<'a>(numbering: &'a [String], selected: &'a str) -> Ctx<'a> {
-        Ctx { current_dir: "", numbering, selected: Some(selected) }
+        Ctx { current_dir: "", numbering, selected: Some(selected), marked: &[] }
     }
 
     // ── the selected note ───────────────────────────────────────────────────
@@ -768,6 +803,60 @@ mod handler_tests {
         )
         .unwrap();
         assert_eq!(store.find_note(&id).unwrap().directory, "cs130");
+    }
+
+    // ── marked notes ────────────────────────────────────────────────────────
+
+    fn ctx_marked<'a>(numbering: &'a [String], marked: &'a [String]) -> Ctx<'a> {
+        Ctx { current_dir: "", numbering, selected: marked.first().map(String::as_str), marked }
+    }
+
+    /// With notes marked, a command that names none means all of them.
+    #[test]
+    fn delete_with_marks_asks_once_for_all_of_them() {
+        let (mut store, _d) = temp_store();
+        let a = seed(&mut store, "A", "", "");
+        let b = seed(&mut store, "B", "", "");
+        seed(&mut store, "C", "", "");
+        let marked = vec![a.clone(), b.clone()];
+        let numbering = numbering_for(&store, "");
+        let out = apply(
+            Action::Delete { note: String::new() },
+            &mut store,
+            ctx_marked(&numbering, &marked),
+            &FakeAi::default(),
+        )
+        .unwrap();
+        let Effect::Confirm { prompt, on_yes } = out.effect else {
+            panic!("expected a confirmation, got {:?}", out.effect);
+        };
+        assert_eq!(prompt, "Delete 2 notes?");
+        apply_confirmed(&mut store, &on_yes).unwrap();
+        assert_eq!(store.notes.len(), 1);
+        store.undo().unwrap();
+        assert_eq!(store.notes.len(), 3, "one undo brings both back");
+    }
+
+    #[test]
+    fn mv_with_marks_moves_all_of_them_as_one_undo() {
+        let (mut store, _d) = temp_store();
+        store.create_dir("cs130");
+        let a = seed(&mut store, "A", "", "");
+        let b = seed(&mut store, "B", "", "");
+        let marked = vec![a.clone(), b.clone()];
+        let numbering = numbering_for(&store, "");
+        apply(
+            Action::Mv { notes: vec![], dir: "cs130".to_string() },
+            &mut store,
+            ctx_marked(&numbering, &marked),
+            &FakeAi::default(),
+        )
+        .unwrap();
+        assert_eq!(store.find_note(&a).unwrap().directory, "cs130");
+        assert_eq!(store.find_note(&b).unwrap().directory, "cs130");
+        store.undo().unwrap();
+        assert_eq!(store.find_note(&a).unwrap().directory, "");
+        assert_eq!(store.find_note(&b).unwrap().directory, "");
     }
 
     #[test]
@@ -1223,7 +1312,7 @@ mod handler_tests {
     }
 
     #[test]
-    fn mv_moves_several_notes_and_reports_each() {
+    fn mv_moves_several_notes_and_says_how_many() {
         let (mut store, _d) = temp_store();
         store.create_dir("cs130");
         let a = seed(&mut store, "One", "b", "");
@@ -1243,7 +1332,7 @@ mod handler_tests {
         assert!(out.dirty);
         assert_eq!(store.find_note(&a).unwrap().directory, "cs130");
         assert_eq!(store.find_note(&b).unwrap().directory, "cs130");
-        assert_eq!(out.lines.iter().filter(|l| l.kind == Kind::Good).count(), 2);
+        assert_eq!(out.text(), "Moved 2 notes to cs130");
     }
 
     #[test]

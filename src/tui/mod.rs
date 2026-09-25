@@ -112,6 +112,8 @@ pub struct App {
     /// cursor left on another note means nothing, so it reads as the first box.
     box_sel: usize,
     box_note: Option<String>,
+    /// Notes marked with Space. When any are, D and m act on all of them.
+    marked: Vec<String>,
     dir_sel: usize,
     focus: Pane,
     mode: Mode,
@@ -191,6 +193,7 @@ impl App {
             note_sel: 0,
             box_sel: 0,
             box_note: None,
+            marked: Vec::new(),
             dir_sel: 0,
             focus: Pane::Notes,
             mode: Mode::Normal,
@@ -233,7 +236,11 @@ impl App {
             .iter()
             .filter_map(|id| self.store.find_note(id))
             .collect();
-        view::notes::rows(&notes, &self.current_dir)
+        let mut rows = view::notes::rows(&notes, &self.current_dir);
+        for row in &mut rows {
+            row.marked = self.marked.contains(&row.id);
+        }
+        rows
     }
 
     /// Where the checkbox cursor is on the selected note.
@@ -744,6 +751,26 @@ impl App {
 
             Intent::NewNote => self.run_action(Action::New { title: None }, terminal),
 
+            Intent::ToggleMark => {
+                let Some(id) = self.selected_id().cloned() else {
+                    return Ok(());
+                };
+                match self.marked.iter().position(|m| *m == id) {
+                    Some(i) => {
+                        self.marked.remove(i);
+                    }
+                    None => self.marked.push(id),
+                }
+                match self.marked.len() {
+                    0 => self.say(Kind::Dim, "No notes marked."),
+                    n => self.say(
+                        Kind::Dim,
+                        format!("{n} marked — D deletes them, m moves them, Esc clears."),
+                    ),
+                }
+                Ok(())
+            }
+
             // Pre-filled rather than asked for from scratch: the usual rename is
             // a small change to the title that is already there.
             Intent::RenameSelected => {
@@ -773,6 +800,9 @@ impl App {
             // pane. Both confirm first.
             Intent::DeleteSelected => match self.focus {
                 Pane::Dirs => self.delete_selected_dir(terminal),
+                _ if !self.marked.is_empty() => {
+                    self.run_action(Action::Delete { note: String::new() }, terminal)
+                }
                 _ => match self.selected_ref() {
                     Some(note) => self.run_action(Action::Delete { note }, terminal),
                     None => Ok(()),
@@ -809,6 +839,11 @@ impl App {
             Intent::Cancel => {
                 self.pinned = None;
                 self.mode = Mode::Normal;
+                if !self.marked.is_empty() {
+                    self.marked.clear();
+                    self.say(Kind::Dim, "Marks cleared.");
+                    return Ok(());
+                }
                 let picked = self.selected_id().cloned();
                 if self.filter.take().is_some() {
                     self.resync();
@@ -966,10 +1001,16 @@ impl App {
 
     fn run_action<B: TuiBackend>(&mut self, action: Action, terminal: &mut Terminal<B>) -> Result<()> {
         let selected = self.numbering.get(self.note_sel).map(String::as_str);
-        let action = match action::fill_selected(action, selected) {
+        let action = match action::fill_selected(action, selected, &self.marked) {
             Ok(action) => action,
             Err(line) => return self.absorb(Outcome::line(line), terminal),
         };
+        // Marks are spent by the command that used them.
+        if matches!(&action, Action::DeleteMany { .. })
+            || matches!(&action, Action::Mv { notes, .. } if !self.marked.is_empty() && *notes == self.marked)
+        {
+            self.marked.clear();
+        }
         // `ask` is the one action that can take a minute. Run it on a worker and
         // stream the answer: inline, it froze the interface with nothing to say
         // whether the model was thinking or the request had died.
@@ -1016,6 +1057,7 @@ impl App {
                 current_dir: &self.current_dir,
                 numbering: &self.numbering,
                 selected: self.numbering.get(self.note_sel).map(String::as_str),
+                marked: &[],
             },
             &RealAi,
         ) {

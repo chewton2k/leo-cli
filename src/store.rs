@@ -158,6 +158,8 @@ pub enum Undoable {
     Moved { id: String, from: String, title: String },
     /// A checkbox that was toggled. Toggling is its own inverse.
     Toggled { id: String, n: usize, title: String },
+    /// Changes made by one command, taken back together.
+    Batch { changes: Vec<Undoable>, what: String },
 }
 
 impl Undoable {
@@ -169,6 +171,7 @@ impl Undoable {
                 let place = if from.is_empty() { "/".to_string() } else { format!("/{from}") };
                 format!("Moved \"{title}\" back to {place}")
             }
+            Undoable::Batch { what, .. } => what.clone(),
             Undoable::Toggled { title, n, .. } => {
                 format!("Un-toggled box {n} in \"{title}\"")
             }
@@ -400,6 +403,24 @@ impl Store {
         true
     }
 
+    /// Delete every note whose full ID is in `ids`, as one undoable change.
+    /// Returns how many were deleted.
+    pub fn delete_notes(&mut self, ids: &[String]) -> usize {
+        let (removed, kept): (Vec<Note>, Vec<Note>) = std::mem::take(&mut self.notes)
+            .into_iter()
+            .partition(|n| ids.contains(&n.id));
+        self.notes = kept;
+        let count = removed.len();
+        if count > 0 {
+            let what = match removed.as_slice() {
+                [one] => format!("\"{}\"", one.title),
+                many => format!("{} notes", many.len()),
+            };
+            self.remember(Undoable::Deleted { notes: removed, directories: Vec::new(), what });
+        }
+        count
+    }
+
     /// Push a change onto the undo stack, discarding the oldest when full.
     fn remember(&mut self, change: Undoable) {
         if self.undo.len() == UNDO_DEPTH {
@@ -424,7 +445,13 @@ impl Store {
     pub fn undo(&mut self) -> Option<String> {
         let change = self.undo.pop()?;
         let described = change.describe();
+        self.revert(change);
+        Some(described)
+    }
 
+    /// Apply the inverse of one change. Never records anything, or one press
+    /// of `u` would toggle forever.
+    fn revert(&mut self, change: Undoable) {
         match change {
             Undoable::Deleted { notes, directories, .. } => {
                 for dir in directories {
@@ -448,9 +475,12 @@ impl Store {
                     note.toggle_checkbox(n);
                 }
             }
+            Undoable::Batch { changes, .. } => {
+                for change in changes.into_iter().rev() {
+                    self.revert(change);
+                }
+            }
         }
-
-        Some(described)
     }
 
     /// The one search: every directory, titles, bodies and tags.
@@ -649,6 +679,27 @@ impl Store {
             });
         }
         counts
+    }
+
+    /// Move several notes as one undoable change. Returns the titles moved.
+    pub fn move_notes(&mut self, ids: &[String], new_dir: &str) -> Vec<String> {
+        let mut changes = Vec::new();
+        let mut titles = Vec::new();
+        for id in ids {
+            if self.move_note(id, new_dir).is_some() {
+                changes.push(self.undo.pop().expect("move_note records its change"));
+                titles.push(self.find_note(id).map(|n| n.title.clone()).unwrap_or_default());
+            }
+        }
+        match changes.len() {
+            0 => {}
+            1 => self.remember(changes.pop().unwrap()),
+            n => self.remember(Undoable::Batch {
+                changes,
+                what: format!("Moved {n} notes back"),
+            }),
+        }
+        titles
     }
 
     pub fn move_note(&mut self, id_prefix: &str, new_dir: &str) -> Option<String> {
@@ -1112,6 +1163,41 @@ mod tests {
     fn find_ignores_case() {
         let (store, _d) = store_for_find();
         assert_eq!(titles(store.find("RUST")), vec!["Rust ownership"]);
+    }
+
+    /// Several notes deleted at once come back with one undo.
+    #[test]
+    fn deleting_several_notes_is_one_undo() {
+        let (mut store, _d) = temp_store();
+        let a = store.create_note("A", "", vec![], "").unwrap().id.clone();
+        let b = store.create_note("B", "", vec![], "").unwrap().id.clone();
+        store.create_note("C", "", vec![], "").unwrap();
+        assert_eq!(store.delete_notes(&[a.clone(), b.clone()]), 2);
+        assert_eq!(store.notes.len(), 1);
+        assert_eq!(store.undo().as_deref(), Some("Restored 2 notes"));
+        assert!(store.find_note(&a).is_some() && store.find_note(&b).is_some());
+        assert!(!store.can_undo());
+    }
+
+    #[test]
+    fn deleting_nothing_records_nothing() {
+        let (mut store, _d) = temp_store();
+        assert_eq!(store.delete_notes(&["nope".to_string()]), 0);
+        assert!(!store.can_undo());
+    }
+
+    #[test]
+    fn moving_several_notes_is_one_undo() {
+        let (mut store, _d) = temp_store();
+        store.create_dir("cs130");
+        let a = store.create_note("A", "", vec![], "").unwrap().id.clone();
+        let b = store.create_note("B", "", vec![], "").unwrap().id.clone();
+        let moved = store.move_notes(&[a.clone(), b.clone()], "cs130");
+        assert_eq!(moved, vec!["A".to_string(), "B".to_string()]);
+        store.undo().unwrap();
+        assert_eq!(store.find_note(&a).unwrap().directory, "");
+        assert_eq!(store.find_note(&b).unwrap().directory, "");
+        assert!(!store.can_undo());
     }
 
     /// The whole point: a deleted note comes back as it was, not as a copy.

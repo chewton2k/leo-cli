@@ -82,6 +82,7 @@ impl App {
                     current_dir: &self.current_dir,
                     numbering: &self.numbering,
                     selected: None,
+                    marked: &[],
                 },
                 &answered,
             )?;

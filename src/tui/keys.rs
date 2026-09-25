@@ -37,6 +37,8 @@ pub enum Intent {
     Open,
     /// Toggle the first unchecked checkbox of the selected note.
     ToggleCheckbox,
+    /// Mark or unmark the selected note, so D and m can act on several.
+    ToggleMark,
     /// Take back the last destructive change.
     Undo,
     /// Edit the selected note in `$EDITOR`.
@@ -113,6 +115,7 @@ pub fn normal(key: KeyEvent, focus: Pane) -> Intent {
         KeyCode::Char('/') => Intent::OpenFilter,
         KeyCode::Char('?') => Intent::ToggleHelp,
         KeyCode::Esc => Intent::Cancel,
+        KeyCode::Char(' ') if focus == Pane::Notes => Intent::ToggleMark,
         // In the preview pane, space and the page keys scroll.
         KeyCode::Char(' ') | KeyCode::PageDown if focus == Pane::Preview => Intent::ScrollDown,
         KeyCode::PageUp if focus == Pane::Preview => Intent::ScrollUp,
@@ -203,6 +206,12 @@ mod tests {
     }
 
     #[test]
+    fn space_marks_in_the_list_and_scrolls_in_the_preview() {
+        assert_eq!(normal(key(' '), Pane::Notes), Intent::ToggleMark);
+        assert_eq!(normal(key(' '), Pane::Preview), Intent::ScrollDown);
+    }
+
+    #[test]
     fn arrow_keys_mirror_the_vi_movement_keys() {
         assert_eq!(normal(code(KeyCode::Down), Pane::Notes), Intent::Down);
         assert_eq!(normal(code(KeyCode::Up), Pane::Notes), Intent::Up);
@@ -232,12 +241,6 @@ mod tests {
                 "lowercase {c} must not delete"
             );
         }
-    }
-
-    #[test]
-    fn space_scrolls_only_in_the_preview_pane() {
-        assert_eq!(normal(key(' '), Pane::Preview), Intent::ScrollDown);
-        assert_eq!(normal(key(' '), Pane::Notes), Intent::Nothing);
     }
 
     #[test]

@@ -32,6 +32,10 @@ pub enum Action {
     Delete {
         note: String,
     },
+    /// Delete the marked notes. Never typed: `fill_selected` makes it.
+    DeleteMany {
+        ids: Vec<String>,
+    },
     /// Give a note a new title. Only the title changes.
     Rename {
         note: String,
@@ -211,8 +215,11 @@ pub enum EditTarget {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)]
 pub enum ConfirmedAction {
     DeleteNote { id: String, title: String },
+    /// Delete every one of these notes, as one undo.
+    DeleteNotes { ids: Vec<String> },
     /// Delete a directory and everything inside it.
     DeleteDir { path: String },
 }

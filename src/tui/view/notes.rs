@@ -19,6 +19,8 @@ pub struct NoteRow {
     /// The note's directory, when it is not the one being shown — a search
     /// lists notes from everywhere, and a title alone would hide where they are.
     pub elsewhere: Option<String>,
+    /// Marked with Space, so D and m will include it.
+    pub marked: bool,
 }
 
 pub fn rows(notes: &[&Note], current_dir: &str) -> Vec<NoteRow> {
@@ -31,15 +33,17 @@ pub fn rows(notes: &[&Note], current_dir: &str) -> Vec<NoteRow> {
             title: n.title.clone(),
             tags: n.tags.clone(),
             elsewhere: (n.directory != current_dir).then(|| n.directory.clone()),
+            marked: false,
         })
         .collect()
 }
 
 fn item(row: &NoteRow) -> ListItem<'static> {
     let mut spans = vec![
+        Span::styled(format!("{:>3}", row.number), Style::default().add_modifier(Modifier::DIM)),
         Span::styled(
-            format!("{:>3} ", row.number),
-            Style::default().add_modifier(Modifier::DIM),
+            if row.marked { "●" } else { " " },
+            Style::default().fg(super::theme::accent()),
         ),
     ];
     if let Some(dir) = &row.elsewhere {

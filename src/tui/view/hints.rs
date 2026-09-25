@@ -28,6 +28,7 @@ pub fn for_place(place: Place) -> &'static [(&'static str, &'static str)] {
             ("r", "rename"),
             ("m", "move"),
             ("x", "tick"),
+            ("Space", "mark"),
             ("D", "delete"),
             ("/", "find"),
             (":", "command"),

@@ -318,6 +318,53 @@ fn choosing_another_note_puts_the_checkbox_cursor_back_at_the_top() {
     assert_eq!(app.box_index(), 0);
 }
 
+/// Space marks notes; D and m then act on every marked note at once.
+#[test]
+fn marked_notes_are_deleted_together_and_come_back_together() {
+    let (mut app, _d) = temp_app();
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
+    app.focus = Pane::Notes;
+    let before = app.store.notes.len();
+
+    select_titled(&mut app, "Rust ownership");
+    app.on_key(press(' '), &mut terminal).unwrap();
+    select_titled(&mut app, "Graph traversals");
+    app.on_key(press(' '), &mut terminal).unwrap();
+    assert_eq!(app.marked.len(), 2);
+
+    terminal.draw(|f| app.draw(f)).unwrap();
+    let out = terminal.backend().to_string();
+    assert!(out.contains("2 marked"), "the status line does not say: {out}");
+
+    app.on_intent(Intent::DeleteSelected, &mut terminal).unwrap();
+    assert!(matches!(
+        &app.mode,
+        Mode::Confirm { on_yes: crate::action::ConfirmedAction::DeleteNotes { ids }, .. } if ids.len() == 2
+    ));
+    app.on_key(press('y'), &mut terminal).unwrap();
+    assert_eq!(app.store.notes.len(), before - 2);
+    assert!(app.marked.is_empty(), "marks outlived the notes");
+
+    app.on_intent(Intent::Undo, &mut terminal).unwrap();
+    assert_eq!(app.store.notes.len(), before);
+}
+
+#[test]
+fn space_again_unmarks_and_esc_clears_every_mark() {
+    let (mut app, _d) = temp_app();
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
+    app.focus = Pane::Notes;
+    app.on_key(press(' '), &mut terminal).unwrap();
+    app.on_key(press(' '), &mut terminal).unwrap();
+    assert!(app.marked.is_empty());
+
+    app.on_key(press(' '), &mut terminal).unwrap();
+    app.on_key(press_code(event::KeyCode::Esc), &mut terminal).unwrap();
+    assert!(app.marked.is_empty());
+}
+
 /// The bug this guards: work below the UI printed to stdout while the panes
 /// owned the screen, so git's commit summary and config warnings landed on
 /// top of the notes list. They now arrive as status-line messages instead.
