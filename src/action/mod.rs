@@ -82,6 +82,8 @@ pub enum Action {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyncAction {
+    /// Back up now: pull, then push.
+    Now,
     Init,
     Connect { url: String },
     Push,

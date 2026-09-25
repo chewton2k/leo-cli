@@ -133,14 +133,14 @@ runs to see the raw transcript, `Enter` to stop. Writing `@leo <question>` in a
 note and running `:ask` replaces that line with an answer.
 
 Both need a model, and the answer appears as it arrives rather than all at once.
-`Ctrl-S` shows which models are set up and lets you add one; `leo doctor` in a
-shell reports anything missing along with the command that installs it.
+`Ctrl-S` shows which models are set up and lets you add one; `leo setup` in a
+shell reports anything missing, says what installs it, and stores a key.
 
 ## Your notes are just files
 
-Plain markdown, one file per note, in `{notes_dir}`. `:sync init` then
-`:sync connect <url>` backs them up to git; after that every save commits, and
-leo pushes when you quit. `Ctrl-S` can make it push while you work instead.
+Plain markdown, one file per note, in `{notes_dir}`. `leo sync` in a shell (or
+`Ctrl-S`) sets up backup to git; after that every save commits, leo pushes when
+you quit, and `:sync` backs up on demand.
 
 ## Everything in one place
 
@@ -149,7 +149,7 @@ backup to GitHub, and where everything lives on disk. Enter on a row changes it 
 including setting up git backup, which used to need two typed commands.
 
 Settings live in `{config_path}`. API keys never do — `Ctrl-S` or
-`leo model login` keeps those in a separate file only your account can read.
+`leo setup` keeps those in a store only your account can read.
 "#,
         notes_dir = "<data dir>/leo/notes/",
         config_path = "<config dir>/leo/config.toml",
@@ -285,7 +285,7 @@ mod tests {
         let body = manual_body();
         assert!(body.contains("`?`"), "never mentions the help key");
         assert!(body.contains("Ctrl-S"), "never mentions the provider screen");
-        assert!(body.contains("leo doctor"), "never mentions doctor");
+        assert!(body.contains("leo setup"), "never mentions setup");
     }
 
     /// The handful of things a first-time user needs on day one must be here,

@@ -95,7 +95,7 @@ impl App {
             self.last_push = Some(Instant::now());
             self.say(
                 Kind::Warn,
-                format!("Backup failed: {e}. Try `:sync pull` then `:sync push`."),
+                format!("Backup failed: {e}. Try `:sync`, which pulls first."),
             );
         }
     }

@@ -1,6 +1,6 @@
 //! What works on this machine, and what to run if it doesn't.
 //!
-//! One place that answers "can leo do X here?", so `leo doctor`, the first-run
+//! One place that answers "can leo do X here?", so `leo setup`, the first-run
 //! greeting, and the pre-flight check before recording all agree — and so a
 //! missing dependency is reported with the command that installs it rather than
 //! as a failure after the user has already tried to use it.
@@ -241,12 +241,12 @@ fn chain_check(config: &Config, chain: Chain, store: &dyn SecretStore) -> Check 
                 fix: match chain {
                     Chain::Chat => {
                         "brew install ollama && ollama pull qwen3:8b   (free, local)\n\
-                         or: leo model login openrouter                (free tier)"
+                         or: leo setup, and store an openrouter key   (free tier)"
                             .to_string()
                     }
                     Chain::Transcribe => {
                         "brew install whisper-cpp   (free, local)\n\
-                         or: leo model login groq   (free tier)"
+                         or: leo setup, and store a groq key   (free tier)"
                             .to_string()
                     }
                 },

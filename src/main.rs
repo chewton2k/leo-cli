@@ -118,26 +118,32 @@ enum Commands {
         port: u16,
     },
 
-    /// Check what works on this machine and what to install
+    /// See what works here, and fix what does not: AI keys, recording, backup
+    Setup,
+
+    /// The report half of `setup`, without the questions.
+    #[command(hide = true)]
     Doctor,
 
     /// Retired. Use `leo model login`, which stores keys for you.
     #[command(hide = true)]
     Env,
 
-    /// Sync notes via git / GitHub
+    /// Back up your notes to git: pull, then push. Sets backup up the first time.
     Sync {
         #[command(subcommand)]
-        command: SyncCommands,
+        command: Option<SyncCommands>,
     },
 
     /// Inspect, test, and authenticate AI model providers
+    #[command(hide = true)]
     Model {
         #[command(subcommand)]
         command: ModelCommands,
     },
 
     /// Open or show the leo model config file
+    #[command(hide = true)]
     Config {
         #[command(subcommand)]
         command: ConfigCommands,
@@ -236,6 +242,7 @@ fn main() -> Result<()> {
             println!("  Env vars still work and still take precedence, for CI.");
             Ok(())
         }
+        Some(Commands::Setup) => run_setup(),
         Some(Commands::Doctor) => run_doctor(),
         Some(Commands::Sync { command }) => run_sync(command),
         Some(Commands::Model { command }) => run_model(command.into()),
@@ -297,6 +304,7 @@ fn run_command(cmd: Commands) -> Result<()> {
         Commands::Ask { id } => action::Action::Ask { note: id },
 
         Commands::Serve { .. }
+        | Commands::Setup
         | Commands::Doctor
         | Commands::Env
         | Commands::Sync { .. }
@@ -349,15 +357,55 @@ fn absorb_cli(
     Ok(())
 }
 
-fn run_sync(command: SyncCommands) -> Result<()> {
+fn run_sync(command: Option<SyncCommands>) -> Result<()> {
     let store = store::Store::load()?;
     match command {
-        SyncCommands::Init => sync::init(&store.notes_dir),
-        SyncCommands::Connect { url } => sync::connect(&store.notes_dir, &url),
-        SyncCommands::Push => sync::push(&store.notes_dir),
-        SyncCommands::Pull => sync::pull(&store.notes_dir),
-        SyncCommands::Status => sync::status(&store.notes_dir),
+        None => sync_or_set_up(&store.notes_dir),
+        Some(command) => run_sync_command(command, &store.notes_dir),
     }
+}
+
+fn run_sync_command(command: SyncCommands, notes_dir: &std::path::Path) -> Result<()> {
+    match command {
+        SyncCommands::Init => sync::init(notes_dir),
+        SyncCommands::Connect { url } => sync::connect(notes_dir, &url),
+        SyncCommands::Push => sync::push(notes_dir),
+        SyncCommands::Pull => sync::pull(notes_dir),
+        SyncCommands::Status => sync::status(notes_dir),
+    }
+}
+
+/// `leo sync` on its own: back up, or — the first time — ask for the remote,
+/// set the repository up, and push.
+fn sync_or_set_up(notes_dir: &std::path::Path) -> Result<()> {
+    if sync::is_initialized(notes_dir) && sync::remote_url(notes_dir).is_some() {
+        return sync::now(notes_dir);
+    }
+    if !std::io::stdin().is_terminal() {
+        return sync::now(notes_dir);
+    }
+    println!("  Backup is not set up yet. Make an empty repository on GitHub, then");
+    let url = ask("  paste its URL (e.g. git@github.com:you/notes.git), or Enter to skip: ")?;
+    if url.is_empty() {
+        return Ok(());
+    }
+    if !sync::is_initialized(notes_dir) {
+        sync::init(notes_dir)?;
+    }
+    sync::connect(notes_dir, &url)?;
+    sync::push(notes_dir)?;
+    println!("  {} Backed up. From now on, `leo sync` does it again.", "ok".green());
+    Ok(())
+}
+
+/// Print a prompt and read one trimmed line.
+fn ask(prompt: &str) -> Result<String> {
+    use std::io::Write;
+    print!("{prompt}");
+    std::io::stdout().flush().ok();
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer)?;
+    Ok(answer.trim().to_string())
 }
 
 /// Describe where a provider's credential comes from — never what it is.
@@ -377,7 +425,7 @@ fn describe_credential(provider: &str, key_env: Option<&str>, store: &dyn Secret
     if store.has(provider) {
         "key stored".to_string()
     } else {
-        format!("no key (run `leo model login {provider}`)")
+        "no key (`leo setup` stores one)".to_string()
     }
 }
 
@@ -454,10 +502,56 @@ pub fn test_provider(name: &str) -> Result<String> {
     }
 }
 
-/// `leo doctor` — one command that says what works here and what to run.
+/// The report `leo setup` opens with, also reachable as `leo doctor`.
 ///
 /// Exists because the alternative is a user discovering each missing dependency
 /// the moment they try to use it, one failure at a time.
+/// Providers in a chain that need a key and have none, in chain order.
+fn providers_missing_keys(cfg: &Config, store: &dyn SecretStore) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for name in cfg.chat.chain.iter().chain(&cfg.transcribe.chain) {
+        let Some(var) = cfg.provider(name).and_then(|p| p.key_env.as_deref()) else {
+            continue;
+        };
+        let in_env = std::env::var(var).map(|v| !v.trim().is_empty()).unwrap_or(false);
+        if !in_env && !store.has(name) && !out.contains(name) {
+            out.push(name.clone());
+        }
+    }
+    out
+}
+
+/// `leo setup`: what works, where things live, and a key stored on the spot
+/// for anything the AI chains are missing.
+pub fn run_setup() -> Result<()> {
+    run_doctor()?;
+    run_model(action::ModelAction::List)?;
+
+    let store = store::Store::load()?;
+    println!("  notes   {}", store.notes_dir.display());
+    println!("  config  {}", Config::config_path()?.display());
+    println!();
+
+    if !std::io::stdin().is_terminal() {
+        return Ok(());
+    }
+    let cfg = Config::load();
+    let missing = providers_missing_keys(&cfg, config::secret::default_store().as_ref());
+    if !missing.is_empty() {
+        let name = ask(&format!(
+            "  Store an API key now? Which provider ({}), or Enter to skip: ",
+            missing.join(", ")
+        ))?;
+        if !name.is_empty() {
+            run_model(action::ModelAction::Login { name })?;
+        }
+    }
+    if !sync::is_initialized(&store.notes_dir) {
+        println!("  Backup is off. `leo sync` sets it up.");
+    }
+    Ok(())
+}
+
 pub fn run_doctor() -> Result<()> {
     use health::State;
 
@@ -567,7 +661,7 @@ pub fn run_model(command: action::ModelAction) -> Result<()> {
                     "  {} no [providers.{name}] block in your config — storing the key anyway.",
                     "note".yellow()
                 );
-                println!("  Run `leo config edit` to add it, or check `leo model list`.");
+                println!("  Press Ctrl-S in leo to add it, or run `leo setup` to see what is configured.");
             }
             let key_env = cfg.provider(&name).and_then(|p| p.key_env.clone());
 
@@ -638,6 +732,67 @@ mod cli_tests {
     use super::*;
     use config::secret::MemoryStore;
     use std::sync::Mutex;
+
+    /// Setup is the one command for "what works, and fix what does not", and
+    /// `leo sync` alone backs up; the old names keep working for scripts.
+    #[test]
+    fn setup_and_bare_sync_parse() {
+        assert!(matches!(Cli::try_parse_from(["leo", "setup"]).unwrap().command, Some(Commands::Setup)));
+        assert!(matches!(
+            Cli::try_parse_from(["leo", "sync"]).unwrap().command,
+            Some(Commands::Sync { command: None })
+        ));
+        for old in [&["leo", "doctor"][..], &["leo", "model", "list"], &["leo", "config", "path"]] {
+            assert!(Cli::try_parse_from(old).is_ok(), "{old:?} stopped parsing");
+        }
+    }
+
+    /// The top-level help lists the commands someone needs, not every alias.
+    #[test]
+    fn the_top_level_help_is_short() {
+        use clap::CommandFactory;
+        let help = Cli::command().render_help().to_string();
+        assert!(help.contains("setup"), "{help}");
+        for hidden in ["doctor", "model", "config"] {
+            assert!(!help.contains(&format!("  {hidden} ")), "{hidden} is still listed:\n{help}");
+        }
+    }
+
+    /// Setup offers to store a key only for providers that are in a chain,
+    /// need one, and have none.
+    #[test]
+    fn setup_offers_keys_only_where_one_is_missing() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("LEO_TEST_SETUP_A");
+        std::env::remove_var("LEO_TEST_SETUP_B");
+        let cfg = Config::parse(
+            r#"
+[chat]
+chain = ["local", "cloud_a", "cloud_b"]
+[transcribe]
+chain = []
+[providers.local]
+kind = "openai"
+base_url = "http://localhost:11434/v1"
+[providers.cloud_a]
+kind = "openai"
+base_url = "https://a.example/v1"
+key_env = "LEO_TEST_SETUP_A"
+[providers.cloud_b]
+kind = "openai"
+base_url = "https://b.example/v1"
+key_env = "LEO_TEST_SETUP_B"
+[providers.unused]
+kind = "openai"
+base_url = "https://c.example/v1"
+key_env = "LEO_TEST_SETUP_C"
+"#,
+        )
+        .unwrap();
+        let store = MemoryStore::default();
+        store.set("cloud_b", "k").unwrap();
+        assert_eq!(providers_missing_keys(&cfg, &store), vec!["cloud_a".to_string()]);
+    }
 
     /// Env vars are process-global; serialize the tests that mutate them.
     static ENV_LOCK: Mutex<()> = Mutex::new(());

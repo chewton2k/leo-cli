@@ -110,6 +110,19 @@ pub fn unpushed(notes_dir: &Path) -> Option<usize> {
     String::from_utf8_lossy(&out.stdout).trim().parse().ok()
 }
 
+/// Back up now: pull what another machine pushed, then push. Says how to set
+/// backup up when it is not, rather than failing inside git.
+pub fn now(notes_dir: &Path) -> Result<()> {
+    if !is_initialized(notes_dir) {
+        anyhow::bail!("Backup is not set up. Run `leo sync` in a shell, or press Ctrl-S.");
+    }
+    if remote_url(notes_dir).is_none() {
+        anyhow::bail!("No remote to back up to. Run `leo sync connect <url>`, or press Ctrl-S.");
+    }
+    pull(notes_dir)?;
+    push(notes_dir)
+}
+
 pub fn status(notes_dir: &Path) -> Result<()> {
     print_output(run_git(notes_dir, &["status"])?);
     Ok(())
@@ -178,6 +191,23 @@ fn run_git(dir: &Path, args: &[&str]) -> Result<String> {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    /// Backing up with nothing set up says how to set it up, rather than
+    /// failing inside git.
+    #[test]
+    fn backing_up_before_setup_says_what_to_do() {
+        let tmp = TempDir::new().unwrap();
+        let err = now(tmp.path()).unwrap_err().to_string();
+        assert!(err.contains("leo sync") && err.contains("Ctrl-S"), "{err}");
+    }
+
+    #[test]
+    fn backing_up_without_a_remote_says_what_to_do() {
+        let tmp = TempDir::new().unwrap();
+        init(tmp.path()).unwrap();
+        let err = now(tmp.path()).unwrap_err().to_string();
+        assert!(err.contains("remote"), "{err}");
+    }
 
     #[test]
     fn test_is_initialized_false_before_init() {

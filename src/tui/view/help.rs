@@ -115,7 +115,7 @@ pub const SECTIONS: &[Section] = &[
             e("  a / d", "on that screen: add to / drop from a chain"),
             e("  e", "on that screen: open config.toml"),
             e("  Enter", "on a setting: change it, or set up git backup"),
-            e("leo doctor", "what works here, and what to install"),
+            e("leo setup", "what works here; fixes what does not"),
         ],
     },
     Section {
@@ -360,9 +360,9 @@ mod tests {
 
     /// The one command that diagnoses a broken setup has to be findable.
     #[test]
-    fn help_mentions_doctor() {
+    fn help_mentions_setup() {
         let text: String = help_lines().iter().map(|l| l.to_string()).collect();
-        assert!(text.contains("leo doctor"));
+        assert!(text.contains("leo setup"));
     }
 
     #[test]

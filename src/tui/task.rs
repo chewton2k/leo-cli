@@ -260,7 +260,7 @@ fn chain_with_value(
 /// this is nearly always a permission that was never granted.
 const SILENT_RECORDING: &str = "No sound was recorded. macOS may not be letting \
      this terminal use the microphone: System Settings > Privacy & Security > \
-     Microphone, then restart the terminal. `leo doctor` re-checks it.";
+     Microphone, then restart the terminal. `leo setup` re-checks it.";
 
 /// Read a WAV's duration in whole seconds via sox.
 fn wav_secs(path: &Path) -> Option<u64> {

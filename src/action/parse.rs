@@ -26,7 +26,7 @@ pub const VERBS: &[Verb] = &[
     v("mkdir", &[], "mkdir <name>", "a directory here"),
     v("cd", &[], "cd <dir>", "enter a directory; .. up, / root"),
     v("mv", &[], "mv [note...] <dir>", "move notes, or the selected one"),
-    v("sync", &[], "sync <init | connect <url> | push | pull | status>", "back up to git"),
+    v("sync", &[], "sync [init | connect <url> | push | pull | status]", "back up now: pull, then push"),
     v("help", &["?"], "help", "every key and command"),
     v("quit", &["exit", "q"], "quit", "leave"),
 ];
@@ -257,6 +257,7 @@ pub fn parse(line: &str) -> Parsed {
             Some("push") => act(Action::Sync(SyncAction::Push)),
             Some("pull") => act(Action::Sync(SyncAction::Pull)),
             Some("status") => act(Action::Sync(SyncAction::Status)),
+            None => act(Action::Sync(SyncAction::Now)),
             _ => usage("sync"),
         },
 
@@ -524,8 +525,9 @@ mod parse_tests {
             Action::Sync(SyncAction::Connect { url: "https://example.com/n.git".to_string() })
         );
         assert!(usage("sync connect").contains("connect"));
-        assert!(usage("sync").contains("init"));
         assert!(usage("sync bogus").contains("init"));
+        // On its own it means "back up now": pull, then push.
+        assert_eq!(act("sync"), Action::Sync(SyncAction::Now));
     }
 
     #[test]

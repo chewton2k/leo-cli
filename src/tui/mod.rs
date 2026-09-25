@@ -524,7 +524,7 @@ impl App {
         }
         lines.push(Line::blank());
         lines.push(Line::dim(
-            "  Ctrl-S manages providers · `leo doctor` checks everything",
+            "  Ctrl-S manages providers · `leo setup` checks and fixes everything",
         ));
         Some(lines)
     }
@@ -1181,6 +1181,7 @@ impl App {
                 let out = self.outside(terminal, || {
                     use crate::action::SyncAction;
                     match &a {
+                        SyncAction::Now => crate::sync::now(&notes_dir),
                         SyncAction::Init => crate::sync::init(&notes_dir),
                         SyncAction::Connect { url } => crate::sync::connect(&notes_dir, url),
                         SyncAction::Push => crate::sync::push(&notes_dir),
