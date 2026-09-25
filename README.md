@@ -48,12 +48,24 @@ optional.
    that installs each missing piece. Run it again any time something seems off.
 
 **If your shell says `leo: command not found`**, Cargo's bin directory is not on
-your PATH. Add this line to `~/.zshrc` (or `~/.bashrc`), then open a new
-terminal:
+your PATH. Typing `export PATH=...` into the terminal only lasts until you close
+it, so add it to the file your shell reads at startup. `echo $SHELL` shows which
+shell you have:
 
 ```sh
-export PATH="$HOME/.cargo/bin:$PATH"
+# zsh (the default on Macs):
+echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
+
+# bash on a Mac:
+echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.bash_profile && source ~/.bash_profile
+
+# bash on Linux:
+echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
 ```
+
+If it still says "command not found", check that leo was installed:
+`ls ~/.cargo/bin/leo` should list a file. If it does not, run
+`cargo install --path .` again and look for an error at the end.
 
 **To update leo later**, pull the latest code and reinstall:
 
