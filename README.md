@@ -7,6 +7,14 @@ Markdown files on your disk. It can also record a lecture and turn it into
 structured notes while you type the points that matter, answer questions you
 write inside a note, and back everything up to GitHub.
 
+**Quick install** (Mac or Linux):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/chewton2k/leo-cli/main/install.sh | bash
+```
+
+Then open a new terminal and run `leo`.
+
 This page walks you through setting it up, one feature at a time. Only the
 first two sections are needed to take notes; everything after that is
 optional.
@@ -28,13 +36,30 @@ optional.
 
 On a Mac or Linux, paste this into a terminal:
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/chewton2k/leo-cli/main/install.sh | sh
+```bash
+curl -fsSL https://raw.githubusercontent.com/chewton2k/leo-cli/main/install.sh | bash
 ```
 
-It downloads the ready-made leo for your computer, puts it in `~/.local/bin`,
-and adds that to your PATH for every future terminal. Then open a new terminal
-and run:
+It works the same whichever shell you use (zsh, bash, fish), and `| sh` works
+in place of `| bash`. It downloads the ready-made leo for your computer, checks
+it against the published checksum, puts it in `~/.local/bin`, and adds that to
+your PATH for every future terminal, in the file your shell reads at startup.
+
+**If you'd rather read the script before running it:**
+
+```bash
+curl -fsSL -o install.sh https://raw.githubusercontent.com/chewton2k/leo-cli/main/install.sh
+less install.sh      # have a look
+bash install.sh
+```
+
+To install somewhere other than `~/.local/bin`, set `LEO_INSTALL_DIR`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/chewton2k/leo-cli/main/install.sh | LEO_INSTALL_DIR="$HOME/bin" bash
+```
+
+Then open a new terminal and run:
 
 ```sh
 leo setup
@@ -47,7 +72,7 @@ If the download fails, there may be no ready-made build for your computer yet;
 build it from source instead (below).
 
 **To update leo**, run the same install command again. **To uninstall**, delete
-`~/.local/bin/leo`; your notes are never touched.
+the program (`rm ~/.local/bin/leo`); your notes are never touched.
 
 ### Or build it from source
 

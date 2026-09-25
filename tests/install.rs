@@ -32,7 +32,12 @@ fn archive(dir: &Path) -> PathBuf {
 }
 
 fn install(home: &Path, shell: &str, tarball: &Path) -> String {
-    let out = Command::new("sh")
+    install_with("sh", home, shell, tarball)
+}
+
+/// Run install.sh with a given interpreter, as `curl ... | <interpreter>` would.
+fn install_with(interpreter: &str, home: &Path, shell: &str, tarball: &Path) -> String {
+    let out = Command::new(interpreter)
         .arg(root().join("install.sh"))
         .env_clear()
         .env("HOME", home)
@@ -89,4 +94,14 @@ fn bash_gets_the_path_line_in_the_file_it_reads() {
     let rc = std::fs::read_to_string(home.join(expected))
         .unwrap_or_else(|_| panic!("nothing written to {expected}"));
     assert!(rc.contains(".local/bin"), "{rc}");
+}
+
+/// The README offers `| bash` as well as `| sh`; both must work.
+#[test]
+fn the_installer_runs_under_bash_too() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let said = install_with("bash", &home, "/bin/bash", &archive(tmp.path()));
+    assert!(home.join(".local/bin/leo").is_file(), "{said}");
 }
