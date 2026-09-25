@@ -254,6 +254,22 @@ fn x_toggles_the_first_open_checkbox_of_the_selected_note() {
     );
 }
 
+/// Ticking a box makes the note the newest, which moves it to the top of the
+/// list; the selection has to move with it rather than land on whichever note
+/// slid into its old row.
+#[test]
+fn the_selection_follows_a_note_that_moved_in_the_list() {
+    let (mut app, _d) = temp_app();
+    select_titled(&mut app, "Rust ownership");
+    let id = app.selected_id().cloned().unwrap();
+    let before = app.note_sel;
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
+    app.on_intent(Intent::ToggleCheckbox, &mut terminal).unwrap();
+    assert_ne!(app.numbering.iter().position(|n| *n == id), Some(before), "fixture did not reorder");
+    assert_eq!(app.selected_id(), Some(&id));
+}
+
 /// The bug this guards: work below the UI printed to stdout while the panes
 /// owned the screen, so git's commit summary and config warnings landed on
 /// top of the notes list. They now arrive as status-line messages instead.

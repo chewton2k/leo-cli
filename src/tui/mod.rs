@@ -501,13 +501,20 @@ impl App {
 
     /// Refresh the numbering after the store or directory changed, keeping the
     /// selection in range.
+    /// Recompute the numbering, keeping the selected note selected if it is
+    /// still listed — an edit moves a note to the top, and the selection has to
+    /// follow it rather than land on whatever slid into its old row.
     fn resync(&mut self) {
+        let keep = self.selected_id().cloned();
         self.numbering = match &self.filter {
             Some(query) => {
                 action::filtered_numbering(&self.store, &self.current_dir, query)
             }
             None => action::numbering_for(&self.store, &self.current_dir),
         };
+        if let Some(pos) = keep.and_then(|id| self.numbering.iter().position(|n| *n == id)) {
+            self.note_sel = pos;
+        }
         if self.note_sel >= self.numbering.len() {
             self.note_sel = self.numbering.len().saturating_sub(1);
         }
