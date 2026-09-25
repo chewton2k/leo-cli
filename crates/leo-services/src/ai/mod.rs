@@ -124,7 +124,7 @@ pub fn expand_prompts_streaming(
             on_restart,
         ) {
             Ok(outcome) if !outcome.value.trim().is_empty() => {
-                result.push(outcome.value.trim().to_string());
+                result.push(chat::clean_reply(&outcome.value));
                 count += 1;
             }
             // A prompt that could not be answered stays as it was, so nothing is
@@ -166,7 +166,7 @@ pub fn structure_notes_append(transcript: &str, existing_body: &str) -> Result<S
         STRUCTURE_MAX_TOKENS,
     )?;
     report(&outcome);
-    Ok(outcome.value.trim().to_string())
+    Ok(chat::clean_reply(&outcome.value))
 }
 
 /// Expand a single `@leo` prompt in place.
@@ -184,7 +184,7 @@ pub fn expand_prompt(
         EXPAND_MAX_TOKENS,
     )?;
     report(&outcome);
-    Ok(outcome.value.trim().to_string())
+    Ok(chat::clean_reply(&outcome.value))
 }
 
 /// The real [`leo_core::action::Ai`], running the provider chains.

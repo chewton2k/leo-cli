@@ -213,20 +213,94 @@ You answer a question the user wrote inside their own notes. Your answer is plac
     Prompt { system, user }
 }
 
-/// The model is asked to put a bare title on line one; everything after the
-/// blank line is the body.
+/// Strip what models wrap around an answer despite being asked not to: a code
+/// block around the whole reply, a preamble line ("Here are your notes:"), and
+/// a sign-off ("Let me know if…").
+pub fn clean_reply(reply: &str) -> String {
+    let mut text = reply.trim();
+
+    // A fence around the whole reply, not one inside it.
+    if let Some(rest) = text.strip_prefix("```") {
+        if let Some(inner) = rest.strip_suffix("```") {
+            if !inner.contains("```") {
+                text = inner.split_once('\n').map_or("", |(_, body)| body).trim();
+            }
+        }
+    }
+
+    let mut lines: Vec<&str> = text.lines().collect();
+    while lines
+        .first()
+        .is_some_and(|l| l.trim().is_empty() || is_preamble(l))
+    {
+        lines.remove(0);
+    }
+    while lines
+        .last()
+        .is_some_and(|l| l.trim().is_empty() || is_sign_off(l))
+    {
+        lines.pop();
+    }
+    lines.join("\n").trim().to_string()
+}
+
+/// A chatty opener, not a title: it starts like one and ends like a sentence,
+/// so "Sure-fire study tricks" stays a title.
+fn is_preamble(line: &str) -> bool {
+    let l = line.trim().to_lowercase();
+    if !l.ends_with([':', '.', '!']) {
+        return false;
+    }
+    const OPENERS: &[&str] = &[
+        "here are",
+        "here is",
+        "here's",
+        "sure",
+        "certainly",
+        "of course",
+        "below are",
+        "below is",
+    ];
+    OPENERS.iter().any(|o| l.starts_with(o))
+}
+
+fn is_sign_off(line: &str) -> bool {
+    let l = line.trim().to_lowercase();
+    const CLOSERS: &[&str] = &[
+        "let me know",
+        "i hope this",
+        "hope this helps",
+        "feel free to",
+    ];
+    CLOSERS.iter().any(|c| l.starts_with(c))
+}
+
+/// Split a reply into (title, body): the first line is the title, cleaned of
+/// the "Title:", `#`, bold and quotes models add, and the rest is the body.
 pub fn split_title_body(content: &str) -> (String, String) {
-    let mut lines = content.lines();
-    let title = lines
-        .next()
-        .unwrap_or("")
-        .trim_start_matches('#')
-        .trim()
-        .to_string();
+    let cleaned = clean_reply(content);
+    let mut lines = cleaned.lines();
+    let mut title = lines.next().unwrap_or("").trim();
+    loop {
+        let before = title;
+        title = title.trim_start_matches('#').trim();
+        title = title.trim_matches('*').trim();
+        for label in ["Title:", "title:", "TITLE:"] {
+            if let Some(rest) = title.strip_prefix(label) {
+                title = rest.trim();
+            }
+        }
+        title = title
+            .trim_matches(|c| c == '"' || c == '\'' || c == '“' || c == '”')
+            .trim();
+        if title == before {
+            break;
+        }
+    }
     let title = if title.is_empty() {
         "Untitled Notes".to_string()
     } else {
-        title
+        title.to_string()
     };
     let body = lines.collect::<Vec<_>>().join("\n").trim().to_string();
     (title, body)
@@ -317,6 +391,72 @@ mod tests {
     fn split_title_falls_back_when_empty() {
         let (title, _) = split_title_body("");
         assert_eq!(title, "Untitled Notes");
+    }
+
+    // ── reading the reply ───────────────────────────────────────────────────
+
+    /// The ways free models dress up a title, each of which used to become the
+    /// note's title verbatim.
+    #[test]
+    fn a_dressed_up_title_is_cleaned() {
+        for reply in [
+            "Lecture 4: Graphs\n\n- BFS",
+            "# Lecture 4: Graphs\n\n- BFS",
+            "Title: Lecture 4: Graphs\n\n- BFS",
+            "**Lecture 4: Graphs**\n\n- BFS",
+            "\"Lecture 4: Graphs\"\n\n- BFS",
+            "**Title:** Lecture 4: Graphs\n\n- BFS",
+        ] {
+            let (title, body) = split_title_body(reply);
+            assert_eq!(title, "Lecture 4: Graphs", "from {reply:?}");
+            assert_eq!(body, "- BFS", "from {reply:?}");
+        }
+    }
+
+    #[test]
+    fn a_preamble_before_the_title_is_skipped() {
+        for reply in [
+            "Here are your notes:\n\nLecture 4: Graphs\n\n- BFS",
+            "Sure! Here are the structured notes.\nLecture 4: Graphs\n\n- BFS",
+            "Certainly, here is the note:\n\n# Lecture 4: Graphs\n\n- BFS",
+        ] {
+            let (title, body) = split_title_body(reply);
+            assert_eq!(title, "Lecture 4: Graphs", "from {reply:?}");
+            assert_eq!(body, "- BFS", "from {reply:?}");
+        }
+    }
+
+    #[test]
+    fn a_title_that_merely_starts_like_a_preamble_is_kept() {
+        assert_eq!(
+            split_title_body("Sure-fire study tricks\n\n- sleep").0,
+            "Sure-fire study tricks"
+        );
+    }
+
+    /// A reply wrapped in a code block would otherwise save the fences into
+    /// the note.
+    #[test]
+    fn a_reply_wrapped_in_a_code_block_is_unwrapped() {
+        let (title, body) = split_title_body("```markdown\nLecture 4\n\n- BFS\n```");
+        assert_eq!(title, "Lecture 4");
+        assert_eq!(body, "- BFS");
+        assert_eq!(clean_reply("```\n- added point\n```"), "- added point");
+    }
+
+    /// A code block inside the note is content, not wrapping.
+    #[test]
+    fn a_code_block_inside_the_note_is_kept() {
+        let reply = "Lecture 4\n\n```python\nprint(1)\n```\n\n- BFS";
+        let (_, body) = split_title_body(reply);
+        assert!(body.contains("```python\nprint(1)\n```"), "{body}");
+    }
+
+    #[test]
+    fn a_sign_off_after_the_note_is_dropped() {
+        let reply = "Lecture 4\n\n- BFS\n\nLet me know if you want more detail!";
+        assert_eq!(split_title_body(reply).1, "- BFS");
+        assert_eq!(clean_reply("- BFS\n\nI hope this helps."), "- BFS");
     }
 
     // ── the structure prompt ────────────────────────────────────────────────

@@ -281,10 +281,13 @@ pub fn start_structuring(
                         to: f.to.clone(),
                     });
                 }
-                let _ = tx.send(TaskEvent::Structured {
-                    title,
-                    body: outcome.value.trim().to_string(),
-                });
+                // A new note's body was already cleaned when its title was split
+                // off; an addition is cleaned here.
+                let body = match title {
+                    Some(_) => outcome.value.trim().to_string(),
+                    None => leo_services::ai::chat::clean_reply(&outcome.value),
+                };
+                let _ = tx.send(TaskEvent::Structured { title, body });
             }
             Err(e) => {
                 let _ = tx.send(TaskEvent::Failed(e.to_string()));
