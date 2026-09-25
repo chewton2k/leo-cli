@@ -115,7 +115,7 @@ Anything that takes an argument goes on the `:` line:
 ```
 
 `Tab` completes titles, directories and tags. Notes are numbered as you see
-them, so `:view 2` means the second one in the pane.
+them, so `:edit 2` means the second one in the pane.
 
 `/` filters the list as you type and `Esc` clears it. `t` switches the left pane
 between directories and tags, so you can pick a tag and see only those notes.
@@ -141,7 +141,6 @@ shell reports anything missing along with the command that installs it.
 Plain markdown, one file per note, in `{notes_dir}`. `:sync init` then
 `:sync connect <url>` backs them up to git; after that every save commits, and
 leo pushes when you quit. `Ctrl-S` can make it push while you work instead.
-`:export 1 pdf` writes a copy elsewhere.
 
 ## Everything in one place
 
@@ -294,7 +293,7 @@ mod tests {
     #[test]
     fn the_manual_covers_the_day_one_commands() {
         let body = manual_body();
-        for verb in ["new", "/", "mkdir", "mv", "listen", "ask", "sync", "export"] {
+        for verb in ["new", "/", "mkdir", "mv", "listen", "ask", "sync"] {
             assert!(body.contains(verb), "the manual never mentions `{verb}`");
         }
         // And the keys someone needs before they find the help screen.

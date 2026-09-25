@@ -1,11 +1,10 @@
 //! Context-aware fuzzy completion for the `:` line.
 //!
 //! What can be completed depends on the verb and on the token's position
-//! *relative to the end of the line*, not just its index: `export 1 md` and
-//! `check 1 3` both put a fixed slot last and let the note reference occupy
+//! *relative to the end of the line*, not just its index: `mv 1 2 cs130` and
+//! `check 1 3` both put a fixed slot last and let the note references occupy
 //! everything before it. Candidates are always leo's own data — verbs,
-//! directories, note titles, tags, provider names, export formats — so no
-//! filesystem completion is needed.
+//! directories, note titles, tags — so no filesystem completion is needed.
 //!
 //! The engine is a pure function of (line, cursor, sources), which makes the
 //! whole position table table-testable.
@@ -15,11 +14,7 @@ use nucleo::Matcher;
 
 use crate::action::all_verb_words;
 
-/// Export formats, matching what `export.rs` accepts.
-pub const FORMATS: &[&str] = &["txt", "md", "html", "docx", "pdf", "rtf", "odt"];
 const SYNC_SUBS: &[&str] = &["init", "connect", "push", "pull", "status"];
-const MODEL_SUBS: &[&str] = &["list", "test", "login", "logout"];
-const CONFIG_SUBS: &[&str] = &["edit", "path"];
 
 /// A note as the completer sees it: the number the `:` line accepts, and the
 /// title the user actually remembers.
@@ -39,8 +34,6 @@ pub struct Sources {
     pub notes: Vec<NoteChoice>,
     /// Tag names, without the `#`.
     pub tags: Vec<String>,
-    /// Provider names from config.
-    pub providers: Vec<String>,
 }
 
 /// One completion result.
@@ -102,8 +95,6 @@ enum Source {
     Dirs,
     Notes,
     Tags,
-    Formats,
-    Providers,
     Words(&'static [&'static str]),
     /// A note reference, but the same slot could also be the trailing argument
     /// — `export 1 md` while the cursor is on `1`. Notes rank first.
@@ -141,44 +132,21 @@ fn source_for(line: &str, cursor: usize) -> (Source, usize, usize) {
     let arg = index;
 
     let source = match verb.as_str() {
-        "cd" | "mkdir" | "rmdir" => Source::Dirs,
+        "cd" | "mkdir" => Source::Dirs,
 
-        "view" | "v" | "edit" | "e" | "delete" | "rm" | "del" | "d" | "ask" | "expand" => {
-            Source::Notes
-        }
+        "edit" | "e" | "delete" | "rm" | "ask" => Source::Notes,
 
         // The trailing slot is a checkbox number, which nothing can usefully
         // complete, so every position offers notes.
-        "check" | "uncheck" | "x" => Source::Notes,
+        "check" | "x" => Source::Notes,
 
         // Directory last, notes before it. While typing the first argument the
         // user is naming a note; later arguments could be either.
-        "mv" | "move" => {
+        "mv" => {
             if arg == 1 {
                 Source::Notes
             } else {
                 Source::NotesThen(Box::new(Source::Dirs))
-            }
-        }
-
-        // Format last, notes before it.
-        "export" | "exp" => {
-            if arg == 1 {
-                Source::Notes
-            } else {
-                Source::NotesThen(Box::new(Source::Formats))
-            }
-        }
-
-        // `list #tag` is handled by the `#` rule above; a bare number is a
-        // limit, which needs no completion.
-        "list" | "ls" | "l" => Source::None,
-
-        "search" | "find" => {
-            if arg == 1 {
-                Source::Words(&["-f"])
-            } else {
-                Source::None
             }
         }
 
@@ -190,24 +158,7 @@ fn source_for(line: &str, cursor: usize) -> (Source, usize, usize) {
             }
         }
 
-        "model" => match arg {
-            1 => Source::Words(MODEL_SUBS),
-            // Only the subcommands that name a provider.
-            2 if matches!(all[1].2.to_lowercase().as_str(), "test" | "login" | "logout") => {
-                Source::Providers
-            }
-            _ => Source::None,
-        },
-
-        "config" => {
-            if arg == 1 {
-                Source::Words(CONFIG_SUBS)
-            } else {
-                Source::None
-            }
-        }
-
-        "listen" | "rec" => {
+        "listen" => {
             // `listen add <note>` takes a note; a bare title takes nothing.
             if arg >= 2 && all[1].2.eq_ignore_ascii_case("add") {
                 Source::Notes
@@ -244,8 +195,6 @@ fn candidates(source: &Source, sources: &Sources) -> Vec<String> {
             .map(|n| format!("{} {}", n.number, n.title))
             .collect(),
         Source::Tags => sources.tags.clone(),
-        Source::Formats => FORMATS.iter().map(|s| s.to_string()).collect(),
-        Source::Providers => sources.providers.clone(),
         Source::Words(words) => words.iter().map(|s| s.to_string()).collect(),
         Source::NotesThen(other) => {
             let mut out = candidates(&Source::Notes, sources);
@@ -314,11 +263,6 @@ mod tests {
                 NoteChoice { number: 3, title: "Midterm plan".to_string() },
             ],
             tags: vec!["rust".to_string(), "reminder".to_string(), "learning".to_string()],
-            providers: vec![
-                "ollama".to_string(),
-                "openrouter".to_string(),
-                "groq".to_string(),
-            ],
         }
     }
 
@@ -335,11 +279,11 @@ mod tests {
 
     #[test]
     fn the_first_word_completes_verbs_and_aliases() {
-        let m = matches("vie");
-        assert_eq!(m.first().map(String::as_str), Some("view"));
+        let m = matches("ren");
+        assert_eq!(m.first().map(String::as_str), Some("rename"));
 
         // Aliases are completable too, since they are real input.
-        assert!(matches("l").contains(&"ls".to_string()));
+        assert!(matches("r").contains(&"rm".to_string()));
         // An empty line offers everything, in help order.
         assert_eq!(matches("").first().map(String::as_str), Some("new"));
     }
@@ -352,8 +296,8 @@ mod tests {
     // ── directories ─────────────────────────────────────────────────────────
 
     #[test]
-    fn cd_mkdir_and_rmdir_complete_directories() {
-        for verb in ["cd", "mkdir", "rmdir"] {
+    fn cd_and_mkdir_complete_directories() {
+        for verb in ["cd", "mkdir"] {
             let m = matches(&format!("{verb} cs1"));
             assert!(m.contains(&"cs130".to_string()), "{verb}: {m:?}");
             assert!(m.contains(&"cs162".to_string()), "{verb}: {m:?}");
@@ -372,7 +316,7 @@ mod tests {
 
     #[test]
     fn note_verbs_complete_notes_by_title() {
-        for verb in ["view", "edit", "delete", "ask", "v", "e", "rm", "d", "expand"] {
+        for verb in ["edit", "delete", "ask", "e", "rm"] {
             let m = matches(&format!("{verb} owner"));
             assert_eq!(
                 m.first().map(String::as_str),
@@ -385,15 +329,15 @@ mod tests {
     #[test]
     fn fuzzy_matching_finds_a_title_from_scattered_letters() {
         // The spec's example shape: non-contiguous characters still match.
-        let m = matches("view grtrv");
+        let m = matches("edit grtrv");
         assert_eq!(m.first().map(String::as_str), Some("2 Graph traversals"));
     }
 
     #[test]
     fn accepting_a_note_leaves_only_its_number() {
-        let c = at_end("view owner");
-        let (line, cursor) = apply("view owner", &c, c.best().unwrap());
-        assert_eq!(line, "view 1");
+        let c = at_end("edit owner");
+        let (line, cursor) = apply("edit owner", &c, c.best().unwrap());
+        assert_eq!(line, "edit 1");
         assert_eq!(cursor, 6);
     }
 
@@ -418,78 +362,29 @@ mod tests {
         assert!(later.contains(&"cs130".to_string()), "{later:?}");
     }
 
-    #[test]
-    fn export_completes_formats_in_the_trailing_slot() {
-        let m = matches("export 1 m");
-        assert!(m.contains(&"md".to_string()), "{m:?}");
-
-        // Every documented format is reachable.
-        let all = matches("export 1 ");
-        for f in FORMATS {
-            assert!(all.contains(&f.to_string()), "missing format {f}: {all:?}");
-        }
-    }
-
-    #[test]
-    fn export_completes_notes_in_the_first_slot() {
-        let m = matches("export own");
-        assert_eq!(m.first().map(String::as_str), Some("1 Rust ownership"));
-        assert!(!m.contains(&"md".to_string()), "a format is not a note: {m:?}");
-    }
-
     // ── tags ────────────────────────────────────────────────────────────────
-
-    /// The other half of the `list` row: a bare number is a count limit, and
-    /// there is nothing sensible to complete for it.
-    #[test]
-    fn list_offers_nothing_for_a_bare_limit() {
-        assert!(matches("list 1").is_empty());
-        assert!(matches("list ").is_empty());
-    }
 
     #[test]
     fn a_hash_completes_tags_anywhere_in_the_line() {
-        let m = matches("list #ru");
+        let m = matches("new Lecture #ru");
         assert_eq!(m.first().map(String::as_str), Some("rust"));
-        // Not only after `list`.
-        assert!(!matches("search #remin").is_empty());
+        assert!(!matches("mv #remin").is_empty());
     }
 
     #[test]
     fn accepting_a_tag_keeps_the_hash() {
-        let line = "list #ru";
+        let line = "new Lecture #ru";
         let c = at_end(line);
         let (new_line, _) = apply(line, &c, c.best().unwrap());
-        assert_eq!(new_line, "list #rust");
+        assert_eq!(new_line, "new Lecture #rust");
     }
 
     // ── flags and subcommands ───────────────────────────────────────────────
 
     #[test]
-    fn search_offers_the_full_text_flag_in_the_first_slot_only() {
-        assert_eq!(matches("search -"), vec!["-f".to_string()]);
-        // Past the flag, the query is free text with nothing to complete.
-        assert!(matches("search -f ru").is_empty());
-    }
-
-    #[test]
-    fn sync_and_config_complete_their_subcommands() {
+    fn sync_completes_its_subcommands() {
         assert!(matches("sync ").contains(&"status".to_string()));
         assert_eq!(matches("sync pu").len(), 2, "push and pull both fuzzy match");
-        assert!(matches("config ").contains(&"edit".to_string()));
-    }
-
-    #[test]
-    fn model_completes_subcommands_then_provider_names() {
-        assert!(matches("model ").contains(&"login".to_string()));
-        assert_eq!(matches("model logi"), vec!["login".to_string()]);
-
-        for sub in ["test", "login", "logout"] {
-            let m = matches(&format!("model {sub} op"));
-            assert!(m.contains(&"openrouter".to_string()), "{sub}: {m:?}");
-        }
-        // `model list` takes no provider.
-        assert!(matches("model list ").is_empty());
     }
 
     #[test]
@@ -504,34 +399,33 @@ mod tests {
     fn free_text_arguments_offer_nothing() {
         // A note title being typed after `new` is the user's own text.
         assert!(matches("new My New Note").is_empty());
-        assert!(matches("remind me to buy milk").is_empty());
-        assert!(matches("pwd ").is_empty());
+        assert!(matches("rename Graph traversals").is_empty());
     }
 
     // ── mechanics ───────────────────────────────────────────────────────────
 
     #[test]
     fn completing_mid_line_replaces_only_the_token_under_the_cursor() {
-        let line = "export ow md";
+        let line = "mv ow cs130";
         // Cursor just after "ow".
-        let c = complete(line, 9, &sources());
-        assert_eq!(c.start, 7);
-        assert_eq!(c.end, 9);
+        let c = complete(line, 5, &sources());
+        assert_eq!(c.start, 3);
+        assert_eq!(c.end, 5);
         let (new_line, cursor) = apply(line, &c, "1 Rust ownership");
-        assert_eq!(new_line, "export 1 md");
-        assert_eq!(cursor, 8);
+        assert_eq!(new_line, "mv 1 cs130");
+        assert_eq!(cursor, 4);
     }
 
     #[test]
     fn the_ghost_hint_is_only_the_untyped_remainder() {
-        let c = at_end("vie");
-        assert_eq!(c.ghost("vie").as_deref(), Some("w"));
+        let c = at_end("ren");
+        assert_eq!(c.ghost("ren").as_deref(), Some("ame"));
         // A fuzzy match that is not a prefix cannot be shown ahead of the
         // cursor, since the characters do not line up.
-        let scattered = at_end("view grtrv");
+        let scattered = at_end("edit grtrv");
         assert_eq!(scattered.ghost("grtrv"), None);
         // Nothing left to hint once the word is complete.
-        assert_eq!(at_end("view").ghost("view"), None);
+        assert_eq!(at_end("edit").ghost("edit"), None);
     }
 
     #[test]
@@ -561,14 +455,12 @@ mod tests {
     fn empty_sources_never_panic() {
         let empty = Sources::default();
         // Store-derived candidates have nothing to offer...
-        for line in ["cd x", "view x", "model login x", "list #x"] {
+        for line in ["cd x", "edit x", "new #x"] {
             let c = complete(line, line.chars().count(), &empty);
             assert!(c.matches.is_empty(), "{line}: {:?}", c.matches);
         }
         // ...but the static lists are independent of the store, so a fresh
-        // install can still complete a format or a subcommand.
-        let c = complete("export 1 m", 10, &empty);
-        assert!(c.matches.contains(&"md".to_string()), "{:?}", c.matches);
+        // install can still complete a subcommand.
         let c = complete("sync pu", 7, &empty);
         assert!(!c.matches.is_empty());
     }

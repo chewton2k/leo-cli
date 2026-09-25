@@ -45,22 +45,14 @@ pub enum Action {
     Search {
         query: String,
     },
-    Remind {
-        text: String,
-    },
     Listen {
         title: Option<String>,
         append_to: Option<String>,
         screen: bool,
     },
-    Export {
-        note: String,
-        format: String,
-    },
     Ask {
         note: String,
     },
-    Tags,
     Mkdir {
         name: String,
     },
@@ -78,8 +70,6 @@ pub enum Action {
         recursive: bool,
     },
     Sync(SyncAction),
-    Model(ModelAction),
-    Config(ConfigAction),
     /// Take back the most recent destructive change.
     Undo,
     Help,
@@ -201,9 +191,6 @@ pub enum Effect {
     Quit,
     /// Shell out to git. Streams its own output.
     Sync(SyncAction),
-    /// Provider management, which prompts for a key with echo disabled.
-    Model(ModelAction),
-    Config(ConfigAction),
 }
 
 /// A pending editor session. `seed` is written to `path` before `$EDITOR` opens
@@ -414,25 +401,17 @@ macro_rules! resolve_or_return {
 /// chain on the settings screen.
 pub const VERBS: &[(&str, &[&str])] = &[
     ("new", &[]),
-    ("list", &["ls"]),
-    ("view", &[]),
     ("edit", &["e"]),
     ("delete", &["rm"]),
     ("rename", &[]),
     ("check", &["x"]),
-    ("tags", &[]),
     ("undo", &["u"]),
-    ("remind", &[]),
     ("listen", &[]),
     ("ask", &[]),
-    ("export", &[]),
     ("mkdir", &[]),
     ("cd", &[]),
     ("mv", &[]),
-    ("rmdir", &[]),
     ("sync", &[]),
-    ("model", &[]),
-    ("config", &[]),
     ("help", &["?"]),
     ("quit", &["exit", "q"]),
 ];
@@ -444,23 +423,32 @@ pub const VERBS: &[(&str, &[&str])] = &[
 /// hunting; naming the replacement costs one line. A replacement starting with
 /// `:` is a command; anything else is a key or a place on screen.
 pub const RETIRED: &[(&str, &str, &str)] = &[
-    ("l", ":list", ONE_NAME),
+    ("l", "the notes pane", LISTED),
+    ("ls", "the notes pane", LISTED),
+    ("list", "the notes pane", LISTED),
+    ("v", "j and k", SHOWN),
+    ("view", "j and k", SHOWN),
     ("d", ":delete", ONE_NAME),
     ("del", ":delete", ONE_NAME),
-    ("n", ":new", ONE_NAME),
-    ("v", ":view", ONE_NAME),
-    ("rem", ":remind", ONE_NAME),
-    ("rec", ":listen", ONE_NAME),
-    ("exp", ":export", ONE_NAME),
-    ("move", ":mv", ONE_NAME),
-    ("h", ":help", ONE_NAME),
+    ("n", "n", "it is a key now: n makes a note"),
+    ("rec", "R", "it is a key now: R records"),
+    ("move", "m", "it is a key now: m moves the selected note"),
+    ("h", "?", ONE_NAME),
     ("find", "/", ONE_SEARCH),
     ("search", "/", ONE_SEARCH),
-    ("expand", ":ask", ONE_NAME),
+    ("expand", "a", "it is a key now: a asks about the selected note"),
     ("uncheck", ":check", ONE_NAME),
+    ("tags", "t", "it switches the left pane to your tags, with counts"),
+    ("rmdir", "D in the directories pane", "it asks, then removes the directory"),
+    ("model", "Ctrl-S", PROFILE),
+    ("config", "Ctrl-S", PROFILE),
+    ("rem", "a note with - [ ] lines", GONE_REMIND),
+    ("remind", "a note with - [ ] lines", GONE_REMIND),
+    ("exp", "the .md file in your notes folder", GONE_EXPORT),
+    ("export", "the .md file in your notes folder", GONE_EXPORT),
     (
         "env",
-        ":model login <provider>",
+        "Ctrl-S",
         "keys live in your OS keychain now, not a plaintext file",
     ),
     ("pwd", "the status bar", "it always shows where you are"),
@@ -468,6 +456,11 @@ pub const RETIRED: &[(&str, &str, &str)] = &[
 ];
 
 const ONE_NAME: &str = "one name per command now, so there is less to learn";
+const LISTED: &str = "the notes pane always lists this directory";
+const SHOWN: &str = "the preview shows whichever note is selected";
+const PROFILE: &str = "providers and keys live on that screen; `leo model` still works in a shell";
+const GONE_REMIND: &str = "reminders were removed; a checklist note does the same";
+const GONE_EXPORT: &str = "export was removed; every note is already a Markdown file";
 const ONE_SEARCH: &str = "one search now: / looks in every note, bodies and tags included";
 
 /// Every word that can start a command, canonical names and aliases alike.
@@ -551,28 +544,6 @@ pub fn parse(line: &str) -> Parsed {
             title: if args.is_empty() { None } else { Some(joined()) },
         }),
 
-        "list" | "ls" => {
-            let mut tag = None;
-            let mut limit = 20;
-            for arg in args {
-                if let Some(t) = arg.strip_prefix('#') {
-                    tag = Some(t.to_string());
-                } else if let Ok(n) = arg.parse::<usize>() {
-                    limit = n;
-                }
-            }
-            act(Action::List { tag, limit })
-        }
-
-        "view" => {
-            if args.is_empty() {
-                usage("view <note>")
-            } else {
-                act(Action::View { note: joined() })
-            }
-        }
-
-        // A missing note means the selected one; see `fill_selected`.
         "edit" | "e" => act(Action::Edit { note: joined() }),
         "delete" | "rm" => act(Action::Delete { note: joined() }),
 
@@ -588,25 +559,6 @@ pub fn parse(line: &str) -> Parsed {
                     index,
                 }),
                 _ => Parsed::Usage("Checkbox number must be a positive integer.".to_string()),
-            }
-        }
-
-        "remind" => {
-            if args.is_empty() {
-                return usage("remind <what to remember>");
-            }
-            // Normalize the natural phrasing "remind me to X".
-            let text = joined();
-            let text = text
-                .strip_prefix("me to ")
-                .or_else(|| text.strip_prefix("me "))
-                .unwrap_or(&text)
-                .trim()
-                .to_string();
-            if text.is_empty() {
-                usage("remind <what to remember>")
-            } else {
-                act(Action::Remind { text })
             }
         }
 
@@ -629,20 +581,8 @@ pub fn parse(line: &str) -> Parsed {
             })
         }
 
-        // Format is the last token; the note reference is everything before it.
-        "export" => {
-            if args.len() < 2 {
-                return usage("export <note> <format>   (txt, md, html, docx, pdf, rtf, odt)");
-            }
-            act(Action::Export {
-                note: args[..args.len() - 1].join(" "),
-                format: args.last().unwrap().to_lowercase(),
-            })
-        }
-
         "ask" => act(Action::Ask { note: joined() }),
 
-        "tags" => act(Action::Tags),
         "undo" | "u" => act(Action::Undo),
 
         // The whole line is the new title; the note is always the selected one
@@ -679,24 +619,6 @@ pub fn parse(line: &str) -> Parsed {
             })
         }
 
-        // `-r` mirrors the shell, where recursive removal is also opt-in.
-        "rmdir" => {
-            let recursive = args.iter().any(|a| a == "-r" || a == "--recursive");
-            let name = args
-                .iter()
-                .filter(|a| a.as_str() != "-r" && a.as_str() != "--recursive")
-                .cloned()
-                .collect::<Vec<_>>()
-                .join(" ")
-                .trim()
-                .to_string();
-            if name.is_empty() {
-                usage("rmdir [-r] <name>")
-            } else {
-                act(Action::Rmdir { name, recursive })
-            }
-        }
-
         "sync" => match args.first().map(|s| s.to_lowercase()).as_deref() {
             Some("init") => act(Action::Sync(SyncAction::Init)),
             Some("connect") => match args.get(1) {
@@ -707,29 +629,6 @@ pub fn parse(line: &str) -> Parsed {
             Some("pull") => act(Action::Sync(SyncAction::Pull)),
             Some("status") => act(Action::Sync(SyncAction::Status)),
             _ => usage("sync <init | connect <url> | push | pull | status>"),
-        },
-
-        "model" => match args.first().map(|s| s.to_lowercase()).as_deref() {
-            Some("list") => act(Action::Model(ModelAction::List)),
-            Some("test") => match args.get(1) {
-                Some(name) => act(Action::Model(ModelAction::Test { name: name.clone() })),
-                None => usage("model test <provider>"),
-            },
-            Some("login") => match args.get(1) {
-                Some(name) => act(Action::Model(ModelAction::Login { name: name.clone() })),
-                None => usage("model login <provider>"),
-            },
-            Some("logout") => match args.get(1) {
-                Some(name) => act(Action::Model(ModelAction::Logout { name: name.clone() })),
-                None => usage("model logout <provider>"),
-            },
-            _ => usage("model <list | test <provider> | login <provider> | logout <provider>>"),
-        },
-
-        "config" => match args.first().map(|s| s.to_lowercase()).as_deref() {
-            Some("edit") | None => act(Action::Config(ConfigAction::Edit)),
-            Some("path") => act(Action::Config(ConfigAction::Path)),
-            _ => usage("config <edit | path>"),
         },
 
         "help" | "?" => act(Action::Help),
@@ -815,13 +714,10 @@ pub fn apply(
         Action::Delete { note } => Ok(delete(store, &note, ctx.numbering)),
         Action::Check { note, index } => check(store, &note, index, ctx.numbering),
         Action::Search { query } => Ok(search(store, &query)),
-        Action::Remind { text } => remind(store, &text),
         Action::Listen { title, append_to, screen } => {
             Ok(listen(store, title, append_to, screen, ctx.current_dir))
         }
-        Action::Export { note, format } => export(store, &note, &format, ctx.numbering),
         Action::Ask { note } => ask(store, &note, ctx.numbering, ai),
-        Action::Tags => Ok(tags(store)),
         Action::Undo => Ok(undo(store)),
         Action::Mkdir { name } => mkdir(store, &name, ctx.current_dir),
         Action::Cd { path } => Ok(cd(store, &path, ctx.current_dir)),
@@ -829,8 +725,6 @@ pub fn apply(
         Action::Rename { note, title } => rename(store, &note, &title, ctx.numbering),
         Action::Rmdir { name, recursive } => rmdir(store, &name, recursive, ctx.current_dir),
         Action::Sync(a) => Ok(Outcome::effect(Effect::Sync(a))),
-        Action::Model(a) => Ok(Outcome::effect(Effect::Model(a))),
-        Action::Config(a) => Ok(Outcome::effect(Effect::Config(a))),
         Action::Help => Ok(Outcome::effect(Effect::ShowHelp)),
         Action::Quit => Ok(Outcome::effect(Effect::Quit)),
     }
@@ -967,25 +861,6 @@ fn search(store: &Store, query: &str) -> Outcome {
     Outcome { selection: Some(selection), ..Outcome::lines(lines) }
 }
 
-fn remind(store: &mut Store, text: &str) -> Result<Outcome> {
-    let item = format!("- [ ] {text}");
-    // Reminders always live at the root, in one note tagged #reminder.
-    if let Some(note) = store.find_by_tag_mut("reminder") {
-        note.body.push('\n');
-        note.body.push_str(&item);
-        note.updated_at = chrono::Utc::now();
-        store.save()?;
-        Ok(Outcome { dirty: true, ..Outcome::line(Line::good(format!("Added {text}"))) })
-    } else {
-        store.create_note("Reminders", &item, vec!["reminder".to_string()], "")?;
-        store.save()?;
-        Ok(Outcome {
-            dirty: true,
-            ..Outcome::line(Line::good(format!("Created Reminders + {text}")))
-        })
-    }
-}
-
 /// `listen` — validate the append target before spending time recording.
 fn listen(
     store: &Store,
@@ -1005,24 +880,6 @@ fn listen(
         append_to,
         dir: dir.to_string(),
     }))
-}
-
-fn export(store: &Store, note: &str, format: &str, numbering: &[String]) -> Result<Outcome> {
-    let id = resolve_or_return!(note, store, numbering);
-    let n = store.find_note(&id).expect("resolve returned a live id");
-    // Desktop, then home, then the working directory. `export` takes no path
-    // argument, so nothing here needs filesystem completion. Each candidate is
-    // checked for existence rather than trusted: `dirs::desktop_dir()` reports
-    // `$HOME/Desktop` on macOS whether or not that directory was ever created,
-    // and writing into a missing directory fails with a bare "No such file or
-    // directory" that names neither the note nor the path.
-    let output_dir = [dirs::desktop_dir(), dirs::home_dir()]
-        .into_iter()
-        .flatten()
-        .find(|d| d.is_dir())
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
-    let path = crate::export::export_note(n, format.trim_start_matches('.'), &output_dir)?;
-    Ok(Outcome::line(Line::good(format!("Exported {}", path.display()))))
 }
 
 fn ask(store: &mut Store, note: &str, numbering: &[String], ai: &dyn Ai) -> Result<Outcome> {
@@ -1064,19 +921,6 @@ fn undo(store: &mut Store) -> Outcome {
         },
         None => Outcome::line(Line::dim("Nothing to undo.")),
     }
-}
-
-fn tags(store: &Store) -> Outcome {
-    let tags = store.tags();
-    if tags.is_empty() {
-        return Outcome::line(Line::dim("No tags yet."));
-    }
-    let mut lines = vec![Line::blank()];
-    for (tag, count) in &tags {
-        lines.push(Line::plain(format!("#{tag} ({count})")));
-    }
-    lines.push(Line::blank());
-    Outcome::lines(lines)
 }
 
 /// Join a name onto the current directory, tolerating stray slashes.
@@ -1530,7 +1374,6 @@ mod parse_tests {
     #[test]
     fn every_alias_maps_to_the_same_action_as_its_canonical_verb() {
         let pairs = [
-            ("ls", "list"),
             ("e 1", "edit 1"),
             ("rm 1", "delete 1"),
             ("x 1 2", "check 1 2"),
@@ -1609,40 +1452,23 @@ mod parse_tests {
 
     #[test]
     fn verbs_are_case_insensitive() {
-        assert_eq!(act("LIST"), act("list"));
-        assert_eq!(act("View 1"), act("view 1"));
+        assert_eq!(act("EDIT 1"), act("edit 1"));
+        assert_eq!(act("Mv 1 cs130"), act("mv 1 cs130"));
     }
 
     #[test]
     fn hey_leo_prefix_is_stripped() {
-        assert_eq!(
-            act("hey leo remind me to call mom"),
-            Action::Remind { text: "call mom".to_string() }
-        );
-        assert_eq!(act("leo list"), Action::List { tag: None, limit: 20 });
+        assert_eq!(act("hey leo new Groceries"), act("new Groceries"));
+        assert_eq!(act("leo undo"), Action::Undo);
         // "leo" alone as the whole line is not a command.
         assert_eq!(parse("leo"), Parsed::Unknown("leo".to_string()));
     }
 
     #[test]
-    fn list_parses_tag_and_limit_in_any_order() {
-        assert_eq!(act("list"), Action::List { tag: None, limit: 20 });
-        assert_eq!(
-            act("list #rust"),
-            Action::List { tag: Some("rust".to_string()), limit: 20 }
-        );
-        assert_eq!(act("list 5"), Action::List { tag: None, limit: 5 });
-        assert_eq!(
-            act("list 5 #rust"),
-            Action::List { tag: Some("rust".to_string()), limit: 5 }
-        );
-    }
-
-    #[test]
     fn multi_word_note_references_are_joined() {
         assert_eq!(
-            act("view Rust ownership notes"),
-            Action::View { note: "Rust ownership notes".to_string() }
+            act("edit Rust ownership notes"),
+            Action::Edit { note: "Rust ownership notes".to_string() }
         );
     }
 
@@ -1671,20 +1497,6 @@ mod parse_tests {
         assert!(usage("check 1").contains("check <note>"));
     }
 
-    /// `export` takes the format as the LAST token, same shape as `check`.
-    #[test]
-    fn export_takes_its_format_from_the_end() {
-        assert_eq!(
-            act("export Rust ownership md"),
-            Action::Export { note: "Rust ownership".to_string(), format: "md".to_string() }
-        );
-        // Format is lowercased so `MD` works.
-        assert_eq!(
-            act("export 1 MD"),
-            Action::Export { note: "1".to_string(), format: "md".to_string() }
-        );
-    }
-
     /// `mv` takes the directory last and any number of notes before it.
     #[test]
     fn mv_takes_the_directory_from_the_end() {
@@ -1702,6 +1514,21 @@ mod parse_tests {
         );
     }
 
+    /// Verbs the panes or the profile screen already do, and the two features
+    /// that went: each must still explain itself when typed.
+    #[test]
+    fn verbs_the_panes_replaced_are_retired() {
+        for word in [
+            "list", "ls", "view", "tags", "rmdir", "model", "config", "remind", "export",
+        ] {
+            assert!(
+                matches!(parse(word), Parsed::Retired { .. }),
+                "{word:?} should be retired, got {:?}",
+                parse(word)
+            );
+        }
+    }
+
     /// There is one search, and it is `/`.
     #[test]
     fn search_and_find_point_at_slash() {
@@ -1711,22 +1538,6 @@ mod parse_tests {
                 other => panic!("{word:?} should be retired, got {other:?}"),
             }
         }
-    }
-
-    #[test]
-    fn remind_strips_the_natural_phrasing() {
-        assert_eq!(
-            act("remind me to buy groceries"),
-            Action::Remind { text: "buy groceries".to_string() }
-        );
-        assert_eq!(
-            act("remind me buy groceries"),
-            Action::Remind { text: "buy groceries".to_string() }
-        );
-        assert_eq!(
-            act("remind buy groceries"),
-            Action::Remind { text: "buy groceries".to_string() }
-        );
     }
 
     #[test]
@@ -1791,51 +1602,8 @@ mod parse_tests {
     }
 
     #[test]
-    fn model_subcommands_parse() {
-        assert_eq!(act("model list"), Action::Model(ModelAction::List));
-        assert_eq!(
-            act("model login openrouter"),
-            Action::Model(ModelAction::Login { name: "openrouter".to_string() })
-        );
-        assert_eq!(
-            act("model test groq"),
-            Action::Model(ModelAction::Test { name: "groq".to_string() })
-        );
-        assert_eq!(
-            act("model logout hf"),
-            Action::Model(ModelAction::Logout { name: "hf".to_string() })
-        );
-        assert!(usage("model login").contains("login"));
-        assert!(usage("model").contains("list"));
-    }
-
-    #[test]
-    fn config_defaults_to_edit() {
-        assert_eq!(act("config"), Action::Config(ConfigAction::Edit));
-        assert_eq!(act("config path"), Action::Config(ConfigAction::Path));
-        assert!(usage("config bogus").contains("edit"));
-    }
-
-    #[test]
-    fn rmdir_takes_an_opt_in_recursive_flag() {
-        assert_eq!(
-            act("rmdir cs130"),
-            Action::Rmdir { name: "cs130".to_string(), recursive: false }
-        );
-        for line in ["rmdir -r cs130", "rmdir cs130 -r", "rmdir --recursive cs130"] {
-            assert_eq!(
-                act(line),
-                Action::Rmdir { name: "cs130".to_string(), recursive: true },
-                "for {line:?}"
-            );
-        }
-        // The flag alone is not a directory name.
-        assert!(matches!(parse("rmdir -r"), Parsed::Usage(_)));
-    }
-
-    #[test]
     fn usage_is_returned_for_verbs_missing_a_required_argument() {
-        for line in ["view", "mkdir", "rmdir", "export 1", "mv"] {
+        for line in ["mkdir", "mv", "rename", "check 1"] {
             assert!(
                 matches!(parse(line), Parsed::Usage(_)),
                 "{line:?} should report usage"
@@ -2199,17 +1967,6 @@ mod handler_tests {
         assert!(out.text().contains("No note found: nope"));
     }
 
-    #[test]
-    fn tags_counts_each_tag() {
-        let (mut store, _d) = temp_store();
-        store.create_note("A", "b", vec!["rust".to_string()], "").unwrap();
-        store.create_note("B", "b", vec!["rust".to_string()], "").unwrap();
-        store.save().unwrap();
-
-        let out = apply(Action::Tags, &mut store, ctx("", &[]), &FakeAi::default()).unwrap();
-        assert!(out.text().contains("#rust (2)"), "got: {}", out.text());
-    }
-
     // ── mutating handlers ───────────────────────────────────────────────────
 
     #[test]
@@ -2245,35 +2002,6 @@ mod handler_tests {
         .unwrap();
         assert!(!out.dirty);
         assert!(out.text().contains("No checkbox #9"));
-    }
-
-    #[test]
-    fn remind_creates_the_note_then_appends_to_it() {
-        let (mut store, _d) = temp_store();
-
-        let first = apply(
-            Action::Remind { text: "buy milk".to_string() },
-            &mut store,
-            ctx("", &[]),
-            &FakeAi::default(),
-        )
-        .unwrap();
-        assert!(first.text().contains("Created Reminders"));
-        assert_eq!(store.notes.len(), 1);
-
-        let second = apply(
-            Action::Remind { text: "call mom".to_string() },
-            &mut store,
-            ctx("", &[]),
-            &FakeAi::default(),
-        )
-        .unwrap();
-        assert!(second.text().contains("Added call mom"));
-        // Still one note, now with both items.
-        assert_eq!(store.notes.len(), 1);
-        let body = &store.notes[0].body;
-        assert!(body.contains("- [ ] buy milk"));
-        assert!(body.contains("- [ ] call mom"));
     }
 
     #[test]
@@ -2883,7 +2611,7 @@ mod handler_tests {
                 why,
             } => {
                 assert_eq!(verb, "env");
-                assert!(replacement.contains("model login"), "{replacement}");
+                assert_eq!(replacement, "Ctrl-S");
                 assert!(why.contains("keychain"), "{why}");
             }
             other => panic!("expected Retired, got {other:?}"),
@@ -2909,8 +2637,6 @@ mod handler_tests {
         let ai = FakeAi::default();
         let cases = [
             (Action::Sync(SyncAction::Push), Effect::Sync(SyncAction::Push)),
-            (Action::Model(ModelAction::List), Effect::Model(ModelAction::List)),
-            (Action::Config(ConfigAction::Path), Effect::Config(ConfigAction::Path)),
             (Action::Help, Effect::ShowHelp),
             (Action::Quit, Effect::Quit),
         ];

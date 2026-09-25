@@ -1121,22 +1121,6 @@ impl App {
                 }
                 Ok(())
             }
-
-            Effect::Model(a) => {
-                let out = self.outside(terminal, || crate::run_model(a.clone()))?;
-                if let Err(e) = out {
-                    self.say(Kind::Bad, e.to_string());
-                }
-                Ok(())
-            }
-
-            Effect::Config(a) => {
-                let out = self.outside(terminal, || crate::run_config(a.clone()))?;
-                if let Err(e) = out {
-                    self.say(Kind::Bad, e.to_string());
-                }
-                Ok(())
-            }
         }
     }
 
@@ -1190,11 +1174,6 @@ impl App {
                 })
                 .collect(),
             tags: self.store.tags().into_iter().map(|(t, _)| t).collect(),
-            providers: crate::config::Config::load()
-                .providers
-                .keys()
-                .cloned()
-                .collect(),
         }
     }
 

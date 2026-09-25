@@ -517,18 +517,6 @@ impl Store {
         tags
     }
 
-    /// Find the most recently updated note with a given tag (mutable).
-    pub fn find_by_tag_mut(&mut self, tag: &str) -> Option<&mut Note> {
-        let idx = self
-            .notes
-            .iter()
-            .enumerate()
-            .filter(|(_, n)| n.tags.iter().any(|t| t == tag))
-            .max_by_key(|(_, n)| n.updated_at)
-            .map(|(i, _)| i)?;
-        Some(&mut self.notes[idx])
-    }
-
     /// Toggle the Nth checkbox in a note. Returns the new state text.
     pub fn toggle_checkbox(&mut self, id_prefix: &str, n: usize) -> Option<String> {
         let note = self.find_note_mut(id_prefix)?;

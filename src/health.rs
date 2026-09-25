@@ -310,9 +310,6 @@ fn install_hint(tool: &str) -> &'static str {
         ("sox", true, _) => "brew install sox",
         ("sox", _, true) => "choco install sox",
         ("sox", ..) => "sudo apt install sox",
-        ("pandoc", true, _) => "brew install pandoc",
-        ("pandoc", _, true) => "choco install pandoc",
-        ("pandoc", ..) => "sudo apt install pandoc",
         ("git", true, _) => "xcode-select --install",
         ("git", _, true) => "winget install Git.Git",
         ("git", ..) => "sudo apt install git",
@@ -353,16 +350,6 @@ pub fn report(config: &Config, store: &dyn SecretStore) -> Vec<Check> {
     if on_path("rec") {
         checks.push(microphone());
     }
-
-    checks.push(if on_path("pandoc") {
-        Check::ready("pandoc", "export to docx, pdf, rtf, odt", None)
-    } else {
-        Check::missing(
-            "pandoc",
-            "export to docx, pdf, rtf, odt",
-            install_hint("pandoc"),
-        )
-    });
 
     checks.push(if on_path("git") {
         Check::ready("git", "sync to GitHub", None)

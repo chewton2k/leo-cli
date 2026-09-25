@@ -68,7 +68,6 @@ pub const SECTIONS: &[Section] = &[
             e("Ctrl-P", "the same as /"),
             e("t", "left pane: directories or tags"),
             e("  Enter", "on a tag: show only those notes"),
-            e(":tags", "every tag with a count"),
         ],
     },
     Section {
@@ -100,14 +99,10 @@ pub const SECTIONS: &[Section] = &[
         title: "Notes",
         entries: &[
             e(":new [title]", "create, opening $EDITOR"),
-            e(":view <note>", "show it"),
             e(":edit [note]", "edit it; no note means the selected one"),
             e(":delete [note]", "delete it"),
             e(":rename <title>", "retitle the selected note"),
-            e(":list [#tag] [N]", "list, by tag or capped at N"),
             e(":check <note> <N>", "toggle checkbox N"),
-            e(":tags", "every tag, with counts"),
-            e(":remind <text>", "add to the reminder note"),
         ],
     },
     Section {
@@ -116,8 +111,7 @@ pub const SECTIONS: &[Section] = &[
             e(":mkdir <name>", "create one"),
             e(":cd <dir>", "enter it; .. up, / root"),
             e(":mv [note...] <dir>", "move notes, or the selected one, into it"),
-            e(":rmdir <name>", "remove an empty one"),
-            e(":rmdir -r <name>", "remove it and everything in it"),
+            e("D", "in the dirs pane: remove it and everything in it"),
         ],
     },
     Section {
@@ -141,17 +135,12 @@ pub const SECTIONS: &[Section] = &[
             e("  a / d", "on that screen: add to / drop from a chain"),
             e("  e", "on that screen: open config.toml"),
             e("  Enter", "on a setting: change it, or set up git backup"),
-            e(":model list", "chains, models, and key status"),
-            e(":model login <p>", "store a key in the OS keychain"),
-            e(":model test <p>", "one small request to check it"),
-            e(":config edit", "open config.toml in $EDITOR"),
             e("leo doctor", "what works here, and what to install"),
         ],
     },
     Section {
         title: "Elsewhere",
         entries: &[
-            e(":export <note> <fmt>", "txt md html docx pdf rtf odt"),
             e(":sync <sub>", "init, connect, push, pull, status"),
             e("  automatically", "Ctrl-S: back up on quit, or when idle"),
             e("leo serve", "read notes from your phone (shell only)"),

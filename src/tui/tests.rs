@@ -30,18 +30,18 @@ fn select_titled(app: &mut App, title: &str) {
 fn tab_completes_a_verb_on_the_command_line() {
     let (mut app, _d) = temp_app();
     app.mode = Mode::Command;
-    app.cmd.open("vie");
+    app.cmd.open("ren");
 
     app.cycle_completion();
-    assert_eq!(app.cmd.text(), "view");
-    assert_eq!(app.cmd.cursor(), 4);
+    assert_eq!(app.cmd.text(), "rename");
+    assert_eq!(app.cmd.cursor(), 6);
 }
 
 #[test]
 fn tab_completes_a_note_reference_to_its_number() {
     let (mut app, _d) = temp_app();
     app.mode = Mode::Command;
-    app.cmd.open("view owner");
+    app.cmd.open("edit owner");
 
     // Notes list newest-first, so derive the expected number rather than
     // assuming creation order.
@@ -56,7 +56,7 @@ fn tab_completes_a_note_reference_to_its_number() {
 
     app.cycle_completion();
     // Only the number is a valid argument; the title was just for matching.
-    assert_eq!(app.cmd.text(), format!("view {expected}"));
+    assert_eq!(app.cmd.text(), format!("edit {expected}"));
 }
 
 #[test]
@@ -85,7 +85,7 @@ fn tab_cycles_through_candidates_and_back_to_what_was_typed() {
 fn a_keystroke_after_tab_abandons_the_candidate_list() {
     let (mut app, _d) = temp_app();
     app.mode = Mode::Command;
-    app.cmd.open("vie");
+    app.cmd.open("ren");
     app.cycle_completion();
     assert!(app.completing.is_some());
 
@@ -97,15 +97,15 @@ fn a_keystroke_after_tab_abandons_the_candidate_list() {
     app.mode = Mode::Command;
     app.on_key(key, &mut terminal).unwrap();
     assert!(app.completing.is_none());
-    assert_eq!(app.cmd.text(), "viewx");
+    assert_eq!(app.cmd.text(), "renamex");
 }
 
 #[test]
 fn the_ghost_hint_shows_the_rest_of_the_top_match() {
     let (mut app, _d) = temp_app();
     app.mode = Mode::Command;
-    app.cmd.open("vie");
-    assert_eq!(app.ghost().as_deref(), Some("w"));
+    app.cmd.open("ren");
+    assert_eq!(app.ghost().as_deref(), Some("ame"));
 
     // Not shown once cycling has started: the line already holds the match.
     app.cycle_completion();
@@ -116,7 +116,7 @@ fn the_ghost_hint_shows_the_rest_of_the_top_match() {
 fn no_ghost_hint_outside_the_command_line() {
     let (mut app, _d) = temp_app();
     app.mode = Mode::Normal;
-    app.cmd.open("vie");
+    app.cmd.open("ren");
     assert_eq!(app.ghost(), None);
 }
 
@@ -144,13 +144,13 @@ fn the_key_hints_follow_the_focused_pane() {
 fn the_frame_renders_the_completed_command_with_its_hint() {
     let (mut app, _d) = temp_app();
     app.mode = Mode::Command;
-    app.cmd.open("vie");
+    app.cmd.open("ren");
 
     let mut terminal =
         ratatui::Terminal::new(ratatui::backend::TestBackend::new(90, 20)).unwrap();
     terminal.draw(|frame| app.draw(frame)).unwrap();
     let out = terminal.backend().to_string();
-    assert!(out.contains(":view"), "ghost hint is not rendered:\n{out}");
+    assert!(out.contains(":rename"), "ghost hint is not rendered:\n{out}");
 }
 
 #[test]
@@ -457,7 +457,7 @@ fn a_retired_command_explains_itself_in_one_message() {
 
     app.run_line("env", &mut terminal).unwrap();
     let (_, text, _) = app.message.as_ref().expect("a message");
-    assert!(text.contains("model login"), "{text}");
+    assert!(text.contains("Ctrl-S"), "{text}");
     assert!(text.contains("keychain"), "does not say why: {text}");
 }
 

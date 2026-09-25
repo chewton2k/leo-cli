@@ -2,7 +2,6 @@ mod action;
 mod ai;
 mod config;
 mod diag;
-mod export;
 mod health;
 mod listen;
 mod manual;
@@ -90,12 +89,6 @@ enum Commands {
         full_text: bool,
     },
 
-    /// Add a reminder (creates or appends to a Reminders note)
-    Remind {
-        /// What to remember
-        text: Vec<String>,
-    },
-
     /// Record audio and create structured notes from speech
     Listen {
         /// Optional title (AI generates one if omitted)
@@ -109,15 +102,6 @@ enum Commands {
         /// Capture system audio instead of microphone (requires BlackHole: brew install blackhole-2ch)
         #[arg(long)]
         screen: bool,
-    },
-
-    /// Export a note to a file (txt, md, html, docx, pdf, rtf, odt)
-    Export {
-        /// Note ID (or unique prefix)
-        id: String,
-
-        /// Output format
-        format: String,
     },
 
     /// Expand all @leo prompts in a note using AI
@@ -299,23 +283,11 @@ fn run_command(cmd: Commands) -> Result<()> {
         Commands::Edit { id } => action::Action::Edit { note: id },
         Commands::Delete { id, .. } => action::Action::Delete { note: id },
         Commands::Search { query, .. } => action::Action::Search { query },
-        Commands::Remind { text } => {
-            // The subcommand takes the words as a Vec; parse the joined form so
-            // `leo remind me to X` strips the same phrasing the shell does.
-            match action::parse(&format!("remind {}", text.join(" "))) {
-                action::Parsed::Action(a) => a,
-                _ => {
-                    eprintln!("Usage: leo remind <what to remember>");
-                    return Ok(());
-                }
-            }
-        }
         Commands::Listen { title, add, screen } => action::Action::Listen {
             title,
             append_to: add,
             screen,
         },
-        Commands::Export { id, format } => action::Action::Export { note: id, format },
         Commands::Ask { id } => action::Action::Ask { note: id },
 
         Commands::Serve { .. }
@@ -364,9 +336,7 @@ fn absorb_cli(
         // Reachable only through the interactive shell.
         action::Effect::ShowHelp
         | action::Effect::Quit
-        | action::Effect::Sync(_)
-        | action::Effect::Model(_)
-        | action::Effect::Config(_) => return Ok(()),
+        | action::Effect::Sync(_) => return Ok(()),
     };
 
     shell::render(&next.lines);
