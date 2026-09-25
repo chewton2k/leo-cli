@@ -551,7 +551,7 @@ impl App {
             Some(step) => self.say(Kind::Warn, step),
             None => self.say(
                 Kind::Good,
-                "Everything is set up. Press ? for help, or : to run a command.",
+                "Everything is set up. The bottom line shows what to press; ? shows it all.",
             ),
         }
     }
@@ -1087,7 +1087,12 @@ impl App {
                 Ok(())
             }
             Parsed::Unknown(verb) => {
-                self.say(Kind::Bad, format!("Unknown command: {verb}"));
+                self.say(
+                    Kind::Bad,
+                    format!(
+                        "Unknown command: {verb} — the : menu lists them all, ? shows every key"
+                    ),
+                );
                 Ok(())
             }
             // One line, not two: the status line holds a single message, so a

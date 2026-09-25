@@ -488,7 +488,7 @@ async function renderSearch() {
 async function doSearch(q) {
   const el = document.getElementById('search-results');
   if (!q.trim()) { el.innerHTML = ''; return; }
-  const results = await api(`/api/search?q=${encodeURIComponent(q)}&full_text=true`);
+  const results = await api(`/api/search?q=${encodeURIComponent(q)}`);
   if (!results.length) {
     el.innerHTML = '<div class="empty">No results</div>';
     return;

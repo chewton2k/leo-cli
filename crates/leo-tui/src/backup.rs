@@ -58,7 +58,7 @@ impl App {
             Ok(()) => println!("  backed up."),
             Err(e) => {
                 println!("  backup failed: {e}");
-                println!("  your notes are committed locally; `leo sync push` retries.");
+                println!("  your notes are committed locally; `leo sync` retries.");
             }
         }
     }

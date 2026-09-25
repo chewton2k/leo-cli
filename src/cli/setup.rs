@@ -78,7 +78,7 @@ pub fn doctor() -> Result<()> {
         println!("  Everything leo can use is available.");
     } else {
         println!(
-            "  {missing} thing{} missing. Notes, search, export to text and sync work regardless.",
+            "  {missing} thing{} missing. Notes, search and backup work regardless.",
             if missing == 1 { " is" } else { "s are" }
         );
     }

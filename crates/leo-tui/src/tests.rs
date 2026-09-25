@@ -661,6 +661,27 @@ fn r_opens_the_command_line_with_the_title_ready_to_change() {
     assert_eq!(app.cmd.text(), "rename Rust ownership");
 }
 
+/// A typo on the : line should say where the real commands are.
+#[test]
+fn an_unknown_command_points_at_the_menu_and_help() {
+    let (mut app, _d) = temp_app();
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
+    app.run_line("frobnicate", &mut terminal).unwrap();
+    let (_, text, _) = app.message.as_ref().expect("a message");
+    assert!(text.contains("frobnicate"), "{text}");
+    assert!(text.contains("?"), "does not mention help: {text}");
+}
+
+/// A key that replaced a command is named as a key, not as the same word.
+#[test]
+fn a_command_that_became_a_key_says_so() {
+    let (mut app, _d) = temp_app();
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
+    app.run_line("tags", &mut terminal).unwrap();
+    let (_, text, _) = app.message.as_ref().expect("a message");
+    assert!(text.contains("the t key"), "{text}");
+}
+
 /// The finished text is written through the same seam a live model would
 /// use, so titles, tags and appending behave identically.
 #[test]
@@ -1682,7 +1703,7 @@ fn an_empty_pane_explains_itself_differently_by_place() {
     terminal.draw(|f| app.draw(f)).unwrap();
     let out = terminal.backend().to_string();
     assert!(out.contains("No notes yet"), "{out}");
-    assert!(out.contains(":new"), "{out}");
+    assert!(out.contains("n to write one"), "{out}");
 
     // Inside a directory, where leaving matters as much as writing. A fresh
     // one, since the fixture's directories have notes in them.

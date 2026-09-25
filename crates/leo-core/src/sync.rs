@@ -37,7 +37,7 @@ pub fn init(notes_dir: &Path) -> Result<()> {
 
 pub fn connect(notes_dir: &Path, url: &str) -> Result<()> {
     if !is_initialized(notes_dir) {
-        anyhow::bail!("Run 'leo sync init' first.");
+        init(notes_dir)?;
     }
     run_git(notes_dir, &["remote", "add", "origin", url])?;
     println!("Connected to {url}");
@@ -263,11 +263,17 @@ mod tests {
         assert!(gitignore.contains("*.bak"));
     }
 
+    /// Connecting is the step a user thinks of; the repository it needs is
+    /// made for them rather than being a separate step to remember.
     #[test]
-    fn test_connect_before_init_returns_error() {
+    fn connecting_before_init_sets_the_repository_up() {
         let tmp = TempDir::new().unwrap();
-        let err = connect(tmp.path(), "https://github.com/user/repo.git").unwrap_err();
-        assert!(err.to_string().contains("leo sync init"));
+        connect(tmp.path(), "https://github.com/user/repo.git").unwrap();
+        assert!(is_initialized(tmp.path()));
+        assert_eq!(
+            remote_url(tmp.path()).as_deref(),
+            Some("https://github.com/user/repo.git")
+        );
     }
 
     #[test]

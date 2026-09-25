@@ -256,8 +256,8 @@ impl ChatProvider for OpenAiChat {
 
     fn unavailable_reason(&self) -> String {
         format!(
-            "{}: no API key (run `leo model login {}`)",
-            self.name, self.name
+            "{}: no API key (run `leo setup`, or press Ctrl-S in leo)",
+            self.name
         )
     }
 

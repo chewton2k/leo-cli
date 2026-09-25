@@ -423,7 +423,7 @@ pub fn next_step(config: &Config, store: &dyn SecretStore) -> Option<String> {
         );
     }
     if !on_path("rec") {
-        return Some(format!("`listen` needs sox: {}", install_hint("sox")));
+        return Some(format!("Recording (R) needs sox: {}", install_hint("sox")));
     }
     None
 }

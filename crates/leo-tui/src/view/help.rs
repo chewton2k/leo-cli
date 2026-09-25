@@ -53,7 +53,7 @@ pub const SECTIONS: &[Section] = &[
             e("Ctrl-R", "reload from disk, and repaint"),
             e("click", "focus a pane, or select a row"),
             e("wheel", "scroll whatever is under the pointer"),
-            e("Esc", "close an overlay, or unpin output"),
+            e("Esc", "close, or clear a search or marks"),
             e("?", "this help"),
             e("q", "quit"),
         ],

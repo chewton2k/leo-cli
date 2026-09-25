@@ -40,7 +40,7 @@ enum Commands {
         tags: Vec<String>,
     },
 
-    /// List all notes (newest first)
+    /// List the top-level notes and directories, newest first
     List {
         /// Filter by tag
         #[arg(short, long)]

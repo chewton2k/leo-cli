@@ -81,8 +81,8 @@ impl Config {
         format!(
             r#"# leo configuration.
 #
-# Keys do NOT belong in this file. Run `leo model login <provider>` to store one
-# in your OS keychain, or press Ctrl-S inside leo for the same thing with a menu.
+# Keys do NOT belong in this file. Run `leo setup` to store one, or press Ctrl-S
+# inside leo and Enter on the provider.
 #
 # These two lines are the ones worth tuning: providers are tried in order, and
 # unavailable ones — no key, no binary, closed port — are skipped without
@@ -100,7 +100,7 @@ chain = [{transcribe}]
 # openai, deepseek, together, xai, whisper_cpp, groq, hf, openai_whisper,
 # local_whisper_server. Press Ctrl-S to see them all and add one to a chain.
 #
-# Backing up to git happens on every save once `:sync init` has run. Pushing is
+# Backing up to git happens on every save once `leo sync` has set it up. Pushing is
 # separate, because it needs the network:
 #
 #   [sync]
@@ -131,8 +131,8 @@ chain = [{transcribe}]
         format!(
             r#"# leo configuration.
 #
-# Keys do NOT belong in this file. Run `leo model login <provider>` to put one
-# in your OS keychain, or press Ctrl-S inside leo for the same thing with a menu.
+# Keys do NOT belong in this file. Run `leo setup` to store one, or press Ctrl-S
+# inside leo and Enter on the provider.
 #
 # Providers are tried in order and unavailable ones — no key, no binary, closed
 # port — are skipped without complaint. Listing more than you have is the point:
@@ -168,7 +168,7 @@ base_url = "http://localhost:11434/v1"
 model = "qwen3:8b"
 max_tokens = 4096
 
-# Free cloud models. `leo model login openrouter`
+# Free cloud models; `leo setup` stores the key.
 # "openrouter/free" is a router over OpenRouter's zero-cost models, so it
 # survives individual models being retired.
 [providers.openrouter]
@@ -179,7 +179,7 @@ key_env = "OPENROUTER_API_KEY"
 max_tokens = 4096
 
 # Everything below is defined and ready: add the name to a chain above, and run
-# `leo model login <name>` if it needs a key.
+# `leo setup` (or Ctrl-S, Enter) if it needs a key.
 
 # Local servers — no key, nothing to sign up for.
 [providers.lmstudio]
@@ -277,14 +277,14 @@ kind = "whisper_cpp"
 bin = "whisper-cli"
 model_path = "~/.leo/models/ggml-base.en.bin"
 
-# Free tier, fast. `leo model login groq`
+# Free tier, fast; `leo setup` stores the key.
 [providers.groq]
 kind = "groq"
 base_url = "https://api.groq.com/openai/v1"
 model = "whisper-large-v3-turbo"
 key_env = "GROQ_API_KEY"
 
-# `leo model login hf`
+# Hugging Face; `leo setup` stores the key.
 [providers.hf]
 kind = "hf"
 model = "openai/whisper-large-v3-turbo"
@@ -687,7 +687,7 @@ kind = "telepathy"
     fn the_shipped_file_explains_how_to_add_a_provider() {
         let text = Config::default_toml();
         // The file is the documentation, so these have to be present.
-        assert!(text.contains("leo model login"));
+        assert!(text.contains("leo setup"));
         assert!(text.contains("kind = \"openai\""));
         assert!(text.contains("[chat]"));
         assert!(text.contains("[transcribe]"));

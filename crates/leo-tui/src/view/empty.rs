@@ -46,13 +46,16 @@ impl Hint {
 
     /// Nothing here yet, at the top level.
     pub fn no_notes() -> Self {
-        Self::new("No notes yet", ":new to write one")
+        Self::new("No notes yet", "n to write one")
     }
 
     /// An empty directory, which is different from an empty collection: the way
     /// out matters as much as the way forward.
     pub fn empty_directory() -> Self {
-        Self::new("Nothing in this directory", ":new here · :cd .. to leave")
+        Self::new(
+            "Nothing in this directory",
+            "n for a note · :cd .. to leave",
+        )
     }
 
     /// A filter that matched nothing. Quoting the query is the point — it is
@@ -62,7 +65,7 @@ impl Hint {
     }
 
     pub fn no_directories() -> Self {
-        Self::new("No directories", ":mkdir name to add one")
+        Self::new("No directories", "N to add one")
     }
 
     pub fn no_selection() -> Self {
@@ -70,7 +73,10 @@ impl Hint {
     }
 
     pub fn no_tags() -> Self {
-        Self::new("No tags yet", "add tags: to a note's frontmatter")
+        Self::new(
+            "No tags yet",
+            "#tag when you make a note, or tags: in the editor",
+        )
     }
 }
 
@@ -133,7 +139,10 @@ mod tests {
     fn a_hint_shows_its_reason_and_its_action() {
         let out = drawn(&Hint::no_notes(), 40, 6);
         assert!(out.contains("No notes yet"), "{out}");
-        assert!(out.contains(":new"), "{out}");
+        assert!(
+            out.contains("n to write one"),
+            "points at the command, not the key: {out}"
+        );
     }
 
     #[test]
@@ -189,7 +198,7 @@ mod tests {
         let text: String = out.chars().filter(|c| !matches!(c, '"' | '\n')).collect();
 
         // Every word of the action survives somewhere on screen.
-        for word in [":mkdir", "name", "to", "add", "one"] {
+        for word in ["N", "to", "add", "one"] {
             assert!(text.contains(word), "lost {word:?} from:\n{out}");
         }
     }
