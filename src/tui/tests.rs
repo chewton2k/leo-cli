@@ -254,6 +254,30 @@ fn x_toggles_the_first_open_checkbox_of_the_selected_note() {
     );
 }
 
+/// In the preview, j and k step between checkboxes and x ticks the one the
+/// cursor is on, so any box is one keypress away instead of `:check 3 5`.
+#[test]
+fn in_the_preview_x_ticks_the_checkbox_under_the_cursor() {
+    let (mut app, _d) = temp_app();
+    select_titled(&mut app, "Rust ownership");
+    let id = app.selected_id().cloned().unwrap();
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
+
+    app.focus = Pane::Preview;
+    app.on_intent(Intent::Down, &mut terminal).unwrap();
+    assert_eq!(app.box_index(), 1);
+    app.on_intent(Intent::ToggleCheckbox, &mut terminal).unwrap();
+
+    let body = &app.store.find_note(&id).unwrap().body;
+    assert!(body.contains("- [ ] done"), "the second box was not unticked: {body}");
+    assert!(body.contains("- [ ] read"), "the first box changed: {body}");
+
+    // The cursor cannot run past the last box.
+    app.on_intent(Intent::Down, &mut terminal).unwrap();
+    assert_eq!(app.box_index(), 1);
+}
+
 /// Ticking a box makes the note the newest, which moves it to the top of the
 /// list; the selection has to move with it rather than land on whichever note
 /// slid into its old row.
@@ -268,6 +292,30 @@ fn the_selection_follows_a_note_that_moved_in_the_list() {
     app.on_intent(Intent::ToggleCheckbox, &mut terminal).unwrap();
     assert_ne!(app.numbering.iter().position(|n| *n == id), Some(before), "fixture did not reorder");
     assert_eq!(app.selected_id(), Some(&id));
+}
+
+#[test]
+fn in_a_preview_without_checkboxes_j_scrolls() {
+    let (mut app, _d) = temp_app();
+    select_titled(&mut app, "Graph traversals");
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
+    app.focus = Pane::Preview;
+    app.on_intent(Intent::Down, &mut terminal).unwrap();
+    assert_eq!(app.preview_scroll, 1);
+}
+
+#[test]
+fn choosing_another_note_puts_the_checkbox_cursor_back_at_the_top() {
+    let (mut app, _d) = temp_app();
+    select_titled(&mut app, "Rust ownership");
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
+    app.focus = Pane::Preview;
+    app.on_intent(Intent::Down, &mut terminal).unwrap();
+    app.focus = Pane::Notes;
+    app.on_intent(Intent::Up, &mut terminal).unwrap();
+    assert_eq!(app.box_index(), 0);
 }
 
 /// The bug this guards: work below the UI printed to stdout while the panes
@@ -1533,15 +1581,4 @@ fn stepping_an_empty_list_stays_at_zero() {
     for intent in [Intent::Down, Intent::Up, Intent::First, Intent::Last] {
         assert_eq!(step(0, 0, intent), 0);
     }
-}
-
-#[test]
-fn the_first_open_checkbox_is_found_by_overall_position() {
-    // Checked boxes still count, because `check <note> <N>` numbers them all.
-    assert_eq!(first_open_checkbox("- [x] done\n- [ ] next"), Some(2));
-    assert_eq!(first_open_checkbox("- [ ] first"), Some(1));
-    assert_eq!(first_open_checkbox("  - [ ] indented"), Some(1));
-    assert_eq!(first_open_checkbox("- [x] all\n- [X] done"), None);
-    assert_eq!(first_open_checkbox("no checkboxes"), None);
-    assert_eq!(first_open_checkbox(""), None);
 }

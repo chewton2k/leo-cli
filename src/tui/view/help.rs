@@ -79,6 +79,7 @@ pub const SECTIONS: &[Section] = &[
             e("r", "rename it"),
             e("m", "move it to another directory"),
             e("x", "tick its first open checkbox"),
+            e("  j / k", "in the preview: pick a checkbox, then x ticks it"),
             e("a", "ask AI: answer its @leo lines"),
             e("R", "record a new note by talking"),
             e("D", "delete it (asks first)"),

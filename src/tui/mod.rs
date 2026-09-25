@@ -108,6 +108,10 @@ pub struct App {
     /// on every frame: it costs a git process.
     unpushed: Option<usize>,
     note_sel: usize,
+    /// Which checkbox the preview cursor is on, and the note it belongs to. A
+    /// cursor left on another note means nothing, so it reads as the first box.
+    box_sel: usize,
+    box_note: Option<String>,
     dir_sel: usize,
     focus: Pane,
     mode: Mode,
@@ -185,6 +189,8 @@ impl App {
             current_dir,
             numbering,
             note_sel: 0,
+            box_sel: 0,
+            box_note: None,
             dir_sel: 0,
             focus: Pane::Notes,
             mode: Mode::Normal,
@@ -228,6 +234,23 @@ impl App {
             .filter_map(|id| self.store.find_note(id))
             .collect();
         view::notes::rows(&notes, &self.current_dir)
+    }
+
+    /// Where the checkbox cursor is on the selected note.
+    fn box_index(&self) -> usize {
+        if self.box_note.as_ref() == self.selected_id() {
+            self.box_sel
+        } else {
+            0
+        }
+    }
+
+    /// The selected note's checkboxes, ticked or not.
+    fn checkboxes(&self) -> Vec<bool> {
+        self.selected_id()
+            .and_then(|id| self.store.find_note(id))
+            .map(|n| n.checkboxes())
+            .unwrap_or_default()
     }
 
     fn selected_id(&self) -> Option<&String> {
@@ -700,17 +723,17 @@ impl App {
             // one stack and one set of semantics rather than two.
             Intent::Undo => self.run_action(Action::Undo, terminal),
 
+            // In the preview, the box under the cursor; elsewhere, the first
+            // open one, which is what `x` means with no cursor to go by.
             Intent::ToggleCheckbox => {
                 let Some(note_ref) = self.selected_ref() else {
                     return Ok(());
                 };
-                // Toggle the first open box, which is what `x` means with no
-                // number available from a single key press.
-                let index = self
-                    .selected_id()
-                    .and_then(|id| self.store.find_note(id))
-                    .and_then(|n| first_open_checkbox(&n.body))
-                    .unwrap_or(1);
+                let boxes = self.checkboxes();
+                let index = match self.focus {
+                    Pane::Preview if !boxes.is_empty() => self.box_index().min(boxes.len() - 1) + 1,
+                    _ => boxes.iter().position(|ticked| !ticked).map_or(1, |i| i + 1),
+                };
                 self.run_action(Action::Check { note: note_ref, index }, terminal)
             }
 
@@ -823,6 +846,11 @@ impl App {
                 // A new note means the old scroll position is meaningless.
                 self.preview_scroll = 0;
                 self.pinned = None;
+            }
+            // A note with checkboxes steps between them; any other scrolls.
+            Pane::Preview if !self.checkboxes().is_empty() => {
+                self.box_sel = step(self.box_index(), self.checkboxes().len(), intent);
+                self.box_note = self.selected_id().cloned();
             }
             Pane::Preview => match intent {
                 Intent::Down => self.preview_scroll = self.preview_scroll.saturating_add(1),
@@ -1398,20 +1426,6 @@ fn step(current: usize, len: usize, intent: Intent) -> usize {
     }
 }
 
-/// The 1-based index of the first unchecked checkbox, counting every checkbox.
-fn first_open_checkbox(body: &str) -> Option<usize> {
-    let mut n = 0;
-    for line in body.lines() {
-        let t = line.trim_start();
-        if t.starts_with("- [ ]") || t.starts_with("- [x]") || t.starts_with("- [X]") {
-            n += 1;
-            if t.starts_with("- [ ]") {
-                return Some(n);
-            }
-        }
-    }
-    None
-}
 
 /// Run the TUI. `ratatui::init` installs a panic hook that restores the
 /// terminal, so a panic cannot leave the user in raw mode.

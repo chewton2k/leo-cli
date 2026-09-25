@@ -69,6 +69,7 @@ impl App {
             &preview,
             self.preview_scroll,
             self.focus == Pane::Preview,
+            self.checkbox_cursor(),
         );
 
         let ghost = self.ghost();
@@ -156,5 +157,13 @@ impl App {
             (Pane::Notes, _) => Place::Notes,
             (Pane::Preview, _) => Place::Preview,
         }
+    }
+
+    /// The checkbox to highlight: only with the preview focused on a note that
+    /// has some, since that is when j/k and x act on it.
+    fn checkbox_cursor(&self) -> Option<usize> {
+        let boxes = self.checkboxes().len();
+        (self.focus == Pane::Preview && self.pinned.is_none() && boxes > 0)
+            .then(|| self.box_index().min(boxes - 1))
     }
 }

@@ -1,9 +1,8 @@
 //! Context-aware fuzzy completion for the `:` line.
 //!
 //! What can be completed depends on the verb and on the token's position
-//! *relative to the end of the line*, not just its index: `mv 1 2 cs130` and
-//! `check 1 3` both put a fixed slot last and let the note references occupy
-//! everything before it. Candidates are always leo's own data — verbs,
+//! *relative to the end of the line*, not just its index: `mv 1 2 cs130` puts
+//! the directory last and lets the note references occupy everything before it. Candidates are always leo's own data — verbs,
 //! directories, note titles, tags — so no filesystem completion is needed.
 //!
 //! The engine is a pure function of (line, cursor, sources), which makes the
@@ -134,10 +133,6 @@ fn source_for(line: &str, cursor: usize) -> (Source, usize, usize) {
         "cd" | "mkdir" => Source::Dirs,
 
         "edit" | "e" | "delete" | "rm" | "ask" => Source::Notes,
-
-        // The trailing slot is a checkbox number, which nothing can usefully
-        // complete, so every position offers notes.
-        "check" | "x" => Source::Notes,
 
         // `mv cs130` moves the selected note, so a directory is likely in any
         // slot; notes follow for `mv 1 2 cs130`.
@@ -335,15 +330,6 @@ mod tests {
     }
 
     // ── trailing-slot verbs ─────────────────────────────────────────────────
-
-    #[test]
-    fn check_completes_notes_in_every_argument_position() {
-        assert!(!matches("check own").is_empty());
-        // The trailing checkbox number is not completable, but the note
-        // reference before it still is.
-        let m = matches("check 1 ");
-        assert!(m.iter().any(|c| c.contains("Rust ownership")), "{m:?}");
-    }
 
     /// `mv cs130` moves the selected note, so a directory is the likely word in
     /// any slot — and the one `m` opens the line for.

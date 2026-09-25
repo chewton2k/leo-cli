@@ -13,8 +13,8 @@ use super::theme;
 
 /// A checked box, and an empty one. Symbols rather than `[x]` so a list scans at
 /// a glance.
-const BOX_DONE: &str = "☑ ";
-const BOX_OPEN: &str = "☐ ";
+pub const BOX_DONE: &str = "☑ ";
+pub const BOX_OPEN: &str = "☐ ";
 /// Bullets, by nesting depth.
 const BULLETS: [&str; 3] = ["• ", "◦ ", "‣ "];
 /// Drawn down the left of a quote.

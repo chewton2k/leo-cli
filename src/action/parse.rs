@@ -20,7 +20,6 @@ pub const VERBS: &[Verb] = &[
     v("edit", &["e"], "edit [note]", "open a note in $EDITOR"),
     v("delete", &["rm"], "delete [note]", "delete a note (asks first)"),
     v("rename", &[], "rename <new title>", "retitle the selected note"),
-    v("check", &["x"], "check <note> <N>", "tick or untick checkbox N"),
     v("undo", &["u"], "undo", "take back the last delete, move or tick"),
     v("listen", &[], "listen [title | add [note]] [--screen]", "record, and write notes from speech"),
     v("ask", &[], "ask [note]", "answer the note's @leo lines"),
@@ -77,7 +76,9 @@ pub const RETIRED: &[(&str, &str, &str)] = &[
     ("find", "/", ONE_SEARCH),
     ("search", "/", ONE_SEARCH),
     ("expand", "a", "it is a key now: a asks about the selected note"),
-    ("uncheck", ":check", ONE_NAME),
+    ("check", "x", TICKED),
+    ("x", "x", TICKED),
+    ("uncheck", "x", TICKED),
     ("tags", "t", "it switches the left pane to your tags, with counts"),
     ("rmdir", "D in the directories pane", "it asks, then removes the directory"),
     ("model", "Ctrl-S", PROFILE),
@@ -101,6 +102,7 @@ pub(super) const SHOWN: &str = "the preview shows whichever note is selected";
 pub(super) const PROFILE: &str = "providers and keys live on that screen; `leo model` still works in a shell";
 pub(super) const GONE_REMIND: &str = "reminders were removed; a checklist note does the same";
 pub(super) const GONE_EXPORT: &str = "export was removed; every note is already a Markdown file";
+pub(super) const TICKED: &str = "x ticks the first open box; in the preview, j/k pick one first";
 pub(super) const ONE_SEARCH: &str = "one search now: / looks in every note, bodies and tags included";
 
 /// Every word that can start a command, canonical names and aliases alike.
@@ -188,21 +190,6 @@ pub fn parse(line: &str) -> Parsed {
 
         "edit" | "e" => act(Action::Edit { note: joined() }),
         "delete" | "rm" => act(Action::Delete { note: joined() }),
-
-        // The checkbox number is the last token, so everything before it is the
-        // note reference — a title with spaces still resolves.
-        "check" | "x" => {
-            if args.len() < 2 {
-                return usage("check");
-            }
-            match args.last().unwrap().parse::<usize>() {
-                Ok(index) if index >= 1 => act(Action::Check {
-                    note: args[..args.len() - 1].join(" "),
-                    index,
-                }),
-                _ => Parsed::Usage("Checkbox number must be a positive integer.".to_string()),
-            }
-        }
 
         "listen" => {
             let screen = args.iter().any(|a| a == "--screen");
@@ -324,7 +311,6 @@ mod parse_tests {
         let pairs = [
             ("e 1", "edit 1"),
             ("rm 1", "delete 1"),
-            ("x 1 2", "check 1 2"),
             ("?", "help"),
             ("exit", "quit"),
             ("q", "quit"),
@@ -428,23 +414,6 @@ mod parse_tests {
         );
     }
 
-    /// `check` takes the checkbox number as the LAST token, so a multi-word
-    /// title in front of it must still resolve.
-    #[test]
-    fn check_takes_its_number_from_the_end() {
-        assert_eq!(
-            act("check Rust ownership 3"),
-            Action::Check { note: "Rust ownership".to_string(), index: 3 }
-        );
-    }
-
-    #[test]
-    fn check_rejects_a_non_numeric_or_zero_index() {
-        assert!(usage("check 1 abc").contains("positive integer"));
-        assert!(usage("check 1 0").contains("positive integer"));
-        assert!(usage("check 1").contains("check <note>"));
-    }
-
     /// `mv` takes the directory last and any number of notes before it.
     #[test]
     fn mv_takes_the_directory_from_the_end() {
@@ -474,6 +443,16 @@ mod parse_tests {
                 "{word:?} should be retired, got {:?}",
                 parse(word)
             );
+        }
+    }
+
+    #[test]
+    fn check_is_retired_for_the_x_key() {
+        for word in ["check 1 2", "x 1 2", "uncheck 1 2"] {
+            match parse(word) {
+                Parsed::Retired { replacement, .. } => assert!(replacement.contains('x'), "{replacement}"),
+                other => panic!("{word:?} should be retired, got {other:?}"),
+            }
         }
     }
 
@@ -551,7 +530,7 @@ mod parse_tests {
 
     #[test]
     fn usage_is_returned_for_verbs_missing_a_required_argument() {
-        for line in ["mkdir", "mv", "rename", "check 1"] {
+        for line in ["mkdir", "mv", "rename"] {
             assert!(
                 matches!(parse(line), Parsed::Usage(_)),
                 "{line:?} should report usage"

@@ -163,6 +163,24 @@ impl Note {
 
     /// Toggle the Nth checkbox (1-based). Returns the new state text, or None
     /// if no such checkbox exists.
+    /// Each checkbox in the body, in order: true when ticked. The same lines
+    /// [`Note::toggle_checkbox`] counts, so an index here is an index there.
+    pub fn checkboxes(&self) -> Vec<bool> {
+        self.body
+            .lines()
+            .map(str::trim_start)
+            .filter_map(|t| {
+                if t.starts_with("- [ ] ") {
+                    Some(false)
+                } else if t.starts_with("- [x] ") || t.starts_with("- [X] ") {
+                    Some(true)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
     pub fn toggle_checkbox(&mut self, n: usize) -> Option<String> {
         let mut checkbox_num = 0usize;
         let lines: Vec<String> = self.body.lines().map(|l| l.to_string()).collect();
@@ -197,3 +215,13 @@ impl Note {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn checkboxes_lists_each_box_in_order() {
+        let note = Note::new("T", "- [ ] a\ntext\n  - [x] b\n- [X] c\n- [ ]\n", vec![], "");
+        assert_eq!(note.checkboxes(), vec![false, true, true]);
+    }
+}

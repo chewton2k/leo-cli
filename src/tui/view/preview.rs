@@ -6,7 +6,10 @@ use ratatui::text::Line as TuiLine;
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use ratatui::Frame;
 
+use ratatui::style::{Modifier, Style};
+
 use super::line::border;
+use super::markdown::{BOX_DONE, BOX_OPEN};
 use crate::notes::Note;
 
 /// What the pane is currently showing.
@@ -19,7 +22,16 @@ pub enum Preview<'a> {
     Lines { title: String, lines: &'a [crate::action::Line] },
 }
 
-pub fn render(frame: &mut Frame, area: Rect, preview: &Preview<'_>, scroll: u16, focused: bool) {
+/// `cursor` is the checkbox the preview's cursor is on, drawn reversed and kept
+/// in view.
+pub fn render(
+    frame: &mut Frame,
+    area: Rect,
+    preview: &Preview<'_>,
+    scroll: u16,
+    focused: bool,
+    cursor: Option<usize>,
+) {
     if matches!(preview, Preview::Empty) {
         let block = Block::default()
             .borders(Borders::ALL)
@@ -31,7 +43,7 @@ pub fn render(frame: &mut Frame, area: Rect, preview: &Preview<'_>, scroll: u16,
         return;
     }
 
-    let (title, lines): (String, Vec<TuiLine>) = match preview {
+    let (title, mut lines): (String, Vec<TuiLine>) = match preview {
         Preview::Empty => (String::new(), Vec::new()),
         // Markdown, so a note looks the way it was written rather than like a
         // text dump: headings in the accent, checkboxes as boxes, code receding.
@@ -43,7 +55,23 @@ pub fn render(frame: &mut Frame, area: Rect, preview: &Preview<'_>, scroll: u16,
         ),
     };
     let line_count = lines.len();
-    let scroll = clamp_scroll(scroll, line_count, area.height);
+    let mut scroll = clamp_scroll(scroll, line_count, area.height);
+
+    if let Some(n) = cursor {
+        let is_box = |l: &TuiLine| {
+            l.spans.iter().any(|s| s.content == BOX_OPEN || s.content == BOX_DONE)
+        };
+        if let Some(row) = (0..lines.len()).filter(|&i| is_box(&lines[i])).nth(n) {
+            lines[row] = lines[row].clone().patch_style(Style::default().add_modifier(Modifier::REVERSED));
+            let visible = area.height.saturating_sub(2).max(1);
+            let row = row as u16;
+            if row < scroll {
+                scroll = row;
+            } else if row >= scroll + visible {
+                scroll = row + 1 - visible;
+            }
+        }
+    }
 
     let paragraph = Paragraph::new(lines)
         .block(
@@ -75,7 +103,7 @@ mod tests {
         let note = Note::new("Graphs", "- BFS\n- DFS", vec![], "");
         let mut terminal = Terminal::new(TestBackend::new(30, 6)).unwrap();
         terminal
-            .draw(|f| render(f, f.area(), &Preview::Note(&note), 0, true))
+            .draw(|f| render(f, f.area(), &Preview::Note(&note), 0, true, None))
             .unwrap();
 
         let out = terminal.backend().to_string();
@@ -87,7 +115,7 @@ mod tests {
     fn an_empty_preview_renders_the_placeholder_title() {
         let mut terminal = Terminal::new(TestBackend::new(20, 4)).unwrap();
         terminal
-            .draw(|f| render(f, f.area(), &Preview::Empty, 0, false))
+            .draw(|f| render(f, f.area(), &Preview::Empty, 0, false, None))
             .unwrap();
         assert!(terminal.backend().to_string().contains("preview"));
     }
@@ -97,12 +125,38 @@ mod tests {
         let note = Note::new("T", "line\n".repeat(3), vec![], "");
         let mut terminal = Terminal::new(TestBackend::new(20, 6)).unwrap();
         terminal
-            .draw(|f| render(f, f.area(), &Preview::Note(&note), 9999, true))
+            .draw(|f| render(f, f.area(), &Preview::Note(&note), 9999, true, None))
             .unwrap();
 
         assert_eq!(clamp_scroll(9999, 3, 6), 0, "3 lines fit in 4 rows");
         assert_eq!(clamp_scroll(9999, 100, 6), 96);
         assert_eq!(clamp_scroll(2, 100, 6), 2);
+    }
+
+    /// The checkbox cursor is drawn reversed, so `x` visibly means that line.
+    #[test]
+    fn the_checkbox_under_the_cursor_is_highlighted() {
+        let note = Note::new("T", "- [ ] read\n- [x] done\n", vec![], "");
+        let mut terminal = Terminal::new(TestBackend::new(30, 6)).unwrap();
+        terminal
+            .draw(|f| render(f, f.area(), &Preview::Note(&note), 0, true, Some(1)))
+            .unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let row_of = |word: &str| {
+            (0..buf.area.height)
+                .find(|y| {
+                    let line: String =
+                        (0..buf.area.width).map(|x| buf[(x, *y)].symbol().to_string()).collect();
+                    line.contains(word)
+                })
+                .unwrap()
+        };
+        let reversed = |y: u16| {
+            (1..buf.area.width - 1)
+                .any(|x| buf[(x, y)].modifier.contains(ratatui::style::Modifier::REVERSED))
+        };
+        assert!(reversed(row_of("done")), "the cursor line is not highlighted");
+        assert!(!reversed(row_of("read")), "the other box is highlighted too");
     }
 
     /// The wiring, not the rendering: markdown details are tested next door, but
@@ -112,7 +166,7 @@ mod tests {
         let note = Note::new("T", "## Heading\n- [x] done\n", vec![], "");
         let mut terminal = Terminal::new(TestBackend::new(40, 8)).unwrap();
         terminal
-            .draw(|f| render(f, f.area(), &Preview::Note(&note), 0, true))
+            .draw(|f| render(f, f.area(), &Preview::Note(&note), 0, true, None))
             .unwrap();
         let out = terminal.backend().to_string();
 
