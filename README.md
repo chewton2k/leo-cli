@@ -166,6 +166,23 @@ Settings are in `config.toml` next to them. API keys are never in that file.
 They live in a store only your account can read, or in environment variables,
 which take precedence.
 
+## Working on leo
+
+The code is a Cargo workspace. Each crate may only depend on the ones above it,
+and the compiler enforces that:
+
+| Crate | What it holds | Depends on |
+|-------|---------------|------------|
+| `crates/leo-core` | Notes, the on-disk store, git backup, the `:` command vocabulary and its handlers | — |
+| `crates/leo-services` | AI providers and fallback chains, config and credentials, recording, capability checks | core |
+| `crates/leo-tui` | The full-screen interface | core, services |
+| `crates/leo-web` | `leo serve` | core |
+| `leo` (the root) | `main.rs` and the `cli/` subcommands | all of them |
+
+`cargo test` from the root runs every crate's tests. Nothing in them touches the
+network or the real keychain: AI calls go through a trait with a test double, and
+`leo-services` has a `test-support` feature with an in-memory credential store.
+
 ## License
 
 MIT

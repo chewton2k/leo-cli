@@ -6,7 +6,7 @@ use anyhow::Result;
 use colored::Colorize;
 
 use super::SyncCommands;
-use crate::{store, sync};
+use leo_core::{store, sync};
 
 pub fn run(command: Option<SyncCommands>) -> Result<()> {
     let store = store::Store::load()?;

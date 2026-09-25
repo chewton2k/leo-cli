@@ -1,18 +1,4 @@
-mod action;
-mod ai;
 mod cli;
-mod config;
-mod diag;
-mod health;
-mod listen;
-mod manual;
-mod notes;
-mod providers;
-mod shell;
-mod store;
-mod sync;
-mod tui;
-mod web;
 
 use anyhow::Result;
 use clap::Parser;

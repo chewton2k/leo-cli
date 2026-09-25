@@ -4,7 +4,9 @@
 use anyhow::Result;
 
 use super::Commands;
-use crate::{action, ai, manual, shell, store};
+use leo_core::{action, manual, store};
+use leo_services::ai;
+use leo_tui::shell;
 
 /// Turn a CLI subcommand into an [`action::Action`], so scripting and the
 /// interactive shell share one implementation. The few CLI-only affordances —

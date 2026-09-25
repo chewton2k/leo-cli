@@ -1694,30 +1694,84 @@ name = "leo"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "axum",
- "base64",
- "chrono",
  "clap",
  "colored",
  "dirs",
  "dotenvy",
- "keyring",
- "local-ip-address",
+ "leo-core",
+ "leo-services",
+ "leo-tui",
+ "leo-web",
+ "tokio",
+]
+
+[[package]]
+name = "leo-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "colored",
+ "dirs",
  "nucleo",
- "qrcode",
- "ratatui",
- "reqwest",
- "rpassword",
  "serde",
  "serde_json",
  "serde_yaml",
  "tempfile",
- "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "leo-services"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "colored",
+ "dirs",
+ "keyring",
+ "leo-core",
+ "reqwest",
+ "rpassword",
+ "serde",
+ "serde_json",
+ "tempfile",
  "toml",
  "toml_edit",
+ "zeroize",
+]
+
+[[package]]
+name = "leo-tui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "colored",
+ "dirs",
+ "leo-core",
+ "leo-services",
+ "nucleo",
+ "ratatui",
+ "serde_json",
+ "tempfile",
+ "toml_edit",
+]
+
+[[package]]
+name = "leo-web"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "chrono",
+ "colored",
+ "leo-core",
+ "local-ip-address",
+ "qrcode",
+ "serde",
+ "tempfile",
+ "tokio",
  "tower-http",
  "uuid",
- "zeroize",
 ]
 
 [[package]]

@@ -4,8 +4,9 @@ use std::io::IsTerminal;
 
 use anyhow::Result;
 
-use crate::config::{self, Config};
-use crate::{health, providers, store, sync};
+use leo_services::config::{self, Config};
+use leo_core::{store, sync};
+use leo_services::{health, providers};
 
 /// `leo setup`: what works, where things live, and a key stored on the spot
 /// for anything the AI chains are missing.

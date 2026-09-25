@@ -1,0 +1,22 @@
+[package]
+name = "leo-web"
+description = "The phone and browser interface served by `leo serve`"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+leo-core.workspace = true
+anyhow.workspace = true
+axum.workspace = true
+chrono.workspace = true
+colored.workspace = true
+local-ip-address.workspace = true
+qrcode.workspace = true
+serde.workspace = true
+tokio.workspace = true
+tower-http.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

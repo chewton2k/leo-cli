@@ -12,7 +12,7 @@ use std::io::IsTerminal;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use crate::providers;
+use leo_services::providers;
 
 /// leo — notes for programmers.
 /// Run with no arguments to enter the interactive terminal.
@@ -214,7 +214,7 @@ enum SyncCommands {
 pub fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Some(Commands::Serve { port }) => {
-            tokio::runtime::Runtime::new()?.block_on(crate::web::serve(port))
+            tokio::runtime::Runtime::new()?.block_on(leo_web::serve(port))
         }
         // Kept only so the name explains itself instead of erroring. It used to
         // write a plaintext `.env`, whose vars take precedence over the
@@ -232,7 +232,7 @@ pub fn run(cli: Cli) -> Result<()> {
         Some(Commands::Config { command }) => providers::config_file(command.into()),
         None => {
             if std::io::stdin().is_terminal() {
-                crate::tui::run()
+                leo_tui::run()
             } else {
                 eprintln!("leo: interactive mode requires a terminal. Use subcommands for scripting.");
                 std::process::exit(1);
