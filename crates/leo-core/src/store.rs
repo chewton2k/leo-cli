@@ -113,7 +113,12 @@ fn collect_md_paths(dir: &Path, result: &mut HashSet<PathBuf>) -> Result<()> {
 }
 
 /// Recursively parse all .md files under `dir` into `notes`.
-fn collect_notes(notes_dir: &Path, dir: &Path, notes: &mut Vec<Note>) -> Result<()> {
+fn collect_notes(
+    notes_dir: &Path,
+    dir: &Path,
+    notes: &mut Vec<Note>,
+    unreadable: &mut Vec<(PathBuf, String)>,
+) -> Result<()> {
     if !dir.exists() {
         return Ok(());
     }
@@ -123,7 +128,7 @@ fn collect_notes(notes_dir: &Path, dir: &Path, notes: &mut Vec<Note>) -> Result<
         if path.is_dir() {
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if !name.starts_with('.') {
-                collect_notes(notes_dir, &path, notes)?;
+                collect_notes(notes_dir, &path, notes, unreadable)?;
             }
         } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
             let content = fs::read_to_string(&path)?;
@@ -132,7 +137,10 @@ fn collect_notes(notes_dir: &Path, dir: &Path, notes: &mut Vec<Note>) -> Result<
                 .context("path outside notes_dir")?;
             match parse_note_from_markdown(&content, relative) {
                 Ok(note) => notes.push(note),
-                Err(e) => crate::diag::warn(format!("skipping {}: {e}", path.display())),
+                Err(e) => {
+                    crate::diag::warn(format!("skipping {}: {e}", path.display()));
+                    unreadable.push((path.clone(), e.to_string()));
+                }
             }
         }
     }
@@ -203,6 +211,9 @@ pub struct Store {
     pub notes: Vec<Note>,
     pub directories: Vec<String>,
     pub notes_dir: PathBuf,
+    /// Note files that could not be read, and why. They are skipped, never
+    /// deleted: `save` leaves them alone.
+    pub unreadable: Vec<(PathBuf, String)>,
     /// Most recent change last. Not persisted: undo covers a session, and a
     /// deletion that survived a restart is a decision the user has lived with.
     undo: Vec<Undoable>,
@@ -233,8 +244,10 @@ impl Store {
         fs::create_dir_all(notes_dir)?;
         let directories = load_directories(notes_dir)?;
         let mut notes = Vec::new();
-        collect_notes(notes_dir, notes_dir, &mut notes)?;
+        let mut unreadable = Vec::new();
+        collect_notes(notes_dir, notes_dir, &mut notes, &mut unreadable)?;
         Ok(Store {
+            unreadable,
             undo: Vec::new(),
             notes,
             directories,
@@ -263,9 +276,11 @@ impl Store {
             new_paths.insert(file_path);
         }
 
-        // Delete files no longer in the notes vec
+        // Delete files no longer in the notes vec — but never one leo could
+        // not read, which is the user's text rather than a leftover.
         for old_path in &old_paths {
-            if !new_paths.contains(old_path) {
+            if !new_paths.contains(old_path) && !self.unreadable.iter().any(|(p, _)| p == old_path)
+            {
                 fs::remove_file(old_path)?;
             }
         }
@@ -967,6 +982,7 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let notes_dir = tmp.path().join("notes");
         let store = Store {
+            unreadable: Vec::new(),
             notes: vec![],
             directories: vec![],
             notes_dir: notes_dir.clone(),
@@ -984,6 +1000,7 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let notes_dir = tmp.path().join("notes");
         let store = Store {
+            unreadable: Vec::new(),
             notes: vec![],
             directories: vec![],
             notes_dir: notes_dir.clone(),
@@ -1038,6 +1055,7 @@ mod tests {
         let notes_dir = tmp.path().join("notes");
         std::fs::create_dir_all(&notes_dir).unwrap();
         let store = Store {
+            unreadable: Vec::new(),
             undo: Vec::new(),
             notes: vec![make_note()],
             directories: vec![],
@@ -1059,6 +1077,7 @@ mod tests {
         std::fs::write(&orphan, "---\nid: deadbeef-0000-0000-0000-000000000000\ntitle: Old\ntags: []\ncreated_at: '2026-01-01T00:00:00Z'\nupdated_at: '2026-01-01T00:00:00Z'\n---\n\nbody").unwrap();
 
         let store = Store {
+            unreadable: Vec::new(),
             undo: Vec::new(),
             notes: vec![make_note()],
             directories: vec![],
@@ -1111,6 +1130,7 @@ mod tests {
 
         let note = make_note();
         let store = Store {
+            unreadable: Vec::new(),
             undo: Vec::new(),
             notes: vec![note.clone()],
             directories: vec![],
@@ -1124,6 +1144,7 @@ mod tests {
         let mut moved = note.clone();
         moved.directory = "ideas".to_string();
         let store2 = Store {
+            unreadable: Vec::new(),
             undo: Vec::new(),
             notes: vec![moved],
             directories: vec!["ideas".to_string()],
@@ -1151,6 +1172,7 @@ mod tests {
         crate::sync::init(&notes_dir).unwrap();
 
         let store = Store {
+            unreadable: Vec::new(),
             undo: Vec::new(),
             notes: vec![make_note()],
             directories: vec![],
@@ -1294,6 +1316,34 @@ mod tests {
         assert_eq!(store.find_note(&a).unwrap().directory, "");
         assert_eq!(store.find_note(&b).unwrap().directory, "");
         assert!(!store.can_undo());
+    }
+
+    /// A file leo cannot read is skipped, never deleted: it is the user's text,
+    /// probably with a header they edited by hand, and saving any other note
+    /// used to erase it as an "orphan".
+    #[test]
+    fn a_note_leo_cannot_read_survives_a_save() {
+        let (mut store, _d) = temp_store();
+        store.create_note("Good", "fine", vec![], "").unwrap();
+        store.save().unwrap();
+        let broken = store.notes_dir.join("broken.md");
+        std::fs::write(&broken, "---\ntitle: [unclosed\n---\nmy words").unwrap();
+
+        let mut store = Store::load_from(&store.notes_dir).unwrap();
+        assert_eq!(store.notes.len(), 1);
+        assert_eq!(
+            store.unreadable.len(),
+            1,
+            "the skipped file is not reported"
+        );
+        assert!(store.unreadable[0].0.ends_with("broken.md"));
+
+        store.create_note("Another", "x", vec![], "").unwrap();
+        store.save().unwrap();
+        assert!(broken.exists(), "saving deleted a note leo could not read");
+        assert!(std::fs::read_to_string(&broken)
+            .unwrap()
+            .contains("my words"));
     }
 
     /// The whole point: a deleted note comes back as it was, not as a copy.
