@@ -286,6 +286,7 @@ mod tests {
 
     fn req() -> ChatRequest {
         ChatRequest {
+            system: None,
             prompt: "hi".to_string(),
             temperature: 0.3,
             max_tokens: 100,

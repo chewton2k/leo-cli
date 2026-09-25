@@ -26,30 +26,6 @@ pub fn clock(secs: u64) -> String {
     }
 }
 
-/// The instructions and the list that make typed points lead the notes.
-/// Empty when nothing was typed, so the prompt is unchanged.
-fn points_section(points: &[Jotted], length_secs: u64) -> String {
-    if points.is_empty() {
-        return String::new();
-    }
-    let list: String = points
-        .iter()
-        .map(|p| format!("- ({}) {}\n", clock(p.at_secs), p.text))
-        .collect();
-    format!(
-        "The listener typed these points while recording, each with how far into the \
-         {} recording they typed it. They are what the listener found most important:\n\
-         {list}\n\
-         Rules for the typed points:\n\
-         - Open the body with a \"## Key points\" section: every typed point, in bold, in \
-         the listener's words, each followed by the detail the transcript gives about it \
-         (look at what was said around its time)\n\
-         - Keep a typed point even if the transcript never mentions it\n\
-         - Everything else from the transcript comes after, as usual\n\n",
-        clock(length_secs)
-    )
-}
-
 /// Typed points with no speech to go with them, as a note body.
 pub fn points_as_markdown(points: &[Jotted]) -> String {
     let mut body = "## Key points\n".to_string();
@@ -59,82 +35,182 @@ pub fn points_as_markdown(points: &[Jotted]) -> String {
     body
 }
 
-pub fn build_structure_prompt(transcript: &str) -> String {
+/// A request in two parts: standing instructions, sent as the system message,
+/// and the material to work on, sent as the user's message. Models follow rules
+/// given this way more reliably than rules mixed into the material.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Prompt {
+    pub system: String,
+    pub user: String,
+}
+
+/// How the speech-recognition text is to be read. Shared by the new-note and
+/// append prompts so they cannot disagree about it.
+const READING_A_TRANSCRIPT: &str = "\
+The transcript comes from speech recognition, so expect mistakes:
+- Fix words that were clearly misheard, using the subject for context (\"breath first search\" is \"breadth-first search\"). Do not guess beyond that.
+- Leave out filler, repetition, and anything unrelated to the topic.
+
+Where the recording is patchy or the speaker was vague, fill the gap with accurate explanation from your own knowledge, so the notes make sense on their own. Add what helps someone understand the topic, not tangents.";
+
+/// Formatting rules both note prompts share.
+const FORMATTING: &str = "\
+- Bold a term where it is defined. Put formulas and code in code blocks.
+- Use a table only to compare two or more things across the same attributes.
+- Put tasks in a final \"## Action items\" section as checkboxes (- [ ] ), and only if the speaker assigned or mentioned some; otherwise leave the section out.";
+
+/// What to do with points the listener typed while recording.
+fn points_rule(opening: &str) -> String {
+    format!(
+        "The listener typed points while recording; they mark what mattered most to them. \
+{opening} a \"## Key points\" section: each typed point in bold, in the listener's words, \
+followed by what the transcript says about it. The [~mm:ss] markers in the transcript show \
+roughly how far into the recording each part was said; use the time beside a typed point to \
+find the part it refers to. Keep every typed point, even one the transcript never mentions."
+    )
+}
+
+/// The typed points as the user message lists them.
+fn points_block(points: &[Jotted]) -> String {
+    if points.is_empty() {
+        return String::new();
+    }
+    let list: String = points
+        .iter()
+        .map(|p| format!("- ({}) {}\n", clock(p.at_secs), p.text))
+        .collect();
+    format!("<typed_points>\n{list}</typed_points>\n\n")
+}
+
+/// Mark roughly where each minute falls in a transcript that has no timestamps,
+/// by spreading the recording's length evenly over its words. Speech is not
+/// that even, but it is close enough to find the stretch a typed point belongs
+/// to, which is all the markers are for.
+pub fn with_time_markers(transcript: &str, length_secs: u64) -> String {
+    const EVERY_SECS: u64 = 60;
+    let words: Vec<&str> = transcript.split_whitespace().collect();
+    if length_secs == 0 || words.is_empty() {
+        return transcript.to_string();
+    }
+    let mut out = String::with_capacity(transcript.len() + words.len() / 4);
+    let mut next = EVERY_SECS;
+    for (i, word) in words.iter().enumerate() {
+        let at = i as u64 * length_secs / words.len() as u64;
+        if at >= next {
+            out.push_str(&format!("[~{}] ", clock(next)));
+            next += EVERY_SECS;
+        }
+        out.push_str(word);
+        out.push(' ');
+    }
+    out.trim_end().to_string()
+}
+
+pub fn build_structure_prompt(transcript: &str) -> Prompt {
     build_structure_prompt_with(transcript, &[], 0)
 }
 
-pub fn build_append_prompt(transcript: &str, existing_body: &str) -> String {
+pub fn build_append_prompt(transcript: &str, existing_body: &str) -> Prompt {
     build_append_prompt_with(transcript, existing_body, &[], 0)
 }
 
-/// The structure prompt, led by whatever the listener typed while recording.
+/// The prompt that turns a recording into a new note. Typed points, when there
+/// are any, lead the note and the transcript gets time markers to match them.
 pub fn build_structure_prompt_with(
     transcript: &str,
     points: &[Jotted],
     length_secs: u64,
-) -> String {
-    let points = points_section(points, length_secs);
-    format!(
-        "You are a note-taking assistant. Given the following transcript from a lecture or meeting, \
-         create well-structured notes in Markdown format.\n\n\
-         Rules:\n\
-         - The FIRST line must be ONLY a concise title (no # prefix, no formatting, just plain text)\n\
-         - Follow it with a blank line, then the structured body\n\
-         - Use bullet points (- ) for key points\n\
-         - Use checkboxes (- [ ] ) for action items or to-dos mentioned\n\
-         - Make tables when grouping like ideas\n\
-         - Group related points under ## headings\n\
-         - There will sometimes be noise in the transcription so make sure to filter out any extraneous information not related to the main topic \n\
-         - Interweave your own notes with the structured output where you deem helpful \n\
-         - Don't lose important details and capture notes that are meaningful\n\n\
-         {points}Transcript:\n{transcript}"
-    )
+) -> Prompt {
+    let key_points = if points.is_empty() {
+        String::new()
+    } else {
+        format!("\n\n{}", points_rule("Right after the summary, add"))
+    };
+    let system = format!(
+        "You turn lecture and meeting transcripts into study notes in Markdown.
+
+{READING_A_TRANSCRIPT}
+
+Shape of the reply:
+1. The first line is the title, as plain text: no \"Title:\", no #, no quotes, no bold.
+2. A blank line, then a 2-3 sentence summary of the whole recording.
+3. ## sections for the topics, in the order they came up, with bullet points (- ).
+{FORMATTING}{key_points}
+
+Reply with the note only: no preamble before the title, no remarks after the note, and do not wrap it in a code block."
+    );
+    let transcript = if points.is_empty() {
+        transcript.to_string()
+    } else {
+        with_time_markers(transcript, length_secs)
+    };
+    let user = format!(
+        "{}<transcript>\n{transcript}\n</transcript>\n\n\
+         Write the notes for this transcript: the title alone on the first line, then the \
+         summary, then the sections.",
+        points_block(points)
+    );
+    Prompt { system, user }
 }
 
-/// The append prompt, led by whatever the listener typed while recording.
+/// The prompt that turns a recording into an addition to an existing note.
 pub fn build_append_prompt_with(
     transcript: &str,
     existing_body: &str,
     points: &[Jotted],
     length_secs: u64,
-) -> String {
-    let points = points_section(points, length_secs);
-    format!(
-        "You are a note-taking assistant. You are adding to an EXISTING note. \
-         Given the existing notes and a new transcript, create well-structured notes \
-         for ONLY the new content in Markdown format.\n\n\
-         Rules:\n\
-         - Do NOT include a title — this will be appended to an existing note\n\
-         - Use bullet points (- ) for key points\n\
-         - Use checkboxes (- [ ] ) for action items or to-dos mentioned\n\
-         - Group related points under ## headings\n\
-         - Filter out noise from transcription\n\
-         - Keep it concise but don't lose important details\n\
-         - Avoid duplicating information already in the existing notes\n\
-         - Use the same style and structure as the existing notes\n\n\
-         Existing notes:\n{existing_body}\n\n\
-         {points}New transcript:\n{transcript}"
-    )
+) -> Prompt {
+    let key_points = if points.is_empty() {
+        String::new()
+    } else {
+        format!("\n\n{}", points_rule("Start the addition with"))
+    };
+    let system = format!(
+        "You add to an existing set of notes in Markdown, from a new transcript.
+
+{READING_A_TRANSCRIPT}
+
+Rules for the addition:
+- Write only the new material. No title, no summary of the existing notes.
+- Do not repeat anything the existing notes already cover.
+- Match the existing notes' style; start each new topic with a ## heading and use bullet points (- ).
+{FORMATTING}{key_points}
+
+Reply with the addition only: no preamble, no remarks after it, and do not wrap it in a code block."
+    );
+    let transcript = if points.is_empty() {
+        transcript.to_string()
+    } else {
+        with_time_markers(transcript, length_secs)
+    };
+    let user = format!(
+        "<existing_notes>\n{existing_body}\n</existing_notes>\n\n{}<transcript>\n{transcript}\n</transcript>\n\n\
+         Write only the new notes to add for this transcript, with no title.",
+        points_block(points)
+    );
+    Prompt { system, user }
 }
 
+/// The prompt that answers an `@leo` question written inside a note.
 pub fn build_expand_prompt(
     question: &str,
     local_context: &str,
     note_title: &str,
     full_body: &str,
-) -> String {
-    format!(
-        "You are a note-taking assistant helping expand a specific section of lecture notes.\n\n\
-         Topic: {note_title}\n\n\
-         Full lecture notes (for background):\n{full_body}\n\n\
-         Local context around the question:\n{local_context}\n\n\
-         Question to expand on:\n{question}\n\n\
-         Rules:\n\
-         - Answer concisely in markdown (bullet points, short paragraphs)\n\
-         - Tie your answer back to the lecture context where relevant\n\
-         - Do not repeat what's already in the notes\n\
-         - Return only the expanded content, no preamble"
-    )
+) -> Prompt {
+    let system = "\
+You answer a question the user wrote inside their own notes. Your answer is placed in the note directly under the question.
+- Answer directly and concisely in Markdown: short paragraphs or bullets.
+- Use the note for context and tie the answer back to it where that helps.
+- Do not repeat what the note already says.
+- Reply with the answer only: no preamble, do not restate the question, no remarks after it, and do not wrap it in a code block."
+        .to_string();
+    let user = format!(
+        "<note title=\"{note_title}\">\n{full_body}\n</note>\n\n\
+         <around_the_question>\n{local_context}\n</around_the_question>\n\n\
+         <question>\n{question}\n</question>"
+    );
+    Prompt { system, user }
 }
 
 /// The model is asked to put a bare title on line one; everything after the
@@ -160,12 +236,13 @@ pub fn split_title_body(content: &str) -> (String, String) {
 pub fn complete(
     cfg: &Config,
     store: &dyn SecretStore,
-    prompt: String,
+    prompt: Prompt,
     max_tokens: u32,
 ) -> Result<ChainOutcome<String>> {
     let providers = build_chat_chain(cfg, store);
     let req = ChatRequest {
-        prompt,
+        system: Some(prompt.system),
+        prompt: prompt.user,
         temperature: TEMPERATURE,
         max_tokens,
     };
@@ -176,14 +253,15 @@ pub fn complete(
 pub fn complete_streaming(
     cfg: &Config,
     store: &dyn SecretStore,
-    prompt: String,
+    prompt: Prompt,
     max_tokens: u32,
     on_fragment: &mut dyn FnMut(&str),
     on_restart: &mut dyn FnMut(),
 ) -> Result<ChainOutcome<String>> {
     let providers = build_chat_chain(cfg, store);
     let req = ChatRequest {
-        prompt,
+        system: Some(prompt.system),
+        prompt: prompt.user,
         temperature: TEMPERATURE,
         max_tokens,
     };
@@ -193,13 +271,6 @@ pub fn complete_streaming(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn structure_prompt_embeds_the_transcript() {
-        let p = build_structure_prompt("the mitochondria is the powerhouse");
-        assert!(p.contains("the mitochondria is the powerhouse"));
-        assert!(p.contains("FIRST line"));
-    }
 
     fn points() -> Vec<Jotted> {
         vec![
@@ -214,63 +285,12 @@ mod tests {
         ]
     }
 
-    /// Without typed points the prompt is exactly what it always was.
-    #[test]
-    fn no_typed_points_leaves_the_prompt_unchanged() {
-        assert_eq!(
-            build_structure_prompt_with("t", &[], 0),
-            build_structure_prompt("t")
-        );
-        assert_eq!(
-            build_append_prompt_with("t", "e", &[], 0),
-            build_append_prompt("t", "e")
-        );
-    }
-
-    /// What the listener typed is what they found important, so the notes are
-    /// built around it and it stands out.
-    #[test]
-    fn typed_points_lead_and_are_emphasized() {
-        let p = build_structure_prompt_with("a long lecture", &points(), 900);
-        assert!(p.contains("BFS uses a queue"), "{p}");
-        assert!(p.contains("exam: know Dijkstra"), "{p}");
-        assert!(p.contains("02:14"), "no time for the first point: {p}");
-        assert!(p.contains("15:00"), "no recording length: {p}");
-        assert!(p.contains("## Key points"), "{p}");
-        assert!(p.to_lowercase().contains("bold"), "{p}");
-        assert!(p.contains("a long lecture"));
-    }
-
-    #[test]
-    fn typed_points_reach_an_append_too() {
-        let p = build_append_prompt_with("more", "## Existing", &points(), 900);
-        assert!(p.contains("BFS uses a queue"), "{p}");
-        assert!(p.contains("## Existing"));
-    }
-
     /// With no speech, the typed points are still a note.
     #[test]
     fn points_alone_make_a_note_body() {
         let body = points_as_markdown(&points());
         assert!(body.starts_with("## Key points\n"), "{body}");
         assert!(body.contains("- **BFS uses a queue** (02:14)"), "{body}");
-    }
-
-    #[test]
-    fn append_prompt_embeds_both_transcript_and_existing_body() {
-        let p = build_append_prompt("new stuff", "## Existing\n- old point");
-        assert!(p.contains("new stuff"));
-        assert!(p.contains("- old point"));
-        assert!(p.contains("Do NOT include a title"));
-    }
-
-    #[test]
-    fn expand_prompt_embeds_all_four_inputs() {
-        let p = build_expand_prompt("what is BFS?", "local ctx", "Graphs", "full body here");
-        assert!(p.contains("what is BFS?"));
-        assert!(p.contains("local ctx"));
-        assert!(p.contains("Graphs"));
-        assert!(p.contains("full body here"));
     }
 
     #[test]
@@ -297,5 +317,131 @@ mod tests {
     fn split_title_falls_back_when_empty() {
         let (title, _) = split_title_body("");
         assert_eq!(title, "Untitled Notes");
+    }
+
+    // ── the structure prompt ────────────────────────────────────────────────
+
+    #[test]
+    fn rules_go_in_the_system_message_and_the_transcript_in_the_user_message() {
+        let p = build_structure_prompt("the mitochondria is the powerhouse");
+        assert!(p.system.contains("first line is the title"), "{}", p.system);
+        assert!(!p.system.contains("mitochondria"));
+        assert!(
+            p.user
+                .contains("<transcript>\nthe mitochondria is the powerhouse\n</transcript>"),
+            "{}",
+            p.user
+        );
+    }
+
+    /// Long transcripts push early instructions out of a model's attention, so
+    /// the essentials are repeated after the material.
+    #[test]
+    fn the_rules_are_restated_after_the_transcript() {
+        let p = build_structure_prompt("some speech");
+        let after = &p.user[p.user.find("</transcript>").unwrap()..];
+        assert!(after.contains("title"), "{}", p.user);
+    }
+
+    #[test]
+    fn the_structure_prompt_asks_for_a_clean_useful_shape() {
+        let s = build_structure_prompt("x").system;
+        for wanted in [
+            "misheard",      // fix speech-recognition errors
+            "own knowledge", // fill gaps the recording or speaker left
+            "summary",       // a short summary under the title
+            "order",         // sections follow the lecture
+            "Bold",          // defined terms stand out
+            "code block",    // formulas and code
+            "compare",       // tables only for real comparisons
+            "Action items",  // tasks only when there were some
+            "no preamble",   // nothing before the title
+        ] {
+            assert!(
+                s.contains(wanted),
+                "structure prompt lacks {wanted:?}:\n{s}"
+            );
+        }
+    }
+
+    #[test]
+    fn without_typed_points_there_is_no_key_points_section_or_time_markers() {
+        let p = build_structure_prompt("some speech");
+        assert!(!p.system.contains("Key points"));
+        assert!(!p.user.contains("[~"));
+        assert!(!p.user.contains("<typed_points>"));
+    }
+
+    /// What the listener typed is what they found important, so the notes are
+    /// built around it and it stands out; time markers let the model find the
+    /// part of the transcript each point was typed during.
+    #[test]
+    fn typed_points_lead_and_line_up_with_the_transcript() {
+        let transcript = vec!["word"; 900].join(" ");
+        let p = build_structure_prompt_with(&transcript, &points(), 900);
+        assert!(p.system.contains("## Key points"), "{}", p.system);
+        assert!(p.system.to_lowercase().contains("bold"));
+        assert!(p.user.contains("<typed_points>"), "{}", p.user);
+        assert!(p.user.contains("(02:14) BFS uses a queue"));
+        assert!(
+            p.user.contains("[~02:00]"),
+            "no time markers in the transcript"
+        );
+    }
+
+    #[test]
+    fn typed_points_reach_an_append_too() {
+        let p = build_append_prompt_with("more", "## Existing", &points(), 900);
+        assert!(p.user.contains("BFS uses a queue"), "{}", p.user);
+        assert!(
+            p.user
+                .contains("<existing_notes>\n## Existing\n</existing_notes>"),
+            "{}",
+            p.user
+        );
+        assert!(p.system.contains("Key points"));
+    }
+
+    #[test]
+    fn an_append_writes_only_the_new_material() {
+        let s = build_append_prompt("new stuff", "## Existing").system;
+        assert!(s.contains("No title"), "{s}");
+        assert!(s.contains("Do not repeat"), "{s}");
+        assert!(s.contains("misheard"), "{s}");
+    }
+
+    // ── time markers ────────────────────────────────────────────────────────
+
+    #[test]
+    fn markers_are_spread_through_the_transcript_by_position() {
+        let transcript = (0..600)
+            .map(|i| format!("w{i}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let marked = with_time_markers(&transcript, 600);
+        // Ten minutes, one word a second: a marker every minute, at the word
+        // spoken then.
+        assert!(marked.contains("[~01:00] w60"), "{marked}");
+        assert!(marked.contains("[~09:00] w540"), "{marked}");
+        assert!(!marked.contains("[~00:00]"));
+        assert_eq!(marked.matches("[~").count(), 9);
+    }
+
+    #[test]
+    fn no_length_means_no_markers() {
+        assert_eq!(with_time_markers("a b c", 0), "a b c");
+        assert_eq!(with_time_markers("", 600), "");
+    }
+
+    // ── the @leo prompt ─────────────────────────────────────────────────────
+
+    #[test]
+    fn a_question_prompt_carries_the_note_and_is_not_about_lectures_only() {
+        let p = build_expand_prompt("what is BFS?", "local ctx", "Groceries", "full body here");
+        assert!(!p.system.to_lowercase().contains("lecture"), "{}", p.system);
+        assert!(p.system.contains("no preamble"), "{}", p.system);
+        for part in ["what is BFS?", "local ctx", "Groceries", "full body here"] {
+            assert!(p.user.contains(part), "{part} missing from {}", p.user);
+        }
     }
 }

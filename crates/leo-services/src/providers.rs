@@ -105,6 +105,7 @@ pub fn test_provider(name: &str) -> Result<String> {
             use ai::provider::ChatProvider;
             let reply = p
                 .complete(&ai::provider::ChatRequest {
+                    system: None,
                     prompt: "Reply with the single word: ok".to_string(),
                     temperature: 0.0,
                     max_tokens: 16,

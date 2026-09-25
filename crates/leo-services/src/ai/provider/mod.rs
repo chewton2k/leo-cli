@@ -5,6 +5,9 @@ use crate::ai::error::ProviderResult;
 /// One chat completion request, provider-independent.
 #[derive(Debug, Clone)]
 pub struct ChatRequest {
+    /// Standing instructions, sent as a system message when present.
+    pub system: Option<String>,
+    /// The material to work on, sent as the user's message.
     pub prompt: String,
     pub temperature: f32,
     pub max_tokens: u32,

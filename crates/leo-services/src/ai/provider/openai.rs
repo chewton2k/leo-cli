@@ -43,9 +43,14 @@ impl OpenAiChat {
     /// The request body, shared by the streaming and non-streaming paths so they
     /// cannot drift apart on model or temperature.
     fn body(&self, req: &ChatRequest, stream: bool) -> serde_json::Value {
+        let mut messages = Vec::new();
+        if let Some(system) = &req.system {
+            messages.push(serde_json::json!({"role": "system", "content": system}));
+        }
+        messages.push(serde_json::json!({"role": "user", "content": req.prompt}));
         serde_json::json!({
             "model": self.model,
-            "messages": [{"role": "user", "content": req.prompt}],
+            "messages": messages,
             "temperature": req.temperature,
             "max_tokens": req.max_tokens,
             "stream": stream,
@@ -173,28 +178,9 @@ impl ChatProvider for OpenAiChat {
             .build()
             .map_err(|e| ProviderError::Fatal(format!("{}: {e}", self.name)))?;
 
-        let body = serde_json::json!({
-            "model": self.model,
-            "messages": [{"role": "user", "content": req.prompt}],
-            "temperature": req.temperature,
-            "max_tokens": req.max_tokens,
-        });
-
-        let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
-
-        let mut request = client
-            .post(&url)
-            .header("Content-Type", "application/json")
-            // OpenRouter attribution headers; harmless elsewhere.
-            .header("HTTP-Referer", "https://github.com/leo-cli")
-            .header("X-Title", "leo")
-            .json(&body);
-
-        if let Some(key) = &self.key {
-            request = request.header("Authorization", format!("Bearer {}", key.as_str()));
-        }
-
-        let resp = request
+        let resp = self
+            .authorized(client.post(self.endpoint()))
+            .json(&self.body(req, false))
             .send()
             .map_err(|e| classify_reqwest(&self.name, &e))?;
 
@@ -280,6 +266,34 @@ mod tests {
         };
         let provider = OpenAiChat::new("ollama".to_string(), &cfg, None);
         assert_eq!(ChatProvider::max_tokens(&provider), Some(777));
+    }
+
+    /// Instructions travel as a system message and the material as the user's,
+    /// which models follow more reliably than one mixed message.
+    #[test]
+    fn a_system_prompt_is_sent_as_its_own_message() {
+        let provider = OpenAiChat::new("ollama".to_string(), &ProviderConfig::default(), None);
+        let req = ChatRequest {
+            system: Some("the rules".to_string()),
+            prompt: "the material".to_string(),
+            temperature: 0.3,
+            max_tokens: 100,
+        };
+        for stream in [false, true] {
+            let body = provider.body(&req, stream);
+            assert_eq!(body["messages"][0]["role"], "system");
+            assert_eq!(body["messages"][0]["content"], "the rules");
+            assert_eq!(body["messages"][1]["role"], "user");
+            assert_eq!(body["messages"][1]["content"], "the material");
+        }
+
+        let plain = ChatRequest {
+            system: None,
+            ..req
+        };
+        let body = provider.body(&plain, false);
+        assert_eq!(body["messages"].as_array().unwrap().len(), 1);
+        assert_eq!(body["messages"][0]["role"], "user");
     }
 
     #[test]

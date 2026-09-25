@@ -80,7 +80,7 @@ pub fn transcribe_outcome_with_progress(
 }
 
 /// One chat completion through the configured chain, without printing.
-pub fn chat_outcome(prompt: String, max_tokens: u32) -> Result<chain::ChainOutcome<String>> {
+pub fn chat_outcome(prompt: chat::Prompt, max_tokens: u32) -> Result<chain::ChainOutcome<String>> {
     let (cfg, store) = context();
     chat::complete(&cfg, &store, prompt, max_tokens)
 }
