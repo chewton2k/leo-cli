@@ -7,6 +7,7 @@
 pub mod dirs;
 pub mod empty;
 pub mod help;
+pub mod hints;
 pub mod line;
 pub mod notes;
 pub mod overlay;

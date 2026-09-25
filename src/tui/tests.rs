@@ -120,6 +120,26 @@ fn no_ghost_hint_outside_the_command_line() {
     assert_eq!(app.ghost(), None);
 }
 
+/// The idle command line answers "what can I do here?", which depends on the
+/// pane.
+#[test]
+fn the_key_hints_follow_the_focused_pane() {
+    let (mut app, _d) = temp_app();
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 20)).unwrap();
+
+    app.focus = Pane::Notes;
+    terminal.draw(|frame| app.draw(frame)).unwrap();
+    let notes = terminal.backend().to_string();
+    assert!(notes.contains("n new"), "{notes}");
+
+    app.focus = Pane::Dirs;
+    terminal.draw(|frame| app.draw(frame)).unwrap();
+    let dirs = terminal.backend().to_string();
+    assert!(dirs.contains("N new dir"), "{dirs}");
+    assert!(!dirs.contains("r rename"), "{dirs}");
+}
+
 #[test]
 fn the_frame_renders_the_completed_command_with_its_hint() {
     let (mut app, _d) = temp_app();

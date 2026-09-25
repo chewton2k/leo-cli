@@ -16,7 +16,8 @@ use super::theme;
 /// the user sees a real caret rather than a drawn one.
 ///
 /// `ghost` is the completion hint shown ahead of the cursor; it is not part of
-/// the text and is never submitted.
+/// the text and is never submitted. `idle` is what the line shows when it is not
+/// in use: the keys that do something where the user is.
 pub fn render_command(
     frame: &mut Frame,
     area: Rect,
@@ -24,13 +25,11 @@ pub fn render_command(
     text: &str,
     cursor: usize,
     ghost: Option<&str>,
+    idle: &[(&'static str, &'static str)],
 ) {
     if !active {
-        let hint = Span::styled(
-            "  :  command    ?  help    Ctrl-P  find    q  quit",
-            Style::default().add_modifier(Modifier::DIM),
-        );
-        frame.render_widget(Paragraph::new(TuiLine::from(hint)), area);
+        let hints = super::hints::spans(idle, area.width);
+        frame.render_widget(Paragraph::new(TuiLine::from(hints)), area);
         return;
     }
 
@@ -297,23 +296,23 @@ mod tests {
     #[test]
     fn an_inactive_command_line_shows_the_key_hints() {
         let mut t = Terminal::new(TestBackend::new(60, 1)).unwrap();
-        t.draw(|f| render_command(f, f.area(), false, "", 0, None)).unwrap();
+        t.draw(|f| render_command(f, f.area(), false, "", 0, None, super::super::hints::for_place(super::super::hints::Place::Notes))).unwrap();
         let out = t.backend().to_string();
-        assert!(out.contains("command"), "{out}");
-        assert!(out.contains("quit"), "{out}");
+        assert!(out.contains("n new"), "{out}");
+        assert!(out.contains("? help"), "{out}");
     }
 
     #[test]
     fn an_active_command_line_shows_a_colon_and_the_text() {
         let mut t = Terminal::new(TestBackend::new(30, 1)).unwrap();
-        t.draw(|f| render_command(f, f.area(), true, "list", 4, None)).unwrap();
+        t.draw(|f| render_command(f, f.area(), true, "list", 4, None, &[])).unwrap();
         assert!(t.backend().to_string().contains(":list"));
     }
 
     #[test]
     fn the_ghost_hint_follows_the_typed_text() {
         let mut t = Terminal::new(TestBackend::new(30, 1)).unwrap();
-        t.draw(|f| render_command(f, f.area(), true, "vie", 3, Some("w"))).unwrap();
+        t.draw(|f| render_command(f, f.area(), true, "vie", 3, Some("w"), &[])).unwrap();
         assert!(t.backend().to_string().contains(":view"), "{}", t.backend().to_string());
     }
 
@@ -321,7 +320,7 @@ mod tests {
     #[test]
     fn a_cursor_past_the_edge_is_clamped() {
         let mut t = Terminal::new(TestBackend::new(10, 1)).unwrap();
-        t.draw(|f| render_command(f, f.area(), true, &"x".repeat(50), 50, None))
+        t.draw(|f| render_command(f, f.area(), true, &"x".repeat(50), 50, None, &[]))
             .unwrap();
     }
 

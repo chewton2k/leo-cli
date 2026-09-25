@@ -85,6 +85,7 @@ impl App {
                 self.cmd.text(),
                 self.cmd.cursor(),
                 ghost.as_deref(),
+                view::hints::for_place(self.hint_place()),
             ),
         }
         // A job's progress replaces the plain busy label, so the user can see
@@ -142,5 +143,19 @@ impl App {
         self.message.as_ref().and_then(|(kind, text, at)| {
             (at.elapsed() < MESSAGE_TTL).then_some((*kind, text.as_str()))
         })
+    }
+
+    /// Which set of key hints the idle command line shows.
+    fn hint_place(&self) -> view::hints::Place {
+        use view::hints::Place;
+        if self.recording.is_some() {
+            return Place::Recording;
+        }
+        match (self.focus, self.left) {
+            (Pane::Dirs, LeftPane::Tags) => Place::Tags,
+            (Pane::Dirs, LeftPane::Dirs) => Place::Dirs,
+            (Pane::Notes, _) => Place::Notes,
+            (Pane::Preview, _) => Place::Preview,
+        }
     }
 }
