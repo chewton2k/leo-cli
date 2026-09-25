@@ -96,9 +96,8 @@ enum Source {
     Notes,
     Tags,
     Words(&'static [&'static str]),
-    /// A note reference, but the same slot could also be the trailing argument
-    /// — `export 1 md` while the cursor is on `1`. Notes rank first.
-    NotesThen(Box<Source>),
+    /// A directory, or a note: `mv` takes either in most slots.
+    DirsThenNotes,
     None,
 }
 
@@ -140,15 +139,9 @@ fn source_for(line: &str, cursor: usize) -> (Source, usize, usize) {
         // complete, so every position offers notes.
         "check" | "x" => Source::Notes,
 
-        // Directory last, notes before it. While typing the first argument the
-        // user is naming a note; later arguments could be either.
-        "mv" => {
-            if arg == 1 {
-                Source::Notes
-            } else {
-                Source::NotesThen(Box::new(Source::Dirs))
-            }
-        }
+        // `mv cs130` moves the selected note, so a directory is likely in any
+        // slot; notes follow for `mv 1 2 cs130`.
+        "mv" => Source::DirsThenNotes,
 
         "sync" => {
             if arg == 1 {
@@ -196,9 +189,9 @@ fn candidates(source: &Source, sources: &Sources) -> Vec<String> {
             .collect(),
         Source::Tags => sources.tags.clone(),
         Source::Words(words) => words.iter().map(|s| s.to_string()).collect(),
-        Source::NotesThen(other) => {
-            let mut out = candidates(&Source::Notes, sources);
-            out.extend(candidates(other, sources));
+        Source::DirsThenNotes => {
+            let mut out = candidates(&Source::Dirs, sources);
+            out.extend(candidates(&Source::Notes, sources));
             out
         }
         Source::None => Vec::new(),
@@ -352,14 +345,17 @@ mod tests {
         assert!(m.iter().any(|c| c.contains("Rust ownership")), "{m:?}");
     }
 
+    /// `mv cs130` moves the selected note, so a directory is the likely word in
+    /// any slot — and the one `m` opens the line for.
     #[test]
-    fn mv_completes_notes_first_then_directories() {
-        let first = matches("mv own");
-        assert_eq!(first.first().map(String::as_str), Some("1 Rust ownership"));
+    fn mv_offers_directories_first_then_notes() {
+        let first = matches("mv ");
+        assert_eq!(first.first().map(String::as_str), Some("cs130"), "{first:?}");
+        assert!(first.contains(&"1 Rust ownership".to_string()), "{first:?}");
 
-        // In a later slot a directory is the likely target, and must be offered.
-        let later = matches("mv 1 cs1");
-        assert!(later.contains(&"cs130".to_string()), "{later:?}");
+        // A note can still be named first.
+        let named = matches("mv own");
+        assert_eq!(named.first().map(String::as_str), Some("1 Rust ownership"));
     }
 
     // ── tags ────────────────────────────────────────────────────────────────

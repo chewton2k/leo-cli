@@ -11,6 +11,7 @@ pub mod hints;
 pub mod line;
 pub mod notes;
 pub mod markdown;
+pub mod menu;
 pub mod preview;
 pub mod progress;
 pub mod settings;

@@ -1228,6 +1228,33 @@ impl App {
         self.completing = Some(Cycle { completion, typed, index: 0 });
     }
 
+    /// What the menu above the `:` line lists, and which one Tab has chosen.
+    fn menu(&self) -> Option<(Vec<view::menu::Item>, Option<usize>)> {
+        if self.mode != Mode::Command {
+            return None;
+        }
+        let (completion, selected) = match &self.completing {
+            Some(cycle) => {
+                let index = (cycle.index < cycle.completion.matches.len()).then_some(cycle.index);
+                (cycle.completion.clone(), index)
+            }
+            None => (complete::complete(self.cmd.text(), self.cmd.cursor(), &self.sources()), None),
+        };
+        if completion.matches.is_empty() {
+            return None;
+        }
+        let first_word = self.cmd.text().chars().take(completion.start).all(char::is_whitespace);
+        let items = completion
+            .matches
+            .into_iter()
+            .map(|label| view::menu::Item {
+                detail: first_word.then(|| action::verb(&label).map(|v| v.summary)).flatten(),
+                label,
+            })
+            .collect();
+        Some((items, selected))
+    }
+
     /// The ghost hint: what the top candidate would add, shown ahead of the
     /// cursor. Only computed while the `:` line is open and idle.
     fn ghost(&self) -> Option<String> {

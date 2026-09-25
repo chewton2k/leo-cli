@@ -120,6 +120,45 @@ fn no_ghost_hint_outside_the_command_line() {
     assert_eq!(app.ghost(), None);
 }
 
+/// Opening the `:` line lists what can be typed, so nobody has to remember a
+/// verb to find one.
+#[test]
+fn an_empty_command_line_lists_the_commands_with_what_they_do() {
+    let (mut app, _d) = temp_app();
+    app.mode = Mode::Command;
+    app.cmd.open("");
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+    terminal.draw(|frame| app.draw(frame)).unwrap();
+    let out = terminal.backend().to_string();
+    assert!(out.contains("rename"), "{out}");
+    assert!(out.contains("retitle the selected note"), "{out}");
+}
+
+#[test]
+fn the_menu_offers_directories_after_mv() {
+    let (mut app, _d) = temp_app();
+    app.mode = Mode::Command;
+    app.cmd.open("mv ");
+    // Narrow enough that only the notes pane is drawn, so the directory name
+    // can only have come from the menu.
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(50, 30)).unwrap();
+    terminal.draw(|frame| app.draw(frame)).unwrap();
+    let out = terminal.backend().to_string();
+    assert!(out.contains("cs130"), "{out}");
+}
+
+#[test]
+fn no_menu_while_the_panes_have_the_keyboard() {
+    let (app, _d) = temp_app();
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+    terminal.draw(|frame| app.draw(frame)).unwrap();
+    let out = terminal.backend().to_string();
+    assert!(!out.contains("retitle the selected note"), "{out}");
+}
+
 /// The idle command line answers "what can I do here?", which depends on the
 /// pane.
 #[test]

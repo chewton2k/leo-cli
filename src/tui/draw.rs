@@ -113,6 +113,10 @@ impl App {
             self.counts(),
         );
 
+        if let Some((items, selected)) = self.menu() {
+            view::menu::render(frame, frame.area(), f.command, &items, selected);
+        }
+
         match &self.mode {
             Mode::Help => view::help::render_help(frame, frame.area(), self.help_scroll),
             Mode::Confirm { prompt, .. } => {
