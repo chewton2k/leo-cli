@@ -304,7 +304,7 @@ impl Store {
                 None => true,
             })
             .collect();
-        notes.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        notes.sort_by_key(|n| std::cmp::Reverse(n.updated_at));
         notes.truncate(limit);
         notes
     }
@@ -320,7 +320,7 @@ impl Store {
                 None => true,
             })
             .collect();
-        notes.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        notes.sort_by_key(|n| std::cmp::Reverse(n.updated_at));
         notes.truncate(limit);
         notes
     }
@@ -357,7 +357,7 @@ impl Store {
             .iter()
             .filter(|n| n.title.to_lowercase().contains(&q))
             .collect();
-        matches.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        matches.sort_by_key(|n| std::cmp::Reverse(n.updated_at));
         matches
     }
 
@@ -434,7 +434,7 @@ impl Store {
                 }
                 self.notes.extend(notes);
                 // Restored notes go back in the order the store keeps.
-                self.notes.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+                self.notes.sort_by_key(|n| std::cmp::Reverse(n.created_at));
             }
             Undoable::Moved { id, from, .. } => {
                 if let Some(note) = self.find_note_mut(&id) {
@@ -473,7 +473,7 @@ impl Store {
             }
         }
         let mut tags: Vec<(String, usize)> = counts.into_iter().collect();
-        tags.sort_by(|a, b| b.1.cmp(&a.1));
+        tags.sort_by_key(|t| std::cmp::Reverse(t.1));
         tags
     }
 

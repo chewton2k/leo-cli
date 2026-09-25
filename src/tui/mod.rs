@@ -1171,7 +1171,7 @@ impl App {
             } => {
                 self.say(
                     Kind::Warn,
-                    format!("`{verb}` is gone — use `:{replacement}` ({why})."),
+                    format!("`{verb}` is gone — use `{replacement}` ({why})."),
                 );
                 Ok(())
             }
@@ -1300,14 +1300,6 @@ impl App {
             Effect::ShowHelp => {
                 self.mode = Mode::Help;
                 self.help_scroll = 0;
-                Ok(())
-            }
-
-            // There is no scrollback to clear in a full-screen UI; drop any
-            // pinned output instead, which is what the user means by it.
-            Effect::ClearScreen => {
-                self.pinned = None;
-                self.message = None;
                 Ok(())
             }
 

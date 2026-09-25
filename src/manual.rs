@@ -307,7 +307,7 @@ mod tests {
     #[test]
     fn the_manual_names_no_retired_command() {
         let body = manual_body();
-        for (alias, _) in crate::action::RETIRED {
+        for (alias, _, _) in crate::action::RETIRED {
             // Checked as a `:` command, since short aliases like `e` and `x`
             // appear as prose elsewhere.
             assert!(

@@ -110,7 +110,6 @@ pub const SECTIONS: &[Section] = &[
         entries: &[
             e(":mkdir <name>", "create one"),
             e(":cd <dir>", "enter it; .. up, / root"),
-            e(":pwd", "where am I"),
             e(":mv <note>... <dir>", "move notes into it"),
             e(":rmdir <name>", "remove an empty one"),
             e(":rmdir -r <name>", "remove it and everything in it"),
@@ -353,9 +352,8 @@ mod tests {
     fn every_command_verb_appears_in_help() {
         let text: String = help_lines().iter().map(|l| l.to_string()).collect();
         for (verb, _aliases) in crate::action::VERBS {
-            // `clear`, `help` and `quit` are single keys documented as keys;
-            // `pwd` is what the status line already shows.
-            if matches!(*verb, "clear" | "help" | "quit" | "pwd") {
+            // `help` and `quit` are single keys, documented as keys.
+            if matches!(*verb, "help" | "quit") {
                 continue;
             }
             assert!(text.contains(verb), "help never mentions `{verb}`");
@@ -367,7 +365,7 @@ mod tests {
     #[test]
     fn no_retired_command_appears_in_help() {
         let text: String = help_lines().iter().map(|l| l.to_string()).collect();
-        for (alias, _) in crate::action::RETIRED {
+        for (alias, _, _) in crate::action::RETIRED {
             assert!(
                 !text.contains(&format!(":{alias} ")),
                 "help still documents `:{alias}`"

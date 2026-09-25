@@ -363,7 +363,6 @@ fn absorb_cli(
 
         // Reachable only through the interactive shell.
         action::Effect::ShowHelp
-        | action::Effect::ClearScreen
         | action::Effect::Quit
         | action::Effect::Sync(_)
         | action::Effect::Model(_)

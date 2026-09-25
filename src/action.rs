@@ -62,7 +62,6 @@ pub enum Action {
     Cd {
         path: String,
     },
-    Pwd,
     Mv {
         notes: Vec<String>,
         dir: String,
@@ -79,7 +78,6 @@ pub enum Action {
     /// Take back the most recent destructive change.
     Undo,
     Help,
-    Clear,
     Quit,
 }
 
@@ -128,7 +126,7 @@ pub enum Parsed {
 // ── Output ──────────────────────────────────────────────────────────────────
 
 /// How one output line should be presented. Naming the intent rather than a
-/// color lets the REPL pick `colored` styles and the TUI pick ratatui ones.
+/// color lets the CLI pick `colored` styles and the TUI pick ratatui ones.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     /// Ordinary text.
@@ -178,7 +176,7 @@ impl Line {
 }
 
 /// Work that requires the terminal or a long-running subprocess, so a handler
-/// describes it instead of doing it. The REPL performs these inline; the TUI
+/// describes it instead of doing it. The CLI performs these inline; the TUI
 /// suspends itself or hands them to its worker thread.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Effect {
@@ -195,7 +193,6 @@ pub enum Effect {
     /// Render a note in full.
     ShowNote { id: String },
     ShowHelp,
-    ClearScreen,
     Quit,
     /// Shell out to git. Streams its own output.
     Sync(SyncAction),
@@ -426,37 +423,45 @@ pub const VERBS: &[(&str, &[&str])] = &[
     ("export", &[]),
     ("mkdir", &[]),
     ("cd", &[]),
-    ("pwd", &[]),
     ("mv", &[]),
     ("rmdir", &[]),
     ("sync", &[]),
     ("model", &[]),
     ("config", &[]),
-    ("clear", &[]),
     ("help", &["?"]),
     ("quit", &["exit", "q"]),
 ];
 
-/// Aliases that used to work, and what to type instead.
+/// Words that used to work: what to use instead, and why it changed.
 ///
 /// Removing a word someone has in their fingers is only kind if the removal
 /// explains itself. "Unknown command: d" reads like a typo and sends the user
-/// hunting; naming the replacement costs one line.
-pub const RETIRED: &[(&str, &str)] = &[
-    ("l", "list"),
-    ("d", "delete"),
-    ("del", "delete"),
-    ("n", "new"),
-    ("v", "view"),
-    ("rem", "remind"),
-    ("rec", "listen"),
-    ("exp", "export"),
-    ("move", "mv"),
-    ("h", "help"),
-    ("find", "search"),
-    ("expand", "ask"),
-    ("uncheck", "check"),
+/// hunting; naming the replacement costs one line. A replacement starting with
+/// `:` is a command; anything else is a key or a place on screen.
+pub const RETIRED: &[(&str, &str, &str)] = &[
+    ("l", ":list", ONE_NAME),
+    ("d", ":delete", ONE_NAME),
+    ("del", ":delete", ONE_NAME),
+    ("n", ":new", ONE_NAME),
+    ("v", ":view", ONE_NAME),
+    ("rem", ":remind", ONE_NAME),
+    ("rec", ":listen", ONE_NAME),
+    ("exp", ":export", ONE_NAME),
+    ("move", ":mv", ONE_NAME),
+    ("h", ":help", ONE_NAME),
+    ("find", ":search", ONE_NAME),
+    ("expand", ":ask", ONE_NAME),
+    ("uncheck", ":check", ONE_NAME),
+    (
+        "env",
+        ":model login <provider>",
+        "keys live in your OS keychain now, not a plaintext file",
+    ),
+    ("pwd", "the status bar", "it always shows where you are"),
+    ("clear", "Esc", "it closes whatever output is pinned"),
 ];
+
+const ONE_NAME: &str = "one name per command now, so there is less to learn";
 
 /// Every word that can start a command, canonical names and aliases alike.
 pub fn all_verb_words() -> Vec<&'static str> {
@@ -676,7 +681,6 @@ pub fn parse(line: &str) -> Parsed {
 
         "cd" => act(Action::Cd { path: joined().trim().to_string() }),
 
-        "pwd" => act(Action::Pwd),
 
         "mv" => {
             if args.len() < 2 {
@@ -741,23 +745,14 @@ pub fn parse(line: &str) -> Parsed {
             _ => usage("config <edit | path>"),
         },
 
-        "clear" => act(Action::Clear),
         "help" | "?" => act(Action::Help),
         "quit" | "exit" | "q" => act(Action::Quit),
 
-        // Retired, but still in muscle memory and in old notes: say where the
-        // replacement is rather than "unknown command".
-        "env" => Parsed::Retired {
-            verb: "env",
-            replacement: "model login <provider>",
-            why: "keys live in your OS keychain now, not a plaintext file",
-        },
-
-        _ => match RETIRED.iter().find(|(alias, _)| *alias == verb.as_str()) {
-            Some((alias, replacement)) => Parsed::Retired {
+        _ => match RETIRED.iter().find(|(alias, _, _)| *alias == verb.as_str()) {
+            Some((alias, replacement, why)) => Parsed::Retired {
                 verb: alias,
                 replacement,
-                why: "one name per command now, so there is less to learn",
+                why,
             },
             None => Parsed::Unknown(verb),
         },
@@ -800,14 +795,12 @@ pub fn apply(
         Action::Undo => Ok(undo(store)),
         Action::Mkdir { name } => mkdir(store, &name, ctx.current_dir),
         Action::Cd { path } => Ok(cd(store, &path, ctx.current_dir)),
-        Action::Pwd => Ok(pwd(ctx.current_dir)),
         Action::Mv { notes, dir } => mv(store, &notes, &dir, ctx.numbering),
         Action::Rmdir { name, recursive } => rmdir(store, &name, recursive, ctx.current_dir),
         Action::Sync(a) => Ok(Outcome::effect(Effect::Sync(a))),
         Action::Model(a) => Ok(Outcome::effect(Effect::Model(a))),
         Action::Config(a) => Ok(Outcome::effect(Effect::Config(a))),
         Action::Help => Ok(Outcome::effect(Effect::ShowHelp)),
-        Action::Clear => Ok(Outcome::effect(Effect::ClearScreen)),
         Action::Quit => Ok(Outcome::effect(Effect::Quit)),
     }
 }
@@ -1127,15 +1120,6 @@ fn cd(store: &Store, path: &str, current_dir: &str) -> Outcome {
         Ok(dir) => Outcome { new_dir: Some(dir), dirty: true, ..Outcome::empty() },
         Err(msg) => Outcome::line(Line::bad(msg)),
     }
-}
-
-fn pwd(current_dir: &str) -> Outcome {
-    let shown = if current_dir.is_empty() {
-        "/".to_string()
-    } else {
-        format!("/{current_dir}")
-    };
-    Outcome::line(Line::plain(shown))
 }
 
 fn mv(store: &mut Store, notes: &[String], dir: &str, numbering: &[String]) -> Result<Outcome> {
@@ -1509,8 +1493,7 @@ mod parse_tests {
         assert_eq!(parse("frobnicate 3"), Parsed::Unknown("frobnicate".to_string()));
     }
 
-    /// Every legacy alias must keep working — this is the compatibility
-    /// contract with the old REPL.
+    /// Every live alias must parse exactly like the verb it abbreviates.
     #[test]
     fn every_alias_maps_to_the_same_action_as_its_canonical_verb() {
         let pairs = [
@@ -1536,20 +1519,20 @@ mod parse_tests {
     /// command: d" reads like a typo.
     #[test]
     fn every_retired_alias_names_a_real_replacement() {
-        for (alias, replacement) in RETIRED {
+        for (alias, instead, why) in RETIRED {
             match parse(alias) {
-                Parsed::Retired {
-                    verb,
-                    replacement: named,
-                    ..
-                } => {
+                Parsed::Retired { verb, replacement, why: said } => {
                     assert_eq!(verb, *alias);
-                    assert_eq!(named, *replacement);
-                    // The replacement has to be something that actually parses.
-                    assert!(
-                        !matches!(parse(named), Parsed::Unknown(_) | Parsed::Retired { .. }),
-                        "{alias} points at {named}, which is not a verb"
-                    );
+                    assert_eq!(replacement, *instead);
+                    assert_eq!(said, *why);
+                    assert!(!why.is_empty(), "{alias} retires without a reason");
+                    // A `:` replacement has to be something that actually parses.
+                    if let Some(command) = instead.strip_prefix(':') {
+                        assert!(
+                            !matches!(parse(command), Parsed::Unknown(_) | Parsed::Retired { .. }),
+                            "{alias} points at {instead}, which is not a verb"
+                        );
+                    }
                 }
                 other => panic!("{alias} should be retired, got {other:?}"),
             }
@@ -1559,11 +1542,27 @@ mod parse_tests {
     /// A retired alias must not also be live, or the table contradicts itself.
     #[test]
     fn no_retired_alias_is_still_in_the_verb_table() {
-        for (alias, _) in RETIRED {
+        for (alias, _, _) in RETIRED {
             assert!(
                 !all_verb_words().contains(alias),
                 "{alias} is both retired and live"
             );
+        }
+    }
+
+    /// Verbs left over from the line-oriented shell, where the screen scrolled
+    /// and nothing showed the directory. The panes do both now.
+    #[test]
+    fn pwd_and_clear_point_at_what_replaced_them() {
+        match parse("pwd") {
+            Parsed::Retired { replacement, .. } => {
+                assert!(replacement.contains("status"), "{replacement}")
+            }
+            other => panic!("expected Retired, got {other:?}"),
+        }
+        match parse("clear") {
+            Parsed::Retired { replacement, .. } => assert_eq!(replacement, "Esc"),
+            other => panic!("expected Retired, got {other:?}"),
         }
     }
 
@@ -2047,16 +2046,6 @@ mod handler_tests {
 
         let out = apply(Action::Tags, &mut store, ctx("", &[]), &FakeAi::default()).unwrap();
         assert!(out.text().contains("#rust (2)"), "got: {}", out.text());
-    }
-
-    #[test]
-    fn pwd_shows_root_as_a_slash() {
-        let (mut store, _d) = temp_store();
-        let root = apply(Action::Pwd, &mut store, ctx("", &[]), &FakeAi::default()).unwrap();
-        assert_eq!(root.text(), "/");
-        let nested =
-            apply(Action::Pwd, &mut store, ctx("cs130/lec", &[]), &FakeAi::default()).unwrap();
-        assert_eq!(nested.text(), "/cs130/lec");
     }
 
     // ── mutating handlers ───────────────────────────────────────────────────
@@ -2761,7 +2750,6 @@ mod handler_tests {
             (Action::Model(ModelAction::List), Effect::Model(ModelAction::List)),
             (Action::Config(ConfigAction::Path), Effect::Config(ConfigAction::Path)),
             (Action::Help, Effect::ShowHelp),
-            (Action::Clear, Effect::ClearScreen),
             (Action::Quit, Effect::Quit),
         ];
         for (action, expected) in cases {
