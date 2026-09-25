@@ -211,9 +211,17 @@ fn rank(typed: &str, pool: Vec<String>) -> Vec<String> {
 /// Complete the token at `cursor`.
 pub fn complete(line: &str, cursor: usize, sources: &Sources) -> Completion {
     let (source, start, end) = source_for(line, cursor);
-    let typed: String = line.chars().skip(start).take(end.saturating_sub(start)).collect();
+    let typed: String = line
+        .chars()
+        .skip(start)
+        .take(end.saturating_sub(start))
+        .collect();
     let matches = rank(&typed, candidates(&source, sources));
-    Completion { start, end, matches }
+    Completion {
+        start,
+        end,
+        matches,
+    }
 }
 
 /// Apply a chosen match to the line, returning the new line and cursor.
@@ -246,11 +254,24 @@ mod tests {
         Sources {
             dirs: vec!["cs130".to_string(), "cs162".to_string(), "chem".to_string()],
             notes: vec![
-                NoteChoice { number: 1, title: "Rust ownership".to_string() },
-                NoteChoice { number: 2, title: "Graph traversals".to_string() },
-                NoteChoice { number: 3, title: "Midterm plan".to_string() },
+                NoteChoice {
+                    number: 1,
+                    title: "Rust ownership".to_string(),
+                },
+                NoteChoice {
+                    number: 2,
+                    title: "Graph traversals".to_string(),
+                },
+                NoteChoice {
+                    number: 3,
+                    title: "Midterm plan".to_string(),
+                },
             ],
-            tags: vec!["rust".to_string(), "reminder".to_string(), "learning".to_string()],
+            tags: vec![
+                "rust".to_string(),
+                "reminder".to_string(),
+                "learning".to_string(),
+            ],
         }
     }
 
@@ -289,7 +310,10 @@ mod tests {
             let m = matches(&format!("{verb} cs1"));
             assert!(m.contains(&"cs130".to_string()), "{verb}: {m:?}");
             assert!(m.contains(&"cs162".to_string()), "{verb}: {m:?}");
-            assert!(!m.contains(&"chem".to_string()), "{verb} matched chem: {m:?}");
+            assert!(
+                !m.contains(&"chem".to_string()),
+                "{verb} matched chem: {m:?}"
+            );
         }
     }
 
@@ -336,7 +360,11 @@ mod tests {
     #[test]
     fn mv_offers_directories_first_then_notes() {
         let first = matches("mv ");
-        assert_eq!(first.first().map(String::as_str), Some("cs130"), "{first:?}");
+        assert_eq!(
+            first.first().map(String::as_str),
+            Some("cs130"),
+            "{first:?}"
+        );
         assert!(first.contains(&"1 Rust ownership".to_string()), "{first:?}");
 
         // A note can still be named first.
@@ -366,7 +394,11 @@ mod tests {
     #[test]
     fn sync_completes_its_subcommands() {
         assert!(matches("sync ").contains(&"status".to_string()));
-        assert_eq!(matches("sync pu").len(), 2, "push and pull both fuzzy match");
+        assert_eq!(
+            matches("sync pu").len(),
+            2,
+            "push and pull both fuzzy match"
+        );
     }
 
     #[test]

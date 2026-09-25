@@ -140,7 +140,10 @@ pub fn next_slice(cursor_secs: u64, recorded_secs: u64) -> Option<Slice> {
         return None;
     }
     let start = cursor_secs.saturating_sub(overlap);
-    Some(Slice { start_secs: start, duration_secs: recorded_secs - start })
+    Some(Slice {
+        start_secs: start,
+        duration_secs: recorded_secs - start,
+    })
 }
 
 /// Reduce text to comparable characters: letters and digits only, lowercased.
@@ -165,7 +168,11 @@ fn repeated_word_count(previous_norm: &str, next_words: &[&str], max_words: usiz
     let limit = max_words.min(next_words.len());
     for k in (1..=limit).rev() {
         let candidate = norm(&next_words[..k].join(""));
-        let floor = if k == 1 { MIN_SINGLE_WORD_CHARS } else { MIN_MULTI_WORD_CHARS };
+        let floor = if k == 1 {
+            MIN_SINGLE_WORD_CHARS
+        } else {
+            MIN_MULTI_WORD_CHARS
+        };
         if candidate.len() < floor {
             continue;
         }
@@ -320,7 +327,10 @@ mod tests {
             "So thank you. Next, the ownership rules.",
             "Thanks for watching the lecture recording I made yesterday",
         ] {
-            assert!(!is_silence_artifact(speech), "dropped real speech: {speech:?}");
+            assert!(
+                !is_silence_artifact(speech),
+                "dropped real speech: {speech:?}"
+            );
         }
     }
 
@@ -434,7 +444,10 @@ mod tests {
     /// A lone distinctive word is a real overlap.
     #[test]
     fn a_single_long_word_is_treated_as_overlap() {
-        let out = stitch("it finishes by backtracking", "backtracking to the previous vertex");
+        let out = stitch(
+            "it finishes by backtracking",
+            "backtracking to the previous vertex",
+        );
         assert_eq!(out, "it finishes by backtracking to the previous vertex");
     }
 
@@ -445,7 +458,10 @@ mod tests {
         let previous = "a b c d e f g h i j k l m n o p the";
         let segment = "the second half of the lecture starts now";
         let out = stitch(previous, segment);
-        assert!(out.ends_with("second half of the lecture starts now"), "got: {out}");
+        assert!(
+            out.ends_with("second half of the lecture starts now"),
+            "got: {out}"
+        );
         assert!(out.starts_with("a b c"), "got: {out}");
     }
 
@@ -484,7 +500,10 @@ mod tests {
 
     #[test]
     fn the_context_tail_is_bounded() {
-        let long = (0..500).map(|i| i.to_string()).collect::<Vec<_>>().join(" ");
+        let long = (0..500)
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join(" ");
         let tail = context_tail(&long);
         assert_eq!(tail.split_whitespace().count(), CONTEXT_TAIL_WORDS);
         assert!(tail.ends_with("499"), "the tail is the most recent words");

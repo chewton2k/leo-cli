@@ -23,7 +23,12 @@ pub fn run(cmd: Commands) -> Result<()> {
     let numbering = action::numbering_for(&store, "");
 
     // `new --body` is a non-interactive create, with no editor round trip.
-    if let Commands::New { title, body: Some(body), tags } = cmd {
+    if let Commands::New {
+        title,
+        body: Some(body),
+        tags,
+    } = cmd
+    {
         let (dir, title, mut named) = action::split_new(&store, &title, "");
         named.extend(tags);
         if !store.dir_exists(&dir) {
@@ -64,7 +69,12 @@ pub fn run(cmd: Commands) -> Result<()> {
     let outcome = action::apply(
         action,
         &mut store,
-        action::Ctx { current_dir: "", numbering: &numbering, selected: None, marked: &[] },
+        action::Ctx {
+            current_dir: "",
+            numbering: &numbering,
+            selected: None,
+            marked: &[],
+        },
         &ai,
     )?;
     absorb_cli(outcome, &mut store, &ai, force_delete)
@@ -97,9 +107,7 @@ fn absorb_cli(
         action::Effect::Listen(req) => shell::record_and_apply(store, req, ai)?,
 
         // Reachable only through the interactive shell.
-        action::Effect::ShowHelp
-        | action::Effect::Quit
-        | action::Effect::Sync(_) => return Ok(()),
+        action::Effect::ShowHelp | action::Effect::Quit | action::Effect::Sync(_) => return Ok(()),
     };
 
     shell::render(&next.lines);

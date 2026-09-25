@@ -264,7 +264,6 @@ impl KeyringStore {
         cache_put(bundle.clone());
         Ok(())
     }
-
 }
 
 impl SecretStore for KeyringStore {
@@ -377,7 +376,10 @@ mod tests {
         assert!(!shown.contains("supersecret"));
         assert!(!shown.contains(secret));
         // The redacted form must be short: "…" plus at most 4 characters.
-        assert!(shown.chars().count() <= 5, "redacted output too long: {shown:?}");
+        assert!(
+            shown.chars().count() <= 5,
+            "redacted output too long: {shown:?}"
+        );
         // No prefix of the secret longer than 4 characters may appear
         // anywhere in the redacted output (rules out "last N" for N > 4,
         // and rules out echoing the secret back some other way).

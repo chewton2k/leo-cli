@@ -1,7 +1,5 @@
 //! Frontmatter and `@leo` prompts.
 
-
-
 /// Parse an editor buffer's `---` frontmatter block into (title, tags, body).
 /// Malformed or absent frontmatter yields an empty title and tags with the
 /// whole buffer as the body, so a user who deletes the header keeps their text.

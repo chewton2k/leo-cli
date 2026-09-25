@@ -25,11 +25,17 @@ pub struct Progress {
 
 impl Progress {
     pub fn spinner(label: impl Into<String>) -> Progress {
-        Progress { label: label.into(), steps: None }
+        Progress {
+            label: label.into(),
+            steps: None,
+        }
     }
 
     pub fn steps(label: impl Into<String>, done: usize, total: usize) -> Progress {
-        Progress { label: label.into(), steps: Some((done, total)) }
+        Progress {
+            label: label.into(),
+            steps: Some((done, total)),
+        }
     }
 }
 
@@ -43,11 +49,7 @@ pub fn spinner_frame(elapsed: Duration) -> &'static str {
 fn bar(done: usize, total: usize) -> String {
     let total = total.max(1);
     let filled = (done.min(total) * BAR_WIDTH) / total;
-    format!(
-        "▕{}{}▏",
-        "█".repeat(filled),
-        "▁".repeat(BAR_WIDTH - filled)
-    )
+    format!("▕{}{}▏", "█".repeat(filled), "▁".repeat(BAR_WIDTH - filled))
 }
 
 /// Render progress as one line for the status bar.
@@ -66,11 +68,7 @@ pub fn render(progress: &Progress, elapsed: Duration) -> String {
             done.min(total),
             total
         ),
-        None => format!(
-            "{} {} {clock}",
-            spinner_frame(elapsed),
-            progress.label
-        ),
+        None => format!("{} {} {clock}", spinner_frame(elapsed), progress.label),
     }
 }
 

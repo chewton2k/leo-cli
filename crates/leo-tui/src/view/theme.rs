@@ -69,14 +69,20 @@ mod tests {
     #[test]
     fn every_colour_is_true_colour() {
         for color in [accent(), accent_muted(), bar(), warn(), good(), bad()] {
-            assert!(matches!(color, Color::Rgb(..)), "{color:?} is not true colour");
+            assert!(
+                matches!(color, Color::Rgb(..)),
+                "{color:?} is not true colour"
+            );
         }
     }
 
     #[test]
     fn the_default_accent_is_orange_and_the_frame_recedes_behind_it() {
         let p = Palette::default();
-        assert!(p.accent.r > p.accent.g && p.accent.g > p.accent.b, "not orange");
+        assert!(
+            p.accent.r > p.accent.g && p.accent.g > p.accent.b,
+            "not orange"
+        );
         // Focused border brightest, unfocused dimmer, bar dimmest.
         assert!(p.accent.luminance() > p.accent_muted.luminance());
         assert!(p.accent_muted.luminance() > p.bar.luminance());

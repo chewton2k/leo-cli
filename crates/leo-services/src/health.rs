@@ -7,8 +7,8 @@
 
 use std::path::PathBuf;
 
-use crate::config::secret::SecretStore;
 use crate::config::provider::ProviderConfig;
+use crate::config::secret::SecretStore;
 use crate::config::Config;
 
 /// Whether a capability is usable, and what to do when it is not.
@@ -239,16 +239,12 @@ fn chain_check(config: &Config, chain: Chain, store: &dyn SecretStore) -> Check 
             needed_for: chain.needed_for().to_string(),
             state: State::Missing {
                 fix: match chain {
-                    Chain::Chat => {
-                        "brew install ollama && ollama pull qwen3:8b   (free, local)\n\
+                    Chain::Chat => "brew install ollama && ollama pull qwen3:8b   (free, local)\n\
                          or: leo setup, and store an openrouter key   (free tier)"
-                            .to_string()
-                    }
-                    Chain::Transcribe => {
-                        "brew install whisper-cpp   (free, local)\n\
+                        .to_string(),
+                    Chain::Transcribe => "brew install whisper-cpp   (free, local)\n\
                          or: leo setup, and store a groq key   (free tier)"
-                            .to_string()
-                    }
+                        .to_string(),
                 },
             },
             detail: if names.is_empty() {
@@ -427,10 +423,7 @@ pub fn next_step(config: &Config, store: &dyn SecretStore) -> Option<String> {
         );
     }
     if !on_path("rec") {
-        return Some(format!(
-            "`listen` needs sox: {}",
-            install_hint("sox")
-        ));
+        return Some(format!("`listen` needs sox: {}", install_hint("sox")));
     }
     None
 }
@@ -576,7 +569,8 @@ mod tests {
     #[test]
     fn the_next_step_names_one_thing() {
         let config = config_with(vec![], vec![]);
-        let step = next_step(&config, &store()).expect("a config with nothing should suggest something");
+        let step =
+            next_step(&config, &store()).expect("a config with nothing should suggest something");
         assert!(step.contains("Ctrl-S"), "{step}");
         assert_eq!(step.lines().count(), 1, "more than one instruction: {step}");
     }
@@ -633,7 +627,9 @@ mod tests {
         let started = std::time::Instant::now();
         assert!(!port_open("http://127.0.0.1:1"));
         assert!(!port_open("not a url at all"));
-        assert!(!port_open("http://a-hostname-that-does-not-resolve.invalid:80"));
+        assert!(!port_open(
+            "http://a-hostname-that-does-not-resolve.invalid:80"
+        ));
         assert!(!port_open(""));
         assert!(!port_open("http://127.0.0.1:0"));
         // Generous, but far below what a DNS timeout costs.

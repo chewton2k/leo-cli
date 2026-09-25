@@ -234,7 +234,9 @@ pub fn run(cli: Cli) -> Result<()> {
             if std::io::stdin().is_terminal() {
                 leo_tui::run()
             } else {
-                eprintln!("leo: interactive mode requires a terminal. Use subcommands for scripting.");
+                eprintln!(
+                    "leo: interactive mode requires a terminal. Use subcommands for scripting."
+                );
                 std::process::exit(1);
             }
         }
@@ -249,12 +251,19 @@ mod cli_tests {
     /// `leo sync` alone backs up; the old names keep working for scripts.
     #[test]
     fn setup_and_bare_sync_parse() {
-        assert!(matches!(Cli::try_parse_from(["leo", "setup"]).unwrap().command, Some(Commands::Setup)));
+        assert!(matches!(
+            Cli::try_parse_from(["leo", "setup"]).unwrap().command,
+            Some(Commands::Setup)
+        ));
         assert!(matches!(
             Cli::try_parse_from(["leo", "sync"]).unwrap().command,
             Some(Commands::Sync { command: None })
         ));
-        for old in [&["leo", "doctor"][..], &["leo", "model", "list"], &["leo", "config", "path"]] {
+        for old in [
+            &["leo", "doctor"][..],
+            &["leo", "model", "list"],
+            &["leo", "config", "path"],
+        ] {
             assert!(Cli::try_parse_from(old).is_ok(), "{old:?} stopped parsing");
         }
     }
@@ -266,8 +275,10 @@ mod cli_tests {
         let help = Cli::command().render_help().to_string();
         assert!(help.contains("setup"), "{help}");
         for hidden in ["doctor", "model", "config"] {
-            assert!(!help.contains(&format!("  {hidden} ")), "{hidden} is still listed:\n{help}");
+            assert!(
+                !help.contains(&format!("  {hidden} ")),
+                "{hidden} is still listed:\n{help}"
+            );
         }
     }
-
 }

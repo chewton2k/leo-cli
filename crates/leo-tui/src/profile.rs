@@ -20,7 +20,11 @@ impl App {
         } else {
             keep
         };
-        self.settings = Some(SettingsScreen { rows, selected, status });
+        self.settings = Some(SettingsScreen {
+            rows,
+            selected,
+            status,
+        });
         self.mode = Mode::Settings;
     }
 
@@ -60,8 +64,11 @@ impl App {
                 Ok(())
             }
             A::EditConfig => {
-                let out = self
-                    .outside(terminal, || leo_services::providers::config_file(leo_services::providers::ConfigAction::Edit))?;
+                let out = self.outside(terminal, || {
+                    leo_services::providers::config_file(
+                        leo_services::providers::ConfigAction::Edit,
+                    )
+                })?;
                 if let Err(e) = out {
                     self.say(Kind::Bad, e.to_string());
                 }
@@ -234,9 +241,9 @@ impl App {
 
             // Removing a key needs no prompt, so it happens in place.
             event::KeyCode::Char('x') => {
-                let status = match leo_services::providers::model(leo_services::providers::ModelAction::Logout {
-                    name: name.clone(),
-                }) {
+                let status = match leo_services::providers::model(
+                    leo_services::providers::ModelAction::Logout { name: name.clone() },
+                ) {
                     Ok(()) => format!("removed the key for {name}"),
                     Err(e) => e.to_string(),
                 };
@@ -245,7 +252,9 @@ impl App {
 
             event::KeyCode::Char('e') => {
                 let out = self.outside(terminal, || {
-                    leo_services::providers::config_file(leo_services::providers::ConfigAction::Edit)
+                    leo_services::providers::config_file(
+                        leo_services::providers::ConfigAction::Edit,
+                    )
                 })?;
                 let status = match out {
                     Ok(()) => None,
@@ -273,7 +282,9 @@ impl App {
             settings::ProviderOp::Login => {
                 let target = name.to_string();
                 let out = self.outside(terminal, || {
-                    leo_services::providers::model(leo_services::providers::ModelAction::Login { name: target })
+                    leo_services::providers::model(leo_services::providers::ModelAction::Login {
+                        name: target,
+                    })
                 })?;
                 let status = match out {
                     Ok(()) => format!("stored a key for {name}"),

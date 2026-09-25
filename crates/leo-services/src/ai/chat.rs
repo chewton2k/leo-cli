@@ -68,7 +68,11 @@ pub fn build_append_prompt(transcript: &str, existing_body: &str) -> String {
 }
 
 /// The structure prompt, led by whatever the listener typed while recording.
-pub fn build_structure_prompt_with(transcript: &str, points: &[Jotted], length_secs: u64) -> String {
+pub fn build_structure_prompt_with(
+    transcript: &str,
+    points: &[Jotted],
+    length_secs: u64,
+) -> String {
     let points = points_section(points, length_secs);
     format!(
         "You are a note-taking assistant. Given the following transcript from a lecture or meeting, \
@@ -199,8 +203,14 @@ mod tests {
 
     fn points() -> Vec<Jotted> {
         vec![
-            Jotted { at_secs: 134, text: "BFS uses a queue".to_string() },
-            Jotted { at_secs: 610, text: "exam: know Dijkstra".to_string() },
+            Jotted {
+                at_secs: 134,
+                text: "BFS uses a queue".to_string(),
+            },
+            Jotted {
+                at_secs: 610,
+                text: "exam: know Dijkstra".to_string(),
+            },
         ]
     }
 
@@ -211,7 +221,10 @@ mod tests {
             build_structure_prompt_with("t", &[], 0),
             build_structure_prompt("t")
         );
-        assert_eq!(build_append_prompt_with("t", "e", &[], 0), build_append_prompt("t", "e"));
+        assert_eq!(
+            build_append_prompt_with("t", "e", &[], 0),
+            build_append_prompt("t", "e")
+        );
     }
 
     /// What the listener typed is what they found important, so the notes are

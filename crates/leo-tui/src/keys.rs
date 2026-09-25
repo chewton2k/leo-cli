@@ -54,7 +54,9 @@ pub enum Intent {
     /// Delete the selected note, with confirmation.
     DeleteSelected,
     /// Open the `:` line, optionally pre-filled.
-    OpenCommand { seed: &'static str },
+    OpenCommand {
+        seed: &'static str,
+    },
     /// Start filtering the notes pane as the user types.
     OpenFilter,
     /// Switch the left pane between directories and tags.
@@ -216,7 +218,10 @@ mod tests {
         assert_eq!(normal(code(KeyCode::Down), Pane::Notes), Intent::Down);
         assert_eq!(normal(code(KeyCode::Up), Pane::Notes), Intent::Up);
         assert_eq!(normal(code(KeyCode::Left), Pane::Notes), Intent::FocusLeft);
-        assert_eq!(normal(code(KeyCode::Right), Pane::Notes), Intent::FocusRight);
+        assert_eq!(
+            normal(code(KeyCode::Right), Pane::Notes),
+            Intent::FocusRight
+        );
     }
 
     /// Ctrl chords must not be shadowed by the plain letter binding.

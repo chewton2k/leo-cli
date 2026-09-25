@@ -35,10 +35,16 @@ pub fn tag_rows(tags: &[(String, usize)]) -> Vec<DirRow> {
 pub fn rows(current_dir: &str, children: &[String]) -> Vec<DirRow> {
     let mut out = Vec::new();
     if !current_dir.is_empty() {
-        out.push(DirRow { label: "..".to_string(), target: "..".to_string() });
+        out.push(DirRow {
+            label: "..".to_string(),
+            target: "..".to_string(),
+        });
     }
     for child in children {
-        out.push(DirRow { label: format!("{child}/"), target: child.clone() });
+        out.push(DirRow {
+            label: format!("{child}/"),
+            target: child.clone(),
+        });
     }
     out
 }
@@ -66,7 +72,10 @@ pub fn render(
         return;
     }
 
-    let items: Vec<ListItem> = rows.iter().map(|r| ListItem::new(r.label.clone())).collect();
+    let items: Vec<ListItem> = rows
+        .iter()
+        .map(|r| ListItem::new(r.label.clone()))
+        .collect();
     let list = List::new(items)
         .block(block)
         .highlight_style(selection(focused));
@@ -123,7 +132,17 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(20, 6)).unwrap();
         let r = rows("cs130", &["lec".to_string()]);
         terminal
-            .draw(|f| render(f, f.area(), &r, 0, true, "dirs", &crate::view::empty::Hint::no_directories()))
+            .draw(|f| {
+                render(
+                    f,
+                    f.area(),
+                    &r,
+                    0,
+                    true,
+                    "dirs",
+                    &crate::view::empty::Hint::no_directories(),
+                )
+            })
             .unwrap();
 
         let rendered = terminal.backend().to_string();
@@ -136,8 +155,32 @@ mod tests {
     #[test]
     fn an_empty_or_overflowing_selection_does_not_panic() {
         let mut terminal = Terminal::new(TestBackend::new(20, 6)).unwrap();
-        terminal.draw(|f| render(f, f.area(), &[], 3, false, "dirs", &crate::view::empty::Hint::no_directories())).unwrap();
+        terminal
+            .draw(|f| {
+                render(
+                    f,
+                    f.area(),
+                    &[],
+                    3,
+                    false,
+                    "dirs",
+                    &crate::view::empty::Hint::no_directories(),
+                )
+            })
+            .unwrap();
         let r = rows("", &["a".to_string()]);
-        terminal.draw(|f| render(f, f.area(), &r, 99, true, "dirs", &crate::view::empty::Hint::no_directories())).unwrap();
+        terminal
+            .draw(|f| {
+                render(
+                    f,
+                    f.area(),
+                    &r,
+                    99,
+                    true,
+                    "dirs",
+                    &crate::view::empty::Hint::no_directories(),
+                )
+            })
+            .unwrap();
     }
 }

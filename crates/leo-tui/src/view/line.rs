@@ -14,7 +14,9 @@ pub fn style_for(kind: Kind) -> Style {
         Kind::Good => Style::default().fg(theme::good()),
         Kind::Warn => Style::default().fg(theme::warn()),
         Kind::Bad => Style::default().fg(theme::bad()),
-        Kind::Dir => Style::default().fg(theme::accent()).add_modifier(Modifier::BOLD),
+        Kind::Dir => Style::default()
+            .fg(theme::accent())
+            .add_modifier(Modifier::BOLD),
     }
 }
 

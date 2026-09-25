@@ -237,7 +237,10 @@ mod tests {
             "the marker is inside the synced notes directory"
         );
         assert!(marker_path(&store.notes_dir).exists());
-        assert_eq!(marker_path(&store.notes_dir).parent(), store.notes_dir.parent());
+        assert_eq!(
+            marker_path(&store.notes_dir).parent(),
+            store.notes_dir.parent()
+        );
     }
 
     /// An install that already has the old marker keeps working, and the stray
@@ -273,7 +276,10 @@ mod tests {
     fn the_manual_points_at_the_full_reference() {
         let body = manual_body();
         assert!(body.contains("`?`"), "never mentions the help key");
-        assert!(body.contains("Ctrl-S"), "never mentions the provider screen");
+        assert!(
+            body.contains("Ctrl-S"),
+            "never mentions the provider screen"
+        );
         assert!(body.contains("leo setup"), "never mentions setup");
     }
 
@@ -287,7 +293,10 @@ mod tests {
         }
         // And the keys someone needs before they find the help screen.
         for key in ["j", "k", "Enter", "Tab", "e", "x", "D"] {
-            assert!(body.contains(key), "the manual never mentions the {key} key");
+            assert!(
+                body.contains(key),
+                "the manual never mentions the {key} key"
+            );
         }
     }
 
@@ -303,7 +312,10 @@ mod tests {
                 "the manual still tells the user to run `:{alias}`"
             );
         }
-        assert!(!body.contains("leo env"), "the manual still mentions leo env");
+        assert!(
+            !body.contains("leo env"),
+            "the manual still mentions leo env"
+        );
     }
 
     #[test]
@@ -320,10 +332,12 @@ mod tests {
     #[test]
     fn the_manual_says_keys_are_kept_separately_and_privately() {
         let body = manual_body().to_lowercase();
-        assert!(body.contains("never"), "does not say keys are never in the config");
         assert!(
-            body.contains("only your account can read")
-                || body.contains("only you can read"),
+            body.contains("never"),
+            "does not say keys are never in the config"
+        );
+        assert!(
+            body.contains("only your account can read") || body.contains("only you can read"),
             "does not say the store is private"
         );
     }
@@ -345,6 +359,10 @@ mod tests {
         let second = install_if_absent(&mut store).unwrap().unwrap();
         assert_eq!(second, first, "a second manual was created");
         assert_eq!(store.notes.len(), 1, "two manuals now exist");
-        assert!(store.find_note(&first).unwrap().body.contains("everyday keys"));
+        assert!(store
+            .find_note(&first)
+            .unwrap()
+            .body
+            .contains("everyday keys"));
     }
 }

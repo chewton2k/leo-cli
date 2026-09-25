@@ -247,7 +247,10 @@ mod tests {
             name: &'static str,
             max_tokens: Option<u32>,
             out: &str,
-        ) -> (Box<dyn ChatProvider>, std::rc::Rc<std::cell::RefCell<Option<u32>>>) {
+        ) -> (
+            Box<dyn ChatProvider>,
+            std::rc::Rc<std::cell::RefCell<Option<u32>>>,
+        ) {
             let observed: std::rc::Rc<std::cell::RefCell<Option<u32>>> = Default::default();
             let provider = Box::new(FakeChat {
                 name,
@@ -394,7 +397,10 @@ mod tests {
     #[test]
     fn mixed_chain_reports_both_skipped_and_failed() {
         let err = run_chat_chain(
-            vec![FakeChat::unavailable("ollama"), FakeChat::retryable("openrouter")],
+            vec![
+                FakeChat::unavailable("ollama"),
+                FakeChat::retryable("openrouter"),
+            ],
             &req(),
         )
         .unwrap_err();
@@ -423,7 +429,10 @@ mod tests {
     #[test]
     fn mixed_chain_does_not_claim_every_provider_failed() {
         let err = run_chat_chain(
-            vec![FakeChat::unavailable("ollama"), FakeChat::retryable("openrouter")],
+            vec![
+                FakeChat::unavailable("ollama"),
+                FakeChat::retryable("openrouter"),
+            ],
             &req(),
         )
         .unwrap_err();
@@ -612,7 +621,9 @@ mod tests {
     #[test]
     fn falling_through_tells_the_caller_to_discard_what_it_showed() {
         let providers: Vec<Box<dyn ChatProvider>> = vec![
-            Box::new(HalfThenFail { name: "first".into() }),
+            Box::new(HalfThenFail {
+                name: "first".into(),
+            }),
             Box::new(Streamer {
                 name: "second".into(),
                 pieces: vec!["the real answer"],

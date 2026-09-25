@@ -36,7 +36,9 @@ fn parse_note_from_markdown(content: &str, relative_path: &Path) -> Result<Note>
     let rest = content
         .strip_prefix("---\n")
         .context("note file missing opening ---")?;
-    let end = rest.find("\n---\n").context("note file missing closing ---")?;
+    let end = rest
+        .find("\n---\n")
+        .context("note file missing closing ---")?;
     let yaml_str = &rest[..end];
     let body = rest[end + 5..].trim_start_matches('\n').to_string();
 
@@ -125,7 +127,9 @@ fn collect_notes(notes_dir: &Path, dir: &Path, notes: &mut Vec<Note>) -> Result<
             }
         } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
             let content = fs::read_to_string(&path)?;
-            let relative = path.strip_prefix(notes_dir).context("path outside notes_dir")?;
+            let relative = path
+                .strip_prefix(notes_dir)
+                .context("path outside notes_dir")?;
             match parse_note_from_markdown(&content, relative) {
                 Ok(note) => notes.push(note),
                 Err(e) => crate::diag::warn(format!("skipping {}: {e}", path.display())),
@@ -153,11 +157,18 @@ pub enum Undoable {
         what: String,
     },
     /// A note that moved, and where it came from.
-    Moved { id: String, from: String, title: String },
+    Moved {
+        id: String,
+        from: String,
+        title: String,
+    },
     /// A checkbox that was toggled. Toggling is its own inverse.
     Toggled { id: String, n: usize, title: String },
     /// Changes made by one command, taken back together.
-    Batch { changes: Vec<Undoable>, what: String },
+    Batch {
+        changes: Vec<Undoable>,
+        what: String,
+    },
 }
 
 impl Undoable {
@@ -166,7 +177,11 @@ impl Undoable {
         match self {
             Undoable::Deleted { what, .. } => format!("Restored {what}"),
             Undoable::Moved { title, from, .. } => {
-                let place = if from.is_empty() { "/".to_string() } else { format!("/{from}") };
+                let place = if from.is_empty() {
+                    "/".to_string()
+                } else {
+                    format!("/{from}")
+                };
                 format!("Moved \"{title}\" back to {place}")
             }
             Undoable::Batch { what, .. } => what.clone(),
@@ -369,14 +384,25 @@ impl Store {
             .iter()
             .filter(|n| n.id.starts_with(id_prefix))
             .collect();
-        if matches.len() == 1 { Some(matches[0]) } else { None }
+        if matches.len() == 1 {
+            Some(matches[0])
+        } else {
+            None
+        }
     }
 
     /// Find a mutable note by full ID or unique prefix.
     pub fn find_note_mut(&mut self, id_prefix: &str) -> Option<&mut Note> {
-        let mut found = self.notes.iter_mut().filter(|n| n.id.starts_with(id_prefix));
+        let mut found = self
+            .notes
+            .iter_mut()
+            .filter(|n| n.id.starts_with(id_prefix));
         let first = found.next()?;
-        if found.next().is_none() { Some(first) } else { None }
+        if found.next().is_none() {
+            Some(first)
+        } else {
+            None
+        }
     }
 
     /// Delete a note by ID prefix; returns true if removed.
@@ -414,7 +440,11 @@ impl Store {
                 [one] => format!("\"{}\"", one.title),
                 many => format!("{} notes", many.len()),
             };
-            self.remember(Undoable::Deleted { notes: removed, directories: Vec::new(), what });
+            self.remember(Undoable::Deleted {
+                notes: removed,
+                directories: Vec::new(),
+                what,
+            });
         }
         count
     }
@@ -451,7 +481,9 @@ impl Store {
     /// of `u` would toggle forever.
     fn revert(&mut self, change: Undoable) {
         match change {
-            Undoable::Deleted { notes, directories, .. } => {
+            Undoable::Deleted {
+                notes, directories, ..
+            } => {
                 for dir in directories {
                     if !self.directories.contains(&dir) {
                         self.directories.push(dir);
@@ -492,7 +524,11 @@ impl Store {
         let query = query.to_lowercase();
         let (tags, words): (Vec<&str>, Vec<&str>) =
             query.split_whitespace().partition(|w| w.starts_with('#'));
-        let tags: Vec<&str> = tags.iter().map(|t| &t[1..]).filter(|t| !t.is_empty()).collect();
+        let tags: Vec<&str> = tags
+            .iter()
+            .map(|t| &t[1..])
+            .filter(|t| !t.is_empty())
+            .collect();
 
         let mut matcher = nucleo::Matcher::new(nucleo::Config::DEFAULT);
         let fuzzy = nucleo::pattern::Pattern::parse(
@@ -504,15 +540,18 @@ impl Store {
         let mut ranked: Vec<(u8, &Note)> = Vec::new();
         for note in &self.notes {
             let note_tags: Vec<String> = note.tags.iter().map(|t| t.to_lowercase()).collect();
-            if !tags.iter().all(|t| note_tags.iter().any(|nt| nt.starts_with(t))) {
+            if !tags
+                .iter()
+                .all(|t| note_tags.iter().any(|nt| nt.starts_with(t)))
+            {
                 continue;
             }
             let title = note.title.to_lowercase();
             let body = note.body.to_lowercase();
             let in_title = words.iter().all(|w| title.contains(w));
-            let anywhere = words
-                .iter()
-                .all(|w| title.contains(w) || body.contains(w) || note_tags.iter().any(|t| t.contains(w)));
+            let anywhere = words.iter().all(|w| {
+                title.contains(w) || body.contains(w) || note_tags.iter().any(|t| t.contains(w))
+            });
             let group = if in_title {
                 0
             } else if anywhere {
@@ -533,8 +572,7 @@ impl Store {
 
     /// Return all tags with usage counts, sorted most-used first.
     pub fn tags(&self) -> Vec<(String, usize)> {
-        let mut counts: std::collections::HashMap<String, usize> =
-            std::collections::HashMap::new();
+        let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
         for note in &self.notes {
             for tag in &note.tags {
                 *counts.entry(tag.clone()).or_insert(0) += 1;
@@ -558,7 +596,9 @@ impl Store {
 
     pub fn create_dir(&mut self, path: &str) -> bool {
         let path = path.trim_matches('/');
-        if path.is_empty() { return false; }
+        if path.is_empty() {
+            return false;
+        }
         let mut created = false;
         let parts: Vec<&str> = path.split('/').collect();
         for i in 0..parts.len() {
@@ -572,7 +612,9 @@ impl Store {
     }
 
     pub fn dir_exists(&self, path: &str) -> bool {
-        if path.is_empty() { return true; }
+        if path.is_empty() {
+            return true;
+        }
         self.directories.contains(&path.to_string())
     }
 
@@ -587,7 +629,11 @@ impl Store {
             .iter()
             .filter_map(|d| {
                 if parent.is_empty() {
-                    if !d.contains('/') { Some(d.clone()) } else { None }
+                    if !d.contains('/') {
+                        Some(d.clone())
+                    } else {
+                        None
+                    }
                 } else if let Some(rest) = d.strip_prefix(&prefix) {
                     if !rest.is_empty() && !rest.contains('/') {
                         Some(rest.to_string())
@@ -612,7 +658,9 @@ impl Store {
             .iter()
             .any(|n| n.directory == path || n.directory.starts_with(&prefix));
         let has_subdirs = self.directories.iter().any(|d| d.starts_with(&prefix));
-        if has_notes || has_subdirs { return false; }
+        if has_notes || has_subdirs {
+            return false;
+        }
         let before = self.directories.len();
         self.directories.retain(|d| d != path);
         self.directories.len() < before
@@ -686,7 +734,11 @@ impl Store {
         for id in ids {
             if self.move_note(id, new_dir).is_some() {
                 changes.push(self.undo.pop().expect("move_note records its change"));
-                titles.push(self.find_note(id).map(|n| n.title.clone()).unwrap_or_default());
+                titles.push(
+                    self.find_note(id)
+                        .map(|n| n.title.clone())
+                        .unwrap_or_default(),
+                );
             }
         }
         match changes.len() {
@@ -790,8 +842,12 @@ mod tests {
         store.create_dir("cs162");
         store.create_note("Root note", "b", vec![], "").unwrap();
         store.create_note("In cs130", "b", vec![], "cs130").unwrap();
-        store.create_note("In lec 1", "b", vec![], "cs130/lec").unwrap();
-        store.create_note("In lec 2", "b", vec![], "cs130/lec").unwrap();
+        store
+            .create_note("In lec 1", "b", vec![], "cs130/lec")
+            .unwrap();
+        store
+            .create_note("In lec 2", "b", vec![], "cs130/lec")
+            .unwrap();
         store.create_note("In cs162", "b", vec![], "cs162").unwrap();
         store.save().unwrap();
         (store, dir)
@@ -820,7 +876,11 @@ mod tests {
         store.create_dir("cs130");
         store.create_note("In cs130", "b", vec![], "cs130").unwrap();
 
-        assert_eq!(store.dir_contents("cs13"), (0, 1), "cs130 is not inside cs13");
+        assert_eq!(
+            store.dir_contents("cs13"),
+            (0, 1),
+            "cs130 is not inside cs13"
+        );
         assert_eq!(store.dir_contents("cs130"), (1, 1));
     }
 
@@ -885,8 +945,7 @@ mod tests {
     fn test_note_roundtrip() {
         let note = make_note();
         let md = note_to_markdown(&note).unwrap();
-        let parsed =
-            parse_note_from_markdown(&md, std::path::Path::new("550e8400.md")).unwrap();
+        let parsed = parse_note_from_markdown(&md, std::path::Path::new("550e8400.md")).unwrap();
         assert_eq!(parsed.id, note.id);
         assert_eq!(parsed.title, note.title);
         assert_eq!(parsed.body, note.body);
@@ -898,11 +957,8 @@ mod tests {
     fn test_directory_derived_from_path() {
         let note = make_note();
         let md = note_to_markdown(&note).unwrap();
-        let parsed = parse_note_from_markdown(
-            &md,
-            std::path::Path::new("cs162/lec/550e8400.md"),
-        )
-        .unwrap();
+        let parsed =
+            parse_note_from_markdown(&md, std::path::Path::new("cs162/lec/550e8400.md")).unwrap();
         assert_eq!(parsed.directory, "cs162/lec");
     }
 
@@ -910,7 +966,12 @@ mod tests {
     fn test_note_path_root() {
         let tmp = tempfile::TempDir::new().unwrap();
         let notes_dir = tmp.path().join("notes");
-        let store = Store { notes: vec![], directories: vec![], notes_dir: notes_dir.clone(), undo: Vec::new() };
+        let store = Store {
+            notes: vec![],
+            directories: vec![],
+            notes_dir: notes_dir.clone(),
+            undo: Vec::new(),
+        };
         let note = make_note();
         assert_eq!(
             store.note_path(&note),
@@ -922,7 +983,12 @@ mod tests {
     fn test_note_path_subdir() {
         let tmp = tempfile::TempDir::new().unwrap();
         let notes_dir = tmp.path().join("notes");
-        let store = Store { notes: vec![], directories: vec![], notes_dir: notes_dir.clone(), undo: Vec::new() };
+        let store = Store {
+            notes: vec![],
+            directories: vec![],
+            notes_dir: notes_dir.clone(),
+            undo: Vec::new(),
+        };
         let mut note = make_note();
         note.directory = "cs162/lec".to_string();
         assert_eq!(
@@ -978,7 +1044,9 @@ mod tests {
             notes_dir: notes_dir.clone(),
         };
         store.save().unwrap();
-        assert!(notes_dir.join("550e8400-e29b-41d4-a716-446655440000.md").exists());
+        assert!(notes_dir
+            .join("550e8400-e29b-41d4-a716-446655440000.md")
+            .exists());
     }
 
     #[test]
@@ -999,7 +1067,9 @@ mod tests {
         store.save().unwrap();
 
         assert!(!orphan.exists(), "orphaned file should be deleted");
-        assert!(notes_dir.join("550e8400-e29b-41d4-a716-446655440000.md").exists());
+        assert!(notes_dir
+            .join("550e8400-e29b-41d4-a716-446655440000.md")
+            .exists());
     }
 
     #[test]
@@ -1026,7 +1096,9 @@ mod tests {
         migrate_from_json(&old_path, &notes_dir).unwrap();
 
         assert!(notes_dir.exists());
-        assert!(notes_dir.join("550e8400-e29b-41d4-a716-446655440000.md").exists());
+        assert!(notes_dir
+            .join("550e8400-e29b-41d4-a716-446655440000.md")
+            .exists());
         assert!(!old_path.exists(), "notes.json should be renamed");
         assert!(tmp.path().join("notes.json.bak").exists());
     }
@@ -1045,7 +1117,9 @@ mod tests {
             notes_dir: notes_dir.clone(),
         };
         store.save().unwrap();
-        assert!(notes_dir.join("550e8400-e29b-41d4-a716-446655440000.md").exists());
+        assert!(notes_dir
+            .join("550e8400-e29b-41d4-a716-446655440000.md")
+            .exists());
 
         let mut moved = note.clone();
         moved.directory = "ideas".to_string();
@@ -1057,9 +1131,13 @@ mod tests {
         };
         store2.save().unwrap();
 
-        assert!(notes_dir.join("ideas/550e8400-e29b-41d4-a716-446655440000.md").exists());
+        assert!(notes_dir
+            .join("ideas/550e8400-e29b-41d4-a716-446655440000.md")
+            .exists());
         assert!(
-            !notes_dir.join("550e8400-e29b-41d4-a716-446655440000.md").exists(),
+            !notes_dir
+                .join("550e8400-e29b-41d4-a716-446655440000.md")
+                .exists(),
             "old location should be removed after move"
         );
     }
@@ -1101,7 +1179,6 @@ mod tests {
         (store, dir)
     }
 
-
     // ── find ────────────────────────────────────────────────────────────────
 
     fn titles(found: Vec<&Note>) -> Vec<String> {
@@ -1111,9 +1188,30 @@ mod tests {
     fn store_for_find() -> (Store, tempfile::TempDir) {
         let (mut store, d) = temp_store();
         store.create_dir("cs130");
-        store.create_note("Rust ownership", "borrow checker rules", vec!["rust".into()], "").unwrap();
-        store.create_note("Graph traversals", "BFS explores level by level", vec![], "cs130").unwrap();
-        store.create_note("Lecture 4", "graphs: BFS, then DFS", vec!["exam".into()], "cs130").unwrap();
+        store
+            .create_note(
+                "Rust ownership",
+                "borrow checker rules",
+                vec!["rust".into()],
+                "",
+            )
+            .unwrap();
+        store
+            .create_note(
+                "Graph traversals",
+                "BFS explores level by level",
+                vec![],
+                "cs130",
+            )
+            .unwrap();
+        store
+            .create_note(
+                "Lecture 4",
+                "graphs: BFS, then DFS",
+                vec!["exam".into()],
+                "cs130",
+            )
+            .unwrap();
         (store, d)
     }
 
@@ -1202,7 +1300,9 @@ mod tests {
     #[test]
     fn undoing_a_delete_restores_the_note_exactly() {
         let (mut store, _d) = temp_store();
-        let note = store.create_note("Keep me", "body text", vec!["tag".into()], "").unwrap();
+        let note = store
+            .create_note("Keep me", "body text", vec!["tag".into()], "")
+            .unwrap();
         let (id, created, updated) = (note.id.clone(), note.created_at, note.updated_at);
 
         assert!(store.delete_note(&id));
@@ -1242,7 +1342,10 @@ mod tests {
         assert!(store.dir_exists("cs130"));
         assert!(store.dir_exists("cs130/week1"));
         // And each note is back where it lived.
-        let a = store.find_by_title("A").first().map(|n| n.directory.clone());
+        let a = store
+            .find_by_title("A")
+            .first()
+            .map(|n| n.directory.clone());
         assert_eq!(a.as_deref(), Some("cs130"));
     }
 
@@ -1250,7 +1353,11 @@ mod tests {
     fn undoing_a_move_puts_a_note_back() {
         let (mut store, _d) = temp_store();
         store.create_dir("cs130");
-        let id = store.create_note("Wanderer", "b", vec![], "").unwrap().id.clone();
+        let id = store
+            .create_note("Wanderer", "b", vec![], "")
+            .unwrap()
+            .id
+            .clone();
 
         store.move_note(&id, "cs130");
         assert_eq!(store.find_note(&id).unwrap().directory, "cs130");
@@ -1284,12 +1391,19 @@ mod tests {
     #[test]
     fn undoing_does_not_stack_its_own_inverse() {
         let (mut store, _d) = temp_store();
-        let id = store.create_note("Tasks", "- [ ] one", vec![], "").unwrap().id.clone();
+        let id = store
+            .create_note("Tasks", "- [ ] one", vec![], "")
+            .unwrap()
+            .id
+            .clone();
 
         store.toggle_checkbox(&id, 1);
         assert!(store.can_undo());
         store.undo();
-        assert!(!store.can_undo(), "undo pushed its own inverse onto the stack");
+        assert!(
+            !store.can_undo(),
+            "undo pushed its own inverse onto the stack"
+        );
     }
 
     #[test]
@@ -1303,7 +1417,10 @@ mod tests {
         assert!(store.notes.is_empty());
 
         store.undo();
-        assert!(store.find_note(&b).is_some(), "B was deleted last, so it returns first");
+        assert!(
+            store.find_note(&b).is_some(),
+            "B was deleted last, so it returns first"
+        );
         assert!(store.find_note(&a).is_none());
 
         store.undo();
@@ -1368,17 +1485,26 @@ mod tests {
     #[test]
     fn a_restored_note_is_written_back_to_disk() {
         let (mut store, _d) = temp_store();
-        let id = store.create_note("Persisted", "body", vec![], "").unwrap().id.clone();
+        let id = store
+            .create_note("Persisted", "body", vec![], "")
+            .unwrap()
+            .id
+            .clone();
         store.save().unwrap();
 
         store.delete_note(&id);
         store.save().unwrap();
-        assert!(Store::load_from(&store.notes_dir).unwrap().find_note(&id).is_none());
+        assert!(Store::load_from(&store.notes_dir)
+            .unwrap()
+            .find_note(&id)
+            .is_none());
 
         store.undo();
         store.save().unwrap();
         let reloaded = Store::load_from(&store.notes_dir).unwrap();
-        let back = reloaded.find_note(&id).expect("restored note missing from disk");
+        let back = reloaded
+            .find_note(&id)
+            .expect("restored note missing from disk");
         assert_eq!(back.title, "Persisted");
         assert_eq!(back.body, "body");
     }

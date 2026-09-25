@@ -16,17 +16,52 @@ use super::*;
 /// panes there, and `d` deleted a note here while dropping a provider from a
 /// chain on the settings screen.
 pub const VERBS: &[Verb] = &[
-    v("new", &[], "new [dir/][title] [#tag...]", "a note, opening $EDITOR"),
+    v(
+        "new",
+        &[],
+        "new [dir/][title] [#tag...]",
+        "a note, opening $EDITOR",
+    ),
     v("edit", &["e"], "edit [note]", "open a note in $EDITOR"),
-    v("delete", &["rm"], "delete [note]", "delete a note (asks first)"),
-    v("rename", &[], "rename <new title>", "retitle the selected note"),
-    v("undo", &["u"], "undo", "take back the last delete, move or tick"),
-    v("listen", &[], "listen [title | add [note]] [--screen]", "record, and write notes from speech"),
+    v(
+        "delete",
+        &["rm"],
+        "delete [note]",
+        "delete a note (asks first)",
+    ),
+    v(
+        "rename",
+        &[],
+        "rename <new title>",
+        "retitle the selected note",
+    ),
+    v(
+        "undo",
+        &["u"],
+        "undo",
+        "take back the last delete, move or tick",
+    ),
+    v(
+        "listen",
+        &[],
+        "listen [title | add [note]] [--screen]",
+        "record, and write notes from speech",
+    ),
     v("ask", &[], "ask [note]", "answer the note's @leo lines"),
     v("mkdir", &[], "mkdir <name>", "a directory here"),
     v("cd", &[], "cd <dir>", "enter a directory; .. up, / root"),
-    v("mv", &[], "mv [note...] <dir>", "move notes, or the selected one"),
-    v("sync", &[], "sync [init | connect <url> | push | pull | status]", "back up now: pull, then push"),
+    v(
+        "mv",
+        &[],
+        "mv [note...] <dir>",
+        "move notes, or the selected one",
+    ),
+    v(
+        "sync",
+        &[],
+        "sync [init | connect <url> | push | pull | status]",
+        "back up now: pull, then push",
+    ),
     v("help", &["?"], "help", "every key and command"),
     v("quit", &["exit", "q"], "quit", "leave"),
 ];
@@ -47,12 +82,19 @@ pub(super) const fn v(
     usage: &'static str,
     summary: &'static str,
 ) -> Verb {
-    Verb { name, aliases, usage, summary }
+    Verb {
+        name,
+        aliases,
+        usage,
+        summary,
+    }
 }
 
 /// The table row for a verb or one of its aliases.
 pub fn verb(word: &str) -> Option<&'static Verb> {
-    VERBS.iter().find(|v| v.name == word || v.aliases.contains(&word))
+    VERBS
+        .iter()
+        .find(|v| v.name == word || v.aliases.contains(&word))
 }
 
 /// Words that used to work: what to use instead, and why it changed.
@@ -75,12 +117,24 @@ pub const RETIRED: &[(&str, &str, &str)] = &[
     ("h", "?", ONE_NAME),
     ("find", "/", ONE_SEARCH),
     ("search", "/", ONE_SEARCH),
-    ("expand", "a", "it is a key now: a asks about the selected note"),
+    (
+        "expand",
+        "a",
+        "it is a key now: a asks about the selected note",
+    ),
     ("check", "x", TICKED),
     ("x", "x", TICKED),
     ("uncheck", "x", TICKED),
-    ("tags", "t", "it switches the left pane to your tags, with counts"),
-    ("rmdir", "D in the directories pane", "it asks, then removes the directory"),
+    (
+        "tags",
+        "t",
+        "it switches the left pane to your tags, with counts",
+    ),
+    (
+        "rmdir",
+        "D in the directories pane",
+        "it asks, then removes the directory",
+    ),
     ("model", "Ctrl-S", PROFILE),
     ("config", "Ctrl-S", PROFILE),
     ("rem", "a note with - [ ] lines", GONE_REMIND),
@@ -99,11 +153,13 @@ pub const RETIRED: &[(&str, &str, &str)] = &[
 pub(super) const ONE_NAME: &str = "one name per command now, so there is less to learn";
 pub(super) const LISTED: &str = "the notes pane always lists this directory";
 pub(super) const SHOWN: &str = "the preview shows whichever note is selected";
-pub(super) const PROFILE: &str = "providers and keys live on that screen; `leo model` still works in a shell";
+pub(super) const PROFILE: &str =
+    "providers and keys live on that screen; `leo model` still works in a shell";
 pub(super) const GONE_REMIND: &str = "reminders were removed; a checklist note does the same";
 pub(super) const GONE_EXPORT: &str = "export was removed; every note is already a Markdown file";
 pub(super) const TICKED: &str = "x ticks the first open box; in the preview, j/k pick one first";
-pub(super) const ONE_SEARCH: &str = "one search now: / looks in every note, bodies and tags included";
+pub(super) const ONE_SEARCH: &str =
+    "one search now: / looks in every note, bodies and tags included";
 
 /// Every word that can start a command, canonical names and aliases alike.
 pub fn all_verb_words() -> Vec<&'static str> {
@@ -179,13 +235,22 @@ pub fn parse(line: &str) -> Parsed {
     let args = &tokens[1..];
     let joined = || args.join(" ");
     let usage = |name: &str| {
-        Parsed::Usage(self::verb(name).map(|v| v.usage).unwrap_or(name).to_string())
+        Parsed::Usage(
+            self::verb(name)
+                .map(|v| v.usage)
+                .unwrap_or(name)
+                .to_string(),
+        )
     };
     let act = |a: Action| Parsed::Action(a);
 
     match verb.as_str() {
         "new" => act(Action::New {
-            title: if args.is_empty() { None } else { Some(joined()) },
+            title: if args.is_empty() {
+                None
+            } else {
+                Some(joined())
+            },
         }),
 
         "edit" | "e" => act(Action::Edit { note: joined() }),
@@ -193,10 +258,17 @@ pub fn parse(line: &str) -> Parsed {
 
         "listen" => {
             let screen = args.iter().any(|a| a == "--screen");
-            let rest: Vec<String> =
-                args.iter().filter(|a| a.as_str() != "--screen").cloned().collect();
+            let rest: Vec<String> = args
+                .iter()
+                .filter(|a| a.as_str() != "--screen")
+                .cloned()
+                .collect();
 
-            if rest.first().map(|s| s.eq_ignore_ascii_case("add")).unwrap_or(false) {
+            if rest
+                .first()
+                .map(|s| s.eq_ignore_ascii_case("add"))
+                .unwrap_or(false)
+            {
                 return act(Action::Listen {
                     title: None,
                     append_to: Some(rest[1..].join(" ")),
@@ -204,7 +276,11 @@ pub fn parse(line: &str) -> Parsed {
                 });
             }
             act(Action::Listen {
-                title: if rest.is_empty() { None } else { Some(rest.join(" ")) },
+                title: if rest.is_empty() {
+                    None
+                } else {
+                    Some(rest.join(" "))
+                },
                 append_to: None,
                 screen,
             })
@@ -220,7 +296,10 @@ pub fn parse(line: &str) -> Parsed {
             if args.is_empty() {
                 usage("rename")
             } else {
-                act(Action::Rename { note: String::new(), title: joined() })
+                act(Action::Rename {
+                    note: String::new(),
+                    title: joined(),
+                })
             }
         }
 
@@ -233,8 +312,9 @@ pub fn parse(line: &str) -> Parsed {
             }
         }
 
-        "cd" => act(Action::Cd { path: joined().trim().to_string() }),
-
+        "cd" => act(Action::Cd {
+            path: joined().trim().to_string(),
+        }),
 
         // With one argument, that is the directory and the note is the
         // selected one.
@@ -303,7 +383,10 @@ mod parse_tests {
 
     #[test]
     fn unknown_verb_is_reported_with_the_verb() {
-        assert_eq!(parse("frobnicate 3"), Parsed::Unknown("frobnicate".to_string()));
+        assert_eq!(
+            parse("frobnicate 3"),
+            Parsed::Unknown("frobnicate".to_string())
+        );
     }
 
     /// Every live alias must parse exactly like the verb it abbreviates.
@@ -332,7 +415,11 @@ mod parse_tests {
     fn every_retired_alias_names_a_real_replacement() {
         for (alias, instead, why) in RETIRED {
             match parse(alias) {
-                Parsed::Retired { verb, replacement, why: said } => {
+                Parsed::Retired {
+                    verb,
+                    replacement,
+                    why: said,
+                } => {
                     assert_eq!(verb, *alias);
                     assert_eq!(replacement, *instead);
                     assert_eq!(said, *why);
@@ -403,7 +490,9 @@ mod parse_tests {
     fn multi_word_note_references_are_joined() {
         assert_eq!(
             act("edit Rust ownership notes"),
-            Action::Edit { note: "Rust ownership notes".to_string() }
+            Action::Edit {
+                note: "Rust ownership notes".to_string()
+            }
         );
     }
 
@@ -411,7 +500,9 @@ mod parse_tests {
     fn quoted_arguments_stay_together() {
         assert_eq!(
             act("new \"My Note\""),
-            Action::New { title: Some("My Note".to_string()) }
+            Action::New {
+                title: Some("My Note".to_string())
+            }
         );
     }
 
@@ -428,7 +519,10 @@ mod parse_tests {
         // A trailing slash on the destination is tolerated, and `/` means root.
         assert_eq!(
             act("mv 1 /"),
-            Action::Mv { notes: vec!["1".to_string()], dir: String::new() }
+            Action::Mv {
+                notes: vec!["1".to_string()],
+                dir: String::new()
+            }
         );
     }
 
@@ -451,7 +545,9 @@ mod parse_tests {
     fn check_is_retired_for_the_x_key() {
         for word in ["check 1 2", "x 1 2", "uncheck 1 2"] {
             match parse(word) {
-                Parsed::Retired { replacement, .. } => assert!(replacement.contains('x'), "{replacement}"),
+                Parsed::Retired { replacement, .. } => {
+                    assert!(replacement.contains('x'), "{replacement}")
+                }
                 other => panic!("{word:?} should be retired, got {other:?}"),
             }
         }
@@ -472,7 +568,11 @@ mod parse_tests {
     fn listen_parses_screen_flag_title_and_append_target() {
         assert_eq!(
             act("listen"),
-            Action::Listen { title: None, append_to: None, screen: false }
+            Action::Listen {
+                title: None,
+                append_to: None,
+                screen: false
+            }
         );
         assert_eq!(
             act("listen CS 101 Lecture"),
@@ -484,7 +584,11 @@ mod parse_tests {
         );
         assert_eq!(
             act("listen add 1"),
-            Action::Listen { title: None, append_to: Some("1".to_string()), screen: false }
+            Action::Listen {
+                title: None,
+                append_to: Some("1".to_string()),
+                screen: false
+            }
         );
         // --screen is positional-agnostic and never lands in the title.
         assert_eq!(
@@ -504,14 +608,36 @@ mod parse_tests {
             }
         );
         // No note after `add` means the selected one; see `fill_selected`.
-        assert_eq!(act("listen add"), Action::Listen { title: None, append_to: Some(String::new()), screen: false });
+        assert_eq!(
+            act("listen add"),
+            Action::Listen {
+                title: None,
+                append_to: Some(String::new()),
+                screen: false
+            }
+        );
     }
 
     #[test]
     fn cd_accepts_no_argument_as_root() {
-        assert_eq!(act("cd"), Action::Cd { path: String::new() });
-        assert_eq!(act("cd .."), Action::Cd { path: "..".to_string() });
-        assert_eq!(act("cd cs130"), Action::Cd { path: "cs130".to_string() });
+        assert_eq!(
+            act("cd"),
+            Action::Cd {
+                path: String::new()
+            }
+        );
+        assert_eq!(
+            act("cd .."),
+            Action::Cd {
+                path: "..".to_string()
+            }
+        );
+        assert_eq!(
+            act("cd cs130"),
+            Action::Cd {
+                path: "cs130".to_string()
+            }
+        );
     }
 
     #[test]
@@ -522,7 +648,9 @@ mod parse_tests {
         assert_eq!(act("sync status"), Action::Sync(SyncAction::Status));
         assert_eq!(
             act("sync connect https://example.com/n.git"),
-            Action::Sync(SyncAction::Connect { url: "https://example.com/n.git".to_string() })
+            Action::Sync(SyncAction::Connect {
+                url: "https://example.com/n.git".to_string()
+            })
         );
         assert!(usage("sync connect").contains("connect"));
         assert!(usage("sync bogus").contains("init"));
@@ -578,7 +706,10 @@ mod parse_tests {
     fn tokenize_keeps_quoted_runs_and_drops_empty_gaps() {
         assert_eq!(tokenize("a  b\tc"), vec!["a", "b", "c"]);
         assert_eq!(tokenize("new \"two words\""), vec!["new", "two words"]);
-        assert_eq!(tokenize("new 'single quoted'"), vec!["new", "single quoted"]);
+        assert_eq!(
+            tokenize("new 'single quoted'"),
+            vec!["new", "single quoted"]
+        );
         assert!(tokenize("   ").is_empty());
     }
 }

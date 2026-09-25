@@ -36,10 +36,7 @@ pub fn record_audio(screen: bool) -> Result<PathBuf> {
 
     // Resolve audio device for screen mode
     let device = if screen {
-        Some(
-            std::env::var("LEO_SCREEN_DEVICE")
-                .unwrap_or_else(|_| "BlackHole 2ch".to_string()),
-        )
+        Some(std::env::var("LEO_SCREEN_DEVICE").unwrap_or_else(|_| "BlackHole 2ch".to_string()))
     } else {
         None
     };
@@ -76,7 +73,11 @@ pub fn record_audio(screen: bool) -> Result<PathBuf> {
         })?;
 
     // Live stopwatch display
-    let label = if screen { "Recording screen" } else { "Recording" };
+    let label = if screen {
+        "Recording screen"
+    } else {
+        "Recording"
+    };
     let running = Arc::new(AtomicBool::new(true));
     let running_clone = Arc::clone(&running);
     let start = Instant::now();
@@ -148,7 +149,12 @@ pub fn record_audio(screen: bool) -> Result<PathBuf> {
         .args(["--i", "-D", tmp_path.to_str().unwrap()])
         .output()
         .ok()
-        .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<f64>().ok())
+        .and_then(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .trim()
+                .parse::<f64>()
+                .ok()
+        })
         .map(|d| d as u64)
         .unwrap_or_else(|| size / (16000 * 2));
     let file_mins = file_secs / 60;
@@ -472,7 +478,10 @@ mod tests {
         std::fs::copy(&dest, &snap).unwrap();
         repair_wav_header(&snap);
         let level = peak_amplitude(&snap).expect("a level");
-        assert!(!crate::ai::live::is_silent(level), "replayed audio read silent");
+        assert!(
+            !crate::ai::live::is_silent(level),
+            "replayed audio read silent"
+        );
 
         let finished = recorder.stop().expect("a finished file");
         assert!(finished.exists());
@@ -514,7 +523,10 @@ mod tests {
             .unwrap_or(false);
         assert!(ok, "could not synthesise a tone");
         let level = peak_amplitude(&tone).expect("a level for a tone");
-        assert!(!crate::ai::live::is_silent(level), "a tone measured {level}");
+        assert!(
+            !crate::ai::live::is_silent(level),
+            "a tone measured {level}"
+        );
     }
 
     #[test]

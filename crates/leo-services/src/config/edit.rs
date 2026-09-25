@@ -116,8 +116,7 @@ pub fn save_document(path: &std::path::Path, doc: &DocumentMut) -> Result<()> {
     let tmp = path.with_extension("toml.new");
     std::fs::write(&tmp, doc.to_string())
         .with_context(|| format!("could not write {}", tmp.display()))?;
-    std::fs::rename(&tmp, path)
-        .with_context(|| format!("could not replace {}", path.display()))?;
+    std::fs::rename(&tmp, path).with_context(|| format!("could not replace {}", path.display()))?;
     Ok(())
 }
 
@@ -135,7 +134,9 @@ mod tests {
     }
 
     fn doc() -> DocumentMut {
-        crate::config::Config::default_toml().parse::<DocumentMut>().unwrap()
+        crate::config::Config::default_toml()
+            .parse::<DocumentMut>()
+            .unwrap()
     }
 
     #[test]
@@ -194,7 +195,11 @@ mod tests {
     #[test]
     fn a_rewritten_chain_reads_back_and_still_parses_as_config() {
         let mut d = doc();
-        write_chain(&mut d, Task::Chat, &["openrouter".to_string(), "ollama".to_string()]);
+        write_chain(
+            &mut d,
+            Task::Chat,
+            &["openrouter".to_string(), "ollama".to_string()],
+        );
         assert_eq!(read_chain(&d, Task::Chat), vec!["openrouter", "ollama"]);
 
         let cfg = crate::config::Config::parse(&d.to_string()).unwrap();
@@ -280,6 +285,9 @@ mod tests {
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("\"new\""));
         assert!(!text.contains("\"old\""));
-        assert!(!path.with_extension("toml.new").exists(), "temp file left behind");
+        assert!(
+            !path.with_extension("toml.new").exists(),
+            "temp file left behind"
+        );
     }
 }

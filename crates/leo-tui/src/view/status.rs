@@ -49,7 +49,10 @@ pub fn render_command(
 
     // +1 for the leading ":".
     let x = area.x + 1 + cursor as u16;
-    frame.set_cursor_position(Position::new(x.min(area.x + area.width.saturating_sub(1)), area.y));
+    frame.set_cursor_position(Position::new(
+        x.min(area.x + area.width.saturating_sub(1)),
+        area.y,
+    ));
 }
 
 /// Draw the live filter on the command line, with a real caret.
@@ -95,7 +98,10 @@ pub fn render_jot(frame: &mut Frame, area: Rect, text: &str) {
     }
     frame.render_widget(Paragraph::new(TuiLine::from(spans)), area);
     let x = area.x + 2 + text.chars().count() as u16;
-    frame.set_cursor_position(Position::new(x.min(area.x + area.width.saturating_sub(1)), area.y));
+    frame.set_cursor_position(Position::new(
+        x.min(area.x + area.width.saturating_sub(1)),
+        area.y,
+    ));
 }
 
 /// What the right-hand side of the bar reports.
@@ -258,14 +264,24 @@ mod tests {
         })
         .unwrap();
         let out = t.backend().to_string();
-        assert!(!out.contains("42 notes"), "counts collided with the message: {out}");
+        assert!(
+            !out.contains("42 notes"),
+            "counts collided with the message: {out}"
+        );
     }
 
     #[test]
     fn a_message_keeps_its_intent_colour_on_the_bar() {
         let mut t = Terminal::new(TestBackend::new(40, 1)).unwrap();
         t.draw(|f| {
-            render_status(f, f.area(), "", Some((Kind::Bad, "failed")), None, counts(1, None))
+            render_status(
+                f,
+                f.area(),
+                "",
+                Some((Kind::Bad, "failed")),
+                None,
+                counts(1, None),
+            )
         })
         .unwrap();
         let buffer = t.backend().buffer().clone();
@@ -278,7 +294,14 @@ mod tests {
         for width in [1, 2, 3, 8] {
             let mut t = Terminal::new(TestBackend::new(width, 1)).unwrap();
             t.draw(|f| {
-                render_status(f, f.area(), "deep/directory", None, Some("Working"), counts(9, Some(9)))
+                render_status(
+                    f,
+                    f.area(),
+                    "deep/directory",
+                    None,
+                    Some("Working"),
+                    counts(9, Some(9)),
+                )
             })
             .unwrap();
         }
@@ -307,13 +330,25 @@ mod tests {
     #[test]
     fn a_long_filter_query_does_not_panic() {
         let mut t = Terminal::new(TestBackend::new(12, 1)).unwrap();
-        t.draw(|f| render_filter(f, f.area(), &"x".repeat(80), 0)).unwrap();
+        t.draw(|f| render_filter(f, f.area(), &"x".repeat(80), 0))
+            .unwrap();
     }
 
     #[test]
     fn an_inactive_command_line_shows_the_key_hints() {
         let mut t = Terminal::new(TestBackend::new(60, 1)).unwrap();
-        t.draw(|f| render_command(f, f.area(), false, "", 0, None, super::super::hints::for_place(super::super::hints::Place::Notes))).unwrap();
+        t.draw(|f| {
+            render_command(
+                f,
+                f.area(),
+                false,
+                "",
+                0,
+                None,
+                super::super::hints::for_place(super::super::hints::Place::Notes),
+            )
+        })
+        .unwrap();
         let out = t.backend().to_string();
         assert!(out.contains("n new"), "{out}");
         assert!(out.contains("? help"), "{out}");
@@ -322,15 +357,21 @@ mod tests {
     #[test]
     fn an_active_command_line_shows_a_colon_and_the_text() {
         let mut t = Terminal::new(TestBackend::new(30, 1)).unwrap();
-        t.draw(|f| render_command(f, f.area(), true, "list", 4, None, &[])).unwrap();
+        t.draw(|f| render_command(f, f.area(), true, "list", 4, None, &[]))
+            .unwrap();
         assert!(t.backend().to_string().contains(":list"));
     }
 
     #[test]
     fn the_ghost_hint_follows_the_typed_text() {
         let mut t = Terminal::new(TestBackend::new(30, 1)).unwrap();
-        t.draw(|f| render_command(f, f.area(), true, "vie", 3, Some("w"), &[])).unwrap();
-        assert!(t.backend().to_string().contains(":view"), "{}", t.backend().to_string());
+        t.draw(|f| render_command(f, f.area(), true, "vie", 3, Some("w"), &[]))
+            .unwrap();
+        assert!(
+            t.backend().to_string().contains(":view"),
+            "{}",
+            t.backend().to_string()
+        );
     }
 
     /// A cursor beyond the pane must be clamped, not passed through.
@@ -345,7 +386,14 @@ mod tests {
     fn the_status_line_shows_the_directory_and_the_last_message() {
         let mut t = Terminal::new(TestBackend::new(60, 1)).unwrap();
         t.draw(|f| {
-            render_status(f, f.area(), "cs130/lec", Some((Kind::Good, "Created abc")), None, Counts::default())
+            render_status(
+                f,
+                f.area(),
+                "cs130/lec",
+                Some((Kind::Good, "Created abc")),
+                None,
+                Counts::default(),
+            )
         })
         .unwrap();
         let out = t.backend().to_string();
@@ -356,14 +404,29 @@ mod tests {
     #[test]
     fn the_root_directory_shows_as_a_slash() {
         let mut t = Terminal::new(TestBackend::new(20, 1)).unwrap();
-        t.draw(|f| render_status(f, f.area(), "", None, None, Counts::default())).unwrap();
-        assert!(t.backend().to_string().contains(" / "), "{}", t.backend().to_string());
+        t.draw(|f| render_status(f, f.area(), "", None, None, Counts::default()))
+            .unwrap();
+        assert!(
+            t.backend().to_string().contains(" / "),
+            "{}",
+            t.backend().to_string()
+        );
     }
 
     #[test]
     fn a_busy_label_is_visible_alongside_the_message() {
         let mut t = Terminal::new(TestBackend::new(60, 1)).unwrap();
-        t.draw(|f| render_status(f, f.area(), "", None, Some("Recording 00:12"), Counts::default())).unwrap();
+        t.draw(|f| {
+            render_status(
+                f,
+                f.area(),
+                "",
+                None,
+                Some("Recording 00:12"),
+                Counts::default(),
+            )
+        })
+        .unwrap();
         assert!(t.backend().to_string().contains("Recording 00:12"));
     }
 }

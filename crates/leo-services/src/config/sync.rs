@@ -244,7 +244,10 @@ mod tests {
         };
         assert_eq!(config.idle(), MIN_PUSH_GAP);
         assert!(!should_push_now(&config, when(Some(1), 1)));
-        assert!(should_push_now(&config, when(Some(1), MIN_PUSH_GAP.as_secs())));
+        assert!(should_push_now(
+            &config,
+            when(Some(1), MIN_PUSH_GAP.as_secs())
+        ));
     }
 
     #[test]

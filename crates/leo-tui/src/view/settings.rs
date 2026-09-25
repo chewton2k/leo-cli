@@ -83,7 +83,9 @@ pub enum SettingAction {
     /// Ask for a remote URL and connect it. Carries the current one, when there
     /// is one, so the prompt can prefill it for editing rather than making the
     /// user retype a URL to change one character of it.
-    SyncConnect { current: Option<String> },
+    SyncConnect {
+        current: Option<String>,
+    },
     SyncPush,
     SyncPull,
     /// Open config.toml in `$EDITOR`.
@@ -107,7 +109,6 @@ impl SettingAction {
 }
 
 impl Row {
-
     pub fn provider_name(&self) -> Option<&str> {
         match self {
             Row::Member { name, .. } | Row::Unused { name, .. } => Some(name),
@@ -156,10 +157,9 @@ fn credential_span(credential: &Credential) -> Span<'static> {
             "no key needed".to_string(),
             Style::default().add_modifier(Modifier::DIM),
         ),
-        Credential::Stored => Span::styled(
-            "key stored".to_string(),
-            Style::default().fg(theme::good()),
-        ),
+        Credential::Stored => {
+            Span::styled("key stored".to_string(), Style::default().fg(theme::good()))
+        }
         Credential::Env { var, redacted } => Span::styled(
             format!("env {var} {redacted}"),
             Style::default().fg(theme::warn()),
@@ -175,15 +175,26 @@ fn item(row: &Row) -> ListItem<'static> {
     match row {
         Row::Header(task) => ListItem::new(TuiLine::from(Span::styled(
             format!(" {}", heading(*task)),
-            Style::default().fg(theme::accent()).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme::accent())
+                .add_modifier(Modifier::BOLD),
         ))),
 
         Row::AvailableHeader => ListItem::new(TuiLine::from(Span::styled(
             " also configured".to_string(),
-            Style::default().fg(theme::accent()).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme::accent())
+                .add_modifier(Modifier::BOLD),
         ))),
 
-        Row::Member { position, name, model, credential, ready, .. } => {
+        Row::Member {
+            position,
+            name,
+            model,
+            credential,
+            ready,
+            ..
+        } => {
             // A filled marker means the chain runner would use it now.
             let marker = if *ready { "●" } else { "○" };
             ListItem::new(TuiLine::from(vec![
@@ -217,10 +228,7 @@ fn item(row: &Row) -> ListItem<'static> {
 
         Row::Fact { label, value } => ListItem::new(TuiLine::from(vec![
             Span::raw(format!("     {label:<22}")),
-            Span::styled(
-                value.clone(),
-                Style::default().add_modifier(Modifier::DIM),
-            ),
+            Span::styled(value.clone(), Style::default().add_modifier(Modifier::DIM)),
         ])),
 
         Row::Setting { label, value, .. } => ListItem::new(TuiLine::from(vec![
@@ -228,7 +236,12 @@ fn item(row: &Row) -> ListItem<'static> {
             Span::styled(value.clone(), Style::default().fg(theme::warn())),
         ])),
 
-        Row::Unused { name, model, credential, .. } => ListItem::new(TuiLine::from(vec![
+        Row::Unused {
+            name,
+            model,
+            credential,
+            ..
+        } => ListItem::new(TuiLine::from(vec![
             Span::raw("     "),
             Span::raw(format!("{name:<22}")),
             Span::styled(
@@ -504,7 +517,9 @@ mod tests {
             SettingAction::NextTheme,
             SettingAction::SyncInit,
             SettingAction::SyncConnect { current: None },
-            SettingAction::SyncConnect { current: Some("https://example.com/r.git".into()) },
+            SettingAction::SyncConnect {
+                current: Some("https://example.com/r.git".into()),
+            },
             SettingAction::SyncPush,
             SettingAction::SyncPull,
             SettingAction::EditConfig,
@@ -579,8 +594,16 @@ mod tests {
     #[test]
     fn a_status_message_is_shown_when_present() {
         let mut t = Terminal::new(TestBackend::new(110, 16)).unwrap();
-        t.draw(|f| render(f, f.area(), &rows(), 1, Some("openrouter responded in 812ms")))
-            .unwrap();
+        t.draw(|f| {
+            render(
+                f,
+                f.area(),
+                &rows(),
+                1,
+                Some("openrouter responded in 812ms"),
+            )
+        })
+        .unwrap();
         assert!(t.backend().to_string().contains("responded in 812ms"));
     }
 
@@ -604,7 +627,8 @@ mod tests {
     fn rendering_in_a_small_terminal_does_not_panic() {
         for (w, h) in [(40, 8), (24, 6), (10, 4), (200, 60)] {
             let mut t = Terminal::new(TestBackend::new(w, h)).unwrap();
-            t.draw(|f| render(f, f.area(), &rows(), 3, Some("x"))).unwrap();
+            t.draw(|f| render(f, f.area(), &rows(), 3, Some("x")))
+                .unwrap();
         }
     }
 

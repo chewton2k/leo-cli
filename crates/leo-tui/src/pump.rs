@@ -42,9 +42,7 @@ impl App {
                     ask.since = Instant::now();
                 }
                 TaskEvent::Streaming(text) => ask.text = text,
-                TaskEvent::Expanded { note, body, count } => {
-                    expanded = Some((note, body, count))
-                }
+                TaskEvent::Expanded { note, body, count } => expanded = Some((note, body, count)),
                 TaskEvent::ProviderFallback { from, to } => {
                     fallbacks.push(format!("{from} → {to}"))
                 }
@@ -124,9 +122,7 @@ impl App {
                         rec.since = Instant::now();
                     }
                     rec.progress = match steps {
-                        Some((done, total)) => {
-                            view::progress::Progress::steps(label, done, total)
-                        }
+                        Some((done, total)) => view::progress::Progress::steps(label, done, total),
                         None => view::progress::Progress::spinner(label),
                     };
                 }
@@ -139,9 +135,7 @@ impl App {
                 TaskEvent::Structured { title, body } => structured = Some((title, body)),
                 TaskEvent::Failed(e) => failure = Some(e),
                 // Other jobs' events; not this one's business.
-                TaskEvent::Streaming(_)
-                | TaskEvent::Expanded { .. }
-                | TaskEvent::Pushed => {}
+                TaskEvent::Streaming(_) | TaskEvent::Expanded { .. } | TaskEvent::Pushed => {}
             }
         }
 
@@ -204,7 +198,12 @@ impl App {
         }
 
         // The worker ended without a terminal event.
-        if self.recording.as_ref().map(|r| r.job.is_done()).unwrap_or(false) {
+        if self
+            .recording
+            .as_ref()
+            .map(|r| r.job.is_done())
+            .unwrap_or(false)
+        {
             self.recording = None;
             self.say(Kind::Warn, "Recording ended unexpectedly.");
         }

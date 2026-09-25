@@ -26,7 +26,13 @@ pub struct Item {
 ///
 /// `selected` is the candidate Tab has put on the line, if any. When there are
 /// more items than fit, the window follows it.
-pub fn render(frame: &mut Frame, screen: Rect, line: Rect, items: &[Item], selected: Option<usize>) {
+pub fn render(
+    frame: &mut Frame,
+    screen: Rect,
+    line: Rect,
+    items: &[Item],
+    selected: Option<usize>,
+) {
     let room = line.y.saturating_sub(screen.y) as usize;
     let rows = items.len().min(MAX_ROWS).min(room);
     if rows == 0 {
@@ -38,18 +44,27 @@ pub fn render(frame: &mut Frame, screen: Rect, line: Rect, items: &[Item], selec
     };
     let shown = &items[first..first + rows];
 
-    let label_width = shown.iter().map(|i| i.label.chars().count()).max().unwrap_or(0);
+    let label_width = shown
+        .iter()
+        .map(|i| i.label.chars().count())
+        .max()
+        .unwrap_or(0);
     let lines: Vec<TuiLine> = shown
         .iter()
         .enumerate()
         .map(|(n, item)| {
             let picked = selected == Some(first + n);
             let style = if picked {
-                Style::default().fg(theme::accent()).add_modifier(Modifier::REVERSED)
+                Style::default()
+                    .fg(theme::accent())
+                    .add_modifier(Modifier::REVERSED)
             } else {
                 Style::default().fg(theme::accent())
             };
-            let mut spans = vec![Span::styled(format!(" {:<label_width$} ", item.label), style)];
+            let mut spans = vec![Span::styled(
+                format!(" {:<label_width$} ", item.label),
+                style,
+            )];
             if let Some(detail) = item.detail {
                 spans.push(Span::styled(
                     format!(" {detail} "),
@@ -86,14 +101,22 @@ mod tests {
     use ratatui::Terminal;
 
     fn item(label: &str, detail: Option<&'static str>) -> Item {
-        Item { label: label.to_string(), detail }
+        Item {
+            label: label.to_string(),
+            detail,
+        }
     }
 
     fn draw(height: u16, items: &[Item], selected: Option<usize>) -> String {
         let mut t = Terminal::new(TestBackend::new(60, height)).unwrap();
         t.draw(|f| {
             let screen = f.area();
-            let line = Rect { x: 0, y: screen.height - 1, width: 60, height: 1 };
+            let line = Rect {
+                x: 0,
+                y: screen.height - 1,
+                width: 60,
+                height: 1,
+            };
             render(f, screen, line, items, selected);
         })
         .unwrap();
@@ -102,7 +125,11 @@ mod tests {
 
     #[test]
     fn a_verb_shows_what_it_does() {
-        let out = draw(6, &[item("rename", Some("retitle the selected note"))], None);
+        let out = draw(
+            6,
+            &[item("rename", Some("retitle the selected note"))],
+            None,
+        );
         assert!(out.contains("rename"), "{out}");
         assert!(out.contains("retitle the selected note"), "{out}");
     }
@@ -115,7 +142,9 @@ mod tests {
 
     #[test]
     fn the_window_follows_the_selection() {
-        let items: Vec<Item> = (0..30).map(|i| item(&format!("item{i:02}"), None)).collect();
+        let items: Vec<Item> = (0..30)
+            .map(|i| item(&format!("item{i:02}"), None))
+            .collect();
         let out = draw(40, &items, Some(25));
         assert!(out.contains("item25"), "{out}");
         assert!(!out.contains("item00"), "{out}");

@@ -23,7 +23,11 @@ impl Leo {
         std::fs::create_dir_all(&bin).unwrap();
 
         let editor = bin.join("fake-editor");
-        std::fs::write(&editor, "#!/bin/sh\nprintf 'written in the editor\\n' >> \"$1\"\n").unwrap();
+        std::fs::write(
+            &editor,
+            "#!/bin/sh\nprintf 'written in the editor\\n' >> \"$1\"\n",
+        )
+        .unwrap();
         make_executable(&editor);
 
         // git, and nothing else from wherever it was installed.
@@ -55,7 +59,11 @@ impl Leo {
     /// Run and require success, returning stdout.
     fn ok(&self, args: &[&str]) -> String {
         let out = self.cmd(args).output().unwrap();
-        assert!(out.status.success(), "leo {args:?} failed:\n{}", describe(&out));
+        assert!(
+            out.status.success(),
+            "leo {args:?} failed:\n{}",
+            describe(&out)
+        );
         String::from_utf8_lossy(&out.stdout).into_owned()
     }
 
@@ -72,7 +80,9 @@ impl Leo {
 }
 
 fn collect_md(dir: &Path, out: &mut Vec<String>) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() && !path.ends_with(".git") {
@@ -94,7 +104,9 @@ fn describe(out: &Output) -> String {
 
 fn find_on_path(name: &str) -> Option<PathBuf> {
     std::env::var_os("PATH").and_then(|paths| {
-        std::env::split_paths(&paths).map(|p| p.join(name)).find(|p| p.is_file())
+        std::env::split_paths(&paths)
+            .map(|p| p.join(name))
+            .find(|p| p.is_file())
     })
 }
 
@@ -127,7 +139,11 @@ fn bare_leo_without_a_terminal_says_so_and_fails() {
     let leo = Leo::new();
     let out = leo.cmd(&[]).output().unwrap();
     assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("terminal"), "{}", describe(&out));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("terminal"),
+        "{}",
+        describe(&out)
+    );
 }
 
 // ── notes ───────────────────────────────────────────────────────────────────
@@ -135,7 +151,14 @@ fn bare_leo_without_a_terminal_says_so_and_fails() {
 #[test]
 fn a_note_made_from_the_shell_is_listed_found_and_on_disk() {
     let leo = Leo::new();
-    leo.ok(&["new", "Rust ownership", "--body", "borrow checker rules", "--tags", "rust,lang"]);
+    leo.ok(&[
+        "new",
+        "Rust ownership",
+        "--body",
+        "borrow checker rules",
+        "--tags",
+        "rust,lang",
+    ]);
 
     let list = leo.ok(&["list"]);
     assert!(list.contains("Rust ownership"), "{list}");
@@ -143,11 +166,15 @@ fn a_note_made_from_the_shell_is_listed_found_and_on_disk() {
     // Search reaches bodies without a flag, and #tags.
     assert!(leo.ok(&["search", "checker"]).contains("Rust ownership"));
     assert!(leo.ok(&["search", "#rust"]).contains("Rust ownership"));
-    assert!(!leo.ok(&["search", "nothing-like-this"]).contains("Rust ownership"));
+    assert!(!leo
+        .ok(&["search", "nothing-like-this"])
+        .contains("Rust ownership"));
 
     let files = leo.files();
     assert_eq!(files.len(), 2, "the note and the manual: {files:?}");
-    assert!(files.iter().any(|f| f.contains("title: Rust ownership") && f.contains("borrow checker rules")));
+    assert!(files
+        .iter()
+        .any(|f| f.contains("title: Rust ownership") && f.contains("borrow checker rules")));
 }
 
 #[test]
@@ -167,7 +194,10 @@ fn new_puts_a_note_in_a_directory_with_tags() {
 fn new_without_a_body_opens_the_editor() {
     let leo = Leo::new();
     leo.ok(&["new", "From the editor"]);
-    assert!(leo.files().iter().any(|f| f.contains("title: From the editor") && f.contains("written in the editor")));
+    assert!(leo
+        .files()
+        .iter()
+        .any(|f| f.contains("title: From the editor") && f.contains("written in the editor")));
 }
 
 #[test]
@@ -176,8 +206,14 @@ fn edit_goes_through_the_editor_and_keeps_the_note() {
     leo.ok(&["new", "Graphs", "--body", "BFS"]);
     leo.ok(&["edit", "Graphs"]);
     let files = leo.files();
-    let note = files.iter().find(|f| f.contains("title: Graphs")).expect("the note survived");
-    assert!(note.contains("BFS") && note.contains("written in the editor"), "{note}");
+    let note = files
+        .iter()
+        .find(|f| f.contains("title: Graphs"))
+        .expect("the note survived");
+    assert!(
+        note.contains("BFS") && note.contains("written in the editor"),
+        "{note}"
+    );
 }
 
 #[test]
@@ -211,7 +247,11 @@ fn an_unknown_note_is_reported_not_guessed() {
     let leo = Leo::new();
     leo.ok(&["new", "Graphs", "--body", "x"]);
     let out = leo.cmd(&["view", "no-such-note"]).output().unwrap();
-    let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert!(text.contains("No note found"), "{text}");
 }
 
@@ -227,7 +267,11 @@ fn the_manual_is_installed_once() {
     let leo = Leo::new();
     leo.ok(&["list"]);
     leo.ok(&["list"]);
-    let manuals = leo.files().iter().filter(|f| f.contains("title: leo manual")).count();
+    let manuals = leo
+        .files()
+        .iter()
+        .filter(|f| f.contains("title: leo manual"))
+        .count();
     assert_eq!(manuals, 1);
 }
 
@@ -238,8 +282,14 @@ fn setup_reports_without_asking_when_nobody_is_there_to_answer() {
     let leo = Leo::new();
     let out = leo.ok(&["setup"]);
     assert!(out.contains("notes"), "{out}");
-    assert!(out.contains(&leo.home.path().display().to_string()), "paths are not LEO_HOME's:\n{out}");
-    assert!(!out.contains("Store an API key now"), "asked a question with no terminal:\n{out}");
+    assert!(
+        out.contains(&leo.home.path().display().to_string()),
+        "paths are not LEO_HOME's:\n{out}"
+    );
+    assert!(
+        !out.contains("Store an API key now"),
+        "asked a question with no terminal:\n{out}"
+    );
 }
 
 #[test]
@@ -261,7 +311,11 @@ fn sync_backs_notes_up_to_a_git_remote() {
     }
     let leo = Leo::new();
     let remote = leo.home.path().join("remote.git");
-    let init = Command::new("git").args(["init", "--bare", "-q"]).arg(&remote).output().unwrap();
+    let init = Command::new("git")
+        .args(["init", "--bare", "-q"])
+        .arg(&remote)
+        .output()
+        .unwrap();
     assert!(init.status.success(), "{}", describe(&init));
 
     leo.ok(&["new", "First", "--body", "one"]);
@@ -271,11 +325,21 @@ fn sync_backs_notes_up_to_a_git_remote() {
     leo.ok(&["sync"]);
 
     let log = Command::new("git")
-        .args(["--git-dir", remote.to_str().unwrap(), "log", "--all", "--name-only", "--format="])
+        .args([
+            "--git-dir",
+            remote.to_str().unwrap(),
+            "log",
+            "--all",
+            "--name-only",
+            "--format=",
+        ])
         .output()
         .unwrap();
     let files = String::from_utf8_lossy(&log.stdout);
-    assert!(files.lines().filter(|l| l.ends_with(".md")).count() >= 2, "remote has: {files}");
+    assert!(
+        files.lines().filter(|l| l.ends_with(".md")).count() >= 2,
+        "remote has: {files}"
+    );
 }
 
 #[test]
@@ -283,7 +347,11 @@ fn sync_before_setup_says_what_to_do() {
     let leo = Leo::new();
     let out = leo.cmd(&["sync"]).output().unwrap();
     assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("leo sync"), "{}", describe(&out));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("leo sync"),
+        "{}",
+        describe(&out)
+    );
 }
 
 // ── the web server ──────────────────────────────────────────────────────────
@@ -310,19 +378,28 @@ fn serve_needs_its_token_and_then_lists_the_notes() {
         // server's next line of output fail, and it would exit.
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
             if let Some(i) = line.find("token=") {
-                let token: String = line[i + 6..].chars().take_while(|c| c.is_ascii_alphanumeric()).collect();
+                let token: String = line[i + 6..]
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric())
+                    .collect();
                 let _ = tx.send(token);
             }
         }
     });
-    let token = rx.recv_timeout(Duration::from_secs(20)).expect("serve never printed its link");
+    let token = rx
+        .recv_timeout(Duration::from_secs(20))
+        .expect("serve never printed its link");
 
     let get = |path: &str| -> Option<String> {
         let deadline = Instant::now() + Duration::from_secs(10);
         while Instant::now() < deadline {
             if let Ok(mut s) = std::net::TcpStream::connect(("127.0.0.1", port)) {
                 s.set_read_timeout(Some(Duration::from_secs(5))).ok();
-                write!(s, "GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").ok()?;
+                write!(
+                    s,
+                    "GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+                )
+                .ok()?;
                 let mut body = String::new();
                 s.read_to_string(&mut body).ok()?;
                 return Some(body);
@@ -337,7 +414,10 @@ fn serve_needs_its_token_and_then_lists_the_notes() {
     let _ = child.kill();
     let _ = child.wait();
 
-    assert!(refused.starts_with("HTTP/1.1 401"), "no token was accepted:\n{refused}");
+    assert!(
+        refused.starts_with("HTTP/1.1 401"),
+        "no token was accepted:\n{refused}"
+    );
     assert!(allowed.starts_with("HTTP/1.1 200"), "{allowed}");
     assert!(allowed.contains("Served note"), "{allowed}");
 }

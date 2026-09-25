@@ -36,7 +36,9 @@ fn sync_or_set_up(notes_dir: &std::path::Path) -> Result<()> {
         return sync::now(notes_dir);
     }
     println!("  Backup is not set up yet. Make an empty repository on GitHub, then");
-    let url = super::prompt::ask("  paste its URL (e.g. git@github.com:you/notes.git), or Enter to skip: ")?;
+    let url = super::prompt::ask(
+        "  paste its URL (e.g. git@github.com:you/notes.git), or Enter to skip: ",
+    )?;
     if url.is_empty() {
         return Ok(());
     }
@@ -45,6 +47,9 @@ fn sync_or_set_up(notes_dir: &std::path::Path) -> Result<()> {
     }
     sync::connect(notes_dir, &url)?;
     sync::push(notes_dir)?;
-    println!("  {} Backed up. From now on, `leo sync` does it again.", "ok".green());
+    println!(
+        "  {} Backed up. From now on, `leo sync` does it again.",
+        "ok".green()
+    );
     Ok(())
 }

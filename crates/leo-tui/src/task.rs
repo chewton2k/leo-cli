@@ -28,27 +28,44 @@ const POLL: Duration = Duration::from_millis(250);
 /// Progress from a background job.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskEvent {
-    Started { label: String },
+    Started {
+        label: String,
+    },
     /// What is happening now, and how far along it is when that is knowable.
     /// `steps` drives a real progress bar; `None` means an unknown duration, so
     /// the UI shows a spinner instead of inventing a percentage.
-    Progress { label: String, steps: Option<(usize, usize)> },
+    Progress {
+        label: String,
+        steps: Option<(usize, usize)>,
+    },
     /// The full raw transcript so far.
     Transcript(String),
     /// The full condensed bullet stream so far.
     LiveNote(String),
     /// A provider degraded mid-job; shown once in the status line.
-    ProviderFallback { from: String, to: String },
+    ProviderFallback {
+        from: String,
+        to: String,
+    },
     /// The job finished and produced this transcript for the App to save.
-    Finished { transcript: String },
+    Finished {
+        transcript: String,
+    },
     /// A transcript has been structured into a note. `title` is `None` when the
     /// result is being appended to an existing note.
-    Structured { title: Option<String>, body: String },
+    Structured {
+        title: Option<String>,
+        body: String,
+    },
     /// Answer text as it arrives, accumulated. Shown in the preview so a slow
     /// model reads as working rather than hung.
     Streaming(String),
     /// A note's `@leo` prompts have been expanded; the App writes it back.
-    Expanded { note: String, body: String, count: usize },
+    Expanded {
+        note: String,
+        body: String,
+        count: usize,
+    },
     /// A background push finished.
     Pushed,
     Failed(String),
@@ -85,7 +102,11 @@ impl Job {
         for event in events {
             tx.send(event).unwrap();
         }
-        Job { rx, stop: Arc::new(AtomicBool::new(false)), done: false }
+        Job {
+            rx,
+            stop: Arc::new(AtomicBool::new(false)),
+            done: false,
+        }
     }
 
     /// Take everything the worker has sent since the last call. Never blocks.
@@ -143,7 +164,11 @@ pub fn start_push(notes_dir: std::path::PathBuf) -> Job {
         }
     });
 
-    Job { rx, stop, done: false }
+    Job {
+        rx,
+        stop,
+        done: false,
+    }
 }
 
 /// Expand a note's `@leo` prompts on a worker thread, streaming the answer.
@@ -178,7 +203,12 @@ pub fn start_ask(note: String, title: String, body: String) -> Job {
                     text.clear();
                 }
             };
-            leo_services::ai::expand_prompts_streaming(&body, &title, &mut on_fragment, &mut on_restart)
+            leo_services::ai::expand_prompts_streaming(
+                &body,
+                &title,
+                &mut on_fragment,
+                &mut on_restart,
+            )
         };
 
         match result {
@@ -195,7 +225,11 @@ pub fn start_ask(note: String, title: String, body: String) -> Job {
         }
     });
 
-    Job { rx, stop, done: false }
+    Job {
+        rx,
+        stop,
+        done: false,
+    }
 }
 
 /// Turn a transcript into a note body on a worker thread.
@@ -221,12 +255,21 @@ pub fn start_structuring(
 
         let result = match &existing {
             Some(body) => leo_services::ai::chat_outcome(
-                leo_services::ai::chat::build_append_prompt_with(&transcript, body, &points, length_secs),
+                leo_services::ai::chat::build_append_prompt_with(
+                    &transcript,
+                    body,
+                    &points,
+                    length_secs,
+                ),
                 STRUCTURE_MAX_TOKENS,
             )
             .map(|outcome| (None, outcome)),
             None => leo_services::ai::chat_outcome(
-                leo_services::ai::chat::build_structure_prompt_with(&transcript, &points, length_secs),
+                leo_services::ai::chat::build_structure_prompt_with(
+                    &transcript,
+                    &points,
+                    length_secs,
+                ),
                 STRUCTURE_MAX_TOKENS,
             )
             .map(|outcome| {
@@ -254,7 +297,11 @@ pub fn start_structuring(
         }
     });
 
-    Job { rx, stop, done: false }
+    Job {
+        rx,
+        stop,
+        done: false,
+    }
 }
 
 /// Replace an outcome's value, keeping the provider and fallback trail.
@@ -356,7 +403,9 @@ pub fn start_listen(screen: bool) -> Job {
                 return;
             }
         };
-        let _ = tx.send(TaskEvent::Started { label: "Recording".to_string() });
+        let _ = tx.send(TaskEvent::Started {
+            label: "Recording".to_string(),
+        });
 
         // Resolve credentials while the first few seconds of audio accumulate.
         // A keychain read can take a very long time, and paying it inside the
@@ -465,10 +514,16 @@ pub fn start_listen(screen: bool) -> Job {
             }
         };
 
-        let _ = tx.send(TaskEvent::Finished { transcript: final_transcript });
+        let _ = tx.send(TaskEvent::Finished {
+            transcript: final_transcript,
+        });
     });
 
-    Job { rx, stop, done: false }
+    Job {
+        rx,
+        stop,
+        done: false,
+    }
 }
 
 /// One rolling pass: cut the new tail, transcribe it, stitch it on.
@@ -636,7 +691,10 @@ mod tests {
                         }
                     }
                     TaskEvent::ProviderFallback { from, to } => {
-                        println!("[{:>5.1}s] fallback: {from} -> {to}", started.elapsed().as_secs_f64());
+                        println!(
+                            "[{:>5.1}s] fallback: {from} -> {to}",
+                            started.elapsed().as_secs_f64()
+                        );
                     }
                     _ => {}
                 }
@@ -646,7 +704,11 @@ mod tests {
         job.request_stop();
 
         let first = first_text_at.expect("no transcript arrived while recording");
-        println!("first text after {:.1}s, {} updates", first.as_secs_f64(), transcripts.len());
+        println!(
+            "first text after {:.1}s, {} updates",
+            first.as_secs_f64(),
+            transcripts.len()
+        );
         assert!(
             first < std::time::Duration::from_secs(8),
             "first text took {:.1}s — not live",
@@ -666,7 +728,11 @@ mod tests {
     #[test]
     fn a_dropped_worker_marks_the_job_done() {
         let (tx, rx) = mpsc::channel::<TaskEvent>();
-        let mut job = Job { rx, stop: Arc::new(AtomicBool::new(false)), done: false };
+        let mut job = Job {
+            rx,
+            stop: Arc::new(AtomicBool::new(false)),
+            done: false,
+        };
         drop(tx);
         assert!(job.drain().is_empty());
         assert!(job.is_done());
@@ -675,14 +741,24 @@ mod tests {
     #[test]
     fn draining_returns_events_in_order_and_notices_the_terminal_one() {
         let (tx, rx) = mpsc::channel();
-        let mut job = Job { rx, stop: Arc::new(AtomicBool::new(false)), done: false };
+        let mut job = Job {
+            rx,
+            stop: Arc::new(AtomicBool::new(false)),
+            done: false,
+        };
 
-        tx.send(TaskEvent::Started { label: "Recording".to_string() }).unwrap();
+        tx.send(TaskEvent::Started {
+            label: "Recording".to_string(),
+        })
+        .unwrap();
         tx.send(TaskEvent::Transcript("hello".to_string())).unwrap();
         assert_eq!(job.drain().len(), 2);
         assert!(!job.is_done());
 
-        tx.send(TaskEvent::Finished { transcript: "hello".to_string() }).unwrap();
+        tx.send(TaskEvent::Finished {
+            transcript: "hello".to_string(),
+        })
+        .unwrap();
         let events = job.drain();
         assert_eq!(events.len(), 1);
         assert!(job.is_done());
@@ -692,7 +768,11 @@ mod tests {
     fn requesting_stop_is_visible_to_the_worker() {
         let (_tx, rx) = mpsc::channel();
         let stop = Arc::new(AtomicBool::new(false));
-        let job = Job { rx, stop: Arc::clone(&stop), done: false };
+        let job = Job {
+            rx,
+            stop: Arc::clone(&stop),
+            done: false,
+        };
         assert!(!job.stop_requested());
         job.request_stop();
         assert!(stop.load(Ordering::Relaxed));
@@ -702,8 +782,13 @@ mod tests {
     #[test]
     fn a_failure_event_also_ends_the_job() {
         let (tx, rx) = mpsc::channel();
-        let mut job = Job { rx, stop: Arc::new(AtomicBool::new(false)), done: false };
-        tx.send(TaskEvent::Failed("no microphone".to_string())).unwrap();
+        let mut job = Job {
+            rx,
+            stop: Arc::new(AtomicBool::new(false)),
+            done: false,
+        };
+        tx.send(TaskEvent::Failed("no microphone".to_string()))
+            .unwrap();
         job.drain();
         assert!(job.is_done());
     }

@@ -24,6 +24,7 @@ pub mod shell;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use ratatui::backend::Backend;
 use ratatui::crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind, MouseButton, MouseEvent,
     MouseEventKind,
@@ -32,23 +33,22 @@ use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen,
 };
-use ratatui::backend::Backend;
 use ratatui::layout::Rect;
 use ratatui::{Frame, Terminal};
 
+use cmdline::{CmdLine, CmdOutcome};
+use complete::{Completion, NoteChoice, Sources};
+use keys::{Intent, Pane};
 use leo_core::action::{
     self, Action, ConfirmedAction, Ctx, Effect, Kind, Line, ListenRequest, Outcome, Parsed,
 };
 use leo_core::store::Store;
-use cmdline::{CmdLine, CmdOutcome};
 use leo_services::config::edit::Task;
-use complete::{Completion, NoteChoice, Sources};
 use task::{Job, TaskEvent};
-use view::settings::Row as SettingsRow;
-use keys::{Intent, Pane};
 use view::dirs::DirRow;
 use view::notes::NoteRow;
 use view::preview::Preview;
+use view::settings::Row as SettingsRow;
 
 /// The backend bound every terminal-taking method needs. `Backend` alone is not
 /// enough: `?` on a draw has to convert the backend's error into `anyhow::Error`,
@@ -57,7 +57,12 @@ use view::preview::Preview;
 /// what makes the event handling testable without a real terminal.
 trait TuiBackend: Backend<Error: std::error::Error + Send + Sync + 'static> {}
 
-impl<B> TuiBackend for B where B: Backend, B::Error: std::error::Error + Send + Sync + 'static {}
+impl<B> TuiBackend for B
+where
+    B: Backend,
+    B::Error: std::error::Error + Send + Sync + 'static,
+{
+}
 
 /// How long a status message stays before the status line goes quiet again.
 const MESSAGE_TTL: Duration = Duration::from_secs(6);
@@ -81,7 +86,10 @@ enum Mode {
     Filter,
     Command,
     Help,
-    Confirm { prompt: String, on_yes: ConfirmedAction },
+    Confirm {
+        prompt: String,
+        on_yes: ConfirmedAction,
+    },
     Settings,
 }
 
@@ -201,7 +209,10 @@ impl Recording {
         let text = self.jot.trim().to_string();
         self.jot.clear();
         if !text.is_empty() {
-            self.jotted.push(leo_services::ai::chat::Jotted { at_secs: self.started.elapsed().as_secs(), text });
+            self.jotted.push(leo_services::ai::chat::Jotted {
+                at_secs: self.started.elapsed().as_secs(),
+                text,
+            });
         }
     }
 
@@ -219,7 +230,11 @@ impl Recording {
         }
         let mut body = "## Your points\n".to_string();
         for p in &self.jotted {
-            body.push_str(&format!("- **{}** ({})\n", p.text, leo_services::ai::chat::clock(p.at_secs)));
+            body.push_str(&format!(
+                "- **{}** ({})\n",
+                p.text,
+                leo_services::ai::chat::clock(p.at_secs)
+            ));
         }
         body.push('\n');
         body.push_str(&stream);
@@ -368,11 +383,7 @@ impl App {
     /// cannot see would make the keyboard appear to stop working. In the
     /// one-pane shape every pane is "visible" in turn, since the focused one is
     /// the one that gets drawn — which is what keeps everything reachable.
-    fn next_visible_pane<B: TuiBackend>(
-        &self,
-        terminal: &Terminal<B>,
-        direction: isize,
-    ) -> Pane {
+    fn next_visible_pane<B: TuiBackend>(&self, terminal: &Terminal<B>, direction: isize) -> Pane {
         let Ok(size) = terminal.size() else {
             return self.focus;
         };
@@ -434,7 +445,8 @@ impl App {
     /// between recent tabs.
     fn jump_recent(&mut self) {
         let store = &self.store;
-        self.recent.retain_existing(|id| store.find_note(id).is_some());
+        self.recent
+            .retain_existing(|id| store.find_note(id).is_some());
         if self.recent.is_empty() {
             self.say(Kind::Dim, "No notes visited yet.");
             return;
@@ -532,7 +544,10 @@ impl App {
             return;
         }
         let config = leo_services::config::Config::load();
-        match leo_services::health::next_step(&config, leo_services::config::secret::default_store().as_ref()) {
+        match leo_services::health::next_step(
+            &config,
+            leo_services::config::secret::default_store().as_ref(),
+        ) {
             Some(step) => self.say(Kind::Warn, step),
             None => self.say(
                 Kind::Good,
@@ -590,9 +605,7 @@ impl App {
     fn resync(&mut self) {
         let keep = self.selected_id().cloned();
         self.numbering = match &self.filter {
-            Some(query) => {
-                action::filtered_numbering(&self.store, &self.current_dir, query)
-            }
+            Some(query) => action::filtered_numbering(&self.store, &self.current_dir, query),
             None => action::numbering_for(&self.store, &self.current_dir),
         };
         if let Some(pos) = keep.and_then(|id| self.numbering.iter().position(|n| *n == id)) {
@@ -607,7 +620,11 @@ impl App {
         }
     }
 
-    fn on_key<B: TuiBackend>(&mut self, key: event::KeyEvent, terminal: &mut Terminal<B>) -> Result<()> {
+    fn on_key<B: TuiBackend>(
+        &mut self,
+        key: event::KeyEvent,
+        terminal: &mut Terminal<B>,
+    ) -> Result<()> {
         match std::mem::replace(&mut self.mode, Mode::Normal) {
             Mode::Filter => {
                 self.on_filter_key(key);
@@ -704,7 +721,8 @@ impl App {
                         event::KeyCode::Esc => {
                             rec.commit_jot();
                             rec.job.request_stop();
-                            rec.progress = view::progress::Progress::spinner("Finishing the recording");
+                            rec.progress =
+                                view::progress::Progress::spinner("Finishing the recording");
                             rec.since = Instant::now();
                             self.say(Kind::Dim, "Stopping...");
                             return Ok(());
@@ -734,7 +752,11 @@ impl App {
         }
     }
 
-    fn on_intent<B: TuiBackend>(&mut self, intent: Intent, terminal: &mut Terminal<B>) -> Result<()> {
+    fn on_intent<B: TuiBackend>(
+        &mut self,
+        intent: Intent,
+        terminal: &mut Terminal<B>,
+    ) -> Result<()> {
         match intent {
             Intent::Nothing => Ok(()),
             Intent::Quit => {
@@ -804,7 +826,13 @@ impl App {
                     Pane::Preview if !boxes.is_empty() => self.box_index().min(boxes.len() - 1) + 1,
                     _ => boxes.iter().position(|ticked| !ticked).map_or(1, |i| i + 1),
                 };
-                self.run_action(Action::Check { note: note_ref, index }, terminal)
+                self.run_action(
+                    Action::Check {
+                        note: note_ref,
+                        index,
+                    },
+                    terminal,
+                )
             }
 
             Intent::EditSelected => match self.selected_ref() {
@@ -851,10 +879,19 @@ impl App {
                 Ok(())
             }
 
-            Intent::AskSelected => self.run_action(Action::Ask { note: String::new() }, terminal),
+            Intent::AskSelected => self.run_action(
+                Action::Ask {
+                    note: String::new(),
+                },
+                terminal,
+            ),
 
             Intent::Record => self.run_action(
-                Action::Listen { title: None, append_to: None, screen: false },
+                Action::Listen {
+                    title: None,
+                    append_to: None,
+                    screen: false,
+                },
                 terminal,
             ),
 
@@ -863,9 +900,12 @@ impl App {
             // pane. Both confirm first.
             Intent::DeleteSelected => match self.focus {
                 Pane::Dirs => self.delete_selected_dir(terminal),
-                _ if !self.marked.is_empty() => {
-                    self.run_action(Action::Delete { note: String::new() }, terminal)
-                }
+                _ if !self.marked.is_empty() => self.run_action(
+                    Action::Delete {
+                        note: String::new(),
+                    },
+                    terminal,
+                ),
                 _ => match self.selected_ref() {
                     Some(note) => self.run_action(Action::Delete { note }, terminal),
                     None => Ok(()),
@@ -969,11 +1009,17 @@ impl App {
         // ".." is a way to navigate, not a directory of its own; deleting the
         // parent from inside it would be a surprising thing for `D` to do.
         if row.target == ".." {
-            self.say(Kind::Dim, "Move into a directory to delete it, or press h then D.");
+            self.say(
+                Kind::Dim,
+                "Move into a directory to delete it, or press h then D.",
+            );
             return Ok(());
         }
         self.run_action(
-            Action::Rmdir { name: row.target.clone(), recursive: true },
+            Action::Rmdir {
+                name: row.target.clone(),
+                recursive: true,
+            },
             terminal,
         )
     }
@@ -1062,7 +1108,11 @@ impl App {
         }
     }
 
-    fn run_action<B: TuiBackend>(&mut self, action: Action, terminal: &mut Terminal<B>) -> Result<()> {
+    fn run_action<B: TuiBackend>(
+        &mut self,
+        action: Action,
+        terminal: &mut Terminal<B>,
+    ) -> Result<()> {
         let selected = self.numbering.get(self.note_sel).map(String::as_str);
         let action = match action::fill_selected(action, selected, &self.marked) {
             Ok(action) => action,
@@ -1135,7 +1185,11 @@ impl App {
     }
 
     /// Apply an outcome's state changes, show its lines, and perform its effect.
-    fn absorb<B: TuiBackend>(&mut self, outcome: Outcome, terminal: &mut Terminal<B>) -> Result<()> {
+    fn absorb<B: TuiBackend>(
+        &mut self,
+        outcome: Outcome,
+        terminal: &mut Terminal<B>,
+    ) -> Result<()> {
         // Anything that changed the notes restarts the quiet period, and makes
         // the waiting-commit count worth asking for again.
         if outcome.dirty {
@@ -1159,8 +1213,11 @@ impl App {
         }
 
         // Multi-line output goes to the preview; a single line is a status.
-        let printable: Vec<&Line> =
-            outcome.lines.iter().filter(|l| l.kind != Kind::Blank).collect();
+        let printable: Vec<&Line> = outcome
+            .lines
+            .iter()
+            .filter(|l| l.kind != Kind::Blank)
+            .collect();
         match printable.as_slice() {
             [] => {}
             [one] => self.say(one.kind, one.text.clone()),
@@ -1227,7 +1284,10 @@ impl App {
                 }
                 self.recording = Some(Recording::new(task::start_listen(req.screen), req));
                 self.pinned = None;
-                self.say(Kind::Dim, "Recording — type a point and Enter to add it; Esc stops.");
+                self.say(
+                    Kind::Dim,
+                    "Recording — type a point and Enter to add it; Esc stops.",
+                );
                 Ok(())
             }
 
@@ -1260,7 +1320,11 @@ impl App {
     /// Leave the alternate screen, run `f` on the real terminal, then come
     /// back. Everything that writes to stdout or reads stdin — `$EDITOR`, git,
     /// the no-echo key prompt, the recorder — goes through here.
-    fn outside<B: TuiBackend, T>(&mut self, terminal: &mut Terminal<B>, f: impl FnOnce() -> T) -> Result<T> {
+    fn outside<B: TuiBackend, T>(
+        &mut self,
+        terminal: &mut Terminal<B>,
+        f: impl FnOnce() -> T,
+    ) -> Result<T> {
         suspend(terminal)?;
         let result = f();
         resume(terminal)?;
@@ -1289,7 +1353,6 @@ impl App {
         }
     }
 
-
     // ── completion ──────────────────────────────────────────────────────────
 
     /// Candidate sources drawn from the store and config.
@@ -1301,9 +1364,10 @@ impl App {
                 .iter()
                 .enumerate()
                 .filter_map(|(i, id)| {
-                    self.store
-                        .find_note(id)
-                        .map(|n| NoteChoice { number: i + 1, title: n.title.clone() })
+                    self.store.find_note(id).map(|n| NoteChoice {
+                        number: i + 1,
+                        title: n.title.clone(),
+                    })
                 })
                 .collect(),
             tags: self.store.tags().into_iter().map(|(t, _)| t).collect(),
@@ -1338,7 +1402,11 @@ impl App {
                 end: cursor,
                 matches: cycle.completion.matches,
             };
-            self.completing = Some(Cycle { completion, typed: cycle.typed, index: next });
+            self.completing = Some(Cycle {
+                completion,
+                typed: cycle.typed,
+                index: next,
+            });
             return;
         }
 
@@ -1357,8 +1425,16 @@ impl App {
 
         let (line, cursor) = complete::apply(self.cmd.text(), &completion, &completion.matches[0]);
         self.cmd.set_with_cursor(&line, cursor);
-        let completion = Completion { start: completion.start, end: cursor, matches: completion.matches };
-        self.completing = Some(Cycle { completion, typed, index: 0 });
+        let completion = Completion {
+            start: completion.start,
+            end: cursor,
+            matches: completion.matches,
+        };
+        self.completing = Some(Cycle {
+            completion,
+            typed,
+            index: 0,
+        });
     }
 
     /// What the menu above the `:` line lists, and which one Tab has chosen.
@@ -1371,17 +1447,27 @@ impl App {
                 let index = (cycle.index < cycle.completion.matches.len()).then_some(cycle.index);
                 (cycle.completion.clone(), index)
             }
-            None => (complete::complete(self.cmd.text(), self.cmd.cursor(), &self.sources()), None),
+            None => (
+                complete::complete(self.cmd.text(), self.cmd.cursor(), &self.sources()),
+                None,
+            ),
         };
         if completion.matches.is_empty() {
             return None;
         }
-        let first_word = self.cmd.text().chars().take(completion.start).all(char::is_whitespace);
+        let first_word = self
+            .cmd
+            .text()
+            .chars()
+            .take(completion.start)
+            .all(char::is_whitespace);
         let items = completion
             .matches
             .into_iter()
             .map(|label| view::menu::Item {
-                detail: first_word.then(|| action::verb(&label).map(|v| v.summary)).flatten(),
+                detail: first_word
+                    .then(|| action::verb(&label).map(|v| v.summary))
+                    .flatten(),
                 label,
             })
             .collect();
@@ -1406,7 +1492,6 @@ impl App {
             .collect();
         completion.ghost(&typed)
     }
-
 }
 
 /// Hand the terminal back to the shell: leave raw mode and the alternate
@@ -1439,7 +1524,11 @@ fn suspend<B: TuiBackend>(terminal: &mut Terminal<B>) -> Result<()> {
 fn resume<B: TuiBackend>(terminal: &mut Terminal<B>) -> Result<()> {
     leo_core::diag::set_quiet(true);
     enable_raw_mode()?;
-    execute!(std::io::stdout(), EnterAlternateScreen, Clear(ClearType::All))?;
+    execute!(
+        std::io::stdout(),
+        EnterAlternateScreen,
+        Clear(ClearType::All)
+    )?;
     // Two swaps reset both buffers, so the next diff has nothing to compare
     // against and repaints every cell.
     terminal.swap_buffers();
@@ -1466,7 +1555,9 @@ impl action::Ai for ReadyNote {
 
     fn structure(&self, _transcript: &str) -> Result<(String, String)> {
         Ok((
-            self.title.clone().unwrap_or_else(|| "Untitled Notes".to_string()),
+            self.title
+                .clone()
+                .unwrap_or_else(|| "Untitled Notes".to_string()),
             self.body.clone(),
         ))
     }
@@ -1523,7 +1614,6 @@ fn step(current: usize, len: usize, intent: Intent) -> usize {
         _ => current,
     }
 }
-
 
 /// Run the TUI. `ratatui::init` installs a panic hook that restores the
 /// terminal, so a panic cannot leave the user in raw mode.

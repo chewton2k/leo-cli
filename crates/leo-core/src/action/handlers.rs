@@ -3,8 +3,8 @@
 
 use anyhow::Result;
 
-use super::*;
 use super::resolve::resolve_or_return;
+use super::*;
 
 /// Read-only context a handler needs from its shell.
 #[derive(Debug, Clone, Copy)]
@@ -39,7 +39,10 @@ pub fn fill_selected(
         | Action::Ask { note }
         | Action::Rename { note, .. } => note.is_empty(),
         Action::Mv { notes, .. } => notes.is_empty(),
-        Action::Listen { append_to: Some(note), .. } => note.is_empty(),
+        Action::Listen {
+            append_to: Some(note),
+            ..
+        } => note.is_empty(),
         _ => false,
     };
     if !omitted {
@@ -47,8 +50,17 @@ pub fn fill_selected(
     }
     if !marked.is_empty() {
         match action {
-            Action::Delete { .. } => return Ok(Action::DeleteMany { ids: marked.to_vec() }),
-            Action::Mv { dir, .. } => return Ok(Action::Mv { notes: marked.to_vec(), dir }),
+            Action::Delete { .. } => {
+                return Ok(Action::DeleteMany {
+                    ids: marked.to_vec(),
+                })
+            }
+            Action::Mv { dir, .. } => {
+                return Ok(Action::Mv {
+                    notes: marked.to_vec(),
+                    dir,
+                })
+            }
             _ => {}
         }
     }
@@ -63,19 +75,21 @@ pub fn fill_selected(
         Action::Delete { .. } => Action::Delete { note: id },
         Action::Ask { .. } => Action::Ask { note: id },
         Action::Rename { title, .. } => Action::Rename { note: id, title },
-        Action::Mv { dir, .. } => Action::Mv { notes: vec![id], dir },
-        Action::Listen { title, screen, .. } => Action::Listen { title, append_to: Some(id), screen },
+        Action::Mv { dir, .. } => Action::Mv {
+            notes: vec![id],
+            dir,
+        },
+        Action::Listen { title, screen, .. } => Action::Listen {
+            title,
+            append_to: Some(id),
+            screen,
+        },
         other => other,
     })
 }
 
 /// Apply an action. The only entry point a shell needs.
-pub fn apply(
-    action: Action,
-    store: &mut Store,
-    ctx: Ctx<'_>,
-    ai: &dyn Ai,
-) -> Result<Outcome> {
+pub fn apply(action: Action, store: &mut Store, ctx: Ctx<'_>, ai: &dyn Ai) -> Result<Outcome> {
     let action = match fill_selected(action, ctx.selected, ctx.marked) {
         Ok(action) => action,
         Err(line) => return Ok(Outcome::line(line)),
@@ -89,9 +103,11 @@ pub fn apply(
         Action::DeleteMany { ids } => Ok(delete_many(store, &ids)),
         Action::Check { note, index } => check(store, &note, index, ctx.numbering),
         Action::Search { query } => Ok(search(store, &query)),
-        Action::Listen { title, append_to, screen } => {
-            Ok(listen(store, title, append_to, screen, ctx.current_dir))
-        }
+        Action::Listen {
+            title,
+            append_to,
+            screen,
+        } => Ok(listen(store, title, append_to, screen, ctx.current_dir)),
         Action::Ask { note } => ask(store, &note, ctx.numbering, ai),
         Action::Undo => undo(store),
         Action::Mkdir { name } => mkdir(store, &name, ctx.current_dir),
@@ -112,7 +128,10 @@ pub(super) fn new_note(store: &Store, line: Option<String>, current_dir: &str) -
     Outcome::effect(Effect::Edit(EditRequest {
         seed: format!("---\ntitle: {title}\ntags: {}\n---\n", tags.join(", ")),
         path,
-        target: EditTarget::NewNote { fallback_title: title, dir },
+        target: EditTarget::NewNote {
+            fallback_title: title,
+            dir,
+        },
     }))
 }
 
@@ -123,8 +142,9 @@ pub(super) fn new_note(store: &Store, line: Option<String>, current_dir: &str) -
 /// which asks for it to be made. Otherwise a slash is part of the title, so
 /// "TCP/IP basics" stays a title.
 pub fn split_new(store: &Store, line: &str, current_dir: &str) -> (String, String, Vec<String>) {
-    let (tags, words): (Vec<&str>, Vec<&str>) =
-        line.split_whitespace().partition(|w| w.len() > 1 && w.starts_with('#'));
+    let (tags, words): (Vec<&str>, Vec<&str>) = line
+        .split_whitespace()
+        .partition(|w| w.len() > 1 && w.starts_with('#'));
     let tags = tags.iter().map(|t| t[1..].to_string()).collect();
 
     if let Some((prefix, first)) = words.first().and_then(|w| w.rsplit_once('/')) {
@@ -152,7 +172,10 @@ pub(super) fn list(store: &Store, tag: Option<&str>, limit: usize, dir: &str) ->
         } else {
             Line::dim("No notes yet. Type `new` to create one.")
         };
-        return Outcome { selection: Some(Vec::new()), ..Outcome::line(line) };
+        return Outcome {
+            selection: Some(Vec::new()),
+            ..Outcome::line(line)
+        };
     }
 
     let mut lines = vec![Line::blank()];
@@ -166,11 +189,18 @@ pub(super) fn list(store: &Store, tag: Option<&str>, limit: usize, dir: &str) ->
     let mut selection = Vec::with_capacity(notes.len());
     for (i, note) in notes.iter().enumerate() {
         selection.push(note.id.clone());
-        lines.push(Line::plain(format!("{:>3} {}", i + 1, note.format_summary())));
+        lines.push(Line::plain(format!(
+            "{:>3} {}",
+            i + 1,
+            note.format_summary()
+        )));
     }
     lines.push(Line::blank());
 
-    Outcome { selection: Some(selection), ..Outcome::lines(lines) }
+    Outcome {
+        selection: Some(selection),
+        ..Outcome::lines(lines)
+    }
 }
 
 pub(super) fn view(store: &Store, note: &str, numbering: &[String]) -> Outcome {
@@ -212,7 +242,11 @@ pub(super) fn delete(store: &Store, note: &str, numbering: &[String]) -> Outcome
         Resolved::One(id) => id,
         other => return unresolved(note, other),
     };
-    let title = store.find_note(&id).expect("resolve returned a live id").title.clone();
+    let title = store
+        .find_note(&id)
+        .expect("resolve returned a live id")
+        .title
+        .clone();
     Outcome::effect(Effect::Confirm {
         prompt: format!("Delete {title}?"),
         on_yes: ConfirmedAction::DeleteNote { id, title },
@@ -221,7 +255,11 @@ pub(super) fn delete(store: &Store, note: &str, numbering: &[String]) -> Outcome
 
 /// Delete several notes, asking once.
 pub(super) fn delete_many(store: &Store, ids: &[String]) -> Outcome {
-    let ids: Vec<String> = ids.iter().filter(|id| store.find_note(id).is_some()).cloned().collect();
+    let ids: Vec<String> = ids
+        .iter()
+        .filter(|id| store.find_note(id).is_some())
+        .cloned()
+        .collect();
     if ids.is_empty() {
         return Outcome::line(Line::dim("Nothing to delete."));
     }
@@ -231,12 +269,20 @@ pub(super) fn delete_many(store: &Store, ids: &[String]) -> Outcome {
     })
 }
 
-pub(super) fn check(store: &mut Store, note: &str, index: usize, numbering: &[String]) -> Result<Outcome> {
+pub(super) fn check(
+    store: &mut Store,
+    note: &str,
+    index: usize,
+    numbering: &[String],
+) -> Result<Outcome> {
     let id = resolve_or_return!(note, store, numbering);
     match store.toggle_checkbox(&id, index) {
         Some(state) => {
             store.save()?;
-            Ok(Outcome { dirty: true, ..Outcome::line(Line::plain(state)) })
+            Ok(Outcome {
+                dirty: true,
+                ..Outcome::line(Line::plain(state))
+            })
         }
         None => Ok(Outcome::line(Line::bad(format!(
             "No checkbox #{index} in that note."
@@ -270,7 +316,10 @@ pub(super) fn search(store: &Store, query: &str) -> Outcome {
         )));
     }
     lines.push(Line::blank());
-    Outcome { selection: Some(selection), ..Outcome::lines(lines) }
+    Outcome {
+        selection: Some(selection),
+        ..Outcome::lines(lines)
+    }
 }
 
 /// `listen` — validate the append target before spending time recording.
@@ -294,7 +343,12 @@ pub(super) fn listen(
     }))
 }
 
-pub(super) fn ask(store: &mut Store, note: &str, numbering: &[String], ai: &dyn Ai) -> Result<Outcome> {
+pub(super) fn ask(
+    store: &mut Store,
+    note: &str,
+    numbering: &[String],
+    ai: &dyn Ai,
+) -> Result<Outcome> {
     let id = resolve_or_return!(note, store, numbering);
     let (title, body) = {
         let n = store.find_note(&id).expect("resolve returned a live id");
@@ -303,12 +357,16 @@ pub(super) fn ask(store: &mut Store, note: &str, numbering: &[String], ai: &dyn 
 
     let count = body.lines().filter(|l| is_leo_prompt(l).is_some()).count();
     if count == 0 {
-        return Ok(Outcome::line(Line::dim("No @leo prompts found in this note.")));
+        return Ok(Outcome::line(Line::dim(
+            "No @leo prompts found in this note.",
+        )));
     }
 
     let (expanded, _) = ai.expand_prompts(&body, &title)?;
 
-    let n = store.find_note_mut(&id).expect("resolve returned a live id");
+    let n = store
+        .find_note_mut(&id)
+        .expect("resolve returned a live id");
     n.body = expanded;
     n.updated_at = chrono::Utc::now();
     let short = n.id[..std::cmp::min(8, n.id.len())].to_string();
@@ -328,7 +386,11 @@ pub(super) fn undo(store: &mut Store) -> Result<Outcome> {
     match store.undo() {
         Some(what) => {
             store.save()?;
-            Ok(Outcome { lines: vec![Line::good(what)], dirty: true, ..Outcome::default() })
+            Ok(Outcome {
+                lines: vec![Line::good(what)],
+                dirty: true,
+                ..Outcome::default()
+            })
         }
         None => Ok(Outcome::line(Line::dim("Nothing to undo."))),
     }
@@ -352,12 +414,19 @@ pub(super) fn mkdir(store: &mut Store, name: &str, current_dir: &str) -> Result<
     }
     store.create_dir(&full);
     store.save()?;
-    Ok(Outcome { dirty: true, ..Outcome::line(Line::good(format!("Created {full}/"))) })
+    Ok(Outcome {
+        dirty: true,
+        ..Outcome::line(Line::good(format!("Created {full}/")))
+    })
 }
 
 /// `cd` — resolve `..`, `/`, `~`, and `../sibling` against the current
 /// directory. Pure path arithmetic plus one existence check.
-pub fn resolve_cd(path: &str, store: &Store, current_dir: &str) -> std::result::Result<String, String> {
+pub fn resolve_cd(
+    path: &str,
+    store: &Store,
+    current_dir: &str,
+) -> std::result::Result<String, String> {
     let target = path.trim();
     if target.is_empty() || target == "/" || target == "~" {
         return Ok(String::new());
@@ -403,16 +472,27 @@ pub fn resolve_cd(path: &str, store: &Store, current_dir: &str) -> std::result::
 
 pub(super) fn cd(store: &Store, path: &str, current_dir: &str) -> Outcome {
     match resolve_cd(path, store, current_dir) {
-        Ok(dir) => Outcome { new_dir: Some(dir), dirty: true, ..Outcome::empty() },
+        Ok(dir) => Outcome {
+            new_dir: Some(dir),
+            dirty: true,
+            ..Outcome::empty()
+        },
         Err(msg) => Outcome::line(Line::bad(msg)),
     }
 }
 
 /// `rename` — change a note's title and nothing else.
-pub(super) fn rename(store: &mut Store, note: &str, title: &str, numbering: &[String]) -> Result<Outcome> {
+pub(super) fn rename(
+    store: &mut Store,
+    note: &str,
+    title: &str,
+    numbering: &[String],
+) -> Result<Outcome> {
     let id = resolve_or_return!(note, store, numbering);
     let title = title.trim();
-    let n = store.find_note_mut(&id).expect("resolve returned a live id");
+    let n = store
+        .find_note_mut(&id)
+        .expect("resolve returned a live id");
     let old = std::mem::replace(&mut n.title, title.to_string());
     n.updated_at = chrono::Utc::now();
     store.save()?;
@@ -422,9 +502,16 @@ pub(super) fn rename(store: &mut Store, note: &str, title: &str, numbering: &[St
     })
 }
 
-pub(super) fn mv(store: &mut Store, notes: &[String], dir: &str, numbering: &[String]) -> Result<Outcome> {
+pub(super) fn mv(
+    store: &mut Store,
+    notes: &[String],
+    dir: &str,
+    numbering: &[String],
+) -> Result<Outcome> {
     if !dir.is_empty() && !store.dir_exists(dir) {
-        return Ok(Outcome::line(Line::bad(format!("No such directory: {dir}/"))));
+        return Ok(Outcome::line(Line::bad(format!(
+            "No such directory: {dir}/"
+        ))));
     }
 
     let mut lines = Vec::new();
@@ -447,13 +534,23 @@ pub(super) fn mv(store: &mut Store, notes: &[String], dir: &str, numbering: &[St
     if !moved.is_empty() {
         store.save()?;
     }
-    Ok(Outcome { dirty: !moved.is_empty(), ..Outcome::lines(lines) })
+    Ok(Outcome {
+        dirty: !moved.is_empty(),
+        ..Outcome::lines(lines)
+    })
 }
 
-pub(super) fn rmdir(store: &mut Store, name: &str, recursive: bool, current_dir: &str) -> Result<Outcome> {
+pub(super) fn rmdir(
+    store: &mut Store,
+    name: &str,
+    recursive: bool,
+    current_dir: &str,
+) -> Result<Outcome> {
     let full = under(current_dir, name);
     if !store.dir_exists(&full) {
-        return Ok(Outcome::line(Line::bad(format!("No such directory: {full}/"))));
+        return Ok(Outcome::line(Line::bad(format!(
+            "No such directory: {full}/"
+        ))));
     }
 
     if recursive {
@@ -473,7 +570,11 @@ pub(super) fn rmdir(store: &mut Store, name: &str, recursive: bool, current_dir:
             what.push(format!("{notes} note{}", plural(notes)));
         }
         if dirs > 1 {
-            what.push(format!("{} subdirector{}", dirs - 1, if dirs - 1 == 1 { "y" } else { "ies" }));
+            what.push(format!(
+                "{} subdirector{}",
+                dirs - 1,
+                if dirs - 1 == 1 { "y" } else { "ies" }
+            ));
         }
         return Ok(Outcome::effect(Effect::Confirm {
             prompt: format!("Delete {full}/ and its {}?", what.join(" and ")),
@@ -483,7 +584,10 @@ pub(super) fn rmdir(store: &mut Store, name: &str, recursive: bool, current_dir:
 
     if store.delete_dir(&full) {
         store.save()?;
-        Ok(Outcome { dirty: true, ..Outcome::line(Line::dim(format!("Removed {full}/"))) })
+        Ok(Outcome {
+            dirty: true,
+            ..Outcome::line(Line::dim(format!("Removed {full}/")))
+        })
     } else {
         // Name the way out rather than just refusing.
         Ok(Outcome::line(Line::bad(format!(
@@ -516,7 +620,10 @@ pub fn apply_edit(
     let (parsed_title, parsed_tags, body) = parse_frontmatter(raw);
 
     match target {
-        EditTarget::NewNote { fallback_title, dir } => {
+        EditTarget::NewNote {
+            fallback_title,
+            dir,
+        } => {
             if body.trim().is_empty() {
                 return Ok(Outcome::line(Line::dim("Empty note, cancelled.")));
             }
@@ -531,11 +638,23 @@ pub fn apply_edit(
             let note = store.create_note(title, body, parsed_tags, dir)?;
             let short = note.id[..std::cmp::min(8, note.id.len())].to_string();
             store.save()?;
-            Ok(Outcome { dirty: true, ..Outcome::line(Line::good(format!("Created {short}"))) })
+            Ok(Outcome {
+                dirty: true,
+                ..Outcome::line(Line::good(format!("Created {short}")))
+            })
         }
 
-        EditTarget::Existing { id, old_title, old_tags, old_body } => {
-            let title = if parsed_title.is_empty() { old_title.clone() } else { parsed_title };
+        EditTarget::Existing {
+            id,
+            old_title,
+            old_tags,
+            old_body,
+        } => {
+            let title = if parsed_title.is_empty() {
+                old_title.clone()
+            } else {
+                parsed_title
+            };
             let mut body = body;
 
             // Expand any @leo prompts the user added, in one pass, before saving.
@@ -569,7 +688,10 @@ pub fn apply_edit(
             note.updated_at = chrono::Utc::now();
             store.save()?;
             lines.push(Line::good(format!("Updated {title}")));
-            Ok(Outcome { dirty: true, ..Outcome::lines(lines) })
+            Ok(Outcome {
+                dirty: true,
+                ..Outcome::lines(lines)
+            })
         }
     }
 }
@@ -580,7 +702,10 @@ pub fn apply_confirmed(store: &mut Store, action: &ConfirmedAction) -> Result<Ou
         ConfirmedAction::DeleteNote { id, .. } => {
             if store.delete_note(id) {
                 store.save()?;
-                Ok(Outcome { dirty: true, ..Outcome::line(Line::good("Deleted.")) })
+                Ok(Outcome {
+                    dirty: true,
+                    ..Outcome::line(Line::good("Deleted."))
+                })
             } else {
                 Ok(Outcome::line(Line::bad("Nothing deleted.")))
             }
@@ -731,17 +856,31 @@ mod handler_tests {
     }
 
     fn ctx<'a>(dir: &'a str, numbering: &'a [String]) -> Ctx<'a> {
-        Ctx { current_dir: dir, numbering, selected: None, marked: &[] }
+        Ctx {
+            current_dir: dir,
+            numbering,
+            selected: None,
+            marked: &[],
+        }
     }
 
     fn seed(store: &mut Store, title: &str, body: &str, dir: &str) -> String {
-        let id = store.create_note(title, body, vec![], dir).unwrap().id.clone();
+        let id = store
+            .create_note(title, body, vec![], dir)
+            .unwrap()
+            .id
+            .clone();
         store.save().unwrap();
         id
     }
 
     fn ctx_selected<'a>(numbering: &'a [String], selected: &'a str) -> Ctx<'a> {
-        Ctx { current_dir: "", numbering, selected: Some(selected), marked: &[] }
+        Ctx {
+            current_dir: "",
+            numbering,
+            selected: Some(selected),
+            marked: &[],
+        }
     }
 
     // ── the selected note ───────────────────────────────────────────────────
@@ -754,16 +893,38 @@ mod handler_tests {
             Parsed::Action(a) => a,
             other => panic!("{line:?} did not parse: {other:?}"),
         };
-        assert_eq!(parsed("edit"), Action::Edit { note: String::new() });
-        assert_eq!(parsed("delete"), Action::Delete { note: String::new() });
-        assert_eq!(parsed("ask"), Action::Ask { note: String::new() });
+        assert_eq!(
+            parsed("edit"),
+            Action::Edit {
+                note: String::new()
+            }
+        );
+        assert_eq!(
+            parsed("delete"),
+            Action::Delete {
+                note: String::new()
+            }
+        );
+        assert_eq!(
+            parsed("ask"),
+            Action::Ask {
+                note: String::new()
+            }
+        );
         assert_eq!(
             parsed("mv cs130"),
-            Action::Mv { notes: vec![], dir: "cs130".to_string() }
+            Action::Mv {
+                notes: vec![],
+                dir: "cs130".to_string()
+            }
         );
         assert_eq!(
             parsed("listen add"),
-            Action::Listen { title: None, append_to: Some(String::new()), screen: false }
+            Action::Listen {
+                title: None,
+                append_to: Some(String::new()),
+                screen: false
+            }
         );
     }
 
@@ -774,14 +935,19 @@ mod handler_tests {
         let id = seed(&mut store, "Graphs", "", "");
         let numbering = numbering_for(&store, "");
         let out = apply(
-            Action::Delete { note: String::new() },
+            Action::Delete {
+                note: String::new(),
+            },
             &mut store,
             ctx_selected(&numbering, &id),
             &FakeAi::default(),
         )
         .unwrap();
         match out.effect {
-            Effect::Confirm { on_yes: ConfirmedAction::DeleteNote { id: target, .. }, .. } => {
+            Effect::Confirm {
+                on_yes: ConfirmedAction::DeleteNote { id: target, .. },
+                ..
+            } => {
                 assert_eq!(target, id)
             }
             other => panic!("expected a delete confirmation, got {other:?}"),
@@ -795,7 +961,10 @@ mod handler_tests {
         let id = seed(&mut store, "Graphs", "", "");
         let numbering = numbering_for(&store, "");
         apply(
-            Action::Mv { notes: vec![], dir: "cs130".to_string() },
+            Action::Mv {
+                notes: vec![],
+                dir: "cs130".to_string(),
+            },
             &mut store,
             ctx_selected(&numbering, &id),
             &FakeAi::default(),
@@ -809,17 +978,31 @@ mod handler_tests {
     fn an_undo_is_saved() {
         let (mut store, _d) = temp_store();
         let id = seed(&mut store, "Doomed", "b", "");
-        apply_confirmed(&mut store, &ConfirmedAction::DeleteNote { id: id.clone(), title: "Doomed".into() })
-            .unwrap();
+        apply_confirmed(
+            &mut store,
+            &ConfirmedAction::DeleteNote {
+                id: id.clone(),
+                title: "Doomed".into(),
+            },
+        )
+        .unwrap();
         apply(Action::Undo, &mut store, ctx("", &[]), &FakeAi::default()).unwrap();
         let reloaded = Store::load_from(&store.notes_dir).unwrap();
-        assert!(reloaded.find_note(&id).is_some(), "the restored note is not on disk");
+        assert!(
+            reloaded.find_note(&id).is_some(),
+            "the restored note is not on disk"
+        );
     }
 
     // ── marked notes ────────────────────────────────────────────────────────
 
     fn ctx_marked<'a>(numbering: &'a [String], marked: &'a [String]) -> Ctx<'a> {
-        Ctx { current_dir: "", numbering, selected: marked.first().map(String::as_str), marked }
+        Ctx {
+            current_dir: "",
+            numbering,
+            selected: marked.first().map(String::as_str),
+            marked,
+        }
     }
 
     /// With notes marked, a command that names none means all of them.
@@ -832,7 +1015,9 @@ mod handler_tests {
         let marked = vec![a.clone(), b.clone()];
         let numbering = numbering_for(&store, "");
         let out = apply(
-            Action::Delete { note: String::new() },
+            Action::Delete {
+                note: String::new(),
+            },
             &mut store,
             ctx_marked(&numbering, &marked),
             &FakeAi::default(),
@@ -857,7 +1042,10 @@ mod handler_tests {
         let marked = vec![a.clone(), b.clone()];
         let numbering = numbering_for(&store, "");
         apply(
-            Action::Mv { notes: vec![], dir: "cs130".to_string() },
+            Action::Mv {
+                notes: vec![],
+                dir: "cs130".to_string(),
+            },
             &mut store,
             ctx_marked(&numbering, &marked),
             &FakeAi::default(),
@@ -878,7 +1066,10 @@ mod handler_tests {
         };
         assert_eq!(
             parsed,
-            Action::Rename { note: String::new(), title: "Graph traversals".to_string() }
+            Action::Rename {
+                note: String::new(),
+                title: "Graph traversals".to_string()
+            }
         );
         assert!(matches!(parse("rename"), Parsed::Usage(_)));
     }
@@ -889,7 +1080,10 @@ mod handler_tests {
         let id = seed(&mut store, "Graphs", "BFS and DFS", "cs130");
         let numbering = numbering_for(&store, "cs130");
         let out = apply(
-            Action::Rename { note: String::new(), title: "Graph traversals".to_string() },
+            Action::Rename {
+                note: String::new(),
+                title: "Graph traversals".to_string(),
+            },
             &mut store,
             ctx_selected(&numbering, &id),
             &FakeAi::default(),
@@ -912,7 +1106,9 @@ mod handler_tests {
         let (mut store, _d) = temp_store();
         seed(&mut store, "Graphs", "", "");
         let out = apply(
-            Action::Edit { note: String::new() },
+            Action::Edit {
+                note: String::new(),
+            },
             &mut store,
             ctx("", &[]),
             &FakeAi::default(),
@@ -926,9 +1122,14 @@ mod handler_tests {
 
     fn new_request(store: &mut Store, dir: &str, line: &str) -> EditRequest {
         let title = Some(line.to_string());
-        match apply(Action::New { title }, store, ctx(dir, &[]), &FakeAi::default())
-            .unwrap()
-            .effect
+        match apply(
+            Action::New { title },
+            store,
+            ctx(dir, &[]),
+            &FakeAi::default(),
+        )
+        .unwrap()
+        .effect
         {
             Effect::Edit(req) => req,
             other => panic!("expected an editor, got {other:?}"),
@@ -972,8 +1173,13 @@ mod handler_tests {
         assert_eq!(target_dir(&req), "cs162");
         assert!(!store.dir_exists("cs162"), "made before the editor closed");
 
-        apply_edit(&mut store, &req.target, &format!("{}notes", req.seed), &FakeAi::default())
-            .unwrap();
+        apply_edit(
+            &mut store,
+            &req.target,
+            &format!("{}notes", req.seed),
+            &FakeAi::default(),
+        )
+        .unwrap();
         assert!(store.dir_exists("cs162"));
         assert_eq!(store.notes[0].directory, "cs162");
         assert_eq!(store.notes[0].title, "Lecture 1");
@@ -996,7 +1202,10 @@ mod handler_tests {
         let numbering = vec![id.clone()];
 
         assert_eq!(resolve("1", &store, &numbering), Resolved::One(id.clone()));
-        assert_eq!(resolve(&id[..8], &store, &numbering), Resolved::One(id.clone()));
+        assert_eq!(
+            resolve(&id[..8], &store, &numbering),
+            Resolved::One(id.clone())
+        );
         assert_eq!(resolve("ownership", &store, &numbering), Resolved::One(id));
     }
 
@@ -1052,7 +1261,10 @@ mod handler_tests {
         seed(&mut store, "Nested", "b", "cs130");
 
         let out = apply(
-            Action::List { tag: None, limit: 20 },
+            Action::List {
+                tag: None,
+                limit: 20,
+            },
             &mut store,
             ctx("", &[]),
             &FakeAi::default(),
@@ -1070,7 +1282,10 @@ mod handler_tests {
     fn list_on_an_empty_store_clears_the_numbering() {
         let (mut store, _d) = temp_store();
         let out = apply(
-            Action::List { tag: None, limit: 20 },
+            Action::List {
+                tag: None,
+                limit: 20,
+            },
             &mut store,
             ctx("", &["stale".to_string()]),
             &FakeAi::default(),
@@ -1086,7 +1301,9 @@ mod handler_tests {
         let (mut store, _d) = temp_store();
         seed(&mut store, "Graphs", "BFS explores level by level", "");
         let out = apply(
-            Action::Search { query: "explores".to_string() },
+            Action::Search {
+                query: "explores".to_string(),
+            },
             &mut store,
             ctx("", &[]),
             &FakeAi::default(),
@@ -1102,7 +1319,9 @@ mod handler_tests {
         seed(&mut store, "Nested graphs", "b", "cs130");
 
         let out = apply(
-            Action::Search { query: "graphs".to_string() },
+            Action::Search {
+                query: "graphs".to_string(),
+            },
             &mut store,
             ctx("", &[]),
             &FakeAi::default(),
@@ -1110,7 +1329,11 @@ mod handler_tests {
         .unwrap();
 
         assert_eq!(out.selection.as_ref().map(|s| s.len()), Some(2));
-        assert!(out.text().contains("cs130/"), "search shows the directory: {}", out.text());
+        assert!(
+            out.text().contains("cs130/"),
+            "search shows the directory: {}",
+            out.text()
+        );
     }
 
     #[test]
@@ -1118,7 +1341,9 @@ mod handler_tests {
         let (mut store, _d) = temp_store();
         let id = seed(&mut store, "Note", "b", "");
         let out = apply(
-            Action::View { note: "1".to_string() },
+            Action::View {
+                note: "1".to_string(),
+            },
             &mut store,
             ctx("", std::slice::from_ref(&id)),
             &FakeAi::default(),
@@ -1131,7 +1356,9 @@ mod handler_tests {
     fn a_handler_given_an_unresolvable_note_reports_it_and_does_nothing() {
         let (mut store, _d) = temp_store();
         let out = apply(
-            Action::View { note: "nope".to_string() },
+            Action::View {
+                note: "nope".to_string(),
+            },
             &mut store,
             ctx("", &[]),
             &FakeAi::default(),
@@ -1149,7 +1376,10 @@ mod handler_tests {
         let id = seed(&mut store, "Tasks", "- [ ] first\n- [ ] second", "");
 
         let out = apply(
-            Action::Check { note: "1".to_string(), index: 1 },
+            Action::Check {
+                note: "1".to_string(),
+                index: 1,
+            },
             &mut store,
             ctx("", std::slice::from_ref(&id)),
             &FakeAi::default(),
@@ -1160,7 +1390,11 @@ mod handler_tests {
 
         // Reloading from disk proves it was saved, not just mutated in memory.
         let reloaded = Store::load_from(&store.notes_dir).unwrap();
-        assert!(reloaded.find_note(&id).unwrap().body.contains("- [x] first"));
+        assert!(reloaded
+            .find_note(&id)
+            .unwrap()
+            .body
+            .contains("- [x] first"));
     }
 
     #[test]
@@ -1168,7 +1402,10 @@ mod handler_tests {
         let (mut store, _d) = temp_store();
         let id = seed(&mut store, "Tasks", "- [ ] only one", "");
         let out = apply(
-            Action::Check { note: "1".to_string(), index: 9 },
+            Action::Check {
+                note: "1".to_string(),
+                index: 9,
+            },
             &mut store,
             ctx("", &[id]),
             &FakeAi::default(),
@@ -1184,7 +1421,9 @@ mod handler_tests {
         store.create_dir("cs130");
 
         apply(
-            Action::Mkdir { name: "lec".to_string() },
+            Action::Mkdir {
+                name: "lec".to_string(),
+            },
             &mut store,
             ctx("cs130", &[]),
             &FakeAi::default(),
@@ -1198,7 +1437,9 @@ mod handler_tests {
         let (mut store, _d) = temp_store();
         store.create_dir("cs130");
         let out = apply(
-            Action::Mkdir { name: "cs130".to_string() },
+            Action::Mkdir {
+                name: "cs130".to_string(),
+            },
             &mut store,
             ctx("", &[]),
             &FakeAi::default(),
@@ -1215,7 +1456,10 @@ mod handler_tests {
         seed(&mut store, "Nested", "b", "cs130");
 
         let out = apply(
-            Action::Rmdir { name: "cs130".to_string(), recursive: false },
+            Action::Rmdir {
+                name: "cs130".to_string(),
+                recursive: false,
+            },
             &mut store,
             ctx("", &[]),
             &FakeAi::default(),
@@ -1237,7 +1481,10 @@ mod handler_tests {
         seed(&mut store, "Two", "b", "cs130/lec");
 
         let out = apply(
-            Action::Rmdir { name: "cs130".to_string(), recursive: true },
+            Action::Rmdir {
+                name: "cs130".to_string(),
+                recursive: true,
+            },
             &mut store,
             ctx("", &[]),
             &FakeAi::default(),
@@ -1249,7 +1496,12 @@ mod handler_tests {
                 assert!(prompt.contains("cs130/"), "prompt: {prompt}");
                 assert!(prompt.contains("2 notes"), "prompt: {prompt}");
                 assert!(prompt.contains("1 subdirectory"), "prompt: {prompt}");
-                assert_eq!(on_yes, ConfirmedAction::DeleteDir { path: "cs130".to_string() });
+                assert_eq!(
+                    on_yes,
+                    ConfirmedAction::DeleteDir {
+                        path: "cs130".to_string()
+                    }
+                );
             }
             other => panic!("expected a confirmation, got {other:?}"),
         }
@@ -1269,7 +1521,9 @@ mod handler_tests {
 
         let out = apply_confirmed(
             &mut store,
-            &ConfirmedAction::DeleteDir { path: "cs130".to_string() },
+            &ConfirmedAction::DeleteDir {
+                path: "cs130".to_string(),
+            },
         )
         .unwrap();
 
@@ -1290,7 +1544,10 @@ mod handler_tests {
         store.create_dir("empty");
 
         let out = apply(
-            Action::Rmdir { name: "empty".to_string(), recursive: true },
+            Action::Rmdir {
+                name: "empty".to_string(),
+                recursive: true,
+            },
             &mut store,
             ctx("", &[]),
             &FakeAi::default(),
@@ -1310,7 +1567,10 @@ mod handler_tests {
         seed(&mut store, "One", "b", "cs130");
 
         let out = apply(
-            Action::Rmdir { name: "cs130".to_string(), recursive: false },
+            Action::Rmdir {
+                name: "cs130".to_string(),
+                recursive: false,
+            },
             &mut store,
             ctx("", &[]),
             &FakeAi::default(),
@@ -1351,7 +1611,10 @@ mod handler_tests {
         let (mut store, _d) = temp_store();
         let a = seed(&mut store, "One", "b", "");
         let out = apply(
-            Action::Mv { notes: vec!["1".to_string()], dir: "ghost".to_string() },
+            Action::Mv {
+                notes: vec!["1".to_string()],
+                dir: "ghost".to_string(),
+            },
             &mut store,
             ctx("", std::slice::from_ref(&a)),
             &FakeAi::default(),
@@ -1418,7 +1681,9 @@ mod handler_tests {
     fn cd_into_a_missing_directory_is_an_error_and_does_not_move() {
         let (mut store, _d) = temp_store();
         let out = apply(
-            Action::Cd { path: "ghost".to_string() },
+            Action::Cd {
+                path: "ghost".to_string(),
+            },
             &mut store,
             ctx("", &[]),
             &FakeAi::default(),
@@ -1434,7 +1699,9 @@ mod handler_tests {
     fn new_requests_an_editor_seeded_with_the_title() {
         let (mut store, _d) = temp_store();
         let out = apply(
-            Action::New { title: Some("My Note".to_string()) },
+            Action::New {
+                title: Some("My Note".to_string()),
+            },
             &mut store,
             ctx("cs130", &[]),
             &FakeAi::default(),
@@ -1480,8 +1747,13 @@ mod handler_tests {
             fallback_title: "T".to_string(),
             dir: String::new(),
         };
-        let out = apply_edit(&mut store, &target, "---\ntitle: T\ntags: \n---\n   \n", &FakeAi::default())
-            .unwrap();
+        let out = apply_edit(
+            &mut store,
+            &target,
+            "---\ntitle: T\ntags: \n---\n   \n",
+            &FakeAi::default(),
+        )
+        .unwrap();
         assert!(out.text().contains("cancelled"));
         assert!(store.notes.is_empty());
     }
@@ -1564,7 +1836,10 @@ mod handler_tests {
             old_tags: vec![],
             old_body: "old body".to_string(),
         };
-        let ai = FakeAi { fail: true, ..FakeAi::default() };
+        let ai = FakeAi {
+            fail: true,
+            ..FakeAi::default()
+        };
 
         let out = apply_edit(
             &mut store,
@@ -1574,11 +1849,17 @@ mod handler_tests {
         )
         .unwrap();
 
-        assert!(out.dirty, "the edit must be saved even though expansion failed");
+        assert!(
+            out.dirty,
+            "the edit must be saved even though expansion failed"
+        );
         assert!(out.text().contains("Expansion failed"));
         let body = &store.find_note(&id).unwrap().body;
         assert!(body.contains("new text"));
-        assert!(body.contains("@leo what is BFS?"), "the prompt line is kept");
+        assert!(
+            body.contains("@leo what is BFS?"),
+            "the prompt line is kept"
+        );
     }
 
     // ── delete confirmation ─────────────────────────────────────────────────
@@ -1589,7 +1870,9 @@ mod handler_tests {
         let id = seed(&mut store, "Doomed", "b", "");
 
         let out = apply(
-            Action::Delete { note: "1".to_string() },
+            Action::Delete {
+                note: "1".to_string(),
+            },
             &mut store,
             ctx("", std::slice::from_ref(&id)),
             &FakeAi::default(),
@@ -1600,7 +1883,10 @@ mod handler_tests {
             out.effect,
             Effect::Confirm {
                 prompt: "Delete Doomed?".to_string(),
-                on_yes: ConfirmedAction::DeleteNote { id: id.clone(), title: "Doomed".to_string() },
+                on_yes: ConfirmedAction::DeleteNote {
+                    id: id.clone(),
+                    title: "Doomed".to_string()
+                },
             }
         );
         // Nothing is gone yet.
@@ -1614,7 +1900,10 @@ mod handler_tests {
 
         let out = apply_confirmed(
             &mut store,
-            &ConfirmedAction::DeleteNote { id: id.clone(), title: "Doomed".to_string() },
+            &ConfirmedAction::DeleteNote {
+                id: id.clone(),
+                title: "Doomed".to_string(),
+            },
         )
         .unwrap();
 
@@ -1740,7 +2029,9 @@ mod handler_tests {
         let (mut store, _d) = temp_store();
         let id = seed(&mut store, "Plain", "no prompts here", "");
         let out = apply(
-            Action::Ask { note: "1".to_string() },
+            Action::Ask {
+                note: "1".to_string(),
+            },
             &mut store,
             ctx("", &[id]),
             &FakeAi::default(),
@@ -1760,7 +2051,9 @@ mod handler_tests {
         };
 
         let out = apply(
-            Action::Ask { note: "1".to_string() },
+            Action::Ask {
+                note: "1".to_string(),
+            },
             &mut store,
             ctx("", std::slice::from_ref(&id)),
             &ai,
@@ -1797,7 +2090,9 @@ mod handler_tests {
     #[test]
     fn env_is_no_longer_a_verb() {
         assert!(
-            !VERBS.iter().any(|v| v.name == "env" || v.aliases.contains(&"env")),
+            !VERBS
+                .iter()
+                .any(|v| v.name == "env" || v.aliases.contains(&"env")),
             "env is still in the verb table"
         );
     }
@@ -1809,7 +2104,10 @@ mod handler_tests {
         let (mut store, _d) = temp_store();
         let ai = FakeAi::default();
         let cases = [
-            (Action::Sync(SyncAction::Push), Effect::Sync(SyncAction::Push)),
+            (
+                Action::Sync(SyncAction::Push),
+                Effect::Sync(SyncAction::Push),
+            ),
             (Action::Help, Effect::ShowHelp),
             (Action::Quit, Effect::Quit),
         ];
@@ -1833,7 +2131,10 @@ mod handler_tests {
     #[test]
     fn absent_or_malformed_frontmatter_keeps_the_whole_buffer_as_body() {
         let raw = "no frontmatter here";
-        assert_eq!(parse_frontmatter(raw), (String::new(), vec![], raw.to_string()));
+        assert_eq!(
+            parse_frontmatter(raw),
+            (String::new(), vec![], raw.to_string())
+        );
 
         let unterminated = "---\ntitle: T\nbody with no closing marker";
         assert_eq!(
@@ -1880,7 +2181,9 @@ mod handler_tests {
     fn numbering_covers_every_note_in_the_directory() {
         let (mut store, _d) = temp_store();
         for i in 0..25 {
-            store.create_note(format!("Note {i}"), "", vec![], "").unwrap();
+            store
+                .create_note(format!("Note {i}"), "", vec![], "")
+                .unwrap();
         }
         store.save().unwrap();
         assert_eq!(numbering_for(&store, "").len(), 25);

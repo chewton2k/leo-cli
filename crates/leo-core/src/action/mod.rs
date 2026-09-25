@@ -85,7 +85,9 @@ pub enum SyncAction {
     /// Back up now: pull, then push.
     Now,
     Init,
-    Connect { url: String },
+    Connect {
+        url: String,
+    },
     Push,
     Pull,
     Status,
@@ -140,25 +142,46 @@ pub struct Line {
 
 impl Line {
     pub fn plain(text: impl Into<String>) -> Line {
-        Line { kind: Kind::Plain, text: text.into() }
+        Line {
+            kind: Kind::Plain,
+            text: text.into(),
+        }
     }
     pub fn dim(text: impl Into<String>) -> Line {
-        Line { kind: Kind::Dim, text: text.into() }
+        Line {
+            kind: Kind::Dim,
+            text: text.into(),
+        }
     }
     pub fn good(text: impl Into<String>) -> Line {
-        Line { kind: Kind::Good, text: text.into() }
+        Line {
+            kind: Kind::Good,
+            text: text.into(),
+        }
     }
     pub fn warn(text: impl Into<String>) -> Line {
-        Line { kind: Kind::Warn, text: text.into() }
+        Line {
+            kind: Kind::Warn,
+            text: text.into(),
+        }
     }
     pub fn bad(text: impl Into<String>) -> Line {
-        Line { kind: Kind::Bad, text: text.into() }
+        Line {
+            kind: Kind::Bad,
+            text: text.into(),
+        }
     }
     pub fn dir(text: impl Into<String>) -> Line {
-        Line { kind: Kind::Dir, text: text.into() }
+        Line {
+            kind: Kind::Dir,
+            text: text.into(),
+        }
     }
     pub fn blank() -> Line {
-        Line { kind: Kind::Blank, text: String::new() }
+        Line {
+            kind: Kind::Blank,
+            text: String::new(),
+        }
     }
 }
 
@@ -173,12 +196,17 @@ pub enum Effect {
     /// [`apply_edit`].
     Edit(EditRequest),
     /// Ask the user to confirm, then apply `on_yes`.
-    Confirm { prompt: String, on_yes: ConfirmedAction },
+    Confirm {
+        prompt: String,
+        on_yes: ConfirmedAction,
+    },
     /// Record audio, transcribe it, then feed the result back through
     /// [`apply_transcript`].
     Listen(ListenRequest),
     /// Render a note in full.
-    ShowNote { id: String },
+    ShowNote {
+        id: String,
+    },
     ShowHelp,
     Quit,
     /// Shell out to git. Streams its own output.
@@ -199,17 +227,29 @@ pub enum EditTarget {
     /// A note that does not exist yet.
     NewNote { fallback_title: String, dir: String },
     /// An existing note, with the values to diff the result against.
-    Existing { id: String, old_title: String, old_tags: Vec<String>, old_body: String },
+    Existing {
+        id: String,
+        old_title: String,
+        old_tags: Vec<String>,
+        old_body: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(clippy::enum_variant_names)]
 pub enum ConfirmedAction {
-    DeleteNote { id: String, title: String },
+    DeleteNote {
+        id: String,
+        title: String,
+    },
     /// Delete every one of these notes, as one undo.
-    DeleteNotes { ids: Vec<String> },
+    DeleteNotes {
+        ids: Vec<String>,
+    },
     /// Delete a directory and everything inside it.
-    DeleteDir { path: String },
+    DeleteDir {
+        path: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -240,15 +280,24 @@ impl Outcome {
     }
 
     pub fn line(line: Line) -> Outcome {
-        Outcome { lines: vec![line], ..Outcome::default() }
+        Outcome {
+            lines: vec![line],
+            ..Outcome::default()
+        }
     }
 
     pub fn lines(lines: Vec<Line>) -> Outcome {
-        Outcome { lines, ..Outcome::default() }
+        Outcome {
+            lines,
+            ..Outcome::default()
+        }
     }
 
     pub fn effect(effect: Effect) -> Outcome {
-        Outcome { effect, ..Outcome::default() }
+        Outcome {
+            effect,
+            ..Outcome::default()
+        }
     }
 
     /// Convenience for tests and callers that only care about the text.

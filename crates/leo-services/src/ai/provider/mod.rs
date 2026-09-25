@@ -306,7 +306,8 @@ model_path = "/nonexistent/model.bin"
     }
 
     #[test]
-    fn whisper_cpp_only_chain_never_touches_the_secret_store() {        let cfg = Config::parse(
+    fn whisper_cpp_only_chain_never_touches_the_secret_store() {
+        let cfg = Config::parse(
             r#"
 [transcribe]
 chain = ["whisper_cpp"]

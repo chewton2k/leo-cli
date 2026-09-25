@@ -40,15 +40,25 @@ pub fn rows(notes: &[&Note], current_dir: &str) -> Vec<NoteRow> {
 
 fn item(row: &NoteRow) -> ListItem<'static> {
     let mut spans = vec![
-        Span::styled(format!("{:>3}", row.number), Style::default().add_modifier(Modifier::DIM)),
+        Span::styled(
+            format!("{:>3}", row.number),
+            Style::default().add_modifier(Modifier::DIM),
+        ),
         Span::styled(
             if row.marked { "●" } else { " " },
             Style::default().fg(super::theme::accent()),
         ),
     ];
     if let Some(dir) = &row.elsewhere {
-        let shown = if dir.is_empty() { "/".to_string() } else { format!("{dir}/") };
-        spans.push(Span::styled(shown, Style::default().add_modifier(Modifier::DIM)));
+        let shown = if dir.is_empty() {
+            "/".to_string()
+        } else {
+            format!("{dir}/")
+        };
+        spans.push(Span::styled(
+            shown,
+            Style::default().add_modifier(Modifier::DIM),
+        ));
     }
     spans.push(Span::raw(row.title.clone()));
     if !row.tags.is_empty() {
@@ -183,7 +193,11 @@ mod tests {
         assert_eq!(first_visible(0, 100, 10), 0);
         assert_eq!(first_visible(9, 100, 10), 0, "the tenth item still fits");
         assert_eq!(first_visible(10, 100, 10), 1);
-        assert_eq!(first_visible(99, 100, 10), 90, "the last item sits on the last row");
+        assert_eq!(
+            first_visible(99, 100, 10),
+            90,
+            "the last item sits on the last row"
+        );
         // Beyond the end cannot scroll further.
         assert_eq!(first_visible(500, 100, 10), 90);
     }
@@ -232,7 +246,8 @@ mod tests {
     fn an_empty_pane_shows_the_hint_it_was_given() {
         let mut t = Terminal::new(TestBackend::new(46, 8)).unwrap();
         let hint = crate::view::empty::Hint::empty_directory();
-        t.draw(|f| render(f, f.area(), &[], 0, true, &hint, None)).unwrap();
+        t.draw(|f| render(f, f.area(), &[], 0, true, &hint, None))
+            .unwrap();
         let out = t.backend().to_string();
 
         assert!(out.contains("Nothing in this directory"), "{out}");
@@ -265,7 +280,19 @@ mod tests {
         let a = note("Rust ownership", &["rust", "learning"]);
         let r = rows(&[&a], "");
         let mut terminal = Terminal::new(TestBackend::new(50, 5)).unwrap();
-        terminal.draw(|f| render(f, f.area(), &r, 0, true, &crate::view::empty::Hint::no_notes(), None)).unwrap();
+        terminal
+            .draw(|f| {
+                render(
+                    f,
+                    f.area(),
+                    &r,
+                    0,
+                    true,
+                    &crate::view::empty::Hint::no_notes(),
+                    None,
+                )
+            })
+            .unwrap();
 
         let out = terminal.backend().to_string();
         assert!(out.contains("Rust ownership"), "{out}");
@@ -302,6 +329,18 @@ mod tests {
         let a = note(&"x".repeat(500), &[]);
         let r = rows(&[&a], "");
         let mut terminal = Terminal::new(TestBackend::new(20, 4)).unwrap();
-        terminal.draw(|f| render(f, f.area(), &r, 0, true, &crate::view::empty::Hint::no_notes(), None)).unwrap();
+        terminal
+            .draw(|f| {
+                render(
+                    f,
+                    f.area(),
+                    &r,
+                    0,
+                    true,
+                    &crate::view::empty::Hint::no_notes(),
+                    None,
+                )
+            })
+            .unwrap();
     }
 }

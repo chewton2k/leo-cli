@@ -53,11 +53,15 @@ impl App {
                 } else {
                     "live notes (Tab for raw text)"
                 };
-                Preview::Text { title: title.to_string(), body: rec.live_body() }
+                Preview::Text {
+                    title: title.to_string(),
+                    body: rec.live_body(),
+                }
             }
-            (None, None, Some((title, lines)), _) => {
-                Preview::Lines { title: title.clone(), lines }
-            }
+            (None, None, Some((title, lines)), _) => Preview::Lines {
+                title: title.clone(),
+                lines,
+            },
             (None, None, None, Some(note)) => Preview::Note(note),
             (None, None, None, None) => Preview::Empty,
         };
@@ -122,9 +126,7 @@ impl App {
 
         match &self.mode {
             Mode::Help => view::help::render_help(frame, frame.area(), self.help_scroll),
-            Mode::Confirm { prompt, .. } => {
-                view::help::render_confirm(frame, frame.area(), prompt)
-            }
+            Mode::Confirm { prompt, .. } => view::help::render_confirm(frame, frame.area(), prompt),
             Mode::Settings => {
                 if let Some(screen) = &self.settings {
                     view::settings::render(

@@ -193,9 +193,7 @@ fn transcribe_with_progress(
 
         match progress {
             Some(report) => report(i + 1, chunks.len()),
-            None => {
-                leo_core::diag::warn(format!("transcribing chunk {}/{}", i + 1, chunks.len()))
-            }
+            None => leo_core::diag::warn(format!("transcribing chunk {}/{}", i + 1, chunks.len())),
         }
         let result = provider.transcribe(&path);
         let _ = std::fs::remove_file(&path);

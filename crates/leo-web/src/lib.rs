@@ -62,7 +62,11 @@ pub async fn serve(port: u16) -> Result<()> {
     let local_url = format!("http://localhost:{port}/?token={token}");
 
     println!("\n  {} {}", "Local:".bold(), local_url.cyan().underline());
-    println!("  {} {}\n", "Network:".bold(), network_url.cyan().underline());
+    println!(
+        "  {} {}\n",
+        "Network:".bold(),
+        network_url.cyan().underline()
+    );
 
     // Print QR code for easy phone scanning
     if let Ok(code) = qrcode::QrCode::new(&network_url) {
@@ -81,7 +85,10 @@ pub async fn serve(port: u16) -> Result<()> {
         "Settings > Apps > Safari".bold(),
         "HTTPS Upgrade".bold()
     );
-    println!("  {}", "The token in the URL prevents unauthorized access.".dimmed());
+    println!(
+        "  {}",
+        "The token in the URL prevents unauthorized access.".dimmed()
+    );
     println!();
     println!("  {}\n", "Press Ctrl+C to stop".dimmed());
 
@@ -265,7 +272,11 @@ async fn create_note(
     let mut store = state.store.lock().unwrap();
     let tags = body.tags.unwrap_or_default();
     let note_body = body.body.unwrap_or_default();
-    let dir = body.directory.unwrap_or_default().trim_matches('/').to_string();
+    let dir = body
+        .directory
+        .unwrap_or_default()
+        .trim_matches('/')
+        .to_string();
     if !store.dir_exists(&dir) {
         store.create_dir(&dir);
     }
@@ -273,7 +284,9 @@ async fn create_note(
         Ok(n) => NoteResponse::from_note(n),
         Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
     };
-    store.save().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    store
+        .save()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok((StatusCode::CREATED, Json(resp)))
 }
 
@@ -297,14 +310,13 @@ async fn update_note(
     note.updated_at = chrono::Utc::now();
 
     let resp = NoteResponse::from_note(note);
-    store.save().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    store
+        .save()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(resp))
 }
 
-async fn delete_note(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> StatusCode {
+async fn delete_note(State(state): State<AppState>, Path(id): Path<String>) -> StatusCode {
     let mut store = state.store.lock().unwrap();
     // Exactly one note: a prefix shared by several must not delete them all.
     let Some(full) = store.find_note(&id).map(|n| n.id.clone()) else {
@@ -328,7 +340,9 @@ async fn toggle_checkbox(
         .ok_or(StatusCode::NOT_FOUND)?;
     let note = store.find_note(&id).ok_or(StatusCode::NOT_FOUND)?;
     let resp = NoteResponse::from_note(note);
-    store.save().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    store
+        .save()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(resp))
 }
 
@@ -345,7 +359,9 @@ async fn move_note(
     store.move_note(&id, dir).ok_or(StatusCode::NOT_FOUND)?;
     let note = store.find_note(&id).ok_or(StatusCode::NOT_FOUND)?;
     let resp = NoteResponse::from_note(note);
-    store.save().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    store
+        .save()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(resp))
 }
 
@@ -382,10 +398,7 @@ async fn list_dirs(
     Json(store.subdirs(&parent))
 }
 
-async fn create_dir(
-    State(state): State<AppState>,
-    Json(body): Json<CreateDirBody>,
-) -> StatusCode {
+async fn create_dir(State(state): State<AppState>, Json(body): Json<CreateDirBody>) -> StatusCode {
     let mut store = state.store.lock().unwrap();
     if store.create_dir(&body.path) {
         match store.save() {
@@ -409,7 +422,10 @@ mod tests {
             .map(|(title, d)| store.create_note(*title, "", vec![], d).unwrap().id.clone())
             .collect();
         store.save().unwrap();
-        let state = AppState { store: Arc::new(Mutex::new(store)), token: String::new() };
+        let state = AppState {
+            store: Arc::new(Mutex::new(store)),
+            token: String::new(),
+        };
         (state, dir, ids)
     }
 
@@ -441,16 +457,33 @@ mod tests {
             tags: None,
             directory: Some("cs162".to_string()),
         };
-        run(create_note(State(state.clone()), Json(body))).ok().unwrap();
+        run(create_note(State(state.clone()), Json(body)))
+            .ok()
+            .unwrap();
         assert!(state.store.lock().unwrap().dir_exists("cs162"));
     }
 
     #[test]
     fn moving_to_a_missing_directory_is_refused() {
         let (state, _d, ids) = state_with(&[("A", "")]);
-        let body = MoveBody { directory: "nowhere".to_string() };
-        let out = run(move_note(State(state.clone()), Path(ids[0].clone()), Json(body)));
+        let body = MoveBody {
+            directory: "nowhere".to_string(),
+        };
+        let out = run(move_note(
+            State(state.clone()),
+            Path(ids[0].clone()),
+            Json(body),
+        ));
         assert_eq!(out.err(), Some(StatusCode::NOT_FOUND));
-        assert_eq!(state.store.lock().unwrap().find_note(&ids[0]).unwrap().directory, "");
+        assert_eq!(
+            state
+                .store
+                .lock()
+                .unwrap()
+                .find_note(&ids[0])
+                .unwrap()
+                .directory,
+            ""
+        );
     }
 }

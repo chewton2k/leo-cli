@@ -22,7 +22,9 @@ pub fn config_dir() -> Result<PathBuf> {
 }
 
 fn home() -> Option<PathBuf> {
-    std::env::var_os("LEO_HOME").filter(|v| !v.is_empty()).map(PathBuf::from)
+    std::env::var_os("LEO_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
 }
 
 fn choose(home: Option<PathBuf>, platform: Option<PathBuf>, what: &str) -> Result<PathBuf> {
@@ -41,7 +43,10 @@ mod tests {
     #[test]
     fn leo_home_holds_everything() {
         let home = PathBuf::from("/tmp/leo-home");
-        assert_eq!(choose(Some(home.clone()), Some("/p".into()), "data").unwrap(), home);
+        assert_eq!(
+            choose(Some(home.clone()), Some("/p".into()), "data").unwrap(),
+            home
+        );
     }
 
     #[test]

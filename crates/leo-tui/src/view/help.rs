@@ -79,7 +79,10 @@ pub const SECTIONS: &[Section] = &[
             e("r", "rename it"),
             e("m", "move it to another directory"),
             e("x", "tick its first open checkbox"),
-            e("  j / k", "in the preview: pick a checkbox, then x ticks it"),
+            e(
+                "  j / k",
+                "in the preview: pick a checkbox, then x ticks it",
+            ),
             e("a", "ask AI: answer its @leo lines"),
             e("R", "record a new note by talking"),
             e("D", "delete it (asks first)"),
@@ -111,9 +114,15 @@ pub const SECTIONS: &[Section] = &[
         title: "Providers and settings",
         entries: &[
             e("Ctrl-S", "your profile: providers, keys, colour, backup"),
-            e("  Enter", "on a provider: store its key, add it, or test it"),
+            e(
+                "  Enter",
+                "on a provider: store its key, add it, or test it",
+            ),
             e("  x", "on that screen: remove a key"),
-            e("  J / K", "on that screen: change the order they are tried in"),
+            e(
+                "  J / K",
+                "on that screen: change the order they are tried in",
+            ),
             e("  a / d", "on that screen: add to / drop from a list"),
             e("  e", "on that screen: open config.toml"),
             e("  Enter", "on a setting: change it, or set up git backup"),
@@ -147,12 +156,17 @@ fn help_lines() -> Vec<TuiLine<'static>> {
     let heading = |title: &str| {
         TuiLine::from(Span::styled(
             format!(" {title}"),
-            Style::default().fg(theme::accent()).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme::accent())
+                .add_modifier(Modifier::BOLD),
         ))
     };
     let row = |key: String, what: &'static str| {
         TuiLine::from(vec![
-            Span::styled(format!("  {key:<20}"), Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!("  {key:<20}"),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
             Span::raw(what),
         ])
     };
@@ -385,12 +399,16 @@ mod tests {
         t.draw(|f| render_help(f, f.area(), 0)).unwrap();
         let top = t.backend().to_string();
 
-        t.draw(|f| render_help(f, f.area(), line_count() as u16)).unwrap();
+        t.draw(|f| render_help(f, f.area(), line_count() as u16))
+            .unwrap();
         let bottom = t.backend().to_string();
 
         assert_ne!(top, bottom, "scrolling changed nothing");
         assert!(top.contains("Moving around"));
-        assert!(bottom.contains(":quit"), "the last section is unreachable:\n{bottom}");
+        assert!(
+            bottom.contains(":quit"),
+            "the last section is unreachable:\n{bottom}"
+        );
     }
 
     #[test]
@@ -454,10 +472,10 @@ mod tests {
     #[test]
     fn the_confirm_prompt_shows_the_question_and_the_keys() {
         let mut t = Terminal::new(TestBackend::new(60, 8)).unwrap();
-        t.draw(|f| render_confirm(f, f.area(), "Delete Rust ownership?")).unwrap();
+        t.draw(|f| render_confirm(f, f.area(), "Delete Rust ownership?"))
+            .unwrap();
         let out = t.backend().to_string();
         assert!(out.contains("Delete Rust ownership?"), "{out}");
         assert!(out.contains("y to confirm"), "{out}");
     }
-
 }

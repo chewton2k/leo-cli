@@ -83,7 +83,9 @@ pub fn spans(hints: &[(&'static str, &'static str)], width: u16) -> Vec<Span<'st
     }
     shown.extend(help);
 
-    let key_style = Style::default().fg(theme::accent()).add_modifier(Modifier::BOLD);
+    let key_style = Style::default()
+        .fg(theme::accent())
+        .add_modifier(Modifier::BOLD);
     let what_style = Style::default().add_modifier(Modifier::DIM);
     let mut out = Vec::new();
     for (key, what) in shown {
@@ -125,15 +127,25 @@ mod tests {
     #[test]
     fn a_recording_says_how_to_stop() {
         let hints = for_place(Place::Recording);
-        assert!(hints.iter().any(|(k, what)| *k == "Esc" && what.contains("stop")));
-        assert!(hints.iter().any(|(k, what)| *k == "Enter" && what.contains("point")));
+        assert!(hints
+            .iter()
+            .any(|(k, what)| *k == "Esc" && what.contains("stop")));
+        assert!(hints
+            .iter()
+            .any(|(k, what)| *k == "Enter" && what.contains("point")));
     }
 
     /// A hint for a key that does nothing would be worse than no hint.
     #[test]
     fn every_hinted_key_is_documented_in_help() {
         let documented = super::super::help::all_keys().join(" ");
-        for place in [Place::Notes, Place::Dirs, Place::Tags, Place::Preview, Place::Recording] {
+        for place in [
+            Place::Notes,
+            Place::Dirs,
+            Place::Tags,
+            Place::Preview,
+            Place::Recording,
+        ] {
             for (key, _) in for_place(place) {
                 assert!(
                     documented.split_whitespace().any(|k| k == *key),

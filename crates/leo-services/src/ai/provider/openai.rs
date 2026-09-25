@@ -27,7 +27,10 @@ impl OpenAiChat {
                 .base_url
                 .clone()
                 .unwrap_or_else(|| "https://openrouter.ai/api/v1".to_string()),
-            model: cfg.model.clone().unwrap_or_else(|| "openrouter/free".to_string()),
+            model: cfg
+                .model
+                .clone()
+                .unwrap_or_else(|| "openrouter/free".to_string()),
             key,
             // A provider that names no key_env is a local server needing none.
             needs_key: cfg.key_env.is_some(),
@@ -206,9 +209,9 @@ impl ChatProvider for OpenAiChat {
             return Err(classify_status(status, &self.name, &text));
         }
 
-        let json: serde_json::Value = resp
-            .json()
-            .map_err(|e| ProviderError::Fatal(format!("{}: unreadable response: {e}", self.name)))?;
+        let json: serde_json::Value = resp.json().map_err(|e| {
+            ProviderError::Fatal(format!("{}: unreadable response: {e}", self.name))
+        })?;
 
         let message = &json["choices"][0]["message"];
         let finish = json["choices"][0]["finish_reason"].as_str().unwrap_or("");
@@ -369,7 +372,10 @@ mod streaming_tests {
             })
             .collect();
         assert_eq!(answer, "Ownership transfers.");
-        assert!(!answer.contains("user asks"), "reasoning leaked into the answer");
+        assert!(
+            !answer.contains("user asks"),
+            "reasoning leaked into the answer"
+        );
     }
 
     /// Fragments must concatenate into the whole answer, which is what the

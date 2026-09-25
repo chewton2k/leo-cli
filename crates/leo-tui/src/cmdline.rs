@@ -311,7 +311,10 @@ mod tests {
     #[test]
     fn enter_submits_and_clears() {
         let mut c = typed("list");
-        assert_eq!(c.key(code(KeyCode::Enter)), CmdOutcome::Submit("list".to_string()));
+        assert_eq!(
+            c.key(code(KeyCode::Enter)),
+            CmdOutcome::Submit("list".to_string())
+        );
         assert_eq!(c.text(), "");
         assert_eq!(c.cursor(), 0);
     }

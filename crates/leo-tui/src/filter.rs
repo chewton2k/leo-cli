@@ -17,10 +17,7 @@ impl App {
             KeyCode::Enter => {
                 // Keep the filter, but hand the keyboard back to the
                 // panes so j/k and D act on what is shown.
-                let empty = self
-                    .filter
-                    .as_ref()
-                    .is_some_and(|q| q.trim().is_empty());
+                let empty = self.filter.as_ref().is_some_and(|q| q.trim().is_empty());
                 if empty {
                     self.filter = None;
                     self.resync();

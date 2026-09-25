@@ -14,7 +14,9 @@ impl App {
         mouse: MouseEvent,
         terminal: &mut Terminal<B>,
     ) -> Result<()> {
-        let area = terminal.size().map(|s| Rect::new(0, 0, s.width, s.height))?;
+        let area = terminal
+            .size()
+            .map(|s| Rect::new(0, 0, s.width, s.height))?;
 
         // The profile page owns the whole screen when it is open, so clicks
         // belong to it. Anything else with an overlay up ignores them: a click
@@ -112,12 +114,9 @@ impl App {
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 let list = view::settings::list_area(area);
-                let Some(index) = view::settings::row_at(
-                    list,
-                    mouse.row,
-                    screen.selected,
-                    screen.rows.len(),
-                ) else {
+                let Some(index) =
+                    view::settings::row_at(list, mouse.row, screen.selected, screen.rows.len())
+                else {
                     return Ok(());
                 };
                 // Land on something actionable: clicking a heading should move to
@@ -141,7 +140,13 @@ impl App {
 
     /// Scroll whatever is under the pointer, which is not necessarily what has
     /// focus — that is what every other application does.
-    pub(super) fn wheel(&mut self, frames: &view::Frames, column: u16, row: u16, direction: Intent) {
+    pub(super) fn wheel(
+        &mut self,
+        frames: &view::Frames,
+        column: u16,
+        row: u16,
+        direction: Intent,
+    ) {
         let inside = |rect: Rect| {
             column >= rect.x
                 && column < rect.x + rect.width

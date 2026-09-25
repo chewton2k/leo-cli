@@ -7,7 +7,11 @@ use anyhow::Result;
 use colored::Colorize;
 
 use crate::ai;
-use crate::config::{self, secret::{redact, resolve, SecretStore}, Config};
+use crate::config::{
+    self,
+    secret::{redact, resolve, SecretStore},
+    Config,
+};
 
 /// What a model command asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,7 +34,11 @@ pub enum ConfigAction {
 /// Asks whether a key exists rather than reading it. Reading is what can cost a
 /// permission dialog on a keychain, and this runs for every provider in both
 /// chains.
-pub fn describe_credential(provider: &str, key_env: Option<&str>, store: &dyn SecretStore) -> String {
+pub fn describe_credential(
+    provider: &str,
+    key_env: Option<&str>,
+    store: &dyn SecretStore,
+) -> String {
     let Some(var) = key_env else {
         return "no key needed".to_string();
     };
@@ -130,7 +138,9 @@ pub fn providers_missing_keys(cfg: &Config, store: &dyn SecretStore) -> Vec<Stri
         let Some(var) = cfg.provider(name).and_then(|p| p.key_env.as_deref()) else {
             continue;
         };
-        let in_env = std::env::var(var).map(|v| !v.trim().is_empty()).unwrap_or(false);
+        let in_env = std::env::var(var)
+            .map(|v| !v.trim().is_empty())
+            .unwrap_or(false);
         if !in_env && !store.has(name) && !out.contains(name) {
             out.push(name.clone());
         }
@@ -308,10 +318,11 @@ key_env = "LEO_TEST_SETUP_C"
         .unwrap();
         let store = MemoryStore::default();
         store.set("cloud_b", "k").unwrap();
-        assert_eq!(providers_missing_keys(&cfg, &store), vec!["cloud_a".to_string()]);
+        assert_eq!(
+            providers_missing_keys(&cfg, &store),
+            vec!["cloud_a".to_string()]
+        );
     }
-
-
 
     #[test]
     fn describes_a_missing_credential() {
@@ -335,7 +346,10 @@ key_env = "LEO_TEST_SETUP_C"
         let s = describe_credential("openrouter", Some("LEO_TEST_DESC_B"), &store);
         assert!(s.contains("stored"), "got: {s}");
         assert!(!s.contains("supersecret"), "LEAKED THE KEY: {s}");
-        assert!(!s.contains("9999"), "the value must not be read at all: {s}");
+        assert!(
+            !s.contains("9999"),
+            "the value must not be read at all: {s}"
+        );
     }
 
     #[test]

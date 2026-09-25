@@ -244,7 +244,10 @@ mod tests {
         let (store, _d) = store();
         store.set("groq", "gsk-secret").unwrap();
 
-        let mode = std::fs::metadata(store.path()).unwrap().permissions().mode();
+        let mode = std::fs::metadata(store.path())
+            .unwrap()
+            .permissions()
+            .mode();
         assert_eq!(mode & 0o777, 0o600, "mode is {:o}", mode & 0o777);
         assert!(store.is_private());
 
@@ -252,7 +255,12 @@ mod tests {
             .unwrap()
             .permissions()
             .mode();
-        assert_eq!(dir_mode & 0o777, 0o700, "dir mode is {:o}", dir_mode & 0o777);
+        assert_eq!(
+            dir_mode & 0o777,
+            0o700,
+            "dir mode is {:o}",
+            dir_mode & 0o777
+        );
     }
 
     /// A file left open by an older version, or copied in by hand, must be

@@ -188,8 +188,7 @@ impl Note {
 
         for (i, line) in lines.iter().enumerate() {
             let trimmed = line.trim_start();
-            let is_checked =
-                trimmed.starts_with("- [x] ") || trimmed.starts_with("- [X] ");
+            let is_checked = trimmed.starts_with("- [x] ") || trimmed.starts_with("- [X] ");
             let is_unchecked = trimmed.starts_with("- [ ] ");
 
             if is_checked || is_unchecked {
@@ -221,7 +220,12 @@ mod tests {
 
     #[test]
     fn checkboxes_lists_each_box_in_order() {
-        let note = Note::new("T", "- [ ] a\ntext\n  - [x] b\n- [X] c\n- [ ]\n", vec![], "");
+        let note = Note::new(
+            "T",
+            "- [ ] a\ntext\n  - [x] b\n- [X] c\n- [ ]\n",
+            vec![],
+            "",
+        );
         assert_eq!(note.checkboxes(), vec![false, true, true]);
     }
 }

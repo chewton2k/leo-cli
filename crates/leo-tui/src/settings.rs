@@ -6,11 +6,11 @@
 
 use anyhow::Result;
 
+use crate::view::settings::{Credential, Row, SettingAction};
 use leo_services::config::edit::{self, Task};
 use leo_services::config::provider::ProviderKind;
 use leo_services::config::secret::{redact, SecretStore};
 use leo_services::config::Config;
-use crate::view::settings::{Credential, Row, SettingAction};
 
 /// Which chain a provider kind can serve. A transcription provider in the chat
 /// chain would be silently dropped by the chain builder, so the screen offers
@@ -202,9 +202,7 @@ fn backup_rows(notes_dir: &std::path::Path, cfg: &Config) -> Vec<Row> {
             rows.push(Row::Setting {
                 label: "remote".to_string(),
                 value: url.clone(),
-                action: SettingAction::SyncConnect {
-                    current: Some(url),
-                },
+                action: SettingAction::SyncConnect { current: Some(url) },
             });
             let waiting = match leo_core::sync::unpushed(notes_dir) {
                 Some(0) => "everything is pushed".to_string(),
@@ -281,7 +279,10 @@ pub enum Changed {
 pub fn cycle_theme() -> Result<Changed> {
     let (path, mut doc) = edit::load_document()?;
 
-    let presets: Vec<&str> = leo_services::config::theme::presets().keys().copied().collect();
+    let presets: Vec<&str> = leo_services::config::theme::presets()
+        .keys()
+        .copied()
+        .collect();
     let current = doc
         .get("theme")
         .and_then(|t| t.get("preset"))
@@ -401,10 +402,19 @@ mod tests {
     #[test]
     fn enter_on_a_provider_does_what_it_most_needs() {
         use crate::view::settings::Credential;
-        assert_eq!(primary_action(&Credential::Missing, true), ProviderOp::Login);
-        assert_eq!(primary_action(&Credential::Missing, false), ProviderOp::Login);
+        assert_eq!(
+            primary_action(&Credential::Missing, true),
+            ProviderOp::Login
+        );
+        assert_eq!(
+            primary_action(&Credential::Missing, false),
+            ProviderOp::Login
+        );
         assert_eq!(primary_action(&Credential::Stored, false), ProviderOp::Add);
-        assert_eq!(primary_action(&Credential::NotNeeded, true), ProviderOp::Test);
+        assert_eq!(
+            primary_action(&Credential::NotNeeded, true),
+            ProviderOp::Test
+        );
     }
 
     use super::*;
@@ -451,10 +461,18 @@ key_env = "LEO_TEST_SETTINGS_CB"
     #[test]
     fn rows_list_both_chains_in_order_then_the_rest() {
         let _guard = ENV_LOCK.lock().unwrap();
-        for v in ["LEO_TEST_SETTINGS_OR", "LEO_TEST_SETTINGS_GROQ", "LEO_TEST_SETTINGS_CB"] {
+        for v in [
+            "LEO_TEST_SETTINGS_OR",
+            "LEO_TEST_SETTINGS_GROQ",
+            "LEO_TEST_SETTINGS_CB",
+        ] {
             std::env::remove_var(v);
         }
-        let rows = rows(&small_config(), &MemoryStore::default(), std::path::Path::new("/tmp/leo-test-notes"));
+        let rows = rows(
+            &small_config(),
+            &MemoryStore::default(),
+            std::path::Path::new("/tmp/leo-test-notes"),
+        );
 
         assert_eq!(rows[0], Row::Header(Task::Chat));
         assert_eq!(rows[1].provider_name(), Some("ollama"));
@@ -472,7 +490,11 @@ key_env = "LEO_TEST_SETTINGS_CB"
     #[test]
     fn a_chain_position_is_shown_as_its_priority() {
         let _guard = ENV_LOCK.lock().unwrap();
-        let rows = rows(&small_config(), &MemoryStore::default(), std::path::Path::new("/tmp/leo-test-notes"));
+        let rows = rows(
+            &small_config(),
+            &MemoryStore::default(),
+            std::path::Path::new("/tmp/leo-test-notes"),
+        );
         match &rows[2] {
             Row::Member { position, name, .. } => {
                 assert_eq!(*position, 2);
@@ -485,7 +507,11 @@ key_env = "LEO_TEST_SETTINGS_CB"
     #[test]
     fn a_keyless_local_provider_needs_no_credential() {
         let _guard = ENV_LOCK.lock().unwrap();
-        let rows = rows(&small_config(), &MemoryStore::default(), std::path::Path::new("/tmp/leo-test-notes"));
+        let rows = rows(
+            &small_config(),
+            &MemoryStore::default(),
+            std::path::Path::new("/tmp/leo-test-notes"),
+        );
         match &rows[1] {
             Row::Member { credential, .. } => assert_eq!(*credential, Credential::NotNeeded),
             other => panic!("expected a member, got {other:?}"),
@@ -500,7 +526,11 @@ key_env = "LEO_TEST_SETTINGS_CB"
 
         let store = MemoryStore::default();
         store.set("openrouter", "sk-or-v1-secret9999").unwrap();
-        let rows = rows(&small_config(), &store, std::path::Path::new("/tmp/leo-test-notes"));
+        let rows = rows(
+            &small_config(),
+            &store,
+            std::path::Path::new("/tmp/leo-test-notes"),
+        );
 
         match &rows[2] {
             Row::Member { credential, .. } => {
@@ -523,7 +553,11 @@ key_env = "LEO_TEST_SETTINGS_CB"
         let store = MemoryStore::default();
         store.set("openrouter", "from-keychain-9999").unwrap();
 
-        let rows = rows(&small_config(), &store, std::path::Path::new("/tmp/leo-test-notes"));
+        let rows = rows(
+            &small_config(),
+            &store,
+            std::path::Path::new("/tmp/leo-test-notes"),
+        );
         std::env::remove_var("LEO_TEST_SETTINGS_OR");
 
         match &rows[2] {
@@ -542,10 +576,16 @@ key_env = "LEO_TEST_SETTINGS_CB"
     fn a_chain_entry_with_no_provider_block_is_shown_rather_than_hidden() {
         let _guard = ENV_LOCK.lock().unwrap();
         let cfg = Config::parse("[chat]\nchain = [\"ghost\"]\n").unwrap();
-        let rows = rows(&cfg, &MemoryStore::default(), std::path::Path::new("/tmp/leo-test-notes"));
+        let rows = rows(
+            &cfg,
+            &MemoryStore::default(),
+            std::path::Path::new("/tmp/leo-test-notes"),
+        );
 
         match &rows[1] {
-            Row::Member { name, model, ready, .. } => {
+            Row::Member {
+                name, model, ready, ..
+            } => {
                 assert_eq!(name, "ghost");
                 assert_eq!(model, "(not configured)");
                 assert!(!ready);
@@ -577,7 +617,11 @@ model_path = "/nope"
 "#,
         )
         .unwrap();
-        let rows = rows(&cfg, &MemoryStore::default(), std::path::Path::new("/tmp/leo-test-notes"));
+        let rows = rows(
+            &cfg,
+            &MemoryStore::default(),
+            std::path::Path::new("/tmp/leo-test-notes"),
+        );
 
         let task_of = |name: &str| {
             rows.iter()
@@ -594,7 +638,11 @@ model_path = "/nope"
     fn an_empty_config_produces_only_headers_and_the_rest_of_the_page() {
         let _guard = ENV_LOCK.lock().unwrap();
         let cfg = Config::parse("").unwrap();
-        let rows = rows(&cfg, &MemoryStore::default(), std::path::Path::new("/tmp/leo-test-notes"));
+        let rows = rows(
+            &cfg,
+            &MemoryStore::default(),
+            std::path::Path::new("/tmp/leo-test-notes"),
+        );
 
         // No providers, but both chain headers still say so.
         let providers: Vec<&Row> = rows
@@ -613,7 +661,10 @@ model_path = "/nope"
                 _ => None,
             })
             .collect();
-        assert_eq!(sections, ["appearance", "backup to github", "where things live"]);
+        assert_eq!(
+            sections,
+            ["appearance", "backup to github", "where things live"]
+        );
     }
 
     /// Everything on the page must either do something or be worth reading, and
@@ -621,7 +672,11 @@ model_path = "/nope"
     #[test]
     fn only_actionable_rows_are_selectable() {
         let _guard = ENV_LOCK.lock().unwrap();
-        let rows = rows(&small_config(), &MemoryStore::default(), std::path::Path::new("/tmp/leo-test-notes"));
+        let rows = rows(
+            &small_config(),
+            &MemoryStore::default(),
+            std::path::Path::new("/tmp/leo-test-notes"),
+        );
 
         for row in &rows {
             match row {
@@ -646,7 +701,12 @@ model_path = "/nope"
     fn the_appearance_row_names_the_current_colour() {
         let cfg = Config::parse("").unwrap();
         let rows = appearance_rows(&cfg);
-        let Row::Setting { label, value, action } = &rows[1] else {
+        let Row::Setting {
+            label,
+            value,
+            action,
+        } = &rows[1]
+        else {
             panic!("expected a setting, got {:?}", rows[1]);
         };
         assert_eq!(label, "colour");
@@ -729,14 +789,19 @@ model_path = "/nope"
         let rows = backup_rows(&notes, &Config::default());
         let row = rows
             .iter()
-            .find(|r| matches!(r, Row::Setting { action, .. }
-                if *action == SettingAction::NextAutoPush))
+            .find(|r| {
+                matches!(r, Row::Setting { action, .. }
+                if *action == SettingAction::NextAutoPush)
+            })
             .expect("no automatic backup row");
         let Row::Setting { value, .. } = row else {
             unreachable!()
         };
         // The default is stated rather than left blank.
-        assert_eq!(value, leo_services::config::sync::AutoPush::default().label());
+        assert_eq!(
+            value,
+            leo_services::config::sync::AutoPush::default().label()
+        );
     }
 
     #[test]
@@ -763,13 +828,21 @@ model_path = "/nope"
         let store = MemoryStore::default();
 
         // Without a key, openrouter is not ready.
-        let rows_before = rows(&small_config(), &store, std::path::Path::new("/tmp/leo-test-notes"));
+        let rows_before = rows(
+            &small_config(),
+            &store,
+            std::path::Path::new("/tmp/leo-test-notes"),
+        );
         let ready_before = matches!(&rows_before[2], Row::Member { ready: true, .. });
         assert!(!ready_before);
 
         // With one, it is.
         store.set("openrouter", "a-key").unwrap();
-        let rows_after = rows(&small_config(), &store, std::path::Path::new("/tmp/leo-test-notes"));
+        let rows_after = rows(
+            &small_config(),
+            &store,
+            std::path::Path::new("/tmp/leo-test-notes"),
+        );
         assert!(matches!(&rows_after[2], Row::Member { ready: true, .. }));
     }
 }

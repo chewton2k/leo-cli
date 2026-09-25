@@ -16,8 +16,7 @@ pub fn init(notes_dir: &Path) -> Result<()> {
 
     fs::create_dir_all(notes_dir)?;
 
-    run_git(notes_dir, &["init", "-b", "main"])
-        .context("git init failed — is git installed?")?;
+    run_git(notes_dir, &["init", "-b", "main"]).context("git init failed — is git installed?")?;
 
     let gitignore = notes_dir.join(".gitignore");
     if !gitignore.exists() {
@@ -27,7 +26,10 @@ pub fn init(notes_dir: &Path) -> Result<()> {
     // Commit any existing files (e.g. migrated notes)
     run_git(notes_dir, &["add", "."])?;
     // Suppress error if there is nothing to commit (empty repo)
-    let _ = run_git(notes_dir, &["commit", "-m", "init: initialize leo notes repo"]);
+    let _ = run_git(
+        notes_dir,
+        &["commit", "-m", "init: initialize leo notes repo"],
+    );
 
     println!("Initialized notes repo in {}", notes_dir.display());
     Ok(())
@@ -55,9 +57,7 @@ pub fn current_branch(notes_dir: &Path) -> Result<String> {
         .context("failed to run git rev-parse")?;
     let branch = String::from_utf8_lossy(&out.stdout).trim().to_string();
     if !out.status.success() || branch.is_empty() || branch == "HEAD" {
-        anyhow::bail!(
-            "the notes repository has no branch yet — save a note first, then push"
-        );
+        anyhow::bail!("the notes repository has no branch yet — save a note first, then push");
     }
     Ok(branch)
 }
@@ -212,7 +212,12 @@ mod tests {
         let remote = tmp.path().join("remote.git");
         let notes = tmp.path().join("notes");
         std::fs::create_dir_all(&notes).unwrap();
-        assert!(Command::new("git").args(["init", "--bare", "-q"]).arg(&remote).status().unwrap().success());
+        assert!(Command::new("git")
+            .args(["init", "--bare", "-q"])
+            .arg(&remote)
+            .status()
+            .unwrap()
+            .success());
         init(&notes).unwrap();
         std::fs::write(notes.join("a.md"), "hello").unwrap();
         auto_commit(&notes).unwrap();
@@ -341,7 +346,10 @@ mod tests {
             .output()
             .unwrap();
         let log_str = String::from_utf8(log.stdout).unwrap();
-        assert!(log_str.contains("update notes"), "expected commit, got: {log_str}");
+        assert!(
+            log_str.contains("update notes"),
+            "expected commit, got: {log_str}"
+        );
     }
 
     /// The bug this guards: `main` was hardcoded, so a repo on any other branch

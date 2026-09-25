@@ -219,7 +219,15 @@ mod tests {
 
     #[test]
     fn nonsense_is_rejected_rather_than_guessed_at() {
-        for bad in ["", "#", "xyz", "#gg0011", "#12345", "rebeccapurple", "12345678"] {
+        for bad in [
+            "",
+            "#",
+            "xyz",
+            "#gg0011",
+            "#12345",
+            "rebeccapurple",
+            "12345678",
+        ] {
             assert_eq!(Rgb::parse(bad), None, "accepted {bad:?}");
         }
     }
@@ -242,7 +250,10 @@ mod tests {
         let p = theme.palette();
         assert_eq!(p.accent, Rgb::new(88, 141, 217));
         // Muted and bar follow the chosen hue rather than staying orange.
-        assert!(p.accent_muted.b > p.accent_muted.r, "muted lost the blue hue");
+        assert!(
+            p.accent_muted.b > p.accent_muted.r,
+            "muted lost the blue hue"
+        );
         assert!(p.bar.b > p.bar.r, "the bar lost the blue hue");
         assert!(p.accent_muted.luminance() < p.accent.luminance());
         assert!(p.bar.luminance() < p.accent_muted.luminance());
@@ -278,7 +289,11 @@ mod tests {
             ..Default::default()
         };
         let p = theme.palette();
-        assert_eq!(p.accent, Palette::default().accent, "accent was not restored");
+        assert_eq!(
+            p.accent,
+            Palette::default().accent,
+            "accent was not restored"
+        );
         // And the fields that were fine still applied.
         assert_eq!(p.good, Rgb::new(0, 255, 0));
     }

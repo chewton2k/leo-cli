@@ -459,10 +459,7 @@ model_path = "~/.leo/models/ggml-base.en.bin"
         let cfg = Config::parse(toml).unwrap();
         assert_eq!(cfg.chat.chain, vec!["ollama", "openrouter"]);
         assert_eq!(cfg.transcribe.chain, vec!["whisper_cpp", "groq"]);
-        assert_eq!(
-            cfg.providers["ollama"].kind,
-            Some(ProviderKind::Openai)
-        );
+        assert_eq!(cfg.providers["ollama"].kind, Some(ProviderKind::Openai));
         assert_eq!(
             cfg.providers["ollama"].base_url.as_deref(),
             Some("http://localhost:11434/v1")
@@ -508,7 +505,10 @@ model_path = "~/.leo/models/ggml-base.en.bin"
             .lines()
             .filter(|l| l.trim_start().starts_with("[providers."))
             .count();
-        assert_eq!(real_blocks, 0, "provider blocks are back in the shipped file");
+        assert_eq!(
+            real_blocks, 0,
+            "provider blocks are back in the shipped file"
+        );
         // It still has to be a working config.
         let cfg = Config::parse(&text).unwrap();
         assert_eq!(cfg.chat.chain, DEFAULT_CHAT_CHAIN);
@@ -595,7 +595,11 @@ kind = "telepathy"
     #[test]
     fn every_shipped_provider_is_complete_enough_to_build() {
         let cfg = Config::default();
-        assert!(cfg.providers.len() >= 15, "only {} providers", cfg.providers.len());
+        assert!(
+            cfg.providers.len() >= 15,
+            "only {} providers",
+            cfg.providers.len()
+        );
 
         for (name, p) in &cfg.providers {
             let kind = p.kind.unwrap_or_else(|| panic!("{name} has no kind"));
@@ -633,7 +637,10 @@ kind = "telepathy"
     fn every_chain_entry_names_a_defined_provider() {
         let cfg = Config::default();
         for name in cfg.chat.chain.iter().chain(cfg.transcribe.chain.iter()) {
-            assert!(cfg.providers.contains_key(name), "chain names unknown {name}");
+            assert!(
+                cfg.providers.contains_key(name),
+                "chain names unknown {name}"
+            );
         }
     }
 
@@ -664,10 +671,14 @@ kind = "telepathy"
         for (name, p) in &cfg.providers {
             if let Some(var) = &p.key_env {
                 assert!(
-                    var.chars().all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit()),
+                    var.chars()
+                        .all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit()),
                     "{name}: {var} is not a conventional env var name"
                 );
-                assert!(var.ends_with("_API_KEY"), "{name}: {var} should end in _API_KEY");
+                assert!(
+                    var.ends_with("_API_KEY"),
+                    "{name}: {var} should end in _API_KEY"
+                );
             }
         }
     }

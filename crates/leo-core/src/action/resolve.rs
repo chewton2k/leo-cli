@@ -48,7 +48,10 @@ pub fn resolve(input: &str, store: &Store, numbering: &[String]) -> Resolved {
             matches
                 .iter()
                 .map(|note| NoteBrief {
-                    index: numbering.iter().position(|id| id == &note.id).map(|p| p + 1),
+                    index: numbering
+                        .iter()
+                        .position(|id| id == &note.id)
+                        .map(|p| p + 1),
                     id: note.id.clone(),
                     title: note.title.clone(),
                 })

@@ -17,9 +17,15 @@ pub enum Preview<'a> {
     Empty,
     Note(&'a Note),
     /// Free text, used by the live transcription stream.
-    Text { title: String, body: String },
+    Text {
+        title: String,
+        body: String,
+    },
     /// Handler output, keeping each line's `Kind` styling.
-    Lines { title: String, lines: &'a [leo_core::action::Line] },
+    Lines {
+        title: String,
+        lines: &'a [leo_core::action::Line],
+    },
 }
 
 /// `cursor` is the checkbox the preview's cursor is on, drawn reversed and kept
@@ -59,10 +65,14 @@ pub fn render(
 
     if let Some(n) = cursor {
         let is_box = |l: &TuiLine| {
-            l.spans.iter().any(|s| s.content == BOX_OPEN || s.content == BOX_DONE)
+            l.spans
+                .iter()
+                .any(|s| s.content == BOX_OPEN || s.content == BOX_DONE)
         };
         if let Some(row) = (0..lines.len()).filter(|&i| is_box(&lines[i])).nth(n) {
-            lines[row] = lines[row].clone().patch_style(Style::default().add_modifier(Modifier::REVERSED));
+            lines[row] = lines[row]
+                .clone()
+                .patch_style(Style::default().add_modifier(Modifier::REVERSED));
             let visible = area.height.saturating_sub(2).max(1);
             let row = row as u16;
             if row < scroll {
@@ -145,18 +155,28 @@ mod tests {
         let row_of = |word: &str| {
             (0..buf.area.height)
                 .find(|y| {
-                    let line: String =
-                        (0..buf.area.width).map(|x| buf[(x, *y)].symbol().to_string()).collect();
+                    let line: String = (0..buf.area.width)
+                        .map(|x| buf[(x, *y)].symbol().to_string())
+                        .collect();
                     line.contains(word)
                 })
                 .unwrap()
         };
         let reversed = |y: u16| {
-            (1..buf.area.width - 1)
-                .any(|x| buf[(x, y)].modifier.contains(ratatui::style::Modifier::REVERSED))
+            (1..buf.area.width - 1).any(|x| {
+                buf[(x, y)]
+                    .modifier
+                    .contains(ratatui::style::Modifier::REVERSED)
+            })
         };
-        assert!(reversed(row_of("done")), "the cursor line is not highlighted");
-        assert!(!reversed(row_of("read")), "the other box is highlighted too");
+        assert!(
+            reversed(row_of("done")),
+            "the cursor line is not highlighted"
+        );
+        assert!(
+            !reversed(row_of("read")),
+            "the other box is highlighted too"
+        );
     }
 
     /// The wiring, not the rendering: markdown details are tested next door, but

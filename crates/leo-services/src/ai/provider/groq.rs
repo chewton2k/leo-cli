@@ -44,7 +44,10 @@ impl GroqTranscribe {
     }
 
     fn url(&self) -> String {
-        format!("{}/audio/transcriptions", self.base_url.trim_end_matches('/'))
+        format!(
+            "{}/audio/transcriptions",
+            self.base_url.trim_end_matches('/')
+        )
     }
 }
 
@@ -89,14 +92,16 @@ impl TranscribeProvider for GroqTranscribe {
             return Err(classify_status(status, &self.name, &text));
         }
 
-        let json: serde_json::Value = resp
-            .json()
-            .map_err(|e| ProviderError::Fatal(format!("{}: unreadable response: {e}", self.name)))?;
+        let json: serde_json::Value = resp.json().map_err(|e| {
+            ProviderError::Fatal(format!("{}: unreadable response: {e}", self.name))
+        })?;
 
         json["text"]
             .as_str()
             .map(|s| s.trim().to_string())
-            .ok_or_else(|| ProviderError::Fatal(format!("{}: unexpected response shape", self.name)))
+            .ok_or_else(|| {
+                ProviderError::Fatal(format!("{}: unexpected response shape", self.name))
+            })
     }
 
     fn max_bytes(&self) -> Option<u64> {
@@ -112,7 +117,10 @@ impl TranscribeProvider for GroqTranscribe {
     }
 
     fn unavailable_reason(&self) -> String {
-        format!("{}: no API key (run `leo model login {}`)", self.name, self.name)
+        format!(
+            "{}: no API key (run `leo model login {}`)",
+            self.name, self.name
+        )
     }
 }
 

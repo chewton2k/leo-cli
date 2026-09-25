@@ -9,9 +9,9 @@ pub mod empty;
 pub mod help;
 pub mod hints;
 pub mod line;
-pub mod notes;
 pub mod markdown;
 pub mod menu;
+pub mod notes;
 pub mod preview;
 pub mod progress;
 pub mod settings;
@@ -150,9 +150,11 @@ pub fn layout_with_tabs(area: Rect, tabs: bool, focus: Pane) -> Frames {
         Shape::Two => {
             // Same reasoning without the dirs column: the list gets what it
             // needs and the note gets the rest.
-            let [notes, preview] =
-                Layout::horizontal([Constraint::Length(NOTES_WIDTH), Constraint::Min(PREVIEW_MIN)])
-                    .areas(body);
+            let [notes, preview] = Layout::horizontal([
+                Constraint::Length(NOTES_WIDTH),
+                Constraint::Min(PREVIEW_MIN),
+            ])
+            .areas(body);
             (empty, notes, preview)
         }
         Shape::One => match focus {
@@ -188,7 +190,11 @@ mod tests {
             let rows = f.tabs.height + f.notes.height + f.command.height + f.status.height;
             assert_eq!(rows, h, "{w}x{h}: rows do not sum to the height");
             assert_eq!(f.tabs.y, 0);
-            assert_eq!(f.status.y + f.status.height, h, "{w}x{h}: bottom row unused");
+            assert_eq!(
+                f.status.y + f.status.height,
+                h,
+                "{w}x{h}: bottom row unused"
+            );
 
             // Horizontal: the visible panes span the full width.
             let used = f.dirs.width + f.notes.width + f.preview.width;
@@ -234,7 +240,10 @@ mod tests {
         // The list keeps its fixed width and the note gets the rest.
         assert_eq!(f.notes.width + f.preview.width, 70);
         assert_eq!(f.notes.width, NOTES_WIDTH);
-        assert!(f.preview.width > f.notes.width, "the note pane is the smaller one");
+        assert!(
+            f.preview.width > f.notes.width,
+            "the note pane is the smaller one"
+        );
     }
 
     /// The pane showing the note must get the extra room, not the list of
@@ -262,7 +271,11 @@ mod tests {
     fn the_list_is_wide_enough_to_read() {
         let f = frames(120, 30, false);
         // Four columns for the number and a space, two for borders.
-        assert!(f.notes.width >= 30, "only {} columns for titles", f.notes.width);
+        assert!(
+            f.notes.width >= 30,
+            "only {} columns for titles",
+            f.notes.width
+        );
     }
 
     /// At the narrowest size the focused pane takes the screen, so everything
@@ -361,7 +374,7 @@ mod tests {
     }
 
     /// A short or narrow terminal must still produce a valid layout rather
-        /// than panicking on a negative remainder.
+    /// than panicking on a negative remainder.
     #[test]
     fn a_tiny_terminal_still_lays_out() {
         for (w, h) in [(20, 5), (40, 3), (10, 4), (200, 60)] {

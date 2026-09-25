@@ -90,7 +90,10 @@ fn line(trimmed: &str, indent: usize) -> TuiLine<'static> {
     if let Some(rest) = trimmed.strip_prefix("> ").or(trimmed.strip_prefix(">")) {
         let mut spans = vec![
             Span::raw(pad),
-            Span::styled(QUOTE_BAR.to_string(), Style::default().fg(theme::accent_muted())),
+            Span::styled(
+                QUOTE_BAR.to_string(),
+                Style::default().fg(theme::accent_muted()),
+            ),
             Span::raw(" "),
         ];
         spans.extend(inline(rest, Style::default().add_modifier(Modifier::DIM)));
@@ -133,10 +136,7 @@ fn line(trimmed: &str, indent: usize) -> TuiLine<'static> {
     if let Some((number, rest)) = ordered(trimmed) {
         let mut spans = vec![
             Span::raw(pad),
-            Span::styled(
-                format!("{number}. "),
-                Style::default().fg(theme::accent()),
-            ),
+            Span::styled(format!("{number}. "), Style::default().fg(theme::accent())),
         ];
         spans.extend(inline(rest, Style::default()));
         return TuiLine::from(spans);
@@ -165,7 +165,10 @@ fn heading_level(trimmed: &str) -> Option<usize> {
     let hashes = trimmed.chars().take_while(|c| *c == '#').count();
     // `#tag` is not a heading; a heading has a space after the hashes.
     let followed_by_space = trimmed[hashes..].starts_with(' ');
-    (1..=6).contains(&hashes).then_some(hashes).filter(|_| followed_by_space)
+    (1..=6)
+        .contains(&hashes)
+        .then_some(hashes)
+        .filter(|_| followed_by_space)
 }
 
 /// `---`, `***`, `___`, three or more, spaced or not.
@@ -408,7 +411,12 @@ mod tests {
     fn a_code_fence_is_hidden_and_its_contents_are_left_alone() {
         let lines = render("```rust\nlet x = **not bold**;\n```");
         // The language label, then the code. The fences themselves are gone.
-        assert_eq!(lines.len(), 2, "{:?}", lines.iter().map(text).collect::<Vec<_>>());
+        assert_eq!(
+            lines.len(),
+            2,
+            "{:?}",
+            lines.iter().map(text).collect::<Vec<_>>()
+        );
         assert_eq!(text(&lines[0]), "rust");
         assert!(
             text(&lines[1]).contains("**not bold**"),
