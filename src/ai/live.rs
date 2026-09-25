@@ -7,7 +7,7 @@
 //! condense loop turns the accumulated raw text into a few readable bullets.
 //!
 //! Only the scheduling and text-stitching decisions live here, as pure
-//! functions; the worker thread in [`crate::tui::task`] performs the effects.
+//! functions; the caller (the TUI's worker thread) performs the effects.
 
 use std::time::Duration;
 

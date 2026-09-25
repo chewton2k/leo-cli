@@ -186,3 +186,48 @@ pub fn expand_prompt(
     Ok(outcome.value.trim().to_string())
 }
 
+/// The real [`crate::action::Ai`], running the provider chains.
+pub struct RealAi;
+
+impl crate::action::Ai for RealAi {
+    fn expand_prompts(&self, body: &str, title: &str) -> Result<(String, usize)> {
+        expand_leo_prompts(body, title)
+    }
+    fn structure(&self, transcript: &str) -> Result<(String, String)> {
+        structure_notes(transcript)
+    }
+    fn structure_append(&self, transcript: &str, existing: &str) -> Result<String> {
+        structure_notes_append(transcript, existing)
+    }
+}
+
+/// Replace every `@leo` line with the model's answer, giving each one five
+/// lines of surrounding context plus the whole note for background. A prompt
+/// that fails to expand is left in place rather than dropped.
+pub fn expand_leo_prompts(body: &str, title: &str) -> Result<(String, usize)> {
+    let lines: Vec<&str> = body.lines().collect();
+    let mut result: Vec<String> = Vec::with_capacity(lines.len());
+    let mut count = 0;
+
+    for (i, &line) in lines.iter().enumerate() {
+        let Some(question) = crate::action::is_leo_prompt(line) else {
+            result.push(line.to_string());
+            continue;
+        };
+
+        let before = lines[i.saturating_sub(5)..i].join("\n");
+        let after_end = (i + 6).min(lines.len());
+        let after = lines[(i + 1)..after_end].join("\n");
+        let local_context = format!("{before}\n{after}");
+
+        match expand_prompt(question, &local_context, title, body) {
+            Ok(expansion) if !expansion.is_empty() => {
+                result.push(expansion);
+                count += 1;
+            }
+            _ => result.push(line.to_string()),
+        }
+    }
+
+    Ok((result.join("\n"), count))
+}

@@ -1,6 +1,5 @@
 //! Frontmatter and `@leo` prompts.
 
-use anyhow::Result;
 
 
 /// Parse an editor buffer's `---` frontmatter block into (title, tags, body).
@@ -53,35 +52,4 @@ pub fn is_leo_prompt(line: &str) -> Option<&str> {
     } else {
         Some(q)
     }
-}
-
-/// Replace every `@leo` line with the model's answer, giving each one five
-/// lines of surrounding context plus the whole note for background. A prompt
-/// that fails to expand is left in place rather than dropped.
-pub fn expand_leo_prompts(body: &str, title: &str) -> Result<(String, usize)> {
-    let lines: Vec<&str> = body.lines().collect();
-    let mut result: Vec<String> = Vec::with_capacity(lines.len());
-    let mut count = 0;
-
-    for (i, &line) in lines.iter().enumerate() {
-        let Some(question) = is_leo_prompt(line) else {
-            result.push(line.to_string());
-            continue;
-        };
-
-        let before = lines[i.saturating_sub(5)..i].join("\n");
-        let after_end = (i + 6).min(lines.len());
-        let after = lines[(i + 1)..after_end].join("\n");
-        let local_context = format!("{before}\n{after}");
-
-        match crate::ai::expand_prompt(question, &local_context, title, body) {
-            Ok(expansion) if !expansion.is_empty() => {
-                result.push(expansion);
-                count += 1;
-            }
-            _ => result.push(line.to_string()),
-        }
-    }
-
-    Ok((result.join("\n"), count))
 }

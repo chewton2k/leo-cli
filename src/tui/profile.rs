@@ -61,7 +61,7 @@ impl App {
             }
             A::EditConfig => {
                 let out = self
-                    .outside(terminal, || crate::run_config(action::ConfigAction::Edit))?;
+                    .outside(terminal, || crate::providers::config_file(crate::providers::ConfigAction::Edit))?;
                 if let Err(e) = out {
                     self.say(Kind::Bad, e.to_string());
                 }
@@ -234,7 +234,7 @@ impl App {
 
             // Removing a key needs no prompt, so it happens in place.
             event::KeyCode::Char('x') => {
-                let status = match crate::run_model(crate::action::ModelAction::Logout {
+                let status = match crate::providers::model(crate::providers::ModelAction::Logout {
                     name: name.clone(),
                 }) {
                     Ok(()) => format!("removed the key for {name}"),
@@ -245,7 +245,7 @@ impl App {
 
             event::KeyCode::Char('e') => {
                 let out = self.outside(terminal, || {
-                    crate::run_config(crate::action::ConfigAction::Edit)
+                    crate::providers::config_file(crate::providers::ConfigAction::Edit)
                 })?;
                 let status = match out {
                     Ok(()) => None,
@@ -273,7 +273,7 @@ impl App {
             settings::ProviderOp::Login => {
                 let target = name.to_string();
                 let out = self.outside(terminal, || {
-                    crate::run_model(crate::action::ModelAction::Login { name: target })
+                    crate::providers::model(crate::providers::ModelAction::Login { name: target })
                 })?;
                 let status = match out {
                     Ok(()) => format!("stored a key for {name}"),
@@ -291,7 +291,7 @@ impl App {
                     screen.status = Some(format!("testing {name}..."));
                 }
                 terminal.draw(|frame| self.draw(frame))?;
-                let status = match crate::test_provider(name) {
+                let status = match crate::providers::test_provider(name) {
                     Ok(report) => report,
                     Err(e) => format!("{name}: {e}"),
                 };

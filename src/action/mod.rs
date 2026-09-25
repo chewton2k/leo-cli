@@ -91,20 +91,6 @@ pub enum SyncAction {
     Status,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ModelAction {
-    List,
-    Test { name: String },
-    Login { name: String },
-    Logout { name: String },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ConfigAction {
-    Edit,
-    Path,
-}
-
 /// What parsing one input line produced.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Parsed {
@@ -289,21 +275,6 @@ pub trait Ai {
     fn structure(&self, transcript: &str) -> Result<(String, String)>;
     /// Turn a transcript into a body fragment to append to `existing`.
     fn structure_append(&self, transcript: &str, existing: &str) -> Result<String>;
-}
-
-/// The real implementation, delegating to the provider chains in `crate::ai`.
-pub struct RealAi;
-
-impl Ai for RealAi {
-    fn expand_prompts(&self, body: &str, title: &str) -> Result<(String, usize)> {
-        expand_leo_prompts(body, title)
-    }
-    fn structure(&self, transcript: &str) -> Result<(String, String)> {
-        crate::ai::structure_notes(transcript)
-    }
-    fn structure_append(&self, transcript: &str, existing: &str) -> Result<String> {
-        crate::ai::structure_notes_append(transcript, existing)
-    }
 }
 
 mod frontmatter;

@@ -37,7 +37,6 @@ use ratatui::{Frame, Terminal};
 
 use crate::action::{
     self, Action, ConfirmedAction, Ctx, Effect, Kind, Line, ListenRequest, Outcome, Parsed,
-    RealAi,
 };
 use crate::store::Store;
 use cmdline::{CmdLine, CmdOutcome};
@@ -1122,7 +1121,7 @@ impl App {
                 selected: self.numbering.get(self.note_sel).map(String::as_str),
                 marked: &[],
             },
-            &RealAi,
+            &crate::ai::RealAi,
         ) {
             Ok(o) => o,
             // A handler failure is a status-line message, never a crash.
@@ -1208,7 +1207,7 @@ impl App {
             }
 
             Effect::Edit(req) => self.suspend_with_store(terminal, |store| {
-                crate::shell::run_editor(store, req, &RealAi)
+                crate::shell::run_editor(store, req, &crate::ai::RealAi)
             }),
 
             Effect::Listen(req) => {
