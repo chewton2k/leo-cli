@@ -195,15 +195,5 @@ impl Note {
         }
         None
     }
-
-    /// Returns true if the query matches the title (case-insensitive).
-    pub fn matches_title(&self, query: &str) -> bool {
-        self.title.to_lowercase().contains(&query.to_lowercase())
-    }
-
-    /// Returns true if the query matches the title or body (case-insensitive).
-    pub fn matches_full_text(&self, query: &str) -> bool {
-        let q = query.to_lowercase();
-        self.title.to_lowercase().contains(&q) || self.body.to_lowercase().contains(&q)
-    }
 }
+

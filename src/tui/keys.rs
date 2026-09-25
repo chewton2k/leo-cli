@@ -59,8 +59,6 @@ pub enum Intent {
     ToggleLeftPane,
     /// Jump back to a recently visited note.
     JumpRecent,
-    /// Open the fuzzy finder overlay.
-    OpenFinder,
     /// Open the provider and settings screen.
     OpenSettings,
     ToggleHelp,
@@ -77,7 +75,8 @@ pub fn normal(key: KeyEvent, focus: Pane) -> Intent {
     // Control chords first: they must not be shadowed by the plain letters.
     if ctrl {
         return match key.code {
-            KeyCode::Char('p') => Intent::OpenFinder,
+            // Ctrl-P was a separate finder; search now covers everywhere.
+            KeyCode::Char('p') => Intent::OpenFilter,
             KeyCode::Char('s') => Intent::OpenSettings,
             KeyCode::Char('c') => Intent::Quit,
             KeyCode::Char('d') => Intent::ScrollDown,
@@ -178,7 +177,7 @@ mod tests {
             (key('e'), Intent::EditSelected),
             (key('?'), Intent::ToggleHelp),
             (code(KeyCode::Enter), Intent::Open),
-            (ctrl('p'), Intent::OpenFinder),
+            (ctrl('p'), Intent::OpenFilter),
             (ctrl('s'), Intent::OpenSettings),
         ];
         for (k, expected) in cases {

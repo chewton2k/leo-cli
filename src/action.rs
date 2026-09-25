@@ -41,9 +41,9 @@ pub enum Action {
         note: String,
         index: usize,
     },
+    /// The CLI's search. In the panes, `/` does the same thing live.
     Search {
         query: String,
-        full_text: bool,
     },
     Remind {
         text: String,
@@ -420,7 +420,6 @@ pub const VERBS: &[(&str, &[&str])] = &[
     ("delete", &["rm"]),
     ("rename", &[]),
     ("check", &["x"]),
-    ("search", &[]),
     ("tags", &[]),
     ("undo", &["u"]),
     ("remind", &[]),
@@ -455,7 +454,8 @@ pub const RETIRED: &[(&str, &str, &str)] = &[
     ("exp", ":export", ONE_NAME),
     ("move", ":mv", ONE_NAME),
     ("h", ":help", ONE_NAME),
-    ("find", ":search", ONE_NAME),
+    ("find", "/", ONE_SEARCH),
+    ("search", "/", ONE_SEARCH),
     ("expand", ":ask", ONE_NAME),
     ("uncheck", ":check", ONE_NAME),
     (
@@ -468,6 +468,7 @@ pub const RETIRED: &[(&str, &str, &str)] = &[
 ];
 
 const ONE_NAME: &str = "one name per command now, so there is less to learn";
+const ONE_SEARCH: &str = "one search now: / looks in every note, bodies and tags included";
 
 /// Every word that can start a command, canonical names and aliases alike.
 pub fn all_verb_words() -> Vec<&'static str> {
@@ -587,17 +588,6 @@ pub fn parse(line: &str) -> Parsed {
                     index,
                 }),
                 _ => Parsed::Usage("Checkbox number must be a positive integer.".to_string()),
-            }
-        }
-
-        "search" => {
-            let full_text = args.first().map(|s| s == "-f").unwrap_or(false);
-            let rest = if full_text { &args[1..] } else { args };
-            let query = rest.join(" ");
-            if query.is_empty() {
-                usage("search [-f] <query>")
-            } else {
-                act(Action::Search { query, full_text })
             }
         }
 
@@ -824,7 +814,7 @@ pub fn apply(
         Action::Edit { note } => Ok(edit(store, &note, ctx.numbering)),
         Action::Delete { note } => Ok(delete(store, &note, ctx.numbering)),
         Action::Check { note, index } => check(store, &note, index, ctx.numbering),
-        Action::Search { query, full_text } => Ok(search(store, &query, full_text)),
+        Action::Search { query } => Ok(search(store, &query)),
         Action::Remind { text } => remind(store, &text),
         Action::Listen { title, append_to, screen } => {
             Ok(listen(store, title, append_to, screen, ctx.current_dir))
@@ -948,8 +938,8 @@ fn check(store: &mut Store, note: &str, index: usize, numbering: &[String]) -> R
     }
 }
 
-fn search(store: &Store, query: &str, full_text: bool) -> Outcome {
-    let results = store.search(query, full_text);
+fn search(store: &Store, query: &str) -> Outcome {
+    let results = store.find(query);
     if results.is_empty() {
         return Outcome {
             selection: Some(Vec::new()),
@@ -1410,26 +1400,14 @@ pub fn numbering_for(store: &Store, dir: &str) -> Vec<String> {
         .collect()
 }
 
-/// The same numbering, narrowed to notes matching `query`.
-///
-/// Matches titles and tags rather than bodies: this runs on every keystroke, and
-/// a filter that suddenly matches a note whose title looks unrelated is more
-/// confusing than helpful. Full-text search is what `search -f` is for.
-///
-/// Case-insensitive, and a blank query matches everything, so an empty filter is
-/// the same as no filter.
+/// The numbering while a search is active: every matching note in every
+/// directory, ranked by [`Store::find`]. A blank query is no search, so it is
+/// the directory's ordinary listing.
 pub fn filtered_numbering(store: &Store, dir: &str, query: &str) -> Vec<String> {
-    let needle = query.trim().to_lowercase();
-    store
-        .list_notes_in_dir(dir, None, usize::MAX)
-        .iter()
-        .filter(|n| {
-            needle.is_empty()
-                || n.title.to_lowercase().contains(&needle)
-                || n.tags.iter().any(|t| t.to_lowercase().contains(&needle))
-        })
-        .map(|n| n.id.clone())
-        .collect()
+    if query.trim().is_empty() {
+        return numbering_for(store, dir);
+    }
+    store.find(query).iter().map(|n| n.id.clone()).collect()
 }
 
 // ── Frontmatter and @leo prompts ────────────────────────────────────────────
@@ -1724,18 +1702,15 @@ mod parse_tests {
         );
     }
 
+    /// There is one search, and it is `/`.
     #[test]
-    fn search_recognizes_the_full_text_flag() {
-        assert_eq!(
-            act("search rust"),
-            Action::Search { query: "rust".to_string(), full_text: false }
-        );
-        assert_eq!(
-            act("search -f rust"),
-            Action::Search { query: "rust".to_string(), full_text: true }
-        );
-        assert!(usage("search").contains("search"));
-        assert!(usage("search -f").contains("search"));
+    fn search_and_find_point_at_slash() {
+        for word in ["search rust", "find rust"] {
+            match parse(word) {
+                Parsed::Retired { replacement, .. } => assert_eq!(replacement, "/"),
+                other => panic!("{word:?} should be retired, got {other:?}"),
+            }
+        }
     }
 
     #[test]
@@ -2163,6 +2138,21 @@ mod handler_tests {
         assert!(out.text().contains("No notes yet"));
     }
 
+    /// The CLI's search is the same search as `/`: bodies included, no flag.
+    #[test]
+    fn search_looks_in_bodies() {
+        let (mut store, _d) = temp_store();
+        seed(&mut store, "Graphs", "BFS explores level by level", "");
+        let out = apply(
+            Action::Search { query: "explores".to_string() },
+            &mut store,
+            ctx("", &[]),
+            &FakeAi::default(),
+        )
+        .unwrap();
+        assert!(out.text().contains("Graphs"), "{}", out.text());
+    }
+
     #[test]
     fn search_renumbers_across_directories() {
         let (mut store, _d) = temp_store();
@@ -2170,7 +2160,7 @@ mod handler_tests {
         seed(&mut store, "Nested graphs", "b", "cs130");
 
         let out = apply(
-            Action::Search { query: "graphs".to_string(), full_text: false },
+            Action::Search { query: "graphs".to_string() },
             &mut store,
             ctx("", &[]),
             &FakeAi::default(),

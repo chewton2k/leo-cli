@@ -16,9 +16,12 @@ pub struct NoteRow {
     pub id: String,
     pub title: String,
     pub tags: Vec<String>,
+    /// The note's directory, when it is not the one being shown — a search
+    /// lists notes from everywhere, and a title alone would hide where they are.
+    pub elsewhere: Option<String>,
 }
 
-pub fn rows(notes: &[&Note]) -> Vec<NoteRow> {
+pub fn rows(notes: &[&Note], current_dir: &str) -> Vec<NoteRow> {
     notes
         .iter()
         .enumerate()
@@ -27,6 +30,7 @@ pub fn rows(notes: &[&Note]) -> Vec<NoteRow> {
             id: n.id.clone(),
             title: n.title.clone(),
             tags: n.tags.clone(),
+            elsewhere: (n.directory != current_dir).then(|| n.directory.clone()),
         })
         .collect()
 }
@@ -37,8 +41,12 @@ fn item(row: &NoteRow) -> ListItem<'static> {
             format!("{:>3} ", row.number),
             Style::default().add_modifier(Modifier::DIM),
         ),
-        Span::raw(row.title.clone()),
     ];
+    if let Some(dir) = &row.elsewhere {
+        let shown = if dir.is_empty() { "/".to_string() } else { format!("{dir}/") };
+        spans.push(Span::styled(shown, Style::default().add_modifier(Modifier::DIM)));
+    }
+    spans.push(Span::raw(row.title.clone()));
     if !row.tags.is_empty() {
         spans.push(Span::styled(
             format!("  [{}]", row.tags.join(", ")),
@@ -133,7 +141,7 @@ mod tests {
     #[test]
     fn a_filtered_pane_names_the_filter_in_its_title() {
         let a = note("Rust ownership", &[]);
-        let r = rows(&[&a]);
+        let r = rows(&[&a], "");
         let mut t = Terminal::new(TestBackend::new(48, 6)).unwrap();
         t.draw(|f| {
             render(
@@ -242,7 +250,7 @@ mod tests {
     fn rows_are_numbered_from_one() {
         let a = note("First", &[]);
         let b = note("Second", &["rust"]);
-        let r = rows(&[&a, &b]);
+        let r = rows(&[&a, &b], "");
         assert_eq!(r[0].number, 1);
         assert_eq!(r[1].number, 2);
         assert_eq!(r[1].tags, vec!["rust"]);
@@ -251,7 +259,7 @@ mod tests {
     #[test]
     fn renders_numbers_titles_and_tags() {
         let a = note("Rust ownership", &["rust", "learning"]);
-        let r = rows(&[&a]);
+        let r = rows(&[&a], "");
         let mut terminal = Terminal::new(TestBackend::new(50, 5)).unwrap();
         terminal.draw(|f| render(f, f.area(), &r, 0, true, &crate::tui::view::empty::Hint::no_notes(), None)).unwrap();
 
@@ -288,7 +296,7 @@ mod tests {
     #[test]
     fn a_title_longer_than_the_pane_does_not_panic() {
         let a = note(&"x".repeat(500), &[]);
-        let r = rows(&[&a]);
+        let r = rows(&[&a], "");
         let mut terminal = Terminal::new(TestBackend::new(20, 4)).unwrap();
         terminal.draw(|f| render(f, f.area(), &r, 0, true, &crate::tui::view::empty::Hint::no_notes(), None)).unwrap();
     }

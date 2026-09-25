@@ -109,7 +109,7 @@ Anything that takes an argument goes on the `:` line:
 
 ```
 :new Rust ownership        create a note
-:search borrow             find one
+/borrow                    find one, in any directory
 :mkdir cs130               make a directory
 :mv 2 cs130                move note 2 into it
 ```
@@ -294,7 +294,7 @@ mod tests {
     #[test]
     fn the_manual_covers_the_day_one_commands() {
         let body = manual_body();
-        for verb in ["new", "search", "mkdir", "mv", "listen", "ask", "sync", "export"] {
+        for verb in ["new", "/", "mkdir", "mv", "listen", "ask", "sync", "export"] {
             assert!(body.contains(verb), "the manual never mentions `{verb}`");
         }
         // And the keys someone needs before they find the help screen.

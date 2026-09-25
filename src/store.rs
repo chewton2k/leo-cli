@@ -453,14 +453,54 @@ impl Store {
         Some(described)
     }
 
-    /// Search notes. If `full_text` is false, only title is searched.
-    pub fn search(&self, query: &str, full_text: bool) -> Vec<&Note> {
-        self.notes
-            .iter()
-            .filter(|n| {
-                if full_text { n.matches_full_text(query) } else { n.matches_title(query) }
-            })
-            .collect()
+    /// The one search: every directory, titles, bodies and tags.
+    ///
+    /// Every word must appear somewhere in the note; a `#word` must be the start
+    /// of one of its tags, so a partly typed tag already narrows. Notes whose
+    /// title holds all the words come first, then other matches, then notes
+    /// whose title only fuzzy-matches (`grtrv` for "Graph traversals"). Newest
+    /// first within each group. Case never matters.
+    pub fn find(&self, query: &str) -> Vec<&Note> {
+        let query = query.to_lowercase();
+        let (tags, words): (Vec<&str>, Vec<&str>) =
+            query.split_whitespace().partition(|w| w.starts_with('#'));
+        let tags: Vec<&str> = tags.iter().map(|t| &t[1..]).filter(|t| !t.is_empty()).collect();
+
+        let mut matcher = nucleo::Matcher::new(nucleo::Config::DEFAULT);
+        let fuzzy = nucleo::pattern::Pattern::parse(
+            &words.join(" "),
+            nucleo::pattern::CaseMatching::Ignore,
+            nucleo::pattern::Normalization::Smart,
+        );
+
+        let mut ranked: Vec<(u8, &Note)> = Vec::new();
+        for note in &self.notes {
+            let note_tags: Vec<String> = note.tags.iter().map(|t| t.to_lowercase()).collect();
+            if !tags.iter().all(|t| note_tags.iter().any(|nt| nt.starts_with(t))) {
+                continue;
+            }
+            let title = note.title.to_lowercase();
+            let body = note.body.to_lowercase();
+            let in_title = words.iter().all(|w| title.contains(w));
+            let anywhere = words
+                .iter()
+                .all(|w| title.contains(w) || body.contains(w) || note_tags.iter().any(|t| t.contains(w)));
+            let group = if in_title {
+                0
+            } else if anywhere {
+                1
+            } else {
+                let mut buf = Vec::new();
+                let haystack = nucleo::Utf32Str::new(&note.title, &mut buf);
+                if fuzzy.score(haystack, &mut matcher).is_none() {
+                    continue;
+                }
+                2
+            };
+            ranked.push((group, note));
+        }
+        ranked.sort_by(|(ga, a), (gb, b)| ga.cmp(gb).then(b.updated_at.cmp(&a.updated_at)));
+        ranked.into_iter().map(|(_, n)| n).collect()
     }
 
     /// Return all tags with usage counts, sorted most-used first.
@@ -1024,6 +1064,67 @@ mod tests {
         (store, dir)
     }
 
+
+    // ── find ────────────────────────────────────────────────────────────────
+
+    fn titles(found: Vec<&Note>) -> Vec<String> {
+        found.iter().map(|n| n.title.clone()).collect()
+    }
+
+    fn store_for_find() -> (Store, tempfile::TempDir) {
+        let (mut store, d) = temp_store();
+        store.create_dir("cs130");
+        store.create_note("Rust ownership", "borrow checker rules", vec!["rust".into()], "").unwrap();
+        store.create_note("Graph traversals", "BFS explores level by level", vec![], "cs130").unwrap();
+        store.create_note("Lecture 4", "graphs: BFS, then DFS", vec!["exam".into()], "cs130").unwrap();
+        (store, d)
+    }
+
+    /// One search, everywhere: bodies and other directories included.
+    #[test]
+    fn find_looks_in_bodies_in_every_directory() {
+        let (store, _d) = store_for_find();
+        assert_eq!(titles(store.find("borrow")), vec!["Rust ownership"]);
+        let bfs = titles(store.find("bfs"));
+        assert_eq!(bfs.len(), 2, "{bfs:?}");
+    }
+
+    #[test]
+    fn a_title_match_ranks_ahead_of_a_body_match() {
+        let (store, _d) = store_for_find();
+        let found = titles(store.find("graph"));
+        assert_eq!(found, vec!["Graph traversals", "Lecture 4"]);
+    }
+
+    #[test]
+    fn every_word_has_to_match_somewhere() {
+        let (store, _d) = store_for_find();
+        assert_eq!(titles(store.find("bfs dfs")), vec!["Lecture 4"]);
+    }
+
+    #[test]
+    fn a_hash_word_means_a_tag() {
+        let (store, _d) = store_for_find();
+        assert_eq!(titles(store.find("#exam")), vec!["Lecture 4"]);
+        // Narrowed further by ordinary words.
+        assert!(store.find("#exam borrow").is_empty());
+        // A partly typed tag already narrows, since this runs on every keystroke.
+        assert_eq!(titles(store.find("#ex")), vec!["Lecture 4"]);
+    }
+
+    /// Fuzzy title matching, which the Ctrl-P finder used to offer, still finds
+    /// a note from a few letters of its title.
+    #[test]
+    fn a_few_letters_of_a_title_still_find_it() {
+        let (store, _d) = store_for_find();
+        assert_eq!(titles(store.find("grtrv")), vec!["Graph traversals"]);
+    }
+
+    #[test]
+    fn find_ignores_case() {
+        let (store, _d) = store_for_find();
+        assert_eq!(titles(store.find("RUST")), vec!["Rust ownership"]);
+    }
 
     /// The whole point: a deleted note comes back as it was, not as a copy.
     #[test]

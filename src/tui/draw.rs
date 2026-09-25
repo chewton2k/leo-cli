@@ -118,11 +118,6 @@ impl App {
             Mode::Confirm { prompt, .. } => {
                 view::help::render_confirm(frame, frame.area(), prompt)
             }
-            Mode::Find => {
-                if let Some(finder) = &self.finder {
-                    view::overlay::render(frame, frame.area(), finder);
-                }
-            }
             Mode::Settings => {
                 if let Some(screen) = &self.settings {
                     view::settings::render(

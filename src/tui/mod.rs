@@ -16,7 +16,6 @@ pub mod view;
 mod backup;
 mod draw;
 mod filter;
-mod finder;
 mod mouse;
 mod profile;
 mod pump;
@@ -45,7 +44,6 @@ use cmdline::{CmdLine, CmdOutcome};
 use crate::config::edit::Task;
 use complete::{Completion, NoteChoice, Sources};
 use task::{Job, TaskEvent};
-use view::overlay::{Choice, Finder};
 use view::settings::Row as SettingsRow;
 use keys::{Intent, Pane};
 use view::dirs::DirRow;
@@ -84,7 +82,6 @@ enum Mode {
     Command,
     Help,
     Confirm { prompt: String, on_yes: ConfirmedAction },
-    Find,
     Settings,
 }
 
@@ -127,7 +124,6 @@ pub struct App {
     completing: Option<Cycle>,
     /// Scroll offset for the help overlay.
     help_scroll: u16,
-    finder: Option<Finder>,
     /// The provider screen's rows and selection, live only while it is open.
     settings: Option<SettingsScreen>,
     /// Foreground work the user is waiting on, shown in the status line.
@@ -199,7 +195,6 @@ impl App {
             recording: None,
             completing: None,
             help_scroll: 0,
-            finder: None,
             settings: None,
             busy: None,
             repaint: false,
@@ -232,7 +227,7 @@ impl App {
             .iter()
             .filter_map(|id| self.store.find_note(id))
             .collect();
-        view::notes::rows(&notes)
+        view::notes::rows(&notes, &self.current_dir)
     }
 
     fn selected_id(&self) -> Option<&String> {
@@ -579,11 +574,6 @@ impl App {
                 Ok(())
             }
 
-            Mode::Find => {
-                self.mode = Mode::Find;
-                self.on_find_key(key)
-            }
-
             Mode::Settings => {
                 self.mode = Mode::Settings;
                 self.on_settings_key(key, terminal)
@@ -773,12 +763,6 @@ impl App {
                 Ok(())
             }
 
-            Intent::OpenFinder => {
-                self.finder = Some(Finder::open(self.all_note_choices()));
-                self.mode = Mode::Find;
-                Ok(())
-            }
-
             Intent::OpenSettings => {
                 self.open_settings(None);
                 Ok(())
@@ -790,9 +774,19 @@ impl App {
                 Ok(())
             }
 
+            // Esc also ends a search or a tag, leaving you on the note you
+            // picked — in its own directory, since results come from anywhere.
             Intent::Cancel => {
                 self.pinned = None;
                 self.mode = Mode::Normal;
+                let picked = self.selected_id().cloned();
+                if self.filter.take().is_some() {
+                    self.resync();
+                    match picked {
+                        Some(id) => self.jump_to(&id),
+                        None => self.note_sel = 0,
+                    }
+                }
                 Ok(())
             }
 
@@ -867,7 +861,7 @@ impl App {
                     // filter rather than inventing a second kind of narrowing —
                     // so Esc clears a tag the same way it clears a search.
                     LeftPane::Tags => {
-                        self.filter = Some(target.clone());
+                        self.filter = Some(format!("#{target}"));
                         self.note_sel = 0;
                         self.resync();
                         self.focus = Pane::Notes;
@@ -882,6 +876,26 @@ impl App {
             }
             Pane::Preview => Ok(()),
         }
+    }
+
+    /// Select a note by id, following it into its directory when it is not in
+    /// the current listing — which is where a search result from elsewhere
+    /// has to take you.
+    fn jump_to(&mut self, id: &str) {
+        let Some(dir) = self.store.find_note(id).map(|n| n.directory.clone()) else {
+            return;
+        };
+        if dir != self.current_dir {
+            self.current_dir = dir;
+            self.dir_sel = 0;
+            self.numbering = action::numbering_for(&self.store, &self.current_dir);
+        }
+        if let Some(pos) = self.numbering.iter().position(|n| n == id) {
+            self.note_sel = pos;
+        }
+        self.pinned = None;
+        self.preview_scroll = 0;
+        self.focus = Pane::Notes;
     }
 
     // ── running actions ─────────────────────────────────────────────────────

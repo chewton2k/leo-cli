@@ -80,13 +80,13 @@ enum Commands {
         force: bool,
     },
 
-    /// Search notes by title or body content
+    /// Search every note: titles, bodies, and #tags
     Search {
-        /// Search query
+        /// Search query; every word must match, and #word means a tag
         query: String,
 
-        /// Also search inside note bodies
-        #[arg(short, long)]
+        /// Accepted for old scripts. Bodies are always searched now.
+        #[arg(short, long, hide = true)]
         full_text: bool,
     },
 
@@ -298,7 +298,7 @@ fn run_command(cmd: Commands) -> Result<()> {
         Commands::View { id } => action::Action::View { note: id },
         Commands::Edit { id } => action::Action::Edit { note: id },
         Commands::Delete { id, .. } => action::Action::Delete { note: id },
-        Commands::Search { query, full_text } => action::Action::Search { query, full_text },
+        Commands::Search { query, .. } => action::Action::Search { query },
         Commands::Remind { text } => {
             // The subcommand takes the words as a Vec; parse the joined form so
             // `leo remind me to X` strips the same phrasing the shell does.

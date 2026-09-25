@@ -3,12 +3,12 @@
 //! A small, ordered set of recently opened notes, like an editor's list of open
 //! tabs. The point is the return trip: writing notes means going back and forth
 //! between two or three of them, and finding the same note again through the
-//! pane or the finder every time is the friction this removes.
+//! pane or a search every time is the friction this removes.
 
 use std::path::{Path, PathBuf};
 
 /// How many notes to remember. Small on purpose: a list long enough to need
-/// searching is a worse version of the finder, which already exists.
+/// searching is a worse version of `/`, which already exists.
 pub const CAPACITY: usize = 5;
 
 /// Recently opened note IDs, most recent first.

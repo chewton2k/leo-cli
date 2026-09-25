@@ -154,16 +154,6 @@ fn the_frame_renders_the_completed_command_with_its_hint() {
 }
 
 #[test]
-fn the_finder_lists_notes_from_every_directory() {
-    let (app, _d) = temp_app();
-    let choices = app.all_note_choices();
-    let labels: Vec<&str> = choices.iter().map(|c| c.label.as_str()).collect();
-    assert!(labels.contains(&"Rust ownership"), "{labels:?}");
-    // A note outside the current directory is labelled with its path.
-    assert!(labels.contains(&"cs130/Nested note"), "{labels:?}");
-}
-
-#[test]
 fn jumping_to_a_note_follows_it_into_its_directory() {
     let (mut app, _d) = temp_app();
     let nested = app
@@ -704,7 +694,7 @@ fn opening_a_tag_filters_the_notes_pane() {
     app.on_intent(Intent::ToggleLeftPane, &mut terminal).unwrap();
     app.on_intent(Intent::Open, &mut terminal).unwrap();
 
-    assert_eq!(app.filter.as_deref(), Some("rust"));
+    assert_eq!(app.filter.as_deref(), Some("#rust"));
     assert!(app.note_count() < all, "the tag did not narrow anything");
     assert_eq!(app.focus, Pane::Notes, "focus should follow the notes");
 
@@ -865,6 +855,63 @@ fn a_filter_that_matches_nothing_says_so() {
     let out = terminal.backend().to_string();
     assert!(out.contains("zzzz"), "the query is not shown: {out}");
     assert!(out.contains("Esc to clear"), "{out}");
+}
+
+/// One search, everywhere: `/` finds a note in another directory without
+/// having to go there first.
+#[test]
+fn slash_searches_every_directory() {
+    let (mut app, _d) = temp_app();
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 16)).unwrap();
+    assert_eq!(app.current_dir, "");
+
+    app.on_intent(Intent::OpenFilter, &mut terminal).unwrap();
+    for c in "nested".chars() {
+        app.on_key(press(c), &mut terminal).unwrap();
+    }
+    assert_eq!(app.note_count(), 1);
+    let id = app.selected_id().cloned().unwrap();
+    assert_eq!(app.store.find_note(&id).unwrap().directory, "cs130");
+
+    // And the row says where it lives, since it is not in the directory shown.
+    terminal.draw(|f| app.draw(f)).unwrap();
+    let out = terminal.backend().to_string();
+    assert!(out.contains("cs130/"), "{out}");
+}
+
+/// After a search, Esc clears it and leaves you on the note you picked — in its
+/// own directory — rather than back where you started.
+#[test]
+fn esc_after_a_search_lands_on_the_selected_note() {
+    let (mut app, _d) = temp_app();
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 16)).unwrap();
+
+    app.on_intent(Intent::OpenFilter, &mut terminal).unwrap();
+    for c in "nested".chars() {
+        app.on_key(press(c), &mut terminal).unwrap();
+    }
+    app.on_key(press_code(event::KeyCode::Enter), &mut terminal).unwrap();
+    let picked = app.selected_id().cloned().unwrap();
+
+    app.on_key(press_code(event::KeyCode::Esc), &mut terminal).unwrap();
+    assert!(app.filter.is_none(), "Esc did not clear the search");
+    assert_eq!(app.current_dir, "cs130");
+    assert_eq!(app.selected_id(), Some(&picked));
+}
+
+/// A tag opened from the left pane clears the same way.
+#[test]
+fn esc_clears_a_tag() {
+    let (mut app, _d) = temp_app();
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 16)).unwrap();
+    app.on_intent(Intent::ToggleLeftPane, &mut terminal).unwrap();
+    app.on_intent(Intent::Open, &mut terminal).unwrap();
+    assert!(app.filter.is_some());
+    app.on_key(press_code(event::KeyCode::Esc), &mut terminal).unwrap();
+    assert!(app.filter.is_none());
 }
 
 /// Case must not matter, or the filter is a guessing game.

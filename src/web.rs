@@ -159,7 +159,6 @@ struct ListParams {
 #[derive(Deserialize)]
 struct SearchParams {
     q: Option<String>,
-    full_text: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -352,8 +351,7 @@ async fn search_notes(
     if q.is_empty() {
         return Json(vec![]);
     }
-    let full_text = params.full_text.unwrap_or(false);
-    let results = store.search(&q, full_text);
+    let results = store.find(&q);
     Json(results.iter().map(|n| NoteResponse::from_note(n)).collect())
 }
 
