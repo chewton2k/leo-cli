@@ -1,0 +1,73 @@
+name: Release
+
+# Push a tag like v0.2.0 to build leo for each platform and publish a GitHub
+# release the install script downloads from.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          # 22.04 rather than latest: a binary built against an older glibc
+          # runs on more Linux systems.
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-22.04-arm
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Package
+        shell: bash
+        run: |
+          name="leo-${{ matrix.target }}.tar.gz"
+          tar -czf "$name" -C "target/${{ matrix.target }}/release" leo
+          if command -v shasum >/dev/null; then
+            shasum -a 256 "$name" > "$name.sha256"
+          else
+            sha256sum "$name" > "$name.sha256"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: leo-${{ matrix.target }}
+          path: leo-${{ matrix.target }}.tar.gz*
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/*
+            install.sh

@@ -25,7 +25,7 @@ local-ip-address = "0.6"
 nucleo = "0.5"
 qrcode = "0.14"
 ratatui = "0.30"
-reqwest = { version = "0.12", features = ["blocking", "json", "multipart"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "multipart", "rustls-tls"] }
 rpassword = "7"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

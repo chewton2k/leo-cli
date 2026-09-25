@@ -355,6 +355,18 @@ mod tests {
         assert_eq!(finish_reason("[DONE]"), None);
     }
 
+    /// leo speaks HTTPS through rustls with bundled root certificates, so a
+    /// release binary does not depend on the system's OpenSSL. Run by hand:
+    /// `cargo test -p leo-services tls -- --ignored`.
+    #[test]
+    #[ignore = "reaches the network"]
+    fn tls_reaches_a_public_https_endpoint() {
+        let status = reqwest::blocking::get("https://openrouter.ai/api/v1/models")
+            .expect("an HTTPS connection")
+            .status();
+        assert!(status.is_success(), "{status}");
+    }
+
     #[test]
     fn unavailable_reason_never_contains_the_key_value() {
         let store = MemoryStore::default();

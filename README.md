@@ -26,31 +26,42 @@ optional.
 
 ## 1. Install leo
 
-**You need:** Rust 1.88 or newer, and git.
+On a Mac or Linux, paste this into a terminal:
 
-1. If you don't have Rust, install it from [rustup.rs](https://rustup.rs) (or
-   `brew install rust` on a Mac).
-2. Get the code and install it:
+```sh
+curl -fsSL https://raw.githubusercontent.com/chewton2k/leo-cli/main/install.sh | sh
+```
 
-   ```sh
-   git clone https://github.com/chewton2k/leo-cli
-   cd leo-cli
-   cargo install --path .
-   ```
+It downloads the ready-made leo for your computer, puts it in `~/.local/bin`,
+and adds that to your PATH for every future terminal. Then open a new terminal
+and run:
 
-3. Check it worked:
+```sh
+leo setup
+```
 
-   ```sh
-   leo setup
-   ```
+`leo setup` lists what works on this machine, what is missing, and the command
+that installs each missing piece. Run it again any time something seems off.
 
-   `leo setup` lists what works on this machine, what is missing, and the command
-   that installs each missing piece. Run it again any time something seems off.
+**To update leo**, run the same install command again. **To uninstall**, delete
+`~/.local/bin/leo`; your notes are never touched.
 
-**If your shell says `leo: command not found`**, Cargo's bin directory is not on
-your PATH. Typing `export PATH=...` into the terminal only lasts until you close
-it, so add it to the file your shell reads at startup. `echo $SHELL` shows which
-shell you have:
+### Or build it from source
+
+If there is no ready-made build for your computer, or you want to change leo,
+you need Rust 1.88 or newer ([rustup.rs](https://rustup.rs), or
+`brew install rust`) and git:
+
+```sh
+git clone https://github.com/chewton2k/leo-cli
+cd leo-cli
+cargo install --path .
+```
+
+That installs leo to `~/.cargo/bin`. **If your shell then says
+`leo: command not found`**, that directory is not on your PATH. Typing
+`export PATH=...` into the terminal only lasts until you close it, so add it to
+the file your shell reads at startup (`echo $SHELL` shows which shell you have):
 
 ```sh
 # zsh (the default on Macs):
@@ -67,14 +78,7 @@ If it still says "command not found", check that leo was installed:
 `ls ~/.cargo/bin/leo` should list a file. If it does not, run
 `cargo install --path .` again and look for an error at the end.
 
-**To update leo later**, pull the latest code and reinstall:
-
-```sh
-git pull
-cargo install --path . --force
-```
-
-Uninstalling (`cargo uninstall leo`) never touches your notes.
+To update a source install, `git pull` and run `cargo install --path . --force`.
 
 ---
 
@@ -493,6 +497,11 @@ and the compiler enforces that:
 `cargo test` from the root runs every crate's unit tests plus the end-to-end
 tests in `tests/`, which run the real `leo` binary against a throwaway
 `LEO_HOME`. Nothing touches the network, your notes or your keychain.
+
+Pushing a tag like `v0.2.0` runs `.github/workflows/release.yml`, which builds
+leo for Apple Silicon and Intel Macs and for x86 and ARM Linux, and publishes
+them with checksums as a GitHub release; `install.sh` downloads from the latest
+one.
 
 CI (`.github/workflows/ci.yml`) runs the tests on Linux and macOS, plus
 `cargo fmt --check`, `cargo clippy -D warnings`, and a check against the
