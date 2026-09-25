@@ -265,15 +265,16 @@ async fn create_note(
     let mut store = state.store.lock().unwrap();
     let tags = body.tags.unwrap_or_default();
     let note_body = body.body.unwrap_or_default();
-    let dir = body.directory.unwrap_or_default();
-    match store.create_note(body.title, note_body, tags, &dir) {
-        Ok(n) => {
-            let resp = NoteResponse::from_note(n);
-            let _ = store.save();
-            Ok((StatusCode::CREATED, Json(resp)))
-        }
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    let dir = body.directory.unwrap_or_default().trim_matches('/').to_string();
+    if !store.dir_exists(&dir) {
+        store.create_dir(&dir);
     }
+    let resp = match store.create_note(body.title, note_body, tags, &dir) {
+        Ok(n) => NoteResponse::from_note(n),
+        Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
+    };
+    store.save().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok((StatusCode::CREATED, Json(resp)))
 }
 
 async fn update_note(
@@ -296,7 +297,7 @@ async fn update_note(
     note.updated_at = chrono::Utc::now();
 
     let resp = NoteResponse::from_note(note);
-    let _ = store.save();
+    store.save().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(resp))
 }
 
@@ -305,11 +306,14 @@ async fn delete_note(
     Path(id): Path<String>,
 ) -> StatusCode {
     let mut store = state.store.lock().unwrap();
-    if store.delete_note(&id) {
-        let _ = store.save();
-        StatusCode::NO_CONTENT
-    } else {
-        StatusCode::NOT_FOUND
+    // Exactly one note: a prefix shared by several must not delete them all.
+    let Some(full) = store.find_note(&id).map(|n| n.id.clone()) else {
+        return StatusCode::NOT_FOUND;
+    };
+    store.delete_notes(&[full]);
+    match store.save() {
+        Ok(()) => StatusCode::NO_CONTENT,
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
 
@@ -324,7 +328,7 @@ async fn toggle_checkbox(
         .ok_or(StatusCode::NOT_FOUND)?;
     let note = store.find_note(&id).ok_or(StatusCode::NOT_FOUND)?;
     let resp = NoteResponse::from_note(note);
-    let _ = store.save();
+    store.save().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(resp))
 }
 
@@ -335,10 +339,13 @@ async fn move_note(
 ) -> Result<Json<NoteResponse>, StatusCode> {
     let mut store = state.store.lock().unwrap();
     let dir = body.directory.trim_matches('/');
+    if !store.dir_exists(dir) {
+        return Err(StatusCode::NOT_FOUND);
+    }
     store.move_note(&id, dir).ok_or(StatusCode::NOT_FOUND)?;
     let note = store.find_note(&id).ok_or(StatusCode::NOT_FOUND)?;
     let resp = NoteResponse::from_note(note);
-    let _ = store.save();
+    store.save().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(resp))
 }
 
@@ -381,9 +388,69 @@ async fn create_dir(
 ) -> StatusCode {
     let mut store = state.store.lock().unwrap();
     if store.create_dir(&body.path) {
-        let _ = store.save();
-        StatusCode::CREATED
+        match store.save() {
+            Ok(()) => StatusCode::CREATED,
+            Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        }
     } else {
         StatusCode::CONFLICT
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<String>) {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::load_from(&dir.path().join("notes")).unwrap();
+        let ids = notes
+            .iter()
+            .map(|(title, d)| store.create_note(*title, "", vec![], d).unwrap().id.clone())
+            .collect();
+        store.save().unwrap();
+        let state = AppState { store: Arc::new(Mutex::new(store)), token: String::new() };
+        (state, dir, ids)
+    }
+
+    fn run<F: std::future::Future>(f: F) -> F::Output {
+        tokio::runtime::Runtime::new().unwrap().block_on(f)
+    }
+
+    /// An ID prefix shared by several notes must not delete all of them.
+    #[test]
+    fn deleting_by_an_ambiguous_prefix_deletes_nothing() {
+        let (state, _d, _ids) = state_with(&[("A", ""), ("B", "")]);
+        let prefix = {
+            let mut store = state.store.lock().unwrap();
+            let first = store.notes[0].id.clone();
+            store.notes[1].id = format!("{first}x");
+            first
+        };
+        let status = run(delete_note(State(state.clone()), Path(prefix)));
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(state.store.lock().unwrap().notes.len(), 2);
+    }
+
+    #[test]
+    fn creating_a_note_in_a_new_directory_registers_it() {
+        let (state, _d, _ids) = state_with(&[]);
+        let body = CreateBody {
+            title: "Lecture".to_string(),
+            body: None,
+            tags: None,
+            directory: Some("cs162".to_string()),
+        };
+        run(create_note(State(state.clone()), Json(body))).ok().unwrap();
+        assert!(state.store.lock().unwrap().dir_exists("cs162"));
+    }
+
+    #[test]
+    fn moving_to_a_missing_directory_is_refused() {
+        let (state, _d, ids) = state_with(&[("A", "")]);
+        let body = MoveBody { directory: "nowhere".to_string() };
+        let out = run(move_note(State(state.clone()), Path(ids[0].clone()), Json(body)));
+        assert_eq!(out.err(), Some(StatusCode::NOT_FOUND));
+        assert_eq!(state.store.lock().unwrap().find_note(&ids[0]).unwrap().directory, "");
     }
 }
