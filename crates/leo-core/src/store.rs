@@ -64,14 +64,12 @@ fn parse_note_from_markdown(content: &str, relative_path: &Path) -> Result<Note>
 
 /// notes directory: ~/Library/Application Support/leo/notes  (macOS)
 fn notes_dir_path() -> Result<PathBuf> {
-    let base = dirs::data_dir().context("Could not determine user data directory")?;
-    Ok(base.join("leo").join("notes"))
+    Ok(crate::paths::data_dir()?.join("notes"))
 }
 
 /// Legacy notes.json path — used only for migration detection.
 fn old_data_path() -> Result<PathBuf> {
-    let base = dirs::data_dir().context("Could not determine user data directory")?;
-    Ok(base.join("leo").join("notes.json"))
+    Ok(crate::paths::data_dir()?.join("notes.json"))
 }
 
 fn load_directories(notes_dir: &Path) -> Result<Vec<String>> {

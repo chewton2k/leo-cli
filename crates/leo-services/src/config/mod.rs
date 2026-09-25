@@ -313,9 +313,7 @@ model = "Systran/faster-whisper-small"
     /// directory: notes are git-synced by sync.rs, and this file holds
     /// machine-local values (ports, model paths).
     pub fn config_path() -> Result<std::path::PathBuf> {
-        let dir = dirs::config_dir()
-            .context("could not determine a config directory for this platform")?;
-        Ok(dir.join("leo").join("config.toml"))
+        Ok(leo_core::paths::config_dir()?.join("config.toml"))
     }
 
     /// Load from the standard path. Never fails: a missing or malformed file

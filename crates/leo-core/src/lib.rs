@@ -6,5 +6,6 @@ pub mod action;
 pub mod diag;
 pub mod manual;
 pub mod notes;
+pub mod paths;
 pub mod store;
 pub mod sync;
