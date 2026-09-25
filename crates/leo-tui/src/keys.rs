@@ -112,8 +112,7 @@ pub fn normal(key: KeyEvent, focus: Pane) -> Intent {
         KeyCode::Char('a') => Intent::AskSelected,
         KeyCode::Char('R') => Intent::Record,
         KeyCode::Char('D') => Intent::DeleteSelected,
-        // Commands start with `/`; `:` opens the same line for vim hands.
-        KeyCode::Char('/') | KeyCode::Char(':') => Intent::OpenCommand { seed: "" },
+        KeyCode::Char('/') => Intent::OpenCommand { seed: "" },
         KeyCode::Char('f') => Intent::OpenFilter,
         KeyCode::Char('?') => Intent::ToggleHelp,
         KeyCode::Esc => Intent::Cancel,
@@ -213,18 +212,15 @@ mod tests {
         assert_eq!(normal(key(' '), Pane::Preview), Intent::ScrollDown);
     }
 
-    /// Commands start with `/`, the way they do in chat apps; `:` still opens
-    /// the same line for anyone with it in their fingers. Search is `f`.
+    /// Commands start with `/`, the way they do in chat apps. There is one way
+    /// in, so `:` does nothing. Search is `f`.
     #[test]
     fn slash_starts_a_command_and_f_finds() {
         assert_eq!(
             normal(key('/'), Pane::Notes),
             Intent::OpenCommand { seed: "" }
         );
-        assert_eq!(
-            normal(key(':'), Pane::Notes),
-            Intent::OpenCommand { seed: "" }
-        );
+        assert_eq!(normal(key(':'), Pane::Notes), Intent::Nothing);
         assert_eq!(normal(key('f'), Pane::Notes), Intent::OpenFilter);
         assert_eq!(normal(ctrl('f'), Pane::Notes), Intent::OpenFilter);
     }

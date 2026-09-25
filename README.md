@@ -383,7 +383,7 @@ unique part of its title.
 | `Tab` | Back to a recently visited note |
 | `R` | Record |
 | `a` | Answer the note's `@leo` questions |
-| `/` | Command line (`:` works too) |
+| `/` | Command line |
 | `Ctrl-S` | Profile: AI providers, keys, colour, backup |
 | `?` / `q` | Help / quit |
 

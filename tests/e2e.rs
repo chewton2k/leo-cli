@@ -128,10 +128,14 @@ fn has_git() -> bool {
 fn help_lists_the_everyday_commands_and_hides_the_old_ones() {
     let leo = Leo::new();
     let help = leo.ok(&["--help"]);
-    for cmd in ["new", "list", "search", "listen", "setup", "sync", "serve"] {
+    for cmd in [
+        "new", "list", "search", "listen", "setup", "doctor", "sync", "serve",
+    ] {
         assert!(help.contains(cmd), "help lacks {cmd}:\n{help}");
     }
-    assert!(!help.contains("doctor"), "{help}");
+    for old in ["model", "config"] {
+        assert!(!help.contains(&format!("  {old} ")), "{help}");
+    }
 }
 
 #[test]
@@ -327,12 +331,14 @@ fn setup_reports_without_asking_when_nobody_is_there_to_answer() {
 }
 
 #[test]
-fn the_old_setup_commands_still_work() {
+fn the_old_setup_aliases_are_gone() {
     let leo = Leo::new();
-    leo.ok(&["doctor"]);
-    leo.ok(&["model", "list"]);
-    let path = leo.ok(&["config", "path"]);
-    assert!(path.trim().ends_with("config.toml"), "{path}");
+    for old in [&["model", "list"][..], &["config", "path"], &["env"]] {
+        assert!(
+            !leo.cmd(old).output().unwrap().status.success(),
+            "{old:?} still works"
+        );
+    }
 }
 
 // ── backup ──────────────────────────────────────────────────────────────────

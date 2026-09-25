@@ -17,7 +17,6 @@ use crate::config::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModelAction {
     List,
-    Test { name: String },
     Login { name: String },
     Logout { name: String },
 }
@@ -26,7 +25,6 @@ pub enum ModelAction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigAction {
     Edit,
-    Path,
 }
 
 /// Describe where a provider's credential comes from — never what it is.
@@ -197,14 +195,6 @@ pub fn model(command: ModelAction) -> Result<()> {
             Ok(())
         }
 
-        ModelAction::Test { name } => {
-            match test_provider(&name) {
-                Ok(report) => println!("  {} {report}", "ok".green()),
-                Err(e) => println!("  {} {name}: {e}", "failed".red()),
-            }
-            Ok(())
-        }
-
         ModelAction::Login { name } => {
             if cfg.provider(&name).is_none() {
                 println!(
@@ -259,10 +249,6 @@ pub fn model(command: ModelAction) -> Result<()> {
 
 pub fn config_file(command: ConfigAction) -> Result<()> {
     match command {
-        ConfigAction::Path => {
-            println!("{}", Config::config_path()?.display());
-            Ok(())
-        }
         ConfigAction::Edit => {
             let (path, created) = Config::ensure_exists()?;
             if created {

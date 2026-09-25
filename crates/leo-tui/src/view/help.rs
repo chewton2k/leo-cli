@@ -109,10 +109,7 @@ pub const SECTIONS: &[Section] = &[
     Section {
         title: "The / line",
         entries: &[
-            e(
-                "/",
-                "start a command; the commands are listed below (: works too)",
-            ),
+            e("/", "start a command; the commands are listed below"),
             e("Tab", "complete verbs, notes, dirs, tags"),
             e("Up / Down", "previous commands"),
             e("Ctrl-W / Ctrl-U", "delete a word / the line"),

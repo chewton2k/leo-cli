@@ -70,13 +70,9 @@ pub fn run(cmd: Commands) -> Result<()> {
         },
         Commands::Ask { id } => action::Action::Ask { note: id },
 
-        Commands::Serve { .. }
-        | Commands::Setup
-        | Commands::Doctor
-        | Commands::Env
-        | Commands::Sync { .. }
-        | Commands::Model { .. }
-        | Commands::Config { .. } => unreachable!("handled in main()"),
+        Commands::Serve { .. } | Commands::Setup | Commands::Doctor | Commands::Sync { .. } => {
+            unreachable!("handled in main()")
+        }
     };
 
     let outcome = action::apply(

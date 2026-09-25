@@ -218,12 +218,9 @@ pub fn strip_leo_prefix(tokens: &mut Vec<String>) {
 
 /// Parse one command line into an [`Action`].
 pub fn parse(line: &str) -> Parsed {
-    // The prompt shows `/` already; a typed one, or a `:` from habit, is noise.
+    // The prompt shows `/` already; typing another is noise.
     let line = line.trim();
-    let line = line
-        .strip_prefix('/')
-        .or_else(|| line.strip_prefix(':'))
-        .unwrap_or(line);
+    let line = line.strip_prefix('/').unwrap_or(line);
     let mut tokens = tokenize(line.trim());
     if tokens.is_empty() {
         return Parsed::Empty;
@@ -426,7 +423,7 @@ mod parse_tests {
                     assert_eq!(replacement, *instead);
                     assert_eq!(said, *why);
                     assert!(!why.is_empty(), "{alias} retires without a reason");
-                    // A `:` replacement has to be something that actually parses.
+                    // A `/` replacement has to be something that actually parses.
                     if let Some(command) = instead.strip_prefix('/') {
                         assert!(
                             !matches!(parse(command), Parsed::Unknown(_) | Parsed::Retired { .. }),
@@ -555,12 +552,11 @@ mod parse_tests {
         }
     }
 
-    /// The prompt already shows `/`, but typing it again — or a `:` from habit —
-    /// must not turn the command into an unknown one.
+    /// The prompt already shows `/`, but typing it again must not turn the
+    /// command into an unknown one.
     #[test]
-    fn a_typed_slash_or_colon_prefix_is_ignored() {
+    fn a_typed_slash_prefix_is_ignored() {
         assert_eq!(act("/edit 1"), act("edit 1"));
-        assert_eq!(act(":edit 1"), act("edit 1"));
     }
 
     /// There is one search, and it is `f`.

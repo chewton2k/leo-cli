@@ -12,8 +12,6 @@ use std::io::IsTerminal;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use leo_services::providers;
-
 /// leo — notes for programmers.
 /// Run with no arguments to enter the interactive terminal.
 #[derive(Parser)]
@@ -117,82 +115,14 @@ enum Commands {
     /// See what works here, and fix what does not: AI keys, recording, backup
     Setup,
 
-    /// The report half of `setup`, without the questions.
-    #[command(hide = true)]
+    /// A full health scan: leo itself, your notes, the AI, recording, and backup
     Doctor,
-
-    /// Retired. Use `leo model login`, which stores keys for you.
-    #[command(hide = true)]
-    Env,
 
     /// Back up your notes to git: pull, then push. Sets backup up the first time.
     Sync {
         #[command(subcommand)]
         command: Option<SyncCommands>,
     },
-
-    /// Inspect, test, and authenticate AI model providers
-    #[command(hide = true)]
-    Model {
-        #[command(subcommand)]
-        command: ModelCommands,
-    },
-
-    /// Open or show the leo model config file
-    #[command(hide = true)]
-    Config {
-        #[command(subcommand)]
-        command: ConfigCommands,
-    },
-}
-
-#[derive(Subcommand)]
-enum ModelCommands {
-    /// Show configured chains, reachability, and credential status
-    List,
-    /// Send one minimal request to a provider to check it works
-    Test {
-        /// Provider name from your config
-        name: String,
-    },
-    /// Store a provider's API key (kept in a file only you can read)
-    Login {
-        /// Provider name from your config
-        name: String,
-    },
-    /// Remove a provider's stored API key
-    Logout {
-        /// Provider name from your config
-        name: String,
-    },
-}
-
-#[derive(Subcommand)]
-enum ConfigCommands {
-    /// Open config.toml in $EDITOR, creating it if absent
-    Edit,
-    /// Print the path to config.toml
-    Path,
-}
-
-impl From<ModelCommands> for providers::ModelAction {
-    fn from(c: ModelCommands) -> Self {
-        match c {
-            ModelCommands::List => providers::ModelAction::List,
-            ModelCommands::Test { name } => providers::ModelAction::Test { name },
-            ModelCommands::Login { name } => providers::ModelAction::Login { name },
-            ModelCommands::Logout { name } => providers::ModelAction::Logout { name },
-        }
-    }
-}
-
-impl From<ConfigCommands> for providers::ConfigAction {
-    fn from(c: ConfigCommands) -> Self {
-        match c {
-            ConfigCommands::Edit => providers::ConfigAction::Edit,
-            ConfigCommands::Path => providers::ConfigAction::Path,
-        }
-    }
 }
 
 #[derive(Subcommand)]
@@ -219,20 +149,9 @@ pub fn run(cli: Cli) -> Result<()> {
         Some(Commands::Serve { port }) => {
             tokio::runtime::Runtime::new()?.block_on(leo_web::serve(port))
         }
-        // Kept only so the name explains itself instead of erroring. It used to
-        // write a plaintext `.env`, whose vars take precedence over the
-        // keychain — so a file made months ago could silently shadow a key
-        // stored the recommended way.
-        Some(Commands::Env) => {
-            println!("  `leo env` is gone: `leo setup` stores keys for you.");
-            println!("  Env vars still work and still take precedence, for CI.");
-            Ok(())
-        }
         Some(Commands::Setup) => setup::run(),
         Some(Commands::Doctor) => setup::doctor(),
         Some(Commands::Sync { command }) => sync::run(command),
-        Some(Commands::Model { command }) => providers::model(command.into()),
-        Some(Commands::Config { command }) => providers::config_file(command.into()),
         None => {
             if std::io::stdin().is_terminal() {
                 leo_tui::run()
@@ -262,12 +181,14 @@ mod cli_tests {
             Cli::try_parse_from(["leo", "sync"]).unwrap().command,
             Some(Commands::Sync { command: None })
         ));
+        assert!(Cli::try_parse_from(["leo", "doctor"]).is_ok());
+        // The hidden aliases are gone: setup and Ctrl-S cover them.
         for old in [
-            &["leo", "doctor"][..],
-            &["leo", "model", "list"],
+            &["leo", "model", "list"][..],
             &["leo", "config", "path"],
+            &["leo", "env"],
         ] {
-            assert!(Cli::try_parse_from(old).is_ok(), "{old:?} stopped parsing");
+            assert!(Cli::try_parse_from(old).is_err(), "{old:?} still parses");
         }
     }
 
@@ -277,7 +198,11 @@ mod cli_tests {
         use clap::CommandFactory;
         let help = Cli::command().render_help().to_string();
         assert!(help.contains("setup"), "{help}");
-        for hidden in ["doctor", "model", "config"] {
+        assert!(
+            help.contains("doctor"),
+            "the health scan is not listed:\n{help}"
+        );
+        for hidden in ["model", "config"] {
             assert!(
                 !help.contains(&format!("  {hidden} ")),
                 "{hidden} is still listed:\n{help}"
