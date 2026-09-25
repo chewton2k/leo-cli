@@ -2,521 +2,159 @@
 
 > Notes for programmers — fast, local, plain-text, AI-powered.
 
-`leo` is a lightweight note manager that lives entirely in your terminal. No Electron app, no subscription. Just run `leo` and start typing. With built-in AI features, leo can record lectures, transcribe speech into structured notes, answer inline questions, and sync your notes to GitHub.
+`leo` is a note manager that lives in your terminal. Your notes are Markdown
+files on disk. It can also record a lecture and turn it into notes while you
+type the points that matter, answer questions written inside a note, and back
+everything up to GitHub.
 
-## Install and Setup
+## Install
 
 ```sh
 git clone https://github.com/you/leo
 cd leo
 cargo install --path .
+leo setup
 ```
 
-### Setup
+`leo setup` tells you what works on this machine, what is missing and the
+command that installs it, and offers to store an API key. Run it again whenever
+something seems off.
 
-`leo` works with no API keys at all if you run models locally:
+If `leo` is not found after installing, add Cargo's bin directory to your PATH:
+`export PATH="$HOME/.cargo/bin:$PATH"` in `~/.zshrc` or `~/.bashrc`.
 
-```sh
-brew install ollama whisper-cpp
-ollama pull qwen3:8b
-```
+Reinstall after changes with `cargo install --path . --force`. Uninstalling
+(`cargo uninstall leo`) never touches your notes.
 
-Otherwise, store a key once and leo remembers it:
+## Using it
 
-```sh
-leo model login openrouter   # free models via openrouter/free
-leo model login groq         # free Whisper transcription
-leo model list               # check what's configured
-```
-
-`leo model login` reads the key with echo disabled, so it never appears on screen
-or in your shell history. `leo model list` reports only whether a key is stored,
-never the key itself.
-
-Keys are kept in `credentials.json` beside your config, with mode `0600` in a
-`0700` directory — readable by your account and nothing else. leo does **not**
-use the macOS keychain by default, and that is deliberate: a keychain item
-records which binary created it and asks permission whenever a different one
-reads it, so every `cargo install` brought the dialog back, once per provider,
-with no way to answer it for good.
-
-The trade-off, stated plainly: the file is not encrypted, so anything running as
-you can read it. That is the same arrangement as `~/.aws/credentials` and `gh`'s
-token file, and on macOS FileVault still encrypts it at rest. If you would rather
-have encryption at rest and do not mind the prompts, set `LEO_USE_KEYCHAIN=1`.
-If you would rather store nothing at all, use env vars — they take precedence
-over both.
-
-Tune providers and fallback order in `leo config edit`. Providers are tried in
-order and unavailable ones (no key, no binary, closed port) are skipped
-silently, so listing more providers than you have installed is fine.
-
-API keys are only required for AI features (`listen`, `ask`). All other commands work without them.
-
-Env vars still work and still take precedence over the keychain, which is useful
-in CI. `leo env`, which wrote a plaintext `.env`, is gone: a file made months ago
-could silently shadow a key stored the recommended way.
-
-Not sure what is working? `leo doctor` says so, and prints the command that fixes
-anything missing:
-
-```sh
-leo doctor
-  ok   config file — ~/Library/Application Support/leo/config.toml
-  ok   a chat model — using ollama
-  no   a transcription model — tried whisper_cpp, groq
-       needed for turning speech into text
-       brew install whisper-cpp   (free, local)
-       or: leo model login groq   (free tier)
-  ok   sox
-  no   pandoc
-       needed for export to docx, pdf, rtf, odt
-       brew install pandoc
-```
-
-
-### Troubleshooting Installation
-If this doesn't work, you can run a check for 
-```sh
-~/.cargo/bin/leo 
-```
-
-If that works you just need to add it to your ~/.zshrc or ~/.bashrc through: 
-```sh
-export PATH="$HOME/.cargo/bin:$PATH"
-```
-
-
-
-## Installation after modifications
-
-```sh
-# Reinstall after changes
-cargo install --path . --force
-
-# Uninstall (won't delete your notes)
-cargo uninstall leo
-```
-
-### Optional dependencies
-
-| Tool | Required for | Install |
-|------|-------------|---------|
-| [SoX](https://sox.sourceforge.net/) | `listen` (audio recording) | `brew install sox` |
-| [Pandoc](https://pandoc.org/) | `export` to docx, pdf, rtf, odt | `brew install pandoc` |
-| [git](https://git-scm.com/) | `sync` (GitHub backup) | usually pre-installed |
-| [Ollama](https://ollama.com/) | free local chat (no API key) | `brew install ollama` |
-| [whisper.cpp](https://github.com/ggml-org/whisper.cpp) | free local transcription | `brew install whisper-cpp` |
-
-## Getting started
-
-```sh
-leo
-```
-
-That opens the full-screen interface: directories on the left, your notes in the
-middle, the selected note on the right.
-
-The notes list keeps a fixed width — a list of titles gains nothing from more
-room — so every extra column goes to the note itself.
-
-The layout follows the terminal. Below about 90 columns the directories pane steps
-aside — the current directory is in the status bar and `:cd` still works — and on
-a genuinely narrow terminal the focused pane takes the screen, with `h` and `l`
-moving between them. Resize and it reflows.
+Run `leo`. The window has three panes: directories, your notes, and the selected
+note. **The bottom line always shows the keys that work where you are**, and `?`
+opens the full reference.
 
 ```
 ┌ dirs ────────┬ notes (3) ──────────────┬ Rust ownership ──────────┐
 │ cs130/       │   1 Graph traversals    │ ## Ownership             │
-│ cs162/       │   2 Rust ownership      │ - [ ] read the book      │
-│              │   3 Midterm plan        │ - [x] write notes        │
+│ cs162/       │   2●Rust ownership      │ ☐ read the book          │
+│              │   3 Midterm plan        │ ☑ write notes            │
 └──────────────┴─────────────────────────┴──────────────────────────┘
-  :  command    ?  help    Ctrl-P  find    q  quit
- /cs130   Created a1b2c3d4
+   n new   e edit   r rename   m move   x tick   Space mark   / find   ? help
+ /cs130                                              3 notes · 212 words
 ```
 
-Move with `j`/`k`, switch panes with `h`/`l`, and press `?` for help at any
-time. Anything that takes an argument goes on the `:` line, where Tab completes
-note titles, directories, tags, and formats.
-
-The note body is rendered rather than printed: headings in the accent colour,
-checkboxes as boxes with finished items struck through, code receding behind its
-fence. Along the top, the notes you were last looking at, like an editor's tabs.
+### The keys you need
 
 | Key | What it does |
 |-----|-------------|
-| `j` / `k` | Move down / up |
-| `g` / `G` | First / last |
-| `h` / `l` | Switch pane |
-| `Enter` | Open a directory, or focus the note body |
-| `x` | Toggle the first open checkbox |
-| `e` | Edit the note in `$EDITOR` |
-| `D` | Delete the note, or the directory when the dirs pane has focus (asks first) |
+| `j` / `k`, `h` / `l` | Move; switch pane (arrows work too) |
+| `n` | New note here, in `$EDITOR` |
+| `e` | Edit the selected note |
+| `r` / `m` | Rename it / move it to another directory |
+| `x` | Tick its first open checkbox. In the preview, `j`/`k` pick a box first |
+| `D` | Delete it (asks). In the directories pane, deletes the directory |
+| `Space` | Mark notes; `D` and `m` then act on all of them |
 | `u` | Undo the last delete, move or tick |
-| `/` | Filter the notes pane as you type (`Esc` clears) |
-| `t` | Switch the left pane between directories and tags |
-| `Tab` | Jump back to a recently visited note |
-| `:` | Command line |
-| `Ctrl-P` | Fuzzy find a note across all directories |
-| `Ctrl-S` | Your profile: models, keys, colour, backup |
-| `Ctrl-D` / `Ctrl-U` | Scroll the preview |
-| `Ctrl-R` | Reload from disk, and repaint the screen |
-| `?` | Help |
-| `q` | Quit |
+| `/` | Search every note: titles, bodies, and `#tags`. `Esc` clears |
+| `N` | New directory |
+| `R` | Record a note by talking (see below) |
+| `a` | Ask AI: answer the note's `@leo` lines |
+| `t` | Left pane: directories or tags |
+| `Tab` | Back to a recently visited note |
+| `Ctrl-S` | Your profile: AI providers and keys, colour, backup |
+| `:` | Command line — a menu lists every command as you type |
+| `?` / `q` | Help / quit |
 
-The mouse works as well: click a pane to focus it, click a row to select it, and
-the wheel scrolls whatever is under the pointer. Everything it does has a
-keyboard equivalent.
+The mouse works too: click to focus or select, scroll with the wheel.
 
-Deleting is reversible. `u` takes back the last delete, move or checkbox tick,
-including a recursive directory delete, for the last 32 changes of a session.
+### The `:` line
 
-Notes are numbered in the pane, so `:view 2`, `:edit 2`, and `:delete 2` all
-refer to what you can see. Tab completion accepts a title and fills in the
-number for you: type `:view owner` and press Tab.
-
-Your first run creates one note called **leo manual** — a one-screen quickstart,
-not a full reference, since `?` is always a keypress away. It is an ordinary
-note, so you can search it, edit it, and delete it; it will not come back.
-
-## Commands
-
-### Notes
-
-Type these on the `:` line, or use them as CLI subcommands.
-
-| Command | What it does | Shortcut |
-|---------|-------------|----------|
-| `new [title]` | Create a note (opens `$EDITOR`) | |
-| `list [#tag] [N]` | List notes, optionally filter by tag or limit count | `ls` |
-| `view <note>` | View a note | |
-| `edit <note>` | Edit a note in `$EDITOR` | `e` |
-| `delete <note>` | Delete a note | `rm` |
-| `check <note> <N>` | Toggle checkbox N | `x` |
-| `search <query>` | Search note titles | |
-| `search -f <query>` | Full-text search (titles + bodies) | |
-| `tags` | Show all tags with counts | |
-
-`<note>` can be a pane number (`view 1`), an ID prefix (`view 3f2a`), or a unique part of the title (`view ownership`).
-
-Each command has one name, give or take the few that come from a shell (`ls`,
-`rm`) or match the key that does the same thing in the panes (`e`, `x`). Older
-abbreviations like `d`, `rem` and `exp` were removed; typing one tells you what
-replaced it.
-
-### Directories
-
-Organize notes into directories:
+Most things are keys; the `:` line is for anything that takes words. Leave the
+note out and a command means the selected one (or the marked ones).
 
 ```
-:mkdir cs130
-:cd cs130          (or select it in the dirs pane and press Enter)
-:new Lecture 1
-:cd ..
-:mv 1 cs130
+:new cs130/Lecture 4 #exam     a note in cs130, tagged exam
+:rename Graph traversals       retitle the selected note
+:mv cs162                      move the selected (or marked) notes
+:mkdir cs130                   a directory here
+:cd ..                         up a directory; / for the top
+:sync                          back up now
 ```
 
-| Command | What it does |
-|---------|-------------|
-| `mkdir <name>` | Create a directory |
-| `cd <dir>` | Change directory (`..`, `/` supported) |
-| `pwd` | Show current directory |
-| `mv <note>... <dir>` | Move notes to a directory |
-| `rmdir <name>` | Remove an empty directory |
-| `rmdir -r <name>` | Remove a directory and everything in it (asks first) |
-
-### Creating notes
-
-`new` opens your `$EDITOR` with a frontmatter template:
-
-```markdown
----
-title: My Note
-tags: rust, learning
----
-Write your note here. Full markdown supported.
-
-- [ ] Checkboxes work
-- [ ] Like this
-```
-
-Save and quit to create the note. Empty body cancels.
-
-### Checklists
-
-Notes support markdown checkboxes and bullets:
-
-```
-:view 1
-  [1] ☐ Write tests
-  [2] ☑ Fix login bug
-  • Remember to deploy
-
-:check 1 1
-  ☑ Write tests
-```
+`Tab` completes commands, directories, note titles and tags. Typing a command
+that was removed tells you what replaced it.
 
 ## AI features
 
-### Reminders
+AI works with no keys at all if you run models locally
+(`brew install ollama whisper-cpp && ollama pull qwen3:8b`). Otherwise
+`leo setup` stores a key for a free cloud provider such as OpenRouter or Groq.
+Everything except recording and `@leo` works without AI.
+
+### Recording, with your own notes
+
+Press `R` (or `:listen`). The preview fills with bullets as you talk. **While it
+records, type the points you care about and press `Enter` after each one.** They
+show up as "Your points", and the finished note opens with a **Key points**
+section: every point you typed, in bold, with what was said about it around the
+time you typed it. `Tab` shows the raw transcript, `Esc` stops and saves.
 
 ```
-:remind me to buy groceries
-:hey leo remind me to call mom
+:listen CS 101 Lecture     a title of your own
+:listen add                append to the selected note
+:listen --screen           record system audio instead of the microphone
 ```
 
-Reminders are stored as checkboxes in a `#reminder` note. Toggle with `check`.
+Needs SoX (`brew install sox`) for recording.
 
-### Listen (speech-to-notes)
+### Questions inside a note
 
-Record audio and get AI-structured notes. Recording does not block the
-interface — the preview pane fills in with notes as you talk:
+Write `@leo <question>` on its own line, then press `a`. The line is replaced
+with the answer, which streams in as it arrives. Saving a note from the editor
+does the same for any `@leo` lines in it.
 
-```
-:listen
-┌ dirs ────────┬ notes (3) ──────────────┬ live notes (t for raw text) ─┐
-│ cs130/       │   1 Graph traversals    │ - BFS explores a graph level │
-│              │   2 Rust ownership      │   by level using a queue     │
-│              │                         │ - DFS uses a stack instead   │
-└──────────────┴─────────────────────────┴──────────────────────────────┘
- /   • Recording 01:23
-```
+### Providers
 
-Press `t` to switch between the condensed bullets and the raw transcript, and
-`Enter` to stop. Stopping is not cancelling: the finished recording is
-transcribed in one pass and saved as a note, so the result is the same quality
-you would get without the live view.
+`Ctrl-S` lists the AI used for writing and for speech, each tried in order until
+one works. A filled dot means that provider would be used right now. `Enter` on
+a provider does what it needs: stores its key, adds it, or tests it. Adding a
+provider of your own is a few lines in `config.toml`, which `e` opens from that
+screen; the comments in the file show how.
 
-```
-:listen CS 101 Lecture       # custom title
-:listen add 1                # append to an existing note
-:listen --screen             # capture system audio instead of the microphone
-```
-
-Under the hood a background thread transcribes the last 15 seconds every 15
-seconds and asks the chat model for a few bullets every minute, so the live view
-costs a handful of small requests. Putting a local Ollama first in the chat chain
-makes that part free.
-
-**Requires:** SoX (`brew install sox`), plus at least one working provider in
-each chain — either local (`ollama` + `whisper-cpp`) or a key for one cloud
-provider (`leo model login openrouter`, `leo model login groq`).
-
-### Inline AI prompts
-
-Write `@leo` questions directly in a note and expand them with `ask`:
-
-```markdown
-## Rust ownership
-
-@leo what is the difference between Box and Rc?
-```
-
-```
-:ask 1
-  Expanding 1 prompt...
-  Updated "Rust ownership notes" 3f2a1b4c
-```
-
-The `@leo` line is replaced with the AI's answer inline. In the interface the
-answer appears as it arrives, on a background thread, so the panes stay usable
-while a slow model thinks. Works on the `:` line and as a CLI subcommand
-(`leo ask <id>`), and triggers automatically when saving a note in `edit` if any
-`@leo` lines are present.
-
-**Requires:** one working chat provider — a running `ollama`, or
-`leo model login openrouter`.
-
-### Export
-
-```
-:export 1 md
-  Exported /Users/you/Desktop/My-Note.md
-```
-
-Formats: `txt`, `md`, `html`, `docx`, `pdf`, `rtf`, `odt` (last four need Pandoc).
-
-### Your profile
-
-Press `Ctrl-S`. Everything configurable is on one page: both model chains in the
-order they are tried, the interface colour, backup to GitHub, and where notes,
-settings and keys live on disk. Enter changes whatever is selected.
-
-```
-┌ providers ──────────────────────────────────────────────────────────────┐
-│ chat chain                                                              │
-│   1. ● ollama          qwen3:8b              no key needed              │
-│   2. ○ openrouter      openrouter/free       no key — press l           │
-│ transcribe chain                                                        │
-│   1. ○ whisper_cpp     (default)             no key needed              │
-│   2. ● groq            whisper-large-v3-turbo key stored                │
-│ also configured                                                         │
-│      gemini            gemini-2.5-flash      no key — press l           │
-│      lmstudio          local-model           no key needed              │
-└─────────────────────────────────────────────────────────────────────────┘
- l login · x remove key · t test · J/K reorder · a add · d drop · e edit file
-```
-
-A filled dot means leo would use that provider right now. A hollow one means it
-is configured but not usable yet — a missing key, a binary that is not
-installed, or a local server that is not running.
-
-| Key | What it does |
-|-----|-------------|
-| `j` / `k` | Move between rows |
-| `l` | Store an API key (typing is hidden) |
-| `x` | Remove a stored key |
-| `t` | Send one small request to check it works |
-| `J` / `K` | Change priority within a chain |
-| `a` | Add the selected provider to its chain |
-| `d` | Drop it from the chain (it stays configured) |
-| `e` | Open `config.toml` in `$EDITOR` |
-| `Enter` | On a setting: change the colour, or set up GitHub backup |
-
-The footer describes whatever is selected, so the keys above only appear when
-they mean something.
-
-### Colour
-
-The interface takes its accent from `config.toml`, or from `Enter` on the colour
-row of the profile page:
-
-```toml
-[theme]
-preset = "orange"      # orange, blue, green, purple, pink, mono
-```
-
-Or name a colour directly, and the rest of the palette follows it:
-
-```toml
-[theme]
-accent = "#588dd9"
-```
-
-The same things work from a shell:
+## Backup
 
 ```sh
-leo model list                 # both chains, models, and credential status
-leo model test openrouter      # one minimal request to check it works
-leo model login openrouter     # store a key (echo disabled)
-leo model logout openrouter    # remove it
-leo config path                # where config.toml lives
-leo config edit                # open it in $EDITOR
-leo doctor                     # what works here, and what to install
+leo sync
 ```
 
-### Adding a provider
+The first time, it asks for the URL of an empty GitHub repository and sets
+everything up. After that, every save is committed, leo pushes when you quit, and
+`leo sync` (or `:sync`) backs up on demand by pulling, then pushing. `Ctrl-S` can
+make it push while you work instead.
 
-leo knows 18 providers without any of them appearing in your config — Ollama,
-OpenRouter, LM Studio, llama.cpp, vLLM, Groq, Cerebras, Gemini, Mistral, OpenAI,
-DeepSeek, Together, xAI, whisper.cpp, and four more for transcription. Only the
-free ones are wired into a chain; the rest are one keypress away on the provider
-screen. `config.toml` itself is 28 lines, because it holds your decisions rather
-than an inventory.
-
-Adding your own — or overriding one of the built-ins, by using its name — is
-four lines of TOML and no code, as long as it speaks a protocol leo already
-knows:
-
-```toml
-[providers.my-provider]
-kind = "openai"                       # OpenAI-compatible chat completions
-base_url = "https://api.example.com/v1"
-model = "some-model-id"
-key_env = "EXAMPLE_API_KEY"           # omit entirely for a local server
-```
-
-Then add its name to a chain:
-
-```toml
-[chat]
-chain = ["ollama", "my-provider"]
-```
-
-The four protocols are `openai` (chat, and almost everything speaks it),
-`whisper_cpp` (a local binary), `groq` (any OpenAI-compatible
-`/audio/transcriptions` endpoint, including OpenAI's own), and `hf` (Hugging
-Face inference).
-
-Keys never go in this file — they live in `credentials.json` beside it, or in env
-vars, which take precedence. Reordering a chain or toggling a provider from the
-provider screen rewrites only that one line, so your comments and formatting
-survive.
-
-### Serve
-
-Access your notes from your phone or browser:
+## From a shell
 
 ```sh
-leo serve --port 3131
-```
-
-Opens a web UI with a QR code for easy phone access on your local network. This
-one is CLI-only — it runs its own async server, so it is not a `:` line command.
-
-Note that the server has no authentication: anyone who can reach that port on
-your network can read and edit your notes. Run it on trusted networks only.
-
-## Sync (GitHub backup)
-
-Back up and sync your notes via git. Notes are stored as plain `.md` files, so your repo is readable on GitHub as-is.
-
-```
-:sync init               # initialize a git repo in your notes directory
-:sync connect <url>      # connect to a GitHub remote
-:sync push               # push notes to GitHub
-:sync pull               # pull notes from GitHub (reloads store)
-:sync status             # show git status
-```
-
-Or as CLI subcommands:
-
-```sh
-leo sync init
-leo sync connect https://github.com/you/leo-notes.git
-leo sync push
-leo sync pull
-leo sync status
-```
-
-Notes are committed on every save once a repo is initialized — no manual commits
-needed. Pushing is separate, because it needs the network, and leo will do it for
-you:
-
-```toml
-[sync]
-auto_push = "on_quit"     # off · on_quit · when_idle
-idle_secs = 45            # for when_idle: how long the notes must be quiet
-```
-
-`on_quit` is the default: one push on the way out, batching the session, with a
-line saying whether it worked. `when_idle` also pushes while you work, once the
-notes have been quiet for `idle_secs` — useful across two machines. Pushes are
-never closer together than twenty seconds however you configure it, they run on a
-background thread so nothing blocks, and a rejected push tells you to pull rather
-than merging on your behalf.
-
-The same setting is on the profile page, under backup, once a remote exists.
-
-## Scripting
-
-All commands work as CLI subcommands for scripts and one-liners:
-
-```sh
-leo new "Quick thought" --body "Remember to refactor auth" --tags todo
-leo new "Meeting notes"          # opens $EDITOR when --body is omitted
+leo new "Quick thought" --body "Refactor auth" --tags todo
+leo new "cs130/Lecture 4 #exam"     # opens $EDITOR
 leo list --tag todo
-leo search "refactor" --full-text
+leo search "refactor"
+leo edit 3f2a
 leo delete 3f2a --force
-leo remind "buy coffee"
-leo listen --title "Meeting notes"
-leo export 3f2a md
 leo ask 3f2a
+leo serve                           # read and edit from your phone
 ```
 
-## Data storage
+A note can be named by its number in `leo list`, an ID prefix, or a unique part
+of its title.
 
-Notes are stored as individual `.md` files with YAML frontmatter:
+`leo serve` prints a link and a QR code that carry an access token. Anyone on
+your network with that link can edit your notes, so use it on networks you
+trust.
+
+## Where things live
+
+Notes are Markdown files with a small YAML header, one per note, with
+directories mirrored on disk:
 
 | Platform | Path |
 |----------|------|
@@ -524,7 +162,9 @@ Notes are stored as individual `.md` files with YAML frontmatter:
 | Linux | `~/.local/share/leo/` |
 | Windows | `%APPDATA%\leo\` |
 
-Each note is a file like `<uuid>.md`. Directory structure is mirrored on disk. Existing `notes.json` data is automatically migrated on first run.
+Settings are in `config.toml` next to them. API keys are never in that file.
+They live in a store only your account can read, or in environment variables,
+which take precedence.
 
 ## License
 

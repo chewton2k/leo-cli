@@ -14,7 +14,7 @@ use anyhow::Result;
 use crate::store::Store;
 
 /// Bump when the manual's content changes enough to be worth re-offering.
-const MANUAL_VERSION: u32 = 2;
+const MANUAL_VERSION: u32 = 3;
 const MARKER: &str = ".manual-installed";
 pub const MANUAL_TITLE: &str = "leo manual";
 
@@ -98,60 +98,47 @@ pub fn manual_body() -> String {
         r#"This note is the manual. It is an ordinary note, so you can search it,
 edit it, or delete it — it will not come back.
 
-## The one-minute version
+## Look at the bottom line
 
-Three panes: directories, your notes, and the selected note. `j`/`k` move,
-`h`/`l` switch panes, `Enter` opens. `e` edits the note in your editor, `x`
-ticks the first open checkbox, `D` deletes and `u` undoes. The mouse works too:
-click a pane or a row, scroll with the wheel.
+It always shows the keys that work where you are, and changes as you move
+between panes. `?` shows every key and command.
 
-Anything that takes an argument goes on the `:` line:
+## The everyday keys
+
+`j`/`k` move, `h`/`l` switch panes, `Enter` opens. `n` makes a note, `e` edits
+it, `r` renames it, `m` moves it, `D` deletes it, `u` undoes. `x` ticks a
+checkbox; in the preview, `j`/`k` pick which one. `Space` marks notes so `D`
+and `m` act on all of them. `/` searches every note, bodies and `#tags`
+included, and `Esc` clears it. `Tab` goes back to a note you just visited.
+
+## The `:` line
+
+For anything that takes words. A menu shows every command as you type, and
+leaving the note out means the selected one:
 
 ```
-:new Rust ownership        create a note
-/borrow                    find one, in any directory
-:mkdir cs130               make a directory
-:mv 2 cs130                move note 2 into it
+:new cs130/Lecture 4 #exam   a note in cs130, tagged exam
+:mkdir cs130                 a directory
+:mv cs130                    move the selected note there
+:sync                        back up now
 ```
-
-`Tab` completes titles, directories and tags. Notes are numbered as you see
-them, so `:edit 2` means the second one in the pane.
-
-`/` filters the list as you type and `Esc` clears it. `t` switches the left pane
-between directories and tags, so you can pick a tag and see only those notes.
-Along the top, the notes you were last looking at; `Tab` goes back to one.
-
-## Press `?` for everything else
-
-That help screen is the full reference — every key, every command, grouped and
-scrollable. It is always one keypress away, which is why this note is short.
 
 ## Talking instead of typing
 
-`R` (or `:listen`) records and turns speech into structured notes. While it
-runs, type the points that matter and press `Enter` after each: they lead the
-finished notes, in bold, with what was said about them. `Tab` shows the raw
-transcript, `Esc` stops. Writing `@leo <question>` in a
-note and running `:ask` replaces that line with an answer.
+`R` (or `:listen`) records and turns speech into notes. While it runs, type the
+points that matter and press `Enter` after each: the finished note leads with
+them, in bold, with what was said about them. `Esc` stops. Write
+`@leo <question>` in a note and press `a` (or `:ask`) to get an answer in place.
 
-Both need a model, and the answer appears as it arrives rather than all at once.
-`Ctrl-S` shows which models are set up and lets you add one; `leo setup` in a
-shell reports anything missing, says what installs it, and stores a key.
+## Setting up
 
-## Your notes are just files
+`leo setup` in a shell shows what works, what is missing and how to install it,
+and stores API keys. `leo sync` sets up backup to GitHub. `Ctrl-S` shows the same
+things in here: AI providers, keys, colour, backup.
 
-Plain markdown, one file per note, in `{notes_dir}`. `leo sync` in a shell (or
-`Ctrl-S`) sets up backup to git; after that every save commits, leo pushes when
-you quit, and `:sync` backs up on demand.
-
-## Everything in one place
-
-`Ctrl-S` is your profile: both model chains and their keys, the interface colour,
-backup to GitHub, and where everything lives on disk. Enter on a row changes it —
-including setting up git backup, which used to need two typed commands.
-
-Settings live in `{config_path}`. API keys never do — `Ctrl-S` or
-`leo setup` keeps those in a store only your account can read.
+Notes are plain Markdown files in `{notes_dir}`. Settings live in
+`{config_path}`. API keys never do; they are kept in a store
+only your account can read.
 "#,
         notes_dir = "<data dir>/leo/notes/",
         config_path = "<config dir>/leo/config.toml",
@@ -358,6 +345,6 @@ mod tests {
         let second = install_if_absent(&mut store).unwrap().unwrap();
         assert_eq!(second, first, "a second manual was created");
         assert_eq!(store.notes.len(), 1, "two manuals now exist");
-        assert!(store.find_note(&first).unwrap().body.contains("one-minute"));
+        assert!(store.find_note(&first).unwrap().body.contains("everyday keys"));
     }
 }
