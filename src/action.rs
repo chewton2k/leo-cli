@@ -32,6 +32,11 @@ pub enum Action {
     Delete {
         note: String,
     },
+    /// Give a note a new title. Only the title changes.
+    Rename {
+        note: String,
+        title: String,
+    },
     Check {
         note: String,
         index: usize,
@@ -413,6 +418,7 @@ pub const VERBS: &[(&str, &[&str])] = &[
     ("view", &[]),
     ("edit", &["e"]),
     ("delete", &["rm"]),
+    ("rename", &[]),
     ("check", &["x"]),
     ("search", &[]),
     ("tags", &[]),
@@ -649,6 +655,16 @@ pub fn parse(line: &str) -> Parsed {
         "tags" => act(Action::Tags),
         "undo" | "u" => act(Action::Undo),
 
+        // The whole line is the new title; the note is always the selected one
+        // (see `fill_selected`), which is what the `r` key pre-fills this for.
+        "rename" => {
+            if args.is_empty() {
+                usage("rename <new title>")
+            } else {
+                act(Action::Rename { note: String::new(), title: joined() })
+            }
+        }
+
         "mkdir" => {
             let name = joined().trim().to_string();
             if name.is_empty() {
@@ -763,7 +779,10 @@ pub struct Ctx<'a> {
 /// guessing.
 pub fn fill_selected(action: Action, selected: Option<&str>) -> std::result::Result<Action, Line> {
     let omitted = match &action {
-        Action::Edit { note } | Action::Delete { note } | Action::Ask { note } => note.is_empty(),
+        Action::Edit { note }
+        | Action::Delete { note }
+        | Action::Ask { note }
+        | Action::Rename { note, .. } => note.is_empty(),
         Action::Mv { notes, .. } => notes.is_empty(),
         Action::Listen { append_to: Some(note), .. } => note.is_empty(),
         _ => false,
@@ -781,6 +800,7 @@ pub fn fill_selected(action: Action, selected: Option<&str>) -> std::result::Res
         Action::Edit { .. } => Action::Edit { note: id },
         Action::Delete { .. } => Action::Delete { note: id },
         Action::Ask { .. } => Action::Ask { note: id },
+        Action::Rename { title, .. } => Action::Rename { note: id, title },
         Action::Mv { dir, .. } => Action::Mv { notes: vec![id], dir },
         Action::Listen { title, screen, .. } => Action::Listen { title, append_to: Some(id), screen },
         other => other,
@@ -816,6 +836,7 @@ pub fn apply(
         Action::Mkdir { name } => mkdir(store, &name, ctx.current_dir),
         Action::Cd { path } => Ok(cd(store, &path, ctx.current_dir)),
         Action::Mv { notes, dir } => mv(store, &notes, &dir, ctx.numbering),
+        Action::Rename { note, title } => rename(store, &note, &title, ctx.numbering),
         Action::Rmdir { name, recursive } => rmdir(store, &name, recursive, ctx.current_dir),
         Action::Sync(a) => Ok(Outcome::effect(Effect::Sync(a))),
         Action::Model(a) => Ok(Outcome::effect(Effect::Model(a))),
@@ -1140,6 +1161,20 @@ fn cd(store: &Store, path: &str, current_dir: &str) -> Outcome {
         Ok(dir) => Outcome { new_dir: Some(dir), dirty: true, ..Outcome::empty() },
         Err(msg) => Outcome::line(Line::bad(msg)),
     }
+}
+
+/// `rename` — change a note's title and nothing else.
+fn rename(store: &mut Store, note: &str, title: &str, numbering: &[String]) -> Result<Outcome> {
+    let id = resolve_or_return!(note, store, numbering);
+    let title = title.trim();
+    let n = store.find_note_mut(&id).expect("resolve returned a live id");
+    let old = std::mem::replace(&mut n.title, title.to_string());
+    n.updated_at = chrono::Utc::now();
+    store.save()?;
+    Ok(Outcome {
+        dirty: true,
+        ..Outcome::line(Line::good(format!("Renamed \"{old}\" to \"{title}\"")))
+    })
 }
 
 fn mv(store: &mut Store, notes: &[String], dir: &str, numbering: &[String]) -> Result<Outcome> {
@@ -1981,6 +2016,41 @@ mod handler_tests {
         )
         .unwrap();
         assert_eq!(store.find_note(&id).unwrap().directory, "cs130");
+    }
+
+    #[test]
+    fn rename_takes_the_new_title_and_means_the_selected_note() {
+        let parsed = match parse("rename Graph traversals") {
+            Parsed::Action(a) => a,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            parsed,
+            Action::Rename { note: String::new(), title: "Graph traversals".to_string() }
+        );
+        assert!(matches!(parse("rename"), Parsed::Usage(_)));
+    }
+
+    #[test]
+    fn renaming_changes_only_the_title() {
+        let (mut store, _d) = temp_store();
+        let id = seed(&mut store, "Graphs", "BFS and DFS", "cs130");
+        let numbering = numbering_for(&store, "cs130");
+        let out = apply(
+            Action::Rename { note: String::new(), title: "Graph traversals".to_string() },
+            &mut store,
+            ctx_selected(&numbering, &id),
+            &FakeAi::default(),
+        )
+        .unwrap();
+        let note = store.find_note(&id).unwrap();
+        assert_eq!(note.title, "Graph traversals");
+        assert_eq!(note.body, "BFS and DFS");
+        assert_eq!(note.directory, "cs130");
+        assert!(out.dirty);
+        // And it survives a reload, so the file on disk was rewritten too.
+        let reloaded = Store::load_from(&store.notes_dir).unwrap();
+        assert_eq!(reloaded.find_note(&id).unwrap().title, "Graph traversals");
     }
 
     /// The CLI has no selection, so an omitted note has to say so rather than

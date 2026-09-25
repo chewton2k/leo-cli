@@ -722,6 +722,32 @@ impl App {
                 None => Ok(()),
             },
 
+            Intent::NewNote => self.run_action(Action::New { title: None }, terminal),
+
+            // Pre-filled rather than asked for from scratch: the usual rename is
+            // a small change to the title that is already there.
+            Intent::RenameSelected => {
+                let title = self
+                    .selected_id()
+                    .and_then(|id| self.store.find_note(id))
+                    .map(|n| n.title.clone());
+                match title {
+                    Some(title) => {
+                        self.cmd.open(&format!("rename {title}"));
+                        self.mode = Mode::Command;
+                    }
+                    None => self.say(Kind::Dim, "No note selected."),
+                }
+                Ok(())
+            }
+
+            Intent::AskSelected => self.run_action(Action::Ask { note: String::new() }, terminal),
+
+            Intent::Record => self.run_action(
+                Action::Listen { title: None, append_to: None, screen: false },
+                terminal,
+            ),
+
             // `D` deletes whatever is selected, which depends on the focused
             // pane: a note in the notes pane, a whole directory in the dirs
             // pane. Both confirm first.

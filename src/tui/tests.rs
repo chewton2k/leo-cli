@@ -359,6 +359,17 @@ fn a_command_without_a_note_acts_on_the_selected_one() {
     }
 }
 
+#[test]
+fn r_opens_the_command_line_with_the_title_ready_to_change() {
+    let (mut app, _d) = temp_app();
+    select_titled(&mut app, "Rust ownership");
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(90, 24)).unwrap();
+    app.on_intent(Intent::RenameSelected, &mut terminal).unwrap();
+    assert_eq!(app.mode, Mode::Command);
+    assert_eq!(app.cmd.text(), "rename Rust ownership");
+}
+
 /// The finished text is written through the same seam a live model would
 /// use, so titles, tags and appending behave identically.
 #[test]

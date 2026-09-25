@@ -41,6 +41,14 @@ pub enum Intent {
     Undo,
     /// Edit the selected note in `$EDITOR`.
     EditSelected,
+    /// Create a note in the current directory, opening `$EDITOR`.
+    NewNote,
+    /// Open the `:` line with the selected note's title ready to change.
+    RenameSelected,
+    /// Expand the selected note's `@leo` lines.
+    AskSelected,
+    /// Start recording a new note.
+    Record,
     /// Delete the selected note, with confirmation.
     DeleteSelected,
     /// Open the `:` line, optionally pre-filled.
@@ -94,6 +102,12 @@ pub fn normal(key: KeyEvent, focus: Pane) -> Intent {
         // Tab, the way editors move between recent files.
         KeyCode::Tab => Intent::JumpRecent,
         KeyCode::Char('e') => Intent::EditSelected,
+        KeyCode::Char('n') => Intent::NewNote,
+        KeyCode::Char('N') => Intent::OpenCommand { seed: "mkdir " },
+        KeyCode::Char('r') => Intent::RenameSelected,
+        KeyCode::Char('m') => Intent::OpenCommand { seed: "mv " },
+        KeyCode::Char('a') => Intent::AskSelected,
+        KeyCode::Char('R') => Intent::Record,
         KeyCode::Char('D') => Intent::DeleteSelected,
         KeyCode::Char(':') => Intent::OpenCommand { seed: "" },
         // `/` is a shorthand for the search verb, so one keymap entry covers it.
@@ -166,6 +180,23 @@ mod tests {
             (code(KeyCode::Enter), Intent::Open),
             (ctrl('p'), Intent::OpenFinder),
             (ctrl('s'), Intent::OpenSettings),
+        ];
+        for (k, expected) in cases {
+            assert_eq!(normal(*k, Pane::Notes), *expected, "for {k:?}");
+        }
+    }
+
+    /// The everyday actions are one key each, so nobody has to remember a `:`
+    /// verb to make, rename, move, ask about or record a note.
+    #[test]
+    fn everyday_actions_have_their_own_key() {
+        let cases: &[(KeyEvent, Intent)] = &[
+            (key('n'), Intent::NewNote),
+            (key('N'), Intent::OpenCommand { seed: "mkdir " }),
+            (key('r'), Intent::RenameSelected),
+            (key('m'), Intent::OpenCommand { seed: "mv " }),
+            (key('a'), Intent::AskSelected),
+            (key('R'), Intent::Record),
         ];
         for (k, expected) in cases {
             assert_eq!(normal(*k, Pane::Notes), *expected, "for {k:?}");
