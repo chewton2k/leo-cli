@@ -109,9 +109,10 @@ Needs SoX (`brew install sox`) for recording.
 
 ### Questions inside a note
 
-Write `@leo <question>` on its own line, then press `a`. The line is replaced
-with the answer, which streams in as it arrives. Saving a note from the editor
-does the same for any `@leo` lines in it.
+Write `@leo <question>` on its own line, then press `a`. The answer appears under
+your question, which stays in the note as a bold **Q:** line, and streams in as
+it arrives. Saving a note from the editor does the same for any `@leo` lines in
+it.
 
 ### Providers
 

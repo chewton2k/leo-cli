@@ -98,6 +98,30 @@ pub fn expand_prompts_streaming(
     on_restart: &mut dyn FnMut(),
 ) -> Result<(String, usize)> {
     let (cfg, store) = context();
+    Ok(answer_each(body, |question, local_context| {
+        let prompt = chat::build_expand_prompt(question, local_context, title, body);
+        chat::complete_streaming(
+            &cfg,
+            &store,
+            prompt,
+            EXPAND_MAX_TOKENS,
+            on_fragment,
+            on_restart,
+        )
+        .ok()
+        .map(|outcome| chat::clean_reply(&outcome.value))
+    }))
+}
+
+/// Answer every `@leo` line in `body` with `answer`, which gets the question
+/// and the five lines around it. An answered question stays in the note as a
+/// bold **Q:** line with the answer under it; one that gets no answer is left
+/// as written, so nothing is lost and it can be asked again. Returns the new
+/// body and how many were answered.
+fn answer_each(
+    body: &str,
+    mut answer: impl FnMut(&str, &str) -> Option<String>,
+) -> (String, usize) {
     let lines: Vec<&str> = body.lines().collect();
     let mut result: Vec<String> = Vec::with_capacity(lines.len());
     let mut count = 0;
@@ -107,33 +131,19 @@ pub fn expand_prompts_streaming(
             result.push(line.to_string());
             continue;
         };
-
-        // The same window of surrounding lines the non-streaming path uses.
         let before = lines[i.saturating_sub(5)..i].join("\n");
-        let after_end = (i + 6).min(lines.len());
-        let after = lines[(i + 1)..after_end].join("\n");
+        let after = lines[(i + 1)..(i + 6).min(lines.len())].join("\n");
         let local_context = format!("{before}\n{after}");
 
-        let prompt = chat::build_expand_prompt(question, &local_context, title, body);
-        match chat::complete_streaming(
-            &cfg,
-            &store,
-            prompt,
-            EXPAND_MAX_TOKENS,
-            on_fragment,
-            on_restart,
-        ) {
-            Ok(outcome) if !outcome.value.trim().is_empty() => {
-                result.push(chat::clean_reply(&outcome.value));
+        match answer(question, &local_context).filter(|a| !a.trim().is_empty()) {
+            Some(text) => {
+                result.push(format!("**Q:** {question}\n\n{}", text.trim()));
                 count += 1;
             }
-            // A prompt that could not be answered stays as it was, so nothing is
-            // lost and the user can try again.
-            _ => result.push(line.to_string()),
+            None => result.push(line.to_string()),
         }
     }
-
-    Ok((result.join("\n"), count))
+    (result.join("\n"), count)
 }
 
 /// Transcribe an audio file of any length through the configured chain.
@@ -202,33 +212,52 @@ impl leo_core::action::Ai for RealAi {
     }
 }
 
-/// Replace every `@leo` line with the model's answer, giving each one five
-/// lines of surrounding context plus the whole note for background. A prompt
-/// that fails to expand is left in place rather than dropped.
+/// Answer every `@leo` line in a note, giving each one the lines around it plus
+/// the whole note for background.
 pub fn expand_leo_prompts(body: &str, title: &str) -> Result<(String, usize)> {
-    let lines: Vec<&str> = body.lines().collect();
-    let mut result: Vec<String> = Vec::with_capacity(lines.len());
-    let mut count = 0;
+    Ok(answer_each(body, |question, local_context| {
+        expand_prompt(question, local_context, title, body).ok()
+    }))
+}
 
-    for (i, &line) in lines.iter().enumerate() {
-        let Some(question) = leo_core::action::is_leo_prompt(line) else {
-            result.push(line.to_string());
-            continue;
-        };
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-        let before = lines[i.saturating_sub(5)..i].join("\n");
-        let after_end = (i + 6).min(lines.len());
-        let after = lines[(i + 1)..after_end].join("\n");
-        let local_context = format!("{before}\n{after}");
-
-        match expand_prompt(question, &local_context, title, body) {
-            Ok(expansion) if !expansion.is_empty() => {
-                result.push(expansion);
-                count += 1;
-            }
-            _ => result.push(line.to_string()),
-        }
+    /// The question stays in the note, above its answer, so a later reader can
+    /// see what was asked.
+    #[test]
+    fn an_answered_question_keeps_the_question() {
+        let body = "## Graphs\n@leo what is BFS?\n- more notes";
+        let (out, count) = answer_each(body, |question, _| {
+            assert_eq!(question, "what is BFS?");
+            Some("Breadth-first search visits level by level.".to_string())
+        });
+        assert_eq!(count, 1);
+        assert_eq!(
+            out,
+            "## Graphs\n**Q:** what is BFS?\n\nBreadth-first search visits level by level.\n- more notes"
+        );
     }
 
-    Ok((result.join("\n"), count))
+    /// An unanswered question stays exactly as written, to try again.
+    #[test]
+    fn an_unanswered_question_is_left_alone() {
+        let body = "@leo what is BFS?";
+        let (out, count) = answer_each(body, |_, _| None);
+        assert_eq!(count, 0);
+        assert_eq!(out, body);
+    }
+
+    /// Each question gets the five lines around it as local context.
+    #[test]
+    fn the_context_is_the_lines_around_the_question() {
+        let body = "a\nb\nc\nd\ne\nf\n@leo q?\ng\nh";
+        answer_each(body, |_, context| {
+            assert!(context.contains("b\nc\nd\ne\nf"), "{context}");
+            assert!(!context.contains('a'), "{context}");
+            assert!(context.contains("g\nh"), "{context}");
+            None
+        });
+    }
 }
