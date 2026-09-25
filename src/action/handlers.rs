@@ -1,677 +1,10 @@
-//! The single command vocabulary for the whole program.
-//!
-//! Every input surface — the keymap, the `:` command line, and the CLI
-//! subcommands — parses into an [`Action`], and one set of handlers applies
-//! them to a [`Store`]. Handlers contain no terminal or rendering code: they
-//! return an [`Outcome`] describing what to show and, when a step genuinely
-//! needs the terminal (spawning `$EDITOR`, recording audio, asking for
-//! confirmation), an [`Effect`] for the shell to perform. That split is what
-//! makes them unit-testable without a terminal.
+//! Applying an [`Action`] to the store, and the second-phase handlers that
+//! finish what an [`Effect`] started.
 
 use anyhow::Result;
 
-use crate::store::Store;
-
-// ── Vocabulary ──────────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Action {
-    New {
-        title: Option<String>,
-    },
-    List {
-        tag: Option<String>,
-        limit: usize,
-    },
-    View {
-        note: String,
-    },
-    Edit {
-        note: String,
-    },
-    Delete {
-        note: String,
-    },
-    /// Give a note a new title. Only the title changes.
-    Rename {
-        note: String,
-        title: String,
-    },
-    Check {
-        note: String,
-        index: usize,
-    },
-    /// The CLI's search. In the panes, `/` does the same thing live.
-    Search {
-        query: String,
-    },
-    Listen {
-        title: Option<String>,
-        append_to: Option<String>,
-        screen: bool,
-    },
-    Ask {
-        note: String,
-    },
-    Mkdir {
-        name: String,
-    },
-    Cd {
-        path: String,
-    },
-    Mv {
-        notes: Vec<String>,
-        dir: String,
-    },
-    Rmdir {
-        name: String,
-        /// Remove the directory's notes and subdirectories too. Always asks
-        /// first, since nothing else in leo destroys more than one note at once.
-        recursive: bool,
-    },
-    Sync(SyncAction),
-    /// Take back the most recent destructive change.
-    Undo,
-    Help,
-    Quit,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SyncAction {
-    Init,
-    Connect { url: String },
-    Push,
-    Pull,
-    Status,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ModelAction {
-    List,
-    Test { name: String },
-    Login { name: String },
-    Logout { name: String },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ConfigAction {
-    Edit,
-    Path,
-}
-
-/// What parsing one input line produced.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Parsed {
-    /// Nothing to do — the line was blank, or only a stripped `hey leo` prefix.
-    Empty,
-    Action(Action),
-    /// Recognized verb, wrong arguments. Carries the usage text to show.
-    Usage(String),
-    /// Unrecognized verb.
-    Unknown(String),
-    /// A verb that used to exist. Named so the answer is "here is the
-    /// replacement" rather than "unknown command", which reads like a typo.
-    Retired {
-        verb: &'static str,
-        replacement: &'static str,
-        why: &'static str,
-    },
-}
-
-// ── Output ──────────────────────────────────────────────────────────────────
-
-/// How one output line should be presented. Naming the intent rather than a
-/// color lets the CLI pick `colored` styles and the TUI pick ratatui ones.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Kind {
-    /// Ordinary text.
-    Plain,
-    /// Secondary text: "Cancelled.", "No changes."
-    Dim,
-    /// A completed mutation.
-    Good,
-    /// Something the user should notice but that is not a failure.
-    Warn,
-    /// A failure.
-    Bad,
-    /// A directory name.
-    Dir,
-    /// A blank separator line.
-    Blank,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Line {
-    pub kind: Kind,
-    pub text: String,
-}
-
-impl Line {
-    pub fn plain(text: impl Into<String>) -> Line {
-        Line { kind: Kind::Plain, text: text.into() }
-    }
-    pub fn dim(text: impl Into<String>) -> Line {
-        Line { kind: Kind::Dim, text: text.into() }
-    }
-    pub fn good(text: impl Into<String>) -> Line {
-        Line { kind: Kind::Good, text: text.into() }
-    }
-    pub fn warn(text: impl Into<String>) -> Line {
-        Line { kind: Kind::Warn, text: text.into() }
-    }
-    pub fn bad(text: impl Into<String>) -> Line {
-        Line { kind: Kind::Bad, text: text.into() }
-    }
-    pub fn dir(text: impl Into<String>) -> Line {
-        Line { kind: Kind::Dir, text: text.into() }
-    }
-    pub fn blank() -> Line {
-        Line { kind: Kind::Blank, text: String::new() }
-    }
-}
-
-/// Work that requires the terminal or a long-running subprocess, so a handler
-/// describes it instead of doing it. The CLI performs these inline; the TUI
-/// suspends itself or hands them to its worker thread.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub enum Effect {
-    #[default]
-    None,
-    /// Spawn `$EDITOR` on `path`, then feed the result back through
-    /// [`apply_edit`].
-    Edit(EditRequest),
-    /// Ask the user to confirm, then apply `on_yes`.
-    Confirm { prompt: String, on_yes: ConfirmedAction },
-    /// Record audio, transcribe it, then feed the result back through
-    /// [`apply_transcript`].
-    Listen(ListenRequest),
-    /// Render a note in full.
-    ShowNote { id: String },
-    ShowHelp,
-    Quit,
-    /// Shell out to git. Streams its own output.
-    Sync(SyncAction),
-}
-
-/// A pending editor session. `seed` is written to `path` before `$EDITOR` opens
-/// so the user sees a frontmatter template.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EditRequest {
-    pub path: std::path::PathBuf,
-    pub seed: String,
-    pub target: EditTarget,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum EditTarget {
-    /// A note that does not exist yet.
-    NewNote { fallback_title: String, dir: String },
-    /// An existing note, with the values to diff the result against.
-    Existing { id: String, old_title: String, old_tags: Vec<String>, old_body: String },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ConfirmedAction {
-    DeleteNote { id: String, title: String },
-    /// Delete a directory and everything inside it.
-    DeleteDir { path: String },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ListenRequest {
-    pub screen: bool,
-    pub title: Option<String>,
-    pub append_to: Option<String>,
-    pub dir: String,
-}
-
-/// Everything a handler produces. `Default` is "nothing happened", so handlers
-/// only set the fields they mean.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct Outcome {
-    pub lines: Vec<Line>,
-    /// Replaces the caller's note-reference numbering when `Some`.
-    pub selection: Option<Vec<String>>,
-    /// Replaces the caller's current directory when `Some`.
-    pub new_dir: Option<String>,
-    pub effect: Effect,
-    /// The store changed, so any cached view of it is stale.
-    pub dirty: bool,
-}
-
-impl Outcome {
-    pub fn empty() -> Outcome {
-        Outcome::default()
-    }
-
-    pub fn line(line: Line) -> Outcome {
-        Outcome { lines: vec![line], ..Outcome::default() }
-    }
-
-    pub fn lines(lines: Vec<Line>) -> Outcome {
-        Outcome { lines, ..Outcome::default() }
-    }
-
-    pub fn effect(effect: Effect) -> Outcome {
-        Outcome { effect, ..Outcome::default() }
-    }
-
-    /// Convenience for tests and callers that only care about the text.
-    /// The shells render `lines` with styling instead of using this.
-    #[allow(dead_code)]
-    pub fn text(&self) -> String {
-        self.lines
-            .iter()
-            .map(|l| l.text.as_str())
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-}
-
-// ── The AI seam ─────────────────────────────────────────────────────────────
-
-/// The AI operations handlers need, behind a trait so tests never make a
-/// network call and the TUI can route them onto its worker thread.
-pub trait Ai {
-    /// Expand every `@leo` line in `body`. Returns the new body and how many
-    /// prompts were expanded.
-    fn expand_prompts(&self, body: &str, title: &str) -> Result<(String, usize)>;
-    /// Turn a transcript into (title, body).
-    fn structure(&self, transcript: &str) -> Result<(String, String)>;
-    /// Turn a transcript into a body fragment to append to `existing`.
-    fn structure_append(&self, transcript: &str, existing: &str) -> Result<String>;
-}
-
-/// The real implementation, delegating to the provider chains in `crate::ai`.
-pub struct RealAi;
-
-impl Ai for RealAi {
-    fn expand_prompts(&self, body: &str, title: &str) -> Result<(String, usize)> {
-        expand_leo_prompts(body, title)
-    }
-    fn structure(&self, transcript: &str) -> Result<(String, String)> {
-        crate::ai::structure_notes(transcript)
-    }
-    fn structure_append(&self, transcript: &str, existing: &str) -> Result<String> {
-        crate::ai::structure_notes_append(transcript, existing)
-    }
-}
-
-// ── Note reference resolution ───────────────────────────────────────────────
-
-/// A note rendered just enough to disambiguate it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NoteBrief {
-    /// 1-based position in the caller's current numbering, when it has one.
-    pub index: Option<usize>,
-    pub id: String,
-    pub title: String,
-}
-
-/// The result of resolving a user-typed note reference.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Resolved {
-    One(String),
-    /// A title substring matched more than one note.
-    Many(Vec<NoteBrief>),
-    None,
-}
-
-/// Resolve a reference the same way everywhere: list number, then ID prefix,
-/// then unique title substring. Returns structured data rather than printing,
-/// so both shells can render disambiguation their own way.
-///
-/// Always yields a note's full ID, never the prefix the user typed. Downstream
-/// `Store` lookups accept prefixes, but an `Outcome` or `ConfirmedAction` may
-/// outlive the store state it was built from, and a prefix that is unique today
-/// can become ambiguous after the next `sync pull`.
-pub fn resolve(input: &str, store: &Store, numbering: &[String]) -> Resolved {
-    if let Ok(n) = input.parse::<usize>() {
-        if n >= 1 && n <= numbering.len() {
-            let id = &numbering[n - 1];
-            if let Some(note) = store.find_note(id) {
-                return Resolved::One(note.id.clone());
-            }
-        }
-    }
-    if let Some(note) = store.find_note(input) {
-        return Resolved::One(note.id.clone());
-    }
-    let matches = store.find_by_title(input);
-    match matches.len() {
-        0 => Resolved::None,
-        1 => Resolved::One(matches[0].id.clone()),
-        _ => Resolved::Many(
-            matches
-                .iter()
-                .map(|note| NoteBrief {
-                    index: numbering.iter().position(|id| id == &note.id).map(|p| p + 1),
-                    id: note.id.clone(),
-                    title: note.title.clone(),
-                })
-                .collect(),
-        ),
-    }
-}
-
-/// Render a failed resolution as output lines.
-fn unresolved(input: &str, resolved: Resolved) -> Outcome {
-    match resolved {
-        Resolved::Many(briefs) => {
-            let mut lines = vec![Line::warn(format!("Multiple notes match \"{input}\":"))];
-            for b in briefs {
-                let idx = match b.index {
-                    Some(i) => format!("{i:>3}"),
-                    None => "   ".to_string(),
-                };
-                let short = &b.id[..std::cmp::min(8, b.id.len())];
-                lines.push(Line::plain(format!("{idx} {short} {}", b.title)));
-            }
-            lines.push(Line::dim("Use a number or ID prefix to pick one."));
-            Outcome::lines(lines)
-        }
-        _ => Outcome::line(Line::bad(format!("No note found: {input}"))),
-    }
-}
-
-/// Resolve or return the rendered failure, so handlers stay one line each.
-macro_rules! resolve_or_return {
-    ($input:expr, $store:expr, $numbering:expr) => {
-        match resolve($input, $store, $numbering) {
-            Resolved::One(id) => id,
-            other => return Ok(unresolved($input, other)),
-        }
-    };
-}
-
-// ── Parsing ─────────────────────────────────────────────────────────────────
-
-/// All verbs and their aliases, in help order. The completion engine reads
-/// this too, so a new verb becomes completable for free.
-/// An alias earns its place by being something a user already types, not by
-/// saving a keystroke. Three kinds survive:
-///
-/// * shell muscle memory — `ls`, `rm`, `mv`, `exit`, `q`;
-/// * the same letter as the key that does it in the panes — `e`, `x`, `?`;
-/// * nothing else.
-///
-/// Seventeen aliases became six. The rest were a second name to learn for no
-/// gain, and some actively misled: `l` listed notes here while moving between
-/// panes there, and `d` deleted a note here while dropping a provider from a
-/// chain on the settings screen.
-pub const VERBS: &[Verb] = &[
-    v("new", &[], "new [dir/][title] [#tag...]", "a note, opening $EDITOR"),
-    v("edit", &["e"], "edit [note]", "open a note in $EDITOR"),
-    v("delete", &["rm"], "delete [note]", "delete a note (asks first)"),
-    v("rename", &[], "rename <new title>", "retitle the selected note"),
-    v("check", &["x"], "check <note> <N>", "tick or untick checkbox N"),
-    v("undo", &["u"], "undo", "take back the last delete, move or tick"),
-    v("listen", &[], "listen [title | add [note]] [--screen]", "record, and write notes from speech"),
-    v("ask", &[], "ask [note]", "answer the note's @leo lines"),
-    v("mkdir", &[], "mkdir <name>", "a directory here"),
-    v("cd", &[], "cd <dir>", "enter a directory; .. up, / root"),
-    v("mv", &[], "mv [note...] <dir>", "move notes, or the selected one"),
-    v("sync", &[], "sync <init | connect <url> | push | pull | status>", "back up to git"),
-    v("help", &["?"], "help", "every key and command"),
-    v("quit", &["exit", "q"], "quit", "leave"),
-];
-
-/// One `:` command: its name, the aliases that survived the prune, how to call
-/// it, and what it does. Help, the `:` menu and usage errors all read this.
-#[derive(Debug)]
-pub struct Verb {
-    pub name: &'static str,
-    pub aliases: &'static [&'static str],
-    pub usage: &'static str,
-    pub summary: &'static str,
-}
-
-const fn v(
-    name: &'static str,
-    aliases: &'static [&'static str],
-    usage: &'static str,
-    summary: &'static str,
-) -> Verb {
-    Verb { name, aliases, usage, summary }
-}
-
-/// The table row for a verb or one of its aliases.
-pub fn verb(word: &str) -> Option<&'static Verb> {
-    VERBS.iter().find(|v| v.name == word || v.aliases.contains(&word))
-}
-
-/// Words that used to work: what to use instead, and why it changed.
-///
-/// Removing a word someone has in their fingers is only kind if the removal
-/// explains itself. "Unknown command: d" reads like a typo and sends the user
-/// hunting; naming the replacement costs one line. A replacement starting with
-/// `:` is a command; anything else is a key or a place on screen.
-pub const RETIRED: &[(&str, &str, &str)] = &[
-    ("l", "the notes pane", LISTED),
-    ("ls", "the notes pane", LISTED),
-    ("list", "the notes pane", LISTED),
-    ("v", "j and k", SHOWN),
-    ("view", "j and k", SHOWN),
-    ("d", ":delete", ONE_NAME),
-    ("del", ":delete", ONE_NAME),
-    ("n", "n", "it is a key now: n makes a note"),
-    ("rec", "R", "it is a key now: R records"),
-    ("move", "m", "it is a key now: m moves the selected note"),
-    ("h", "?", ONE_NAME),
-    ("find", "/", ONE_SEARCH),
-    ("search", "/", ONE_SEARCH),
-    ("expand", "a", "it is a key now: a asks about the selected note"),
-    ("uncheck", ":check", ONE_NAME),
-    ("tags", "t", "it switches the left pane to your tags, with counts"),
-    ("rmdir", "D in the directories pane", "it asks, then removes the directory"),
-    ("model", "Ctrl-S", PROFILE),
-    ("config", "Ctrl-S", PROFILE),
-    ("rem", "a note with - [ ] lines", GONE_REMIND),
-    ("remind", "a note with - [ ] lines", GONE_REMIND),
-    ("exp", "the .md file in your notes folder", GONE_EXPORT),
-    ("export", "the .md file in your notes folder", GONE_EXPORT),
-    (
-        "env",
-        "Ctrl-S",
-        "keys live in your OS keychain now, not a plaintext file",
-    ),
-    ("pwd", "the status bar", "it always shows where you are"),
-    ("clear", "Esc", "it closes whatever output is pinned"),
-];
-
-const ONE_NAME: &str = "one name per command now, so there is less to learn";
-const LISTED: &str = "the notes pane always lists this directory";
-const SHOWN: &str = "the preview shows whichever note is selected";
-const PROFILE: &str = "providers and keys live on that screen; `leo model` still works in a shell";
-const GONE_REMIND: &str = "reminders were removed; a checklist note does the same";
-const GONE_EXPORT: &str = "export was removed; every note is already a Markdown file";
-const ONE_SEARCH: &str = "one search now: / looks in every note, bodies and tags included";
-
-/// Every word that can start a command, canonical names and aliases alike.
-pub fn all_verb_words() -> Vec<&'static str> {
-    let mut out = Vec::new();
-    for verb in VERBS {
-        out.push(verb.name);
-        out.extend_from_slice(verb.aliases);
-    }
-    out
-}
-
-/// Split on whitespace, keeping quoted runs together.
-pub fn tokenize(input: &str) -> Vec<String> {
-    let mut tokens = Vec::new();
-    let mut current = String::new();
-    let mut in_quotes = false;
-    let mut quote_char = '"';
-
-    for ch in input.chars() {
-        if in_quotes {
-            if ch == quote_char {
-                in_quotes = false;
-            } else {
-                current.push(ch);
-            }
-        } else {
-            match ch {
-                '"' | '\'' => {
-                    in_quotes = true;
-                    quote_char = ch;
-                }
-                ' ' | '\t' => {
-                    if !current.is_empty() {
-                        tokens.push(current.clone());
-                        current.clear();
-                    }
-                }
-                _ => current.push(ch),
-            }
-        }
-    }
-    if !current.is_empty() {
-        tokens.push(current);
-    }
-    tokens
-}
-
-/// Strip a natural-language `hey leo` / `leo` prefix, so "hey leo remind me to
-/// call mom" works. Only strips when something follows.
-pub fn strip_leo_prefix(tokens: &mut Vec<String>) {
-    if tokens.len() >= 2
-        && tokens[0].eq_ignore_ascii_case("hey")
-        && tokens[1].eq_ignore_ascii_case("leo")
-    {
-        tokens.drain(0..2);
-    } else if tokens.len() >= 2 && tokens[0].eq_ignore_ascii_case("leo") {
-        tokens.drain(0..1);
-    }
-}
-
-/// Parse one command line into an [`Action`].
-pub fn parse(line: &str) -> Parsed {
-    let mut tokens = tokenize(line.trim());
-    if tokens.is_empty() {
-        return Parsed::Empty;
-    }
-    strip_leo_prefix(&mut tokens);
-    if tokens.is_empty() {
-        return Parsed::Empty;
-    }
-
-    let verb = tokens[0].to_lowercase();
-    let args = &tokens[1..];
-    let joined = || args.join(" ");
-    let usage = |name: &str| {
-        Parsed::Usage(self::verb(name).map(|v| v.usage).unwrap_or(name).to_string())
-    };
-    let act = |a: Action| Parsed::Action(a);
-
-    match verb.as_str() {
-        "new" => act(Action::New {
-            title: if args.is_empty() { None } else { Some(joined()) },
-        }),
-
-        "edit" | "e" => act(Action::Edit { note: joined() }),
-        "delete" | "rm" => act(Action::Delete { note: joined() }),
-
-        // The checkbox number is the last token, so everything before it is the
-        // note reference — a title with spaces still resolves.
-        "check" | "x" => {
-            if args.len() < 2 {
-                return usage("check");
-            }
-            match args.last().unwrap().parse::<usize>() {
-                Ok(index) if index >= 1 => act(Action::Check {
-                    note: args[..args.len() - 1].join(" "),
-                    index,
-                }),
-                _ => Parsed::Usage("Checkbox number must be a positive integer.".to_string()),
-            }
-        }
-
-        "listen" => {
-            let screen = args.iter().any(|a| a == "--screen");
-            let rest: Vec<String> =
-                args.iter().filter(|a| a.as_str() != "--screen").cloned().collect();
-
-            if rest.first().map(|s| s.eq_ignore_ascii_case("add")).unwrap_or(false) {
-                return act(Action::Listen {
-                    title: None,
-                    append_to: Some(rest[1..].join(" ")),
-                    screen,
-                });
-            }
-            act(Action::Listen {
-                title: if rest.is_empty() { None } else { Some(rest.join(" ")) },
-                append_to: None,
-                screen,
-            })
-        }
-
-        "ask" => act(Action::Ask { note: joined() }),
-
-        "undo" | "u" => act(Action::Undo),
-
-        // The whole line is the new title; the note is always the selected one
-        // (see `fill_selected`), which is what the `r` key pre-fills this for.
-        "rename" => {
-            if args.is_empty() {
-                usage("rename")
-            } else {
-                act(Action::Rename { note: String::new(), title: joined() })
-            }
-        }
-
-        "mkdir" => {
-            let name = joined().trim().to_string();
-            if name.is_empty() {
-                usage("mkdir")
-            } else {
-                act(Action::Mkdir { name })
-            }
-        }
-
-        "cd" => act(Action::Cd { path: joined().trim().to_string() }),
-
-
-        // With one argument, that is the directory and the note is the
-        // selected one.
-        "mv" => {
-            if args.is_empty() {
-                return usage("mv");
-            }
-            act(Action::Mv {
-                notes: args[..args.len() - 1].to_vec(),
-                dir: args.last().unwrap().trim_matches('/').to_string(),
-            })
-        }
-
-        "sync" => match args.first().map(|s| s.to_lowercase()).as_deref() {
-            Some("init") => act(Action::Sync(SyncAction::Init)),
-            Some("connect") => match args.get(1) {
-                Some(url) => act(Action::Sync(SyncAction::Connect { url: url.clone() })),
-                None => Parsed::Usage("sync connect <url>".to_string()),
-            },
-            Some("push") => act(Action::Sync(SyncAction::Push)),
-            Some("pull") => act(Action::Sync(SyncAction::Pull)),
-            Some("status") => act(Action::Sync(SyncAction::Status)),
-            _ => usage("sync"),
-        },
-
-        "help" | "?" => act(Action::Help),
-        "quit" | "exit" | "q" => act(Action::Quit),
-
-        _ => match RETIRED.iter().find(|(alias, _, _)| *alias == verb.as_str()) {
-            Some((alias, replacement, why)) => Parsed::Retired {
-                verb: alias,
-                replacement,
-                why,
-            },
-            None => Parsed::Unknown(verb),
-        },
-    }
-}
-
-// ── Handlers ────────────────────────────────────────────────────────────────
+use super::*;
+use super::resolve::resolve_or_return;
 
 /// Read-only context a handler needs from its shell.
 #[derive(Debug, Clone, Copy)]
@@ -757,7 +90,7 @@ pub fn apply(
 }
 
 /// `new` — ask the shell to open an editor on a frontmatter template.
-fn new_note(store: &Store, line: Option<String>, current_dir: &str) -> Outcome {
+pub(super) fn new_note(store: &Store, line: Option<String>, current_dir: &str) -> Outcome {
     let (dir, title, tags) = split_new(store, line.as_deref().unwrap_or(""), current_dir);
     let path = std::env::temp_dir().join(format!("leo-new-{}.md", uuid::Uuid::new_v4()));
     Outcome::effect(Effect::Edit(EditRequest {
@@ -793,7 +126,7 @@ pub fn split_new(store: &Store, line: &str, current_dir: &str) -> (String, Strin
 }
 
 /// `list` — subdirectories first, then notes, and renumber.
-fn list(store: &Store, tag: Option<&str>, limit: usize, dir: &str) -> Outcome {
+pub(super) fn list(store: &Store, tag: Option<&str>, limit: usize, dir: &str) -> Outcome {
     let subdirs = store.subdirs(dir);
     let notes = store.list_notes_in_dir(dir, tag, limit);
 
@@ -824,7 +157,7 @@ fn list(store: &Store, tag: Option<&str>, limit: usize, dir: &str) -> Outcome {
     Outcome { selection: Some(selection), ..Outcome::lines(lines) }
 }
 
-fn view(store: &Store, note: &str, numbering: &[String]) -> Outcome {
+pub(super) fn view(store: &Store, note: &str, numbering: &[String]) -> Outcome {
     let id = match resolve(note, store, numbering) {
         Resolved::One(id) => id,
         other => return unresolved(note, other),
@@ -833,7 +166,7 @@ fn view(store: &Store, note: &str, numbering: &[String]) -> Outcome {
 }
 
 /// `edit` — hand the shell a temp file seeded with the note's current content.
-fn edit(store: &Store, note: &str, numbering: &[String]) -> Outcome {
+pub(super) fn edit(store: &Store, note: &str, numbering: &[String]) -> Outcome {
     let id = match resolve(note, store, numbering) {
         Resolved::One(id) => id,
         other => return unresolved(note, other),
@@ -858,7 +191,7 @@ fn edit(store: &Store, note: &str, numbering: &[String]) -> Outcome {
     }))
 }
 
-fn delete(store: &Store, note: &str, numbering: &[String]) -> Outcome {
+pub(super) fn delete(store: &Store, note: &str, numbering: &[String]) -> Outcome {
     let id = match resolve(note, store, numbering) {
         Resolved::One(id) => id,
         other => return unresolved(note, other),
@@ -870,7 +203,7 @@ fn delete(store: &Store, note: &str, numbering: &[String]) -> Outcome {
     })
 }
 
-fn check(store: &mut Store, note: &str, index: usize, numbering: &[String]) -> Result<Outcome> {
+pub(super) fn check(store: &mut Store, note: &str, index: usize, numbering: &[String]) -> Result<Outcome> {
     let id = resolve_or_return!(note, store, numbering);
     match store.toggle_checkbox(&id, index) {
         Some(state) => {
@@ -883,7 +216,7 @@ fn check(store: &mut Store, note: &str, index: usize, numbering: &[String]) -> R
     }
 }
 
-fn search(store: &Store, query: &str) -> Outcome {
+pub(super) fn search(store: &Store, query: &str) -> Outcome {
     let results = store.find(query);
     if results.is_empty() {
         return Outcome {
@@ -913,7 +246,7 @@ fn search(store: &Store, query: &str) -> Outcome {
 }
 
 /// `listen` — validate the append target before spending time recording.
-fn listen(
+pub(super) fn listen(
     store: &Store,
     title: Option<String>,
     append_to: Option<String>,
@@ -933,7 +266,7 @@ fn listen(
     }))
 }
 
-fn ask(store: &mut Store, note: &str, numbering: &[String], ai: &dyn Ai) -> Result<Outcome> {
+pub(super) fn ask(store: &mut Store, note: &str, numbering: &[String], ai: &dyn Ai) -> Result<Outcome> {
     let id = resolve_or_return!(note, store, numbering);
     let (title, body) = {
         let n = store.find_note(&id).expect("resolve returned a live id");
@@ -963,7 +296,7 @@ fn ask(store: &mut Store, note: &str, numbering: &[String], ai: &dyn Ai) -> Resu
 ///
 /// A handler rather than a TUI-only key, so the same step back works from the `:`
 /// line and reuses the store's stack instead of a second one.
-fn undo(store: &mut Store) -> Outcome {
+pub(super) fn undo(store: &mut Store) -> Outcome {
     match store.undo() {
         Some(what) => Outcome {
             lines: vec![Line::good(what)],
@@ -975,7 +308,7 @@ fn undo(store: &mut Store) -> Outcome {
 }
 
 /// Join a name onto the current directory, tolerating stray slashes.
-fn under(current_dir: &str, name: &str) -> String {
+pub(super) fn under(current_dir: &str, name: &str) -> String {
     if current_dir.is_empty() {
         name.trim_matches('/').to_string()
     } else {
@@ -983,7 +316,7 @@ fn under(current_dir: &str, name: &str) -> String {
     }
 }
 
-fn mkdir(store: &mut Store, name: &str, current_dir: &str) -> Result<Outcome> {
+pub(super) fn mkdir(store: &mut Store, name: &str, current_dir: &str) -> Result<Outcome> {
     let full = under(current_dir, name);
     if store.dir_exists(&full) {
         return Ok(Outcome::line(Line::dim(format!(
@@ -1041,7 +374,7 @@ pub fn resolve_cd(path: &str, store: &Store, current_dir: &str) -> std::result::
     }
 }
 
-fn cd(store: &Store, path: &str, current_dir: &str) -> Outcome {
+pub(super) fn cd(store: &Store, path: &str, current_dir: &str) -> Outcome {
     match resolve_cd(path, store, current_dir) {
         Ok(dir) => Outcome { new_dir: Some(dir), dirty: true, ..Outcome::empty() },
         Err(msg) => Outcome::line(Line::bad(msg)),
@@ -1049,7 +382,7 @@ fn cd(store: &Store, path: &str, current_dir: &str) -> Outcome {
 }
 
 /// `rename` — change a note's title and nothing else.
-fn rename(store: &mut Store, note: &str, title: &str, numbering: &[String]) -> Result<Outcome> {
+pub(super) fn rename(store: &mut Store, note: &str, title: &str, numbering: &[String]) -> Result<Outcome> {
     let id = resolve_or_return!(note, store, numbering);
     let title = title.trim();
     let n = store.find_note_mut(&id).expect("resolve returned a live id");
@@ -1062,7 +395,7 @@ fn rename(store: &mut Store, note: &str, title: &str, numbering: &[String]) -> R
     })
 }
 
-fn mv(store: &mut Store, notes: &[String], dir: &str, numbering: &[String]) -> Result<Outcome> {
+pub(super) fn mv(store: &mut Store, notes: &[String], dir: &str, numbering: &[String]) -> Result<Outcome> {
     if !dir.is_empty() && !store.dir_exists(dir) {
         return Ok(Outcome::line(Line::bad(format!("No such directory: {dir}/"))));
     }
@@ -1093,7 +426,7 @@ fn mv(store: &mut Store, notes: &[String], dir: &str, numbering: &[String]) -> R
     Ok(Outcome { dirty: moved > 0, ..Outcome::lines(lines) })
 }
 
-fn rmdir(store: &mut Store, name: &str, recursive: bool, current_dir: &str) -> Result<Outcome> {
+pub(super) fn rmdir(store: &mut Store, name: &str, recursive: bool, current_dir: &str) -> Result<Outcome> {
     let full = under(current_dir, name);
     if !store.dir_exists(&full) {
         return Ok(Outcome::line(Line::bad(format!("No such directory: {full}/"))));
@@ -1136,7 +469,7 @@ fn rmdir(store: &mut Store, name: &str, recursive: bool, current_dir: &str) -> R
 }
 
 /// "s" unless there is exactly one.
-fn plural(n: usize) -> &'static str {
+pub(super) fn plural(n: usize) -> &'static str {
     if n == 1 {
         ""
     } else {
@@ -1306,406 +639,6 @@ pub fn filtered_numbering(store: &Store, dir: &str, query: &str) -> Vec<String> 
         return numbering_for(store, dir);
     }
     store.find(query).iter().map(|n| n.id.clone()).collect()
-}
-
-// ── Frontmatter and @leo prompts ────────────────────────────────────────────
-
-/// Parse an editor buffer's `---` frontmatter block into (title, tags, body).
-/// Malformed or absent frontmatter yields an empty title and tags with the
-/// whole buffer as the body, so a user who deletes the header keeps their text.
-pub fn parse_frontmatter(raw: &str) -> (String, Vec<String>, String) {
-    let trimmed = raw.trim_start();
-    if !trimmed.starts_with("---") {
-        return (String::new(), Vec::new(), raw.to_string());
-    }
-
-    let after_open = trimmed[3..].trim_start_matches('-');
-    let after_open = after_open.strip_prefix('\n').unwrap_or(after_open);
-
-    let Some(close_pos) = after_open.find("\n---") else {
-        return (String::new(), Vec::new(), raw.to_string());
-    };
-
-    let front = &after_open[..close_pos];
-    let body_start = close_pos + 4; // past "\n---"
-    let body = after_open[body_start..]
-        .strip_prefix('\n')
-        .unwrap_or(&after_open[body_start..]);
-
-    let mut title = String::new();
-    let mut tags = Vec::new();
-    for line in front.lines() {
-        if let Some(val) = line.strip_prefix("title:") {
-            title = val.trim().to_string();
-        } else if let Some(val) = line.strip_prefix("tags:") {
-            tags = val
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect();
-        }
-    }
-    (title, tags, body.to_string())
-}
-
-/// If `line` is `@leo <question>`, return the question.
-pub fn is_leo_prompt(line: &str) -> Option<&str> {
-    let trimmed = line.trim();
-    if trimmed.len() < 5 || !trimmed[..5].eq_ignore_ascii_case("@leo ") {
-        return None;
-    }
-    let q = trimmed[5..].trim();
-    if q.is_empty() {
-        None
-    } else {
-        Some(q)
-    }
-}
-
-/// Replace every `@leo` line with the model's answer, giving each one five
-/// lines of surrounding context plus the whole note for background. A prompt
-/// that fails to expand is left in place rather than dropped.
-pub fn expand_leo_prompts(body: &str, title: &str) -> Result<(String, usize)> {
-    let lines: Vec<&str> = body.lines().collect();
-    let mut result: Vec<String> = Vec::with_capacity(lines.len());
-    let mut count = 0;
-
-    for (i, &line) in lines.iter().enumerate() {
-        let Some(question) = is_leo_prompt(line) else {
-            result.push(line.to_string());
-            continue;
-        };
-
-        let before = lines[i.saturating_sub(5)..i].join("\n");
-        let after_end = (i + 6).min(lines.len());
-        let after = lines[(i + 1)..after_end].join("\n");
-        let local_context = format!("{before}\n{after}");
-
-        match crate::ai::expand_prompt(question, &local_context, title, body) {
-            Ok(expansion) if !expansion.is_empty() => {
-                result.push(expansion);
-                count += 1;
-            }
-            _ => result.push(line.to_string()),
-        }
-    }
-
-    Ok((result.join("\n"), count))
-}
-
-#[cfg(test)]
-mod parse_tests {
-    use super::*;
-
-    fn act(line: &str) -> Action {
-        match parse(line) {
-            Parsed::Action(a) => a,
-            other => panic!("expected an action for {line:?}, got {other:?}"),
-        }
-    }
-
-    fn usage(line: &str) -> String {
-        match parse(line) {
-            Parsed::Usage(u) => u,
-            other => panic!("expected usage for {line:?}, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn blank_input_is_empty() {
-        assert_eq!(parse(""), Parsed::Empty);
-        assert_eq!(parse("   "), Parsed::Empty);
-        // A bare prefix with nothing after it is not a command either.
-        assert_eq!(parse("hey leo"), Parsed::Empty);
-    }
-
-    #[test]
-    fn unknown_verb_is_reported_with_the_verb() {
-        assert_eq!(parse("frobnicate 3"), Parsed::Unknown("frobnicate".to_string()));
-    }
-
-    /// Every live alias must parse exactly like the verb it abbreviates.
-    #[test]
-    fn every_alias_maps_to_the_same_action_as_its_canonical_verb() {
-        let pairs = [
-            ("e 1", "edit 1"),
-            ("rm 1", "delete 1"),
-            ("x 1 2", "check 1 2"),
-            ("?", "help"),
-            ("exit", "quit"),
-            ("q", "quit"),
-        ];
-        for (alias, canonical) in pairs {
-            assert_eq!(
-                parse(alias),
-                parse(canonical),
-                "alias {alias:?} should parse like {canonical:?}"
-            );
-        }
-    }
-
-    /// A retired alias must name its replacement. Removing a word someone has in
-    /// their fingers is only kind if the removal explains itself; "unknown
-    /// command: d" reads like a typo.
-    #[test]
-    fn every_retired_alias_names_a_real_replacement() {
-        for (alias, instead, why) in RETIRED {
-            match parse(alias) {
-                Parsed::Retired { verb, replacement, why: said } => {
-                    assert_eq!(verb, *alias);
-                    assert_eq!(replacement, *instead);
-                    assert_eq!(said, *why);
-                    assert!(!why.is_empty(), "{alias} retires without a reason");
-                    // A `:` replacement has to be something that actually parses.
-                    if let Some(command) = instead.strip_prefix(':') {
-                        assert!(
-                            !matches!(parse(command), Parsed::Unknown(_) | Parsed::Retired { .. }),
-                            "{alias} points at {instead}, which is not a verb"
-                        );
-                    }
-                }
-                other => panic!("{alias} should be retired, got {other:?}"),
-            }
-        }
-    }
-
-    /// A retired alias must not also be live, or the table contradicts itself.
-    #[test]
-    fn no_retired_alias_is_still_in_the_verb_table() {
-        for (alias, _, _) in RETIRED {
-            assert!(
-                !all_verb_words().contains(alias),
-                "{alias} is both retired and live"
-            );
-        }
-    }
-
-    /// Verbs left over from the line-oriented shell, where the screen scrolled
-    /// and nothing showed the directory. The panes do both now.
-    #[test]
-    fn pwd_and_clear_point_at_what_replaced_them() {
-        match parse("pwd") {
-            Parsed::Retired { replacement, .. } => {
-                assert!(replacement.contains("status"), "{replacement}")
-            }
-            other => panic!("expected Retired, got {other:?}"),
-        }
-        match parse("clear") {
-            Parsed::Retired { replacement, .. } => assert_eq!(replacement, "Esc"),
-            other => panic!("expected Retired, got {other:?}"),
-        }
-    }
-
-    /// The point of the prune: one name per command, give or take the few that
-    /// come from the shell or mirror a key.
-    #[test]
-    fn the_vocabulary_stays_small() {
-        let aliases: usize = VERBS.iter().map(|v| v.aliases.len()).sum();
-        assert!(aliases <= 8, "aliases crept back up to {aliases}");
-    }
-
-    #[test]
-    fn verbs_are_case_insensitive() {
-        assert_eq!(act("EDIT 1"), act("edit 1"));
-        assert_eq!(act("Mv 1 cs130"), act("mv 1 cs130"));
-    }
-
-    #[test]
-    fn hey_leo_prefix_is_stripped() {
-        assert_eq!(act("hey leo new Groceries"), act("new Groceries"));
-        assert_eq!(act("leo undo"), Action::Undo);
-        // "leo" alone as the whole line is not a command.
-        assert_eq!(parse("leo"), Parsed::Unknown("leo".to_string()));
-    }
-
-    #[test]
-    fn multi_word_note_references_are_joined() {
-        assert_eq!(
-            act("edit Rust ownership notes"),
-            Action::Edit { note: "Rust ownership notes".to_string() }
-        );
-    }
-
-    #[test]
-    fn quoted_arguments_stay_together() {
-        assert_eq!(
-            act("new \"My Note\""),
-            Action::New { title: Some("My Note".to_string()) }
-        );
-    }
-
-    /// `check` takes the checkbox number as the LAST token, so a multi-word
-    /// title in front of it must still resolve.
-    #[test]
-    fn check_takes_its_number_from_the_end() {
-        assert_eq!(
-            act("check Rust ownership 3"),
-            Action::Check { note: "Rust ownership".to_string(), index: 3 }
-        );
-    }
-
-    #[test]
-    fn check_rejects_a_non_numeric_or_zero_index() {
-        assert!(usage("check 1 abc").contains("positive integer"));
-        assert!(usage("check 1 0").contains("positive integer"));
-        assert!(usage("check 1").contains("check <note>"));
-    }
-
-    /// `mv` takes the directory last and any number of notes before it.
-    #[test]
-    fn mv_takes_the_directory_from_the_end() {
-        assert_eq!(
-            act("mv 1 2 3 cs130"),
-            Action::Mv {
-                notes: vec!["1".to_string(), "2".to_string(), "3".to_string()],
-                dir: "cs130".to_string(),
-            }
-        );
-        // A trailing slash on the destination is tolerated, and `/` means root.
-        assert_eq!(
-            act("mv 1 /"),
-            Action::Mv { notes: vec!["1".to_string()], dir: String::new() }
-        );
-    }
-
-    /// Verbs the panes or the profile screen already do, and the two features
-    /// that went: each must still explain itself when typed.
-    #[test]
-    fn verbs_the_panes_replaced_are_retired() {
-        for word in [
-            "list", "ls", "view", "tags", "rmdir", "model", "config", "remind", "export",
-        ] {
-            assert!(
-                matches!(parse(word), Parsed::Retired { .. }),
-                "{word:?} should be retired, got {:?}",
-                parse(word)
-            );
-        }
-    }
-
-    /// There is one search, and it is `/`.
-    #[test]
-    fn search_and_find_point_at_slash() {
-        for word in ["search rust", "find rust"] {
-            match parse(word) {
-                Parsed::Retired { replacement, .. } => assert_eq!(replacement, "/"),
-                other => panic!("{word:?} should be retired, got {other:?}"),
-            }
-        }
-    }
-
-    #[test]
-    fn listen_parses_screen_flag_title_and_append_target() {
-        assert_eq!(
-            act("listen"),
-            Action::Listen { title: None, append_to: None, screen: false }
-        );
-        assert_eq!(
-            act("listen CS 101 Lecture"),
-            Action::Listen {
-                title: Some("CS 101 Lecture".to_string()),
-                append_to: None,
-                screen: false,
-            }
-        );
-        assert_eq!(
-            act("listen add 1"),
-            Action::Listen { title: None, append_to: Some("1".to_string()), screen: false }
-        );
-        // --screen is positional-agnostic and never lands in the title.
-        assert_eq!(
-            act("listen --screen Lecture 3"),
-            Action::Listen {
-                title: Some("Lecture 3".to_string()),
-                append_to: None,
-                screen: true,
-            }
-        );
-        assert_eq!(
-            act("listen Lecture 3 --screen"),
-            Action::Listen {
-                title: Some("Lecture 3".to_string()),
-                append_to: None,
-                screen: true,
-            }
-        );
-        // No note after `add` means the selected one; see `fill_selected`.
-        assert_eq!(act("listen add"), Action::Listen { title: None, append_to: Some(String::new()), screen: false });
-    }
-
-    #[test]
-    fn cd_accepts_no_argument_as_root() {
-        assert_eq!(act("cd"), Action::Cd { path: String::new() });
-        assert_eq!(act("cd .."), Action::Cd { path: "..".to_string() });
-        assert_eq!(act("cd cs130"), Action::Cd { path: "cs130".to_string() });
-    }
-
-    #[test]
-    fn sync_subcommands_parse() {
-        assert_eq!(act("sync init"), Action::Sync(SyncAction::Init));
-        assert_eq!(act("sync push"), Action::Sync(SyncAction::Push));
-        assert_eq!(act("sync pull"), Action::Sync(SyncAction::Pull));
-        assert_eq!(act("sync status"), Action::Sync(SyncAction::Status));
-        assert_eq!(
-            act("sync connect https://example.com/n.git"),
-            Action::Sync(SyncAction::Connect { url: "https://example.com/n.git".to_string() })
-        );
-        assert!(usage("sync connect").contains("connect"));
-        assert!(usage("sync").contains("init"));
-        assert!(usage("sync bogus").contains("init"));
-    }
-
-    #[test]
-    fn usage_is_returned_for_verbs_missing_a_required_argument() {
-        for line in ["mkdir", "mv", "rename", "check 1"] {
-            assert!(
-                matches!(parse(line), Parsed::Usage(_)),
-                "{line:?} should report usage"
-            );
-        }
-    }
-
-    /// The table is what help, the : menu and usage errors are built from, so
-    /// every row has to carry both.
-    #[test]
-    fn every_verb_has_a_usage_and_a_summary() {
-        for verb in VERBS {
-            assert!(
-                verb.usage.split_whitespace().next() == Some(verb.name),
-                "{}: usage {:?} does not start with the verb",
-                verb.name,
-                verb.usage
-            );
-            assert!(!verb.summary.is_empty(), "{} has no summary", verb.name);
-        }
-    }
-
-    /// A usage error quotes the table, so the two cannot disagree.
-    #[test]
-    fn usage_errors_come_from_the_table() {
-        assert_eq!(usage("mkdir"), verb("mkdir").unwrap().usage);
-        assert_eq!(usage("rename"), verb("rename").unwrap().usage);
-    }
-
-    #[test]
-    fn every_verb_and_alias_in_the_table_parses_to_something_known() {
-        for word in all_verb_words() {
-            // Bare verbs may legitimately want arguments; what must never
-            // happen is a verb in the table being reported as unknown.
-            assert!(
-                !matches!(parse(word), Parsed::Unknown(_)),
-                "{word:?} is in VERBS but parse() calls it unknown"
-            );
-        }
-    }
-
-    #[test]
-    fn tokenize_keeps_quoted_runs_and_drops_empty_gaps() {
-        assert_eq!(tokenize("a  b\tc"), vec!["a", "b", "c"]);
-        assert_eq!(tokenize("new \"two words\""), vec!["new", "two words"]);
-        assert_eq!(tokenize("new 'single quoted'"), vec!["new", "single quoted"]);
-        assert!(tokenize("   ").is_empty());
-    }
 }
 
 #[cfg(test)]
