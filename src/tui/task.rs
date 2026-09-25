@@ -77,6 +77,17 @@ impl Job {
         self.done
     }
 
+    /// A job that has already sent `events` and ended, for driving the App
+    /// through a job's lifecycle in tests without a worker thread.
+    #[cfg(test)]
+    pub fn scripted(events: Vec<TaskEvent>) -> Job {
+        let (tx, rx) = mpsc::channel();
+        for event in events {
+            tx.send(event).unwrap();
+        }
+        Job { rx, stop: Arc::new(AtomicBool::new(false)), done: false }
+    }
+
     /// Take everything the worker has sent since the last call. Never blocks.
     pub fn drain(&mut self) -> Vec<TaskEvent> {
         let mut out = Vec::new();
@@ -193,7 +204,12 @@ pub fn start_ask(note: String, title: String, body: String) -> Job {
 /// froze the whole UI — no spinner, no clock, no way to tell the difference
 /// between working and hung. `existing` is the body to append to, when this is
 /// an append rather than a new note.
-pub fn start_structuring(transcript: String, existing: Option<String>) -> Job {
+pub fn start_structuring(
+    transcript: String,
+    existing: Option<String>,
+    points: Vec<crate::ai::chat::Jotted>,
+    length_secs: u64,
+) -> Job {
     let (tx, rx) = mpsc::channel();
     let stop = Arc::new(AtomicBool::new(false));
 
@@ -205,12 +221,12 @@ pub fn start_structuring(transcript: String, existing: Option<String>) -> Job {
 
         let result = match &existing {
             Some(body) => crate::ai::chat_outcome(
-                crate::ai::chat::build_append_prompt(&transcript, body),
+                crate::ai::chat::build_append_prompt_with(&transcript, body, &points, length_secs),
                 STRUCTURE_MAX_TOKENS,
             )
             .map(|outcome| (None, outcome)),
             None => crate::ai::chat_outcome(
-                crate::ai::chat::build_structure_prompt(&transcript),
+                crate::ai::chat::build_structure_prompt_with(&transcript, &points, length_secs),
                 STRUCTURE_MAX_TOKENS,
             )
             .map(|outcome| {

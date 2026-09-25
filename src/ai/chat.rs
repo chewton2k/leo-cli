@@ -9,7 +9,67 @@ use crate::config::Config;
 /// creative ones.
 const TEMPERATURE: f32 = 0.3;
 
+/// A point the listener typed while recording, and how far in they typed it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Jotted {
+    pub at_secs: u64,
+    pub text: String,
+}
+
+/// `m:ss` as `mm:ss`, or `h:mm:ss` past an hour.
+pub fn clock(secs: u64) -> String {
+    let (h, m, s) = (secs / 3600, secs / 60 % 60, secs % 60);
+    if h > 0 {
+        format!("{h}:{m:02}:{s:02}")
+    } else {
+        format!("{m:02}:{s:02}")
+    }
+}
+
+/// The instructions and the list that make typed points lead the notes.
+/// Empty when nothing was typed, so the prompt is unchanged.
+fn points_section(points: &[Jotted], length_secs: u64) -> String {
+    if points.is_empty() {
+        return String::new();
+    }
+    let list: String = points
+        .iter()
+        .map(|p| format!("- ({}) {}\n", clock(p.at_secs), p.text))
+        .collect();
+    format!(
+        "The listener typed these points while recording, each with how far into the \
+         {} recording they typed it. They are what the listener found most important:\n\
+         {list}\n\
+         Rules for the typed points:\n\
+         - Open the body with a \"## Key points\" section: every typed point, in bold, in \
+         the listener's words, each followed by the detail the transcript gives about it \
+         (look at what was said around its time)\n\
+         - Keep a typed point even if the transcript never mentions it\n\
+         - Everything else from the transcript comes after, as usual\n\n",
+        clock(length_secs)
+    )
+}
+
+/// Typed points with no speech to go with them, as a note body.
+pub fn points_as_markdown(points: &[Jotted]) -> String {
+    let mut body = "## Key points\n".to_string();
+    for p in points {
+        body.push_str(&format!("- **{}** ({})\n", p.text, clock(p.at_secs)));
+    }
+    body
+}
+
 pub fn build_structure_prompt(transcript: &str) -> String {
+    build_structure_prompt_with(transcript, &[], 0)
+}
+
+pub fn build_append_prompt(transcript: &str, existing_body: &str) -> String {
+    build_append_prompt_with(transcript, existing_body, &[], 0)
+}
+
+/// The structure prompt, led by whatever the listener typed while recording.
+pub fn build_structure_prompt_with(transcript: &str, points: &[Jotted], length_secs: u64) -> String {
+    let points = points_section(points, length_secs);
     format!(
         "You are a note-taking assistant. Given the following transcript from a lecture or meeting, \
          create well-structured notes in Markdown format.\n\n\
@@ -23,11 +83,18 @@ pub fn build_structure_prompt(transcript: &str) -> String {
          - There will sometimes be noise in the transcription so make sure to filter out any extraneous information not related to the main topic \n\
          - Interweave your own notes with the structured output where you deem helpful \n\
          - Don't lose important details and capture notes that are meaningful\n\n\
-         Transcript:\n{transcript}"
+         {points}Transcript:\n{transcript}"
     )
 }
 
-pub fn build_append_prompt(transcript: &str, existing_body: &str) -> String {
+/// The append prompt, led by whatever the listener typed while recording.
+pub fn build_append_prompt_with(
+    transcript: &str,
+    existing_body: &str,
+    points: &[Jotted],
+    length_secs: u64,
+) -> String {
+    let points = points_section(points, length_secs);
     format!(
         "You are a note-taking assistant. You are adding to an EXISTING note. \
          Given the existing notes and a new transcript, create well-structured notes \
@@ -42,7 +109,7 @@ pub fn build_append_prompt(transcript: &str, existing_body: &str) -> String {
          - Avoid duplicating information already in the existing notes\n\
          - Use the same style and structure as the existing notes\n\n\
          Existing notes:\n{existing_body}\n\n\
-         New transcript:\n{transcript}"
+         {points}New transcript:\n{transcript}"
     )
 }
 
@@ -128,6 +195,52 @@ mod tests {
         let p = build_structure_prompt("the mitochondria is the powerhouse");
         assert!(p.contains("the mitochondria is the powerhouse"));
         assert!(p.contains("FIRST line"));
+    }
+
+    fn points() -> Vec<Jotted> {
+        vec![
+            Jotted { at_secs: 134, text: "BFS uses a queue".to_string() },
+            Jotted { at_secs: 610, text: "exam: know Dijkstra".to_string() },
+        ]
+    }
+
+    /// Without typed points the prompt is exactly what it always was.
+    #[test]
+    fn no_typed_points_leaves_the_prompt_unchanged() {
+        assert_eq!(
+            build_structure_prompt_with("t", &[], 0),
+            build_structure_prompt("t")
+        );
+        assert_eq!(build_append_prompt_with("t", "e", &[], 0), build_append_prompt("t", "e"));
+    }
+
+    /// What the listener typed is what they found important, so the notes are
+    /// built around it and it stands out.
+    #[test]
+    fn typed_points_lead_and_are_emphasized() {
+        let p = build_structure_prompt_with("a long lecture", &points(), 900);
+        assert!(p.contains("BFS uses a queue"), "{p}");
+        assert!(p.contains("exam: know Dijkstra"), "{p}");
+        assert!(p.contains("02:14"), "no time for the first point: {p}");
+        assert!(p.contains("15:00"), "no recording length: {p}");
+        assert!(p.contains("## Key points"), "{p}");
+        assert!(p.to_lowercase().contains("bold"), "{p}");
+        assert!(p.contains("a long lecture"));
+    }
+
+    #[test]
+    fn typed_points_reach_an_append_too() {
+        let p = build_append_prompt_with("more", "## Existing", &points(), 900);
+        assert!(p.contains("BFS uses a queue"), "{p}");
+        assert!(p.contains("## Existing"));
+    }
+
+    /// With no speech, the typed points are still a note.
+    #[test]
+    fn points_alone_make_a_note_body() {
+        let body = points_as_markdown(&points());
+        assert!(body.starts_with("## Key points\n"), "{body}");
+        assert!(body.contains("- **BFS uses a queue** (02:14)"), "{body}");
     }
 
     #[test]

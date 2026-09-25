@@ -56,7 +56,11 @@ pub fn for_place(place: Place) -> &'static [(&'static str, &'static str)] {
             ("h", "back"),
             ("?", "help"),
         ],
-        Place::Recording => &[("Enter", "stop and save"), ("t", "raw text / bullets")],
+        Place::Recording => &[
+            ("Enter", "add point"),
+            ("Tab", "raw text / bullets"),
+            ("Esc", "stop and save"),
+        ],
     }
 }
 
@@ -121,7 +125,8 @@ mod tests {
     #[test]
     fn a_recording_says_how_to_stop() {
         let hints = for_place(Place::Recording);
-        assert!(hints.iter().any(|(k, what)| *k == "Enter" && what.contains("stop")));
+        assert!(hints.iter().any(|(k, what)| *k == "Esc" && what.contains("stop")));
+        assert!(hints.iter().any(|(k, what)| *k == "Enter" && what.contains("point")));
     }
 
     /// A hint for a key that does nothing would be worse than no hint.

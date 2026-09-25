@@ -365,6 +365,92 @@ fn space_again_unmarks_and_esc_clears_every_mark() {
     assert!(app.marked.is_empty());
 }
 
+// ── typing while recording ─────────────────────────────────────────────
+
+fn recording_app(events: Vec<TaskEvent>) -> (App, tempfile::TempDir) {
+    let (mut app, d) = temp_app();
+    let req = ListenRequest { screen: false, title: None, append_to: None, dir: String::new() };
+    app.recording = Some(Recording::new(task::Job::scripted(events), req));
+    (app, d)
+}
+
+fn type_str(app: &mut App, text: &str, terminal: &mut ratatui::Terminal<ratatui::backend::TestBackend>) {
+    for c in text.chars() {
+        app.on_key(press(c), terminal).unwrap();
+    }
+}
+
+/// While recording, what you type is a point, and Enter adds it — letters
+/// that are keys elsewhere, like t, are just letters here.
+#[test]
+fn typing_while_recording_jots_points() {
+    let (mut app, _d) = recording_app(vec![]);
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
+    type_str(&mut app, "trees are graphs", &mut terminal);
+    app.on_key(press_code(event::KeyCode::Enter), &mut terminal).unwrap();
+
+    let rec = app.recording.as_ref().unwrap();
+    assert!(!rec.job.stop_requested(), "Enter stopped the recording");
+    assert_eq!(rec.jotted.len(), 1);
+    assert_eq!(rec.jotted[0].text, "trees are graphs");
+    assert!(rec.jot.is_empty());
+    assert!(!rec.show_raw, "t toggled the raw view instead of typing");
+}
+
+#[test]
+fn tab_switches_raw_text_while_recording() {
+    let (mut app, _d) = recording_app(vec![]);
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
+    app.on_key(press_code(event::KeyCode::Tab), &mut terminal).unwrap();
+    assert!(app.recording.as_ref().unwrap().show_raw);
+}
+
+/// Esc stops, and a half-typed point is kept rather than lost.
+#[test]
+fn esc_stops_and_keeps_a_half_typed_point() {
+    let (mut app, _d) = recording_app(vec![]);
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
+    type_str(&mut app, "last thing", &mut terminal);
+    app.on_key(press_code(event::KeyCode::Esc), &mut terminal).unwrap();
+    let rec = app.recording.as_ref().unwrap();
+    assert!(rec.job.stop_requested());
+    assert_eq!(rec.jotted.last().unwrap().text, "last thing");
+}
+
+#[test]
+fn your_points_show_above_the_live_notes() {
+    let (mut app, _d) = recording_app(vec![]);
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
+    type_str(&mut app, "BFS uses a queue", &mut terminal);
+    app.on_key(press_code(event::KeyCode::Enter), &mut terminal).unwrap();
+    type_str(&mut app, "half", &mut terminal);
+    terminal.draw(|f| app.draw(f)).unwrap();
+    let out = terminal.backend().to_string();
+    assert!(out.contains("Your points"), "{out}");
+    assert!(out.contains("BFS uses a queue"), "{out}");
+    assert!(out.contains("half"), "the line being typed is not shown: {out}");
+}
+
+/// Nothing was said, but points were typed: they are still a note.
+#[test]
+fn typed_points_are_saved_even_without_speech() {
+    let (mut app, _d) = recording_app(vec![TaskEvent::Finished { transcript: String::new() }]);
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
+    type_str(&mut app, "read chapter 4", &mut terminal);
+    app.on_key(press_code(event::KeyCode::Enter), &mut terminal).unwrap();
+    let before = app.store.notes.len();
+
+    app.pump_tasks(&mut terminal).unwrap();
+    assert!(app.recording.is_none());
+    assert_eq!(app.store.notes.len(), before + 1);
+    assert!(app.store.notes.iter().any(|n| n.body.contains("**read chapter 4**")));
+}
+
 /// The bug this guards: work below the UI printed to stdout while the panes
 /// owned the screen, so git's commit summary and config warnings landed on
 /// top of the notes list. They now arrive as status-line messages instead.

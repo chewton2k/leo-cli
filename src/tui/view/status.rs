@@ -81,6 +81,23 @@ pub fn render_filter(frame: &mut Frame, area: Rect, query: &str, matches: usize)
     ));
 }
 
+/// Draw the point being typed during a recording, with a real caret. Empty,
+/// it says what typing here does.
+pub fn render_jot(frame: &mut Frame, area: Rect, text: &str) {
+    let mut spans = vec![Span::styled("✎ ", Style::default().fg(theme::accent()))];
+    if text.is_empty() {
+        spans.push(Span::styled(
+            "type what matters · Enter adds it · Tab raw text · Esc stops",
+            Style::default().add_modifier(Modifier::DIM),
+        ));
+    } else {
+        spans.push(Span::raw(text.to_string()));
+    }
+    frame.render_widget(Paragraph::new(TuiLine::from(spans)), area);
+    let x = area.x + 2 + text.chars().count() as u16;
+    frame.set_cursor_position(Position::new(x.min(area.x + area.width.saturating_sub(1)), area.y));
+}
+
 /// What the right-hand side of the bar reports.
 ///
 /// Passed in rather than computed here so the view stays a view: the counts come

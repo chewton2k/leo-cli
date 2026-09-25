@@ -172,6 +172,59 @@ struct Recording {
     /// The raw rolling transcript, behind a toggle.
     raw: String,
     show_raw: bool,
+    /// When recording began, for stamping typed points.
+    started: Instant,
+    /// The point being typed right now.
+    jot: String,
+    /// Points typed so far. They lead the finished notes, in bold.
+    jotted: Vec<crate::ai::chat::Jotted>,
+}
+
+impl Recording {
+    fn new(job: Job, req: ListenRequest) -> Recording {
+        Recording {
+            job,
+            req,
+            progress: view::progress::Progress::spinner("Starting"),
+            since: Instant::now(),
+            condensed: String::new(),
+            raw: String::new(),
+            show_raw: false,
+            started: Instant::now(),
+            jot: String::new(),
+            jotted: Vec::new(),
+        }
+    }
+
+    /// Keep the point being typed, if there is one.
+    fn commit_jot(&mut self) {
+        let text = self.jot.trim().to_string();
+        self.jot.clear();
+        if !text.is_empty() {
+            self.jotted.push(crate::ai::chat::Jotted { at_secs: self.started.elapsed().as_secs(), text });
+        }
+    }
+
+    /// The preview while recording: typed points first, then the live stream.
+    fn live_body(&self) -> String {
+        let stream = if self.show_raw {
+            self.raw.clone()
+        } else if self.condensed.is_empty() {
+            "  listening...".to_string()
+        } else {
+            self.condensed.clone()
+        };
+        if self.jotted.is_empty() {
+            return stream;
+        }
+        let mut body = "## Your points\n".to_string();
+        for p in &self.jotted {
+            body.push_str(&format!("- **{}** ({})\n", p.text, crate::ai::chat::clock(p.at_secs)));
+        }
+        body.push('\n');
+        body.push_str(&stream);
+        body
+    }
 }
 
 impl App {
@@ -642,24 +695,34 @@ impl App {
 
             Mode::Normal => {
                 self.mode = Mode::Normal;
-                // While recording, a few keys mean something else: Enter and
-                // Esc stop, `t` switches between the bullets and the raw text.
-                if let Some(rec) = self.recording.as_mut() {
+                // While recording, the keyboard takes notes: typing builds a
+                // point, Enter adds it, Tab switches bullets and raw text, Esc
+                // stops. Once stopping, the panes get their keys back.
+                if let Some(rec) = self.recording.as_mut().filter(|r| !r.job.stop_requested()) {
+                    let ctrl = key.modifiers.contains(event::KeyModifiers::CONTROL);
                     match key.code {
-                        event::KeyCode::Enter | event::KeyCode::Esc => {
-                            // Idempotent: pressing Enter again while the worker
-                            // finishes must not look like a second command.
-                            if !rec.job.stop_requested() {
-                                rec.job.request_stop();
-                                rec.progress =
-                                    view::progress::Progress::spinner("Finishing the recording");
-                                rec.since = Instant::now();
-                                self.say(Kind::Dim, "Stopping...");
-                            }
+                        event::KeyCode::Esc => {
+                            rec.commit_jot();
+                            rec.job.request_stop();
+                            rec.progress = view::progress::Progress::spinner("Finishing the recording");
+                            rec.since = Instant::now();
+                            self.say(Kind::Dim, "Stopping...");
                             return Ok(());
                         }
-                        event::KeyCode::Char('t') => {
+                        event::KeyCode::Enter => {
+                            rec.commit_jot();
+                            return Ok(());
+                        }
+                        event::KeyCode::Tab => {
                             rec.show_raw = !rec.show_raw;
+                            return Ok(());
+                        }
+                        event::KeyCode::Backspace => {
+                            rec.jot.pop();
+                            return Ok(());
+                        }
+                        event::KeyCode::Char(c) if !ctrl => {
+                            rec.jot.push(c);
                             return Ok(());
                         }
                         _ => {}
@@ -1150,7 +1213,7 @@ impl App {
 
             Effect::Listen(req) => {
                 if self.recording.is_some() {
-                    self.say(Kind::Warn, "Already recording — press Enter to stop.");
+                    self.say(Kind::Warn, "Already recording — press Esc to stop.");
                     return Ok(());
                 }
                 // Check the whole path to a finished note before recording, not
@@ -1162,17 +1225,9 @@ impl App {
                     self.preview_scroll = 0;
                     return Ok(());
                 }
-                self.recording = Some(Recording {
-                    job: task::start_listen(req.screen),
-                    req,
-                    progress: view::progress::Progress::spinner("Starting"),
-                    since: Instant::now(),
-                    condensed: String::new(),
-                    raw: String::new(),
-                    show_raw: false,
-                });
+                self.recording = Some(Recording::new(task::start_listen(req.screen), req));
                 self.pinned = None;
-                self.say(Kind::Dim, "Recording — Enter to stop, t toggles raw text.");
+                self.say(Kind::Dim, "Recording — type a point and Enter to add it; Esc stops.");
                 Ok(())
             }
 

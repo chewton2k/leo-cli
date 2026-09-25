@@ -128,8 +128,10 @@ scrollable. It is always one keypress away, which is why this note is short.
 
 ## Talking instead of typing
 
-`:listen` records and turns speech into structured notes. Press `t` while it
-runs to see the raw transcript, `Enter` to stop. Writing `@leo <question>` in a
+`R` (or `:listen`) records and turns speech into structured notes. While it
+runs, type the points that matter and press `Enter` after each: they lead the
+finished notes, in bold, with what was said about them. `Tab` shows the raw
+transcript, `Esc` stops. Writing `@leo <question>` in a
 note and running `:ask` replaces that line with an answer.
 
 Both need a model, and the answer appears as it arrives rather than all at once.
