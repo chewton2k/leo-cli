@@ -43,9 +43,22 @@ pub fn run(cmd: Commands) -> Result<()> {
 
     let force_delete = matches!(cmd, Commands::Delete { force: true, .. });
 
+    // `leo list cs130` lists inside that directory; everything else works from
+    // the top level.
+    let current_dir = match &cmd {
+        Commands::List { dir: Some(dir), .. } => {
+            let dir = dir.trim_matches('/').to_string();
+            if !store.dir_exists(&dir) {
+                anyhow::bail!("No such directory: {dir}/");
+            }
+            dir
+        }
+        _ => String::new(),
+    };
+
     let action = match cmd {
         Commands::New { title, .. } => action::Action::New { title: Some(title) },
-        Commands::List { tag, limit } => action::Action::List { tag, limit },
+        Commands::List { tag, limit, .. } => action::Action::List { tag, limit },
         Commands::View { id } => action::Action::View { note: id },
         Commands::Edit { id } => action::Action::Edit { note: id },
         Commands::Delete { id, .. } => action::Action::Delete { note: id },
@@ -70,7 +83,7 @@ pub fn run(cmd: Commands) -> Result<()> {
         action,
         &mut store,
         action::Ctx {
-            current_dir: "",
+            current_dir: &current_dir,
             numbering: &numbering,
             selected: None,
             marked: &[],

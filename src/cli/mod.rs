@@ -40,8 +40,11 @@ enum Commands {
         tags: Vec<String>,
     },
 
-    /// List the top-level notes and directories, newest first
+    /// List notes and directories, newest first: the top level, or DIR
     List {
+        /// A directory to list instead of the top level, e.g. cs130
+        dir: Option<String>,
+
         /// Filter by tag
         #[arg(short, long)]
         tag: Option<String>,

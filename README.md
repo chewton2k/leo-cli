@@ -348,6 +348,7 @@ quick captures:
 leo new "Quick thought" --body "Refactor auth" --tags todo
 leo new "cs130/Lecture 4 #exam"     # opens your editor
 leo list --tag todo
+leo list cs130                      # one directory
 leo search "refactor"               # shows the line that matched
 leo view "Rust ownership"
 leo edit 3f2a

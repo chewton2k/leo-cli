@@ -192,6 +192,26 @@ fn search_prints_where_inside_the_note_it_matched() {
 }
 
 #[test]
+fn list_shows_one_directory_when_named() {
+    let leo = Leo::new();
+    leo.ok(&["new", "Top level", "--body", "x"]);
+    leo.ok(&["new", "cs130/ Lecture 4", "--body", "x"]);
+    let inside = leo.ok(&["list", "cs130"]);
+    assert!(inside.contains("Lecture 4"), "{inside}");
+    assert!(!inside.contains("Top level"), "{inside}");
+    // Trailing slashes are fine.
+    assert!(leo.ok(&["list", "cs130/"]).contains("Lecture 4"));
+
+    let out = leo.cmd(&["list", "nowhere"]).output().unwrap();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(text.contains("No such directory"), "{text}");
+}
+
+#[test]
 fn new_puts_a_note_in_a_directory_with_tags() {
     let leo = Leo::new();
     leo.ok(&["new", "cs130/ Lecture 4 #exam", "--body", "graphs"]);
