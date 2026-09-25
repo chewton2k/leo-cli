@@ -300,6 +300,44 @@ fn ask_on_a_note_without_prompts_makes_no_request() {
     assert!(leo.ok(&["ask", "Plain"]).contains("No @leo prompts"));
 }
 
+/// `leo ask` with a question none of the notes mention says so, without
+/// calling any AI (there are no keys here, so a call would fail).
+#[test]
+fn ask_across_notes_with_nothing_relevant_says_so() {
+    let leo = Leo::new();
+    leo.ok(&["new", "Groceries", "--body", "milk, eggs"]);
+    let out = leo.ok(&["ask", "what did we cover about quantum chromodynamics?"]);
+    assert!(out.contains("None of your notes mention that"), "{out}");
+}
+
+/// A question that does match notes reaches for the AI, which is not set up
+/// here — so it must fail with a message, not hang or crash.
+#[test]
+fn ask_across_notes_without_any_ai_fails_cleanly() {
+    let leo = Leo::new();
+    leo.ok(&["new", "Graph traversals", "--body", "BFS uses a queue"]);
+    let out = leo.cmd(&["ask", "how does BFS work?"]).output().unwrap();
+    assert!(!out.status.success(), "{}", describe(&out));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("Error"), "{}", describe(&out));
+}
+
+/// A note file with a broken header is skipped, and saving other notes must
+/// never delete it.
+#[test]
+fn a_note_leo_cannot_read_is_never_deleted() {
+    let leo = Leo::new();
+    leo.ok(&["new", "First", "--body", "x"]);
+    let broken = leo.notes_dir().join("broken.md");
+    std::fs::write(&broken, "---\ntitle: [unclosed\n---\nmy words").unwrap();
+    leo.ok(&["new", "Second", "--body", "y"]);
+    leo.ok(&["delete", "First", "--force"]);
+    assert!(broken.exists(), "saving deleted a note leo could not read");
+    assert!(std::fs::read_to_string(&broken)
+        .unwrap()
+        .contains("my words"));
+}
+
 #[test]
 fn the_manual_is_installed_once() {
     let leo = Leo::new();

@@ -43,6 +43,9 @@ leo setup
 `leo setup` lists what works on this machine, what is missing, and the command
 that installs each missing piece. Run it again any time something seems off.
 
+If the download fails, there may be no ready-made build for your computer yet;
+build it from source instead (below).
+
 **To update leo**, run the same install command again. **To uninstall**, delete
 `~/.local/bin/leo`; your notes are never touched.
 
@@ -117,8 +120,9 @@ Try this:
 1. **Make a directory.** Press `N`, type `cs130`, press `Enter`.
 2. **Go into it.** Press `h` to move to the directories pane, `j`/`k` to select
    `cs130/`, then `Enter`.
-3. **Write a note.** Press `n`. Your editor (`$EDITOR`) opens with a small
-   header:
+3. **Write a note.** Press `n`. Your editor opens with a small header. That is
+   whatever `$EDITOR` is set to, or **nano** if you have never chosen one: type,
+   then `Ctrl-O`, `Enter` to save and `Ctrl-X` to close.
 
    ```markdown
    ---
@@ -130,7 +134,7 @@ Try this:
    ```
 
    Fill in a title, optional tags, and the note. Save and close the editor, and
-   the note appears in the list. An empty note is discarded.
+   the note appears in the list, already selected. An empty note is discarded.
 4. **Tick a checkbox.** With the note selected, press `x` to tick its first open
    box. To tick a different one, press `l` to move into the note, `j`/`k` to
    pick the box, then `x`.
@@ -157,6 +161,9 @@ marked ones).
 /mv cs162                      move the selected (or marked) notes
 /mkdir cs130                   a directory here
 /cd ..                         up a directory; /cd / for the top
+/ask what is BFS?              ask a question across all your notes (section 5)
+/setup                         the setup screen again
+/sync                          back up now (section 6)
 ```
 
 ---
@@ -385,7 +392,10 @@ leo search "refactor"               # shows the line that matched
 leo view "Rust ownership"
 leo edit 3f2a
 leo delete 3f2a --force
-leo ask 3f2a
+leo ask 3f2a                        # answer that note's @leo lines
+leo ask "what did we cover about graphs?"   # a question across all notes
+leo setup                           # what is missing, and store an API key
+leo sync                            # back up to GitHub
 leo listen --title "Meeting notes"  # records until you press Enter
 leo doctor                          # full health scan; exits 1 if anything is broken
 ```
@@ -464,6 +474,11 @@ The AI hit its length limit, and leo shows a warning saying so. Press `Ctrl-S`,
 then `e`, and raise `max_tokens` for that provider (8192 is plenty for an hour
 of lecture).
 
+**A note is missing from the list**
+Run `leo doctor`. If a note file's header was edited and leo cannot read it,
+the doctor names the file and the problem; leo never deletes such a file, so
+fixing the header brings the note back.
+
 **"No API key" or nothing happens when recording**
 Run `leo setup`: it says which kind of AI is missing and how to add it. Keys
 can also be added with `Ctrl-S`, then `Enter` on the provider.
@@ -494,16 +509,24 @@ and the compiler enforces that:
 | `crates/leo-web` | `leo serve` | core |
 | `leo` (the root) | `main.rs` and the `cli/` subcommands | all of them |
 
-`cargo test` from the root runs every crate's unit tests plus the end-to-end
-tests in `tests/`, which run the real `leo` binary against a throwaway
-`LEO_HOME`. Nothing touches the network, your notes or your keychain.
+`cargo test` from the root runs everything: each crate's unit tests, the
+full-screen app driven through a simulated terminal, and in `tests/`:
+
+- `e2e.rs` — the real `leo` binary against a throwaway `LEO_HOME`: notes,
+  search, `leo ask`, `leo doctor`, backup to a local git repository (including
+  a second computer joining it), and `leo serve`;
+- `install.rs` — `install.sh` run for real into a throwaway home directory;
+- `wording.rs` — fails if any text a user can see names a command that is gone.
+
+Nothing touches the network, your notes or your keychain. With SoX installed,
+the audio tests run too; without it they skip themselves.
 
 Pushing a tag like `v0.2.0` runs `.github/workflows/release.yml`, which builds
 leo for Apple Silicon and Intel Macs and for x86 and ARM Linux, and publishes
 them with checksums as a GitHub release; `install.sh` downloads from the latest
 one.
 
-CI (`.github/workflows/ci.yml`) runs the tests on Linux and macOS, plus
+CI (`.github/workflows/ci.yml`) runs the tests on Linux and macOS, with SoX installed so the audio tests run, plus
 `cargo fmt --check`, `cargo clippy -D warnings`, and a check against the
 minimum Rust version, 1.88.
 
