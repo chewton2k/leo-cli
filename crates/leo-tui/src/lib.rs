@@ -1203,6 +1203,15 @@ impl App {
             None => {}
         }
 
+        // A note just made or added to: take the user to it, in its own
+        // directory, with any search cleared so it is actually listed.
+        if let Some(id) = &outcome.select {
+            if self.filter.take().is_some() {
+                self.resync();
+            }
+            self.jump_to(id);
+        }
+
         // Multi-line output goes to the preview; a single line is a status.
         let printable: Vec<&Line> = outcome
             .lines

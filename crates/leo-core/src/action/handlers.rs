@@ -639,10 +639,12 @@ pub fn apply_edit(
                 store.create_dir(dir);
             }
             let note = store.create_note(title, body, parsed_tags, dir)?;
-            let short = note.id[..std::cmp::min(8, note.id.len())].to_string();
+            let id = note.id.clone();
+            let short = id[..std::cmp::min(8, id.len())].to_string();
             store.save()?;
             Ok(Outcome {
                 dirty: true,
+                select: Some(id),
                 ..Outcome::line(Line::good(format!("Created {short}")))
             })
         }
@@ -765,10 +767,12 @@ pub fn apply_transcript(
         note.body = format!("{}\n\n{}", note.body, addition);
         note.updated_at = chrono::Utc::now();
         let title = note.title.clone();
-        let short = note.id[..std::cmp::min(8, note.id.len())].to_string();
+        let id = note.id.clone();
+        let short = id[..std::cmp::min(8, id.len())].to_string();
         store.save()?;
         return Ok(Outcome {
             dirty: true,
+            select: Some(id),
             ..Outcome::line(Line::good(format!("Updated \"{title}\" {short}")))
         });
     }
@@ -776,10 +780,12 @@ pub fn apply_transcript(
     let (ai_title, body) = ai.structure(transcript)?;
     let title = req.title.clone().unwrap_or(ai_title);
     let note = store.create_note(&title, &body, vec!["listen".to_string()], &req.dir)?;
-    let short = note.id[..std::cmp::min(8, note.id.len())].to_string();
+    let id = note.id.clone();
+    let short = id[..std::cmp::min(8, id.len())].to_string();
     store.save()?;
     Ok(Outcome {
         dirty: true,
+        select: Some(id),
         ..Outcome::line(Line::good(format!("Created \"{title}\" {short}")))
     })
 }
@@ -995,6 +1001,24 @@ mod handler_tests {
             reloaded.find_note(&id).is_some(),
             "the restored note is not on disk"
         );
+    }
+
+    /// A note that has just been made is the one the front end should show.
+    #[test]
+    fn a_new_note_asks_to_be_selected() {
+        let (mut store, _d) = temp_store();
+        let target = EditTarget::NewNote {
+            fallback_title: "T".into(),
+            dir: String::new(),
+        };
+        let out = apply_edit(
+            &mut store,
+            &target,
+            "---\ntitle: T\n---\nbody",
+            &FakeAi::default(),
+        )
+        .unwrap();
+        assert_eq!(out.select.as_deref(), Some(store.notes[0].id.as_str()));
     }
 
     // ── marked notes ────────────────────────────────────────────────────────

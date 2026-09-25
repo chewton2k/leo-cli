@@ -272,6 +272,9 @@ pub struct Outcome {
     pub effect: Effect,
     /// The store changed, so any cached view of it is stale.
     pub dirty: bool,
+    /// A note the front end should select and show: one just made or added
+    /// to, so the user does not have to go and find it.
+    pub select: Option<String>,
 }
 
 impl Outcome {

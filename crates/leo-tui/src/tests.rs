@@ -551,6 +551,29 @@ fn typed_points_are_saved_even_without_speech() {
         .any(|n| n.body.contains("**read chapter 4**")));
 }
 
+/// Once a recording is saved, the new note is the selected one, so you can
+/// read it without going to look for it.
+#[test]
+fn a_saved_recording_is_selected_and_shown() {
+    let (mut app, _d) = recording_app(vec![TaskEvent::Finished {
+        transcript: String::new(),
+    }]);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
+    type_str(&mut app, "read chapter 4", &mut terminal);
+    app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
+        .unwrap();
+    app.pump_tasks(&mut terminal).unwrap();
+
+    let selected = app.selected_id().cloned().expect("something is selected");
+    let note = app.store.find_note(&selected).unwrap();
+    assert!(
+        note.body.contains("read chapter 4"),
+        "selected {:?}",
+        note.title
+    );
+    assert_eq!(app.focus, Pane::Notes);
+}
+
 /// The bug this guards: work below the UI printed to stdout while the panes
 /// owned the screen, so git's commit summary and config warnings landed on
 /// top of the notes list. They now arrive as status-line messages instead.
