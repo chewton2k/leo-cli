@@ -117,6 +117,7 @@ pub fn apply(action: Action, store: &mut Store, ctx: Ctx<'_>, ai: &dyn Ai) -> Re
         Action::Rmdir { name, recursive } => rmdir(store, &name, recursive, ctx.current_dir),
         Action::Sync(a) => Ok(Outcome::effect(Effect::Sync(a))),
         Action::Help => Ok(Outcome::effect(Effect::ShowHelp)),
+        Action::Setup => Ok(Outcome::effect(Effect::ShowSetup)),
         Action::Quit => Ok(Outcome::effect(Effect::Quit)),
     }
 }

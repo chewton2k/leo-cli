@@ -67,6 +67,12 @@ pub const VERBS: &[Verb] = &[
         "sync [init | connect <url> | push | pull | status]",
         "back up now: pull, then push",
     ),
+    v(
+        "setup",
+        &[],
+        "setup",
+        "the setup screen: AI, recording, backup",
+    ),
     v("help", &["?"], "help", "every key and command"),
     v("quit", &["exit", "q"], "quit", "leave"),
 ];
@@ -346,6 +352,7 @@ pub fn parse(line: &str) -> Parsed {
         },
 
         "help" | "?" => act(Action::Help),
+        "setup" => act(Action::Setup),
         "quit" | "exit" | "q" => act(Action::Quit),
 
         _ => match RETIRED.iter().find(|(alias, _, _)| *alias == verb.as_str()) {
@@ -562,6 +569,11 @@ mod parse_tests {
     #[test]
     fn a_typed_slash_prefix_is_ignored() {
         assert_eq!(act("/edit 1"), act("edit 1"));
+    }
+
+    #[test]
+    fn setup_opens_the_setup_screen() {
+        assert_eq!(act("setup"), Action::Setup);
     }
 
     /// There is one search, and it is `f`.

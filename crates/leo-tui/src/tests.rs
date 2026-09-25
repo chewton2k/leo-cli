@@ -1934,14 +1934,66 @@ fn only_a_first_run_is_greeted() {
     let (mut app, _d) = temp_app();
     app.greet(false);
     assert!(app.message.is_none(), "a later run should say nothing");
+    assert_eq!(app.mode, Mode::Normal);
+}
 
+// ── the setup screen ────────────────────────────────────────────────────
+
+/// A first run opens a setup screen listing each step and whether it is done.
+#[test]
+fn a_first_run_opens_the_setup_screen() {
+    let (mut app, _d) = temp_app();
     app.greet(true);
-    let (_, text, _) = app
-        .message
-        .as_ref()
-        .expect("a first run should say something");
-    assert!(!text.trim().is_empty());
-    assert_eq!(text.lines().count(), 1, "more than one instruction: {text}");
+    assert_eq!(app.mode, Mode::Welcome);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(110, 24)).unwrap();
+    terminal.draw(|f| app.draw(f)).unwrap();
+    let out = terminal.backend().to_string();
+    for step in [
+        "Welcome",
+        "AI for writing",
+        "AI for speech",
+        "Recording",
+        "Backup to GitHub",
+    ] {
+        assert!(out.contains(step), "no {step:?}:\n{out}");
+    }
+}
+
+#[test]
+fn slash_setup_brings_the_screen_back_and_esc_leaves_it() {
+    let (mut app, _d) = temp_app();
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(110, 24)).unwrap();
+    app.run_line("setup", &mut terminal).unwrap();
+    assert_eq!(app.mode, Mode::Welcome);
+    app.on_key(press_code(event::KeyCode::Esc), &mut terminal)
+        .unwrap();
+    assert_eq!(app.mode, Mode::Normal);
+}
+
+/// Enter on an AI step goes to the provider screen, where keys are added.
+#[test]
+fn enter_on_an_ai_step_opens_the_provider_screen() {
+    let (mut app, _d) = temp_app();
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(110, 24)).unwrap();
+    app.greet(true);
+    app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
+        .unwrap();
+    assert_eq!(app.mode, Mode::Settings);
+}
+
+/// Enter on the backup step asks for the repository URL on the / line.
+#[test]
+fn enter_on_the_backup_step_asks_for_the_repository() {
+    let (mut app, _d) = temp_app();
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(110, 24)).unwrap();
+    app.greet(true);
+    for _ in 0..3 {
+        app.on_key(press('j'), &mut terminal).unwrap();
+    }
+    app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
+        .unwrap();
+    assert_eq!(app.mode, Mode::Command);
+    assert_eq!(app.cmd.text(), "sync connect ");
 }
 
 /// The user must learn about every gap before speaking, not one per attempt.

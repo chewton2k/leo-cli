@@ -77,6 +77,8 @@ pub enum Action {
     /// Take back the most recent destructive change.
     Undo,
     Help,
+    /// Open the setup screen.
+    Setup,
     Quit,
 }
 
@@ -212,6 +214,8 @@ pub enum Effect {
         question: String,
     },
     ShowHelp,
+    /// Show the setup screen: AI, recording, backup.
+    ShowSetup,
     Quit,
     /// Shell out to git. Streams its own output.
     Sync(SyncAction),

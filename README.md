@@ -99,6 +99,12 @@ and the selected note:
  /cs130                                              3 notes · 212 words
 ```
 
+The first time you start leo, a **setup screen** lists the four things worth
+turning on — AI for writing, AI for speech, recording, and backup to GitHub —
+with whether each is done. Select one and press `Enter` to set it up right
+there, or `Esc` to skip; `/setup` brings the screen back any time. The sections
+below cover each step in more detail.
+
 **The line along the bottom always shows the keys that work where you are.**
 If you forget anything, look there, or press `?` for the full list.
 

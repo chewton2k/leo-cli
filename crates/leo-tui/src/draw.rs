@@ -130,6 +130,17 @@ impl App {
         match &self.mode {
             Mode::Help => view::help::render_help(frame, frame.area(), self.help_scroll),
             Mode::Confirm { prompt, .. } => view::help::render_confirm(frame, frame.area(), prompt),
+            Mode::Welcome => {
+                if let Some(screen) = &self.welcome {
+                    view::welcome::render(
+                        frame,
+                        frame.area(),
+                        &screen.steps,
+                        screen.selected,
+                        screen.status.as_deref(),
+                    );
+                }
+            }
             Mode::Settings => {
                 if let Some(screen) = &self.settings {
                     view::settings::render(

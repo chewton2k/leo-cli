@@ -18,6 +18,7 @@ pub mod settings;
 pub mod status;
 pub mod tabs;
 pub mod theme;
+pub mod welcome;
 
 use ratatui::layout::{Constraint, Layout, Rect};
 

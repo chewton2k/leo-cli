@@ -143,7 +143,10 @@ fn absorb_cli(
         action::Effect::Listen(req) => shell::record_and_apply(store, req, ai)?,
 
         // Reachable only through the interactive shell.
-        action::Effect::ShowHelp | action::Effect::Quit | action::Effect::Sync(_) => return Ok(()),
+        action::Effect::ShowHelp
+        | action::Effect::ShowSetup
+        | action::Effect::Quit
+        | action::Effect::Sync(_) => return Ok(()),
     };
 
     shell::render(&next.lines);

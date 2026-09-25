@@ -20,6 +20,7 @@ mod mouse;
 mod profile;
 mod pump;
 pub mod shell;
+mod welcome;
 
 use std::time::{Duration, Instant};
 
@@ -91,6 +92,8 @@ enum Mode {
         on_yes: ConfirmedAction,
     },
     Settings,
+    /// The setup screen, on the first run or after /setup.
+    Welcome,
 }
 
 pub struct App {
@@ -135,6 +138,8 @@ pub struct App {
     /// An answer from all the notes, shown in the preview until dismissed like
     /// pinned output. Markdown, so it renders like a note.
     answer: Option<(String, String)>,
+    /// The setup screen, while it is open.
+    welcome: Option<welcome::WelcomeScreen>,
     /// The running recording, if any.
     recording: Option<Recording>,
     /// Tab-completion state, live only while cycling.
@@ -279,6 +284,7 @@ impl App {
             message: None,
             pinned: None,
             answer: None,
+            welcome: None,
             recording: None,
             completing: None,
             help_scroll: 0,
@@ -555,24 +561,11 @@ impl App {
         self.message = Some((kind, text.into(), Instant::now()));
     }
 
-    /// Say the one useful thing on a first run, and nothing on every run after.
-    ///
-    /// One instruction is actionable where a list of seven is a chore, so this
-    /// names the first gap only and stays quiet when there is nothing to fix.
+    /// On the first run, open the setup screen: the steps to AI, recording
+    /// and backup, each one Enter away. Later runs say nothing.
     fn greet(&mut self, first_run: bool) {
-        if !first_run {
-            return;
-        }
-        let config = leo_services::config::Config::load();
-        match leo_services::health::next_step(
-            &config,
-            leo_services::config::secret::default_store().as_ref(),
-        ) {
-            Some(step) => self.say(Kind::Warn, step),
-            None => self.say(
-                Kind::Good,
-                "Everything is set up. The bottom line shows what to press; ? shows it all.",
-            ),
+        if first_run {
+            self.open_welcome(None);
         }
     }
 
@@ -710,6 +703,11 @@ impl App {
             Mode::Settings => {
                 self.mode = Mode::Settings;
                 self.on_settings_key(key, terminal)
+            }
+
+            Mode::Welcome => {
+                self.mode = Mode::Welcome;
+                self.on_welcome_key(key)
             }
 
             Mode::Command => {
@@ -1326,6 +1324,11 @@ impl App {
                 }
                 self.preview_scroll = 0;
                 self.focus = Pane::Preview;
+                Ok(())
+            }
+
+            Effect::ShowSetup => {
+                self.open_welcome(None);
                 Ok(())
             }
 

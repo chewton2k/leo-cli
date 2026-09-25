@@ -178,6 +178,45 @@ pub fn recording(config: &Config, store: &dyn SecretStore, uses_microphone: bool
     checks
 }
 
+/// The four steps of getting leo set up, as the setup screen lists them: AI
+/// for writing, AI for speech, recording, and backup. Cheap checks only — no
+/// request is sent and the microphone is not opened.
+pub fn setup_steps(
+    config: &Config,
+    store: &dyn SecretStore,
+    notes_dir: &std::path::Path,
+) -> Vec<Check> {
+    let named = |mut check: Check, what: &str| {
+        check.what = what.to_string();
+        check
+    };
+    let recording = if on_path("rec") {
+        Check::ready(
+            "Recording",
+            "recording lectures",
+            Some("SoX is installed".to_string()),
+        )
+    } else {
+        Check::missing("Recording", "recording lectures", install_hint("sox"))
+    };
+    let backup = match (
+        leo_core::sync::is_initialized(notes_dir),
+        leo_core::sync::remote_url(notes_dir),
+    ) {
+        (true, Some(url)) => Check::ready("Backup to GitHub", "a copy in the cloud", Some(url)),
+        _ => Check::missing("Backup to GitHub", "a copy in the cloud", "not set up"),
+    };
+    vec![
+        named(chain_check(config, Chain::Chat, store), "AI for writing"),
+        named(
+            chain_check(config, Chain::Transcribe, store),
+            "AI for speech",
+        ),
+        recording,
+        backup,
+    ]
+}
+
 /// Which chain a check refers to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Chain {
