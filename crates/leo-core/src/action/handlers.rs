@@ -93,7 +93,7 @@ pub fn apply(
             Ok(listen(store, title, append_to, screen, ctx.current_dir))
         }
         Action::Ask { note } => ask(store, &note, ctx.numbering, ai),
-        Action::Undo => Ok(undo(store)),
+        Action::Undo => undo(store),
         Action::Mkdir { name } => mkdir(store, &name, ctx.current_dir),
         Action::Cd { path } => Ok(cd(store, &path, ctx.current_dir)),
         Action::Mv { notes, dir } => mv(store, &notes, &dir, ctx.numbering),
@@ -324,14 +324,13 @@ pub(super) fn ask(store: &mut Store, note: &str, numbering: &[String], ai: &dyn 
 ///
 /// A handler rather than a TUI-only key, so the same step back works from the `:`
 /// line and reuses the store's stack instead of a second one.
-pub(super) fn undo(store: &mut Store) -> Outcome {
+pub(super) fn undo(store: &mut Store) -> Result<Outcome> {
     match store.undo() {
-        Some(what) => Outcome {
-            lines: vec![Line::good(what)],
-            dirty: true,
-            ..Outcome::default()
-        },
-        None => Outcome::line(Line::dim("Nothing to undo.")),
+        Some(what) => {
+            store.save()?;
+            Ok(Outcome { lines: vec![Line::good(what)], dirty: true, ..Outcome::default() })
+        }
+        None => Ok(Outcome::line(Line::dim("Nothing to undo."))),
     }
 }
 
@@ -803,6 +802,18 @@ mod handler_tests {
         )
         .unwrap();
         assert_eq!(store.find_note(&id).unwrap().directory, "cs130");
+    }
+
+    /// Undo has to reach disk, or quitting brings the undone change back.
+    #[test]
+    fn an_undo_is_saved() {
+        let (mut store, _d) = temp_store();
+        let id = seed(&mut store, "Doomed", "b", "");
+        apply_confirmed(&mut store, &ConfirmedAction::DeleteNote { id: id.clone(), title: "Doomed".into() })
+            .unwrap();
+        apply(Action::Undo, &mut store, ctx("", &[]), &FakeAi::default()).unwrap();
+        let reloaded = Store::load_from(&store.notes_dir).unwrap();
+        assert!(reloaded.find_note(&id).is_some(), "the restored note is not on disk");
     }
 
     // ── marked notes ────────────────────────────────────────────────────────
