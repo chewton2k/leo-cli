@@ -119,8 +119,18 @@ pub fn now(notes_dir: &Path) -> Result<()> {
     if remote_url(notes_dir).is_none() {
         anyhow::bail!("No remote to back up to. Run `leo sync connect <url>`, or press Ctrl-S.");
     }
-    pull(notes_dir)?;
+    // A new, empty repository has nothing to pull yet.
+    if remote_has_branch(notes_dir)? {
+        pull(notes_dir)?;
+    }
     push(notes_dir)
+}
+
+/// Whether the remote already has the current branch.
+fn remote_has_branch(notes_dir: &Path) -> Result<bool> {
+    let branch = current_branch(notes_dir)?;
+    let heads = run_git(notes_dir, &["ls-remote", "--heads", "origin", &branch])?;
+    Ok(!heads.trim().is_empty())
 }
 
 pub fn status(notes_dir: &Path) -> Result<()> {
@@ -194,6 +204,25 @@ mod tests {
 
     /// Backing up with nothing set up says how to set it up, rather than
     /// failing inside git.
+    /// The first backup goes to an empty repository, which has no branch to
+    /// pull yet; that must not stop the push.
+    #[test]
+    fn the_first_backup_to_an_empty_remote_works() {
+        let tmp = TempDir::new().unwrap();
+        let remote = tmp.path().join("remote.git");
+        let notes = tmp.path().join("notes");
+        std::fs::create_dir_all(&notes).unwrap();
+        assert!(Command::new("git").args(["init", "--bare", "-q"]).arg(&remote).status().unwrap().success());
+        init(&notes).unwrap();
+        std::fs::write(notes.join("a.md"), "hello").unwrap();
+        auto_commit(&notes).unwrap();
+        connect(&notes, remote.to_str().unwrap()).unwrap();
+
+        now(&notes).unwrap();
+        // And the second one, which does pull, works too.
+        now(&notes).unwrap();
+    }
+
     #[test]
     fn backing_up_before_setup_says_what_to_do() {
         let tmp = TempDir::new().unwrap();
