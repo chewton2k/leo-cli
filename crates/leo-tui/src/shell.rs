@@ -29,20 +29,12 @@ pub fn render(lines: &[Line]) {
     }
 }
 
-fn editor_command() -> String {
-    std::env::var("EDITOR")
-        .or_else(|_| std::env::var("VISUAL"))
-        .unwrap_or_else(|_| "vim".to_string())
-}
-
 /// Spawn `$EDITOR` on the request's temp file, then feed the result back
 /// through [`action::apply_edit`].
 pub fn run_editor(store: &mut Store, req: EditRequest, ai: &dyn Ai) -> Result<Outcome> {
     std::fs::write(&req.path, &req.seed)?;
 
-    let status = std::process::Command::new(editor_command())
-        .arg(&req.path)
-        .status()?;
+    let status = leo_core::editor::open(&req.path)?;
 
     if !status.success() {
         let _ = std::fs::remove_file(&req.path);

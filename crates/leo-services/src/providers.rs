@@ -268,10 +268,7 @@ pub fn config_file(command: ConfigAction) -> Result<()> {
             if created {
                 println!("  Created {}", path.display());
             }
-            let editor = std::env::var("EDITOR")
-                .or_else(|_| std::env::var("VISUAL"))
-                .unwrap_or_else(|_| "vim".to_string());
-            std::process::Command::new(editor).arg(&path).status()?;
+            leo_core::editor::open(&path)?;
             Ok(())
         }
     }

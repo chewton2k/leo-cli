@@ -62,21 +62,7 @@ impl Check {
     }
 }
 
-/// A portable, no-subprocess PATH scan.
-///
-/// Shelling out to `which` would be a process per check and does not exist on
-/// Windows.
-pub fn on_path(binary: &str) -> bool {
-    let Some(paths) = std::env::var_os("PATH") else {
-        return false;
-    };
-    std::env::split_paths(&paths).any(|dir| {
-        dir.join(binary).is_file()
-            // Windows resolves a bare name through PATHEXT; `.exe` covers the
-            // common case without reading the full list.
-            || (cfg!(windows) && dir.join(format!("{binary}.exe")).is_file())
-    })
-}
+pub use leo_core::paths::on_path;
 
 /// Whether a local HTTP server is listening, used for Ollama and friends.
 ///
