@@ -565,21 +565,9 @@ pub fn parse(line: &str) -> Parsed {
             }
         }
 
-        "edit" | "e" => {
-            if args.is_empty() {
-                usage("edit <note>")
-            } else {
-                act(Action::Edit { note: joined() })
-            }
-        }
-
-        "delete" | "rm" => {
-            if args.is_empty() {
-                usage("delete <note>")
-            } else {
-                act(Action::Delete { note: joined() })
-            }
-        }
+        // A missing note means the selected one; see `fill_selected`.
+        "edit" | "e" => act(Action::Edit { note: joined() }),
+        "delete" | "rm" => act(Action::Delete { note: joined() }),
 
         // The checkbox number is the last token, so everything before it is the
         // note reference — a title with spaces still resolves.
@@ -632,9 +620,6 @@ pub fn parse(line: &str) -> Parsed {
                 args.iter().filter(|a| a.as_str() != "--screen").cloned().collect();
 
             if rest.first().map(|s| s.eq_ignore_ascii_case("add")).unwrap_or(false) {
-                if rest.len() < 2 {
-                    return usage("listen add <note>");
-                }
                 return act(Action::Listen {
                     title: None,
                     append_to: Some(rest[1..].join(" ")),
@@ -659,13 +644,7 @@ pub fn parse(line: &str) -> Parsed {
             })
         }
 
-        "ask" => {
-            if args.is_empty() {
-                usage("ask <note>")
-            } else {
-                act(Action::Ask { note: joined() })
-            }
-        }
+        "ask" => act(Action::Ask { note: joined() }),
 
         "tags" => act(Action::Tags),
         "undo" | "u" => act(Action::Undo),
@@ -682,9 +661,11 @@ pub fn parse(line: &str) -> Parsed {
         "cd" => act(Action::Cd { path: joined().trim().to_string() }),
 
 
+        // With one argument, that is the directory and the note is the
+        // selected one.
         "mv" => {
-            if args.len() < 2 {
-                return usage("mv <note>... <directory>");
+            if args.is_empty() {
+                return usage("mv [note...] <directory>");
             }
             act(Action::Mv {
                 notes: args[..args.len() - 1].to_vec(),
@@ -768,15 +749,54 @@ pub struct Ctx<'a> {
     pub current_dir: &'a str,
     /// Note IDs behind the current 1-based numbering.
     pub numbering: &'a [String],
+    /// The note the user is looking at, which is what a command means when it
+    /// names no note. `None` on the CLI, which has no selection.
+    pub selected: Option<&'a str>,
 }
 
 /// Apply an action. The only entry point a shell needs.
+/// Put the selected note into an action that named none.
+///
+/// A command that leaves its note out means the one on screen, so nobody has to
+/// read a number off the list to act on what they are already looking at. With
+/// nothing selected — always the case on the CLI — it says so instead of
+/// guessing.
+pub fn fill_selected(action: Action, selected: Option<&str>) -> std::result::Result<Action, Line> {
+    let omitted = match &action {
+        Action::Edit { note } | Action::Delete { note } | Action::Ask { note } => note.is_empty(),
+        Action::Mv { notes, .. } => notes.is_empty(),
+        Action::Listen { append_to: Some(note), .. } => note.is_empty(),
+        _ => false,
+    };
+    if !omitted {
+        return Ok(action);
+    }
+    let Some(id) = selected else {
+        return Err(Line::bad(
+            "No note selected. Select one, or name it: a number, a title, or an ID.",
+        ));
+    };
+    let id = id.to_string();
+    Ok(match action {
+        Action::Edit { .. } => Action::Edit { note: id },
+        Action::Delete { .. } => Action::Delete { note: id },
+        Action::Ask { .. } => Action::Ask { note: id },
+        Action::Mv { dir, .. } => Action::Mv { notes: vec![id], dir },
+        Action::Listen { title, screen, .. } => Action::Listen { title, append_to: Some(id), screen },
+        other => other,
+    })
+}
+
 pub fn apply(
     action: Action,
     store: &mut Store,
     ctx: Ctx<'_>,
     ai: &dyn Ai,
 ) -> Result<Outcome> {
+    let action = match fill_selected(action, ctx.selected) {
+        Ok(action) => action,
+        Err(line) => return Ok(Outcome::line(line)),
+    };
     match action {
         Action::New { title } => Ok(new_note(title, ctx.current_dir)),
         Action::List { tag, limit } => Ok(list(store, tag.as_deref(), limit, ctx.current_dir)),
@@ -1734,7 +1754,8 @@ mod parse_tests {
                 screen: true,
             }
         );
-        assert!(usage("listen add").contains("listen add"));
+        // No note after `add` means the selected one; see `fill_selected`.
+        assert_eq!(act("listen add"), Action::Listen { title: None, append_to: Some(String::new()), screen: false });
     }
 
     #[test]
@@ -1804,7 +1825,7 @@ mod parse_tests {
 
     #[test]
     fn usage_is_returned_for_verbs_missing_a_required_argument() {
-        for line in ["view", "edit", "delete", "ask", "mkdir", "rmdir", "export 1"] {
+        for line in ["view", "mkdir", "rmdir", "export 1", "mv"] {
             assert!(
                 matches!(parse(line), Parsed::Usage(_)),
                 "{line:?} should report usage"
@@ -1889,13 +1910,94 @@ mod handler_tests {
     }
 
     fn ctx<'a>(dir: &'a str, numbering: &'a [String]) -> Ctx<'a> {
-        Ctx { current_dir: dir, numbering }
+        Ctx { current_dir: dir, numbering, selected: None }
     }
 
     fn seed(store: &mut Store, title: &str, body: &str, dir: &str) -> String {
         let id = store.create_note(title, body, vec![], dir).unwrap().id.clone();
         store.save().unwrap();
         id
+    }
+
+    fn ctx_selected<'a>(numbering: &'a [String], selected: &'a str) -> Ctx<'a> {
+        Ctx { current_dir: "", numbering, selected: Some(selected) }
+    }
+
+    // ── the selected note ───────────────────────────────────────────────────
+
+    /// Leaving the note out means "the one I'm looking at", so the user never
+    /// has to read a number off the screen to act on what is already selected.
+    #[test]
+    fn verbs_that_take_one_note_parse_without_it() {
+        let parsed = |line: &str| match parse(line) {
+            Parsed::Action(a) => a,
+            other => panic!("{line:?} did not parse: {other:?}"),
+        };
+        assert_eq!(parsed("edit"), Action::Edit { note: String::new() });
+        assert_eq!(parsed("delete"), Action::Delete { note: String::new() });
+        assert_eq!(parsed("ask"), Action::Ask { note: String::new() });
+        assert_eq!(
+            parsed("mv cs130"),
+            Action::Mv { notes: vec![], dir: "cs130".to_string() }
+        );
+        assert_eq!(
+            parsed("listen add"),
+            Action::Listen { title: None, append_to: Some(String::new()), screen: false }
+        );
+    }
+
+    #[test]
+    fn an_omitted_note_means_the_selected_one() {
+        let (mut store, _d) = temp_store();
+        seed(&mut store, "Other", "", "");
+        let id = seed(&mut store, "Graphs", "", "");
+        let numbering = numbering_for(&store, "");
+        let out = apply(
+            Action::Delete { note: String::new() },
+            &mut store,
+            ctx_selected(&numbering, &id),
+            &FakeAi::default(),
+        )
+        .unwrap();
+        match out.effect {
+            Effect::Confirm { on_yes: ConfirmedAction::DeleteNote { id: target, .. }, .. } => {
+                assert_eq!(target, id)
+            }
+            other => panic!("expected a delete confirmation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn mv_without_notes_moves_the_selected_one() {
+        let (mut store, _d) = temp_store();
+        store.create_dir("cs130");
+        let id = seed(&mut store, "Graphs", "", "");
+        let numbering = numbering_for(&store, "");
+        apply(
+            Action::Mv { notes: vec![], dir: "cs130".to_string() },
+            &mut store,
+            ctx_selected(&numbering, &id),
+            &FakeAi::default(),
+        )
+        .unwrap();
+        assert_eq!(store.find_note(&id).unwrap().directory, "cs130");
+    }
+
+    /// The CLI has no selection, so an omitted note has to say so rather than
+    /// guess.
+    #[test]
+    fn an_omitted_note_with_nothing_selected_says_so() {
+        let (mut store, _d) = temp_store();
+        seed(&mut store, "Graphs", "", "");
+        let out = apply(
+            Action::Edit { note: String::new() },
+            &mut store,
+            ctx("", &[]),
+            &FakeAi::default(),
+        )
+        .unwrap();
+        assert_eq!(out.effect, Effect::None);
+        assert!(out.text().contains("No note selected"), "{}", out.text());
     }
 
     // ── resolution ──────────────────────────────────────────────────────────

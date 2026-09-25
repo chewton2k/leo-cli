@@ -890,6 +890,11 @@ impl App {
     }
 
     fn run_action<B: TuiBackend>(&mut self, action: Action, terminal: &mut Terminal<B>) -> Result<()> {
+        let selected = self.numbering.get(self.note_sel).map(String::as_str);
+        let action = match action::fill_selected(action, selected) {
+            Ok(action) => action,
+            Err(line) => return self.absorb(Outcome::line(line), terminal),
+        };
         // `ask` is the one action that can take a minute. Run it on a worker and
         // stream the answer: inline, it froze the interface with nothing to say
         // whether the model was thinking or the request had died.
@@ -932,7 +937,11 @@ impl App {
         let outcome = match action::apply(
             action,
             &mut self.store,
-            Ctx { current_dir: &self.current_dir, numbering: &self.numbering },
+            Ctx {
+                current_dir: &self.current_dir,
+                numbering: &self.numbering,
+                selected: self.numbering.get(self.note_sel).map(String::as_str),
+            },
             &RealAi,
         ) {
             Ok(o) => o,

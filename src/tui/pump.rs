@@ -81,6 +81,7 @@ impl App {
                 Ctx {
                     current_dir: &self.current_dir,
                     numbering: &self.numbering,
+                    selected: None,
                 },
                 &answered,
             )?;

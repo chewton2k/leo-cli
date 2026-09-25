@@ -96,8 +96,8 @@ pub const SECTIONS: &[Section] = &[
         entries: &[
             e(":new [title]", "create, opening $EDITOR"),
             e(":view <note>", "show it"),
-            e(":edit <note>", "edit it"),
-            e(":delete <note>", "delete it"),
+            e(":edit [note]", "edit it; no note means the selected one"),
+            e(":delete [note]", "delete it"),
             e(":list [#tag] [N]", "list, by tag or capped at N"),
             e(":search [-f] <q>", "titles, or -f for bodies too"),
             e(":check <note> <N>", "toggle checkbox N"),
@@ -110,7 +110,7 @@ pub const SECTIONS: &[Section] = &[
         entries: &[
             e(":mkdir <name>", "create one"),
             e(":cd <dir>", "enter it; .. up, / root"),
-            e(":mv <note>... <dir>", "move notes into it"),
+            e(":mv [note...] <dir>", "move notes, or the selected one, into it"),
             e(":rmdir <name>", "remove an empty one"),
             e(":rmdir -r <name>", "remove it and everything in it"),
         ],
@@ -119,11 +119,11 @@ pub const SECTIONS: &[Section] = &[
         title: "AI",
         entries: &[
             e(":listen [title]", "record; live notes appear as you talk"),
-            e(":listen add <note>", "record, appending to a note"),
+            e(":listen add [note]", "record, appending to a note"),
             e(":listen --screen", "capture system audio"),
             e("t", "while recording: raw text or bullets"),
             e("Enter", "while recording: stop and save"),
-            e(":ask <note>", "expand its @leo lines in place"),
+            e(":ask [note]", "expand its @leo lines in place"),
         ],
     },
     Section {

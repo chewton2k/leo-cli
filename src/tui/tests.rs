@@ -339,6 +339,26 @@ fn d_in_the_notes_pane_still_targets_a_note() {
     }
 }
 
+/// `:delete` on its own means the note on screen, which is what someone who
+/// just selected it expects.
+#[test]
+fn a_command_without_a_note_acts_on_the_selected_one() {
+    let (mut app, _d) = temp_app();
+    select_titled(&mut app, "Rust ownership");
+    let id = app.selected_id().cloned().unwrap();
+
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(90, 24)).unwrap();
+    app.run_line("delete", &mut terminal).unwrap();
+
+    match &app.mode {
+        Mode::Confirm { on_yes: crate::action::ConfirmedAction::DeleteNote { id: target, .. }, .. } => {
+            assert_eq!(*target, id)
+        }
+        other => panic!("expected a confirmation for the selected note, got {other:?}"),
+    }
+}
+
 /// The finished text is written through the same seam a live model would
 /// use, so titles, tags and appending behave identically.
 #[test]

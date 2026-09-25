@@ -329,7 +329,7 @@ fn run_command(cmd: Commands) -> Result<()> {
     let outcome = action::apply(
         action,
         &mut store,
-        action::Ctx { current_dir: "", numbering: &numbering },
+        action::Ctx { current_dir: "", numbering: &numbering, selected: None },
         &ai,
     )?;
     absorb_cli(outcome, &mut store, &ai, force_delete)
