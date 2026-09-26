@@ -437,7 +437,8 @@ added on the phone show up in the app after `Ctrl-R`.
 ## 8. Use leo from a shell
 
 Every everyday action also works as a command, which is handy for scripts and
-quick captures:
+quick captures. `leo --help` lists them all with examples, and
+`leo <command> --help` shows a command's options.
 
 ```sh
 leo new "Quick thought" --body "Refactor auth" --tags todo
@@ -453,9 +454,10 @@ leo pin "Syllabus"                  # keep it at the top of the list
 leo ask 3f2a                        # answer that note's @leo lines
 leo ask "what did we cover about graphs?"   # a question across all notes
 leo sync                            # back up to GitHub
+leo serve --anywhere                # your notes on your phone, from any network
 leo listen --title "Meeting notes"  # records until you press Enter
 leo doctor                          # check everything, store an API key; exits 1 if anything is broken
-leo update                          # install the latest version
+leo update                          # install a newer version, if there is one
 leo uninstall                       # remove leo; your notes stay
 ```
 

@@ -1,7 +1,6 @@
 mod cli;
 
 use anyhow::Result;
-use clap::Parser;
 
 fn main() -> Result<()> {
     // Load .env from the leo data directory so the installed binary finds it
@@ -10,5 +9,5 @@ fn main() -> Result<()> {
         dotenvy::from_path(data_dir.join(".env")).ok();
     }
     dotenvy::dotenv().ok();
-    cli::run(cli::Cli::parse())
+    cli::run(cli::parse())
 }

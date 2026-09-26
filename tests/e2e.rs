@@ -298,6 +298,54 @@ fn a_pinned_note_leads_the_list() {
     assert!(first.contains("Syllabus"), "{list}");
 }
 
+fn tripwire(leo: &Leo) -> (PathBuf, PathBuf) {
+    let ran = leo.home.path().join("installer-ran");
+    let script = leo.home.path().join("tripwire.sh");
+    std::fs::write(&script, format!("#!/bin/sh\ntouch '{}'\n", ran.display())).unwrap();
+    (script, ran)
+}
+
+#[test]
+fn update_does_nothing_when_already_on_the_latest_version() {
+    let leo = Leo::new();
+    let exe = leo.installed();
+    let (script, ran) = tripwire(&leo);
+    let out = leo
+        .cmd_at(&exe, &["update"])
+        .env("LEO_UPDATE_SCRIPT", &script)
+        .env("LEO_LATEST_RELEASE", env!("CARGO_PKG_VERSION"))
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{}", describe(&out));
+    assert!(said.contains("latest"), "{said}");
+    assert!(!ran.exists(), "downloaded anyway");
+}
+
+#[test]
+fn update_installs_when_a_newer_version_is_out_or_when_forced() {
+    let leo = Leo::new();
+    let exe = leo.installed();
+    let (script, ran) = tripwire(&leo);
+    let newer = leo
+        .cmd_at(&exe, &["update"])
+        .env("LEO_UPDATE_SCRIPT", &script)
+        .env("LEO_LATEST_RELEASE", "999.0.0")
+        .output()
+        .unwrap();
+    assert!(newer.status.success(), "{}", describe(&newer));
+    assert!(String::from_utf8_lossy(&newer.stdout).contains("999.0.0"));
+    assert!(ran.exists(), "did not install the newer version");
+
+    std::fs::remove_file(&ran).unwrap();
+    leo.cmd_at(&exe, &["update", "--force"])
+        .env("LEO_UPDATE_SCRIPT", &script)
+        .env("LEO_LATEST_RELEASE", env!("CARGO_PKG_VERSION"))
+        .output()
+        .unwrap();
+    assert!(ran.exists(), "--force did not reinstall");
+}
+
 #[test]
 fn update_reinstalls_in_place() {
     let leo = Leo::new();
@@ -317,7 +365,7 @@ fn update_reinstalls_in_place() {
         .success());
 
     let out = leo
-        .cmd_at(&exe, &["update"])
+        .cmd_at(&exe, &["update", "--force"])
         .env("SHELL", "/bin/zsh")
         .env(
             "LEO_UPDATE_SCRIPT",

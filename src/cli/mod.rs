@@ -140,8 +140,11 @@ enum Commands {
     )]
     Doctor,
 
-    #[command(about = "Update leo to the latest release")]
-    Update,
+    #[command(about = "Update leo to the latest release, if there is a newer one")]
+    Update {
+        #[arg(long, help = "Reinstall even when already on the latest version")]
+        force: bool,
+    },
 
     #[command(about = "Remove leo from this computer. Your notes, settings and keys stay")]
     Uninstall {
@@ -199,6 +202,70 @@ enum SyncCommands {
     Status,
 }
 
+const EXAMPLES: &[(&str, &str)] = &[
+    ("leo", "open the app"),
+    (
+        "leo new \"Lecture 4 #exam\"",
+        "a note tagged exam; \"cs130/ Lecture 4\" puts it in cs130",
+    ),
+    (
+        "leo list",
+        "notes at the top level; add a folder: leo list cs130",
+    ),
+    ("leo list --tag exam", "only notes tagged exam"),
+    ("leo search graphs", "every note that mentions it"),
+    (
+        "leo view 2",
+        "a note, by its number in leo list, its title or ID",
+    ),
+    ("leo edit 2", "open it in your editor"),
+    (
+        "leo delete 2",
+        "move it to the trash (--force skips the question)",
+    ),
+    ("leo pin 2", "keep it at the top of its list"),
+    ("leo trash", "what was deleted"),
+    ("leo trash restore 1", "bring one back"),
+    ("leo trash empty", "delete the trash for good"),
+    ("leo listen", "record, then turn it into notes"),
+    ("leo listen --add 2", "add a recording to a note"),
+    ("leo ask 2", "answer the @leo lines in a note"),
+    ("leo serve", "your notes on your phone, on the same Wi-Fi"),
+    (
+        "leo serve --anywhere",
+        "the same from any network (needs cloudflared)",
+    ),
+    (
+        "leo serve --new-token",
+        "a new link; old links stop working",
+    ),
+    ("leo sync", "back up to GitHub now"),
+    ("leo sync github", "set up backup with GitHub's gh tool"),
+    ("leo sync connect <url>", "back up to a repository you made"),
+    (
+        "leo doctor",
+        "check that everything works, and store an API key",
+    ),
+    ("leo update", "install a newer version, if there is one"),
+    ("leo uninstall", "remove leo; your notes stay"),
+];
+
+fn examples() -> String {
+    let width = EXAMPLES.iter().map(|(c, _)| c.len()).max().unwrap_or(0);
+    let mut out = String::from("How to use it:\n");
+    for (command, what) in EXAMPLES {
+        out.push_str(&format!("  {command:<width$}   {what}\n"));
+    }
+    out.push_str("\nEvery command's options: leo <command> --help");
+    out
+}
+
+pub fn parse() -> Cli {
+    use clap::{CommandFactory, FromArgMatches};
+    let matches = Cli::command().after_help(examples()).get_matches();
+    Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit())
+}
+
 /// Run whatever the command line asked for.
 pub fn run(cli: Cli) -> Result<()> {
     match cli.command {
@@ -213,7 +280,7 @@ pub fn run(cli: Cli) -> Result<()> {
         })),
         Some(Commands::Doctor) => doctor::run(),
         Some(Commands::Uninstall { yes }) => uninstall::run(yes),
-        Some(Commands::Update) => update::run(),
+        Some(Commands::Update { force }) => update::run(force),
         Some(Commands::Sync { command }) => sync::run(command),
         None => {
             if std::io::stdin().is_terminal() {
@@ -250,6 +317,35 @@ mod cli_tests {
         ] {
             assert!(Cli::try_parse_from(old).is_err(), "{old:?} still parses");
         }
+    }
+
+    #[test]
+    fn every_example_in_the_help_is_a_real_command() {
+        for (example, _) in EXAMPLES {
+            let args: Vec<String> = example
+                .replace("<url>", "https://github.com/me/notes.git")
+                .split('"')
+                .enumerate()
+                .flat_map(|(i, part)| {
+                    if i % 2 == 1 {
+                        vec![part.to_string()]
+                    } else {
+                        part.split_whitespace().map(str::to_string).collect()
+                    }
+                })
+                .collect();
+            assert!(
+                Cli::try_parse_from(&args).is_ok(),
+                "the help shows `{example}`, which does not parse"
+            );
+        }
+    }
+
+    #[test]
+    fn the_help_shows_how_to_use_serve() {
+        let text = examples();
+        assert!(text.contains("leo serve --anywhere"), "{text}");
+        assert!(text.contains("leo <command> --help"), "{text}");
     }
 
     /// The top-level help lists the commands someone needs, not every alias.

@@ -63,7 +63,10 @@ fn check(
     is_newer(&latest, current).then_some(latest)
 }
 
-fn latest_release() -> Result<String> {
+pub fn latest_release() -> Result<String> {
+    if let Ok(pinned) = std::env::var("LEO_LATEST_RELEASE") {
+        return Ok(pinned);
+    }
     let client = reqwest::blocking::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(5))
