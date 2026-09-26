@@ -62,11 +62,13 @@ curl -fsSL https://raw.githubusercontent.com/chewton2k/leo-cli/main/install.sh |
 Then open a new terminal and run:
 
 ```sh
-leo setup
+leo doctor
 ```
 
-`leo setup` lists what works on this machine, what is missing, and the command
-that installs each missing piece. Run it again any time something seems off.
+`leo doctor` checks everything leo uses — your notes, the AI, recording and
+backup — and for anything missing, gives the command that fixes it. If an AI
+has no key yet, it offers to store one. Run it again any time something seems
+off; inside the app, `/doctor` does the same.
 
 If the download fails, there may be no ready-made build for your computer yet;
 build it from source instead (below).
@@ -134,8 +136,9 @@ and the selected note:
 The first time you start leo, a **setup screen** lists the four things worth
 turning on — AI for writing, AI for speech, recording, and backup to GitHub —
 with whether each is done. Select one and press `Enter` to set it up right
-there, or `Esc` to skip; `/setup` brings the screen back any time. The sections
-below cover each step in more detail.
+there, or `Esc` to skip. After that, `/doctor` checks everything any time and
+says how to fix what is missing. The sections below cover each step in more
+detail.
 
 **The line along the bottom always shows the keys that work where you are.**
 If you forget anything, look there, or press `?` for the full list.
@@ -187,7 +190,7 @@ marked ones).
 /mkdir cs130                   a directory here
 /cd ..                         up a directory; /cd / for the top
 /ask what is BFS?              ask a question across all your notes (section 5)
-/setup                         the setup screen again
+/doctor                        check that everything works (AI, recording, backup)
 /sync                          back up now (section 6)
 ```
 
@@ -219,18 +222,19 @@ B**; you can add the other later.
 3. **Give the keys to leo.** Run:
 
    ```sh
-   leo setup
+   leo doctor
    ```
 
    At the end it asks which provider to store a key for. Type `openrouter`,
-   paste the key (it is not shown as you type), then run `leo setup` again for
+   paste the key (it is not shown as you type), then run `leo doctor` again for
    `groq`.
 
    You can do the same from inside the app instead: press `Ctrl-S`, select the
    provider, and press `Enter`.
 
-4. **Check it.** Run `leo setup` once more. The line near the bottom should say
-   `ready now: chat 1 / transcribe 1` or higher.
+4. **Check it.** Run `leo doctor` once more (or `/doctor` in the app). Under
+   **AI**, both models should say `ok`, and `openrouter answers` and
+   `groq answers` confirm the keys work.
 
 ### Option B: on your own machine (free and offline)
 
@@ -251,7 +255,7 @@ B**; you can add the other later.
      https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
    ```
 
-3. **Check it.** `leo setup` should now report both as ready.
+3. **Check it.** `leo doctor` should now show both as `ok` under **AI**.
 
 ### How leo picks a provider
 
@@ -419,10 +423,9 @@ leo edit 3f2a
 leo delete 3f2a --force
 leo ask 3f2a                        # answer that note's @leo lines
 leo ask "what did we cover about graphs?"   # a question across all notes
-leo setup                           # what is missing, and store an API key
 leo sync                            # back up to GitHub
 leo listen --title "Meeting notes"  # records until you press Enter
-leo doctor                          # full health scan; exits 1 if anything is broken
+leo doctor                          # check everything, store an API key; exits 1 if anything is broken
 ```
 
 A note can be named by its number in `leo list`, the start of its ID, or a
@@ -505,8 +508,9 @@ the doctor names the file and the problem; leo never deletes such a file, so
 fixing the header brings the note back.
 
 **"No API key" or nothing happens when recording**
-Run `leo setup`: it says which kind of AI is missing and how to add it. Keys
-can also be added with `Ctrl-S`, then `Enter` on the provider.
+Run `leo doctor` (or `/doctor` in the app): it says which kind of AI is missing
+and how to add it. Keys can also be added with `Ctrl-S`, then `Enter` on the
+provider.
 
 **`leo sync` fails**
 Check that `git push` works from your terminal (a signed-in account or an SSH

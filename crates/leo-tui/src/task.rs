@@ -64,6 +64,8 @@ pub enum TaskEvent {
     },
     /// A background push finished.
     Pushed,
+    /// The health check finished.
+    Checked(Vec<leo_services::doctor::Section>),
     Failed(String),
 }
 
@@ -132,6 +134,7 @@ impl Job {
                             | TaskEvent::Failed(_)
                             | TaskEvent::Structured { .. }
                             | TaskEvent::Answered { .. }
+                            | TaskEvent::Checked(_)
                     ) {
                         self.done = true;
                     }
@@ -179,6 +182,33 @@ pub fn start_push(notes_dir: std::path::PathBuf) -> Job {
     Job {
         rx,
         stop,
+        pause: Arc::new(AtomicBool::new(false)),
+        done: false,
+    }
+}
+
+/// Run the full health check on a worker thread.
+///
+/// On a worker because it can take seconds: it sends a request to each AI in
+/// use, listens to the microphone and asks the backup remote whether it
+/// answers, and the app has to keep drawing meanwhile.
+pub fn start_doctor(notes_dir: std::path::PathBuf, probe: leo_services::doctor::Probe) -> Job {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let config = leo_services::config::Config::load();
+        let config_path = leo_services::config::Config::config_path().unwrap_or_default();
+        let sections = leo_services::doctor::scan(
+            &config,
+            leo_services::config::secret::default_store().as_ref(),
+            &notes_dir,
+            &config_path,
+            probe,
+        );
+        let _ = tx.send(TaskEvent::Checked(sections));
+    });
+    Job {
+        rx,
+        stop: Arc::new(AtomicBool::new(false)),
         pause: Arc::new(AtomicBool::new(false)),
         done: false,
     }
@@ -387,7 +417,7 @@ fn chain_with_value(
 /// this is nearly always a permission that was never granted.
 const SILENT_RECORDING: &str = "No sound was recorded. macOS may not be letting \
      this terminal use the microphone: System Settings > Privacy & Security > \
-     Microphone, then restart the terminal. `leo setup` re-checks it.";
+     Microphone, then restart the terminal. /doctor re-checks it.";
 
 /// Read a WAV's duration in whole seconds via sox.
 fn wav_secs(path: &Path) -> Option<u64> {

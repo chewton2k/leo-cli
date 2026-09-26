@@ -1,50 +1,60 @@
-//! `leo doctor`: the full health scan, printed by section.
+//! `leo doctor`: the full health scan, printed by section, then a key stored on
+//! the spot for any AI that is missing one.
+
+use std::io::IsTerminal;
 
 use anyhow::Result;
 
 use leo_core::store::Store;
 use leo_services::config::{self, Config};
 use leo_services::doctor::{self, Probe};
+use leo_services::providers;
 
 pub fn run() -> Result<()> {
     println!();
     println!("  Checking leo, your notes, the AI, recording and backup.");
     println!("  This sends one small request to each AI in use and listens to the");
     println!("  microphone for half a second.");
+    println!();
 
     let config = Config::load();
-    let notes_dir = Store::notes_dir()?;
-    let config_path = Config::config_path()?;
+    let secrets = config::secret::default_store();
     let sections = doctor::scan(
         &config,
-        config::secret::default_store().as_ref(),
-        &notes_dir,
-        &config_path,
+        secrets.as_ref(),
+        &Store::notes_dir()?,
+        &Config::config_path()?,
         Probe::all(),
     );
-
-    let mut failed = 0;
-    for section in &sections {
-        println!();
-        println!("{}", section.title);
-        for check in &section.checks {
-            if super::setup::print_check(check) {
-                failed += 1;
-            }
-        }
-    }
+    let (lines, failed) = doctor::report(&sections);
+    leo_tui::shell::render(&lines);
 
     println!();
     if failed == 0 {
         println!("  Everything checked out.");
-        println!();
-        Ok(())
     } else {
         println!(
             "  {failed} problem{} found; each says how to fix it above.",
             if failed == 1 { "" } else { "s" }
         );
-        println!();
+    }
+    println!();
+
+    if std::io::stdin().is_terminal() {
+        let missing = providers::providers_missing_keys(&config, secrets.as_ref());
+        if !missing.is_empty() {
+            let name = super::prompt::ask(&format!(
+                "  Store an API key now? Which provider ({}), or Enter to skip: ",
+                missing.join(", ")
+            ))?;
+            if !name.is_empty() {
+                providers::model(providers::ModelAction::Login { name })?;
+            }
+        }
+    }
+
+    if failed > 0 {
         std::process::exit(1);
     }
+    Ok(())
 }

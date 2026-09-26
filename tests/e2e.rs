@@ -128,12 +128,10 @@ fn has_git() -> bool {
 fn help_lists_the_everyday_commands_and_hides_the_old_ones() {
     let leo = Leo::new();
     let help = leo.ok(&["--help"]);
-    for cmd in [
-        "new", "list", "search", "listen", "setup", "doctor", "sync", "serve",
-    ] {
+    for cmd in ["new", "list", "search", "listen", "doctor", "sync", "serve"] {
         assert!(help.contains(cmd), "help lacks {cmd}:\n{help}");
     }
-    for old in ["model", "config"] {
+    for old in ["setup", "model", "config"] {
         assert!(!help.contains(&format!("  {old} ")), "{help}");
     }
 }
@@ -351,12 +349,15 @@ fn the_manual_is_installed_once() {
     assert_eq!(manuals, 1);
 }
 
-// ── setup ───────────────────────────────────────────────────────────────────
+// ── doctor ──────────────────────────────────────────────────────────────────
 
+/// With no AI key, doctor would offer to store one — but only when someone is
+/// at a terminal to answer.
 #[test]
-fn setup_reports_without_asking_when_nobody_is_there_to_answer() {
+fn doctor_reports_without_asking_when_nobody_is_there_to_answer() {
     let leo = Leo::new();
-    let out = leo.ok(&["setup"]);
+    let run = leo.cmd(&["doctor"]).output().unwrap();
+    let out = String::from_utf8_lossy(&run.stdout).to_string();
     assert!(out.contains("notes"), "{out}");
     assert!(
         out.contains(&leo.home.path().display().to_string()),
@@ -369,9 +370,14 @@ fn setup_reports_without_asking_when_nobody_is_there_to_answer() {
 }
 
 #[test]
-fn the_old_setup_aliases_are_gone() {
+fn the_old_setup_commands_are_gone() {
     let leo = Leo::new();
-    for old in [&["model", "list"][..], &["config", "path"], &["env"]] {
+    for old in [
+        &["setup"][..],
+        &["model", "list"],
+        &["config", "path"],
+        &["env"],
+    ] {
         assert!(
             !leo.cmd(old).output().unwrap().status.success(),
             "{old:?} still works"

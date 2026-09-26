@@ -89,6 +89,6 @@ if ! grep -qsF "$BIN_DIR" "$rc"; then
 fi
 
 case ":$PATH:" in
-    *":$BIN_DIR:"*) say "Done. Run: leo setup" ;;
-    *) say "Done. Open a new terminal (or run: . $rc), then run: leo setup" ;;
+    *":$BIN_DIR:"*) say "Done. Run: leo doctor" ;;
+    *) say "Done. Open a new terminal (or run: . $rc), then run: leo doctor" ;;
 esac

@@ -18,6 +18,52 @@ impl App {
         }
     }
 
+    /// Drain a running `/doctor`: when it finishes, its report takes the
+    /// preview. Returns true when it did.
+    pub(super) fn pump_doctor(&mut self) -> bool {
+        let Some((job, _, _)) = self.checking.as_mut() else {
+            return false;
+        };
+        let events = job.drain();
+        if events.is_empty() && !job.is_done() {
+            return false;
+        }
+        let done = job.is_done();
+        let sections = events.into_iter().find_map(|event| match event {
+            TaskEvent::Checked(sections) => Some(sections),
+            _ => None,
+        });
+        match sections {
+            Some(sections) => {
+                self.checking = None;
+                let (lines, failed) = leo_services::doctor::report(&sections);
+                let verdict = match failed {
+                    0 => "everything checked out".to_string(),
+                    1 => "1 problem".to_string(),
+                    n => format!("{n} problems"),
+                };
+                self.unpin();
+                self.pinned = Some((format!("health check: {verdict} (Esc closes)"), lines));
+                self.preview_scroll = 0;
+                if failed == 0 {
+                    self.say(Kind::Good, "Everything checked out.");
+                } else {
+                    self.say(
+                        Kind::Warn,
+                        format!("Health check: {verdict}. The preview says how to fix each."),
+                    );
+                }
+                true
+            }
+            None if done => {
+                self.checking = None;
+                self.say(Kind::Bad, "The health check stopped without a result.");
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Absorb whatever the worker has sent since the last tick. Returns true
     /// when something changed and a redraw is warranted.
     /// Drain the streaming `:ask` job, if one is running.
@@ -145,7 +191,8 @@ impl App {
                 TaskEvent::Streaming(_)
                 | TaskEvent::Expanded { .. }
                 | TaskEvent::Answered { .. }
-                | TaskEvent::Pushed => {}
+                | TaskEvent::Pushed
+                | TaskEvent::Checked(_) => {}
             }
         }
 

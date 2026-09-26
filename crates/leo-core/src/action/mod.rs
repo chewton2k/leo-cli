@@ -77,8 +77,8 @@ pub enum Action {
     /// Take back the most recent destructive change.
     Undo,
     Help,
-    /// Open the setup screen.
-    Setup,
+    /// Check that everything works: leo, the notes, AI, recording, backup.
+    Doctor,
     Quit,
 }
 
@@ -214,8 +214,9 @@ pub enum Effect {
         question: String,
     },
     ShowHelp,
-    /// Show the setup screen: AI, recording, backup.
-    ShowSetup,
+    /// Run the full health check. It probes the network and the microphone,
+    /// so the shell does it.
+    Doctor,
     Quit,
     /// Shell out to git. Streams its own output.
     Sync(SyncAction),

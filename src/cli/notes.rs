@@ -70,7 +70,7 @@ pub fn run(cmd: Commands) -> Result<()> {
         },
         Commands::Ask { id } => action::Action::Ask { note: id },
 
-        Commands::Serve { .. } | Commands::Setup | Commands::Doctor | Commands::Sync { .. } => {
+        Commands::Serve { .. } | Commands::Doctor | Commands::Sync { .. } => {
             unreachable!("handled in main()")
         }
     };
@@ -144,7 +144,7 @@ fn absorb_cli(
 
         // Reachable only through the interactive shell.
         action::Effect::ShowHelp
-        | action::Effect::ShowSetup
+        | action::Effect::Doctor
         | action::Effect::Quit
         | action::Effect::Sync(_) => return Ok(()),
     };

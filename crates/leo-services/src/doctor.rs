@@ -1,20 +1,21 @@
 //! `leo doctor`: a full health scan of leo, the notes, the AI, recording and
 //! backup, grouped so a problem is found under the thing it affects.
 //!
-//! `leo setup` answers "what do I install next?"; this answers "is everything
-//! actually working?", so it goes further: it reads every note file, parses the
-//! config, and — when asked to probe — sends one small request to each AI in
-//! use, listens to the microphone, and asks the backup remote whether it
-//! answers.
+//! It answers "is everything actually working?", not just "is it installed?":
+//! it reads every note file, parses the config, and — when asked to probe —
+//! sends one small request to each AI in use, listens to the microphone, and
+//! asks the backup remote whether it answers.
 
 use std::path::Path;
+
+use leo_core::action::Line;
 
 use crate::config::secret::SecretStore;
 use crate::config::Config;
 use crate::health::{self, Check, State};
 
 /// One group of checks, headed by what it is about.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Section {
     pub title: &'static str,
     pub checks: Vec<Check>,
@@ -72,6 +73,42 @@ pub fn scan(
             checks: backup_checks(config, notes_dir, probe),
         },
     ]
+}
+
+/// The scan as lines to show, and how many checks failed. `leo doctor` prints
+/// them and `/doctor` shows them in the preview, so the two read the same.
+pub fn report(sections: &[Section]) -> (Vec<Line>, usize) {
+    let mut lines = Vec::new();
+    let mut failed = 0;
+    for section in sections {
+        if !lines.is_empty() {
+            lines.push(Line::blank());
+        }
+        lines.push(Line::plain(section.title));
+        for check in &section.checks {
+            let detail = check
+                .detail
+                .as_deref()
+                .map(|d| format!(" — {d}"))
+                .unwrap_or_default();
+            match &check.state {
+                State::Ready => lines.push(Line::good(format!("  ok   {}{detail}", check.what))),
+                State::Warn { note } => {
+                    lines.push(Line::warn(format!("  note {}{detail}", check.what)));
+                    lines.push(Line::dim(format!("       {note}")));
+                }
+                State::Missing { fix } => {
+                    failed += 1;
+                    lines.push(Line::bad(format!("  no   {}{detail}", check.what)));
+                    lines.push(Line::dim(format!("       needed for {}", check.needed_for)));
+                    for step in fix.lines() {
+                        lines.push(Line::plain(format!("       {}", step.trim())));
+                    }
+                }
+            }
+        }
+    }
+    (lines, failed)
 }
 
 fn warn(what: &str, needed_for: &str, note: String) -> Check {
@@ -390,6 +427,74 @@ mod tests {
         let notes = tmp.path().join("notes");
         let config = tmp.path().join("config.toml");
         (tmp, notes, config)
+    }
+
+    /// The terminal and the app print the same report: each section's title,
+    /// then a line per check, with the fix under anything missing.
+    #[test]
+    fn the_report_names_each_problem_with_its_fix_and_counts_them() {
+        use leo_core::action::Kind;
+        let sections = vec![
+            Section {
+                title: "leo",
+                checks: vec![Check::ready("leo", "everything", Some("version 9".into()))],
+            },
+            Section {
+                title: "AI",
+                checks: vec![
+                    Check::missing(
+                        "AI for writing",
+                        "notes from recordings",
+                        "brew install ollama\nor: store a key",
+                    ),
+                    warn("config file", "settings", "is old".into()),
+                ],
+            },
+        ];
+        let (lines, failed) = report(&sections);
+        assert_eq!(failed, 1);
+        let text: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
+        let joined = text.join("\n");
+        for expected in [
+            "leo",
+            "ok   leo — version 9",
+            "no   AI for writing",
+            "needed for notes from recordings",
+            "brew install ollama",
+            "or: store a key",
+            "note config file",
+            "is old",
+        ] {
+            assert!(joined.contains(expected), "no {expected:?} in:\n{joined}");
+        }
+        let missing = lines.iter().find(|l| l.text.contains("no   AI")).unwrap();
+        assert_eq!(missing.kind, Kind::Bad);
+        let fine = lines.iter().find(|l| l.text.contains("ok   leo")).unwrap();
+        assert_eq!(fine.kind, Kind::Good);
+    }
+
+    /// A missing dependency must arrive with the command that fixes it. A report
+    /// that only says "sox: missing" makes the user go looking.
+    #[test]
+    fn every_missing_check_carries_a_fix() {
+        let (_tmp, notes, config) = setup();
+        for section in scan(
+            &Config::default(),
+            &MemoryStore::default(),
+            &notes,
+            &config,
+            quiet(),
+        ) {
+            for check in section.checks {
+                if let State::Missing { fix } = &check.state {
+                    assert!(
+                        !fix.trim().is_empty(),
+                        "{} is missing with no fix",
+                        check.what
+                    );
+                }
+            }
+        }
     }
 
     #[test]

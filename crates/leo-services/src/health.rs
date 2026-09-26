@@ -1,6 +1,6 @@
 //! What works on this machine, and what to run if it doesn't.
 //!
-//! One place that answers "can leo do X here?", so `leo setup`, the first-run
+//! One place that answers "can leo do X here?", so `leo doctor`, the first-run
 //! greeting, and the pre-flight check before recording all agree — and so a
 //! missing dependency is reported with the command that installs it rather than
 //! as a failure after the user has already tried to use it.
@@ -29,7 +29,7 @@ impl State {
 }
 
 /// One checked thing.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Check {
     /// What it is, in the user's words rather than the binary's name.
     pub what: String,
@@ -265,10 +265,10 @@ pub(crate) fn chain_check(config: &Config, chain: Chain, store: &dyn SecretStore
             state: State::Missing {
                 fix: match chain {
                     Chain::Chat => "brew install ollama && ollama pull qwen3:8b   (free, local)\n\
-                         or: leo setup, and store an openrouter key   (free tier)"
+                         or: leo doctor, and store an openrouter key   (free tier)"
                         .to_string(),
                     Chain::Transcribe => "brew install whisper-cpp   (free, local)\n\
-                         or: leo setup, and store a groq key   (free tier)"
+                         or: leo doctor, and store a groq key   (free tier)"
                         .to_string(),
                 },
             },
@@ -336,51 +336,6 @@ pub(crate) fn install_hint(tool: &str) -> &'static str {
         ("git", ..) => "sudo apt install git",
         _ => "see the README",
     }
-}
-
-/// The full report: what leo can do here, and what each gap costs.
-pub fn report(config: &Config, store: &dyn SecretStore) -> Vec<Check> {
-    let mut checks = Vec::new();
-
-    // Storage first: it is the only part that is not optional.
-    match Config::config_path() {
-        Ok(path) => checks.push(Check::ready(
-            "config file",
-            "providers and settings",
-            Some(path.display().to_string()),
-        )),
-        Err(e) => checks.push(Check {
-            what: "config file".to_string(),
-            needed_for: "providers and settings".to_string(),
-            state: State::Warn {
-                note: format!("could not be located: {e}"),
-            },
-            detail: None,
-        }),
-    }
-
-    checks.push(chain_check(config, Chain::Chat, store));
-    checks.push(chain_check(config, Chain::Transcribe, store));
-
-    checks.push(if on_path("rec") {
-        Check::ready("sox", "recording audio for listen", None)
-    } else {
-        Check::missing("sox", "recording audio for listen", install_hint("sox"))
-    });
-
-    if on_path("rec") {
-        checks.push(microphone());
-    }
-
-    checks.push(if on_path("git") {
-        Check::ready("git", "sync to GitHub", None)
-    } else {
-        Check::missing("git", "sync to GitHub", install_hint("git"))
-    });
-
-    checks.push(credentials_check());
-
-    checks
 }
 
 /// Where credentials are kept, and whether the file is readable by anyone else.
@@ -528,22 +483,6 @@ mod tests {
     fn an_unknown_provider_is_never_usable() {
         let config = config_with(vec![], vec![]);
         assert!(!provider_usable(&config, "nope", &store()));
-    }
-
-    /// A missing dependency must arrive with the command that fixes it. A report
-    /// that only says "sox: missing" makes the user go looking.
-    #[test]
-    fn every_missing_check_carries_a_fix() {
-        let config = config_with(vec![], vec![]);
-        for check in report(&config, &store()) {
-            if let State::Missing { fix } = &check.state {
-                assert!(
-                    !fix.trim().is_empty(),
-                    "{} is missing with no fix",
-                    check.what
-                );
-            }
-        }
     }
 
     /// An empty chain is a real gap, not a pass.

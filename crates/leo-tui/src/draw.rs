@@ -110,6 +110,11 @@ impl App {
                     .map(|r| view::progress::render(&r.progress, r.since.elapsed()))
             })
             .or_else(|| {
+                self.checking
+                    .as_ref()
+                    .map(|(_, p, since)| view::progress::render(p, since.elapsed()))
+            })
+            .or_else(|| {
                 self.busy
                     .as_ref()
                     .map(|(p, since)| view::progress::render(p, since.elapsed()))

@@ -67,7 +67,7 @@ fn installs_leo_and_puts_it_on_the_path_once() {
     assert!(leo.is_file(), "leo was not installed:\n{said}");
     let version = Command::new(&leo).arg("--version").output().unwrap();
     assert!(version.status.success(), "the installed leo does not run");
-    assert!(said.contains("leo setup"), "no next step:\n{said}");
+    assert!(said.contains("leo doctor"), "no next step:\n{said}");
 
     // Running it again must not add the PATH line a second time.
     install(&home, "/bin/zsh", &tarball);

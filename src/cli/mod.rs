@@ -5,7 +5,6 @@
 mod doctor;
 mod notes;
 mod prompt;
-mod setup;
 mod sync;
 
 use std::io::IsTerminal;
@@ -113,10 +112,8 @@ enum Commands {
         port: u16,
     },
 
-    /// See what works here, and fix what does not: AI keys, recording, backup
-    Setup,
-
-    /// A full health scan: leo itself, your notes, the AI, recording, and backup
+    /// Check that everything works — leo, your notes, the AI, recording,
+    /// backup — and say how to fix what does not
     Doctor,
 
     /// Back up your notes to git: pull, then push. Sets backup up the first time.
@@ -150,7 +147,6 @@ pub fn run(cli: Cli) -> Result<()> {
         Some(Commands::Serve { port }) => {
             tokio::runtime::Runtime::new()?.block_on(leo_web::serve(port))
         }
-        Some(Commands::Setup) => setup::run(),
         Some(Commands::Doctor) => doctor::run(),
         Some(Commands::Sync { command }) => sync::run(command),
         None => {
@@ -170,22 +166,22 @@ pub fn run(cli: Cli) -> Result<()> {
 mod cli_tests {
     use super::*;
 
-    /// Setup is the one command for "what works, and fix what does not", and
-    /// `leo sync` alone backs up; the old names keep working for scripts.
+    /// Doctor is the one command for "what works, and fix what does not", and
+    /// `leo sync` alone backs up.
     #[test]
-    fn setup_and_bare_sync_parse() {
+    fn doctor_and_bare_sync_parse() {
         assert!(matches!(
-            Cli::try_parse_from(["leo", "setup"]).unwrap().command,
-            Some(Commands::Setup)
+            Cli::try_parse_from(["leo", "doctor"]).unwrap().command,
+            Some(Commands::Doctor)
         ));
         assert!(matches!(
             Cli::try_parse_from(["leo", "sync"]).unwrap().command,
             Some(Commands::Sync { command: None })
         ));
-        assert!(Cli::try_parse_from(["leo", "doctor"]).is_ok());
-        // The hidden aliases are gone: setup and Ctrl-S cover them.
+        // The old names are gone: doctor and Ctrl-S cover them.
         for old in [
-            &["leo", "model", "list"][..],
+            &["leo", "setup"][..],
+            &["leo", "model", "list"],
             &["leo", "config", "path"],
             &["leo", "env"],
         ] {
@@ -198,12 +194,11 @@ mod cli_tests {
     fn the_top_level_help_is_short() {
         use clap::CommandFactory;
         let help = Cli::command().render_help().to_string();
-        assert!(help.contains("setup"), "{help}");
         assert!(
             help.contains("doctor"),
             "the health scan is not listed:\n{help}"
         );
-        for hidden in ["model", "config"] {
+        for hidden in ["setup", "model", "config"] {
             assert!(
                 !help.contains(&format!("  {hidden} ")),
                 "{hidden} is still listed:\n{help}"

@@ -92,7 +92,7 @@ enum Mode {
         on_yes: ConfirmedAction,
     },
     Settings,
-    /// The setup screen, on the first run or after /setup.
+    /// The setup screen, on the first run.
     Welcome,
 }
 
@@ -114,6 +114,10 @@ pub struct App {
     last_change: Instant,
     /// A background push, and when the last one finished.
     pushing: Option<(task::Job, view::progress::Progress, Instant)>,
+    /// A running `/doctor`.
+    checking: Option<(task::Job, view::progress::Progress, Instant)>,
+    /// What `/doctor` may probe. Everything, except in tests.
+    probe: leo_services::doctor::Probe,
     last_push: Option<Instant>,
     /// How many commits are waiting, refreshed when the notes change rather than
     /// on every frame: it costs a git process.
@@ -267,6 +271,8 @@ impl App {
             asking: None,
             last_change: Instant::now(),
             pushing: None,
+            checking: None,
+            probe: leo_services::doctor::Probe::all(),
             last_push: None,
             unpushed: None,
             store,
@@ -605,7 +611,7 @@ impl App {
         }
         lines.push(Line::blank());
         lines.push(Line::dim(
-            "  Ctrl-S manages providers · `leo setup` checks and fixes everything",
+            "  Ctrl-S manages providers · /doctor checks everything",
         ));
         Some(lines)
     }
@@ -1327,8 +1333,21 @@ impl App {
                 Ok(())
             }
 
-            Effect::ShowSetup => {
-                self.open_welcome(None);
+            Effect::Doctor => {
+                if self.checking.is_some() {
+                    self.say(Kind::Warn, "Already checking — one at a time.");
+                    return Ok(());
+                }
+                // The microphone is busy while recording; the rest still runs.
+                let probe = leo_services::doctor::Probe {
+                    microphone: self.probe.microphone && self.recording.is_none(),
+                    ..self.probe
+                };
+                self.checking = Some((
+                    task::start_doctor(self.store.notes_dir.clone(), probe),
+                    view::progress::Progress::spinner("Checking everything"),
+                    Instant::now(),
+                ));
                 Ok(())
             }
 
@@ -1758,6 +1777,7 @@ fn event_loop<B: TuiBackend>(terminal: &mut Terminal<B>, app: &mut App) -> Resul
             // No input: give the worker a chance to report progress, and pick up
             // anything the lower layers queued.
             app.pump_tasks(terminal)?;
+            app.pump_doctor();
             app.pump_diagnostics();
             // Only when there is no input to handle: an automatic backup must
             // never compete with the user's typing.
@@ -1777,6 +1797,7 @@ fn event_loop<B: TuiBackend>(terminal: &mut Terminal<B>, app: &mut App) -> Resul
             _ => {}
         }
         app.pump_tasks(terminal)?;
+        app.pump_doctor();
         app.pump_diagnostics();
     }
     Ok(())

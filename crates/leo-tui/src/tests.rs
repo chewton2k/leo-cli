@@ -20,7 +20,10 @@ fn temp_app() -> (App, tempfile::TempDir) {
         .unwrap();
     store.save().unwrap();
     let store = Store::load_from(&dir.path().join("notes")).unwrap();
-    (App::new(store), dir)
+    let mut app = App::new(store);
+    // No network and no microphone from a test.
+    app.probe = leo_services::doctor::Probe::default();
+    (app, dir)
 }
 
 /// Notes are sorted newest-first, so find one by title rather than index.
@@ -1960,14 +1963,94 @@ fn a_first_run_opens_the_setup_screen() {
 }
 
 #[test]
-fn slash_setup_brings_the_screen_back_and_esc_leaves_it() {
+fn esc_leaves_the_setup_screen_and_points_at_doctor() {
     let (mut app, _d) = temp_app();
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(110, 24)).unwrap();
-    app.run_line("setup", &mut terminal).unwrap();
-    assert_eq!(app.mode, Mode::Welcome);
+    app.greet(true);
     app.on_key(press_code(event::KeyCode::Esc), &mut terminal)
         .unwrap();
     assert_eq!(app.mode, Mode::Normal);
+    let said = app
+        .message
+        .as_ref()
+        .map(|m| m.1.clone())
+        .unwrap_or_default();
+    assert!(said.contains("/doctor"), "{said}");
+}
+
+// ── /doctor ─────────────────────────────────────────────────────────────
+
+/// `/doctor` runs the health check without freezing the app, and says so.
+#[test]
+fn slash_doctor_starts_the_check_on_a_worker() {
+    let (mut app, _d) = temp_app();
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(110, 24)).unwrap();
+    app.run_line("doctor", &mut terminal).unwrap();
+    assert!(app.checking.is_some(), "no check started");
+    assert_eq!(app.mode, Mode::Normal);
+    terminal.draw(|f| app.draw(f)).unwrap();
+    let out = terminal.backend().to_string();
+    assert!(
+        out.contains("Checking"),
+        "nothing says it is working:\n{out}"
+    );
+}
+
+/// The results land in the preview, each problem with its fix, and Esc
+/// closes them.
+#[test]
+fn the_doctor_report_shows_in_the_preview_until_esc() {
+    use leo_services::doctor::Section;
+    use leo_services::health::{Check, State};
+    let (mut app, _d) = temp_app();
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(140, 30)).unwrap();
+    let sections = vec![Section {
+        title: "recording",
+        checks: vec![Check {
+            what: "SoX".to_string(),
+            needed_for: "recording".to_string(),
+            state: State::Missing {
+                fix: "brew install sox".to_string(),
+            },
+            detail: None,
+        }],
+    }];
+    app.checking = Some((
+        task::Job::scripted(vec![TaskEvent::Checked(sections)]),
+        view::progress::Progress::spinner("Checking"),
+        Instant::now(),
+    ));
+    app.pump_doctor();
+    assert!(app.checking.is_none(), "the check never finished");
+
+    terminal.draw(|f| app.draw(f)).unwrap();
+    let out = terminal.backend().to_string();
+    for expected in ["recording", "no   SoX", "brew install sox", "1 problem"] {
+        assert!(out.contains(expected), "no {expected:?}:\n{out}");
+    }
+
+    app.on_key(press_code(event::KeyCode::Esc), &mut terminal)
+        .unwrap();
+    assert!(app.pinned.is_none(), "Esc did not close the report");
+}
+
+/// A second `/doctor` while one is running does not start another.
+#[test]
+fn one_doctor_at_a_time() {
+    let (mut app, _d) = temp_app();
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(110, 24)).unwrap();
+    app.checking = Some((
+        task::Job::scripted(vec![]),
+        view::progress::Progress::spinner("Checking"),
+        Instant::now(),
+    ));
+    app.run_line("doctor", &mut terminal).unwrap();
+    let said = app
+        .message
+        .as_ref()
+        .map(|m| m.1.clone())
+        .unwrap_or_default();
+    assert!(said.contains("Already"), "{said}");
 }
 
 /// Enter on an AI step goes to the provider screen, where keys are added.

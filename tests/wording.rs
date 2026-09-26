@@ -10,12 +10,15 @@ use std::path::{Path, PathBuf};
 
 /// What users must no longer be told to type, and what replaced it.
 const STALE: &[(&str, &str)] = &[
-    ("leo model", "leo setup, or Ctrl-S"),
+    ("leo model", "leo doctor, or Ctrl-S"),
     ("leo config path", "Ctrl-S, then e"),
     ("`leo config`", "Ctrl-S, then e"),
-    ("leo env", "leo setup"),
-    ("leo model login", "leo setup, or Ctrl-S"),
-    ("leo model list", "leo setup"),
+    ("leo env", "leo doctor"),
+    ("leo model login", "leo doctor, or Ctrl-S"),
+    ("leo model list", "leo doctor"),
+    // Setup was folded into doctor, in the shell and in the app.
+    ("leo setup", "leo doctor"),
+    ("/setup", "/doctor"),
     ("leo config edit", "Ctrl-S, then e"),
     ("leo sync init", "leo sync"),
     ("leo sync push", "leo sync"),
@@ -144,7 +147,12 @@ fn nothing_shown_to_a_user_names_a_command_that_is_gone() {
         }
         stale_in(&shipped_lines(file), file, &mut found);
     }
-    for doc in ["README.md", "crates/leo-web/src/web_ui.html"] {
+    for doc in [
+        "README.md",
+        "CONTRIBUTING.md",
+        "install.sh",
+        "crates/leo-web/src/web_ui.html",
+    ] {
         let path = root().join(doc);
         let lines: Vec<(usize, String)> = std::fs::read_to_string(&path)
             .unwrap()

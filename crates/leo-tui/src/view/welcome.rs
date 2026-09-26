@@ -37,10 +37,11 @@ pub fn render(
             accent.add_modifier(Modifier::BOLD),
         )),
         TuiLine::from(""),
-        TuiLine::from(
-            "Notes work already. These steps turn on the rest; do any of them now or later",
-        ),
-        TuiLine::from(Span::styled("with /setup. Esc starts using leo.", dim)),
+        TuiLine::from("Notes work already. These steps turn on the rest; do any of them now."),
+        TuiLine::from(Span::styled(
+            "Later, /doctor checks everything. Esc starts using leo.",
+            dim,
+        )),
         TuiLine::from(""),
     ];
 

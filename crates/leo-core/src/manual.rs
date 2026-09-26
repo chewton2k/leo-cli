@@ -14,7 +14,7 @@ use anyhow::Result;
 use crate::store::Store;
 
 /// Bump when the manual's content changes enough to be worth re-offering.
-const MANUAL_VERSION: u32 = 4;
+const MANUAL_VERSION: u32 = 5;
 const MARKER: &str = ".manual-installed";
 pub const MANUAL_TITLE: &str = "leo manual";
 
@@ -133,9 +133,9 @@ your question.
 
 ## Setting up
 
-`leo setup` in a shell shows what works, what is missing and how to install it,
-and stores API keys. `leo sync` sets up backup to GitHub. `Ctrl-S` shows the same
-things in here: AI providers, keys, colour, backup.
+`/doctor` checks that everything works and says how to fix what does not;
+`leo doctor` does the same in a shell, and stores API keys. `leo sync` sets up
+backup to GitHub. `Ctrl-S` holds AI providers, keys, colour and backup.
 
 Notes are plain Markdown files in `{notes_dir}`. Settings live in
 `{config_path}`. API keys never do; they are kept in a store
@@ -281,7 +281,7 @@ mod tests {
             body.contains("Ctrl-S"),
             "never mentions the provider screen"
         );
-        assert!(body.contains("leo setup"), "never mentions setup");
+        assert!(body.contains("/doctor"), "never mentions the health check");
     }
 
     /// The handful of things a first-time user needs on day one must be here,

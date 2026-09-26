@@ -68,10 +68,10 @@ pub const VERBS: &[Verb] = &[
         "back up now: pull, then push",
     ),
     v(
-        "setup",
+        "doctor",
         &[],
-        "setup",
-        "the setup screen: AI, recording, backup",
+        "doctor",
+        "check that everything works: AI, recording, backup",
     ),
     v("help", &["?"], "help", "every key and command"),
     v("quit", &["exit", "q"], "quit", "leave"),
@@ -155,6 +155,11 @@ pub const RETIRED: &[(&str, &str, &str)] = &[
     ),
     ("pwd", "the status bar", "it always shows where you are"),
     ("clear", "Esc", "it closes whatever output is pinned"),
+    (
+        "setup",
+        "/doctor",
+        "it checks everything and says how to fix what is missing",
+    ),
 ];
 
 pub(super) const ONE_NAME: &str = "one name per command now, so there is less to learn";
@@ -352,7 +357,7 @@ pub fn parse(line: &str) -> Parsed {
         },
 
         "help" | "?" => act(Action::Help),
-        "setup" => act(Action::Setup),
+        "doctor" => act(Action::Doctor),
         "quit" | "exit" | "q" => act(Action::Quit),
 
         _ => match RETIRED.iter().find(|(alias, _, _)| *alias == verb.as_str()) {
@@ -572,8 +577,18 @@ mod parse_tests {
     }
 
     #[test]
-    fn setup_opens_the_setup_screen() {
-        assert_eq!(act("setup"), Action::Setup);
+    fn doctor_runs_the_health_check() {
+        assert_eq!(act("doctor"), Action::Doctor);
+    }
+
+    /// `setup` was folded into `doctor`, which checks everything and says how
+    /// to fix what is missing.
+    #[test]
+    fn setup_points_at_doctor() {
+        match parse("setup") {
+            Parsed::Retired { replacement, .. } => assert_eq!(replacement, "/doctor"),
+            other => panic!("setup should be retired, got {other:?}"),
+        }
     }
 
     /// There is one search, and it is `f`.
