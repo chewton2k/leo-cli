@@ -548,19 +548,24 @@ full-screen app driven through a simulated terminal, and in `tests/`:
   search, `leo ask`, `leo doctor`, backup to a local git repository (including
   a second computer joining it), and `leo serve`;
 - `install.rs` — `install.sh` run for real into a throwaway home directory;
-- `wording.rs` — fails if any text a user can see names a command that is gone.
+- `wording.rs` — fails if any text a user can see names a command that is gone;
+- `release.rs` — the scripts that pick the next version and stamp it into the
+  build.
 
 Nothing touches the network, your notes or your keychain. With SoX installed,
 the audio tests run too; without it they skip themselves.
 
-Pushing a tag like `v0.2.0` runs `.github/workflows/release.yml`, which builds
-leo for Apple Silicon and Intel Macs and for x86 and ARM Linux, and publishes
-them with checksums as a GitHub release; `install.sh` downloads from the latest
-one.
+CI (`.github/workflows/ci.yml`) runs on every push: the tests on Linux and
+macOS, with SoX installed so the audio tests run, plus `cargo fmt --check`,
+`cargo clippy -D warnings`, and a check against the minimum Rust version, 1.88.
 
-CI (`.github/workflows/ci.yml`) runs the tests on Linux and macOS, with SoX installed so the audio tests run, plus
-`cargo fmt --check`, `cargo clippy -D warnings`, and a check against the
-minimum Rust version, 1.88.
+**Every push to `main` that passes CI and changes leo is released
+automatically.** `.github/workflows/release.yml` picks the next version
+(v0.2.1, v0.2.2, …), builds leo for Apple Silicon and Intel Macs and for x86
+and ARM Linux, and publishes them with checksums as a GitHub release, which is
+what the install command downloads. A push that only changes documentation,
+tests or workflows is not released. For a bigger jump, raise `version` in
+`Cargo.toml` (say to `0.3.0`) and that becomes the next release.
 
 `LEO_HOME=/some/dir leo` keeps notes, settings and keys in that one directory,
 which is handy for trying changes without touching your real notes.

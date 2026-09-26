@@ -117,6 +117,15 @@ Before opening a pull request:
 CI runs the tests on Linux and macOS, formatting, clippy, and a build on the
 minimum supported Rust version (1.88).
 
+## Releases
+
+Nobody makes a release by hand. When a push to `main` passes CI and changes
+anything under `src/`, `crates/` or `Cargo.*`, the release workflow publishes
+it as the next patch version, and the install command picks it up. For a minor
+or major release, raise `version` in `Cargo.toml` in your change; that version
+is used instead. `scripts/next-version.sh` holds the rule and
+`tests/release.rs` tests it.
+
 ## Reporting bugs
 
 Open an issue with what you did, what you expected, and what happened. The
