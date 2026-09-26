@@ -92,6 +92,7 @@ header nav button:hover { color: var(--fg); }
 }
 .note-card:active { background: var(--card-hover); }
 .note-card .title { font-weight: 600; font-size: 1em; margin-bottom: 2px; }
+.note-card .pin { color: var(--accent); font-size: 0.8em; }
 .note-card .meta { font-size: 0.8em; color: var(--muted); }
 .note-card .meta .dir-badge {
   color: var(--dir-fg); font-weight: 500;
@@ -281,7 +282,7 @@ async function renderList() {
   if (notes.length) {
     html += notes.map(n => `
       <div class="note-card" onclick="go('view','${n.id}')">
-        <div class="title">${esc(n.title)}</div>
+        <div class="title">${n.pinned ? '<span class="pin">&#9650;</span> ' : ''}${esc(n.title)}</div>
         <div class="meta">${formatDate(n.updated_at)}</div>
         ${n.tags.length ? `<div class="tags">${n.tags.map(t => `<span>#${esc(t)}</span>`).join('')}</div>` : ''}
       </div>

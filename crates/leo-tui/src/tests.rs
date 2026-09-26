@@ -1980,6 +1980,29 @@ fn esc_leaves_the_setup_screen_and_points_at_doctor() {
 
 // ── /doctor ─────────────────────────────────────────────────────────────
 
+// ── pinned notes ────────────────────────────────────────────────────────
+
+/// `p` pins the selected note: it moves to the top, marked, and stays
+/// selected; `p` again unpins it.
+#[test]
+fn p_pins_the_selected_note_to_the_top() {
+    let (mut app, _d) = temp_app();
+    select_titled(&mut app, "Rust ownership");
+    let id = app.selected_id().cloned().unwrap();
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 30)).unwrap();
+    app.on_key(press('p'), &mut terminal).unwrap();
+
+    assert!(app.store.find_note(&id).unwrap().pinned);
+    assert_eq!(app.numbering.first(), Some(&id), "not first");
+    assert_eq!(app.selected_id(), Some(&id), "the selection did not follow");
+    terminal.draw(|f| app.draw(f)).unwrap();
+    let out = terminal.backend().to_string();
+    assert!(out.contains("▲ Rust ownership"), "no pin mark:\n{out}");
+
+    app.on_key(press('p'), &mut terminal).unwrap();
+    assert!(!app.store.find_note(&id).unwrap().pinned);
+}
+
 // ── /trash ──────────────────────────────────────────────────────────────
 
 /// D, y, then `/trash` shows the note; restoring it selects it again.

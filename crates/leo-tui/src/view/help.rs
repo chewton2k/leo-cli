@@ -88,6 +88,7 @@ pub const SECTIONS: &[Section] = &[
                 "in the preview: pick a checkbox, then x ticks it",
             ),
             e("a", "ask AI: answer its @leo lines"),
+            e("p", "pin it to the top of its list (again to unpin)"),
             e("R", "record a new note by talking"),
             e("D", "delete it (asks first)"),
             e("Space", "mark notes; D and m then act on all of them"),

@@ -21,6 +21,8 @@ pub struct NoteRow {
     pub elsewhere: Option<String>,
     /// Marked with Space, so D and m will include it.
     pub marked: bool,
+    /// Pinned to the top of its list with `p`.
+    pub pinned: bool,
     /// The line a search matched inside the note, when the title alone does
     /// not explain why it was found.
     pub snippet: Option<String>,
@@ -37,6 +39,7 @@ pub fn rows(notes: &[&Note], current_dir: &str) -> Vec<NoteRow> {
             tags: n.tags.clone(),
             elsewhere: (n.directory != current_dir).then(|| n.directory.clone()),
             marked: false,
+            pinned: n.pinned,
             snippet: None,
         })
         .collect()
@@ -62,6 +65,12 @@ fn item(row: &NoteRow) -> ListItem<'static> {
         spans.push(Span::styled(
             shown,
             Style::default().add_modifier(Modifier::DIM),
+        ));
+    }
+    if row.pinned {
+        spans.push(Span::styled(
+            "▲ ",
+            Style::default().fg(super::theme::accent()),
         ));
     }
     spans.push(Span::raw(row.title.clone()));

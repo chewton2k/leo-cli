@@ -273,6 +273,20 @@ fn delete_with_force_removes_the_file() {
     assert!(!leo.ok(&["list"]).contains("Doomed"));
 }
 
+#[test]
+fn a_pinned_note_leads_the_list() {
+    let leo = Leo::new();
+    leo.ok(&["new", "Syllabus", "--body", "x"]);
+    leo.ok(&["new", "Lecture 1", "--body", "x"]);
+    assert!(leo.ok(&["pin", "Syllabus"]).contains("Pinned"));
+    let list = leo.ok(&["list"]);
+    let first = list
+        .lines()
+        .find(|l| l.contains("Syllabus") || l.contains("Lecture 1") || l.contains("manual"))
+        .unwrap_or_default();
+    assert!(first.contains("Syllabus"), "{list}");
+}
+
 /// A deleted note waits in the trash: listed, restorable, and emptied only
 /// when asked.
 #[test]

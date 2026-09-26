@@ -18,6 +18,9 @@ struct NoteFrontmatter {
     tags: Vec<String>,
     created_at: chrono::DateTime<chrono::Utc>,
     updated_at: chrono::DateTime<chrono::Utc>,
+    /// Written only when true, so an unpinned note's file never changes.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pinned: bool,
 }
 
 fn note_to_markdown(note: &Note) -> Result<String> {
@@ -27,6 +30,7 @@ fn note_to_markdown(note: &Note) -> Result<String> {
         tags: note.tags.clone(),
         created_at: note.created_at,
         updated_at: note.updated_at,
+        pinned: note.pinned,
     };
     let yaml = serde_yaml::to_string(&fm)?;
     Ok(format!("---\n{}---\n\n{}", yaml, note.body))
@@ -59,6 +63,7 @@ fn parse_note_from_markdown(content: &str, relative_path: &Path) -> Result<Note>
         directory,
         created_at: fm.created_at,
         updated_at: fm.updated_at,
+        pinned: fm.pinned,
     })
 }
 
@@ -472,7 +477,7 @@ impl Store {
         Ok(self.notes.last().unwrap())
     }
 
-    /// Return notes sorted newest-first, optionally filtered by tag.
+    /// Return notes pinned first, then newest first, optionally filtered by tag.
     /// Searches across ALL directories.
     pub fn list_notes(&self, tag: Option<&str>, limit: usize) -> Vec<&Note> {
         let mut notes: Vec<&Note> = self
@@ -483,12 +488,12 @@ impl Store {
                 None => true,
             })
             .collect();
-        notes.sort_by_key(|n| std::cmp::Reverse(n.updated_at));
+        notes.sort_by_key(|n| (std::cmp::Reverse(n.pinned), std::cmp::Reverse(n.updated_at)));
         notes.truncate(limit);
         notes
     }
 
-    /// Return notes in a specific directory, sorted newest-first.
+    /// Return notes in a specific directory, pinned first, then newest first.
     pub fn list_notes_in_dir(&self, dir: &str, tag: Option<&str>, limit: usize) -> Vec<&Note> {
         let mut notes: Vec<&Note> = self
             .notes
@@ -499,7 +504,7 @@ impl Store {
                 None => true,
             })
             .collect();
-        notes.sort_by_key(|n| std::cmp::Reverse(n.updated_at));
+        notes.sort_by_key(|n| (std::cmp::Reverse(n.pinned), std::cmp::Reverse(n.updated_at)));
         notes.truncate(limit);
         notes
     }
@@ -1064,6 +1069,7 @@ mod tests {
             updated_at: chrono::DateTime::parse_from_rfc3339("2026-01-02T00:00:00Z")
                 .unwrap()
                 .with_timezone(&chrono::Utc),
+            pinned: false,
         }
     }
 
@@ -2014,5 +2020,42 @@ mod tests {
         assert_eq!(store.restore(&id), None);
         assert_eq!(store.restore("nope"), None);
         assert_eq!(store.notes.len(), 1);
+    }
+
+    // ── pinned notes ────────────────────────────────────────────────────────
+
+    /// A pinned note leads its directory's list, however old it is.
+    #[test]
+    fn pinned_notes_come_first_and_stay_pinned_on_disk() {
+        let (mut store, _tmp) = temp_store();
+        let old = store
+            .create_note("Syllabus", "", vec![], "cs130")
+            .unwrap()
+            .id
+            .clone();
+        store.create_note("Lecture 1", "", vec![], "cs130").unwrap();
+        store.find_note_mut(&old).unwrap().updated_at -= chrono::Duration::days(30);
+        store.find_note_mut(&old).unwrap().pinned = true;
+        store.save().unwrap();
+
+        let reloaded = Store::load_from(&store.notes_dir).unwrap();
+        let titles: Vec<&str> = reloaded
+            .list_notes_in_dir("cs130", None, usize::MAX)
+            .iter()
+            .map(|n| n.title.as_str())
+            .collect();
+        assert_eq!(titles, ["Syllabus", "Lecture 1"]);
+        assert!(reloaded.find_note(&old).unwrap().pinned);
+    }
+
+    /// Notes that are not pinned are written exactly as before, so a file
+    /// never gains a line it does not need.
+    #[test]
+    fn an_unpinned_note_has_no_pinned_line() {
+        let text = note_to_markdown(&make_note()).unwrap();
+        assert!(!text.contains("pinned"), "{text}");
+        let mut pinned = make_note();
+        pinned.pinned = true;
+        assert!(note_to_markdown(&pinned).unwrap().contains("pinned: true"));
     }
 }

@@ -64,6 +64,10 @@ pub struct Note {
     /// Directory path (empty string = root)
     #[serde(default)]
     pub directory: String,
+
+    /// Kept at the top of its directory's list.
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 impl Note {
@@ -83,6 +87,7 @@ impl Note {
             updated_at: now,
             tags,
             directory: directory.into(),
+            pinned: false,
         }
     }
 

@@ -49,6 +49,8 @@ pub enum Intent {
     RenameSelected,
     /// Expand the selected note's `@leo` lines.
     AskSelected,
+    /// Pin the selected note to the top of its list, or unpin it.
+    PinSelected,
     /// Start recording a new note.
     Record,
     /// Delete the selected note, with confirmation.
@@ -110,6 +112,7 @@ pub fn normal(key: KeyEvent, focus: Pane) -> Intent {
         KeyCode::Char('r') => Intent::RenameSelected,
         KeyCode::Char('m') => Intent::OpenCommand { seed: "mv " },
         KeyCode::Char('a') => Intent::AskSelected,
+        KeyCode::Char('p') => Intent::PinSelected,
         KeyCode::Char('R') => Intent::Record,
         KeyCode::Char('D') => Intent::DeleteSelected,
         KeyCode::Char('/') => Intent::OpenCommand { seed: "" },
@@ -200,6 +203,7 @@ mod tests {
             (key('m'), Intent::OpenCommand { seed: "mv " }),
             (key('a'), Intent::AskSelected),
             (key('R'), Intent::Record),
+            (key('p'), Intent::PinSelected),
         ];
         for (k, expected) in cases {
             assert_eq!(normal(*k, Pane::Notes), *expected, "for {k:?}");

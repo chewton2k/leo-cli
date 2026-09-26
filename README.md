@@ -168,8 +168,9 @@ Try this:
    where it was.
 
 Other everyday keys: `e` edits the selected note, `r` renames it, `m` moves it,
-`D` deletes it (it asks first), and `Space` marks several notes so `D` and `m`
-act on all of them at once.
+`D` deletes it (it asks first), `p` pins it to the top of its list (a syllabus,
+say; `p` again unpins), and `Space` marks several notes so `D` and `m` act on
+all of them at once.
 
 ### Commands with `/`
 
@@ -418,6 +419,7 @@ leo view "Rust ownership"
 leo edit 3f2a
 leo delete 3f2a --force             # goes to the trash
 leo trash                           # what was deleted; leo trash restore 1
+leo pin "Syllabus"                  # keep it at the top of the list
 leo ask 3f2a                        # answer that note's @leo lines
 leo ask "what did we cover about graphs?"   # a question across all notes
 leo sync                            # back up to GitHub
@@ -446,6 +448,7 @@ unique part of its title.
 | `D` | Delete (asks first); in the directories pane, the whole directory |
 | `Space` | Mark notes, so `D` and `m` act on all of them |
 | `u` | Undo the last delete, move or tick |
+| `p` | Pin the note to the top of its list, or unpin it |
 | `f` | Find: search every note (`Ctrl-F` too) |
 | `t` | Left pane: directories or tags |
 | `Tab` | Back to a recently visited note |

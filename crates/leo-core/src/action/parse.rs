@@ -53,6 +53,12 @@ pub const VERBS: &[Verb] = &[
         "ask [note | question]",
         "answer a note's @leo lines, or a question from all your notes",
     ),
+    v(
+        "pin",
+        &[],
+        "pin [note]",
+        "keep a note at the top of its list, or unpin it",
+    ),
     v("mkdir", &[], "mkdir <name>", "a directory here"),
     v("cd", &[], "cd <dir>", "enter a directory; .. up, / root"),
     v(
@@ -313,6 +319,8 @@ pub fn parse(line: &str) -> Parsed {
 
         // The whole line is the new title; the note is always the selected one
         // (see `fill_selected`), which is what the `r` key pre-fills this for.
+        "pin" => act(Action::Pin { note: joined() }),
+
         "rename" => {
             if args.is_empty() {
                 usage("rename")
@@ -589,6 +597,22 @@ mod parse_tests {
     #[test]
     fn a_typed_slash_prefix_is_ignored() {
         assert_eq!(act("/edit 1"), act("edit 1"));
+    }
+
+    #[test]
+    fn pin_names_a_note_or_means_the_selected_one() {
+        assert_eq!(
+            act("pin"),
+            Action::Pin {
+                note: String::new()
+            }
+        );
+        assert_eq!(
+            act("pin 2"),
+            Action::Pin {
+                note: "2".to_string()
+            }
+        );
     }
 
     #[test]

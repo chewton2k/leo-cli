@@ -334,6 +334,7 @@ impl App {
             .unwrap_or_default();
         for (row, note) in rows.iter_mut().zip(&notes) {
             row.marked = self.marked.contains(&row.id);
+            row.pinned = self.store.find_note(&row.id).is_some_and(|n| n.pinned);
             // Only when the title does not already show why it was found.
             let title = note.title.to_lowercase();
             if !words.is_empty() && !words.iter().all(|w| title.contains(w.as_str())) {
@@ -920,6 +921,13 @@ impl App {
 
             Intent::AskSelected => self.run_action(
                 Action::Ask {
+                    note: String::new(),
+                },
+                terminal,
+            ),
+
+            Intent::PinSelected => self.run_action(
+                Action::Pin {
                     note: String::new(),
                 },
                 terminal,

@@ -75,6 +75,7 @@ pub fn run(cmd: Commands) -> Result<()> {
             screen,
         },
         Commands::Ask { id } => action::Action::Ask { note: id },
+        Commands::Pin { id } => action::Action::Pin { note: id },
         Commands::Trash { command } => action::Action::Trash(match command {
             None => action::TrashAction::List,
             Some(super::TrashCommands::Restore { which }) => action::TrashAction::Restore {

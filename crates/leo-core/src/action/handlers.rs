@@ -38,6 +38,7 @@ pub fn fill_selected(
         Action::Edit { note }
         | Action::Delete { note }
         | Action::Ask { note }
+        | Action::Pin { note }
         | Action::Rename { note, .. } => note.is_empty(),
         Action::Mv { notes, .. } => notes.is_empty(),
         Action::Listen {
@@ -75,6 +76,7 @@ pub fn fill_selected(
         Action::Edit { .. } => Action::Edit { note: id },
         Action::Delete { .. } => Action::Delete { note: id },
         Action::Ask { .. } => Action::Ask { note: id },
+        Action::Pin { .. } => Action::Pin { note: id },
         Action::Rename { title, .. } => Action::Rename { note: id, title },
         Action::Mv { dir, .. } => Action::Mv {
             notes: vec![id],
@@ -115,6 +117,7 @@ pub fn apply(action: Action, store: &mut Store, ctx: Ctx<'_>, ai: &dyn Ai) -> Re
         Action::Cd { path } => Ok(cd(store, &path, ctx.current_dir)),
         Action::Mv { notes, dir } => mv(store, &notes, &dir, ctx.numbering),
         Action::Rename { note, title } => rename(store, &note, &title, ctx.numbering),
+        Action::Pin { note } => pin(store, &note, ctx.numbering),
         Action::Rmdir { name, recursive } => rmdir(store, &name, recursive, ctx.current_dir),
         Action::Sync(a) => Ok(Outcome::effect(Effect::Sync(a))),
         Action::Trash(a) => trash(store, a),
@@ -497,6 +500,27 @@ pub(super) fn cd(store: &Store, path: &str, current_dir: &str) -> Outcome {
 }
 
 /// `rename` — change a note's title and nothing else.
+/// `pin` — keep a note at the top of its list, or let it go back into date
+/// order. Not an edit, so it leaves the note's modified time alone.
+pub(super) fn pin(store: &mut Store, note: &str, numbering: &[String]) -> Result<Outcome> {
+    let id = resolve_or_return!(note, store, numbering);
+    let n = store
+        .find_note_mut(&id)
+        .expect("resolve returned a live id");
+    n.pinned = !n.pinned;
+    let line = if n.pinned {
+        format!("Pinned \"{}\" to the top.", n.title)
+    } else {
+        format!("Unpinned \"{}\".", n.title)
+    };
+    store.save()?;
+    Ok(Outcome {
+        dirty: true,
+        select: Some(id),
+        ..Outcome::line(Line::good(line))
+    })
+}
+
 pub(super) fn rename(
     store: &mut Store,
     note: &str,
@@ -1432,6 +1456,7 @@ mod handler_tests {
             directory: String::new(),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
+            pinned: false,
         });
         let numbering = vec![id];
 
@@ -2540,5 +2565,39 @@ mod handler_tests {
         );
         assert_eq!(ago(now - chrono::Duration::hours(1), now), "1 hour ago");
         assert_eq!(ago(now - chrono::Duration::days(3), now), "3 days ago");
+    }
+
+    // ── pin ─────────────────────────────────────────────────────────────────
+
+    /// `pin` toggles: the first press pins, the second unpins.
+    #[test]
+    fn pin_toggles_the_selected_note() {
+        let (mut store, _d) = temp_store();
+        let id = seed(&mut store, "Syllabus", "", "");
+        let numbering = numbering_for(&store, "");
+        let pin = |store: &mut Store| {
+            apply(
+                Action::Pin {
+                    note: String::new(),
+                },
+                store,
+                ctx_selected(&numbering, &id),
+                &FakeAi::default(),
+            )
+            .unwrap()
+        };
+        let first = pin(&mut store);
+        assert!(first.dirty);
+        assert!(first.text().contains("Pinned"), "{}", first.text());
+        assert!(
+            Store::load_from(&store.notes_dir)
+                .unwrap()
+                .find_note(&id)
+                .unwrap()
+                .pinned
+        );
+        let second = pin(&mut store);
+        assert!(second.text().contains("Unpinned"), "{}", second.text());
+        assert!(!store.find_note(&id).unwrap().pinned);
     }
 }

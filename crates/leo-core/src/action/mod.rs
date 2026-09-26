@@ -36,6 +36,10 @@ pub enum Action {
     DeleteMany {
         ids: Vec<String>,
     },
+    /// Pin a note to the top of its directory's list, or unpin it.
+    Pin {
+        note: String,
+    },
     /// Give a note a new title. Only the title changes.
     Rename {
         note: String,

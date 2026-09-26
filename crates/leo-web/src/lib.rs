@@ -216,6 +216,7 @@ struct NoteResponse {
     updated_at: String,
     tags: Vec<String>,
     directory: String,
+    pinned: bool,
 }
 
 impl NoteResponse {
@@ -228,6 +229,7 @@ impl NoteResponse {
             updated_at: n.updated_at.to_rfc3339(),
             tags: n.tags.clone(),
             directory: n.directory.clone(),
+            pinned: n.pinned,
         }
     }
 }

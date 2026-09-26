@@ -105,6 +105,12 @@ enum Commands {
         id: String,
     },
 
+    /// Pin a note to the top of its list, or unpin it
+    Pin {
+        /// Note number, ID prefix or title
+        id: String,
+    },
+
     /// Deleted notes, kept 30 days: list them, restore one, or empty the trash
     Trash {
         #[command(subcommand)]
