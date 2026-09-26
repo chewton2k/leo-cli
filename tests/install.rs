@@ -105,3 +105,45 @@ fn the_installer_runs_under_bash_too() {
     let said = install_with("bash", &home, "/bin/bash", &archive(tmp.path()));
     assert!(home.join(".local/bin/leo").is_file(), "{said}");
 }
+
+/// The closing screen: thanks, the version, and what to type first. Logged or
+/// piped output carries no color codes.
+#[test]
+fn the_installer_ends_with_thanks_and_how_to_start() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let said = install(&home, "/bin/zsh", &archive(tmp.path()));
+
+    let version = env!("CARGO_PKG_VERSION");
+    for expected in [
+        "Installed to ~/.local/bin/leo",
+        &format!("leo {version} is installed"),
+        "Thank you",
+        "leo doctor",
+        "open your notes",
+        "https://github.com/chewton2k/leo-cli",
+    ] {
+        assert!(said.contains(expected), "no {expected:?}:\n{said}");
+    }
+    assert!(
+        !said.contains('\u{1b}'),
+        "color codes in plain output:\n{said}"
+    );
+}
+
+/// Running it again says it updated, and from which version.
+#[test]
+fn a_second_install_says_it_was_an_update() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let tarball = archive(tmp.path());
+    install(&home, "/bin/zsh", &tarball);
+    let again = install(&home, "/bin/zsh", &tarball);
+    let version = env!("CARGO_PKG_VERSION");
+    assert!(
+        again.contains(&format!("already up to date ({version})")),
+        "{again}"
+    );
+}
