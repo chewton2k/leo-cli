@@ -563,9 +563,11 @@ macOS, with SoX installed so the audio tests run, plus `cargo fmt --check`,
 automatically.** `.github/workflows/release.yml` picks the next version
 (v0.2.1, v0.2.2, …), builds leo for Apple Silicon and Intel Macs and for x86
 and ARM Linux, and publishes them with checksums as a GitHub release, which is
-what the install command downloads. A push that only changes documentation,
-tests or workflows is not released. For a bigger jump, raise `version` in
-`Cargo.toml` (say to `0.3.0`) and that becomes the next release.
+what the install command downloads. It also commits the new number to
+`Cargo.toml` on `main`, so run `git pull` before your next push. A push that
+only changes documentation, tests or workflows is not released. For a bigger
+jump, raise `version` in `Cargo.toml` (say to `0.3.0`) and that becomes the
+next release.
 
 `LEO_HOME=/some/dir leo` keeps notes, settings and keys in that one directory,
 which is handy for trying changes without touching your real notes.

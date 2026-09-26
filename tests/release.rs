@@ -131,6 +131,36 @@ fn raising_the_version_in_cargo_toml_releases_that_version() {
     assert_eq!(next_version(repo.path()), "0.3.0");
 }
 
+/// After a release, CI commits the new number to Cargo.toml. That commit
+/// changes nothing else, so it is not a release of its own; the next change to
+/// leo counts on from it.
+#[test]
+fn the_version_bump_commit_releases_nothing() {
+    let repo = repo("0.2.0");
+    git(repo.path(), &["tag", "v0.2.1"]);
+    write_version(repo.path(), "0.2.1");
+    commit(repo.path(), "release: v0.2.1");
+    assert_eq!(next_version(repo.path()), "");
+    change(repo.path(), "src/main.rs");
+    assert_eq!(next_version(repo.path()), "0.2.2");
+}
+
+/// A dependency update is a change to leo even though Cargo.lock's version
+/// lines move: its checksum changes with it.
+#[test]
+fn a_dependency_update_is_released() {
+    let repo = repo("0.2.0");
+    let lock = |version: &str, sum: &str| {
+        format!("[[package]]\nname = \"clap\"\nversion = \"{version}\"\nchecksum = \"{sum}\"\n")
+    };
+    std::fs::write(repo.path().join("Cargo.lock"), lock("4.0.0", "aaa")).unwrap();
+    commit(repo.path(), "lock");
+    git(repo.path(), &["tag", "v0.2.0"]);
+    std::fs::write(repo.path().join("Cargo.lock"), lock("4.1.0", "bbb")).unwrap();
+    commit(repo.path(), "update clap");
+    assert_eq!(next_version(repo.path()), "0.2.1");
+}
+
 /// The version stamped into the build: the workspace's, and every leo crate's
 /// in Cargo.lock, so `--locked` still accepts the lock file. Nothing else.
 #[test]

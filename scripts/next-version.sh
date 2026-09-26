@@ -4,10 +4,11 @@
 # runs it once the tests have passed on main.
 #
 #   no release yet                      the version in Cargo.toml
-#   nothing in src/, crates/, Cargo.*   nothing: a README change builds the
-#     changed since the last release      same program
 #   Cargo.toml's version is newer       that version: this is how a minor or
 #     than the last release               major release is made
+#   nothing in src/, crates/, Cargo.*   nothing: a README change builds the
+#     changed since the last release,     same program, and the commit CI makes
+#     version numbers aside               to record a release is only numbers
 #   otherwise                           the last release, patch number + 1
 set -eu
 
@@ -20,10 +21,6 @@ fi
 latest=$(git tag -l 'v[0-9]*' --sort=-v:refname | head -n 1)
 if [ -z "$latest" ]; then
     echo "$base"
-    exit 0
-fi
-
-if git diff --quiet "$latest" HEAD -- src crates Cargo.toml Cargo.lock; then
     exit 0
 fi
 
@@ -42,6 +39,13 @@ newer() {
 last=${latest#v}
 if newer "$base" "$last"; then
     echo "$base"
-else
-    echo "$last" | awk -F. '{ printf "%d.%d.%d\n", $1, $2, $3 + 1 }'
+    exit 0
 fi
+
+# -I skips hunks made only of version lines: the bump CI commits after each
+# release. A dependency update still counts, since its checksum changes too.
+if git diff --quiet -I '^version = "' "$latest" HEAD -- src crates Cargo.toml Cargo.lock; then
+    exit 0
+fi
+
+echo "$last" | awk -F. '{ printf "%d.%d.%d\n", $1, $2, $3 + 1 }'

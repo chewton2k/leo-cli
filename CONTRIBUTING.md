@@ -121,7 +121,9 @@ minimum supported Rust version (1.88).
 
 Nobody makes a release by hand. When a push to `main` passes CI and changes
 anything under `src/`, `crates/` or `Cargo.*`, the release workflow publishes
-it as the next patch version, and the install command picks it up. For a minor
+it as the next patch version, and the install command picks it up. The
+workflow commits the new number to `Cargo.toml` on `main` (`release: vX.Y.Z`),
+so pull before pushing again. For a minor
 or major release, raise `version` in `Cargo.toml` in your change; that version
 is used instead. `scripts/next-version.sh` holds the rule and
 `tests/release.rs` tests it.

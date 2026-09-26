@@ -1,9 +1,10 @@
 name: Release
 
 # Called by CI once every test has passed on main; can also be run by hand from
-# the Actions tab. Works out the next version (scripts/next-version.sh), builds
-# leo for each platform and publishes a GitHub release. The install script
-# always downloads the latest one.
+# the Actions tab. Works out the next version (scripts/next-version.sh), commits
+# it to Cargo.toml on main, builds leo for each platform from that commit and
+# publishes a GitHub release tagged there. The install script always downloads
+# the latest one.
 on:
   workflow_call:
   workflow_dispatch:
@@ -34,10 +35,42 @@ jobs:
             echo "Nothing to release: leo itself has not changed since the last release."
           fi
 
-  build:
-    name: build (${{ matrix.target }})
+  # Record the new number in Cargo.toml and Cargo.lock on main, so the code
+  # always says which version it is. The release is built from this commit.
+  # Pushed with the workflow's own token, which does not start another CI run.
+  bump:
     needs: version
     if: needs.version.outputs.version != ''
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.commit.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: commit
+        name: Commit the version
+        run: |
+          version="${{ needs.version.outputs.version }}"
+          sh scripts/set-version.sh "$version"
+          # Already recorded: an earlier run committed it, then failed later.
+          if git diff --quiet; then
+            echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -qam "release: v$version"
+          if git push origin HEAD:main; then
+            echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          else
+            # Someone pushed since this run started. That push gets its own CI
+            # run, which releases everything including this.
+            echo "main has moved on; the run for the newer push releases instead."
+          fi
+
+  build:
+    name: build (${{ matrix.target }})
+    needs: bump
+    if: needs.bump.outputs.sha != ''
     strategy:
       fail-fast: true
       matrix:
@@ -55,14 +88,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.bump.outputs.sha }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
-      - name: Set the version
-        run: sh scripts/set-version.sh "${{ needs.version.outputs.version }}"
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }}
       - name: Package
@@ -83,11 +116,12 @@ jobs:
   # Only once every platform has built, so a release never goes out with a
   # download missing.
   publish:
-    needs: [version, build]
+    needs: [version, bump, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ needs.bump.outputs.sha }}
           fetch-depth: 0
       - name: Release notes
         run: |
@@ -95,7 +129,8 @@ jobs:
           {
             echo "## What changed"
             echo
-            git log --no-merges --format='- %s' ${previous:+"$previous..HEAD"}
+            git log --no-merges --invert-grep --grep='^release: v' \
+              --format='- %s' ${previous:+"$previous..HEAD"}
             echo
             echo "## Install or update"
             echo
@@ -111,7 +146,7 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ needs.version.outputs.version }}
-          target_commitish: ${{ github.sha }}
+          target_commitish: ${{ needs.bump.outputs.sha }}
           name: leo v${{ needs.version.outputs.version }}
           body_path: notes.md
           make_latest: true

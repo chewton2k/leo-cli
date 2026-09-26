@@ -1,7 +1,7 @@
 #!/bin/sh
-# Stamp a version into the build: the workspace version in Cargo.toml, and every
-# leo crate's entry in Cargo.lock so a --locked build still accepts it. The
-# release workflow runs this before building; the change is never committed.
+# Set leo's version: the workspace version in Cargo.toml, and every leo crate's
+# entry in Cargo.lock so a --locked build still accepts it. The release workflow
+# runs this and commits the result to main.
 set -eu
 
 version=${1:?usage: set-version.sh X.Y.Z}
