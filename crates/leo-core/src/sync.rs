@@ -182,7 +182,10 @@ pub fn remote_reachable(notes_dir: &Path) -> std::result::Result<(), String> {
 /// backup up when it is not, rather than failing inside git.
 pub fn now(notes_dir: &Path) -> Result<()> {
     if !is_initialized(notes_dir) {
-        anyhow::bail!("Backup is not set up. Run `leo sync` in a shell, or press Ctrl-S.");
+        anyhow::bail!(
+            "Backup is not set up. With GitHub's gh tool, `sync github` does it in one step; \
+             or run `leo sync` in a shell, or press Ctrl-S."
+        );
     }
     if remote_url(notes_dir).is_none() {
         anyhow::bail!("No remote to back up to. Run `leo sync connect <url>`, or press Ctrl-S.");
@@ -193,6 +196,118 @@ pub fn now(notes_dir: &Path) -> Result<()> {
         pull(notes_dir)?;
     }
     push(notes_dir)
+}
+
+// ── GitHub ──────────────────────────────────────────────────────────────────
+
+/// The repository `sync github` uses when it is not given a name.
+pub const GITHUB_REPO: &str = "leo-notes";
+
+const GH_MISSING: &str = "GitHub's command-line tool is not set up. Install it (brew install gh, \
+or see cli.github.com), sign in with `gh auth login`, then try again. Or make a \
+repository yourself and use `sync connect <url>`.";
+
+/// Whether GitHub's `gh` tool is installed and signed in. Asks for the stored
+/// token rather than running `gh auth status`, which calls GitHub.
+pub fn gh_ready() -> bool {
+    Command::new("gh")
+        .args(["auth", "token"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+/// What `sync github` did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitHubBackup {
+    pub name: String,
+    pub url: String,
+    /// The repository was made just now, rather than already there (on a
+    /// second computer, say).
+    pub created: bool,
+}
+
+impl GitHubBackup {
+    /// What to tell the user.
+    pub fn describe(&self) -> String {
+        if self.created {
+            format!(
+                "Made a private repository, {}, on your GitHub and backed up your notes.",
+                self.name
+            )
+        } else {
+            format!(
+                "Joined your {} repository on GitHub: its notes are here now, and yours are backed up.",
+                self.name
+            )
+        }
+    }
+}
+
+/// Back up to a private GitHub repository called `name`, made with `gh` if it
+/// does not exist yet. On a second computer the same call finds the repository
+/// the first one made, and the backup brings its notes down.
+pub fn github(notes_dir: &Path, name: &str) -> Result<GitHubBackup> {
+    if !gh_ready() {
+        anyhow::bail!(GH_MISSING);
+    }
+    let (url, created) = match gh_repo_url(name) {
+        Ok(url) => (url, false),
+        Err(_) => {
+            gh(&[
+                "repo",
+                "create",
+                name,
+                "--private",
+                "--description",
+                "Notes backed up by leo",
+            ])?;
+            (gh_repo_url(name)?, true)
+        }
+    };
+    match remote_url(notes_dir) {
+        Some(existing) if existing == url => {}
+        Some(existing) => anyhow::bail!(
+            "backup already goes to {existing}; leave it, or remove that remote first \
+             (git -C \"{}\" remote remove origin)",
+            notes_dir.display()
+        ),
+        None => connect(notes_dir, &url)?,
+    }
+    now(notes_dir)?;
+    Ok(GitHubBackup {
+        name: name.to_string(),
+        url,
+        created,
+    })
+}
+
+/// The URL git should use for a repository: SSH when the user told `gh` they
+/// use SSH, otherwise HTTPS with `gh` as git's sign-in, which needs no key.
+fn gh_repo_url(name: &str) -> Result<String> {
+    let ssh = gh(&["config", "get", "git_protocol"]).is_ok_and(|p| p.trim() == "ssh");
+    let field = if ssh { ".sshUrl" } else { ".url" };
+    let url = gh(&["repo", "view", name, "--json", "url,sshUrl", "--jq", field])?
+        .trim()
+        .to_string();
+    if !ssh {
+        let _ = gh(&["auth", "setup-git"]);
+    }
+    Ok(url)
+}
+
+/// Run `gh` and capture what it says, like [`run_git`].
+fn gh(args: &[&str]) -> Result<String> {
+    let output = Command::new("gh")
+        .args(args)
+        .output()
+        .context("failed to run gh — is it installed?")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        anyhow::bail!("gh {} failed: {stderr}", args.join(" "));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 /// Whether the remote already has the current branch.

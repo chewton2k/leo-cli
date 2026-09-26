@@ -98,10 +98,7 @@ impl App {
                         self.cmd.open(&format!("sync connect {url}"));
                         self.say(Kind::Dim, "Edit the URL, then Enter.");
                     }
-                    None => {
-                        self.cmd.open("sync connect ");
-                        self.say(Kind::Dim, "Paste the repository URL, then Enter.");
-                    }
+                    None => self.offer_backup_setup(),
                 }
                 Ok(())
             }

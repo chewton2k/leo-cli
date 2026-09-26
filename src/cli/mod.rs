@@ -165,6 +165,13 @@ enum TrashCommands {
 
 #[derive(Subcommand)]
 enum SyncCommands {
+    /// Back up to a private GitHub repository, made for you with GitHub's gh
+    /// tool, or joined if you already have one
+    Github {
+        /// The repository's name
+        #[arg(default_value = leo_core::sync::GITHUB_REPO)]
+        name: String,
+    },
     /// Initialize a git repo for your notes (run this first)
     Init,
     /// Connect the notes repo to a GitHub remote

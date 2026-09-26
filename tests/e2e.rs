@@ -644,6 +644,70 @@ fn a_second_computer_joins_the_backup_and_both_share_notes() {
     assert!(laptop.ok(&["list"]).contains("Written on the desktop"));
 }
 
+/// A stand-in for GitHub's `gh` tool, signed in, whose repositories are bare
+/// git repositories under `github`. Installed into `leo`'s PATH.
+fn fake_gh(leo: &Leo, github: &Path) {
+    let script = format!(
+        r#"#!/bin/sh
+case "$1 $2" in
+    "auth token") echo gho_fake ;;
+    "auth setup-git") ;;
+    "config get") echo https ;;
+    "repo view")
+        [ -d "{github}/$3.git" ] || {{ echo "Could not resolve to a Repository" >&2; exit 1; }}
+        echo "{github}/$3.git" ;;
+    "repo create") git init -q --bare "{github}/$3.git" ;;
+    *) echo "fake gh: $*" >&2; exit 2 ;;
+esac
+"#,
+        github = github.display()
+    );
+    let gh = leo.bin.join("gh");
+    std::fs::write(&gh, script).unwrap();
+    make_executable(&gh);
+}
+
+/// With GitHub's tool signed in, one command makes a private repository and
+/// backs up to it; a second computer's same command joins it.
+#[test]
+fn sync_github_makes_the_repository_then_a_second_computer_joins_it() {
+    if !has_git() {
+        eprintln!("skipping: git is not installed");
+        return;
+    }
+    let laptop = Leo::new();
+    let desktop = Leo::new();
+    let github = laptop.home.path().join("github");
+    std::fs::create_dir_all(&github).unwrap();
+    fake_gh(&laptop, &github);
+    fake_gh(&desktop, &github);
+
+    laptop.ok(&["new", "Written on the laptop", "--body", "one"]);
+    let made = laptop.ok(&["sync", "github"]);
+    assert!(github.join("leo-notes.git").is_dir(), "no repository made");
+    assert!(made.contains("leo-notes"), "{made}");
+    assert!(made.to_lowercase().contains("made"), "{made}");
+
+    desktop.ok(&["new", "Written on the desktop", "--body", "two"]);
+    let joined = desktop.ok(&["sync", "github"]);
+    assert!(joined.to_lowercase().contains("joined"), "{joined}");
+    let listed = desktop.ok(&["list"]);
+    assert!(listed.contains("Written on the laptop"), "{listed}");
+
+    laptop.ok(&["sync"]);
+    assert!(laptop.ok(&["list"]).contains("Written on the desktop"));
+}
+
+/// Without the tool signed in, it says how to get it.
+#[test]
+fn sync_github_without_the_tool_says_how_to_get_it() {
+    let leo = Leo::new();
+    let out = leo.cmd(&["sync", "github"]).output().unwrap();
+    assert!(!out.status.success());
+    let said = String::from_utf8_lossy(&out.stderr);
+    assert!(said.contains("gh auth login"), "{}", describe(&out));
+}
+
 #[test]
 fn sync_before_setup_says_what_to_do() {
     let leo = Leo::new();

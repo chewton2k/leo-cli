@@ -363,16 +363,24 @@ about graphs?"`.
 
 ## 6. Back up to GitHub
 
+**The quick way**, with GitHub's own command-line tool:
+
+```sh
+brew install gh      # or see cli.github.com
+gh auth login        # sign in once
+leo sync github
+```
+
+leo makes a private repository called `leo-notes` on your GitHub, connects
+your notes to it, and backs them up. (`leo sync github another-name` picks a
+different name.) In the app, `/sync github` does the same.
+
+**By hand**, without `gh`:
+
 1. Create an **empty** repository on GitHub (no README, no .gitignore). Make
    it **private** unless you want your notes public.
-2. Run:
-
-   ```sh
-   leo sync
-   ```
-
-   Paste the repository's URL when asked. leo sets up git in your notes
-   directory, connects it, and pushes.
+2. Run `leo sync` and paste the repository's URL when asked. leo sets up git
+   in your notes directory, connects it, and pushes.
 
 From then on:
 
@@ -381,8 +389,8 @@ From then on:
 - `leo sync` (or `/sync` in the app) backs up on demand: it pulls anything
   newer from GitHub first, then pushes.
 
-**On another computer:** install leo, run `leo sync`, and paste the same
-repository's URL. The notes already backed up come down, this computer's notes
+**On another computer:** install leo and run `leo sync github` again (signed
+in to the same GitHub account), or `leo sync` with the same repository's URL. The notes already backed up come down, this computer's notes
 go up, and from then on both stay in step. If the same note was edited on both,
 leo keeps both versions' lines in it for you to tidy rather than losing either.
 

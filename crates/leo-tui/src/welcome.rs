@@ -68,12 +68,7 @@ impl App {
                 }
                 _ => {
                     self.welcome = None;
-                    self.cmd.open("sync connect ");
-                    self.mode = Mode::Command;
-                    self.say(
-                        Kind::Dim,
-                        "Make an empty private repository on GitHub, paste its URL, then Enter.",
-                    );
+                    self.offer_backup_setup();
                 }
             },
             _ => {}

@@ -21,8 +21,10 @@ fn temp_app() -> (App, tempfile::TempDir) {
     store.save().unwrap();
     let store = Store::load_from(&dir.path().join("notes")).unwrap();
     let mut app = App::new(store);
-    // No network and no microphone from a test.
+    // No network and no microphone from a test, and never the machine's own
+    // GitHub sign-in.
     app.probe = leo_services::doctor::Probe::default();
+    app.gh_ready = || false;
     (app, dir)
 }
 
@@ -2153,6 +2155,29 @@ fn enter_on_the_backup_step_asks_for_the_repository() {
         .unwrap();
     assert_eq!(app.mode, Mode::Command);
     assert_eq!(app.cmd.text(), "sync connect ");
+}
+
+/// With GitHub's tool signed in, backup setup needs no URL: the line offers
+/// `sync github`, and says what Enter will do.
+#[test]
+fn with_gh_signed_in_the_backup_step_offers_sync_github() {
+    let (mut app, _d) = temp_app();
+    app.gh_ready = || true;
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(110, 24)).unwrap();
+    app.greet(true);
+    for _ in 0..3 {
+        app.on_key(press('j'), &mut terminal).unwrap();
+    }
+    app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
+        .unwrap();
+    assert_eq!(app.mode, Mode::Command);
+    assert_eq!(app.cmd.text(), "sync github");
+    let said = app
+        .message
+        .as_ref()
+        .map(|m| m.1.clone())
+        .unwrap_or_default();
+    assert!(said.contains("private"), "{said}");
 }
 
 /// The user must learn about every gap before speaking, not one per attempt.

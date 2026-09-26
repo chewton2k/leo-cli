@@ -118,6 +118,9 @@ pub struct App {
     checking: Option<(task::Job, view::progress::Progress, Instant)>,
     /// What `/doctor` may probe. Everything, except in tests.
     probe: leo_services::doctor::Probe,
+    /// Whether GitHub's `gh` tool is signed in, which makes backup setup one
+    /// step. A function so tests never depend on the machine's own sign-in.
+    gh_ready: fn() -> bool,
     /// The background check for a newer release, until it answers.
     update: Option<std::sync::mpsc::Receiver<String>>,
     last_push: Option<Instant>,
@@ -276,6 +279,7 @@ impl App {
             checking: None,
             probe: leo_services::doctor::Probe::all(),
             update: None,
+            gh_ready: leo_core::sync::gh_ready,
             last_push: None,
             unpushed: None,
             store,
@@ -1404,28 +1408,56 @@ impl App {
                 let notes_dir = self.store.notes_dir.clone();
                 let out = self.outside(terminal, || {
                     use leo_core::action::SyncAction;
+                    let done = |r: Result<()>| r.map(|()| "sync done.".to_string());
                     match &a {
-                        SyncAction::Now => leo_core::sync::now(&notes_dir),
-                        SyncAction::Init => leo_core::sync::init(&notes_dir),
+                        SyncAction::Now => done(leo_core::sync::now(&notes_dir)),
+                        SyncAction::Init => done(leo_core::sync::init(&notes_dir)),
                         // Connecting is the moment to back up: bring down any notes
                         // already there, then send these.
-                        SyncAction::Connect { url } => leo_core::sync::connect(&notes_dir, url)
-                            .and_then(|()| leo_core::sync::now(&notes_dir)),
-                        SyncAction::Push => leo_core::sync::push(&notes_dir),
-                        SyncAction::Pull => leo_core::sync::pull(&notes_dir),
-                        SyncAction::Status => leo_core::sync::status(&notes_dir),
+                        SyncAction::Connect { url } => done(
+                            leo_core::sync::connect(&notes_dir, url)
+                                .and_then(|()| leo_core::sync::now(&notes_dir)),
+                        ),
+                        SyncAction::Push => done(leo_core::sync::push(&notes_dir)),
+                        SyncAction::Pull => done(leo_core::sync::pull(&notes_dir)),
+                        SyncAction::Status => done(leo_core::sync::status(&notes_dir)),
+                        SyncAction::GitHub { name } => leo_core::sync::github(
+                            &notes_dir,
+                            name.as_deref().unwrap_or(leo_core::sync::GITHUB_REPO),
+                        )
+                        .map(|backup| backup.describe()),
                     }
                 })?;
-                if let Err(e) = out {
-                    self.say(Kind::Bad, e.to_string());
-                } else {
-                    // Pull rewrites files underneath us.
-                    self.store = Store::load_from(&self.store.notes_dir.clone())?;
-                    self.resync();
-                    self.say(Kind::Good, "sync done.");
+                match out {
+                    Err(e) => self.say(Kind::Bad, e.to_string()),
+                    Ok(said) => {
+                        // Pull rewrites files underneath us.
+                        self.store = Store::load_from(&self.store.notes_dir.clone())?;
+                        self.resync();
+                        self.say(Kind::Good, said);
+                    }
                 }
                 Ok(())
             }
+        }
+    }
+
+    /// Put backup setup on the `/` line: one step with GitHub's tool signed
+    /// in, otherwise the repository URL to paste.
+    fn offer_backup_setup(&mut self) {
+        self.mode = Mode::Command;
+        if (self.gh_ready)() {
+            self.cmd.open("sync github");
+            self.say(
+                Kind::Dim,
+                "Enter makes a private repository, leo-notes, on your GitHub (or joins yours) and backs up.",
+            );
+        } else {
+            self.cmd.open("sync connect ");
+            self.say(
+                Kind::Dim,
+                "Make an empty private repository on GitHub, paste its URL, then Enter. (With GitHub's gh tool, /sync github does it for you.)",
+            );
         }
     }
 

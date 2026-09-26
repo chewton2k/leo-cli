@@ -70,7 +70,7 @@ pub const VERBS: &[Verb] = &[
     v(
         "sync",
         &[],
-        "sync [init | connect <url> | push | pull | status]",
+        "sync [github | connect <url> | init | push | pull | status]",
         "back up now: pull, then push",
     ),
     v(
@@ -366,6 +366,9 @@ pub fn parse(line: &str) -> Parsed {
             Some("push") => act(Action::Sync(SyncAction::Push)),
             Some("pull") => act(Action::Sync(SyncAction::Pull)),
             Some("status") => act(Action::Sync(SyncAction::Status)),
+            Some("github") => act(Action::Sync(SyncAction::GitHub {
+                name: args.get(1).cloned(),
+            })),
             None => act(Action::Sync(SyncAction::Now)),
             _ => usage("sync"),
         },
@@ -597,6 +600,20 @@ mod parse_tests {
     #[test]
     fn a_typed_slash_prefix_is_ignored() {
         assert_eq!(act("/edit 1"), act("edit 1"));
+    }
+
+    #[test]
+    fn sync_github_takes_an_optional_repository_name() {
+        assert_eq!(
+            act("sync github"),
+            Action::Sync(SyncAction::GitHub { name: None })
+        );
+        assert_eq!(
+            act("sync github my-notes"),
+            Action::Sync(SyncAction::GitHub {
+                name: Some("my-notes".to_string())
+            })
+        );
     }
 
     #[test]

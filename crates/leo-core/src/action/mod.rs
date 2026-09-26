@@ -99,6 +99,10 @@ pub enum SyncAction {
     Push,
     Pull,
     Status,
+    /// Back up to a private GitHub repository, made (or found) with `gh`.
+    GitHub {
+        name: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
