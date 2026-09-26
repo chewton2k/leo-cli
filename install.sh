@@ -41,6 +41,26 @@ fail() {
     printf '  %sNothing was changed. Help: https://github.com/%s/issues%s\n' "$dim" "$REPO" "$reset" >&2
     exit 1
 }
+# One frame of the download bar: bytes so far, and the total when known.
+bar() {
+    awk -v done="$1" -v total="$2" 'BEGIN {
+        mb = 1048576
+        if (total > 0) {
+            p = done / total
+            if (p > 1) p = 1
+            filled = int(p * 30 + 0.5)
+            s = ""
+            for (i = 0; i < 30; i++) s = s (i < filled ? "#" : " ")
+            printf "\r    [%s] %3d%%  %.1f / %.1f MB", s, p * 100, done / mb, total / mb
+        } else {
+            printf "\r    %.1f MB", done / mb
+        }
+    }'
+}
+# The size of a file so far; 0 before it exists.
+bytes() {
+    if [ -f "$1" ]; then wc -c <"$1" | tr -d ' '; else echo 0; fi
+}
 # A path with the home directory shown as ~.
 pretty() {
     case "$1" in
@@ -66,7 +86,9 @@ esac
 step "Found $system"
 
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT INT TERM
+pid=""
+trap '[ -n "$pid" ] && kill "$pid" 2>/dev/null; rm -rf "$tmp"' EXIT
+trap 'exit 130' INT TERM
 archive="$tmp/leo.tar.gz"
 
 if [ -n "${LEO_INSTALL_ARCHIVE:-}" ]; then
@@ -86,14 +108,29 @@ else
         doing "Downloading leo"
     fi
 
-    # curl draws its progress bar on stderr, so only when that is a terminal.
-    if [ -t 2 ]; then
-        curl -fL --progress-bar "$url" -o "$archive" || fail "could not download $url"
+    if [ -t 1 ]; then
+        # On a terminal, draw the bar: download in the background and watch
+        # the file grow against the size GitHub reports.
+        total=$(curl -fsSLI "$url" 2>/dev/null | awk 'tolower($1) == "content-length:" { n = $2 } END { print n + 0 }') || total=0
+        curl -fsSL "$url" -o "$archive" &
+        pid=$!
+        while kill -0 "$pid" 2>/dev/null; do
+            bar "$(bytes "$archive")" "$total"
+            sleep 0.1
+        done
+        if ! wait "$pid"; then
+            pid=""
+            printf '\n'
+            fail "could not download $url"
+        fi
+        pid=""
+        got=$(bytes "$archive")
+        bar "$got" "$got"
+        printf '\n'
     else
         curl -fsSL "$url" -o "$archive" || fail "could not download $url"
+        step "Downloaded $(bytes "$archive" | awk '{ printf "%.1f MB", $1 / 1048576 }')"
     fi
-    size=$(wc -c <"$archive" | awk '{ printf "%.1f MB", $1 / 1048576 }')
-    step "Downloaded $size"
 
     # Check the download against the published checksum, when there is a tool
     # to compute one.
@@ -173,9 +210,6 @@ say ""
 say "  ${bold}Get started${reset}"
 say "    ${cyan}leo${reset}            open your notes"
 say "    ${cyan}leo doctor${reset}     check AI, recording and backup, and store an API key"
-say ""
-say "  ${bold}Inside leo${reset}"
-say "    ${cyan}n${reset} new note   ${cyan}f${reset} find   ${cyan}R${reset} record   ${cyan}/${reset} commands   ${cyan}?${reset} every key"
 say ""
 say "  ${dim}Guide: https://github.com/$REPO#readme${reset}"
 case ":$PATH:" in

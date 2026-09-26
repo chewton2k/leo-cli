@@ -126,6 +126,7 @@ fn the_installer_ends_with_thanks_and_how_to_start() {
     ] {
         assert!(said.contains(expected), "no {expected:?}:\n{said}");
     }
+    assert!(!said.contains("Inside leo"), "{said}");
     assert!(
         !said.contains('\u{1b}'),
         "color codes in plain output:\n{said}"
