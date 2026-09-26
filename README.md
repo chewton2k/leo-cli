@@ -7,14 +7,6 @@ Markdown files on your disk. It can also record a lecture and turn it into
 structured notes while you type the points that matter, answer questions you
 write inside a note, and back everything up to GitHub.
 
-**Quick install** (Mac or Linux):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/chewton2k/leo-cli/main/install.sh | bash
-```
-
-Then open a new terminal and run `leo`.
-
 This page walks you through setting it up, one feature at a time. Only the
 first two sections are needed to take notes; everything after that is
 optional.
