@@ -147,7 +147,14 @@ pub const SECTIONS: &[Section] = &[
         title: "Elsewhere",
         entries: &[
             e("backup", "Ctrl-S: back up on quit, or when idle"),
-            e("leo serve", "read notes from your phone (shell only)"),
+            e(
+                "leo serve",
+                "your notes on your phone (--anywhere: any network)",
+            ),
+            e(
+                "leo update",
+                "install the newest leo (the bottom line says when)",
+            ),
             e("Ctrl-R", "reload from disk, and repaint the screen"),
         ],
     },

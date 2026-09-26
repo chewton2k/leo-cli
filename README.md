@@ -504,7 +504,10 @@ The mouse works too: click to focus or select, scroll with the wheel.
 | Windows | `%APPDATA%\leo\` |
 
 Each note is a Markdown file with a small header, and directories are real
-directories. Settings are in `config.toml`; press `Ctrl-S` then `e` to open it.
+directories. Deleted notes wait in a hidden `.trash` folder inside the notes
+folder for 30 days; it is never backed up to GitHub. The settings folder also
+holds `serve-token` (the code in your `leo serve` link) and `update-check.json`
+(when leo last looked for a new version). Settings are in `config.toml`; press `Ctrl-S` then `e` to open it.
 API keys are never stored in that file: they are kept in a separate file only
 your account can read.
 
@@ -518,6 +521,8 @@ your account can read.
 | `LEO_CHAT_MODEL` | Override the model of the first writing provider |
 | `LEO_USE_KEYCHAIN=1` | Store keys in the OS keychain instead of the key file |
 | `LEO_SCREEN_DEVICE` | The audio device for `--screen` (default `BlackHole 2ch`) |
+| `LEO_NO_UPDATE_CHECK=1` | Never check GitHub for a new version |
+| `LEO_INSTALL_DIR` | For the install command: where to put leo (default `~/.local/bin`) |
 
 ---
 
@@ -550,6 +555,19 @@ provider.
 Check that `git push` works from your terminal (a signed-in account or an SSH
 key), and run `leo doctor`, which asks the repository whether it answers. If the push is
 rejected, run `leo sync` again: it pulls first.
+
+**The phone says "This page needs its link"**
+The login cookie is missing or the link was renewed. Open the link `leo serve`
+prints, or scan its QR code again.
+
+**`leo serve --anywhere` does not start**
+It needs `cloudflared` (`brew install cloudflared`). The link changes every
+time the server starts, so scan the new code; and the computer has to be
+awake, with `leo serve` still running in its terminal.
+
+**A new version is out but `leo update` fails**
+It needs `curl` and a connection to GitHub. Running the install command again
+does the same thing.
 
 **Anything else**
 Run `leo doctor` for a full health scan. It checks leo itself, reads every note

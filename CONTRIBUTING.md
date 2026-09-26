@@ -72,6 +72,8 @@ What each part covers:
 - **`tests/e2e.rs`** runs the real `leo` binary against a throwaway `LEO_HOME`,
   with a cleared environment and a PATH of system tools plus git.
 - **`tests/install.rs`** runs `install.sh` into a throwaway home directory.
+- **`tests/release.rs`** checks the scripts that pick and set the next
+  version.
 - **`tests/wording.rs`** fails if any text a user can see names a command that no
   longer exists. If you rename or remove a command, update the text it points
   at, or add the old name to its list.
@@ -85,8 +87,7 @@ are marked `#[ignore]` and are only run by hand.
 ## Style
 
 - Run `cargo fmt`. CI rejects unformatted code, and clippy warnings are errors.
-- Write comments that explain *why* the code is the way it is. The code already
-  says what it does.
+- Don't add code comments. Put the reasoning in the commit message instead.
 - Use user-facing words in messages. A message that tells someone what to do
   should name a command or key that exists, and say it the way the help does.
 

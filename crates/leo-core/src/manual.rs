@@ -14,7 +14,7 @@ use anyhow::Result;
 use crate::store::Store;
 
 /// Bump when the manual's content changes enough to be worth re-offering.
-const MANUAL_VERSION: u32 = 5;
+const MANUAL_VERSION: u32 = 6;
 const MARKER: &str = ".manual-installed";
 pub const MANUAL_TITLE: &str = "leo manual";
 
@@ -106,8 +106,9 @@ between panes. `?` shows every key and command.
 ## The everyday keys
 
 `j`/`k` move, `h`/`l` switch panes, `Enter` opens. `n` makes a note, `e` edits
-it, `r` renames it, `m` moves it, `D` deletes it, `u` undoes. `x` ticks a
-checkbox; in the preview, `j`/`k` pick which one. `Space` marks notes so `D`
+it, `r` renames it, `m` moves it, `p` pins it to the top, `D` deletes it, `u`
+undoes. Deleted notes wait in `/trash` for 30 days. `x` ticks a checkbox; in
+the preview, `j`/`k` pick which one. `Space` marks notes so `D`
 and `m` act on all of them. `f` searches every note, bodies and `#tags`
 included, and `Esc` clears it. `Tab` goes back to a note you just visited.
 
@@ -134,8 +135,8 @@ your question.
 ## Setting up
 
 `/doctor` checks that everything works and says how to fix what does not;
-`leo doctor` does the same in a shell, and stores API keys. `leo sync` sets up
-backup to GitHub. `Ctrl-S` holds AI providers, keys, colour and backup.
+`leo doctor` does the same in a shell, and stores API keys. `/sync github` sets
+up backup to a private GitHub repository. `leo update` gets the newest leo. `Ctrl-S` holds AI providers, keys, colour and backup.
 
 Notes are plain Markdown files in `{notes_dir}`. Settings live in
 `{config_path}`. API keys never do; they are kept in a store
