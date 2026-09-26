@@ -106,8 +106,6 @@ fn the_installer_runs_under_bash_too() {
     assert!(home.join(".local/bin/leo").is_file(), "{said}");
 }
 
-/// The closing screen: thanks, the version, and what to type first. Logged or
-/// piped output carries no color codes.
 #[test]
 fn the_installer_ends_with_thanks_and_how_to_start() {
     let tmp = tempfile::tempdir().unwrap();
@@ -133,7 +131,6 @@ fn the_installer_ends_with_thanks_and_how_to_start() {
     );
 }
 
-/// Running it again says it updated, and from which version.
 #[test]
 fn a_second_install_says_it_was_an_update() {
     let tmp = tempfile::tempdir().unwrap();

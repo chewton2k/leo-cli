@@ -18,7 +18,6 @@ struct NoteFrontmatter {
     tags: Vec<String>,
     created_at: chrono::DateTime<chrono::Utc>,
     updated_at: chrono::DateTime<chrono::Utc>,
-    /// Written only when true, so an unpinned note's file never changes.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pinned: bool,
 }
@@ -117,29 +116,18 @@ fn collect_md_paths(dir: &Path, result: &mut HashSet<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-// ── Trash ───────────────────────────────────────────────────────────────────
-
-/// Where deleted notes are kept, inside the notes directory. Hidden, so loading
-/// and saving never mistake it for notes.
 const TRASH: &str = ".trash";
 
-/// How long a deleted note is kept before it is gone for good.
 pub const TRASH_DAYS: u64 = 30;
 
-/// A note in the trash.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Trashed {
     pub id: String,
     pub title: String,
-    /// Where it was, and where restoring puts it back.
     pub directory: String,
     pub deleted_at: DateTime<Utc>,
 }
 
-/// Every readable note in the trash: its file, the note, and when it was
-/// deleted. A trashed file keeps its place under `.trash/`, so the directory
-/// comes from its path as it does for a live note, and the time it was deleted
-/// is the file's modification time, set when it was moved there.
 fn trash_entries(notes_dir: &Path) -> Vec<(PathBuf, Note, DateTime<Utc>)> {
     let trash = notes_dir.join(TRASH);
     let mut paths = HashSet::new();
@@ -157,8 +145,6 @@ fn trash_entries(notes_dir: &Path) -> Vec<(PathBuf, Note, DateTime<Utc>)> {
         .collect()
 }
 
-/// Drop from the trash what should no longer be there: notes that are live
-/// again (restored, or brought back by undo) and notes past their time.
 fn tidy_trash(notes_dir: &Path, live: &HashSet<&str>) {
     let cutoff = Utc::now() - chrono::Duration::days(TRASH_DAYS as i64);
     for (path, note, deleted_at) in trash_entries(notes_dir) {
@@ -170,7 +156,6 @@ fn tidy_trash(notes_dir: &Path, live: &HashSet<&str>) {
     }
 }
 
-/// Add `dir` and each of its parents to the directory list.
 fn add_with_parents(directories: &mut Vec<String>, dir: &str) {
     let parts: Vec<&str> = dir.split('/').filter(|p| !p.is_empty()).collect();
     for i in 0..parts.len() {
@@ -286,10 +271,6 @@ pub struct Store {
     /// Most recent change last. Not persisted: undo covers a session, and a
     /// deletion that survived a restart is a decision the user has lived with.
     undo: Vec<Undoable>,
-    /// Every note id this store has loaded or written. A note file on disk
-    /// that is not in memory is only a deletion if its id is here; otherwise
-    /// another program (the web server, a second terminal) wrote it since,
-    /// and it is left alone. Grows on save, which takes `&self`.
     known: std::cell::RefCell<HashSet<String>>,
 }
 
@@ -344,9 +325,7 @@ impl Store {
         })
     }
 
-    /// Persist notes to disk with full reconcile (writes new, trashes removed).
     /// All `.md` files in `notes_dir` are owned by the store — any file not
-    /// corresponding to a current note goes to the trash.
     pub fn save(&self) -> Result<()> {
         fs::create_dir_all(&self.notes_dir)?;
 
@@ -365,12 +344,6 @@ impl Store {
             new_paths.insert(file_path);
         }
 
-        // Files no longer in the notes vec — but never one leo could not
-        // read, which is the user's text rather than a leftover. A file whose
-        // note is still here was moved or renamed and is removed; one whose
-        // note this store had and no longer has was deleted, and goes to the
-        // trash; one it never had was written by another program since it
-        // loaded, and is not this store's to touch.
         let live: HashSet<&str> = self.notes.iter().map(|n| n.id.as_str()).collect();
         let mut known = self.known.borrow_mut();
         known.extend(live.iter().map(|id| id.to_string()));
@@ -408,8 +381,6 @@ impl Store {
         Ok(())
     }
 
-    /// Move a note file into the trash, keeping its place, and stamp it with
-    /// the time it was deleted.
     fn move_to_trash(&self, path: &Path) -> Result<()> {
         let relative = path
             .strip_prefix(&self.notes_dir)
@@ -426,7 +397,6 @@ impl Store {
         Ok(())
     }
 
-    /// Every note in the trash, most recently deleted first.
     pub fn trashed(&self) -> Vec<Trashed> {
         let mut out: Vec<Trashed> = trash_entries(&self.notes_dir)
             .into_iter()
@@ -441,9 +411,6 @@ impl Store {
         out
     }
 
-    /// Bring a note back from the trash, into the directory it was in. Returns
-    /// its title, or `None` when there is no such note in the trash. The file
-    /// leaves the trash on the next save, once the note is safely written.
     pub fn restore(&mut self, id: &str) -> Option<String> {
         if self.notes.iter().any(|n| n.id == id) {
             return None;
@@ -458,7 +425,6 @@ impl Store {
         Some(title)
     }
 
-    /// Delete everything in the trash for good. Returns how many notes went.
     pub fn empty_trash(&self) -> Result<usize> {
         let entries = trash_entries(&self.notes_dir);
         for (path, ..) in &entries {
@@ -492,7 +458,6 @@ impl Store {
         Ok(self.notes.last().unwrap())
     }
 
-    /// Return notes pinned first, then newest first, optionally filtered by tag.
     /// Searches across ALL directories.
     pub fn list_notes(&self, tag: Option<&str>, limit: usize) -> Vec<&Note> {
         let mut notes: Vec<&Note> = self
@@ -508,7 +473,6 @@ impl Store {
         notes
     }
 
-    /// Return notes in a specific directory, pinned first, then newest first.
     pub fn list_notes_in_dir(&self, dir: &str, tag: Option<&str>, limit: usize) -> Vec<&Note> {
         let mut notes: Vec<&Note> = self
             .notes
@@ -1321,7 +1285,6 @@ mod tests {
         let store = Store {
             unreadable: Vec::new(),
             undo: Vec::new(),
-            // It had the orphan's note once: this is a deletion.
             known: std::cell::RefCell::new(HashSet::from([
                 "deadbeef-0000-0000-0000-000000000000".to_string()
             ])),
@@ -1901,8 +1864,6 @@ mod tests {
         assert_eq!(back.body, "body");
     }
 
-    // ── trash ───────────────────────────────────────────────────────────────
-
     fn trash_files(store: &Store) -> Vec<PathBuf> {
         let mut paths = HashSet::new();
         let trash = store.notes_dir.join(".trash");
@@ -1912,8 +1873,6 @@ mod tests {
         paths.into_iter().collect()
     }
 
-    /// A deleted note is kept in the trash, where it came from included, and
-    /// is not a note any more.
     #[test]
     fn a_deleted_note_goes_to_the_trash() {
         let (mut store, _tmp) = temp_store();
@@ -1935,7 +1894,6 @@ mod tests {
         assert_eq!(trashed[0].id, id);
     }
 
-    /// Moving a note rewrites its file somewhere else; that is not a delete.
     #[test]
     fn a_moved_note_is_not_trashed() {
         let (mut store, _tmp) = temp_store();
@@ -1969,7 +1927,6 @@ mod tests {
         assert!(reloaded.directories.contains(&"cs130".to_string()));
     }
 
-    /// Undo puts the note back; the copy in the trash must not linger.
     #[test]
     fn undoing_a_delete_empties_it_from_the_trash() {
         let (mut store, _tmp) = temp_store();
@@ -1983,7 +1940,6 @@ mod tests {
         assert!(store.trashed().is_empty());
     }
 
-    /// Deleting a directory trashes each note in it, keeping its place.
     #[test]
     fn deleting_a_directory_trashes_its_notes() {
         let (mut store, _tmp) = temp_store();
@@ -2009,7 +1965,6 @@ mod tests {
         assert!(trash_files(&store).is_empty());
     }
 
-    /// Notes stay in the trash for 30 days, then go for good.
     #[test]
     fn the_trash_forgets_notes_after_thirty_days() {
         let (mut store, _tmp) = temp_store();
@@ -2037,7 +1992,6 @@ mod tests {
         assert_eq!(left, vec![new]);
     }
 
-    /// A restored note that is already back (restored twice) is not doubled.
     #[test]
     fn restoring_a_note_that_is_not_in_the_trash_does_nothing() {
         let (mut store, _tmp) = temp_store();
@@ -2048,9 +2002,6 @@ mod tests {
         assert_eq!(store.notes.len(), 1);
     }
 
-    // ── pinned notes ────────────────────────────────────────────────────────
-
-    /// A pinned note leads its directory's list, however old it is.
     #[test]
     fn pinned_notes_come_first_and_stay_pinned_on_disk() {
         let (mut store, _tmp) = temp_store();
@@ -2074,8 +2025,6 @@ mod tests {
         assert!(reloaded.find_note(&old).unwrap().pinned);
     }
 
-    /// Notes that are not pinned are written exactly as before, so a file
-    /// never gains a line it does not need.
     #[test]
     fn an_unpinned_note_has_no_pinned_line() {
         let text = note_to_markdown(&make_note()).unwrap();
@@ -2085,11 +2034,6 @@ mod tests {
         assert!(note_to_markdown(&pinned).unwrap().contains("pinned: true"));
     }
 
-    // ── two writers ─────────────────────────────────────────────────────────
-
-    /// The app and `leo serve` (or two terminals) can have the same notes
-    /// open. A note one of them adds must survive the other's next save:
-    /// a save only trashes notes it knew about and no longer has.
     #[test]
     fn a_save_leaves_notes_another_program_added_alone() {
         let (mut app, _tmp) = temp_store();

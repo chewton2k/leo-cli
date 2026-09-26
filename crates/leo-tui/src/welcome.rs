@@ -1,5 +1,3 @@
-//! The setup screen's state and keys. Shown on the first run.
-
 use super::*;
 
 /// The steps as last checked, which one is selected, and the result of the

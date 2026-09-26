@@ -500,8 +500,6 @@ pub(super) fn cd(store: &Store, path: &str, current_dir: &str) -> Outcome {
 }
 
 /// `rename` — change a note's title and nothing else.
-/// `pin` — keep a note at the top of its list, or let it go back into date
-/// order. Not an edit, so it leaves the note's modified time alone.
 pub(super) fn pin(store: &mut Store, note: &str, numbering: &[String]) -> Result<Outcome> {
     let id = resolve_or_return!(note, store, numbering);
     let n = store
@@ -797,7 +795,6 @@ pub fn apply_confirmed(store: &mut Store, action: &ConfirmedAction) -> Result<Ou
     }
 }
 
-/// `trash` — list what was deleted, bring a note back, or empty it.
 fn trash(store: &mut Store, action: TrashAction) -> Result<Outcome> {
     let trashed = store.trashed();
     match action {
@@ -883,7 +880,6 @@ fn trash(store: &mut Store, action: TrashAction) -> Result<Outcome> {
     }
 }
 
-/// How long ago `then` was, the way a person would say it.
 fn ago(then: DateTime<Utc>, now: DateTime<Utc>) -> String {
     let secs = (now - then).num_seconds().max(0);
     let (n, unit) = match secs {
@@ -2448,8 +2444,6 @@ mod handler_tests {
         assert_eq!(numbering_for(&store, "").len(), 25);
     }
 
-    // ── trash ───────────────────────────────────────────────────────────────
-
     fn trash(store: &mut Store, what: TrashAction) -> Outcome {
         apply(Action::Trash(what), store, ctx("", &[]), &FakeAi::default()).unwrap()
     }
@@ -2480,8 +2474,6 @@ mod handler_tests {
         assert!(out.text().contains("empty"), "{}", out.text());
     }
 
-    /// The list numbers each note and says where it came from, and how to
-    /// bring one back.
     #[test]
     fn the_trash_lists_what_was_deleted() {
         let (mut store, _d) = temp_store();
@@ -2535,7 +2527,6 @@ mod handler_tests {
         assert!(store.find_note(&id).is_some());
     }
 
-    /// Emptying destroys notes for good, so it asks first.
     #[test]
     fn emptying_the_trash_asks_first() {
         let (mut store, _d) = temp_store();
@@ -2567,9 +2558,6 @@ mod handler_tests {
         assert_eq!(ago(now - chrono::Duration::days(3), now), "3 days ago");
     }
 
-    // ── pin ─────────────────────────────────────────────────────────────────
-
-    /// `pin` toggles: the first press pins, the second unpins.
     #[test]
     fn pin_toggles_the_selected_note() {
         let (mut store, _d) = temp_store();

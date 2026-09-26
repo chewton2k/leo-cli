@@ -1,6 +1,3 @@
-//! `leo uninstall`: remove the program and the PATH line the installer added.
-//! Notes, settings and keys stay, since they are the user's, not the program's.
-
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
@@ -9,13 +6,10 @@ use anyhow::{Context, Result};
 use leo_core::store::Store;
 use leo_services::config::Config;
 
-/// The comment install.sh writes above its PATH line.
 const MARKER: &str = "# Added by the leo installer";
 
 pub fn run(yes: bool) -> Result<()> {
     let exe = std::env::current_exe().context("could not tell where leo is installed")?;
-    // The directory as the shell file names it may be the resolved path or not
-    // (macOS reports /var as /private/var), so a PATH line naming either counts.
     let dirs: Vec<PathBuf> = [
         exe.parent(),
         exe.canonicalize().ok().as_deref().and_then(Path::parent),
@@ -78,9 +72,6 @@ pub fn run(yes: bool) -> Result<()> {
     Ok(())
 }
 
-/// `text` without the installer's block for `dir`: its comment, its PATH line
-/// and the blank line before them. `None` when there is no such block, so an
-/// untouched file is not rewritten.
 fn without_installer_lines(text: &str, dir: &Path) -> Option<String> {
     let dir = dir.to_string_lossy();
     let lines: Vec<&str> = text.split_inclusive('\n').collect();
@@ -106,7 +97,6 @@ fn without_installer_lines(text: &str, dir: &Path) -> Option<String> {
     changed.then(|| kept.concat())
 }
 
-/// A path with the home directory shown as `~`.
 fn pretty(path: &Path, home: &Path) -> String {
     match path.strip_prefix(home) {
         Ok(rest) if !home.as_os_str().is_empty() => format!("~/{}", rest.display()),
@@ -135,7 +125,6 @@ mod tests {
             without_installer_lines("export PATH=\"$HOME/bin:$PATH\"\n", dir),
             None
         );
-        // Another directory's block belongs to another install.
         let other = "# Added by the leo installer\nexport PATH=\"/opt/leo:$PATH\"\n";
         assert_eq!(without_installer_lines(other, dir), None);
     }

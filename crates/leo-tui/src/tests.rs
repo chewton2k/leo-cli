@@ -21,8 +21,6 @@ fn temp_app() -> (App, tempfile::TempDir) {
     store.save().unwrap();
     let store = Store::load_from(&dir.path().join("notes")).unwrap();
     let mut app = App::new(store);
-    // No network and no microphone from a test, and never the machine's own
-    // GitHub sign-in.
     app.probe = leo_services::doctor::Probe::default();
     app.gh_ready = || false;
     (app, dir)
@@ -1980,12 +1978,6 @@ fn esc_leaves_the_setup_screen_and_points_at_doctor() {
     assert!(said.contains("/doctor"), "{said}");
 }
 
-// ── /doctor ─────────────────────────────────────────────────────────────
-
-// ── update notice ───────────────────────────────────────────────────────
-
-/// A newer release found in the background is announced once, with the
-/// command that installs it.
 #[test]
 fn a_newer_release_is_announced_with_how_to_update() {
     let (mut app, _d) = temp_app();
@@ -2006,10 +1998,6 @@ fn a_newer_release_is_announced_with_how_to_update() {
     assert!(app.update.is_none(), "kept listening after the answer");
 }
 
-// ── pinned notes ────────────────────────────────────────────────────────
-
-/// `p` pins the selected note: it moves to the top, marked, and stays
-/// selected; `p` again unpins it.
 #[test]
 fn p_pins_the_selected_note_to_the_top() {
     let (mut app, _d) = temp_app();
@@ -2029,9 +2017,6 @@ fn p_pins_the_selected_note_to_the_top() {
     assert!(!app.store.find_note(&id).unwrap().pinned);
 }
 
-// ── /trash ──────────────────────────────────────────────────────────────
-
-/// D, y, then `/trash` shows the note; restoring it selects it again.
 #[test]
 fn a_deleted_note_is_in_slash_trash_and_comes_back_selected() {
     let (mut app, _d) = temp_app();
@@ -2058,7 +2043,6 @@ fn a_deleted_note_is_in_slash_trash_and_comes_back_selected() {
     assert_eq!(app.selected_id(), Some(&id));
 }
 
-/// `/doctor` runs the health check without freezing the app, and says so.
 #[test]
 fn slash_doctor_starts_the_check_on_a_worker() {
     let (mut app, _d) = temp_app();
@@ -2074,8 +2058,6 @@ fn slash_doctor_starts_the_check_on_a_worker() {
     );
 }
 
-/// The results land in the preview, each problem with its fix, and Esc
-/// closes them.
 #[test]
 fn the_doctor_report_shows_in_the_preview_until_esc() {
     use leo_services::doctor::Section;
@@ -2112,7 +2094,6 @@ fn the_doctor_report_shows_in_the_preview_until_esc() {
     assert!(app.pinned.is_none(), "Esc did not close the report");
 }
 
-/// A second `/doctor` while one is running does not start another.
 #[test]
 fn one_doctor_at_a_time() {
     let (mut app, _d) = temp_app();
@@ -2157,8 +2138,6 @@ fn enter_on_the_backup_step_asks_for_the_repository() {
     assert_eq!(app.cmd.text(), "sync connect ");
 }
 
-/// With GitHub's tool signed in, backup setup needs no URL: the line offers
-/// `sync github`, and says what Enter will do.
 #[test]
 fn with_gh_signed_in_the_backup_step_offers_sync_github() {
     let (mut app, _d) = temp_app();

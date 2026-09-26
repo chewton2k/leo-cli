@@ -49,7 +49,6 @@ pub enum Intent {
     RenameSelected,
     /// Expand the selected note's `@leo` lines.
     AskSelected,
-    /// Pin the selected note to the top of its list, or unpin it.
     PinSelected,
     /// Start recording a new note.
     Record,

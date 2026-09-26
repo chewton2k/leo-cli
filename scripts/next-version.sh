@@ -1,15 +1,4 @@
 #!/bin/sh
-# Print the version the next release of leo should have, or nothing when there
-# is nothing new to release. Run from the repository root; the release workflow
-# runs it once the tests have passed on main.
-#
-#   no release yet                      the version in Cargo.toml
-#   Cargo.toml's version is newer       that version: this is how a minor or
-#     than the last release               major release is made
-#   nothing in src/, crates/, Cargo.*   nothing: a README change builds the
-#     changed since the last release,     same program, and the commit CI makes
-#     version numbers aside               to record a release is only numbers
-#   otherwise                           the last release, patch number + 1
 set -eu
 
 base=$(sed -n 's/^version = "\([0-9.]*\)"$/\1/p' Cargo.toml | head -n 1)
@@ -24,7 +13,6 @@ if [ -z "$latest" ]; then
     exit 0
 fi
 
-# Whether version $1 is newer than $2, comparing each part as a number.
 newer() {
     awk -v a="$1" -v b="$2" 'BEGIN {
         split(a, x, "."); split(b, y, ".")
@@ -42,8 +30,6 @@ if newer "$base" "$last"; then
     exit 0
 fi
 
-# -I skips hunks made only of version lines: the bump CI commits after each
-# release. A dependency update still counts, since its checksum changes too.
 if git diff --quiet -I '^version = "' "$latest" HEAD -- src crates Cargo.toml Cargo.lock; then
     exit 0
 fi

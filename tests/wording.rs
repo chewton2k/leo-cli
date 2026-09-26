@@ -16,7 +16,6 @@ const STALE: &[(&str, &str)] = &[
     ("leo env", "leo doctor"),
     ("leo model login", "leo doctor, or Ctrl-S"),
     ("leo model list", "leo doctor"),
-    // Setup was folded into doctor, in the shell and in the app.
     ("leo setup", "leo doctor"),
     ("/setup", "/doctor"),
     ("leo config edit", "Ctrl-S, then e"),

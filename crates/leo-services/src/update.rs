@@ -1,10 +1,3 @@
-//! Whether a newer leo has been released.
-//!
-//! Releases go out on every push to main, so without this nobody would know.
-//! It asks at most once a day, remembers the answer, and never slows anything
-//! down: callers run it on a worker thread, and a failure is silence rather
-//! than an error, since being offline is not something to report.
-
 use std::path::Path;
 use std::time::Duration;
 
@@ -14,20 +7,14 @@ use serde::{Deserialize, Serialize};
 
 const REPO: &str = "chewton2k/leo-cli";
 
-/// How often GitHub is asked.
 const EVERY: chrono::TimeDelta = chrono::TimeDelta::hours(24);
 
-/// The last answer, kept next to the config.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Cache {
     checked_at: DateTime<Utc>,
-    /// The latest release as of `checked_at`, without the `v`. Empty when
-    /// that check failed.
     latest: String,
 }
 
-/// The newer version, if one has been released. Asks GitHub at most once a
-/// day; `LEO_NO_UPDATE_CHECK=1` turns it off.
 pub fn available() -> Option<String> {
     if std::env::var("LEO_NO_UPDATE_CHECK").is_ok_and(|v| !v.is_empty() && v != "0") {
         return None;
@@ -43,13 +30,10 @@ pub fn available() -> Option<String> {
     )
 }
 
-/// The command that updates leo in place.
 pub fn install_command() -> String {
     format!("curl -fsSL https://raw.githubusercontent.com/{REPO}/main/install.sh | sh")
 }
 
-/// The version to tell the user about, if any. `fetch` is only called when
-/// the cached answer is more than a day old.
 fn check(
     cache_path: &Path,
     now: DateTime<Utc>,
@@ -62,8 +46,6 @@ fn check(
     let latest = match cached {
         Some(cache) if now - cache.checked_at < EVERY => cache.latest,
         _ => {
-            // A failure is remembered too, so being offline does not mean a
-            // request on every start.
             let latest = fetch().unwrap_or_default();
             let cache = Cache {
                 checked_at: now,
@@ -81,8 +63,6 @@ fn check(
     is_newer(&latest, current).then_some(latest)
 }
 
-/// The latest release's version, read from where GitHub's "latest" link
-/// redirects. Not the API, which allows only 60 requests an hour per address.
 fn latest_release() -> Result<String> {
     let client = reqwest::blocking::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -100,7 +80,6 @@ fn latest_release() -> Result<String> {
     tag_from_location(location).context("no version in GitHub's answer")
 }
 
-/// `.../releases/tag/v0.2.3` → `0.2.3`.
 fn tag_from_location(location: &str) -> Option<String> {
     let tag = location.rsplit_once("/tag/")?.1;
     let version = tag.trim_start_matches('v');
@@ -108,8 +87,6 @@ fn tag_from_location(location: &str) -> Option<String> {
     valid.then(|| version.to_string())
 }
 
-/// Whether `candidate` is a later version than `current`, part by part as
-/// numbers, so 0.2.10 is after 0.2.9. Anything unreadable is not newer.
 pub fn is_newer(candidate: &str, current: &str) -> bool {
     let parts = |v: &str| -> Option<Vec<u64>> {
         v.trim()
@@ -154,7 +131,6 @@ mod tests {
         assert_eq!(tag_from_location("https://x/releases/tag/nightly"), None);
     }
 
-    /// A newer release is reported, and the answer is remembered for a day.
     #[test]
     fn asks_at_most_once_a_day() {
         let tmp = tempfile::tempdir().unwrap();
@@ -189,7 +165,6 @@ mod tests {
         );
     }
 
-    /// Offline is not an error, and does not mean a request on every start.
     #[test]
     fn a_failed_check_is_quiet_and_remembered() {
         let tmp = tempfile::tempdir().unwrap();
@@ -207,7 +182,6 @@ mod tests {
         assert!(!asked.get(), "retried within the day");
     }
 
-    /// Reaches GitHub, so only by hand: `cargo test -p leo-services latest -- --ignored`.
     #[test]
     #[ignore]
     fn the_latest_release_is_read_from_github() {

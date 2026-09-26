@@ -2,20 +2,15 @@
 # Install leo: download the ready-made build for this computer and put it on
 # your PATH for good.
 #
-#   curl -fsSL https://raw.githubusercontent.com/chewton2k/leo-cli/main/install.sh | bash
 #
 # Settings (all optional):
 #   LEO_INSTALL_DIR      where to put leo (default: ~/.local/bin)
 #   LEO_INSTALL_ARCHIVE  install from this .tar.gz instead of downloading
-#   LEO_INSTALL_SKIP_PATH  leave shell startup files alone (`leo update` sets it)
-#   NO_COLOR             plain output, no colors
 set -eu
 
 REPO="chewton2k/leo-cli"
 BIN_DIR="${LEO_INSTALL_DIR:-$HOME/.local/bin}"
 
-# Colors and symbols only on a terminal that can show them, so a log or a pipe
-# gets plain text.
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-dumb}" != dumb ]; then
     esc=$(printf '\033')
     bold="$esc[1m" dim="$esc[2m" green="$esc[32m" red="$esc[31m"
@@ -42,7 +37,6 @@ fail() {
     printf '  %sNothing was changed. Help: https://github.com/%s/issues%s\n' "$dim" "$REPO" "$reset" >&2
     exit 1
 }
-# One frame of the download bar: bytes so far, and the total when known.
 bar() {
     awk -v done="$1" -v total="$2" 'BEGIN {
         mb = 1048576
@@ -58,11 +52,9 @@ bar() {
         }
     }'
 }
-# The size of a file so far; 0 before it exists.
 bytes() {
     if [ -f "$1" ]; then wc -c <"$1" | tr -d ' '; else echo 0; fi
 }
-# A path with the home directory shown as ~.
 pretty() {
     case "$1" in
         "$HOME"/*) printf '~%s' "${1#"$HOME"}" ;;
@@ -98,8 +90,6 @@ if [ -n "${LEO_INSTALL_ARCHIVE:-}" ]; then
 else
     command -v curl >/dev/null 2>&1 || fail "curl is needed to download leo"
 
-    # Which release is the latest, read from where GitHub redirects, so the
-    # download and its checksum are certain to come from the same release.
     tag=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest" 2>/dev/null | sed -n 's|.*/tag/||p') || tag=""
     if [ -n "$tag" ]; then
         url="https://github.com/$REPO/releases/download/$tag/leo-$target.tar.gz"
@@ -110,8 +100,6 @@ else
     fi
 
     if [ -t 1 ]; then
-        # On a terminal, draw the bar: download in the background and watch
-        # the file grow against the size GitHub reports.
         total=$(curl -fsSLI "$url" 2>/dev/null | awk 'tolower($1) == "content-length:" { n = $2 } END { print n + 0 }') || total=0
         curl -fsSL "$url" -o "$archive" &
         pid=$!
@@ -157,15 +145,11 @@ fi
 tar -xzf "$archive" -C "$tmp" || fail "could not unpack the download"
 [ -f "$tmp/leo" ] || fail "the download does not contain leo"
 
-# The version already here, if any, to say whether this was an update.
 previous=""
 if [ -x "$BIN_DIR/leo" ]; then
     previous=$("$BIN_DIR/leo" --version 2>/dev/null | awk '{ print $2 }') || previous=""
 fi
 
-# Written beside the old copy, then renamed over it: copying onto a program
-# that is running (leo update, or leo open in another terminal) rewrites it in
-# place, which macOS then refuses to run. A rename swaps in a new file.
 mkdir -p "$BIN_DIR"
 cp "$tmp/leo" "$BIN_DIR/.leo.new"
 chmod 755 "$BIN_DIR/.leo.new"

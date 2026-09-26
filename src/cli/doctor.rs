@@ -1,6 +1,3 @@
-//! `leo doctor`: the full health scan, printed by section, then a key stored on
-//! the spot for any AI that is missing one.
-
 use std::io::IsTerminal;
 
 use anyhow::Result;

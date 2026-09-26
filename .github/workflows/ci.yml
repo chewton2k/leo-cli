@@ -6,9 +6,6 @@ on:
   pull_request:
   workflow_dispatch:
 
-# A newer push replaces an older pull request run, but runs on main wait their
-# turn: one may be publishing a release, and cancelling it halfway would leave
-# a release with some downloads missing.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -71,8 +68,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace --all-targets --locked
 
-  # Every push to main that passes all of the above and changes leo becomes a
-  # release, which is what the one-line install downloads.
   release:
     needs: [test, lint, msrv]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

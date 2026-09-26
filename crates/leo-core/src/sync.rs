@@ -198,17 +198,12 @@ pub fn now(notes_dir: &Path) -> Result<()> {
     push(notes_dir)
 }
 
-// ── GitHub ──────────────────────────────────────────────────────────────────
-
-/// The repository `sync github` uses when it is not given a name.
 pub const GITHUB_REPO: &str = "leo-notes";
 
 const GH_MISSING: &str = "GitHub's command-line tool is not set up. Install it (brew install gh, \
 or see cli.github.com), sign in with `gh auth login`, then try again. Or make a \
 repository yourself and use `sync connect <url>`.";
 
-/// Whether GitHub's `gh` tool is installed and signed in. Asks for the stored
-/// token rather than running `gh auth status`, which calls GitHub.
 pub fn gh_ready() -> bool {
     Command::new("gh")
         .args(["auth", "token"])
@@ -218,18 +213,14 @@ pub fn gh_ready() -> bool {
         .is_ok_and(|s| s.success())
 }
 
-/// What `sync github` did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitHubBackup {
     pub name: String,
     pub url: String,
-    /// The repository was made just now, rather than already there (on a
-    /// second computer, say).
     pub created: bool,
 }
 
 impl GitHubBackup {
-    /// What to tell the user.
     pub fn describe(&self) -> String {
         if self.created {
             format!(
@@ -245,9 +236,6 @@ impl GitHubBackup {
     }
 }
 
-/// Back up to a private GitHub repository called `name`, made with `gh` if it
-/// does not exist yet. On a second computer the same call finds the repository
-/// the first one made, and the backup brings its notes down.
 pub fn github(notes_dir: &Path, name: &str) -> Result<GitHubBackup> {
     if !gh_ready() {
         anyhow::bail!(GH_MISSING);
@@ -283,8 +271,6 @@ pub fn github(notes_dir: &Path, name: &str) -> Result<GitHubBackup> {
     })
 }
 
-/// The URL git should use for a repository: SSH when the user told `gh` they
-/// use SSH, otherwise HTTPS with `gh` as git's sign-in, which needs no key.
 fn gh_repo_url(name: &str) -> Result<String> {
     let ssh = gh(&["config", "get", "git_protocol"]).is_ok_and(|p| p.trim() == "ssh");
     let field = if ssh { ".sshUrl" } else { ".url" };
@@ -297,7 +283,6 @@ fn gh_repo_url(name: &str) -> Result<String> {
     Ok(url)
 }
 
-/// Run `gh` and capture what it says, like [`run_git`].
 fn gh(args: &[&str]) -> Result<String> {
     let output = Command::new("gh")
         .args(args)
@@ -332,8 +317,6 @@ fn print_output(output: String) {
 /// Commit whatever changed. Runs from `Store::save`, so it must never print:
 /// the caller may be a full-screen UI.
 pub fn auto_commit(notes_dir: &Path) -> Result<()> {
-    // Every save commits, and a backup set up by an older leo may predate an
-    // entry (the trash, say), so the ignore list is brought up to date first.
     ensure_lines(&notes_dir.join(".gitignore"), GITIGNORE)?;
     run_git(notes_dir, &["add", "."])?;
 
@@ -713,15 +696,12 @@ mod tests {
         );
     }
 
-    /// Deleted notes are kept on this computer only: the trash is never
-    /// committed, even in a backup set up before the trash existed.
     #[test]
     fn the_trash_is_never_committed() {
         let tmp = TempDir::new().unwrap();
         let notes_dir = tmp.path().join("notes");
         std::fs::create_dir_all(&notes_dir).unwrap();
         init(&notes_dir).unwrap();
-        // An ignore list from before the trash.
         std::fs::write(notes_dir.join(".gitignore"), "*.wav\n").unwrap();
         run_git(&notes_dir, &["commit", "-qam", "old ignore list"]).unwrap();
 

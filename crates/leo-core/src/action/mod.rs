@@ -36,7 +36,6 @@ pub enum Action {
     DeleteMany {
         ids: Vec<String>,
     },
-    /// Pin a note to the top of its directory's list, or unpin it.
     Pin {
         note: String,
     },
@@ -78,12 +77,10 @@ pub enum Action {
         recursive: bool,
     },
     Sync(SyncAction),
-    /// Deleted notes, kept for a while.
     Trash(TrashAction),
     /// Take back the most recent destructive change.
     Undo,
     Help,
-    /// Check that everything works: leo, the notes, AI, recording, backup.
     Doctor,
     Quit,
 }
@@ -99,7 +96,6 @@ pub enum SyncAction {
     Push,
     Pull,
     Status,
-    /// Back up to a private GitHub repository, made (or found) with `gh`.
     GitHub {
         name: Option<String>,
     },
@@ -107,11 +103,8 @@ pub enum SyncAction {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TrashAction {
-    /// What is in the trash, numbered.
     List,
-    /// Bring one back: its number in the list, or part of its title.
     Restore { which: String },
-    /// Delete everything in the trash for good. Asks first.
     Empty,
 }
 
@@ -234,8 +227,6 @@ pub enum Effect {
         question: String,
     },
     ShowHelp,
-    /// Run the full health check. It probes the network and the microphone,
-    /// so the shell does it.
     Doctor,
     Quit,
     /// Shell out to git. Streams its own output.
@@ -279,7 +270,6 @@ pub enum ConfirmedAction {
     DeleteDir {
         path: String,
     },
-    /// Delete everything in the trash for good.
     EmptyTrash,
 }
 

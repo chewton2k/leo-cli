@@ -1,10 +1,5 @@
 name: Release
 
-# Called by CI once every test has passed on main; can also be run by hand from
-# the Actions tab. Works out the next version (scripts/next-version.sh), commits
-# it to Cargo.toml on main, builds leo for each platform from that commit and
-# publishes a GitHub release tagged there. The install script always downloads
-# the latest one.
 on:
   workflow_call:
   workflow_dispatch:
@@ -35,9 +30,6 @@ jobs:
             echo "Nothing to release: leo itself has not changed since the last release."
           fi
 
-  # Record the new number in Cargo.toml and Cargo.lock on main, so the code
-  # always says which version it is. The release is built from this commit.
-  # Pushed with the workflow's own token, which does not start another CI run.
   bump:
     needs: version
     if: needs.version.outputs.version != ''
@@ -51,7 +43,6 @@ jobs:
         run: |
           version="${{ needs.version.outputs.version }}"
           sh scripts/set-version.sh "$version"
-          # Already recorded: an earlier run committed it, then failed later.
           if git diff --quiet; then
             echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
             exit 0
@@ -62,8 +53,6 @@ jobs:
           if git push origin HEAD:main; then
             echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           else
-            # Someone pushed since this run started. That push gets its own CI
-            # run, which releases everything including this.
             echo "main has moved on; the run for the newer push releases instead."
           fi
 
@@ -113,8 +102,6 @@ jobs:
           name: leo-${{ matrix.target }}
           path: leo-${{ matrix.target }}.tar.gz*
 
-  # Only once every platform has built, so a release never goes out with a
-  # download missing.
   publish:
     needs: [version, bump, build]
     runs-on: ubuntu-latest

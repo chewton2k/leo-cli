@@ -92,7 +92,6 @@ enum Mode {
         on_yes: ConfirmedAction,
     },
     Settings,
-    /// The setup screen, on the first run.
     Welcome,
 }
 
@@ -114,14 +113,9 @@ pub struct App {
     last_change: Instant,
     /// A background push, and when the last one finished.
     pushing: Option<(task::Job, view::progress::Progress, Instant)>,
-    /// A running `/doctor`.
     checking: Option<(task::Job, view::progress::Progress, Instant)>,
-    /// What `/doctor` may probe. Everything, except in tests.
     probe: leo_services::doctor::Probe,
-    /// Whether GitHub's `gh` tool is signed in, which makes backup setup one
-    /// step. A function so tests never depend on the machine's own sign-in.
     gh_ready: fn() -> bool,
-    /// The background check for a newer release, until it answers.
     update: Option<std::sync::mpsc::Receiver<String>>,
     last_push: Option<Instant>,
     /// How many commits are waiting, refreshed when the notes change rather than
@@ -1353,7 +1347,6 @@ impl App {
                     self.say(Kind::Warn, "Already checking — one at a time.");
                     return Ok(());
                 }
-                // The microphone is busy while recording; the rest still runs.
                 let probe = leo_services::doctor::Probe {
                     microphone: self.probe.microphone && self.recording.is_none(),
                     ..self.probe
@@ -1431,7 +1424,6 @@ impl App {
                 match out {
                     Err(e) => self.say(Kind::Bad, e.to_string()),
                     Ok(said) => {
-                        // Pull rewrites files underneath us.
                         self.store = Store::load_from(&self.store.notes_dir.clone())?;
                         self.resync();
                         self.say(Kind::Good, said);
@@ -1442,8 +1434,6 @@ impl App {
         }
     }
 
-    /// Put backup setup on the `/` line: one step with GitHub's tool signed
-    /// in, otherwise the repository URL to paste.
     fn offer_backup_setup(&mut self) {
         self.mode = Mode::Command;
         if (self.gh_ready)() {

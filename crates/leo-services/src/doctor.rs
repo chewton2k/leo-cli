@@ -1,10 +1,6 @@
 //! `leo doctor`: a full health scan of leo, the notes, the AI, recording and
 //! backup, grouped so a problem is found under the thing it affects.
 //!
-//! It answers "is everything actually working?", not just "is it installed?":
-//! it reads every note file, parses the config, and — when asked to probe —
-//! sends one small request to each AI in use, listens to the microphone, and
-//! asks the backup remote whether it answers.
 
 use std::path::Path;
 
@@ -31,7 +27,6 @@ pub struct Probe {
     pub microphone: bool,
     /// Ask the backup remote whether it answers.
     pub remote: bool,
-    /// Ask GitHub whether a newer leo is out.
     pub update: bool,
 }
 
@@ -81,8 +76,6 @@ pub fn scan(
     ]
 }
 
-/// The scan as lines to show, and how many checks failed. `leo doctor` prints
-/// them and `/doctor` shows them in the preview, so the two read the same.
 pub fn report(sections: &[Section]) -> (Vec<Line>, usize) {
     let mut lines = Vec::new();
     let mut failed = 0;
@@ -126,7 +119,6 @@ fn warn(what: &str, needed_for: &str, note: String) -> Check {
     }
 }
 
-/// `newer` is a released version later than this one, if there is one.
 fn leo_checks(config_path: &Path, newer: Option<String>) -> Vec<Check> {
     let version = format!("version {}", env!("CARGO_PKG_VERSION"));
     let mut checks = vec![match newer {
@@ -444,8 +436,6 @@ mod tests {
         (tmp, notes, config)
     }
 
-    /// The terminal and the app print the same report: each section's title,
-    /// then a line per check, with the fix under anything missing.
     #[test]
     fn the_report_names_each_problem_with_its_fix_and_counts_them() {
         use leo_core::action::Kind;
@@ -504,8 +494,6 @@ mod tests {
         assert!(leo_checks(&config, None)[0].state.is_ready());
     }
 
-    /// A missing dependency must arrive with the command that fixes it. A report
-    /// that only says "sox: missing" makes the user go looking.
     #[test]
     fn every_missing_check_carries_a_fix() {
         let (_tmp, notes, config) = setup();

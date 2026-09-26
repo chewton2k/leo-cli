@@ -1,6 +1,3 @@
-//! The two scripts the release pipeline runs: which version comes next, and
-//! stamping it into the build. Run against a throwaway git repository.
-
 #![cfg(unix)]
 
 use std::path::{Path, PathBuf};
@@ -25,7 +22,6 @@ fn git(dir: &Path, args: &[&str]) {
     assert!(ok, "git {args:?} failed");
 }
 
-/// A repository shaped like leo's: a workspace version and some code.
 fn repo(version: &str) -> tempfile::TempDir {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
@@ -93,8 +89,6 @@ fn a_code_change_after_a_release_bumps_the_patch_number() {
     assert_eq!(next_version(repo.path()), "0.2.2");
 }
 
-/// Patch numbers are compared as numbers: after 0.2.9 comes 0.2.10, and
-/// 0.2.10 is newer than 0.2.9.
 #[test]
 fn versions_count_past_nine() {
     let repo = repo("0.2.0");
@@ -106,8 +100,6 @@ fn versions_count_past_nine() {
     assert_eq!(next_version(repo.path()), "0.2.11");
 }
 
-/// A push that only changes the README or the workflows builds the same
-/// program, so it is not a new release.
 #[test]
 fn a_change_that_does_not_touch_leo_releases_nothing() {
     let repo = repo("0.2.0");
@@ -121,7 +113,6 @@ fn a_change_that_does_not_touch_leo_releases_nothing() {
     assert_eq!(next_version(repo.path()), "");
 }
 
-/// Raising the version in Cargo.toml is how a bigger release is made.
 #[test]
 fn raising_the_version_in_cargo_toml_releases_that_version() {
     let repo = repo("0.2.0");
@@ -131,9 +122,6 @@ fn raising_the_version_in_cargo_toml_releases_that_version() {
     assert_eq!(next_version(repo.path()), "0.3.0");
 }
 
-/// After a release, CI commits the new number to Cargo.toml. That commit
-/// changes nothing else, so it is not a release of its own; the next change to
-/// leo counts on from it.
 #[test]
 fn the_version_bump_commit_releases_nothing() {
     let repo = repo("0.2.0");
@@ -145,8 +133,6 @@ fn the_version_bump_commit_releases_nothing() {
     assert_eq!(next_version(repo.path()), "0.2.2");
 }
 
-/// A dependency update is a change to leo even though Cargo.lock's version
-/// lines move: its checksum changes with it.
 #[test]
 fn a_dependency_update_is_released() {
     let repo = repo("0.2.0");
@@ -161,8 +147,6 @@ fn a_dependency_update_is_released() {
     assert_eq!(next_version(repo.path()), "0.2.1");
 }
 
-/// The version stamped into the build: the workspace's, and every leo crate's
-/// in Cargo.lock, so `--locked` still accepts the lock file. Nothing else.
 #[test]
 fn set_version_changes_the_workspace_and_its_lock_entries_only() {
     let tmp = tempfile::tempdir().unwrap();

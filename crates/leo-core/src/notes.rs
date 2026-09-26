@@ -65,7 +65,6 @@ pub struct Note {
     #[serde(default)]
     pub directory: String,
 
-    /// Kept at the top of its directory's list.
     #[serde(default)]
     pub pinned: bool,
 }

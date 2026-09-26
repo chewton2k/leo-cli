@@ -657,8 +657,6 @@ mod parse_tests {
         assert_eq!(act("doctor"), Action::Doctor);
     }
 
-    /// `setup` was folded into `doctor`, which checks everything and says how
-    /// to fix what is missing.
     #[test]
     fn setup_points_at_doctor() {
         match parse("setup") {

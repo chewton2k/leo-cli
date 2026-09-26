@@ -64,7 +64,6 @@ pub enum TaskEvent {
     },
     /// A background push finished.
     Pushed,
-    /// The health check finished.
     Checked(Vec<leo_services::doctor::Section>),
     Failed(String),
 }
@@ -187,8 +186,6 @@ pub fn start_push(notes_dir: std::path::PathBuf) -> Job {
     }
 }
 
-/// Ask, off the event loop, whether a newer leo has been released. Sends the
-/// version only when there is one; otherwise the channel just closes.
 pub fn start_update_check() -> std::sync::mpsc::Receiver<String> {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
@@ -199,11 +196,6 @@ pub fn start_update_check() -> std::sync::mpsc::Receiver<String> {
     rx
 }
 
-/// Run the full health check on a worker thread.
-///
-/// On a worker because it can take seconds: it sends a request to each AI in
-/// use, listens to the microphone and asks the backup remote whether it
-/// answers, and the app has to keep drawing meanwhile.
 pub fn start_doctor(notes_dir: std::path::PathBuf, probe: leo_services::doctor::Probe) -> Job {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {

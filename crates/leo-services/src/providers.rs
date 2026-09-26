@@ -196,7 +196,6 @@ mod tests {
     /// Env vars are process-global; serialize the tests that mutate them.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
-    /// Doctor offers to store a key only for providers that are in a chain,
     /// need one, and have none.
     #[test]
     fn doctor_offers_keys_only_where_one_is_missing() {

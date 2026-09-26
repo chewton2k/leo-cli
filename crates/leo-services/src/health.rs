@@ -1,6 +1,5 @@
 //! What works on this machine, and what to run if it doesn't.
 //!
-//! One place that answers "can leo do X here?", so `leo doctor`, the first-run
 //! greeting, and the pre-flight check before recording all agree — and so a
 //! missing dependency is reported with the command that installs it rather than
 //! as a failure after the user has already tried to use it.
