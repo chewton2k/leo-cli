@@ -62,6 +62,7 @@ impl Leo {
             .env("PATH", format!("{}:/usr/bin:/bin", self.bin.display()))
             .env("EDITOR", self.bin.join("fake-editor"))
             .env("NO_COLOR", "1")
+            .env("LEO_NO_UPDATE_CHECK", "1")
             .env("GIT_AUTHOR_NAME", "leo test")
             .env("GIT_AUTHOR_EMAIL", "leo@example.com")
             .env("GIT_COMMITTER_NAME", "leo test")
@@ -299,6 +300,52 @@ fn a_pinned_note_leads_the_list() {
         .find(|l| l.contains("Syllabus") || l.contains("Lecture 1") || l.contains("manual"))
         .unwrap_or_default();
     assert!(first.contains("Syllabus"), "{list}");
+}
+
+// ── update ──────────────────────────────────────────────────────────────────
+
+/// `leo update` runs the installer into the directory leo is already in, and
+/// leaves the shell's startup files alone: leo is already on the PATH.
+#[test]
+fn update_reinstalls_in_place() {
+    let leo = Leo::new();
+    let exe = leo.installed();
+    let staging = leo.home.path().join("staging");
+    std::fs::create_dir_all(&staging).unwrap();
+    std::fs::copy(env!("CARGO_BIN_EXE_leo"), staging.join("leo")).unwrap();
+    let tarball = leo.home.path().join("leo.tar.gz");
+    assert!(Command::new("tar")
+        .arg("-czf")
+        .arg(&tarball)
+        .arg("-C")
+        .arg(&staging)
+        .arg("leo")
+        .status()
+        .unwrap()
+        .success());
+
+    let out = leo
+        .cmd_at(&exe, &["update"])
+        .env("SHELL", "/bin/zsh")
+        .env(
+            "LEO_UPDATE_SCRIPT",
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("install.sh"),
+        )
+        .env("LEO_INSTALL_ARCHIVE", &tarball)
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{}", describe(&out));
+    assert!(said.contains("already up to date"), "{said}");
+    assert!(
+        said.contains("~/.local/bin/leo"),
+        "not updated in place:\n{said}"
+    );
+    assert!(exe.exists());
+    assert!(
+        !leo.home.path().join(".zshrc").exists(),
+        "an update edited the shell's startup file"
+    );
 }
 
 // ── uninstall ───────────────────────────────────────────────────────────────

@@ -1980,6 +1980,30 @@ fn esc_leaves_the_setup_screen_and_points_at_doctor() {
 
 // ── /doctor ─────────────────────────────────────────────────────────────
 
+// ── update notice ───────────────────────────────────────────────────────
+
+/// A newer release found in the background is announced once, with the
+/// command that installs it.
+#[test]
+fn a_newer_release_is_announced_with_how_to_update() {
+    let (mut app, _d) = temp_app();
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.update = Some(rx);
+    assert!(!app.pump_update(), "announced before anything arrived");
+    tx.send("9.9.9".to_string()).unwrap();
+    assert!(app.pump_update());
+    let said = app
+        .message
+        .as_ref()
+        .map(|m| m.1.clone())
+        .unwrap_or_default();
+    assert!(
+        said.contains("9.9.9") && said.contains("leo update"),
+        "{said}"
+    );
+    assert!(app.update.is_none(), "kept listening after the answer");
+}
+
 // ── pinned notes ────────────────────────────────────────────────────────
 
 /// `p` pins the selected note: it moves to the top, marked, and stays

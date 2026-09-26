@@ -118,6 +118,8 @@ pub struct App {
     checking: Option<(task::Job, view::progress::Progress, Instant)>,
     /// What `/doctor` may probe. Everything, except in tests.
     probe: leo_services::doctor::Probe,
+    /// The background check for a newer release, until it answers.
+    update: Option<std::sync::mpsc::Receiver<String>>,
     last_push: Option<Instant>,
     /// How many commits are waiting, refreshed when the notes change rather than
     /// on every frame: it costs a git process.
@@ -273,6 +275,7 @@ impl App {
             pushing: None,
             checking: None,
             probe: leo_services::doctor::Probe::all(),
+            update: None,
             last_push: None,
             unpushed: None,
             store,
@@ -1751,6 +1754,7 @@ pub fn run() -> Result<()> {
     // user is already on — and answers "only this note has been visited".
     app.remember_visit();
     app.greet(installed_manual);
+    app.update = Some(task::start_update_check());
     let result = event_loop(&mut terminal, &mut app);
     // Persist the recent list so the strip survives a restart, which is the
     // difference between a convenience and a novelty.
@@ -1786,6 +1790,7 @@ fn event_loop<B: TuiBackend>(terminal: &mut Terminal<B>, app: &mut App) -> Resul
             // anything the lower layers queued.
             app.pump_tasks(terminal)?;
             app.pump_doctor();
+            app.pump_update();
             app.pump_diagnostics();
             // Only when there is no input to handle: an automatic backup must
             // never compete with the user's typing.

@@ -187,6 +187,18 @@ pub fn start_push(notes_dir: std::path::PathBuf) -> Job {
     }
 }
 
+/// Ask, off the event loop, whether a newer leo has been released. Sends the
+/// version only when there is one; otherwise the channel just closes.
+pub fn start_update_check() -> std::sync::mpsc::Receiver<String> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        if let Some(version) = leo_services::update::available() {
+            let _ = tx.send(version);
+        }
+    });
+    rx
+}
+
 /// Run the full health check on a worker thread.
 ///
 /// On a worker because it can take seconds: it sends a request to each AI in

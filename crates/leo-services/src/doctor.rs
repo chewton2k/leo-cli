@@ -31,6 +31,8 @@ pub struct Probe {
     pub microphone: bool,
     /// Ask the backup remote whether it answers.
     pub remote: bool,
+    /// Ask GitHub whether a newer leo is out.
+    pub update: bool,
 }
 
 impl Probe {
@@ -39,6 +41,7 @@ impl Probe {
             ai: true,
             microphone: true,
             remote: true,
+            update: true,
         }
     }
 }
@@ -54,7 +57,10 @@ pub fn scan(
     vec![
         Section {
             title: "leo",
-            checks: leo_checks(config_path),
+            checks: leo_checks(
+                config_path,
+                probe.update.then(crate::update::available).flatten(),
+            ),
         },
         Section {
             title: "notes",
@@ -120,12 +126,21 @@ fn warn(what: &str, needed_for: &str, note: String) -> Check {
     }
 }
 
-fn leo_checks(config_path: &Path) -> Vec<Check> {
-    let mut checks = vec![Check::ready(
-        "leo",
-        "everything",
-        Some(format!("version {}", env!("CARGO_PKG_VERSION"))),
-    )];
+/// `newer` is a released version later than this one, if there is one.
+fn leo_checks(config_path: &Path, newer: Option<String>) -> Vec<Check> {
+    let version = format!("version {}", env!("CARGO_PKG_VERSION"));
+    let mut checks = vec![match newer {
+        None => Check::ready("leo", "everything", Some(version)),
+        Some(newer) => {
+            let mut c = warn(
+                "leo",
+                "everything",
+                format!("leo {newer} is out: run `leo update`"),
+            );
+            c.detail = Some(version);
+            c
+        }
+    }];
 
     checks.push(if health::on_path("leo") {
         Check::ready("leo on your PATH", "running `leo` from any terminal", None)
@@ -471,6 +486,22 @@ mod tests {
         assert_eq!(missing.kind, Kind::Bad);
         let fine = lines.iter().find(|l| l.text.contains("ok   leo")).unwrap();
         assert_eq!(fine.kind, Kind::Good);
+    }
+
+    #[test]
+    fn a_newer_release_is_a_note_with_the_command_to_update() {
+        let (_tmp, _notes, config) = setup();
+        let checks = leo_checks(&config, Some("9.9.9".to_string()));
+        match &checks[0].state {
+            State::Warn { note } => {
+                assert!(
+                    note.contains("9.9.9") && note.contains("leo update"),
+                    "{note}"
+                )
+            }
+            other => panic!("expected a note, got {other:?}"),
+        }
+        assert!(leo_checks(&config, None)[0].state.is_ready());
     }
 
     /// A missing dependency must arrive with the command that fixes it. A report

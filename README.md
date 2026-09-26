@@ -65,7 +65,9 @@ off; inside the app, `/doctor` does the same.
 If the download fails, there may be no ready-made build for your computer yet;
 build it from source instead (below).
 
-**To update leo**, run the same install command again. **To uninstall**, run
+**To update leo**, run `leo update`. leo checks for a new version once a day
+and says so on the bottom line when there is one (`LEO_NO_UPDATE_CHECK=1` turns
+that off). **To uninstall**, run
 `leo uninstall`: it removes the program and the PATH line the installer added,
 and leaves your notes, settings and keys where they are.
 
@@ -426,6 +428,7 @@ leo ask "what did we cover about graphs?"   # a question across all notes
 leo sync                            # back up to GitHub
 leo listen --title "Meeting notes"  # records until you press Enter
 leo doctor                          # check everything, store an API key; exits 1 if anything is broken
+leo update                          # install the latest version
 leo uninstall                       # remove leo; your notes stay
 ```
 

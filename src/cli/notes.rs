@@ -87,6 +87,7 @@ pub fn run(cmd: Commands) -> Result<()> {
         Commands::Serve { .. }
         | Commands::Doctor
         | Commands::Uninstall { .. }
+        | Commands::Update
         | Commands::Sync { .. } => {
             unreachable!("handled in main()")
         }

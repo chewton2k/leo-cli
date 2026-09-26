@@ -1660,6 +1660,7 @@ name = "leo-services"
 version = "0.2.1"
 dependencies = [
  "anyhow",
+ "chrono",
  "colored",
  "dirs",
  "keyring",

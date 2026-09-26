@@ -7,6 +7,7 @@
 # Settings (all optional):
 #   LEO_INSTALL_DIR      where to put leo (default: ~/.local/bin)
 #   LEO_INSTALL_ARCHIVE  install from this .tar.gz instead of downloading
+#   LEO_INSTALL_SKIP_PATH  leave shell startup files alone (`leo update` sets it)
 #   NO_COLOR             plain output, no colors
 set -eu
 
@@ -162,9 +163,13 @@ if [ -x "$BIN_DIR/leo" ]; then
     previous=$("$BIN_DIR/leo" --version 2>/dev/null | awk '{ print $2 }') || previous=""
 fi
 
+# Written beside the old copy, then renamed over it: copying onto a program
+# that is running (leo update, or leo open in another terminal) rewrites it in
+# place, which macOS then refuses to run. A rename swaps in a new file.
 mkdir -p "$BIN_DIR"
-cp "$tmp/leo" "$BIN_DIR/leo"
-chmod 755 "$BIN_DIR/leo"
+cp "$tmp/leo" "$BIN_DIR/.leo.new"
+chmod 755 "$BIN_DIR/.leo.new"
+mv -f "$BIN_DIR/.leo.new" "$BIN_DIR/leo"
 step "Installed to $(pretty "$BIN_DIR")/leo"
 version=$("$BIN_DIR/leo" --version 2>/dev/null | awk '{ print $2 }') || version=""
 
@@ -188,7 +193,9 @@ case "$(basename "${SHELL:-sh}")" in
     *) rc="$HOME/.profile" ;;
 esac
 
-if grep -qsF "$BIN_DIR" "$rc"; then
+if [ -n "${LEO_INSTALL_SKIP_PATH:-}" ]; then
+    :
+elif grep -qsF "$BIN_DIR" "$rc"; then
     step "Already on your PATH in $(pretty "$rc")"
 else
     mkdir -p "$(dirname "$rc")"
@@ -215,8 +222,10 @@ say "  ${dim}Guide: https://github.com/$REPO#readme${reset}"
 case ":$PATH:" in
     *":$BIN_DIR:"*) ;;
     *)
-        say ""
-        say "  ${yellow}Open a new terminal first${reset} (or run: . $(pretty "$rc"))"
+        if [ -z "${LEO_INSTALL_SKIP_PATH:-}" ]; then
+            say ""
+            say "  ${yellow}Open a new terminal first${reset} (or run: . $(pretty "$rc"))"
+        fi
         ;;
 esac
 say ""

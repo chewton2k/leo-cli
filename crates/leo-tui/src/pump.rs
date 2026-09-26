@@ -18,6 +18,29 @@ impl App {
         }
     }
 
+    /// Announce a newer release once the background check finds one. Returns
+    /// true when it did.
+    pub(super) fn pump_update(&mut self) -> bool {
+        let Some(rx) = self.update.as_ref() else {
+            return false;
+        };
+        match rx.try_recv() {
+            Ok(version) => {
+                self.update = None;
+                self.say(
+                    Kind::Good,
+                    format!("leo {version} is out. To update, run `leo update` in a shell."),
+                );
+                true
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => false,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.update = None;
+                false
+            }
+        }
+    }
+
     /// Drain a running `/doctor`: when it finishes, its report takes the
     /// preview. Returns true when it did.
     pub(super) fn pump_doctor(&mut self) -> bool {

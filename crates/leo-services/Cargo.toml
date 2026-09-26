@@ -13,6 +13,7 @@ test-support = []
 [dependencies]
 leo-core.workspace = true
 anyhow.workspace = true
+chrono.workspace = true
 colored.workspace = true
 dirs.workspace = true
 keyring.workspace = true

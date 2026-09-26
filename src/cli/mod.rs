@@ -7,6 +7,7 @@ mod notes;
 mod prompt;
 mod sync;
 mod uninstall;
+mod update;
 
 use std::io::IsTerminal;
 
@@ -129,6 +130,9 @@ enum Commands {
     /// backup — and say how to fix what does not
     Doctor,
 
+    /// Update leo to the latest release
+    Update,
+
     /// Remove leo from this computer. Your notes, settings and keys stay
     Uninstall {
         /// Do not ask first
@@ -185,6 +189,7 @@ pub fn run(cli: Cli) -> Result<()> {
         }
         Some(Commands::Doctor) => doctor::run(),
         Some(Commands::Uninstall { yes }) => uninstall::run(yes),
+        Some(Commands::Update) => update::run(),
         Some(Commands::Sync { command }) => sync::run(command),
         None => {
             if std::io::stdin().is_terminal() {
