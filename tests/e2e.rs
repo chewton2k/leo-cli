@@ -39,7 +39,21 @@ impl Leo {
     }
 
     fn cmd(&self, args: &[&str]) -> Command {
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_leo"));
+        self.cmd_at(Path::new(env!("CARGO_BIN_EXE_leo")), args)
+    }
+
+    /// A copy of leo installed the way install.sh installs it, in
+    /// ~/.local/bin, so a test can remove or replace it.
+    fn installed(&self) -> PathBuf {
+        let dir = self.home.path().join(".local/bin");
+        std::fs::create_dir_all(&dir).unwrap();
+        let leo = dir.join("leo");
+        std::fs::copy(env!("CARGO_BIN_EXE_leo"), &leo).unwrap();
+        leo
+    }
+
+    fn cmd_at(&self, exe: &Path, args: &[&str]) -> Command {
+        let mut cmd = Command::new(exe);
         cmd.args(args)
             .env_clear()
             .current_dir(self.home.path())
@@ -285,6 +299,62 @@ fn a_pinned_note_leads_the_list() {
         .find(|l| l.contains("Syllabus") || l.contains("Lecture 1") || l.contains("manual"))
         .unwrap_or_default();
     assert!(first.contains("Syllabus"), "{list}");
+}
+
+// ── uninstall ───────────────────────────────────────────────────────────────
+
+/// What install.sh appends to a shell's startup file.
+fn installer_block(dir: &Path) -> String {
+    format!(
+        "\n# Added by the leo installer\nexport PATH=\"{}:$PATH\"\n",
+        dir.display()
+    )
+}
+
+/// Uninstalling removes the program and the installer's PATH line, and
+/// nothing else: other lines in the file, and the notes, stay.
+#[test]
+fn uninstall_removes_leo_and_its_path_line_but_keeps_the_notes() {
+    let leo = Leo::new();
+    leo.ok(&["new", "Keep me", "--body", "x"]);
+    let exe = leo.installed();
+    let zshrc = leo.home.path().join(".zshrc");
+    let mine = "alias ll='ls -l'\n";
+    std::fs::write(
+        &zshrc,
+        format!("{mine}{}", installer_block(exe.parent().unwrap())),
+    )
+    .unwrap();
+
+    let out = leo.cmd_at(&exe, &["uninstall", "--yes"]).output().unwrap();
+    let said = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{}", describe(&out));
+    assert!(!exe.exists(), "leo is still installed");
+    assert_eq!(std::fs::read_to_string(&zshrc).unwrap(), mine);
+    assert!(said.contains("~/.zshrc"), "{said}");
+    assert!(
+        leo.files().iter().any(|f| f.contains("Keep me")),
+        "notes went too"
+    );
+    assert!(
+        said.contains("notes"),
+        "does not say the notes stay:\n{said}"
+    );
+}
+
+/// With nobody at a terminal to say yes, nothing is removed.
+#[test]
+fn uninstall_asks_first() {
+    let leo = Leo::new();
+    let exe = leo.installed();
+    let out = leo.cmd_at(&exe, &["uninstall"]).output().unwrap();
+    assert!(!out.status.success());
+    assert!(exe.exists(), "removed without asking");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("--yes"),
+        "{}",
+        describe(&out)
+    );
 }
 
 /// A deleted note waits in the trash: listed, restorable, and emptied only

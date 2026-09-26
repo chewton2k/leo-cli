@@ -84,7 +84,10 @@ pub fn run(cmd: Commands) -> Result<()> {
             Some(super::TrashCommands::Empty { .. }) => action::TrashAction::Empty,
         }),
 
-        Commands::Serve { .. } | Commands::Doctor | Commands::Sync { .. } => {
+        Commands::Serve { .. }
+        | Commands::Doctor
+        | Commands::Uninstall { .. }
+        | Commands::Sync { .. } => {
             unreachable!("handled in main()")
         }
     };

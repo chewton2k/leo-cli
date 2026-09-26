@@ -6,6 +6,7 @@ mod doctor;
 mod notes;
 mod prompt;
 mod sync;
+mod uninstall;
 
 use std::io::IsTerminal;
 
@@ -128,6 +129,13 @@ enum Commands {
     /// backup — and say how to fix what does not
     Doctor,
 
+    /// Remove leo from this computer. Your notes, settings and keys stay
+    Uninstall {
+        /// Do not ask first
+        #[arg(short, long)]
+        yes: bool,
+    },
+
     /// Back up your notes to git: pull, then push. Sets backup up the first time.
     Sync {
         #[command(subcommand)]
@@ -176,6 +184,7 @@ pub fn run(cli: Cli) -> Result<()> {
             tokio::runtime::Runtime::new()?.block_on(leo_web::serve(port))
         }
         Some(Commands::Doctor) => doctor::run(),
+        Some(Commands::Uninstall { yes }) => uninstall::run(yes),
         Some(Commands::Sync { command }) => sync::run(command),
         None => {
             if std::io::stdin().is_terminal() {
