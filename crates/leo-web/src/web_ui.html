@@ -182,15 +182,12 @@ header nav button:hover { color: var(--fg); }
 
 <script>
 const API = '';
-const TOKEN = new URLSearchParams(window.location.search).get('token') || '';
 let notes = [];
 let currentDir = '';
 let currentTag = null;
 
 async function api(path, opts = {}) {
-  const sep = path.includes('?') ? '&' : '?';
-  const url = API + path + sep + 'token=' + encodeURIComponent(TOKEN);
-  const res = await fetch(url, {
+  const res = await fetch(API + path, {
     headers: { 'Content-Type': 'application/json', ...opts.headers },
     credentials: 'same-origin',
     ...opts,

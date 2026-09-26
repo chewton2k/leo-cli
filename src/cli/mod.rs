@@ -107,13 +107,13 @@ enum Commands {
         id: String,
     },
 
-    /// Pin a note to the top of its list, or unpin it
+    #[command(about = "Pin a note to the top of its list, or unpin it")]
     Pin {
-        /// Note number, ID prefix or title
+        #[arg(help = "Note number, ID prefix or title")]
         id: String,
     },
 
-    /// Deleted notes, kept 30 days: list them, restore one, or empty the trash
+    #[command(about = "Deleted notes, kept 30 days: list them, restore one, or empty the trash")]
     Trash {
         #[command(subcommand)]
         command: Option<TrashCommands>,
@@ -124,19 +124,28 @@ enum Commands {
         /// Port to listen on
         #[arg(short, long, default_value_t = 3131)]
         port: u16,
+
+        #[arg(
+            long,
+            help = "Also open a public link that works from any network, through a Cloudflare tunnel (needs cloudflared)"
+        )]
+        anywhere: bool,
+
+        #[arg(long, help = "Make a new link, so every old one stops working")]
+        new_token: bool,
     },
 
-    /// Check that everything works — leo, your notes, the AI, recording,
-    /// backup — and say how to fix what does not
+    #[command(
+        about = "Check that everything works (leo, your notes, the AI, recording, backup) and say how to fix what does not"
+    )]
     Doctor,
 
-    /// Update leo to the latest release
+    #[command(about = "Update leo to the latest release")]
     Update,
 
-    /// Remove leo from this computer. Your notes, settings and keys stay
+    #[command(about = "Remove leo from this computer. Your notes, settings and keys stay")]
     Uninstall {
-        /// Do not ask first
-        #[arg(short, long)]
+        #[arg(short, long, help = "Do not ask first")]
         yes: bool,
     },
 
@@ -149,27 +158,29 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum TrashCommands {
-    /// Bring a note back to where it was
+    #[command(about = "Bring a note back to where it was")]
     Restore {
-        /// Its number in `leo trash`, or part of its title
-        #[arg(required = true, num_args = 1..)]
+        #[arg(
+            required = true,
+            num_args = 1..,
+            help = "Its number in `leo trash`, or part of its title"
+        )]
         which: Vec<String>,
     },
-    /// Delete everything in the trash for good
+    #[command(about = "Delete everything in the trash for good")]
     Empty {
-        /// Skip the confirmation
-        #[arg(short, long)]
+        #[arg(short, long, help = "Skip the confirmation")]
         force: bool,
     },
 }
 
 #[derive(Subcommand)]
 enum SyncCommands {
-    /// Back up to a private GitHub repository, made for you with GitHub's gh
-    /// tool, or joined if you already have one
+    #[command(
+        about = "Back up to a private GitHub repository, made for you with GitHub's gh tool, or joined if you already have one"
+    )]
     Github {
-        /// The repository's name
-        #[arg(default_value = leo_core::sync::GITHUB_REPO)]
+        #[arg(default_value = leo_core::sync::GITHUB_REPO, help = "The repository's name")]
         name: String,
     },
     /// Initialize a git repo for your notes (run this first)
@@ -191,9 +202,15 @@ enum SyncCommands {
 /// Run whatever the command line asked for.
 pub fn run(cli: Cli) -> Result<()> {
     match cli.command {
-        Some(Commands::Serve { port }) => {
-            tokio::runtime::Runtime::new()?.block_on(leo_web::serve(port))
-        }
+        Some(Commands::Serve {
+            port,
+            anywhere,
+            new_token,
+        }) => tokio::runtime::Runtime::new()?.block_on(leo_web::serve(leo_web::ServeOptions {
+            port,
+            anywhere,
+            new_token,
+        })),
         Some(Commands::Doctor) => doctor::run(),
         Some(Commands::Uninstall { yes }) => uninstall::run(yes),
         Some(Commands::Update) => update::run(),
@@ -215,8 +232,6 @@ pub fn run(cli: Cli) -> Result<()> {
 mod cli_tests {
     use super::*;
 
-    /// Doctor is the one command for "what works, and fix what does not", and
-    /// `leo sync` alone backs up.
     #[test]
     fn doctor_and_bare_sync_parse() {
         assert!(matches!(
@@ -227,7 +242,6 @@ mod cli_tests {
             Cli::try_parse_from(["leo", "sync"]).unwrap().command,
             Some(Commands::Sync { command: None })
         ));
-        // The old names are gone: doctor and Ctrl-S cover them.
         for old in [
             &["leo", "setup"][..],
             &["leo", "model", "list"],

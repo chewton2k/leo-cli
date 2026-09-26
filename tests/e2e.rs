@@ -42,8 +42,6 @@ impl Leo {
         self.cmd_at(Path::new(env!("CARGO_BIN_EXE_leo")), args)
     }
 
-    /// A copy of leo installed the way install.sh installs it, in
-    /// ~/.local/bin, so a test can remove or replace it.
     fn installed(&self) -> PathBuf {
         let dir = self.home.path().join(".local/bin");
         std::fs::create_dir_all(&dir).unwrap();
@@ -86,8 +84,6 @@ impl Leo {
         self.home.path().join("notes")
     }
 
-    /// Every note file's text, read straight from disk. Hidden directories
-    /// (git's, the trash) hold no live notes.
     fn files(&self) -> Vec<String> {
         let mut out = Vec::new();
         collect_md(&self.notes_dir(), &mut out);
@@ -302,10 +298,6 @@ fn a_pinned_note_leads_the_list() {
     assert!(first.contains("Syllabus"), "{list}");
 }
 
-// ── update ──────────────────────────────────────────────────────────────────
-
-/// `leo update` runs the installer into the directory leo is already in, and
-/// leaves the shell's startup files alone: leo is already on the PATH.
 #[test]
 fn update_reinstalls_in_place() {
     let leo = Leo::new();
@@ -348,9 +340,6 @@ fn update_reinstalls_in_place() {
     );
 }
 
-// ── uninstall ───────────────────────────────────────────────────────────────
-
-/// What install.sh appends to a shell's startup file.
 fn installer_block(dir: &Path) -> String {
     format!(
         "\n# Added by the leo installer\nexport PATH=\"{}:$PATH\"\n",
@@ -358,8 +347,6 @@ fn installer_block(dir: &Path) -> String {
     )
 }
 
-/// Uninstalling removes the program and the installer's PATH line, and
-/// nothing else: other lines in the file, and the notes, stay.
 #[test]
 fn uninstall_removes_leo_and_its_path_line_but_keeps_the_notes() {
     let leo = Leo::new();
@@ -389,7 +376,6 @@ fn uninstall_removes_leo_and_its_path_line_but_keeps_the_notes() {
     );
 }
 
-/// With nobody at a terminal to say yes, nothing is removed.
 #[test]
 fn uninstall_asks_first() {
     let leo = Leo::new();
@@ -404,8 +390,6 @@ fn uninstall_asks_first() {
     );
 }
 
-/// A deleted note waits in the trash: listed, restorable, and emptied only
-/// when asked.
 #[test]
 fn a_deleted_note_can_be_restored_from_the_trash() {
     let leo = Leo::new();
@@ -508,10 +492,6 @@ fn the_manual_is_installed_once() {
     assert_eq!(manuals, 1);
 }
 
-// ── doctor ──────────────────────────────────────────────────────────────────
-
-/// With no AI key, doctor would offer to store one — but only when someone is
-/// at a terminal to answer.
 #[test]
 fn doctor_reports_without_asking_when_nobody_is_there_to_answer() {
     let leo = Leo::new();
@@ -644,8 +624,6 @@ fn a_second_computer_joins_the_backup_and_both_share_notes() {
     assert!(laptop.ok(&["list"]).contains("Written on the desktop"));
 }
 
-/// A stand-in for GitHub's `gh` tool, signed in, whose repositories are bare
-/// git repositories under `github`. Installed into `leo`'s PATH.
 fn fake_gh(leo: &Leo, github: &Path) {
     let script = format!(
         r#"#!/bin/sh
@@ -667,8 +645,6 @@ esac
     make_executable(&gh);
 }
 
-/// With GitHub's tool signed in, one command makes a private repository and
-/// backs up to it; a second computer's same command joins it.
 #[test]
 fn sync_github_makes_the_repository_then_a_second_computer_joins_it() {
     if !has_git() {
@@ -698,7 +674,6 @@ fn sync_github_makes_the_repository_then_a_second_computer_joins_it() {
     assert!(laptop.ok(&["list"]).contains("Written on the desktop"));
 }
 
-/// Without the tool signed in, it says how to get it.
 #[test]
 fn sync_github_without_the_tool_says_how_to_get_it() {
     let leo = Leo::new();
@@ -722,68 +697,201 @@ fn sync_before_setup_says_what_to_do() {
 
 // ── the web server ──────────────────────────────────────────────────────────
 
-/// `leo serve` answers with the notes when given its token, and refuses
-/// without it.
+struct Serving {
+    child: std::process::Child,
+    port: u16,
+    lines: std::sync::mpsc::Receiver<String>,
+}
+
+impl Serving {
+    fn start(leo: &Leo, extra: &[&str]) -> Serving {
+        static NEXT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
+        let port = 38000
+            + (std::process::id() % 500) as u16 * 4
+            + NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let port_arg = port.to_string();
+        let mut args = vec!["serve", "--port", &port_arg];
+        args.extend_from_slice(extra);
+        let mut child = leo
+            .cmd(&args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let stdout = child.stdout.take().unwrap();
+        let (tx, lines) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                let _ = tx.send(line);
+            }
+        });
+        Serving { child, port, lines }
+    }
+
+    fn link(&self, needle: &str) -> String {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while Instant::now() < deadline {
+            if let Ok(line) = self.lines.recv_timeout(Duration::from_millis(200)) {
+                if let Some(i) = line.find("http") {
+                    let link: String = line[i..]
+                        .chars()
+                        .take_while(|c| !c.is_whitespace())
+                        .collect();
+                    if link.contains(needle) {
+                        return link;
+                    }
+                }
+            }
+        }
+        panic!("serve never printed a link with {needle:?}");
+    }
+
+    fn token(&self) -> String {
+        let link = self.link("token=");
+        let i = link.find("token=").unwrap();
+        link[i + 6..]
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric())
+            .collect()
+    }
+
+    fn get(&self, path: &str, headers: &str) -> String {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            if let Ok(mut s) = std::net::TcpStream::connect(("127.0.0.1", self.port)) {
+                s.set_read_timeout(Some(Duration::from_secs(5))).ok();
+                write!(
+                    s,
+                    "GET {path} HTTP/1.1\r\nHost: localhost\r\n{headers}Connection: close\r\n\r\n"
+                )
+                .unwrap();
+                let mut response = String::new();
+                s.read_to_string(&mut response).unwrap();
+                return response;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        panic!("the server did not answer");
+    }
+}
+
+impl Drop for Serving {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
 #[test]
 fn serve_needs_its_token_and_then_lists_the_notes() {
     let leo = Leo::new();
     leo.ok(&["new", "Served note", "--body", "x"]);
+    let server = Serving::start(&leo, &[]);
+    let token = server.token();
 
-    let port = 38000 + (std::process::id() % 1000) as u16;
-    let mut child = leo
-        .cmd(&["serve", "--port", &port.to_string()])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
-
-    let stdout = child.stdout.take().unwrap();
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        // Keep reading after the token: dropping the pipe would make the
-        // server's next line of output fail, and it would exit.
-        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-            if let Some(i) = line.find("token=") {
-                let token: String = line[i + 6..]
-                    .chars()
-                    .take_while(|c| c.is_ascii_alphanumeric())
-                    .collect();
-                let _ = tx.send(token);
-            }
-        }
-    });
-    let token = rx
-        .recv_timeout(Duration::from_secs(20))
-        .expect("serve never printed its link");
-
-    let get = |path: &str| -> Option<String> {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while Instant::now() < deadline {
-            if let Ok(mut s) = std::net::TcpStream::connect(("127.0.0.1", port)) {
-                s.set_read_timeout(Some(Duration::from_secs(5))).ok();
-                write!(
-                    s,
-                    "GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
-                )
-                .ok()?;
-                let mut body = String::new();
-                s.read_to_string(&mut body).ok()?;
-                return Some(body);
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        None
-    };
-
-    let refused = get("/api/notes").expect("server did not answer");
-    let allowed = get(&format!("/api/notes?token={token}")).expect("server did not answer");
-    let _ = child.kill();
-    let _ = child.wait();
-
+    let refused = server.get("/api/notes", "");
     assert!(
         refused.starts_with("HTTP/1.1 401"),
-        "no token was accepted:\n{refused}"
+        "no code was accepted:\n{refused}"
     );
+    let wrong = server.get("/api/notes?token=0000", "");
+    assert!(
+        wrong.starts_with("HTTP/1.1 401"),
+        "a wrong code was accepted:\n{wrong}"
+    );
+    let allowed = server.get(&format!("/api/notes?token={token}"), "");
     assert!(allowed.starts_with("HTTP/1.1 200"), "{allowed}");
     assert!(allowed.contains("Served note"), "{allowed}");
+}
+
+#[test]
+fn opening_the_link_keeps_the_code_out_of_the_address_bar() {
+    let leo = Leo::new();
+    let server = Serving::start(&leo, &[]);
+    let token = server.token();
+
+    let first = server.get(&format!("/?token={token}"), "");
+    assert!(first.starts_with("HTTP/1.1 303"), "{first}");
+    assert!(first.to_lowercase().contains("location: /\r\n"), "{first}");
+    let cookie = first
+        .lines()
+        .find(|l| l.to_lowercase().starts_with("set-cookie:"))
+        .expect("no cookie set");
+    assert!(cookie.contains("HttpOnly"), "{cookie}");
+
+    let page = server.get("/", &format!("Cookie: leo_token={token}\r\n"));
+    assert!(page.starts_with("HTTP/1.1 200"), "{page}");
+    let lower = page.to_lowercase();
+    assert!(lower.contains("referrer-policy: no-referrer"), "{page}");
+    assert!(lower.contains("x-content-type-options: nosniff"), "{page}");
+    assert!(
+        !lower.contains("access-control-allow-origin"),
+        "any site may call it:\n{page}"
+    );
+
+    let tunneled = server.get(&format!("/?token={token}"), "X-Forwarded-Proto: https\r\n");
+    assert!(tunneled.contains("Secure"), "{tunneled}");
+
+    let lost = server.get("/", "");
+    assert!(lost.starts_with("HTTP/1.1 401"), "{lost}");
+    assert!(lost.contains("leo serve"), "{lost}");
+}
+
+#[test]
+fn the_link_survives_a_restart_until_a_new_one_is_asked_for() {
+    let leo = Leo::new();
+    let first = Serving::start(&leo, &[]).token();
+    let again = Serving::start(&leo, &[]).token();
+    assert_eq!(first, again);
+    let fresh = Serving::start(&leo, &["--new-token"]);
+    let new = fresh.token();
+    assert_ne!(new, first);
+    let old = fresh.get(&format!("/api/notes?token={first}"), "");
+    assert!(
+        old.starts_with("HTTP/1.1 401"),
+        "the old link still works:\n{old}"
+    );
+}
+
+#[test]
+fn the_server_sees_notes_added_while_it_runs() {
+    let leo = Leo::new();
+    let server = Serving::start(&leo, &[]);
+    let token = server.token();
+    leo.ok(&["new", "Added while serving", "--body", "x"]);
+    let listed = server.get(&format!("/api/notes?token={token}"), "");
+    assert!(listed.contains("Added while serving"), "{listed}");
+}
+
+#[test]
+fn serve_anywhere_prints_the_tunnel_link() {
+    let leo = Leo::new();
+    let fake = leo.bin.join("cloudflared");
+    std::fs::write(
+        &fake,
+        "#!/bin/sh\necho 'INF |  https://quiet-fox-123.trycloudflare.com  |' >&2\nexec sleep 30\n",
+    )
+    .unwrap();
+    make_executable(&fake);
+    let server = Serving::start(&leo, &["--anywhere"]);
+    let link = server.link("trycloudflare.com");
+    assert!(
+        link.starts_with("https://quiet-fox-123.trycloudflare.com/?token="),
+        "{link}"
+    );
+}
+
+#[test]
+fn serve_anywhere_without_cloudflared_says_how_to_get_it() {
+    let leo = Leo::new();
+    let out = leo
+        .cmd(&["serve", "--anywhere", "--port", "38999"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("cloudflared"),
+        "{}",
+        describe(&out)
+    );
 }

@@ -406,12 +406,31 @@ instead of running `leo sync`.
 leo serve
 ```
 
-This prints a link and a QR code. Scan the code with a phone on the same Wi-Fi
-to read, edit and search your notes in the browser.
+This prints a link and a QR code. Scan the code with your phone's camera to
+read, edit and search your notes in the browser. The phone has to be on the
+same Wi-Fi as your computer.
 
-The link carries an access token: anyone on your network who has it can edit
-your notes, so only use this on networks you trust. Stop the server with
-`Ctrl-C`.
+**From anywhere** (another Wi-Fi, or mobile data):
+
+```sh
+brew install cloudflared     # once; free, no account needed
+leo serve --anywhere
+```
+
+leo opens a private tunnel through Cloudflare and prints an `https://` link
+and QR code that work on any network. Your computer has to stay on and awake
+while you use it; leo keeps a Mac from dozing off while it serves. The link
+changes each time you start it.
+
+**Keeping it safe.** The link carries an access code: anyone with the whole
+link can read and edit your notes, so don't share it. Opening the link swaps
+the code for a login cookie that lasts 30 days, and takes it out of the address
+bar. The code stays the same between runs, so a bookmark keeps working; if a
+link ever gets out, `leo serve --new-token` makes a new code and every old link
+stops working. Stop the server with `Ctrl-C`.
+
+Notes you add in the app while the server runs show up on the phone, and notes
+added on the phone show up in the app after `Ctrl-R`.
 
 ---
 

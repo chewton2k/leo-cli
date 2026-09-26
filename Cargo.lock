@@ -1705,7 +1705,6 @@ dependencies = [
  "serde",
  "tempfile",
  "tokio",
- "tower-http",
  "uuid",
 ]
 
