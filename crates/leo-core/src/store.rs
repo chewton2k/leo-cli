@@ -286,6 +286,11 @@ pub struct Store {
     /// Most recent change last. Not persisted: undo covers a session, and a
     /// deletion that survived a restart is a decision the user has lived with.
     undo: Vec<Undoable>,
+    /// Every note id this store has loaded or written. A note file on disk
+    /// that is not in memory is only a deletion if its id is here; otherwise
+    /// another program (the web server, a second terminal) wrote it since,
+    /// and it is left alone. Grows on save, which takes `&self`.
+    known: std::cell::RefCell<HashSet<String>>,
 }
 
 impl Store {
@@ -328,7 +333,9 @@ impl Store {
             add_with_parents(&mut directories, &note.directory);
         }
         tidy_trash(notes_dir, &notes.iter().map(|n| n.id.as_str()).collect());
+        let known = notes.iter().map(|n| n.id.clone()).collect();
         Ok(Store {
+            known: std::cell::RefCell::new(known),
             unreadable,
             undo: Vec::new(),
             notes,
@@ -360,23 +367,31 @@ impl Store {
 
         // Files no longer in the notes vec — but never one leo could not
         // read, which is the user's text rather than a leftover. A file whose
-        // note is still here was moved or renamed and is removed; anything else
-        // was deleted, and goes to the trash, where it can be restored.
+        // note is still here was moved or renamed and is removed; one whose
+        // note this store had and no longer has was deleted, and goes to the
+        // trash; one it never had was written by another program since it
+        // loaded, and is not this store's to touch.
         let live: HashSet<&str> = self.notes.iter().map(|n| n.id.as_str()).collect();
+        let mut known = self.known.borrow_mut();
+        known.extend(live.iter().map(|id| id.to_string()));
         for old_path in &old_paths {
             if new_paths.contains(old_path) || self.unreadable.iter().any(|(p, _)| p == old_path) {
                 continue;
             }
-            let moved = fs::read_to_string(old_path)
+            let Some(id) = fs::read_to_string(old_path)
                 .ok()
                 .and_then(|text| parse_note_from_markdown(&text, Path::new("note.md")).ok())
-                .is_some_and(|note| live.contains(note.id.as_str()));
-            if moved {
+                .map(|note| note.id)
+            else {
+                continue;
+            };
+            if live.contains(id.as_str()) {
                 fs::remove_file(old_path)?;
-            } else {
+            } else if known.contains(&id) {
                 self.move_to_trash(old_path)?;
             }
         }
+        drop(known);
         tidy_trash(&self.notes_dir, &live);
 
         save_directories(&self.notes_dir, &self.directories)?;
@@ -1211,6 +1226,7 @@ mod tests {
             directories: vec![],
             notes_dir: notes_dir.clone(),
             undo: Vec::new(),
+            known: Default::default(),
         };
         let note = make_note();
         assert_eq!(
@@ -1229,6 +1245,7 @@ mod tests {
             directories: vec![],
             notes_dir: notes_dir.clone(),
             undo: Vec::new(),
+            known: Default::default(),
         };
         let mut note = make_note();
         note.directory = "cs162/lec".to_string();
@@ -1281,6 +1298,7 @@ mod tests {
         let store = Store {
             unreadable: Vec::new(),
             undo: Vec::new(),
+            known: Default::default(),
             notes: vec![make_note()],
             directories: vec![],
             notes_dir: notes_dir.clone(),
@@ -1292,7 +1310,7 @@ mod tests {
     }
 
     #[test]
-    fn test_save_deletes_orphaned_files() {
+    fn test_save_trashes_a_note_it_no_longer_has() {
         let tmp = tempfile::TempDir::new().unwrap();
         let notes_dir = tmp.path().join("notes");
         std::fs::create_dir_all(&notes_dir).unwrap();
@@ -1303,13 +1321,18 @@ mod tests {
         let store = Store {
             unreadable: Vec::new(),
             undo: Vec::new(),
+            // It had the orphan's note once: this is a deletion.
+            known: std::cell::RefCell::new(HashSet::from([
+                "deadbeef-0000-0000-0000-000000000000".to_string()
+            ])),
             notes: vec![make_note()],
             directories: vec![],
             notes_dir: notes_dir.clone(),
         };
         store.save().unwrap();
 
-        assert!(!orphan.exists(), "orphaned file should be deleted");
+        assert!(!orphan.exists(), "orphaned file should be removed");
+        assert_eq!(store.trashed().len(), 1, "and kept in the trash");
         assert!(notes_dir
             .join("550e8400-e29b-41d4-a716-446655440000.md")
             .exists());
@@ -1356,6 +1379,7 @@ mod tests {
         let store = Store {
             unreadable: Vec::new(),
             undo: Vec::new(),
+            known: Default::default(),
             notes: vec![note.clone()],
             directories: vec![],
             notes_dir: notes_dir.clone(),
@@ -1370,6 +1394,7 @@ mod tests {
         let store2 = Store {
             unreadable: Vec::new(),
             undo: Vec::new(),
+            known: Default::default(),
             notes: vec![moved],
             directories: vec!["ideas".to_string()],
             notes_dir: notes_dir.clone(),
@@ -1398,6 +1423,7 @@ mod tests {
         let store = Store {
             unreadable: Vec::new(),
             undo: Vec::new(),
+            known: Default::default(),
             notes: vec![make_note()],
             directories: vec![],
             notes_dir: notes_dir.clone(),
@@ -2057,5 +2083,36 @@ mod tests {
         let mut pinned = make_note();
         pinned.pinned = true;
         assert!(note_to_markdown(&pinned).unwrap().contains("pinned: true"));
+    }
+
+    // ── two writers ─────────────────────────────────────────────────────────
+
+    /// The app and `leo serve` (or two terminals) can have the same notes
+    /// open. A note one of them adds must survive the other's next save:
+    /// a save only trashes notes it knew about and no longer has.
+    #[test]
+    fn a_save_leaves_notes_another_program_added_alone() {
+        let (mut app, _tmp) = temp_store();
+        let mine = app.create_note("Mine", "", vec![], "").unwrap().id.clone();
+        app.save().unwrap();
+
+        let mut phone = Store::load_from(&app.notes_dir).unwrap();
+        let theirs = phone
+            .create_note("From the phone", "", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        phone.save().unwrap();
+
+        app.delete_note(&mine);
+        app.save().unwrap();
+
+        let now = Store::load_from(&app.notes_dir).unwrap();
+        assert!(
+            now.find_note(&theirs).is_some(),
+            "the other program's note was removed"
+        );
+        let trashed: Vec<String> = now.trashed().into_iter().map(|t| t.id).collect();
+        assert_eq!(trashed, vec![mine], "trashed a note it never had");
     }
 }
