@@ -74,6 +74,8 @@ pub enum Action {
         recursive: bool,
     },
     Sync(SyncAction),
+    /// Deleted notes, kept for a while.
+    Trash(TrashAction),
     /// Take back the most recent destructive change.
     Undo,
     Help,
@@ -93,6 +95,16 @@ pub enum SyncAction {
     Push,
     Pull,
     Status,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TrashAction {
+    /// What is in the trash, numbered.
+    List,
+    /// Bring one back: its number in the list, or part of its title.
+    Restore { which: String },
+    /// Delete everything in the trash for good. Asks first.
+    Empty,
 }
 
 /// What parsing one input line produced.
@@ -259,6 +271,8 @@ pub enum ConfirmedAction {
     DeleteDir {
         path: String,
     },
+    /// Delete everything in the trash for good.
+    EmptyTrash,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -217,6 +217,9 @@ fn print_output(output: String) {
 /// Commit whatever changed. Runs from `Store::save`, so it must never print:
 /// the caller may be a full-screen UI.
 pub fn auto_commit(notes_dir: &Path) -> Result<()> {
+    // Every save commits, and a backup set up by an older leo may predate an
+    // entry (the trash, say), so the ignore list is brought up to date first.
+    ensure_lines(&notes_dir.join(".gitignore"), GITIGNORE)?;
     run_git(notes_dir, &["add", "."])?;
 
     // Only create a commit if there are staged changes
@@ -236,7 +239,7 @@ pub fn auto_commit(notes_dir: &Path) -> Result<()> {
 
 /// Files inside the notes directory that are leo's business, not the user's
 /// notes, and so must never be pushed to their remote.
-const GITIGNORE: &str = "*.wav\n*.bak\n.manual-installed\ndirectories.json\n";
+const GITIGNORE: &str = "*.wav\n*.bak\n.manual-installed\ndirectories.json\n.trash/\n";
 
 /// A note edited on two computers keeps both sides' lines rather than one
 /// side's edit being lost; the user tidies it, instead of it vanishing.
@@ -593,6 +596,33 @@ mod tests {
             err.to_lowercase().contains("repository") || err.contains(':'),
             "the error should carry git's own message: {err}"
         );
+    }
+
+    /// Deleted notes are kept on this computer only: the trash is never
+    /// committed, even in a backup set up before the trash existed.
+    #[test]
+    fn the_trash_is_never_committed() {
+        let tmp = TempDir::new().unwrap();
+        let notes_dir = tmp.path().join("notes");
+        std::fs::create_dir_all(&notes_dir).unwrap();
+        init(&notes_dir).unwrap();
+        // An ignore list from before the trash.
+        std::fs::write(notes_dir.join(".gitignore"), "*.wav\n").unwrap();
+        run_git(&notes_dir, &["commit", "-qam", "old ignore list"]).unwrap();
+
+        let mut store = crate::store::Store::load_from(&notes_dir).unwrap();
+        let id = store
+            .create_note("Gone", "x", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.save().unwrap();
+        store.delete_note(&id);
+        store.save().unwrap();
+
+        assert_eq!(store.trashed().len(), 1);
+        let tracked = run_git(&notes_dir, &["ls-files"]).unwrap();
+        assert!(!tracked.contains(".trash"), "{tracked}");
     }
 
     /// leo's own marker files live in the notes directory but are not notes,

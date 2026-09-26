@@ -41,7 +41,13 @@ pub fn run(cmd: Commands) -> Result<()> {
         return Ok(());
     }
 
-    let force_delete = matches!(cmd, Commands::Delete { force: true, .. });
+    let force_delete = matches!(
+        cmd,
+        Commands::Delete { force: true, .. }
+            | Commands::Trash {
+                command: Some(super::TrashCommands::Empty { force: true })
+            }
+    );
 
     // `leo list cs130` lists inside that directory; everything else works from
     // the top level.
@@ -69,6 +75,13 @@ pub fn run(cmd: Commands) -> Result<()> {
             screen,
         },
         Commands::Ask { id } => action::Action::Ask { note: id },
+        Commands::Trash { command } => action::Action::Trash(match command {
+            None => action::TrashAction::List,
+            Some(super::TrashCommands::Restore { which }) => action::TrashAction::Restore {
+                which: which.join(" "),
+            },
+            Some(super::TrashCommands::Empty { .. }) => action::TrashAction::Empty,
+        }),
 
         Commands::Serve { .. } | Commands::Doctor | Commands::Sync { .. } => {
             unreachable!("handled in main()")

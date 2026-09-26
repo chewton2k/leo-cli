@@ -71,7 +71,8 @@ impl Leo {
         self.home.path().join("notes")
     }
 
-    /// Every note file's text, read straight from disk.
+    /// Every note file's text, read straight from disk. Hidden directories
+    /// (git's, the trash) hold no live notes.
     fn files(&self) -> Vec<String> {
         let mut out = Vec::new();
         collect_md(&self.notes_dir(), &mut out);
@@ -85,7 +86,10 @@ fn collect_md(dir: &Path, out: &mut Vec<String>) {
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_dir() && !path.ends_with(".git") {
+        let hidden = path
+            .file_name()
+            .is_some_and(|n| n.to_string_lossy().starts_with('.'));
+        if path.is_dir() && !hidden {
             collect_md(&path, out);
         } else if path.extension().is_some_and(|e| e == "md") {
             out.push(std::fs::read_to_string(&path).unwrap());
@@ -267,6 +271,30 @@ fn delete_with_force_removes_the_file() {
     leo.ok(&["delete", "Doomed", "--force"]);
     assert!(!leo.files().iter().any(|f| f.contains("title: Doomed")));
     assert!(!leo.ok(&["list"]).contains("Doomed"));
+}
+
+/// A deleted note waits in the trash: listed, restorable, and emptied only
+/// when asked.
+#[test]
+fn a_deleted_note_can_be_restored_from_the_trash() {
+    let leo = Leo::new();
+    leo.ok(&["new", "cs130/ Lecture 4", "--body", "BFS"]);
+    let said = leo.ok(&["delete", "Lecture 4", "--force"]);
+    assert!(said.contains("trash"), "{said}");
+
+    let listed = leo.ok(&["trash"]);
+    assert!(listed.contains("Lecture 4"), "{listed}");
+    assert!(listed.contains("/cs130"), "{listed}");
+
+    let restored = leo.ok(&["trash", "restore", "1"]);
+    assert!(restored.contains("Restored"), "{restored}");
+    assert!(leo.ok(&["list", "cs130"]).contains("Lecture 4"));
+    assert!(leo.ok(&["trash"]).contains("empty"));
+
+    leo.ok(&["delete", "Lecture 4", "--force"]);
+    leo.ok(&["trash", "empty", "--force"]);
+    assert!(leo.ok(&["trash"]).contains("empty"));
+    assert!(!leo.ok(&["list", "cs130"]).contains("Lecture 4"));
 }
 
 #[test]

@@ -1980,6 +1980,35 @@ fn esc_leaves_the_setup_screen_and_points_at_doctor() {
 
 // ── /doctor ─────────────────────────────────────────────────────────────
 
+// ── /trash ──────────────────────────────────────────────────────────────
+
+/// D, y, then `/trash` shows the note; restoring it selects it again.
+#[test]
+fn a_deleted_note_is_in_slash_trash_and_comes_back_selected() {
+    let (mut app, _d) = temp_app();
+    select_titled(&mut app, "Rust ownership");
+    let id = app.selected_id().cloned().unwrap();
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 30)).unwrap();
+    app.run_line("delete", &mut terminal).unwrap();
+    app.on_key(press('y'), &mut terminal).unwrap();
+    assert!(app.store.find_note(&id).is_none());
+    let said = app
+        .message
+        .as_ref()
+        .map(|m| m.1.clone())
+        .unwrap_or_default();
+    assert!(said.contains("trash"), "{said}");
+
+    app.run_line("trash", &mut terminal).unwrap();
+    terminal.draw(|f| app.draw(f)).unwrap();
+    let out = terminal.backend().to_string();
+    assert!(out.contains("Rust ownership"), "not listed:\n{out}");
+
+    app.run_line("trash restore 1", &mut terminal).unwrap();
+    assert!(app.store.find_note(&id).is_some(), "not restored");
+    assert_eq!(app.selected_id(), Some(&id));
+}
+
 /// `/doctor` runs the health check without freezing the app, and says so.
 #[test]
 fn slash_doctor_starts_the_check_on_a_worker() {

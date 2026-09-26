@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::notes::Note;
@@ -110,6 +110,70 @@ fn collect_md_paths(dir: &Path, result: &mut HashSet<PathBuf>) -> Result<()> {
         }
     }
     Ok(())
+}
+
+// ── Trash ───────────────────────────────────────────────────────────────────
+
+/// Where deleted notes are kept, inside the notes directory. Hidden, so loading
+/// and saving never mistake it for notes.
+const TRASH: &str = ".trash";
+
+/// How long a deleted note is kept before it is gone for good.
+pub const TRASH_DAYS: u64 = 30;
+
+/// A note in the trash.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Trashed {
+    pub id: String,
+    pub title: String,
+    /// Where it was, and where restoring puts it back.
+    pub directory: String,
+    pub deleted_at: DateTime<Utc>,
+}
+
+/// Every readable note in the trash: its file, the note, and when it was
+/// deleted. A trashed file keeps its place under `.trash/`, so the directory
+/// comes from its path as it does for a live note, and the time it was deleted
+/// is the file's modification time, set when it was moved there.
+fn trash_entries(notes_dir: &Path) -> Vec<(PathBuf, Note, DateTime<Utc>)> {
+    let trash = notes_dir.join(TRASH);
+    let mut paths = HashSet::new();
+    if collect_md_paths(&trash, &mut paths).is_err() {
+        return Vec::new();
+    }
+    paths
+        .into_iter()
+        .filter_map(|path| {
+            let text = fs::read_to_string(&path).ok()?;
+            let note = parse_note_from_markdown(&text, path.strip_prefix(&trash).ok()?).ok()?;
+            let at = fs::metadata(&path).and_then(|m| m.modified()).ok()?;
+            Some((path, note, DateTime::<Utc>::from(at)))
+        })
+        .collect()
+}
+
+/// Drop from the trash what should no longer be there: notes that are live
+/// again (restored, or brought back by undo) and notes past their time.
+fn tidy_trash(notes_dir: &Path, live: &HashSet<&str>) {
+    let cutoff = Utc::now() - chrono::Duration::days(TRASH_DAYS as i64);
+    for (path, note, deleted_at) in trash_entries(notes_dir) {
+        if live.contains(note.id.as_str()) || deleted_at < cutoff {
+            if let Err(e) = fs::remove_file(&path) {
+                crate::diag::warn(format!("could not tidy the trash: {e}"));
+            }
+        }
+    }
+}
+
+/// Add `dir` and each of its parents to the directory list.
+fn add_with_parents(directories: &mut Vec<String>, dir: &str) {
+    let parts: Vec<&str> = dir.split('/').filter(|p| !p.is_empty()).collect();
+    for i in 0..parts.len() {
+        let dir = parts[..=i].join("/");
+        if !directories.contains(&dir) {
+            directories.push(dir);
+        }
+    }
 }
 
 /// Recursively parse all .md files under `dir` into `notes`.
@@ -256,18 +320,9 @@ impl Store {
         // every note's directory, and its parents, is known from where it is.
         let mut directories = directories;
         for note in &notes {
-            let parts: Vec<&str> = note
-                .directory
-                .split('/')
-                .filter(|p| !p.is_empty())
-                .collect();
-            for i in 0..parts.len() {
-                let dir = parts[..=i].join("/");
-                if !directories.contains(&dir) {
-                    directories.push(dir);
-                }
-            }
+            add_with_parents(&mut directories, &note.directory);
         }
+        tidy_trash(notes_dir, &notes.iter().map(|n| n.id.as_str()).collect());
         Ok(Store {
             unreadable,
             undo: Vec::new(),
@@ -277,9 +332,9 @@ impl Store {
         })
     }
 
-    /// Persist notes to disk with full reconcile (writes new, deletes removed).
+    /// Persist notes to disk with full reconcile (writes new, trashes removed).
     /// All `.md` files in `notes_dir` are owned by the store — any file not
-    /// corresponding to a current note will be deleted.
+    /// corresponding to a current note goes to the trash.
     pub fn save(&self) -> Result<()> {
         fs::create_dir_all(&self.notes_dir)?;
 
@@ -298,14 +353,26 @@ impl Store {
             new_paths.insert(file_path);
         }
 
-        // Delete files no longer in the notes vec — but never one leo could
-        // not read, which is the user's text rather than a leftover.
+        // Files no longer in the notes vec — but never one leo could not
+        // read, which is the user's text rather than a leftover. A file whose
+        // note is still here was moved or renamed and is removed; anything else
+        // was deleted, and goes to the trash, where it can be restored.
+        let live: HashSet<&str> = self.notes.iter().map(|n| n.id.as_str()).collect();
         for old_path in &old_paths {
-            if !new_paths.contains(old_path) && !self.unreadable.iter().any(|(p, _)| p == old_path)
-            {
+            if new_paths.contains(old_path) || self.unreadable.iter().any(|(p, _)| p == old_path) {
+                continue;
+            }
+            let moved = fs::read_to_string(old_path)
+                .ok()
+                .and_then(|text| parse_note_from_markdown(&text, Path::new("note.md")).ok())
+                .is_some_and(|note| live.contains(note.id.as_str()));
+            if moved {
                 fs::remove_file(old_path)?;
+            } else {
+                self.move_to_trash(old_path)?;
             }
         }
+        tidy_trash(&self.notes_dir, &live);
 
         save_directories(&self.notes_dir, &self.directories)?;
 
@@ -319,6 +386,65 @@ impl Store {
         }
 
         Ok(())
+    }
+
+    /// Move a note file into the trash, keeping its place, and stamp it with
+    /// the time it was deleted.
+    fn move_to_trash(&self, path: &Path) -> Result<()> {
+        let relative = path
+            .strip_prefix(&self.notes_dir)
+            .context("path outside notes_dir")?;
+        let dest = self.notes_dir.join(TRASH).join(relative);
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::rename(path, &dest)?;
+        fs::File::options()
+            .write(true)
+            .open(&dest)?
+            .set_modified(std::time::SystemTime::now())?;
+        Ok(())
+    }
+
+    /// Every note in the trash, most recently deleted first.
+    pub fn trashed(&self) -> Vec<Trashed> {
+        let mut out: Vec<Trashed> = trash_entries(&self.notes_dir)
+            .into_iter()
+            .map(|(_, note, deleted_at)| Trashed {
+                id: note.id,
+                title: note.title,
+                directory: note.directory,
+                deleted_at,
+            })
+            .collect();
+        out.sort_by_key(|t| std::cmp::Reverse(t.deleted_at));
+        out
+    }
+
+    /// Bring a note back from the trash, into the directory it was in. Returns
+    /// its title, or `None` when there is no such note in the trash. The file
+    /// leaves the trash on the next save, once the note is safely written.
+    pub fn restore(&mut self, id: &str) -> Option<String> {
+        if self.notes.iter().any(|n| n.id == id) {
+            return None;
+        }
+        let (_, note, _) = trash_entries(&self.notes_dir)
+            .into_iter()
+            .find(|(_, note, _)| note.id == id)?;
+        add_with_parents(&mut self.directories, &note.directory);
+        let title = note.title.clone();
+        self.notes.push(note);
+        self.notes.sort_by_key(|n| std::cmp::Reverse(n.created_at));
+        Some(title)
+    }
+
+    /// Delete everything in the trash for good. Returns how many notes went.
+    pub fn empty_trash(&self) -> Result<usize> {
+        let entries = trash_entries(&self.notes_dir);
+        for (path, ..) in &entries {
+            fs::remove_file(path)?;
+        }
+        Ok(entries.len())
     }
 
     /// Returns the expected .md file path for a note.
@@ -1741,5 +1867,152 @@ mod tests {
             .expect("restored note missing from disk");
         assert_eq!(back.title, "Persisted");
         assert_eq!(back.body, "body");
+    }
+
+    // ── trash ───────────────────────────────────────────────────────────────
+
+    fn trash_files(store: &Store) -> Vec<PathBuf> {
+        let mut paths = HashSet::new();
+        let trash = store.notes_dir.join(".trash");
+        if trash.exists() {
+            collect_md_paths(&trash, &mut paths).unwrap();
+        }
+        paths.into_iter().collect()
+    }
+
+    /// A deleted note is kept in the trash, where it came from included, and
+    /// is not a note any more.
+    #[test]
+    fn a_deleted_note_goes_to_the_trash() {
+        let (mut store, _tmp) = temp_store();
+        let id = store
+            .create_note("Lecture 4", "BFS", vec![], "cs130")
+            .unwrap()
+            .id
+            .clone();
+        store.save().unwrap();
+        assert!(store.delete_note(&id));
+        store.save().unwrap();
+
+        let reloaded = Store::load_from(&store.notes_dir).unwrap();
+        assert!(reloaded.notes.is_empty(), "the trash was loaded as notes");
+        let trashed = reloaded.trashed();
+        assert_eq!(trashed.len(), 1);
+        assert_eq!(trashed[0].title, "Lecture 4");
+        assert_eq!(trashed[0].directory, "cs130");
+        assert_eq!(trashed[0].id, id);
+    }
+
+    /// Moving a note rewrites its file somewhere else; that is not a delete.
+    #[test]
+    fn a_moved_note_is_not_trashed() {
+        let (mut store, _tmp) = temp_store();
+        let id = store.create_note("A", "a", vec![], "").unwrap().id.clone();
+        store.save().unwrap();
+        store.move_note(&id, "cs130").unwrap();
+        store.save().unwrap();
+        assert!(store.trashed().is_empty(), "{:?}", trash_files(&store));
+    }
+
+    #[test]
+    fn a_restored_note_comes_back_where_it_was_and_leaves_the_trash() {
+        let (mut store, _tmp) = temp_store();
+        let id = store
+            .create_note("Lecture 4", "BFS", vec!["exam".into()], "cs130")
+            .unwrap()
+            .id
+            .clone();
+        store.save().unwrap();
+        store.delete_note(&id);
+        store.save().unwrap();
+
+        assert_eq!(store.restore(&id).as_deref(), Some("Lecture 4"));
+        store.save().unwrap();
+        let reloaded = Store::load_from(&store.notes_dir).unwrap();
+        let note = reloaded.find_note(&id).expect("not restored");
+        assert_eq!(note.directory, "cs130");
+        assert_eq!(note.body, "BFS");
+        assert_eq!(note.tags, vec!["exam".to_string()]);
+        assert!(reloaded.trashed().is_empty(), "still in the trash");
+        assert!(reloaded.directories.contains(&"cs130".to_string()));
+    }
+
+    /// Undo puts the note back; the copy in the trash must not linger.
+    #[test]
+    fn undoing_a_delete_empties_it_from_the_trash() {
+        let (mut store, _tmp) = temp_store();
+        let id = store.create_note("A", "a", vec![], "").unwrap().id.clone();
+        store.save().unwrap();
+        store.delete_note(&id);
+        store.save().unwrap();
+        store.undo().unwrap();
+        store.save().unwrap();
+        assert!(store.find_note(&id).is_some());
+        assert!(store.trashed().is_empty());
+    }
+
+    /// Deleting a directory trashes each note in it, keeping its place.
+    #[test]
+    fn deleting_a_directory_trashes_its_notes() {
+        let (mut store, _tmp) = temp_store();
+        store.create_note("One", "", vec![], "cs130/lec").unwrap();
+        store.create_note("Two", "", vec![], "cs130").unwrap();
+        store.save().unwrap();
+        store.delete_dir_recursive("cs130");
+        store.save().unwrap();
+        let mut places: Vec<String> = store.trashed().into_iter().map(|t| t.directory).collect();
+        places.sort();
+        assert_eq!(places, ["cs130", "cs130/lec"]);
+    }
+
+    #[test]
+    fn emptying_the_trash_deletes_for_good() {
+        let (mut store, _tmp) = temp_store();
+        let id = store.create_note("A", "a", vec![], "").unwrap().id.clone();
+        store.save().unwrap();
+        store.delete_note(&id);
+        store.save().unwrap();
+        assert_eq!(store.empty_trash().unwrap(), 1);
+        assert!(store.trashed().is_empty());
+        assert!(trash_files(&store).is_empty());
+    }
+
+    /// Notes stay in the trash for 30 days, then go for good.
+    #[test]
+    fn the_trash_forgets_notes_after_thirty_days() {
+        let (mut store, _tmp) = temp_store();
+        let old = store.create_note("Old", "", vec![], "").unwrap().id.clone();
+        let new = store.create_note("New", "", vec![], "").unwrap().id.clone();
+        store.save().unwrap();
+        store.delete_notes(&[old.clone(), new.clone()]);
+        store.save().unwrap();
+
+        let path = trash_files(&store)
+            .into_iter()
+            .find(|p| p.to_string_lossy().contains(&old))
+            .unwrap();
+        let long_ago =
+            std::time::SystemTime::now() - std::time::Duration::from_secs(31 * 24 * 3600);
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(long_ago)
+            .unwrap();
+
+        let reloaded = Store::load_from(&store.notes_dir).unwrap();
+        let left: Vec<String> = reloaded.trashed().into_iter().map(|t| t.id).collect();
+        assert_eq!(left, vec![new]);
+    }
+
+    /// A restored note that is already back (restored twice) is not doubled.
+    #[test]
+    fn restoring_a_note_that_is_not_in_the_trash_does_nothing() {
+        let (mut store, _tmp) = temp_store();
+        let id = store.create_note("A", "a", vec![], "").unwrap().id.clone();
+        store.save().unwrap();
+        assert_eq!(store.restore(&id), None);
+        assert_eq!(store.restore("nope"), None);
+        assert_eq!(store.notes.len(), 1);
     }
 }

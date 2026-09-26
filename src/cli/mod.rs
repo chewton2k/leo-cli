@@ -105,6 +105,12 @@ enum Commands {
         id: String,
     },
 
+    /// Deleted notes, kept 30 days: list them, restore one, or empty the trash
+    Trash {
+        #[command(subcommand)]
+        command: Option<TrashCommands>,
+    },
+
     /// Start a web server to view/edit notes from your phone
     Serve {
         /// Port to listen on
@@ -120,6 +126,22 @@ enum Commands {
     Sync {
         #[command(subcommand)]
         command: Option<SyncCommands>,
+    },
+}
+
+#[derive(Subcommand)]
+enum TrashCommands {
+    /// Bring a note back to where it was
+    Restore {
+        /// Its number in `leo trash`, or part of its title
+        #[arg(required = true, num_args = 1..)]
+        which: Vec<String>,
+    },
+    /// Delete everything in the trash for good
+    Empty {
+        /// Skip the confirmation
+        #[arg(short, long)]
+        force: bool,
     },
 }
 

@@ -68,6 +68,12 @@ pub const VERBS: &[Verb] = &[
         "back up now: pull, then push",
     ),
     v(
+        "trash",
+        &[],
+        "trash [restore <number> | empty]",
+        "deleted notes: bring one back, or empty it",
+    ),
+    v(
         "doctor",
         &[],
         "doctor",
@@ -356,6 +362,15 @@ pub fn parse(line: &str) -> Parsed {
             _ => usage("sync"),
         },
 
+        "trash" => match args.first().map(|s| s.to_lowercase()).as_deref() {
+            None => act(Action::Trash(TrashAction::List)),
+            Some("restore") if args.len() > 1 => act(Action::Trash(TrashAction::Restore {
+                which: args[1..].join(" "),
+            })),
+            Some("empty") if args.len() == 1 => act(Action::Trash(TrashAction::Empty)),
+            _ => usage("trash"),
+        },
+
         "help" | "?" => act(Action::Help),
         "doctor" => act(Action::Doctor),
         "quit" | "exit" | "q" => act(Action::Quit),
@@ -574,6 +589,26 @@ mod parse_tests {
     #[test]
     fn a_typed_slash_prefix_is_ignored() {
         assert_eq!(act("/edit 1"), act("edit 1"));
+    }
+
+    #[test]
+    fn trash_lists_restores_and_empties() {
+        assert_eq!(act("trash"), Action::Trash(TrashAction::List));
+        assert_eq!(
+            act("trash restore 2"),
+            Action::Trash(TrashAction::Restore {
+                which: "2".to_string()
+            })
+        );
+        assert_eq!(
+            act("trash restore Lecture 4"),
+            Action::Trash(TrashAction::Restore {
+                which: "Lecture 4".to_string()
+            })
+        );
+        assert_eq!(act("trash empty"), Action::Trash(TrashAction::Empty));
+        assert!(matches!(parse("trash restore"), Parsed::Usage(_)));
+        assert!(matches!(parse("trash bogus"), Parsed::Usage(_)));
     }
 
     #[test]

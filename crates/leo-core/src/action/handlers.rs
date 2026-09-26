@@ -2,6 +2,7 @@
 //! finish what an [`Effect`] started.
 
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 
 use super::resolve::resolve_or_return;
 use super::*;
@@ -116,6 +117,7 @@ pub fn apply(action: Action, store: &mut Store, ctx: Ctx<'_>, ai: &dyn Ai) -> Re
         Action::Rename { note, title } => rename(store, &note, &title, ctx.numbering),
         Action::Rmdir { name, recursive } => rmdir(store, &name, recursive, ctx.current_dir),
         Action::Sync(a) => Ok(Outcome::effect(Effect::Sync(a))),
+        Action::Trash(a) => trash(store, a),
         Action::Help => Ok(Outcome::effect(Effect::ShowHelp)),
         Action::Doctor => Ok(Outcome::effect(Effect::Doctor)),
         Action::Quit => Ok(Outcome::effect(Effect::Quit)),
@@ -719,7 +721,10 @@ pub fn apply_confirmed(store: &mut Store, action: &ConfirmedAction) -> Result<Ou
                 store.save()?;
                 Ok(Outcome {
                     dirty: true,
-                    ..Outcome::line(Line::good("Deleted."))
+                    ..Outcome::line(Line::good(format!(
+                        "Moved to the trash, kept {} days.",
+                        crate::store::TRASH_DAYS
+                    )))
                 })
             } else {
                 Ok(Outcome::line(Line::bad("Nothing deleted.")))
@@ -733,7 +738,11 @@ pub fn apply_confirmed(store: &mut Store, action: &ConfirmedAction) -> Result<Ou
             }
             Ok(Outcome {
                 dirty: n > 0,
-                ..Outcome::line(Line::good(format!("Deleted {n} note{}.", plural(n))))
+                ..Outcome::line(Line::good(format!(
+                    "Moved {n} note{} to the trash, kept {} days.",
+                    plural(n),
+                    crate::store::TRASH_DAYS
+                )))
             })
         }
         ConfirmedAction::DeleteDir { path } => {
@@ -744,14 +753,122 @@ pub fn apply_confirmed(store: &mut Store, action: &ConfirmedAction) -> Result<Ou
             store.save()?;
             let mut parts = vec![format!("Removed {path}/")];
             if notes > 0 {
-                parts.push(format!("with {notes} note{}", plural(notes)));
+                parts.push(format!(
+                    "and moved its {notes} note{} to the trash",
+                    plural(notes)
+                ));
             }
             Ok(Outcome {
                 dirty: true,
                 ..Outcome::line(Line::good(parts.join(" ")))
             })
         }
+        ConfirmedAction::EmptyTrash => {
+            let n = store.empty_trash()?;
+            Ok(Outcome::line(Line::good(format!(
+                "Deleted {n} note{} for good.",
+                plural(n)
+            ))))
+        }
     }
+}
+
+/// `trash` — list what was deleted, bring a note back, or empty it.
+fn trash(store: &mut Store, action: TrashAction) -> Result<Outcome> {
+    let trashed = store.trashed();
+    match action {
+        TrashAction::List => {
+            if trashed.is_empty() {
+                return Ok(Outcome::line(Line::dim(format!(
+                    "The trash is empty. Deleted notes stay there for {} days.",
+                    crate::store::TRASH_DAYS
+                ))));
+            }
+            let now = Utc::now();
+            let mut lines = vec![
+                Line::plain(format!(
+                    "In the trash, kept {} days after deleting:",
+                    crate::store::TRASH_DAYS
+                )),
+                Line::blank(),
+            ];
+            for (i, note) in trashed.iter().enumerate() {
+                lines.push(Line::plain(format!(
+                    "{:>3}  {}   /{} · deleted {}",
+                    i + 1,
+                    note.title,
+                    note.directory,
+                    ago(note.deleted_at, now)
+                )));
+            }
+            lines.push(Line::blank());
+            lines.push(Line::dim(
+                "trash restore <number> brings one back · trash empty deletes them for good",
+            ));
+            Ok(Outcome::lines(lines))
+        }
+        TrashAction::Restore { which } => {
+            let found = match which.trim().parse::<usize>() {
+                Ok(n) if n >= 1 => trashed.get(n - 1).cloned(),
+                Ok(_) => None,
+                Err(_) => {
+                    let lower = which.trim().to_lowercase();
+                    let mut matches = trashed
+                        .iter()
+                        .filter(|t| t.title.to_lowercase().contains(&lower));
+                    match (matches.next(), matches.next()) {
+                        (Some(one), None) => Some(one.clone()),
+                        _ => None,
+                    }
+                }
+            };
+            let Some(note) = found else {
+                return Ok(Outcome::line(Line::bad(format!(
+                    "No note \"{which}\" in the trash. `trash` lists what is there."
+                ))));
+            };
+            let Some(title) = store.restore(&note.id) else {
+                return Ok(Outcome::line(Line::bad(format!(
+                    "\"{}\" could not be restored.",
+                    note.title
+                ))));
+            };
+            store.save()?;
+            Ok(Outcome {
+                dirty: true,
+                select: Some(note.id),
+                ..Outcome::line(Line::good(format!(
+                    "Restored \"{title}\" to /{}.",
+                    note.directory
+                )))
+            })
+        }
+        TrashAction::Empty => {
+            if trashed.is_empty() {
+                return Ok(Outcome::line(Line::dim("The trash is already empty.")));
+            }
+            let n = trashed.len();
+            Ok(Outcome::effect(Effect::Confirm {
+                prompt: format!(
+                    "Delete the {n} note{} in the trash for good? This cannot be undone.",
+                    plural(n)
+                ),
+                on_yes: ConfirmedAction::EmptyTrash,
+            }))
+        }
+    }
+}
+
+/// How long ago `then` was, the way a person would say it.
+fn ago(then: DateTime<Utc>, now: DateTime<Utc>) -> String {
+    let secs = (now - then).num_seconds().max(0);
+    let (n, unit) = match secs {
+        0..60 => return "just now".to_string(),
+        60..3600 => (secs / 60, "minute"),
+        3600..86400 => (secs / 3600, "hour"),
+        _ => (secs / 86400, "day"),
+    };
+    format!("{n} {unit}{} ago", if n == 1 { "" } else { "s" })
 }
 
 /// Turn a finished recording's transcript into a saved note.
@@ -2304,5 +2421,124 @@ mod handler_tests {
         }
         store.save().unwrap();
         assert_eq!(numbering_for(&store, "").len(), 25);
+    }
+
+    // ── trash ───────────────────────────────────────────────────────────────
+
+    fn trash(store: &mut Store, what: TrashAction) -> Outcome {
+        apply(Action::Trash(what), store, ctx("", &[]), &FakeAi::default()).unwrap()
+    }
+
+    fn delete(store: &mut Store, id: &str) -> Outcome {
+        apply_confirmed(
+            store,
+            &ConfirmedAction::DeleteNote {
+                id: id.to_string(),
+                title: String::new(),
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn deleting_says_the_note_went_to_the_trash() {
+        let (mut store, _d) = temp_store();
+        let id = seed(&mut store, "Graphs", "", "");
+        let out = delete(&mut store, &id);
+        assert!(out.text().contains("trash"), "{}", out.text());
+    }
+
+    #[test]
+    fn an_empty_trash_says_so() {
+        let (mut store, _d) = temp_store();
+        let out = trash(&mut store, TrashAction::List);
+        assert!(out.text().contains("empty"), "{}", out.text());
+    }
+
+    /// The list numbers each note and says where it came from, and how to
+    /// bring one back.
+    #[test]
+    fn the_trash_lists_what_was_deleted() {
+        let (mut store, _d) = temp_store();
+        let id = seed(&mut store, "Lecture 4", "", "cs130");
+        delete(&mut store, &id);
+        let out = trash(&mut store, TrashAction::List);
+        let text = out.text();
+        for expected in ["1", "Lecture 4", "/cs130", "trash restore", "30 days"] {
+            assert!(text.contains(expected), "no {expected:?}:\n{text}");
+        }
+    }
+
+    #[test]
+    fn restoring_by_number_brings_the_note_back_and_selects_it() {
+        let (mut store, _d) = temp_store();
+        let id = seed(&mut store, "Lecture 4", "BFS", "cs130");
+        delete(&mut store, &id);
+        let out = trash(
+            &mut store,
+            TrashAction::Restore {
+                which: "1".to_string(),
+            },
+        );
+        assert!(out.dirty);
+        assert_eq!(out.select.as_deref(), Some(id.as_str()));
+        assert!(out.text().contains("Lecture 4"), "{}", out.text());
+        let reloaded = Store::load_from(&store.notes_dir).unwrap();
+        assert_eq!(reloaded.find_note(&id).unwrap().directory, "cs130");
+        assert!(reloaded.trashed().is_empty());
+    }
+
+    #[test]
+    fn restoring_by_title_works_and_a_miss_says_so() {
+        let (mut store, _d) = temp_store();
+        let id = seed(&mut store, "Lecture 4", "", "");
+        delete(&mut store, &id);
+        let miss = trash(
+            &mut store,
+            TrashAction::Restore {
+                which: "9".to_string(),
+            },
+        );
+        assert!(!miss.dirty);
+        assert!(miss.text().contains("No note"), "{}", miss.text());
+        trash(
+            &mut store,
+            TrashAction::Restore {
+                which: "lecture".to_string(),
+            },
+        );
+        assert!(store.find_note(&id).is_some());
+    }
+
+    /// Emptying destroys notes for good, so it asks first.
+    #[test]
+    fn emptying_the_trash_asks_first() {
+        let (mut store, _d) = temp_store();
+        let id = seed(&mut store, "Gone", "", "");
+        delete(&mut store, &id);
+        let out = trash(&mut store, TrashAction::Empty);
+        match out.effect {
+            Effect::Confirm {
+                on_yes: ConfirmedAction::EmptyTrash,
+                ..
+            } => {}
+            other => panic!("expected a confirmation, got {other:?}"),
+        }
+        assert_eq!(store.trashed().len(), 1, "emptied before asking");
+        let done = apply_confirmed(&mut store, &ConfirmedAction::EmptyTrash).unwrap();
+        assert!(done.text().contains("1"), "{}", done.text());
+        assert!(store.trashed().is_empty());
+    }
+
+    #[test]
+    fn times_read_like_a_person_would_say_them() {
+        let now = Utc::now();
+        assert_eq!(ago(now, now), "just now");
+        assert_eq!(
+            ago(now - chrono::Duration::minutes(5), now),
+            "5 minutes ago"
+        );
+        assert_eq!(ago(now - chrono::Duration::hours(1), now), "1 hour ago");
+        assert_eq!(ago(now - chrono::Duration::days(3), now), "3 days ago");
     }
 }

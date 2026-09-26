@@ -163,6 +163,9 @@ Try this:
    line that matched. Press `Enter` to keep the results, or `Esc` to clear the
    search and jump to the note you picked.
 6. **Undo a mistake.** Press `u` to take back the last delete, move, or tick.
+   A deleted note also waits in the trash for 30 days, even after you quit:
+   `/trash` lists what is there and `/trash restore 1` brings one back to
+   where it was.
 
 Other everyday keys: `e` edits the selected note, `r` renames it, `m` moves it,
 `D` deletes it (it asks first), and `Space` marks several notes so `D` and `m`
@@ -182,6 +185,7 @@ marked ones).
 /mkdir cs130                   a directory here
 /cd ..                         up a directory; /cd / for the top
 /ask what is BFS?              ask a question across all your notes (section 5)
+/trash                         deleted notes, kept 30 days; /trash restore 1
 /doctor                        check that everything works (AI, recording, backup)
 /sync                          back up now (section 6)
 ```
@@ -412,7 +416,8 @@ leo list cs130                      # one directory
 leo search "refactor"               # shows the line that matched
 leo view "Rust ownership"
 leo edit 3f2a
-leo delete 3f2a --force
+leo delete 3f2a --force             # goes to the trash
+leo trash                           # what was deleted; leo trash restore 1
 leo ask 3f2a                        # answer that note's @leo lines
 leo ask "what did we cover about graphs?"   # a question across all notes
 leo sync                            # back up to GitHub
@@ -495,7 +500,9 @@ then `e`, and raise `max_tokens` for that provider (8192 is plenty for an hour
 of lecture).
 
 **A note is missing from the list**
-Run `leo doctor`. If a note file's header was edited and leo cannot read it,
+If you deleted it, it is in the trash for 30 days: `/trash` (or `leo trash`)
+lists it, and `/trash restore <number>` brings it back. Otherwise run
+`leo doctor`. If a note file's header was edited and leo cannot read it,
 the doctor names the file and the problem; leo never deletes such a file, so
 fixing the header brings the note back.
 
