@@ -5,6 +5,7 @@
 pub mod action;
 pub mod diag;
 pub mod editor;
+pub mod filename;
 pub mod manual;
 pub mod notes;
 pub mod paths;
