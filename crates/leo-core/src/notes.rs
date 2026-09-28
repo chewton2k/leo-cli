@@ -93,7 +93,7 @@ impl Note {
     /// One-line summary as a formatted String.
     pub fn format_summary(&self) -> String {
         let date = self.updated_at.format("%Y-%m-%d %H:%M");
-        let id_short = &self.id[..8];
+        let id_short: String = self.id.chars().take(8).collect();
         let tags = if self.tags.is_empty() {
             String::new()
         } else {
@@ -280,5 +280,15 @@ mod tests {
             "",
         );
         assert_eq!(note.checkboxes(), vec![false, true, true]);
+    }
+
+    #[test]
+    fn a_summary_of_a_note_with_a_short_or_wide_id_does_not_panic() {
+        for id in ["abc", "1", "", "세계세계세계세계"] {
+            let mut note = Note::new("Title", "body", vec![], "");
+            note.id = id.to_string();
+            let summary = note.format_summary();
+            assert!(summary.contains("Title"), "{id:?}: {summary}");
+        }
     }
 }

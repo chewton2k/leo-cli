@@ -41,7 +41,7 @@ pub fn parse_frontmatter(raw: &str) -> (String, Vec<String>, String) {
 /// If `line` is `@leo <question>`, return the question.
 pub fn is_leo_prompt(line: &str) -> Option<&str> {
     let trimmed = line.trim();
-    if trimmed.len() < 5 || !trimmed[..5].eq_ignore_ascii_case("@leo ") {
+    if !trimmed.get(..5)?.eq_ignore_ascii_case("@leo ") {
         return None;
     }
     let q = trimmed[5..].trim();
@@ -49,5 +49,24 @@ pub fn is_leo_prompt(line: &str) -> Option<&str> {
         None
     } else {
         Some(q)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_prompt_line_is_recognised_in_any_language() {
+        assert_eq!(is_leo_prompt("@leo what is BFS?"), Some("what is BFS?"));
+        assert_eq!(is_leo_prompt("@LEO 질문이 있어요"), Some("질문이 있어요"));
+    }
+
+    #[test]
+    fn lines_that_start_with_wide_characters_are_not_prompts_and_do_not_panic() {
+        for line in ["안녕하세요 여러분", "世界你好吗", "éàüöçñ text", "🙂🙂 hi"]
+        {
+            assert_eq!(is_leo_prompt(line), None, "{line}");
+        }
     }
 }
