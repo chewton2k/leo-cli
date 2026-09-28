@@ -199,6 +199,7 @@ struct Recording {
     /// When Esc was last pressed, so a second press soon after stops the
     /// recording and a lone one does not.
     stop_armed: Option<Instant>,
+    scroll: view::livescroll::LiveScroll,
 }
 
 impl Recording {
@@ -215,6 +216,7 @@ impl Recording {
             jot: String::new(),
             jotted: Vec::new(),
             stop_armed: None,
+            scroll: view::livescroll::LiveScroll::new(),
         }
     }
 
@@ -787,8 +789,32 @@ impl App {
                             self.say(Kind::Dim, word);
                             return Ok(());
                         }
-                        // Swallowed rather than jumping to a recent note, which
-                        // would pull the selection away mid-recording.
+                        event::KeyCode::Up => {
+                            rec.scroll.scroll_by(-1, Instant::now());
+                            return Ok(());
+                        }
+                        event::KeyCode::Down => {
+                            rec.scroll.scroll_by(1, Instant::now());
+                            return Ok(());
+                        }
+                        event::KeyCode::PageUp => {
+                            let page = rec.scroll.page() as isize;
+                            rec.scroll.scroll_by(-page, Instant::now());
+                            return Ok(());
+                        }
+                        event::KeyCode::PageDown => {
+                            let page = rec.scroll.page() as isize;
+                            rec.scroll.scroll_by(page, Instant::now());
+                            return Ok(());
+                        }
+                        event::KeyCode::Home => {
+                            rec.scroll.to_top(Instant::now());
+                            return Ok(());
+                        }
+                        event::KeyCode::End => {
+                            rec.scroll.follow();
+                            return Ok(());
+                        }
                         event::KeyCode::Tab => return Ok(()),
                         event::KeyCode::Backspace => {
                             rec.jot.pop();

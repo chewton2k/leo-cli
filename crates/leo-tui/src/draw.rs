@@ -56,6 +56,7 @@ impl App {
                 transcript: &rec.transcript,
                 // The box is for typing, so it goes once the recording stops.
                 jot: (!rec.job.stop_requested()).then_some(rec.jot.as_str()),
+                scroll: &rec.scroll,
             },
             (None, None, _, _) if self.answer.is_some() => {
                 let (question, text) = self.answer.as_ref().expect("checked");

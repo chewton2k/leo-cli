@@ -501,6 +501,97 @@ fn resizing_to_any_size_never_panics() {
     }
 }
 
+fn live_screen(app: &mut App) -> String {
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
+    terminal.draw(|f| app.draw(f)).unwrap();
+    terminal.backend().to_string()
+}
+
+fn long_lecture() -> String {
+    format!("STARTMARK {} ENDMARK", "word ".repeat(2000))
+}
+
+#[test]
+fn the_arrow_keys_scroll_back_through_the_live_transcript_without_typing() {
+    let (mut app, _d) = recording_app(vec![TaskEvent::Transcript(long_lecture())]);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
+    app.pump_tasks(&mut terminal).unwrap();
+    type_str(&mut app, "half", &mut terminal);
+    assert!(live_screen(&mut app).contains("ENDMARK"));
+
+    for _ in 0..3 {
+        app.on_key(press_code(event::KeyCode::Up), &mut terminal)
+            .unwrap();
+    }
+    let out = live_screen(&mut app);
+    assert!(!out.contains("ENDMARK"), "Up did not scroll back:\n{out}");
+    assert!(
+        out.contains("scrolled back"),
+        "no sign it is not live:\n{out}"
+    );
+    assert_eq!(app.recording.as_ref().unwrap().jot, "half");
+
+    app.on_key(press_code(event::KeyCode::Home), &mut terminal)
+        .unwrap();
+    assert!(live_screen(&mut app).contains("STARTMARK"));
+
+    app.on_key(press_code(event::KeyCode::End), &mut terminal)
+        .unwrap();
+    let out = live_screen(&mut app);
+    assert!(
+        out.contains("ENDMARK"),
+        "End did not return to live:\n{out}"
+    );
+    assert!(!out.contains("scrolled back"));
+}
+
+#[test]
+fn page_up_moves_a_screenful() {
+    let (mut app, _d) = recording_app(vec![TaskEvent::Transcript(long_lecture())]);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
+    app.pump_tasks(&mut terminal).unwrap();
+    live_screen(&mut app);
+    app.on_key(press_code(event::KeyCode::PageUp), &mut terminal)
+        .unwrap();
+    let rec = app.recording.as_ref().unwrap();
+    assert!(!rec.scroll.is_following());
+}
+
+#[test]
+fn the_wheel_over_the_transcript_scrolls_it() {
+    let (mut app, _d) = recording_app(vec![TaskEvent::Transcript(long_lecture())]);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
+    app.pump_tasks(&mut terminal).unwrap();
+    live_screen(&mut app);
+    let frames =
+        view::layout_with_tabs(Rect::new(0, 0, 120, 24), !app.tabs().is_empty(), app.focus);
+    let over = event::MouseEvent {
+        kind: event::MouseEventKind::ScrollUp,
+        column: frames.preview.x + 2,
+        row: frames.preview.y + 2,
+        modifiers: event::KeyModifiers::NONE,
+    };
+    app.on_mouse(over, &mut terminal).unwrap();
+    assert!(!app.recording.as_ref().unwrap().scroll.is_following());
+    assert!(!live_screen(&mut app).contains("ENDMARK"));
+}
+
+#[test]
+fn the_transcript_follows_again_ten_seconds_after_the_last_scroll() {
+    let (mut app, _d) = recording_app(vec![TaskEvent::Transcript(long_lecture())]);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
+    app.pump_tasks(&mut terminal).unwrap();
+    live_screen(&mut app);
+    let eleven_seconds_ago = Instant::now() - Duration::from_secs(11);
+    app.recording
+        .as_ref()
+        .unwrap()
+        .scroll
+        .scroll_by(-20, eleven_seconds_ago);
+    let out = live_screen(&mut app);
+    assert!(out.contains("ENDMARK"), "did not return to live:\n{out}");
+}
+
 /// The transcript only grows; the newest words are the ones on screen.
 #[test]
 fn the_newest_words_of_a_long_transcript_stay_in_view() {

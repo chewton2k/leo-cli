@@ -1,5 +1,7 @@
 //! Clicks and the scroll wheel, in the panes and on the profile page.
 
+use std::time::Instant;
+
 use super::*;
 
 impl App {
@@ -155,6 +157,11 @@ impl App {
         };
 
         if inside(frames.preview) {
+            if let Some(rec) = self.recording.as_ref() {
+                let rows = if direction == Intent::Down { 3 } else { -3 };
+                rec.scroll.scroll_by(rows, Instant::now());
+                return;
+            }
             self.preview_scroll = match direction {
                 Intent::Down => self.preview_scroll.saturating_add(1),
                 _ => self.preview_scroll.saturating_sub(1),
