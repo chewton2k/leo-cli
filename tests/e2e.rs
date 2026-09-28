@@ -298,6 +298,24 @@ fn a_pinned_note_leads_the_list() {
     assert!(first.contains("Syllabus"), "{list}");
 }
 
+#[test]
+fn a_note_written_by_another_app_shows_up_and_is_left_alone() {
+    let leo = Leo::new();
+    leo.ok(&["new", "Mine", "--body", "x"]);
+    let file = leo.notes_dir().join("From Obsidian.md");
+    std::fs::write(&file, "---\ntags:\n  - vault\n---\nHello from the vault\n").unwrap();
+
+    let listed = leo.ok(&["list"]);
+    assert!(listed.contains("From Obsidian"), "{listed}");
+    let found = leo.ok(&["search", "vault"]);
+    assert!(found.contains("From Obsidian"), "{found}");
+    let after = std::fs::read_to_string(&file).unwrap();
+    assert!(
+        after.starts_with("---\ntags:\n  - vault\n---"),
+        "leo rewrote a note it did not change:\n{after}"
+    );
+}
+
 fn tripwire(leo: &Leo) -> (PathBuf, PathBuf) {
     let ran = leo.home.path().join("installer-ran");
     let script = leo.home.path().join("tripwire.sh");

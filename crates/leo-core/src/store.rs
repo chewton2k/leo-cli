@@ -4,22 +4,21 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::filename;
 use crate::notes::Note;
 
 // ── Frontmatter serialization ───────────────────────────────────────────────
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize)]
 struct NoteFrontmatter {
     id: String,
     title: String,
-    #[serde(default)]
     tags: Vec<String>,
     created_at: chrono::DateTime<chrono::Utc>,
     updated_at: chrono::DateTime<chrono::Utc>,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pinned: bool,
 }
 
@@ -36,35 +35,145 @@ fn note_to_markdown(note: &Note) -> Result<String> {
     Ok(format!("---\n{}---\n\n{}", yaml, note.body))
 }
 
-fn parse_note_from_markdown(content: &str, relative_path: &Path) -> Result<Note> {
-    let rest = content
-        .strip_prefix("---\n")
-        .context("note file missing opening ---")?;
-    let end = rest
-        .find("\n---\n")
-        .context("note file missing closing ---")?;
-    let yaml_str = &rest[..end];
-    let body = rest[end + 5..].trim_start_matches('\n').to_string();
+fn fnv1a(data: &[u8], seed: u64) -> u64 {
+    let mut hash = seed;
+    for byte in data {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
 
-    let fm: NoteFrontmatter =
-        serde_yaml::from_str(yaml_str).context("failed to parse frontmatter")?;
+fn stable_id(relative_path: &Path) -> String {
+    let text = relative_path.to_string_lossy().replace('\\', "/");
+    let mut bytes = [0u8; 16];
+    bytes[..8].copy_from_slice(&fnv1a(text.as_bytes(), 0xcbf2_9ce4_8422_2325).to_be_bytes());
+    bytes[8..].copy_from_slice(&fnv1a(text.as_bytes(), 0x8422_2325_cbf2_9ce4).to_be_bytes());
+    uuid::Builder::from_custom_bytes(bytes)
+        .into_uuid()
+        .to_string()
+}
+
+fn split_front_matter(text: &str) -> Result<(Option<serde_yaml::Mapping>, String)> {
+    let Some(rest) = text.strip_prefix("---\n") else {
+        return Ok((None, text.to_string()));
+    };
+    let (yaml, body) = if let Some(after) = rest.strip_prefix("---\n") {
+        ("", after)
+    } else if rest == "---" {
+        ("", "")
+    } else if let Some(end) = rest.find("\n---\n") {
+        (&rest[..end], &rest[end + 5..])
+    } else if let Some(yaml) = rest.strip_suffix("\n---") {
+        (yaml, "")
+    } else {
+        return Ok((None, text.to_string()));
+    };
+    let value: serde_yaml::Value =
+        serde_yaml::from_str(yaml).context("failed to parse frontmatter")?;
+    let props = match value {
+        serde_yaml::Value::Mapping(map) => map,
+        serde_yaml::Value::Null => serde_yaml::Mapping::new(),
+        _ => return Ok((None, text.to_string())),
+    };
+    Ok((Some(props), body.trim_start_matches('\n').to_string()))
+}
+
+fn tags_from(value: serde_yaml::Value) -> Vec<String> {
+    let raw: Vec<String> = match value {
+        serde_yaml::Value::Sequence(items) => items
+            .into_iter()
+            .filter_map(|item| match item {
+                serde_yaml::Value::String(s) => Some(s),
+                serde_yaml::Value::Number(n) => Some(n.to_string()),
+                _ => None,
+            })
+            .collect(),
+        serde_yaml::Value::String(s) => s
+            .split(|c: char| c == ',' || c.is_whitespace())
+            .map(str::to_string)
+            .collect(),
+        _ => Vec::new(),
+    };
+    let mut tags: Vec<String> = Vec::new();
+    for tag in raw {
+        let tag = tag.trim().trim_start_matches('#').to_string();
+        if !tag.is_empty() && !tags.contains(&tag) {
+            tags.push(tag);
+        }
+    }
+    tags
+}
+
+fn date_from(value: serde_yaml::Value) -> Option<DateTime<Utc>> {
+    value
+        .as_str()
+        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+        .map(|d| d.with_timezone(&Utc))
+}
+
+fn text_from(value: Option<serde_yaml::Value>) -> Option<String> {
+    value
+        .and_then(|v| v.as_str().map(str::to_string))
+        .filter(|s| !s.trim().is_empty())
+}
+
+fn parse_note_from_markdown(
+    content: &str,
+    relative_path: &Path,
+    modified: DateTime<Utc>,
+) -> Result<Note> {
+    let text = content
+        .strip_prefix('\u{feff}')
+        .unwrap_or(content)
+        .replace("\r\n", "\n");
+    let (front, body) = split_front_matter(&text)?;
+    let mut props = front.unwrap_or_default();
 
     let directory = relative_path
         .parent()
         .and_then(|p| if p == Path::new("") { None } else { p.to_str() })
         .unwrap_or("")
         .to_string();
+    let stem = relative_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("note")
+        .to_string();
+
+    let id = text_from(props.remove("id")).unwrap_or_else(|| stable_id(relative_path));
+    let title = text_from(props.remove("title")).unwrap_or_else(|| stem.clone());
+    let tags = props.remove("tags").map(tags_from).unwrap_or_default();
+    let created_at = props
+        .remove("created_at")
+        .and_then(date_from)
+        .unwrap_or(modified);
+    let updated_at = props
+        .remove("updated_at")
+        .and_then(date_from)
+        .unwrap_or(modified);
+    let pinned = props
+        .remove("pinned")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     Ok(Note {
-        id: fm.id,
-        title: fm.title,
+        id,
+        title,
         body,
-        tags: fm.tags,
+        tags,
         directory,
-        created_at: fm.created_at,
-        updated_at: fm.updated_at,
-        pinned: fm.pinned,
+        created_at,
+        updated_at,
+        pinned,
     })
+}
+
+fn modified_time(path: &Path) -> DateTime<Utc> {
+    fs::metadata(path)
+        .and_then(|m| m.modified())
+        .map(DateTime::<Utc>::from)
+        .unwrap_or_else(|_| Utc::now())
 }
 
 #[derive(Debug, Clone)]
@@ -190,7 +299,12 @@ fn trash_entries(notes_dir: &Path) -> Vec<(PathBuf, Note, DateTime<Utc>)> {
         .into_iter()
         .filter_map(|path| {
             let text = fs::read_to_string(&path).ok()?;
-            let note = parse_note_from_markdown(&text, path.strip_prefix(&trash).ok()?).ok()?;
+            let note = parse_note_from_markdown(
+                &text,
+                path.strip_prefix(&trash).ok()?,
+                modified_time(&path),
+            )
+            .ok()?;
             let at = fs::metadata(&path).and_then(|m| m.modified()).ok()?;
             Some((path, note, DateTime::<Utc>::from(at)))
         })
@@ -242,7 +356,7 @@ fn collect_notes(
             let relative = path
                 .strip_prefix(notes_dir)
                 .context("path outside notes_dir")?;
-            match parse_note_from_markdown(&content, relative) {
+            match parse_note_from_markdown(&content, relative, modified_time(&path)) {
                 Ok(note) => {
                     let model = note_to_markdown(&note)
                         .map(|text| hash_str(&text))
@@ -1265,7 +1379,9 @@ mod tests {
     fn test_note_roundtrip() {
         let note = make_note();
         let md = note_to_markdown(&note).unwrap();
-        let parsed = parse_note_from_markdown(&md, std::path::Path::new("550e8400.md")).unwrap();
+        let parsed =
+            parse_note_from_markdown(&md, std::path::Path::new("550e8400.md"), chrono::Utc::now())
+                .unwrap();
         assert_eq!(parsed.id, note.id);
         assert_eq!(parsed.title, note.title);
         assert_eq!(parsed.body, note.body);
@@ -1277,8 +1393,12 @@ mod tests {
     fn test_directory_derived_from_path() {
         let note = make_note();
         let md = note_to_markdown(&note).unwrap();
-        let parsed =
-            parse_note_from_markdown(&md, std::path::Path::new("cs162/lec/550e8400.md")).unwrap();
+        let parsed = parse_note_from_markdown(
+            &md,
+            std::path::Path::new("cs162/lec/550e8400.md"),
+            chrono::Utc::now(),
+        )
+        .unwrap();
         assert_eq!(parsed.directory, "cs162/lec");
     }
 
@@ -2390,5 +2510,149 @@ mod tests {
             .unwrap();
         let dirty = String::from_utf8_lossy(&status.stdout);
         assert!(dirty.trim().is_empty(), "uncommitted: {dirty}");
+    }
+
+    fn parse(name: &str, text: &str) -> Note {
+        parse_note_from_markdown(text, Path::new(name), chrono::Utc::now()).unwrap()
+    }
+
+    #[test]
+    fn a_file_with_no_header_is_a_note_named_after_the_file() {
+        let note = parse(
+            "cs130/Office hours.md",
+            "Tuesday 3-5pm\n\n- [ ] bring questions\n",
+        );
+        assert_eq!(note.title, "Office hours");
+        assert_eq!(note.directory, "cs130");
+        assert_eq!(note.body, "Tuesday 3-5pm\n\n- [ ] bring questions\n");
+        assert!(note.tags.is_empty());
+    }
+
+    #[test]
+    fn a_headerless_note_keeps_the_same_id_on_every_computer() {
+        assert_eq!(
+            parse("Office hours.md", "x").id,
+            "dd6664c0-1761-8255-a94a-68bb2041c68e"
+        );
+        assert_eq!(
+            parse("cs130/Office hours.md", "x").id,
+            "2fc81c8a-8874-8e34-9b89-2740ad5e0b53"
+        );
+        assert_eq!(
+            parse("Office hours.md", "x").id,
+            parse("Office hours.md", "y").id
+        );
+        assert_ne!(
+            parse("Syllabus.md", "x").id,
+            parse("Office hours.md", "x").id
+        );
+    }
+
+    #[test]
+    fn obsidian_properties_become_leo_fields() {
+        let text = "---\ntags:\n  - '#exam'\n  - graphs\npinned: true\n---\nBody\n";
+        let note = parse("Notes.md", text);
+        assert_eq!(note.tags, vec!["exam", "graphs"]);
+        assert!(note.pinned);
+        assert_eq!(note.body, "Body\n");
+    }
+
+    #[test]
+    fn tags_written_as_one_string_are_split() {
+        let note = parse("A.md", "---\ntags: \"exam, graphs #bfs\"\n---\nx");
+        assert_eq!(note.tags, vec!["exam", "graphs", "bfs"]);
+    }
+
+    #[test]
+    fn a_header_missing_leos_fields_still_loads() {
+        let note = parse("Notes.md", "---\ntitle: Real title\n---\nx");
+        assert_eq!(note.title, "Real title");
+    }
+
+    #[test]
+    fn empty_properties_and_a_header_with_no_body_load() {
+        assert_eq!(parse("A.md", "---\n---\nbody").body, "body");
+        assert_eq!(parse("B.md", "---\ntitle: T\n---").body, "");
+    }
+
+    #[test]
+    fn windows_line_endings_and_a_byte_order_mark_are_handled() {
+        let text = "\u{feff}---\r\nid: abc\r\ntitle: Hello\r\n---\r\n\r\nline one\r\nline two\r\n";
+        let note = parse("Hello.md", text);
+        assert_eq!(note.id, "abc");
+        assert_eq!(note.title, "Hello");
+        assert_eq!(note.body, "line one\nline two\n");
+    }
+
+    #[test]
+    fn a_leading_rule_with_no_closing_one_is_just_text() {
+        let note = parse("Rule.md", "---\nnot a header\n");
+        assert_eq!(note.body, "---\nnot a header\n");
+    }
+
+    #[test]
+    fn a_header_that_is_not_yaml_is_still_unreadable() {
+        let result = parse_note_from_markdown(
+            "---\ntitle: [unclosed\n---\nx",
+            Path::new("A.md"),
+            chrono::Utc::now(),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn a_file_dropped_into_the_folder_loads_with_its_modified_time() {
+        let (store, _tmp) = temp_store();
+        let file = store.notes_dir.join("Dropped in.md");
+        fs::write(&file, "from another app").unwrap();
+        let ten_days_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(864_000);
+        fs::File::options()
+            .write(true)
+            .open(&file)
+            .unwrap()
+            .set_modified(ten_days_ago)
+            .unwrap();
+
+        let reloaded = Store::load_from(&store.notes_dir).unwrap();
+        let note = reloaded
+            .notes
+            .iter()
+            .find(|n| n.title == "Dropped in")
+            .expect("not loaded");
+        assert!(note.updated_at < Utc::now() - chrono::Duration::days(9));
+        assert!(reloaded.unreadable.is_empty());
+    }
+
+    #[test]
+    fn saving_does_not_rewrite_a_note_leo_did_not_change() {
+        let (store, _tmp) = temp_store();
+        let file = store.notes_dir.join("Plain.md");
+        fs::write(&file, "from another app").unwrap();
+        let mut store = Store::load_from(&store.notes_dir).unwrap();
+        store.create_note("Other", "x", vec![], "").unwrap();
+        store.save().unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "from another app");
+    }
+
+    #[test]
+    fn editing_a_headerless_note_gives_it_a_header_and_keeps_its_id() {
+        let (store, _tmp) = temp_store();
+        fs::write(store.notes_dir.join("Plain.md"), "before").unwrap();
+        let mut store = Store::load_from(&store.notes_dir).unwrap();
+        let id = store
+            .notes
+            .iter()
+            .find(|n| n.title == "Plain")
+            .unwrap()
+            .id
+            .clone();
+        store.find_note_mut(&id).unwrap().body = "after".to_string();
+        store.save().unwrap();
+
+        assert_eq!(note_files(&store), ["Plain.md"]);
+        let text = fs::read_to_string(store.notes_dir.join("Plain.md")).unwrap();
+        assert!(text.starts_with("---\n"), "{text}");
+        assert!(text.contains(&format!("id: {id}")), "{text}");
+        assert!(text.contains("after"), "{text}");
     }
 }
