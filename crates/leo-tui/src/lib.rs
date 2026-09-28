@@ -27,8 +27,7 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use ratatui::backend::Backend;
 use ratatui::crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind, MouseButton, MouseEvent,
-    MouseEventKind,
+    self, Event, KeyEventKind, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
@@ -197,6 +196,9 @@ struct Recording {
     jot: String,
     /// Points typed so far. They lead the finished notes, in bold.
     jotted: Vec<leo_services::ai::chat::Jotted>,
+    /// When Esc was last pressed, so a second press soon after stops the
+    /// recording and a lone one does not.
+    stop_armed: Option<Instant>,
 }
 
 impl Recording {
@@ -212,6 +214,7 @@ impl Recording {
             paused_since: None,
             jot: String::new(),
             jotted: Vec::new(),
+            stop_armed: None,
         }
     }
 
@@ -751,6 +754,17 @@ impl App {
                     let ctrl = key.modifiers.contains(event::KeyModifiers::CONTROL);
                     match key.code {
                         event::KeyCode::Esc => {
+                            let armed = rec
+                                .stop_armed
+                                .is_some_and(|at| at.elapsed() < STOP_CONFIRM_WITHIN);
+                            if !armed {
+                                rec.stop_armed = Some(Instant::now());
+                                self.say(
+                                    Kind::Warn,
+                                    "Press Esc again to stop recording, or keep talking.",
+                                );
+                                return Ok(());
+                            }
                             rec.commit_jot();
                             rec.job.request_stop();
                             rec.progress =
@@ -1376,7 +1390,7 @@ impl App {
 
             Effect::Listen(req) => {
                 if self.recording.is_some() {
-                    self.say(Kind::Warn, "Already recording — press Esc to stop.");
+                    self.say(Kind::Warn, "Already recording — press Esc twice to stop.");
                     return Ok(());
                 }
                 // Check the whole path to a finished note before recording, not
@@ -1392,7 +1406,7 @@ impl App {
                 self.unpin();
                 self.say(
                     Kind::Dim,
-                    "Recording — type a point and Enter to add it; Esc stops.",
+                    "Recording — type a point and Enter to add it; Esc twice stops.",
                 );
                 Ok(())
             }
@@ -1754,6 +1768,42 @@ fn step(current: usize, len: usize, intent: Intent) -> usize {
 
 /// Run the TUI. `ratatui::init` installs a panic hook that restores the
 /// terminal, so a panic cannot leave the user in raw mode.
+const STOP_CONFIRM_WITHIN: Duration = Duration::from_secs(3);
+
+const MOUSE_ON: &str = "\x1b[?1000h\x1b[?1006h";
+
+const MOUSE_OFF: &str = "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l";
+
+fn disable_mouse() {
+    use std::io::Write;
+    let mut out = std::io::stdout();
+    let _ = out.write_all(MOUSE_OFF.as_bytes());
+    let _ = out.flush();
+}
+
+fn is_main_thread(name: Option<&str>) -> bool {
+    name == Some("main")
+}
+
+fn install_panic_hook() {
+    let restoring = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if is_main_thread(std::thread::current().name()) {
+            disable_mouse();
+            restoring(info);
+        } else {
+            leo_core::diag::warn(format!("a background task crashed: {info}"));
+        }
+    }));
+}
+
+fn enable_mouse() -> std::io::Result<()> {
+    use std::io::Write;
+    let mut out = std::io::stdout();
+    out.write_all(MOUSE_ON.as_bytes())?;
+    out.flush()
+}
+
 pub fn run() -> Result<()> {
     // Nothing below the UI may write to the terminal while the panes own it:
     // a stray line lands on top of them and stays until the next full repaint.
@@ -1767,9 +1817,10 @@ pub fn run() -> Result<()> {
         .unwrap_or(None)
         .is_some();
     let mut terminal = ratatui::init();
+    install_panic_hook();
     // Mouse reporting is opt-in per terminal. Failing to enable it is not fatal:
     // every key still works, which is how leo is mostly driven.
-    let mouse = execute!(std::io::stdout(), EnableMouseCapture).is_ok();
+    let mouse = enable_mouse().is_ok();
     let mut app = App::new(store);
     // The note on screen at startup has been looked at, so it belongs in the
     // recent list. Without this the first Tab has only one entry — the note the
@@ -1782,7 +1833,7 @@ pub fn run() -> Result<()> {
     // difference between a convenience and a novelty.
     app.recent.save();
     if mouse {
-        let _ = execute!(std::io::stdout(), DisableMouseCapture);
+        disable_mouse();
     }
     ratatui::restore();
     leo_core::diag::set_quiet(false);

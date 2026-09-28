@@ -457,6 +457,50 @@ fn a_recording_shows_the_live_transcript() {
     assert!(out.contains("the words as heard"), "{out}");
 }
 
+#[test]
+fn a_recording_draws_at_every_terminal_size_without_panicking() {
+    let (mut app, _d) = recording_app(vec![TaskEvent::Transcript("word ".repeat(400))]);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
+    app.pump_tasks(&mut terminal).unwrap();
+    for point in ["first", "second", "third", "fourth", "fifth"] {
+        type_str(&mut app, point, &mut terminal);
+        app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
+            .unwrap();
+    }
+    type_str(
+        &mut app,
+        "a half typed point that is fairly long",
+        &mut terminal,
+    );
+
+    for width in 0..=45u16 {
+        for height in 0..=16u16 {
+            let mut small =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+            let drawn = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                small.draw(|f| app.draw(f)).unwrap();
+            }));
+            assert!(drawn.is_ok(), "drawing panicked at {width}x{height}");
+        }
+    }
+}
+
+#[test]
+fn resizing_to_any_size_never_panics() {
+    let (mut app, _d) = recording_app(vec![]);
+    for focus in [Pane::Dirs, Pane::Notes, Pane::Preview] {
+        app.focus = focus;
+        for width in (0..=140u16).step_by(7).chain([59, 60, 61, 89, 90, 91]) {
+            for height in [0u16, 1, 2, 3, 5, 11, 12, 13, 24, 60] {
+                let resized = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    app.on_resize(width, height);
+                }));
+                assert!(resized.is_ok(), "resize panicked at {width}x{height}");
+            }
+        }
+    }
+}
+
 /// The transcript only grows; the newest words are the ones on screen.
 #[test]
 fn the_newest_words_of_a_long_transcript_stay_in_view() {
@@ -543,17 +587,76 @@ fn a_points_time_leaves_out_paused_time() {
     assert!((29..=31).contains(&at), "stamped {at}s, expected about 30");
 }
 
-/// Esc stops, and a half-typed point is kept rather than lost.
+/// One Esc only asks. A stray Esc (a terminal can produce one when a burst
+/// of mouse reports is split in the middle) must not end a lecture recording;
+/// a second Esc stops it, and a half-typed point is kept rather than lost.
 #[test]
-fn esc_stops_and_keeps_a_half_typed_point() {
+fn one_esc_only_asks_and_a_second_stops_keeping_a_half_typed_point() {
     let (mut app, _d) = recording_app(vec![]);
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
     type_str(&mut app, "last thing", &mut terminal);
+
+    app.on_key(press_code(event::KeyCode::Esc), &mut terminal)
+        .unwrap();
+    assert!(
+        !app.recording.as_ref().unwrap().job.stop_requested(),
+        "one Esc stopped the recording"
+    );
+    let said = app
+        .message
+        .as_ref()
+        .map(|m| m.1.clone())
+        .unwrap_or_default();
+    assert!(said.contains("Esc again"), "{said}");
+    assert_eq!(app.recording.as_ref().unwrap().jot, "last thing");
+
     app.on_key(press_code(event::KeyCode::Esc), &mut terminal)
         .unwrap();
     let rec = app.recording.as_ref().unwrap();
     assert!(rec.job.stop_requested());
     assert_eq!(rec.jotted.last().unwrap().text, "last thing");
+}
+
+#[test]
+fn an_old_esc_does_not_count_towards_stopping() {
+    let (mut app, _d) = recording_app(vec![]);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
+    app.on_key(press_code(event::KeyCode::Esc), &mut terminal)
+        .unwrap();
+    app.recording.as_mut().unwrap().stop_armed =
+        Instant::now().checked_sub(Duration::from_secs(10));
+    app.on_key(press_code(event::KeyCode::Esc), &mut terminal)
+        .unwrap();
+    assert!(
+        !app.recording.as_ref().unwrap().job.stop_requested(),
+        "an Esc from ten seconds ago counted"
+    );
+}
+
+#[test]
+fn every_mouse_mode_is_switched_off_on_the_way_out() {
+    for mode in ["?1000l", "?1002l", "?1003l", "?1006l"] {
+        assert!(MOUSE_OFF.contains(mode), "{mode} stays on after leo exits");
+    }
+}
+
+#[test]
+fn only_a_main_thread_panic_takes_the_screen_down() {
+    assert!(is_main_thread(Some("main")));
+    assert!(!is_main_thread(None));
+    assert!(!is_main_thread(Some("leo-listen")));
+}
+
+#[test]
+fn mouse_reporting_asks_for_clicks_and_the_wheel_only() {
+    assert!(MOUSE_ON.contains("?1000h"));
+    assert!(MOUSE_ON.contains("?1006h"));
+    for motion in ["?1002h", "?1003h"] {
+        assert!(
+            !MOUSE_ON.contains(motion),
+            "asking for pointer motion floods the input after a desktop switch"
+        );
+    }
 }
 
 #[test]

@@ -16,6 +16,7 @@ pub fn record_audio(screen: bool) -> Result<PathBuf> {
     // Check if sox/rec is available
     if Command::new("rec")
         .arg("--version")
+        .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
@@ -54,6 +55,7 @@ pub fn record_audio(screen: bool) -> Result<PathBuf> {
     }
     let mut child = cmd
         .args(rec_args)
+        .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -120,6 +122,7 @@ pub fn record_audio(screen: bool) -> Result<PathBuf> {
             tmp_path.to_str().unwrap(),
             fixed.to_str().unwrap(),
         ])
+        .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
@@ -189,6 +192,7 @@ pub fn recording_path() -> PathBuf {
 fn require_sox() -> Result<()> {
     if Command::new("rec")
         .arg("--version")
+        .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
@@ -248,6 +252,7 @@ impl Recorder {
         }
         let child = cmd
             .args([path_str, "rate", "16000", "channels", "1"])
+            .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -378,6 +383,7 @@ pub fn cut_pauses(path: &std::path::Path, pauses: &[Pause]) -> Result<PathBuf> {
         .arg(&out)
         .arg("trim")
         .args(trim_positions(pauses))
+        .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
@@ -466,6 +472,7 @@ pub fn microphone_peak(seconds: f64) -> Option<f64> {
             "0",
             &seconds.to_string(),
         ])
+        .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
@@ -485,6 +492,7 @@ pub fn repair_wav_header(path: &std::path::Path) {
             &path.to_string_lossy(),
             &fixed.to_string_lossy(),
         ])
+        .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()

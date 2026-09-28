@@ -157,11 +157,34 @@ impl Job {
 /// would freeze the interface for as long as the remote takes, which is exactly
 /// the thing an automatic feature must never do to someone who did not ask for it
 /// right now.
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    payload
+        .downcast_ref::<&str>()
+        .map(|s| s.to_string())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "unknown error".to_string())
+}
+
+fn caught<T>(work: impl FnOnce() -> T) -> Result<T, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(work))
+        .map_err(|payload| panic_message(&*payload))
+}
+
+fn spawn_guarded(tx: mpsc::Sender<TaskEvent>, work: impl FnOnce() + Send + 'static) {
+    thread::spawn(move || {
+        if let Err(message) = caught(work) {
+            let _ = tx.send(TaskEvent::Failed(format!(
+                "leo hit an internal error and stopped this task ({message}). Your notes are safe."
+            )));
+        }
+    });
+}
+
 pub fn start_push(notes_dir: std::path::PathBuf) -> Job {
     let (tx, rx) = mpsc::channel();
     let stop = Arc::new(AtomicBool::new(false));
 
-    thread::spawn(move || {
+    spawn_guarded(tx.clone(), move || {
         let _ = tx.send(TaskEvent::Started {
             label: "Backing up".to_string(),
         });
@@ -198,7 +221,7 @@ pub fn start_update_check() -> std::sync::mpsc::Receiver<String> {
 
 pub fn start_doctor(notes_dir: std::path::PathBuf, probe: leo_services::doctor::Probe) -> Job {
     let (tx, rx) = mpsc::channel();
-    thread::spawn(move || {
+    spawn_guarded(tx.clone(), move || {
         let config = leo_services::config::Config::load();
         let config_path = leo_services::config::Config::config_path().unwrap_or_default();
         let sections = leo_services::doctor::scan(
@@ -227,7 +250,7 @@ pub fn start_ask(note: String, title: String, body: String) -> Job {
     let (tx, rx) = mpsc::channel();
     let stop = Arc::new(AtomicBool::new(false));
 
-    thread::spawn(move || {
+    spawn_guarded(tx.clone(), move || {
         let _ = tx.send(TaskEvent::Started {
             label: "Asking".to_string(),
         });
@@ -286,7 +309,7 @@ pub fn start_question(question: String, notes: Vec<(String, String, String)>) ->
     let (tx, rx) = mpsc::channel();
     let stop = Arc::new(AtomicBool::new(false));
 
-    thread::spawn(move || {
+    spawn_guarded(tx.clone(), move || {
         let _ = tx.send(TaskEvent::Started {
             label: "Asking your notes".to_string(),
         });
@@ -341,7 +364,7 @@ pub fn start_structuring(
     let (tx, rx) = mpsc::channel();
     let stop = Arc::new(AtomicBool::new(false));
 
-    thread::spawn(move || {
+    spawn_guarded(tx.clone(), move || {
         let _ = tx.send(TaskEvent::Progress {
             label: "Structuring notes".to_string(),
             steps: None,
@@ -491,7 +514,7 @@ pub fn start_listen(screen: bool) -> Job {
     let pause = Arc::new(AtomicBool::new(false));
     let worker_pause = Arc::clone(&pause);
 
-    thread::spawn(move || {
+    spawn_guarded(tx.clone(), move || {
         let recorder = match Recorder::start(screen) {
             Ok(r) => r,
             Err(e) => {
@@ -564,7 +587,13 @@ pub fn start_listen(screen: bool) -> Job {
                 continue;
             }
             last_roll = Instant::now();
-            roll_once(recorder.path(), &mut state, &tx);
+            let rolled = caught(|| roll_once(recorder.path(), &mut state, &tx));
+            if let Err(message) = rolled {
+                state.interval = live::backoff(state.interval);
+                leo_core::diag::warn(format!(
+                    "live transcription hit a problem ({message}); the recording continues"
+                ));
+            }
         }
 
         // Stopping is not cancelling: finish the recording and transcribe it
@@ -883,5 +912,26 @@ mod tests {
             .unwrap();
         job.drain();
         assert!(job.is_done());
+    }
+
+    #[test]
+    fn a_panic_is_caught_with_its_message() {
+        assert_eq!(caught(|| 5), Ok(5));
+        assert_eq!(caught(|| -> u8 { panic!("boom") }), Err("boom".to_string()));
+        let detailed = caught(|| -> u8 { panic!("{} failed", "stitching") });
+        assert_eq!(detailed, Err("stitching failed".to_string()));
+    }
+
+    #[test]
+    fn a_task_that_panics_reports_a_failure_instead_of_taking_the_app_down() {
+        let (tx, rx) = mpsc::channel();
+        spawn_guarded(tx, || panic!("boom in a worker"));
+        match rx.recv_timeout(Duration::from_secs(5)).unwrap() {
+            TaskEvent::Failed(message) => {
+                assert!(message.contains("boom in a worker"), "{message}");
+                assert!(message.contains("notes are safe"), "{message}");
+            }
+            other => panic!("expected a failure, got {other:?}"),
+        }
     }
 }

@@ -128,7 +128,7 @@ leaving the note out means the selected one:
 
 `R` (or `/listen`) records and turns speech into notes. While it runs, type the
 points that matter and press `Enter` after each: the finished note leads with
-them, in bold, with what was said about them. `Esc` stops. Write
+them, in bold, with what was said about them. `Esc` twice stops. Write
 `@leo <question>` in a note and press `a` (or `/ask`): the answer appears under
 your question.
 

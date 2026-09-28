@@ -181,7 +181,12 @@ fn render_live(
             .fg(super::theme::accent())
             .add_modifier(Modifier::BOLD);
         let mut lines = vec![TuiLine::from(Span::styled("Your points", accent))];
-        for p in points.iter().rev().take(points_height as usize - 2).rev() {
+        for p in points
+            .iter()
+            .rev()
+            .take((points_height as usize).saturating_sub(2))
+            .rev()
+        {
             lines.push(TuiLine::from(vec![
                 Span::raw("• "),
                 Span::styled(p.clone(), Style::default().add_modifier(Modifier::BOLD)),
@@ -206,7 +211,7 @@ fn render_live(
         let jot_box = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(super::theme::accent()))
-            .title(" your point · Enter adds it · Ctrl-P pauses · Esc stops ");
+            .title(" your point · Enter adds it · Ctrl-P pauses · Esc twice stops ");
         let field = jot_box.inner(box_area);
         frame.render_widget(jot_box, box_area);
         let shown = if jot.is_empty() {
@@ -284,7 +289,7 @@ fn highlight(line: TuiLine<'static>, words: &[String]) -> (TuiLine<'static>, boo
         ranges.sort();
         let mut at = 0;
         for (start, end) in ranges {
-            if start < at {
+            if start < at || !text.is_char_boundary(start) || !text.is_char_boundary(end) {
                 continue;
             }
             if start > at {
@@ -467,5 +472,13 @@ mod tests {
 
         assert!(!out.contains("##"), "hashes reached the screen: {out}");
         assert!(out.contains('☑'), "no rendered checkbox: {out}");
+    }
+
+    #[test]
+    fn highlighting_text_whose_lowercase_shifts_characters_does_not_panic() {
+        let line = TuiLine::from("ẞİ");
+        let (out, _) = highlight(line, &["i".to_string()]);
+        let text: String = out.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "ẞİ");
     }
 }
