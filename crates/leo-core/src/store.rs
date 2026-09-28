@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -64,6 +64,35 @@ fn parse_note_from_markdown(content: &str, relative_path: &Path) -> Result<Note>
         updated_at: fm.updated_at,
         pinned: fm.pinned,
     })
+}
+
+#[derive(Debug, Clone)]
+struct Seen {
+    path: PathBuf,
+    disk: u64,
+    model: u64,
+}
+
+fn hash_str(text: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn write_atomic(path: &Path, text: &str) -> Result<()> {
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("note");
+    let temp = path.with_file_name(format!(".{name}.leo-tmp"));
+    fs::write(&temp, text)?;
+    if let Err(e) = fs::rename(&temp, path) {
+        let _ = fs::remove_file(&temp);
+        return Err(e.into());
+    }
+    Ok(())
+}
+
+fn is_clean(path: &Path, expected: u64) -> bool {
+    fs::read_to_string(path).is_ok_and(|text| hash_str(&text) == expected)
 }
 
 // ── Filesystem helpers ──────────────────────────────────────────────────────
@@ -172,6 +201,7 @@ fn collect_notes(
     dir: &Path,
     notes: &mut Vec<Note>,
     unreadable: &mut Vec<(PathBuf, String)>,
+    seen: &mut HashMap<String, Seen>,
 ) -> Result<()> {
     if !dir.exists() {
         return Ok(());
@@ -182,7 +212,7 @@ fn collect_notes(
         if path.is_dir() {
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if !name.starts_with('.') {
-                collect_notes(notes_dir, &path, notes, unreadable)?;
+                collect_notes(notes_dir, &path, notes, unreadable, seen)?;
             }
         } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
             let content = fs::read_to_string(&path)?;
@@ -190,7 +220,20 @@ fn collect_notes(
                 .strip_prefix(notes_dir)
                 .context("path outside notes_dir")?;
             match parse_note_from_markdown(&content, relative) {
-                Ok(note) => notes.push(note),
+                Ok(note) => {
+                    let model = note_to_markdown(&note)
+                        .map(|text| hash_str(&text))
+                        .unwrap_or(0);
+                    seen.insert(
+                        note.id.clone(),
+                        Seen {
+                            path: relative.to_path_buf(),
+                            disk: hash_str(&content),
+                            model,
+                        },
+                    );
+                    notes.push(note);
+                }
                 Err(e) => {
                     crate::diag::warn(format!("skipping {}: {e}", path.display()));
                     unreadable.push((path.clone(), e.to_string()));
@@ -271,7 +314,7 @@ pub struct Store {
     /// Most recent change last. Not persisted: undo covers a session, and a
     /// deletion that survived a restart is a decision the user has lived with.
     undo: Vec<Undoable>,
-    known: std::cell::RefCell<HashSet<String>>,
+    seen: std::cell::RefCell<HashMap<String, Seen>>,
 }
 
 impl Store {
@@ -305,7 +348,8 @@ impl Store {
         let directories = load_directories(notes_dir)?;
         let mut notes = Vec::new();
         let mut unreadable = Vec::new();
-        collect_notes(notes_dir, notes_dir, &mut notes, &mut unreadable)?;
+        let mut seen = HashMap::new();
+        collect_notes(notes_dir, notes_dir, &mut notes, &mut unreadable, &mut seen)?;
 
         // The directory list on disk only needs to remember empty directories:
         // every note's directory, and its parents, is known from where it is.
@@ -314,9 +358,8 @@ impl Store {
             add_with_parents(&mut directories, &note.directory);
         }
         tidy_trash(notes_dir, &notes.iter().map(|n| n.id.as_str()).collect());
-        let known = notes.iter().map(|n| n.id.clone()).collect();
         Ok(Store {
-            known: std::cell::RefCell::new(known),
+            seen: std::cell::RefCell::new(seen),
             unreadable,
             undo: Vec::new(),
             notes,
@@ -325,55 +368,66 @@ impl Store {
         })
     }
 
-    /// All `.md` files in `notes_dir` are owned by the store — any file not
     pub fn save(&self) -> Result<()> {
         fs::create_dir_all(&self.notes_dir)?;
+        let mut seen = self.seen.borrow_mut();
+        let live: HashSet<&str> = self.notes.iter().map(|n| n.id.as_str()).collect();
 
-        // Snapshot existing .md paths before writing
-        let mut old_paths: HashSet<PathBuf> = HashSet::new();
-        collect_md_paths(&self.notes_dir, &mut old_paths)?;
-
-        // Write all current notes
-        let mut new_paths: HashSet<PathBuf> = HashSet::new();
         for note in &self.notes {
-            let file_path = self.note_path(note);
-            if let Some(parent) = file_path.parent() {
+            let target = self.note_path(note);
+            let content = note_to_markdown(note)?;
+            let model = hash_str(&content);
+            let unchanged = seen
+                .get(&note.id)
+                .is_some_and(|s| s.model == model && self.notes_dir.join(&s.path) == target);
+            if unchanged {
+                continue;
+            }
+            if let Some(parent) = target.parent() {
                 fs::create_dir_all(parent)?;
             }
-            fs::write(&file_path, note_to_markdown(note)?)?;
-            new_paths.insert(file_path);
+            write_atomic(&target, &content)?;
+            if let Some(previous) = seen.get(&note.id) {
+                let old_path = self.notes_dir.join(&previous.path);
+                if old_path != target {
+                    let _ = fs::remove_file(old_path);
+                }
+            }
+            let relative = target
+                .strip_prefix(&self.notes_dir)
+                .context("path outside notes_dir")?
+                .to_path_buf();
+            seen.insert(
+                note.id.clone(),
+                Seen {
+                    path: relative,
+                    disk: model,
+                    model,
+                },
+            );
         }
 
-        let live: HashSet<&str> = self.notes.iter().map(|n| n.id.as_str()).collect();
-        let mut known = self.known.borrow_mut();
-        known.extend(live.iter().map(|id| id.to_string()));
-        for old_path in &old_paths {
-            if new_paths.contains(old_path) || self.unreadable.iter().any(|(p, _)| p == old_path) {
-                continue;
-            }
-            let Some(id) = fs::read_to_string(old_path)
-                .ok()
-                .and_then(|text| parse_note_from_markdown(&text, Path::new("note.md")).ok())
-                .map(|note| note.id)
-            else {
+        let gone: Vec<String> = seen
+            .keys()
+            .filter(|id| !live.contains(id.as_str()))
+            .cloned()
+            .collect();
+        for id in gone {
+            let Some(entry) = seen.remove(&id) else {
                 continue;
             };
-            if live.contains(id.as_str()) {
-                fs::remove_file(old_path)?;
-            } else if known.contains(&id) {
-                self.move_to_trash(old_path)?;
+            let path = self.notes_dir.join(&entry.path);
+            if is_clean(&path, entry.disk) {
+                self.move_to_trash(&path)?;
             }
         }
-        drop(known);
+        drop(seen);
         tidy_trash(&self.notes_dir, &live);
 
         save_directories(&self.notes_dir, &self.directories)?;
 
-        // Auto-commit if git repo is initialized (non-fatal — notes are saved regardless)
         if crate::sync::is_initialized(&self.notes_dir) {
             if let Err(e) = crate::sync::auto_commit(&self.notes_dir) {
-                // Every save reaches here, including from the TUI, so this must
-                // never write to the terminal directly.
                 crate::diag::warn(format!("sync auto-commit failed: {e}"));
             }
         }
@@ -1190,7 +1244,7 @@ mod tests {
             directories: vec![],
             notes_dir: notes_dir.clone(),
             undo: Vec::new(),
-            known: Default::default(),
+            seen: Default::default(),
         };
         let note = make_note();
         assert_eq!(
@@ -1209,7 +1263,7 @@ mod tests {
             directories: vec![],
             notes_dir: notes_dir.clone(),
             undo: Vec::new(),
-            known: Default::default(),
+            seen: Default::default(),
         };
         let mut note = make_note();
         note.directory = "cs162/lec".to_string();
@@ -1262,40 +1316,12 @@ mod tests {
         let store = Store {
             unreadable: Vec::new(),
             undo: Vec::new(),
-            known: Default::default(),
+            seen: Default::default(),
             notes: vec![make_note()],
             directories: vec![],
             notes_dir: notes_dir.clone(),
         };
         store.save().unwrap();
-        assert!(notes_dir
-            .join("550e8400-e29b-41d4-a716-446655440000.md")
-            .exists());
-    }
-
-    #[test]
-    fn test_save_trashes_a_note_it_no_longer_has() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let notes_dir = tmp.path().join("notes");
-        std::fs::create_dir_all(&notes_dir).unwrap();
-
-        let orphan = notes_dir.join("deadbeef-0000-0000-0000-000000000000.md");
-        std::fs::write(&orphan, "---\nid: deadbeef-0000-0000-0000-000000000000\ntitle: Old\ntags: []\ncreated_at: '2026-01-01T00:00:00Z'\nupdated_at: '2026-01-01T00:00:00Z'\n---\n\nbody").unwrap();
-
-        let store = Store {
-            unreadable: Vec::new(),
-            undo: Vec::new(),
-            known: std::cell::RefCell::new(HashSet::from([
-                "deadbeef-0000-0000-0000-000000000000".to_string()
-            ])),
-            notes: vec![make_note()],
-            directories: vec![],
-            notes_dir: notes_dir.clone(),
-        };
-        store.save().unwrap();
-
-        assert!(!orphan.exists(), "orphaned file should be removed");
-        assert_eq!(store.trashed().len(), 1, "and kept in the trash");
         assert!(notes_dir
             .join("550e8400-e29b-41d4-a716-446655440000.md")
             .exists());
@@ -1333,49 +1359,6 @@ mod tests {
     }
 
     #[test]
-    fn test_save_handles_directory_move() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let notes_dir = tmp.path().join("notes");
-        std::fs::create_dir_all(&notes_dir).unwrap();
-
-        let note = make_note();
-        let store = Store {
-            unreadable: Vec::new(),
-            undo: Vec::new(),
-            known: Default::default(),
-            notes: vec![note.clone()],
-            directories: vec![],
-            notes_dir: notes_dir.clone(),
-        };
-        store.save().unwrap();
-        assert!(notes_dir
-            .join("550e8400-e29b-41d4-a716-446655440000.md")
-            .exists());
-
-        let mut moved = note.clone();
-        moved.directory = "ideas".to_string();
-        let store2 = Store {
-            unreadable: Vec::new(),
-            undo: Vec::new(),
-            known: Default::default(),
-            notes: vec![moved],
-            directories: vec!["ideas".to_string()],
-            notes_dir: notes_dir.clone(),
-        };
-        store2.save().unwrap();
-
-        assert!(notes_dir
-            .join("ideas/550e8400-e29b-41d4-a716-446655440000.md")
-            .exists());
-        assert!(
-            !notes_dir
-                .join("550e8400-e29b-41d4-a716-446655440000.md")
-                .exists(),
-            "old location should be removed after move"
-        );
-    }
-
-    #[test]
     fn test_save_auto_commits_when_initialized() {
         let tmp = tempfile::TempDir::new().unwrap();
         let notes_dir = tmp.path().join("notes");
@@ -1386,7 +1369,7 @@ mod tests {
         let store = Store {
             unreadable: Vec::new(),
             undo: Vec::new(),
-            known: Default::default(),
+            seen: Default::default(),
             notes: vec![make_note()],
             directories: vec![],
             notes_dir: notes_dir.clone(),
@@ -2058,5 +2041,146 @@ mod tests {
         );
         let trashed: Vec<String> = now.trashed().into_iter().map(|t| t.id).collect();
         assert_eq!(trashed, vec![mine], "trashed a note it never had");
+    }
+
+    fn set_mtime_to_the_past(path: &Path) {
+        let long_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(long_ago)
+            .unwrap();
+    }
+
+    #[test]
+    fn saving_rewrites_only_the_notes_that_changed() {
+        let (mut store, _tmp) = temp_store();
+        let kept = store
+            .create_note("Kept", "same", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        let edited = store
+            .create_note("Edited", "before", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.save().unwrap();
+        let dir = store.notes_dir.clone();
+        let file_of = |id: &str| dir.join(format!("{id}.md"));
+        set_mtime_to_the_past(&file_of(&kept));
+        set_mtime_to_the_past(&file_of(&edited));
+        let modified = |id: &str| fs::metadata(file_of(id)).unwrap().modified().unwrap();
+        let kept_time = modified(&kept);
+        let edited_time = modified(&edited);
+
+        store.find_note_mut(&edited).unwrap().body = "after".to_string();
+        store.save().unwrap();
+
+        assert_eq!(
+            modified(&kept),
+            kept_time,
+            "an unchanged note was rewritten"
+        );
+        assert!(
+            modified(&edited) > edited_time,
+            "an edited note was not written"
+        );
+        assert!(fs::read_to_string(file_of(&edited))
+            .unwrap()
+            .contains("after"));
+    }
+
+    #[test]
+    fn saving_one_note_leaves_another_programs_edit_to_a_different_note_alone() {
+        let (mut store, _tmp) = temp_store();
+        let mine = store
+            .create_note("Mine", "a", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        let theirs = store
+            .create_note("Theirs", "b", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.save().unwrap();
+        let theirs_file = store.notes_dir.join(format!("{theirs}.md"));
+        let edited = fs::read_to_string(&theirs_file)
+            .unwrap()
+            .replace("\n\nb", "\n\nb edited elsewhere");
+        fs::write(&theirs_file, &edited).unwrap();
+
+        store.find_note_mut(&mine).unwrap().body = "a2".to_string();
+        store.save().unwrap();
+
+        assert_eq!(fs::read_to_string(&theirs_file).unwrap(), edited);
+    }
+
+    #[test]
+    fn deleting_a_note_that_was_edited_elsewhere_keeps_the_edit() {
+        let (mut store, _tmp) = temp_store();
+        let id = store
+            .create_note("Shared", "one", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.save().unwrap();
+        let file = store.notes_dir.join(format!("{id}.md"));
+        fs::write(
+            &file,
+            fs::read_to_string(&file)
+                .unwrap()
+                .replace("one", "one and more"),
+        )
+        .unwrap();
+
+        store.delete_note(&id);
+        store.save().unwrap();
+
+        assert!(file.exists(), "the other program's edit was moved away");
+        assert!(store.trashed().is_empty());
+    }
+
+    #[test]
+    fn test_save_handles_directory_move() {
+        let (mut store, _tmp) = temp_store();
+        store.create_dir("ideas");
+        let id = store
+            .create_note("Moving", "body", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.save().unwrap();
+        let root_file = store.notes_dir.join(format!("{id}.md"));
+        assert!(root_file.exists());
+
+        store.move_note(&id, "ideas").unwrap();
+        store.save().unwrap();
+
+        assert!(store.notes_dir.join(format!("ideas/{id}.md")).exists());
+        assert!(
+            !root_file.exists(),
+            "old location should be removed after move"
+        );
+    }
+
+    #[test]
+    fn test_save_trashes_a_note_it_no_longer_has() {
+        let (mut store, _tmp) = temp_store();
+        let id = store
+            .create_note("Old", "body", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.save().unwrap();
+        let file = store.notes_dir.join(format!("{id}.md"));
+
+        store.delete_note(&id);
+        store.save().unwrap();
+
+        assert!(!file.exists(), "the deleted note's file should be gone");
+        assert_eq!(store.trashed().len(), 1, "and kept in the trash");
     }
 }
