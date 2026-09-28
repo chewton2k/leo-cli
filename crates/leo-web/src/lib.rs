@@ -33,7 +33,9 @@ impl AppState {
     }
 }
 
-const HTML: &str = include_str!("web_ui.html");
+const HTML: &str = include_str!("web/index.html");
+const APP_JS: &str = include_str!("web/app.js");
+const MARKDOWN_JS: &str = include_str!("web/markdown.js");
 
 const COOKIE_DAYS: u32 = 30;
 
@@ -194,6 +196,11 @@ fn router(state: AppState) -> Router {
         .route("/api/search", get(search_notes))
         .route("/api/tags", get(list_tags))
         .route("/api/dirs", get(list_dirs).post(create_dir))
+        .route("/api/folders", get(list_folders))
+        .route("/api/trash", get(list_trash))
+        .route("/api/trash/{id}/restore", post(restore_note))
+        .route("/app.js", get(app_js))
+        .route("/markdown.js", get(markdown_js))
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
@@ -204,6 +211,22 @@ fn router(state: AppState) -> Router {
 
 async fn index() -> Html<&'static str> {
     Html(HTML)
+}
+
+fn javascript(source: &'static str) -> Response {
+    (
+        [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+        source,
+    )
+        .into_response()
+}
+
+async fn app_js() -> Response {
+    javascript(APP_JS)
+}
+
+async fn markdown_js() -> Response {
+    javascript(MARKDOWN_JS)
 }
 
 async fn auth_middleware(State(state): State<AppState>, request: Request, next: Next) -> Response {
@@ -271,6 +294,12 @@ async fn security_headers(request: Request, next: Next) -> Response {
         ("x-content-type-options", "nosniff"),
         ("x-frame-options", "DENY"),
         ("cache-control", "no-store"),
+        (
+            "content-security-policy",
+            "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
+             img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'self'; \
+             frame-ancestors 'none'",
+        ),
     ] {
         headers.insert(name, HeaderValue::from_static(value));
     }
@@ -327,6 +356,7 @@ struct UpdateBody {
     title: Option<String>,
     body: Option<String>,
     tags: Option<Vec<String>>,
+    pinned: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -341,7 +371,7 @@ struct MoveBody {
 
 // ── Response types ────────────────────────────────────────────────────────
 
-#[derive(serde::Serialize)]
+#[derive(Debug, serde::Serialize)]
 struct NoteResponse {
     id: String,
     title: String,
@@ -433,6 +463,7 @@ async fn update_note(
 ) -> Result<Json<NoteResponse>, StatusCode> {
     let mut store = state.fresh();
     let note = store.find_note_mut(&id).ok_or(StatusCode::NOT_FOUND)?;
+    let edited = body.title.is_some() || body.body.is_some() || body.tags.is_some();
 
     if let Some(title) = body.title {
         note.title = title;
@@ -443,7 +474,12 @@ async fn update_note(
     if let Some(tags) = body.tags {
         note.tags = tags;
     }
-    note.updated_at = chrono::Utc::now();
+    if let Some(pinned) = body.pinned {
+        note.pinned = pinned;
+    }
+    if edited {
+        note.updated_at = chrono::Utc::now();
+    }
 
     let resp = NoteResponse::from_note(note);
     store
@@ -525,13 +561,84 @@ async fn list_tags(State(state): State<AppState>) -> Json<Vec<TagResponse>> {
     )
 }
 
+#[derive(serde::Serialize)]
+struct DirResponse {
+    name: String,
+    notes: usize,
+}
+
 async fn list_dirs(
     State(state): State<AppState>,
     Query(params): Query<DirParams>,
-) -> Json<Vec<String>> {
+) -> Json<Vec<DirResponse>> {
     let store = state.fresh();
     let parent = params.parent.unwrap_or_default();
-    Json(store.subdirs(&parent))
+    Json(
+        store
+            .subdirs(&parent)
+            .into_iter()
+            .map(|name| {
+                let full = if parent.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{parent}/{name}")
+                };
+                let notes = store.dir_contents(&full).0;
+                DirResponse { name, notes }
+            })
+            .collect(),
+    )
+}
+
+async fn list_folders(State(state): State<AppState>) -> Json<Vec<DirResponse>> {
+    let store = state.fresh();
+    let mut all = store.directories.clone();
+    all.sort_by_key(|d| d.to_lowercase());
+    Json(
+        all.into_iter()
+            .map(|name| {
+                let notes = store.dir_contents(&name).0;
+                DirResponse { name, notes }
+            })
+            .collect(),
+    )
+}
+
+#[derive(serde::Serialize)]
+struct TrashResponse {
+    id: String,
+    title: String,
+    directory: String,
+    deleted_at: String,
+}
+
+async fn list_trash(State(state): State<AppState>) -> Json<Vec<TrashResponse>> {
+    let store = state.fresh();
+    Json(
+        store
+            .trashed()
+            .into_iter()
+            .map(|t| TrashResponse {
+                id: t.id,
+                title: t.title,
+                directory: t.directory,
+                deleted_at: t.deleted_at.to_rfc3339(),
+            })
+            .collect(),
+    )
+}
+
+async fn restore_note(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<NoteResponse>, StatusCode> {
+    let mut store = state.fresh();
+    store.restore(&id).ok_or(StatusCode::NOT_FOUND)?;
+    store
+        .save()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let note = store.find_note(&id).ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(NoteResponse::from_note(note)))
 }
 
 async fn create_dir(State(state): State<AppState>, Json(body): Json<CreateDirBody>) -> StatusCode {
@@ -622,5 +729,64 @@ mod tests {
                 .directory,
             ""
         );
+    }
+
+    #[test]
+    fn a_note_can_be_pinned_from_the_phone() {
+        let (state, _d, ids) = state_with(&[("Syllabus", "")]);
+        let body = UpdateBody {
+            title: None,
+            body: None,
+            tags: None,
+            pinned: Some(true),
+        };
+        let Json(note) = run(update_note(
+            State(state.clone()),
+            Path(ids[0].clone()),
+            Json(body),
+        ))
+        .unwrap();
+        assert!(note.pinned);
+        assert!(state.fresh().find_note(&ids[0]).unwrap().pinned);
+    }
+
+    #[test]
+    fn a_deleted_note_is_in_the_trash_and_can_be_restored() {
+        let (state, _d, ids) = state_with(&[("Lecture 4", "cs130")]);
+        assert_eq!(
+            run(delete_note(State(state.clone()), Path(ids[0].clone()))),
+            StatusCode::NO_CONTENT
+        );
+        let Json(trash) = run(list_trash(State(state.clone())));
+        assert_eq!(trash.len(), 1);
+        assert_eq!(trash[0].title, "Lecture 4");
+        assert_eq!(trash[0].directory, "cs130");
+
+        let Json(back) = run(restore_note(State(state.clone()), Path(ids[0].clone()))).unwrap();
+        assert_eq!(back.directory, "cs130");
+        assert!(state.fresh().find_note(&ids[0]).is_some());
+        let Json(trash) = run(list_trash(State(state.clone())));
+        assert!(trash.is_empty());
+        assert_eq!(
+            run(restore_note(State(state), Path(ids[0].clone()))).unwrap_err(),
+            StatusCode::NOT_FOUND
+        );
+    }
+
+    #[test]
+    fn folders_come_with_how_many_notes_they_hold() {
+        let (state, _d, _ids) = state_with(&[("A", "cs130"), ("B", "cs130/lec"), ("C", "")]);
+        let Json(dirs) = run(list_dirs(State(state), Query(DirParams { parent: None })));
+        assert_eq!(dirs.len(), 1);
+        assert_eq!(dirs[0].name, "cs130");
+        assert_eq!(dirs[0].notes, 2);
+    }
+
+    #[test]
+    fn every_folder_is_listed_for_moving_a_note() {
+        let (state, _d, _ids) = state_with(&[("A", "cs130"), ("B", "cs130/lec"), ("C", "Ideas")]);
+        let Json(all) = run(list_folders(State(state)));
+        let names: Vec<&str> = all.iter().map(|d| d.name.as_str()).collect();
+        assert_eq!(names, ["cs130", "cs130/lec", "Ideas"]);
     }
 }

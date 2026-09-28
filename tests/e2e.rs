@@ -876,6 +876,26 @@ fn opening_the_link_keeps_the_code_out_of_the_address_bar() {
         !lower.contains("access-control-allow-origin"),
         "any site may call it:\n{page}"
     );
+    assert!(
+        lower.contains("content-security-policy: default-src 'none'; script-src 'self'"),
+        "{page}"
+    );
+    assert!(page.contains("<script src=\"/app.js\">"), "{page}");
+
+    for script in ["/app.js", "/markdown.js"] {
+        let served = server.get(script, &format!("Cookie: leo_token={token}\r\n"));
+        assert!(served.starts_with("HTTP/1.1 200"), "{script}: {served}");
+        assert!(
+            served
+                .to_lowercase()
+                .contains("content-type: text/javascript"),
+            "{served}"
+        );
+        assert!(
+            server.get(script, "").starts_with("HTTP/1.1 401"),
+            "{script} without the code"
+        );
+    }
 
     let tunneled = server.get(&format!("/?token={token}"), "X-Forwarded-Proto: https\r\n");
     assert!(tunneled.contains("Secure"), "{tunneled}");

@@ -150,7 +150,8 @@ fn nothing_shown_to_a_user_names_a_command_that_is_gone() {
         "README.md",
         "CONTRIBUTING.md",
         "install.sh",
-        "crates/leo-web/src/web_ui.html",
+        "crates/leo-web/src/web/index.html",
+        "crates/leo-web/src/web/app.js",
     ] {
         let path = root().join(doc);
         let lines: Vec<(usize, String)> = std::fs::read_to_string(&path)

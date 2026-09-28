@@ -406,9 +406,20 @@ instead of running `leo sync`.
 leo serve
 ```
 
-This prints a link and a QR code. Scan the code with your phone's camera to
-read, edit and search your notes in the browser. The phone has to be on the
-same Wi-Fi as your computer.
+This prints a link and a QR code. Scan the code with your phone's camera and
+your notes open in the browser, laid out for a phone and following its light or
+dark mode. The phone has to be on the same Wi-Fi as your computer. From there
+you can:
+
+- browse folders and read notes with their formatting: headings, lists, code,
+  tables, quotes and links;
+- tick checkboxes with a tap;
+- search every note, with the matching words highlighted;
+- write and edit notes, with a preview and buttons for bold, lists and
+  checkboxes;
+- pin, move, share and delete notes (deleted notes go to the trash, and Undo
+  is right there);
+- restore notes from the trash, and browse by tag.
 
 **From anywhere** (another Wi-Fi, or mobile data):
 

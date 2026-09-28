@@ -74,6 +74,8 @@ What each part covers:
 - **`tests/install.rs`** runs `install.sh` into a throwaway home directory.
 - **`tests/release.rs`** checks the scripts that pick and set the next
   version.
+- **`crates/leo-web/tests/markdown.test.js`** checks the phone page's Markdown
+  renderer (run by `cargo test` through Node; skipped if Node is missing).
 - **`tests/wording.rs`** fails if any text a user can see names a command that no
   longer exists. If you rename or remove a command, update the text it points
   at, or add the old name to its list.
