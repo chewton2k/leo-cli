@@ -20,6 +20,8 @@ struct NoteFrontmatter {
     updated_at: chrono::DateTime<chrono::Utc>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pinned: bool,
+    #[serde(flatten)]
+    extra: serde_yaml::Mapping,
 }
 
 fn note_to_markdown(note: &Note) -> Result<String> {
@@ -30,6 +32,7 @@ fn note_to_markdown(note: &Note) -> Result<String> {
         created_at: note.created_at,
         updated_at: note.updated_at,
         pinned: note.pinned,
+        extra: note.extra.clone(),
     };
     let yaml = serde_yaml::to_string(&fm)?;
     Ok(format!("---\n{}---\n\n{}", yaml, note.body))
@@ -166,6 +169,7 @@ fn parse_note_from_markdown(
         created_at,
         updated_at,
         pinned,
+        extra: props,
     })
 }
 
@@ -1265,6 +1269,7 @@ mod tests {
                 .unwrap()
                 .with_timezone(&chrono::Utc),
             pinned: false,
+            extra: Default::default(),
         }
     }
 
@@ -2654,5 +2659,31 @@ mod tests {
         assert!(text.starts_with("---\n"), "{text}");
         assert!(text.contains(&format!("id: {id}")), "{text}");
         assert!(text.contains("after"), "{text}");
+    }
+
+    #[test]
+    fn properties_leo_does_not_know_survive_a_round_trip() {
+        let text = "---\nid: abc\ntitle: T\ntags: []\ncreated_at: 2026-01-01T00:00:00Z\nupdated_at: 2026-01-01T00:00:00Z\naliases:\n- Short\ncssclasses:\n- wide\nrating: 5\n---\n\nbody\n";
+        let note = parse("T.md", text);
+        let written = note_to_markdown(&note).unwrap();
+        for expected in ["aliases:", "- Short", "cssclasses:", "- wide", "rating: 5"] {
+            assert!(written.contains(expected), "no {expected:?} in:\n{written}");
+        }
+        assert_eq!(parse("T.md", &written).extra, note.extra);
+    }
+
+    #[test]
+    fn a_save_keeps_another_apps_properties_in_the_file() {
+        let (store, _tmp) = temp_store();
+        let text = "---\nid: keep1\ntitle: Keep\ntags: []\ncreated_at: 2026-01-01T00:00:00Z\nupdated_at: 2026-01-01T00:00:00Z\naliases:\n- Other name\n---\n\nold\n";
+        fs::write(store.notes_dir.join("Keep.md"), text).unwrap();
+        let mut store = Store::load_from(&store.notes_dir).unwrap();
+        store.find_note_mut("keep1").unwrap().body = "new".to_string();
+        store.save().unwrap();
+
+        let saved = fs::read_to_string(store.notes_dir.join("Keep.md")).unwrap();
+        assert!(saved.contains("aliases:"), "{saved}");
+        assert!(saved.contains("Other name"), "{saved}");
+        assert!(saved.contains("new"), "{saved}");
     }
 }

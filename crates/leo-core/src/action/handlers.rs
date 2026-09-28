@@ -1453,6 +1453,7 @@ mod handler_tests {
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
             pinned: false,
+            extra: Default::default(),
         });
         let numbering = vec![id];
 
