@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::filename;
 use crate::notes::Note;
 
 // ── Frontmatter serialization ───────────────────────────────────────────────
@@ -93,6 +94,28 @@ fn write_atomic(path: &Path, text: &str) -> Result<()> {
 
 fn is_clean(path: &Path, expected: u64) -> bool {
     fs::read_to_string(path).is_ok_and(|text| hash_str(&text) == expected)
+}
+
+fn same_file(a: &Path, b: &Path) -> bool {
+    match (fs::canonicalize(a), fs::canonicalize(b)) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => a == b,
+    }
+}
+
+fn unique_path(wanted: &Path) -> PathBuf {
+    if !wanted.exists() {
+        return wanted.to_path_buf();
+    }
+    let stem = wanted
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("note");
+    let ext = wanted.extension().and_then(|e| e.to_str()).unwrap_or("md");
+    (2..)
+        .map(|n| wanted.with_file_name(format!("{}.{ext}", filename::numbered(stem, n))))
+        .find(|candidate| !candidate.exists())
+        .expect("an unused name exists")
 }
 
 // ── Filesystem helpers ──────────────────────────────────────────────────────
@@ -371,10 +394,11 @@ impl Store {
     pub fn save(&self) -> Result<()> {
         fs::create_dir_all(&self.notes_dir)?;
         let mut seen = self.seen.borrow_mut();
+        let targets = self.assign_paths(&seen);
         let live: HashSet<&str> = self.notes.iter().map(|n| n.id.as_str()).collect();
 
         for note in &self.notes {
-            let target = self.note_path(note);
+            let target = targets[&note.id].clone();
             let content = note_to_markdown(note)?;
             let model = hash_str(&content);
             let unchanged = seen
@@ -389,7 +413,7 @@ impl Store {
             write_atomic(&target, &content)?;
             if let Some(previous) = seen.get(&note.id) {
                 let old_path = self.notes_dir.join(&previous.path);
-                if old_path != target {
+                if !same_file(&old_path, &target) {
                     let _ = fs::remove_file(old_path);
                 }
             }
@@ -439,7 +463,7 @@ impl Store {
         let relative = path
             .strip_prefix(&self.notes_dir)
             .context("path outside notes_dir")?;
-        let dest = self.notes_dir.join(TRASH).join(relative);
+        let dest = unique_path(&self.notes_dir.join(TRASH).join(relative));
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -487,16 +511,40 @@ impl Store {
         Ok(entries.len())
     }
 
-    /// Returns the expected .md file path for a note.
-    /// Assumes `note.directory` is a clean relative path with no `..` components.
-    fn note_path(&self, note: &Note) -> PathBuf {
-        if note.directory.is_empty() {
-            self.notes_dir.join(format!("{}.md", note.id))
-        } else {
-            self.notes_dir
-                .join(&note.directory)
-                .join(format!("{}.md", note.id))
+    fn assign_paths(&self, seen: &HashMap<String, Seen>) -> HashMap<String, PathBuf> {
+        let mut order: Vec<&Note> = self.notes.iter().collect();
+        order.sort_by(|a, b| (a.created_at, &a.id).cmp(&(b.created_at, &b.id)));
+        let mut taken: HashSet<String> = HashSet::new();
+        let mut targets = HashMap::new();
+        for note in order {
+            let dir = if note.directory.is_empty() {
+                self.notes_dir.clone()
+            } else {
+                self.notes_dir.join(&note.directory)
+            };
+            let base = filename::file_name(&note.title);
+            let own = seen.get(&note.id).map(|s| {
+                self.notes_dir
+                    .join(&s.path)
+                    .to_string_lossy()
+                    .to_lowercase()
+            });
+            for n in 1.. {
+                let candidate = dir.join(format!("{}.md", filename::numbered(&base, n)));
+                let key = candidate.to_string_lossy().to_lowercase();
+                if taken.contains(&key) {
+                    continue;
+                }
+                let is_own = own.as_deref() == Some(key.as_str());
+                if !is_own && candidate.exists() {
+                    continue;
+                }
+                taken.insert(key);
+                targets.insert(note.id.clone(), candidate);
+                break;
+            }
         }
+        targets
     }
 
     /// Create and store a new note, returning a reference to it.
@@ -1235,45 +1283,6 @@ mod tests {
     }
 
     #[test]
-    fn test_note_path_root() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let notes_dir = tmp.path().join("notes");
-        let store = Store {
-            unreadable: Vec::new(),
-            notes: vec![],
-            directories: vec![],
-            notes_dir: notes_dir.clone(),
-            undo: Vec::new(),
-            seen: Default::default(),
-        };
-        let note = make_note();
-        assert_eq!(
-            store.note_path(&note),
-            notes_dir.join("550e8400-e29b-41d4-a716-446655440000.md")
-        );
-    }
-
-    #[test]
-    fn test_note_path_subdir() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let notes_dir = tmp.path().join("notes");
-        let store = Store {
-            unreadable: Vec::new(),
-            notes: vec![],
-            directories: vec![],
-            notes_dir: notes_dir.clone(),
-            undo: Vec::new(),
-            seen: Default::default(),
-        };
-        let mut note = make_note();
-        note.directory = "cs162/lec".to_string();
-        assert_eq!(
-            store.note_path(&note),
-            notes_dir.join("cs162/lec/550e8400-e29b-41d4-a716-446655440000.md")
-        );
-    }
-
-    #[test]
     fn test_load_from_reads_md_files() {
         let tmp = tempfile::TempDir::new().unwrap();
         let notes_dir = tmp.path().join("notes");
@@ -1322,9 +1331,7 @@ mod tests {
             notes_dir: notes_dir.clone(),
         };
         store.save().unwrap();
-        assert!(notes_dir
-            .join("550e8400-e29b-41d4-a716-446655440000.md")
-            .exists());
+        assert!(notes_dir.join("Test Note.md").exists());
     }
 
     #[test]
@@ -1959,7 +1966,11 @@ mod tests {
 
         let path = trash_files(&store)
             .into_iter()
-            .find(|p| p.to_string_lossy().contains(&old))
+            .find(|p| {
+                fs::read_to_string(p)
+                    .unwrap()
+                    .contains(&format!("id: {old}"))
+            })
             .unwrap();
         let long_ago =
             std::time::SystemTime::now() - std::time::Duration::from_secs(31 * 24 * 3600);
@@ -2056,11 +2067,7 @@ mod tests {
     #[test]
     fn saving_rewrites_only_the_notes_that_changed() {
         let (mut store, _tmp) = temp_store();
-        let kept = store
-            .create_note("Kept", "same", vec![], "")
-            .unwrap()
-            .id
-            .clone();
+        store.create_note("Kept", "same", vec![], "").unwrap();
         let edited = store
             .create_note("Edited", "before", vec![], "")
             .unwrap()
@@ -2068,26 +2075,26 @@ mod tests {
             .clone();
         store.save().unwrap();
         let dir = store.notes_dir.clone();
-        let file_of = |id: &str| dir.join(format!("{id}.md"));
-        set_mtime_to_the_past(&file_of(&kept));
-        set_mtime_to_the_past(&file_of(&edited));
-        let modified = |id: &str| fs::metadata(file_of(id)).unwrap().modified().unwrap();
-        let kept_time = modified(&kept);
-        let edited_time = modified(&edited);
+        let file_of = |title: &str| dir.join(format!("{title}.md"));
+        set_mtime_to_the_past(&file_of("Kept"));
+        set_mtime_to_the_past(&file_of("Edited"));
+        let modified = |title: &str| fs::metadata(file_of(title)).unwrap().modified().unwrap();
+        let kept_time = modified("Kept");
+        let edited_time = modified("Edited");
 
         store.find_note_mut(&edited).unwrap().body = "after".to_string();
         store.save().unwrap();
 
         assert_eq!(
-            modified(&kept),
+            modified("Kept"),
             kept_time,
             "an unchanged note was rewritten"
         );
         assert!(
-            modified(&edited) > edited_time,
+            modified("Edited") > edited_time,
             "an edited note was not written"
         );
-        assert!(fs::read_to_string(file_of(&edited))
+        assert!(fs::read_to_string(file_of("Edited"))
             .unwrap()
             .contains("after"));
     }
@@ -2100,13 +2107,9 @@ mod tests {
             .unwrap()
             .id
             .clone();
-        let theirs = store
-            .create_note("Theirs", "b", vec![], "")
-            .unwrap()
-            .id
-            .clone();
+        store.create_note("Theirs", "b", vec![], "").unwrap();
         store.save().unwrap();
-        let theirs_file = store.notes_dir.join(format!("{theirs}.md"));
+        let theirs_file = store.notes_dir.join("Theirs.md");
         let edited = fs::read_to_string(&theirs_file)
             .unwrap()
             .replace("\n\nb", "\n\nb edited elsewhere");
@@ -2127,7 +2130,7 @@ mod tests {
             .id
             .clone();
         store.save().unwrap();
-        let file = store.notes_dir.join(format!("{id}.md"));
+        let file = store.notes_dir.join("Shared.md");
         fs::write(
             &file,
             fs::read_to_string(&file)
@@ -2153,13 +2156,13 @@ mod tests {
             .id
             .clone();
         store.save().unwrap();
-        let root_file = store.notes_dir.join(format!("{id}.md"));
+        let root_file = store.notes_dir.join("Moving.md");
         assert!(root_file.exists());
 
         store.move_note(&id, "ideas").unwrap();
         store.save().unwrap();
 
-        assert!(store.notes_dir.join(format!("ideas/{id}.md")).exists());
+        assert!(store.notes_dir.join("ideas/Moving.md").exists());
         assert!(
             !root_file.exists(),
             "old location should be removed after move"
@@ -2175,12 +2178,217 @@ mod tests {
             .id
             .clone();
         store.save().unwrap();
-        let file = store.notes_dir.join(format!("{id}.md"));
+        let file = store.notes_dir.join("Old.md");
 
         store.delete_note(&id);
         store.save().unwrap();
 
         assert!(!file.exists(), "the deleted note's file should be gone");
         assert_eq!(store.trashed().len(), 1, "and kept in the trash");
+    }
+
+    fn note_files(store: &Store) -> Vec<String> {
+        let mut paths = HashSet::new();
+        collect_md_paths(&store.notes_dir, &mut paths).unwrap();
+        let mut names: Vec<String> = paths
+            .iter()
+            .map(|p| {
+                p.strip_prefix(&store.notes_dir)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn notes_are_saved_under_their_titles() {
+        let (mut store, _tmp) = temp_store();
+        store
+            .create_note("Lecture 4", "BFS", vec![], "cs130")
+            .unwrap();
+        store.create_note("Reading list", "", vec![], "").unwrap();
+        store.save().unwrap();
+        assert_eq!(
+            note_files(&store),
+            ["Reading list.md", "cs130/Lecture 4.md"]
+        );
+    }
+
+    #[test]
+    fn notes_with_the_same_title_are_numbered_oldest_first() {
+        let (mut store, _tmp) = temp_store();
+        let older = store
+            .create_note("Same", "first", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        let newer = store
+            .create_note("Same", "second", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.find_note_mut(&newer).unwrap().created_at += chrono::Duration::seconds(5);
+        store.save().unwrap();
+
+        assert_eq!(note_files(&store), ["Same (2).md", "Same.md"]);
+        let first = fs::read_to_string(store.notes_dir.join("Same.md")).unwrap();
+        let second = fs::read_to_string(store.notes_dir.join("Same (2).md")).unwrap();
+        assert!(first.contains(&format!("id: {older}")), "{first}");
+        assert!(second.contains(&format!("id: {newer}")), "{second}");
+    }
+
+    #[test]
+    fn saving_again_changes_no_file_name() {
+        let (mut store, _tmp) = temp_store();
+        store.create_note("Same", "a", vec![], "").unwrap();
+        let newer = store
+            .create_note("Same", "b", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.find_note_mut(&newer).unwrap().created_at += chrono::Duration::seconds(5);
+        store.save().unwrap();
+        let first = note_files(&store);
+        store.save().unwrap();
+        assert_eq!(first, note_files(&store));
+    }
+
+    #[test]
+    fn a_file_another_program_put_in_the_way_is_never_overwritten() {
+        let (mut store, _tmp) = temp_store();
+        fs::write(
+            store.notes_dir.join("Taken.md"),
+            "written by another program",
+        )
+        .unwrap();
+        store.create_note("Taken", "mine", vec![], "").unwrap();
+        store.save().unwrap();
+        assert_eq!(
+            fs::read_to_string(store.notes_dir.join("Taken.md")).unwrap(),
+            "written by another program"
+        );
+        assert!(store.notes_dir.join("Taken (2).md").exists());
+    }
+
+    #[test]
+    fn renaming_a_note_moves_its_file() {
+        let (mut store, _tmp) = temp_store();
+        let id = store
+            .create_note("Old title", "x", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.save().unwrap();
+        store.find_note_mut(&id).unwrap().title = "New title".to_string();
+        store.save().unwrap();
+        assert_eq!(note_files(&store), ["New title.md"]);
+    }
+
+    #[test]
+    fn a_rename_that_only_changes_case_leaves_one_file() {
+        let (mut store, _tmp) = temp_store();
+        let id = store
+            .create_note("lower", "x", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.save().unwrap();
+        store.find_note_mut(&id).unwrap().title = "Lower".to_string();
+        store.save().unwrap();
+        assert_eq!(note_files(&store).len(), 1, "{:?}", note_files(&store));
+        assert!(Store::load_from(&store.notes_dir)
+            .unwrap()
+            .find_note(&id)
+            .is_some());
+    }
+
+    #[test]
+    fn titles_that_differ_only_by_case_get_separate_files() {
+        let (mut store, _tmp) = temp_store();
+        store.create_note("Notes", "a", vec![], "").unwrap();
+        store.create_note("notes", "b", vec![], "").unwrap();
+        store.save().unwrap();
+        assert_eq!(note_files(&store).len(), 2, "{:?}", note_files(&store));
+        assert_eq!(Store::load_from(&store.notes_dir).unwrap().notes.len(), 2);
+    }
+
+    #[test]
+    fn old_id_named_files_are_renamed_to_titles_on_the_next_save() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("notes");
+        fs::create_dir_all(dir.join("cs130")).unwrap();
+        let root = Note::new("Graphs", "BFS", vec![], "");
+        let nested = Note::new("Lecture", "DFS", vec![], "cs130");
+        fs::write(
+            dir.join(format!("{}.md", root.id)),
+            note_to_markdown(&root).unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("cs130").join(format!("{}.md", nested.id)),
+            note_to_markdown(&nested).unwrap(),
+        )
+        .unwrap();
+
+        let store = Store::load_from(&dir).unwrap();
+        store.save().unwrap();
+
+        assert_eq!(note_files(&store), ["Graphs.md", "cs130/Lecture.md"]);
+        let reloaded = Store::load_from(&dir).unwrap();
+        assert_eq!(reloaded.find_note(&root.id).unwrap().body, "BFS");
+        assert_eq!(reloaded.find_note(&nested.id).unwrap().directory, "cs130");
+    }
+
+    #[test]
+    fn a_second_deleted_note_with_the_same_name_does_not_replace_the_first_in_the_trash() {
+        let (mut store, _tmp) = temp_store();
+        let first = store
+            .create_note("Draft", "one", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.save().unwrap();
+        store.delete_note(&first);
+        store.save().unwrap();
+        let second = store
+            .create_note("Draft", "two", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.save().unwrap();
+        store.delete_note(&second);
+        store.save().unwrap();
+
+        let ids: HashSet<String> = store.trashed().into_iter().map(|t| t.id).collect();
+        assert_eq!(ids, HashSet::from([first, second]));
+    }
+
+    #[test]
+    fn upgrading_a_backup_leaves_a_clean_tree_with_the_renames_committed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("notes");
+        fs::create_dir_all(&dir).unwrap();
+        let note = Note::new("Graphs", "BFS", vec![], "");
+        fs::write(
+            dir.join(format!("{}.md", note.id)),
+            note_to_markdown(&note).unwrap(),
+        )
+        .unwrap();
+        crate::sync::init(&dir).unwrap();
+
+        let store = Store::load_from(&dir).unwrap();
+        store.save().unwrap();
+
+        assert_eq!(note_files(&store), ["Graphs.md"]);
+        let status = std::process::Command::new("git")
+            .args(["status", "--porcelain"])
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        let dirty = String::from_utf8_lossy(&status.stdout);
+        assert!(dirty.trim().is_empty(), "uncommitted: {dirty}");
     }
 }
