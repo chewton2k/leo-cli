@@ -108,6 +108,10 @@ pub const SECTIONS: &[Section] = &[
                 "Ctrl-P",
                 "pause or resume; paused audio is never transcribed",
             ),
+            e(
+                "↑↓",
+                "scroll back through the transcript (PgUp PgDn Home too; End returns); it follows again 10 s after you stop",
+            ),
             e("Esc", "press twice to stop and save"),
         ],
     },

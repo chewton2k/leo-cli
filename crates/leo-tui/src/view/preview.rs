@@ -24,6 +24,7 @@ pub enum Preview<'a> {
         points: Vec<String>,
         transcript: &'a str,
         jot: Option<&'a str>,
+        scroll: &'a super::livescroll::LiveScroll,
     },
     /// Free text: a streaming answer.
     Text {
@@ -49,14 +50,8 @@ pub fn render(
     cursor: Option<usize>,
     search: Option<&str>,
 ) {
-    if let Preview::Live {
-        paused,
-        points,
-        transcript,
-        jot,
-    } = preview
-    {
-        render_live(frame, area, *paused, points, transcript, *jot, focused);
+    if matches!(preview, Preview::Live { .. }) {
+        render_live(frame, area, preview, focused);
         return;
     }
     if matches!(preview, Preview::Empty) {
@@ -141,24 +136,28 @@ pub fn render(
 /// The recording view. The transcript is wrapped here rather than by the
 /// widget, so the newest words can be kept at the bottom of the pane as it
 /// grows; the typing box sits under it.
-fn render_live(
-    frame: &mut Frame,
-    area: Rect,
-    paused: bool,
-    points: &[String],
-    transcript: &str,
-    jot: Option<&str>,
-    focused: bool,
-) {
+fn render_live(frame: &mut Frame, area: Rect, preview: &Preview<'_>, focused: bool) {
     use ratatui::layout::{Constraint, Layout, Position};
+
+    let Preview::Live {
+        paused,
+        points,
+        transcript,
+        jot,
+        scroll,
+    } = preview
+    else {
+        return;
+    };
+    let (paused, jot) = (*paused, *jot);
 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(border(focused))
-        .title(if paused {
-            "live transcript — paused (Ctrl-P resumes)"
-        } else {
-            "live transcript"
+        .title(match (paused, scroll.is_following()) {
+            (true, _) => "live transcript — paused (Ctrl-P resumes)",
+            (false, true) => "live transcript",
+            (false, false) => "live transcript — scrolled back (End returns, or it does in 10 s)",
         });
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -202,8 +201,16 @@ fn render_live(
         ))]
     } else {
         let rows = wrap(transcript, text_area.width as usize);
-        let skip = rows.len().saturating_sub(text_area.height as usize);
-        rows.into_iter().skip(skip).map(TuiLine::from).collect()
+        let top = scroll.visible_top(
+            rows.len(),
+            text_area.height as usize,
+            std::time::Instant::now(),
+        );
+        rows.into_iter()
+            .skip(top)
+            .take(text_area.height as usize)
+            .map(TuiLine::from)
+            .collect()
     };
     frame.render_widget(Paragraph::new(text), text_area);
 

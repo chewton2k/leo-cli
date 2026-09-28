@@ -289,7 +289,8 @@ To record:
    points", with the time you typed them.
 4. **Need a break?** Press `Ctrl-P` to pause and again to resume. Anything
    said while paused is cut out: it is never transcribed or sent anywhere.
-5. Press `Esc` to stop. leo transcribes the whole recording again in one pass,
+5. Press `Esc` twice to stop (one press only asks, so an accidental key cannot
+   end a lecture). leo transcribes the whole recording again in one pass,
    writes the note, and selects it so you can read it straight away.
 
 The finished note has:
@@ -504,7 +505,9 @@ unique part of its title.
 | `?` / `q` | Help / quit |
 
 While recording: type a point, `Enter` adds it, `Ctrl-P` pauses or resumes,
-`Esc` stops and saves.
+`↑`/`↓` (or the mouse wheel, `PgUp`/`PgDn`, `Home`) scroll back through the
+transcript and `End` returns to the newest words, as does waiting 10 seconds;
+`Esc` twice stops and saves.
 
 The mouse works too: click to focus or select, scroll with the wheel.
 

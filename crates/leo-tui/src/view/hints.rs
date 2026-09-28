@@ -61,6 +61,7 @@ pub fn for_place(place: Place) -> &'static [(&'static str, &'static str)] {
             ("type", "a point"),
             ("Enter", "add point"),
             ("Ctrl-P", "pause"),
+            ("↑↓", "scroll back"),
             ("Esc", "twice stops and saves"),
         ],
     }

@@ -9,6 +9,7 @@ pub mod empty;
 pub mod help;
 pub mod hints;
 pub mod line;
+pub mod livescroll;
 pub mod markdown;
 pub mod menu;
 pub mod notes;
