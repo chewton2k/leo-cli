@@ -108,7 +108,7 @@ pub const SECTIONS: &[Section] = &[
                 "Ctrl-P",
                 "pause or resume; paused audio is never transcribed",
             ),
-            e("Esc", "stop and save"),
+            e("Esc", "press twice to stop and save"),
         ],
     },
     Section {
