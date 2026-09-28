@@ -26,6 +26,9 @@ impl Rgb {
     /// Parse `#rrggbb`, `rrggbb`, or `#rgb`.
     pub fn parse(text: &str) -> Option<Self> {
         let hex = text.trim().trim_start_matches('#');
+        if !hex.is_ascii() {
+            return None;
+        }
         match hex.len() {
             6 => Some(Self::new(
                 u8::from_str_radix(&hex[0..2], 16).ok()?,
@@ -346,5 +349,12 @@ mod tests {
         assert_eq!(Rgb::new(10, 10, 10).scaled(0.0), Rgb::new(0, 0, 0));
         // No overflow when a factor is above 1.
         assert_eq!(Rgb::new(200, 200, 200).scaled(4.0), Rgb::new(255, 255, 255));
+    }
+
+    #[test]
+    fn a_colour_with_wide_characters_is_rejected_not_a_panic() {
+        assert_eq!(Rgb::parse("abcéd"), None);
+        assert_eq!(Rgb::parse("#é1é"), None);
+        assert_eq!(Rgb::parse("세계"), None);
     }
 }

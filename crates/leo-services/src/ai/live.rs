@@ -164,7 +164,7 @@ fn repeated_word_count(previous_norm: &str, next_words: &[&str], max_words: usiz
         } else {
             MIN_MULTI_WORD_CHARS
         };
-        if candidate.len() < floor {
+        if candidate.chars().count() < floor {
             continue;
         }
         if previous_norm.ends_with(&candidate) {
@@ -195,7 +195,11 @@ pub fn stitch(previous: &str, segment: &str) -> String {
     // cheap as the transcript grows through a long lecture.
     let previous_norm = {
         let n = norm(previous);
-        let start = n.len().saturating_sub(TAIL_COMPARE_CHARS);
+        let start = n
+            .char_indices()
+            .rev()
+            .nth(TAIL_COMPARE_CHARS - 1)
+            .map_or(0, |(at, _)| at);
         n[start..].to_string()
     };
 
@@ -431,5 +435,32 @@ mod tests {
             transcript,
             "today we cover graphs and their traversals like BFS and DFS which uses a stack"
         );
+    }
+    #[test]
+    fn a_transcript_in_wide_characters_can_be_stitched_whatever_its_length() {
+        for count in 560..620 {
+            let previous = "세".repeat(count);
+            let stitched = stitch(&previous, "다음 문장");
+            assert!(stitched.ends_with("다음 문장"), "{count}: {stitched}");
+        }
+    }
+
+    #[test]
+    fn overlap_is_found_in_text_that_is_not_ascii() {
+        let previous = "모든 학생 여러분 오늘은 그래프 탐색을 배웁니다";
+        let segment = "그래프 탐색을 배웁니다 그리고 다음은 큐입니다";
+        assert_eq!(
+            stitch(previous, segment),
+            "모든 학생 여러분 오늘은 그래프 탐색을 배웁니다 그리고 다음은 큐입니다"
+        );
+    }
+
+    #[test]
+    fn accented_and_mixed_text_is_stitched_without_panicking() {
+        for pairs in 600..612 {
+            let previous = format!("{} déjà vu naïve café", "aü".repeat(pairs));
+            let stitched = stitch(&previous, "café au lait");
+            assert!(stitched.contains("au lait"), "{pairs}: {stitched}");
+        }
     }
 }
