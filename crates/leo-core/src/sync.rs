@@ -423,7 +423,7 @@ pub fn auto_commit(notes_dir: &Path) -> Result<()> {
 
 /// Files inside the notes directory that are leo's business, not the user's
 /// notes, and so must never be pushed to their remote.
-const GITIGNORE: &str = "*.wav\n*.bak\n.manual-installed\ndirectories.json\n.trash/\n";
+const GITIGNORE: &str = "*.wav\n*.bak\n.manual-installed\ndirectories.json\n.trash/\n.obsidian/\n";
 
 /// A note edited on two computers keeps both sides' lines rather than one
 /// side's edit being lost; the user tidies it, instead of it vanishing.
@@ -988,5 +988,22 @@ mod tests {
         .unwrap();
         now(&desktop).unwrap();
         assert!(!desktop.join("Shared (2).md").exists());
+    }
+
+    #[test]
+    fn obsidians_settings_folder_is_never_committed() {
+        let tmp = TempDir::new().unwrap();
+        let notes_dir = tmp.path().join("notes");
+        std::fs::create_dir_all(&notes_dir).unwrap();
+        init(&notes_dir).unwrap();
+        std::fs::create_dir_all(notes_dir.join(".obsidian")).unwrap();
+        std::fs::write(notes_dir.join(".obsidian/app.json"), "{}").unwrap();
+        std::fs::write(notes_dir.join("A.md"), "x").unwrap();
+
+        auto_commit(&notes_dir).unwrap();
+
+        let tracked = run_git(&notes_dir, &["ls-files"]).unwrap();
+        assert!(!tracked.contains(".obsidian"), "{tracked}");
+        assert!(tracked.contains("A.md"), "{tracked}");
     }
 }
