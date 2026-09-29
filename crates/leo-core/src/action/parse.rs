@@ -79,6 +79,7 @@ pub const VERBS: &[Verb] = &[
         "trash [restore <number> | empty]",
         "deleted notes: bring one back, or empty it",
     ),
+    v("obsidian", &[], "obsidian", "open your notes in Obsidian"),
     v(
         "doctor",
         &[],
@@ -384,6 +385,7 @@ pub fn parse(line: &str) -> Parsed {
 
         "help" | "?" => act(Action::Help),
         "doctor" => act(Action::Doctor),
+        "obsidian" => act(Action::Obsidian),
         "quit" | "exit" | "q" => act(Action::Quit),
 
         _ => match RETIRED.iter().find(|(alias, _, _)| *alias == verb.as_str()) {
@@ -650,6 +652,11 @@ mod parse_tests {
         assert_eq!(act("trash empty"), Action::Trash(TrashAction::Empty));
         assert!(matches!(parse("trash restore"), Parsed::Usage(_)));
         assert!(matches!(parse("trash bogus"), Parsed::Usage(_)));
+    }
+
+    #[test]
+    fn obsidian_opens_the_notes_in_obsidian() {
+        assert_eq!(act("obsidian"), Action::Obsidian);
     }
 
     #[test]

@@ -82,6 +82,7 @@ pub enum Action {
     Undo,
     Help,
     Doctor,
+    Obsidian,
     Quit,
 }
 
@@ -228,6 +229,7 @@ pub enum Effect {
     },
     ShowHelp,
     Doctor,
+    Obsidian,
     Quit,
     /// Shell out to git. Streams its own output.
     Sync(SyncAction),

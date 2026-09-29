@@ -316,6 +316,74 @@ fn a_note_written_by_another_app_shows_up_and_is_left_alone() {
     );
 }
 
+fn fake_opener(leo: &Leo) -> (PathBuf, PathBuf) {
+    let log = leo.home.path().join("opened");
+    let clipboard = leo.home.path().join("clipboard");
+    for name in ["open", "xdg-open"] {
+        let script = leo.bin.join(name);
+        std::fs::write(
+            &script,
+            format!("#!/bin/sh\nprintf '%s\\n' \"$1\" >> '{}'\n", log.display()),
+        )
+        .unwrap();
+        make_executable(&script);
+    }
+    for name in ["pbcopy", "wl-copy", "xclip", "xsel"] {
+        let script = leo.bin.join(name);
+        std::fs::write(
+            &script,
+            format!("#!/bin/sh\ncat > '{}'\n", clipboard.display()),
+        )
+        .unwrap();
+        make_executable(&script);
+    }
+    (log, clipboard)
+}
+
+#[test]
+fn obsidian_opens_the_notes_folder_through_its_link() {
+    let leo = Leo::new();
+    let (log, clipboard) = fake_opener(&leo);
+    let marker = leo.home.path().join("Obsidian.app");
+    std::fs::create_dir_all(&marker).unwrap();
+
+    let out = leo
+        .cmd(&["obsidian"])
+        .env("LEO_OBSIDIAN_APP", &marker)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", describe(&out));
+
+    let opened = std::fs::read_to_string(&log).unwrap();
+    assert!(opened.starts_with("obsidian://open?path=%2F"), "{opened}");
+    assert!(opened.contains("notes"), "{opened}");
+    let said = String::from_utf8_lossy(&out.stdout);
+    assert!(said.contains("Open folder as vault"), "{said}");
+    let copied = std::fs::read_to_string(&clipboard).unwrap();
+    assert!(
+        copied.ends_with("notes"),
+        "the folder's path was not copied: {copied}"
+    );
+}
+
+#[test]
+fn obsidian_without_it_installed_says_where_to_get_it() {
+    let leo = Leo::new();
+    let (log, _clipboard) = fake_opener(&leo);
+    let out = leo
+        .cmd(&["obsidian"])
+        .env("LEO_OBSIDIAN_APP", leo.home.path().join("missing"))
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("obsidian.md"),
+        "{}",
+        describe(&out)
+    );
+    assert!(!log.exists(), "opened something anyway");
+}
+
 fn tripwire(leo: &Leo) -> (PathBuf, PathBuf) {
     let ran = leo.home.path().join("installer-ran");
     let script = leo.home.path().join("tripwire.sh");

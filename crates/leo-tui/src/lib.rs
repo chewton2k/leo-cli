@@ -116,6 +116,7 @@ pub struct App {
     checking: Option<(task::Job, view::progress::Progress, Instant)>,
     probe: leo_services::doctor::Probe,
     gh_ready: fn() -> bool,
+    obsidian: fn(&std::path::Path) -> Result<leo_core::obsidian::Opened>,
     update: Option<std::sync::mpsc::Receiver<String>>,
     last_disk_check: Option<Instant>,
     last_push: Option<Instant>,
@@ -282,6 +283,7 @@ impl App {
             update: None,
             last_disk_check: None,
             gh_ready: leo_core::sync::gh_ready,
+            obsidian: leo_core::obsidian::open,
             last_push: None,
             unpushed: None,
             store,
@@ -1382,6 +1384,19 @@ impl App {
                 }
                 self.preview_scroll = 0;
                 self.focus = Pane::Preview;
+                Ok(())
+            }
+
+            Effect::Obsidian => {
+                match (self.obsidian)(&self.store.notes_dir) {
+                    Ok(opened) => {
+                        let lines = opened.describe().into_iter().map(Line::plain).collect();
+                        self.unpin();
+                        self.pinned = Some(("obsidian (Esc closes)".to_string(), lines));
+                        self.preview_scroll = 0;
+                    }
+                    Err(e) => self.say(Kind::Bad, e.to_string()),
+                }
                 Ok(())
             }
 

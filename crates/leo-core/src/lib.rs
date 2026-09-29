@@ -8,6 +8,7 @@ pub mod editor;
 pub mod filename;
 pub mod manual;
 pub mod notes;
+pub mod obsidian;
 pub mod paths;
 pub mod store;
 pub mod sync;
