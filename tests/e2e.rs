@@ -316,6 +316,52 @@ fn a_note_written_by_another_app_shows_up_and_is_left_alone() {
     );
 }
 
+#[test]
+fn leo_and_obsidian_work_on_the_same_notes_folder() {
+    let leo = Leo::new();
+    leo.ok(&["new", "cs130/ Lecture 4", "--body", "BFS uses a queue"]);
+    let cs130 = leo.notes_dir().join("cs130");
+    let lecture = cs130.join("Lecture 4.md");
+    assert!(lecture.is_file(), "not saved under its title");
+
+    std::fs::write(cs130.join("Office hours.md"), "Tuesday 3-5pm\n").unwrap();
+    let listed = leo.ok(&["list", "cs130"]);
+    assert!(listed.contains("Office hours"), "{listed}");
+
+    let renamed = cs130.join("Lecture 4 - BFS.md");
+    std::fs::rename(&lecture, &renamed).unwrap();
+    let with_alias = std::fs::read_to_string(&renamed).unwrap().replacen(
+        "tags:",
+        "aliases:\n- BFS lecture\ntags:",
+        1,
+    );
+    std::fs::write(&renamed, with_alias).unwrap();
+    let listed = leo.ok(&["list", "cs130"]);
+    assert!(
+        listed.contains("Lecture 4 - BFS"),
+        "rename not picked up:\n{listed}"
+    );
+
+    leo.ok(&["edit", "Lecture 4 - BFS"]);
+    let edited = std::fs::read_to_string(&renamed).unwrap();
+    assert!(edited.contains("written in the editor"), "{edited}");
+    assert!(
+        edited.contains("BFS lecture"),
+        "the alias was lost:\n{edited}"
+    );
+    assert!(!lecture.exists(), "the file was renamed back");
+
+    assert_eq!(
+        std::fs::read_to_string(cs130.join("Office hours.md")).unwrap(),
+        "Tuesday 3-5pm\n",
+        "a note leo did not change was rewritten"
+    );
+
+    leo.ok(&["delete", "Office hours", "--force"]);
+    assert!(!cs130.join("Office hours.md").exists());
+    assert!(leo.ok(&["trash"]).contains("Office hours"));
+}
+
 fn fake_opener(leo: &Leo) -> (PathBuf, PathBuf) {
     let log = leo.home.path().join("opened");
     let clipboard = leo.home.path().join("clipboard");
