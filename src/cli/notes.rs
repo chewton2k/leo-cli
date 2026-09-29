@@ -76,6 +76,7 @@ pub fn run(cmd: Commands) -> Result<()> {
         },
         Commands::Ask { id } => action::Action::Ask { note: id },
         Commands::Pin { id } => action::Action::Pin { note: id },
+        Commands::Obsidian => action::Action::Obsidian,
         Commands::Trash { command } => action::Action::Trash(match command {
             None => action::TrashAction::List,
             Some(super::TrashCommands::Restore { which }) => action::TrashAction::Restore {
@@ -119,6 +120,14 @@ fn absorb_cli(
 
     let next = match outcome.effect {
         action::Effect::None => return Ok(()),
+
+        action::Effect::Obsidian => {
+            let opened = leo_core::obsidian::open(&store.notes_dir)?;
+            for line in opened.describe() {
+                println!("  {line}");
+            }
+            return Ok(());
+        }
 
         action::Effect::ShowNote { id } => {
             if let Some(note) = store.find_note(&id) {

@@ -14,6 +14,7 @@ pub mod task;
 pub mod view;
 
 mod backup;
+mod disk;
 mod draw;
 mod filter;
 mod mouse;
@@ -115,7 +116,9 @@ pub struct App {
     checking: Option<(task::Job, view::progress::Progress, Instant)>,
     probe: leo_services::doctor::Probe,
     gh_ready: fn() -> bool,
+    obsidian: fn(&std::path::Path) -> Result<leo_core::obsidian::Opened>,
     update: Option<std::sync::mpsc::Receiver<String>>,
+    last_disk_check: Option<Instant>,
     last_push: Option<Instant>,
     /// How many commits are waiting, refreshed when the notes change rather than
     /// on every frame: it costs a git process.
@@ -278,7 +281,9 @@ impl App {
             checking: None,
             probe: leo_services::doctor::Probe::all(),
             update: None,
+            last_disk_check: None,
             gh_ready: leo_core::sync::gh_ready,
+            obsidian: leo_core::obsidian::open,
             last_push: None,
             unpushed: None,
             store,
@@ -1051,7 +1056,7 @@ impl App {
             // with the screen, and this is the one key a user will try when the
             // display looks wrong.
             Intent::Reload => {
-                self.store = Store::load_from(&self.store.notes_dir.clone())?;
+                self.store.refresh()?;
                 self.resync();
                 self.repaint = true;
                 self.say(Kind::Dim, "Reloaded.");
@@ -1379,6 +1384,19 @@ impl App {
                 }
                 self.preview_scroll = 0;
                 self.focus = Pane::Preview;
+                Ok(())
+            }
+
+            Effect::Obsidian => {
+                match (self.obsidian)(&self.store.notes_dir) {
+                    Ok(opened) => {
+                        let lines = opened.describe().into_iter().map(Line::plain).collect();
+                        self.unpin();
+                        self.pinned = Some(("obsidian (Esc closes)".to_string(), lines));
+                        self.preview_scroll = 0;
+                    }
+                    Err(e) => self.say(Kind::Bad, e.to_string()),
+                }
                 Ok(())
             }
 
@@ -1890,6 +1908,7 @@ fn event_loop<B: TuiBackend>(terminal: &mut Terminal<B>, app: &mut App) -> Resul
             app.pump_tasks(terminal)?;
             app.pump_doctor();
             app.pump_update();
+            app.maybe_reload_from_disk();
             app.pump_diagnostics();
             // Only when there is no input to handle: an automatic backup must
             // never compete with the user's typing.

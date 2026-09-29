@@ -1,25 +1,27 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
+use crate::filename;
 use crate::notes::Note;
 
 // ── Frontmatter serialization ───────────────────────────────────────────────
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize)]
 struct NoteFrontmatter {
     id: String,
     title: String,
-    #[serde(default)]
     tags: Vec<String>,
     created_at: chrono::DateTime<chrono::Utc>,
     updated_at: chrono::DateTime<chrono::Utc>,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pinned: bool,
+    #[serde(flatten)]
+    extra: serde_yaml::Mapping,
 }
 
 fn note_to_markdown(note: &Note) -> Result<String> {
@@ -30,40 +32,235 @@ fn note_to_markdown(note: &Note) -> Result<String> {
         created_at: note.created_at,
         updated_at: note.updated_at,
         pinned: note.pinned,
+        extra: note.extra.clone(),
     };
     let yaml = serde_yaml::to_string(&fm)?;
     Ok(format!("---\n{}---\n\n{}", yaml, note.body))
 }
 
-fn parse_note_from_markdown(content: &str, relative_path: &Path) -> Result<Note> {
-    let rest = content
-        .strip_prefix("---\n")
-        .context("note file missing opening ---")?;
-    let end = rest
-        .find("\n---\n")
-        .context("note file missing closing ---")?;
-    let yaml_str = &rest[..end];
-    let body = rest[end + 5..].trim_start_matches('\n').to_string();
+fn fnv1a(data: &[u8], seed: u64) -> u64 {
+    let mut hash = seed;
+    for byte in data {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
 
-    let fm: NoteFrontmatter =
-        serde_yaml::from_str(yaml_str).context("failed to parse frontmatter")?;
+fn stable_id(relative_path: &Path) -> String {
+    let text = relative_path.to_string_lossy().replace('\\', "/");
+    let mut bytes = [0u8; 16];
+    bytes[..8].copy_from_slice(&fnv1a(text.as_bytes(), 0xcbf2_9ce4_8422_2325).to_be_bytes());
+    bytes[8..].copy_from_slice(&fnv1a(text.as_bytes(), 0x8422_2325_cbf2_9ce4).to_be_bytes());
+    uuid::Builder::from_custom_bytes(bytes)
+        .into_uuid()
+        .to_string()
+}
+
+fn split_front_matter(text: &str) -> Result<(Option<serde_yaml::Mapping>, String)> {
+    let Some(rest) = text.strip_prefix("---\n") else {
+        return Ok((None, text.to_string()));
+    };
+    let (yaml, body) = if let Some(after) = rest.strip_prefix("---\n") {
+        ("", after)
+    } else if rest == "---" {
+        ("", "")
+    } else if let Some(end) = rest.find("\n---\n") {
+        (&rest[..end], &rest[end + 5..])
+    } else if let Some(yaml) = rest.strip_suffix("\n---") {
+        (yaml, "")
+    } else {
+        return Ok((None, text.to_string()));
+    };
+    let value: serde_yaml::Value =
+        serde_yaml::from_str(yaml).context("failed to parse frontmatter")?;
+    let props = match value {
+        serde_yaml::Value::Mapping(map) => map,
+        serde_yaml::Value::Null => serde_yaml::Mapping::new(),
+        _ => return Ok((None, text.to_string())),
+    };
+    Ok((Some(props), body.trim_start_matches('\n').to_string()))
+}
+
+fn tags_from(value: serde_yaml::Value) -> Vec<String> {
+    let raw: Vec<String> = match value {
+        serde_yaml::Value::Sequence(items) => items
+            .into_iter()
+            .filter_map(|item| match item {
+                serde_yaml::Value::String(s) => Some(s),
+                serde_yaml::Value::Number(n) => Some(n.to_string()),
+                _ => None,
+            })
+            .collect(),
+        serde_yaml::Value::String(s) => s
+            .split(|c: char| c == ',' || c.is_whitespace())
+            .map(str::to_string)
+            .collect(),
+        _ => Vec::new(),
+    };
+    let mut tags: Vec<String> = Vec::new();
+    for tag in raw {
+        let tag = tag.trim().trim_start_matches('#').to_string();
+        if !tag.is_empty() && !tags.contains(&tag) {
+            tags.push(tag);
+        }
+    }
+    tags
+}
+
+fn date_from(value: serde_yaml::Value) -> Option<DateTime<Utc>> {
+    value
+        .as_str()
+        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+        .map(|d| d.with_timezone(&Utc))
+}
+
+fn text_from(value: Option<serde_yaml::Value>) -> Option<String> {
+    value
+        .and_then(|v| v.as_str().map(str::to_string))
+        .filter(|s| !s.trim().is_empty())
+}
+
+fn parse_note_from_markdown(
+    content: &str,
+    relative_path: &Path,
+    modified: DateTime<Utc>,
+) -> Result<Note> {
+    let text = content
+        .strip_prefix('\u{feff}')
+        .unwrap_or(content)
+        .replace("\r\n", "\n");
+    let (front, body) = split_front_matter(&text)?;
+    let mut props = front.unwrap_or_default();
 
     let directory = relative_path
         .parent()
         .and_then(|p| if p == Path::new("") { None } else { p.to_str() })
         .unwrap_or("")
         .to_string();
+    let stem = relative_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("note")
+        .to_string();
+
+    let id = text_from(props.remove("id")).unwrap_or_else(|| stable_id(relative_path));
+    let header_title = text_from(props.remove("title")).unwrap_or_else(|| stem.clone());
+    let title =
+        if uuid::Uuid::parse_str(&stem).is_ok() || filename::matches_title(&stem, &header_title) {
+            header_title
+        } else {
+            stem.clone()
+        };
+    let tags = props.remove("tags").map(tags_from).unwrap_or_default();
+    let created_at = props
+        .remove("created_at")
+        .and_then(date_from)
+        .unwrap_or(modified);
+    let updated_at = props
+        .remove("updated_at")
+        .and_then(date_from)
+        .unwrap_or(modified);
+    let pinned = props
+        .remove("pinned")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     Ok(Note {
-        id: fm.id,
-        title: fm.title,
+        id,
+        title,
         body,
-        tags: fm.tags,
+        tags,
         directory,
-        created_at: fm.created_at,
-        updated_at: fm.updated_at,
-        pinned: fm.pinned,
+        created_at,
+        updated_at,
+        pinned,
+        extra: props,
     })
+}
+
+fn modified_time(path: &Path) -> DateTime<Utc> {
+    fs::metadata(path)
+        .and_then(|m| m.modified())
+        .map(DateTime::<Utc>::from)
+        .unwrap_or_else(|_| Utc::now())
+}
+
+pub const CONFLICT_SUFFIX: &str = " (conflict from leo)";
+
+fn conflict_notice(title: &str) -> String {
+    format!(
+        "\"{title}\" was changed by another program while leo had it open, so leo kept your edit as \"{title}{CONFLICT_SUFFIX}\""
+    )
+}
+
+#[derive(Debug, Clone)]
+struct Seen {
+    path: PathBuf,
+    disk: u64,
+    model: u64,
+}
+
+fn hash_str(text: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn write_atomic(path: &Path, text: &str) -> Result<()> {
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("note");
+    let temp = path.with_file_name(format!(".{name}.leo-tmp"));
+    fs::write(&temp, text)?;
+    if let Err(e) = fs::rename(&temp, path) {
+        let _ = fs::remove_file(&temp);
+        return Err(e.into());
+    }
+    Ok(())
+}
+
+fn is_clean(path: &Path, expected: u64) -> bool {
+    fs::read_to_string(path).is_ok_and(|text| hash_str(&text) == expected)
+}
+
+fn fingerprint_of(notes_dir: &Path) -> u64 {
+    let mut paths = HashSet::new();
+    let _ = collect_md_paths(notes_dir, &mut paths);
+    paths.iter().fold(0u64, |sum, path| {
+        let (len, nanos) = fs::metadata(path)
+            .map(|m| {
+                let nanos = m
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map_or(0, |d| d.as_nanos());
+                (m.len(), nanos)
+            })
+            .unwrap_or((0, 0));
+        sum.wrapping_add(hash_str(&format!("{}|{len}|{nanos}", path.display())))
+    })
+}
+
+fn same_file(a: &Path, b: &Path) -> bool {
+    match (fs::canonicalize(a), fs::canonicalize(b)) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => a == b,
+    }
+}
+
+fn unique_path(wanted: &Path) -> PathBuf {
+    if !wanted.exists() {
+        return wanted.to_path_buf();
+    }
+    let stem = wanted
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("note");
+    let ext = wanted.extension().and_then(|e| e.to_str()).unwrap_or("md");
+    (2..)
+        .map(|n| wanted.with_file_name(format!("{}.{ext}", filename::numbered(stem, n))))
+        .find(|candidate| !candidate.exists())
+        .expect("an unused name exists")
 }
 
 // ── Filesystem helpers ──────────────────────────────────────────────────────
@@ -138,7 +335,12 @@ fn trash_entries(notes_dir: &Path) -> Vec<(PathBuf, Note, DateTime<Utc>)> {
         .into_iter()
         .filter_map(|path| {
             let text = fs::read_to_string(&path).ok()?;
-            let note = parse_note_from_markdown(&text, path.strip_prefix(&trash).ok()?).ok()?;
+            let note = parse_note_from_markdown(
+                &text,
+                path.strip_prefix(&trash).ok()?,
+                modified_time(&path),
+            )
+            .ok()?;
             let at = fs::metadata(&path).and_then(|m| m.modified()).ok()?;
             Some((path, note, DateTime::<Utc>::from(at)))
         })
@@ -170,27 +372,32 @@ fn add_with_parents(directories: &mut Vec<String>, dir: &str) {
 fn collect_notes(
     notes_dir: &Path,
     dir: &Path,
-    notes: &mut Vec<Note>,
+    found: &mut Vec<(PathBuf, Note, String, std::time::SystemTime)>,
     unreadable: &mut Vec<(PathBuf, String)>,
 ) -> Result<()> {
     if !dir.exists() {
         return Ok(());
     }
     for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
+        let path = entry?.path();
         if path.is_dir() {
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if !name.starts_with('.') {
-                collect_notes(notes_dir, &path, notes, unreadable)?;
+                collect_notes(notes_dir, &path, found, unreadable)?;
             }
         } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
             let content = fs::read_to_string(&path)?;
             let relative = path
                 .strip_prefix(notes_dir)
-                .context("path outside notes_dir")?;
-            match parse_note_from_markdown(&content, relative) {
-                Ok(note) => notes.push(note),
+                .context("path outside notes_dir")?
+                .to_path_buf();
+            match parse_note_from_markdown(&content, &relative, modified_time(&path)) {
+                Ok(note) => {
+                    let modified = fs::metadata(&path)
+                        .and_then(|m| m.modified())
+                        .unwrap_or(std::time::UNIX_EPOCH);
+                    found.push((relative, note, content, modified));
+                }
                 Err(e) => {
                     crate::diag::warn(format!("skipping {}: {e}", path.display()));
                     unreadable.push((path.clone(), e.to_string()));
@@ -199,6 +406,35 @@ fn collect_notes(
         }
     }
     Ok(())
+}
+
+fn index_notes(
+    mut found: Vec<(PathBuf, Note, String, std::time::SystemTime)>,
+) -> (Vec<Note>, HashMap<String, Seen>) {
+    found.sort_by(|a, b| (a.3, &a.0).cmp(&(b.3, &b.0)));
+    let mut notes = Vec::with_capacity(found.len());
+    let mut seen = HashMap::new();
+    for (relative, mut note, content, _) in found {
+        if seen.contains_key(&note.id) {
+            note.id = stable_id(&relative);
+            if seen.contains_key(&note.id) {
+                note.id = uuid::Uuid::new_v4().to_string();
+            }
+        }
+        let model = note_to_markdown(&note)
+            .map(|text| hash_str(&text))
+            .unwrap_or(0);
+        seen.insert(
+            note.id.clone(),
+            Seen {
+                path: relative,
+                disk: hash_str(&content),
+                model,
+            },
+        );
+        notes.push(note);
+    }
+    (notes, seen)
 }
 
 // ── Store ───────────────────────────────────────────────────────────────────
@@ -271,7 +507,8 @@ pub struct Store {
     /// Most recent change last. Not persisted: undo covers a session, and a
     /// deletion that survived a restart is a decision the user has lived with.
     undo: Vec<Undoable>,
-    known: std::cell::RefCell<HashSet<String>>,
+    seen: std::cell::RefCell<HashMap<String, Seen>>,
+    fingerprint: std::cell::Cell<u64>,
 }
 
 impl Store {
@@ -303,9 +540,10 @@ impl Store {
     pub fn load_from(notes_dir: &Path) -> Result<Self> {
         fs::create_dir_all(notes_dir)?;
         let directories = load_directories(notes_dir)?;
-        let mut notes = Vec::new();
+        let mut found = Vec::new();
         let mut unreadable = Vec::new();
-        collect_notes(notes_dir, notes_dir, &mut notes, &mut unreadable)?;
+        collect_notes(notes_dir, notes_dir, &mut found, &mut unreadable)?;
+        let (notes, seen) = index_notes(found);
 
         // The directory list on disk only needs to remember empty directories:
         // every note's directory, and its parents, is known from where it is.
@@ -314,9 +552,9 @@ impl Store {
             add_with_parents(&mut directories, &note.directory);
         }
         tidy_trash(notes_dir, &notes.iter().map(|n| n.id.as_str()).collect());
-        let known = notes.iter().map(|n| n.id.clone()).collect();
         Ok(Store {
-            known: std::cell::RefCell::new(known),
+            seen: std::cell::RefCell::new(seen),
+            fingerprint: std::cell::Cell::new(fingerprint_of(notes_dir)),
             unreadable,
             undo: Vec::new(),
             notes,
@@ -325,59 +563,114 @@ impl Store {
         })
     }
 
-    /// All `.md` files in `notes_dir` are owned by the store — any file not
     pub fn save(&self) -> Result<()> {
         fs::create_dir_all(&self.notes_dir)?;
+        let mut seen = self.seen.borrow_mut();
+        let targets = self.assign_paths(&seen);
+        let live: HashSet<&str> = self.notes.iter().map(|n| n.id.as_str()).collect();
 
-        // Snapshot existing .md paths before writing
-        let mut old_paths: HashSet<PathBuf> = HashSet::new();
-        collect_md_paths(&self.notes_dir, &mut old_paths)?;
-
-        // Write all current notes
-        let mut new_paths: HashSet<PathBuf> = HashSet::new();
         for note in &self.notes {
-            let file_path = self.note_path(note);
-            if let Some(parent) = file_path.parent() {
+            let target = targets[&note.id].clone();
+            let content = note_to_markdown(note)?;
+            let model = hash_str(&content);
+            let previous = seen.get(&note.id).cloned();
+
+            if let Some(previous) = &previous {
+                let old_path = self.notes_dir.join(&previous.path);
+                if previous.model == model && old_path == target {
+                    continue;
+                }
+                if !is_clean(&old_path, previous.disk) {
+                    if previous.model != model {
+                        self.conflict_copy(note)?;
+                        if let Some(entry) = seen.get_mut(&note.id) {
+                            entry.model = model;
+                        }
+                    }
+                    continue;
+                }
+            }
+
+            if let Some(parent) = target.parent() {
                 fs::create_dir_all(parent)?;
             }
-            fs::write(&file_path, note_to_markdown(note)?)?;
-            new_paths.insert(file_path);
+            write_atomic(&target, &content)?;
+            if let Some(previous) = &previous {
+                let old_path = self.notes_dir.join(&previous.path);
+                if !same_file(&old_path, &target) {
+                    let _ = fs::remove_file(old_path);
+                }
+            }
+            let relative = target
+                .strip_prefix(&self.notes_dir)
+                .context("path outside notes_dir")?
+                .to_path_buf();
+            seen.insert(
+                note.id.clone(),
+                Seen {
+                    path: relative,
+                    disk: model,
+                    model,
+                },
+            );
         }
 
-        let live: HashSet<&str> = self.notes.iter().map(|n| n.id.as_str()).collect();
-        let mut known = self.known.borrow_mut();
-        known.extend(live.iter().map(|id| id.to_string()));
-        for old_path in &old_paths {
-            if new_paths.contains(old_path) || self.unreadable.iter().any(|(p, _)| p == old_path) {
-                continue;
-            }
-            let Some(id) = fs::read_to_string(old_path)
-                .ok()
-                .and_then(|text| parse_note_from_markdown(&text, Path::new("note.md")).ok())
-                .map(|note| note.id)
-            else {
+        let gone: Vec<String> = seen
+            .keys()
+            .filter(|id| !live.contains(id.as_str()))
+            .cloned()
+            .collect();
+        for id in gone {
+            let Some(entry) = seen.remove(&id) else {
                 continue;
             };
-            if live.contains(id.as_str()) {
-                fs::remove_file(old_path)?;
-            } else if known.contains(&id) {
-                self.move_to_trash(old_path)?;
+            let path = self.notes_dir.join(&entry.path);
+            if is_clean(&path, entry.disk) {
+                self.move_to_trash(&path)?;
             }
         }
-        drop(known);
+        drop(seen);
         tidy_trash(&self.notes_dir, &live);
 
         save_directories(&self.notes_dir, &self.directories)?;
 
-        // Auto-commit if git repo is initialized (non-fatal — notes are saved regardless)
         if crate::sync::is_initialized(&self.notes_dir) {
             if let Err(e) = crate::sync::auto_commit(&self.notes_dir) {
-                // Every save reaches here, including from the TUI, so this must
-                // never write to the terminal directly.
                 crate::diag::warn(format!("sync auto-commit failed: {e}"));
             }
         }
 
+        self.fingerprint.set(fingerprint_of(&self.notes_dir));
+        Ok(())
+    }
+
+    pub fn changed_on_disk(&self) -> bool {
+        fingerprint_of(&self.notes_dir) != self.fingerprint.get()
+    }
+
+    pub fn refresh(&mut self) -> Result<()> {
+        let undo = std::mem::take(&mut self.undo);
+        *self = Store::load_from(&self.notes_dir.clone())?;
+        self.undo = undo;
+        Ok(())
+    }
+
+    fn conflict_copy(&self, note: &Note) -> Result<()> {
+        let mut copy = note.clone();
+        copy.id = uuid::Uuid::new_v4().to_string();
+        copy.title = format!("{}{CONFLICT_SUFFIX}", note.title);
+        copy.pinned = false;
+        let dir = if copy.directory.is_empty() {
+            self.notes_dir.clone()
+        } else {
+            self.notes_dir.join(&copy.directory)
+        };
+        let path = unique_path(&dir.join(format!("{}.md", filename::file_name(&copy.title))));
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        write_atomic(&path, &note_to_markdown(&copy)?)?;
+        crate::diag::warn(conflict_notice(&note.title));
         Ok(())
     }
 
@@ -385,7 +678,7 @@ impl Store {
         let relative = path
             .strip_prefix(&self.notes_dir)
             .context("path outside notes_dir")?;
-        let dest = self.notes_dir.join(TRASH).join(relative);
+        let dest = unique_path(&self.notes_dir.join(TRASH).join(relative));
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -433,16 +726,40 @@ impl Store {
         Ok(entries.len())
     }
 
-    /// Returns the expected .md file path for a note.
-    /// Assumes `note.directory` is a clean relative path with no `..` components.
-    fn note_path(&self, note: &Note) -> PathBuf {
-        if note.directory.is_empty() {
-            self.notes_dir.join(format!("{}.md", note.id))
-        } else {
-            self.notes_dir
-                .join(&note.directory)
-                .join(format!("{}.md", note.id))
+    fn assign_paths(&self, seen: &HashMap<String, Seen>) -> HashMap<String, PathBuf> {
+        let mut order: Vec<&Note> = self.notes.iter().collect();
+        order.sort_by(|a, b| (a.created_at, &a.id).cmp(&(b.created_at, &b.id)));
+        let mut taken: HashSet<String> = HashSet::new();
+        let mut targets = HashMap::new();
+        for note in order {
+            let dir = if note.directory.is_empty() {
+                self.notes_dir.clone()
+            } else {
+                self.notes_dir.join(&note.directory)
+            };
+            let base = filename::file_name(&note.title);
+            let own = seen.get(&note.id).map(|s| {
+                self.notes_dir
+                    .join(&s.path)
+                    .to_string_lossy()
+                    .to_lowercase()
+            });
+            for n in 1.. {
+                let candidate = dir.join(format!("{}.md", filename::numbered(&base, n)));
+                let key = candidate.to_string_lossy().to_lowercase();
+                if taken.contains(&key) {
+                    continue;
+                }
+                let is_own = own.as_deref() == Some(key.as_str());
+                if !is_own && candidate.exists() {
+                    continue;
+                }
+                taken.insert(key);
+                targets.insert(note.id.clone(), candidate);
+                break;
+            }
         }
+        targets
     }
 
     /// Create and store a new note, returning a reference to it.
@@ -1049,6 +1366,7 @@ mod tests {
                 .unwrap()
                 .with_timezone(&chrono::Utc),
             pinned: false,
+            extra: Default::default(),
         }
     }
 
@@ -1163,7 +1481,12 @@ mod tests {
     fn test_note_roundtrip() {
         let note = make_note();
         let md = note_to_markdown(&note).unwrap();
-        let parsed = parse_note_from_markdown(&md, std::path::Path::new("550e8400.md")).unwrap();
+        let parsed = parse_note_from_markdown(
+            &md,
+            std::path::Path::new("Test Note.md"),
+            chrono::Utc::now(),
+        )
+        .unwrap();
         assert_eq!(parsed.id, note.id);
         assert_eq!(parsed.title, note.title);
         assert_eq!(parsed.body, note.body);
@@ -1175,48 +1498,13 @@ mod tests {
     fn test_directory_derived_from_path() {
         let note = make_note();
         let md = note_to_markdown(&note).unwrap();
-        let parsed =
-            parse_note_from_markdown(&md, std::path::Path::new("cs162/lec/550e8400.md")).unwrap();
+        let parsed = parse_note_from_markdown(
+            &md,
+            std::path::Path::new("cs162/lec/550e8400.md"),
+            chrono::Utc::now(),
+        )
+        .unwrap();
         assert_eq!(parsed.directory, "cs162/lec");
-    }
-
-    #[test]
-    fn test_note_path_root() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let notes_dir = tmp.path().join("notes");
-        let store = Store {
-            unreadable: Vec::new(),
-            notes: vec![],
-            directories: vec![],
-            notes_dir: notes_dir.clone(),
-            undo: Vec::new(),
-            known: Default::default(),
-        };
-        let note = make_note();
-        assert_eq!(
-            store.note_path(&note),
-            notes_dir.join("550e8400-e29b-41d4-a716-446655440000.md")
-        );
-    }
-
-    #[test]
-    fn test_note_path_subdir() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let notes_dir = tmp.path().join("notes");
-        let store = Store {
-            unreadable: Vec::new(),
-            notes: vec![],
-            directories: vec![],
-            notes_dir: notes_dir.clone(),
-            undo: Vec::new(),
-            known: Default::default(),
-        };
-        let mut note = make_note();
-        note.directory = "cs162/lec".to_string();
-        assert_eq!(
-            store.note_path(&note),
-            notes_dir.join("cs162/lec/550e8400-e29b-41d4-a716-446655440000.md")
-        );
     }
 
     #[test]
@@ -1262,43 +1550,14 @@ mod tests {
         let store = Store {
             unreadable: Vec::new(),
             undo: Vec::new(),
-            known: Default::default(),
+            seen: Default::default(),
+            fingerprint: Default::default(),
             notes: vec![make_note()],
             directories: vec![],
             notes_dir: notes_dir.clone(),
         };
         store.save().unwrap();
-        assert!(notes_dir
-            .join("550e8400-e29b-41d4-a716-446655440000.md")
-            .exists());
-    }
-
-    #[test]
-    fn test_save_trashes_a_note_it_no_longer_has() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let notes_dir = tmp.path().join("notes");
-        std::fs::create_dir_all(&notes_dir).unwrap();
-
-        let orphan = notes_dir.join("deadbeef-0000-0000-0000-000000000000.md");
-        std::fs::write(&orphan, "---\nid: deadbeef-0000-0000-0000-000000000000\ntitle: Old\ntags: []\ncreated_at: '2026-01-01T00:00:00Z'\nupdated_at: '2026-01-01T00:00:00Z'\n---\n\nbody").unwrap();
-
-        let store = Store {
-            unreadable: Vec::new(),
-            undo: Vec::new(),
-            known: std::cell::RefCell::new(HashSet::from([
-                "deadbeef-0000-0000-0000-000000000000".to_string()
-            ])),
-            notes: vec![make_note()],
-            directories: vec![],
-            notes_dir: notes_dir.clone(),
-        };
-        store.save().unwrap();
-
-        assert!(!orphan.exists(), "orphaned file should be removed");
-        assert_eq!(store.trashed().len(), 1, "and kept in the trash");
-        assert!(notes_dir
-            .join("550e8400-e29b-41d4-a716-446655440000.md")
-            .exists());
+        assert!(notes_dir.join("Test Note.md").exists());
     }
 
     #[test]
@@ -1333,49 +1592,6 @@ mod tests {
     }
 
     #[test]
-    fn test_save_handles_directory_move() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let notes_dir = tmp.path().join("notes");
-        std::fs::create_dir_all(&notes_dir).unwrap();
-
-        let note = make_note();
-        let store = Store {
-            unreadable: Vec::new(),
-            undo: Vec::new(),
-            known: Default::default(),
-            notes: vec![note.clone()],
-            directories: vec![],
-            notes_dir: notes_dir.clone(),
-        };
-        store.save().unwrap();
-        assert!(notes_dir
-            .join("550e8400-e29b-41d4-a716-446655440000.md")
-            .exists());
-
-        let mut moved = note.clone();
-        moved.directory = "ideas".to_string();
-        let store2 = Store {
-            unreadable: Vec::new(),
-            undo: Vec::new(),
-            known: Default::default(),
-            notes: vec![moved],
-            directories: vec!["ideas".to_string()],
-            notes_dir: notes_dir.clone(),
-        };
-        store2.save().unwrap();
-
-        assert!(notes_dir
-            .join("ideas/550e8400-e29b-41d4-a716-446655440000.md")
-            .exists());
-        assert!(
-            !notes_dir
-                .join("550e8400-e29b-41d4-a716-446655440000.md")
-                .exists(),
-            "old location should be removed after move"
-        );
-    }
-
-    #[test]
     fn test_save_auto_commits_when_initialized() {
         let tmp = tempfile::TempDir::new().unwrap();
         let notes_dir = tmp.path().join("notes");
@@ -1386,7 +1602,8 @@ mod tests {
         let store = Store {
             unreadable: Vec::new(),
             undo: Vec::new(),
-            known: Default::default(),
+            seen: Default::default(),
+            fingerprint: Default::default(),
             notes: vec![make_note()],
             directories: vec![],
             notes_dir: notes_dir.clone(),
@@ -1976,7 +2193,11 @@ mod tests {
 
         let path = trash_files(&store)
             .into_iter()
-            .find(|p| p.to_string_lossy().contains(&old))
+            .find(|p| {
+                fs::read_to_string(p)
+                    .unwrap()
+                    .contains(&format!("id: {old}"))
+            })
             .unwrap();
         let long_ago =
             std::time::SystemTime::now() - std::time::Duration::from_secs(31 * 24 * 3600);
@@ -2058,5 +2279,734 @@ mod tests {
         );
         let trashed: Vec<String> = now.trashed().into_iter().map(|t| t.id).collect();
         assert_eq!(trashed, vec![mine], "trashed a note it never had");
+    }
+
+    fn set_mtime_to_the_past(path: &Path) {
+        let long_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(long_ago)
+            .unwrap();
+    }
+
+    #[test]
+    fn saving_rewrites_only_the_notes_that_changed() {
+        let (mut store, _tmp) = temp_store();
+        store.create_note("Kept", "same", vec![], "").unwrap();
+        let edited = store
+            .create_note("Edited", "before", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.save().unwrap();
+        let dir = store.notes_dir.clone();
+        let file_of = |title: &str| dir.join(format!("{title}.md"));
+        set_mtime_to_the_past(&file_of("Kept"));
+        set_mtime_to_the_past(&file_of("Edited"));
+        let modified = |title: &str| fs::metadata(file_of(title)).unwrap().modified().unwrap();
+        let kept_time = modified("Kept");
+        let edited_time = modified("Edited");
+
+        store.find_note_mut(&edited).unwrap().body = "after".to_string();
+        store.save().unwrap();
+
+        assert_eq!(
+            modified("Kept"),
+            kept_time,
+            "an unchanged note was rewritten"
+        );
+        assert!(
+            modified("Edited") > edited_time,
+            "an edited note was not written"
+        );
+        assert!(fs::read_to_string(file_of("Edited"))
+            .unwrap()
+            .contains("after"));
+    }
+
+    #[test]
+    fn saving_one_note_leaves_another_programs_edit_to_a_different_note_alone() {
+        let (mut store, _tmp) = temp_store();
+        let mine = store
+            .create_note("Mine", "a", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.create_note("Theirs", "b", vec![], "").unwrap();
+        store.save().unwrap();
+        let theirs_file = store.notes_dir.join("Theirs.md");
+        let edited = fs::read_to_string(&theirs_file)
+            .unwrap()
+            .replace("\n\nb", "\n\nb edited elsewhere");
+        fs::write(&theirs_file, &edited).unwrap();
+
+        store.find_note_mut(&mine).unwrap().body = "a2".to_string();
+        store.save().unwrap();
+
+        assert_eq!(fs::read_to_string(&theirs_file).unwrap(), edited);
+    }
+
+    #[test]
+    fn deleting_a_note_that_was_edited_elsewhere_keeps_the_edit() {
+        let (mut store, _tmp) = temp_store();
+        let id = store
+            .create_note("Shared", "one", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.save().unwrap();
+        let file = store.notes_dir.join("Shared.md");
+        fs::write(
+            &file,
+            fs::read_to_string(&file)
+                .unwrap()
+                .replace("one", "one and more"),
+        )
+        .unwrap();
+
+        store.delete_note(&id);
+        store.save().unwrap();
+
+        assert!(file.exists(), "the other program's edit was moved away");
+        assert!(store.trashed().is_empty());
+    }
+
+    #[test]
+    fn test_save_handles_directory_move() {
+        let (mut store, _tmp) = temp_store();
+        store.create_dir("ideas");
+        let id = store
+            .create_note("Moving", "body", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.save().unwrap();
+        let root_file = store.notes_dir.join("Moving.md");
+        assert!(root_file.exists());
+
+        store.move_note(&id, "ideas").unwrap();
+        store.save().unwrap();
+
+        assert!(store.notes_dir.join("ideas/Moving.md").exists());
+        assert!(
+            !root_file.exists(),
+            "old location should be removed after move"
+        );
+    }
+
+    #[test]
+    fn test_save_trashes_a_note_it_no_longer_has() {
+        let (mut store, _tmp) = temp_store();
+        let id = store
+            .create_note("Old", "body", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.save().unwrap();
+        let file = store.notes_dir.join("Old.md");
+
+        store.delete_note(&id);
+        store.save().unwrap();
+
+        assert!(!file.exists(), "the deleted note's file should be gone");
+        assert_eq!(store.trashed().len(), 1, "and kept in the trash");
+    }
+
+    fn note_files(store: &Store) -> Vec<String> {
+        let mut paths = HashSet::new();
+        collect_md_paths(&store.notes_dir, &mut paths).unwrap();
+        let mut names: Vec<String> = paths
+            .iter()
+            .map(|p| {
+                p.strip_prefix(&store.notes_dir)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn notes_are_saved_under_their_titles() {
+        let (mut store, _tmp) = temp_store();
+        store
+            .create_note("Lecture 4", "BFS", vec![], "cs130")
+            .unwrap();
+        store.create_note("Reading list", "", vec![], "").unwrap();
+        store.save().unwrap();
+        assert_eq!(
+            note_files(&store),
+            ["Reading list.md", "cs130/Lecture 4.md"]
+        );
+    }
+
+    #[test]
+    fn notes_with_the_same_title_are_numbered_oldest_first() {
+        let (mut store, _tmp) = temp_store();
+        let older = store
+            .create_note("Same", "first", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        let newer = store
+            .create_note("Same", "second", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.find_note_mut(&newer).unwrap().created_at += chrono::Duration::seconds(5);
+        store.save().unwrap();
+
+        assert_eq!(note_files(&store), ["Same (2).md", "Same.md"]);
+        let first = fs::read_to_string(store.notes_dir.join("Same.md")).unwrap();
+        let second = fs::read_to_string(store.notes_dir.join("Same (2).md")).unwrap();
+        assert!(first.contains(&format!("id: {older}")), "{first}");
+        assert!(second.contains(&format!("id: {newer}")), "{second}");
+    }
+
+    #[test]
+    fn saving_again_changes_no_file_name() {
+        let (mut store, _tmp) = temp_store();
+        store.create_note("Same", "a", vec![], "").unwrap();
+        let newer = store
+            .create_note("Same", "b", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.find_note_mut(&newer).unwrap().created_at += chrono::Duration::seconds(5);
+        store.save().unwrap();
+        let first = note_files(&store);
+        store.save().unwrap();
+        assert_eq!(first, note_files(&store));
+    }
+
+    #[test]
+    fn a_file_another_program_put_in_the_way_is_never_overwritten() {
+        let (mut store, _tmp) = temp_store();
+        fs::write(
+            store.notes_dir.join("Taken.md"),
+            "written by another program",
+        )
+        .unwrap();
+        store.create_note("Taken", "mine", vec![], "").unwrap();
+        store.save().unwrap();
+        assert_eq!(
+            fs::read_to_string(store.notes_dir.join("Taken.md")).unwrap(),
+            "written by another program"
+        );
+        assert!(store.notes_dir.join("Taken (2).md").exists());
+    }
+
+    #[test]
+    fn renaming_a_note_moves_its_file() {
+        let (mut store, _tmp) = temp_store();
+        let id = store
+            .create_note("Old title", "x", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.save().unwrap();
+        store.find_note_mut(&id).unwrap().title = "New title".to_string();
+        store.save().unwrap();
+        assert_eq!(note_files(&store), ["New title.md"]);
+    }
+
+    #[test]
+    fn a_rename_that_only_changes_case_leaves_one_file() {
+        let (mut store, _tmp) = temp_store();
+        let id = store
+            .create_note("lower", "x", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.save().unwrap();
+        store.find_note_mut(&id).unwrap().title = "Lower".to_string();
+        store.save().unwrap();
+        assert_eq!(note_files(&store).len(), 1, "{:?}", note_files(&store));
+        assert!(Store::load_from(&store.notes_dir)
+            .unwrap()
+            .find_note(&id)
+            .is_some());
+    }
+
+    #[test]
+    fn titles_that_differ_only_by_case_get_separate_files() {
+        let (mut store, _tmp) = temp_store();
+        store.create_note("Notes", "a", vec![], "").unwrap();
+        store.create_note("notes", "b", vec![], "").unwrap();
+        store.save().unwrap();
+        assert_eq!(note_files(&store).len(), 2, "{:?}", note_files(&store));
+        assert_eq!(Store::load_from(&store.notes_dir).unwrap().notes.len(), 2);
+    }
+
+    #[test]
+    fn old_id_named_files_are_renamed_to_titles_on_the_next_save() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("notes");
+        fs::create_dir_all(dir.join("cs130")).unwrap();
+        let root = Note::new("Graphs", "BFS", vec![], "");
+        let nested = Note::new("Lecture", "DFS", vec![], "cs130");
+        fs::write(
+            dir.join(format!("{}.md", root.id)),
+            note_to_markdown(&root).unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("cs130").join(format!("{}.md", nested.id)),
+            note_to_markdown(&nested).unwrap(),
+        )
+        .unwrap();
+
+        let store = Store::load_from(&dir).unwrap();
+        store.save().unwrap();
+
+        assert_eq!(note_files(&store), ["Graphs.md", "cs130/Lecture.md"]);
+        let reloaded = Store::load_from(&dir).unwrap();
+        assert_eq!(reloaded.find_note(&root.id).unwrap().body, "BFS");
+        assert_eq!(reloaded.find_note(&nested.id).unwrap().directory, "cs130");
+    }
+
+    #[test]
+    fn a_second_deleted_note_with_the_same_name_does_not_replace_the_first_in_the_trash() {
+        let (mut store, _tmp) = temp_store();
+        let first = store
+            .create_note("Draft", "one", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.save().unwrap();
+        store.delete_note(&first);
+        store.save().unwrap();
+        let second = store
+            .create_note("Draft", "two", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.save().unwrap();
+        store.delete_note(&second);
+        store.save().unwrap();
+
+        let ids: HashSet<String> = store.trashed().into_iter().map(|t| t.id).collect();
+        assert_eq!(ids, HashSet::from([first, second]));
+    }
+
+    #[test]
+    fn upgrading_a_backup_leaves_a_clean_tree_with_the_renames_committed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("notes");
+        fs::create_dir_all(&dir).unwrap();
+        let note = Note::new("Graphs", "BFS", vec![], "");
+        fs::write(
+            dir.join(format!("{}.md", note.id)),
+            note_to_markdown(&note).unwrap(),
+        )
+        .unwrap();
+        crate::sync::init(&dir).unwrap();
+
+        let store = Store::load_from(&dir).unwrap();
+        store.save().unwrap();
+
+        assert_eq!(note_files(&store), ["Graphs.md"]);
+        let status = std::process::Command::new("git")
+            .args(["status", "--porcelain"])
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        let dirty = String::from_utf8_lossy(&status.stdout);
+        assert!(dirty.trim().is_empty(), "uncommitted: {dirty}");
+    }
+
+    fn parse(name: &str, text: &str) -> Note {
+        parse_note_from_markdown(text, Path::new(name), chrono::Utc::now()).unwrap()
+    }
+
+    #[test]
+    fn a_file_with_no_header_is_a_note_named_after_the_file() {
+        let note = parse(
+            "cs130/Office hours.md",
+            "Tuesday 3-5pm\n\n- [ ] bring questions\n",
+        );
+        assert_eq!(note.title, "Office hours");
+        assert_eq!(note.directory, "cs130");
+        assert_eq!(note.body, "Tuesday 3-5pm\n\n- [ ] bring questions\n");
+        assert!(note.tags.is_empty());
+    }
+
+    #[test]
+    fn a_headerless_note_keeps_the_same_id_on_every_computer() {
+        assert_eq!(
+            parse("Office hours.md", "x").id,
+            "dd6664c0-1761-8255-a94a-68bb2041c68e"
+        );
+        assert_eq!(
+            parse("cs130/Office hours.md", "x").id,
+            "2fc81c8a-8874-8e34-9b89-2740ad5e0b53"
+        );
+        assert_eq!(
+            parse("Office hours.md", "x").id,
+            parse("Office hours.md", "y").id
+        );
+        assert_ne!(
+            parse("Syllabus.md", "x").id,
+            parse("Office hours.md", "x").id
+        );
+    }
+
+    #[test]
+    fn obsidian_properties_become_leo_fields() {
+        let text = "---\ntags:\n  - '#exam'\n  - graphs\npinned: true\n---\nBody\n";
+        let note = parse("Notes.md", text);
+        assert_eq!(note.tags, vec!["exam", "graphs"]);
+        assert!(note.pinned);
+        assert_eq!(note.body, "Body\n");
+    }
+
+    #[test]
+    fn tags_written_as_one_string_are_split() {
+        let note = parse("A.md", "---\ntags: \"exam, graphs #bfs\"\n---\nx");
+        assert_eq!(note.tags, vec!["exam", "graphs", "bfs"]);
+    }
+
+    #[test]
+    fn a_header_missing_leos_fields_still_loads() {
+        let note = parse("Real title.md", "---\ntitle: Real title\n---\nx");
+        assert_eq!(note.title, "Real title");
+        assert_eq!(
+            parse("Notes.md", "---\ntitle: Real title\n---\nx").title,
+            "Notes",
+            "Obsidian shows a note by its file name"
+        );
+    }
+
+    #[test]
+    fn empty_properties_and_a_header_with_no_body_load() {
+        assert_eq!(parse("A.md", "---\n---\nbody").body, "body");
+        assert_eq!(parse("B.md", "---\ntitle: T\n---").body, "");
+    }
+
+    #[test]
+    fn windows_line_endings_and_a_byte_order_mark_are_handled() {
+        let text = "\u{feff}---\r\nid: abc\r\ntitle: Hello\r\n---\r\n\r\nline one\r\nline two\r\n";
+        let note = parse("Hello.md", text);
+        assert_eq!(note.id, "abc");
+        assert_eq!(note.title, "Hello");
+        assert_eq!(note.body, "line one\nline two\n");
+    }
+
+    #[test]
+    fn a_leading_rule_with_no_closing_one_is_just_text() {
+        let note = parse("Rule.md", "---\nnot a header\n");
+        assert_eq!(note.body, "---\nnot a header\n");
+    }
+
+    #[test]
+    fn a_header_that_is_not_yaml_is_still_unreadable() {
+        let result = parse_note_from_markdown(
+            "---\ntitle: [unclosed\n---\nx",
+            Path::new("A.md"),
+            chrono::Utc::now(),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn a_file_dropped_into_the_folder_loads_with_its_modified_time() {
+        let (store, _tmp) = temp_store();
+        let file = store.notes_dir.join("Dropped in.md");
+        fs::write(&file, "from another app").unwrap();
+        let ten_days_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(864_000);
+        fs::File::options()
+            .write(true)
+            .open(&file)
+            .unwrap()
+            .set_modified(ten_days_ago)
+            .unwrap();
+
+        let reloaded = Store::load_from(&store.notes_dir).unwrap();
+        let note = reloaded
+            .notes
+            .iter()
+            .find(|n| n.title == "Dropped in")
+            .expect("not loaded");
+        assert!(note.updated_at < Utc::now() - chrono::Duration::days(9));
+        assert!(reloaded.unreadable.is_empty());
+    }
+
+    #[test]
+    fn saving_does_not_rewrite_a_note_leo_did_not_change() {
+        let (store, _tmp) = temp_store();
+        let file = store.notes_dir.join("Plain.md");
+        fs::write(&file, "from another app").unwrap();
+        let mut store = Store::load_from(&store.notes_dir).unwrap();
+        store.create_note("Other", "x", vec![], "").unwrap();
+        store.save().unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "from another app");
+    }
+
+    #[test]
+    fn editing_a_headerless_note_gives_it_a_header_and_keeps_its_id() {
+        let (store, _tmp) = temp_store();
+        fs::write(store.notes_dir.join("Plain.md"), "before").unwrap();
+        let mut store = Store::load_from(&store.notes_dir).unwrap();
+        let id = store
+            .notes
+            .iter()
+            .find(|n| n.title == "Plain")
+            .unwrap()
+            .id
+            .clone();
+        store.find_note_mut(&id).unwrap().body = "after".to_string();
+        store.save().unwrap();
+
+        assert_eq!(note_files(&store), ["Plain.md"]);
+        let text = fs::read_to_string(store.notes_dir.join("Plain.md")).unwrap();
+        assert!(text.starts_with("---\n"), "{text}");
+        assert!(text.contains(&format!("id: {id}")), "{text}");
+        assert!(text.contains("after"), "{text}");
+    }
+
+    #[test]
+    fn properties_leo_does_not_know_survive_a_round_trip() {
+        let text = "---\nid: abc\ntitle: T\ntags: []\ncreated_at: 2026-01-01T00:00:00Z\nupdated_at: 2026-01-01T00:00:00Z\naliases:\n- Short\ncssclasses:\n- wide\nrating: 5\n---\n\nbody\n";
+        let note = parse("T.md", text);
+        let written = note_to_markdown(&note).unwrap();
+        for expected in ["aliases:", "- Short", "cssclasses:", "- wide", "rating: 5"] {
+            assert!(written.contains(expected), "no {expected:?} in:\n{written}");
+        }
+        assert_eq!(parse("T.md", &written).extra, note.extra);
+    }
+
+    #[test]
+    fn a_save_keeps_another_apps_properties_in_the_file() {
+        let (store, _tmp) = temp_store();
+        let text = "---\nid: keep1\ntitle: Keep\ntags: []\ncreated_at: 2026-01-01T00:00:00Z\nupdated_at: 2026-01-01T00:00:00Z\naliases:\n- Other name\n---\n\nold\n";
+        fs::write(store.notes_dir.join("Keep.md"), text).unwrap();
+        let mut store = Store::load_from(&store.notes_dir).unwrap();
+        store.find_note_mut("keep1").unwrap().body = "new".to_string();
+        store.save().unwrap();
+
+        let saved = fs::read_to_string(store.notes_dir.join("Keep.md")).unwrap();
+        assert!(saved.contains("aliases:"), "{saved}");
+        assert!(saved.contains("Other name"), "{saved}");
+        assert!(saved.contains("new"), "{saved}");
+    }
+
+    fn leo_text(title: &str) -> String {
+        format!("---\nid: abc\ntitle: {title}\ntags: []\ncreated_at: 2026-01-01T00:00:00Z\nupdated_at: 2026-01-01T00:00:00Z\n---\n\nbody\n")
+    }
+
+    #[test]
+    fn a_file_renamed_in_another_app_takes_the_new_name_as_its_title() {
+        assert_eq!(
+            parse("New name.md", &leo_text("Old name")).title,
+            "New name"
+        );
+    }
+
+    #[test]
+    fn numbered_and_sanitised_names_keep_the_header_title() {
+        let text = leo_text("'Lecture 4: BFS'");
+        assert_eq!(parse("Lecture 4 - BFS.md", &text).title, "Lecture 4: BFS");
+        assert_eq!(
+            parse("Lecture 4 - BFS (2).md", &text).title,
+            "Lecture 4: BFS"
+        );
+    }
+
+    #[test]
+    fn a_file_named_after_its_id_keeps_the_header_title() {
+        let name = "550e8400-e29b-41d4-a716-446655440000.md";
+        assert_eq!(parse(name, &leo_text("Whatever")).title, "Whatever");
+    }
+
+    #[test]
+    fn a_rename_made_in_another_app_is_not_undone_by_a_save() {
+        let (mut store, _tmp) = temp_store();
+        let id = store
+            .create_note("Old name", "x", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.save().unwrap();
+        fs::rename(
+            store.notes_dir.join("Old name.md"),
+            store.notes_dir.join("New name.md"),
+        )
+        .unwrap();
+
+        let mut reloaded = Store::load_from(&store.notes_dir).unwrap();
+        assert_eq!(reloaded.find_note(&id).unwrap().title, "New name");
+        reloaded.create_note("Other", "y", vec![], "").unwrap();
+        reloaded.save().unwrap();
+
+        assert_eq!(note_files(&reloaded), ["New name.md", "Other.md"]);
+    }
+
+    #[test]
+    fn a_note_changed_elsewhere_and_edited_here_keeps_both_versions() {
+        let (mut store, _tmp) = temp_store();
+        let id = store
+            .create_note("Shared", "one", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.save().unwrap();
+        let file = store.notes_dir.join("Shared.md");
+        fs::write(
+            &file,
+            fs::read_to_string(&file)
+                .unwrap()
+                .replace("one", "one, plus a line from Obsidian"),
+        )
+        .unwrap();
+
+        store.find_note_mut(&id).unwrap().body = "one, plus a line from leo".to_string();
+        store.save().unwrap();
+
+        assert!(fs::read_to_string(&file).unwrap().contains("from Obsidian"));
+        let reloaded = Store::load_from(&store.notes_dir).unwrap();
+        assert_eq!(reloaded.notes.len(), 2);
+        let copy = reloaded
+            .notes
+            .iter()
+            .find(|n| n.title == "Shared (conflict from leo)")
+            .expect("no conflict copy");
+        assert!(copy.body.contains("from leo"));
+        assert_ne!(copy.id, id);
+    }
+
+    #[test]
+    fn saving_again_does_not_pile_up_conflict_copies() {
+        let (mut store, _tmp) = temp_store();
+        let id = store
+            .create_note("Shared", "one", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.save().unwrap();
+        let file = store.notes_dir.join("Shared.md");
+        fs::write(
+            &file,
+            "---\nid: other\ntitle: Shared\n---\n\nchanged elsewhere\n",
+        )
+        .unwrap();
+        store.find_note_mut(&id).unwrap().body = "edited here".to_string();
+        store.save().unwrap();
+        store.save().unwrap();
+        store.save().unwrap();
+        assert_eq!(note_files(&store).len(), 2, "{:?}", note_files(&store));
+    }
+
+    #[test]
+    fn a_note_changed_elsewhere_but_not_here_is_left_alone() {
+        let (mut store, _tmp) = temp_store();
+        store.create_note("Shared", "one", vec![], "").unwrap();
+        store.save().unwrap();
+        let file = store.notes_dir.join("Shared.md");
+        let edited = fs::read_to_string(&file).unwrap().replace("one", "two");
+        fs::write(&file, &edited).unwrap();
+        store.create_note("Unrelated", "x", vec![], "").unwrap();
+        store.save().unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), edited);
+        assert_eq!(note_files(&store).len(), 2);
+    }
+
+    #[test]
+    fn a_note_deleted_elsewhere_and_edited_here_comes_back_as_a_copy() {
+        let (mut store, _tmp) = temp_store();
+        let id = store
+            .create_note("Shared", "one", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.save().unwrap();
+        fs::remove_file(store.notes_dir.join("Shared.md")).unwrap();
+        store.find_note_mut(&id).unwrap().body = "still writing".to_string();
+        store.save().unwrap();
+
+        let reloaded = Store::load_from(&store.notes_dir).unwrap();
+        assert_eq!(reloaded.notes.len(), 1);
+        assert_eq!(reloaded.notes[0].title, "Shared (conflict from leo)");
+        assert!(reloaded.notes[0].body.contains("still writing"));
+    }
+
+    #[test]
+    fn the_notice_names_the_note() {
+        assert!(conflict_notice("Shared").contains("Shared"));
+    }
+
+    #[test]
+    fn the_store_notices_another_programs_change_but_not_its_own_saves() {
+        let (mut store, _tmp) = temp_store();
+        assert!(!store.changed_on_disk());
+        store.create_note("Mine", "a", vec![], "").unwrap();
+        store.save().unwrap();
+        assert!(
+            !store.changed_on_disk(),
+            "its own save looked like someone else's"
+        );
+
+        fs::write(store.notes_dir.join("Theirs.md"), "from elsewhere").unwrap();
+        assert!(store.changed_on_disk());
+        store.refresh().unwrap();
+        assert!(!store.changed_on_disk());
+        assert_eq!(store.notes.len(), 2);
+    }
+
+    #[test]
+    fn refreshing_keeps_the_undo_stack() {
+        let (mut store, _tmp) = temp_store();
+        let id = store
+            .create_note("Doomed", "a", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.save().unwrap();
+        store.delete_note(&id);
+        store.save().unwrap();
+        store.refresh().unwrap();
+        assert!(store.undo().is_some());
+        assert!(store.find_note(&id).is_some());
+    }
+
+    #[test]
+    fn a_note_duplicated_in_another_app_is_its_own_note_and_both_survive_a_save() {
+        let (mut store, _tmp) = temp_store();
+        let id = store
+            .create_note("Lecture 4", "the original", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.save().unwrap();
+        let original = store.notes_dir.join("Lecture 4.md");
+        let copy = store.notes_dir.join("Lecture 4 1.md");
+        let copied_text = fs::read_to_string(&original)
+            .unwrap()
+            .replace("the original", "the copy, edited");
+        fs::write(&copy, &copied_text).unwrap();
+        let an_hour_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        fs::File::options()
+            .write(true)
+            .open(&original)
+            .unwrap()
+            .set_modified(an_hour_ago)
+            .unwrap();
+
+        let mut store = Store::load_from(&store.notes_dir).unwrap();
+        assert_eq!(store.notes.len(), 2);
+        let ids: HashSet<&str> = store.notes.iter().map(|n| n.id.as_str()).collect();
+        assert_eq!(ids.len(), 2, "two notes share one id");
+        assert!(store.duplicate_ids().is_empty());
+
+        store.find_note_mut(&id).unwrap().body = "the original, edited in leo".to_string();
+        store.save().unwrap();
+
+        let reloaded = Store::load_from(&store.notes_dir).unwrap();
+        let bodies: HashSet<String> = reloaded.notes.iter().map(|n| n.body.clone()).collect();
+        assert!(bodies.contains("the original, edited in leo"), "{bodies:?}");
+        assert!(bodies.contains("the copy, edited"), "{bodies:?}");
     }
 }

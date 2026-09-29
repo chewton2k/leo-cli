@@ -1,8 +1,11 @@
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
 
 use anyhow::{Context, Result};
+
+use crate::filename;
 
 pub fn is_initialized(notes_dir: &Path) -> bool {
     notes_dir.join(".git").exists()
@@ -75,17 +78,99 @@ pub fn push(notes_dir: &Path) -> Result<()> {
 /// backup the first one made.
 pub fn pull(notes_dir: &Path) -> Result<()> {
     let branch = current_branch(notes_dir)?;
+    auto_commit(notes_dir)?;
+    run_git(notes_dir, &["fetch", "origin", &branch])?;
+    keep_both_notes_with_the_same_name(notes_dir)?;
     print_output(run_git(
         notes_dir,
         &[
-            "pull",
-            "--no-rebase",
+            "merge",
             "--no-edit",
             "--allow-unrelated-histories",
-            "origin",
-            &branch,
+            "FETCH_HEAD",
         ],
     )?);
+    Ok(())
+}
+
+fn tree(notes_dir: &Path, rev: &str) -> Result<HashMap<String, String>> {
+    let out = run_git(notes_dir, &["ls-tree", "-r", "-z", rev])?;
+    Ok(out
+        .split('\0')
+        .filter_map(|entry| {
+            let (meta, path) = entry.split_once('\t')?;
+            let sha = meta.split_whitespace().nth(2)?;
+            Some((path.to_string(), sha.to_string()))
+        })
+        .collect())
+}
+
+fn note_id(notes_dir: &Path, rev: &str, path: &str) -> Option<String> {
+    let text = run_git(notes_dir, &["show", &format!("{rev}:{path}")]).ok()?;
+    if !text.starts_with("---") {
+        return None;
+    }
+    text.lines().take(20).find_map(|line| {
+        line.strip_prefix("id: ").map(|id| {
+            id.trim()
+                .trim_matches(|c| c == '\'' || c == '"')
+                .to_string()
+        })
+    })
+}
+
+fn keep_both_notes_with_the_same_name(notes_dir: &Path) -> Result<()> {
+    let Ok(ours) = tree(notes_dir, "HEAD") else {
+        return Ok(());
+    };
+    let theirs = tree(notes_dir, "FETCH_HEAD")?;
+    let base = run_git(notes_dir, &["merge-base", "HEAD", "FETCH_HEAD"])
+        .ok()
+        .and_then(|sha| tree(notes_dir, sha.trim()).ok());
+
+    let mut clashes: Vec<&String> = ours
+        .iter()
+        .filter(|(path, sha)| {
+            path.ends_with(".md")
+                && theirs.get(*path).is_some_and(|other| other != *sha)
+                && base.as_ref().is_none_or(|b| !b.contains_key(*path))
+        })
+        .map(|(path, _)| path)
+        .collect();
+    clashes.sort();
+
+    let mut taken: HashSet<String> = ours
+        .keys()
+        .chain(theirs.keys())
+        .map(|path| path.to_lowercase())
+        .collect();
+    let mut renamed = 0;
+    for path in clashes {
+        let same_note = matches!(
+            (note_id(notes_dir, "HEAD", path), note_id(notes_dir, "FETCH_HEAD", path)),
+            (Some(a), Some(b)) if a == b
+        );
+        if same_note {
+            continue;
+        }
+        let stem = path.trim_end_matches(".md");
+        let free = (2..)
+            .map(|n| format!("{}.md", filename::numbered(stem, n)))
+            .find(|candidate| taken.insert(candidate.to_lowercase()))
+            .expect("an unused name exists");
+        run_git(notes_dir, &["mv", "--", path, &free])?;
+        renamed += 1;
+    }
+    if renamed > 0 {
+        run_git(
+            notes_dir,
+            &[
+                "commit",
+                "-m",
+                "sync: keep both notes that were given the same name",
+            ],
+        )?;
+    }
     Ok(())
 }
 
@@ -191,6 +276,7 @@ pub fn now(notes_dir: &Path) -> Result<()> {
         anyhow::bail!("No remote to back up to. Run `leo sync connect <url>`, or press Ctrl-S.");
     }
     prepare(notes_dir)?;
+    auto_commit(notes_dir)?;
     // A new, empty repository has nothing to pull yet.
     if remote_has_branch(notes_dir)? {
         pull(notes_dir)?;
@@ -337,7 +423,7 @@ pub fn auto_commit(notes_dir: &Path) -> Result<()> {
 
 /// Files inside the notes directory that are leo's business, not the user's
 /// notes, and so must never be pushed to their remote.
-const GITIGNORE: &str = "*.wav\n*.bak\n.manual-installed\ndirectories.json\n.trash/\n";
+const GITIGNORE: &str = "*.wav\n*.bak\n.manual-installed\ndirectories.json\n.trash/\n.obsidian/\n";
 
 /// A note edited on two computers keeps both sides' lines rather than one
 /// side's edit being lost; the user tidies it, instead of it vanishing.
@@ -426,6 +512,7 @@ fn run_git(dir: &Path, args: &[&str]) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
     use tempfile::TempDir;
 
     /// Backing up with nothing set up says how to set it up, rather than
@@ -817,5 +904,106 @@ mod tests {
         }
         let err = current_branch(&empty).unwrap_err().to_string();
         assert!(err.contains("no branch yet"), "{err}");
+    }
+
+    fn note_text(id: &str, title: &str, body: &str) -> String {
+        format!("---\nid: {id}\ntitle: {title}\ntags: []\ncreated_at: 2026-01-01T00:00:00Z\nupdated_at: 2026-01-01T00:00:00Z\n---\n\n{body}\n")
+    }
+
+    fn bare_remote(tmp: &TempDir) -> PathBuf {
+        let remote = tmp.path().join("remote.git");
+        run_git(
+            tmp.path(),
+            &["init", "--bare", "-q", remote.to_str().unwrap()],
+        )
+        .unwrap();
+        remote
+    }
+
+    fn computer(tmp: &TempDir, name: &str, remote: &Path) -> PathBuf {
+        let dir = tmp.path().join(name);
+        fs::create_dir_all(&dir).unwrap();
+        connect(&dir, remote.to_str().unwrap()).unwrap();
+        dir
+    }
+
+    #[test]
+    fn two_computers_that_name_a_note_the_same_keep_both_notes() {
+        let tmp = TempDir::new().unwrap();
+        let remote = bare_remote(&tmp);
+        let laptop = computer(&tmp, "laptop", &remote);
+        let desktop = computer(&tmp, "desktop", &remote);
+
+        fs::create_dir_all(laptop.join("cs130")).unwrap();
+        fs::write(
+            laptop.join("cs130/Lecture 4.md"),
+            note_text("aaaa", "Lecture 4", "BFS from the laptop"),
+        )
+        .unwrap();
+        now(&laptop).unwrap();
+
+        fs::create_dir_all(desktop.join("cs130")).unwrap();
+        fs::write(
+            desktop.join("cs130/Lecture 4.md"),
+            note_text("bbbb", "Lecture 4", "DFS from the desktop"),
+        )
+        .unwrap();
+        now(&desktop).unwrap();
+
+        let first = fs::read_to_string(desktop.join("cs130/Lecture 4.md")).unwrap();
+        let second = fs::read_to_string(desktop.join("cs130/Lecture 4 (2).md")).unwrap();
+        assert!(
+            first.contains("id: aaaa")
+                && first.contains("BFS from the laptop")
+                && !first.contains("bbbb"),
+            "{first}"
+        );
+        assert!(
+            second.contains("id: bbbb")
+                && second.contains("DFS from the desktop")
+                && !second.contains("aaaa"),
+            "{second}"
+        );
+
+        now(&laptop).unwrap();
+        assert!(laptop.join("cs130/Lecture 4 (2).md").exists());
+    }
+
+    #[test]
+    fn the_same_note_added_on_both_sides_is_merged_not_duplicated() {
+        let tmp = TempDir::new().unwrap();
+        let remote = bare_remote(&tmp);
+        let laptop = computer(&tmp, "laptop", &remote);
+        let desktop = computer(&tmp, "desktop", &remote);
+        fs::write(
+            laptop.join("Shared.md"),
+            note_text("same", "Shared", "from the laptop"),
+        )
+        .unwrap();
+        now(&laptop).unwrap();
+        fs::write(
+            desktop.join("Shared.md"),
+            note_text("same", "Shared", "from the desktop"),
+        )
+        .unwrap();
+        now(&desktop).unwrap();
+        assert!(!desktop.join("Shared (2).md").exists());
+    }
+
+    #[test]
+    fn obsidians_settings_folder_is_never_committed() {
+        let tmp = TempDir::new().unwrap();
+        let notes_dir = tmp.path().join("notes");
+        std::fs::create_dir_all(&notes_dir).unwrap();
+        init(&notes_dir).unwrap();
+        std::fs::create_dir_all(notes_dir.join(".obsidian")).unwrap();
+        std::fs::write(notes_dir.join(".obsidian/app.json"), "{}").unwrap();
+        std::fs::write(notes_dir.join("A.md"), "x").unwrap();
+
+        auto_commit(&notes_dir).unwrap();
+
+        let tracked = run_git(&notes_dir, &["ls-files"]).unwrap();
+        assert!(!tracked.contains(".obsidian"), "{tracked}");
+        assert!(tracked.contains("A.md"), "{tracked}");
     }
 }

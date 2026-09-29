@@ -67,6 +67,9 @@ pub struct Note {
 
     #[serde(default)]
     pub pinned: bool,
+
+    #[serde(skip)]
+    pub extra: serde_yaml::Mapping,
 }
 
 impl Note {
@@ -87,6 +90,7 @@ impl Note {
             tags,
             directory: directory.into(),
             pinned: false,
+            extra: serde_yaml::Mapping::new(),
         }
     }
 

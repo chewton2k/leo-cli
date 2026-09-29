@@ -23,6 +23,7 @@ fn temp_app() -> (App, tempfile::TempDir) {
     let mut app = App::new(store);
     app.probe = leo_services::doctor::Probe::default();
     app.gh_ready = || false;
+    app.obsidian = |_| Err(anyhow::anyhow!("tests never launch Obsidian"));
     (app, dir)
 }
 
@@ -2170,6 +2171,72 @@ fn esc_leaves_the_setup_screen_and_points_at_doctor() {
         .map(|m| m.1.clone())
         .unwrap_or_default();
     assert!(said.contains("/doctor"), "{said}");
+}
+
+#[test]
+fn a_note_written_by_another_program_appears_without_pressing_anything() {
+    let (mut app, _d) = temp_app();
+    let before = app.numbering.len();
+    std::fs::write(app.store.notes_dir.join("From Obsidian.md"), "hello").unwrap();
+    app.last_disk_check = None;
+
+    assert!(app.maybe_reload_from_disk());
+    assert_eq!(app.numbering.len(), before + 1);
+}
+
+#[test]
+fn nothing_reloads_while_typing_or_when_nothing_changed() {
+    let (mut app, _d) = temp_app();
+    std::fs::write(app.store.notes_dir.join("From Obsidian.md"), "hello").unwrap();
+
+    app.mode = Mode::Command;
+    app.last_disk_check = None;
+    assert!(
+        !app.maybe_reload_from_disk(),
+        "reloaded under the command line"
+    );
+
+    app.mode = Mode::Normal;
+    app.last_disk_check = None;
+    assert!(app.maybe_reload_from_disk());
+
+    app.last_disk_check = None;
+    assert!(!app.maybe_reload_from_disk(), "reloaded with nothing new");
+}
+
+#[test]
+fn slash_obsidian_says_how_to_add_the_folder_as_a_vault() {
+    let (mut app, _d) = temp_app();
+    app.obsidian = |dir| {
+        Ok(leo_core::obsidian::Opened {
+            path: dir.to_path_buf(),
+            how: leo_core::obsidian::How::ByHand,
+            copied: true,
+        })
+    };
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(140, 30)).unwrap();
+    app.run_line("obsidian", &mut terminal).unwrap();
+    let (_, lines) = app.pinned.as_ref().expect("nothing was shown");
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.text.contains("Open folder as vault")),
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn slash_obsidian_without_obsidian_says_where_to_get_it() {
+    let (mut app, _d) = temp_app();
+    app.obsidian = |_| Err(anyhow::anyhow!(leo_core::obsidian::NOT_INSTALLED));
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(140, 30)).unwrap();
+    app.run_line("obsidian", &mut terminal).unwrap();
+    let said = app
+        .message
+        .as_ref()
+        .map(|m| m.1.clone())
+        .unwrap_or_default();
+    assert!(said.contains("obsidian.md"), "{said}");
 }
 
 #[test]

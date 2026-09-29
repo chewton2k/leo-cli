@@ -446,7 +446,35 @@ added on the phone show up in the app after `Ctrl-R`.
 
 ---
 
-## 8. Use leo from a shell
+## 8. Use your notes in Obsidian
+
+Your notes are Markdown files in one folder, which is what
+[Obsidian](https://obsidian.md) reads.
+
+```sh
+leo obsidian
+```
+
+opens the folder in Obsidian (`/obsidian` does the same inside leo). The first
+time, if Obsidian does not show your notes, choose **Open folder as vault** and
+pick the folder; leo copies its path to your clipboard. This is a separate vault
+from any you already have.
+
+- Files are named after their titles, so the file list reads well. Renaming a
+  file in Obsidian renames the note in leo.
+- Notes made in Obsidian show up in leo, and leo leaves them exactly as they are
+  until you edit them there. Properties leo does not know (aliases, anything a
+  plugin adds) are kept.
+- leo picks up changes made in Obsidian within a couple of seconds. If a note
+  was changed in Obsidian while leo had it open and you edited it in leo too,
+  leo keeps both, calling yours `<title> (conflict from leo)`; `leo doctor`
+  lists them.
+- Obsidian's own settings folder (`.obsidian`) is not backed up to GitHub.
+- `[[links]]` between notes are shown as plain text in leo for now.
+
+---
+
+## 9. Use leo from a shell
 
 Every everyday action also works as a command, which is handy for scripts and
 quick captures. `leo --help` lists them all with examples, and
@@ -467,6 +495,7 @@ leo ask 3f2a                        # answer that note's @leo lines
 leo ask "what did we cover about graphs?"   # a question across all notes
 leo sync                            # back up to GitHub
 leo serve --anywhere                # your notes on your phone, from any network
+leo obsidian                        # open your notes in Obsidian
 leo listen --title "Meeting notes"  # records until you press Enter
 leo doctor                          # check everything, store an API key; exits 1 if anything is broken
 leo update                          # install a newer version, if there is one
@@ -478,7 +507,7 @@ unique part of its title.
 
 ---
 
-## 9. Reference
+## 10. Reference
 
 ### Keys
 
@@ -519,7 +548,7 @@ The mouse works too: click to focus or select, scroll with the wheel.
 | Linux | `~/.local/share/leo/` (notes), `~/.config/leo/` (settings) |
 | Windows | `%APPDATA%\leo\` |
 
-Each note is a Markdown file with a small header, and directories are real
+Each note is a Markdown file named after its title, with a small header, and directories are real
 directories. Deleted notes wait in a hidden `.trash` folder inside the notes
 folder for 30 days; it is never backed up to GitHub. The settings folder also
 holds `serve-token` (the code in your `leo serve` link) and `update-check.json`
@@ -542,7 +571,7 @@ your account can read.
 
 ---
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
 **"Not ready to record: microphone — recorded silence"**
 The microphone is not being heard. Check that your terminal is allowed in

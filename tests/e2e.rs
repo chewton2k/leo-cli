@@ -298,6 +298,249 @@ fn a_pinned_note_leads_the_list() {
     assert!(first.contains("Syllabus"), "{list}");
 }
 
+#[test]
+fn a_note_written_by_another_app_shows_up_and_is_left_alone() {
+    let leo = Leo::new();
+    leo.ok(&["new", "Mine", "--body", "x"]);
+    let file = leo.notes_dir().join("From Obsidian.md");
+    std::fs::write(&file, "---\ntags:\n  - vault\n---\nHello from the vault\n").unwrap();
+
+    let listed = leo.ok(&["list"]);
+    assert!(listed.contains("From Obsidian"), "{listed}");
+    let found = leo.ok(&["search", "vault"]);
+    assert!(found.contains("From Obsidian"), "{found}");
+    let after = std::fs::read_to_string(&file).unwrap();
+    assert!(
+        after.starts_with("---\ntags:\n  - vault\n---"),
+        "leo rewrote a note it did not change:\n{after}"
+    );
+}
+
+#[test]
+fn leo_and_obsidian_work_on_the_same_notes_folder() {
+    let leo = Leo::new();
+    leo.ok(&["new", "cs130/ Lecture 4", "--body", "BFS uses a queue"]);
+    let cs130 = leo.notes_dir().join("cs130");
+    let lecture = cs130.join("Lecture 4.md");
+    assert!(lecture.is_file(), "not saved under its title");
+
+    std::fs::write(cs130.join("Office hours.md"), "Tuesday 3-5pm\n").unwrap();
+    let listed = leo.ok(&["list", "cs130"]);
+    assert!(listed.contains("Office hours"), "{listed}");
+
+    let renamed = cs130.join("Lecture 4 - BFS.md");
+    std::fs::rename(&lecture, &renamed).unwrap();
+    let with_alias = std::fs::read_to_string(&renamed).unwrap().replacen(
+        "tags:",
+        "aliases:\n- BFS lecture\ntags:",
+        1,
+    );
+    std::fs::write(&renamed, with_alias).unwrap();
+    let listed = leo.ok(&["list", "cs130"]);
+    assert!(
+        listed.contains("Lecture 4 - BFS"),
+        "rename not picked up:\n{listed}"
+    );
+
+    leo.ok(&["edit", "Lecture 4 - BFS"]);
+    let edited = std::fs::read_to_string(&renamed).unwrap();
+    assert!(edited.contains("written in the editor"), "{edited}");
+    assert!(
+        edited.contains("BFS lecture"),
+        "the alias was lost:\n{edited}"
+    );
+    assert!(!lecture.exists(), "the file was renamed back");
+
+    assert_eq!(
+        std::fs::read_to_string(cs130.join("Office hours.md")).unwrap(),
+        "Tuesday 3-5pm\n",
+        "a note leo did not change was rewritten"
+    );
+
+    leo.ok(&["delete", "Office hours", "--force"]);
+    assert!(!cs130.join("Office hours.md").exists());
+    assert!(leo.ok(&["trash"]).contains("Office hours"));
+}
+
+#[test]
+fn a_note_duplicated_in_obsidian_is_a_second_note_and_editing_keeps_both() {
+    let leo = Leo::new();
+    leo.ok(&["new", "Lecture 4", "--body", "the original"]);
+    let original = leo.notes_dir().join("Lecture 4.md");
+    let an_hour_ago = std::time::SystemTime::now() - Duration::from_secs(3600);
+    std::fs::File::options()
+        .write(true)
+        .open(&original)
+        .unwrap()
+        .set_modified(an_hour_ago)
+        .unwrap();
+    let copy = leo.notes_dir().join("Lecture 4 1.md");
+    std::fs::write(
+        &copy,
+        std::fs::read_to_string(&original)
+            .unwrap()
+            .replace("the original", "the copy"),
+    )
+    .unwrap();
+
+    let id = std::fs::read_to_string(&original)
+        .unwrap()
+        .lines()
+        .find_map(|l| l.strip_prefix("id: ").map(str::to_string))
+        .unwrap();
+    leo.ok(&["edit", &id]);
+
+    let original_text = std::fs::read_to_string(&original).unwrap();
+    let copy_text = std::fs::read_to_string(&copy).unwrap();
+    assert!(original_text.contains("the original"), "{original_text}");
+    assert!(
+        original_text.contains("written in the editor"),
+        "{original_text}"
+    );
+    assert!(
+        copy_text.contains("the copy"),
+        "the duplicate was overwritten:\n{copy_text}"
+    );
+}
+
+fn fake_opener(leo: &Leo, obsidian_running: bool) -> (PathBuf, PathBuf) {
+    let log = leo.home.path().join("opened");
+    let clipboard = leo.home.path().join("clipboard");
+    for name in ["open", "xdg-open"] {
+        let script = leo.bin.join(name);
+        std::fs::write(
+            &script,
+            format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\n", log.display()),
+        )
+        .unwrap();
+        make_executable(&script);
+    }
+    for name in ["pbcopy", "wl-copy", "xclip", "xsel"] {
+        let script = leo.bin.join(name);
+        std::fs::write(
+            &script,
+            format!("#!/bin/sh\ncat > '{}'\n", clipboard.display()),
+        )
+        .unwrap();
+        make_executable(&script);
+    }
+    let pgrep = leo.bin.join("pgrep");
+    std::fs::write(
+        &pgrep,
+        format!("#!/bin/sh\nexit {}\n", if obsidian_running { 0 } else { 1 }),
+    )
+    .unwrap();
+    make_executable(&pgrep);
+    (log, clipboard)
+}
+
+fn obsidian_config(leo: &Leo) -> PathBuf {
+    if cfg!(target_os = "macos") {
+        leo.home
+            .path()
+            .join("Library/Application Support/obsidian/obsidian.json")
+    } else {
+        leo.home.path().join(".config/obsidian/obsidian.json")
+    }
+}
+
+fn run_obsidian(leo: &Leo) -> Output {
+    let marker = leo.home.path().join("Obsidian.app");
+    std::fs::create_dir_all(&marker).unwrap();
+    leo.cmd(&["obsidian"])
+        .env("LEO_OBSIDIAN_APP", &marker)
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn obsidian_adds_the_notes_folder_as_a_vault_and_opens_it() {
+    let leo = Leo::new();
+    let (log, _clipboard) = fake_opener(&leo, false);
+    let config = obsidian_config(&leo);
+    std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+    std::fs::write(
+        &config,
+        r#"{"vaults":{"aaaa000000000001":{"path":"/Users/me/Vault","ts":1,"open":true}},"frame":"hidden"}"#,
+    )
+    .unwrap();
+
+    let out = run_obsidian(&leo);
+    assert!(out.status.success(), "{}", describe(&out));
+
+    let value: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&config).unwrap()).unwrap();
+    assert_eq!(value["frame"], "hidden", "another setting was lost");
+    assert_eq!(
+        value["vaults"]["aaaa000000000001"]["path"],
+        "/Users/me/Vault"
+    );
+    let vaults = value["vaults"].as_object().unwrap();
+    let (id, vault) = vaults
+        .iter()
+        .find(|(_, v)| v["path"].as_str().unwrap_or("").ends_with("notes"))
+        .expect("the notes folder was not added");
+    assert!(
+        config.with_extension("json.leo-backup").exists(),
+        "no backup kept"
+    );
+
+    let opened = std::fs::read_to_string(&log).unwrap();
+    assert!(
+        opened.contains(&format!("obsidian://open?vault={id}")),
+        "{opened}"
+    );
+    assert!(vault["ts"].as_u64().unwrap() > 0);
+
+    let again = run_obsidian(&leo);
+    assert!(again.status.success());
+    let after: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&config).unwrap()).unwrap();
+    assert_eq!(
+        after["vaults"].as_object().unwrap().len(),
+        2,
+        "a second run added the folder twice"
+    );
+}
+
+#[test]
+fn obsidian_already_running_is_not_edited_and_the_steps_are_given() {
+    let leo = Leo::new();
+    let (log, clipboard) = fake_opener(&leo, true);
+    let out = run_obsidian(&leo);
+    assert!(out.status.success(), "{}", describe(&out));
+    assert!(
+        !obsidian_config(&leo).exists(),
+        "edited a running Obsidian's list"
+    );
+    let said = String::from_utf8_lossy(&out.stdout);
+    assert!(said.contains("Open folder as vault"), "{said}");
+    assert!(std::fs::read_to_string(&clipboard)
+        .unwrap()
+        .ends_with("notes"));
+    assert!(std::fs::read_to_string(&log)
+        .unwrap()
+        .contains("obsidian://"));
+}
+
+#[test]
+fn obsidian_without_it_installed_says_where_to_get_it() {
+    let leo = Leo::new();
+    let (log, _clipboard) = fake_opener(&leo, false);
+    let out = leo
+        .cmd(&["obsidian"])
+        .env("LEO_OBSIDIAN_APP", leo.home.path().join("missing"))
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("obsidian.md"),
+        "{}",
+        describe(&out)
+    );
+    assert!(!log.exists(), "opened something anyway");
+}
+
 fn tripwire(leo: &Leo) -> (PathBuf, PathBuf) {
     let ran = leo.home.path().join("installer-ran");
     let script = leo.home.path().join("tripwire.sh");
@@ -670,6 +913,24 @@ fn a_second_computer_joins_the_backup_and_both_share_notes() {
 
     laptop.ok(&["sync"]);
     assert!(laptop.ok(&["list"]).contains("Written on the desktop"));
+
+    let manuals: Vec<String> = desktop
+        .files()
+        .into_iter()
+        .filter(|f| f.contains("title: leo manual"))
+        .collect();
+    assert_eq!(
+        manuals.len(),
+        2,
+        "each computer's manual note should survive"
+    );
+    for manual in &manuals {
+        assert_eq!(
+            manual.matches("\nid: ").count(),
+            1,
+            "two notes were merged into one:\n{manual}"
+        );
+    }
 }
 
 fn fake_gh(leo: &Leo, github: &Path) {

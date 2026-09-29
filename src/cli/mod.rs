@@ -135,6 +135,9 @@ enum Commands {
         new_token: bool,
     },
 
+    #[command(about = "Open your notes in Obsidian (they are already Markdown files it can read)")]
+    Obsidian,
+
     #[command(
         about = "Check that everything works (leo, your notes, the AI, recording, backup) and say how to fix what does not"
     )]
@@ -242,6 +245,7 @@ const EXAMPLES: &[(&str, &str)] = &[
     ("leo sync", "back up to GitHub now"),
     ("leo sync github", "set up backup with GitHub's gh tool"),
     ("leo sync connect <url>", "back up to a repository you made"),
+    ("leo obsidian", "open your notes in Obsidian"),
     (
         "leo doctor",
         "check that everything works, and store an API key",

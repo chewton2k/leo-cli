@@ -14,7 +14,7 @@ use anyhow::Result;
 use crate::store::Store;
 
 /// Bump when the manual's content changes enough to be worth re-offering.
-const MANUAL_VERSION: u32 = 6;
+const MANUAL_VERSION: u32 = 7;
 const MARKER: &str = ".manual-installed";
 pub const MANUAL_TITLE: &str = "leo manual";
 
@@ -136,7 +136,7 @@ your question.
 
 `/doctor` checks that everything works and says how to fix what does not;
 `leo doctor` does the same in a shell, and stores API keys. `/sync github` sets
-up backup to a private GitHub repository. `leo update` gets the newest leo. `Ctrl-S` holds AI providers, keys, colour and backup.
+up backup to a private GitHub repository. `leo update` gets the newest leo, and `/obsidian` opens your notes in Obsidian. `Ctrl-S` holds AI providers, keys, colour and backup.
 
 Notes are plain Markdown files in `{notes_dir}`. Settings live in
 `{config_path}`. API keys never do; they are kept in a store
