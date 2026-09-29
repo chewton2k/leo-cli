@@ -2369,7 +2369,7 @@ fn listen_refuses_with_the_fixes_when_nothing_is_set_up() {
         let checks = leo_services::health::recording(
             &config,
             &leo_services::config::secret::MemoryStore::default(),
-            true,
+            false,
         );
         checks.iter().filter(|c| !c.state.is_ready()).count()
     };
