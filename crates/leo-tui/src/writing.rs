@@ -18,33 +18,53 @@ impl App {
         };
         let already = self.editing.as_ref().is_some_and(|ed| ed.id == note.id);
         if !already {
-            self.editing = Some(editor::Editor::open(&note.id, &note.body));
+            let (id, body) = (note.id.clone(), note.body.clone());
+            self.flush_edit();
+            self.editing = Some(editor::Editor::open(&id, &body));
         }
         self.focus = Pane::Preview;
         true
     }
 
     pub(super) fn flush_edit(&mut self) {
-        let Some(ed) = self.editing.as_mut() else {
+        self.write_edit(true);
+    }
+
+    fn write_edit(&mut self, commit: bool) {
+        let Some(ed) = self.editing.as_ref() else {
             return;
         };
-        if !ed.dirty {
+        let unsaved = ed.dirty;
+        let committed_later = self.edit_uncommitted;
+        if !unsaved && !(commit && committed_later) {
             return;
         }
-        let text = ed.text();
-        ed.saved();
-        let Some(note) = self.store.find_note_mut(&ed.id.clone()) else {
-            return;
+        let (id, text) = (ed.id.clone(), ed.text());
+        if unsaved {
+            let Some(note) = self.store.find_note_mut(&id) else {
+                return;
+            };
+            if note.body != text {
+                note.body = text;
+                note.updated_at = chrono::Utc::now();
+            }
+        }
+        let saved = if commit {
+            self.store.save()
+        } else {
+            self.store.save_files()
         };
-        if note.body == text {
+        if let Err(e) = saved {
+            self.say(
+                Kind::Bad,
+                format!("Could not save: {e}. It stays here until it can."),
+            );
             return;
         }
-        note.body = text;
-        note.updated_at = chrono::Utc::now();
-        if let Err(e) = self.store.save() {
-            self.say(Kind::Bad, format!("Could not save: {e}"));
-            return;
+        if let Some(ed) = self.editing.as_mut() {
+            ed.saved();
         }
+        self.edit_uncommitted = !commit;
         self.note_changed();
         self.resync();
     }
@@ -67,7 +87,7 @@ impl App {
 
     pub(super) fn pump_editor(&mut self) {
         if self.editing.as_ref().is_some_and(|ed| ed.wants_saving()) {
-            self.flush_edit();
+            self.write_edit(false);
         }
     }
 

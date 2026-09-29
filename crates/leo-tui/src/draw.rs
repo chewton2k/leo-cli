@@ -72,8 +72,13 @@ impl App {
             (None, None, None, None) => Preview::Empty,
         };
         let now = chrono::Utc::now();
-        match (&preview, &self.editing) {
-            (Preview::Note(note), Some(ed)) if ed.id == note.id => view::editing::render(
+        let written = self
+            .editing
+            .as_ref()
+            .filter(|_| !matches!(preview, Preview::Text { .. } | Preview::Live { .. }))
+            .and_then(|ed| self.store.find_note(&ed.id).map(|note| (ed, note)));
+        match written {
+            Some((ed, note)) => view::editing::render(
                 frame,
                 f.preview,
                 &format!(
@@ -84,7 +89,7 @@ impl App {
                 ed,
                 self.focus == Pane::Preview,
             ),
-            _ => view::preview::render(
+            None => view::preview::render(
                 frame,
                 f.preview,
                 &preview,
@@ -191,15 +196,15 @@ impl App {
     }
 
     /// Which set of key hints the idle command line shows.
-    fn hint_place(&self) -> view::hints::Place {
+    pub(super) fn hint_place(&self) -> view::hints::Place {
         use view::hints::Place;
         if self.recording.is_some() {
             return Place::Recording;
         }
         match self.focus {
             Pane::Dirs => Place::Dirs,
-            Pane::Notes => Place::Notes,
-            Pane::Preview => Place::Preview,
+            Pane::Preview if self.editing.is_some() => Place::Preview,
+            _ => Place::Notes,
         }
     }
 }

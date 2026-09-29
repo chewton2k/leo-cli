@@ -564,6 +564,16 @@ impl Store {
     }
 
     pub fn save(&self) -> Result<()> {
+        self.save_files()?;
+        if crate::sync::is_initialized(&self.notes_dir) {
+            if let Err(e) = crate::sync::auto_commit(&self.notes_dir) {
+                crate::diag::warn(format!("sync auto-commit failed: {e}"));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn save_files(&self) -> Result<()> {
         fs::create_dir_all(&self.notes_dir)?;
         let mut seen = self.seen.borrow_mut();
         let targets = self.assign_paths(&seen);
@@ -633,13 +643,6 @@ impl Store {
         tidy_trash(&self.notes_dir, &live);
 
         save_directories(&self.notes_dir, &self.directories)?;
-
-        if crate::sync::is_initialized(&self.notes_dir) {
-            if let Err(e) = crate::sync::auto_commit(&self.notes_dir) {
-                crate::diag::warn(format!("sync auto-commit failed: {e}"));
-            }
-        }
-
         self.fingerprint.set(fingerprint_of(&self.notes_dir));
         Ok(())
     }

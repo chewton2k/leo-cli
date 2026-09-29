@@ -2771,3 +2771,199 @@ fn random_keys_across_the_whole_app_never_panic() {
         app.flush_edit();
     }
 }
+
+fn commits(dir: &std::path::Path) -> usize {
+    let out = std::process::Command::new("git")
+        .args(["rev-list", "--count", "HEAD"])
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .parse()
+        .unwrap_or(0)
+}
+
+#[test]
+fn pauses_while_writing_save_without_a_commit_each_and_esc_commits_once() {
+    let (mut app, _d) = temp_app();
+    leo_core::sync::init(&app.store.notes_dir).unwrap();
+    app.store.save().unwrap();
+    let before = commits(&app.store.notes_dir);
+    select_titled(&mut app, "Graph traversals");
+    let id = app.selected_id().cloned().unwrap();
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
+    app.focus = Pane::Notes;
+    app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
+        .unwrap();
+    for word in [" one", " two", " three"] {
+        type_in(&mut app, &mut terminal, word);
+        app.editing.as_mut().unwrap().last_edit =
+            Some(std::time::Instant::now() - crate::editor::AUTOSAVE);
+        app.pump_editor();
+    }
+    assert!(app
+        .store
+        .find_note(&id)
+        .unwrap()
+        .body
+        .ends_with("one two three"));
+    assert_eq!(commits(&app.store.notes_dir), before, "a commit per pause");
+    app.on_key(press_code(event::KeyCode::Esc), &mut terminal)
+        .unwrap();
+    assert_eq!(commits(&app.store.notes_dir), before + 1);
+}
+
+#[test]
+fn a_note_that_stops_matching_the_search_while_written_stays_the_one_being_written() {
+    let (mut app, _d) = temp_app();
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
+    app.on_key(press('/'), &mut terminal).unwrap();
+    type_in(&mut app, &mut terminal, "BFS");
+    app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
+        .unwrap();
+    let id = app.selected_id().cloned().unwrap();
+    app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
+        .unwrap();
+    for _ in 0..5 {
+        app.on_key(press_code(event::KeyCode::Backspace), &mut terminal)
+            .unwrap();
+    }
+    type_in(&mut app, &mut terminal, "zzz");
+    app.flush_edit();
+    terminal.draw(|f| app.draw(f)).unwrap();
+    assert!(
+        terminal.backend().to_string().contains("zzz"),
+        "the note being written vanished from view"
+    );
+    type_in(&mut app, &mut terminal, "!");
+    app.on_key(press_code(event::KeyCode::Esc), &mut terminal)
+        .unwrap();
+    assert_eq!(app.store.find_note(&id).unwrap().body, "zzz!");
+}
+
+#[test]
+fn a_failed_save_keeps_the_text_waiting_to_be_saved() {
+    use std::os::unix::fs::PermissionsExt;
+    let (mut app, _d) = temp_app();
+    select_titled(&mut app, "Graph traversals");
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
+    app.focus = Pane::Notes;
+    app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
+        .unwrap();
+    type_in(&mut app, &mut terminal, " kept");
+    let dir = app.store.notes_dir.clone();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+    app.flush_edit();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(
+        app.editing.as_ref().unwrap().dirty,
+        "the unsaved text was forgotten"
+    );
+    app.flush_edit();
+    let reloaded = leo_core::store::Store::load_from(&dir).unwrap();
+    assert!(reloaded.notes.iter().any(|n| n.body.ends_with(" kept")));
+}
+
+#[test]
+fn a_note_changed_by_another_app_while_written_keeps_both_versions() {
+    let (mut app, _d) = temp_app();
+    select_titled(&mut app, "Graph traversals");
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
+    app.focus = Pane::Notes;
+    app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
+        .unwrap();
+    let path = app.store.notes_dir.join("Graph traversals.md");
+    let text = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(&path, text.replace("- BFS", "- BFS from Obsidian")).unwrap();
+    type_in(&mut app, &mut terminal, " from leo");
+    app.on_key(press_code(event::KeyCode::Esc), &mut terminal)
+        .unwrap();
+    let reloaded = leo_core::store::Store::load_from(&app.store.notes_dir).unwrap();
+    let bodies: Vec<&str> = reloaded.notes.iter().map(|n| n.body.as_str()).collect();
+    assert!(
+        bodies.iter().any(|b| b.contains("from Obsidian")),
+        "{bodies:?}"
+    );
+    assert!(bodies.iter().any(|b| b.contains("from leo")), "{bodies:?}");
+}
+
+#[test]
+fn the_hints_say_writing_keys_only_while_writing() {
+    let (mut app, _d) = temp_app();
+    app.pinned = Some(("output".to_string(), vec![Line::plain("a report")]));
+    app.focus = Pane::Preview;
+    assert_ne!(app.hint_place(), view::hints::Place::Preview);
+}
+
+#[test]
+fn opening_another_note_for_writing_saves_the_first() {
+    let (mut app, _d) = temp_app();
+    select_titled(&mut app, "Graph traversals");
+    let first = app.selected_id().cloned().unwrap();
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
+    app.focus = Pane::Notes;
+    app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
+        .unwrap();
+    type_in(&mut app, &mut terminal, " unsaved");
+    app.focus = Pane::Notes;
+    select_titled(&mut app, "Rust ownership");
+    app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
+        .unwrap();
+    assert!(app
+        .store
+        .find_note(&first)
+        .unwrap()
+        .body
+        .ends_with(" unsaved"));
+}
+
+#[test]
+fn with_no_notes_at_all_enter_does_nothing_harmful_and_n_still_works() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::load_from(&dir.path().join("notes")).unwrap();
+    let mut app = App::new(store);
+    app.setup_steps = steps_ready;
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 20)).unwrap();
+    for key in [
+        press_code(event::KeyCode::Enter),
+        press('x'),
+        press('D'),
+        press('p'),
+        press_code(event::KeyCode::Esc),
+    ] {
+        app.on_key(key, &mut terminal).unwrap();
+        terminal.draw(|f| app.draw(f)).unwrap();
+    }
+    assert!(app.editing.is_none());
+    app.focus = Pane::Notes;
+    app.on_key(press('n'), &mut terminal).unwrap();
+    app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
+        .unwrap();
+    let ed = app.editing.as_ref().expect("writing the new note");
+    assert_eq!(app.store.find_note(&ed.id).unwrap().title, "Untitled");
+}
+
+#[test]
+fn n_then_esc_makes_nothing() {
+    let (mut app, _d) = temp_app();
+    let before = app.store.notes.len();
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 20)).unwrap();
+    app.on_key(press('n'), &mut terminal).unwrap();
+    type_in(&mut app, &mut terminal, "Draft");
+    app.on_key(press_code(event::KeyCode::Esc), &mut terminal)
+        .unwrap();
+    assert_eq!(app.store.notes.len(), before);
+    assert!(app.editing.is_none());
+    assert_eq!(app.mode, Mode::Normal);
+}
+
+#[test]
+fn pasting_at_the_slash_line_searches_on_one_line() {
+    let (mut app, _d) = temp_app();
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 20)).unwrap();
+    app.on_key(press('/'), &mut terminal).unwrap();
+    app.on_paste("own\nership");
+    assert_eq!(app.cmd.text(), "ownership");
+    assert_eq!(app.note_count(), 1);
+}

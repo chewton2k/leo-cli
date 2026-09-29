@@ -189,7 +189,7 @@ completes names, folders and tags. If you leave the note out, a command acts on
 the selected note (or on the marked ones).
 
 ```
-/new cs130/Lecture 4 #exam     a note in cs130, tagged exam, in one step
+/new cs130/Lecture 4 #exam     a note in folder cs130 (if it exists), tagged exam
 /rename Graph traversals       retitle the selected note
 /mv cs162                      move the selected (or marked) notes
 /mkdir cs130                   a folder here

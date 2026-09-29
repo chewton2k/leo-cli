@@ -117,6 +117,7 @@ pub struct App {
     unpushed: Option<usize>,
     note_sel: usize,
     editing: Option<editor::Editor>,
+    edit_uncommitted: bool,
     /// Notes marked with Space. When any are, D and m act on all of them.
     marked: Vec<String>,
     dir_sel: usize,
@@ -282,6 +283,7 @@ impl App {
             numbering,
             note_sel: 0,
             editing: None,
+            edit_uncommitted: false,
             marked: Vec::new(),
             dir_sel: 0,
             focus: Pane::Notes,
