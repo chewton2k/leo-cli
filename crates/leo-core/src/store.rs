@@ -145,7 +145,13 @@ fn parse_note_from_markdown(
         .to_string();
 
     let id = text_from(props.remove("id")).unwrap_or_else(|| stable_id(relative_path));
-    let title = text_from(props.remove("title")).unwrap_or_else(|| stem.clone());
+    let header_title = text_from(props.remove("title")).unwrap_or_else(|| stem.clone());
+    let title =
+        if uuid::Uuid::parse_str(&stem).is_ok() || filename::matches_title(&stem, &header_title) {
+            header_title
+        } else {
+            stem.clone()
+        };
     let tags = props.remove("tags").map(tags_from).unwrap_or_default();
     let created_at = props
         .remove("created_at")
@@ -1384,9 +1390,12 @@ mod tests {
     fn test_note_roundtrip() {
         let note = make_note();
         let md = note_to_markdown(&note).unwrap();
-        let parsed =
-            parse_note_from_markdown(&md, std::path::Path::new("550e8400.md"), chrono::Utc::now())
-                .unwrap();
+        let parsed = parse_note_from_markdown(
+            &md,
+            std::path::Path::new("Test Note.md"),
+            chrono::Utc::now(),
+        )
+        .unwrap();
         assert_eq!(parsed.id, note.id);
         assert_eq!(parsed.title, note.title);
         assert_eq!(parsed.body, note.body);
@@ -2570,8 +2579,13 @@ mod tests {
 
     #[test]
     fn a_header_missing_leos_fields_still_loads() {
-        let note = parse("Notes.md", "---\ntitle: Real title\n---\nx");
+        let note = parse("Real title.md", "---\ntitle: Real title\n---\nx");
         assert_eq!(note.title, "Real title");
+        assert_eq!(
+            parse("Notes.md", "---\ntitle: Real title\n---\nx").title,
+            "Notes",
+            "Obsidian shows a note by its file name"
+        );
     }
 
     #[test]
@@ -2685,5 +2699,56 @@ mod tests {
         assert!(saved.contains("aliases:"), "{saved}");
         assert!(saved.contains("Other name"), "{saved}");
         assert!(saved.contains("new"), "{saved}");
+    }
+
+    fn leo_text(title: &str) -> String {
+        format!("---\nid: abc\ntitle: {title}\ntags: []\ncreated_at: 2026-01-01T00:00:00Z\nupdated_at: 2026-01-01T00:00:00Z\n---\n\nbody\n")
+    }
+
+    #[test]
+    fn a_file_renamed_in_another_app_takes_the_new_name_as_its_title() {
+        assert_eq!(
+            parse("New name.md", &leo_text("Old name")).title,
+            "New name"
+        );
+    }
+
+    #[test]
+    fn numbered_and_sanitised_names_keep_the_header_title() {
+        let text = leo_text("'Lecture 4: BFS'");
+        assert_eq!(parse("Lecture 4- BFS.md", &text).title, "Lecture 4: BFS");
+        assert_eq!(
+            parse("Lecture 4- BFS (2).md", &text).title,
+            "Lecture 4: BFS"
+        );
+    }
+
+    #[test]
+    fn a_file_named_after_its_id_keeps_the_header_title() {
+        let name = "550e8400-e29b-41d4-a716-446655440000.md";
+        assert_eq!(parse(name, &leo_text("Whatever")).title, "Whatever");
+    }
+
+    #[test]
+    fn a_rename_made_in_another_app_is_not_undone_by_a_save() {
+        let (mut store, _tmp) = temp_store();
+        let id = store
+            .create_note("Old name", "x", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.save().unwrap();
+        fs::rename(
+            store.notes_dir.join("Old name.md"),
+            store.notes_dir.join("New name.md"),
+        )
+        .unwrap();
+
+        let mut reloaded = Store::load_from(&store.notes_dir).unwrap();
+        assert_eq!(reloaded.find_note(&id).unwrap().title, "New name");
+        reloaded.create_note("Other", "y", vec![], "").unwrap();
+        reloaded.save().unwrap();
+
+        assert_eq!(note_files(&reloaded), ["New name.md", "Other.md"]);
     }
 }
