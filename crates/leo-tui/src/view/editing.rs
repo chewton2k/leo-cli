@@ -199,6 +199,62 @@ mod tests {
     }
 
     #[test]
+    fn thousands_of_random_keys_never_panic_or_lose_the_cursor() {
+        let alphabet: Vec<char> = "ab -[]x*#>1.세계é🎉\t".chars().collect();
+        let mut seed: u64 = 0x5eed;
+        let mut next = |n: usize| {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((seed >> 33) as usize) % n
+        };
+        for round in 0..40 {
+            let mut ed = Editor::open("id", "- [ ] 세계\n## 제목\n```\ncode 🎉\n```\n> quote");
+            let width = 3 + next(40) as u16;
+            let height = 3 + next(12) as u16;
+            let mut t = Terminal::new(TestBackend::new(width, height)).unwrap();
+            for _ in 0..300 {
+                match next(16) {
+                    0 => ed.enter(),
+                    1 => ed.backspace(),
+                    2 => ed.delete(),
+                    3 => ed.left(),
+                    4 => ed.right(),
+                    5 => ed.up(),
+                    6 => ed.down(),
+                    7 => ed.indent(),
+                    8 => ed.outdent(),
+                    9 => {
+                        ed.undo();
+                    }
+                    10 => ed.paste("x\n세\n- [ ] 🎉"),
+                    11 => {
+                        ed.toggle_box(next(ed.lines.len() + 2));
+                    }
+                    12 => ed.page(next(2) == 0),
+                    13 => {
+                        let (x, y) = (
+                            next(width as usize + 3) as u16,
+                            next(height as usize + 3) as u16,
+                        );
+                        match hit(&ed, x, y) {
+                            Some(Hit::Place { line, col }) => ed.place(line, col),
+                            Some(Hit::Box { line }) => {
+                                ed.toggle_box(line);
+                            }
+                            None => {}
+                        }
+                    }
+                    _ => ed.insert(alphabet[next(alphabet.len())]),
+                }
+                assert!(ed.row < ed.lines.len(), "round {round}");
+                assert!(ed.col <= ed.lines[ed.row].chars().count(), "round {round}");
+                t.draw(|f| render(f, f.area(), "t", &ed, true)).unwrap();
+            }
+        }
+    }
+
+    #[test]
     fn long_lines_wrap_without_losing_text() {
         let ed = Editor::open("id", "alpha beta gamma delta epsilon zeta");
         let out = draw(&ed, 16, 8);

@@ -2715,3 +2715,59 @@ fn a_whole_session_ends_with_the_right_files_on_disk() {
         "the edit in the note was lost"
     );
 }
+
+#[test]
+fn random_keys_across_the_whole_app_never_panic() {
+    let keys: Vec<event::KeyEvent> = "bcdfghijklmnopstvwxyzBDGNKJ /#?-[]세🎉"
+        .chars()
+        .map(press)
+        .chain([
+            press_code(event::KeyCode::Enter),
+            press_code(event::KeyCode::Esc),
+            press_code(event::KeyCode::Backspace),
+            press_code(event::KeyCode::Tab),
+            press_code(event::KeyCode::BackTab),
+            press_code(event::KeyCode::Up),
+            press_code(event::KeyCode::Down),
+            press_code(event::KeyCode::Left),
+            press_code(event::KeyCode::Right),
+            press_code(event::KeyCode::Delete),
+            event::KeyEvent::new(event::KeyCode::Char('z'), event::KeyModifiers::CONTROL),
+        ])
+        .collect();
+    let mut seed: u64 = 0xfeed;
+    let mut next = |n: usize| {
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        ((seed >> 33) as usize) % n
+    };
+    for round in 0..6 {
+        let (mut app, _d) = temp_app();
+        let width = 30 + next(100) as u16;
+        let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(
+            width,
+            12 + next(20) as u16,
+        ))
+        .unwrap();
+        for _ in 0..400 {
+            let key = keys[next(keys.len())];
+            let text: String = app.cmd.text().to_lowercase();
+            let risky = app.mode == Mode::Command
+                && key.code == event::KeyCode::Enter
+                && ["e", "a", "r", "q", "u"]
+                    .iter()
+                    .any(|v| text.split_whitespace().next() == Some(v));
+            if risky || app.recording.is_some() {
+                app.on_key(press_code(event::KeyCode::Esc), &mut terminal)
+                    .unwrap();
+                continue;
+            }
+            app.on_key(key, &mut terminal).unwrap();
+            app.pump_editor();
+            terminal.draw(|f| app.draw(f)).unwrap();
+            assert!(!app.quit, "round {round}");
+        }
+        app.flush_edit();
+    }
+}
