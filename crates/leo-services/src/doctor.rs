@@ -250,6 +250,22 @@ fn notes_checks(notes_dir: &Path) -> Vec<Check> {
             ),
         ));
     }
+    let copies: Vec<&str> = store
+        .notes
+        .iter()
+        .filter(|n| n.title.ends_with(leo_core::store::CONFLICT_SUFFIX))
+        .map(|n| n.title.as_str())
+        .collect();
+    if !copies.is_empty() {
+        checks.push(warn(
+            "conflict copies",
+            "keeping every edit",
+            format!(
+                "another program changed a note while leo had it open, so leo kept your edit as a copy. Compare each with its original and delete the one you do not want:\n{}",
+                copies.join("\n")
+            ),
+        ));
+    }
     checks
 }
 
@@ -650,5 +666,30 @@ mod tests {
             "{:?}",
             backup.checks
         );
+    }
+
+    #[test]
+    fn a_conflict_copy_is_reported_with_what_to_do() {
+        let (_tmp, notes, config) = setup();
+        let mut store = leo_core::store::Store::load_from(&notes).unwrap();
+        store
+            .create_note("Shared (conflict from leo)", "x", vec![], "")
+            .unwrap();
+        store.save().unwrap();
+
+        let sections = scan(
+            &Config::default(),
+            &MemoryStore::default(),
+            &notes,
+            &config,
+            quiet(),
+        );
+        match &check(section(&sections, "notes"), "conflict copies").state {
+            State::Warn { note } => {
+                assert!(note.contains("Shared (conflict from leo)"), "{note}");
+                assert!(note.contains("delete"), "{note}");
+            }
+            other => panic!("expected a note, got {other:?}"),
+        }
     }
 }
