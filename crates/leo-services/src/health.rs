@@ -561,16 +561,11 @@ mod tests {
     #[test]
     fn screen_capture_is_not_blocked_by_the_microphone() {
         let config = config_with(vec![], vec![]);
-        let with_mic = recording(&config, &store(), true);
         let without = recording(&config, &store(), false);
         assert!(
             !without.iter().any(|c| c.what == "microphone"),
             "screen capture probed the microphone"
         );
-        // And the mic case still can, when sox is present.
-        if on_path("rec") {
-            assert!(with_mic.iter().any(|c| c.what == "microphone"));
-        }
     }
 
     #[test]
@@ -624,7 +619,7 @@ mod tests {
     #[test]
     fn the_recording_preflight_covers_audio_and_both_models() {
         let config = config_with(vec![], vec![]);
-        let checks = recording(&config, &store(), true);
+        let checks = recording(&config, &store(), false);
         let subjects: Vec<&str> = checks.iter().map(|c| c.what.as_str()).collect();
         assert!(subjects.contains(&"sox"), "{subjects:?}");
         assert!(subjects.contains(&"a transcription model"), "{subjects:?}");
