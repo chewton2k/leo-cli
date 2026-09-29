@@ -223,6 +223,24 @@ fn is_clean(path: &Path, expected: u64) -> bool {
     fs::read_to_string(path).is_ok_and(|text| hash_str(&text) == expected)
 }
 
+fn fingerprint_of(notes_dir: &Path) -> u64 {
+    let mut paths = HashSet::new();
+    let _ = collect_md_paths(notes_dir, &mut paths);
+    paths.iter().fold(0u64, |sum, path| {
+        let (len, nanos) = fs::metadata(path)
+            .map(|m| {
+                let nanos = m
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map_or(0, |d| d.as_nanos());
+                (m.len(), nanos)
+            })
+            .unwrap_or((0, 0));
+        sum.wrapping_add(hash_str(&format!("{}|{len}|{nanos}", path.display())))
+    })
+}
+
 fn same_file(a: &Path, b: &Path) -> bool {
     match (fs::canonicalize(a), fs::canonicalize(b)) {
         (Ok(x), Ok(y)) => x == y,
@@ -470,6 +488,7 @@ pub struct Store {
     /// deletion that survived a restart is a decision the user has lived with.
     undo: Vec<Undoable>,
     seen: std::cell::RefCell<HashMap<String, Seen>>,
+    fingerprint: std::cell::Cell<u64>,
 }
 
 impl Store {
@@ -515,6 +534,7 @@ impl Store {
         tidy_trash(notes_dir, &notes.iter().map(|n| n.id.as_str()).collect());
         Ok(Store {
             seen: std::cell::RefCell::new(seen),
+            fingerprint: std::cell::Cell::new(fingerprint_of(notes_dir)),
             unreadable,
             undo: Vec::new(),
             notes,
@@ -600,6 +620,18 @@ impl Store {
             }
         }
 
+        self.fingerprint.set(fingerprint_of(&self.notes_dir));
+        Ok(())
+    }
+
+    pub fn changed_on_disk(&self) -> bool {
+        fingerprint_of(&self.notes_dir) != self.fingerprint.get()
+    }
+
+    pub fn refresh(&mut self) -> Result<()> {
+        let undo = std::mem::take(&mut self.undo);
+        *self = Store::load_from(&self.notes_dir.clone())?;
+        self.undo = undo;
         Ok(())
     }
 
@@ -1499,6 +1531,7 @@ mod tests {
             unreadable: Vec::new(),
             undo: Vec::new(),
             seen: Default::default(),
+            fingerprint: Default::default(),
             notes: vec![make_note()],
             directories: vec![],
             notes_dir: notes_dir.clone(),
@@ -1550,6 +1583,7 @@ mod tests {
             unreadable: Vec::new(),
             undo: Vec::new(),
             seen: Default::default(),
+            fingerprint: Default::default(),
             notes: vec![make_note()],
             directories: vec![],
             notes_dir: notes_dir.clone(),
@@ -2882,5 +2916,39 @@ mod tests {
     #[test]
     fn the_notice_names_the_note() {
         assert!(conflict_notice("Shared").contains("Shared"));
+    }
+
+    #[test]
+    fn the_store_notices_another_programs_change_but_not_its_own_saves() {
+        let (mut store, _tmp) = temp_store();
+        assert!(!store.changed_on_disk());
+        store.create_note("Mine", "a", vec![], "").unwrap();
+        store.save().unwrap();
+        assert!(
+            !store.changed_on_disk(),
+            "its own save looked like someone else's"
+        );
+
+        fs::write(store.notes_dir.join("Theirs.md"), "from elsewhere").unwrap();
+        assert!(store.changed_on_disk());
+        store.refresh().unwrap();
+        assert!(!store.changed_on_disk());
+        assert_eq!(store.notes.len(), 2);
+    }
+
+    #[test]
+    fn refreshing_keeps_the_undo_stack() {
+        let (mut store, _tmp) = temp_store();
+        let id = store
+            .create_note("Doomed", "a", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.save().unwrap();
+        store.delete_note(&id);
+        store.save().unwrap();
+        store.refresh().unwrap();
+        assert!(store.undo().is_some());
+        assert!(store.find_note(&id).is_some());
     }
 }

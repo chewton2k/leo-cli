@@ -2173,6 +2173,37 @@ fn esc_leaves_the_setup_screen_and_points_at_doctor() {
 }
 
 #[test]
+fn a_note_written_by_another_program_appears_without_pressing_anything() {
+    let (mut app, _d) = temp_app();
+    let before = app.numbering.len();
+    std::fs::write(app.store.notes_dir.join("From Obsidian.md"), "hello").unwrap();
+    app.last_disk_check = None;
+
+    assert!(app.maybe_reload_from_disk());
+    assert_eq!(app.numbering.len(), before + 1);
+}
+
+#[test]
+fn nothing_reloads_while_typing_or_when_nothing_changed() {
+    let (mut app, _d) = temp_app();
+    std::fs::write(app.store.notes_dir.join("From Obsidian.md"), "hello").unwrap();
+
+    app.mode = Mode::Command;
+    app.last_disk_check = None;
+    assert!(
+        !app.maybe_reload_from_disk(),
+        "reloaded under the command line"
+    );
+
+    app.mode = Mode::Normal;
+    app.last_disk_check = None;
+    assert!(app.maybe_reload_from_disk());
+
+    app.last_disk_check = None;
+    assert!(!app.maybe_reload_from_disk(), "reloaded with nothing new");
+}
+
+#[test]
 fn a_newer_release_is_announced_with_how_to_update() {
     let (mut app, _d) = temp_app();
     let (tx, rx) = std::sync::mpsc::channel();
