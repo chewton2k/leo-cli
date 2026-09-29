@@ -1635,6 +1635,7 @@ dependencies = [
  "leo-services",
  "leo-tui",
  "leo-web",
+ "serde_json",
  "tempfile",
  "tokio",
 ]

@@ -2210,6 +2210,7 @@ fn slash_obsidian_says_how_to_add_the_folder_as_a_vault() {
     app.obsidian = |dir| {
         Ok(leo_core::obsidian::Opened {
             path: dir.to_path_buf(),
+            how: leo_core::obsidian::How::ByHand,
             copied: true,
         })
     };

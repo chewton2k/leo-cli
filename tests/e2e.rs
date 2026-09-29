@@ -403,14 +403,14 @@ fn a_note_duplicated_in_obsidian_is_a_second_note_and_editing_keeps_both() {
     );
 }
 
-fn fake_opener(leo: &Leo) -> (PathBuf, PathBuf) {
+fn fake_opener(leo: &Leo, obsidian_running: bool) -> (PathBuf, PathBuf) {
     let log = leo.home.path().join("opened");
     let clipboard = leo.home.path().join("clipboard");
     for name in ["open", "xdg-open"] {
         let script = leo.bin.join(name);
         std::fs::write(
             &script,
-            format!("#!/bin/sh\nprintf '%s\\n' \"$1\" >> '{}'\n", log.display()),
+            format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\n", log.display()),
         )
         .unwrap();
         make_executable(&script);
@@ -424,39 +424,109 @@ fn fake_opener(leo: &Leo) -> (PathBuf, PathBuf) {
         .unwrap();
         make_executable(&script);
     }
+    let pgrep = leo.bin.join("pgrep");
+    std::fs::write(
+        &pgrep,
+        format!("#!/bin/sh\nexit {}\n", if obsidian_running { 0 } else { 1 }),
+    )
+    .unwrap();
+    make_executable(&pgrep);
     (log, clipboard)
 }
 
-#[test]
-fn obsidian_opens_the_notes_folder_through_its_link() {
-    let leo = Leo::new();
-    let (log, clipboard) = fake_opener(&leo);
+fn obsidian_config(leo: &Leo) -> PathBuf {
+    if cfg!(target_os = "macos") {
+        leo.home
+            .path()
+            .join("Library/Application Support/obsidian/obsidian.json")
+    } else {
+        leo.home.path().join(".config/obsidian/obsidian.json")
+    }
+}
+
+fn run_obsidian(leo: &Leo) -> Output {
     let marker = leo.home.path().join("Obsidian.app");
     std::fs::create_dir_all(&marker).unwrap();
-
-    let out = leo
-        .cmd(&["obsidian"])
+    leo.cmd(&["obsidian"])
         .env("LEO_OBSIDIAN_APP", &marker)
         .output()
-        .unwrap();
+        .unwrap()
+}
+
+#[test]
+fn obsidian_adds_the_notes_folder_as_a_vault_and_opens_it() {
+    let leo = Leo::new();
+    let (log, _clipboard) = fake_opener(&leo, false);
+    let config = obsidian_config(&leo);
+    std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+    std::fs::write(
+        &config,
+        r#"{"vaults":{"aaaa000000000001":{"path":"/Users/me/Vault","ts":1,"open":true}},"frame":"hidden"}"#,
+    )
+    .unwrap();
+
+    let out = run_obsidian(&leo);
     assert!(out.status.success(), "{}", describe(&out));
 
+    let value: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&config).unwrap()).unwrap();
+    assert_eq!(value["frame"], "hidden", "another setting was lost");
+    assert_eq!(
+        value["vaults"]["aaaa000000000001"]["path"],
+        "/Users/me/Vault"
+    );
+    let vaults = value["vaults"].as_object().unwrap();
+    let (id, vault) = vaults
+        .iter()
+        .find(|(_, v)| v["path"].as_str().unwrap_or("").ends_with("notes"))
+        .expect("the notes folder was not added");
+    assert!(
+        config.with_extension("json.leo-backup").exists(),
+        "no backup kept"
+    );
+
     let opened = std::fs::read_to_string(&log).unwrap();
-    assert!(opened.starts_with("obsidian://open?path=%2F"), "{opened}");
-    assert!(opened.contains("notes"), "{opened}");
+    assert!(
+        opened.contains(&format!("obsidian://open?vault={id}")),
+        "{opened}"
+    );
+    assert!(vault["ts"].as_u64().unwrap() > 0);
+
+    let again = run_obsidian(&leo);
+    assert!(again.status.success());
+    let after: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&config).unwrap()).unwrap();
+    assert_eq!(
+        after["vaults"].as_object().unwrap().len(),
+        2,
+        "a second run added the folder twice"
+    );
+}
+
+#[test]
+fn obsidian_already_running_is_not_edited_and_the_steps_are_given() {
+    let leo = Leo::new();
+    let (log, clipboard) = fake_opener(&leo, true);
+    let out = run_obsidian(&leo);
+    assert!(out.status.success(), "{}", describe(&out));
+    assert!(
+        !obsidian_config(&leo).exists(),
+        "edited a running Obsidian's list"
+    );
     let said = String::from_utf8_lossy(&out.stdout);
     assert!(said.contains("Open folder as vault"), "{said}");
-    let copied = std::fs::read_to_string(&clipboard).unwrap();
-    assert!(
-        copied.ends_with("notes"),
-        "the folder's path was not copied: {copied}"
-    );
+    assert!(std::fs::read_to_string(&clipboard)
+        .unwrap()
+        .ends_with("notes"));
+    assert!(std::fs::read_to_string(&log)
+        .unwrap()
+        .contains("obsidian://"));
 }
 
 #[test]
 fn obsidian_without_it_installed_says_where_to_get_it() {
     let leo = Leo::new();
-    let (log, _clipboard) = fake_opener(&leo);
+    let (log, _clipboard) = fake_opener(&leo, false);
     let out = leo
         .cmd(&["obsidian"])
         .env("LEO_OBSIDIAN_APP", leo.home.path().join("missing"))

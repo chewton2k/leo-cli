@@ -10,6 +10,14 @@ pub fn file_name(title: &str) -> String {
     let mut cleaned = String::with_capacity(title.len());
     let mut after_space = true;
     for c in title.chars() {
+        if c == ':' {
+            if !after_space {
+                cleaned.push(' ');
+            }
+            cleaned.push_str("- ");
+            after_space = true;
+            continue;
+        }
         if c.is_whitespace() {
             if !after_space {
                 cleaned.push(' ');
@@ -71,9 +79,19 @@ mod tests {
 
     #[test]
     fn characters_no_file_system_allows_become_dashes() {
-        assert_eq!(file_name("a/b\\c:d*e?f\"g<h>i|j"), "a-b-c-d-e-f-g-h-i-j");
+        assert_eq!(file_name("a/b\\c*e?f\"g<h>i|j"), "a-b-c-e-f-g-h-i-j");
         assert_eq!(file_name("tab\there"), "tab here");
         assert_eq!(file_name("bell\u{7}x"), "bell-x");
+    }
+
+    #[test]
+    fn a_colon_reads_as_a_dash_between_words() {
+        assert_eq!(
+            file_name("Lecture 4: Graph search"),
+            "Lecture 4 - Graph search"
+        );
+        assert_eq!(file_name("Q:A"), "Q - A");
+        assert_eq!(file_name(": leading"), "- leading");
     }
 
     #[test]

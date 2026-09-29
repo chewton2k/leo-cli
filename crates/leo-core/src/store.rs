@@ -2809,9 +2809,9 @@ mod tests {
     #[test]
     fn numbered_and_sanitised_names_keep_the_header_title() {
         let text = leo_text("'Lecture 4: BFS'");
-        assert_eq!(parse("Lecture 4- BFS.md", &text).title, "Lecture 4: BFS");
+        assert_eq!(parse("Lecture 4 - BFS.md", &text).title, "Lecture 4: BFS");
         assert_eq!(
-            parse("Lecture 4- BFS (2).md", &text).title,
+            parse("Lecture 4 - BFS (2).md", &text).title,
             "Lecture 4: BFS"
         );
     }
