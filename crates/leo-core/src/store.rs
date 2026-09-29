@@ -372,40 +372,31 @@ fn add_with_parents(directories: &mut Vec<String>, dir: &str) {
 fn collect_notes(
     notes_dir: &Path,
     dir: &Path,
-    notes: &mut Vec<Note>,
+    found: &mut Vec<(PathBuf, Note, String, std::time::SystemTime)>,
     unreadable: &mut Vec<(PathBuf, String)>,
-    seen: &mut HashMap<String, Seen>,
 ) -> Result<()> {
     if !dir.exists() {
         return Ok(());
     }
     for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
+        let path = entry?.path();
         if path.is_dir() {
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if !name.starts_with('.') {
-                collect_notes(notes_dir, &path, notes, unreadable, seen)?;
+                collect_notes(notes_dir, &path, found, unreadable)?;
             }
         } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
             let content = fs::read_to_string(&path)?;
             let relative = path
                 .strip_prefix(notes_dir)
-                .context("path outside notes_dir")?;
-            match parse_note_from_markdown(&content, relative, modified_time(&path)) {
+                .context("path outside notes_dir")?
+                .to_path_buf();
+            match parse_note_from_markdown(&content, &relative, modified_time(&path)) {
                 Ok(note) => {
-                    let model = note_to_markdown(&note)
-                        .map(|text| hash_str(&text))
-                        .unwrap_or(0);
-                    seen.insert(
-                        note.id.clone(),
-                        Seen {
-                            path: relative.to_path_buf(),
-                            disk: hash_str(&content),
-                            model,
-                        },
-                    );
-                    notes.push(note);
+                    let modified = fs::metadata(&path)
+                        .and_then(|m| m.modified())
+                        .unwrap_or(std::time::UNIX_EPOCH);
+                    found.push((relative, note, content, modified));
                 }
                 Err(e) => {
                     crate::diag::warn(format!("skipping {}: {e}", path.display()));
@@ -415,6 +406,35 @@ fn collect_notes(
         }
     }
     Ok(())
+}
+
+fn index_notes(
+    mut found: Vec<(PathBuf, Note, String, std::time::SystemTime)>,
+) -> (Vec<Note>, HashMap<String, Seen>) {
+    found.sort_by(|a, b| (a.3, &a.0).cmp(&(b.3, &b.0)));
+    let mut notes = Vec::with_capacity(found.len());
+    let mut seen = HashMap::new();
+    for (relative, mut note, content, _) in found {
+        if seen.contains_key(&note.id) {
+            note.id = stable_id(&relative);
+            if seen.contains_key(&note.id) {
+                note.id = uuid::Uuid::new_v4().to_string();
+            }
+        }
+        let model = note_to_markdown(&note)
+            .map(|text| hash_str(&text))
+            .unwrap_or(0);
+        seen.insert(
+            note.id.clone(),
+            Seen {
+                path: relative,
+                disk: hash_str(&content),
+                model,
+            },
+        );
+        notes.push(note);
+    }
+    (notes, seen)
 }
 
 // ── Store ───────────────────────────────────────────────────────────────────
@@ -520,10 +540,10 @@ impl Store {
     pub fn load_from(notes_dir: &Path) -> Result<Self> {
         fs::create_dir_all(notes_dir)?;
         let directories = load_directories(notes_dir)?;
-        let mut notes = Vec::new();
+        let mut found = Vec::new();
         let mut unreadable = Vec::new();
-        let mut seen = HashMap::new();
-        collect_notes(notes_dir, notes_dir, &mut notes, &mut unreadable, &mut seen)?;
+        collect_notes(notes_dir, notes_dir, &mut found, &mut unreadable)?;
+        let (notes, seen) = index_notes(found);
 
         // The directory list on disk only needs to remember empty directories:
         // every note's directory, and its parents, is known from where it is.
@@ -2950,5 +2970,43 @@ mod tests {
         store.refresh().unwrap();
         assert!(store.undo().is_some());
         assert!(store.find_note(&id).is_some());
+    }
+
+    #[test]
+    fn a_note_duplicated_in_another_app_is_its_own_note_and_both_survive_a_save() {
+        let (mut store, _tmp) = temp_store();
+        let id = store
+            .create_note("Lecture 4", "the original", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.save().unwrap();
+        let original = store.notes_dir.join("Lecture 4.md");
+        let copy = store.notes_dir.join("Lecture 4 1.md");
+        let copied_text = fs::read_to_string(&original)
+            .unwrap()
+            .replace("the original", "the copy, edited");
+        fs::write(&copy, &copied_text).unwrap();
+        let an_hour_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        fs::File::options()
+            .write(true)
+            .open(&original)
+            .unwrap()
+            .set_modified(an_hour_ago)
+            .unwrap();
+
+        let mut store = Store::load_from(&store.notes_dir).unwrap();
+        assert_eq!(store.notes.len(), 2);
+        let ids: HashSet<&str> = store.notes.iter().map(|n| n.id.as_str()).collect();
+        assert_eq!(ids.len(), 2, "two notes share one id");
+        assert!(store.duplicate_ids().is_empty());
+
+        store.find_note_mut(&id).unwrap().body = "the original, edited in leo".to_string();
+        store.save().unwrap();
+
+        let reloaded = Store::load_from(&store.notes_dir).unwrap();
+        let bodies: HashSet<String> = reloaded.notes.iter().map(|n| n.body.clone()).collect();
+        assert!(bodies.contains("the original, edited in leo"), "{bodies:?}");
+        assert!(bodies.contains("the copy, edited"), "{bodies:?}");
     }
 }

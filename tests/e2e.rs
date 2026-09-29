@@ -362,6 +362,47 @@ fn leo_and_obsidian_work_on_the_same_notes_folder() {
     assert!(leo.ok(&["trash"]).contains("Office hours"));
 }
 
+#[test]
+fn a_note_duplicated_in_obsidian_is_a_second_note_and_editing_keeps_both() {
+    let leo = Leo::new();
+    leo.ok(&["new", "Lecture 4", "--body", "the original"]);
+    let original = leo.notes_dir().join("Lecture 4.md");
+    let an_hour_ago = std::time::SystemTime::now() - Duration::from_secs(3600);
+    std::fs::File::options()
+        .write(true)
+        .open(&original)
+        .unwrap()
+        .set_modified(an_hour_ago)
+        .unwrap();
+    let copy = leo.notes_dir().join("Lecture 4 1.md");
+    std::fs::write(
+        &copy,
+        std::fs::read_to_string(&original)
+            .unwrap()
+            .replace("the original", "the copy"),
+    )
+    .unwrap();
+
+    let id = std::fs::read_to_string(&original)
+        .unwrap()
+        .lines()
+        .find_map(|l| l.strip_prefix("id: ").map(str::to_string))
+        .unwrap();
+    leo.ok(&["edit", &id]);
+
+    let original_text = std::fs::read_to_string(&original).unwrap();
+    let copy_text = std::fs::read_to_string(&copy).unwrap();
+    assert!(original_text.contains("the original"), "{original_text}");
+    assert!(
+        original_text.contains("written in the editor"),
+        "{original_text}"
+    );
+    assert!(
+        copy_text.contains("the copy"),
+        "the duplicate was overwritten:\n{copy_text}"
+    );
+}
+
 fn fake_opener(leo: &Leo) -> (PathBuf, PathBuf) {
     let log = leo.home.path().join("opened");
     let clipboard = leo.home.path().join("clipboard");
