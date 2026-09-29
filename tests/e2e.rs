@@ -688,6 +688,24 @@ fn a_second_computer_joins_the_backup_and_both_share_notes() {
 
     laptop.ok(&["sync"]);
     assert!(laptop.ok(&["list"]).contains("Written on the desktop"));
+
+    let manuals: Vec<String> = desktop
+        .files()
+        .into_iter()
+        .filter(|f| f.contains("title: leo manual"))
+        .collect();
+    assert_eq!(
+        manuals.len(),
+        2,
+        "each computer's manual note should survive"
+    );
+    for manual in &manuals {
+        assert_eq!(
+            manual.matches("\nid: ").count(),
+            1,
+            "two notes were merged into one:\n{manual}"
+        );
+    }
 }
 
 fn fake_gh(leo: &Leo, github: &Path) {
