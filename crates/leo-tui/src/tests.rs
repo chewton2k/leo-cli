@@ -23,8 +23,40 @@ fn temp_app() -> (App, tempfile::TempDir) {
     let mut app = App::new(store);
     app.probe = leo_services::doctor::Probe::default();
     app.gh_ready = || false;
+    app.setup_steps = steps_ready;
     app.obsidian = |_| Err(anyhow::anyhow!("tests never launch Obsidian"));
     (app, dir)
+}
+
+fn steps(ready: bool) -> Vec<leo_services::health::Check> {
+    [
+        "AI for writing",
+        "AI for speech",
+        "Recording",
+        "Backup to GitHub",
+    ]
+    .iter()
+    .map(|what| leo_services::health::Check {
+        what: what.to_string(),
+        needed_for: String::new(),
+        state: if ready {
+            leo_services::health::State::Ready
+        } else {
+            leo_services::health::State::Missing {
+                fix: "set it up".to_string(),
+            }
+        },
+        detail: None,
+    })
+    .collect()
+}
+
+fn steps_ready(_: &std::path::Path) -> Vec<leo_services::health::Check> {
+    steps(true)
+}
+
+fn steps_missing(_: &std::path::Path) -> Vec<leo_services::health::Check> {
+    steps(false)
 }
 
 /// Notes are sorted newest-first, so find one by title rather than index.
@@ -2173,31 +2205,60 @@ fn only_a_first_run_is_greeted() {
 
 // ── the setup screen ────────────────────────────────────────────────────
 
-/// A first run opens a setup screen listing each step and whether it is done.
 #[test]
-fn a_first_run_opens_the_setup_screen() {
+fn a_first_run_greets_with_the_everyday_keys_and_opens_no_screen() {
     let (mut app, _d) = temp_app();
     app.greet(true);
-    assert_eq!(app.mode, Mode::Welcome);
+    assert_eq!(app.mode, Mode::Normal);
+    let said = app
+        .live_message()
+        .map(|(_, t)| t.to_string())
+        .unwrap_or_default();
+    for key in ["Enter", "n", "/", "?"] {
+        assert!(said.contains(key), "{said}");
+    }
+}
+
+#[test]
+fn recording_with_nothing_set_up_offers_the_setup_it_needs() {
+    let (mut app, _d) = temp_app();
+    app.setup_steps = steps_missing;
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(110, 24)).unwrap();
+    app.on_key(press('R'), &mut terminal).unwrap();
+    assert_eq!(app.mode, Mode::Welcome);
+    assert!(app.recording.is_none());
     terminal.draw(|f| app.draw(f)).unwrap();
     let out = terminal.backend().to_string();
     for step in [
-        "Welcome",
+        "Before you record",
         "AI for writing",
         "AI for speech",
         "Recording",
-        "Backup to GitHub",
     ] {
         assert!(out.contains(step), "no {step:?}:\n{out}");
     }
+    assert!(!out.contains("Backup to GitHub"), "{out}");
+}
+
+#[test]
+fn asking_without_an_ai_offers_to_set_one_up() {
+    let (mut app, _d) = temp_app();
+    app.setup_steps = steps_missing;
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(110, 24)).unwrap();
+    app.run_line("ask how does BFS work?", &mut terminal)
+        .unwrap();
+    assert_eq!(app.mode, Mode::Welcome);
+    assert!(app.asking.is_none());
+    terminal.draw(|f| app.draw(f)).unwrap();
+    assert!(terminal.backend().to_string().contains("Before you ask"));
 }
 
 #[test]
 fn esc_leaves_the_setup_screen_and_points_at_doctor() {
     let (mut app, _d) = temp_app();
+    app.setup_steps = steps_missing;
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(110, 24)).unwrap();
-    app.greet(true);
+    app.on_key(press('R'), &mut terminal).unwrap();
     app.on_key(press_code(event::KeyCode::Esc), &mut terminal)
         .unwrap();
     assert_eq!(app.mode, Mode::Normal);
@@ -2409,43 +2470,32 @@ fn one_doctor_at_a_time() {
     assert!(said.contains("Already"), "{said}");
 }
 
-/// Enter on an AI step goes to the provider screen, where keys are added.
 #[test]
 fn enter_on_an_ai_step_opens_the_provider_screen() {
     let (mut app, _d) = temp_app();
+    app.setup_steps = steps_missing;
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(110, 24)).unwrap();
-    app.greet(true);
+    app.on_key(press('R'), &mut terminal).unwrap();
     app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
         .unwrap();
     assert_eq!(app.mode, Mode::Settings);
 }
 
-/// Enter on the backup step asks for the repository URL on the / line.
 #[test]
-fn enter_on_the_backup_step_asks_for_the_repository() {
+fn backing_up_before_it_is_set_up_asks_for_the_repository() {
     let (mut app, _d) = temp_app();
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(110, 24)).unwrap();
-    app.greet(true);
-    for _ in 0..3 {
-        app.on_key(press('j'), &mut terminal).unwrap();
-    }
-    app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
-        .unwrap();
+    app.run_line("backup", &mut terminal).unwrap();
     assert_eq!(app.mode, Mode::Command);
     assert_eq!(app.cmd.text(), "backup connect ");
 }
 
 #[test]
-fn with_gh_signed_in_the_backup_step_offers_sync_github() {
+fn with_gh_signed_in_backing_up_offers_backup_github() {
     let (mut app, _d) = temp_app();
     app.gh_ready = || true;
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(110, 24)).unwrap();
-    app.greet(true);
-    for _ in 0..3 {
-        app.on_key(press('j'), &mut terminal).unwrap();
-    }
-    app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
-        .unwrap();
+    app.run_line("backup", &mut terminal).unwrap();
     assert_eq!(app.mode, Mode::Command);
     assert_eq!(app.cmd.text(), "backup github");
     let said = app

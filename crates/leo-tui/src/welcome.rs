@@ -1,23 +1,60 @@
 use super::*;
 
-/// The steps as last checked, which one is selected, and the result of the
-/// last thing Enter did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Need {
+    Recording,
+    Writing,
+}
+
 pub(super) struct WelcomeScreen {
+    pub(super) need: Need,
     pub(super) steps: Vec<leo_services::health::Check>,
     pub(super) selected: usize,
     pub(super) status: Option<String>,
 }
 
+pub(super) fn real_setup_steps(notes_dir: &std::path::Path) -> Vec<leo_services::health::Check> {
+    leo_services::health::setup_steps(
+        &leo_services::config::Config::load(),
+        leo_services::config::secret::default_store().as_ref(),
+        notes_dir,
+    )
+}
+
+fn wanted(need: Need, what: &str) -> bool {
+    match need {
+        Need::Recording => matches!(what, "AI for writing" | "AI for speech" | "Recording"),
+        Need::Writing => what == "AI for writing",
+    }
+}
+
 impl App {
-    pub(super) fn open_welcome(&mut self, status: Option<String>) {
-        let config = leo_services::config::Config::load();
-        let steps = leo_services::health::setup_steps(
-            &config,
-            leo_services::config::secret::default_store().as_ref(),
-            &self.store.notes_dir,
-        );
-        let selected = self.welcome.as_ref().map_or(0, |w| w.selected);
+    pub(super) fn missing_for(&self, need: Need) -> Vec<leo_services::health::Check> {
+        (self.setup_steps)(&self.store.notes_dir)
+            .into_iter()
+            .filter(|step| wanted(need, &step.what) && !step.state.is_ready())
+            .collect()
+    }
+
+    pub(super) fn set_up_first(&mut self, need: Need) -> bool {
+        if self.missing_for(need).is_empty() {
+            return false;
+        }
+        self.open_welcome(need, None);
+        true
+    }
+
+    pub(super) fn open_welcome(&mut self, need: Need, status: Option<String>) {
+        let steps: Vec<_> = (self.setup_steps)(&self.store.notes_dir)
+            .into_iter()
+            .filter(|step| wanted(need, &step.what))
+            .collect();
+        let selected = steps
+            .iter()
+            .position(|step| !step.state.is_ready())
+            .unwrap_or(0);
         self.welcome = Some(WelcomeScreen {
+            need,
             steps,
             selected,
             status,
@@ -43,32 +80,40 @@ impl App {
             event::KeyCode::Char('k') | event::KeyCode::Up => {
                 screen.selected = screen.selected.saturating_sub(1);
             }
-            event::KeyCode::Enter => match screen.selected {
-                // Both AI steps are settled on the provider screen.
-                0 | 1 => self.open_settings(None),
-                2 => {
-                    let result = if leo_services::health::on_path("rec") {
-                        let check = leo_services::health::microphone();
-                        match &check.state {
-                            leo_services::health::State::Ready => {
-                                "The microphone is heard. Recording is ready: press R in the notes.".to_string()
+            event::KeyCode::Enter => {
+                let need = screen.need;
+                let what = screen
+                    .steps
+                    .get(screen.selected)
+                    .map(|s| s.what.clone())
+                    .unwrap_or_default();
+                match what.as_str() {
+                    "Recording" => {
+                        let result = if leo_services::health::on_path("rec") {
+                            let check = leo_services::health::microphone();
+                            match &check.state {
+                                leo_services::health::State::Ready => {
+                                    "The microphone is heard. Recording is ready: press R.".to_string()
+                                }
+                                leo_services::health::State::Missing { fix } => format!(
+                                    "Nothing was heard. {} (On a MacBook, the built-in mic is off with the lid closed.)",
+                                    fix.lines().next().unwrap_or("")
+                                ),
+                                leo_services::health::State::Warn { note } => {
+                                    format!("The microphone {note}.")
+                                }
                             }
-                            leo_services::health::State::Missing { fix } => format!(
-                                "Nothing was heard. {} (On a MacBook, the built-in mic is off with the lid closed.)",
-                                fix.lines().next().unwrap_or("")
-                            ),
-                            leo_services::health::State::Warn { note } => format!("The microphone {note}."),
-                        }
-                    } else {
-                        "Install SoX first: brew install sox".to_string()
-                    };
-                    self.open_welcome(Some(result));
+                        } else {
+                            "Install SoX first: brew install sox".to_string()
+                        };
+                        self.open_welcome(need, Some(result));
+                    }
+                    _ => {
+                        self.welcome = None;
+                        self.open_settings(None);
+                    }
                 }
-                _ => {
-                    self.welcome = None;
-                    self.offer_backup_setup();
-                }
-            },
+            }
             _ => {}
         }
         Ok(())

@@ -11,17 +11,23 @@ use leo_services::health::{Check, State};
 
 use super::theme;
 
-/// What Enter does on each step, in order.
-const ACTIONS: [&str; 4] = [
-    "Enter: add a key or a local model",
-    "Enter: add a key or a local model",
-    "Enter: test the microphone",
-    "Enter: connect a GitHub repository",
-];
+fn action(what: &str) -> &'static str {
+    match what {
+        "Recording" => "Enter: test the microphone",
+        "Backup to GitHub" => "Enter: connect a GitHub repository",
+        _ => "Enter: add a key or a local model",
+    }
+}
+
+pub struct Heading<'a> {
+    pub title: &'a str,
+    pub why: &'a str,
+}
 
 pub fn render(
     frame: &mut Frame,
     area: Rect,
+    heading: Heading<'_>,
     steps: &[Check],
     selected: usize,
     status: Option<&str>,
@@ -33,13 +39,13 @@ pub fn render(
 
     let mut lines = vec![
         TuiLine::from(Span::styled(
-            "Welcome to leo",
+            heading.title.to_string(),
             accent.add_modifier(Modifier::BOLD),
         )),
         TuiLine::from(""),
-        TuiLine::from("Notes work already. These steps turn on the rest; do any of them now."),
+        TuiLine::from(heading.why.to_string()),
         TuiLine::from(Span::styled(
-            "Later, /doctor checks everything. Esc starts using leo.",
+            "Everything else in leo works without these. Esc goes back.",
             dim,
         )),
         TuiLine::from(""),
@@ -78,7 +84,7 @@ pub fn render(
         ]));
         if picked {
             lines.push(TuiLine::from(Span::styled(
-                format!("        {}", ACTIONS.get(i).copied().unwrap_or("")),
+                format!("        {}", action(&step.what)),
                 accent,
             )));
         }
@@ -90,7 +96,7 @@ pub fn render(
         lines.push(TuiLine::from(""));
     }
     lines.push(TuiLine::from(Span::styled(
-        "j/k move · Enter set up the selected step · Esc start using leo",
+        "j/k move · Enter set up the selected step · Esc back",
         dim,
     )));
 

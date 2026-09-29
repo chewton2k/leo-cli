@@ -107,6 +107,7 @@ pub struct App {
     checking: Option<(task::Job, view::progress::Progress, Instant)>,
     probe: leo_services::doctor::Probe,
     gh_ready: fn() -> bool,
+    setup_steps: fn(&std::path::Path) -> Vec<leo_services::health::Check>,
     obsidian: fn(&std::path::Path) -> Result<leo_core::obsidian::Opened>,
     update: Option<std::sync::mpsc::Receiver<String>>,
     last_disk_check: Option<Instant>,
@@ -271,6 +272,7 @@ impl App {
             update: None,
             last_disk_check: None,
             gh_ready: leo_core::sync::gh_ready,
+            setup_steps: welcome::real_setup_steps,
             obsidian: leo_core::obsidian::open,
             last_push: None,
             unpushed: None,
@@ -544,11 +546,12 @@ impl App {
         self.message = Some((kind, text.into(), Instant::now()));
     }
 
-    /// On the first run, open the setup screen: the steps to AI, recording
-    /// and backup, each one Enter away. Later runs say nothing.
     fn greet(&mut self, first_run: bool) {
         if first_run {
-            self.open_welcome(None);
+            self.say(
+                Kind::Dim,
+                "Welcome. Enter writes in a note, n makes one, / finds anything, ? shows the rest.",
+            );
         }
     }
 
@@ -1246,6 +1249,9 @@ impl App {
                 );
                 return Ok(());
             }
+            if self.set_up_first(welcome::Need::Writing) {
+                return Ok(());
+            }
 
             self.asking = Some(Asking {
                 job: task::start_ask(note.clone(), title, body),
@@ -1354,6 +1360,9 @@ impl App {
                     self.say(Kind::Warn, "Already asking — one at a time.");
                     return Ok(());
                 }
+                if self.set_up_first(welcome::Need::Writing) {
+                    return Ok(());
+                }
                 let notes: Vec<(String, String, String)> = self
                     .store
                     .relevant(&question, 6)
@@ -1446,6 +1455,9 @@ impl App {
                 // just the recorder. Discovering there is no transcription
                 // provider *after* talking for twenty minutes is the worst way
                 // to learn it.
+                if self.set_up_first(welcome::Need::Recording) {
+                    return Ok(());
+                }
                 if let Some(lines) = self.listen_preflight(req.screen) {
                     self.pinned = Some(("not ready to record".to_string(), lines));
                     self.preview_scroll = 0;
@@ -1457,6 +1469,13 @@ impl App {
                     Kind::Dim,
                     "Recording — type a point and Enter to add it; Esc twice stops.",
                 );
+                Ok(())
+            }
+
+            Effect::Sync(leo_core::action::SyncAction::Now)
+                if leo_core::sync::remote_url(&self.store.notes_dir).is_none() =>
+            {
+                self.offer_backup_setup();
                 Ok(())
             }
 

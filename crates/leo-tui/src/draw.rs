@@ -148,9 +148,20 @@ impl App {
             Mode::Confirm { prompt, .. } => view::help::render_confirm(frame, frame.area(), prompt),
             Mode::Welcome => {
                 if let Some(screen) = &self.welcome {
+                    let heading = match screen.need {
+                        welcome::Need::Recording => view::welcome::Heading {
+                            title: "Before you record",
+                            why: "Recording turns speech into a note, which needs these.",
+                        },
+                        welcome::Need::Writing => view::welcome::Heading {
+                            title: "Before you ask",
+                            why: "Answers come from an AI for writing, which is not set up yet.",
+                        },
+                    };
                     view::welcome::render(
                         frame,
                         frame.area(),
+                        heading,
                         &screen.steps,
                         screen.selected,
                         screen.status.as_deref(),
