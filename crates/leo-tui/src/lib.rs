@@ -7,6 +7,7 @@
 
 pub mod cmdline;
 pub mod complete;
+pub mod editor;
 pub mod keys;
 mod recent;
 pub mod settings;
@@ -16,19 +17,20 @@ pub mod view;
 mod backup;
 mod disk;
 mod draw;
-mod filter;
 mod mouse;
 mod profile;
 mod pump;
 pub mod shell;
 mod welcome;
+mod writing;
 
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use ratatui::backend::Backend;
 use ratatui::crossterm::event::{
-    self, Event, KeyEventKind, MouseButton, MouseEvent, MouseEventKind,
+    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyEventKind, MouseButton,
+    MouseEvent, MouseEventKind,
 };
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
@@ -71,20 +73,10 @@ const MESSAGE_TTL: Duration = Duration::from_secs(6);
 /// promptly, long enough not to spin the CPU.
 const TICK: Duration = Duration::from_millis(120);
 
-/// What the left pane lists. Directories and tags are two ways to slice the same
-/// notes, and both deserve to be navigable rather than only typeable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LeftPane {
-    Dirs,
-    Tags,
-}
-
 /// Which input surface is active.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Mode {
     Normal,
-    /// Typing a filter. Every keystroke narrows the notes pane.
-    Filter,
     Command,
     Help,
     Confirm {
@@ -103,8 +95,7 @@ pub struct App {
     /// The live filter, when one is set. `numbering` respects it, so the numbers
     /// the user types always mean the rows the user can see.
     filter: Option<String>,
-    /// Whether the left pane lists directories or tags.
-    left: LeftPane,
+    search_base: Option<String>,
     /// Notes recently looked at, most recent first.
     recent: recent::Recent,
     /// A running `:ask`, with the answer so far.
@@ -124,10 +115,7 @@ pub struct App {
     /// on every frame: it costs a git process.
     unpushed: Option<usize>,
     note_sel: usize,
-    /// Which checkbox the preview cursor is on, and the note it belongs to. A
-    /// cursor left on another note means nothing, so it reads as the first box.
-    box_sel: usize,
-    box_note: Option<String>,
+    editing: Option<editor::Editor>,
     /// Notes marked with Space. When any are, D and m act on all of them.
     marked: Vec<String>,
     dir_sel: usize,
@@ -273,7 +261,7 @@ impl App {
         let numbering = action::numbering_for(&store, &current_dir);
         App {
             filter: None,
-            left: LeftPane::Dirs,
+            search_base: None,
             recent: recent::Recent::load(),
             asking: None,
             last_change: Instant::now(),
@@ -290,8 +278,7 @@ impl App {
             current_dir,
             numbering,
             note_sel: 0,
-            box_sel: 0,
-            box_note: None,
+            editing: None,
             marked: Vec::new(),
             dir_sel: 0,
             focus: Pane::Notes,
@@ -315,20 +302,7 @@ impl App {
     // ── derived view data ───────────────────────────────────────────────────
 
     fn dir_rows(&self) -> Vec<DirRow> {
-        match self.left {
-            LeftPane::Dirs => {
-                view::dirs::rows(&self.current_dir, &self.store.subdirs(&self.current_dir))
-            }
-            LeftPane::Tags => view::dirs::tag_rows(&self.store.tags()),
-        }
-    }
-
-    /// The left pane's title and empty state, which differ by what it lists.
-    fn left_pane_labels(&self) -> (&'static str, view::empty::Hint) {
-        match self.left {
-            LeftPane::Dirs => ("dirs", view::empty::Hint::no_directories()),
-            LeftPane::Tags => ("tags", view::empty::Hint::no_tags()),
-        }
+        view::dirs::rows(&self.current_dir, &self.store.subdirs(&self.current_dir))
     }
 
     fn note_rows(&self) -> Vec<NoteRow> {
@@ -353,15 +327,6 @@ impl App {
             }
         }
         rows
-    }
-
-    /// Where the checkbox cursor is on the selected note.
-    fn box_index(&self) -> usize {
-        if self.box_note.as_ref() == self.selected_id() {
-            self.box_sel
-        } else {
-            0
-        }
     }
 
     /// The selected note's checkboxes, ticked or not.
@@ -663,11 +628,6 @@ impl App {
         terminal: &mut Terminal<B>,
     ) -> Result<()> {
         match std::mem::replace(&mut self.mode, Mode::Normal) {
-            Mode::Filter => {
-                self.on_filter_key(key);
-                Ok(())
-            }
-
             Mode::Confirm { prompt, on_yes } => {
                 let yes = matches!(key.code, event::KeyCode::Char('y' | 'Y'));
                 if yes {
@@ -736,24 +696,35 @@ impl App {
                     self.completing = None;
                 }
                 match outcome {
-                    CmdOutcome::Editing => Ok(()),
+                    CmdOutcome::Editing => {
+                        self.follow_search();
+                        Ok(())
+                    }
                     CmdOutcome::Cancel => {
                         self.mode = Mode::Normal;
+                        if self.filter.take().is_some() {
+                            self.resync();
+                            self.note_sel = 0;
+                        }
                         Ok(())
                     }
                     CmdOutcome::Complete => {
                         self.cycle_completion();
+                        self.follow_search();
                         Ok(())
                     }
                     CmdOutcome::Submit(line) => {
                         self.mode = Mode::Normal;
-                        self.run_line(&line, terminal)
+                        self.submit_line(&line, terminal)
                     }
                 }
             }
 
             Mode::Normal => {
                 self.mode = Mode::Normal;
+                if self.editing.is_some() && self.focus == Pane::Preview {
+                    return self.on_edit_key(key, terminal);
+                }
                 // While recording, the keyboard takes notes: typing builds a
                 // point, Enter adds it, Tab switches bullets and raw text, Esc
                 // stops. Once stopping, the panes get their keys back.
@@ -861,7 +832,11 @@ impl App {
                 Ok(())
             }
             Intent::FocusRight => {
-                self.focus = self.next_visible_pane(terminal, 1);
+                let next = self.next_visible_pane(terminal, 1);
+                if next == Pane::Preview && self.focus == Pane::Notes && self.start_editing() {
+                    return Ok(());
+                }
+                self.focus = next;
                 Ok(())
             }
 
@@ -887,31 +862,16 @@ impl App {
                 Ok(())
             }
 
-            Intent::ToggleLeftPane => {
-                self.left = match self.left {
-                    LeftPane::Dirs => LeftPane::Tags,
-                    LeftPane::Tags => LeftPane::Dirs,
-                };
-                self.dir_sel = 0;
-                self.focus = Pane::Dirs;
-                Ok(())
-            }
-
             // Undo goes through the same handler the `:` line uses, so there is
             // one stack and one set of semantics rather than two.
             Intent::Undo => self.run_action(Action::Undo, terminal),
 
-            // In the preview, the box under the cursor; elsewhere, the first
-            // open one, which is what `x` means with no cursor to go by.
             Intent::ToggleCheckbox => {
                 let Some(note_ref) = self.selected_ref() else {
                     return Ok(());
                 };
                 let boxes = self.checkboxes();
-                let index = match self.focus {
-                    Pane::Preview if !boxes.is_empty() => self.box_index().min(boxes.len() - 1) + 1,
-                    _ => boxes.iter().position(|ticked| !ticked).map_or(1, |i| i + 1),
-                };
+                let index = boxes.iter().position(|ticked| !ticked).map_or(1, |i| i + 1);
                 self.run_action(
                     Action::Check {
                         note: note_ref,
@@ -926,7 +886,12 @@ impl App {
                 None => Ok(()),
             },
 
-            Intent::NewNote => self.run_action(Action::New { title: None }, terminal),
+            Intent::NewNote => {
+                self.search_base = self.filter.clone();
+                self.cmd.open("new ");
+                self.mode = Mode::Command;
+                Ok(())
+            }
 
             Intent::ToggleMark => {
                 let Some(id) = self.selected_id().cloned() else {
@@ -965,13 +930,6 @@ impl App {
                 Ok(())
             }
 
-            Intent::AskSelected => self.run_action(
-                Action::Ask {
-                    note: String::new(),
-                },
-                terminal,
-            ),
-
             Intent::PinSelected => self.run_action(
                 Action::Pin {
                     note: String::new(),
@@ -1006,16 +964,17 @@ impl App {
             },
 
             Intent::OpenCommand { seed } => {
+                self.search_base = self.filter.clone();
                 self.cmd.open(seed);
                 self.mode = Mode::Command;
                 Ok(())
             }
 
             Intent::OpenFilter => {
-                self.filter = Some(String::new());
-                self.mode = Mode::Filter;
-                self.note_sel = 0;
-                self.resync();
+                self.search_base = None;
+                let seed = self.filter.clone().unwrap_or_default();
+                self.cmd.open(&seed);
+                self.mode = Mode::Command;
                 Ok(())
             }
 
@@ -1078,11 +1037,6 @@ impl App {
                 self.preview_scroll = 0;
                 self.unpin();
             }
-            // A note with checkboxes steps between them; any other scrolls.
-            Pane::Preview if !self.checkboxes().is_empty() => {
-                self.box_sel = step(self.box_index(), self.checkboxes().len(), intent);
-                self.box_note = self.selected_id().cloned();
-            }
             Pane::Preview => match intent {
                 Intent::Down => self.preview_scroll = self.preview_scroll.saturating_add(1),
                 Intent::Up => self.preview_scroll = self.preview_scroll.saturating_sub(1),
@@ -1126,24 +1080,12 @@ impl App {
                     return Ok(());
                 };
                 let target = row.target.clone();
-
-                match self.left {
-                    LeftPane::Dirs => self.run_action(Action::Cd { path: target }, terminal),
-                    // Opening a tag narrows the notes pane to it, reusing the
-                    // filter rather than inventing a second kind of narrowing —
-                    // so Esc clears a tag the same way it clears a search.
-                    LeftPane::Tags => {
-                        self.filter = Some(format!("#{target}"));
-                        self.note_sel = 0;
-                        self.resync();
-                        self.focus = Pane::Notes;
-                        self.say(Kind::Dim, format!("Showing #{target}. Esc clears it."));
-                        Ok(())
-                    }
-                }
+                self.run_action(Action::Cd { path: target }, terminal)
             }
             Pane::Notes => {
-                self.focus = Pane::Preview;
+                if !self.start_editing() {
+                    self.focus = Pane::Preview;
+                }
                 Ok(())
             }
             Pane::Preview => Ok(()),
@@ -1171,6 +1113,50 @@ impl App {
     }
 
     // ── running actions ─────────────────────────────────────────────────────
+
+    fn follow_search(&mut self) {
+        let text = self.cmd.text().to_string();
+        let wanted = if action::is_command(&text) {
+            self.search_base.clone()
+        } else if text.trim().is_empty() {
+            None
+        } else {
+            Some(text)
+        };
+        if wanted != self.filter {
+            self.filter = wanted;
+            self.note_sel = 0;
+            self.preview_scroll = 0;
+            self.unpin();
+            self.resync();
+        }
+    }
+
+    fn submit_line<B: TuiBackend>(&mut self, line: &str, terminal: &mut Terminal<B>) -> Result<()> {
+        if action::is_command(line) {
+            return self.run_line(line, terminal);
+        }
+        if line.trim().is_empty() {
+            if self.filter.take().is_some() {
+                self.resync();
+                self.note_sel = 0;
+            }
+            return Ok(());
+        }
+        self.filter = Some(line.to_string());
+        self.resync();
+        self.focus = Pane::Notes;
+        let found = self.note_count();
+        self.say(
+            Kind::Dim,
+            match found {
+                0 => "Nothing found. Esc clears the search.".to_string(),
+                1 => "1 note found. Esc clears the search.".to_string(),
+                n => format!("{n} notes found. Esc clears the search."),
+            },
+        );
+        Ok(())
+    }
 
     fn run_line<B: TuiBackend>(&mut self, line: &str, terminal: &mut Terminal<B>) -> Result<()> {
         match action::parse(line) {
@@ -1211,6 +1197,16 @@ impl App {
         action: Action,
         terminal: &mut Terminal<B>,
     ) -> Result<()> {
+        self.flush_edit();
+        if let Action::New { title } = action {
+            return match self.create_and_edit(title) {
+                Ok(()) => Ok(()),
+                Err(e) => {
+                    self.say(Kind::Bad, e.to_string());
+                    Ok(())
+                }
+            };
+        }
         let selected = self.numbering.get(self.note_sel).map(String::as_str);
         let action = match action::fill_selected(action, selected, &self.marked) {
             Ok(action) => action,
@@ -1230,6 +1226,9 @@ impl App {
                 self.say(Kind::Warn, "Already asking — one at a time.");
                 return Ok(());
             }
+            if !self.store.notes.iter().any(|n| n.id == *note) {
+                return self.run_action_inline(action, terminal);
+            }
             let resolved = action::resolve(note, &self.store, &self.numbering);
             let action::Resolved::One(id) = resolved else {
                 // Ambiguous or missing: let the ordinary handler explain, since
@@ -1241,7 +1240,10 @@ impl App {
             };
             let (title, body) = (target.title.clone(), target.body.clone());
             if !body.lines().any(|l| action::is_leo_prompt(l).is_some()) {
-                self.say(Kind::Dim, "No @leo prompts found in this note.");
+                self.say(
+                    Kind::Dim,
+                    "Type a question after /ask, or write @leo and a question in a note.",
+                );
                 return Ok(());
             }
 
@@ -1328,6 +1330,9 @@ impl App {
             .collect();
         match printable.as_slice() {
             [] => {}
+            [one] if outcome.undoable => {
+                self.say(one.kind, format!("{} u brings it back.", one.text))
+            }
             [one] => self.say(one.kind, one.text.clone()),
             many => {
                 let lines = many.iter().map(|l| (*l).clone()).collect();
@@ -1459,7 +1464,7 @@ impl App {
                 let notes_dir = self.store.notes_dir.clone();
                 let out = self.outside(terminal, || {
                     use leo_core::action::SyncAction;
-                    let done = |r: Result<()>| r.map(|()| "sync done.".to_string());
+                    let done = |r: Result<()>| r.map(|()| "Backed up.".to_string());
                     match &a {
                         SyncAction::Now => done(leo_core::sync::now(&notes_dir)),
                         SyncAction::Init => done(leo_core::sync::init(&notes_dir)),
@@ -1495,16 +1500,16 @@ impl App {
     fn offer_backup_setup(&mut self) {
         self.mode = Mode::Command;
         if (self.gh_ready)() {
-            self.cmd.open("sync github");
+            self.cmd.open("backup github");
             self.say(
                 Kind::Dim,
                 "Enter makes a private repository, leo-notes, on your GitHub (or joins yours) and backs up.",
             );
         } else {
-            self.cmd.open("sync connect ");
+            self.cmd.open("backup connect ");
             self.say(
                 Kind::Dim,
-                "Make an empty private repository on GitHub, paste its URL, then Enter. (With GitHub's gh tool, /sync github does it for you.)",
+                "Make an empty private repository on GitHub, paste its URL, then Enter. (With GitHub's gh tool, /backup github does it for you.)",
             );
         }
     }
@@ -1699,7 +1704,11 @@ fn suspend<B: TuiBackend>(terminal: &mut Terminal<B>) -> Result<()> {
         eprintln!("  {message}");
     }
     disable_raw_mode()?;
-    execute!(std::io::stdout(), LeaveAlternateScreen)?;
+    execute!(
+        std::io::stdout(),
+        DisableBracketedPaste,
+        LeaveAlternateScreen
+    )?;
     terminal.show_cursor()?;
     Ok(())
 }
@@ -1719,6 +1728,7 @@ fn resume<B: TuiBackend>(terminal: &mut Terminal<B>) -> Result<()> {
     execute!(
         std::io::stdout(),
         EnterAlternateScreen,
+        EnableBracketedPaste,
         Clear(ClearType::All)
     )?;
     // Two swaps reset both buffers, so the next diff has nothing to compare
@@ -1865,6 +1875,7 @@ pub fn run() -> Result<()> {
     // Mouse reporting is opt-in per terminal. Failing to enable it is not fatal:
     // every key still works, which is how leo is mostly driven.
     let mouse = enable_mouse().is_ok();
+    let _ = execute!(std::io::stdout(), EnableBracketedPaste);
     let mut app = App::new(store);
     // The note on screen at startup has been looked at, so it belongs in the
     // recent list. Without this the first Tab has only one entry — the note the
@@ -1873,6 +1884,8 @@ pub fn run() -> Result<()> {
     app.greet(installed_manual);
     app.update = Some(task::start_update_check());
     let result = event_loop(&mut terminal, &mut app);
+    app.flush_edit();
+    let _ = execute!(std::io::stdout(), DisableBracketedPaste);
     // Persist the recent list so the strip survives a restart, which is the
     // difference between a convenience and a novelty.
     app.recent.save();
@@ -1905,6 +1918,7 @@ fn event_loop<B: TuiBackend>(terminal: &mut Terminal<B>, app: &mut App) -> Resul
         if !event::poll(TICK)? {
             // No input: give the worker a chance to report progress, and pick up
             // anything the lower layers queued.
+            app.pump_editor();
             app.pump_tasks(terminal)?;
             app.pump_doctor();
             app.pump_update();
@@ -1922,6 +1936,7 @@ fn event_loop<B: TuiBackend>(terminal: &mut Terminal<B>, app: &mut App) -> Resul
                 app.on_key(key, terminal)?;
             }
             Event::Mouse(mouse) => app.on_mouse(mouse, terminal)?,
+            Event::Paste(text) => app.on_paste(&text),
             // A resize can take away the pane that had focus, leaving j and k
             // moving a selection the user cannot see.
             Event::Resize(width, height) => app.on_resize(width, height),

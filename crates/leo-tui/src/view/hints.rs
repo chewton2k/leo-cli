@@ -14,48 +14,34 @@ use super::theme;
 pub enum Place {
     Notes,
     Dirs,
-    Tags,
     Preview,
     Recording,
 }
+
+pub const MOST: usize = 5;
 
 /// Key and what it does, most useful first. Fitting drops from the end.
 pub fn for_place(place: Place) -> &'static [(&'static str, &'static str)] {
     match place {
         Place::Notes => &[
+            ("Enter", "write"),
             ("n", "new"),
-            ("e", "edit"),
-            ("r", "rename"),
-            ("m", "move"),
-            ("x", "tick"),
-            ("Space", "mark"),
+            ("/", "find or command"),
             ("D", "delete"),
-            ("p", "pin"),
-            ("f", "find"),
-            ("/", "command"),
             ("?", "help"),
         ],
         Place::Dirs => &[
             ("Enter", "open"),
-            ("N", "new dir"),
-            ("D", "delete dir"),
-            ("t", "tags"),
-            ("/", "command"),
-            ("?", "help"),
-        ],
-        Place::Tags => &[
-            ("Enter", "show its notes"),
-            ("t", "directories"),
-            ("f", "find"),
+            ("N", "new folder"),
+            ("/", "find or command"),
+            ("D", "delete"),
             ("?", "help"),
         ],
         Place::Preview => &[
-            ("Ctrl-D", "scroll"),
-            ("e", "edit"),
-            ("x", "tick"),
-            ("a", "ask AI"),
-            ("h", "back"),
-            ("?", "help"),
+            ("Esc", "done"),
+            ("type", "to write"),
+            ("Tab", "indent"),
+            ("Ctrl-Z", "undo"),
         ],
         Place::Recording => &[
             ("type", "a point"),
@@ -114,8 +100,15 @@ mod tests {
     #[test]
     fn the_notes_list_offers_the_everyday_keys() {
         let k = keys(Place::Notes);
-        for key in ["n", "e", "D", "f", "/"] {
+        for key in ["Enter", "n", "D", "/", "?"] {
             assert!(k.contains(&key), "notes hints lack {key}: {k:?}");
+        }
+    }
+
+    #[test]
+    fn no_place_offers_more_than_a_handful_of_keys() {
+        for place in [Place::Notes, Place::Dirs, Place::Preview, Place::Recording] {
+            assert!(for_place(place).len() <= MOST, "{place:?} offers too many");
         }
     }
 
@@ -142,14 +135,11 @@ mod tests {
     #[test]
     fn every_hinted_key_is_documented_in_help() {
         let documented = super::super::help::all_keys().join(" ");
-        for place in [
-            Place::Notes,
-            Place::Dirs,
-            Place::Tags,
-            Place::Preview,
-            Place::Recording,
-        ] {
+        for place in [Place::Notes, Place::Dirs, Place::Preview, Place::Recording] {
             for (key, _) in for_place(place) {
+                if *key == "type" {
+                    continue;
+                }
                 assert!(
                     documented.split_whitespace().any(|k| k == *key),
                     "{place:?} hints `{key}`, which help does not document"

@@ -60,6 +60,69 @@ pub fn render(body: &str) -> Vec<TuiLine<'static>> {
     out
 }
 
+pub fn render_line(raw: &str) -> TuiLine<'static> {
+    let trimmed = raw.trim_start();
+    line(trimmed, raw.len() - trimmed.len())
+}
+
+pub fn is_fence(raw: &str) -> bool {
+    let trimmed = raw.trim_start();
+    trimmed.starts_with("```") || trimmed.starts_with("~~~")
+}
+
+fn prefixes(raw: &str) -> (usize, usize) {
+    let trimmed = raw.trim_start();
+    let indent = raw.chars().count() - trimmed.chars().count();
+    if let Some(level) = heading_level(trimmed) {
+        let spaces = trimmed[level..].chars().take_while(|c| *c == ' ').count();
+        return (indent + level + spaces, indent);
+    }
+    if trimmed.starts_with("> ") {
+        return (indent + 2, indent + 2);
+    }
+    if trimmed.starts_with('>') {
+        return (indent + 1, indent + 2);
+    }
+    if let Some((_, rest)) = checkbox(trimmed) {
+        return (
+            indent + trimmed.chars().count() - rest.chars().count(),
+            indent + 2,
+        );
+    }
+    if bullet(trimmed).is_some() {
+        return (indent + 2, indent + 2);
+    }
+    if let Some((number, _)) = ordered(trimmed) {
+        let used = number.chars().count() + 2;
+        return (indent + used, indent + used);
+    }
+    (indent, indent)
+}
+
+pub fn raw_col(raw: &str, shown: usize) -> usize {
+    let (raw_prefix, shown_prefix) = prefixes(raw);
+    if shown <= shown_prefix {
+        return raw_prefix;
+    }
+    let mut left = shown - shown_prefix;
+    for (i, c) in raw.chars().enumerate().skip(raw_prefix) {
+        if c == '*' || c == '`' {
+            continue;
+        }
+        if left == 0 {
+            return i;
+        }
+        left -= 1;
+    }
+    raw.chars().count()
+}
+
+pub fn on_box(raw: &str, shown: usize) -> bool {
+    let trimmed = raw.trim_start();
+    let indent = raw.chars().count() - trimmed.chars().count();
+    checkbox(trimmed).is_some() && (indent..indent + 2).contains(&shown)
+}
+
 /// Render one line outside a code fence.
 fn line(trimmed: &str, indent: usize) -> TuiLine<'static> {
     let pad = " ".repeat(indent);
@@ -325,6 +388,25 @@ fn flush(spans: &mut Vec<Span<'static>>, plain: &mut String, base: Style) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_click_on_formatted_text_lands_on_the_same_place_in_the_markdown() {
+        assert_eq!(raw_col("- [ ] milk", 2), 6);
+        assert_eq!(raw_col("- [ ] milk", 4), 8);
+        assert_eq!(raw_col("## Title", 2), 5);
+        assert_eq!(raw_col("some **bold** text", 7), 9);
+        assert_eq!(raw_col("  1. first", 5), 5);
+        assert_eq!(raw_col("- a", 99), 3);
+        assert_eq!(raw_col("plain", 0), 0);
+    }
+
+    #[test]
+    fn only_the_box_itself_counts_as_a_click_on_the_box() {
+        assert!(on_box("- [ ] milk", 0));
+        assert!(on_box("  - [x] eggs", 3));
+        assert!(!on_box("- [ ] milk", 2));
+        assert!(!on_box("- milk", 0));
+    }
 
     /// The visible text of a rendered line, with styling discarded.
     fn text(line: &TuiLine) -> String {

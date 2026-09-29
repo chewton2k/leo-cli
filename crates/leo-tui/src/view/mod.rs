@@ -5,6 +5,7 @@
 //! network access.
 
 pub mod dirs;
+pub mod editing;
 pub mod empty;
 pub mod help;
 pub mod hints;
@@ -20,6 +21,7 @@ pub mod status;
 pub mod tabs;
 pub mod theme;
 pub mod welcome;
+pub mod when;
 
 use ratatui::layout::{Constraint, Layout, Rect};
 

@@ -11,9 +11,9 @@
 use nucleo::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo::Matcher;
 
-use leo_core::action::all_verb_words;
+use leo_core::action::VERBS;
 
-const SYNC_SUBS: &[&str] = &["init", "connect", "push", "pull", "status"];
+const BACKUP_SUBS: &[&str] = &["github", "connect"];
 
 /// A note as the completer sees it: the number the `:` line accepts, and the
 /// title the user actually remembers.
@@ -132,22 +132,21 @@ fn source_for(line: &str, cursor: usize) -> (Source, usize, usize) {
     let source = match verb.as_str() {
         "cd" | "mkdir" => Source::Dirs,
 
-        "edit" | "e" | "delete" | "rm" | "ask" => Source::Notes,
+        "edit" | "e" | "delete" | "rm" => Source::Notes,
 
         // `mv cs130` moves the selected note, so a directory is likely in any
         // slot; notes follow for `mv 1 2 cs130`.
         "mv" => Source::DirsThenNotes,
 
-        "sync" => {
+        "backup" => {
             if arg == 1 {
-                Source::Words(SYNC_SUBS)
+                Source::Words(BACKUP_SUBS)
             } else {
                 Source::None
             }
         }
 
-        "listen" => {
-            // `listen add <note>` takes a note; a bare title takes nothing.
+        "record" => {
             if arg >= 2 && all[1].2.eq_ignore_ascii_case("add") {
                 Source::Notes
             } else if arg == 1 {
@@ -166,7 +165,7 @@ fn source_for(line: &str, cursor: usize) -> (Source, usize, usize) {
 /// Expand a source into its candidate strings.
 fn candidates(source: &Source, sources: &Sources) -> Vec<String> {
     match source {
-        Source::Verbs => all_verb_words().iter().map(|s| s.to_string()).collect(),
+        Source::Verbs => VERBS.iter().map(|v| v.name.to_string()).collect(),
         Source::Dirs => {
             let mut out = sources.dirs.clone();
             // Navigation targets that are not directories in the store.
@@ -216,7 +215,15 @@ pub fn complete(line: &str, cursor: usize, sources: &Sources) -> Completion {
         .skip(start)
         .take(end.saturating_sub(start))
         .collect();
-    let matches = rank(&typed, candidates(&source, sources));
+    let matches = if source == Source::Verbs {
+        let typed = typed.to_lowercase();
+        candidates(&source, sources)
+            .into_iter()
+            .filter(|verb| verb.starts_with(&typed))
+            .collect()
+    } else {
+        rank(&typed, candidates(&source, sources))
+    };
     Completion {
         start,
         end,
@@ -287,14 +294,15 @@ mod tests {
     // ── first word: verbs ───────────────────────────────────────────────────
 
     #[test]
-    fn the_first_word_completes_verbs_and_aliases() {
-        let m = matches("ren");
-        assert_eq!(m.first().map(String::as_str), Some("rename"));
-
-        // Aliases are completable too, since they are real input.
-        assert!(matches("r").contains(&"rm".to_string()));
-        // An empty line offers everything, in help order.
+    fn the_first_word_completes_verbs_by_their_start() {
+        assert_eq!(matches("ren"), vec!["rename"]);
+        assert_eq!(matches("r"), vec!["rename", "record"]);
+        assert!(matches("grph").is_empty(), "a search is not a command");
         assert_eq!(matches("").first().map(String::as_str), Some("new"));
+        assert!(
+            !matches("").contains(&"rm".to_string()),
+            "aliases are not offered"
+        );
     }
 
     #[test]
@@ -328,7 +336,7 @@ mod tests {
 
     #[test]
     fn note_verbs_complete_notes_by_title() {
-        for verb in ["edit", "delete", "ask", "e", "rm"] {
+        for verb in ["edit", "delete", "e", "rm"] {
             let m = matches(&format!("{verb} owner"));
             assert_eq!(
                 m.first().map(String::as_str),
@@ -392,20 +400,16 @@ mod tests {
     // ── flags and subcommands ───────────────────────────────────────────────
 
     #[test]
-    fn sync_completes_its_subcommands() {
-        assert!(matches("sync ").contains(&"status".to_string()));
-        assert_eq!(
-            matches("sync pu").len(),
-            2,
-            "push and pull both fuzzy match"
-        );
+    fn backup_completes_its_subcommands() {
+        assert_eq!(matches("backup "), vec!["github", "connect"]);
+        assert_eq!(matches("backup gi"), vec!["github"]);
     }
 
     #[test]
-    fn listen_completes_add_and_then_a_note() {
-        assert!(matches("listen ").contains(&"add".to_string()));
-        assert!(matches("listen ").contains(&"--screen".to_string()));
-        let m = matches("listen add own");
+    fn record_completes_add_and_then_a_note() {
+        assert!(matches("record ").contains(&"add".to_string()));
+        assert!(matches("record ").contains(&"--screen".to_string()));
+        let m = matches("record add own");
         assert_eq!(m.first().map(String::as_str), Some("1 Rust ownership"));
     }
 
@@ -475,7 +479,7 @@ mod tests {
         }
         // ...but the static lists are independent of the store, so a fresh
         // install can still complete a subcommand.
-        let c = complete("sync pu", 7, &empty);
+        let c = complete("backup gi", 9, &empty);
         assert!(!c.matches.is_empty());
     }
 

@@ -66,6 +66,9 @@ impl App {
                     return Ok(());
                 }
 
+                if !in_pane(frames.preview) && self.editing.is_some() {
+                    self.finish_editing(terminal)?;
+                }
                 if in_pane(frames.dirs) {
                     self.focus = Pane::Dirs;
                     let rows = self.dir_rows();
@@ -86,7 +89,7 @@ impl App {
                         self.unpin();
                     }
                 } else if in_pane(frames.preview) {
-                    self.focus = Pane::Preview;
+                    self.click_in_note(column, row);
                 }
                 Ok(())
             }
@@ -160,6 +163,14 @@ impl App {
             if let Some(rec) = self.recording.as_ref() {
                 let rows = if direction == Intent::Down { 3 } else { -3 };
                 rec.scroll.scroll_by(rows, Instant::now());
+                return;
+            }
+            if let Some(ed) = self.editing.as_ref() {
+                let at = ed.scroll.get();
+                ed.scroll.set(match direction {
+                    Intent::Down => at + 1,
+                    _ => at.saturating_sub(1),
+                });
                 return;
             }
             self.preview_scroll = match direction {

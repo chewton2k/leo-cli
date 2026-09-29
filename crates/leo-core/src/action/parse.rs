@@ -42,16 +42,16 @@ pub const VERBS: &[Verb] = &[
         "take back the last delete, move or tick",
     ),
     v(
-        "listen",
+        "record",
         &[],
-        "listen [title | add [note]] [--screen]",
-        "record, and write notes from speech",
+        "record [title | add [note]] [--screen]",
+        "record, and turn what was said into a note",
     ),
     v(
         "ask",
         &[],
-        "ask [note | question]",
-        "answer a note's @leo lines, or a question from all your notes",
+        "ask <question>",
+        "ask a question, answered from your notes",
     ),
     v(
         "pin",
@@ -68,10 +68,10 @@ pub const VERBS: &[Verb] = &[
         "move notes, or the selected one",
     ),
     v(
-        "sync",
+        "backup",
         &[],
-        "sync [github | connect <url> | init | push | pull | status]",
-        "back up now: pull, then push",
+        "backup [github | connect <url>]",
+        "back up now, or set backup up",
     ),
     v(
         "trash",
@@ -139,17 +139,17 @@ pub const RETIRED: &[(&str, &str, &str)] = &[
     ("rec", "the R key", "it records"),
     ("move", "the m key", "it moves the selected note"),
     ("h", "?", ONE_NAME),
-    ("find", "the f key", ONE_SEARCH),
-    ("search", "the f key", ONE_SEARCH),
-    ("expand", "the a key", "it asks about the selected note"),
+    ("find", "/", ONE_SEARCH),
+    ("search", "/", ONE_SEARCH),
+    (
+        "expand",
+        "/ask",
+        "write @leo in a note, and it is answered when you finish",
+    ),
     ("check", "the x key", TICKED),
     ("x", "the x key", TICKED),
     ("uncheck", "the x key", TICKED),
-    (
-        "tags",
-        "the t key",
-        "it switches the left pane to your tags, with counts",
-    ),
+    ("tags", "/", "type #tag at / to see the notes with that tag"),
     (
         "rmdir",
         "D in the directories pane",
@@ -184,7 +184,7 @@ pub(super) const GONE_REMIND: &str = "reminders were removed; a checklist note d
 pub(super) const GONE_EXPORT: &str = "export was removed; every note is already a Markdown file";
 pub(super) const TICKED: &str = "x ticks the first open box; in the preview, j/k pick one first";
 pub(super) const ONE_SEARCH: &str =
-    "one search now: f looks in every note, bodies and tags included";
+    "one search now: type at / to look in every note, bodies and tags included";
 
 /// Every word that can start a command, canonical names and aliases alike.
 pub fn all_verb_words() -> Vec<&'static str> {
@@ -194,6 +194,15 @@ pub fn all_verb_words() -> Vec<&'static str> {
         out.extend_from_slice(verb.aliases);
     }
     out
+}
+
+/// Whether a line typed at `/` is a command rather than a search.
+pub fn is_command(line: &str) -> bool {
+    let line = line.trim_start();
+    let line = line.strip_prefix('/').unwrap_or(line);
+    line.split_whitespace()
+        .next()
+        .is_some_and(|first| all_verb_words().contains(&first.to_lowercase().as_str()))
 }
 
 /// Split on whitespace, keeping quoted runs together.
@@ -284,7 +293,7 @@ pub fn parse(line: &str) -> Parsed {
         "edit" | "e" => act(Action::Edit { note: joined() }),
         "delete" | "rm" => act(Action::Delete { note: joined() }),
 
-        "listen" => {
+        "record" => {
             let screen = args.iter().any(|a| a == "--screen");
             let rest: Vec<String> = args
                 .iter()
@@ -358,11 +367,11 @@ pub fn parse(line: &str) -> Parsed {
             })
         }
 
-        "sync" => match args.first().map(|s| s.to_lowercase()).as_deref() {
+        "backup" => match args.first().map(|s| s.to_lowercase()).as_deref() {
             Some("init") => act(Action::Sync(SyncAction::Init)),
             Some("connect") => match args.get(1) {
                 Some(url) => act(Action::Sync(SyncAction::Connect { url: url.clone() })),
-                None => Parsed::Usage("sync connect <url>".to_string()),
+                None => Parsed::Usage("backup connect <url>".to_string()),
             },
             Some("push") => act(Action::Sync(SyncAction::Push)),
             Some("pull") => act(Action::Sync(SyncAction::Pull)),
@@ -371,7 +380,7 @@ pub fn parse(line: &str) -> Parsed {
                 name: args.get(1).cloned(),
             })),
             None => act(Action::Sync(SyncAction::Now)),
-            _ => usage("sync"),
+            _ => usage("backup"),
         },
 
         "trash" => match args.first().map(|s| s.to_lowercase()).as_deref() {
@@ -517,6 +526,41 @@ mod parse_tests {
     }
 
     #[test]
+    fn a_line_is_a_command_only_when_it_starts_with_a_verb() {
+        for line in [
+            "new Lecture",
+            "mv cs130",
+            "backup",
+            "/doctor",
+            "Q",
+            "  edit 2",
+        ] {
+            assert!(is_command(line), "{line}");
+        }
+        for line in [
+            "",
+            "graph",
+            "#exam",
+            "news",
+            "search graphs",
+            "renamed notes",
+        ] {
+            assert!(!is_command(line), "{line}");
+        }
+    }
+
+    #[test]
+    fn old_names_for_record_and_backup_are_gone() {
+        for word in ["listen", "sync", "listen add 1", "sync github"] {
+            assert!(
+                matches!(parse(word), Parsed::Unknown(_)),
+                "{word:?} still means something: {:?}",
+                parse(word)
+            );
+        }
+    }
+
+    #[test]
     fn verbs_are_case_insensitive() {
         assert_eq!(act("EDIT 1"), act("edit 1"));
         assert_eq!(act("Mv 1 cs130"), act("mv 1 cs130"));
@@ -605,13 +649,13 @@ mod parse_tests {
     }
 
     #[test]
-    fn sync_github_takes_an_optional_repository_name() {
+    fn backup_github_takes_an_optional_repository_name() {
         assert_eq!(
-            act("sync github"),
+            act("backup github"),
             Action::Sync(SyncAction::GitHub { name: None })
         );
         assert_eq!(
-            act("sync github my-notes"),
+            act("backup github my-notes"),
             Action::Sync(SyncAction::GitHub {
                 name: Some("my-notes".to_string())
             })
@@ -672,21 +716,20 @@ mod parse_tests {
         }
     }
 
-    /// There is one search, and it is `f`.
     #[test]
-    fn search_and_find_point_at_the_f_key() {
+    fn search_and_find_point_at_the_slash_line() {
         for word in ["search rust", "find rust"] {
             match parse(word) {
-                Parsed::Retired { replacement, .. } => assert_eq!(replacement, "the f key"),
+                Parsed::Retired { replacement, .. } => assert_eq!(replacement, "/"),
                 other => panic!("{word:?} should be retired, got {other:?}"),
             }
         }
     }
 
     #[test]
-    fn listen_parses_screen_flag_title_and_append_target() {
+    fn record_parses_screen_flag_title_and_append_target() {
         assert_eq!(
-            act("listen"),
+            act("record"),
             Action::Listen {
                 title: None,
                 append_to: None,
@@ -694,7 +737,7 @@ mod parse_tests {
             }
         );
         assert_eq!(
-            act("listen CS 101 Lecture"),
+            act("record CS 101 Lecture"),
             Action::Listen {
                 title: Some("CS 101 Lecture".to_string()),
                 append_to: None,
@@ -702,7 +745,7 @@ mod parse_tests {
             }
         );
         assert_eq!(
-            act("listen add 1"),
+            act("record add 1"),
             Action::Listen {
                 title: None,
                 append_to: Some("1".to_string()),
@@ -711,7 +754,7 @@ mod parse_tests {
         );
         // --screen is positional-agnostic and never lands in the title.
         assert_eq!(
-            act("listen --screen Lecture 3"),
+            act("record --screen Lecture 3"),
             Action::Listen {
                 title: Some("Lecture 3".to_string()),
                 append_to: None,
@@ -719,7 +762,7 @@ mod parse_tests {
             }
         );
         assert_eq!(
-            act("listen Lecture 3 --screen"),
+            act("record Lecture 3 --screen"),
             Action::Listen {
                 title: Some("Lecture 3".to_string()),
                 append_to: None,
@@ -728,7 +771,7 @@ mod parse_tests {
         );
         // No note after `add` means the selected one; see `fill_selected`.
         assert_eq!(
-            act("listen add"),
+            act("record add"),
             Action::Listen {
                 title: None,
                 append_to: Some(String::new()),
@@ -760,21 +803,21 @@ mod parse_tests {
     }
 
     #[test]
-    fn sync_subcommands_parse() {
-        assert_eq!(act("sync init"), Action::Sync(SyncAction::Init));
-        assert_eq!(act("sync push"), Action::Sync(SyncAction::Push));
-        assert_eq!(act("sync pull"), Action::Sync(SyncAction::Pull));
-        assert_eq!(act("sync status"), Action::Sync(SyncAction::Status));
+    fn backup_subcommands_parse() {
+        assert_eq!(act("backup init"), Action::Sync(SyncAction::Init));
+        assert_eq!(act("backup push"), Action::Sync(SyncAction::Push));
+        assert_eq!(act("backup pull"), Action::Sync(SyncAction::Pull));
+        assert_eq!(act("backup status"), Action::Sync(SyncAction::Status));
         assert_eq!(
-            act("sync connect https://example.com/n.git"),
+            act("backup connect https://example.com/n.git"),
             Action::Sync(SyncAction::Connect {
                 url: "https://example.com/n.git".to_string()
             })
         );
-        assert!(usage("sync connect").contains("connect"));
-        assert!(usage("sync bogus").contains("init"));
+        assert!(usage("backup connect").contains("connect"));
+        assert!(usage("backup bogus").contains("github"));
         // On its own it means "back up now": pull, then push.
-        assert_eq!(act("sync"), Action::Sync(SyncAction::Now));
+        assert_eq!(act("backup"), Action::Sync(SyncAction::Now));
     }
 
     #[test]

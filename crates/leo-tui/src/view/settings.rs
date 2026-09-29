@@ -315,7 +315,7 @@ pub fn render(frame: &mut Frame, area: Rect, rows: &[Row], selected: usize, stat
         Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(theme::accent()))
-            .title(" leo · profile "),
+            .title(" leo · settings "),
         box_area,
     );
 
@@ -567,7 +567,7 @@ mod tests {
         let out = t.backend().to_string();
 
         for expected in [
-            "profile",
+            "settings",
             "ollama",
             "appearance",
             "orange",

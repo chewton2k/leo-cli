@@ -58,7 +58,7 @@ impl App {
             Ok(()) => println!("  backed up."),
             Err(e) => {
                 println!("  backup failed: {e}");
-                println!("  your notes are committed locally; `leo sync` retries.");
+                println!("  your notes are committed locally; `leo backup` retries.");
             }
         }
     }
@@ -95,7 +95,7 @@ impl App {
             self.last_push = Some(Instant::now());
             self.say(
                 Kind::Warn,
-                format!("Backup failed: {e}. Try `/sync`, which pulls first."),
+                format!("Backup failed: {e}. Try `/backup`, which pulls first."),
             );
         }
     }

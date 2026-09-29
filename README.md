@@ -119,12 +119,12 @@ You get three panes — your directories, the notes in the current directory,
 and the selected note:
 
 ```
-┌ dirs ────────┬ notes (3) ──────────────┬ Rust ownership ──────────┐
-│ cs130/       │   1 Graph traversals    │ ## Ownership             │
-│ cs162/       │   2●Rust ownership      │ ☐ read the book          │
-│              │   3 Midterm plan        │ ☑ write notes            │
-└──────────────┴─────────────────────────┴──────────────────────────┘
-   n new   e edit   r rename   m move   x tick   Space mark   f find   ? help
+┌ dirs ────────┬ notes (3) ──────────────┬ Rust ownership · edited … ┐
+│ cs130/       │   1 Graph traversals 2h │ Ownership                 │
+│ cs162/       │   2 Rust ownership   5m │ ☐ read the book           │
+│              │   3 Midterm plan  Sep 3 │ ☑ write notes             │
+└──────────────┴─────────────────────────┴───────────────────────────┘
+   Enter write   n new   / find or command   D delete   ? help
  /cs130                                              3 notes · 212 words
 ```
 
@@ -138,60 +138,67 @@ detail.
 **The line along the bottom always shows the keys that work where you are.**
 If you forget anything, look there, or press `?` for the full list.
 
+Five keys are all you need:
+
+| Key | What it does |
+|-----|-------------|
+| `Enter` | Write in the selected note. `Esc` when you are done; it saves as you go |
+| `n` | A new note: type a title, `Enter`, and start writing |
+| `/` | Find a note, or pick a command from the list |
+| `D` | Delete. `u` brings it back |
+| `?` | Every key and command |
+
 Try this:
 
-1. **Make a directory.** Press `N`, type `cs130`, press `Enter`.
-2. **Go into it.** Press `h` to move to the directories pane, `j`/`k` to select
-   `cs130/`, then `Enter`.
-3. **Write a note.** Press `n`. Your editor opens with a small header. That is
-   whatever `$EDITOR` is set to, or **nano** if you have never chosen one: type,
-   then `Ctrl-O`, `Enter` to save and `Ctrl-X` to close.
+1. **Write a note.** Press `n`, type `Lecture 1 #exam`, press `Enter`. The note
+   opens for writing, tagged `exam`. Type as you would anywhere else:
 
    ```markdown
-   ---
-   title: Lecture 1
-   tags: exam, graphs
-   ---
+   ## Graphs
    - BFS explores level by level
    - [ ] review Dijkstra
    ```
 
-   Fill in a title, optional tags, and the note. Save and close the editor, and
-   the note appears in the list, already selected. An empty note is discarded.
-4. **Tick a checkbox.** With the note selected, press `x` to tick its first open
-   box. To tick a different one, press `l` to move into the note, `j`/`k` to
-   pick the box, then `x`.
-5. **Find something.** Press `f` and type. The search covers every note in every
-   directory: titles, the text inside notes, and `#tags`. Each result shows the
+   Every line shows formatted, and the line with the cursor shows its Markdown.
+   `Enter` after a list item starts the next one (a checklist too), `Tab`
+   indents, and `Ctrl-Z` undoes. Press `Esc` when you are done. There is nothing
+   to save: leo saves a moment after you stop typing.
+2. **Tick a checkbox.** Click the box, or press `x` in the list to tick the
+   note's first open box.
+3. **Find something.** Press `/` and type. The search covers every note in every
+   folder: titles, the text inside notes, and `#tags`. Each result shows the
    line that matched. Press `Enter` to keep the results, or `Esc` to clear the
    search and jump to the note you picked.
-6. **Undo a mistake.** Press `u` to take back the last delete, move, or tick.
+4. **Make a folder.** Press `N`, type `cs130`, press `Enter`. `h` moves to the
+   folders pane, `j`/`k` select, and `Enter` goes in.
+5. **Undo a mistake.** Press `u` to take back the last delete, move, or tick.
    A deleted note also waits in the trash for 30 days, even after you quit:
    `/trash` lists what is there and `/trash restore 1` brings one back to
    where it was.
 
-Other everyday keys: `e` edits the selected note, `r` renames it, `m` moves it,
-`D` deletes it (it asks first), `p` pins it to the top of its list (a syllabus,
-say; `p` again unpins), and `Space` marks several notes so `D` and `m` act on
-all of them at once.
+More keys, all listed under `?`: `e` opens the note in your own editor
+(`$EDITOR`, or nano) instead, `r` renames it, `m` moves it, `p` pins it to the
+top of its list (a syllabus, say; `p` again unpins), and `Space` marks several
+notes so `D` and `m` act on all of them at once. Each note in the list shows
+when it was last edited, and the note's title bar gives the day and time.
 
-### Commands with `/`
+### Finding and commands with `/`
 
-Anything that takes words goes on the command line. Press `/`: a menu lists
-every command, narrowing as you type, and `Tab` completes names, directories and
-tags. If you leave the note out, a command acts on the selected note (or on the
-marked ones).
+`/` is one line for both. Type words and the list narrows to the notes that
+match. Start with a command instead and a menu shows what it does; `Tab`
+completes names, folders and tags. If you leave the note out, a command acts on
+the selected note (or on the marked ones).
 
 ```
 /new cs130/Lecture 4 #exam     a note in cs130, tagged exam, in one step
 /rename Graph traversals       retitle the selected note
 /mv cs162                      move the selected (or marked) notes
-/mkdir cs130                   a directory here
-/cd ..                         up a directory; /cd / for the top
-/ask what is BFS?              ask a question across all your notes (section 5)
+/mkdir cs130                   a folder here
+/cd ..                         up a folder; /cd / for the top
+/ask what is BFS?              a question answered from your notes (section 5)
 /trash                         deleted notes, kept 30 days; /trash restore 1
 /doctor                        check that everything works (AI, recording, backup)
-/sync                          back up now (section 6)
+/backup                        back up now (section 6)
 ```
 
 ---
@@ -282,7 +289,7 @@ iTerm, Ghostty…), then quit and reopen the terminal.
 To record:
 
 1. Select the directory the note should go in.
-2. Press `R` (or type `/listen`). The live transcript appears in the right-hand
+2. Press `R` (or type `/record`). The live transcript appears in the right-hand
    pane, updating every few seconds as the speaker talks.
 3. **Type the points you care about** in the box under the transcript, and press
    `Enter` after each one. They are listed above the transcript as "Your
@@ -311,9 +318,9 @@ as a note.
 **Variations:**
 
 ```
-/listen CS 101 Lecture 4     give the note your own title
-/listen add                  add to the selected note instead of making a new one
-/listen --screen             record your computer's audio (a video, a call)
+/record CS 101 Lecture 4     give the note your own title
+/record add                  add to the selected note instead of making a new one
+/record --screen             record your computer's audio (a video, a call)
 ```
 
 **Recording computer audio** (`--screen`) needs a virtual audio device:
@@ -335,8 +342,8 @@ Write a question on its own line, starting with `@leo`:
 @leo how is BFS different from DFS?
 ```
 
-With the note selected, press `a` (or type `/ask`). The answer streams in under
-your question, and the question stays in the note as a bold **Q:** line:
+Press `Esc` when you finish writing and the answer streams in under your
+question, which stays in the note as a bold **Q:** line:
 
 ```markdown
 **Q:** how is BFS different from DFS?
@@ -344,11 +351,11 @@ your question, and the question stays in the note as a bold **Q:** line:
 BFS visits nodes level by level using a queue; DFS goes as deep as it can…
 ```
 
-Any `@leo` lines are also answered when you save a note from the editor.
+`@leo` lines are also answered when you save a note from your own editor (`e`).
 
 ### Ask all your notes
 
-Type `/ask` followed by a question:
+Press `a` (or type `/ask`) followed by a question:
 
 ```
 /ask what did we cover about graphs?
@@ -369,35 +376,35 @@ about graphs?"`.
 ```sh
 brew install gh      # or see cli.github.com
 gh auth login        # sign in once
-leo sync github
+leo backup github
 ```
 
 leo makes a private repository called `leo-notes` on your GitHub, connects
-your notes to it, and backs them up. (`leo sync github another-name` picks a
-different name.) In the app, `/sync github` does the same.
+your notes to it, and backs them up. (`leo backup github another-name` picks a
+different name.) In the app, `/backup github` does the same.
 
 **By hand**, without `gh`:
 
 1. Create an **empty** repository on GitHub (no README, no .gitignore). Make
    it **private** unless you want your notes public.
-2. Run `leo sync` and paste the repository's URL when asked. leo sets up git
+2. Run `leo backup` and paste the repository's URL when asked. leo sets up git
    in your notes directory, connects it, and pushes.
 
 From then on:
 
 - every change is committed as you save;
 - leo pushes when you quit the app;
-- `leo sync` (or `/sync` in the app) backs up on demand: it pulls anything
+- `leo backup` (or `/backup` in the app) backs up on demand: it pulls anything
   newer from GitHub first, then pushes.
 
-**On another computer:** install leo and run `leo sync github` again (signed
-in to the same GitHub account), or `leo sync` with the same repository's URL. The notes already backed up come down, this computer's notes
+**On another computer:** install leo and run `leo backup github` again (signed
+in to the same GitHub account), or `leo backup` with the same repository's URL. The notes already backed up come down, this computer's notes
 go up, and from then on both stay in step. If the same note was edited on both,
 leo keeps both versions' lines in it for you to tidy rather than losing either.
 
 To push while you work instead of on quit, press `Ctrl-S` and change **when leo
 backs up** on the backup row. You can also set up backup from that screen
-instead of running `leo sync`.
+instead of running `leo backup`.
 
 ---
 
@@ -486,28 +493,32 @@ from any you already have.
 
 ## 9. Use leo from a shell
 
-Every everyday action also works as a command, which is handy for scripts and
-quick captures. `leo --help` lists them all with examples, and
-`leo <command> --help` shows a command's options.
+The everyday actions also work as commands, which is handy for scripts and
+quick captures. `leo --help` lists them with examples, `leo help --all` lists
+every command, and `leo <command> --help` shows a command's options.
 
 ```sh
 leo new "Quick thought" --body "Refactor auth" --tags todo
 leo new "cs130/Lecture 4 #exam"     # opens your editor
-leo list --tag todo
-leo list cs130                      # one directory
 leo search "refactor"               # shows the line that matched
+leo record --title "Meeting notes"  # records until you press Enter
+leo ask "what did we cover about graphs?"
+leo backup                          # back up to GitHub
+leo serve --anywhere                # your notes on your phone, from any network
+leo doctor                          # check everything, store an API key; exits 1 if anything is broken
+```
+
+And the rest, from `leo help --all`:
+
+```sh
+leo list --tag todo
+leo list cs130                      # one folder
 leo view "Rust ownership"
 leo edit 3f2a
-leo delete 3f2a --force             # goes to the trash
+leo delete 3f2a                     # goes to the trash
 leo trash                           # what was deleted; leo trash restore 1
 leo pin "Syllabus"                  # keep it at the top of the list
-leo ask 3f2a                        # answer that note's @leo lines
-leo ask "what did we cover about graphs?"   # a question across all notes
-leo sync                            # back up to GitHub
-leo serve --anywhere                # your notes on your phone, from any network
 leo obsidian                        # open your notes in Obsidian
-leo listen --title "Meeting notes"  # records until you press Enter
-leo doctor                          # check everything, store an API key; exits 1 if anything is broken
 leo update                          # install a newer version, if there is one
 leo uninstall                       # remove leo; your notes stay
 ```
@@ -523,25 +534,28 @@ unique part of its title.
 
 | Key | What it does |
 |-----|-------------|
+| `Enter` | Write in the selected note; in the folders pane, open the folder |
+| `Esc` | Done writing; or clear a search, marks or pinned output |
+| `n` / `N` | New note / new folder |
+| `/` | Find a note, or run a command (`f` and `Ctrl-F` too) |
+| `D` | Delete; in the folders pane, the whole folder. `u` brings it back |
 | `j` / `k` | Move down / up (arrows work too) |
 | `h` / `l` | Switch pane |
-| `Enter` | Open a directory, or move into the note |
-| `n` / `N` | New note / new directory |
-| `e` | Edit the selected note |
+| `e` | Open the note in your own editor |
 | `r` / `m` | Rename / move it |
-| `x` | Tick a checkbox |
-| `D` | Delete (asks first); in the directories pane, the whole directory |
+| `x` | Tick the note's first open checkbox |
+| `p` | Pin the note to the top of its list, or unpin it |
 | `Space` | Mark notes, so `D` and `m` act on all of them |
 | `u` | Undo the last delete, move or tick |
-| `p` | Pin the note to the top of its list, or unpin it |
-| `f` | Find: search every note (`Ctrl-F` too) |
-| `t` | Left pane: directories or tags |
 | `Tab` | Back to a recently visited note |
 | `R` | Record |
-| `a` | Answer the note's `@leo` questions |
-| `/` | Command line |
-| `Ctrl-S` | Profile: AI providers, keys, colour, backup |
+| `a` | Ask a question, answered from your notes |
+| `Ctrl-S` | Settings: AI, keys, colour, backup |
 | `?` / `q` | Help / quit |
+
+While writing in a note: `Enter` continues a list, `Tab` / `Shift-Tab` indent
+and outdent, `Ctrl-Z` undoes, a click puts the cursor there (or ticks a box),
+and `Esc` finishes.
 
 While recording: type a point, `Enter` adds it, `Ctrl-P` pauses or resumes,
 `↑`/`↓` (or the mouse wheel, `PgUp`/`PgDn`, `Home`) scroll back through the
@@ -606,10 +620,10 @@ Run `leo doctor` (or `/doctor` in the app): it says which kind of AI is missing
 and how to add it. Keys can also be added with `Ctrl-S`, then `Enter` on the
 provider.
 
-**`leo sync` fails**
+**`leo backup` fails**
 Check that `git push` works from your terminal (a signed-in account or an SSH
 key), and run `leo doctor`, which asks the repository whether it answers. If the push is
-rejected, run `leo sync` again: it pulls first.
+rejected, run `leo backup` again: it pulls first.
 
 **The phone says "This page needs its link"**
 The login cookie is missing or the link was renewed. Open the link `leo serve`

@@ -47,8 +47,6 @@ pub enum Intent {
     NewNote,
     /// Open the `:` line with the selected note's title ready to change.
     RenameSelected,
-    /// Expand the selected note's `@leo` lines.
-    AskSelected,
     PinSelected,
     /// Start recording a new note.
     Record,
@@ -60,8 +58,6 @@ pub enum Intent {
     },
     /// Start filtering the notes pane as the user types.
     OpenFilter,
-    /// Switch the left pane between directories and tags.
-    ToggleLeftPane,
     /// Jump back to a recently visited note.
     JumpRecent,
     /// Open the provider and settings screen.
@@ -102,7 +98,6 @@ pub fn normal(key: KeyEvent, focus: Pane) -> Intent {
         KeyCode::Enter => Intent::Open,
         KeyCode::Char('x') => Intent::ToggleCheckbox,
         KeyCode::Char('u') => Intent::Undo,
-        KeyCode::Char('t') => Intent::ToggleLeftPane,
         // Tab, the way editors move between recent files.
         KeyCode::Tab => Intent::JumpRecent,
         KeyCode::Char('e') => Intent::EditSelected,
@@ -110,11 +105,11 @@ pub fn normal(key: KeyEvent, focus: Pane) -> Intent {
         KeyCode::Char('N') => Intent::OpenCommand { seed: "mkdir " },
         KeyCode::Char('r') => Intent::RenameSelected,
         KeyCode::Char('m') => Intent::OpenCommand { seed: "mv " },
-        KeyCode::Char('a') => Intent::AskSelected,
+        KeyCode::Char('a') => Intent::OpenCommand { seed: "ask " },
         KeyCode::Char('p') => Intent::PinSelected,
         KeyCode::Char('R') => Intent::Record,
         KeyCode::Char('D') => Intent::DeleteSelected,
-        KeyCode::Char('/') => Intent::OpenCommand { seed: "" },
+        KeyCode::Char('/') => Intent::OpenFilter,
         KeyCode::Char('f') => Intent::OpenFilter,
         KeyCode::Char('?') => Intent::ToggleHelp,
         KeyCode::Esc => Intent::Cancel,
@@ -172,12 +167,11 @@ mod tests {
             (key('l'), Intent::FocusRight),
             (key('x'), Intent::ToggleCheckbox),
             (key('u'), Intent::Undo),
-            (key('t'), Intent::ToggleLeftPane),
             (
                 KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
                 Intent::JumpRecent,
             ),
-            (key('/'), Intent::OpenCommand { seed: "" }),
+            (key('/'), Intent::OpenFilter),
             (key('f'), Intent::OpenFilter),
             (key('q'), Intent::Quit),
             (key('e'), Intent::EditSelected),
@@ -200,7 +194,7 @@ mod tests {
             (key('N'), Intent::OpenCommand { seed: "mkdir " }),
             (key('r'), Intent::RenameSelected),
             (key('m'), Intent::OpenCommand { seed: "mv " }),
-            (key('a'), Intent::AskSelected),
+            (key('a'), Intent::OpenCommand { seed: "ask " }),
             (key('R'), Intent::Record),
             (key('p'), Intent::PinSelected),
         ];
@@ -215,15 +209,11 @@ mod tests {
         assert_eq!(normal(key(' '), Pane::Preview), Intent::ScrollDown);
     }
 
-    /// Commands start with `/`, the way they do in chat apps. There is one way
-    /// in, so `:` does nothing. Search is `f`.
     #[test]
-    fn slash_starts_a_command_and_f_finds() {
-        assert_eq!(
-            normal(key('/'), Pane::Notes),
-            Intent::OpenCommand { seed: "" }
-        );
+    fn slash_f_and_ctrl_f_open_the_same_line() {
+        assert_eq!(normal(key('/'), Pane::Notes), Intent::OpenFilter);
         assert_eq!(normal(key(':'), Pane::Notes), Intent::Nothing);
+        assert_eq!(normal(key('t'), Pane::Notes), Intent::Nothing);
         assert_eq!(normal(key('f'), Pane::Notes), Intent::OpenFilter);
         assert_eq!(normal(ctrl('f'), Pane::Notes), Intent::OpenFilter);
     }

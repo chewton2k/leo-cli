@@ -13,7 +13,10 @@ impl App {
             return false;
         }
         self.last_disk_check = Some(Instant::now());
-        let busy = self.mode != Mode::Normal || self.recording.is_some() || self.asking.is_some();
+        let busy = self.mode != Mode::Normal
+            || self.recording.is_some()
+            || self.asking.is_some()
+            || self.editing.is_some();
         if busy || !self.store.changed_on_disk() || self.store.refresh().is_err() {
             return false;
         }

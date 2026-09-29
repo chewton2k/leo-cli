@@ -143,11 +143,25 @@ fn has_git() -> bool {
 fn help_lists_the_everyday_commands_and_hides_the_old_ones() {
     let leo = Leo::new();
     let help = leo.ok(&["--help"]);
-    for cmd in ["new", "list", "search", "listen", "doctor", "sync", "serve"] {
-        assert!(help.contains(cmd), "help lacks {cmd}:\n{help}");
+    for cmd in [
+        "new", "search", "record", "ask", "doctor", "backup", "serve",
+    ] {
+        assert!(
+            help.contains(&format!("  {cmd} ")),
+            "help lacks {cmd}:\n{help}"
+        );
     }
-    for old in ["setup", "model", "config"] {
+    for old in [
+        "setup", "model", "config", "sync", "listen", "trash", "list",
+    ] {
         assert!(!help.contains(&format!("  {old} ")), "{help}");
+    }
+    let all = leo.ok(&["help", "--all"]);
+    for cmd in ["list", "trash", "obsidian", "update", "uninstall"] {
+        assert!(
+            all.contains(&format!("  {cmd} ")),
+            "help --all lacks {cmd}:\n{all}"
+        );
     }
 }
 
@@ -704,11 +718,13 @@ fn a_deleted_note_can_be_restored_from_the_trash() {
 }
 
 #[test]
-fn delete_without_confirmation_keeps_the_note() {
+fn delete_moves_the_note_to_the_trash_without_asking_and_says_how_to_get_it_back() {
     let leo = Leo::new();
     leo.ok(&["new", "Keeper", "--body", "x"]);
-    // stdin is empty, so the question gets no "y".
-    let _ = leo.cmd(&["delete", "Keeper"]).output().unwrap();
+    let said = leo.ok(&["delete", "Keeper"]);
+    assert!(said.contains("leo trash restore"), "{said}");
+    assert!(!leo.files().iter().any(|f| f.contains("title: Keeper")));
+    leo.ok(&["trash", "restore", "Keeper"]);
     assert!(leo.files().iter().any(|f| f.contains("title: Keeper")));
 }
 
@@ -723,13 +739,6 @@ fn an_unknown_note_is_reported_not_guessed() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(text.contains("No note found"), "{text}");
-}
-
-#[test]
-fn ask_on_a_note_without_prompts_makes_no_request() {
-    let leo = Leo::new();
-    leo.ok(&["new", "Plain", "--body", "no questions here"]);
-    assert!(leo.ok(&["ask", "Plain"]).contains("No @leo prompts"));
 }
 
 /// `leo ask` with a question none of the notes mention says so, without
@@ -844,7 +853,7 @@ fn doctor_scans_every_part_and_fails_when_something_is_broken() {
 // ── backup ──────────────────────────────────────────────────────────────────
 
 #[test]
-fn sync_backs_notes_up_to_a_git_remote() {
+fn backup_sends_notes_to_a_git_remote() {
     if !has_git() {
         eprintln!("skipping: git is not installed");
         return;
@@ -859,10 +868,10 @@ fn sync_backs_notes_up_to_a_git_remote() {
     assert!(init.status.success(), "{}", describe(&init));
 
     leo.ok(&["new", "First", "--body", "one"]);
-    leo.ok(&["sync", "init"]);
-    leo.ok(&["sync", "connect", remote.to_str().unwrap()]);
+    leo.ok(&["backup", "init"]);
+    leo.ok(&["backup", "connect", remote.to_str().unwrap()]);
     leo.ok(&["new", "Second", "--body", "two"]);
-    leo.ok(&["sync"]);
+    leo.ok(&["backup"]);
 
     let log = Command::new("git")
         .args([
@@ -901,17 +910,17 @@ fn a_second_computer_joins_the_backup_and_both_share_notes() {
     let url = remote.to_str().unwrap();
 
     laptop.ok(&["new", "Written on the laptop", "--body", "one"]);
-    laptop.ok(&["sync", "connect", url]);
-    laptop.ok(&["sync"]);
+    laptop.ok(&["backup", "connect", url]);
+    laptop.ok(&["backup"]);
 
     desktop.ok(&["new", "Written on the desktop", "--body", "two"]);
-    desktop.ok(&["sync", "connect", url]);
-    desktop.ok(&["sync"]);
+    desktop.ok(&["backup", "connect", url]);
+    desktop.ok(&["backup"]);
     let listed = desktop.ok(&["list"]);
     assert!(listed.contains("Written on the laptop"), "{listed}");
     assert!(listed.contains("Written on the desktop"), "{listed}");
 
-    laptop.ok(&["sync"]);
+    laptop.ok(&["backup"]);
     assert!(laptop.ok(&["list"]).contains("Written on the desktop"));
 
     let manuals: Vec<String> = desktop
@@ -955,7 +964,7 @@ esac
 }
 
 #[test]
-fn sync_github_makes_the_repository_then_a_second_computer_joins_it() {
+fn backup_github_makes_the_repository_then_a_second_computer_joins_it() {
     if !has_git() {
         eprintln!("skipping: git is not installed");
         return;
@@ -968,37 +977,37 @@ fn sync_github_makes_the_repository_then_a_second_computer_joins_it() {
     fake_gh(&desktop, &github);
 
     laptop.ok(&["new", "Written on the laptop", "--body", "one"]);
-    let made = laptop.ok(&["sync", "github"]);
+    let made = laptop.ok(&["backup", "github"]);
     assert!(github.join("leo-notes.git").is_dir(), "no repository made");
     assert!(made.contains("leo-notes"), "{made}");
     assert!(made.to_lowercase().contains("made"), "{made}");
 
     desktop.ok(&["new", "Written on the desktop", "--body", "two"]);
-    let joined = desktop.ok(&["sync", "github"]);
+    let joined = desktop.ok(&["backup", "github"]);
     assert!(joined.to_lowercase().contains("joined"), "{joined}");
     let listed = desktop.ok(&["list"]);
     assert!(listed.contains("Written on the laptop"), "{listed}");
 
-    laptop.ok(&["sync"]);
+    laptop.ok(&["backup"]);
     assert!(laptop.ok(&["list"]).contains("Written on the desktop"));
 }
 
 #[test]
-fn sync_github_without_the_tool_says_how_to_get_it() {
+fn backup_github_without_the_tool_says_how_to_get_it() {
     let leo = Leo::new();
-    let out = leo.cmd(&["sync", "github"]).output().unwrap();
+    let out = leo.cmd(&["backup", "github"]).output().unwrap();
     assert!(!out.status.success());
     let said = String::from_utf8_lossy(&out.stderr);
     assert!(said.contains("gh auth login"), "{}", describe(&out));
 }
 
 #[test]
-fn sync_before_setup_says_what_to_do() {
+fn backup_before_setup_says_what_to_do() {
     let leo = Leo::new();
-    let out = leo.cmd(&["sync"]).output().unwrap();
+    let out = leo.cmd(&["backup"]).output().unwrap();
     assert!(!out.status.success());
     assert!(
-        String::from_utf8_lossy(&out.stderr).contains("leo sync"),
+        String::from_utf8_lossy(&out.stderr).contains("leo backup"),
         "{}",
         describe(&out)
     );

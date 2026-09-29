@@ -42,58 +42,66 @@ const fn e(key: &'static str, what: &'static str) -> Entry {
 /// Help content, grouped the way someone looks for it.
 pub const SECTIONS: &[Section] = &[
     Section {
+        title: "The five you need",
+        entries: &[
+            e("Enter", "write in the selected note; Esc when done, it saves itself"),
+            e("n", "new note: type a title, Enter, then write"),
+            e("/", "find a note, or pick a command from the list"),
+            e("D", "delete (u brings it back)"),
+            e("?", "this help"),
+        ],
+    },
+    Section {
+        title: "Writing in a note",
+        entries: &[
+            e("type", "edit the line under the cursor; it shows its Markdown"),
+            e("Enter", "new line; continues a list, checklist or numbering"),
+            e("Tab / Shift-Tab", "indent / outdent the line"),
+            e("Ctrl-Z", "undo typing"),
+            e("click", "put the cursor there; clicking a ☐ ticks it"),
+            e("@leo", "write @leo and a question; it is answered when you press Esc"),
+            e("Esc", "done: back to the list"),
+        ],
+    },
+    Section {
         title: "Moving around",
         entries: &[
             e("j / k", "down / up"),
             e("g / G", "first / last"),
-            e("h / l", "switch pane: dirs, notes, body"),
-            e("Enter", "open a directory, or focus the note body"),
+            e("h / l", "switch pane: folders, notes, the note"),
+            e("Enter", "open a folder"),
             e("Ctrl-D / Ctrl-U", "scroll the note"),
             e("Tab", "back to a recently visited note"),
-            e("Ctrl-R", "reload from disk, and repaint"),
-            e("click", "focus a pane, or select a row"),
             e("wheel", "scroll whatever is under the pointer"),
             e("Esc", "close, or clear a search or marks"),
-            e("?", "this help"),
             e("q", "quit"),
         ],
     },
     Section {
         title: "Finding things",
         entries: &[
-            e("f", "find: search every note — titles, bodies, tags"),
+            e("/", "type words to search every note: titles, text, tags"),
             e("  #word", "only notes with that tag"),
-            e(
-                "  results",
-                "show the line that matched; the note lights it up",
-            ),
-            e("  Enter", "keep the results, and return to the panes"),
+            e("  Enter", "keep the results, and return to the list"),
             e("  Esc", "clear it, staying on the note you picked"),
-            e("Ctrl-F", "the same as f"),
-            e("t", "left pane: directories or tags"),
-            e("  Enter", "on a tag: show only those notes"),
+            e("f", "the same as /"),
+            e("Ctrl-F", "the same as /"),
         ],
     },
     Section {
-        title: "Everyday keys",
+        title: "More keys",
         entries: &[
-            e("n", "new note here, in $EDITOR"),
-            e("N", "new directory"),
-            e("e", "edit the selected note"),
+            e("e", "open the note in your own editor"),
             e("r", "rename it"),
-            e("m", "move it to another directory"),
+            e("m", "move it to another folder"),
             e("x", "tick its first open checkbox"),
-            e(
-                "  j / k",
-                "in the preview: pick a checkbox, then x ticks it",
-            ),
-            e("a", "ask AI: answer its @leo lines"),
             e("p", "pin it to the top of its list (again to unpin)"),
+            e("a", "ask a question, answered from your notes"),
             e("R", "record a new note by talking"),
-            e("D", "delete it (asks first)"),
+            e("N", "new folder"),
             e("Space", "mark notes; D and m then act on all of them"),
-            e("D", "in the dirs pane: delete that whole directory"),
             e("u", "undo the last delete, move or tick"),
+            e("Ctrl-R", "reload from disk, and repaint"),
         ],
     },
     Section {
@@ -118,39 +126,20 @@ pub const SECTIONS: &[Section] = &[
     Section {
         title: "The / line",
         entries: &[
-            e("/", "start a command; the commands are listed below"),
-            e("Tab", "complete verbs, notes, dirs, tags"),
-            e("Up / Down", "previous commands"),
+            e("Tab", "complete commands, notes, folders, tags"),
+            e("Up / Down", "previous lines"),
             e("Ctrl-W / Ctrl-U", "delete a word / the line"),
             e("[note]", "leave it out to mean the selected note"),
         ],
     },
     Section {
-        title: "Providers and settings",
+        title: "Settings",
         entries: &[
-            e("Ctrl-S", "your profile: providers, keys, colour, backup"),
-            e(
-                "  Enter",
-                "on a provider: store its key, add it, or test it",
-            ),
-            e("  x", "on that screen: remove a key"),
-            e(
-                "  J / K",
-                "on that screen: change the order they are tried in",
-            ),
-            e("  a / d", "on that screen: add to / drop from a list"),
-            e("  e", "on that screen: open config.toml"),
-            e("  Enter", "on a setting: change it, or set up git backup"),
+            e("Ctrl-S", "settings: AI, keys, colour, backup"),
             e(
                 "leo doctor",
                 "check everything; says how to fix what does not",
             ),
-        ],
-    },
-    Section {
-        title: "Elsewhere",
-        entries: &[
-            e("backup", "Ctrl-S: back up on quit, or when idle"),
             e(
                 "leo serve",
                 "your notes on your phone (--anywhere: any network)",
@@ -159,7 +148,6 @@ pub const SECTIONS: &[Section] = &[
                 "leo update",
                 "install the newest leo (the bottom line says when)",
             ),
-            e("Ctrl-R", "reload from disk, and repaint the screen"),
         ],
     },
 ];
@@ -358,7 +346,7 @@ mod tests {
         let text: String = help_lines().iter().map(|l| l.to_string()).collect();
         for key in [
             "j", "k", "g", "G", "h", "l", "Enter", "x", "e", "D", "/", "f", "Tab", "Ctrl-F",
-            "Ctrl-S", "Ctrl-D", "Ctrl-U", "Ctrl-R", "Esc", "t", "?", "q",
+            "Ctrl-S", "Ctrl-D", "Ctrl-U", "Ctrl-R", "Esc", "Ctrl-Z", "?", "q", "n", "a", "R",
         ] {
             assert!(text.contains(key), "help never shows the {key} key");
         }
@@ -429,7 +417,7 @@ mod tests {
         let bottom = t.backend().to_string();
 
         assert_ne!(top, bottom, "scrolling changed nothing");
-        assert!(top.contains("Moving around"));
+        assert!(top.contains("The five you need"));
         assert!(
             bottom.contains("/quit"),
             "the last section is unreachable:\n{bottom}"

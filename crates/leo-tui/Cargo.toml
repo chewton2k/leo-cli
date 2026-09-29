@@ -9,12 +9,14 @@ rust-version.workspace = true
 leo-core.workspace = true
 leo-services.workspace = true
 anyhow.workspace = true
+chrono.workspace = true
 colored.workspace = true
 dirs.workspace = true
 nucleo.workspace = true
 ratatui.workspace = true
 serde_json.workspace = true
 toml_edit.workspace = true
+unicode-width.workspace = true
 
 [dev-dependencies]
 leo-services = { workspace = true, features = ["test-support"] }

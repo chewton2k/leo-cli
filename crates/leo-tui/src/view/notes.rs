@@ -25,9 +25,11 @@ pub struct NoteRow {
     /// The line a search matched inside the note, when the title alone does
     /// not explain why it was found.
     pub snippet: Option<String>,
+    pub edited: String,
 }
 
 pub fn rows(notes: &[&Note], current_dir: &str) -> Vec<NoteRow> {
+    let now = chrono::Utc::now();
     notes
         .iter()
         .enumerate()
@@ -40,11 +42,12 @@ pub fn rows(notes: &[&Note], current_dir: &str) -> Vec<NoteRow> {
             marked: false,
             pinned: n.pinned,
             snippet: None,
+            edited: super::when::short(n.updated_at, now),
         })
         .collect()
 }
 
-fn item(row: &NoteRow) -> ListItem<'static> {
+fn item(row: &NoteRow, width: usize) -> ListItem<'static> {
     let mut spans = vec![
         Span::styled(
             format!("{:>3}", row.number),
@@ -82,6 +85,15 @@ fn item(row: &NoteRow) -> ListItem<'static> {
     if let Some(snippet) = &row.snippet {
         spans.push(Span::styled(
             format!("  … {snippet}"),
+            Style::default().add_modifier(Modifier::DIM),
+        ));
+    }
+    let used: usize = spans.iter().map(|s| s.width()).sum();
+    let age = row.edited.chars().count();
+    if !row.edited.is_empty() && used + 1 + age <= width {
+        spans.push(Span::raw(" ".repeat(width - used - age)));
+        spans.push(Span::styled(
+            row.edited.clone(),
             Style::default().add_modifier(Modifier::DIM),
         ));
     }
@@ -123,7 +135,8 @@ pub fn render(
     }
 
     let inner = block.inner(area);
-    let list = List::new(rows.iter().map(item).collect::<Vec<_>>())
+    let width = inner.width as usize;
+    let list = List::new(rows.iter().map(|r| item(r, width)).collect::<Vec<_>>())
         .block(block)
         .highlight_style(selection(focused));
 
@@ -190,6 +203,32 @@ mod tests {
         let out = t.backend().to_string();
         assert!(out.contains("own"), "{out}");
         assert!(out.contains("(1)"), "{out}");
+    }
+
+    #[test]
+    fn each_row_says_when_the_note_was_last_edited_at_the_right_edge() {
+        let a = note("Rust ownership", &[]);
+        let r = rows(&[&a], "");
+        assert_eq!(r[0].edited, "now");
+        let mut t = Terminal::new(TestBackend::new(40, 5)).unwrap();
+        t.draw(|f| {
+            render(
+                f,
+                f.area(),
+                &r,
+                0,
+                true,
+                &crate::view::empty::Hint::no_notes(),
+                None,
+            )
+        })
+        .unwrap();
+        let out = t.backend().to_string();
+        let row = out.lines().find(|l| l.contains("Rust ownership")).unwrap();
+        assert!(
+            row.trim_end_matches(['"', '│']).trim_end().ends_with("now"),
+            "{row}"
+        );
     }
 
     // ── hit testing ─────────────────────────────────────────────────────────

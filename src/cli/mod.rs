@@ -2,10 +2,10 @@
 //! subcommands. Each converts its arguments into the same `Action`s and
 //! provider calls the TUI uses, so the two cannot drift apart.
 
+mod backup;
 mod doctor;
 mod notes;
 mod prompt;
-mod sync;
 mod uninstall;
 mod update;
 
@@ -41,6 +41,7 @@ enum Commands {
     },
 
     /// List notes and directories, newest first: the top level, or DIR
+    #[command(hide = true)]
     List {
         /// A directory to list instead of the top level, e.g. cs130
         dir: Option<String>,
@@ -55,24 +56,26 @@ enum Commands {
     },
 
     /// View the full content of a note
+    #[command(hide = true)]
     View {
         /// Note ID (or unique prefix)
         id: String,
     },
 
     /// Edit an existing note in $EDITOR
+    #[command(hide = true)]
     Edit {
         /// Note ID (or unique prefix)
         id: String,
     },
 
-    /// Delete a note
+    /// Move a note to the trash
+    #[command(hide = true)]
     Delete {
         /// Note ID (or unique prefix)
         id: String,
 
-        /// Skip confirmation prompt
-        #[arg(short, long)]
+        #[arg(short, long, hide = true)]
         force: bool,
     },
 
@@ -86,8 +89,8 @@ enum Commands {
         full_text: bool,
     },
 
-    /// Record audio and create structured notes from speech
-    Listen {
+    /// Record, and turn what was said into a note
+    Record {
         /// Optional title (AI generates one if omitted)
         #[arg(short, long)]
         title: Option<String>,
@@ -101,19 +104,22 @@ enum Commands {
         screen: bool,
     },
 
-    /// Expand all @leo prompts in a note using AI
+    #[command(about = "Ask a question, answered from your notes")]
     Ask {
-        /// Note ID (or unique prefix)
-        id: String,
+        #[arg(required = true, num_args = 1.., help = "The question, e.g. what is due on Friday?")]
+        question: Vec<String>,
     },
 
-    #[command(about = "Pin a note to the top of its list, or unpin it")]
+    #[command(about = "Pin a note to the top of its list, or unpin it", hide = true)]
     Pin {
         #[arg(help = "Note number, ID prefix or title")]
         id: String,
     },
 
-    #[command(about = "Deleted notes, kept 30 days: list them, restore one, or empty the trash")]
+    #[command(
+        about = "Deleted notes, kept 30 days: list them, restore one, or empty the trash",
+        hide = true
+    )]
     Trash {
         #[command(subcommand)]
         command: Option<TrashCommands>,
@@ -135,7 +141,10 @@ enum Commands {
         new_token: bool,
     },
 
-    #[command(about = "Open your notes in Obsidian (they are already Markdown files it can read)")]
+    #[command(
+        about = "Open your notes in Obsidian (they are already Markdown files it can read)",
+        hide = true
+    )]
     Obsidian,
 
     #[command(
@@ -143,22 +152,28 @@ enum Commands {
     )]
     Doctor,
 
-    #[command(about = "Update leo to the latest release, if there is a newer one")]
+    #[command(
+        about = "Update leo to the latest release, if there is a newer one",
+        hide = true
+    )]
     Update {
         #[arg(long, help = "Reinstall even when already on the latest version")]
         force: bool,
     },
 
-    #[command(about = "Remove leo from this computer. Your notes, settings and keys stay")]
+    #[command(
+        about = "Remove leo from this computer. Your notes, settings and keys stay",
+        hide = true
+    )]
     Uninstall {
         #[arg(short, long, help = "Do not ask first")]
         yes: bool,
     },
 
-    /// Back up your notes to git: pull, then push. Sets backup up the first time.
-    Sync {
+    #[command(about = "Back up your notes now, or set backup up the first time")]
+    Backup {
         #[command(subcommand)]
-        command: Option<SyncCommands>,
+        command: Option<BackupCommands>,
     },
 }
 
@@ -181,7 +196,7 @@ enum TrashCommands {
 }
 
 #[derive(Subcommand)]
-enum SyncCommands {
+enum BackupCommands {
     #[command(
         about = "Back up to a private GitHub repository, made for you with GitHub's gh tool, or joined if you already have one"
     )]
@@ -189,19 +204,19 @@ enum SyncCommands {
         #[arg(default_value = leo_core::sync::GITHUB_REPO, help = "The repository's name")]
         name: String,
     },
-    /// Initialize a git repo for your notes (run this first)
+    #[command(hide = true)]
     Init,
-    /// Connect the notes repo to a GitHub remote
+    /// Back up to a repository you made, by its URL
     Connect {
         /// Remote URL, e.g. https://github.com/user/leo-notes.git
         /// or git@github.com:user/leo-notes.git (SSH)
         url: String,
     },
-    /// Push notes to the remote
+    #[command(hide = true)]
     Push,
-    /// Pull notes from the remote
+    #[command(hide = true)]
     Pull,
-    /// Show git status of the notes repo
+    #[command(hide = true)]
     Status,
 }
 
@@ -211,62 +226,100 @@ const EXAMPLES: &[(&str, &str)] = &[
         "leo new \"Lecture 4 #exam\"",
         "a note tagged exam; \"cs130/ Lecture 4\" puts it in cs130",
     ),
-    (
-        "leo list",
-        "notes at the top level; add a folder: leo list cs130",
-    ),
-    ("leo list --tag exam", "only notes tagged exam"),
     ("leo search graphs", "every note that mentions it"),
+    ("leo record", "record, then turn what was said into a note"),
     (
-        "leo view 2",
-        "a note, by its number in leo list, its title or ID",
+        "leo ask \"what is due Friday?\"",
+        "an answer from your notes",
     ),
-    ("leo edit 2", "open it in your editor"),
-    (
-        "leo delete 2",
-        "move it to the trash (--force skips the question)",
-    ),
-    ("leo pin 2", "keep it at the top of its list"),
-    ("leo trash", "what was deleted"),
-    ("leo trash restore 1", "bring one back"),
-    ("leo trash empty", "delete the trash for good"),
-    ("leo listen", "record, then turn it into notes"),
-    ("leo listen --add 2", "add a recording to a note"),
-    ("leo ask 2", "answer the @leo lines in a note"),
     ("leo serve", "your notes on your phone, on the same Wi-Fi"),
     (
         "leo serve --anywhere",
         "the same from any network (needs cloudflared)",
     ),
+    ("leo backup", "back up now, or set backup up the first time"),
+    (
+        "leo doctor",
+        "check that everything works, and fix what does not",
+    ),
+];
+
+const MORE_EXAMPLES: &[(&str, &str)] = &[
+    (
+        "leo list",
+        "notes at the top level; add a folder: leo list cs130",
+    ),
+    ("leo list --tag exam", "only notes tagged exam"),
+    (
+        "leo view 2",
+        "a note, by its number in leo list, its title or ID",
+    ),
+    ("leo edit 2", "open it in your editor"),
+    ("leo delete 2", "move it to the trash"),
+    ("leo pin 2", "keep it at the top of its list"),
+    ("leo trash", "what was deleted"),
+    ("leo trash restore 1", "bring one back"),
+    ("leo trash empty", "delete the trash for good"),
+    ("leo record --add 2", "add a recording to a note"),
     (
         "leo serve --new-token",
         "a new link; old links stop working",
     ),
-    ("leo sync", "back up to GitHub now"),
-    ("leo sync github", "set up backup with GitHub's gh tool"),
-    ("leo sync connect <url>", "back up to a repository you made"),
-    ("leo obsidian", "open your notes in Obsidian"),
+    ("leo backup github", "set up backup with GitHub's gh tool"),
     (
-        "leo doctor",
-        "check that everything works, and store an API key",
+        "leo backup connect <url>",
+        "back up to a repository you made",
     ),
+    ("leo obsidian", "open your notes in Obsidian"),
     ("leo update", "install a newer version, if there is one"),
     ("leo uninstall", "remove leo; your notes stay"),
 ];
 
-fn examples() -> String {
-    let width = EXAMPLES.iter().map(|(c, _)| c.len()).max().unwrap_or(0);
+fn examples(all: bool) -> String {
+    let shown: Vec<&(&str, &str)> = if all {
+        EXAMPLES.iter().chain(MORE_EXAMPLES).collect()
+    } else {
+        EXAMPLES.iter().collect()
+    };
+    let width = shown.iter().map(|(c, _)| c.len()).max().unwrap_or(0);
     let mut out = String::from("How to use it:\n");
-    for (command, what) in EXAMPLES {
+    for (command, what) in shown {
         out.push_str(&format!("  {command:<width$}   {what}\n"));
     }
-    out.push_str("\nEvery command's options: leo <command> --help");
+    if all {
+        out.push_str("\nEvery command's options: leo <command> --help");
+    } else {
+        out.push_str("\nEvery command: leo help --all");
+    }
     out
 }
 
+fn wants_everything(args: &[String]) -> bool {
+    let rest: Vec<&str> = args.iter().skip(1).map(String::as_str).collect();
+    matches!(
+        rest.as_slice(),
+        ["help", "--all"] | ["--help", "--all"] | ["-h", "--all"] | ["--all", "--help"]
+    )
+}
+
+fn command(all: bool) -> clap::Command {
+    use clap::CommandFactory;
+    let command = Cli::command().after_help(examples(all));
+    if all {
+        command.mut_subcommands(|sub| sub.hide(false))
+    } else {
+        command
+    }
+}
+
 pub fn parse() -> Cli {
-    use clap::{CommandFactory, FromArgMatches};
-    let matches = Cli::command().after_help(examples()).get_matches();
+    use clap::FromArgMatches;
+    let args: Vec<String> = std::env::args().collect();
+    if wants_everything(&args) {
+        let _ = command(true).print_help();
+        std::process::exit(0);
+    }
+    let matches = command(false).get_matches();
     Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit())
 }
 
@@ -285,7 +338,7 @@ pub fn run(cli: Cli) -> Result<()> {
         Some(Commands::Doctor) => doctor::run(),
         Some(Commands::Uninstall { yes }) => uninstall::run(yes),
         Some(Commands::Update { force }) => update::run(force),
-        Some(Commands::Sync { command }) => sync::run(command),
+        Some(Commands::Backup { command }) => backup::run(command),
         None => {
             if std::io::stdin().is_terminal() {
                 leo_tui::run()
@@ -304,28 +357,46 @@ mod cli_tests {
     use super::*;
 
     #[test]
-    fn doctor_and_bare_sync_parse() {
+    fn doctor_and_bare_backup_parse() {
         assert!(matches!(
             Cli::try_parse_from(["leo", "doctor"]).unwrap().command,
             Some(Commands::Doctor)
         ));
         assert!(matches!(
-            Cli::try_parse_from(["leo", "sync"]).unwrap().command,
-            Some(Commands::Sync { command: None })
+            Cli::try_parse_from(["leo", "backup"]).unwrap().command,
+            Some(Commands::Backup { command: None })
         ));
+    }
+
+    #[test]
+    fn old_names_are_gone() {
         for old in [
             &["leo", "setup"][..],
             &["leo", "model", "list"],
             &["leo", "config", "path"],
             &["leo", "env"],
+            &["leo", "sync"],
+            &["leo", "sync", "github"],
+            &["leo", "listen"],
         ] {
             assert!(Cli::try_parse_from(old).is_err(), "{old:?} still parses");
         }
     }
 
     #[test]
+    fn ask_takes_a_question_of_several_words() {
+        match Cli::try_parse_from(["leo", "ask", "what", "is", "due?"])
+            .unwrap()
+            .command
+        {
+            Some(Commands::Ask { question }) => assert_eq!(question.join(" "), "what is due?"),
+            _ => panic!("ask did not parse"),
+        }
+    }
+
+    #[test]
     fn every_example_in_the_help_is_a_real_command() {
-        for (example, _) in EXAMPLES {
+        for (example, _) in EXAMPLES.iter().chain(MORE_EXAMPLES) {
             let args: Vec<String> = example
                 .replace("<url>", "https://github.com/me/notes.git")
                 .split('"')
@@ -346,26 +417,73 @@ mod cli_tests {
     }
 
     #[test]
-    fn the_help_shows_how_to_use_serve() {
-        let text = examples();
+    fn the_short_help_points_at_the_full_one() {
+        let text = examples(false);
         assert!(text.contains("leo serve --anywhere"), "{text}");
-        assert!(text.contains("leo <command> --help"), "{text}");
+        assert!(text.contains("leo help --all"), "{text}");
+        let all = examples(true);
+        assert!(all.contains("leo trash restore 1"), "{all}");
+        assert!(all.contains("leo <command> --help"), "{all}");
     }
 
-    /// The top-level help lists the commands someone needs, not every alias.
+    fn listed(help: &str) -> Vec<String> {
+        help.lines()
+            .skip_while(|l| !l.starts_with("Commands:"))
+            .skip(1)
+            .take_while(|l| l.starts_with("  "))
+            .filter_map(|l| l.split_whitespace().next().map(str::to_string))
+            .collect()
+    }
+
     #[test]
-    fn the_top_level_help_is_short() {
-        use clap::CommandFactory;
-        let help = Cli::command().render_help().to_string();
-        assert!(
-            help.contains("doctor"),
-            "the health scan is not listed:\n{help}"
-        );
-        for hidden in ["setup", "model", "config"] {
+    fn the_top_level_help_lists_only_the_everyday_commands() {
+        let help = command(false).render_help().to_string();
+        let shown = listed(&help);
+        for everyday in [
+            "new", "search", "record", "ask", "serve", "backup", "doctor",
+        ] {
             assert!(
-                !help.contains(&format!("  {hidden} ")),
-                "{hidden} is still listed:\n{help}"
+                shown.iter().any(|c| c == everyday),
+                "{everyday} missing:\n{help}"
             );
         }
+        for hidden in [
+            "list",
+            "view",
+            "edit",
+            "delete",
+            "pin",
+            "trash",
+            "obsidian",
+            "update",
+            "uninstall",
+        ] {
+            assert!(
+                !shown.iter().any(|c| c == hidden),
+                "{hidden} is listed:\n{help}"
+            );
+        }
+        assert!(shown.len() <= 8, "{shown:?}");
+    }
+
+    #[test]
+    fn help_all_lists_every_command() {
+        let help = command(true).render_help().to_string();
+        let shown = listed(&help);
+        for every in [
+            "list",
+            "trash",
+            "obsidian",
+            "update",
+            "uninstall",
+            "record",
+            "backup",
+        ] {
+            assert!(shown.iter().any(|c| c == every), "{every} missing:\n{help}");
+        }
+        let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(wants_everything(&args(&["leo", "help", "--all"])));
+        assert!(wants_everything(&args(&["leo", "--help", "--all"])));
+        assert!(!wants_everything(&args(&["leo", "help"])));
     }
 }

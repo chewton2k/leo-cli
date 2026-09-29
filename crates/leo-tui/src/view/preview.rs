@@ -10,7 +10,6 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
 
 use super::line::border;
-use super::markdown::{BOX_DONE, BOX_OPEN};
 use leo_core::notes::Note;
 
 /// What the pane is currently showing.
@@ -47,7 +46,6 @@ pub fn render(
     preview: &Preview<'_>,
     scroll: u16,
     focused: bool,
-    cursor: Option<usize>,
     search: Option<&str>,
 ) {
     if matches!(preview, Preview::Live { .. }) {
@@ -69,7 +67,14 @@ pub fn render(
         Preview::Empty | Preview::Live { .. } => (String::new(), Vec::new()),
         // Markdown, so a note looks the way it was written rather than like a
         // text dump: headings in the accent, checkboxes as boxes, code receding.
-        Preview::Note(n) => (n.title.clone(), super::markdown::render(&n.body)),
+        Preview::Note(n) => (
+            format!(
+                "{}  ·  {}",
+                n.title,
+                super::when::long(n.updated_at, chrono::Utc::now())
+            ),
+            super::markdown::render(&n.body),
+        ),
         Preview::Text { title, body } => (title.clone(), super::markdown::render(body)),
         Preview::Lines { title, lines } => (
             title.clone(),
@@ -97,25 +102,6 @@ pub fn render(
         if let (true, Some(row)) = (untouched, first) {
             if row >= visible {
                 scroll = row.saturating_sub(2);
-            }
-        }
-    }
-
-    if let Some(n) = cursor {
-        let is_box = |l: &TuiLine| {
-            l.spans
-                .iter()
-                .any(|s| s.content == BOX_OPEN || s.content == BOX_DONE)
-        };
-        if let Some(row) = (0..lines.len()).filter(|&i| is_box(&lines[i])).nth(n) {
-            lines[row] = lines[row]
-                .clone()
-                .patch_style(Style::default().add_modifier(Modifier::REVERSED));
-            let row = row as u16;
-            if row < scroll {
-                scroll = row;
-            } else if row >= scroll + visible {
-                scroll = row + 1 - visible;
             }
         }
     }
@@ -196,7 +182,7 @@ fn render_live(frame: &mut Frame, area: Rect, preview: &Preview<'_>, focused: bo
 
     let text = if transcript.trim().is_empty() {
         vec![TuiLine::from(Span::styled(
-            "listening...",
+            "recording...",
             Style::default().add_modifier(Modifier::DIM),
         ))]
     } else {
@@ -332,7 +318,7 @@ mod tests {
         let note = Note::new("Graphs", "- BFS\n- DFS", vec![], "");
         let mut terminal = Terminal::new(TestBackend::new(30, 6)).unwrap();
         terminal
-            .draw(|f| render(f, f.area(), &Preview::Note(&note), 0, true, None, None))
+            .draw(|f| render(f, f.area(), &Preview::Note(&note), 0, true, None))
             .unwrap();
 
         let out = terminal.backend().to_string();
@@ -344,7 +330,7 @@ mod tests {
     fn an_empty_preview_renders_the_placeholder_title() {
         let mut terminal = Terminal::new(TestBackend::new(20, 4)).unwrap();
         terminal
-            .draw(|f| render(f, f.area(), &Preview::Empty, 0, false, None, None))
+            .draw(|f| render(f, f.area(), &Preview::Empty, 0, false, None))
             .unwrap();
         assert!(terminal.backend().to_string().contains("preview"));
     }
@@ -354,48 +340,12 @@ mod tests {
         let note = Note::new("T", "line\n".repeat(3), vec![], "");
         let mut terminal = Terminal::new(TestBackend::new(20, 6)).unwrap();
         terminal
-            .draw(|f| render(f, f.area(), &Preview::Note(&note), 9999, true, None, None))
+            .draw(|f| render(f, f.area(), &Preview::Note(&note), 9999, true, None))
             .unwrap();
 
         assert_eq!(clamp_scroll(9999, 3, 6), 0, "3 lines fit in 4 rows");
         assert_eq!(clamp_scroll(9999, 100, 6), 96);
         assert_eq!(clamp_scroll(2, 100, 6), 2);
-    }
-
-    /// The checkbox cursor is drawn reversed, so `x` visibly means that line.
-    #[test]
-    fn the_checkbox_under_the_cursor_is_highlighted() {
-        let note = Note::new("T", "- [ ] read\n- [x] done\n", vec![], "");
-        let mut terminal = Terminal::new(TestBackend::new(30, 6)).unwrap();
-        terminal
-            .draw(|f| render(f, f.area(), &Preview::Note(&note), 0, true, Some(1), None))
-            .unwrap();
-        let buf = terminal.backend().buffer().clone();
-        let row_of = |word: &str| {
-            (0..buf.area.height)
-                .find(|y| {
-                    let line: String = (0..buf.area.width)
-                        .map(|x| buf[(x, *y)].symbol().to_string())
-                        .collect();
-                    line.contains(word)
-                })
-                .unwrap()
-        };
-        let reversed = |y: u16| {
-            (1..buf.area.width - 1).any(|x| {
-                buf[(x, y)]
-                    .modifier
-                    .contains(ratatui::style::Modifier::REVERSED)
-            })
-        };
-        assert!(
-            reversed(row_of("done")),
-            "the cursor line is not highlighted"
-        );
-        assert!(
-            !reversed(row_of("read")),
-            "the other box is highlighted too"
-        );
     }
 
     fn modifiers_on(buf: &ratatui::buffer::Buffer, word: &str) -> Vec<Modifier> {
@@ -418,18 +368,8 @@ mod tests {
     fn search_words_are_highlighted() {
         let note = Note::new("T", "intro\nBFS explores level by level\n", vec![], "");
         let mut t = Terminal::new(TestBackend::new(40, 8)).unwrap();
-        t.draw(|f| {
-            render(
-                f,
-                f.area(),
-                &Preview::Note(&note),
-                0,
-                true,
-                None,
-                Some("bfs"),
-            )
-        })
-        .unwrap();
+        t.draw(|f| render(f, f.area(), &Preview::Note(&note), 0, true, Some("bfs")))
+            .unwrap();
         let buf = t.backend().buffer().clone();
         assert!(
             modifiers_on(&buf, "BFS")
@@ -451,18 +391,8 @@ mod tests {
         let body = format!("{}needle here\n", "filler\n".repeat(40));
         let note = Note::new("T", body, vec![], "");
         let mut t = Terminal::new(TestBackend::new(40, 10)).unwrap();
-        t.draw(|f| {
-            render(
-                f,
-                f.area(),
-                &Preview::Note(&note),
-                0,
-                true,
-                None,
-                Some("needle"),
-            )
-        })
-        .unwrap();
+        t.draw(|f| render(f, f.area(), &Preview::Note(&note), 0, true, Some("needle")))
+            .unwrap();
         assert!(t.backend().to_string().contains("needle here"));
     }
 
@@ -473,7 +403,7 @@ mod tests {
         let note = Note::new("T", "## Heading\n- [x] done\n", vec![], "");
         let mut terminal = Terminal::new(TestBackend::new(40, 8)).unwrap();
         terminal
-            .draw(|f| render(f, f.area(), &Preview::Note(&note), 0, true, None, None))
+            .draw(|f| render(f, f.area(), &Preview::Note(&note), 0, true, None))
             .unwrap();
         let out = terminal.backend().to_string();
 

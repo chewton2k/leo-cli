@@ -1681,6 +1681,7 @@ name = "leo-tui"
 version = "0.2.7"
 dependencies = [
  "anyhow",
+ "chrono",
  "colored",
  "dirs",
  "leo-core",
@@ -1690,6 +1691,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "toml_edit",
+ "unicode-width",
 ]
 
 [[package]]

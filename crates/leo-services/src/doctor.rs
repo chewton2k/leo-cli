@@ -334,7 +334,7 @@ fn backup_checks(config: &Config, notes_dir: &Path, probe: Probe) -> Vec<Check> 
         checks.push(warn(
             "backup",
             "keeping a copy on GitHub",
-            "off — `leo sync` sets it up".to_string(),
+            "off — `leo backup` sets it up".to_string(),
         ));
         return checks;
     }
@@ -348,7 +348,7 @@ fn backup_checks(config: &Config, notes_dir: &Path, probe: Probe) -> Vec<Check> 
         None => checks.push(warn(
             "GitHub remote",
             "keeping a copy on GitHub",
-            "none connected — `leo sync` connects one".to_string(),
+            "none connected — `leo backup` connects one".to_string(),
         )),
         Some(url) if probe.remote => checks.push(match sync::remote_reachable(notes_dir) {
             Ok(()) => Check::ready("GitHub remote", "keeping a copy on GitHub", Some(url)),
@@ -383,7 +383,7 @@ fn backup_checks(config: &Config, notes_dir: &Path, probe: Probe) -> Vec<Check> 
                 "pushed",
                 "keeping a copy on GitHub",
                 format!(
-                    "{waiting} change{} not on GitHub yet — `leo sync` pushes {}",
+                    "{waiting} change{} not on GitHub yet — `leo backup` pushes {}",
                     if waiting == 1 { "" } else { "s" },
                     if waiting == 1 { "it" } else { "them" }
                 ),
@@ -399,7 +399,7 @@ fn backup_checks(config: &Config, notes_dir: &Path, probe: Probe) -> Vec<Check> 
                 "uncommitted changes",
                 "keeping a copy on GitHub",
                 format!(
-                    "{changed} file{} changed outside leo; the next save or `leo sync` commits {}",
+                    "{changed} file{} changed outside leo; the next save or `leo backup` commits {}",
                     if changed == 1 { "" } else { "s" },
                     if changed == 1 { "it" } else { "them" }
                 ),
@@ -622,7 +622,7 @@ mod tests {
         );
         let b = check(section(&sections, "backup"), "backup");
         match &b.state {
-            State::Warn { note } => assert!(note.contains("leo sync"), "{note}"),
+            State::Warn { note } => assert!(note.contains("leo backup"), "{note}"),
             other => panic!("expected a note, got {other:?}"),
         }
     }

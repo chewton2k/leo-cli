@@ -268,12 +268,12 @@ pub fn remote_reachable(notes_dir: &Path) -> std::result::Result<(), String> {
 pub fn now(notes_dir: &Path) -> Result<()> {
     if !is_initialized(notes_dir) {
         anyhow::bail!(
-            "Backup is not set up. With GitHub's gh tool, `sync github` does it in one step; \
-             or run `leo sync` in a shell, or press Ctrl-S."
+            "Backup is not set up. With GitHub's gh tool, `backup github` does it in one step; \
+             or run `leo backup` in a shell, or press Ctrl-S."
         );
     }
     if remote_url(notes_dir).is_none() {
-        anyhow::bail!("No remote to back up to. Run `leo sync connect <url>`, or press Ctrl-S.");
+        anyhow::bail!("No remote to back up to. Run `leo backup connect <url>`, or press Ctrl-S.");
     }
     prepare(notes_dir)?;
     auto_commit(notes_dir)?;
@@ -288,7 +288,7 @@ pub const GITHUB_REPO: &str = "leo-notes";
 
 const GH_MISSING: &str = "GitHub's command-line tool is not set up. Install it (brew install gh, \
 or see cli.github.com), sign in with `gh auth login`, then try again. Or make a \
-repository yourself and use `sync connect <url>`.";
+repository yourself and use `backup connect <url>`.";
 
 pub fn gh_ready() -> bool {
     Command::new("gh")
@@ -694,7 +694,10 @@ mod tests {
     fn backing_up_before_setup_says_what_to_do() {
         let tmp = TempDir::new().unwrap();
         let err = now(tmp.path()).unwrap_err().to_string();
-        assert!(err.contains("leo sync") && err.contains("Ctrl-S"), "{err}");
+        assert!(
+            err.contains("leo backup") && err.contains("Ctrl-S"),
+            "{err}"
+        );
     }
 
     #[test]

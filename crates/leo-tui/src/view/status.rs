@@ -18,32 +18,52 @@ use super::theme;
 /// `ghost` is the completion hint shown ahead of the cursor; it is not part of
 /// the text and is never submitted. `idle` is what the line shows when it is not
 /// in use: the keys that do something where the user is.
+pub struct Typing<'a> {
+    pub text: &'a str,
+    pub cursor: usize,
+    pub ghost: Option<&'a str>,
+    pub found: Option<usize>,
+}
+
 pub fn render_command(
     frame: &mut Frame,
     area: Rect,
-    active: bool,
-    text: &str,
-    cursor: usize,
-    ghost: Option<&str>,
+    typing: Option<Typing<'_>>,
     idle: &[(&'static str, &'static str)],
 ) {
-    if !active {
+    let Some(Typing {
+        text,
+        cursor,
+        ghost,
+        found,
+    }) = typing
+    else {
         let hints = super::hints::spans(idle, area.width);
         frame.render_widget(Paragraph::new(TuiLine::from(hints)), area);
         return;
-    }
+    };
 
+    let dim = Style::default().add_modifier(Modifier::DIM);
     let mut spans = vec![
         Span::styled("/", Style::default().fg(theme::accent())),
         Span::raw(text.to_string()),
     ];
-    if let Some(ghost) = ghost {
+    if text.is_empty() {
+        spans.push(Span::styled(PLACEHOLDER, dim));
+    } else if let Some(ghost) = ghost {
         if !ghost.is_empty() {
-            spans.push(Span::styled(
-                ghost.to_string(),
-                Style::default().add_modifier(Modifier::DIM),
-            ));
+            spans.push(Span::styled(ghost.to_string(), dim));
         }
+    }
+    if let Some(found) = found {
+        spans.push(Span::styled(
+            match found {
+                0 => "  nothing found".to_string(),
+                1 => "  1 note".to_string(),
+                n => format!("  {n} notes"),
+            },
+            dim,
+        ));
     }
     frame.render_widget(Paragraph::new(TuiLine::from(spans)), area);
 
@@ -55,36 +75,7 @@ pub fn render_command(
     ));
 }
 
-/// What the search line starts with.
-const FIND_PROMPT: &str = "find: ";
-
-/// Draw the live filter on the command line, with a real caret.
-///
-/// A separate line from the `/` prompt on purpose: search is not a command, it
-/// is a lens on the pane above, and showing the count keeps the effect visible
-/// while typing.
-pub fn render_filter(frame: &mut Frame, area: Rect, query: &str, matches: usize) {
-    let mut spans = vec![
-        Span::styled(FIND_PROMPT, Style::default().fg(theme::accent())),
-        Span::raw(query.to_string()),
-    ];
-    let summary = match matches {
-        0 => "  no matches".to_string(),
-        1 => "  1 match".to_string(),
-        n => format!("  {n} matches"),
-    };
-    spans.push(Span::styled(
-        summary,
-        Style::default().add_modifier(Modifier::DIM),
-    ));
-    frame.render_widget(Paragraph::new(TuiLine::from(spans)), area);
-
-    let x = area.x + FIND_PROMPT.chars().count() as u16 + query.chars().count() as u16;
-    frame.set_cursor_position(Position::new(
-        x.min(area.x + area.width.saturating_sub(1)),
-        area.y,
-    ));
-}
+pub const PLACEHOLDER: &str = "type to find a note, or pick a command";
 
 /// What the right-hand side of the bar reports.
 ///
@@ -290,30 +281,50 @@ mod tests {
     }
 
     #[test]
-    fn the_filter_line_shows_the_query_and_how_many_matched() {
-        let mut t = Terminal::new(TestBackend::new(50, 1)).unwrap();
-        t.draw(|f| render_filter(f, f.area(), "owner", 3)).unwrap();
-        let out = t.backend().to_string();
-        assert!(out.contains("find: owner"), "{out}");
-        assert!(out.contains("3 matches"), "{out}");
-    }
-
-    #[test]
-    fn the_filter_line_pluralises_and_says_when_nothing_matched() {
-        let mut t = Terminal::new(TestBackend::new(50, 1)).unwrap();
-        t.draw(|f| render_filter(f, f.area(), "zzz", 0)).unwrap();
-        assert!(t.backend().to_string().contains("no matches"));
-
-        let mut t = Terminal::new(TestBackend::new(50, 1)).unwrap();
-        t.draw(|f| render_filter(f, f.area(), "a", 1)).unwrap();
-        assert!(t.backend().to_string().contains("1 match"));
-    }
-
-    #[test]
-    fn a_long_filter_query_does_not_panic() {
-        let mut t = Terminal::new(TestBackend::new(12, 1)).unwrap();
-        t.draw(|f| render_filter(f, f.area(), &"x".repeat(80), 0))
+    fn a_search_shows_how_many_notes_it_found() {
+        for (found, said) in [(3, "3 notes"), (1, "1 note"), (0, "nothing found")] {
+            let mut t = Terminal::new(TestBackend::new(50, 1)).unwrap();
+            t.draw(|f| {
+                render_command(
+                    f,
+                    f.area(),
+                    Some(Typing {
+                        text: "owner",
+                        cursor: 5,
+                        ghost: None,
+                        found: Some(found),
+                    }),
+                    &[],
+                )
+            })
             .unwrap();
+            let out = t.backend().to_string();
+            assert!(out.contains("/owner"), "{out}");
+            assert!(out.contains(said), "{out}");
+        }
+    }
+
+    #[test]
+    fn an_empty_line_says_what_it_is_for() {
+        let mut t = Terminal::new(TestBackend::new(60, 1)).unwrap();
+        t.draw(|f| {
+            render_command(
+                f,
+                f.area(),
+                Some(Typing {
+                    text: "",
+                    cursor: 0,
+                    ghost: None,
+                    found: None,
+                }),
+                &[],
+            )
+        })
+        .unwrap();
+        assert!(t
+            .backend()
+            .to_string()
+            .contains("find a note, or pick a command"));
     }
 
     #[test]
@@ -323,9 +334,6 @@ mod tests {
             render_command(
                 f,
                 f.area(),
-                false,
-                "",
-                0,
                 None,
                 super::super::hints::for_place(super::super::hints::Place::Notes),
             )
@@ -339,16 +347,40 @@ mod tests {
     #[test]
     fn an_active_command_line_shows_a_slash_and_the_text() {
         let mut t = Terminal::new(TestBackend::new(30, 1)).unwrap();
-        t.draw(|f| render_command(f, f.area(), true, "edit", 4, None, &[]))
-            .unwrap();
+        t.draw(|f| {
+            render_command(
+                f,
+                f.area(),
+                Some(Typing {
+                    text: "edit",
+                    cursor: 4,
+                    ghost: None,
+                    found: None,
+                }),
+                &[],
+            )
+        })
+        .unwrap();
         assert!(t.backend().to_string().contains("/edit"));
     }
 
     #[test]
     fn the_ghost_hint_follows_the_typed_text() {
         let mut t = Terminal::new(TestBackend::new(30, 1)).unwrap();
-        t.draw(|f| render_command(f, f.area(), true, "ren", 3, Some("ame"), &[]))
-            .unwrap();
+        t.draw(|f| {
+            render_command(
+                f,
+                f.area(),
+                Some(Typing {
+                    text: "ren",
+                    cursor: 3,
+                    ghost: Some("ame"),
+                    found: None,
+                }),
+                &[],
+            )
+        })
+        .unwrap();
         assert!(
             t.backend().to_string().contains("/rename"),
             "{}",
@@ -360,8 +392,20 @@ mod tests {
     #[test]
     fn a_cursor_past_the_edge_is_clamped() {
         let mut t = Terminal::new(TestBackend::new(10, 1)).unwrap();
-        t.draw(|f| render_command(f, f.area(), true, &"x".repeat(50), 50, None, &[]))
-            .unwrap();
+        t.draw(|f| {
+            render_command(
+                f,
+                f.area(),
+                Some(Typing {
+                    text: &"x".repeat(50),
+                    cursor: 50,
+                    ghost: None,
+                    found: None,
+                }),
+                &[],
+            )
+        })
+        .unwrap();
     }
 
     #[test]

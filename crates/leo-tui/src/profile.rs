@@ -95,7 +95,7 @@ impl App {
                 self.mode = Mode::Command;
                 match &current {
                     Some(url) => {
-                        self.cmd.open(&format!("sync connect {url}"));
+                        self.cmd.open(&format!("backup connect {url}"));
                         self.say(Kind::Dim, "Edit the URL, then Enter.");
                     }
                     None => self.offer_backup_setup(),

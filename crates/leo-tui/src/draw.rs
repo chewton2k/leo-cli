@@ -11,15 +11,14 @@ impl App {
         let dir_rows = self.dir_rows();
         let note_rows = self.note_rows();
 
-        let (left_title, left_empty) = self.left_pane_labels();
         view::dirs::render(
             frame,
             f.dirs,
             &dir_rows,
             self.dir_sel,
             self.focus == Pane::Dirs,
-            left_title,
-            &left_empty,
+            "dirs",
+            &view::empty::Hint::no_directories(),
         );
         let empty_hint = self.empty_hint();
         view::notes::render(
@@ -72,33 +71,44 @@ impl App {
             (None, None, None, Some(note)) => Preview::Note(note),
             (None, None, None, None) => Preview::Empty,
         };
-        view::preview::render(
-            frame,
-            f.preview,
-            &preview,
-            self.preview_scroll,
-            self.focus == Pane::Preview,
-            self.checkbox_cursor(),
-            self.filter.as_deref().filter(|q| !q.trim().is_empty()),
-        );
-
-        let ghost = self.ghost();
-        // While filtering, the command row belongs to the filter: it is a lens
-        // on the pane above rather than a command to run.
-        match (&self.mode, &self.filter) {
-            (Mode::Filter, Some(query)) => {
-                view::status::render_filter(frame, f.command, query, self.note_count())
-            }
-            _ => view::status::render_command(
+        let now = chrono::Utc::now();
+        match (&preview, &self.editing) {
+            (Preview::Note(note), Some(ed)) if ed.id == note.id => view::editing::render(
                 frame,
-                f.command,
-                self.mode == Mode::Command,
-                self.cmd.text(),
-                self.cmd.cursor(),
-                ghost.as_deref(),
-                view::hints::for_place(self.hint_place()),
+                f.preview,
+                &format!(
+                    "{}  ·  {}",
+                    note.title,
+                    view::when::long(note.updated_at, now)
+                ),
+                ed,
+                self.focus == Pane::Preview,
+            ),
+            _ => view::preview::render(
+                frame,
+                f.preview,
+                &preview,
+                self.preview_scroll,
+                self.focus == Pane::Preview,
+                self.filter.as_deref().filter(|q| !q.trim().is_empty()),
             ),
         }
+
+        let ghost = self.ghost();
+        let found = (self.mode == Mode::Command && !action::is_command(self.cmd.text()))
+            .then(|| self.filter.as_ref().map(|_| self.note_count()))
+            .flatten();
+        view::status::render_command(
+            frame,
+            f.command,
+            (self.mode == Mode::Command).then(|| view::status::Typing {
+                text: self.cmd.text(),
+                cursor: self.cmd.cursor(),
+                ghost: ghost.as_deref(),
+                found,
+            }),
+            view::hints::for_place(self.hint_place()),
+        );
         // A job's progress replaces the plain busy label, so the user can see
         // both that something is happening and how far along it is.
         let busy = self
@@ -175,19 +185,10 @@ impl App {
         if self.recording.is_some() {
             return Place::Recording;
         }
-        match (self.focus, self.left) {
-            (Pane::Dirs, LeftPane::Tags) => Place::Tags,
-            (Pane::Dirs, LeftPane::Dirs) => Place::Dirs,
-            (Pane::Notes, _) => Place::Notes,
-            (Pane::Preview, _) => Place::Preview,
+        match self.focus {
+            Pane::Dirs => Place::Dirs,
+            Pane::Notes => Place::Notes,
+            Pane::Preview => Place::Preview,
         }
-    }
-
-    /// The checkbox to highlight: only with the preview focused on a note that
-    /// has some, since that is when j/k and x act on it.
-    fn checkbox_cursor(&self) -> Option<usize> {
-        let boxes = self.checkboxes().len();
-        (self.focus == Pane::Preview && self.pinned.is_none() && boxes > 0)
-            .then(|| self.box_index().min(boxes - 1))
     }
 }

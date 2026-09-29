@@ -1,14 +1,14 @@
-//! `leo sync`: back up, or set backup up the first time.
+//! `leo backup`: back up, or set backup up the first time.
 
 use std::io::IsTerminal;
 
 use anyhow::Result;
 use colored::Colorize;
 
-use super::SyncCommands;
+use super::BackupCommands;
 use leo_core::{store, sync};
 
-pub fn run(command: Option<SyncCommands>) -> Result<()> {
+pub fn run(command: Option<BackupCommands>) -> Result<()> {
     let store = store::Store::load()?;
     match command {
         None => sync_or_set_up(&store.notes_dir),
@@ -16,25 +16,25 @@ pub fn run(command: Option<SyncCommands>) -> Result<()> {
     }
 }
 
-fn run_sync_command(command: SyncCommands, notes_dir: &std::path::Path) -> Result<()> {
+fn run_sync_command(command: BackupCommands, notes_dir: &std::path::Path) -> Result<()> {
     match command {
-        SyncCommands::Init => sync::init(notes_dir),
-        SyncCommands::Connect { url } => sync::connect(notes_dir, &url),
-        SyncCommands::Push => sync::push(notes_dir),
-        SyncCommands::Pull => sync::pull(notes_dir),
-        SyncCommands::Status => sync::status(notes_dir),
-        SyncCommands::Github { name } => github(notes_dir, &name),
+        BackupCommands::Init => sync::init(notes_dir),
+        BackupCommands::Connect { url } => sync::connect(notes_dir, &url),
+        BackupCommands::Push => sync::push(notes_dir),
+        BackupCommands::Pull => sync::pull(notes_dir),
+        BackupCommands::Status => sync::status(notes_dir),
+        BackupCommands::Github { name } => github(notes_dir, &name),
     }
 }
 
 fn github(notes_dir: &std::path::Path, name: &str) -> Result<()> {
     let backup = sync::github(notes_dir, name)?;
     println!("  {} {}", "ok".green(), backup.describe());
-    println!("  From now on, `leo sync` backs up again.");
+    println!("  From now on, `leo backup` backs up again.");
     Ok(())
 }
 
-/// `leo sync` on its own: back up, or — the first time — ask for the remote,
+/// `leo backup` on its own: back up, or — the first time — ask for the remote,
 /// set the repository up, and push.
 fn sync_or_set_up(notes_dir: &std::path::Path) -> Result<()> {
     if sync::is_initialized(notes_dir) && sync::remote_url(notes_dir).is_some() {
@@ -56,7 +56,7 @@ fn sync_or_set_up(notes_dir: &std::path::Path) -> Result<()> {
         }
     } else {
         println!("  Tip: with GitHub's gh tool (brew install gh, then gh auth login),");
-        println!("  `leo sync github` sets this up in one step.");
+        println!("  `leo backup github` sets this up in one step.");
         println!();
     }
     println!("  Backup is not set up yet. Make an empty repository on GitHub — or, on a");
@@ -74,7 +74,7 @@ fn sync_or_set_up(notes_dir: &std::path::Path) -> Result<()> {
     // Pulls first, so notes already in the repository come down too.
     sync::now(notes_dir)?;
     println!(
-        "  {} Backed up. From now on, `leo sync` does it again.",
+        "  {} Backed up. From now on, `leo backup` does it again.",
         "ok".green()
     );
     Ok(())

@@ -100,7 +100,7 @@ chain = [{transcribe}]
 # openai, deepseek, together, xai, whisper_cpp, groq, hf, openai_whisper,
 # local_whisper_server. Press Ctrl-S to see them all and add one to a chain.
 #
-# Backing up to git happens on every save once `leo sync` has set it up. Pushing is
+# Backing up to git happens on every save once `leo backup` has set it up. Pushing is
 # separate, because it needs the network:
 #
 #   [sync]

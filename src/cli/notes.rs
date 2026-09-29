@@ -69,12 +69,14 @@ pub fn run(cmd: Commands) -> Result<()> {
         Commands::Edit { id } => action::Action::Edit { note: id },
         Commands::Delete { id, .. } => action::Action::Delete { note: id },
         Commands::Search { query, .. } => action::Action::Search { query },
-        Commands::Listen { title, add, screen } => action::Action::Listen {
+        Commands::Record { title, add, screen } => action::Action::Listen {
             title,
             append_to: add,
             screen,
         },
-        Commands::Ask { id } => action::Action::Ask { note: id },
+        Commands::Ask { question } => action::Action::Ask {
+            note: question.join(" "),
+        },
         Commands::Pin { id } => action::Action::Pin { note: id },
         Commands::Obsidian => action::Action::Obsidian,
         Commands::Trash { command } => action::Action::Trash(match command {
@@ -89,7 +91,7 @@ pub fn run(cmd: Commands) -> Result<()> {
         | Commands::Doctor
         | Commands::Uninstall { .. }
         | Commands::Update { .. }
-        | Commands::Sync { .. } => {
+        | Commands::Backup { .. } => {
             unreachable!("handled in main()")
         }
     };
@@ -117,6 +119,11 @@ fn absorb_cli(
     force_delete: bool,
 ) -> Result<()> {
     shell::render(&outcome.lines);
+    if outcome.undoable {
+        println!(
+            "  `leo trash` lists what was deleted; `leo trash restore <title>` brings it back."
+        );
+    }
 
     let next = match outcome.effect {
         action::Effect::None => return Ok(()),

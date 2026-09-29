@@ -102,8 +102,8 @@ pub fn apply(action: Action, store: &mut Store, ctx: Ctx<'_>, ai: &dyn Ai) -> Re
         Action::List { tag, limit } => Ok(list(store, tag.as_deref(), limit, ctx.current_dir)),
         Action::View { note } => Ok(view(store, &note, ctx.numbering)),
         Action::Edit { note } => Ok(edit(store, &note, ctx.numbering)),
-        Action::Delete { note } => Ok(delete(store, &note, ctx.numbering)),
-        Action::DeleteMany { ids } => Ok(delete_many(store, &ids)),
+        Action::Delete { note } => delete(store, &note, ctx.numbering),
+        Action::DeleteMany { ids } => delete_many(store, &ids),
         Action::Check { note, index } => check(store, &note, index, ctx.numbering),
         Action::Search { query } => Ok(search(store, &query)),
         Action::Listen {
@@ -244,36 +244,29 @@ pub(super) fn edit(store: &Store, note: &str, numbering: &[String]) -> Outcome {
     }))
 }
 
-pub(super) fn delete(store: &Store, note: &str, numbering: &[String]) -> Outcome {
+pub(super) fn delete(store: &mut Store, note: &str, numbering: &[String]) -> Result<Outcome> {
     let id = match resolve(note, store, numbering) {
         Resolved::One(id) => id,
-        other => return unresolved(note, other),
+        other => return Ok(unresolved(note, other)),
     };
     let title = store
         .find_note(&id)
         .expect("resolve returned a live id")
         .title
         .clone();
-    Outcome::effect(Effect::Confirm {
-        prompt: format!("Delete {title}?"),
-        on_yes: ConfirmedAction::DeleteNote { id, title },
-    })
+    apply_confirmed(store, &ConfirmedAction::DeleteNote { id, title })
 }
 
-/// Delete several notes, asking once.
-pub(super) fn delete_many(store: &Store, ids: &[String]) -> Outcome {
+pub(super) fn delete_many(store: &mut Store, ids: &[String]) -> Result<Outcome> {
     let ids: Vec<String> = ids
         .iter()
         .filter(|id| store.find_note(id).is_some())
         .cloned()
         .collect();
     if ids.is_empty() {
-        return Outcome::line(Line::dim("Nothing to delete."));
+        return Ok(Outcome::line(Line::dim("Nothing to delete.")));
     }
-    Outcome::effect(Effect::Confirm {
-        prompt: format!("Delete {} note{}?", ids.len(), plural(ids.len())),
-        on_yes: ConfirmedAction::DeleteNotes { ids },
-    })
+    apply_confirmed(store, &ConfirmedAction::DeleteNotes { ids })
 }
 
 pub(super) fn check(
@@ -359,11 +352,8 @@ pub(super) fn ask(
     numbering: &[String],
     ai: &dyn Ai,
 ) -> Result<Outcome> {
-    // Words that name no note, and are more than one word, are a question for
-    // all of them.
-    if matches!(resolve(note, store, numbering), Resolved::None)
-        && note.trim().contains(char::is_whitespace)
-    {
+    let named = store.notes.iter().any(|n| n.id == note);
+    if !named {
         return Ok(Outcome::effect(Effect::AskNotes {
             question: note.trim().to_string(),
         }));
@@ -377,7 +367,7 @@ pub(super) fn ask(
     let count = body.lines().filter(|l| is_leo_prompt(l).is_some()).count();
     if count == 0 {
         return Ok(Outcome::line(Line::dim(
-            "No @leo prompts found in this note.",
+            "Type a question after /ask, or write @leo and a question in a note.",
         )));
     }
 
@@ -593,7 +583,6 @@ pub(super) fn rmdir(
 
     if recursive {
         let (notes, dirs) = store.dir_contents(&full);
-        // An empty directory needs no warning, so delete it outright.
         if notes == 0 && dirs <= 1 {
             store.delete_dir_recursive(&full);
             store.save()?;
@@ -602,22 +591,7 @@ pub(super) fn rmdir(
                 ..Outcome::line(Line::dim(format!("Removed {full}/")))
             });
         }
-        // Otherwise say exactly what will be lost before asking.
-        let mut what = Vec::new();
-        if notes > 0 {
-            what.push(format!("{notes} note{}", plural(notes)));
-        }
-        if dirs > 1 {
-            what.push(format!(
-                "{} subdirector{}",
-                dirs - 1,
-                if dirs - 1 == 1 { "y" } else { "ies" }
-            ));
-        }
-        return Ok(Outcome::effect(Effect::Confirm {
-            prompt: format!("Delete {full}/ and its {}?", what.join(" and ")),
-            on_yes: ConfirmedAction::DeleteDir { path: full },
-        }));
+        return apply_confirmed(store, &ConfirmedAction::DeleteDir { path: full });
     }
 
     if store.delete_dir(&full) {
@@ -736,18 +710,24 @@ pub fn apply_edit(
     }
 }
 
+fn action_title(action: &ConfirmedAction) -> &str {
+    match action {
+        ConfirmedAction::DeleteNote { title, .. } => title,
+        _ => "",
+    }
+}
+
 /// Apply a confirmed destructive action.
 pub fn apply_confirmed(store: &mut Store, action: &ConfirmedAction) -> Result<Outcome> {
     match action {
         ConfirmedAction::DeleteNote { id, .. } => {
             if store.delete_note(id) {
                 store.save()?;
+                let title = action_title(action);
                 Ok(Outcome {
                     dirty: true,
-                    ..Outcome::line(Line::good(format!(
-                        "Moved to the trash, kept {} days.",
-                        crate::store::TRASH_DAYS
-                    )))
+                    undoable: true,
+                    ..Outcome::line(Line::good(format!("Moved “{title}” to the trash.")))
                 })
             } else {
                 Ok(Outcome::line(Line::bad("Nothing deleted.")))
@@ -761,10 +741,10 @@ pub fn apply_confirmed(store: &mut Store, action: &ConfirmedAction) -> Result<Ou
             }
             Ok(Outcome {
                 dirty: n > 0,
+                undoable: n > 0,
                 ..Outcome::line(Line::good(format!(
-                    "Moved {n} note{} to the trash, kept {} days.",
-                    plural(n),
-                    crate::store::TRASH_DAYS
+                    "Moved {n} note{} to the trash.",
+                    plural(n)
                 )))
             })
         }
@@ -783,7 +763,8 @@ pub fn apply_confirmed(store: &mut Store, action: &ConfirmedAction) -> Result<Ou
             }
             Ok(Outcome {
                 dirty: true,
-                ..Outcome::line(Line::good(parts.join(" ")))
+                undoable: true,
+                ..Outcome::line(Line::good(format!("{}.", parts.join(" "))))
             })
         }
         ConfirmedAction::EmptyTrash => {
@@ -1076,7 +1057,7 @@ mod handler_tests {
             }
         );
         assert_eq!(
-            parsed("listen add"),
+            parsed("record add"),
             Action::Listen {
                 title: None,
                 append_to: Some(String::new()),
@@ -1100,15 +1081,8 @@ mod handler_tests {
             &FakeAi::default(),
         )
         .unwrap();
-        match out.effect {
-            Effect::Confirm {
-                on_yes: ConfirmedAction::DeleteNote { id: target, .. },
-                ..
-            } => {
-                assert_eq!(target, id)
-            }
-            other => panic!("expected a delete confirmation, got {other:?}"),
-        }
+        assert!(out.undoable);
+        assert!(store.find_note(&id).is_none());
     }
 
     #[test]
@@ -1192,36 +1166,26 @@ mod handler_tests {
         );
     }
 
-    /// A note's name still means that note's @leo lines, and one unknown word
-    /// is still a note that was not found.
     #[test]
-    fn ask_with_a_note_name_or_one_word_is_unchanged() {
+    fn ask_with_any_words_is_a_question_even_one_that_names_a_note() {
         let (mut store, _d) = temp_store();
         seed(&mut store, "Graph traversals", "no prompts here", "");
-        let named = apply(
-            Action::Ask {
-                note: "Graph traversals".into(),
-            },
-            &mut store,
-            ctx("", &[]),
-            &FakeAi::default(),
-        )
-        .unwrap();
-        assert!(named.text().contains("No @leo prompts"), "{}", named.text());
-        let unknown = apply(
-            Action::Ask {
-                note: "nosuchnote".into(),
-            },
-            &mut store,
-            ctx("", &[]),
-            &FakeAi::default(),
-        )
-        .unwrap();
-        assert!(
-            unknown.text().contains("No note found"),
-            "{}",
-            unknown.text()
-        );
+        for words in ["Graph traversals", "BFS?", "1"] {
+            let out = apply(
+                Action::Ask { note: words.into() },
+                &mut store,
+                ctx("", &[]),
+                &FakeAi::default(),
+            )
+            .unwrap();
+            assert_eq!(
+                out.effect,
+                Effect::AskNotes {
+                    question: words.into()
+                },
+                "{words}"
+            );
+        }
     }
 
     // ── marked notes ────────────────────────────────────────────────────────
@@ -1237,7 +1201,7 @@ mod handler_tests {
 
     /// With notes marked, a command that names none means all of them.
     #[test]
-    fn delete_with_marks_asks_once_for_all_of_them() {
+    fn delete_with_marks_deletes_all_of_them_as_one_undo() {
         let (mut store, _d) = temp_store();
         let a = seed(&mut store, "A", "", "");
         let b = seed(&mut store, "B", "", "");
@@ -1253,11 +1217,9 @@ mod handler_tests {
             &FakeAi::default(),
         )
         .unwrap();
-        let Effect::Confirm { prompt, on_yes } = out.effect else {
-            panic!("expected a confirmation, got {:?}", out.effect);
-        };
-        assert_eq!(prompt, "Delete 2 notes?");
-        apply_confirmed(&mut store, &on_yes).unwrap();
+        assert_eq!(out.effect, Effect::None);
+        assert!(out.undoable);
+        assert!(out.text().contains("2 notes"), "{}", out.text());
         assert_eq!(store.notes.len(), 1);
         store.undo().unwrap();
         assert_eq!(store.notes.len(), 3, "one undo brings both back");
@@ -1730,7 +1692,7 @@ mod handler_tests {
     /// to say how much is at stake — this is the only action in leo that can
     /// destroy more than one note.
     #[test]
-    fn a_recursive_rmdir_asks_before_deleting_and_names_the_damage() {
+    fn a_recursive_rmdir_deletes_at_once_and_undo_brings_it_back() {
         let (mut store, _d) = temp_store();
         store.create_dir("cs130");
         store.create_dir("cs130/lec");
@@ -1748,21 +1710,11 @@ mod handler_tests {
         )
         .unwrap();
 
-        match out.effect {
-            Effect::Confirm { prompt, on_yes } => {
-                assert!(prompt.contains("cs130/"), "prompt: {prompt}");
-                assert!(prompt.contains("2 notes"), "prompt: {prompt}");
-                assert!(prompt.contains("1 subdirectory"), "prompt: {prompt}");
-                assert_eq!(
-                    on_yes,
-                    ConfirmedAction::DeleteDir {
-                        path: "cs130".to_string()
-                    }
-                );
-            }
-            other => panic!("expected a confirmation, got {other:?}"),
-        }
-        // Nothing is gone yet.
+        assert_eq!(out.effect, Effect::None);
+        assert!(out.undoable);
+        assert!(out.text().contains("2 notes"), "{}", out.text());
+        assert!(!store.dir_exists("cs130"));
+        store.undo().unwrap();
         assert!(store.dir_exists("cs130"));
         assert_eq!(store.notes.len(), 2);
     }
@@ -2122,7 +2074,7 @@ mod handler_tests {
     // ── delete confirmation ─────────────────────────────────────────────────
 
     #[test]
-    fn delete_asks_for_confirmation_before_removing_anything() {
+    fn delete_happens_at_once_and_undo_brings_it_back() {
         let (mut store, _d) = temp_store();
         let id = seed(&mut store, "Doomed", "b", "");
 
@@ -2136,17 +2088,11 @@ mod handler_tests {
         )
         .unwrap();
 
-        assert_eq!(
-            out.effect,
-            Effect::Confirm {
-                prompt: "Delete Doomed?".to_string(),
-                on_yes: ConfirmedAction::DeleteNote {
-                    id: id.clone(),
-                    title: "Doomed".to_string()
-                },
-            }
-        );
-        // Nothing is gone yet.
+        assert_eq!(out.effect, Effect::None);
+        assert!(out.undoable);
+        assert!(out.text().contains("Doomed"), "{}", out.text());
+        assert!(store.find_note(&id).is_none());
+        store.undo().unwrap();
         assert!(store.find_note(&id).is_some());
     }
 
@@ -2286,15 +2232,13 @@ mod handler_tests {
         let (mut store, _d) = temp_store();
         let id = seed(&mut store, "Plain", "no prompts here", "");
         let out = apply(
-            Action::Ask {
-                note: "1".to_string(),
-            },
+            Action::Ask { note: id.clone() },
             &mut store,
             ctx("", &[id]),
             &FakeAi::default(),
         )
         .unwrap();
-        assert!(out.text().contains("No @leo prompts"));
+        assert!(out.text().contains("@leo"), "{}", out.text());
         assert!(!out.dirty);
     }
 
@@ -2308,9 +2252,7 @@ mod handler_tests {
         };
 
         let out = apply(
-            Action::Ask {
-                note: "1".to_string(),
-            },
+            Action::Ask { note: id.clone() },
             &mut store,
             ctx("", std::slice::from_ref(&id)),
             &ai,

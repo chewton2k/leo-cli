@@ -14,7 +14,7 @@ use anyhow::Result;
 use crate::store::Store;
 
 /// Bump when the manual's content changes enough to be worth re-offering.
-const MANUAL_VERSION: u32 = 7;
+const MANUAL_VERSION: u32 = 8;
 const MARKER: &str = ".manual-installed";
 pub const MANUAL_TITLE: &str = "leo manual";
 
@@ -98,45 +98,49 @@ pub fn manual_body() -> String {
         r#"This note is the manual. It is an ordinary note, so you can search it,
 edit it, or delete it — it will not come back.
 
-## Look at the bottom line
+## Five keys
 
-It always shows the keys that work where you are, and changes as you move
-between panes. `?` shows every key and command.
+```
+Enter   write in the selected note (Esc when done; it saves itself)
+n       a new note: type a title, then Enter
+/       find a note, or pick a command from the list
+D       delete (u brings it back)
+?       every key and command
+```
 
-## The everyday keys
+The bottom line always shows the keys that work where you are; `?` shows
+them all.
 
-`j`/`k` move, `h`/`l` switch panes, `Enter` opens. `n` makes a note, `e` edits
-it, `r` renames it, `m` moves it, `p` pins it to the top, `D` deletes it, `u`
-undoes. Deleted notes wait in `/trash` for 30 days. `x` ticks a checkbox; in
-the preview, `j`/`k` pick which one. `Space` marks notes so `D`
-and `m` act on all of them. `f` searches every note, bodies and `#tags`
-included, and `Esc` clears it. `Tab` goes back to a note you just visited.
+## Writing
 
-## The `/` line
+Every line shows formatted, and the line with the cursor shows its Markdown.
+`Enter` continues a list or a checklist, `Tab` indents, `Ctrl-Z` undoes, and a
+click on a box ticks it. Write `@leo` and a question on a line: when you press
+`Esc` the answer appears under it. `e` opens the note in your own editor instead.
 
-For anything that takes words. A menu shows every command as you type, and
-leaving the note out means the selected one:
+## Finding and organising
+
+Type at `/` to search every note, bodies and `#tags` included; `Enter` keeps
+the results and `Esc` clears them. Start the line with a command to run it:
 
 ```
 /new cs130/Lecture 4 #exam   a note in cs130, tagged exam
-/mkdir cs130                 a directory
+/mkdir cs130                 a folder
 /mv cs130                    move the selected note there
-/sync                        back up now
+/ask what is due Friday?     an answer from your notes
 ```
 
 ## Talking instead of typing
 
-`R` (or `/listen`) records and turns speech into notes. While it runs, type the
-points that matter and press `Enter` after each: the finished note leads with
-them, in bold, with what was said about them. `Esc` twice stops. Write
-`@leo <question>` in a note and press `a` (or `/ask`): the answer appears under
-your question.
+`R` records and turns what was said into a note. While it runs, type the points
+that matter and press `Enter` after each; they lead the finished note, in bold.
+`Esc` twice stops.
 
 ## Setting up
 
-`/doctor` checks that everything works and says how to fix what does not;
-`leo doctor` does the same in a shell, and stores API keys. `/sync github` sets
-up backup to a private GitHub repository. `leo update` gets the newest leo, and `/obsidian` opens your notes in Obsidian. `Ctrl-S` holds AI providers, keys, colour and backup.
+`/doctor` checks that everything works and says how to fix what does not.
+`/backup` keeps a copy on GitHub. `Ctrl-S` holds settings: AI, keys, colour
+and backup.
 
 Notes are plain Markdown files in `{notes_dir}`. Settings live in
 `{config_path}`. API keys never do; they are kept in a store
@@ -290,11 +294,11 @@ mod tests {
     #[test]
     fn the_manual_covers_the_day_one_commands() {
         let body = manual_body();
-        for verb in ["new", "`f`", "mkdir", "mv", "listen", "ask", "sync"] {
+        for verb in ["new", "/", "mkdir", "mv", "ask", "backup", "records"] {
             assert!(body.contains(verb), "the manual never mentions `{verb}`");
         }
         // And the keys someone needs before they find the help screen.
-        for key in ["j", "k", "Enter", "Tab", "e", "x", "D"] {
+        for key in ["Enter", "Esc", "Tab", "n", "e", "D", "u", "R"] {
             assert!(
                 body.contains(key),
                 "the manual never mentions the {key} key"
@@ -361,10 +365,6 @@ mod tests {
         let second = install_if_absent(&mut store).unwrap().unwrap();
         assert_eq!(second, first, "a second manual was created");
         assert_eq!(store.notes.len(), 1, "two manuals now exist");
-        assert!(store
-            .find_note(&first)
-            .unwrap()
-            .body
-            .contains("everyday keys"));
+        assert!(store.find_note(&first).unwrap().body.contains("Five keys"));
     }
 }
