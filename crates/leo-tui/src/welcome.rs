@@ -110,7 +110,7 @@ impl App {
                     }
                     _ => {
                         self.welcome = None;
-                        self.open_settings(None);
+                        self.open_providers();
                     }
                 }
             }

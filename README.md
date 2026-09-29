@@ -271,8 +271,9 @@ writing tries Ollama, then OpenRouter; speech tries whisper.cpp, then Groq, then
 Hugging Face. So with both options set up, leo uses your own machine when
 Ollama is running and falls back to the cloud when it is not.
 
-`Ctrl-S` shows both lists. A filled dot `●` means that provider would be used
-right now. On a provider, `Enter` stores its key, adds it to its list, or sends
+`Ctrl-S` opens Settings, which says which AI each kind would use right now.
+Its **AI providers** row shows both lists in full. A filled dot `●` means that
+provider would be used right now. On a provider, `Enter` stores its key, adds it to its list, or sends
 a small test request. `J`/`K` change the order.
 
 ---

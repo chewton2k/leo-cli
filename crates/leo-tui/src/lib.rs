@@ -155,6 +155,7 @@ struct SettingsScreen {
     rows: Vec<SettingsRow>,
     selected: usize,
     status: Option<String>,
+    advanced: bool,
 }
 
 /// Tab cycling: the candidates for one token and how far through them the user

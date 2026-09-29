@@ -63,6 +63,52 @@ fn credential_for(name: &str, key_env: Option<&str>, store: &dyn SecretStore) ->
     }
 }
 
+fn summary(cfg: &Config, store: &dyn SecretStore, task: Task) -> String {
+    let ready = match task {
+        Task::Chat => leo_services::ai::provider::build_chat_chain(cfg, store)
+            .iter()
+            .find(|p| p.available())
+            .map(|p| p.name().to_string()),
+        Task::Transcribe => leo_services::ai::provider::build_transcribe_chain(cfg, store)
+            .iter()
+            .find(|p| p.available())
+            .map(|p| p.name().to_string()),
+    };
+    match ready {
+        Some(name) => match cfg.provider(&name).and_then(|pc| pc.model.clone()) {
+            Some(model) => format!("● {name}  {model}"),
+            None => format!("● {name}"),
+        },
+        None => "○ not set up — Enter to add a key or a local model".to_string(),
+    }
+}
+
+pub fn simple_rows(cfg: &Config, store: &dyn SecretStore, notes_dir: &std::path::Path) -> Vec<Row> {
+    let mut rows = vec![
+        Row::Section("AI".to_string()),
+        Row::Setting {
+            label: "AI for writing".to_string(),
+            value: summary(cfg, store, Task::Chat),
+            action: SettingAction::ShowProviders,
+        },
+        Row::Setting {
+            label: "AI for speech".to_string(),
+            value: summary(cfg, store, Task::Transcribe),
+            action: SettingAction::ShowProviders,
+        },
+    ];
+    rows.extend(appearance_rows(cfg));
+    rows.extend(backup_rows(notes_dir, cfg));
+    rows.extend(storage_rows(notes_dir));
+    rows.push(Row::Section("advanced".to_string()));
+    rows.push(Row::Setting {
+        label: "AI providers".to_string(),
+        value: "every provider, its key, and the order they are tried in".to_string(),
+        action: SettingAction::ShowProviders,
+    });
+    rows
+}
+
 /// Build the screen: both chains in order, then everything else that is
 /// configured.
 pub fn rows(cfg: &Config, store: &dyn SecretStore, notes_dir: &std::path::Path) -> Vec<Row> {
@@ -397,6 +443,34 @@ pub fn remove_from_chain(task: Task, name: &str) -> Result<Changed> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_simple_page_shows_outcomes_and_keeps_providers_one_step_away() {
+        use super::*;
+        let tmp = tempfile::tempdir().unwrap();
+        let rows = simple_rows(
+            &Config::default(),
+            &leo_services::config::secret::MemoryStore::default(),
+            tmp.path(),
+        );
+        assert!(!rows
+            .iter()
+            .any(|r| matches!(r, Row::Member { .. } | Row::Unused { .. })));
+        let labels: Vec<String> = rows
+            .iter()
+            .filter_map(|r| match r {
+                Row::Setting { label, action, .. } => Some(format!("{label}:{action:?}")),
+                _ => None,
+            })
+            .collect();
+        for wanted in [
+            "AI for writing:ShowProviders",
+            "AI for speech:ShowProviders",
+            "AI providers:ShowProviders",
+        ] {
+            assert!(labels.iter().any(|l| l == wanted), "{labels:?}");
+        }
+    }
+
     /// Enter does the one thing a provider row most needs: a key when it has
     /// none, joining a list when it is unused, otherwise a test.
     #[test]

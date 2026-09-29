@@ -2482,6 +2482,38 @@ fn enter_on_an_ai_step_opens_the_provider_screen() {
 }
 
 #[test]
+fn settings_open_simple_and_show_the_providers_one_step_in() {
+    let (mut app, _d) = temp_app();
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(110, 30)).unwrap();
+    let members = |app: &App| {
+        app.settings
+            .as_ref()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|r| matches!(r, SettingsRow::Member { .. }))
+    };
+    app.on_intent(Intent::OpenSettings, &mut terminal).unwrap();
+    assert!(
+        !members(&app),
+        "providers are shown before they are asked for"
+    );
+    app.open_providers();
+    assert!(members(&app));
+    app.on_key(press_code(event::KeyCode::Esc), &mut terminal)
+        .unwrap();
+    assert_eq!(
+        app.mode,
+        Mode::Settings,
+        "Esc steps back to the simple page first"
+    );
+    assert!(!members(&app));
+    app.on_key(press_code(event::KeyCode::Esc), &mut terminal)
+        .unwrap();
+    assert_eq!(app.mode, Mode::Normal);
+}
+
+#[test]
 fn backing_up_before_it_is_set_up_asks_for_the_repository() {
     let (mut app, _d) = temp_app();
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(110, 24)).unwrap();

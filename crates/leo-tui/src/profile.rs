@@ -7,14 +7,32 @@ impl App {
     /// Open or rebuild the provider screen. Rows come from the config file and
     /// the keychain every time, so an edit made here or in `$EDITOR` shows up
     /// immediately rather than going stale.
+    fn settings_rows(&self, advanced: bool) -> Vec<SettingsRow> {
+        let cfg = leo_services::config::Config::load();
+        let store = leo_services::config::secret::default_store();
+        if advanced {
+            settings::rows(&cfg, store.as_ref(), &self.store.notes_dir)
+        } else {
+            settings::simple_rows(&cfg, store.as_ref(), &self.store.notes_dir)
+        }
+    }
+
+    pub(super) fn open_providers(&mut self) {
+        self.settings = None;
+        self.open_settings(None);
+        if let Some(screen) = self.settings.as_mut() {
+            screen.advanced = true;
+        }
+        self.refresh_settings();
+        if let Some(screen) = self.settings.as_mut() {
+            screen.selected = view::settings::first_selectable(&screen.rows);
+        }
+    }
+
     pub(super) fn open_settings(&mut self, status: Option<String>) {
         let keep = self.settings.as_ref().map(|s| s.selected).unwrap_or(0);
-        let cfg = leo_services::config::Config::load();
-        let rows = settings::rows(
-            &cfg,
-            leo_services::config::secret::default_store().as_ref(),
-            &self.store.notes_dir,
-        );
+        let advanced = self.settings.as_ref().is_some_and(|s| s.advanced);
+        let rows = self.settings_rows(advanced);
         let selected = if keep == 0 || keep >= rows.len() {
             view::settings::first_selectable(&rows)
         } else {
@@ -22,6 +40,7 @@ impl App {
         };
         self.settings = Some(SettingsScreen {
             rows,
+            advanced,
             selected,
             status,
         });
@@ -49,6 +68,10 @@ impl App {
     ) -> Result<()> {
         use view::settings::SettingAction as A;
         match action {
+            A::ShowProviders => {
+                self.open_providers();
+                Ok(())
+            }
             A::NextAutoPush => {
                 let changed = settings::cycle_auto_push()?;
                 self.after_settings_change(changed);
@@ -128,13 +151,8 @@ impl App {
 
     /// Rebuild the rows after something on the page changed.
     pub(super) fn refresh_settings(&mut self) {
-        if self.settings.is_some() {
-            let cfg = leo_services::config::Config::load();
-            let rows = settings::rows(
-                &cfg,
-                leo_services::config::secret::default_store().as_ref(),
-                &self.store.notes_dir,
-            );
+        if let Some(advanced) = self.settings.as_ref().map(|s| s.advanced) {
+            let rows = self.settings_rows(advanced);
             if let Some(screen) = self.settings.as_mut() {
                 screen.selected = screen.selected.min(rows.len().saturating_sub(1));
                 screen.rows = rows;
@@ -149,6 +167,17 @@ impl App {
     ) -> Result<()> {
         // Esc and Ctrl-S both close, so the key that opened it also closes it.
         let ctrl = key.modifiers.contains(event::KeyModifiers::CONTROL);
+        if key.code == event::KeyCode::Esc && self.settings.as_ref().is_some_and(|s| s.advanced) {
+            if let Some(screen) = self.settings.as_mut() {
+                screen.advanced = false;
+                screen.selected = 0;
+            }
+            self.refresh_settings();
+            if let Some(screen) = self.settings.as_mut() {
+                screen.selected = view::settings::first_selectable(&screen.rows);
+            }
+            return Ok(());
+        }
         if key.code == event::KeyCode::Esc || (ctrl && key.code == event::KeyCode::Char('s')) {
             self.settings = None;
             self.mode = Mode::Normal;

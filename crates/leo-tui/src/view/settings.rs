@@ -90,6 +90,7 @@ pub enum SettingAction {
     SyncPull,
     /// Open config.toml in `$EDITOR`.
     EditConfig,
+    ShowProviders,
 }
 
 impl SettingAction {
@@ -104,6 +105,7 @@ impl SettingAction {
             SettingAction::SyncPush => "Enter pushes now",
             SettingAction::SyncPull => "Enter pulls now",
             SettingAction::EditConfig => "Enter opens config.toml",
+            SettingAction::ShowProviders => "Enter shows the providers, their keys and order",
         }
     }
 }
