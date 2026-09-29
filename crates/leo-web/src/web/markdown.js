@@ -68,7 +68,8 @@
 
     function build(from, indent) {
       const ordered = items[from].ordered;
-      let html = ordered ? '<ol>' : '<ul>';
+      const first = ordered ? parseInt(items[from].raw.trim(), 10) : 1;
+      let html = ordered ? (first > 1 ? `<ol start="${first}">` : '<ol>') : '<ul>';
       let i = from;
       while (i < items.length && items[i].indent >= indent) {
         const item = items[i];
@@ -191,9 +192,9 @@
     return html;
   }
 
-  function render(markdown) {
+  function render(markdown, options = {}) {
     return blocks(String(markdown || '').replace(/\r\n?/g, '\n').split('\n'), {
-      boxes: 0,
+      boxes: options.boxOffset || 0,
       interactive: true,
     });
   }

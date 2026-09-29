@@ -414,13 +414,23 @@ you can:
 
 - browse folders and read notes with their formatting: headings, lists, code,
   tables, quotes and links;
+- edit in place, the way Obsidian does: tap any line and type. The line shows
+  its Markdown while you edit it and goes back to formatted when you move on.
+  Enter continues a list or checklist, and the title and tags are edited in
+  place too. There is no Edit or Save button, because changes save themselves
+  a moment after you stop typing;
 - tick checkboxes with a tap;
+- pin a note with the pin beside its title in the list. The pin is hollow when
+  the note is unpinned and filled purple when it is pinned;
 - search every note, with the matching words highlighted;
-- write and edit notes, with a preview and buttons for bold, lists and
-  checkboxes;
-- pin, move, share and delete notes (deleted notes go to the trash, and Undo
-  is right there);
+- move and delete notes (deleted notes go to the trash, and Undo is right
+  there), and save a note as a PDF with **PDF**, which opens your phone's print
+  sheet;
 - restore notes from the trash, and browse by tag.
+
+If a note changes on your computer while you are editing it on the phone,
+nothing is overwritten: the computer's version stays, and yours is kept next to
+it as "<title> (conflict from phone)".
 
 **From anywhere** (another Wi-Fi, or mobile data):
 

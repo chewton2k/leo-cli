@@ -36,6 +36,8 @@ impl AppState {
 const HTML: &str = include_str!("web/index.html");
 const APP_JS: &str = include_str!("web/app.js");
 const MARKDOWN_JS: &str = include_str!("web/markdown.js");
+const EDITING_JS: &str = include_str!("web/editing.js");
+const DOC_JS: &str = include_str!("web/doc.js");
 
 const COOKIE_DAYS: u32 = 30;
 
@@ -201,6 +203,8 @@ fn router(state: AppState) -> Router {
         .route("/api/trash/{id}/restore", post(restore_note))
         .route("/app.js", get(app_js))
         .route("/markdown.js", get(markdown_js))
+        .route("/editing.js", get(editing_js))
+        .route("/doc.js", get(doc_js))
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
@@ -227,6 +231,14 @@ async fn app_js() -> Response {
 
 async fn markdown_js() -> Response {
     javascript(MARKDOWN_JS)
+}
+
+async fn editing_js() -> Response {
+    javascript(EDITING_JS)
+}
+
+async fn doc_js() -> Response {
+    javascript(DOC_JS)
 }
 
 async fn auth_middleware(State(state): State<AppState>, request: Request, next: Next) -> Response {
@@ -357,6 +369,7 @@ struct UpdateBody {
     body: Option<String>,
     tags: Option<Vec<String>>,
     pinned: Option<bool>,
+    base: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -381,6 +394,23 @@ struct NoteResponse {
     tags: Vec<String>,
     directory: String,
     pinned: bool,
+    version: String,
+}
+
+fn version_of(note: &leo_core::notes::Note) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    let parts = [
+        note.title.as_str(),
+        note.body.as_str(),
+        &note.tags.join("\u{1f}"),
+    ];
+    for part in parts {
+        for byte in part.bytes().chain([0u8]) {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    format!("{hash:016x}")
 }
 
 impl NoteResponse {
@@ -394,6 +424,7 @@ impl NoteResponse {
             tags: n.tags.clone(),
             directory: n.directory.clone(),
             pinned: n.pinned,
+            version: version_of(n),
         }
     }
 }
@@ -464,6 +495,14 @@ async fn update_note(
     let mut store = state.fresh();
     let note = store.find_note_mut(&id).ok_or(StatusCode::NOT_FOUND)?;
     let edited = body.title.is_some() || body.body.is_some() || body.tags.is_some();
+    if edited
+        && body
+            .base
+            .as_deref()
+            .is_some_and(|base| base != version_of(note))
+    {
+        return Err(StatusCode::CONFLICT);
+    }
 
     if let Some(title) = body.title {
         note.title = title;
@@ -739,6 +778,7 @@ mod tests {
             body: None,
             tags: None,
             pinned: Some(true),
+            base: None,
         };
         let Json(note) = run(update_note(
             State(state.clone()),
@@ -788,5 +828,54 @@ mod tests {
         let Json(all) = run(list_folders(State(state)));
         let names: Vec<&str> = all.iter().map(|d| d.name.as_str()).collect();
         assert_eq!(names, ["cs130", "cs130/lec", "Ideas"]);
+    }
+
+    fn edit(
+        state: &AppState,
+        id: &str,
+        body: &str,
+        base: Option<String>,
+    ) -> Result<NoteResponse, StatusCode> {
+        run(update_note(
+            State(state.clone()),
+            Path(id.to_string()),
+            Json(UpdateBody {
+                title: None,
+                body: Some(body.to_string()),
+                tags: None,
+                pinned: None,
+                base,
+            }),
+        ))
+        .map(|Json(n)| n)
+    }
+
+    #[test]
+    fn an_edit_based_on_the_current_version_is_saved_and_returns_the_next_version() {
+        let (state, _d, ids) = state_with(&[("Shared", "")]);
+        let current = run(get_note(State(state.clone()), Path(ids[0].clone())))
+            .unwrap()
+            .0
+            .version;
+        let saved = edit(&state, &ids[0], "from the phone", Some(current.clone())).unwrap();
+        assert_eq!(saved.body, "from the phone");
+        assert_ne!(saved.version, current);
+    }
+
+    #[test]
+    fn an_edit_based_on_an_old_version_is_refused_and_changes_nothing() {
+        let (state, dir, ids) = state_with(&[("Shared", "")]);
+        let seen = run(get_note(State(state.clone()), Path(ids[0].clone())))
+            .unwrap()
+            .0;
+        let file = dir.path().join("notes").join("Shared.md");
+        let text = std::fs::read_to_string(&file).unwrap();
+        std::fs::write(&file, format!("{text}typed in Obsidian\n")).unwrap();
+
+        let refused = edit(&state, &ids[0], "from the phone", Some(seen.version));
+        assert_eq!(refused.unwrap_err(), StatusCode::CONFLICT);
+        assert!(std::fs::read_to_string(&file)
+            .unwrap()
+            .contains("typed in Obsidian"));
     }
 }

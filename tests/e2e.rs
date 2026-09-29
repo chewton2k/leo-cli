@@ -1143,7 +1143,7 @@ fn opening_the_link_keeps_the_code_out_of_the_address_bar() {
     );
     assert!(page.contains("<script src=\"/app.js\">"), "{page}");
 
-    for script in ["/app.js", "/markdown.js"] {
+    for script in ["/app.js", "/markdown.js", "/editing.js", "/doc.js"] {
         let served = server.get(script, &format!("Cookie: leo_token={token}\r\n"));
         assert!(served.starts_with("HTTP/1.1 200"), "{script}: {served}");
         assert!(

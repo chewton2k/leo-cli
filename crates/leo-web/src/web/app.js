@@ -2,6 +2,7 @@
   'use strict';
 
   const md = window.leoMarkdown;
+  const leoDoc = window.leoDoc;
   const esc = md.escape;
   const enc = encodeURIComponent;
   const $ = (selector, root = document) => root.querySelector(selector);
@@ -20,10 +21,8 @@
     folderPlus: svg(FOLDER + '<path d="M12 10.5v6M9 13.5h6"/>'),
     move: svg(FOLDER + '<path d="M9.5 13.5h6M13 11l2.5 2.5L13 16"/>'),
     pin: svg('<path d="M12 16v6"/><path d="M8 3h8l-1.2 6.2L18 12.5V15H6v-2.5l3.2-3.3z"/>'),
-    edit: svg('<path d="M4 20h4L19.5 8.5l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>'),
     trash: svg('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/>'),
     share: svg('<path d="M12 3v12M8 7l4-4 4 4"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/>'),
-    copy: svg('<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>'),
     plus: svg('<path d="M12 5v14M5 12h14"/>'),
     restore: svg('<path d="M4 12a8 8 0 1 0 2.3-5.6L4 8.5"/><path d="M4 4v4.5h4.5"/>'),
     tag: svg('<path d="M3 12V4h8l10 10-8 8z"/><circle cx="7.5" cy="8.5" r="1.3"/>'),
@@ -130,15 +129,20 @@
     return (start ? '…' : '') + highlight(text.slice(start, start + 180), words);
   }
 
+  function pinButton(note) {
+    const label = note.pinned ? 'Unpin' : 'Pin to the top';
+    return `<button class="pin-toggle${note.pinned ? ' on' : ''}" data-action="pin-card" data-id="${esc(note.id)}" aria-pressed="${note.pinned}" aria-label="${label}" title="${label}">${ICON.pin}</button>`;
+  }
+
   function card(note, { words = [], showFolder = false } = {}) {
     const tags = note.tags.map((t) => `<span class="chip">#${esc(t)}</span>`).join('');
     const where = showFolder && note.directory ? `<span class="chip accent">${esc(note.directory)}</span>` : '';
     const text = snippet(note.body, words);
-    return `<button class="card" data-action="open-note" data-id="${esc(note.id)}">
-      <div class="card-title">${note.pinned ? ICON.pin.replace('<svg', '<svg class="pin"') : ''}<span>${words.length ? highlight(note.title, words) : esc(note.title)}</span></div>
+    return `<div class="card" role="link" tabindex="0" data-action="open-note" data-id="${esc(note.id)}">
+      <div class="card-title"><span>${words.length ? highlight(note.title, words) : esc(note.title)}</span>${pinButton(note)}</div>
       ${text ? `<div class="card-snippet">${text}</div>` : ''}
       <div class="card-meta">${where}<span>${rel(note.updated_at)}</span>${progress(note.body)}${tags}</div>
-    </button>`;
+    </div>`;
   }
 
   function empty(icon, title, text) {
@@ -148,7 +152,6 @@
   const skeleton = (n) => Array.from({ length: n }, () => '<div class="skeleton"></div>').join('');
 
   let state = { view: null };
-  let dirty = false;
   let seq = 0;
 
   function go(hash, { replace = false } = {}) {
@@ -165,7 +168,6 @@
   const noteHash = (id) => `#/n/${enc(id)}`;
 
   function back() {
-    if (state.view === 'edit') return go(state.id ? noteHash(state.id) : folderHash(state.dir || ''), { replace: true });
     if (state.view === 'note') return go(folderHash(state.dir || ''));
     if (state.view === 'folder') return go(folderHash((state.dir || '').split('/').slice(0, -1).join('/')));
     go('#/');
@@ -219,132 +221,195 @@
     app.innerHTML = html;
   }
 
-  async function showNote(id) {
-    const mine = ++seq;
-    const note = await api(`/api/notes/${enc(id)}`);
-    if (mine !== seq) return;
-    state = { view: 'note', dir: note.directory, note };
-    const canShare = typeof navigator.share === 'function';
-    chrome({
-      dir: note.directory,
-      showBack: true,
-      actions: `<nav class="actions" aria-label="Note">
-        <button data-action="edit">${ICON.edit}<span>Edit</span></button>
-        <button data-action="pin" class="${note.pinned ? 'on' : ''}">${ICON.pin}<span>${note.pinned ? 'Pinned' : 'Pin'}</span></button>
-        <button data-action="move">${ICON.move}<span>Move</span></button>
-        <button data-action="share">${canShare ? ICON.share : ICON.copy}<span>${canShare ? 'Share' : 'Copy'}</span></button>
-        <button data-action="delete" class="danger">${ICON.trash}<span>Delete</span></button>
-      </nav>`,
-    });
-    document.title = `${note.title} · leo`;
-    const tags = note.tags.map((t) => `<button class="chip" data-action="tag" data-tag="${esc(t)}">#${esc(t)}</button>`).join('');
-    const where = `<button class="chip accent" data-action="open-folder" data-dir="${esc(note.directory)}">${ICON.folder.replace('<svg', '<svg width="13" height="13"')} ${esc(folderLabel(note.directory))}</button>`;
-    app.innerHTML = `<article>
-      <header class="note-head"><h1>${esc(note.title)}</h1>
-      <div class="note-meta">${where}<span>Edited ${rel(note.updated_at)}</span>${tags}</div></header>
-      <div class="prose" id="prose">${note.body.trim() ? md.render(note.body) : '<p class="hint">This note is empty. Tap Edit to write in it.</p>'}</div>
-    </article>`;
+  const cleanTitle = (text) => text.replace(/\s*\n\s*/g, ' ').trim();
+
+  function session(note) {
+    return { note, tags: [...note.tags], dirty: false, timer: null, saving: null, doc: null, title: null };
   }
 
-  async function showEditor(id, dir) {
-    const mine = ++seq;
-    const [note, folders] = await Promise.all([
-      id ? api(`/api/notes/${enc(id)}`) : Promise.resolve({ title: '', body: '', tags: [], directory: dir || '' }),
-      id ? Promise.resolve([]) : api('/api/folders'),
-    ]);
-    if (mine !== seq) return;
-    state = { view: 'edit', dir: note.directory, id };
-    chrome({ dir: note.directory, showBack: true });
-    const folderField = id
-      ? ''
-      : `<label class="field">${ICON.folder}<select id="ed-dir" aria-label="Folder"><option value="">All notes (top level)</option>${folders
-          .map((f) => `<option value="${esc(f.name)}"${f.name === note.directory ? ' selected' : ''}>${esc(f.name)}</option>`)
-          .join('')}</select></label>`;
-    app.innerHTML = `<div class="editor">
-      <input class="title-input" id="ed-title" placeholder="Title" value="${esc(note.title)}" autocomplete="off">
-      <div class="row">${folderField}<label class="field">${ICON.tag}<input id="ed-tags" placeholder="Tags, separated by commas" value="${esc(note.tags.join(', '))}" autocomplete="off"></label></div>
-      <div class="save-row">
-        <div class="tabs" role="tablist"><button data-action="tab" data-tab="write" class="on">Write</button><button data-action="tab" data-tab="preview">Preview</button></div>
-        <div class="toolbar" id="toolbar">
-          <button data-action="fmt" data-fmt="heading" title="Heading">H</button>
-          <button data-action="fmt" data-fmt="bold" title="Bold"><b>B</b></button>
-          <button data-action="fmt" data-fmt="italic" title="Italic"><i>I</i></button>
-          <button data-action="fmt" data-fmt="list" title="List">• List</button>
-          <button data-action="fmt" data-fmt="task" title="Checkbox">☐ Task</button>
-          <button data-action="fmt" data-fmt="code" title="Code">&lt;/&gt;</button>
-          <button data-action="fmt" data-fmt="link" title="Link">Link</button>
-        </div>
-      </div>
-      <textarea id="ed-body" placeholder="Write in Markdown. - [ ] makes a checkbox." spellcheck="true">${esc(note.body)}</textarea>
-      <div class="preview prose" id="ed-preview" hidden></div>
-      <div class="save-row"><span class="hint">⌘S or Ctrl-S saves.</span>
-      <div class="row"><button class="btn plain" data-action="cancel">Cancel</button><button class="btn primary" data-action="save">Save</button></div></div>
-    </div>`;
-    dirty = false;
-    const body = $('#ed-body');
-    grow(body);
-    for (const field of ['#ed-title', '#ed-tags', '#ed-body', '#ed-dir']) {
-      const el = $(field);
-      if (el) el.addEventListener('input', () => (dirty = true));
+  function mark(s, text) {
+    if (state.session !== s) return;
+    const el = $('#save-state');
+    if (el) el.textContent = text;
+  }
+
+  function changed(s) {
+    s.dirty = true;
+    mark(s, 'Editing…');
+    clearTimeout(s.timer);
+    s.timer = setTimeout(() => flush(s).catch(fail), 700);
+  }
+
+  function snapshot(s) {
+    const body = s.doc.source();
+    const title = cleanTitle(s.title.textContent) || (s.note.id ? s.note.title : md.plain(body).slice(0, 60));
+    return { title: title || 'Untitled', body, tags: [...s.tags] };
+  }
+
+  async function flush(s = state.session) {
+    if (!s) return;
+    clearTimeout(s.timer);
+    while (s.saving) await s.saving;
+    if (!s.dirty) return;
+    const edit = snapshot(s);
+    if (!s.note.id && !cleanTitle(s.title.textContent) && !edit.body.trim() && !edit.tags.length) {
+      s.dirty = false;
+      return;
     }
-    body.addEventListener('input', () => grow(body));
-    if (!id) $('#ed-title').focus();
-  }
-
-  function grow(textarea) {
-    textarea.style.height = 'auto';
-    textarea.style.height = `${Math.max(textarea.scrollHeight + 2, window.innerHeight * 0.5)}px`;
-  }
-
-  async function save() {
-    const button = $('[data-action="save"]');
-    const body = $('#ed-body').value;
-    const title = $('#ed-title').value.trim() || md.plain(body).slice(0, 60) || 'Untitled';
-    const tags = $('#ed-tags')
-      .value.split(',')
-      .map((t) => t.trim().replace(/^#/, ''))
-      .filter(Boolean);
-    button.disabled = true;
+    s.dirty = false;
+    mark(s, 'Saving…');
+    s.saving = write(s, edit);
     try {
-      let note;
-      if (state.id) {
-        note = await api(`/api/notes/${enc(state.id)}`, { method: 'PATCH', body: { title, body, tags } });
-      } else {
-        const dir = $('#ed-dir') ? $('#ed-dir').value : state.dir;
-        note = await api('/api/notes', { method: 'POST', body: { title, body, tags, directory: dir } });
-      }
-      dirty = false;
-      toast('Saved');
-      go(noteHash(note.id), { replace: true });
-    } catch (e) {
-      button.disabled = false;
-      fail(e);
+      await s.saving;
+    } finally {
+      s.saving = null;
     }
   }
 
-  function format(kind) {
-    const area = $('#ed-body');
-    const { selectionStart: start, selectionEnd: end, value } = area;
-    const picked = value.slice(start, end);
-    const lineStart = value.lastIndexOf('\n', start - 1) + 1;
-    const wrap = (before, after, fallback) => {
-      const text = picked || fallback;
-      area.setRangeText(before + text + after, start, end, 'end');
-      if (!picked) area.setSelectionRange(start + before.length, start + before.length + text.length);
+  async function write(s, edit) {
+    try {
+      if (!s.note.id) {
+        s.note = await api('/api/notes', { method: 'POST', body: { ...edit, directory: s.note.directory } });
+        if (state.session === s) history.replaceState(null, '', noteHash(s.note.id));
+      } else {
+        s.note = await api(`/api/notes/${enc(s.note.id)}`, { method: 'PATCH', body: { ...edit, base: s.note.version } });
+      }
+      mark(s, s.dirty ? 'Editing…' : 'Saved');
+    } catch (e) {
+      if (e.status === 409) return keepBoth(s, edit);
+      s.dirty = true;
+      if (e instanceof Offline) {
+        mark(s, 'Offline, will retry');
+        s.timer = setTimeout(() => flush(s).catch(fail), 4000);
+        return;
+      }
+      mark(s, 'Not saved');
+      throw e;
+    }
+  }
+
+  async function keepBoth(s, edit) {
+    let copy;
+    try {
+      copy = await api('/api/notes', {
+        method: 'POST',
+        body: { ...edit, title: `${edit.title} (conflict from phone)`, directory: s.note.directory },
+      });
+    } catch (e) {
+      s.dirty = true;
+      mark(s, 'Not saved');
+      throw e;
+    }
+    toast('This note changed on your computer, so your version was kept as a copy.', {
+      action: 'Open copy',
+      run: () => go(noteHash(copy.id)),
+    });
+    if (state.session === s) showNote(s.note.id);
+  }
+
+  function tagChips(s) {
+    return (
+      s.tags
+        .map(
+          (t) =>
+            `<span class="chip tag-chip"><button data-action="tag" data-tag="${esc(t)}">#${esc(t)}</button><button class="untag" data-action="untag" data-tag="${esc(t)}" aria-label="Remove #${esc(t)}">${ICON.close}</button></span>`
+        )
+        .join('') + '<input id="tag-input" class="tag-input" placeholder="+ tag" autocomplete="off" autocapitalize="none" enterkeyhint="done" aria-label="Add a tag">'
+    );
+  }
+
+  function drawTags(s) {
+    const box = $('#tags');
+    if (!box) return;
+    box.innerHTML = tagChips(s);
+    const input = $('#tag-input', box);
+    const add = () => {
+      const words = input.value
+        .split(/[\s,]+/)
+        .map((t) => t.replace(/^#/, '').trim())
+        .filter(Boolean)
+        .filter((t) => !s.tags.includes(t));
+      input.value = '';
+      if (!words.length) return;
+      s.tags.push(...words);
+      changed(s);
+      drawTags(s);
+      $('#tag-input').focus();
     };
-    const prefix = (mark) => {
-      area.setRangeText(mark, lineStart, lineStart, 'end');
-      area.setSelectionRange(end + mark.length, end + mark.length);
-    };
-    if (kind === 'bold') wrap('**', '**', 'bold');
-    if (kind === 'italic') wrap('*', '*', 'italic');
-    if (kind === 'code') picked.includes('\n') ? wrap('```\n', '\n```', '') : wrap('`', '`', 'code');
-    if (kind === 'link') wrap('[', '](https://)', 'link');
-    if (kind === 'heading') prefix('## ');
-    if (kind === 'list') prefix('- ');
-    if (kind === 'task') prefix('- [ ] ');
-    area.focus();
-    area.dispatchEvent(new Event('input'));
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ',') {
+        e.preventDefault();
+        add();
+      } else if (e.key === 'Backspace' && !input.value && s.tags.length) {
+        s.tags.pop();
+        changed(s);
+        drawTags(s);
+        $('#tag-input').focus();
+      }
+    });
+    input.addEventListener('blur', add);
+  }
+
+  function noteActions() {
+    return `<nav class="actions" aria-label="Note">
+        <button data-action="move">${ICON.move}<span>Move</span></button>
+        <button data-action="share">${ICON.share}<span>PDF</span></button>
+        <button data-action="delete" class="danger">${ICON.trash}<span>Delete</span></button>
+      </nav>`;
+  }
+
+  async function showNote(id, { fresh = null } = {}) {
+    const mine = ++seq;
+    const note = fresh || (await api(`/api/notes/${enc(id)}`));
+    if (mine !== seq) return;
+    const s = session(note);
+    state = { view: 'note', dir: note.directory, session: s };
+    chrome({ dir: note.directory, showBack: true, actions: noteActions() });
+    document.title = `${note.title || 'New note'} · leo`;
+    const where = `<button class="chip accent" data-action="open-folder" data-dir="${esc(note.directory)}">${ICON.folder.replace('<svg', '<svg width="13" height="13"')} ${esc(folderLabel(note.directory))}</button>`;
+    const when = note.id ? `Edited ${rel(note.updated_at)}` : 'New note';
+    app.innerHTML = `<article class="note">
+      <header class="note-head"><h1 id="title" contenteditable="plaintext-only" spellcheck="true" data-placeholder="Title" enterkeyhint="next">${esc(note.title)}</h1>
+      <div class="note-meta">${where}<span id="save-state">${when}</span></div>
+      <div class="tags" id="tags"></div></header>
+      <div class="prose doc" id="doc"></div>
+    </article>`;
+    s.title = $('#title');
+    s.doc = leoDoc.mount($('#doc'), { source: note.body, onChange: () => changed(s), placeholder: 'Tap here to write' });
+    drawTags(s);
+    const blank = () => s.title.classList.toggle('blank', !cleanTitle(s.title.textContent));
+    blank();
+    s.title.addEventListener('input', () => {
+      blank();
+      document.title = `${cleanTitle(s.title.textContent) || 'Untitled'} · leo`;
+      changed(s);
+    });
+    s.title.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        s.doc.editStart();
+      }
+    });
+    s.title.addEventListener('paste', (e) => {
+      e.preventDefault();
+      const text = cleanTitle((e.clipboardData || window.clipboardData).getData('text'));
+      document.execCommand('insertText', false, text);
+    });
+    if (!note.id) {
+      s.title.focus();
+    }
+  }
+
+  function newNote(dir) {
+    return showNote(null, { fresh: { id: null, title: '', body: '', tags: [], directory: dir || '', pinned: false, version: null } });
+  }
+
+  async function ready() {
+    const s = state.session;
+    if (!s) return null;
+    s.doc.stop();
+    await flush(s);
+    return s.note.id ? s : null;
   }
 
   async function showSearch(query) {
@@ -462,7 +527,9 @@
   }
 
   async function moveSheet() {
-    const note = state.note;
+    const s = await ready();
+    if (!s) return toast('Write something first.');
+    const note = s.note;
     const folders = await api('/api/folders');
     const row = (name, label) =>
       `<button class="list-row" data-action="move-to" data-dir="${esc(name)}">${ICON.folder}<span class="grow">${esc(label)}</span>${
@@ -472,7 +539,7 @@
   }
 
   async function moveTo(dir) {
-    const note = state.note;
+    const note = state.session.note;
     closeSheet();
     if (dir === note.directory) return;
     try {
@@ -484,14 +551,16 @@
     }
   }
 
-  function confirmDelete() {
-    const note = state.note;
-    sheet(`<h3>Move “${esc(note.title)}” to the trash?</h3><p>You can restore it for 30 days, from Trash in the menu.</p>
+  async function confirmDelete() {
+    const s = await ready();
+    if (!s) return back();
+    sheet(`<h3>Move “${esc(s.note.title)}” to the trash?</h3><p>You can restore it for 30 days, from Trash in the menu.</p>
       <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn danger" data-action="delete-now">Move to trash</button></div>`);
   }
 
   async function deleteNow() {
-    const note = state.note;
+    const note = state.session.note;
+    state.session = null;
     closeSheet();
     try {
       await api(`/api/notes/${enc(note.id)}`, { method: 'DELETE' });
@@ -513,51 +582,32 @@
     }
   }
 
-  async function togglePin() {
-    const note = state.note;
+  async function pinCard(el) {
+    const on = !el.classList.contains('on');
+    el.classList.toggle('on', on);
+    el.setAttribute('aria-pressed', String(on));
     try {
-      await api(`/api/notes/${enc(note.id)}`, { method: 'PATCH', body: { pinned: !note.pinned } });
-      toast(note.pinned ? 'Unpinned' : 'Pinned to the top of its folder');
-      showNote(note.id);
+      await api(`/api/notes/${enc(el.dataset.id)}`, { method: 'PATCH', body: { pinned: on } });
+      toast(on ? 'Pinned to the top of its folder' : 'Unpinned');
+      await render();
     } catch (e) {
+      el.classList.toggle('on', !on);
+      el.setAttribute('aria-pressed', String(!on));
       fail(e);
     }
   }
 
   async function share() {
-    const note = state.note;
-    const text = `${note.title}\n\n${note.body}`;
-    if (typeof navigator.share === 'function') {
-      try {
-        await navigator.share({ title: note.title, text });
-      } catch (e) {
-        return;
-      }
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(text);
-      toast('Copied the note');
-    } catch (e) {
-      toast("Couldn't copy here.", { bad: true });
-    }
-  }
-
-  async function tick(input) {
-    const label = input.closest('.task');
-    const note = state.note;
-    label.classList.toggle('done', input.checked);
-    label.classList.add('busy');
-    try {
-      const updated = await api(`/api/notes/${enc(note.id)}/toggle?checkbox=${input.dataset.box}`, { method: 'POST' });
-      state.note = updated;
-      $('#prose').innerHTML = md.render(updated.body);
-    } catch (e) {
-      input.checked = !input.checked;
-      label.classList.toggle('done', input.checked);
-      label.classList.remove('busy');
-      fail(e);
-    }
+    const s = await ready();
+    if (!s) return toast('Write something first.');
+    const before = document.title;
+    document.title = s.note.title;
+    const restore = () => {
+      document.title = before;
+      window.removeEventListener('afterprint', restore);
+    };
+    window.addEventListener('afterprint', restore);
+    window.print();
   }
 
   function openSearch(value) {
@@ -604,6 +654,7 @@
       go(folderHash(el.dataset.dir));
     },
     'open-note': (el) => go(noteHash(el.dataset.id)),
+    'pin-card': pinCard,
     new: (el) => {
       closeSheet();
       go(el.dataset.dir ? `#/new/${enc(el.dataset.dir)}` : '#/new');
@@ -623,33 +674,18 @@
       route();
     },
     tag: (el) => go(`#/search/${enc('#' + el.dataset.tag)}`),
-    edit: () => go(`${noteHash(state.note.id)}/edit`),
-    pin: togglePin,
-    move: () => moveSheet().catch(fail),
+    untag: (el) => {
+      const s = state.session;
+      s.tags = s.tags.filter((t) => t !== el.dataset.tag);
+      changed(s);
+      drawTags(s);
+    },
+    move: () => moveSheet(),
     'move-to': (el) => moveTo(el.dataset.dir),
     share,
     delete: confirmDelete,
     'delete-now': deleteNow,
     restore: (el) => restore(el.dataset.id, false),
-    save,
-    cancel: () => {
-      if (dirty && !window.confirm('Leave without saving your changes?')) return;
-      dirty = false;
-      back();
-    },
-    tab: (el) => {
-      const preview = el.dataset.tab === 'preview';
-      for (const b of document.querySelectorAll('.tabs button')) b.classList.toggle('on', b === el);
-      $('#ed-body').hidden = preview;
-      $('#toolbar').hidden = preview;
-      const pane = $('#ed-preview');
-      pane.hidden = !preview;
-      if (preview) {
-        pane.innerHTML = md.render($('#ed-body').value) || '<p class="hint">Nothing to preview yet.</p>';
-        for (const box of pane.querySelectorAll('input')) box.disabled = true;
-      }
-    },
-    fmt: (el) => format(el.dataset.fmt),
   };
 
   document.addEventListener('click', (e) => {
@@ -661,21 +697,22 @@
     Promise.resolve(act(el)).catch(fail);
   });
 
-  app.addEventListener('change', (e) => {
-    if (e.target.matches('#prose input[data-box]') && state.view === 'note') tick(e.target);
-  });
-
   document.addEventListener('keydown', (e) => {
-    const typing = e.target.closest('input, textarea, select');
-    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's' && state.view === 'edit') {
+    const typing = e.target.closest('input, textarea, select, [contenteditable]');
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's' && state.view === 'note') {
       e.preventDefault();
-      save();
+      flush().catch(fail);
       return;
     }
     if (e.key === 'Escape') {
       if ($('.scrim')) return closeSheet();
       if (typing) return e.target.blur();
-      if (state.view !== 'folder' || state.dir) return actions.cancel();
+      if (state.view !== 'folder' || state.dir) return back();
+    }
+    if (e.key === 'Enter' && e.target.matches('.card')) {
+      e.preventDefault();
+      go(noteHash(e.target.dataset.id));
+      return;
     }
     if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key === '/') {
@@ -684,27 +721,42 @@
       $('#search-input').focus();
     } else if (e.key === 'n' && state.view === 'folder') {
       go(state.dir ? `#/new/${enc(state.dir)}` : '#/new');
-    } else if (e.key === 'e' && state.view === 'note') {
-      actions.edit();
     }
   });
+
+  const unsaved = () => {
+    const s = state.session;
+    return Boolean(s && (s.dirty || s.saving));
+  };
 
   window.addEventListener('beforeunload', (e) => {
-    if (dirty) e.preventDefault();
+    if (!unsaved()) return;
+    flush().catch(() => {});
+    e.preventDefault();
   });
 
-  let shown = location.hash;
   window.addEventListener('hashchange', () => {
-    if (dirty && state.view === 'edit' && !window.confirm('Leave without saving your changes?')) {
-      history.replaceState(null, '', shown);
-      return;
+    const leaving = state.session;
+    if (leaving) {
+      leaving.doc.stop();
+      flush(leaving).catch(fail);
     }
-    dirty = false;
     route();
   });
 
+  const busy = () => {
+    const active = document.activeElement;
+    return unsaved() || Boolean(active && active !== document.body && app.contains(active));
+  };
+
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && ['folder', 'note', 'search', 'trash', 'tags'].includes(state.view)) route();
+    if (document.visibilityState === 'hidden') {
+      if (state.session) flush().catch(() => {});
+      return;
+    }
+    if (!['folder', 'note', 'search', 'trash', 'tags'].includes(state.view)) return;
+    if (state.view === 'note' && (busy() || !state.session.note.id)) return;
+    render().catch(fail);
   });
 
   window.addEventListener(
@@ -714,18 +766,20 @@
   );
 
   async function route() {
-    shown = location.hash;
     closeSheet();
+    window.scrollTo(0, 0);
+    await render();
+  }
+
+  async function render() {
     const hash = decodeURI(location.hash || '#/');
     const [, kind, rest = ''] = location.hash.match(/^#\/([a-z]*)\/?(.*)$/) || [null, '', ''];
     const arg = decodeURIComponent(rest);
     if (kind !== 'search') closeSearch();
-    window.scrollTo(0, 0);
     try {
       if (kind === 'f') await showFolder(arg);
-      else if (kind === 'n' && arg.endsWith('/edit')) await showEditor(arg.slice(0, -5));
-      else if (kind === 'n') await showNote(arg);
-      else if (kind === 'new') await showEditor(null, arg);
+      else if (kind === 'n') await showNote(arg.replace(/\/edit$/, ''));
+      else if (kind === 'new') await newNote(arg);
       else if (kind === 'search') await showSearch(arg);
       else if (kind === 'tags') await showTags();
       else if (kind === 'trash') await showTrash();
