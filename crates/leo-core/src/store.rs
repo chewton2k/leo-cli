@@ -186,6 +186,14 @@ fn modified_time(path: &Path) -> DateTime<Utc> {
         .unwrap_or_else(|_| Utc::now())
 }
 
+pub const CONFLICT_SUFFIX: &str = " (conflict from leo)";
+
+fn conflict_notice(title: &str) -> String {
+    format!(
+        "\"{title}\" was changed by another program while leo had it open, so leo kept your edit as \"{title}{CONFLICT_SUFFIX}\""
+    )
+}
+
 #[derive(Debug, Clone)]
 struct Seen {
     path: PathBuf,
@@ -525,17 +533,29 @@ impl Store {
             let target = targets[&note.id].clone();
             let content = note_to_markdown(note)?;
             let model = hash_str(&content);
-            let unchanged = seen
-                .get(&note.id)
-                .is_some_and(|s| s.model == model && self.notes_dir.join(&s.path) == target);
-            if unchanged {
-                continue;
+            let previous = seen.get(&note.id).cloned();
+
+            if let Some(previous) = &previous {
+                let old_path = self.notes_dir.join(&previous.path);
+                if previous.model == model && old_path == target {
+                    continue;
+                }
+                if !is_clean(&old_path, previous.disk) {
+                    if previous.model != model {
+                        self.conflict_copy(note)?;
+                        if let Some(entry) = seen.get_mut(&note.id) {
+                            entry.model = model;
+                        }
+                    }
+                    continue;
+                }
             }
+
             if let Some(parent) = target.parent() {
                 fs::create_dir_all(parent)?;
             }
             write_atomic(&target, &content)?;
-            if let Some(previous) = seen.get(&note.id) {
+            if let Some(previous) = &previous {
                 let old_path = self.notes_dir.join(&previous.path);
                 if !same_file(&old_path, &target) {
                     let _ = fs::remove_file(old_path);
@@ -580,6 +600,25 @@ impl Store {
             }
         }
 
+        Ok(())
+    }
+
+    fn conflict_copy(&self, note: &Note) -> Result<()> {
+        let mut copy = note.clone();
+        copy.id = uuid::Uuid::new_v4().to_string();
+        copy.title = format!("{}{CONFLICT_SUFFIX}", note.title);
+        copy.pinned = false;
+        let dir = if copy.directory.is_empty() {
+            self.notes_dir.clone()
+        } else {
+            self.notes_dir.join(&copy.directory)
+        };
+        let path = unique_path(&dir.join(format!("{}.md", filename::file_name(&copy.title))));
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        write_atomic(&path, &note_to_markdown(&copy)?)?;
+        crate::diag::warn(conflict_notice(&note.title));
         Ok(())
     }
 
@@ -2750,5 +2789,98 @@ mod tests {
         reloaded.save().unwrap();
 
         assert_eq!(note_files(&reloaded), ["New name.md", "Other.md"]);
+    }
+
+    #[test]
+    fn a_note_changed_elsewhere_and_edited_here_keeps_both_versions() {
+        let (mut store, _tmp) = temp_store();
+        let id = store
+            .create_note("Shared", "one", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.save().unwrap();
+        let file = store.notes_dir.join("Shared.md");
+        fs::write(
+            &file,
+            fs::read_to_string(&file)
+                .unwrap()
+                .replace("one", "one, plus a line from Obsidian"),
+        )
+        .unwrap();
+
+        store.find_note_mut(&id).unwrap().body = "one, plus a line from leo".to_string();
+        store.save().unwrap();
+
+        assert!(fs::read_to_string(&file).unwrap().contains("from Obsidian"));
+        let reloaded = Store::load_from(&store.notes_dir).unwrap();
+        assert_eq!(reloaded.notes.len(), 2);
+        let copy = reloaded
+            .notes
+            .iter()
+            .find(|n| n.title == "Shared (conflict from leo)")
+            .expect("no conflict copy");
+        assert!(copy.body.contains("from leo"));
+        assert_ne!(copy.id, id);
+    }
+
+    #[test]
+    fn saving_again_does_not_pile_up_conflict_copies() {
+        let (mut store, _tmp) = temp_store();
+        let id = store
+            .create_note("Shared", "one", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.save().unwrap();
+        let file = store.notes_dir.join("Shared.md");
+        fs::write(
+            &file,
+            "---\nid: other\ntitle: Shared\n---\n\nchanged elsewhere\n",
+        )
+        .unwrap();
+        store.find_note_mut(&id).unwrap().body = "edited here".to_string();
+        store.save().unwrap();
+        store.save().unwrap();
+        store.save().unwrap();
+        assert_eq!(note_files(&store).len(), 2, "{:?}", note_files(&store));
+    }
+
+    #[test]
+    fn a_note_changed_elsewhere_but_not_here_is_left_alone() {
+        let (mut store, _tmp) = temp_store();
+        store.create_note("Shared", "one", vec![], "").unwrap();
+        store.save().unwrap();
+        let file = store.notes_dir.join("Shared.md");
+        let edited = fs::read_to_string(&file).unwrap().replace("one", "two");
+        fs::write(&file, &edited).unwrap();
+        store.create_note("Unrelated", "x", vec![], "").unwrap();
+        store.save().unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), edited);
+        assert_eq!(note_files(&store).len(), 2);
+    }
+
+    #[test]
+    fn a_note_deleted_elsewhere_and_edited_here_comes_back_as_a_copy() {
+        let (mut store, _tmp) = temp_store();
+        let id = store
+            .create_note("Shared", "one", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.save().unwrap();
+        fs::remove_file(store.notes_dir.join("Shared.md")).unwrap();
+        store.find_note_mut(&id).unwrap().body = "still writing".to_string();
+        store.save().unwrap();
+
+        let reloaded = Store::load_from(&store.notes_dir).unwrap();
+        assert_eq!(reloaded.notes.len(), 1);
+        assert_eq!(reloaded.notes[0].title, "Shared (conflict from leo)");
+        assert!(reloaded.notes[0].body.contains("still writing"));
+    }
+
+    #[test]
+    fn the_notice_names_the_note() {
+        assert!(conflict_notice("Shared").contains("Shared"));
     }
 }
