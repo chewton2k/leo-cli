@@ -200,12 +200,34 @@ pub fn get_local_model(task: crate::config::edit::Task) -> Result<String> {
     }
 }
 
-pub fn speech_model_present(cfg: &Config) -> bool {
-    let starter = crate::config::choice::models_dir().join(crate::config::choice::WHISPER_STARTER);
-    let configured = cfg
-        .provider("whisper_cpp")
-        .map(crate::ai::provider::whisper_cpp::model_file);
-    starter.is_file() || configured.is_some_and(|m| m.is_file())
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelState {
+    Ready,
+    Missing,
+    Damaged,
+}
+
+fn expected_model_sha() -> String {
+    std::env::var("LEO_INSTALL_MODEL_SHA256")
+        .unwrap_or_else(|_| crate::config::choice::WHISPER_STARTER_SHA256.to_string())
+}
+
+pub fn speech_model_path() -> std::path::PathBuf {
+    crate::config::choice::models_dir().join(crate::config::choice::WHISPER_STARTER)
+}
+
+pub fn model_state(path: &std::path::Path, sha256: &str) -> ModelState {
+    if !path.is_file() {
+        return ModelState::Missing;
+    }
+    match sha256_of(path) {
+        Ok(actual) if actual.eq_ignore_ascii_case(sha256) => ModelState::Ready,
+        _ => ModelState::Damaged,
+    }
+}
+
+pub fn speech_model_state() -> ModelState {
+    model_state(&speech_model_path(), &expected_model_sha())
 }
 
 pub fn sha256_of(path: &std::path::Path) -> Result<String> {
@@ -224,8 +246,7 @@ pub fn download_speech_model() -> Result<std::path::PathBuf> {
     download_verified(
         &std::env::var("LEO_INSTALL_MODEL_URL")
             .unwrap_or_else(|_| crate::config::choice::WHISPER_STARTER_URL.to_string()),
-        &std::env::var("LEO_INSTALL_MODEL_SHA256")
-            .unwrap_or_else(|_| crate::config::choice::WHISPER_STARTER_SHA256.to_string()),
+        &expected_model_sha(),
         &crate::config::choice::models_dir(),
         crate::config::choice::WHISPER_STARTER,
     )
@@ -314,6 +335,19 @@ mod tests {
         .unwrap_err();
         assert!(err.to_string().contains("failed"), "{err}");
         assert!(!models.join("ggml-z.bin.part").exists());
+    }
+
+    #[test]
+    fn a_model_is_ready_only_when_its_checksum_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ggml-base.en.bin");
+        assert_eq!(model_state(&path, "00"), ModelState::Missing);
+        std::fs::write(&path, b"whole model").unwrap();
+        let good = sha256_of(&path).unwrap();
+        assert_eq!(model_state(&path, &good), ModelState::Ready);
+        assert_eq!(model_state(&path, &good.to_uppercase()), ModelState::Ready);
+        std::fs::write(&path, b"whole mo").unwrap();
+        assert_eq!(model_state(&path, &good), ModelState::Damaged);
     }
 
     #[test]

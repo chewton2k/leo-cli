@@ -191,17 +191,15 @@ fn local_rows(
                 .whisper
                 .iter()
                 .any(|p| *p == leo_services::ai::provider::whisper_cpp::expand_tilde(&current));
-            let value = if installed {
-                format!("{} (free)", choice::whisper_label(&current))
-            } else {
-                format!(
-                    "{} is missing — Enter picks one you have",
-                    choice::whisper_label(&current)
-                )
-            };
+            if installed {
+                return;
+            }
             rows.push(Row::Setting {
                 label: model_label,
-                value,
+                value: format!(
+                    "{} is missing — Enter picks one you have",
+                    choice::whisper_label(&current)
+                ),
                 action: SettingAction::ChooseModel(task),
             });
         }
@@ -566,6 +564,19 @@ mod tests {
         assert!(
             speech_model.1.starts_with("base.en is missing"),
             "{speech_model:?}"
+        );
+
+        let ready = Local {
+            ollama_running: false,
+            ollama: Vec::new(),
+            whisper: vec![leo_services::ai::provider::whisper_cpp::model_file(
+                &leo_services::config::provider::ProviderConfig::default(),
+            )],
+        };
+        let rows = simple_page(config, &MemoryStore::default(), &ready);
+        assert!(
+            row(&rows, "speech model").is_none(),
+            "a speech model that is there needs no row: {rows:?}"
         );
 
         let pulled = Local {

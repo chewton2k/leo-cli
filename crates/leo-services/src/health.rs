@@ -265,9 +265,11 @@ pub(crate) fn chain_check(config: &Config, chain: Chain, store: &dyn SecretStore
                          or: /settings in leo, choose OpenAI, Anthropic, Gemini or xAI, add its key"
                             .to_string()
                     }
-                    Chain::Transcribe => "/settings in leo, then Enter on speech model to download one   (free, private)\n\
+                    Chain::Transcribe => {
+                        "leo update   (downloads the speech model; free, private)\n\
                          or: /settings in leo, choose OpenAI, Gemini or xAI, add its key"
-                        .to_string(),
+                            .to_string()
+                    }
                 },
             },
             detail: if names.is_empty() {
@@ -393,9 +395,7 @@ pub fn next_step(config: &Config, store: &dyn SecretStore) -> Option<String> {
     }
     let transcribe = chain_check(config, Chain::Transcribe, store);
     if let State::Missing { .. } = transcribe.state {
-        return Some(
-            "Speech is not set up. Type /settings and download a speech model.".to_string(),
-        );
+        return Some("The speech model is missing. Run `leo update` to download it.".to_string());
     }
     if !on_path("rec") {
         return Some(format!("Recording (R) needs sox: {}", install_hint("sox")));

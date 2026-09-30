@@ -267,7 +267,7 @@ impl TranscribeProvider for WhisperCppTranscribe {
                 format!("{}: `{bin}` not on PATH", self.name)
             }
             _ => format!(
-                "{}: no speech model at {} (in /settings, Enter on speech model downloads one)",
+                "{}: no speech model at {} (run `leo update` to download it)",
                 self.name,
                 self.model_path.display()
             ),

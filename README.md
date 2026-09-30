@@ -237,7 +237,6 @@ looks like this:
      writing model         claude-sonnet-5-5
      Anthropic key         stored
      speech                ● this Mac (whisper.cpp)
-     speech model          base.en
 ```
 
 | Key | What it does |
@@ -254,16 +253,22 @@ something is missing, and the row under it says what.
 
 ### Option A: your own computer (free and offline)
 
-1. **Speech is built in.** leo has its own speech-to-text engine (whisper.cpp),
-   so there is nothing to install. In Settings, **speech** should say
-   `this Mac (whisper.cpp)`. The first time, **speech model** says `none yet`:
-   press `Enter` on it to download `base.en` (142 MB, once) into
-   `~/.leo/models`.
+1. **Speech is built in.** leo has its own speech-to-text engine (whisper.cpp)
+   and its model (`base.en`, 142 MB), so there is nothing to install or pick.
+   The installer downloads the model into `~/.leo/models`, and `leo update`
+   checks it every time: if it is missing, or its checksum does not match
+   (a damaged or half-finished download), it is downloaded again. In Settings,
+   **speech** says `● this Mac (whisper.cpp)`.
 
-   For better accuracy, put any other whisper model in that folder and pick it
-   with `Enter` on **speech model**. `ggml-large-v3-turbo.bin` (1.6 GB, from
-   [huggingface.co/ggerganov/whisper.cpp](https://huggingface.co/ggerganov/whisper.cpp/tree/main))
-   is much more accurate and still faster than real time on a recent Mac.
+   For better accuracy, put a bigger whisper model in that folder, such as
+   `ggml-large-v3-turbo.bin` (1.6 GB, from
+   [huggingface.co/ggerganov/whisper.cpp](https://huggingface.co/ggerganov/whisper.cpp/tree/main)),
+   and point leo at it: `/settings`, press `e`, and add
+
+   ```toml
+   [providers.whisper_cpp]
+   model_path = "~/.leo/models/ggml-large-v3-turbo.bin"
+   ```
 
 2. **Writing uses Ollama.**
 

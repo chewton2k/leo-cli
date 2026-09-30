@@ -719,12 +719,33 @@ fn update_downloads_the_speech_model_first_when_it_is_missing() {
         .cmd_at(&exe, &["update"])
         .env_remove("LEO_INSTALL_SKIP_MODEL")
         .env("LEO_INSTALL_MODEL_URL", "file:///nonexistent")
+        .env("LEO_INSTALL_MODEL_SHA256", &real)
         .env("LEO_UPDATE_SCRIPT", &script)
         .env("LEO_LATEST_RELEASE", env!("CARGO_PKG_VERSION"))
         .output()
         .unwrap();
     let said = String::from_utf8_lossy(&again.stdout);
     assert!(!said.contains("speech model"), "downloaded twice:\n{said}");
+
+    std::fs::write(&model, b"a small stand-in").unwrap();
+    let repaired = leo
+        .cmd_at(&exe, &["update"])
+        .env_remove("LEO_INSTALL_SKIP_MODEL")
+        .env(
+            "LEO_INSTALL_MODEL_URL",
+            format!("file://{}", source.display()),
+        )
+        .env("LEO_INSTALL_MODEL_SHA256", &real)
+        .env("LEO_UPDATE_SCRIPT", &script)
+        .env("LEO_LATEST_RELEASE", env!("CARGO_PKG_VERSION"))
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&repaired.stdout);
+    assert!(said.contains("damaged"), "{said}");
+    assert_eq!(
+        std::fs::read(&model).unwrap(),
+        b"a small stand-in for base.en"
+    );
 }
 
 fn installer_block(dir: &Path) -> String {

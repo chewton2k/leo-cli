@@ -171,14 +171,27 @@ fi
 model="$models/ggml-base.en.bin"
 model_url="${LEO_INSTALL_MODEL_URL:-https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin}"
 model_sha="${LEO_INSTALL_MODEL_SHA256:-a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002}"
+model_state=missing
+if [ -z "${LEO_INSTALL_SKIP_MODEL:-}" ] && [ -s "$model" ]; then
+    have=$(sha256_of "$model")
+    if [ -z "$have" ] || [ "$have" = "$model_sha" ]; then
+        model_state=ready
+    else
+        model_state=damaged
+    fi
+fi
 if [ -n "${LEO_INSTALL_SKIP_MODEL:-}" ]; then
     :
-elif [ -s "$model" ]; then
+elif [ "$model_state" = ready ]; then
     step "Speech model ready in $(pretty "$models")"
 elif ! command -v curl >/dev/null 2>&1; then
     say "  ${yellow}!${reset} No curl, so the speech model was not downloaded; /settings in leo can fetch it"
 else
-    doing "Downloading the speech model (base.en, 142 MB, once)"
+    if [ "$model_state" = damaged ]; then
+        doing "The speech model is damaged; downloading it again (142 MB)"
+    else
+        doing "Downloading the speech model (base.en, 142 MB, once)"
+    fi
     mkdir -p "$models"
     got_model=""
     if fetch "$model_url" "$model.part"; then

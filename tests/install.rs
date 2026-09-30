@@ -105,6 +105,15 @@ fn installs_leo_and_puts_it_on_the_path_once() {
     // Running it again must not add the PATH line a second time.
     let again = install(&home, "/bin/zsh", &tarball);
     assert!(again.contains("Speech model ready"), "{again}");
+
+    std::fs::write(&model, b"a small stand-in for bas").unwrap();
+    let repaired = install(&home, "/bin/zsh", &tarball);
+    assert!(repaired.contains("damaged"), "{repaired}");
+    assert_eq!(
+        std::fs::read(&model).unwrap(),
+        b"a small stand-in for base.en",
+        "a damaged model was kept:\n{repaired}"
+    );
     let zshrc = std::fs::read_to_string(home.join(".zshrc")).unwrap();
     let lines = zshrc.lines().filter(|l| l.contains(".local/bin")).count();
     assert_eq!(lines, 1, "{zshrc}");

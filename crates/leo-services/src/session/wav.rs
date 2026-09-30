@@ -31,7 +31,12 @@ pub fn write(path: &Path, samples: &[i16]) -> Result<()> {
     for s in samples {
         bytes.extend_from_slice(&s.to_le_bytes());
     }
-    std::fs::write(path, bytes).with_context(|| format!("could not write {}", path.display()))
+    let mut partial = path.as_os_str().to_owned();
+    partial.push(".tmp");
+    let partial = PathBuf::from(partial);
+    std::fs::write(&partial, bytes)
+        .and_then(|()| std::fs::rename(&partial, path))
+        .with_context(|| format!("could not write {}", path.display()))
 }
 
 pub fn read(path: &Path) -> Result<Vec<i16>> {
@@ -219,6 +224,7 @@ mod tests {
         let path = dir.path().join("a.wav");
         write(&path, &[1, -2, 3]).unwrap();
         assert_eq!(read(&path).unwrap(), vec![1, -2, 3]);
+        assert!(!dir.path().join("a.wav.tmp").exists());
         let bytes = std::fs::read(&path).unwrap();
         assert_eq!(&bytes[40..44], &6u32.to_le_bytes());
         assert_eq!(&bytes[24..28], &16_000u32.to_le_bytes());

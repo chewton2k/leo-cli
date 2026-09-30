@@ -8,12 +8,18 @@ fn ensure_speech_model() {
     if std::env::var_os("LEO_INSTALL_SKIP_MODEL").is_some() {
         return;
     }
-    let cfg = leo_services::config::Config::load();
-    if leo_services::providers::speech_model_present(&cfg) {
-        return;
+    use leo_services::providers::ModelState;
+    match leo_services::providers::speech_model_state() {
+        ModelState::Ready => return,
+        ModelState::Missing => {
+            println!();
+            println!("  The speech model is missing. Downloading base.en (142 MB, once)…");
+        }
+        ModelState::Damaged => {
+            println!();
+            println!("  The speech model is damaged. Downloading base.en again (142 MB)…");
+        }
     }
-    println!();
-    println!("  The speech model is missing. Downloading base.en (142 MB, once)…");
     match leo_services::providers::download_speech_model() {
         Ok(path) => println!("  Saved {}", path.display()),
         Err(e) => println!(
