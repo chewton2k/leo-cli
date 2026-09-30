@@ -164,6 +164,43 @@ impl App {
         Ok(true)
     }
 
+    pub(super) fn resume_interrupted(&mut self) {
+        if self.recording.is_some() {
+            return;
+        }
+        let Some(root) = self.recordings.clone() else {
+            return;
+        };
+        let Some(dir) = leo_services::session::Session::unfinished(&root)
+            .into_iter()
+            .next()
+        else {
+            return;
+        };
+        let Ok(session) = leo_services::session::Session::open(&dir) else {
+            return;
+        };
+        let req = leo_core::action::ListenRequest {
+            screen: session.manifest.screen,
+            title: session.manifest.title.clone(),
+            append_to: session.manifest.append_to.clone(),
+            dir: session.manifest.dir.clone(),
+        };
+        let mut rec = Recording::new(task::start_resume(dir.clone()), req);
+        rec.jotted = session.manifest.jotted();
+        rec.session = Some(dir);
+        self.recording = Some(rec);
+        let when = session
+            .manifest
+            .started
+            .with_timezone(&chrono::Local)
+            .format("%b %-d %-I:%M %p");
+        self.say(
+            Kind::Dim,
+            format!("Finishing a recording from {when} that was interrupted; nothing was lost."),
+        );
+    }
+
     pub(super) fn pump_tasks<B: TuiBackend>(&mut self, terminal: &mut Terminal<B>) -> Result<bool> {
         if self.pump_ask(terminal)? {
             return Ok(true);
@@ -177,7 +214,7 @@ impl App {
             return Ok(false);
         }
 
-        let mut finished: Option<String> = None;
+        let mut finished: Option<(String, Option<std::path::PathBuf>)> = None;
         let mut structured: Option<(Option<String>, String)> = None;
         let mut failure: Option<String> = None;
         let mut fallbacks: Vec<String> = Vec::new();
@@ -203,7 +240,11 @@ impl App {
                 TaskEvent::ProviderFallback { from, to } => {
                     fallbacks.push(format!("{from} unavailable, using {to}"))
                 }
-                TaskEvent::Finished { transcript } => finished = Some(transcript),
+                TaskEvent::Finished {
+                    transcript,
+                    session,
+                } => finished = Some((transcript, session)),
+                TaskEvent::Warning(message) => fallbacks.push(message),
                 TaskEvent::Structured { title, body } => structured = Some((title, body)),
                 TaskEvent::Failed(e) => failure = Some(e),
                 // Other jobs' events; not this one's business.
@@ -220,17 +261,34 @@ impl App {
         }
 
         if let Some(e) = failure {
-            self.recording = None;
-            self.say(Kind::Bad, e);
+            let kept = self
+                .recording
+                .take()
+                .and_then(|r| r.session)
+                .is_some_and(|dir| dir.exists());
+            if kept {
+                self.say(
+                    Kind::Bad,
+                    format!(
+                        "{e} The recording is kept, and leo finishes it the next time it starts."
+                    ),
+                );
+            } else {
+                self.say(Kind::Bad, e);
+            }
             return Ok(true);
         }
 
         // The recording is done; structuring is another request, so it runs on
         // its own thread and the UI keeps animating.
-        if let Some(transcript) = finished {
-            let rec = self.recording.take().expect("checked above");
+        if let Some((transcript, session)) = finished {
+            let mut rec = self.recording.take().expect("checked above");
+            rec.session = session.clone();
             if transcript.trim().is_empty() {
                 if rec.jotted.is_empty() {
+                    if let Some(dir) = &session {
+                        let _ = std::fs::remove_dir_all(dir);
+                    }
                     self.say(Kind::Dim, "No speech detected.");
                     return Ok(true);
                 }
@@ -240,7 +298,10 @@ impl App {
                     body: leo_services::ai::chat::points_as_markdown(&rec.jotted),
                 };
                 match action::apply_transcript(&mut self.store, &rec.req, "ready", &ready) {
-                    Ok(outcome) => self.absorb(outcome, terminal)?,
+                    Ok(outcome) => {
+                        finish_recording(rec.session.as_deref());
+                        self.absorb(outcome, terminal)?
+                    }
                     Err(e) => self.say(Kind::Bad, e.to_string()),
                 }
                 return Ok(true);
@@ -251,9 +312,15 @@ impl App {
                 .as_deref()
                 .and_then(|target| self.store.find_by_index_or_prefix(target))
                 .map(|n| n.body.clone());
-            let length = rec.recorded().as_secs();
+            let fallback = fallback_title(session.as_deref());
             self.recording = Some(Recording {
-                job: task::start_structuring(transcript, existing, rec.jotted.clone(), length),
+                job: task::start_structuring(
+                    transcript,
+                    session,
+                    existing,
+                    rec.jotted.clone(),
+                    fallback,
+                ),
                 progress: view::progress::Progress::spinner("Structuring notes"),
                 since: Instant::now(),
                 ..rec
@@ -267,8 +334,17 @@ impl App {
             let rec = self.recording.take().expect("checked above");
             let ready = ReadyNote { title, body };
             match action::apply_transcript(&mut self.store, &rec.req, "ready", &ready) {
-                Ok(outcome) => self.absorb(outcome, terminal)?,
-                Err(e) => self.say(Kind::Bad, e.to_string()),
+                Ok(outcome) => {
+                    finish_recording(rec.session.as_deref());
+                    self.absorb(outcome, terminal)?;
+                    self.resume_interrupted();
+                }
+                Err(e) => self.say(
+                    Kind::Bad,
+                    format!(
+                        "{e} The recording is kept, and leo finishes it the next time it starts."
+                    ),
+                ),
             }
             return Ok(true);
         }
@@ -285,4 +361,23 @@ impl App {
         }
         Ok(true)
     }
+}
+
+fn finish_recording(session: Option<&std::path::Path>) {
+    if let Some(dir) = session {
+        if let Ok(s) = leo_services::session::Session::open(dir) {
+            let _ = s.finish();
+        }
+    }
+}
+
+pub(super) fn fallback_title(session: Option<&std::path::Path>) -> String {
+    let started = session
+        .and_then(|dir| leo_services::session::Session::open(dir).ok())
+        .map(|s| s.manifest.started)
+        .unwrap_or_else(chrono::Utc::now);
+    started
+        .with_timezone(&chrono::Local)
+        .format("Recording, %b %-d %-I:%M %p")
+        .to_string()
 }

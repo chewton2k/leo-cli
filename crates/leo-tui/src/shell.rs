@@ -13,6 +13,9 @@ use leo_core::action::{
     self, Ai, ConfirmedAction, EditRequest, EditTarget, Kind, Line, ListenRequest, Outcome,
 };
 use leo_core::store::Store;
+use leo_services::session::capture::{Capture, Source};
+use leo_services::session::transcriber::{Policy, Transcriber, Update};
+use leo_services::session::{self, Manifest, SegmentState, Session};
 
 /// Style one output line. The only place [`Kind`] becomes color.
 pub fn render(lines: &[Line]) {
@@ -82,18 +85,259 @@ pub fn confirm(
     action::apply_confirmed(store, &on_yes)
 }
 
-/// Record, transcribe, and structure into a note.
-pub fn record_and_apply(store: &mut Store, req: ListenRequest, ai: &dyn Ai) -> Result<Outcome> {
-    let audio_path = leo_services::listen::record_audio(req.screen)?;
+pub struct Prepared {
+    pub title: Option<String>,
+    pub body: String,
+}
 
-    println!("  {}", "Transcribing...".cyan());
-    let transcript = leo_services::ai::transcribe(&audio_path)?;
-    let _ = std::fs::remove_file(&audio_path);
-
-    if !transcript.trim().is_empty() {
-        println!("  {}", "Structuring notes...".cyan());
+impl Ai for Prepared {
+    fn expand_prompts(&self, body: &str, _title: &str) -> Result<(String, usize)> {
+        Ok((body.to_string(), 0))
     }
-    action::apply_transcript(store, &req, &transcript, ai)
+
+    fn structure(&self, _transcript: &str) -> Result<(String, String)> {
+        Ok((
+            self.title
+                .clone()
+                .unwrap_or_else(|| "Recording".to_string()),
+            self.body.clone(),
+        ))
+    }
+
+    fn structure_append(&self, _transcript: &str, _existing: &str) -> Result<String> {
+        Ok(self.body.clone())
+    }
+}
+
+fn say(text: &str) {
+    use std::io::Write;
+    print!("\r\x1b[2K  {text}");
+    let _ = std::io::stdout().flush();
+}
+
+fn transcribe_segment() -> session::transcriber::TranscribeFn {
+    std::sync::Arc::new(|path: &std::path::Path| {
+        leo_services::ai::transcribe_outcome(path)
+            .map(|o| o.value)
+            .map_err(|e| e.to_string())
+    })
+}
+
+fn wait_for_transcripts(
+    session: &Session,
+    transcriber: Transcriber,
+    updates: &std::sync::mpsc::Receiver<Update>,
+) {
+    transcriber.recording_ended();
+    while !transcriber.is_finished() {
+        for update in updates.try_iter() {
+            if let Update::Retrying {
+                error,
+                wait,
+                attempt,
+                ..
+            } = update
+            {
+                if attempt >= 2 {
+                    println!();
+                    println!(
+                        "  {}",
+                        format!("Transcription is retrying ({error}); next try in {}s. Nothing is lost.", wait.as_secs()).yellow()
+                    );
+                }
+            }
+        }
+        let segments = session.segments();
+        let done = segments
+            .iter()
+            .filter(|s| matches!(s.state, SegmentState::Done(_) | SegmentState::Failed(_)))
+            .count();
+        say(&format!(
+            "{} {done}/{}",
+            "Transcribing".cyan(),
+            segments.len()
+        ));
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+    transcriber.wait();
+    println!();
+}
+
+fn save_session(store: &mut Store, dir: &std::path::Path) -> Result<Outcome> {
+    let session = Session::open(dir)?;
+    let assembled = session.assemble();
+    let points = session.manifest.jotted();
+    let req = ListenRequest {
+        screen: session.manifest.screen,
+        title: session.manifest.title.clone(),
+        append_to: session.manifest.append_to.clone(),
+        dir: session.manifest.dir.clone(),
+    };
+    if assembled.is_silent() && points.is_empty() {
+        let _ = std::fs::remove_dir_all(dir);
+        return Ok(Outcome::line(Line::dim("No speech detected.")));
+    }
+    let existing = req
+        .append_to
+        .as_deref()
+        .and_then(|t| store.find_by_index_or_prefix(t))
+        .map(|n| n.body.clone());
+    let fallback = session
+        .manifest
+        .started
+        .with_timezone(&chrono::Local)
+        .format("Recording, %b %-d %-I:%M %p")
+        .to_string();
+    let structured = leo_services::ai::long::structure_recording(
+        &assembled.parts,
+        &points,
+        existing.as_deref(),
+        &fallback,
+        &|prompt, max| leo_services::ai::chat_outcome(prompt, max).map(|o| o.value),
+        &|done, total| say(&format!("{} {done}/{total}", "Writing the notes".cyan())),
+    );
+    println!();
+    for problem in &structured.problems {
+        println!("  {}", problem.yellow());
+    }
+    let notice = session::failure_notice(&assembled.failed, dir);
+    let body = if notice.is_empty() {
+        structured.body
+    } else {
+        format!("{notice}\n\n{}", structured.body)
+    };
+    let prepared = Prepared {
+        title: existing.is_none().then_some(structured.title),
+        body,
+    };
+    let outcome = action::apply_transcript(store, &req, "ready", &prepared)?;
+    session.finish()?;
+    Ok(outcome)
+}
+
+fn finish_interrupted(store: &mut Store, root: &std::path::Path) -> Result<()> {
+    for dir in Session::unfinished(root) {
+        let Ok(session) = Session::open(&dir) else {
+            continue;
+        };
+        println!(
+            "  {}",
+            format!(
+                "Finishing a recording from {} that was interrupted...",
+                session
+                    .manifest
+                    .started
+                    .with_timezone(&chrono::Local)
+                    .format("%b %-d %-I:%M %p")
+            )
+            .cyan()
+        );
+        let lock = session.lock()?;
+        session.recover_parts()?;
+        let (tx, rx) = std::sync::mpsc::channel();
+        let transcriber = Transcriber::start(
+            &dir,
+            transcribe_segment(),
+            Policy {
+                workers: leo_services::ai::parallel_transcriptions(),
+                ..Policy::default()
+            },
+            false,
+            tx,
+        );
+        wait_for_transcripts(&session, transcriber, &rx);
+        drop(lock);
+        let outcome = save_session(store, &dir)?;
+        render(&outcome.lines);
+    }
+    Ok(())
+}
+
+/// Record, transcribe, and structure into a note.
+pub fn record_and_apply(store: &mut Store, req: ListenRequest, _ai: &dyn Ai) -> Result<Outcome> {
+    let root = session::root()?;
+    finish_interrupted(store, &root)?;
+
+    let session = Session::create(
+        &root,
+        Manifest::new(
+            req.title.clone(),
+            req.append_to.clone(),
+            &req.dir,
+            req.screen,
+        ),
+    )?;
+    let lock = session.lock()?;
+    let capture = match Capture::start(
+        &session.dir,
+        0,
+        session.manifest.segment_secs,
+        Source::from_env(req.screen),
+    ) {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&session.dir);
+            return Err(e);
+        }
+    };
+    let (tx, rx) = std::sync::mpsc::channel();
+    let transcriber = Transcriber::start(
+        &session.dir,
+        transcribe_segment(),
+        Policy {
+            workers: leo_services::ai::parallel_transcriptions(),
+            ..Policy::default()
+        },
+        true,
+        tx,
+    );
+
+    let entered = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    {
+        let entered = std::sync::Arc::clone(&entered);
+        std::thread::spawn(move || {
+            let mut line = String::new();
+            let _ = std::io::stdin().read_line(&mut line);
+            entered.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+    }
+    let label = if req.screen {
+        "Recording screen"
+    } else {
+        "Recording"
+    };
+    while !entered.load(std::sync::atomic::Ordering::Relaxed) && !capture.ended() {
+        let secs = capture.recorded_secs() as u64;
+        let waiting = session::transcriber::waiting(&session.dir).len();
+        let behind = if waiting > 1 {
+            format!(" ({waiting} parts waiting to be transcribed)")
+        } else {
+            String::new()
+        };
+        say(&format!(
+            "{} {}{}  {}",
+            label.cyan().bold(),
+            leo_services::ai::chat::clock(secs).cyan().bold(),
+            behind.dimmed(),
+            "press Enter to stop".dimmed()
+        ));
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    println!();
+    if let Some(problem) = capture.problem() {
+        println!(
+            "  {}",
+            format!("{problem} What was recorded is being saved.").yellow()
+        );
+    }
+    capture.stop()?;
+    let mut session = session;
+    session.manifest.stopped = true;
+    session.save()?;
+    wait_for_transcripts(&session, transcriber, &rx);
+    drop(lock);
+    let dir = session.dir.clone();
+    save_session(store, &dir)
 }
 
 pub fn plural(n: usize) -> &'static str {

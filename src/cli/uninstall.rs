@@ -19,6 +19,7 @@ const KNOWN: &[&str] = &[
     ".manual-installed",
     "notes.json",
     "notes.json.bak",
+    "recordings",
 ];
 
 const TEMP_PREFIXES: &[&str] = &["leo-recording", "leo-live-", "leo-mic-probe-"];

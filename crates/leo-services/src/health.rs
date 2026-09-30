@@ -173,7 +173,6 @@ pub fn recording(config: &Config, store: &dyn SecretStore, uses_microphone: bool
         checks.push(microphone());
     }
     checks.push(chain_check(config, Chain::Transcribe, store));
-    checks.push(chain_check(config, Chain::Chat, store));
     checks
 }
 
@@ -617,12 +616,12 @@ mod tests {
     /// The recording pre-flight must cover everything a recording needs, so the
     /// user learns about all of it before speaking rather than one gap at a time.
     #[test]
-    fn the_recording_preflight_covers_audio_and_both_models() {
+    fn the_recording_preflight_needs_audio_and_speech_but_not_writing() {
         let config = config_with(vec![], vec![]);
         let checks = recording(&config, &store(), false);
         let subjects: Vec<&str> = checks.iter().map(|c| c.what.as_str()).collect();
         assert!(subjects.contains(&"sox"), "{subjects:?}");
         assert!(subjects.contains(&"a transcription model"), "{subjects:?}");
-        assert!(subjects.contains(&"a chat model"), "{subjects:?}");
+        assert!(!subjects.contains(&"a chat model"), "{subjects:?}");
     }
 }

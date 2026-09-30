@@ -186,7 +186,11 @@ fn render_live(frame: &mut Frame, area: Rect, preview: &Preview<'_>, focused: bo
             Style::default().add_modifier(Modifier::DIM),
         ))]
     } else {
-        let rows = wrap(transcript, text_area.width as usize);
+        let (shown, trimmed) = recent_words(transcript, LIVE_WORDS);
+        let mut rows = wrap(shown, text_area.width as usize);
+        if trimmed {
+            rows.insert(0, EARLIER.to_string());
+        }
         let top = scroll.visible_top(
             rows.len(),
             text_area.height as usize,
@@ -225,6 +229,28 @@ fn render_live(frame: &mut Frame, area: Rect, preview: &Preview<'_>, focused: bo
 }
 
 /// Greedy word wrap to `width` columns; a word longer than a row is split.
+const LIVE_WORDS: usize = 20_000;
+const EARLIER: &str = "… earlier parts are saved and will all be in the note";
+
+fn recent_words(text: &str, most: usize) -> (&str, bool) {
+    let mut words = 0;
+    let mut in_word = false;
+    for (i, c) in text.char_indices().rev() {
+        if c.is_whitespace() {
+            if in_word {
+                words += 1;
+                if words == most {
+                    return (&text[i + c.len_utf8()..], true);
+                }
+            }
+            in_word = false;
+        } else {
+            in_word = true;
+        }
+    }
+    (text, false)
+}
+
 fn wrap(text: &str, width: usize) -> Vec<String> {
     let width = width.max(1);
     let mut rows = Vec::new();
@@ -310,6 +336,17 @@ pub fn clamp_scroll(scroll: u16, line_count: usize, viewport_height: u16) -> u16
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_huge_live_transcript_shows_only_its_recent_words() {
+        let text: String = (0..50_000).map(|i| format!("w{i} ")).collect();
+        let (shown, trimmed) = super::recent_words(&text, super::LIVE_WORDS);
+        assert!(trimmed);
+        assert_eq!(shown.split_whitespace().count(), super::LIVE_WORDS);
+        assert!(shown.trim_end().ends_with("w49999"));
+        let (all, cut) = super::recent_words("세계 short text", 10);
+        assert_eq!((all, cut), ("세계 short text", false));
+    }
+
     use super::*;
     use ratatui::{backend::TestBackend, Terminal};
 

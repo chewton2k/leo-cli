@@ -9,4 +9,5 @@ pub mod doctor;
 pub mod health;
 pub mod listen;
 pub mod providers;
+pub mod session;
 pub mod update;

@@ -21,6 +21,13 @@ pub(super) fn real_setup_steps(notes_dir: &std::path::Path) -> Vec<leo_services:
     )
 }
 
+fn blocking(need: Need, what: &str) -> bool {
+    match need {
+        Need::Recording => matches!(what, "AI for speech" | "Recording"),
+        Need::Writing => what == "AI for writing",
+    }
+}
+
 fn wanted(need: Need, what: &str) -> bool {
     match need {
         Need::Recording => matches!(what, "AI for writing" | "AI for speech" | "Recording"),
@@ -32,7 +39,7 @@ impl App {
     pub(super) fn missing_for(&self, need: Need) -> Vec<leo_services::health::Check> {
         (self.setup_steps)(&self.store.notes_dir)
             .into_iter()
-            .filter(|step| wanted(need, &step.what) && !step.state.is_ready())
+            .filter(|step| blocking(need, &step.what) && !step.state.is_ready())
             .collect()
     }
 

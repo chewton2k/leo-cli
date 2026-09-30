@@ -12,8 +12,11 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use leo_services::ai::chat::Jotted;
 use leo_services::ai::live;
-use leo_services::listen::Recorder;
+use leo_services::session::capture::{Capture, Source};
+use leo_services::session::transcriber::{Policy, Transcriber, Update};
+use leo_services::session::{self, wav, Manifest, Part, Point, Session};
 
 /// How often the worker wakes to check the clock and the stop flag.
 const POLL: Duration = Duration::from_millis(250);
@@ -41,7 +44,9 @@ pub enum TaskEvent {
     /// The job finished and produced this transcript for the App to save.
     Finished {
         transcript: String,
+        session: Option<PathBuf>,
     },
+    Warning(String),
     /// A transcript has been structured into a note. `title` is `None` when the
     /// result is being appended to an existing note.
     Structured {
@@ -75,6 +80,7 @@ pub struct Job {
     /// Set while a recording is paused. Only the listen worker reads it.
     pause: Arc<AtomicBool>,
     done: bool,
+    points: Arc<std::sync::Mutex<Vec<Jotted>>>,
 }
 
 impl Job {
@@ -95,6 +101,12 @@ impl Job {
 
     pub fn stop_requested(&self) -> bool {
         self.stop.load(Ordering::Relaxed)
+    }
+
+    pub fn add_point(&self, point: Jotted) {
+        if let Ok(mut points) = self.points.lock() {
+            points.push(point);
+        }
     }
 
     /// True once a terminal event has been observed.
@@ -118,6 +130,7 @@ impl Job {
             stop: Arc::new(AtomicBool::new(false)),
             pause: Arc::new(AtomicBool::new(false)),
             done: false,
+            points: Default::default(),
         }
     }
 
@@ -206,6 +219,7 @@ pub fn start_push(notes_dir: std::path::PathBuf) -> Job {
         stop,
         pause: Arc::new(AtomicBool::new(false)),
         done: false,
+        points: Default::default(),
     }
 }
 
@@ -238,6 +252,7 @@ pub fn start_doctor(notes_dir: std::path::PathBuf, probe: leo_services::doctor::
         stop: Arc::new(AtomicBool::new(false)),
         pause: Arc::new(AtomicBool::new(false)),
         done: false,
+        points: Default::default(),
     }
 }
 
@@ -300,6 +315,7 @@ pub fn start_ask(note: String, title: String, body: String) -> Job {
         stop,
         pause: Arc::new(AtomicBool::new(false)),
         done: false,
+        points: Default::default(),
     }
 }
 
@@ -346,6 +362,7 @@ pub fn start_question(question: String, notes: Vec<(String, String, String)>) ->
         stop,
         pause: Arc::new(AtomicBool::new(false)),
         done: false,
+        points: Default::default(),
     }
 }
 
@@ -357,64 +374,62 @@ pub fn start_question(question: String, notes: Vec<(String, String, String)>) ->
 /// an append rather than a new note.
 pub fn start_structuring(
     transcript: String,
+    session: Option<PathBuf>,
     existing: Option<String>,
-    points: Vec<leo_services::ai::chat::Jotted>,
-    length_secs: u64,
+    points: Vec<Jotted>,
+    fallback_title: String,
 ) -> Job {
     let (tx, rx) = mpsc::channel();
     let stop = Arc::new(AtomicBool::new(false));
 
     spawn_guarded(tx.clone(), move || {
         let _ = tx.send(TaskEvent::Progress {
-            label: "Structuring notes".to_string(),
+            label: "Writing the notes".to_string(),
             steps: None,
         });
-
-        let result = match &existing {
-            Some(body) => leo_services::ai::chat_outcome(
-                leo_services::ai::chat::build_append_prompt_with(
-                    &transcript,
-                    body,
-                    &points,
-                    length_secs,
-                ),
-                leo_services::ai::STRUCTURE_MAX_TOKENS,
-            )
-            .map(|outcome| (None, outcome)),
-            None => leo_services::ai::chat_outcome(
-                leo_services::ai::chat::build_structure_prompt_with(
-                    &transcript,
-                    &points,
-                    length_secs,
-                ),
-                leo_services::ai::STRUCTURE_MAX_TOKENS,
-            )
-            .map(|outcome| {
-                let (title, body) = leo_services::ai::chat::split_title_body(&outcome.value);
-                (Some(title), chain_with_value(outcome, body))
-            }),
+        let opened = session.as_deref().map(Session::open);
+        let (parts, notice) = match opened {
+            Some(Ok(s)) => {
+                let assembled = s.assemble();
+                let notice = session::failure_notice(&assembled.failed, &s.dir);
+                (assembled.parts, notice)
+            }
+            _ => (
+                vec![Part {
+                    index: 0,
+                    start_secs: 0,
+                    end_secs: 0,
+                    text: transcript.clone(),
+                }],
+                String::new(),
+            ),
         };
-
-        match result {
-            Ok((title, outcome)) => {
-                for f in &outcome.fallbacks {
-                    let _ = tx.send(TaskEvent::ProviderFallback {
-                        from: f.from.clone(),
-                        to: f.to.clone(),
-                    });
-                }
-                // A new note's body was already cleaned when its title was split
-                // off; an addition is cleaned here.
-                let body = match title {
-                    Some(_) => outcome.value.trim().to_string(),
-                    None => leo_services::ai::chat::clean_reply(&outcome.value),
-                };
-                let _ = tx.send(TaskEvent::Structured { title, body });
-            }
-            Err(e) => {
-                let _ = tx.send(TaskEvent::Failed(e.to_string()));
-            }
+        let report = tx.clone();
+        let structured = leo_services::ai::long::structure_recording(
+            &parts,
+            &points,
+            existing.as_deref(),
+            &fallback_title,
+            &|prompt, max| leo_services::ai::chat_outcome(prompt, max).map(|o| o.value),
+            &move |done, total| {
+                let _ = report.send(TaskEvent::Progress {
+                    label: "Writing the notes".to_string(),
+                    steps: (total > 1).then_some((done, total)),
+                });
+            },
+        );
+        for problem in structured.problems {
+            let _ = tx.send(TaskEvent::Warning(problem));
         }
+        let body = if notice.is_empty() {
+            structured.body
+        } else {
+            format!("{notice}\n\n{}", structured.body)
+        };
+        let _ = tx.send(TaskEvent::Structured {
+            title: existing.is_none().then_some(structured.title),
+            body,
+        });
     });
 
     Job {
@@ -422,18 +437,7 @@ pub fn start_structuring(
         stop,
         pause: Arc::new(AtomicBool::new(false)),
         done: false,
-    }
-}
-
-/// Replace an outcome's value, keeping the provider and fallback trail.
-fn chain_with_value(
-    outcome: leo_services::ai::chain::ChainOutcome<String>,
-    value: String,
-) -> leo_services::ai::chain::ChainOutcome<String> {
-    leo_services::ai::chain::ChainOutcome {
-        value,
-        provider: outcome.provider,
-        fallbacks: outcome.fallbacks,
+        points: Default::default(),
     }
 }
 
@@ -446,275 +450,103 @@ const SILENT_RECORDING: &str = "No sound was recorded. macOS may not be letting 
      this terminal use the microphone: System Settings > Privacy & Security > \
      Microphone, then restart the terminal. /doctor re-checks it.";
 
-/// Read a WAV's duration in whole seconds via sox.
-fn wav_secs(path: &Path) -> Option<u64> {
-    let out = std::process::Command::new("sox")
-        .args(["--i", "-D", path.to_str()?])
-        .output()
-        .ok()?;
-    String::from_utf8_lossy(&out.stdout)
-        .trim()
-        .parse::<f64>()
-        .ok()
-        .map(|d| d as u64)
-        .filter(|&d| d > 0)
-}
+const LIVE_WINDOW_SECS: u64 = 30;
 
-/// Copy the growing recording and repair the copy's header, so a slice can be
-/// cut from it. The live file's DataSize is still zero — `rec` only writes it on
-/// exit — and `sox trim` on such a file yields nothing.
-fn snapshot(source: &Path) -> Option<PathBuf> {
-    let dest = std::env::temp_dir().join(format!("leo-live-snapshot-{}.wav", std::process::id()));
-    std::fs::copy(source, &dest).ok()?;
-    leo_services::listen::repair_wav_header(&dest);
-    Some(dest)
-}
-
-/// Cut one slice out of a snapshot for transcription.
-fn cut(source: &Path, slice: live::Slice) -> Option<PathBuf> {
-    let dest = std::env::temp_dir().join(format!("leo-live-slice-{}.wav", std::process::id()));
-    let ok = std::process::Command::new("sox")
-        .arg(source)
-        .arg(&dest)
-        .arg("trim")
-        .arg(slice.start_secs.to_string())
-        .arg(slice.duration_secs.to_string())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-
-    if ok && dest.exists() && std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0) > 100 {
-        Some(dest)
-    } else {
-        let _ = std::fs::remove_file(&dest);
-        None
-    }
-}
-
-/// State the two loops share across iterations.
 struct Live {
-    /// Current gap between slices. Grows on failure, resets on success.
-    interval: std::time::Duration,
-    /// Consecutive slices that contained no sound.
+    interval: Duration,
     silent_slices: usize,
-    /// Whether the user has already been told the microphone is not heard.
     warned_silent: bool,
-    transcript: String,
-    /// Where the rolling loop has transcribed up to, in seconds.
+    finals: std::collections::BTreeMap<u32, String>,
+    settled: u32,
+    base: u64,
     cursor: u64,
+    text: String,
+    shown: String,
 }
 
-/// Start recording with rolling transcription, sent to the App as it grows.
-pub fn start_listen(screen: bool) -> Job {
-    let (tx, rx) = mpsc::channel();
-    let stop = Arc::new(AtomicBool::new(false));
-    let worker_stop = Arc::clone(&stop);
-    let pause = Arc::new(AtomicBool::new(false));
-    let worker_pause = Arc::clone(&pause);
-
-    spawn_guarded(tx.clone(), move || {
-        let recorder = match Recorder::start(screen) {
-            Ok(r) => r,
-            Err(e) => {
-                let _ = tx.send(TaskEvent::Failed(e.to_string()));
-                return;
-            }
-        };
-        let _ = tx.send(TaskEvent::Started {
-            label: "Recording".to_string(),
-        });
-
-        // Resolve credentials while the first few seconds of audio accumulate.
-        // A keychain read can take a very long time, and paying it inside the
-        // rolling loop stalls transcription with nothing on screen to explain
-        // the silence — which is exactly how live transcription came to look
-        // like it did not work at all.
-        leo_services::ai::warm_credentials();
-
-        let mut state = Live {
-            transcript: String::new(),
-            cursor: 0,
+impl Live {
+    fn new() -> Live {
+        Live {
             interval: live::ROLL_INTERVAL,
             silent_slices: 0,
             warned_silent: false,
-        };
-        // Due immediately: the first words should appear as soon as there is
-        // enough audio to cut, not one interval later.
-        let mut last_roll = Instant::now() - live::ROLL_INTERVAL;
+            finals: Default::default(),
+            settled: 0,
+            base: 0,
+            cursor: 0,
+            text: String::new(),
+            shown: String::new(),
+        }
+    }
 
-        // Paused stretches, in seconds into the file. The recorder keeps
-        // running through a pause; these are cut out before the final pass,
-        // and the live loop skips them.
-        let mut pauses: Vec<leo_services::listen::Pause> = Vec::new();
-        let mut paused_since: Option<f64> = None;
+    fn display(&self) -> String {
+        let mut out = String::new();
+        for text in self.finals.values() {
+            out = live::stitch(&out, text);
+        }
+        live::stitch(&out, &self.text)
+    }
 
-        while !worker_stop.load(Ordering::Relaxed) {
-            thread::sleep(POLL);
-
-            let now = recorder.elapsed().as_secs_f64();
-            match (worker_pause.load(Ordering::Relaxed), paused_since) {
-                (true, None) => paused_since = Some(now),
-                (false, Some(start)) => {
-                    pauses.push((start, Some(now)));
-                    paused_since = None;
-                    // Carry on from here, past the overlap, so nothing said
-                    // while paused reaches the live transcript.
-                    state.cursor = now.ceil() as u64 + live::OVERLAP.as_secs();
-                    last_roll = Instant::now() - state.interval;
+    fn apply(&mut self, update: Update, tx: &mpsc::Sender<TaskEvent>, segment_samples: u64) {
+        match update {
+            Update::Done { index, text } => {
+                self.finals.insert(index, text);
+            }
+            Update::Failed { index, error } => {
+                self.finals.insert(index, String::new());
+                let _ = tx.send(TaskEvent::Warning(format!(
+                    "part {} of the recording could not be transcribed ({error}); its audio is kept",
+                    index + 1
+                )));
+            }
+            Update::Retrying {
+                attempt,
+                error,
+                wait,
+                ..
+            } => {
+                if attempt >= 2 {
+                    let _ = tx.send(TaskEvent::Warning(format!(
+                        "transcription is retrying ({error}); trying again in {}s, and nothing is lost",
+                        wait.as_secs()
+                    )));
                 }
-                _ => {}
-            }
-
-            let paused_for: f64 = pauses
-                .iter()
-                .map(|(start, end)| end.unwrap_or(now) - start)
-                .sum::<f64>()
-                + paused_since.map_or(0.0, |start| now - start);
-            let secs = (now - paused_for).max(0.0) as u64;
-            let state_word = if paused_since.is_some() {
-                "Paused"
-            } else {
-                "Recording"
-            };
-            let _ = tx.send(TaskEvent::Progress {
-                label: format!("{state_word} {:02}:{:02}", secs / 60, secs % 60),
-                steps: None,
-            });
-
-            if paused_since.is_some() || last_roll.elapsed() < state.interval {
-                continue;
-            }
-            last_roll = Instant::now();
-            let rolled = caught(|| roll_once(recorder.path(), &mut state, &tx));
-            if let Err(message) = rolled {
-                state.interval = live::backoff(state.interval);
-                leo_core::diag::warn(format!(
-                    "live transcription hit a problem ({message}); the recording continues"
-                ));
             }
         }
-
-        // Stopping is not cancelling: finish the recording and transcribe it
-        // whole. The rolling transcript is lower quality by construction —
-        // slices are stitched across boundaries — so the saved note uses a
-        // single pass over the finished file, matching non-live behavior. If
-        // that fails, fall back to the rolling text rather than losing the
-        // recording entirely.
-        let _ = tx.send(TaskEvent::Progress {
-            label: "Transcribing the recording".to_string(),
-            steps: None,
-        });
-
-        if let Some(start) = paused_since {
-            pauses.push((start, None));
+        while self.finals.contains_key(&self.settled) {
+            self.settled += 1;
         }
-        let finished = recorder
-            .stop()
-            .and_then(|path| leo_services::listen::cut_pauses(&path, &pauses));
+        let base = self.settled as u64 * segment_samples;
+        if base > self.base {
+            self.base = base;
+            self.text.clear();
+            self.cursor = self.cursor.max(base);
+        }
+    }
 
-        let final_transcript = match finished {
-            Ok(path) => {
-                // A recording with no sound in it must not be transcribed. The
-                // result would be invented text saved as a note, which is worse
-                // than an error: it looks like leo mis-heard rather than never
-                // heard anything.
-                let level = leo_services::listen::peak_amplitude(&path).unwrap_or(1.0);
-                if live::is_silent(level) {
-                    let _ = std::fs::remove_file(&path);
-                    let _ = tx.send(TaskEvent::Failed(SILENT_RECORDING.to_string()));
-                    return;
-                }
-
-                let report = tx.clone();
-                let result = leo_services::ai::transcribe_outcome_with_progress(
-                    &path,
-                    &move |done, total| {
-                        let _ = report.send(TaskEvent::Progress {
-                            label: "Transcribing the recording".to_string(),
-                            steps: Some((done, total)),
-                        });
-                    },
-                );
-                let _ = std::fs::remove_file(&path);
-                match result {
-                    Ok(outcome) => {
-                        for f in &outcome.fallbacks {
-                            let _ = tx.send(TaskEvent::ProviderFallback {
-                                from: f.from.clone(),
-                                to: f.to.clone(),
-                            });
-                        }
-                        outcome.value
-                    }
-                    Err(e) if !state.transcript.trim().is_empty() => {
-                        let _ = tx.send(TaskEvent::ProviderFallback {
-                            from: format!("final transcription failed ({e})"),
-                            to: "the live transcript".to_string(),
-                        });
-                        state.transcript.clone()
-                    }
-                    Err(e) => {
-                        let _ = tx.send(TaskEvent::Failed(e.to_string()));
-                        return;
-                    }
-                }
-            }
-            Err(e) => {
-                // No audio at all: only worth reporting if the live loop never
-                // heard anything either.
-                if state.transcript.trim().is_empty() {
-                    let _ = tx.send(TaskEvent::Failed(e.to_string()));
-                    return;
-                }
-                state.transcript.clone()
-            }
-        };
-
-        let _ = tx.send(TaskEvent::Finished {
-            transcript: final_transcript,
-        });
-    });
-
-    Job {
-        rx,
-        stop,
-        pause,
-        done: false,
+    fn show(&mut self, tx: &mpsc::Sender<TaskEvent>) {
+        let shown = self.display();
+        if shown != self.shown {
+            self.shown = shown.clone();
+            let _ = tx.send(TaskEvent::Transcript(shown));
+        }
     }
 }
 
-/// One rolling pass: cut the new tail, transcribe it, stitch it on.
-fn roll_once(source: &Path, state: &mut Live, tx: &mpsc::Sender<TaskEvent>) {
-    let Some(snap) = snapshot(source) else {
+fn roll(capture: &Capture, dir: &Path, state: &mut Live, tx: &mpsc::Sender<TaskEvent>) {
+    let rate = wav::RATE as u64;
+    let from = state
+        .cursor
+        .saturating_sub(live::OVERLAP.as_secs() * rate)
+        .max(state.base);
+    let (start, samples) = capture.tail(from, (LIVE_WINDOW_SECS * rate) as usize);
+    if (samples.len() as u64) < (live::OVERLAP.as_secs() + 1) * rate {
         return;
-    };
-    let recorded = wav_secs(&snap).unwrap_or(0);
-
-    let Some(slice) = live::next_slice(state.cursor, recorded) else {
-        let _ = std::fs::remove_file(&snap);
-        return;
-    };
-    let Some(slice_path) = cut(&snap, slice) else {
-        let _ = std::fs::remove_file(&snap);
-        return;
-    };
-    let _ = std::fs::remove_file(&snap);
-
-    // Never send silence. Whisper does not answer it with an empty string; it
-    // invents filler, and "Thank you." is its favourite — which is how someone
-    // saying "hello, my name is…" into a microphone macOS had muted got back
-    // "thank you". Skipping also costs nothing, so idle stretches are free.
-    let level = leo_services::listen::peak_amplitude(&slice_path).unwrap_or(1.0);
-    if live::is_silent(level) {
-        let _ = std::fs::remove_file(&slice_path);
-        state.cursor = recorded;
+    }
+    let end = start + samples.len() as u64;
+    if live::is_silent(wav::peak(&samples)) {
+        state.cursor = end;
         state.silent_slices += 1;
-        // Two silent slices in a row is a quiet room. Sustained silence while
-        // the user believes they are being recorded is a broken microphone, and
-        // saying so is the whole difference between "leo is broken" and "macOS
-        // needs to be told yes".
         if state.silent_slices >= 4 && !state.warned_silent {
             state.warned_silent = true;
             let _ = tx.send(TaskEvent::ProviderFallback {
@@ -725,10 +557,12 @@ fn roll_once(source: &Path, state: &mut Live, tx: &mpsc::Sender<TaskEvent>) {
         return;
     }
     state.silent_slices = 0;
-
-    let result = leo_services::ai::transcribe_outcome(&slice_path);
-    let _ = std::fs::remove_file(&slice_path);
-
+    let path = dir.join("live.wav");
+    if wav::write(&path, &samples).is_err() {
+        return;
+    }
+    let result = leo_services::ai::transcribe_outcome(&path);
+    let _ = std::fs::remove_file(&path);
     match result {
         Ok(outcome) => {
             for f in &outcome.fallbacks {
@@ -738,28 +572,262 @@ fn roll_once(source: &Path, state: &mut Live, tx: &mpsc::Sender<TaskEvent>) {
                 });
             }
             state.interval = live::ROLL_INTERVAL;
-            state.cursor = recorded;
+            state.cursor = end;
+            if !live::is_silence_artifact(&outcome.value) {
+                state.text = live::stitch(&state.text, &outcome.value);
+            }
+        }
+        Err(_) => state.interval = live::backoff(state.interval),
+    }
+}
 
-            // Audio loud enough to pass the level check can still be too quiet
-            // to transcribe, and comes back as the same invented filler.
-            if live::is_silence_artifact(&outcome.value) {
+fn clock_label(word: &str, secs: u64) -> String {
+    format!("{word} {}", leo_services::ai::chat::clock(secs))
+}
+
+fn transcribe_segment() -> leo_services::session::transcriber::TranscribeFn {
+    Arc::new(|path: &Path| {
+        leo_services::ai::transcribe_outcome(path)
+            .map(|o| o.value)
+            .map_err(|e| e.to_string())
+    })
+}
+
+fn points_of(jotted: &[Jotted]) -> Vec<Point> {
+    jotted
+        .iter()
+        .map(|p| Point {
+            at_secs: p.at_secs,
+            text: p.text.clone(),
+        })
+        .collect()
+}
+
+fn finish_session(
+    mut session: Session,
+    transcriber: Transcriber,
+    updates: &mpsc::Receiver<Update>,
+    state: &mut Live,
+    tx: &mpsc::Sender<TaskEvent>,
+) {
+    session.manifest.stopped = true;
+    let _ = session.save();
+    transcriber.recording_ended();
+    let segment_samples = session.manifest.segment_secs * wav::RATE as u64;
+    while !transcriber.is_finished() {
+        for update in updates.try_iter() {
+            state.apply(update, tx, segment_samples);
+        }
+        let segments = session.segments();
+        let total = segments.len();
+        let done = segments
+            .iter()
+            .filter(|s| {
+                matches!(
+                    s.state,
+                    session::SegmentState::Done(_) | session::SegmentState::Failed(_)
+                )
+            })
+            .count();
+        let _ = tx.send(TaskEvent::Progress {
+            label: "Transcribing the recording".to_string(),
+            steps: (total > 1).then_some((done, total)),
+        });
+        state.show(tx);
+        thread::sleep(POLL);
+    }
+    transcriber.wait();
+    for update in updates.try_iter() {
+        state.apply(update, tx, segment_samples);
+    }
+    let assembled = session.assemble();
+    if assembled.is_silent() && session.manifest.points.is_empty() {
+        let _ = std::fs::remove_dir_all(&session.dir);
+        let _ = tx.send(TaskEvent::Failed(SILENT_RECORDING.to_string()));
+        return;
+    }
+    let _ = tx.send(TaskEvent::Finished {
+        transcript: assembled.text(),
+        session: Some(session.dir.clone()),
+    });
+}
+
+pub fn start_listen(
+    title: Option<String>,
+    append_to: Option<String>,
+    dir: String,
+    screen: bool,
+) -> Job {
+    let (tx, rx) = mpsc::channel();
+    let stop = Arc::new(AtomicBool::new(false));
+    let worker_stop = Arc::clone(&stop);
+    let pause = Arc::new(AtomicBool::new(false));
+    let worker_pause = Arc::clone(&pause);
+    let points: Arc<std::sync::Mutex<Vec<Jotted>>> = Default::default();
+    let worker_points = Arc::clone(&points);
+
+    spawn_guarded(tx.clone(), move || {
+        let started = session::root().and_then(|root| {
+            let session = Session::create(&root, Manifest::new(title, append_to, &dir, screen))?;
+            let lock = session.lock()?;
+            match Capture::start(
+                &session.dir,
+                0,
+                session.manifest.segment_secs,
+                Source::from_env(screen),
+            ) {
+                Ok(capture) => Ok((session, lock, capture)),
+                Err(e) => {
+                    let _ = std::fs::remove_dir_all(&session.dir);
+                    Err(e)
+                }
+            }
+        });
+        let (mut session, _lock, capture) = match started {
+            Ok(parts) => parts,
+            Err(e) => {
+                let _ = tx.send(TaskEvent::Failed(e.to_string()));
                 return;
             }
+        };
+        let _ = tx.send(TaskEvent::Started {
+            label: "Recording".to_string(),
+        });
+        leo_services::ai::warm_credentials();
 
-            state.transcript = live::stitch(&state.transcript, &outcome.value);
-            let _ = tx.send(TaskEvent::Transcript(state.transcript.clone()));
+        let (updates_tx, updates) = mpsc::channel();
+        let transcriber = Transcriber::start(
+            &session.dir,
+            transcribe_segment(),
+            Policy {
+                workers: leo_services::ai::parallel_transcriptions(),
+                ..Policy::default()
+            },
+            true,
+            updates_tx,
+        );
+        let segment_samples = session.manifest.segment_secs * wav::RATE as u64;
+        let mut state = Live::new();
+        let mut last_roll = Instant::now() - live::ROLL_INTERVAL;
+        let mut saved_points = 0;
+
+        while !worker_stop.load(Ordering::Relaxed) && !capture.ended() {
+            thread::sleep(POLL);
+            capture.set_paused(worker_pause.load(Ordering::Relaxed));
+
+            if let Ok(points) = worker_points.lock() {
+                if points.len() != saved_points {
+                    saved_points = points.len();
+                    session.manifest.points = points_of(&points);
+                    let _ = session.save();
+                }
+            }
+            for update in updates.try_iter() {
+                state.apply(update, &tx, segment_samples);
+            }
+
+            let secs = capture.recorded_secs() as u64;
+            let backlog = leo_services::session::transcriber::waiting(&session.dir).len();
+            let word = if capture.paused() {
+                "Paused"
+            } else {
+                "Recording"
+            };
+            let mut label = clock_label(word, secs);
+            if backlog > 1 {
+                label.push_str(&format!(" · {backlog} parts waiting to be transcribed"));
+            }
+            let _ = tx.send(TaskEvent::Progress { label, steps: None });
+
+            if !capture.paused() && backlog <= 1 && last_roll.elapsed() >= state.interval {
+                last_roll = Instant::now();
+                let dir = session.dir.clone();
+                if let Err(message) = caught(|| roll(&capture, &dir, &mut state, &tx)) {
+                    state.interval = live::backoff(state.interval);
+                    leo_core::diag::warn(format!(
+                        "live transcription hit a problem ({message}); the recording continues"
+                    ));
+                }
+            }
+            state.show(&tx);
         }
-        // A failed slice is not fatal: the cursor stays put so the next pass
-        // covers the same audio again. Back off, though — at a three-second
-        // cadence, retrying a rate-limited provider at full speed is what keeps
-        // it rate-limited.
-        Err(e) => {
-            state.interval = live::backoff(state.interval);
-            let _ = tx.send(TaskEvent::Progress {
-                label: format!("Transcription retrying ({e})"),
-                steps: None,
-            });
+
+        if let Some(problem) = capture.problem() {
+            let _ = tx.send(TaskEvent::Warning(format!(
+                "{problem} What was recorded is being saved."
+            )));
         }
+        if let Ok(points) = worker_points.lock() {
+            session.manifest.points = points_of(&points);
+        }
+        let _ = tx.send(TaskEvent::Progress {
+            label: "Transcribing the recording".to_string(),
+            steps: None,
+        });
+        if let Err(e) = capture.stop() {
+            let _ = tx.send(TaskEvent::Warning(e.to_string()));
+        }
+        finish_session(session, transcriber, &updates, &mut state, &tx);
+    });
+
+    Job {
+        rx,
+        stop,
+        pause,
+        done: false,
+        points,
+    }
+}
+
+pub fn start_resume(dir: PathBuf) -> Job {
+    let (tx, rx) = mpsc::channel();
+    let stop = Arc::new(AtomicBool::new(true));
+
+    spawn_guarded(tx.clone(), move || {
+        let session = match Session::open(&dir) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = tx.send(TaskEvent::Failed(e.to_string()));
+                return;
+            }
+        };
+        let _lock = match session.lock() {
+            Ok(l) => l,
+            Err(e) => {
+                let _ = tx.send(TaskEvent::Failed(e.to_string()));
+                return;
+            }
+        };
+        let _ = tx.send(TaskEvent::Started {
+            label: "Finishing an interrupted recording".to_string(),
+        });
+        if let Err(e) = session.recover_parts() {
+            let _ = tx.send(TaskEvent::Warning(format!(
+                "some audio could not be recovered ({e})"
+            )));
+        }
+        leo_services::ai::warm_credentials();
+        let (updates_tx, updates) = mpsc::channel();
+        let transcriber = Transcriber::start(
+            &session.dir,
+            transcribe_segment(),
+            Policy {
+                workers: leo_services::ai::parallel_transcriptions(),
+                ..Policy::default()
+            },
+            false,
+            updates_tx,
+        );
+        let mut state = Live::new();
+        finish_session(session, transcriber, &updates, &mut state, &tx);
+    });
+
+    Job {
+        rx,
+        stop,
+        pause: Arc::new(AtomicBool::new(false)),
+        done: false,
+        points: Default::default(),
     }
 }
 
@@ -775,7 +843,7 @@ mod tests {
         if std::env::var("LEO_FAKE_AUDIO").is_err() {
             panic!("set LEO_FAKE_AUDIO to a wav of speech");
         }
-        let mut job = super::start_listen(false);
+        let mut job = super::start_listen(None, None, String::new(), false);
 
         let started = std::time::Instant::now();
         let mut first_text_at = None;
@@ -840,6 +908,7 @@ mod tests {
             stop: Arc::new(AtomicBool::new(false)),
             pause: Arc::new(AtomicBool::new(false)),
             done: false,
+            points: Default::default(),
         };
         drop(tx);
         assert!(job.drain().is_empty());
@@ -854,6 +923,7 @@ mod tests {
             stop: Arc::new(AtomicBool::new(false)),
             pause: Arc::new(AtomicBool::new(false)),
             done: false,
+            points: Default::default(),
         };
 
         tx.send(TaskEvent::Started {
@@ -866,6 +936,7 @@ mod tests {
 
         tx.send(TaskEvent::Finished {
             transcript: "hello".to_string(),
+            session: None,
         })
         .unwrap();
         let events = job.drain();
@@ -892,6 +963,7 @@ mod tests {
             stop: Arc::clone(&stop),
             pause: Arc::new(AtomicBool::new(false)),
             done: false,
+            points: Default::default(),
         };
         assert!(!job.stop_requested());
         job.request_stop();
@@ -907,6 +979,7 @@ mod tests {
             stop: Arc::new(AtomicBool::new(false)),
             pause: Arc::new(AtomicBool::new(false)),
             done: false,
+            points: Default::default(),
         };
         tx.send(TaskEvent::Failed("no microphone".to_string()))
             .unwrap();

@@ -1273,3 +1273,133 @@ fn serve_without_cloudflared_says_how_to_get_it_and_about_local() {
     assert!(said.contains("cloudflared"), "{}", describe(&out));
     assert!(said.contains("--local"), "{}", describe(&out));
 }
+
+// ── long recordings ─────────────────────────────────────────────────────────
+
+fn fake_transcription(leo: &Leo) {
+    let whisper = leo.bin.join("fake-whisper");
+    std::fs::write(
+        &whisper,
+        "#!/bin/sh\nwhile [ \"$1\" != \"-f\" ]; do shift; done\nprintf 'heard %s\\n' \"$(basename \"$2\")\"\n",
+    )
+    .unwrap();
+    make_executable(&whisper);
+    let model = leo.home.path().join("model.bin");
+    std::fs::write(&model, "model").unwrap();
+    std::fs::write(
+        leo.home.path().join("config.toml"),
+        format!(
+            "[chat]\nchain = []\n\n[transcribe]\nchain = [\"fake\"]\n\n[providers.fake]\nkind = \"whisper_cpp\"\nbin = \"{}\"\nmodel_path = \"{}\"\n",
+            whisper.display(),
+            model.display()
+        ),
+    )
+    .unwrap();
+}
+
+fn tone(path: &Path, secs: u64) {
+    let samples: Vec<i16> = (0..secs * 16_000)
+        .map(|i| if (i / 20) % 2 == 0 { 3000 } else { -3000 })
+        .collect();
+    leo_services::session::wav::write(path, &samples).unwrap();
+}
+
+fn record_until_the_audio_ends(leo: &Leo, audio: &Path) -> std::process::Output {
+    let mut child = leo
+        .cmd(&["record"])
+        .env("LEO_FAKE_AUDIO", audio)
+        .env("LEO_FAKE_SPEED", "300")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let keep_open = child.stdin.take();
+    let started = Instant::now();
+    while child.try_wait().unwrap().is_none() {
+        assert!(
+            started.elapsed() < Duration::from_secs(120),
+            "leo record never finished"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    drop(keep_open);
+    child.wait_with_output().unwrap()
+}
+
+#[test]
+fn a_long_recording_is_saved_in_order_even_with_no_ai_to_write_notes() {
+    let leo = Leo::new();
+    fake_transcription(&leo);
+    let audio = leo.home.path().join("lecture.wav");
+    tone(&audio, 22 * 60);
+
+    let out = record_until_the_audio_ends(&leo, &audio);
+    assert!(out.status.success(), "{}", describe(&out));
+    let files = leo.files();
+    let note = files
+        .iter()
+        .find(|f| f.contains("heard seg-00000.wav"))
+        .unwrap_or_else(|| panic!("no note with the transcript:\n{}", describe(&out)));
+    let mut last = 0;
+    for i in 0..5 {
+        let at = note
+            .find(&format!("heard seg-{i:05}.wav"))
+            .unwrap_or_else(|| panic!("segment {i} is missing:\n{note}"));
+        assert!(at >= last, "segment {i} is out of order");
+        last = at;
+    }
+    assert!(note.contains("title: Recording,"), "{note}");
+    let recordings = leo.home.path().join("recordings");
+    let left: Vec<_> = std::fs::read_dir(&recordings)
+        .map(|d| d.flatten().collect())
+        .unwrap_or_default();
+    assert!(
+        left.is_empty(),
+        "the recording was not cleaned up after saving"
+    );
+}
+
+#[test]
+fn an_interrupted_recording_is_finished_before_the_next_one_starts() {
+    let leo = Leo::new();
+    fake_transcription(&leo);
+    let left = leo.home.path().join("recordings/20260101-090000");
+    std::fs::create_dir_all(&left).unwrap();
+    std::fs::write(
+        left.join("session.json"),
+        "{\"started\":\"2026-01-01T09:00:00Z\",\"title\":\"Before the crash\",\"segment_secs\":300,\"points\":[{\"at_secs\":10,\"text\":\"remember this\"}]}",
+    )
+    .unwrap();
+    tone(&left.join("seg-00000.wav"), 300);
+    tone(&left.join("seg-00001.part.wav"), 40);
+
+    let audio = leo.home.path().join("short.wav");
+    tone(&audio, 20);
+    let out = record_until_the_audio_ends(&leo, &audio);
+    assert!(out.status.success(), "{}", describe(&out));
+    let files = leo.files();
+    let recovered = files
+        .iter()
+        .find(|f| f.contains("title: Before the crash"))
+        .unwrap_or_else(|| {
+            panic!(
+                "the interrupted recording was not saved:\n{}",
+                describe(&out)
+            )
+        });
+    assert!(recovered.contains("heard seg-00000.wav"), "{recovered}");
+    assert!(
+        recovered.contains("heard seg-00001.wav"),
+        "the part cut short by the crash was lost"
+    );
+    assert!(
+        recovered.contains("remember this"),
+        "a typed point was lost"
+    );
+    assert!(!left.exists());
+    assert!(
+        files.iter().any(|f| f.contains("title: Recording,")),
+        "the new recording was not saved"
+    );
+}

@@ -191,6 +191,59 @@ Reply with the addition only: no preamble, no remarks after it, and do not wrap 
     Prompt { system, user }
 }
 
+pub fn build_part_prompt(
+    transcript: &str,
+    points: &[Jotted],
+    length_secs: u64,
+    part: usize,
+    parts: usize,
+    span: &str,
+) -> Prompt {
+    let key_points = if points.is_empty() {
+        String::new()
+    } else {
+        format!("\n\n{}", points_rule("Start with"))
+    };
+    let system = format!(
+        "You turn one part of a long lecture or meeting transcript into study notes in Markdown.
+
+{READING_A_TRANSCRIPT}
+
+This is part {part} of {parts} ({span}). Other parts are handled separately, so:
+- No title and no summary of the whole recording.
+- ## sections for the topics in this part, in the order they came up, with bullet points (- ).
+{FORMATTING}{key_points}
+
+Reply with the notes for this part only: no preamble, no remarks after them, and do not wrap them in a code block."
+    );
+    let transcript = if points.is_empty() {
+        transcript.to_string()
+    } else {
+        with_time_markers(transcript, length_secs)
+    };
+    let user = format!(
+        "{}<transcript>\n{transcript}\n</transcript>\n\n\
+         Write the notes for this part ({span}): ## sections only, no title.",
+        points_block(points)
+    );
+    Prompt { system, user }
+}
+
+pub fn build_summary_prompt(part_notes: &str) -> Prompt {
+    let system = "You name and summarize a long recording from the notes already taken on it.
+
+Shape of the reply:
+1. The first line is the title, as plain text: no \"Title:\", no #, no quotes, no bold.
+2. A blank line, then a 2-4 sentence summary of the whole recording.
+
+Reply with the title and summary only: no preamble and no remarks after them."
+        .to_string();
+    let user = format!(
+        "<notes>\n{part_notes}\n</notes>\n\nWrite the title alone on the first line, then the summary."
+    );
+    Prompt { system, user }
+}
+
 /// The prompt that answers a question from a set of the user's notes, given as
 /// (title, directory, body).
 pub fn build_notes_question_prompt(question: &str, notes: &[(&str, &str, &str)]) -> Prompt {

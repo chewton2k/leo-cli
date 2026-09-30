@@ -108,6 +108,7 @@ pub struct App {
     probe: leo_services::doctor::Probe,
     gh_ready: fn() -> bool,
     setup_steps: fn(&std::path::Path) -> Vec<leo_services::health::Check>,
+    recordings: Option<std::path::PathBuf>,
     obsidian: fn(&std::path::Path) -> Result<leo_core::obsidian::Opened>,
     update: Option<std::sync::mpsc::Receiver<String>>,
     last_disk_check: Option<Instant>,
@@ -194,6 +195,7 @@ struct Recording {
     /// recording and a lone one does not.
     stop_armed: Option<Instant>,
     scroll: view::livescroll::LiveScroll,
+    session: Option<std::path::PathBuf>,
 }
 
 impl Recording {
@@ -211,6 +213,7 @@ impl Recording {
             jotted: Vec::new(),
             stop_armed: None,
             scroll: view::livescroll::LiveScroll::new(),
+            session: None,
         }
     }
 
@@ -242,10 +245,12 @@ impl Recording {
         let text = self.jot.trim().to_string();
         self.jot.clear();
         if !text.is_empty() {
-            self.jotted.push(leo_services::ai::chat::Jotted {
+            let point = leo_services::ai::chat::Jotted {
                 at_secs: self.recorded().as_secs(),
                 text,
-            });
+            };
+            self.job.add_point(point.clone());
+            self.jotted.push(point);
         }
     }
 
@@ -275,6 +280,7 @@ impl App {
             last_disk_check: None,
             gh_ready: leo_core::sync::gh_ready,
             setup_steps: welcome::real_setup_steps,
+            recordings: leo_services::session::root().ok(),
             obsidian: leo_core::obsidian::open,
             last_push: None,
             unpushed: None,
@@ -1466,7 +1472,15 @@ impl App {
                     self.preview_scroll = 0;
                     return Ok(());
                 }
-                self.recording = Some(Recording::new(task::start_listen(req.screen), req));
+                self.recording = Some(Recording::new(
+                    task::start_listen(
+                        req.title.clone(),
+                        req.append_to.clone(),
+                        req.dir.clone(),
+                        req.screen,
+                    ),
+                    req,
+                ));
                 self.unpin();
                 self.say(
                     Kind::Dim,
@@ -1904,6 +1918,7 @@ pub fn run() -> Result<()> {
     // user is already on — and answers "only this note has been visited".
     app.remember_visit();
     app.greet(installed_manual);
+    app.resume_interrupted();
     app.update = Some(task::start_update_check());
     let result = event_loop(&mut terminal, &mut app);
     app.flush_edit();

@@ -317,6 +317,25 @@ Speech-recognition mistakes in subject terms ("breath first search") are
 corrected. If you type points but nothing is heard, your points are still saved
 as a note.
 
+**Long recordings are safe.** A recording can run for hours, a whole day if
+you like, and nothing is lost along the way:
+
+- leo records in five-minute pieces and transcribes each one while you keep
+  talking, saving its text straight away. Stopping only has the last few
+  minutes left to do, however long the recording was.
+- If the transcription service is busy or rate-limited, leo waits and tries
+  again; the recording carries on meanwhile, and nothing is thrown away.
+- If leo quits, crashes or the computer shuts down mid-recording, the next time
+  you start leo it finishes that recording and saves it as a note.
+- Long transcripts are written up a part at a time, then given one title and
+  summary. If the AI for writing is not set up or fails, the note is saved
+  anyway, with the transcript in it.
+- Disk use stays small: each piece's audio is deleted once its text is saved.
+- Pieces that queue up (after a rate limit, or when finishing an interrupted
+  recording) are transcribed three at a time, and long notes are written three
+  parts at a time, then put back in order. A local whisper.cpp takes one piece
+  at a time, so it does not compete with itself for your computer.
+
 **Variations:**
 
 ```

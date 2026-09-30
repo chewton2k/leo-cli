@@ -2,6 +2,7 @@ pub mod chain;
 pub mod chat;
 pub mod error;
 pub mod live;
+pub mod long;
 pub mod provider;
 pub mod transcribe;
 
@@ -65,6 +66,20 @@ pub fn warm_credentials() {
             let _ =
                 crate::config::secret::resolve(name, provider.key_env.as_deref(), store.as_ref());
         }
+    }
+}
+
+pub fn parallel_transcriptions() -> usize {
+    let (cfg, store) = context();
+    let chain = provider::build_transcribe_chain(&cfg, store.as_ref());
+    let local = chain.iter().find(|p| p.available()).is_some_and(|p| {
+        cfg.provider(p.name()).and_then(|pc| pc.kind)
+            == Some(crate::config::provider::ProviderKind::WhisperCpp)
+    });
+    if local {
+        1
+    } else {
+        3
     }
 }
 

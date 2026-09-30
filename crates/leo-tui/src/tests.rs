@@ -24,6 +24,7 @@ fn temp_app() -> (App, tempfile::TempDir) {
     app.probe = leo_services::doctor::Probe::default();
     app.gh_ready = || false;
     app.setup_steps = steps_ready;
+    app.recordings = None;
     app.obsidian = |_| Err(anyhow::anyhow!("tests never launch Obsidian"));
     (app, dir)
 }
@@ -926,6 +927,7 @@ fn your_points_show_above_the_live_transcript() {
 fn typed_points_are_saved_even_without_speech() {
     let (mut app, _d) = recording_app(vec![TaskEvent::Finished {
         transcript: String::new(),
+        session: None,
     }]);
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
     type_str(&mut app, "read chapter 4", &mut terminal);
@@ -949,6 +951,7 @@ fn typed_points_are_saved_even_without_speech() {
 fn a_saved_recording_is_selected_and_shown() {
     let (mut app, _d) = recording_app(vec![TaskEvent::Finished {
         transcript: String::new(),
+        session: None,
     }]);
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
     type_str(&mut app, "read chapter 4", &mut terminal);
@@ -2241,6 +2244,20 @@ fn recording_with_nothing_set_up_offers_the_setup_it_needs() {
 }
 
 #[test]
+fn recording_is_not_held_up_by_a_missing_writing_ai() {
+    let (mut app, _d) = temp_app();
+    app.setup_steps = |_| {
+        let mut all = steps(true);
+        all[0].state = leo_services::health::State::Missing {
+            fix: "add a key".to_string(),
+        };
+        all
+    };
+    assert!(app.missing_for(welcome::Need::Recording).is_empty());
+    assert_eq!(app.missing_for(welcome::Need::Writing).len(), 1);
+}
+
+#[test]
 fn asking_without_an_ai_offers_to_set_one_up() {
     let (mut app, _d) = temp_app();
     app.setup_steps = steps_missing;
@@ -2558,7 +2575,10 @@ fn listen_refuses_with_the_fixes_when_nothing_is_set_up() {
         );
         checks.iter().filter(|c| !c.state.is_ready()).count()
     };
-    assert!(lines >= 2, "expected several gaps, got {lines}");
+    assert!(
+        lines >= 1,
+        "expected the missing speech AI, got {lines} gaps"
+    );
 
     // And the App path renders them into the preview rather than a status
     // line, since a one-line status cannot hold install commands.
@@ -2924,6 +2944,7 @@ fn with_no_notes_at_all_enter_does_nothing_harmful_and_n_still_works() {
     let store = Store::load_from(&dir.path().join("notes")).unwrap();
     let mut app = App::new(store);
     app.setup_steps = steps_ready;
+    app.recordings = None;
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 20)).unwrap();
     for key in [
         press_code(event::KeyCode::Enter),
