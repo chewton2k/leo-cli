@@ -206,7 +206,7 @@ preset = "mono"
         let cfg = Config::parse_with_built_ins(&text).unwrap();
         assert_eq!(
             cfg.provider("openai").unwrap().model.as_deref(),
-            Some("gpt-6.1-sol")
+            Some("gpt-6-luna")
         );
         assert_eq!(
             cfg.provider("xai").unwrap().model.as_deref(),

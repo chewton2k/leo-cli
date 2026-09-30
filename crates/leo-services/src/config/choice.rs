@@ -9,10 +9,20 @@ use crate::config::secret::SecretStore;
 use crate::config::Config;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Model {
+    pub id: &'static str,
+    pub price: &'static str,
+}
+
+const fn m(id: &'static str, price: &'static str) -> Model {
+    Model { id, price }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Choice {
     pub provider: &'static str,
     pub name: &'static str,
-    pub models: &'static [&'static str],
+    pub models: &'static [Model],
 }
 
 impl Choice {
@@ -26,6 +36,13 @@ impl Choice {
         } else {
             self.name.to_string()
         }
+    }
+
+    pub fn price(&self, model: &str) -> Option<&'static str> {
+        if self.local() {
+            return Some("free");
+        }
+        self.models.iter().find(|m| m.id == model).map(|m| m.price)
     }
 }
 
@@ -46,33 +63,61 @@ pub const WRITING: &[Choice] = &[
     Choice {
         provider: "openai",
         name: "OpenAI",
-        models: &["gpt-6.1-sol", "gpt-6-luna", "gpt-6-astra", "gpt-5.5"],
+        models: &[
+            m("gpt-5-nano", "$0.05 in, $0.40 out per 1M tokens"),
+            m("gpt-6-luna", "$0.10 in, $0.50 out per 1M tokens"),
+            m("gpt-5.4-nano", "$0.20 in, $1.25 out per 1M tokens"),
+            m("gpt-5-mini", "$0.25 in, $2 out per 1M tokens"),
+            m("gpt-5.4-mini", "$0.75 in, $4.50 out per 1M tokens"),
+            m("gpt-6.1-sol", "$2 in, $10 out per 1M tokens"),
+            m("gpt-5.4", "$2.50 in, $15 out per 1M tokens"),
+            m("gpt-5.5", "$5 in, $30 out per 1M tokens"),
+            m("gpt-6-astra", "$10 in, $50 out per 1M tokens"),
+        ],
     },
     Choice {
         provider: "anthropic",
         name: "Anthropic",
         models: &[
-            "claude-sonnet-5-5",
-            "claude-opus-5-5",
-            "claude-haiku-4-5",
-            "claude-sonnet-5",
-            "claude-opus-5",
+            m("claude-haiku-4-5", "$1 in, $5 out per 1M tokens"),
+            m("claude-sonnet-5-5", "$2 in, $10 out per 1M tokens"),
+            m("claude-sonnet-5", "$2 in, $10 out per 1M tokens"),
+            m("claude-opus-5-5", "$4 in, $20 out per 1M tokens"),
+            m("claude-opus-5", "$5 in, $25 out per 1M tokens"),
         ],
     },
     Choice {
         provider: "gemini",
         name: "Gemini",
         models: &[
-            "gemini-3.8-flash",
-            "gemini-3.5-flash",
-            "gemini-3.5-flash-lite",
-            "gemini-3.1-pro-preview",
+            m(
+                "gemini-3.1-flash-lite",
+                "free tier, then $0.25 in, $1.50 out per 1M tokens",
+            ),
+            m(
+                "gemini-3.5-flash-lite",
+                "free tier, then $0.30 in, $2.50 out per 1M tokens",
+            ),
+            m(
+                "gemini-3.8-flash",
+                "free tier, then $0.75 in, $3.75 out per 1M tokens",
+            ),
+            m(
+                "gemini-3.5-flash",
+                "free tier, then $1.50 in, $9 out per 1M tokens",
+            ),
+            m("gemini-3.1-pro-preview", "$2 in, $12 out per 1M tokens"),
         ],
     },
     Choice {
         provider: "xai",
         name: "xAI",
-        models: &["grok-4.7", "grok-4.6", "grok-4.5", "grok-4.3"],
+        models: &[
+            m("grok-4.3", "$1.25 in, $2.50 out per 1M tokens"),
+            m("grok-4.5", "$2 in, $6 out per 1M tokens"),
+            m("grok-4.6", "$2 in, $6 out per 1M tokens"),
+            m("grok-4.7", "$2 in, $6 out per 1M tokens"),
+        ],
     },
 ];
 
@@ -85,19 +130,39 @@ pub const SPEECH: &[Choice] = &[
     Choice {
         provider: "openai_whisper",
         name: "OpenAI",
-        models: &["gpt-transcribe", "gpt-4o-mini-transcribe", "whisper-1"],
+        models: &[
+            m("gpt-4o-mini-transcribe", "$0.18 per hour"),
+            m("gpt-transcribe", "$0.27 per hour"),
+            m("whisper-1", "$0.36 per hour"),
+        ],
     },
     Choice {
         provider: "gemini_speech",
         name: "Gemini",
-        models: &["gemini-3.8-flash", "gemini-3.5-flash-lite"],
+        models: &[
+            m("gemini-3.8-flash", "free tier"),
+            m(
+                "gemini-3.1-flash-lite",
+                "free tier, then about $0.06 per hour",
+            ),
+        ],
     },
     Choice {
         provider: "xai_speech",
         name: "xAI",
-        models: &["grok-voice-transcribe-2.0", "grok-voice-transcribe-1.0"],
+        models: &[
+            m("grok-voice-transcribe-2.0", "$0.10 per hour"),
+            m("grok-voice-transcribe-1.0", "$0.10 per hour"),
+        ],
     },
 ];
+
+pub fn priced(task: Task, provider: &str, model: &str) -> String {
+    match find(task, provider).and_then(|c| c.price(model)) {
+        Some(price) => format!("{model} ({price})"),
+        None => model.to_string(),
+    }
+}
 
 pub const OLLAMA_STARTER: &str = "qwen3:8b";
 pub const WHISPER_STARTER: &str = crate::ai::provider::whisper_cpp::STARTER;
@@ -265,7 +330,7 @@ pub fn model_options(task: Task, provider: &str, local: &Local) -> Vec<String> {
             .map(|p| p.display().to_string())
             .collect(),
         _ => find(task, provider)
-            .map(|c| c.models.iter().map(|m| m.to_string()).collect())
+            .map(|c| c.models.iter().map(|m| m.id.to_string()).collect())
             .unwrap_or_default(),
     }
 }
@@ -337,17 +402,106 @@ mod tests {
         for choice in WRITING {
             let pc = Config::built_in_provider(choice.provider).expect(choice.provider);
             assert_eq!(pc.kind, Some(ProviderKind::Openai), "{}", choice.provider);
-            if let Some(first) = choice.models.first() {
-                assert_eq!(pc.model.as_deref(), Some(*first), "{}", choice.provider);
+            if !choice.local() {
+                let default = pc.model.clone().unwrap();
+                assert!(
+                    choice.models.iter().any(|m| m.id == default),
+                    "{} defaults to {default}, which is not offered",
+                    choice.provider
+                );
+                assert!(
+                    choice
+                        .models
+                        .windows(2)
+                        .all(|w| cost(w[0].price) <= cost(w[1].price)),
+                    "{} is not listed cheapest first",
+                    choice.provider
+                );
             }
         }
         for choice in SPEECH {
             let pc = Config::built_in_provider(choice.provider).expect(choice.provider);
             assert_ne!(pc.kind, Some(ProviderKind::Openai), "{}", choice.provider);
-            if let Some(first) = choice.models.first() {
-                assert_eq!(pc.model.as_deref(), Some(*first), "{}", choice.provider);
+            if !choice.local() {
+                let default = pc.model.clone().unwrap();
+                assert!(
+                    choice.models.iter().any(|m| m.id == default),
+                    "{} defaults to {default}, which is not offered",
+                    choice.provider
+                );
+                assert!(
+                    choice
+                        .models
+                        .windows(2)
+                        .all(|w| cost(w[0].price) <= cost(w[1].price)),
+                    "{} is not listed cheapest first",
+                    choice.provider
+                );
             }
         }
+    }
+
+    fn cost(price: &str) -> f64 {
+        price
+            .split('$')
+            .skip(1)
+            .filter_map(|p| p.split(|c: char| !(c.is_ascii_digit() || c == '.')).next())
+            .filter_map(|n| n.parse::<f64>().ok())
+            .enumerate()
+            .map(|(i, n)| if i == 0 { n } else { n * 4.0 })
+            .sum()
+    }
+
+    #[test]
+    fn every_cloud_model_has_a_price_and_local_ones_are_free() {
+        for choice in WRITING.iter().chain(SPEECH) {
+            for model in choice.models {
+                assert!(
+                    model.price.contains('$') || model.price == "free tier",
+                    "{}: {}",
+                    model.id,
+                    model.price
+                );
+            }
+        }
+        assert_eq!(
+            priced(Task::Chat, "anthropic", "claude-opus-5-5"),
+            "claude-opus-5-5 ($4 in, $20 out per 1M tokens)"
+        );
+        assert_eq!(priced(Task::Chat, "ollama", "qwen3:8b"), "qwen3:8b (free)");
+        assert_eq!(priced(Task::Chat, "mine", "house"), "house");
+        assert_eq!(
+            priced(Task::Transcribe, "openai_whisper", "gpt-transcribe"),
+            "gpt-transcribe ($0.27 per hour)"
+        );
+    }
+
+    #[test]
+    fn cheap_and_free_cloud_models_are_offered() {
+        let ids = |p: &str| -> Vec<&str> {
+            find(Task::Chat, p)
+                .unwrap()
+                .models
+                .iter()
+                .map(|m| m.id)
+                .collect()
+        };
+        for cheap in ["gpt-5-nano", "gpt-6-luna", "gpt-5-mini", "gpt-5.4-mini"] {
+            assert!(ids("openai").contains(&cheap), "{cheap}");
+        }
+        assert!(ids("gemini").contains(&"gemini-3.1-flash-lite"));
+        assert!(find(Task::Chat, "gemini")
+            .unwrap()
+            .models
+            .iter()
+            .any(|m| m.price.starts_with("free tier")));
+        assert_eq!(
+            Config::built_in_provider("openai")
+                .unwrap()
+                .model
+                .as_deref(),
+            Some("gpt-6-luna")
+        );
     }
 
     #[test]
@@ -374,7 +528,7 @@ mod tests {
             "claude-sonnet-5",
             "claude-opus-5",
         ] {
-            assert!(anthropic.models.contains(&model), "{model}");
+            assert!(anthropic.models.iter().any(|m| m.id == model), "{model}");
         }
     }
 
@@ -543,7 +697,7 @@ mod tests {
             model_options(Task::Chat, "openai", &local)
                 .first()
                 .map(String::as_str),
-            Some("gpt-6.1-sol")
+            Some("gpt-5-nano")
         );
         assert!(model_options(Task::Chat, "openrouter", &local).is_empty());
     }

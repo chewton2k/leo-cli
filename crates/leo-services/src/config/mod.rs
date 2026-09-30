@@ -131,7 +131,7 @@ max_tokens = 4096
 [providers.openai]
 kind = "openai"
 base_url = "https://api.openai.com/v1"
-model = "gpt-6.1-sol"
+model = "gpt-6-luna"
 key_env = "OPENAI_API_KEY"
 max_tokens = 32000
 reasoning = true

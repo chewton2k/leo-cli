@@ -2566,10 +2566,25 @@ fn choosing_in_settings_writes_the_choice_and_moves_both_ways() {
     app.on_key(press('j'), &mut terminal).unwrap();
     app.on_key(press_code(event::KeyCode::Right), &mut terminal)
         .unwrap();
-    assert_eq!(value(&app, "writing model").unwrap(), "claude-opus-5-5");
+    assert_eq!(
+        value(&app, "writing model").unwrap(),
+        "claude-sonnet-5 ($2 in, $10 out per 1M tokens)"
+    );
     app.on_key(press_code(event::KeyCode::Left), &mut terminal)
         .unwrap();
-    assert_eq!(value(&app, "writing model").unwrap(), "claude-sonnet-5-5");
+    app.on_key(press_code(event::KeyCode::Left), &mut terminal)
+        .unwrap();
+    assert_eq!(
+        value(&app, "writing model").unwrap(),
+        "claude-haiku-4-5 ($1 in, $5 out per 1M tokens)"
+    );
+    assert!(app
+        .settings
+        .as_ref()
+        .unwrap()
+        .status
+        .as_deref()
+        .is_some_and(|s| s.contains("claude-haiku-4-5 ($1 in")));
     app.on_key(press('k'), &mut terminal).unwrap();
     app.on_key(press_code(event::KeyCode::Left), &mut terminal)
         .unwrap();
@@ -2578,7 +2593,7 @@ fn choosing_in_settings_writes_the_choice_and_moves_both_ways() {
     assert_eq!(cfg.chat.chain, vec!["openai"]);
     assert_eq!(
         cfg.provider("anthropic").unwrap().model.as_deref(),
-        Some("claude-sonnet-5-5")
+        Some("claude-haiku-4-5")
     );
 }
 

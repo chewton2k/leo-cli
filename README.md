@@ -291,14 +291,28 @@ something is missing, and the row under it says what.
 3. **Add the key.** `Enter` on the **key** row. One key serves writing and
    speech for the same provider.
 4. **Pick a model** (optional). `Enter` on **writing model** goes through the
-   models leo supports:
+   models leo supports, cheapest first, each with its price in parentheses,
+   for example `gpt-6-luna ($0.10 in, $0.50 out per 1M tokens)`. Turning an
+   hour of lecture into notes uses roughly 15,000 tokens in and 3,000 out, so on
+   the cheaper models it costs well under a cent.
 
-   | Provider | Writing models | Speech models |
-   |----------|----------------|---------------|
-   | OpenAI | `gpt-6.1-sol`, `gpt-6-luna`, `gpt-6-astra`, `gpt-5.5` | `gpt-transcribe`, `gpt-4o-mini-transcribe`, `whisper-1` |
-   | Anthropic | `claude-sonnet-5-5`, `claude-opus-5-5`, `claude-haiku-4-5`, `claude-sonnet-5`, `claude-opus-5` | — |
-   | Gemini | `gemini-3.8-flash`, `gemini-3.5-flash`, `gemini-3.5-flash-lite`, `gemini-3.1-pro-preview` | `gemini-3.8-flash`, `gemini-3.5-flash-lite` |
-   | xAI | `grok-4.7`, `grok-4.6`, `grok-4.5`, `grok-4.3` | `grok-voice-transcribe-2.0`, `grok-voice-transcribe-1.0` |
+   | Provider | Writing models, cheapest first (per 1M tokens in / out) |
+   |----------|------------------------------------------|
+   | OpenAI | `gpt-5-nano` $0.05 / $0.40, `gpt-6-luna` $0.10 / $0.50 (default), `gpt-5.4-nano` $0.20 / $1.25, `gpt-5-mini` $0.25 / $2, `gpt-5.4-mini` $0.75 / $4.50, `gpt-6.1-sol` $2 / $10, `gpt-5.4` $2.50 / $15, `gpt-5.5` $5 / $30, `gpt-6-astra` $10 / $50 |
+   | Anthropic | `claude-haiku-4-5` $1 / $5, `claude-sonnet-5-5` $2 / $10 (default), `claude-sonnet-5` $2 / $10, `claude-opus-5-5` $4 / $20, `claude-opus-5` $5 / $25 |
+   | Gemini | Free tier on every Flash model, then: `gemini-3.1-flash-lite` $0.25 / $1.50, `gemini-3.5-flash-lite` $0.30 / $2.50, `gemini-3.8-flash` $0.75 / $3.75 (default), `gemini-3.5-flash` $1.50 / $9; `gemini-3.1-pro-preview` $2 / $12 (no free tier) |
+   | xAI | `grok-4.3` $1.25 / $2.50, `grok-4.5`, `grok-4.6`, `grok-4.7` (default) $2 / $6 |
+
+   | Provider | Speech models |
+   |----------|---------------|
+   | OpenAI | `gpt-4o-mini-transcribe` $0.18/hour, `gpt-transcribe` $0.27/hour (default), `whisper-1` $0.36/hour |
+   | Gemini | `gemini-3.8-flash` (free tier, default), `gemini-3.1-flash-lite` (free tier, then about $0.06/hour) |
+   | xAI | `grok-voice-transcribe-2.0` (default), `grok-voice-transcribe-1.0`, both $0.10/hour |
+
+   **Free:** your own computer costs nothing. In the cloud, Gemini's free tier
+   covers writing and speech on its Flash models, with daily limits (and Google
+   may use free-tier content to improve its products). Prices are as of
+   September 2026 and change; check the provider's pricing page.
 
 5. **Check it.** `leo doctor` should say `ok` under **AI**, and that the
    provider answers.

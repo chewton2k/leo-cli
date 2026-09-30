@@ -99,7 +99,11 @@ fn ai_rows(
     }
     rows.push(Row::Setting {
         label: model_label,
-        value: sel.model.clone().unwrap_or_else(|| "(default)".to_string()),
+        value: sel
+            .model
+            .as_deref()
+            .map(|m| choice::priced(task, &sel.provider, m))
+            .unwrap_or_else(|| "(default)".to_string()),
         action: SettingAction::ChooseModel(task),
     });
     let pc = cfg.provider(&sel.provider)?;
@@ -155,7 +159,7 @@ fn local_rows(
             }
             let current = sel.model.clone().unwrap_or_default();
             let value = if local.ollama.contains(&current) {
-                current
+                format!("{current} (free)")
             } else {
                 format!("{current} is not downloaded — Enter picks one you have")
             };
@@ -188,7 +192,7 @@ fn local_rows(
                 .iter()
                 .any(|p| *p == leo_services::ai::provider::whisper_cpp::expand_tilde(&current));
             let value = if installed {
-                choice::whisper_label(&current)
+                format!("{} (free)", choice::whisper_label(&current))
             } else {
                 format!(
                     "{} is missing — Enter picks one you have",
@@ -423,9 +427,9 @@ pub fn step_model(task: Task, delta: isize, local: &Local) -> Result<Changed> {
     choice::write_model(&mut doc, &sel.provider, next);
     edit::save_document(&path, &doc)?;
     let shown = if task == Task::Transcribe && sel.choice.is_some_and(|c| c.local()) {
-        choice::whisper_label(next)
+        format!("{} (free)", choice::whisper_label(next))
     } else {
-        next.clone()
+        choice::priced(task, &sel.provider, next)
     };
     Ok(Changed::Yes(format!("Model set to {shown}.")))
 }
@@ -497,7 +501,7 @@ mod tests {
         assert_eq!(writing.1, "○ Anthropic");
         assert_eq!(writing.2, "ChooseProvider(Chat)");
         let model = row(&rows, "writing model").unwrap();
-        assert_eq!(model.1, "claude-sonnet-5-5");
+        assert_eq!(model.1, "claude-sonnet-5-5 ($2 in, $10 out per 1M tokens)");
         assert_eq!(model.2, "ChooseModel(Chat)");
         let key = row(&rows, "Anthropic key").unwrap();
         assert_eq!(key.2, "StoreKey { name: \"anthropic\" }");
@@ -505,7 +509,10 @@ mod tests {
             assert_eq!(key.1, "none — Enter to add one");
         }
         assert_eq!(row(&rows, "speech").unwrap().1, "● OpenAI");
-        assert_eq!(row(&rows, "speech model").unwrap().1, "gpt-transcribe");
+        assert_eq!(
+            row(&rows, "speech model").unwrap().1,
+            "gpt-transcribe ($0.27 per hour)"
+        );
         let openai = row(&rows, "OpenAI key").unwrap();
         if std::env::var("OPENAI_API_KEY").is_err() {
             assert_eq!(openai.1, "stored");
@@ -568,7 +575,7 @@ mod tests {
         };
         let rows = simple_page(config, &MemoryStore::default(), &pulled);
         let writing_model = row(&rows, "writing model").unwrap();
-        assert_eq!(writing_model.1, "qwen3:8b");
+        assert_eq!(writing_model.1, "qwen3:8b (free)");
         assert_eq!(writing_model.2, "ChooseModel(Chat)");
     }
 
