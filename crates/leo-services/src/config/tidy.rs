@@ -23,6 +23,7 @@ const KNOWN_KINDS: &[&str] = &[
     "groq",
     "whisper_cpp",
     "chat_audio",
+    "parakeet",
 ];
 
 fn stale(provider: &str, field: &str, value: &toml_edit::Value) -> bool {
@@ -80,16 +81,25 @@ pub fn tidy(doc: &mut DocumentMut) -> bool {
     }
 
     let Some(providers) = doc.get_mut("providers").and_then(Item::as_table_mut) else {
-        return changed;
+        return replace_old_engine(doc) || changed;
     };
     let names: Vec<String> = providers.iter().map(|(k, _)| k.to_string()).collect();
     for name in names {
-        let unusable_kind = providers
+        let kind = providers
             .get(&name)
             .and_then(|b| b.get("kind"))
             .and_then(|k| k.as_str())
-            .is_some_and(|k| !KNOWN_KINDS.contains(&k));
-        if RETIRED.contains(&name.as_str()) || unusable_kind {
+            .map(str::to_string);
+        let unusable_kind = kind.as_deref().is_some_and(|k| !KNOWN_KINDS.contains(&k));
+        let own_program = providers
+            .get(&name)
+            .and_then(|b| b.get("bin"))
+            .and_then(|b| b.as_str())
+            .is_some_and(|b| b != "whisper-cli");
+        let old_engine = (kind.as_deref() == Some("whisper_cpp")
+            || (kind.is_none() && name == "whisper_cpp"))
+            && !own_program;
+        if RETIRED.contains(&name.as_str()) || unusable_kind || old_engine {
             providers.remove(&name);
             changed = true;
             continue;
@@ -120,6 +130,38 @@ pub fn tidy(doc: &mut DocumentMut) -> bool {
     }
     if providers.is_empty() {
         doc.remove("providers");
+    }
+    changed |= replace_old_engine(doc);
+    changed
+}
+
+fn replace_old_engine(doc: &mut DocumentMut) -> bool {
+    let defined = doc
+        .get("providers")
+        .and_then(|p| p.get("whisper_cpp"))
+        .is_some();
+    if defined {
+        return false;
+    }
+    let mut changed = false;
+    for task in [Task::Chat, Task::Transcribe] {
+        let before = edit::read_chain(doc, task);
+        if !before.iter().any(|n| n == "whisper_cpp") {
+            continue;
+        }
+        let mut after: Vec<String> = Vec::new();
+        for name in before {
+            let name = if name == "whisper_cpp" {
+                "parakeet".to_string()
+            } else {
+                name
+            };
+            if !after.contains(&name) {
+                after.push(name);
+            }
+        }
+        edit::write_chain(doc, task, &after);
+        changed = true;
     }
     changed
 }
@@ -197,7 +239,7 @@ preset = "mono"
         let text = doc.to_string();
         assert!(!text.contains("[providers"), "{text}");
         assert!(text.contains("chain = [\"openrouter\"]"), "{text}");
-        assert!(text.contains("chain = [\"whisper_cpp\"]"), "{text}");
+        assert!(text.contains("chain = [\"parakeet\"]"), "{text}");
         assert!(text.contains("preset = \"mono\""));
         assert!(text.starts_with("# leo configuration."));
         assert!(!tidy(&mut doc), "a tidy file must stay as it is");
@@ -211,7 +253,7 @@ preset = "mono"
             cfg.provider("xai").unwrap().model.as_deref(),
             Some("grok-4.7")
         );
-        assert_eq!(cfg.provider("whisper_cpp").unwrap().bin, None);
+        assert!(cfg.provider("whisper_cpp").is_none());
         assert_eq!(
             cfg.provider("openrouter").unwrap().model.as_deref(),
             Some("openrouter/free")
@@ -303,7 +345,7 @@ model = "house-model"
         assert!(!on_disk.contains("[providers"), "{on_disk}");
         assert!(!on_disk.contains("mistral"), "{on_disk}");
         assert!(cfg.provider("hf").is_none());
-        assert_eq!(cfg.provider("whisper_cpp").unwrap().bin, None);
+        assert!(cfg.provider("whisper_cpp").is_none());
         let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
         Config::load_from(&path);
         assert_eq!(

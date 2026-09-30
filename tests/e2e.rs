@@ -670,21 +670,38 @@ fn update_downloads_the_speech_model_first_when_it_is_missing() {
     let leo = Leo::new();
     let exe = leo.installed();
     let (script, ran) = tripwire(&leo);
-    let source = leo.home.path().join("fake-model.bin");
-    std::fs::write(&source, b"a small stand-in for base.en").unwrap();
-    let sha = "0e2cb5e4b8ad0c9ee4d74c4e0d7d0b4d25b37b1c2f3b6b8d5d1b0f5b7b2f2a1c";
-    let out = leo
-        .cmd_at(&exe, &["update"])
-        .env_remove("LEO_INSTALL_SKIP_MODEL")
-        .env(
-            "LEO_INSTALL_MODEL_URL",
-            format!("file://{}", source.display()),
+    let source = leo.home.path().join("fake-model");
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::write(
+        source.join("encoder.int8.onnx"),
+        b"a small stand-in encoder",
+    )
+    .unwrap();
+    std::fs::write(source.join("tokens.txt"), b"a b c").unwrap();
+    let url = format!("file://{}", source.display());
+    let manifest = |encoder: &str| {
+        format!(
+            "encoder.int8.onnx={encoder} tokens.txt={}",
+            sha256_of(&source.join("tokens.txt"))
         )
-        .env("LEO_INSTALL_MODEL_SHA256", sha)
-        .env("LEO_UPDATE_SCRIPT", &script)
-        .env("LEO_LATEST_RELEASE", env!("CARGO_PKG_VERSION"))
-        .output()
-        .unwrap();
+    };
+    let update = |url: &str, manifest: &str| {
+        leo.cmd_at(&exe, &["update"])
+            .env_remove("LEO_INSTALL_SKIP_MODEL")
+            .env("LEO_INSTALL_MODEL_URL", url)
+            .env("LEO_INSTALL_MODEL_MANIFEST", manifest)
+            .env("LEO_UPDATE_SCRIPT", &script)
+            .env("LEO_LATEST_RELEASE", env!("CARGO_PKG_VERSION"))
+            .output()
+            .unwrap()
+    };
+    let dir = leo.home.path().join("models/parakeet-tdt-0.6b-v3-int8");
+    let encoder = dir.join("encoder.int8.onnx");
+    let old = leo.home.path().join("models/ggml-base.en.bin");
+    std::fs::create_dir_all(old.parent().unwrap()).unwrap();
+    std::fs::write(&old, b"the old whisper model").unwrap();
+
+    let out = update(&url, &manifest(&"0".repeat(64)));
     assert!(out.status.success(), "{}", describe(&out));
     let said = String::from_utf8_lossy(&out.stdout);
     assert!(said.contains("speech model"), "{said}");
@@ -692,59 +709,34 @@ fn update_downloads_the_speech_model_first_when_it_is_missing() {
         said.contains("damaged"),
         "a wrong checksum was accepted:\n{said}"
     );
-    let model = leo.home.path().join("models/ggml-base.en.bin");
-    assert!(!model.exists());
+    assert!(!encoder.exists());
+    assert!(
+        old.exists(),
+        "the old model went before the new one arrived"
+    );
     assert!(!ran.exists());
 
-    let real = sha256_of(&source);
-    let out = leo
-        .cmd_at(&exe, &["update"])
-        .env_remove("LEO_INSTALL_SKIP_MODEL")
-        .env(
-            "LEO_INSTALL_MODEL_URL",
-            format!("file://{}", source.display()),
-        )
-        .env("LEO_INSTALL_MODEL_SHA256", &real)
-        .env("LEO_UPDATE_SCRIPT", &script)
-        .env("LEO_LATEST_RELEASE", env!("CARGO_PKG_VERSION"))
-        .output()
-        .unwrap();
+    let real = manifest(&sha256_of(&source.join("encoder.int8.onnx")));
+    let out = update(&url, &real);
     assert!(out.status.success(), "{}", describe(&out));
     assert_eq!(
-        std::fs::read(&model).unwrap(),
-        b"a small stand-in for base.en"
+        std::fs::read(&encoder).unwrap(),
+        b"a small stand-in encoder"
     );
+    assert!(dir.join("tokens.txt").is_file());
+    assert!(!old.exists(), "the old whisper model was left behind");
 
-    let again = leo
-        .cmd_at(&exe, &["update"])
-        .env_remove("LEO_INSTALL_SKIP_MODEL")
-        .env("LEO_INSTALL_MODEL_URL", "file:///nonexistent")
-        .env("LEO_INSTALL_MODEL_SHA256", &real)
-        .env("LEO_UPDATE_SCRIPT", &script)
-        .env("LEO_LATEST_RELEASE", env!("CARGO_PKG_VERSION"))
-        .output()
-        .unwrap();
+    let again = update("file:///nonexistent", &real);
     let said = String::from_utf8_lossy(&again.stdout);
     assert!(!said.contains("speech model"), "downloaded twice:\n{said}");
 
-    std::fs::write(&model, b"a small stand-in").unwrap();
-    let repaired = leo
-        .cmd_at(&exe, &["update"])
-        .env_remove("LEO_INSTALL_SKIP_MODEL")
-        .env(
-            "LEO_INSTALL_MODEL_URL",
-            format!("file://{}", source.display()),
-        )
-        .env("LEO_INSTALL_MODEL_SHA256", &real)
-        .env("LEO_UPDATE_SCRIPT", &script)
-        .env("LEO_LATEST_RELEASE", env!("CARGO_PKG_VERSION"))
-        .output()
-        .unwrap();
+    std::fs::write(&encoder, b"a small stand-in").unwrap();
+    let repaired = update(&url, &real);
     let said = String::from_utf8_lossy(&repaired.stdout);
     assert!(said.contains("damaged"), "{said}");
     assert_eq!(
-        std::fs::read(&model).unwrap(),
-        b"a small stand-in for base.en"
+        std::fs::read(&encoder).unwrap(),
+        b"a small stand-in encoder"
     );
 }
 

@@ -35,26 +35,42 @@ fn install(home: &Path, shell: &str, tarball: &Path) -> String {
     install_with("sh", home, shell, tarball)
 }
 
-fn fake_model(home: &Path) -> (PathBuf, String) {
-    let source = home.with_file_name("fake-model.bin");
-    std::fs::write(&source, b"a small stand-in for base.en").unwrap();
-    let sum = ["shasum -a 256", "sha256sum"]
+fn sha256(path: &Path) -> String {
+    let out = ["shasum -a 256", "sha256sum"]
         .iter()
         .find_map(|tool| {
             Command::new("sh")
                 .arg("-c")
-                .arg(format!("{tool} '{}'", source.display()))
+                .arg(format!("{tool} '{}'", path.display()))
                 .output()
                 .ok()
                 .filter(|o| o.status.success())
         })
         .expect("no sha256 tool");
-    let sum = String::from_utf8_lossy(&sum.stdout)
+    String::from_utf8_lossy(&out.stdout)
         .split_whitespace()
         .next()
         .unwrap()
-        .to_string();
-    (source, sum)
+        .to_string()
+}
+
+const MODEL: &str = ".leo/models/parakeet-tdt-0.6b-v3-int8";
+
+fn fake_model(home: &Path) -> (String, String) {
+    let source = home.with_file_name("fake-model");
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::write(
+        source.join("encoder.int8.onnx"),
+        b"a small stand-in encoder",
+    )
+    .unwrap();
+    std::fs::write(source.join("tokens.txt"), b"a b c").unwrap();
+    let manifest = ["encoder.int8.onnx", "tokens.txt"]
+        .iter()
+        .map(|name| format!("{name}={}", sha256(&source.join(name))))
+        .collect::<Vec<_>>()
+        .join(" ");
+    (format!("file://{}", source.display()), manifest)
 }
 
 /// Run install.sh with a given interpreter, as `curl ... | <interpreter>` would.
@@ -66,11 +82,8 @@ fn install_with(interpreter: &str, home: &Path, shell: &str, tarball: &Path) -> 
         .env("SHELL", shell)
         .env("PATH", "/usr/bin:/bin")
         .env("LEO_INSTALL_ARCHIVE", tarball)
-        .env(
-            "LEO_INSTALL_MODEL_URL",
-            format!("file://{}", fake_model(home).0.display()),
-        )
-        .env("LEO_INSTALL_MODEL_SHA256", fake_model(home).1)
+        .env("LEO_INSTALL_MODEL_URL", fake_model(home).0)
+        .env("LEO_INSTALL_MODEL_MANIFEST", fake_model(home).1)
         .output()
         .unwrap();
     let text = format!(
@@ -95,25 +108,29 @@ fn installs_leo_and_puts_it_on_the_path_once() {
     let version = Command::new(&leo).arg("--version").output().unwrap();
     assert!(version.status.success(), "the installed leo does not run");
     assert!(said.contains("leo doctor"), "no next step:\n{said}");
-    let model = home.join(".leo/models/ggml-base.en.bin");
+    let model = home.join(MODEL).join("encoder.int8.onnx");
     assert_eq!(
         std::fs::read(&model).unwrap(),
-        b"a small stand-in for base.en",
+        b"a small stand-in encoder",
         "the speech model was not downloaded:\n{said}"
     );
+    assert!(home.join(MODEL).join("tokens.txt").is_file());
 
     // Running it again must not add the PATH line a second time.
     let again = install(&home, "/bin/zsh", &tarball);
     assert!(again.contains("Speech model ready"), "{again}");
 
-    std::fs::write(&model, b"a small stand-in for bas").unwrap();
+    std::fs::write(&model, b"a small stand-in enc").unwrap();
+    let old = home.join(".leo/models/ggml-base.en.bin");
+    std::fs::write(&old, b"the old whisper model").unwrap();
     let repaired = install(&home, "/bin/zsh", &tarball);
     assert!(repaired.contains("damaged"), "{repaired}");
     assert_eq!(
         std::fs::read(&model).unwrap(),
-        b"a small stand-in for base.en",
+        b"a small stand-in encoder",
         "a damaged model was kept:\n{repaired}"
     );
+    assert!(!old.exists(), "the old whisper model was left behind");
     let zshrc = std::fs::read_to_string(home.join(".zshrc")).unwrap();
     let lines = zshrc.lines().filter(|l| l.contains(".local/bin")).count();
     assert_eq!(lines, 1, "{zshrc}");
@@ -195,7 +212,8 @@ fn a_damaged_speech_model_is_thrown_away_and_the_install_still_succeeds() {
     let home = tmp.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
     let tarball = archive(tmp.path());
-    let (source, _) = fake_model(&home);
+    let (source, manifest) = fake_model(&home);
+    let broken = manifest.replace(&manifest[manifest.len() - 64..], &"0".repeat(64));
     let out = Command::new("sh")
         .arg(root().join("install.sh"))
         .env_clear()
@@ -203,11 +221,8 @@ fn a_damaged_speech_model_is_thrown_away_and_the_install_still_succeeds() {
         .env("SHELL", "/bin/zsh")
         .env("PATH", "/usr/bin:/bin")
         .env("LEO_INSTALL_ARCHIVE", &tarball)
-        .env(
-            "LEO_INSTALL_MODEL_URL",
-            format!("file://{}", source.display()),
-        )
-        .env("LEO_INSTALL_MODEL_SHA256", "0".repeat(64))
+        .env("LEO_INSTALL_MODEL_URL", &source)
+        .env("LEO_INSTALL_MODEL_MANIFEST", broken)
         .output()
         .unwrap();
     let said = String::from_utf8_lossy(&out.stdout);
@@ -217,9 +232,9 @@ fn a_damaged_speech_model_is_thrown_away_and_the_install_still_succeeds() {
         "{said}"
     );
     assert!(home.join(".local/bin/leo").is_file());
-    let models = home.join(".leo/models");
-    assert!(!models.join("ggml-base.en.bin").exists());
-    assert!(!models.join("ggml-base.en.bin.part").exists());
+    let models = home.join(MODEL);
+    assert!(!models.join("tokens.txt").exists());
+    assert!(!models.join("tokens.txt.part").exists());
 }
 
 #[test]
@@ -229,7 +244,7 @@ fn leo_home_keeps_the_speech_model_inside_it() {
     let leo_home = tmp.path().join("leo-home");
     std::fs::create_dir_all(&home).unwrap();
     let tarball = archive(tmp.path());
-    let (source, sum) = fake_model(&home);
+    let (source, manifest) = fake_model(&home);
     let out = Command::new("sh")
         .arg(root().join("install.sh"))
         .env_clear()
@@ -238,11 +253,8 @@ fn leo_home_keeps_the_speech_model_inside_it() {
         .env("SHELL", "/bin/zsh")
         .env("PATH", "/usr/bin:/bin")
         .env("LEO_INSTALL_ARCHIVE", &tarball)
-        .env(
-            "LEO_INSTALL_MODEL_URL",
-            format!("file://{}", source.display()),
-        )
-        .env("LEO_INSTALL_MODEL_SHA256", sum)
+        .env("LEO_INSTALL_MODEL_URL", &source)
+        .env("LEO_INSTALL_MODEL_MANIFEST", manifest)
         .output()
         .unwrap();
     assert!(
@@ -250,6 +262,8 @@ fn leo_home_keeps_the_speech_model_inside_it() {
         "{}",
         String::from_utf8_lossy(&out.stdout)
     );
-    assert!(leo_home.join("models/ggml-base.en.bin").is_file());
+    assert!(leo_home
+        .join("models/parakeet-tdt-0.6b-v3-int8/encoder.int8.onnx")
+        .is_file());
     assert!(!home.join(".leo").exists());
 }

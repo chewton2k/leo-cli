@@ -37,7 +37,8 @@ tokio = { version = "1", features = ["full"] }
 toml = "1"
 toml_edit = "0.25.13"
 unicode-width = "0.2"
-whisper-rs = "0.16"
+sherpa-onnx = "1.13.8"
+libc = "0.2"
 uuid = { version = "1", features = ["v4"] }
 zeroize = "1"
 
@@ -70,8 +71,8 @@ leo-services = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 serde_json.workspace = true
 
-[profile.dev.package.whisper-rs-sys]
-opt-level = 3
-
 [profile.release]
 strip = true
+
+[profile.dev.package.sha2]
+opt-level = 3

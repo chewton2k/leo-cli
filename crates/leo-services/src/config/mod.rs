@@ -29,7 +29,7 @@ pub struct Config {
 }
 
 pub const DEFAULT_CHAT_CHAIN: [&str; 1] = ["ollama"];
-pub const DEFAULT_TRANSCRIBE_CHAIN: [&str; 1] = ["whisper_cpp"];
+pub const DEFAULT_TRANSCRIBE_CHAIN: [&str; 1] = ["parakeet"];
 
 impl Default for Config {
     fn default() -> Self {
@@ -110,7 +110,7 @@ chain = [{transcribe}]
 # To add your own provider, or to override one of the above, name it here:
 #
 #   [providers.my-provider]
-#   kind = "openai"                        # or openai_transcribe, whisper_cpp
+#   kind = "openai"                        # or openai_transcribe
 #   base_url = "https://api.example.com/v1"
 #   model = "some-model-id"
 #   key_env = "EXAMPLE_API_KEY"            # omit entirely for a local server
@@ -166,8 +166,8 @@ model = "openrouter/free"
 key_env = "OPENROUTER_API_KEY"
 max_tokens = 8192
 
-[providers.whisper_cpp]
-kind = "whisper_cpp"
+[providers.parakeet]
+kind = "parakeet"
 
 [providers.openai_whisper]
 kind = "openai_transcribe"
@@ -376,7 +376,7 @@ model_path = "~/.leo/models/ggml-base.en.bin"
         assert!(cfg.chat.chain.is_empty());
         assert_eq!(cfg.providers.len(), 10, "{:?}", cfg.providers.keys());
         assert!(cfg.providers.contains_key("ollama"));
-        assert!(cfg.providers.contains_key("whisper_cpp"));
+        assert!(cfg.providers.contains_key("parakeet"));
     }
 
     /// The file the user gets must be short enough to read. The inventory of
@@ -471,7 +471,7 @@ model = "my-own-model"
                 "openai",
                 "openai_whisper",
                 "openrouter",
-                "whisper_cpp",
+                "parakeet",
                 "xai",
                 "xai_speech"
             ]
@@ -498,8 +498,8 @@ kind = "telepathy"
     fn defaults_run_on_this_computer() {
         let cfg = Config::default();
         assert_eq!(cfg.chat.chain, vec!["ollama"]);
-        assert_eq!(cfg.transcribe.chain, vec!["whisper_cpp"]);
-        assert_eq!(cfg.providers["whisper_cpp"].bin, None);
+        assert_eq!(cfg.transcribe.chain, vec!["parakeet"]);
+        assert_eq!(cfg.providers["parakeet"].bin, None);
     }
 
     #[test]
@@ -539,12 +539,13 @@ kind = "telepathy"
                     assert!(p.model.is_some(), "{name} has no model");
                     assert!(p.key_from.is_some(), "{name} should share its chat key");
                 }
-                ProviderKind::WhisperCpp => {
-                    assert!(p.bin.is_none(), "{name} should use the built-in engine");
+                ProviderKind::WhisperCpp => panic!("{name}: no built-in runs an external program"),
+                ProviderKind::Parakeet => {
                     assert!(
                         p.model_path.is_none(),
                         "{name} should use the models folder"
                     );
+                    assert!(p.key_env.is_none(), "{name} runs on this computer");
                 }
             }
         }

@@ -51,9 +51,9 @@ To install somewhere other than `~/.local/bin`, set `LEO_INSTALL_DIR`:
 curl -fsSL https://raw.githubusercontent.com/chewton2k/leo-cli/main/install.sh | LEO_INSTALL_DIR="$HOME/bin" bash
 ```
 
-The installer also downloads leo's speech model (`base.en`, 142 MB, into
-`~/.leo/models`) and checks it against its published checksum, so recording
-works with nothing else to set up.
+The installer also downloads leo's speech model (NVIDIA Parakeet, 670 MB, into
+`~/.leo/models`) and checks every file against its published checksum, so
+recording works with nothing else to set up.
 
 Then open a new terminal and run:
 
@@ -85,8 +85,8 @@ first.
 
 If there is no ready-made build for your computer, or you want to change leo,
 you need Rust 1.88 or newer ([rustup.rs](https://rustup.rs), or
-`brew install rust`), git, and CMake with a C++ compiler for the built-in speech
-engine (`brew install cmake`; on Linux, `sudo apt install cmake g++`):
+`brew install rust`) and git. The first build downloads the speech engine's
+ready-made library (sherpa-onnx) from GitHub:
 
 ```sh
 git clone https://github.com/chewton2k/leo-cli
@@ -249,7 +249,7 @@ looks like this:
      writing               ● Anthropic
      writing model         claude-sonnet-5-5
      Anthropic key         stored
-     speech                ● this Mac (whisper.cpp)
+     speech                ● this Mac (Parakeet)
 ```
 
 | Key | What it does |
@@ -266,22 +266,19 @@ something is missing, and the row under it says what.
 
 ### Option A: your own computer (free and offline)
 
-1. **Speech is built in.** leo has its own speech-to-text engine (whisper.cpp)
-   and its model (`base.en`, 142 MB), so there is nothing to install or pick.
-   The installer downloads the model into `~/.leo/models`, and `leo update`
-   checks it every time: if it is missing, or its checksum does not match
-   (a damaged or half-finished download), it is downloaded again. In Settings,
-   **speech** says `● this Mac (whisper.cpp)`.
+1. **Speech is built in.** leo has its own speech-to-text engine and model,
+   NVIDIA's Parakeet (670 MB), which is among the most accurate open models for
+   English and adds punctuation and capitals. There is nothing to install or
+   pick. The installer downloads it into `~/.leo/models`, and `leo update`
+   checks it every time: if a file is missing, or its checksum does not match
+   (a damaged or half-finished download), that file is downloaded again. In
+   Settings, **speech** says `● this Mac (Parakeet)`.
 
-   For better accuracy, put a bigger whisper model in that folder, such as
-   `ggml-large-v3-turbo.bin` (1.6 GB, from
-   [huggingface.co/ggerganov/whisper.cpp](https://huggingface.co/ggerganov/whisper.cpp/tree/main)),
-   and point leo at it: `/settings`, press `e`, and add
-
-   ```toml
-   [providers.whisper_cpp]
-   model_path = "~/.leo/models/ggml-large-v3-turbo.bin"
-   ```
+   It is built to leave your computer usable while it works: it uses at most
+   half your processor cores (never more than four), runs at background
+   priority so the apps you are using come first, and frees its memory a
+   minute after it was last needed. Two minutes of speech take about ten
+   seconds on a recent Mac.
 
 2. **Writing uses Ollama.**
 
@@ -404,8 +401,8 @@ you like, and nothing is lost along the way:
 - Disk use stays small: each piece's audio is deleted once its text is saved.
 - Pieces that queue up (after a rate limit, or when finishing an interrupted
   recording) are transcribed three at a time, and long notes are written three
-  parts at a time, then put back in order. A local whisper.cpp takes one piece
-  at a time, so it does not compete with itself for your computer.
+  parts at a time, then put back in order. Speech on your own computer takes
+  one piece at a time, so it does not compete with itself for your computer.
 
 **Variations:**
 
@@ -784,3 +781,9 @@ which is handy for trying changes without touching your real notes.
 ## License
 
 MIT
+
+The speech model is NVIDIA's
+[Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3),
+licensed [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/), in the
+ONNX conversion by the [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)
+project (Apache-2.0), whose library runs it.

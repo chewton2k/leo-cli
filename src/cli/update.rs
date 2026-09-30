@@ -10,14 +10,17 @@ fn ensure_speech_model() {
     }
     use leo_services::providers::ModelState;
     match leo_services::providers::speech_model_state() {
-        ModelState::Ready => return,
+        ModelState::Ready => {
+            leo_services::providers::remove_old_models();
+            return;
+        }
         ModelState::Missing => {
             println!();
-            println!("  The speech model is missing. Downloading base.en (142 MB, once)…");
+            println!("  The speech model is missing. Downloading Parakeet (670 MB, once)…");
         }
         ModelState::Damaged => {
             println!();
-            println!("  The speech model is damaged. Downloading base.en again (142 MB)…");
+            println!("  The speech model is damaged. Downloading the damaged parts again…");
         }
     }
     match leo_services::providers::download_speech_model() {

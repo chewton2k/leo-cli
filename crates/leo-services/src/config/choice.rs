@@ -1,8 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use toml_edit::{DocumentMut, Item, Table};
 
-use crate::ai::provider::whisper_cpp::model_file;
 use crate::config::edit::{self, Task};
 use crate::config::provider::ProviderKind;
 use crate::config::secret::SecretStore;
@@ -150,8 +149,8 @@ pub const WRITING: &[Choice] = &[
 
 pub const SPEECH: &[Choice] = &[
     Choice {
-        provider: "whisper_cpp",
-        name: "whisper.cpp",
+        provider: "parakeet",
+        name: "Parakeet",
         models: &[],
     },
     Choice {
@@ -192,11 +191,6 @@ pub fn priced(task: Task, provider: &str, model: &str) -> String {
 }
 
 pub const OLLAMA_STARTER: &str = "qwen3:8b";
-pub const WHISPER_STARTER: &str = crate::ai::provider::whisper_cpp::STARTER;
-pub const WHISPER_STARTER_URL: &str =
-    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin";
-pub const WHISPER_STARTER_SHA256: &str =
-    "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002";
 
 pub fn choices(task: Task) -> &'static [Choice] {
     match task {
@@ -216,7 +210,7 @@ pub fn find(task: Task, provider: &str) -> Option<Choice> {
 pub struct Local {
     pub ollama_running: bool,
     pub ollama: Vec<String>,
-    pub whisper: Vec<PathBuf>,
+    pub speech_ready: bool,
 }
 
 pub fn local_models(cfg: &Config) -> Local {
@@ -229,7 +223,10 @@ pub fn local_models(cfg: &Config) -> Local {
     Local {
         ollama_running,
         ollama,
-        whisper: whisper_models(cfg),
+        speech_ready: cfg
+            .provider("parakeet")
+            .map(crate::ai::provider::parakeet::model_dir)
+            .is_some_and(|dir| crate::ai::provider::parakeet::present(&dir)),
     }
 }
 
@@ -275,47 +272,7 @@ pub fn ollama_names(json: &serde_json::Value) -> Vec<String> {
 }
 
 pub fn models_dir() -> PathBuf {
-    crate::ai::provider::whisper_cpp::models_dir()
-}
-
-pub fn whisper_models(cfg: &Config) -> Vec<PathBuf> {
-    let mut dirs = vec![models_dir()];
-    if let Some(parent) = cfg
-        .provider("whisper_cpp")
-        .map(model_file)
-        .and_then(|p| p.parent().map(Path::to_path_buf))
-    {
-        if !dirs.contains(&parent) {
-            dirs.push(parent);
-        }
-    }
-    let mut found: Vec<PathBuf> = dirs
-        .iter()
-        .filter_map(|d| std::fs::read_dir(d).ok())
-        .flat_map(|entries| entries.flatten().map(|e| e.path()))
-        .filter(|p| is_whisper_model(p))
-        .collect();
-    found.sort();
-    found.dedup();
-    found
-}
-
-fn is_whisper_model(path: &Path) -> bool {
-    path.is_file()
-        && path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|n| n.starts_with("ggml-") && n.ends_with(".bin") && !n.contains("silero"))
-}
-
-pub fn whisper_label(path: &str) -> String {
-    let name = Path::new(path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or(path);
-    name.trim_start_matches("ggml-")
-        .trim_end_matches(".bin")
-        .to_string()
+    crate::ai::provider::audio::models_dir()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -336,8 +293,8 @@ pub fn selection(cfg: &Config, store: &dyn SecretStore, task: Task) -> Option<Se
         .find(|n| crate::health::provider_usable(cfg, n, store));
     let provider = usable.or(chain.first())?.clone();
     let model = cfg.provider(&provider).and_then(|p| {
-        if p.kind == Some(ProviderKind::WhisperCpp) {
-            Some(model_file(p).display().to_string())
+        if p.kind == Some(ProviderKind::Parakeet) {
+            Some(crate::ai::provider::parakeet::MODEL_NAME.to_string())
         } else {
             p.model.clone()
         }
@@ -353,11 +310,6 @@ pub fn selection(cfg: &Config, store: &dyn SecretStore, task: Task) -> Option<Se
 pub fn model_options(task: Task, provider: &str, local: &Local) -> Vec<String> {
     match (task, provider) {
         (Task::Chat, "ollama") => local.ollama.clone(),
-        (Task::Transcribe, "whisper_cpp") => local
-            .whisper
-            .iter()
-            .map(|p| p.display().to_string())
-            .collect(),
         _ => find(task, provider)
             .map(|c| c.models.iter().map(|m| m.id.to_string()).collect())
             .unwrap_or_default(),
@@ -392,7 +344,7 @@ pub fn write_choice(doc: &mut DocumentMut, task: Task, provider: &str) {
 
 pub fn write_model(doc: &mut DocumentMut, provider: &str, model: &str) {
     let field = match Config::built_in_provider(provider) {
-        Some(pc) if pc.kind == Some(ProviderKind::WhisperCpp) => "model_path",
+        Some(pc) if pc.kind == Some(ProviderKind::Parakeet) => "model_path",
         _ => "model",
     };
     let providers = doc
@@ -588,7 +540,7 @@ mod tests {
         );
         assert_eq!(
             step_choice(Task::Transcribe, Some("xai_speech"), 1).provider,
-            "whisper_cpp"
+            "parakeet"
         );
     }
 
@@ -648,24 +600,6 @@ mod tests {
     }
 
     #[test]
-    fn a_whisper_model_is_a_path() {
-        let mut doc = String::new().parse::<DocumentMut>().unwrap();
-        write_model(&mut doc, "whisper_cpp", "/models/ggml-large-v3-turbo.bin");
-        let cfg = load(&doc.to_string());
-        let w = cfg.provider("whisper_cpp").unwrap();
-        assert_eq!(
-            w.model_path.as_deref(),
-            Some("/models/ggml-large-v3-turbo.bin")
-        );
-        assert_eq!(w.bin, None);
-        assert_eq!(w.model, None);
-        assert_eq!(
-            whisper_label("/models/ggml-large-v3-turbo.bin"),
-            "large-v3-turbo"
-        );
-    }
-
-    #[test]
     fn ollama_names_come_from_the_tags_listing_without_embedding_models() {
         let json = serde_json::json!({"models": [
             {"name": "qwen3:8b", "model": "qwen3:8b"},
@@ -688,43 +622,17 @@ mod tests {
     }
 
     #[test]
-    fn whisper_models_are_found_beside_the_configured_one() {
-        let dir = tempfile::tempdir().unwrap();
-        for name in [
-            "ggml-base.en.bin",
-            "ggml-large-v3-turbo.bin",
-            "ggml-silero-v5.bin",
-            "notes.txt",
-        ] {
-            std::fs::write(dir.path().join(name), b"x").unwrap();
-        }
-        let configured = dir.path().join("ggml-base.en.bin");
-        let cfg = load(&format!(
-            "[providers.whisper_cpp]\nkind = \"whisper_cpp\"\nmodel_path = \"{}\"\n",
-            configured.display()
-        ));
-        let found = whisper_models(&cfg);
-        assert!(found.contains(&configured));
-        assert!(found.contains(&dir.path().join("ggml-large-v3-turbo.bin")));
-        assert!(!found.iter().any(|p| p.ends_with("ggml-silero-v5.bin")));
-        assert!(!found.iter().any(|p| p.ends_with("notes.txt")));
-    }
-
-    #[test]
     fn model_options_are_local_lists_for_local_choices_and_curated_for_cloud() {
         let local = Local {
             ollama_running: true,
             ollama: vec!["qwen3:8b".to_string()],
-            whisper: vec![PathBuf::from("/m/ggml-base.en.bin")],
+            speech_ready: true,
         };
         assert_eq!(
             model_options(Task::Chat, "ollama", &local),
             vec!["qwen3:8b"]
         );
-        assert_eq!(
-            model_options(Task::Transcribe, "whisper_cpp", &local),
-            vec!["/m/ggml-base.en.bin"]
-        );
+        assert!(model_options(Task::Transcribe, "parakeet", &local).is_empty());
         assert_eq!(
             model_options(Task::Chat, "openai", &local)
                 .first()

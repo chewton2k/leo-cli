@@ -75,9 +75,12 @@ pub fn warm_credentials() {
 pub fn parallel_transcriptions() -> usize {
     let (cfg, store) = context();
     let chain = provider::build_transcribe_chain(&cfg, store.as_ref());
+    use crate::config::provider::ProviderKind;
     let local = chain.iter().find(|p| p.available()).is_some_and(|p| {
-        cfg.provider(p.name()).and_then(|pc| pc.kind)
-            == Some(crate::config::provider::ProviderKind::WhisperCpp)
+        matches!(
+            cfg.provider(p.name()).and_then(|pc| pc.kind),
+            Some(ProviderKind::WhisperCpp | ProviderKind::Parakeet)
+        )
     });
     if local {
         1

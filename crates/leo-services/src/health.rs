@@ -291,12 +291,19 @@ pub fn provider_usable(config: &Config, name: &str, store: &dyn SecretStore) -> 
     };
     let _: &ProviderConfig = provider;
 
+    if provider.kind == Some(crate::config::provider::ProviderKind::Parakeet) {
+        return crate::ai::provider::parakeet::present(&crate::ai::provider::parakeet::model_dir(
+            provider,
+        ));
+    }
     if provider.kind == Some(crate::config::provider::ProviderKind::WhisperCpp) {
-        return crate::ai::provider::whisper_cpp::model_file(provider).is_file()
-            && provider
-                .bin
-                .as_deref()
-                .is_none_or(|bin| on_path(bin) || std::path::Path::new(bin).is_file());
+        let model = crate::ai::provider::audio::expand_tilde(
+            provider.model_path.as_deref().unwrap_or_default(),
+        );
+        return model.is_file()
+            && crate::ai::provider::whisper_cpp::WhisperCppTranscribe::binary_on_path(
+                provider.bin.as_deref().unwrap_or("whisper-cli"),
+            );
     }
 
     // A key-based provider: env var first, then the keychain, and `has` rather
@@ -464,17 +471,33 @@ mod tests {
         assert!(!provider_usable(&config, "absent", &store()));
     }
 
+    fn speech_model() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        for f in [
+            "encoder.int8.onnx",
+            "decoder.int8.onnx",
+            "joiner.int8.onnx",
+            "tokens.txt",
+        ] {
+            std::fs::write(dir.path().join(f), b"x").unwrap();
+        }
+        dir
+    }
+
+    fn built_in(dir: &std::path::Path) -> ProviderConfig {
+        ProviderConfig {
+            kind: Some(crate::config::provider::ProviderKind::Parakeet),
+            model_path: Some(dir.to_string_lossy().to_string()),
+            ..Default::default()
+        }
+    }
+
     #[test]
-    fn the_built_in_speech_engine_needs_only_its_model_file() {
-        let model = tempfile::NamedTempFile::new().unwrap();
+    fn the_built_in_speech_engine_needs_only_its_model_files() {
+        let model = speech_model();
+        let empty = tempfile::tempdir().unwrap();
         let config = config_with(
-            vec![
-                ("a", whisper(model.path(), None)),
-                (
-                    "b",
-                    whisper(std::path::Path::new("/nonexistent/model.bin"), None),
-                ),
-            ],
+            vec![("a", built_in(model.path())), ("b", built_in(empty.path()))],
             vec!["a"],
         );
         assert!(provider_usable(&config, "a", &store()));
@@ -500,11 +523,8 @@ mod tests {
     /// "chat works" is less useful than "chat works, using ollama".
     #[test]
     fn a_usable_chain_names_the_provider_it_would_use() {
-        let model = tempfile::NamedTempFile::new().unwrap();
-        let config = config_with(
-            vec![("localbin", whisper(model.path(), None))],
-            vec!["localbin"],
-        );
+        let model = speech_model();
+        let config = config_with(vec![("localbin", built_in(model.path()))], vec!["localbin"]);
         let check = chain_check(&config, Chain::Chat, &store());
         assert!(check.state.is_ready());
         assert_eq!(check.detail.as_deref(), Some("using localbin"));
@@ -514,9 +534,10 @@ mod tests {
     /// second one, because that is exactly how the fallback behaves at runtime.
     #[test]
     fn a_chain_falls_past_an_unusable_provider() {
-        let model = tempfile::NamedTempFile::new().unwrap();
-        let broken = whisper(std::path::Path::new("/nonexistent/model.bin"), None);
-        let working = whisper(model.path(), None);
+        let model = speech_model();
+        let empty = tempfile::tempdir().unwrap();
+        let broken = built_in(empty.path());
+        let working = built_in(model.path());
         let config = config_with(
             vec![("broken", broken), ("working", working)],
             vec!["broken", "working"],
@@ -540,11 +561,8 @@ mod tests {
     /// message the user has to dismiss on every launch.
     #[test]
     fn a_working_setup_has_no_next_step() {
-        let model = tempfile::NamedTempFile::new().unwrap();
-        let mut config = config_with(
-            vec![("localbin", whisper(model.path(), None))],
-            vec!["localbin"],
-        );
+        let model = speech_model();
+        let mut config = config_with(vec![("localbin", built_in(model.path()))], vec!["localbin"]);
         config.transcribe.chain = vec!["localbin".to_string()];
         // Only sox can still be missing, and that is environment-dependent, so
         // assert on the part this test controls.

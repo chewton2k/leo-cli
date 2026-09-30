@@ -108,7 +108,7 @@ mod tests {
     fn the_shipped_config_is_valid_toml_for_editing() {
         let d = doc();
         assert_eq!(read_chain(&d, Task::Chat), vec!["ollama"]);
-        assert_eq!(read_chain(&d, Task::Transcribe), vec!["whisper_cpp"]);
+        assert_eq!(read_chain(&d, Task::Transcribe), vec!["parakeet"]);
     }
 
     /// The whole reason for `toml_edit`: an edit must not cost the user the
@@ -127,7 +127,7 @@ mod tests {
         assert!(after.contains("Keys do NOT belong in this file"));
         assert!(after.contains("Type /settings"), "{after}");
         // And the transcribe chain is untouched.
-        assert_eq!(read_chain(&d, Task::Transcribe), vec!["whisper_cpp"]);
+        assert_eq!(read_chain(&d, Task::Transcribe), vec!["parakeet"]);
     }
 
     /// A chain may name a provider that has no block in the file, because most

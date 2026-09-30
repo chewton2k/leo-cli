@@ -94,7 +94,7 @@ fn ai_rows(
     });
     let model_label = format!("{what} model");
     if chosen.local() {
-        local_rows(rows, cfg, local, task, &sel, model_label);
+        local_rows(rows, local, task, &sel, model_label);
         return None;
     }
     rows.push(Row::Setting {
@@ -129,7 +129,6 @@ fn ai_rows(
 
 fn local_rows(
     rows: &mut Vec<Row>,
-    cfg: &Config,
     local: &Local,
     task: Task,
     sel: &choice::Selection,
@@ -170,38 +169,16 @@ fn local_rows(
             });
         }
         Task::Transcribe => {
-            if let Some(bin) = cfg.provider(&sel.provider).and_then(|p| p.bin.clone()) {
-                if !leo_services::health::on_path(&bin) && !std::path::Path::new(&bin).is_file() {
-                    rows.push(Row::Fact {
-                        label: "whisper program".to_string(),
-                        value: format!("{bin} is not installed"),
-                    });
-                }
-            }
-            if local.whisper.is_empty() {
+            if !local.speech_ready {
                 rows.push(Row::Setting {
                     label: model_label,
-                    value: "none yet — Enter downloads base.en (142 MB)".to_string(),
+                    value: format!(
+                        "none yet — Enter downloads it ({} MB, once)",
+                        leo_services::ai::provider::parakeet::MODEL_MB
+                    ),
                     action: SettingAction::GetLocalModel(task),
                 });
-                return;
             }
-            let current = sel.model.clone().unwrap_or_default();
-            let installed = local
-                .whisper
-                .iter()
-                .any(|p| *p == leo_services::ai::provider::whisper_cpp::expand_tilde(&current));
-            if installed {
-                return;
-            }
-            rows.push(Row::Setting {
-                label: model_label,
-                value: format!(
-                    "{} is missing — Enter picks one you have",
-                    choice::whisper_label(&current)
-                ),
-                action: SettingAction::ChooseModel(task),
-            });
         }
     }
 }
@@ -413,30 +390,23 @@ pub fn step_model(task: Task, delta: isize, local: &Local) -> Result<Changed> {
         return Ok(Changed::No);
     };
     let options = choice::model_options(task, &sel.provider, local);
-    let current = sel.model.as_deref().map(|m| {
-        leo_services::ai::provider::whisper_cpp::expand_tilde(m)
-            .display()
-            .to_string()
-    });
-    let Some(next) = choice::step(&options, current.as_deref(), delta) else {
+    let Some(next) = choice::step(&options, sel.model.as_deref(), delta) else {
         return Ok(Changed::No);
     };
     let (path, mut doc) = edit::load_document()?;
     choice::write_model(&mut doc, &sel.provider, next);
     edit::save_document(&path, &doc)?;
-    let shown = if task == Task::Transcribe && sel.choice.is_some_and(|c| c.local()) {
-        format!("{} (free)", choice::whisper_label(next))
-    } else {
+    Ok(Changed::Yes(format!(
+        "Model set to {}.",
         choice::priced(task, &sel.provider, next)
-    };
-    Ok(Changed::Yes(format!("Model set to {shown}.")))
+    )))
 }
 
 pub fn use_model(task: Task, model: &str) -> Result<Changed> {
-    let provider = match task {
-        Task::Chat => "ollama",
-        Task::Transcribe => "whisper_cpp",
-    };
+    if task == Task::Transcribe {
+        return Ok(Changed::Yes("Downloaded. Speech uses it now.".to_string()));
+    }
+    let provider = "ollama";
     let (path, mut doc) = edit::load_document()?;
     choice::write_model(&mut doc, provider, model);
     edit::save_document(&path, &doc)?;
@@ -537,7 +507,7 @@ mod tests {
     #[test]
     fn a_local_choice_says_what_is_missing_and_offers_the_download() {
         use super::*;
-        let config = "[chat]\nchain = [\"ollama\"]\n[transcribe]\nchain = [\"whisper_cpp\"]\n";
+        let config = "[chat]\nchain = [\"ollama\"]\n[transcribe]\nchain = [\"parakeet\"]\n";
         let rows = simple_page(config, &MemoryStore::default(), &Local::default());
         let writing_model = row(&rows, "writing model").unwrap();
         assert_eq!(writing_model.2, "Fact");
@@ -549,29 +519,27 @@ mod tests {
         assert_eq!(speech_model.2, "GetLocalModel(Transcribe)");
         assert!(!rows.iter().any(|(l, _, _)| l.ends_with(" key")));
 
+        assert!(speech_model.1.contains("670 MB"), "{speech_model:?}");
+
         let running = Local {
             ollama_running: true,
             ollama: Vec::new(),
-            whisper: vec![std::path::PathBuf::from("/m/ggml-small.bin")],
+            speech_ready: false,
         };
         let rows = simple_page(config, &MemoryStore::default(), &running);
         assert_eq!(
             row(&rows, "writing model").unwrap().2,
             "GetLocalModel(Chat)"
         );
-        let speech_model = row(&rows, "speech model").unwrap();
-        assert_eq!(speech_model.2, "ChooseModel(Transcribe)");
-        assert!(
-            speech_model.1.starts_with("base.en is missing"),
-            "{speech_model:?}"
+        assert_eq!(
+            row(&rows, "speech").unwrap().1,
+            format!("○ {} (Parakeet)", choice::this_computer())
         );
 
         let ready = Local {
             ollama_running: false,
             ollama: Vec::new(),
-            whisper: vec![leo_services::ai::provider::whisper_cpp::model_file(
-                &leo_services::config::provider::ProviderConfig::default(),
-            )],
+            speech_ready: true,
         };
         let rows = simple_page(config, &MemoryStore::default(), &ready);
         assert!(
@@ -582,7 +550,7 @@ mod tests {
         let pulled = Local {
             ollama_running: true,
             ollama: vec!["qwen3:8b".to_string(), "gemma3:4b".to_string()],
-            whisper: Vec::new(),
+            speech_ready: true,
         };
         let rows = simple_page(config, &MemoryStore::default(), &pulled);
         let writing_model = row(&rows, "writing model").unwrap();

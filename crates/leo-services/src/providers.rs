@@ -53,6 +53,9 @@ pub fn build_one_transcriber(
         Some(ProviderKind::WhisperCpp) => Some(Box::new(
             ai::provider::whisper_cpp::WhisperCppTranscribe::new(name.to_string(), pc),
         )),
+        Some(ProviderKind::Parakeet) => Some(Box::new(
+            ai::provider::parakeet::ParakeetTranscribe::new(name.to_string(), pc),
+        )),
         _ => None,
     }
 }
@@ -207,13 +210,8 @@ pub enum ModelState {
     Damaged,
 }
 
-fn expected_model_sha() -> String {
-    std::env::var("LEO_INSTALL_MODEL_SHA256")
-        .unwrap_or_else(|_| crate::config::choice::WHISPER_STARTER_SHA256.to_string())
-}
-
-pub fn speech_model_path() -> std::path::PathBuf {
-    crate::config::choice::models_dir().join(crate::config::choice::WHISPER_STARTER)
+pub fn speech_model_dir() -> std::path::PathBuf {
+    crate::ai::provider::parakeet::default_dir()
 }
 
 pub fn model_state(path: &std::path::Path, sha256: &str) -> ModelState {
@@ -226,8 +224,25 @@ pub fn model_state(path: &std::path::Path, sha256: &str) -> ModelState {
     }
 }
 
+pub fn files_state(dir: &std::path::Path, manifest: &[(String, String)]) -> ModelState {
+    let states: Vec<ModelState> = manifest
+        .iter()
+        .map(|(name, sha)| model_state(&dir.join(name), sha))
+        .collect();
+    if states.contains(&ModelState::Damaged) {
+        ModelState::Damaged
+    } else if states.contains(&ModelState::Missing) {
+        ModelState::Missing
+    } else {
+        ModelState::Ready
+    }
+}
+
 pub fn speech_model_state() -> ModelState {
-    model_state(&speech_model_path(), &expected_model_sha())
+    files_state(
+        &speech_model_dir(),
+        &crate::ai::provider::parakeet::manifest(),
+    )
 }
 
 pub fn sha256_of(path: &std::path::Path) -> Result<String> {
@@ -243,13 +258,22 @@ pub fn sha256_of(path: &std::path::Path) -> Result<String> {
 }
 
 pub fn download_speech_model() -> Result<std::path::PathBuf> {
-    download_verified(
-        &std::env::var("LEO_INSTALL_MODEL_URL")
-            .unwrap_or_else(|_| crate::config::choice::WHISPER_STARTER_URL.to_string()),
-        &expected_model_sha(),
-        &crate::config::choice::models_dir(),
-        crate::config::choice::WHISPER_STARTER,
-    )
+    let base = std::env::var("LEO_INSTALL_MODEL_URL")
+        .unwrap_or_else(|_| crate::ai::provider::parakeet::MODEL_URL.to_string());
+    let dir = speech_model_dir();
+    for (name, sha) in crate::ai::provider::parakeet::manifest() {
+        if model_state(&dir.join(&name), &sha) == ModelState::Ready {
+            continue;
+        }
+        println!("  {name}");
+        download_verified(&format!("{base}/{name}"), &sha, &dir, &name)?;
+    }
+    remove_old_models();
+    Ok(dir)
+}
+
+pub fn remove_old_models() {
+    let _ = std::fs::remove_file(crate::config::choice::models_dir().join("ggml-base.en.bin"));
 }
 
 pub fn download_verified(
@@ -351,10 +375,21 @@ mod tests {
     }
 
     #[test]
-    fn the_known_checksum_of_base_en_is_well_formed() {
-        let sha = crate::config::choice::WHISPER_STARTER_SHA256;
-        assert_eq!(sha.len(), 64);
-        assert!(sha.chars().all(|c| c.is_ascii_hexdigit()));
+    fn a_model_of_several_files_is_ready_only_when_every_one_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.onnx");
+        let b = dir.path().join("b.txt");
+        std::fs::write(&a, b"aaa").unwrap();
+        std::fs::write(&b, b"bbb").unwrap();
+        let manifest = vec![
+            ("a.onnx".to_string(), sha256_of(&a).unwrap()),
+            ("b.txt".to_string(), sha256_of(&b).unwrap()),
+        ];
+        assert_eq!(files_state(dir.path(), &manifest), ModelState::Ready);
+        std::fs::remove_file(&b).unwrap();
+        assert_eq!(files_state(dir.path(), &manifest), ModelState::Missing);
+        std::fs::write(&a, b"aa").unwrap();
+        assert_eq!(files_state(dir.path(), &manifest), ModelState::Damaged);
     }
     use crate::config::secret::MemoryStore;
     use std::sync::Mutex;

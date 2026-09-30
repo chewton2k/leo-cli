@@ -65,8 +65,10 @@ pub trait TranscribeProvider {
     }
 }
 
+pub mod audio;
 pub mod chat_audio;
 pub mod openai;
+pub mod parakeet;
 pub mod transcriptions;
 pub mod whisper_cpp;
 
@@ -138,6 +140,10 @@ pub fn build_transcribe_chain(
             Some(ProviderKind::WhisperCpp) => out.push(Box::new(
                 whisper_cpp::WhisperCppTranscribe::new(name.clone(), pc),
             )),
+            Some(ProviderKind::Parakeet) => out.push(Box::new(parakeet::ParakeetTranscribe::new(
+                name.clone(),
+                pc,
+            ))),
             _ => continue,
         }
     }
@@ -211,7 +217,7 @@ model = "m"
         let store = MemoryStore::default();
         let chain = build_transcribe_chain(&cfg, &store);
         let names: Vec<_> = chain.iter().map(|p| p.name().to_string()).collect();
-        assert_eq!(names, vec!["whisper_cpp"]);
+        assert_eq!(names, vec!["parakeet"]);
     }
 
     #[test]

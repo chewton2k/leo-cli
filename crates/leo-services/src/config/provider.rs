@@ -12,6 +12,7 @@ pub enum ProviderKind {
     /// Local whisper.cpp binary.
     WhisperCpp,
     ChatAudio,
+    Parakeet,
 }
 
 /// One named provider from `[providers.<name>]`.

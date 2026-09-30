@@ -168,44 +168,74 @@ if [ -n "${LEO_HOME:-}" ]; then
 else
     models="$HOME/.leo/models"
 fi
-model="$models/ggml-base.en.bin"
-model_url="${LEO_INSTALL_MODEL_URL:-https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin}"
-model_sha="${LEO_INSTALL_MODEL_SHA256:-a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002}"
-model_state=missing
-if [ -z "${LEO_INSTALL_SKIP_MODEL:-}" ] && [ -s "$model" ]; then
-    have=$(sha256_of "$model")
-    if [ -z "$have" ] || [ "$have" = "$model_sha" ]; then
-        model_state=ready
-    else
-        model_state=damaged
+model_dir="$models/parakeet-tdt-0.6b-v3-int8"
+model_url="${LEO_INSTALL_MODEL_URL:-https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/2bda32ec70b097a55adaa07d9a7173915b43cc78}"
+model_files="${LEO_INSTALL_MODEL_MANIFEST:-encoder.int8.onnx=acfc2b4456377e15d04f0243af540b7fe7c992f8d898d751cf134c3a55fd2247 decoder.int8.onnx=179e50c43d1a9de79c8a24149a2f9bac6eb5981823f2a2ed88d655b24248db4e joiner.int8.onnx=3164c13fc2821009440d20fcb5fdc78bff28b4db2f8d0f0b329101719c0948b3 tokens.txt=d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d}"
+file_state() {
+    if [ ! -s "$model_dir/$1" ]; then
+        echo missing
+        return
     fi
-fi
-if [ -n "${LEO_INSTALL_SKIP_MODEL:-}" ]; then
-    :
-elif [ "$model_state" = ready ]; then
-    step "Speech model ready in $(pretty "$models")"
-elif ! command -v curl >/dev/null 2>&1; then
-    say "  ${yellow}!${reset} No curl, so the speech model was not downloaded; /settings in leo can fetch it"
-else
-    if [ "$model_state" = damaged ]; then
-        doing "The speech model is damaged; downloading it again (142 MB)"
+    have=$(sha256_of "$model_dir/$1")
+    if [ -z "$have" ] || [ "$have" = "$2" ]; then
+        echo ready
     else
-        doing "Downloading the speech model (base.en, 142 MB, once)"
+        echo damaged
     fi
-    mkdir -p "$models"
-    got_model=""
-    if fetch "$model_url" "$model.part"; then
-        actual=$(sha256_of "$model.part")
-        if [ -z "$actual" ] || [ "$actual" = "$model_sha" ]; then
-            mv -f "$model.part" "$model"
-            got_model=1
+}
+if [ -z "${LEO_INSTALL_SKIP_MODEL:-}" ]; then
+    need=""
+    damaged=""
+    for pair in $model_files; do
+        case "$(file_state "${pair%%=*}" "${pair#*=}")" in
+            ready) ;;
+            damaged)
+                need="$need $pair"
+                damaged=1
+                ;;
+            *) need="$need $pair" ;;
+        esac
+    done
+    model_ready=""
+    if [ -z "$need" ]; then
+        model_ready=1
+        step "Speech model ready in $(pretty "$model_dir")"
+    elif ! command -v curl >/dev/null 2>&1; then
+        say "  ${yellow}!${reset} No curl, so the speech model was not downloaded; /settings in leo can fetch it"
+    else
+        if [ -n "$damaged" ]; then
+            doing "The speech model is damaged; downloading it again"
+        else
+            doing "Downloading the speech model (Parakeet, 670 MB, once)"
+        fi
+        mkdir -p "$model_dir"
+        model_ready=1
+        for pair in $need; do
+            name=${pair%%=*}
+            sha=${pair#*=}
+            actual=""
+            if fetch "$model_url/$name" "$model_dir/$name.part"; then
+                actual=$(sha256_of "$model_dir/$name.part")
+                if [ -z "$actual" ]; then
+                    actual="$sha"
+                fi
+            fi
+            if [ "$actual" = "$sha" ]; then
+                mv -f "$model_dir/$name.part" "$model_dir/$name"
+            else
+                rm -f "$model_dir/$name.part"
+                model_ready=""
+                break
+            fi
+        done
+        if [ -n "$model_ready" ]; then
+            step "Speech model saved to $(pretty "$model_dir")"
+        else
+            say "  ${yellow}!${reset} Could not download the speech model; /settings in leo can fetch it later"
         fi
     fi
-    if [ -n "$got_model" ]; then
-        step "Speech model saved to $(pretty "$models")"
-    else
-        rm -f "$model.part"
-        say "  ${yellow}!${reset} Could not download the speech model; /settings in leo can fetch it later"
+    if [ -n "$model_ready" ]; then
+        rm -f "$models/ggml-base.en.bin"
     fi
 fi
 
