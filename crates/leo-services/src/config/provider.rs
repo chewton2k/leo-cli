@@ -7,10 +7,8 @@ use serde::{Deserialize, Serialize};
 pub enum ProviderKind {
     /// OpenAI-compatible chat completions: OpenRouter, Ollama, LM Studio, vLLM.
     Openai,
-    /// Hugging Face inference, raw audio body.
-    Hf,
-    /// Groq transcription, multipart form.
-    Groq,
+    #[serde(rename = "openai_transcribe", alias = "groq")]
+    Transcriptions,
     /// Local whisper.cpp binary.
     WhisperCpp,
     ChatAudio,
@@ -41,6 +39,8 @@ pub struct ProviderConfig {
     #[serde(default)]
     pub key_from: Option<String>,
     #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
     pub reasoning: Option<bool>,
 }
 
@@ -61,6 +61,7 @@ impl ProviderConfig {
         self.bin = self.bin.take().or(built_in.bin);
         self.model_path = self.model_path.take().or(built_in.model_path);
         self.key_from = self.key_from.take().or(built_in.key_from);
+        self.path = self.path.take().or(built_in.path);
         self.reasoning = self.reasoning.or(built_in.reasoning);
     }
 }

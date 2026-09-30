@@ -14,7 +14,7 @@ use anyhow::Result;
 use crate::store::Store;
 
 /// Bump when the manual's content changes enough to be worth re-offering.
-const MANUAL_VERSION: u32 = 8;
+const MANUAL_VERSION: u32 = 9;
 const MARKER: &str = ".manual-installed";
 pub const MANUAL_TITLE: &str = "leo manual";
 
@@ -138,9 +138,13 @@ that matter and press `Enter` after each; they lead the finished note, in bold.
 
 ## Setting up
 
+`Ctrl-S` opens settings. Under **writing** and **speech**, `Enter` (or `→`)
+switches between this computer (free, private) and OpenAI, Anthropic, Gemini
+or xAI; the row below picks the model, and the **key** row takes the key. To
+record without the cloud, `Enter` on **speech model** downloads one once.
+
 `/doctor` checks that everything works and says how to fix what does not.
-`/backup` keeps a copy on GitHub. `Ctrl-S` holds settings: AI, keys, colour
-and backup.
+`/backup` keeps a copy on GitHub.
 
 Notes are plain Markdown files in `{notes_dir}`. Settings live in
 `{config_path}`. API keys never do; they are kept in a store

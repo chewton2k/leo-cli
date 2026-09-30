@@ -68,8 +68,29 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace --all-targets --locked
 
+  targets:
+    name: build (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-22.04-arm
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+
   release:
-    needs: [test, lint, msrv]
+    needs: [test, lint, msrv, targets]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: write

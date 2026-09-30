@@ -36,16 +36,13 @@ pub fn build_one_transcriber(
 ) -> Option<Box<dyn ai::provider::TranscribeProvider>> {
     use config::provider::ProviderKind;
     match pc.kind {
-        Some(ProviderKind::Hf) => Some(Box::new(ai::provider::hf::HfTranscribe::new(
-            name.to_string(),
-            pc,
-            resolve(pc.account(name), pc.key_env.as_deref(), store),
-        ))),
-        Some(ProviderKind::Groq) => Some(Box::new(ai::provider::groq::GroqTranscribe::new(
-            name.to_string(),
-            pc,
-            resolve(pc.account(name), pc.key_env.as_deref(), store),
-        ))),
+        Some(ProviderKind::Transcriptions) => {
+            Some(Box::new(ai::provider::transcriptions::Transcriptions::new(
+                name.to_string(),
+                pc,
+                resolve(pc.account(name), pc.key_env.as_deref(), store),
+            )))
+        }
         Some(ProviderKind::ChatAudio) => Some(Box::new(
             ai::provider::chat_audio::ChatAudioTranscribe::new(
                 name.to_string(),

@@ -2,8 +2,9 @@ use std::path::{Path, PathBuf};
 
 use toml_edit::{DocumentMut, Item, Table};
 
-use crate::ai::provider::whisper_cpp::expand_tilde;
+use crate::ai::provider::whisper_cpp::model_file;
 use crate::config::edit::{self, Task};
+use crate::config::provider::ProviderKind;
 use crate::config::secret::SecretStore;
 use crate::config::Config;
 
@@ -68,6 +69,11 @@ pub const WRITING: &[Choice] = &[
             "gemini-3.1-pro-preview",
         ],
     },
+    Choice {
+        provider: "xai",
+        name: "xAI",
+        models: &["grok-4.7", "grok-4.6", "grok-4.5", "grok-4.3"],
+    },
 ];
 
 pub const SPEECH: &[Choice] = &[
@@ -86,10 +92,15 @@ pub const SPEECH: &[Choice] = &[
         name: "Gemini",
         models: &["gemini-3.8-flash", "gemini-3.5-flash-lite"],
     },
+    Choice {
+        provider: "xai_speech",
+        name: "xAI",
+        models: &["grok-voice-transcribe-2.0", "grok-voice-transcribe-1.0"],
+    },
 ];
 
 pub const OLLAMA_STARTER: &str = "qwen3:8b";
-pub const WHISPER_STARTER: &str = "ggml-base.en.bin";
+pub const WHISPER_STARTER: &str = crate::ai::provider::whisper_cpp::STARTER;
 pub const WHISPER_STARTER_URL: &str =
     "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin";
 
@@ -170,15 +181,14 @@ pub fn ollama_names(json: &serde_json::Value) -> Vec<String> {
 }
 
 pub fn models_dir() -> PathBuf {
-    expand_tilde("~/.leo/models")
+    crate::ai::provider::whisper_cpp::models_dir()
 }
 
 pub fn whisper_models(cfg: &Config) -> Vec<PathBuf> {
     let mut dirs = vec![models_dir()];
     if let Some(parent) = cfg
         .provider("whisper_cpp")
-        .and_then(|p| p.model_path.as_deref())
-        .map(expand_tilde)
+        .map(model_file)
         .and_then(|p| p.parent().map(Path::to_path_buf))
     {
         if !dirs.contains(&parent) {
@@ -232,8 +242,8 @@ pub fn selection(cfg: &Config, store: &dyn SecretStore, task: Task) -> Option<Se
         .find(|n| crate::health::provider_usable(cfg, n, store));
     let provider = usable.or(chain.first())?.clone();
     let model = cfg.provider(&provider).and_then(|p| {
-        if p.bin.is_some() {
-            p.model_path.clone()
+        if p.kind == Some(ProviderKind::WhisperCpp) {
+            Some(model_file(p).display().to_string())
         } else {
             p.model.clone()
         }
@@ -288,7 +298,7 @@ pub fn write_choice(doc: &mut DocumentMut, task: Task, provider: &str) {
 
 pub fn write_model(doc: &mut DocumentMut, provider: &str, model: &str) {
     let field = match Config::built_in_provider(provider) {
-        Some(pc) if pc.bin.is_some() => "model_path",
+        Some(pc) if pc.kind == Some(ProviderKind::WhisperCpp) => "model_path",
         _ => "model",
     };
     let providers = doc
@@ -342,7 +352,11 @@ mod tests {
 
     #[test]
     fn one_key_serves_writing_and_speech_for_each_cloud() {
-        for (chat, speech) in [("openai", "openai_whisper"), ("gemini", "gemini_speech")] {
+        for (chat, speech) in [
+            ("openai", "openai_whisper"),
+            ("gemini", "gemini_speech"),
+            ("xai", "xai_speech"),
+        ] {
             let a = Config::built_in_provider(chat).unwrap();
             let b = Config::built_in_provider(speech).unwrap();
             assert_eq!(a.account(chat), b.account(speech));
@@ -385,12 +399,9 @@ mod tests {
             step_choice(Task::Chat, Some("ollama"), 1).provider,
             "openai"
         );
+        assert_eq!(step_choice(Task::Chat, Some("ollama"), -1).provider, "xai");
         assert_eq!(
-            step_choice(Task::Chat, Some("ollama"), -1).provider,
-            "gemini"
-        );
-        assert_eq!(
-            step_choice(Task::Transcribe, Some("gemini_speech"), 1).provider,
+            step_choice(Task::Transcribe, Some("xai_speech"), 1).provider,
             "whisper_cpp"
         );
     }
@@ -460,7 +471,7 @@ mod tests {
             w.model_path.as_deref(),
             Some("/models/ggml-large-v3-turbo.bin")
         );
-        assert_eq!(w.bin.as_deref(), Some("whisper-cli"));
+        assert_eq!(w.bin, None);
         assert_eq!(w.model, None);
         assert_eq!(
             whisper_label("/models/ggml-large-v3-turbo.bin"),
@@ -503,7 +514,7 @@ mod tests {
         }
         let configured = dir.path().join("ggml-base.en.bin");
         let cfg = load(&format!(
-            "[providers.whisper_cpp]\nkind = \"whisper_cpp\"\nbin = \"whisper-cli\"\nmodel_path = \"{}\"\n",
+            "[providers.whisper_cpp]\nkind = \"whisper_cpp\"\nmodel_path = \"{}\"\n",
             configured.display()
         ));
         let found = whisper_models(&cfg);

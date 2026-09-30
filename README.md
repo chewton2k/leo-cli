@@ -77,7 +77,8 @@ exactly as it is. It lists what it will remove and asks first.
 
 If there is no ready-made build for your computer, or you want to change leo,
 you need Rust 1.88 or newer ([rustup.rs](https://rustup.rs), or
-`brew install rust`) and git:
+`brew install rust`), git, and CMake with a C++ compiler for the built-in speech
+engine (`brew install cmake`; on Linux, `sudo apt install cmake g++`):
 
 ```sh
 git clone https://github.com/chewton2k/leo-cli
@@ -215,21 +216,55 @@ leo uses two kinds of AI:
   questions.
 - **AI for speech:** turns audio into a transcript.
 
-There are two ways to set it up. Pick one; you can switch any time.
+There are two ways to set it up. Pick one; you can switch any time, and you
+can mix them (for example, speech on your computer and writing in the cloud).
 
 - **Option A: your own computer.** Free, private, works offline. Nothing to sign
   up for.
-- **Option B: one cloud account.** OpenAI, Anthropic or Gemini. One key covers
-  both kinds (Anthropic only writes, so pair it with your computer or another
-  cloud for speech).
+- **Option B: one cloud account.** OpenAI, Anthropic, Gemini or xAI. One key
+  covers both writing and speech (Anthropic only writes, so pair it with your
+  computer or another cloud for speech).
 
-Everything happens in Settings: press `Ctrl-S`. The top section has a row for
-each kind of AI, a row for its model, and (for a cloud) a row for its key.
-`Enter` or `→` on a row moves to the next choice, `←` goes back.
+### Settings, in one minute
+
+Everything happens in Settings: press `Ctrl-S` inside leo. The top of the page
+looks like this:
+
+```
+ AI
+     writing               ● Anthropic
+     writing model         claude-sonnet-5-5
+     Anthropic key         stored
+     speech                ● this Mac (whisper.cpp)
+     speech model          base.en
+```
+
+| Key | What it does |
+|-----|--------------|
+| `↑` `↓` (or `j` `k`) | Move between rows |
+| `Enter` or `→` | Next choice on this row: the next provider, or the next model |
+| `←` | Previous choice |
+| `Enter` on a **key** row | Asks for the key; it is never shown as you type |
+| `x` on a **key** row | Removes the key |
+| `Esc` | Close Settings |
+
+A filled dot `●` means that choice is ready to use; a hollow one `○` means
+something is missing, and the row under it says what.
 
 ### Option A: your own computer (free and offline)
 
-1. **Writing: Ollama.**
+1. **Speech is built in.** leo has its own speech-to-text engine (whisper.cpp),
+   so there is nothing to install. In Settings, **speech** should say
+   `this Mac (whisper.cpp)`. The first time, **speech model** says `none yet`:
+   press `Enter` on it to download `base.en` (142 MB, once) into
+   `~/.leo/models`.
+
+   For better accuracy, put any other whisper model in that folder and pick it
+   with `Enter` on **speech model**. `ggml-large-v3-turbo.bin` (1.6 GB, from
+   [huggingface.co/ggerganov/whisper.cpp](https://huggingface.co/ggerganov/whisper.cpp/tree/main))
+   is much more accurate and still faster than real time on a recent Mac.
+
+2. **Writing uses Ollama.**
 
    ```sh
    brew install ollama
@@ -237,20 +272,8 @@ each kind of AI, a row for its model, and (for a cloud) a row for its key.
 
    Open the Ollama app (or run `ollama serve`). In Settings, **writing** should
    say `this Mac (Ollama)`. If **writing model** says `none yet`, press `Enter`
-   on it to download `qwen3:8b` (a few GB). Any model you have pulled with
-   `ollama pull` shows up there too; `Enter` cycles through them.
-
-2. **Speech: whisper.cpp.**
-
-   ```sh
-   brew install whisper-cpp
-   ```
-
-   In Settings, **speech** should say `this Mac (whisper.cpp)`. If **speech
-   model** says `none yet`, press `Enter` on it to download `base.en` (142 MB)
-   into `~/.leo/models`. Any other `ggml-*.bin` model you put in that folder
-   (for example `ggml-large-v3-turbo.bin`, slower but more accurate) shows up
-   there too.
+   on it to download `qwen3:8b` (about 5 GB). Every model you have pulled with
+   `ollama pull` appears there too; `Enter` goes through them.
 
 3. **Check it.** `leo doctor` (or `/doctor` in the app) should show both as
    `ok` under **AI**.
@@ -259,27 +282,35 @@ each kind of AI, a row for its model, and (for a cloud) a row for its key.
 
 1. **Get a key** from one of:
    [OpenAI](https://platform.openai.com/api-keys),
-   [Anthropic](https://platform.claude.com/settings/keys) or
-   [Gemini](https://aistudio.google.com/apikey). These are paid per use
-   (Gemini has a free tier).
-2. **Choose it.** Press `Ctrl-S`, then `Enter` on **writing** until it shows
-   your provider, and the same on **speech** (OpenAI or Gemini).
-3. **Store the key.** `Enter` on the **key** row asks for it; it is never shown
-   as you type. One key serves both writing and speech.
-4. **Pick a model** (optional). `Enter` on **writing model** cycles through the
-   ones leo supports, for example `claude-sonnet-5-5`, `claude-opus-5-5`,
-   `claude-haiku-4-5`, `claude-sonnet-5` and `claude-opus-5` for Anthropic.
+   [Anthropic](https://platform.claude.com/settings/keys),
+   [Gemini](https://aistudio.google.com/apikey) or
+   [xAI](https://console.x.ai). These charge per use.
+2. **Choose it.** In Settings, press `Enter` on **writing** until it shows your
+   provider. Do the same on **speech** (OpenAI, Gemini or xAI), or keep speech
+   on your computer.
+3. **Add the key.** `Enter` on the **key** row. One key serves writing and
+   speech for the same provider.
+4. **Pick a model** (optional). `Enter` on **writing model** goes through the
+   models leo supports:
+
+   | Provider | Writing models | Speech models |
+   |----------|----------------|---------------|
+   | OpenAI | `gpt-6.1-sol`, `gpt-6-luna`, `gpt-6-astra`, `gpt-5.5` | `gpt-transcribe`, `gpt-4o-mini-transcribe`, `whisper-1` |
+   | Anthropic | `claude-sonnet-5-5`, `claude-opus-5-5`, `claude-haiku-4-5`, `claude-sonnet-5`, `claude-opus-5` | — |
+   | Gemini | `gemini-3.8-flash`, `gemini-3.5-flash`, `gemini-3.5-flash-lite`, `gemini-3.1-pro-preview` | `gemini-3.8-flash`, `gemini-3.5-flash-lite` |
+   | xAI | `grok-4.7`, `grok-4.6`, `grok-4.5`, `grok-4.3` | `grok-voice-transcribe-2.0`, `grok-voice-transcribe-1.0` |
+
 5. **Check it.** `leo doctor` should say `ok` under **AI**, and that the
    provider answers.
 
-### Anything else
+### Upgrading from an older leo
 
-leo knows other providers too (OpenRouter, Groq, Mistral, LM Studio, a local
-whisper server, and more). Settings' **AI providers** row lists them all: there,
-`Enter` stores a key, adds a provider, or sends a test request, and `J`/`K`
-change the order they are tried in. When a list has more than one provider, the
-first one that is ready gets the request, and leo falls back to the next if it
-fails. A filled dot `●` means that provider would be used right now.
+leo used to know eighteen providers. It now keeps five: Ollama, OpenAI,
+Anthropic, Gemini and xAI. The first time a new leo starts it tidies
+`config.toml`: providers that were removed (OpenRouter, Groq, Hugging Face,
+Mistral, and so on) are dropped, and if one of them was your choice, that task
+goes back to your computer. Open Settings to pick again. A provider you added
+yourself under a new name is left alone.
 
 ---
 
@@ -604,7 +635,7 @@ your account can read.
 | Variable | What it does |
 |----------|--------------|
 | `LEO_HOME` | Keep notes, settings and keys in this one directory instead |
-| `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, … | A provider's key; takes precedence over a stored one |
+| `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `XAI_API_KEY` | A provider's key; takes precedence over a stored one |
 | `LEO_CHAT_PROVIDER` / `LEO_TRANSCRIBE_PROVIDER` | Use only this provider for writing / speech |
 | `LEO_CHAT_MODEL` | Override the model of the first writing provider |
 | `LEO_USE_KEYCHAIN=1` | Store keys in the OS keychain instead of the key file |

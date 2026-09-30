@@ -63,8 +63,11 @@ pub fn warm_credentials() {
         .chain(config.chat.chain.iter());
     for name in names {
         if let Some(provider) = config.provider(name) {
-            let _ =
-                crate::config::secret::resolve(name, provider.key_env.as_deref(), store.as_ref());
+            let _ = crate::config::secret::resolve(
+                provider.account(name),
+                provider.key_env.as_deref(),
+                store.as_ref(),
+            );
         }
     }
 }

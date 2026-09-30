@@ -5,6 +5,7 @@ pub mod provider;
 pub mod secret;
 pub mod sync;
 pub mod theme;
+pub mod tidy;
 
 use std::collections::BTreeMap;
 
@@ -27,10 +28,8 @@ pub struct Config {
     pub sync: sync::SyncConfig,
 }
 
-/// Default chat chain: local first (free, private), cloud second.
-const DEFAULT_CHAT_CHAIN: [&str; 2] = ["ollama", "openrouter"];
-/// Default transcribe chain: local first, then the two free-tier cloud options.
-const DEFAULT_TRANSCRIBE_CHAIN: [&str; 3] = ["whisper_cpp", "groq", "hf"];
+pub const DEFAULT_CHAT_CHAIN: [&str; 1] = ["ollama"];
+pub const DEFAULT_TRANSCRIBE_CHAIN: [&str; 1] = ["whisper_cpp"];
 
 impl Default for Config {
     fn default() -> Self {
@@ -87,13 +86,12 @@ impl Config {
         format!(
             r#"# leo configuration.
 #
-# Keys do NOT belong in this file. Run `leo doctor` to store one, or press Ctrl-S
-# inside leo and Enter on the provider.
+# Keys do NOT belong in this file. Press Ctrl-S inside leo and Enter on the
+# key row, or run `leo doctor`.
 #
-# These two lines are the ones worth tuning: providers are tried in order, and
-# unavailable ones — no key, no binary, closed port — are skipped without
-# complaint. So a laptop with Ollama running uses it for free and reaches for the
-# cloud only when it is not.
+# Press Ctrl-S to choose what writes and what listens: this computer (free and
+# private) or OpenAI, Anthropic, Gemini or xAI with one key, and which model
+# each uses. Settings writes these two lines for you.
 
 [chat]
 chain = [{chat}]
@@ -101,10 +99,6 @@ chain = [{chat}]
 [transcribe]
 chain = [{transcribe}]
 
-# Press Ctrl-S to choose what writes and what listens: this Mac (Ollama and
-# whisper.cpp, free and private) or OpenAI, Anthropic or Gemini with one key,
-# and which model each uses. Every other provider leo knows is under
-# "AI providers" there, and needs no entry here either.
 #
 # Backing up to git happens on every save once `leo backup` has set it up. Pushing is
 # separate, because it needs the network:
@@ -116,7 +110,7 @@ chain = [{transcribe}]
 # To add your own provider, or to override one of the above, name it here:
 #
 #   [providers.my-provider]
-#   kind = "openai"                        # or whisper_cpp, groq, hf
+#   kind = "openai"                        # or openai_transcribe, whisper_cpp
 #   base_url = "https://api.example.com/v1"
 #   model = "some-model-id"
 #   key_env = "EXAMPLE_API_KEY"            # omit entirely for a local server
@@ -126,116 +120,14 @@ chain = [{transcribe}]
         )
     }
 
-    /// Every provider leo knows how to talk to.
-    ///
-    /// Built in rather than written to disk: eighteen commented blocks made the
-    /// file 174 lines, so `config edit` opened a wall of text the user had to
-    /// scroll past to reach the two lines they came for. These are merged in at
-    /// load time, so they all still work and all still appear on the provider
-    /// screen — a user's own block of the same name simply wins.
     fn built_in_toml() -> String {
-        format!(
-            r#"# leo configuration.
-#
-# Keys do NOT belong in this file. Run `leo doctor` to store one, or press Ctrl-S
-# inside leo and Enter on the provider.
-#
-# Providers are tried in order and unavailable ones — no key, no binary, closed
-# port — are skipped without complaint. Listing more than you have is the point:
-# a laptop with Ollama running uses it for free and falls back to the cloud only
-# when it is not running.
-
-[chat]
-chain = [{chat}]
-
-[transcribe]
-chain = [{transcribe}]
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  Chat providers
-#
-#  kind = "openai" means "speaks the OpenAI chat-completions protocol", which
-#  is nearly everything. Adding a provider is four lines and no code:
-#
-#      [providers.pick-a-name]
-#      kind = "openai"
-#      base_url = "https://.../v1"
-#      model = "the-model-id"
-#      key_env = "SOME_API_KEY"    # omit for a local server needing no key
-#
-#  Then add that name to the [chat] chain above.
-# ─────────────────────────────────────────────────────────────────────────────
-
-# Local, free, private. `brew install ollama && ollama pull qwen3:8b`
+        r#"
 [providers.ollama]
 kind = "openai"
 base_url = "http://localhost:11434/v1"
 model = "qwen3:8b"
 max_tokens = 4096
 
-# Free cloud models; `leo doctor` stores the key.
-# "openrouter/free" is a router over OpenRouter's zero-cost models, so it
-# survives individual models being retired.
-[providers.openrouter]
-kind = "openai"
-base_url = "https://openrouter.ai/api/v1"
-model = "openrouter/free"
-key_env = "OPENROUTER_API_KEY"
-max_tokens = 8192
-
-# Everything below is defined and ready: add the name to a chain above, and run
-# `leo doctor` (or Ctrl-S, Enter) if it needs a key.
-
-# Local servers — no key, nothing to sign up for.
-[providers.lmstudio]
-kind = "openai"
-base_url = "http://localhost:1234/v1"
-model = "local-model"
-max_tokens = 4096
-
-[providers.llamacpp]
-kind = "openai"
-base_url = "http://localhost:8080/v1"
-model = "local-model"
-max_tokens = 4096
-
-[providers.vllm]
-kind = "openai"
-base_url = "http://localhost:8000/v1"
-model = "local-model"
-max_tokens = 4096
-
-# Cloud providers with a free tier.
-[providers.groq_chat]
-kind = "openai"
-base_url = "https://api.groq.com/openai/v1"
-model = "llama-3.3-70b-versatile"
-key_env = "GROQ_API_KEY"
-max_tokens = 8192
-
-[providers.cerebras]
-kind = "openai"
-base_url = "https://api.cerebras.ai/v1"
-model = "llama-3.3-70b"
-key_env = "CEREBRAS_API_KEY"
-max_tokens = 8192
-
-[providers.gemini]
-kind = "openai"
-base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
-model = "gemini-3.8-flash"
-key_env = "GEMINI_API_KEY"
-max_tokens = 32000
-
-[providers.mistral]
-kind = "openai"
-base_url = "https://api.mistral.ai/v1"
-model = "mistral-small-latest"
-key_env = "MISTRAL_API_KEY"
-max_tokens = 8192
-
-# Paid. Check pricing before putting these in a chain.
 [providers.openai]
 kind = "openai"
 base_url = "https://api.openai.com/v1"
@@ -252,62 +144,26 @@ key_env = "ANTHROPIC_API_KEY"
 max_tokens = 32000
 reasoning = true
 
-[providers.deepseek]
+[providers.gemini]
 kind = "openai"
-base_url = "https://api.deepseek.com/v1"
-model = "deepseek-chat"
-key_env = "DEEPSEEK_API_KEY"
-max_tokens = 8192
-
-[providers.together]
-kind = "openai"
-base_url = "https://api.together.xyz/v1"
-model = "meta-llama/Llama-3.3-70B-Instruct-Turbo"
-key_env = "TOGETHER_API_KEY"
-max_tokens = 8192
+base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+model = "gemini-3.8-flash"
+key_env = "GEMINI_API_KEY"
+max_tokens = 32000
 
 [providers.xai]
 kind = "openai"
 base_url = "https://api.x.ai/v1"
-model = "grok-3-mini"
+model = "grok-4.7"
 key_env = "XAI_API_KEY"
-max_tokens = 8192
+max_tokens = 32000
+reasoning = true
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  Transcription providers
-#
-#  kind = "whisper_cpp"  a local binary. No request-size limit, so no chunking.
-#  kind = "groq"         any OpenAI-compatible /audio/transcriptions endpoint,
-#                        including OpenAI's own — point base_url wherever.
-#  kind = "hf"           Hugging Face inference.
-# ─────────────────────────────────────────────────────────────────────────────
-
-# Local, free, private, and unbounded in length.
-# `brew install whisper-cpp`, then fetch a model:
-#   mkdir -p ~/.leo/models && curl -L -o ~/.leo/models/ggml-base.en.bin \
-#     https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
 [providers.whisper_cpp]
 kind = "whisper_cpp"
-bin = "whisper-cli"
-model_path = "~/.leo/models/ggml-base.en.bin"
 
-# Free tier, fast; `leo doctor` stores the key.
-[providers.groq]
-kind = "groq"
-base_url = "https://api.groq.com/openai/v1"
-model = "whisper-large-v3-turbo"
-key_env = "GROQ_API_KEY"
-
-# Hugging Face; `leo doctor` stores the key.
-[providers.hf]
-kind = "hf"
-model = "openai/whisper-large-v3-turbo"
-key_env = "HF_API_KEY"
-
-# Paid. Same protocol as Groq, different host.
 [providers.openai_whisper]
-kind = "groq"
+kind = "openai_transcribe"
 base_url = "https://api.openai.com/v1"
 model = "gpt-transcribe"
 key_env = "OPENAI_API_KEY"
@@ -320,16 +176,15 @@ model = "gemini-3.8-flash"
 key_env = "GEMINI_API_KEY"
 key_from = "gemini"
 
-# A local whisper server copying OpenAI's shape (speaches, faster-whisper-server,
-# whisper.cpp's own server). No key needed.
-[providers.local_whisper_server]
-kind = "groq"
-base_url = "http://localhost:8000/v1"
-model = "Systran/faster-whisper-small"
-"#,
-            chat = quoted_list(&DEFAULT_CHAT_CHAIN),
-            transcribe = quoted_list(&DEFAULT_TRANSCRIBE_CHAIN),
-        )
+[providers.xai_speech]
+kind = "openai_transcribe"
+base_url = "https://api.x.ai/v1"
+path = "stt"
+model = "grok-voice-transcribe-2.0"
+key_env = "XAI_API_KEY"
+key_from = "xai"
+"#
+        .to_string()
     }
 
     /// `~/.config/leo/config.toml`. Deliberately not beside the notes
@@ -354,7 +209,7 @@ model = "Systran/faster-whisper-small"
     }
 
     pub fn load_from(path: &std::path::Path) -> Config {
-        let mut cfg = match std::fs::read_to_string(path) {
+        let mut cfg = match std::fs::read_to_string(path).map(|text| tidied(path, text)) {
             Ok(text) => match Config::parse_with_built_ins(&text) {
                 Ok(cfg) => cfg,
                 Err(e) => {
@@ -429,16 +284,6 @@ model = "Systran/faster-whisper-small"
                 }
             }
         }
-        // Deprecated: honored for one release so existing .env files keep working.
-        if let Ok(model) = std::env::var("OPENROUTER_CHAT_MODEL") {
-            if let Some(provider) = self.providers.get_mut("openrouter") {
-                provider.model = Some(model);
-            } else {
-                leo_core::diag::warn(
-                    "config: OPENROUTER_CHAT_MODEL set but there is no \"openrouter\" [providers] block; ignoring",
-                );
-            }
-        }
     }
 
     pub fn provider(&self, name: &str) -> Option<&ProviderConfig> {
@@ -449,6 +294,17 @@ model = "Systran/faster-whisper-small"
         let built_in: Config = toml::from_str(&Config::built_in_toml()).ok()?;
         built_in.providers.get(name).cloned()
     }
+}
+
+fn tidied(path: &std::path::Path, text: String) -> String {
+    let Ok(mut doc) = text.parse::<toml_edit::DocumentMut>() else {
+        return text;
+    };
+    if !tidy::tidy(&mut doc) {
+        return text;
+    }
+    let _ = edit::save_document(path, &doc);
+    doc.to_string()
 }
 
 fn quoted_list(items: &[&str]) -> String {
@@ -468,10 +324,10 @@ mod tests {
     fn parses_a_full_config() {
         let toml = r#"
 [chat]
-chain = ["ollama", "openrouter"]
+chain = ["ollama", "anthropic"]
 
 [transcribe]
-chain = ["whisper_cpp", "groq"]
+chain = ["whisper_cpp", "openai_whisper"]
 
 [providers.ollama]
 kind = "openai"
@@ -485,8 +341,8 @@ bin = "whisper-cli"
 model_path = "~/.leo/models/ggml-base.en.bin"
 "#;
         let cfg = Config::parse(toml).unwrap();
-        assert_eq!(cfg.chat.chain, vec!["ollama", "openrouter"]);
-        assert_eq!(cfg.transcribe.chain, vec!["whisper_cpp", "groq"]);
+        assert_eq!(cfg.chat.chain, vec!["ollama", "anthropic"]);
+        assert_eq!(cfg.transcribe.chain, vec!["whisper_cpp", "openai_whisper"]);
         assert_eq!(cfg.providers["ollama"].kind, Some(ProviderKind::Openai));
         assert_eq!(
             cfg.providers["ollama"].base_url.as_deref(),
@@ -511,11 +367,7 @@ model_path = "~/.leo/models/ggml-base.en.bin"
         std::fs::write(&path, "").unwrap();
         let cfg = Config::load_from(&path);
         assert!(cfg.chat.chain.is_empty());
-        assert!(
-            cfg.providers.len() >= 15,
-            "built-ins were not merged: {} providers",
-            cfg.providers.len()
-        );
+        assert_eq!(cfg.providers.len(), 9, "{:?}", cfg.providers.keys());
         assert!(cfg.providers.contains_key("ollama"));
         assert!(cfg.providers.contains_key("whisper_cpp"));
     }
@@ -566,8 +418,7 @@ model = "my-own-model"
             Some("http://localhost:9999/v1"),
             "the built-in overwrote the user's block"
         );
-        // And the others are still there.
-        assert!(cfg.providers.contains_key("openrouter"));
+        assert!(cfg.providers.contains_key("anthropic"));
     }
 
     #[test]
@@ -588,11 +439,11 @@ model = "my-own-model"
     #[test]
     fn a_block_of_another_kind_under_a_built_in_name_takes_nothing_from_it() {
         let cfg = Config::parse_with_built_ins(
-            "[providers.gemini]\nkind = \"groq\"\nbase_url = \"http://localhost:8000/v1\"\n",
+            "[providers.gemini]\nkind = \"openai_transcribe\"\nbase_url = \"http://localhost:8000/v1\"\n",
         )
         .unwrap();
         let gemini = cfg.provider("gemini").unwrap();
-        assert_eq!(gemini.kind, Some(ProviderKind::Groq));
+        assert_eq!(gemini.kind, Some(ProviderKind::Transcriptions));
         assert_eq!(gemini.key_env, None);
         assert_eq!(gemini.model, None);
     }
@@ -601,14 +452,22 @@ model = "my-own-model"
     #[test]
     fn the_built_in_provider_table_parses() {
         let built_in: Config = toml::from_str(&Config::built_in_toml()).unwrap();
-        assert!(
-            built_in.providers.len() >= 15,
-            "only {} built-in providers",
-            built_in.providers.len()
+        let mut names: Vec<&String> = built_in.providers.keys().collect();
+        names.sort();
+        assert_eq!(
+            names,
+            [
+                "anthropic",
+                "gemini",
+                "gemini_speech",
+                "ollama",
+                "openai",
+                "openai_whisper",
+                "whisper_cpp",
+                "xai",
+                "xai_speech"
+            ]
         );
-        for name in ["ollama", "openrouter", "whisper_cpp", "groq", "hf"] {
-            assert!(built_in.providers.contains_key(name), "missing {name}");
-        }
     }
 
     #[test]
@@ -628,21 +487,20 @@ kind = "telepathy"
     }
 
     #[test]
-    fn defaults_use_only_free_providers() {
+    fn defaults_run_on_this_computer() {
         let cfg = Config::default();
-        assert_eq!(cfg.chat.chain, vec!["ollama", "openrouter"]);
-        assert_eq!(cfg.transcribe.chain, vec!["whisper_cpp", "groq", "hf"]);
+        assert_eq!(cfg.chat.chain, vec!["ollama"]);
+        assert_eq!(cfg.transcribe.chain, vec!["whisper_cpp"]);
+        assert_eq!(cfg.providers["whisper_cpp"].bin, None);
+    }
+
+    #[test]
+    fn the_old_transcription_kind_name_still_parses() {
+        let cfg = Config::parse("[providers.mine]\nkind = \"groq\"\n").unwrap();
         assert_eq!(
-            cfg.providers["openrouter"].model.as_deref(),
-            Some("openrouter/free")
+            cfg.providers["mine"].kind,
+            Some(ProviderKind::Transcriptions)
         );
-        // The paid model must not reappear as a default.
-        let models: Vec<_> = cfg
-            .providers
-            .values()
-            .filter_map(|p| p.model.as_deref())
-            .collect();
-        assert!(!models.contains(&"google/gemini-2.5-flash"));
     }
 
     /// The shipped config is the primary UI for the model layer, so every
@@ -650,12 +508,6 @@ kind = "telepathy"
     #[test]
     fn every_shipped_provider_is_complete_enough_to_build() {
         let cfg = Config::default();
-        assert!(
-            cfg.providers.len() >= 15,
-            "only {} providers",
-            cfg.providers.len()
-        );
-
         for (name, p) in &cfg.providers {
             let kind = p.kind.unwrap_or_else(|| panic!("{name} has no kind"));
             match kind {
@@ -675,12 +527,16 @@ kind = "telepathy"
                         "{name}: key_env presence should match whether it is local"
                     );
                 }
-                ProviderKind::Groq | ProviderKind::Hf | ProviderKind::ChatAudio => {
+                ProviderKind::Transcriptions | ProviderKind::ChatAudio => {
                     assert!(p.model.is_some(), "{name} has no model");
+                    assert!(p.key_from.is_some(), "{name} should share its chat key");
                 }
                 ProviderKind::WhisperCpp => {
-                    assert!(p.bin.is_some(), "{name} has no bin");
-                    assert!(p.model_path.is_some(), "{name} has no model_path");
+                    assert!(p.bin.is_none(), "{name} should use the built-in engine");
+                    assert!(
+                        p.model_path.is_none(),
+                        "{name} should use the models folder"
+                    );
                 }
             }
         }
@@ -707,11 +563,11 @@ kind = "telepathy"
         for paid in [
             "openai",
             "anthropic",
-            "deepseek",
-            "together",
+            "gemini",
             "xai",
             "openai_whisper",
             "gemini_speech",
+            "xai_speech",
         ] {
             assert!(
                 cfg.providers.contains_key(paid),
@@ -752,35 +608,17 @@ kind = "telepathy"
     #[test]
     fn cloud_chat_providers_allow_long_notes_and_local_ones_stay_modest() {
         let cfg = Config::default();
-        for cloud in [
-            "openrouter",
-            "groq_chat",
-            "cerebras",
-            "mistral",
-            "deepseek",
-            "together",
-            "xai",
-        ] {
-            assert_eq!(
-                cfg.provider(cloud).and_then(|p| p.max_tokens),
-                Some(8192),
-                "{cloud}"
-            );
-        }
-        for thinking in ["openai", "anthropic", "gemini"] {
+        for thinking in ["openai", "anthropic", "gemini", "xai"] {
             assert_eq!(
                 cfg.provider(thinking).and_then(|p| p.max_tokens),
                 Some(32000),
                 "{thinking}"
             );
         }
-        for local in ["ollama", "lmstudio", "llamacpp", "vllm"] {
-            assert_eq!(
-                cfg.provider(local).and_then(|p| p.max_tokens),
-                Some(4096),
-                "{local}"
-            );
-        }
+        assert_eq!(
+            cfg.provider("ollama").and_then(|p| p.max_tokens),
+            Some(4096)
+        );
     }
 
     #[test]
@@ -801,8 +639,8 @@ kind = "telepathy"
         let parsed = Config::parse_with_built_ins(&text).unwrap();
         assert_eq!(parsed.chat.chain, Config::default().chat.chain);
         assert_eq!(
-            parsed.providers["openrouter"].model,
-            Config::default().providers["openrouter"].model
+            parsed.providers["anthropic"].model,
+            Config::default().providers["anthropic"].model
         );
     }
 
@@ -858,26 +696,12 @@ kind = "telepathy"
     #[test]
     fn leo_chat_provider_replaces_the_chain() {
         let _guard = ENV_LOCK.lock().unwrap();
-        std::env::set_var("LEO_CHAT_PROVIDER", "openrouter");
+        std::env::set_var("LEO_CHAT_PROVIDER", "anthropic");
         let mut cfg = Config::default();
         cfg.apply_env_overrides();
         std::env::remove_var("LEO_CHAT_PROVIDER");
 
-        assert_eq!(cfg.chat.chain, vec!["openrouter"]);
-    }
-
-    #[test]
-    fn deprecated_openrouter_chat_model_still_works() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::set_var("OPENROUTER_CHAT_MODEL", "legacy/model");
-        let mut cfg = Config::default();
-        cfg.apply_env_overrides();
-        std::env::remove_var("OPENROUTER_CHAT_MODEL");
-
-        assert_eq!(
-            cfg.providers["openrouter"].model.as_deref(),
-            Some("legacy/model")
-        );
+        assert_eq!(cfg.chat.chain, vec!["anthropic"]);
     }
 
     #[test]

@@ -8,27 +8,20 @@ use crate::config::provider::ProviderConfig;
 use crate::config::secret::Secret;
 
 const MAX_BYTES: u64 = 20 * 1024 * 1024;
-/// Groq's endpoint, used when a provider names no `base_url`.
-const DEFAULT_BASE_URL: &str = "https://api.groq.com/openai/v1";
+const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 
-/// Any endpoint speaking OpenAI's `/audio/transcriptions` protocol: Groq,
-/// OpenAI itself, and the several local servers that copy that shape.
-///
-/// The kind is still spelled `groq` for compatibility with existing config
-/// files, but nothing here is Groq-specific — pointing `base_url` elsewhere is
-/// all it takes to use another host.
-pub struct GroqTranscribe {
+pub struct Transcriptions {
     name: String,
     base_url: String,
     model: String,
+    path: String,
     key: Option<Secret>,
-    /// Local servers accept requests without a credential.
     needs_key: bool,
 }
 
-impl GroqTranscribe {
+impl Transcriptions {
     pub fn new(name: String, cfg: &ProviderConfig, key: Option<Secret>) -> Self {
-        GroqTranscribe {
+        Transcriptions {
             name,
             base_url: cfg
                 .base_url
@@ -37,7 +30,11 @@ impl GroqTranscribe {
             model: cfg
                 .model
                 .clone()
-                .unwrap_or_else(|| "whisper-large-v3-turbo".to_string()),
+                .unwrap_or_else(|| "gpt-transcribe".to_string()),
+            path: cfg
+                .path
+                .clone()
+                .unwrap_or_else(|| "audio/transcriptions".to_string()),
             key,
             needs_key: cfg.key_env.is_some(),
         }
@@ -45,13 +42,14 @@ impl GroqTranscribe {
 
     fn url(&self) -> String {
         format!(
-            "{}/audio/transcriptions",
-            self.base_url.trim_end_matches('/')
+            "{}/{}",
+            self.base_url.trim_end_matches('/'),
+            self.path.trim_start_matches('/')
         )
     }
 }
 
-impl TranscribeProvider for GroqTranscribe {
+impl TranscribeProvider for Transcriptions {
     fn transcribe(&self, audio_path: &Path) -> ProviderResult<String> {
         let client = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(300))
@@ -132,7 +130,7 @@ mod tests {
     #[test]
     fn max_bytes_is_twenty_megabytes() {
         let cfg = ProviderConfig::default();
-        let provider = GroqTranscribe::new("groq".to_string(), &cfg, None);
+        let provider = Transcriptions::new("groq".to_string(), &cfg, None);
         assert_eq!(provider.max_bytes(), Some(20 * 1024 * 1024));
     }
 
@@ -145,19 +143,19 @@ mod tests {
             key_env: Some("GROQ_API_KEY".to_string()),
             ..ProviderConfig::default()
         };
-        assert!(!GroqTranscribe::new("groq".to_string(), &keyed, None).available());
+        assert!(!Transcriptions::new("groq".to_string(), &keyed, None).available());
 
         let store = MemoryStore::default();
         store.set("groq", "a-key").unwrap();
         let key = resolve("groq", None, &store);
-        assert!(GroqTranscribe::new("groq".to_string(), &keyed, key).available());
+        assert!(Transcriptions::new("groq".to_string(), &keyed, key).available());
 
         // No key_env: a local server, available with no credential at all.
         let local = ProviderConfig {
             base_url: Some("http://localhost:8000/v1".to_string()),
             ..ProviderConfig::default()
         };
-        assert!(GroqTranscribe::new("local".to_string(), &local, None).available());
+        assert!(Transcriptions::new("local".to_string(), &local, None).available());
     }
 
     #[test]
@@ -166,15 +164,23 @@ mod tests {
             base_url: Some("https://api.openai.com/v1/".to_string()),
             ..ProviderConfig::default()
         };
-        let p = GroqTranscribe::new("openai_whisper".to_string(), &cfg, None);
+        let p = Transcriptions::new("openai_whisper".to_string(), &cfg, None);
         assert_eq!(p.url(), "https://api.openai.com/v1/audio/transcriptions");
 
-        // Groq's host is the default when none is named.
-        let bare = GroqTranscribe::new("groq".to_string(), &ProviderConfig::default(), None);
-        assert_eq!(
-            bare.url(),
-            "https://api.groq.com/openai/v1/audio/transcriptions"
+        let bare = Transcriptions::new(
+            "openai_whisper".to_string(),
+            &ProviderConfig::default(),
+            None,
         );
+        assert_eq!(bare.url(), "https://api.openai.com/v1/audio/transcriptions");
+
+        let xai = ProviderConfig {
+            base_url: Some("https://api.x.ai/v1".to_string()),
+            path: Some("/stt".to_string()),
+            ..ProviderConfig::default()
+        };
+        let p = Transcriptions::new("xai_speech".to_string(), &xai, None);
+        assert_eq!(p.url(), "https://api.x.ai/v1/stt");
     }
 
     #[test]
@@ -183,7 +189,7 @@ mod tests {
         store.set("groq", "sk-super-secret-value").unwrap();
         let key = resolve("groq", None, &store);
         let cfg = ProviderConfig::default();
-        let provider = GroqTranscribe::new("groq".to_string(), &cfg, key);
+        let provider = Transcriptions::new("groq".to_string(), &cfg, key);
         assert!(!provider
             .unavailable_reason()
             .contains("sk-super-secret-value"));

@@ -66,9 +66,8 @@ pub trait TranscribeProvider {
 }
 
 pub mod chat_audio;
-pub mod groq;
-pub mod hf;
 pub mod openai;
+pub mod transcriptions;
 pub mod whisper_cpp;
 
 use crate::config::provider::ProviderKind;
@@ -120,13 +119,13 @@ pub fn build_transcribe_chain(
             continue;
         };
         match pc.kind {
-            Some(ProviderKind::Hf) => {
+            Some(ProviderKind::Transcriptions) => {
                 let key = resolve(pc.account(name), pc.key_env.as_deref(), store);
-                out.push(Box::new(hf::HfTranscribe::new(name.clone(), pc, key)))
-            }
-            Some(ProviderKind::Groq) => {
-                let key = resolve(pc.account(name), pc.key_env.as_deref(), store);
-                out.push(Box::new(groq::GroqTranscribe::new(name.clone(), pc, key)))
+                out.push(Box::new(transcriptions::Transcriptions::new(
+                    name.clone(),
+                    pc,
+                    key,
+                )))
             }
             Some(ProviderKind::ChatAudio) => {
                 let key = resolve(pc.account(name), pc.key_env.as_deref(), store);
@@ -212,7 +211,7 @@ model = "m"
         let store = MemoryStore::default();
         let chain = build_transcribe_chain(&cfg, &store);
         let names: Vec<_> = chain.iter().map(|p| p.name().to_string()).collect();
-        assert_eq!(names, vec!["whisper_cpp", "groq", "hf"]);
+        assert_eq!(names, vec!["whisper_cpp"]);
     }
 
     #[test]

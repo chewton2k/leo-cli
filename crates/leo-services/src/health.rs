@@ -262,11 +262,11 @@ pub(crate) fn chain_check(config: &Config, chain: Chain, store: &dyn SecretStore
                 fix: match chain {
                     Chain::Chat => {
                         "brew install ollama && ollama pull qwen3:8b   (free, private)\n\
-                         or: Ctrl-S in leo, choose OpenAI, Anthropic or Gemini, add its key"
+                         or: Ctrl-S in leo, choose OpenAI, Anthropic, Gemini or xAI, add its key"
                             .to_string()
                     }
-                    Chain::Transcribe => "brew install whisper-cpp   (free, private)\n\
-                         or: Ctrl-S in leo, choose OpenAI or Gemini, add its key"
+                    Chain::Transcribe => "Ctrl-S in leo, then Enter on speech model to download one   (free, private)\n\
+                         or: Ctrl-S in leo, choose OpenAI, Gemini or xAI, add its key"
                         .to_string(),
                 },
             },
@@ -289,15 +289,12 @@ pub fn provider_usable(config: &Config, name: &str, store: &dyn SecretStore) -> 
     };
     let _: &ProviderConfig = provider;
 
-    // A local binary: is it installed, and is its model present?
-    if let Some(bin) = &provider.bin {
-        if !on_path(bin) {
-            return false;
-        }
-        if let Some(model) = &provider.model_path {
-            return crate::ai::provider::whisper_cpp::expand_tilde(model).is_file();
-        }
-        return true;
+    if provider.kind == Some(crate::config::provider::ProviderKind::WhisperCpp) {
+        return crate::ai::provider::whisper_cpp::model_file(provider).is_file()
+            && provider
+                .bin
+                .as_deref()
+                .is_none_or(|bin| on_path(bin) || std::path::Path::new(bin).is_file());
     }
 
     // A key-based provider: env var first, then the keychain, and `has` rather
@@ -396,9 +393,7 @@ pub fn next_step(config: &Config, store: &dyn SecretStore) -> Option<String> {
     }
     let transcribe = chain_check(config, Chain::Transcribe, store);
     if let State::Missing { .. } = transcribe.state {
-        return Some(
-            "Transcription is not set up. Press Ctrl-S, or `brew install whisper-cpp`.".to_string(),
-        );
+        return Some("Speech is not set up. Press Ctrl-S and download a speech model.".to_string());
     }
     if !on_path("rec") {
         return Some(format!("Recording (R) needs sox: {}", install_hint("sox")));
@@ -441,18 +436,26 @@ mod tests {
         assert!(!on_path("leo-definitely-not-a-real-binary"));
     }
 
+    fn whisper(model: &std::path::Path, bin: Option<&str>) -> ProviderConfig {
+        ProviderConfig {
+            kind: Some(crate::config::provider::ProviderKind::WhisperCpp),
+            model_path: Some(model.to_string_lossy().to_string()),
+            bin: bin.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
     #[test]
-    fn a_local_provider_needs_its_binary() {
-        let present = ProviderConfig {
-            bin: Some("sh".to_string()),
-            ..Default::default()
-        };
-        let absent = ProviderConfig {
-            bin: Some("leo-definitely-not-a-real-binary".to_string()),
-            ..Default::default()
-        };
+    fn a_named_whisper_binary_must_be_installed() {
+        let model = tempfile::NamedTempFile::new().unwrap();
         let config = config_with(
-            vec![("present", present), ("absent", absent)],
+            vec![
+                ("present", whisper(model.path(), Some("sh"))),
+                (
+                    "absent",
+                    whisper(model.path(), Some("leo-definitely-not-a-real-binary")),
+                ),
+            ],
             vec!["present"],
         );
         assert!(provider_usable(&config, "present", &store()));
@@ -460,19 +463,18 @@ mod tests {
     }
 
     #[test]
-    fn a_local_provider_also_needs_its_model_file() {
+    fn the_built_in_speech_engine_needs_only_its_model_file() {
         let model = tempfile::NamedTempFile::new().unwrap();
-        let with_model = ProviderConfig {
-            bin: Some("sh".to_string()),
-            model_path: Some(model.path().to_string_lossy().to_string()),
-            ..Default::default()
-        };
-        let without = ProviderConfig {
-            bin: Some("sh".to_string()),
-            model_path: Some("/nonexistent/model.bin".to_string()),
-            ..Default::default()
-        };
-        let config = config_with(vec![("a", with_model), ("b", without)], vec!["a"]);
+        let config = config_with(
+            vec![
+                ("a", whisper(model.path(), None)),
+                (
+                    "b",
+                    whisper(std::path::Path::new("/nonexistent/model.bin"), None),
+                ),
+            ],
+            vec!["a"],
+        );
         assert!(provider_usable(&config, "a", &store()));
         assert!(!provider_usable(&config, "b", &store()));
     }
@@ -496,11 +498,11 @@ mod tests {
     /// "chat works" is less useful than "chat works, using ollama".
     #[test]
     fn a_usable_chain_names_the_provider_it_would_use() {
-        let local = ProviderConfig {
-            bin: Some("sh".to_string()),
-            ..Default::default()
-        };
-        let config = config_with(vec![("localbin", local)], vec!["localbin"]);
+        let model = tempfile::NamedTempFile::new().unwrap();
+        let config = config_with(
+            vec![("localbin", whisper(model.path(), None))],
+            vec!["localbin"],
+        );
         let check = chain_check(&config, Chain::Chat, &store());
         assert!(check.state.is_ready());
         assert_eq!(check.detail.as_deref(), Some("using localbin"));
@@ -510,14 +512,9 @@ mod tests {
     /// second one, because that is exactly how the fallback behaves at runtime.
     #[test]
     fn a_chain_falls_past_an_unusable_provider() {
-        let broken = ProviderConfig {
-            bin: Some("leo-definitely-not-a-real-binary".to_string()),
-            ..Default::default()
-        };
-        let working = ProviderConfig {
-            bin: Some("sh".to_string()),
-            ..Default::default()
-        };
+        let model = tempfile::NamedTempFile::new().unwrap();
+        let broken = whisper(std::path::Path::new("/nonexistent/model.bin"), None);
+        let working = whisper(model.path(), None);
         let config = config_with(
             vec![("broken", broken), ("working", working)],
             vec!["broken", "working"],
@@ -541,11 +538,11 @@ mod tests {
     /// message the user has to dismiss on every launch.
     #[test]
     fn a_working_setup_has_no_next_step() {
-        let local = ProviderConfig {
-            bin: Some("sh".to_string()),
-            ..Default::default()
-        };
-        let mut config = config_with(vec![("localbin", local)], vec!["localbin"]);
+        let model = tempfile::NamedTempFile::new().unwrap();
+        let mut config = config_with(
+            vec![("localbin", whisper(model.path(), None))],
+            vec!["localbin"],
+        );
         config.transcribe.chain = vec!["localbin".to_string()];
         // Only sox can still be missing, and that is environment-dependent, so
         // assert on the part this test controls.

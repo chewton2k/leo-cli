@@ -46,7 +46,6 @@ use leo_core::action::{
     self, Action, ConfirmedAction, Ctx, Effect, Kind, Line, ListenRequest, Outcome, Parsed,
 };
 use leo_core::store::Store;
-use leo_services::config::edit::Task;
 use task::{Job, TaskEvent};
 use view::dirs::DirRow;
 use view::notes::NoteRow;
@@ -158,7 +157,6 @@ struct SettingsScreen {
     rows: Vec<SettingsRow>,
     selected: usize,
     status: Option<String>,
-    advanced: bool,
 }
 
 /// Tab cycling: the candidates for one token and how far through them the user

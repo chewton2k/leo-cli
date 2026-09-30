@@ -1,6 +1,18 @@
 use super::*;
 
+static CONFIG_WRITES: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn away_from_the_real_config() {
+    static HOME: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    HOME.get_or_init(|| {
+        let home = tempfile::tempdir().unwrap();
+        std::env::set_var("LEO_HOME", home.path());
+        home
+    });
+}
+
 fn temp_app() -> (App, tempfile::TempDir) {
+    away_from_the_real_config();
     let dir = tempfile::tempdir().unwrap();
     let mut store = Store::load_from(&dir.path().join("notes")).unwrap();
     store.create_dir("cs130");
@@ -2500,35 +2512,74 @@ fn enter_on_an_ai_step_opens_the_provider_screen() {
 }
 
 #[test]
-fn settings_open_simple_and_show_the_providers_one_step_in() {
+fn settings_open_on_the_ai_choices_and_esc_closes() {
+    let _one_at_a_time = CONFIG_WRITES.lock().unwrap_or_else(|e| e.into_inner());
     let (mut app, _d) = temp_app();
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(110, 30)).unwrap();
-    let members = |app: &App| {
+    app.on_intent(Intent::OpenSettings, &mut terminal).unwrap();
+    let labels: Vec<String> = app
+        .settings
+        .as_ref()
+        .unwrap()
+        .rows
+        .iter()
+        .filter_map(|r| match r {
+            SettingsRow::Setting { label, .. } | SettingsRow::Fact { label, .. } => {
+                Some(label.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(labels[0], "writing", "{labels:?}");
+    assert!(labels.iter().any(|l| l == "speech"), "{labels:?}");
+    assert!(!labels.iter().any(|l| l == "AI providers"), "{labels:?}");
+    app.on_key(press_code(event::KeyCode::Esc), &mut terminal)
+        .unwrap();
+    assert_eq!(app.mode, Mode::Normal);
+}
+
+#[test]
+fn choosing_in_settings_writes_the_choice_and_moves_both_ways() {
+    let _one_at_a_time = CONFIG_WRITES.lock().unwrap_or_else(|e| e.into_inner());
+    let (mut app, _d) = temp_app();
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(110, 30)).unwrap();
+    app.on_intent(Intent::OpenSettings, &mut terminal).unwrap();
+    let value = |app: &App, label: &str| {
         app.settings
             .as_ref()
             .unwrap()
             .rows
             .iter()
-            .any(|r| matches!(r, SettingsRow::Member { .. }))
+            .find_map(|r| match r {
+                SettingsRow::Setting {
+                    label: l, value, ..
+                } if l == label => Some(value.clone()),
+                _ => None,
+            })
     };
-    app.on_intent(Intent::OpenSettings, &mut terminal).unwrap();
-    assert!(
-        !members(&app),
-        "providers are shown before they are asked for"
-    );
-    app.open_providers();
-    assert!(members(&app));
-    app.on_key(press_code(event::KeyCode::Esc), &mut terminal)
+    app.on_key(press_code(event::KeyCode::Right), &mut terminal)
         .unwrap();
+    assert!(value(&app, "writing").unwrap().ends_with("OpenAI"));
+    app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
+        .unwrap();
+    assert!(value(&app, "writing").unwrap().ends_with("Anthropic"));
+    app.on_key(press('j'), &mut terminal).unwrap();
+    app.on_key(press_code(event::KeyCode::Right), &mut terminal)
+        .unwrap();
+    assert_eq!(value(&app, "writing model").unwrap(), "claude-opus-5-5");
+    app.on_key(press_code(event::KeyCode::Left), &mut terminal)
+        .unwrap();
+    assert_eq!(value(&app, "writing model").unwrap(), "claude-sonnet-5-5");
+    app.on_key(press('k'), &mut terminal).unwrap();
+    app.on_key(press_code(event::KeyCode::Left), &mut terminal)
+        .unwrap();
+    assert!(value(&app, "writing").unwrap().ends_with("OpenAI"));
+    let cfg = leo_services::config::Config::load();
+    assert_eq!(cfg.chat.chain, vec!["openai"]);
     assert_eq!(
-        app.mode,
-        Mode::Settings,
-        "Esc steps back to the simple page first"
+        cfg.provider("anthropic").unwrap().model.as_deref(),
+        Some("claude-sonnet-5-5")
     );
-    assert!(!members(&app));
-    app.on_key(press_code(event::KeyCode::Esc), &mut terminal)
-        .unwrap();
-    assert_eq!(app.mode, Mode::Normal);
 }
 
 #[test]

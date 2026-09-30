@@ -61,41 +61,6 @@ pub fn write_chain(doc: &mut DocumentMut, task: Task, chain: &[String]) {
     }
 }
 
-/// Move the entry at `index` one step toward the front, returning the new index.
-/// Order is priority, so this is how a user promotes a provider.
-pub fn move_up(chain: &mut [String], index: usize) -> usize {
-    if index == 0 || index >= chain.len() {
-        return index;
-    }
-    chain.swap(index - 1, index);
-    index - 1
-}
-
-/// Move the entry at `index` one step toward the back.
-pub fn move_down(chain: &mut [String], index: usize) -> usize {
-    if index + 1 >= chain.len() {
-        return index;
-    }
-    chain.swap(index, index + 1);
-    index + 1
-}
-
-/// Add `name` to the end of a chain, or do nothing if it is already there.
-pub fn add(chain: &mut Vec<String>, name: &str) -> bool {
-    if chain.iter().any(|n| n == name) {
-        return false;
-    }
-    chain.push(name.to_string());
-    true
-}
-
-/// Remove `name` from a chain.
-pub fn remove(chain: &mut Vec<String>, name: &str) -> bool {
-    let before = chain.len();
-    chain.retain(|n| n != name);
-    chain.len() != before
-}
-
 /// Load the config file for editing, creating it from the defaults first if it
 /// does not exist yet — a user who never ran `config edit` still gets a file
 /// with all the explanatory comments rather than a bare two lines.
@@ -142,11 +107,8 @@ mod tests {
     #[test]
     fn the_shipped_config_is_valid_toml_for_editing() {
         let d = doc();
-        assert_eq!(read_chain(&d, Task::Chat), vec!["ollama", "openrouter"]);
-        assert_eq!(
-            read_chain(&d, Task::Transcribe),
-            vec!["whisper_cpp", "groq", "hf"]
-        );
+        assert_eq!(read_chain(&d, Task::Chat), vec!["ollama"]);
+        assert_eq!(read_chain(&d, Task::Transcribe), vec!["whisper_cpp"]);
     }
 
     /// The whole reason for `toml_edit`: an edit must not cost the user the
@@ -157,18 +119,15 @@ mod tests {
         let before = d.to_string();
         assert!(before.contains("Keys do NOT belong in this file"));
 
-        write_chain(&mut d, Task::Chat, &["groq_chat".to_string()]);
+        write_chain(&mut d, Task::Chat, &["xai".to_string()]);
         let after = d.to_string();
 
-        assert!(after.contains("chain = [\"groq_chat\"]"), "{after}");
+        assert!(after.contains("chain = [\"xai\"]"), "{after}");
         // Comments survive.
         assert!(after.contains("Keys do NOT belong in this file"));
         assert!(after.contains("Press Ctrl-S"), "{after}");
         // And the transcribe chain is untouched.
-        assert_eq!(
-            read_chain(&d, Task::Transcribe),
-            vec!["whisper_cpp", "groq", "hf"]
-        );
+        assert_eq!(read_chain(&d, Task::Transcribe), vec!["whisper_cpp"]);
     }
 
     /// A chain may name a provider that has no block in the file, because most
@@ -221,52 +180,6 @@ mod tests {
         write_chain(&mut d, Task::Chat, &["ollama".to_string()]);
         assert_eq!(read_chain(&d, Task::Chat), vec!["ollama"]);
         assert!(d.to_string().contains("# just a comment"));
-    }
-
-    #[test]
-    fn reordering_moves_one_step_and_saturates() {
-        let mut chain = vec!["a".to_string(), "b".to_string(), "c".to_string()];
-
-        assert_eq!(move_up(&mut chain, 0), 0, "already first");
-        assert_eq!(chain, ["a", "b", "c"]);
-
-        assert_eq!(move_up(&mut chain, 2), 1);
-        assert_eq!(chain, ["a", "c", "b"]);
-
-        assert_eq!(move_down(&mut chain, 2), 2, "already last");
-        assert_eq!(chain, ["a", "c", "b"]);
-
-        assert_eq!(move_down(&mut chain, 0), 1);
-        assert_eq!(chain, ["c", "a", "b"]);
-    }
-
-    #[test]
-    fn reordering_an_out_of_range_index_is_a_no_op() {
-        let mut chain = vec!["a".to_string()];
-        assert_eq!(move_up(&mut chain, 9), 9);
-        assert_eq!(move_down(&mut chain, 9), 9);
-        assert_eq!(chain, ["a"]);
-
-        let mut empty: Vec<String> = Vec::new();
-        assert_eq!(move_up(&mut empty, 0), 0);
-        assert_eq!(move_down(&mut empty, 0), 0);
-    }
-
-    #[test]
-    fn adding_appends_once_and_removing_takes_it_out() {
-        let mut chain = vec!["ollama".to_string()];
-
-        assert!(add(&mut chain, "openrouter"));
-        assert_eq!(chain, ["ollama", "openrouter"]);
-
-        // A provider is a chain member or it is not; adding twice is not an
-        // error but must not duplicate it, since order is priority.
-        assert!(!add(&mut chain, "openrouter"));
-        assert_eq!(chain, ["ollama", "openrouter"]);
-
-        assert!(remove(&mut chain, "ollama"));
-        assert_eq!(chain, ["openrouter"]);
-        assert!(!remove(&mut chain, "ollama"), "already gone");
     }
 
     #[test]
