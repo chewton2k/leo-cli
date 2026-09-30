@@ -653,6 +653,51 @@ fn installer_block(dir: &Path) -> String {
 }
 
 #[test]
+fn uninstall_removes_everything_leo_made_except_the_notes() {
+    let leo = Leo::new();
+    leo.ok(&["new", "Keep me", "--body", "x"]);
+    let home = leo.home.path();
+    for made in [
+        "config.toml",
+        "credentials.json",
+        "serve-token",
+        "update-check.json",
+        "recent.json",
+        ".env",
+    ] {
+        std::fs::write(home.join(made), "x").unwrap();
+    }
+    std::fs::create_dir_all(home.join(".leo/models")).unwrap();
+    std::fs::write(home.join(".leo/models/ggml-base.en.bin"), "model").unwrap();
+    std::fs::write(home.join("my-own-file.txt"), "not leo's").unwrap();
+    let exe = leo.installed();
+
+    let out = leo.cmd_at(&exe, &["uninstall", "--yes"]).output().unwrap();
+    assert!(out.status.success(), "{}", describe(&out));
+    for made in [
+        "config.toml",
+        "credentials.json",
+        "serve-token",
+        "update-check.json",
+        "recent.json",
+        ".env",
+        ".leo",
+        ".manual-installed",
+    ] {
+        assert!(!home.join(made).exists(), "{made} is still there");
+    }
+    assert!(
+        home.join("my-own-file.txt").exists(),
+        "removed a file that is not leo's"
+    );
+    assert!(
+        leo.files().iter().any(|f| f.contains("Keep me")),
+        "notes went too"
+    );
+    assert!(home.join("notes").is_dir());
+}
+
+#[test]
 fn uninstall_removes_leo_and_its_path_line_but_keeps_the_notes() {
     let leo = Leo::new();
     leo.ok(&["new", "Keep me", "--body", "x"]);

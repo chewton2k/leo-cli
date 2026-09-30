@@ -210,6 +210,17 @@ fn cache_get() -> Option<Bundle> {
     CACHE.lock().ok().and_then(|guard| guard.clone())
 }
 
+pub fn forget_keychain(providers: &[String]) -> usize {
+    std::iter::once(BUNDLE_ACCOUNT.to_string())
+        .chain(providers.iter().cloned())
+        .filter(|account| {
+            keyring::Entry::new(SERVICE, account)
+                .and_then(|entry| entry.delete_credential())
+                .is_ok()
+        })
+        .count()
+}
+
 /// The real OS keychain: macOS Keychain, Windows Credential Manager, or Linux
 /// Secret Service, selected by the `keyring` crate's default feature.
 ///

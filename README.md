@@ -68,8 +68,10 @@ build it from source instead (below).
 **To update leo**, run `leo update`. leo checks for a new version once a day
 and says so on the bottom line when there is one (`LEO_NO_UPDATE_CHECK=1` turns
 that off). **To uninstall**, run
-`leo uninstall`: it removes the program and the PATH line the installer added,
-and leaves your notes, settings and keys where they are.
+`leo uninstall`: it removes the program, the PATH line the installer added,
+and everything else leo made (settings, stored API keys, the `leo serve` link,
+caches, downloaded speech models in `~/.leo`), and leaves your notes folder
+exactly as it is. It lists what it will remove and asks first.
 
 ### Or build it from source
 

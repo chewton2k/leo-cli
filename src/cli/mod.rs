@@ -166,7 +166,7 @@ enum Commands {
     },
 
     #[command(
-        about = "Remove leo from this computer. Your notes, settings and keys stay",
+        about = "Remove leo and everything it made from this computer. Your notes stay",
         hide = true
     )]
     Uninstall {
