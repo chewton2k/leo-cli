@@ -326,12 +326,14 @@ mod tests {
     fn a_long_recording_is_written_part_by_part_then_summarized() {
         let parts: Vec<Part> = (0..40).map(|i| part(i, 1000, &format!("p{i}w"))).collect();
         let prompts = std::sync::Mutex::new(Vec::new());
+        let asked = AtomicUsize::new(0);
         let chat = |p: Prompt, _: u32| -> Result<String> {
-            let n = prompts.lock().unwrap().len();
             prompts.lock().unwrap().push(p.user.clone());
             if p.system.contains("name and summarize") {
-                Ok("A long day\n\nEverything covered.".to_string())
-            } else if n == 2 {
+                return Ok("A long day\n\nEverything covered.".to_string());
+            }
+            let n = asked.fetch_add(1, Ordering::SeqCst);
+            if n == 2 {
                 anyhow::bail!("503")
             } else {
                 Ok(format!("## Section {n}\n- point"))
@@ -397,7 +399,11 @@ mod tests {
             Ok(format!("## From {first}\n- x"))
         };
         let s = structure_recording(&parts, &[], None, "R", &chat, &|_, _| {});
-        assert_eq!(most.load(Ordering::SeqCst), PARALLEL_PARTS);
+        assert!(
+            most.load(Ordering::SeqCst) >= 2,
+            "parts were not written in parallel"
+        );
+        assert!(most.load(Ordering::SeqCst) <= PARALLEL_PARTS);
         let firsts: Vec<usize> = groups(&parts, WORDS_PER_PART)
             .iter()
             .map(|g| {

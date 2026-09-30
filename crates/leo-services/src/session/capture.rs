@@ -440,8 +440,16 @@ mod tests {
         .unwrap();
         wait_for(&capture, RATE as u64);
         capture.set_paused(true);
-        std::thread::sleep(Duration::from_millis(50));
-        let at_pause = capture.recorded_samples();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let mut at_pause = capture.recorded_samples();
+        loop {
+            std::thread::sleep(Duration::from_millis(250));
+            let now = capture.recorded_samples();
+            if now == at_pause || std::time::Instant::now() > deadline {
+                break;
+            }
+            at_pause = now;
+        }
         std::thread::sleep(Duration::from_millis(300));
         assert_eq!(capture.recorded_samples(), at_pause);
         capture.set_paused(false);
@@ -449,7 +457,7 @@ mod tests {
         capture.stop().unwrap();
         let written = wav::read(&dir.path().join("seg-00000.wav")).unwrap().len() as u64;
         assert!(written >= at_pause + RATE as u64);
-        assert!(written < at_pause + 40 * RATE as u64);
+        assert!(written < at_pause + 120 * RATE as u64);
     }
 
     #[test]

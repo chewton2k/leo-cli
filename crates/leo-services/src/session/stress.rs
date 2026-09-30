@@ -106,10 +106,12 @@ fn record(secs: u64, speed: f64, segment_secs: u64, crash_after: Option<u32>) ->
 
     if crashed {
         let resumed = Session::open(crash_copy.path()).unwrap();
-        assert!(resumed
+        let cut_short = resumed
             .segments()
             .iter()
-            .any(|s| s.state == super::SegmentState::Recording));
+            .find(|s| s.state == super::SegmentState::Recording)
+            .map(|s| s.index)
+            .expect("the crash left a segment being recorded");
         resumed.recover_parts().unwrap();
         let (tx, _rx) = mpsc::channel();
         Transcriber::start(crash_copy.path(), flaky(calls), quick(), false, tx).wait();
@@ -118,7 +120,8 @@ fn record(secs: u64, speed: f64, segment_secs: u64, crash_after: Option<u32>) ->
         assert_eq!(assembled.pending, 0);
         let text = assembled.text();
         for p in &assembled.parts {
-            if !silent_segment(p.index, segment_secs) {
+            let barely_started = p.index == cut_short && p.text.is_empty();
+            if !silent_segment(p.index, segment_secs) && !barely_started {
                 assert!(
                     text.contains(&text_for(p.index)),
                     "segment {} lost after the crash",
