@@ -44,7 +44,13 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install sox
       - name: Unit, integration and end-to-end tests
-        run: cargo test --workspace --locked
+        shell: bash
+        run: |
+          set -o pipefail
+          if ! cargo test --workspace --locked 2>&1 | tee test.log; then
+            grep -E "panicked|FAILED|^error|^failures:|assertion|left:|right:|undefined reference|could not" test.log | head -40 | while IFS= read -r line; do echo "::error::$line"; done
+            exit 1
+          fi
 
   lint:
     runs-on: ubuntu-latest
