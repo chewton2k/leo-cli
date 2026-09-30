@@ -176,17 +176,12 @@ fn continuation(before: &str) -> Next {
 }
 
 pub fn toggle_box_line(line: &str) -> Option<String> {
-    let indent = line.len() - line.trim_start().len();
-    let rest = &line[indent..];
-    let mark = rest.strip_prefix("- [")?;
-    let state = mark.chars().next()?;
-    let tail = mark[state.len_utf8()..].strip_prefix("] ")?;
-    let flipped = match state {
-        ' ' => 'x',
-        'x' | 'X' => ' ',
-        _ => return None,
-    };
-    Some(format!("{}- [{flipped}] {tail}", &line[..indent]))
+    let b = leo_core::notes::checkbox_line(line)?;
+    let mut out = String::with_capacity(line.len());
+    out.push_str(&line[..b.state]);
+    out.push(if b.ticked { ' ' } else { 'x' });
+    out.push_str(&line[b.state + 1..]);
+    Some(out)
 }
 
 impl Editor {
@@ -622,6 +617,11 @@ mod tests {
             Some("  - [ ] eggs")
         );
         assert_eq!(toggle_box_line("- milk"), None);
+        assert_eq!(toggle_box_line("* [ ] star").as_deref(), Some("* [x] star"));
+        assert_eq!(
+            toggle_box_line("3. [x] third").as_deref(),
+            Some("3. [ ] third")
+        );
         let mut ed = at_end("- [ ] a\ntext");
         assert!(ed.toggle_box(0));
         assert!(!ed.toggle_box(1));

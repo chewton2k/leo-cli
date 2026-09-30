@@ -71,6 +71,7 @@ test('checkbox numbers match the ones leo ticks', () => {
     [1, false],
     [2, true],
     [3, true],
+    [4, false],
   ]);
 });
 

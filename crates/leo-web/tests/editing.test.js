@@ -25,6 +25,18 @@ test('an unclosed fence runs to the end', () => {
   assert.deepEqual(ed.splitBlocks(['```', 'x']).map((b) => [b.start, b.end, b.kind]), [[0, 2, 'code']]);
 });
 
+test('star, plus, numbered and empty boxes count and toggle like leo', () => {
+  const lines = ['* [ ] star', '+ [x] plus', '1. [ ] one', '2) [X] two', '- [ ]', '-[ ] not', '- [y] not'];
+  assert.deepEqual(lines.map(ed.isBox), [true, true, true, true, true, false, false]);
+  assert.equal(ed.toggleBox('* [ ] star'), '* [x] star');
+  assert.equal(ed.toggleBox('3. [x] three'), '3. [ ] three');
+  assert.equal(ed.toggleBox('- [ ]'), '- [x]');
+  assert.equal(ed.boxLine(lines, 5), 4);
+  const html = md.render(lines.slice(0, 5).join('\n'));
+  assert.equal((html.match(/data-box="/g) || []).length, 5, html);
+  assert.ok(!html.includes('disabled'), html);
+});
+
 test('an empty note is one empty line', () => {
   assert.deepEqual(ed.splitBlocks(['']).map((b) => [b.start, b.end]), [[0, 1]]);
 });
@@ -34,7 +46,7 @@ test('box numbers count the same lines leo counts', () => {
   assert.equal(ed.boxesBefore(lines, 0), 0);
   assert.equal(ed.boxesBefore(lines, 3), 2);
   assert.equal(ed.boxesBefore(lines, 7), 3);
-  assert.equal(ed.boxesBefore(lines, 9), 4);
+  assert.equal(ed.boxesBefore(lines, 9), 5);
 });
 
 test('rendering a line block numbers its box globally', () => {

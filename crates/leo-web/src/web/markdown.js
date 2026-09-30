@@ -37,7 +37,7 @@
   const RULE = /^\s{0,3}([-*_])(\s*\1){2,}\s*$/;
   const ITEM = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
   const TABLE_RULE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
-  const BOX = /^- \[( |x|X)\] /;
+  const BOX = /^(?:[-*+]|\d+[.)]) \[( |x|X)\](?: |$)/;
 
   const isBox = (line) => BOX.test(line.trimStart());
 
@@ -80,15 +80,15 @@
           continue;
         }
         let body;
-        const task = item.text.match(/^\[( |x|X)\]\s+(.*)$/);
+        const task = item.text.match(/^\[( |x|X)\](?:\s+(.*))?$/);
         if (task && isBox(item.raw) && state.interactive) {
           state.boxes++;
           const done = task[1] !== ' ';
-          body = `<label class="task${done ? ' done' : ''}"><input type="checkbox" data-box="${state.boxes}"${done ? ' checked' : ''}><span>${inline(task[2])}</span></label>`;
+          body = `<label class="task${done ? ' done' : ''}"><input type="checkbox" data-box="${state.boxes}"${done ? ' checked' : ''}><span>${inline(task[2] || '')}</span></label>`;
           html += `<li class="task-item">${body}</li>`;
         } else if (task) {
           const done = task[1] !== ' ';
-          html += `<li class="task-item"><label class="task${done ? ' done' : ''}"><input type="checkbox" disabled${done ? ' checked' : ''}><span>${inline(task[2])}</span></label></li>`;
+          html += `<li class="task-item"><label class="task${done ? ' done' : ''}"><input type="checkbox" disabled${done ? ' checked' : ''}><span>${inline(task[2] || '')}</span></label></li>`;
         } else {
           html += `<li>${inline(item.text)}</li>`;
         }

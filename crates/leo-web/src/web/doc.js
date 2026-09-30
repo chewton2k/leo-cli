@@ -244,10 +244,20 @@
       return line;
     }
 
+    function boxFor(e) {
+      const direct = e.target.closest('input[data-box]');
+      if (direct) return direct;
+      const item = e.target.closest('.task-item');
+      const input = item && item.querySelector('input[data-box]');
+      const text = item && item.querySelector('label.task > span');
+      if (!input || !text) return null;
+      return e.clientX < text.getBoundingClientRect().left ? input : null;
+    }
+
     container.addEventListener('click', (e) => {
       pressed = false;
       clearTimeout(release);
-      const box = e.target.closest('input[data-box]');
+      const box = boxFor(e);
       if (box) {
         e.preventDefault();
         const number = Number(box.dataset.box);

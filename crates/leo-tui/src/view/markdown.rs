@@ -248,19 +248,7 @@ fn is_rule(trimmed: &str) -> bool {
 
 /// A task item: whether it is done, and the text after the box.
 fn checkbox(trimmed: &str) -> Option<(bool, &str)> {
-    for marker in ["- ", "* ", "+ "] {
-        if let Some(rest) = trimmed.strip_prefix(marker) {
-            if let Some(inner) = rest.strip_prefix("[ ]") {
-                return Some((false, inner.trim_start()));
-            }
-            for done in ["[x]", "[X]"] {
-                if let Some(inner) = rest.strip_prefix(done) {
-                    return Some((true, inner.trim_start()));
-                }
-            }
-        }
-    }
-    None
+    leo_core::notes::checkbox_line(trimmed).map(|b| (b.ticked, b.text))
 }
 
 /// An unordered list item's text.
@@ -398,6 +386,21 @@ mod tests {
         assert_eq!(raw_col("  1. first", 5), 5);
         assert_eq!(raw_col("- a", 99), 3);
         assert_eq!(raw_col("plain", 0), 0);
+    }
+
+    #[test]
+    fn star_numbered_and_empty_boxes_render_as_boxes() {
+        for raw in ["* [ ] star", "1. [x] one", "- [ ]"] {
+            let text: String = render_line(raw)
+                .spans
+                .iter()
+                .map(|s| s.content.as_ref())
+                .collect();
+            assert!(
+                text.contains(BOX_OPEN) || text.contains(BOX_DONE),
+                "{raw}: {text}"
+            );
+        }
     }
 
     #[test]

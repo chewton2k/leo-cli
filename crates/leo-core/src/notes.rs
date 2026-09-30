@@ -140,25 +140,23 @@ impl Note {
             .lines()
             .map(|line| {
                 let trimmed = line.trim_start();
-                if let Some(rest) = trimmed
-                    .strip_prefix("- [x] ")
-                    .or_else(|| trimmed.strip_prefix("- [X] "))
-                {
+                if let Some(b) = checkbox_line(line) {
                     checkbox_num += 1;
-                    format!(
-                        "  {} {} {}",
-                        format!("[{checkbox_num}]").dimmed(),
-                        "☑".green(),
-                        linkify(rest).dimmed(),
-                    )
-                } else if let Some(rest) = trimmed.strip_prefix("- [ ] ") {
-                    checkbox_num += 1;
-                    format!(
-                        "  {} {} {}",
-                        format!("[{checkbox_num}]").dimmed(),
-                        "☐".white(),
-                        linkify(rest),
-                    )
+                    if b.ticked {
+                        format!(
+                            "  {} {} {}",
+                            format!("[{checkbox_num}]").dimmed(),
+                            "☑".green(),
+                            linkify(b.text).dimmed(),
+                        )
+                    } else {
+                        format!(
+                            "  {} {} {}",
+                            format!("[{checkbox_num}]").dimmed(),
+                            "☐".white(),
+                            linkify(b.text),
+                        )
+                    }
                 } else if let Some(rest) = trimmed.strip_prefix("- ") {
                     format!("  • {}", linkify(rest))
                 } else {
@@ -192,50 +190,82 @@ impl Note {
     pub fn checkboxes(&self) -> Vec<bool> {
         self.body
             .lines()
-            .map(str::trim_start)
-            .filter_map(|t| {
-                if t.starts_with("- [ ] ") {
-                    Some(false)
-                } else if t.starts_with("- [x] ") || t.starts_with("- [X] ") {
-                    Some(true)
-                } else {
-                    None
-                }
-            })
+            .filter_map(|l| checkbox_line(l).map(|b| b.ticked))
             .collect()
     }
 
     pub fn toggle_checkbox(&mut self, n: usize) -> Option<String> {
-        let mut checkbox_num = 0usize;
-        let lines: Vec<String> = self.body.lines().map(|l| l.to_string()).collect();
-        let mut new_lines = lines.clone();
-
-        for (i, line) in lines.iter().enumerate() {
-            let trimmed = line.trim_start();
-            let is_checked = trimmed.starts_with("- [x] ") || trimmed.starts_with("- [X] ");
-            let is_unchecked = trimmed.starts_with("- [ ] ");
-
-            if is_checked || is_unchecked {
-                checkbox_num += 1;
-                if checkbox_num == n {
-                    let indent = &line[..line.len() - trimmed.len()];
-                    let rest = &trimmed[6..];
-                    if is_unchecked {
-                        new_lines[i] = format!("{indent}- [x] {rest}");
-                        self.body = new_lines.join("\n");
-                        self.updated_at = Utc::now();
-                        return Some(format!("{} {rest}", "☑".green()));
+        let mut seen = 0usize;
+        let mut out = String::with_capacity(self.body.len());
+        let mut result = None;
+        for piece in self.body.split_inclusive('\n') {
+            let line = piece.trim_end_matches(['\n', '\r']);
+            let found = result.is_none();
+            let hit = checkbox_line(line).filter(|_| {
+                seen += 1;
+                found && seen == n
+            });
+            match hit {
+                Some(b) => {
+                    let flipped = if b.ticked { ' ' } else { 'x' };
+                    out.push_str(&line[..b.state]);
+                    out.push(flipped);
+                    out.push_str(&piece[b.state + 1..]);
+                    result = Some(if b.ticked {
+                        format!("{} {}", "☐".white(), b.text)
                     } else {
-                        new_lines[i] = format!("{indent}- [ ] {rest}");
-                        self.body = new_lines.join("\n");
-                        self.updated_at = Utc::now();
-                        return Some(format!("{} {rest}", "☐".white()));
-                    }
+                        format!("{} {}", "☑".green(), b.text)
+                    });
                 }
+                None => out.push_str(piece),
             }
         }
-        None
+        if result.is_some() {
+            self.body = out;
+            self.updated_at = Utc::now();
+        }
+        result
     }
+}
+
+pub struct Checkbox<'a> {
+    pub ticked: bool,
+    pub state: usize,
+    pub text: &'a str,
+}
+
+pub fn checkbox_line(line: &str) -> Option<Checkbox<'_>> {
+    let trimmed = line.trim_start();
+    let indent = line.len() - trimmed.len();
+    let marker = match trimmed.chars().next()? {
+        '-' | '*' | '+' => 1,
+        c if c.is_ascii_digit() => {
+            let digits = trimmed.chars().take_while(char::is_ascii_digit).count();
+            match trimmed[digits..].chars().next() {
+                Some('.' | ')') => digits + 1,
+                _ => return None,
+            }
+        }
+        _ => return None,
+    };
+    let rest = trimmed[marker..].strip_prefix(" [")?;
+    let mut chars = rest.chars();
+    let ticked = match chars.next()? {
+        ' ' => false,
+        'x' | 'X' => true,
+        _ => return None,
+    };
+    let after = chars.as_str().strip_prefix(']')?;
+    let text = if after.is_empty() {
+        ""
+    } else {
+        after.strip_prefix(' ')?
+    };
+    Some(Checkbox {
+        ticked,
+        state: indent + marker + 2,
+        text,
+    })
 }
 
 /// The plain words of a search query, lowercased: what can match text. Words
@@ -251,6 +281,28 @@ pub fn search_words(query: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_list_style_of_checkbox_counts_and_toggles() {
+        let mut note = Note::new(
+            "T",
+            "- [ ] dash\n* [ ] star\n+ [x] plus\n1. [ ] one\n2) [X] two\n  - [ ]\n-[ ] not\n- [y] not\ncode [ ] not\n",
+            vec![],
+            "",
+        );
+        assert_eq!(
+            note.checkboxes(),
+            vec![false, false, true, false, true, false]
+        );
+        for n in 1..=6 {
+            assert!(note.toggle_checkbox(n).is_some(), "box {n}");
+        }
+        assert_eq!(
+            note.body,
+            "- [x] dash\n* [x] star\n+ [ ] plus\n1. [x] one\n2) [ ] two\n  - [x]\n-[ ] not\n- [y] not\ncode [ ] not\n"
+        );
+        assert!(note.toggle_checkbox(7).is_none());
+    }
 
     /// The line a search matched inside the note, so results can show where.
     #[test]
@@ -283,7 +335,7 @@ mod tests {
             vec![],
             "",
         );
-        assert_eq!(note.checkboxes(), vec![false, true, true]);
+        assert_eq!(note.checkboxes(), vec![false, true, true, false]);
     }
 
     #[test]
