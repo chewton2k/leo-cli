@@ -414,10 +414,10 @@ instead of running `leo backup`.
 leo serve
 ```
 
-This prints a link and a QR code. Scan the code with your phone's camera and
-your notes open in the browser, laid out for a phone and following its light or
-dark mode. The phone has to be on the same Wi-Fi as your computer. From there
-you can:
+This prints a link and a QR code that work from any network: another Wi-Fi,
+or mobile data. Scan the code with your phone's camera and your notes open in
+the browser, laid out for a phone and following its light or dark mode. From
+there you can:
 
 - browse folders and read notes with their formatting: headings, lists, code,
   tables, quotes and links;
@@ -439,24 +439,19 @@ If a note changes on your computer while you are editing it on the phone,
 nothing is overwritten: the computer's version stays, and yours is kept next to
 it as "<title> (conflict from phone)".
 
-**From anywhere** (another Wi-Fi, or mobile data):
-
-```sh
-brew install cloudflared     # once; free, no account needed
-leo serve --anywhere
-```
-
-leo opens a private tunnel through Cloudflare and prints an `https://` link
-and QR code that work on any network. Your computer has to stay on and awake
-while you use it; leo keeps a Mac from dozing off while it serves. The link
-changes each time you start it.
+**How it reaches your phone.** leo opens a private tunnel through Cloudflare's
+free `cloudflared` tool, with no account needed. The first time, if it is not
+installed, leo offers to install it with Homebrew (or `brew install
+cloudflared`). Your computer has to stay on and awake while you use it; leo
+keeps a Mac from dozing off while it serves. The link's address changes each
+time you start it, so scan the new code. `leo serve --local` skips the tunnel
+and only works on the same Wi-Fi as your computer.
 
 **Keeping it safe.** The link carries an access code: anyone with the whole
 link can read and edit your notes, so don't share it. Opening the link swaps
 the code for a login cookie that lasts 30 days, and takes it out of the address
-bar. The code stays the same between runs, so a bookmark keeps working; if a
-link ever gets out, `leo serve --new-token` makes a new code and every old link
-stops working. Stop the server with `Ctrl-C`.
+bar. If a link ever gets out, `leo serve --new-token` makes a new code and
+every old link stops working. Stop the server with `Ctrl-C`.
 
 Notes you add in the app while the server runs show up on the phone, and notes
 added on the phone show up in the app after `Ctrl-R`.
@@ -504,7 +499,7 @@ leo search "refactor"               # shows the line that matched
 leo record --title "Meeting notes"  # records until you press Enter
 leo ask "what did we cover about graphs?"
 leo backup                          # back up to GitHub
-leo serve --anywhere                # your notes on your phone, from any network
+leo serve                           # your notes on your phone, from any network
 leo doctor                          # check everything, store an API key; exits 1 if anything is broken
 ```
 
@@ -629,8 +624,9 @@ rejected, run `leo backup` again: it pulls first.
 The login cookie is missing or the link was renewed. Open the link `leo serve`
 prints, or scan its QR code again.
 
-**`leo serve --anywhere` does not start**
-It needs `cloudflared` (`brew install cloudflared`). The link changes every
+**`leo serve` does not start**
+It needs `cloudflared` (`brew install cloudflared`), or use `leo serve --local`
+on the same Wi-Fi. The link changes every
 time the server starts, so scan the new code; and the computer has to be
 awake, with `leo serve` still running in its terminal.
 

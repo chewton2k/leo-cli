@@ -1,5 +1,5 @@
 mod token;
-mod tunnel;
+pub mod tunnel;
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -44,7 +44,7 @@ const COOKIE_DAYS: u32 = 30;
 #[derive(Debug, Clone, Copy)]
 pub struct ServeOptions {
     pub port: u16,
-    pub anywhere: bool,
+    pub local: bool,
     pub new_token: bool,
 }
 
@@ -55,7 +55,7 @@ pub async fn serve(options: ServeOptions) -> Result<()> {
         &leo_core::paths::config_dir()?.join("serve-token"),
         options.new_token,
     )?;
-    if options.anywhere && !leo_core::paths::on_path("cloudflared") {
+    if !options.local && !leo_core::paths::on_path("cloudflared") {
         anyhow::bail!(tunnel::MISSING);
     }
 
@@ -65,7 +65,7 @@ pub async fn serve(options: ServeOptions) -> Result<()> {
         token: token.clone(),
     });
 
-    let tunnel = if options.anywhere {
+    let tunnel = if !options.local {
         println!();
         println!("  {}", "Opening a link that works from anywhere…".dimmed());
         Some(tunnel::start(port).await?)
@@ -94,12 +94,9 @@ pub async fn serve(options: ServeOptions) -> Result<()> {
     match &tunnel {
         Some(tunnel) => {
             let anywhere = format!("{}/?token={token}", tunnel.url);
-            println!("  {}", "From anywhere".bold());
+            println!("  {}", "Your link, from any network".bold());
             println!("    {}", anywhere.cyan().underline());
             print_qr(&anywhere);
-            println!("  {}", "On this Wi-Fi".bold());
-            println!("    {}", wifi.cyan().underline());
-            println!();
             println!(
                 "  {} anyone with the whole link can read and edit your notes. Keep it",
                 "Careful:".yellow().bold()
@@ -112,7 +109,7 @@ pub async fn serve(options: ServeOptions) -> Result<()> {
             print_qr(&wifi);
             println!(
                 "  {}",
-                "Away from this Wi-Fi? `leo serve --anywhere` gives a link that works on any network."
+                "Away from this Wi-Fi? `leo serve` without --local gives a link that works on any network."
                     .dimmed()
             );
             println!(

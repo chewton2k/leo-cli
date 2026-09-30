@@ -20,6 +20,7 @@ const STALE: &[(&str, &str)] = &[
     ("/setup", "/doctor"),
     ("leo config edit", "Ctrl-S, then e"),
     ("leo sync", "leo backup"),
+    ("serve --anywhere", "leo serve"),
     ("/sync", "/backup"),
     ("leo listen", "leo record"),
     ("/listen", "/record"),

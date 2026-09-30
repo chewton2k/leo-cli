@@ -142,7 +142,7 @@ pub const SECTIONS: &[Section] = &[
             ),
             e(
                 "leo serve",
-                "your notes on your phone (--anywhere: any network)",
+                "your notes on your phone, from any network",
             ),
             e(
                 "leo update",

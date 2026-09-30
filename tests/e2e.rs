@@ -1104,7 +1104,7 @@ impl Drop for Serving {
 fn serve_needs_its_token_and_then_lists_the_notes() {
     let leo = Leo::new();
     leo.ok(&["new", "Served note", "--body", "x"]);
-    let server = Serving::start(&leo, &[]);
+    let server = Serving::start(&leo, &["--local"]);
     let token = server.token();
 
     let refused = server.get("/api/notes", "");
@@ -1125,7 +1125,7 @@ fn serve_needs_its_token_and_then_lists_the_notes() {
 #[test]
 fn opening_the_link_keeps_the_code_out_of_the_address_bar() {
     let leo = Leo::new();
-    let server = Serving::start(&leo, &[]);
+    let server = Serving::start(&leo, &["--local"]);
     let token = server.token();
 
     let first = server.get(&format!("/?token={token}"), "");
@@ -1178,10 +1178,10 @@ fn opening_the_link_keeps_the_code_out_of_the_address_bar() {
 #[test]
 fn the_link_survives_a_restart_until_a_new_one_is_asked_for() {
     let leo = Leo::new();
-    let first = Serving::start(&leo, &[]).token();
-    let again = Serving::start(&leo, &[]).token();
+    let first = Serving::start(&leo, &["--local"]).token();
+    let again = Serving::start(&leo, &["--local"]).token();
     assert_eq!(first, again);
-    let fresh = Serving::start(&leo, &["--new-token"]);
+    let fresh = Serving::start(&leo, &["--local", "--new-token"]);
     let new = fresh.token();
     assert_ne!(new, first);
     let old = fresh.get(&format!("/api/notes?token={first}"), "");
@@ -1194,7 +1194,7 @@ fn the_link_survives_a_restart_until_a_new_one_is_asked_for() {
 #[test]
 fn the_server_sees_notes_added_while_it_runs() {
     let leo = Leo::new();
-    let server = Serving::start(&leo, &[]);
+    let server = Serving::start(&leo, &["--local"]);
     let token = server.token();
     leo.ok(&["new", "Added while serving", "--body", "x"]);
     let listed = server.get(&format!("/api/notes?token={token}"), "");
@@ -1202,7 +1202,7 @@ fn the_server_sees_notes_added_while_it_runs() {
 }
 
 #[test]
-fn serve_anywhere_prints_the_tunnel_link() {
+fn serve_prints_the_link_that_works_from_anywhere() {
     let leo = Leo::new();
     let fake = leo.bin.join("cloudflared");
     std::fs::write(
@@ -1211,7 +1211,7 @@ fn serve_anywhere_prints_the_tunnel_link() {
     )
     .unwrap();
     make_executable(&fake);
-    let server = Serving::start(&leo, &["--anywhere"]);
+    let server = Serving::start(&leo, &[]);
     let link = server.link("trycloudflare.com");
     assert!(
         link.starts_with("https://quiet-fox-123.trycloudflare.com/?token="),
@@ -1220,16 +1220,11 @@ fn serve_anywhere_prints_the_tunnel_link() {
 }
 
 #[test]
-fn serve_anywhere_without_cloudflared_says_how_to_get_it() {
+fn serve_without_cloudflared_says_how_to_get_it_and_about_local() {
     let leo = Leo::new();
-    let out = leo
-        .cmd(&["serve", "--anywhere", "--port", "38999"])
-        .output()
-        .unwrap();
+    let out = leo.cmd(&["serve", "--port", "38999"]).output().unwrap();
     assert!(!out.status.success());
-    assert!(
-        String::from_utf8_lossy(&out.stderr).contains("cloudflared"),
-        "{}",
-        describe(&out)
-    );
+    let said = String::from_utf8_lossy(&out.stderr);
+    assert!(said.contains("cloudflared"), "{}", describe(&out));
+    assert!(said.contains("--local"), "{}", describe(&out));
 }

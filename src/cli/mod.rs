@@ -6,6 +6,7 @@ mod backup;
 mod doctor;
 mod notes;
 mod prompt;
+mod serve;
 mod uninstall;
 mod update;
 
@@ -125,7 +126,7 @@ enum Commands {
         command: Option<TrashCommands>,
     },
 
-    /// Start a web server to view/edit notes from your phone
+    /// Your notes on your phone, from any network
     Serve {
         /// Port to listen on
         #[arg(short, long, default_value_t = 3131)]
@@ -133,8 +134,11 @@ enum Commands {
 
         #[arg(
             long,
-            help = "Also open a public link that works from any network, through a Cloudflare tunnel (needs cloudflared)"
+            help = "Only on this Wi-Fi, without the link that works from anywhere (needs no cloudflared)"
         )]
+        local: bool,
+
+        #[arg(long, hide = true)]
         anywhere: bool,
 
         #[arg(long, help = "Make a new link, so every old one stops working")]
@@ -232,11 +236,7 @@ const EXAMPLES: &[(&str, &str)] = &[
         "leo ask \"what is due Friday?\"",
         "an answer from your notes",
     ),
-    ("leo serve", "your notes on your phone, on the same Wi-Fi"),
-    (
-        "leo serve --anywhere",
-        "the same from any network (needs cloudflared)",
-    ),
+    ("leo serve", "your notes on your phone, from any network"),
     ("leo backup", "back up now, or set backup up the first time"),
     (
         "leo doctor",
@@ -264,6 +264,10 @@ const MORE_EXAMPLES: &[(&str, &str)] = &[
     (
         "leo serve --new-token",
         "a new link; old links stop working",
+    ),
+    (
+        "leo serve --local",
+        "only on this Wi-Fi, without cloudflared",
     ),
     ("leo backup github", "set up backup with GitHub's gh tool"),
     (
@@ -328,13 +332,19 @@ pub fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Some(Commands::Serve {
             port,
-            anywhere,
+            local,
+            anywhere: _,
             new_token,
-        }) => tokio::runtime::Runtime::new()?.block_on(leo_web::serve(leo_web::ServeOptions {
-            port,
-            anywhere,
-            new_token,
-        })),
+        }) => {
+            if !local {
+                serve::ensure_tunnel_tool()?;
+            }
+            tokio::runtime::Runtime::new()?.block_on(leo_web::serve(leo_web::ServeOptions {
+                port,
+                local,
+                new_token,
+            }))
+        }
         Some(Commands::Doctor) => doctor::run(),
         Some(Commands::Uninstall { yes }) => uninstall::run(yes),
         Some(Commands::Update { force }) => update::run(force),
@@ -419,7 +429,8 @@ mod cli_tests {
     #[test]
     fn the_short_help_points_at_the_full_one() {
         let text = examples(false);
-        assert!(text.contains("leo serve --anywhere"), "{text}");
+        assert!(text.contains("leo serve "), "{text}");
+        assert!(!text.contains("--anywhere"), "{text}");
         assert!(text.contains("leo help --all"), "{text}");
         let all = examples(true);
         assert!(all.contains("leo trash restore 1"), "{all}");

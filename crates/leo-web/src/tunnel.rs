@@ -8,10 +8,11 @@ use tokio::process::{Child, Command};
 const WAIT: Duration = Duration::from_secs(45);
 
 pub const MISSING: &str =
-    "serving from anywhere needs Cloudflare's free tunnel tool, cloudflared. \
-Install it (brew install cloudflared; other systems: \
+    "leo serve opens a link that works from anywhere through Cloudflare's free tunnel tool, \
+cloudflared. Install it (brew install cloudflared; other systems: \
 https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) \
-and run this again. No Cloudflare account is needed.";
+and run this again. No Cloudflare account is needed. `leo serve --local` works without it, \
+on this Wi-Fi only.";
 
 pub struct Tunnel {
     pub url: String,
