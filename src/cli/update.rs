@@ -4,7 +4,27 @@ use std::process::Command;
 use anyhow::{Context, Result};
 use colored::Colorize;
 
+fn ensure_speech_model() {
+    if std::env::var_os("LEO_INSTALL_SKIP_MODEL").is_some() {
+        return;
+    }
+    let cfg = leo_services::config::Config::load();
+    if leo_services::providers::speech_model_present(&cfg) {
+        return;
+    }
+    println!();
+    println!("  The speech model is missing. Downloading base.en (142 MB, once)…");
+    match leo_services::providers::download_speech_model() {
+        Ok(path) => println!("  Saved {}", path.display()),
+        Err(e) => println!(
+            "  {}",
+            format!("Could not download it ({e}). /settings in leo can try again.").dimmed()
+        ),
+    }
+}
+
 pub fn run(force: bool) -> Result<()> {
+    ensure_speech_model();
     let current = env!("CARGO_PKG_VERSION");
     if !force {
         match leo_services::update::latest_release() {
@@ -49,6 +69,7 @@ pub fn run(force: bool) -> Result<()> {
     let status = cmd
         .env("LEO_INSTALL_DIR", dir)
         .env("LEO_INSTALL_SKIP_PATH", "1")
+        .env("LEO_INSTALL_SKIP_MODEL", "1")
         .status()
         .context("could not run the installer (is curl installed?)")?;
     if !status.success() {

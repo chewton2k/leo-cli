@@ -128,6 +128,11 @@ fn absorb_cli(
     let next = match outcome.effect {
         action::Effect::None => return Ok(()),
 
+        action::Effect::Settings => {
+            println!("  Settings live inside leo: run `leo`, then type /settings.");
+            return Ok(());
+        }
+
         action::Effect::Obsidian => {
             let opened = leo_core::obsidian::open(&store.notes_dir)?;
             for line in opened.describe() {

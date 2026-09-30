@@ -55,6 +55,35 @@ bar() {
 bytes() {
     if [ -f "$1" ]; then wc -c <"$1" | tr -d ' '; else echo 0; fi
 }
+fetch() {
+    if [ -t 1 ]; then
+        total=$(curl -fsSLI "$1" 2>/dev/null | awk 'tolower($1) == "content-length:" { n = $2 } END { print n + 0 }') || total=0
+        curl -fsSL "$1" -o "$2" &
+        pid=$!
+        while kill -0 "$pid" 2>/dev/null; do
+            bar "$(bytes "$2")" "$total"
+            sleep 0.1
+        done
+        if ! wait "$pid"; then
+            pid=""
+            printf '\n'
+            return 1
+        fi
+        pid=""
+        got=$(bytes "$2")
+        bar "$got" "$got"
+        printf '\n'
+    else
+        curl -fsSL "$1" -o "$2" || return 1
+    fi
+}
+sha256_of() {
+    if command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | cut -d ' ' -f 1
+    elif command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | cut -d ' ' -f 1
+    fi
+}
 pretty() {
     case "$1" in
         "$HOME"/*) printf '~%s' "${1#"$HOME"}" ;;
@@ -99,25 +128,8 @@ else
         doing "Downloading leo"
     fi
 
-    if [ -t 1 ]; then
-        total=$(curl -fsSLI "$url" 2>/dev/null | awk 'tolower($1) == "content-length:" { n = $2 } END { print n + 0 }') || total=0
-        curl -fsSL "$url" -o "$archive" &
-        pid=$!
-        while kill -0 "$pid" 2>/dev/null; do
-            bar "$(bytes "$archive")" "$total"
-            sleep 0.1
-        done
-        if ! wait "$pid"; then
-            pid=""
-            printf '\n'
-            fail "could not download $url"
-        fi
-        pid=""
-        got=$(bytes "$archive")
-        bar "$got" "$got"
-        printf '\n'
-    else
-        curl -fsSL "$url" -o "$archive" || fail "could not download $url"
+    fetch "$url" "$archive" || fail "could not download $url"
+    if [ ! -t 1 ]; then
         step "Downloaded $(bytes "$archive" | awk '{ printf "%.1f MB", $1 / 1048576 }')"
     fi
 
@@ -125,13 +137,7 @@ else
     # to compute one.
     if curl -fsSL "$url.sha256" -o "$archive.sha256" 2>/dev/null; then
         expected=$(cut -d ' ' -f 1 <"$archive.sha256")
-        if command -v shasum >/dev/null 2>&1; then
-            actual=$(shasum -a 256 "$archive" | cut -d ' ' -f 1)
-        elif command -v sha256sum >/dev/null 2>&1; then
-            actual=$(sha256sum "$archive" | cut -d ' ' -f 1)
-        else
-            actual=""
-        fi
+        actual=$(sha256_of "$archive")
         if [ -z "$actual" ]; then
             say "  ${yellow}!${reset} No checksum tool here, so the download was not checked"
         elif [ "$expected" = "$actual" ]; then
@@ -156,6 +162,39 @@ chmod 755 "$BIN_DIR/.leo.new"
 mv -f "$BIN_DIR/.leo.new" "$BIN_DIR/leo"
 step "Installed to $(pretty "$BIN_DIR")/leo"
 version=$("$BIN_DIR/leo" --version 2>/dev/null | awk '{ print $2 }') || version=""
+
+if [ -n "${LEO_HOME:-}" ]; then
+    models="$LEO_HOME/models"
+else
+    models="$HOME/.leo/models"
+fi
+model="$models/ggml-base.en.bin"
+model_url="${LEO_INSTALL_MODEL_URL:-https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin}"
+model_sha="${LEO_INSTALL_MODEL_SHA256:-a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002}"
+if [ -n "${LEO_INSTALL_SKIP_MODEL:-}" ]; then
+    :
+elif [ -s "$model" ]; then
+    step "Speech model ready in $(pretty "$models")"
+elif ! command -v curl >/dev/null 2>&1; then
+    say "  ${yellow}!${reset} No curl, so the speech model was not downloaded; /settings in leo can fetch it"
+else
+    doing "Downloading the speech model (base.en, 142 MB, once)"
+    mkdir -p "$models"
+    got_model=""
+    if fetch "$model_url" "$model.part"; then
+        actual=$(sha256_of "$model.part")
+        if [ -z "$actual" ] || [ "$actual" = "$model_sha" ]; then
+            mv -f "$model.part" "$model"
+            got_model=1
+        fi
+    fi
+    if [ -n "$got_model" ]; then
+        step "Speech model saved to $(pretty "$models")"
+    else
+        rm -f "$model.part"
+        say "  ${yellow}!${reset} Could not download the speech model; /settings in leo can fetch it later"
+    fi
+fi
 
 # Put the directory on the PATH for every future terminal, in the file this
 # shell reads at startup. Mac terminals start bash as a login shell, which reads

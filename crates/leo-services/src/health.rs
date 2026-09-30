@@ -262,11 +262,11 @@ pub(crate) fn chain_check(config: &Config, chain: Chain, store: &dyn SecretStore
                 fix: match chain {
                     Chain::Chat => {
                         "brew install ollama && ollama pull qwen3:8b   (free, private)\n\
-                         or: Ctrl-S in leo, choose OpenAI, Anthropic, Gemini or xAI, add its key"
+                         or: /settings in leo, choose OpenAI, Anthropic, Gemini or xAI, add its key"
                             .to_string()
                     }
-                    Chain::Transcribe => "Ctrl-S in leo, then Enter on speech model to download one   (free, private)\n\
-                         or: Ctrl-S in leo, choose OpenAI, Gemini or xAI, add its key"
+                    Chain::Transcribe => "/settings in leo, then Enter on speech model to download one   (free, private)\n\
+                         or: /settings in leo, choose OpenAI, Gemini or xAI, add its key"
                         .to_string(),
                 },
             },
@@ -387,13 +387,15 @@ pub fn next_step(config: &Config, store: &dyn SecretStore) -> Option<String> {
     let chat = chain_check(config, Chain::Chat, store);
     if let State::Missing { .. } = chat.state {
         return Some(
-            "No AI model yet. Press Ctrl-S to add one, or `brew install ollama` for a free local one."
+            "No AI model yet. Type /settings to choose one, or `brew install ollama` for a free local one."
                 .to_string(),
         );
     }
     let transcribe = chain_check(config, Chain::Transcribe, store);
     if let State::Missing { .. } = transcribe.state {
-        return Some("Speech is not set up. Press Ctrl-S and download a speech model.".to_string());
+        return Some(
+            "Speech is not set up. Type /settings and download a speech model.".to_string(),
+        );
     }
     if !on_path("rec") {
         return Some(format!("Recording (R) needs sox: {}", install_hint("sox")));
@@ -530,7 +532,7 @@ mod tests {
         let config = config_with(vec![], vec![]);
         let step =
             next_step(&config, &store()).expect("a config with nothing should suggest something");
-        assert!(step.contains("Ctrl-S"), "{step}");
+        assert!(step.contains("/settings"), "{step}");
         assert_eq!(step.lines().count(), 1, "more than one instruction: {step}");
     }
 

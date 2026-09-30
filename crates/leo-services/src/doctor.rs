@@ -163,7 +163,7 @@ fn leo_checks(config_path: &Path, newer: Option<String>) -> Vec<Check> {
                     "config file",
                     "providers and settings",
                     &format!(
-                        "fix it (Ctrl-S, then e), or move it aside to start again:\n{}",
+                        "fix it (/settings, then e), or move it aside to start again:\n{}",
                         config_path.display()
                     ),
                 );
@@ -294,7 +294,7 @@ fn ai_checks(config: &Config, secrets: &dyn SecretStore, probe: Probe) -> Vec<Ch
                     let mut c = Check::missing(
                         &what,
                         &needed_for,
-                        "check its key with Ctrl-S, or that the service is up",
+                        "check its key in /settings, or that the service is up",
                     );
                     c.detail = Some(e.to_string());
                     c

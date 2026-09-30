@@ -137,7 +137,7 @@ pub fn model(command: ModelAction) -> Result<()> {
                     "  {} no [providers.{name}] block in your config — storing the key anyway.",
                     "note".yellow()
                 );
-                println!("  Press Ctrl-S in leo to add it, or run `leo doctor` to see what is configured.");
+                println!("  Type /settings in leo to add it, or run `leo doctor` to see what is configured.");
             }
             let key_env = cfg.provider(&name).and_then(|p| p.key_env.clone());
 
@@ -196,30 +196,67 @@ pub fn get_local_model(task: crate::config::edit::Task) -> Result<String> {
             }
             Ok(choice::OLLAMA_STARTER.to_string())
         }
-        Task::Transcribe => {
-            let dir = choice::models_dir();
-            std::fs::create_dir_all(&dir)?;
-            let target = dir.join(choice::WHISPER_STARTER);
-            let partial = dir.join(format!("{}.part", choice::WHISPER_STARTER));
-            println!(
-                "  Downloading {} to {}",
-                choice::WHISPER_STARTER,
-                dir.display()
-            );
-            let status = std::process::Command::new("curl")
-                .args(["-L", "--fail", "--progress-bar", "-o"])
-                .arg(&partial)
-                .arg(choice::WHISPER_STARTER_URL)
-                .status()
-                .map_err(|e| anyhow::anyhow!("could not run curl: {e}"))?;
-            if !status.success() {
-                let _ = std::fs::remove_file(&partial);
-                anyhow::bail!("the download failed; try again when online");
-            }
-            std::fs::rename(&partial, &target)?;
-            Ok(target.display().to_string())
-        }
+        Task::Transcribe => Ok(download_speech_model()?.display().to_string()),
     }
+}
+
+pub fn speech_model_present(cfg: &Config) -> bool {
+    let starter = crate::config::choice::models_dir().join(crate::config::choice::WHISPER_STARTER);
+    let configured = cfg
+        .provider("whisper_cpp")
+        .map(crate::ai::provider::whisper_cpp::model_file);
+    starter.is_file() || configured.is_some_and(|m| m.is_file())
+}
+
+pub fn sha256_of(path: &std::path::Path) -> Result<String> {
+    use sha2::{Digest, Sha256};
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut file, &mut hasher)?;
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect())
+}
+
+pub fn download_speech_model() -> Result<std::path::PathBuf> {
+    download_verified(
+        &std::env::var("LEO_INSTALL_MODEL_URL")
+            .unwrap_or_else(|_| crate::config::choice::WHISPER_STARTER_URL.to_string()),
+        &std::env::var("LEO_INSTALL_MODEL_SHA256")
+            .unwrap_or_else(|_| crate::config::choice::WHISPER_STARTER_SHA256.to_string()),
+        &crate::config::choice::models_dir(),
+        crate::config::choice::WHISPER_STARTER,
+    )
+}
+
+pub fn download_verified(
+    url: &str,
+    sha256: &str,
+    dir: &std::path::Path,
+    name: &str,
+) -> Result<std::path::PathBuf> {
+    std::fs::create_dir_all(dir)?;
+    let target = dir.join(name);
+    let partial = dir.join(format!("{name}.part"));
+    let status = std::process::Command::new("curl")
+        .args(["-L", "--fail", "--progress-bar", "-o"])
+        .arg(&partial)
+        .arg(url)
+        .status()
+        .map_err(|e| anyhow::anyhow!("could not run curl: {e}"))?;
+    if !status.success() {
+        let _ = std::fs::remove_file(&partial);
+        anyhow::bail!("the download failed; try again when online");
+    }
+    let actual = sha256_of(&partial)?;
+    if !actual.eq_ignore_ascii_case(sha256) {
+        let _ = std::fs::remove_file(&partial);
+        anyhow::bail!("the download was damaged (checksum mismatch); try again");
+    }
+    std::fs::rename(&partial, &target)?;
+    Ok(target)
 }
 
 pub fn account_for(cfg: &Config, name: &str) -> String {
@@ -244,6 +281,47 @@ pub fn config_file(command: ConfigAction) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn file_url(path: &std::path::Path) -> String {
+        format!("file://{}", path.display())
+    }
+
+    #[test]
+    fn a_download_is_kept_only_when_its_checksum_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.bin");
+        std::fs::write(&source, b"pretend model").unwrap();
+        let good = sha256_of(&source).unwrap();
+        assert_eq!(good.len(), 64);
+
+        let models = dir.path().join("models");
+        let saved = download_verified(&file_url(&source), &good, &models, "ggml-x.bin").unwrap();
+        assert_eq!(std::fs::read(&saved).unwrap(), b"pretend model");
+        assert!(!models.join("ggml-x.bin.part").exists());
+
+        let err = download_verified(&file_url(&source), &"0".repeat(64), &models, "ggml-y.bin")
+            .unwrap_err();
+        assert!(err.to_string().contains("damaged"), "{err}");
+        assert!(!models.join("ggml-y.bin").exists());
+        assert!(!models.join("ggml-y.bin.part").exists());
+
+        let err = download_verified(
+            &file_url(&dir.path().join("missing.bin")),
+            &good,
+            &models,
+            "ggml-z.bin",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("failed"), "{err}");
+        assert!(!models.join("ggml-z.bin.part").exists());
+    }
+
+    #[test]
+    fn the_known_checksum_of_base_en_is_well_formed() {
+        let sha = crate::config::choice::WHISPER_STARTER_SHA256;
+        assert_eq!(sha.len(), 64);
+        assert!(sha.chars().all(|c| c.is_ascii_hexdigit()));
+    }
     use crate::config::secret::MemoryStore;
     use std::sync::Mutex;
 

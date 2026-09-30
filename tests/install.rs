@@ -35,6 +35,28 @@ fn install(home: &Path, shell: &str, tarball: &Path) -> String {
     install_with("sh", home, shell, tarball)
 }
 
+fn fake_model(home: &Path) -> (PathBuf, String) {
+    let source = home.with_file_name("fake-model.bin");
+    std::fs::write(&source, b"a small stand-in for base.en").unwrap();
+    let sum = ["shasum -a 256", "sha256sum"]
+        .iter()
+        .find_map(|tool| {
+            Command::new("sh")
+                .arg("-c")
+                .arg(format!("{tool} '{}'", source.display()))
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+        })
+        .expect("no sha256 tool");
+    let sum = String::from_utf8_lossy(&sum.stdout)
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .to_string();
+    (source, sum)
+}
+
 /// Run install.sh with a given interpreter, as `curl ... | <interpreter>` would.
 fn install_with(interpreter: &str, home: &Path, shell: &str, tarball: &Path) -> String {
     let out = Command::new(interpreter)
@@ -44,6 +66,11 @@ fn install_with(interpreter: &str, home: &Path, shell: &str, tarball: &Path) -> 
         .env("SHELL", shell)
         .env("PATH", "/usr/bin:/bin")
         .env("LEO_INSTALL_ARCHIVE", tarball)
+        .env(
+            "LEO_INSTALL_MODEL_URL",
+            format!("file://{}", fake_model(home).0.display()),
+        )
+        .env("LEO_INSTALL_MODEL_SHA256", fake_model(home).1)
         .output()
         .unwrap();
     let text = format!(
@@ -68,9 +95,16 @@ fn installs_leo_and_puts_it_on_the_path_once() {
     let version = Command::new(&leo).arg("--version").output().unwrap();
     assert!(version.status.success(), "the installed leo does not run");
     assert!(said.contains("leo doctor"), "no next step:\n{said}");
+    let model = home.join(".leo/models/ggml-base.en.bin");
+    assert_eq!(
+        std::fs::read(&model).unwrap(),
+        b"a small stand-in for base.en",
+        "the speech model was not downloaded:\n{said}"
+    );
 
     // Running it again must not add the PATH line a second time.
-    install(&home, "/bin/zsh", &tarball);
+    let again = install(&home, "/bin/zsh", &tarball);
+    assert!(again.contains("Speech model ready"), "{again}");
     let zshrc = std::fs::read_to_string(home.join(".zshrc")).unwrap();
     let lines = zshrc.lines().filter(|l| l.contains(".local/bin")).count();
     assert_eq!(lines, 1, "{zshrc}");
@@ -144,4 +178,69 @@ fn a_second_install_says_it_was_an_update() {
         again.contains(&format!("already up to date ({version})")),
         "{again}"
     );
+}
+
+#[test]
+fn a_damaged_speech_model_is_thrown_away_and_the_install_still_succeeds() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let tarball = archive(tmp.path());
+    let (source, _) = fake_model(&home);
+    let out = Command::new("sh")
+        .arg(root().join("install.sh"))
+        .env_clear()
+        .env("HOME", &home)
+        .env("SHELL", "/bin/zsh")
+        .env("PATH", "/usr/bin:/bin")
+        .env("LEO_INSTALL_ARCHIVE", &tarball)
+        .env(
+            "LEO_INSTALL_MODEL_URL",
+            format!("file://{}", source.display()),
+        )
+        .env("LEO_INSTALL_MODEL_SHA256", "0".repeat(64))
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{said}");
+    assert!(
+        said.contains("Could not download the speech model"),
+        "{said}"
+    );
+    assert!(home.join(".local/bin/leo").is_file());
+    let models = home.join(".leo/models");
+    assert!(!models.join("ggml-base.en.bin").exists());
+    assert!(!models.join("ggml-base.en.bin.part").exists());
+}
+
+#[test]
+fn leo_home_keeps_the_speech_model_inside_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    let leo_home = tmp.path().join("leo-home");
+    std::fs::create_dir_all(&home).unwrap();
+    let tarball = archive(tmp.path());
+    let (source, sum) = fake_model(&home);
+    let out = Command::new("sh")
+        .arg(root().join("install.sh"))
+        .env_clear()
+        .env("HOME", &home)
+        .env("LEO_HOME", &leo_home)
+        .env("SHELL", "/bin/zsh")
+        .env("PATH", "/usr/bin:/bin")
+        .env("LEO_INSTALL_ARCHIVE", &tarball)
+        .env(
+            "LEO_INSTALL_MODEL_URL",
+            format!("file://{}", source.display()),
+        )
+        .env("LEO_INSTALL_MODEL_SHA256", sum)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    assert!(leo_home.join("models/ggml-base.en.bin").is_file());
+    assert!(!home.join(".leo").exists());
 }

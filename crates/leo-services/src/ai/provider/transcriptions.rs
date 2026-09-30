@@ -116,7 +116,7 @@ impl TranscribeProvider for Transcriptions {
 
     fn unavailable_reason(&self) -> String {
         format!(
-            "{}: no API key (run `leo doctor`, or press Ctrl-S in leo)",
+            "{}: no API key (run `leo doctor`, or type /settings in leo)",
             self.name
         )
     }

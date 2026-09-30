@@ -14,7 +14,7 @@ use anyhow::Result;
 use crate::store::Store;
 
 /// Bump when the manual's content changes enough to be worth re-offering.
-const MANUAL_VERSION: u32 = 9;
+const MANUAL_VERSION: u32 = 10;
 const MARKER: &str = ".manual-installed";
 pub const MANUAL_TITLE: &str = "leo manual";
 
@@ -138,7 +138,7 @@ that matter and press `Enter` after each; they lead the finished note, in bold.
 
 ## Setting up
 
-`Ctrl-S` opens settings. Under **writing** and **speech**, `Enter` (or `→`)
+`/settings` opens settings. Under **writing** and **speech**, `Enter` (or `→`)
 switches between this computer (free, private) and OpenAI, Anthropic, Gemini
 or xAI; the row below picks the model, and the **key** row takes the key. To
 record without the cloud, `Enter` on **speech model** downloads one once.
@@ -287,7 +287,7 @@ mod tests {
         let body = manual_body();
         assert!(body.contains("`?`"), "never mentions the help key");
         assert!(
-            body.contains("Ctrl-S"),
+            body.contains("/settings"),
             "never mentions the provider screen"
         );
         assert!(body.contains("/doctor"), "never mentions the health check");

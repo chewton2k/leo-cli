@@ -110,7 +110,7 @@ impl TranscribeProvider for ChatAudioTranscribe {
 
     fn unavailable_reason(&self) -> String {
         format!(
-            "{}: no API key (press Ctrl-S in leo, or run `leo doctor`)",
+            "{}: no API key (type /settings in leo, or run `leo doctor`)",
             self.name
         )
     }

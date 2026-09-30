@@ -1,4 +1,4 @@
-//! The provider and settings screen (Ctrl-S): opening it, its keys, and
+//! The settings screen (/settings): opening it, its keys, and
 //! applying what they change. The rows themselves are built in `settings.rs`.
 
 use super::*;
@@ -183,9 +183,7 @@ impl App {
         key: event::KeyEvent,
         terminal: &mut Terminal<B>,
     ) -> Result<()> {
-        // Esc and Ctrl-S both close, so the key that opened it also closes it.
-        let ctrl = key.modifiers.contains(event::KeyModifiers::CONTROL);
-        if key.code == event::KeyCode::Esc || (ctrl && key.code == event::KeyCode::Char('s')) {
+        if key.code == event::KeyCode::Esc {
             self.settings = None;
             self.mode = Mode::Normal;
             return Ok(());

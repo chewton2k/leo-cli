@@ -61,6 +61,7 @@ impl Leo {
             .env("EDITOR", self.bin.join("fake-editor"))
             .env("NO_COLOR", "1")
             .env("LEO_NO_UPDATE_CHECK", "1")
+            .env("LEO_INSTALL_SKIP_MODEL", "1")
             .env("GIT_AUTHOR_NAME", "leo test")
             .env("GIT_AUTHOR_EMAIL", "leo@example.com")
             .env("GIT_COMMITTER_NAME", "leo test")
@@ -645,6 +646,87 @@ fn update_reinstalls_in_place() {
     );
 }
 
+fn sha256_of(path: &Path) -> String {
+    let run = |program: &str, args: &[&str]| {
+        Command::new(program)
+            .args(args)
+            .arg(path)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+    };
+    run("shasum", &["-a", "256"])
+        .or_else(|| run("sha256sum", &[]))
+        .expect("no sha256 tool")
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .to_string()
+}
+
+#[test]
+fn update_downloads_the_speech_model_first_when_it_is_missing() {
+    let leo = Leo::new();
+    let exe = leo.installed();
+    let (script, ran) = tripwire(&leo);
+    let source = leo.home.path().join("fake-model.bin");
+    std::fs::write(&source, b"a small stand-in for base.en").unwrap();
+    let sha = "0e2cb5e4b8ad0c9ee4d74c4e0d7d0b4d25b37b1c2f3b6b8d5d1b0f5b7b2f2a1c";
+    let out = leo
+        .cmd_at(&exe, &["update"])
+        .env_remove("LEO_INSTALL_SKIP_MODEL")
+        .env(
+            "LEO_INSTALL_MODEL_URL",
+            format!("file://{}", source.display()),
+        )
+        .env("LEO_INSTALL_MODEL_SHA256", sha)
+        .env("LEO_UPDATE_SCRIPT", &script)
+        .env("LEO_LATEST_RELEASE", env!("CARGO_PKG_VERSION"))
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", describe(&out));
+    let said = String::from_utf8_lossy(&out.stdout);
+    assert!(said.contains("speech model"), "{said}");
+    assert!(
+        said.contains("damaged"),
+        "a wrong checksum was accepted:\n{said}"
+    );
+    let model = leo.home.path().join("models/ggml-base.en.bin");
+    assert!(!model.exists());
+    assert!(!ran.exists());
+
+    let real = sha256_of(&source);
+    let out = leo
+        .cmd_at(&exe, &["update"])
+        .env_remove("LEO_INSTALL_SKIP_MODEL")
+        .env(
+            "LEO_INSTALL_MODEL_URL",
+            format!("file://{}", source.display()),
+        )
+        .env("LEO_INSTALL_MODEL_SHA256", &real)
+        .env("LEO_UPDATE_SCRIPT", &script)
+        .env("LEO_LATEST_RELEASE", env!("CARGO_PKG_VERSION"))
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", describe(&out));
+    assert_eq!(
+        std::fs::read(&model).unwrap(),
+        b"a small stand-in for base.en"
+    );
+
+    let again = leo
+        .cmd_at(&exe, &["update"])
+        .env_remove("LEO_INSTALL_SKIP_MODEL")
+        .env("LEO_INSTALL_MODEL_URL", "file:///nonexistent")
+        .env("LEO_UPDATE_SCRIPT", &script)
+        .env("LEO_LATEST_RELEASE", env!("CARGO_PKG_VERSION"))
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&again.stdout);
+    assert!(!said.contains("speech model"), "downloaded twice:\n{said}");
+}
+
 fn installer_block(dir: &Path) -> String {
     format!(
         "\n# Added by the leo installer\nexport PATH=\"{}:$PATH\"\n",
@@ -669,6 +751,8 @@ fn uninstall_removes_everything_leo_made_except_the_notes() {
     }
     std::fs::create_dir_all(home.join(".leo/models")).unwrap();
     std::fs::write(home.join(".leo/models/ggml-base.en.bin"), "model").unwrap();
+    std::fs::create_dir_all(home.join("models")).unwrap();
+    std::fs::write(home.join("models/ggml-base.en.bin"), "model").unwrap();
     std::fs::write(home.join("my-own-file.txt"), "not leo's").unwrap();
     let exe = leo.installed();
 
@@ -682,6 +766,7 @@ fn uninstall_removes_everything_leo_made_except_the_notes() {
         "recent.json",
         ".env",
         ".leo",
+        "models",
         ".manual-installed",
     ] {
         assert!(!home.join(made).exists(), "{made} is still there");

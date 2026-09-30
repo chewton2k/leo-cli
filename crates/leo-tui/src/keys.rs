@@ -78,7 +78,6 @@ pub fn normal(key: KeyEvent, focus: Pane) -> Intent {
         return match key.code {
             // Ctrl-P was a separate finder; search now covers everywhere.
             KeyCode::Char('f') => Intent::OpenFilter,
-            KeyCode::Char('s') => Intent::OpenSettings,
             KeyCode::Char('c') => Intent::Quit,
             KeyCode::Char('d') => Intent::ScrollDown,
             KeyCode::Char('u') => Intent::ScrollUp,
@@ -178,7 +177,7 @@ mod tests {
             (key('?'), Intent::ToggleHelp),
             (code(KeyCode::Enter), Intent::Open),
             (ctrl('f'), Intent::OpenFilter),
-            (ctrl('s'), Intent::OpenSettings),
+            (ctrl('s'), Intent::Nothing),
         ];
         for (k, expected) in cases {
             assert_eq!(normal(*k, Pane::Notes), *expected, "for {k:?}");

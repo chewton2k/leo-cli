@@ -86,10 +86,10 @@ impl Config {
         format!(
             r#"# leo configuration.
 #
-# Keys do NOT belong in this file. Press Ctrl-S inside leo and Enter on the
-# key row, or run `leo doctor`.
+# Keys do NOT belong in this file. Type /settings inside leo and press Enter on
+# the key row, or run `leo doctor`.
 #
-# Press Ctrl-S to choose what writes and what listens: this computer (free and
+# Type /settings to choose what writes and what listens: this computer (free and
 # private) or OpenAI, Anthropic, Gemini or xAI with one key, and which model
 # each uses. Settings writes these two lines for you.
 

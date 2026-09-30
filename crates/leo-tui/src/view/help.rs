@@ -135,7 +135,7 @@ pub const SECTIONS: &[Section] = &[
     Section {
         title: "Settings",
         entries: &[
-            e("Ctrl-S", "settings: AI, keys, colour, backup"),
+            e("/settings", "AI and models, keys, colour, backup"),
             e(
                 "leo doctor",
                 "check everything; says how to fix what does not",
@@ -346,7 +346,7 @@ mod tests {
         let text: String = help_lines().iter().map(|l| l.to_string()).collect();
         for key in [
             "j", "k", "g", "G", "h", "l", "Enter", "x", "e", "D", "/", "f", "Tab", "Ctrl-F",
-            "Ctrl-S", "Ctrl-D", "Ctrl-U", "Ctrl-R", "Esc", "Ctrl-Z", "?", "q", "n", "a", "R",
+            "Ctrl-D", "Ctrl-U", "Ctrl-R", "Esc", "Ctrl-Z", "?", "q", "n", "a", "R",
         ] {
             assert!(text.contains(key), "help never shows the {key} key");
         }

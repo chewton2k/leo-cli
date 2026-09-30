@@ -600,7 +600,7 @@ impl App {
         }
         lines.push(Line::blank());
         lines.push(Line::dim(
-            "  Ctrl-S manages providers · /doctor checks everything",
+            "  /settings picks the AI · /doctor checks everything",
         ));
         Some(lines)
     }
@@ -1407,6 +1407,11 @@ impl App {
                 }
                 self.preview_scroll = 0;
                 self.focus = Pane::Preview;
+                Ok(())
+            }
+
+            Effect::Settings => {
+                self.open_settings(None);
                 Ok(())
             }
 

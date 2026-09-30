@@ -168,6 +168,8 @@ pub const OLLAMA_STARTER: &str = "qwen3:8b";
 pub const WHISPER_STARTER: &str = crate::ai::provider::whisper_cpp::STARTER;
 pub const WHISPER_STARTER_URL: &str =
     "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin";
+pub const WHISPER_STARTER_SHA256: &str =
+    "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002";
 
 pub fn choices(task: Task) -> &'static [Choice] {
     match task {

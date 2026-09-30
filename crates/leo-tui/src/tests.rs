@@ -1202,7 +1202,7 @@ fn a_retired_command_explains_itself_in_one_message() {
 
     app.run_line("env", &mut terminal).unwrap();
     let (_, text, _) = app.message.as_ref().expect("a message");
-    assert!(text.contains("Ctrl-S"), "{text}");
+    assert!(text.contains("/settings"), "{text}");
     assert!(text.contains("keychain"), "does not say why: {text}");
 }
 

@@ -227,7 +227,8 @@ can mix them (for example, speech on your computer and writing in the cloud).
 
 ### Settings, in one minute
 
-Everything happens in Settings: press `Ctrl-S` inside leo. The top of the page
+Everything happens in Settings: type `/settings` inside leo (press `/`, type
+`settings`, then `Enter`). The top of the page
 looks like this:
 
 ```
@@ -471,7 +472,7 @@ in to the same GitHub account), or `leo backup` with the same repository's URL. 
 go up, and from then on both stay in step. If the same note was edited on both,
 leo keeps both versions' lines in it for you to tidy rather than losing either.
 
-To push while you work instead of on quit, press `Ctrl-S` and change **when leo
+To push while you work instead of on quit, type `/settings` and change **when leo
 backs up** on the backup row. You can also set up backup from that screen
 instead of running `leo backup`.
 
@@ -614,7 +615,7 @@ unique part of its title.
 | `Tab` | Back to a recently visited note |
 | `R` | Record |
 | `a` | Ask a question, answered from your notes |
-| `Ctrl-S` | Settings: AI, keys, colour, backup |
+| `/settings` | Settings: AI and models, keys, colour, backup |
 | `?` / `q` | Help / quit |
 
 While writing in a note: `Enter` continues a list, `Tab` / `Shift-Tab` indent
@@ -640,7 +641,7 @@ Each note is a Markdown file named after its title, with a small header, and dir
 directories. Deleted notes wait in a hidden `.trash` folder inside the notes
 folder for 30 days; it is never backed up to GitHub. The settings folder also
 holds `serve-token` (the code in your `leo serve` link) and `update-check.json`
-(when leo last looked for a new version). Settings are in `config.toml`; press `Ctrl-S` then `e` to open it.
+(when leo last looked for a new version). Settings are in `config.toml`; type `/settings`, then press `e` to open it.
 API keys are never stored in that file: they are kept in a separate file only
 your account can read.
 
@@ -668,7 +669,7 @@ On a MacBook, the built-in microphone is off while the lid is closed, so use an
 external microphone or open the lid.
 
 **A recording's notes stop mid-sentence**
-The AI hit its length limit, and leo shows a warning saying so. Press `Ctrl-S`,
+The AI hit its length limit, and leo shows a warning saying so. Type `/settings`,
 then `e`, and raise `max_tokens` for that provider (the cloud providers default
 to 32000, plenty for an hour of lecture).
 
@@ -681,7 +682,7 @@ fixing the header brings the note back.
 
 **"No API key" or nothing happens when recording**
 Run `leo doctor` (or `/doctor` in the app): it says which kind of AI is missing
-and how to add it. Keys can also be added with `Ctrl-S`, then `Enter` on the
+and how to add it. Keys can also be added with `/settings`, then `Enter` on the
 **key** row.
 
 **`leo backup` fails**

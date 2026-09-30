@@ -114,7 +114,7 @@ fn cut_off_warning(name: &str, finish: &str, max_tokens: u32) -> Option<String> 
     (finish == "length").then(|| {
         format!(
             "{name}: the answer hit its {max_tokens}-token limit and is cut off; \
-             raise max_tokens for {name} in config.toml (Ctrl-S, then e)"
+             raise max_tokens for {name} in config.toml (/settings, then e)"
         )
     })
 }
@@ -285,7 +285,7 @@ impl ChatProvider for OpenAiChat {
 
     fn unavailable_reason(&self) -> String {
         format!(
-            "{}: no API key (run `leo doctor`, or press Ctrl-S in leo)",
+            "{}: no API key (run `leo doctor`, or type /settings in leo)",
             self.name
         )
     }

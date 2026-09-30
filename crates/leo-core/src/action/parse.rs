@@ -81,6 +81,12 @@ pub const VERBS: &[Verb] = &[
     ),
     v("obsidian", &[], "obsidian", "open your notes in Obsidian"),
     v(
+        "settings",
+        &[],
+        "settings",
+        "AI and models, keys, colour, backup",
+    ),
+    v(
         "doctor",
         &[],
         "doctor",
@@ -155,15 +161,15 @@ pub const RETIRED: &[(&str, &str, &str)] = &[
         "D in the directories pane",
         "it asks, then removes the directory",
     ),
-    ("model", "Ctrl-S", PROFILE),
-    ("config", "Ctrl-S", PROFILE),
+    ("model", "/settings", PROFILE),
+    ("config", "/settings", PROFILE),
     ("rem", "a note with - [ ] lines", GONE_REMIND),
     ("remind", "a note with - [ ] lines", GONE_REMIND),
     ("exp", "the .md file in your notes folder", GONE_EXPORT),
     ("export", "the .md file in your notes folder", GONE_EXPORT),
     (
         "env",
-        "Ctrl-S",
+        "/settings",
         "keys live in your OS keychain now, not a plaintext file",
     ),
     ("pwd", "the status bar", "it always shows where you are"),
@@ -178,8 +184,7 @@ pub const RETIRED: &[(&str, &str, &str)] = &[
 pub(super) const ONE_NAME: &str = "one name per command now, so there is less to learn";
 pub(super) const LISTED: &str = "the notes pane always lists this directory";
 pub(super) const SHOWN: &str = "the preview shows whichever note is selected";
-pub(super) const PROFILE: &str =
-    "providers and keys live on that screen; `leo model` still works in a shell";
+pub(super) const PROFILE: &str = "the AI, its model and its key are chosen there";
 pub(super) const GONE_REMIND: &str = "reminders were removed; a checklist note does the same";
 pub(super) const GONE_EXPORT: &str = "export was removed; every note is already a Markdown file";
 pub(super) const TICKED: &str = "x ticks the first open box; in the preview, j/k pick one first";
@@ -395,6 +400,7 @@ pub fn parse(line: &str) -> Parsed {
         "help" | "?" => act(Action::Help),
         "doctor" => act(Action::Doctor),
         "obsidian" => act(Action::Obsidian),
+        "settings" => act(Action::Settings),
         "quit" | "exit" | "q" => act(Action::Quit),
 
         _ => match RETIRED.iter().find(|(alias, _, _)| *alias == verb.as_str()) {
