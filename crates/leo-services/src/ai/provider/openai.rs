@@ -17,6 +17,7 @@ pub struct OpenAiChat {
     /// Whether this endpoint needs a key at all. Local servers do not.
     needs_key: bool,
     max_tokens: u32,
+    reasoning: bool,
 }
 
 impl OpenAiChat {
@@ -35,6 +36,7 @@ impl OpenAiChat {
             // A provider that names no key_env is a local server needing none.
             needs_key: cfg.key_env.is_some(),
             max_tokens: cfg.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
+            reasoning: cfg.reasoning.unwrap_or(false),
         }
     }
 }
@@ -48,6 +50,14 @@ impl OpenAiChat {
             messages.push(serde_json::json!({"role": "system", "content": system}));
         }
         messages.push(serde_json::json!({"role": "user", "content": req.prompt}));
+        if self.reasoning {
+            return serde_json::json!({
+                "model": self.model,
+                "messages": messages,
+                "max_completion_tokens": req.max_tokens,
+                "stream": stream,
+            });
+        }
         serde_json::json!({
             "model": self.model,
             "messages": messages,
@@ -327,6 +337,32 @@ mod tests {
         let body = provider.body(&plain, false);
         assert_eq!(body["messages"].as_array().unwrap().len(), 1);
         assert_eq!(body["messages"][0]["role"], "user");
+    }
+
+    #[test]
+    fn a_reasoning_model_gets_max_completion_tokens_and_no_temperature() {
+        let cfg = ProviderConfig {
+            reasoning: Some(true),
+            ..ProviderConfig::default()
+        };
+        let provider = OpenAiChat::new("openai".to_string(), &cfg, None);
+        let req = ChatRequest {
+            system: None,
+            prompt: "hi".to_string(),
+            temperature: 0.3,
+            max_tokens: 100,
+        };
+        for stream in [false, true] {
+            let body = provider.body(&req, stream);
+            assert_eq!(body["max_completion_tokens"], 100);
+            assert!(body.get("max_tokens").is_none());
+            assert!(body.get("temperature").is_none());
+            assert_eq!(body["stream"], stream);
+        }
+        let plain = OpenAiChat::new("ollama".to_string(), &ProviderConfig::default(), None);
+        let body = plain.body(&req, false);
+        assert_eq!(body["max_tokens"], 100);
+        assert!(body.get("max_completion_tokens").is_none());
     }
 
     /// A reply that ran into the token limit is kept — most of a note beats

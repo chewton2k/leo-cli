@@ -1,3 +1,4 @@
+pub mod choice;
 pub mod edit;
 pub mod file_store;
 pub mod provider;
@@ -47,7 +48,7 @@ impl Config {
     }
 
     /// Parse a user's config and add the providers leo ships with.
-    fn parse_with_built_ins(text: &str) -> Result<Config> {
+    pub(crate) fn parse_with_built_ins(text: &str) -> Result<Config> {
         let mut config = Config::parse(text)?;
         config.merge_built_in_providers();
         Ok(config)
@@ -68,7 +69,12 @@ impl Config {
             }
         };
         for (name, provider) in built_in.providers {
-            self.providers.entry(name).or_insert(provider);
+            match self.providers.get_mut(&name) {
+                Some(own) => own.fill_from(provider),
+                None => {
+                    self.providers.insert(name, provider);
+                }
+            }
         }
     }
 
@@ -95,10 +101,10 @@ chain = [{chat}]
 [transcribe]
 chain = [{transcribe}]
 
-# Eighteen providers are already known to leo and need no entry here: ollama,
-# openrouter, lmstudio, llamacpp, vllm, groq_chat, cerebras, gemini, mistral,
-# openai, deepseek, together, xai, whisper_cpp, groq, hf, openai_whisper,
-# local_whisper_server. Press Ctrl-S to see them all and add one to a chain.
+# Press Ctrl-S to choose what writes and what listens: this Mac (Ollama and
+# whisper.cpp, free and private) or OpenAI, Anthropic or Gemini with one key,
+# and which model each uses. Every other provider leo knows is under
+# "AI providers" there, and needs no entry here either.
 #
 # Backing up to git happens on every save once `leo backup` has set it up. Pushing is
 # separate, because it needs the network:
@@ -218,9 +224,9 @@ max_tokens = 8192
 [providers.gemini]
 kind = "openai"
 base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
-model = "gemini-2.5-flash"
+model = "gemini-3.8-flash"
 key_env = "GEMINI_API_KEY"
-max_tokens = 8192
+max_tokens = 32000
 
 [providers.mistral]
 kind = "openai"
@@ -233,9 +239,18 @@ max_tokens = 8192
 [providers.openai]
 kind = "openai"
 base_url = "https://api.openai.com/v1"
-model = "gpt-4o-mini"
+model = "gpt-6.1-sol"
 key_env = "OPENAI_API_KEY"
-max_tokens = 8192
+max_tokens = 32000
+reasoning = true
+
+[providers.anthropic]
+kind = "openai"
+base_url = "https://api.anthropic.com/v1"
+model = "claude-sonnet-5-5"
+key_env = "ANTHROPIC_API_KEY"
+max_tokens = 32000
+reasoning = true
 
 [providers.deepseek]
 kind = "openai"
@@ -294,8 +309,16 @@ key_env = "HF_API_KEY"
 [providers.openai_whisper]
 kind = "groq"
 base_url = "https://api.openai.com/v1"
-model = "whisper-1"
+model = "gpt-transcribe"
 key_env = "OPENAI_API_KEY"
+key_from = "openai"
+
+[providers.gemini_speech]
+kind = "chat_audio"
+base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+model = "gemini-3.8-flash"
+key_env = "GEMINI_API_KEY"
+key_from = "gemini"
 
 # A local whisper server copying OpenAI's shape (speaches, faster-whisper-server,
 # whisper.cpp's own server). No key needed.
@@ -421,6 +444,11 @@ model = "Systran/faster-whisper-small"
     pub fn provider(&self, name: &str) -> Option<&ProviderConfig> {
         self.providers.get(name)
     }
+
+    pub fn built_in_provider(name: &str) -> Option<ProviderConfig> {
+        let built_in: Config = toml::from_str(&Config::built_in_toml()).ok()?;
+        built_in.providers.get(name).cloned()
+    }
 }
 
 fn quoted_list(items: &[&str]) -> String {
@@ -542,6 +570,33 @@ model = "my-own-model"
         assert!(cfg.providers.contains_key("openrouter"));
     }
 
+    #[test]
+    fn a_block_naming_only_a_model_keeps_the_rest_of_the_built_in() {
+        let cfg =
+            Config::parse_with_built_ins("[providers.openai]\nmodel = \"gpt-6-luna\"\n").unwrap();
+        let openai = cfg.provider("openai").unwrap();
+        assert_eq!(openai.model.as_deref(), Some("gpt-6-luna"));
+        assert_eq!(openai.kind, Some(ProviderKind::Openai));
+        assert_eq!(
+            openai.base_url.as_deref(),
+            Some("https://api.openai.com/v1")
+        );
+        assert_eq!(openai.key_env.as_deref(), Some("OPENAI_API_KEY"));
+        assert_eq!(openai.reasoning, Some(true));
+    }
+
+    #[test]
+    fn a_block_of_another_kind_under_a_built_in_name_takes_nothing_from_it() {
+        let cfg = Config::parse_with_built_ins(
+            "[providers.gemini]\nkind = \"groq\"\nbase_url = \"http://localhost:8000/v1\"\n",
+        )
+        .unwrap();
+        let gemini = cfg.provider("gemini").unwrap();
+        assert_eq!(gemini.kind, Some(ProviderKind::Groq));
+        assert_eq!(gemini.key_env, None);
+        assert_eq!(gemini.model, None);
+    }
+
     /// The built-in table has to parse, since every load path merges it.
     #[test]
     fn the_built_in_provider_table_parses() {
@@ -620,7 +675,7 @@ kind = "telepathy"
                         "{name}: key_env presence should match whether it is local"
                     );
                 }
-                ProviderKind::Groq | ProviderKind::Hf => {
+                ProviderKind::Groq | ProviderKind::Hf | ProviderKind::ChatAudio => {
                     assert!(p.model.is_some(), "{name} has no model");
                 }
                 ProviderKind::WhisperCpp => {
@@ -649,7 +704,15 @@ kind = "telepathy"
     #[test]
     fn no_paid_provider_is_enabled_by_default() {
         let cfg = Config::default();
-        for paid in ["openai", "deepseek", "together", "xai", "openai_whisper"] {
+        for paid in [
+            "openai",
+            "anthropic",
+            "deepseek",
+            "together",
+            "xai",
+            "openai_whisper",
+            "gemini_speech",
+        ] {
             assert!(
                 cfg.providers.contains_key(paid),
                 "{paid} should be offered in the file"
@@ -693,9 +756,7 @@ kind = "telepathy"
             "openrouter",
             "groq_chat",
             "cerebras",
-            "gemini",
             "mistral",
-            "openai",
             "deepseek",
             "together",
             "xai",
@@ -704,6 +765,13 @@ kind = "telepathy"
                 cfg.provider(cloud).and_then(|p| p.max_tokens),
                 Some(8192),
                 "{cloud}"
+            );
+        }
+        for thinking in ["openai", "anthropic", "gemini"] {
+            assert_eq!(
+                cfg.provider(thinking).and_then(|p| p.max_tokens),
+                Some(32000),
+                "{thinking}"
             );
         }
         for local in ["ollama", "lmstudio", "llamacpp", "vllm"] {

@@ -13,6 +13,7 @@ pub enum ProviderKind {
     Groq,
     /// Local whisper.cpp binary.
     WhisperCpp,
+    ChatAudio,
 }
 
 /// One named provider from `[providers.<name>]`.
@@ -37,6 +38,31 @@ pub struct ProviderConfig {
     /// whisper_cpp only: path to the ggml model file.
     #[serde(default)]
     pub model_path: Option<String>,
+    #[serde(default)]
+    pub key_from: Option<String>,
+    #[serde(default)]
+    pub reasoning: Option<bool>,
+}
+
+impl ProviderConfig {
+    pub fn account<'a>(&'a self, name: &'a str) -> &'a str {
+        self.key_from.as_deref().unwrap_or(name)
+    }
+
+    pub fn fill_from(&mut self, built_in: ProviderConfig) {
+        if self.kind.is_some() && self.kind != built_in.kind {
+            return;
+        }
+        self.kind = self.kind.or(built_in.kind);
+        self.base_url = self.base_url.take().or(built_in.base_url);
+        self.model = self.model.take().or(built_in.model);
+        self.key_env = self.key_env.take().or(built_in.key_env);
+        self.max_tokens = self.max_tokens.or(built_in.max_tokens);
+        self.bin = self.bin.take().or(built_in.bin);
+        self.model_path = self.model_path.take().or(built_in.model_path);
+        self.key_from = self.key_from.take().or(built_in.key_from);
+        self.reasoning = self.reasoning.or(built_in.reasoning);
+    }
 }
 
 /// An ordered fallback chain for one task, from `[chat]` or `[transcribe]`.

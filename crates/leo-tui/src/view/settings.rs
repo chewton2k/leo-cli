@@ -91,6 +91,12 @@ pub enum SettingAction {
     /// Open config.toml in `$EDITOR`.
     EditConfig,
     ShowProviders,
+    ChooseProvider(Task),
+    ChooseModel(Task),
+    GetLocalModel(Task),
+    StoreKey {
+        name: String,
+    },
 }
 
 impl SettingAction {
@@ -106,6 +112,11 @@ impl SettingAction {
             SettingAction::SyncPull => "Enter pulls now",
             SettingAction::EditConfig => "Enter opens config.toml",
             SettingAction::ShowProviders => "Enter shows the providers, their keys and order",
+            SettingAction::ChooseProvider(_) => "Enter or → switches to the next · ← goes back",
+            SettingAction::ChooseModel(_) => "Enter or → picks the next model · ← goes back",
+            SettingAction::GetLocalModel(Task::Chat) => "Enter downloads it with ollama pull",
+            SettingAction::GetLocalModel(Task::Transcribe) => "Enter downloads it to ~/.leo/models",
+            SettingAction::StoreKey { .. } => "Enter asks for the key; it never shows on screen",
         }
     }
 }
@@ -525,6 +536,13 @@ mod tests {
             SettingAction::SyncPush,
             SettingAction::SyncPull,
             SettingAction::EditConfig,
+            SettingAction::ChooseProvider(Task::Chat),
+            SettingAction::ChooseModel(Task::Transcribe),
+            SettingAction::GetLocalModel(Task::Chat),
+            SettingAction::GetLocalModel(Task::Transcribe),
+            SettingAction::StoreKey {
+                name: "openai".into(),
+            },
         ] {
             let text = action.describe();
             assert!(text.starts_with("Enter"), "{action:?}: {text}");

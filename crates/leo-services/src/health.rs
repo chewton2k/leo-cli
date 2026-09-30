@@ -4,8 +4,6 @@
 //! missing dependency is reported with the command that installs it rather than
 //! as a failure after the user has already tried to use it.
 
-use std::path::PathBuf;
-
 use crate::config::provider::ProviderConfig;
 use crate::config::secret::SecretStore;
 use crate::config::Config;
@@ -68,7 +66,7 @@ pub use leo_core::paths::on_path;
 /// Resolves the address itself rather than going through `to_socket_addrs`,
 /// which performs a DNS lookup with no timeout — a bogus hostname there can
 /// block for minutes, and this runs on startup.
-fn port_open(base_url: &str) -> bool {
+pub(crate) fn port_open(base_url: &str) -> bool {
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream};
     use std::time::Duration;
 
@@ -262,11 +260,13 @@ pub(crate) fn chain_check(config: &Config, chain: Chain, store: &dyn SecretStore
             needed_for: chain.needed_for().to_string(),
             state: State::Missing {
                 fix: match chain {
-                    Chain::Chat => "brew install ollama && ollama pull qwen3:8b   (free, local)\n\
-                         or: leo doctor, and store an openrouter key   (free tier)"
-                        .to_string(),
-                    Chain::Transcribe => "brew install whisper-cpp   (free, local)\n\
-                         or: leo doctor, and store a groq key   (free tier)"
+                    Chain::Chat => {
+                        "brew install ollama && ollama pull qwen3:8b   (free, private)\n\
+                         or: Ctrl-S in leo, choose OpenAI, Anthropic or Gemini, add its key"
+                            .to_string()
+                    }
+                    Chain::Transcribe => "brew install whisper-cpp   (free, private)\n\
+                         or: Ctrl-S in leo, choose OpenAI or Gemini, add its key"
                         .to_string(),
                 },
             },
@@ -295,7 +295,7 @@ pub fn provider_usable(config: &Config, name: &str, store: &dyn SecretStore) -> 
             return false;
         }
         if let Some(model) = &provider.model_path {
-            return PathBuf::from(model).is_file();
+            return crate::ai::provider::whisper_cpp::expand_tilde(model).is_file();
         }
         return true;
     }
@@ -306,7 +306,7 @@ pub fn provider_usable(config: &Config, name: &str, store: &dyn SecretStore) -> 
         if std::env::var(var).is_ok_and(|v| !v.trim().is_empty()) {
             return true;
         }
-        return store.has(name);
+        return store.has(provider.account(name));
     }
 
     // A local server with no key: is anything listening?

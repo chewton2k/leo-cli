@@ -7,6 +7,7 @@
 use anyhow::Result;
 
 use crate::view::settings::{Credential, Row, SettingAction};
+use leo_services::config::choice::{self, Local};
 use leo_services::config::edit::{self, Task};
 use leo_services::config::provider::ProviderKind;
 use leo_services::config::secret::{redact, SecretStore};
@@ -63,40 +64,22 @@ fn credential_for(name: &str, key_env: Option<&str>, store: &dyn SecretStore) ->
     }
 }
 
-fn summary(cfg: &Config, store: &dyn SecretStore, task: Task) -> String {
-    let ready = match task {
-        Task::Chat => leo_services::ai::provider::build_chat_chain(cfg, store)
-            .iter()
-            .find(|p| p.available())
-            .map(|p| p.name().to_string()),
-        Task::Transcribe => leo_services::ai::provider::build_transcribe_chain(cfg, store)
-            .iter()
-            .find(|p| p.available())
-            .map(|p| p.name().to_string()),
-    };
-    match ready {
-        Some(name) => match cfg.provider(&name).and_then(|pc| pc.model.clone()) {
-            Some(model) => format!("● {name}  {model}"),
-            None => format!("● {name}"),
-        },
-        None => "○ not set up — Enter to add a key or a local model".to_string(),
-    }
-}
-
-pub fn simple_rows(cfg: &Config, store: &dyn SecretStore, notes_dir: &std::path::Path) -> Vec<Row> {
-    let mut rows = vec![
-        Row::Section("AI".to_string()),
-        Row::Setting {
-            label: "AI for writing".to_string(),
-            value: summary(cfg, store, Task::Chat),
-            action: SettingAction::ShowProviders,
-        },
-        Row::Setting {
-            label: "AI for speech".to_string(),
-            value: summary(cfg, store, Task::Transcribe),
-            action: SettingAction::ShowProviders,
-        },
-    ];
+pub fn simple_rows(
+    cfg: &Config,
+    store: &dyn SecretStore,
+    notes_dir: &std::path::Path,
+    local: &Local,
+) -> Vec<Row> {
+    let mut rows = vec![Row::Section("AI".to_string())];
+    let writing_key = ai_rows(&mut rows, cfg, store, local, Task::Chat, None);
+    ai_rows(
+        &mut rows,
+        cfg,
+        store,
+        local,
+        Task::Transcribe,
+        writing_key.as_deref(),
+    );
     rows.extend(appearance_rows(cfg));
     rows.extend(backup_rows(notes_dir, cfg));
     rows.extend(storage_rows(notes_dir));
@@ -107,6 +90,154 @@ pub fn simple_rows(cfg: &Config, store: &dyn SecretStore, notes_dir: &std::path:
         action: SettingAction::ShowProviders,
     });
     rows
+}
+
+fn ai_rows(
+    rows: &mut Vec<Row>,
+    cfg: &Config,
+    store: &dyn SecretStore,
+    local: &Local,
+    task: Task,
+    shown_key: Option<&str>,
+) -> Option<String> {
+    let what = match task {
+        Task::Chat => "writing",
+        Task::Transcribe => "speech",
+    };
+    let Some(sel) = choice::selection(cfg, store, task) else {
+        rows.push(Row::Setting {
+            label: what.to_string(),
+            value: "○ nothing chosen".to_string(),
+            action: SettingAction::ChooseProvider(task),
+        });
+        return None;
+    };
+    let mark = if sel.ready { "●" } else { "○" };
+    let Some(chosen) = sel.choice else {
+        rows.push(Row::Setting {
+            label: what.to_string(),
+            value: format!("{mark} {} (from config.toml)", sel.provider),
+            action: SettingAction::ChooseProvider(task),
+        });
+        return None;
+    };
+    rows.push(Row::Setting {
+        label: what.to_string(),
+        value: format!("{mark} {}", chosen.label()),
+        action: SettingAction::ChooseProvider(task),
+    });
+    let model_label = format!("{what} model");
+    if chosen.local() {
+        local_rows(rows, cfg, local, task, &sel, model_label);
+        return None;
+    }
+    rows.push(Row::Setting {
+        label: model_label,
+        value: sel.model.clone().unwrap_or_else(|| "(default)".to_string()),
+        action: SettingAction::ChooseModel(task),
+    });
+    let pc = cfg.provider(&sel.provider)?;
+    let account = pc.account(&sel.provider).to_string();
+    if shown_key == Some(account.as_str()) {
+        return Some(account);
+    }
+    let value = match credential_for(&account, pc.key_env.as_deref(), store) {
+        Credential::Stored => "stored".to_string(),
+        Credential::Env { var, .. } => format!("from ${var}"),
+        Credential::NotNeeded => "not needed".to_string(),
+        Credential::Missing => "none — Enter to add one".to_string(),
+    };
+    rows.push(Row::Setting {
+        label: format!("{} key", chosen.name),
+        value,
+        action: SettingAction::StoreKey {
+            name: account.clone(),
+        },
+    });
+    Some(account)
+}
+
+fn local_rows(
+    rows: &mut Vec<Row>,
+    cfg: &Config,
+    local: &Local,
+    task: Task,
+    sel: &choice::Selection,
+    model_label: String,
+) {
+    match task {
+        Task::Chat => {
+            if !local.ollama_running {
+                let value = if leo_services::health::on_path("ollama") {
+                    "Ollama is not running: open the Ollama app"
+                } else {
+                    "Ollama is not installed: brew install ollama"
+                };
+                rows.push(Row::Fact {
+                    label: model_label,
+                    value: value.to_string(),
+                });
+                return;
+            }
+            if local.ollama.is_empty() {
+                rows.push(Row::Setting {
+                    label: model_label,
+                    value: format!("none yet — Enter downloads {}", choice::OLLAMA_STARTER),
+                    action: SettingAction::GetLocalModel(task),
+                });
+                return;
+            }
+            let current = sel.model.clone().unwrap_or_default();
+            let value = if local.ollama.contains(&current) {
+                current
+            } else {
+                format!("{current} is not downloaded — Enter picks one you have")
+            };
+            rows.push(Row::Setting {
+                label: model_label,
+                value,
+                action: SettingAction::ChooseModel(task),
+            });
+        }
+        Task::Transcribe => {
+            let bin = cfg
+                .provider(&sel.provider)
+                .and_then(|p| p.bin.clone())
+                .unwrap_or_else(|| "whisper-cli".to_string());
+            if !leo_services::health::on_path(&bin) {
+                rows.push(Row::Fact {
+                    label: "whisper.cpp".to_string(),
+                    value: "not installed: brew install whisper-cpp".to_string(),
+                });
+            }
+            if local.whisper.is_empty() {
+                rows.push(Row::Setting {
+                    label: model_label,
+                    value: "none yet — Enter downloads base.en (142 MB)".to_string(),
+                    action: SettingAction::GetLocalModel(task),
+                });
+                return;
+            }
+            let current = sel.model.clone().unwrap_or_default();
+            let installed = local
+                .whisper
+                .iter()
+                .any(|p| *p == leo_services::ai::provider::whisper_cpp::expand_tilde(&current));
+            let value = if installed {
+                choice::whisper_label(&current)
+            } else {
+                format!(
+                    "{} is missing — Enter picks one you have",
+                    choice::whisper_label(&current)
+                )
+            };
+            rows.push(Row::Setting {
+                label: model_label,
+                value,
+                action: SettingAction::ChooseModel(task),
+            });
+        }
+    }
 }
 
 /// Build the screen: both chains in order, then everything else that is
@@ -152,7 +283,7 @@ pub fn rows(cfg: &Config, store: &dyn SecretStore, notes_dir: &std::path::Path) 
             let (model, credential) = match cfg.provider(name) {
                 Some(pc) => (
                     pc.model.clone().unwrap_or_else(|| "(default)".to_string()),
-                    credential_for(name, pc.key_env.as_deref(), store),
+                    credential_for(pc.account(name), pc.key_env.as_deref(), store),
                 ),
                 // Named in a chain but never defined: worth showing rather than
                 // hiding, since it is a config typo the user should see.
@@ -187,7 +318,7 @@ pub fn rows(cfg: &Config, store: &dyn SecretStore, notes_dir: &std::path::Path) 
             rows.push(Row::Unused {
                 name: name.clone(),
                 model: pc.model.clone().unwrap_or_else(|| "(default)".to_string()),
-                credential: credential_for(name, pc.key_env.as_deref(), store),
+                credential: credential_for(pc.account(name), pc.key_env.as_deref(), store),
                 task: task_for(pc.kind),
             });
         }
@@ -384,6 +515,64 @@ pub fn cycle_auto_push() -> Result<Changed> {
     Ok(Changed::Yes(format!("Backing up {}.", next.label())))
 }
 
+pub fn step_provider(task: Task, delta: isize) -> Result<Changed> {
+    let (path, mut doc) = edit::load_document()?;
+    let cfg = Config::load();
+    let store = leo_services::config::secret::default_store();
+    let current = choice::selection(&cfg, store.as_ref(), task).map(|s| s.provider);
+    let next = choice::step_choice(task, current.as_deref(), delta);
+    choice::write_choice(&mut doc, task, next.provider);
+    edit::save_document(&path, &doc)?;
+    let what = match task {
+        Task::Chat => "Writing",
+        Task::Transcribe => "Speech",
+    };
+    Ok(Changed::Yes(format!("{what} now uses {}.", next.label())))
+}
+
+pub fn step_model(task: Task, delta: isize, local: &Local) -> Result<Changed> {
+    let cfg = Config::load();
+    let store = leo_services::config::secret::default_store();
+    let Some(sel) = choice::selection(&cfg, store.as_ref(), task) else {
+        return Ok(Changed::No);
+    };
+    let options = choice::model_options(task, &sel.provider, local);
+    let current = sel.model.as_deref().map(|m| {
+        leo_services::ai::provider::whisper_cpp::expand_tilde(m)
+            .display()
+            .to_string()
+    });
+    let Some(next) = choice::step(&options, current.as_deref(), delta) else {
+        return Ok(Changed::No);
+    };
+    let (path, mut doc) = edit::load_document()?;
+    choice::write_model(&mut doc, &sel.provider, next);
+    edit::save_document(&path, &doc)?;
+    let shown = if task == Task::Transcribe && sel.choice.is_some_and(|c| c.local()) {
+        choice::whisper_label(next)
+    } else {
+        next.clone()
+    };
+    Ok(Changed::Yes(format!("Model set to {shown}.")))
+}
+
+pub fn use_model(task: Task, model: &str) -> Result<Changed> {
+    let provider = match task {
+        Task::Chat => "ollama",
+        Task::Transcribe => "whisper_cpp",
+    };
+    let (path, mut doc) = edit::load_document()?;
+    choice::write_model(&mut doc, provider, model);
+    edit::save_document(&path, &doc)?;
+    Ok(Changed::Yes(format!(
+        "Downloaded. {} uses it now.",
+        match task {
+            Task::Chat => "Writing",
+            Task::Transcribe => "Speech",
+        }
+    )))
+}
+
 /// Move a chain member up or down and persist it. `delta` is -1 or 1.
 pub fn reorder(task: Task, name: &str, delta: isize) -> Result<Changed> {
     let (path, mut doc) = edit::load_document()?;
@@ -443,32 +632,141 @@ pub fn remove_from_chain(task: Task, name: &str) -> Result<Changed> {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn the_simple_page_shows_outcomes_and_keeps_providers_one_step_away() {
+    fn simple_page(
+        config: &str,
+        store: &dyn SecretStore,
+        local: &Local,
+    ) -> Vec<(String, String, String)> {
         use super::*;
         let tmp = tempfile::tempdir().unwrap();
-        let rows = simple_rows(
-            &Config::default(),
-            &leo_services::config::secret::MemoryStore::default(),
-            tmp.path(),
-        );
-        assert!(!rows
-            .iter()
-            .any(|r| matches!(r, Row::Member { .. } | Row::Unused { .. })));
-        let labels: Vec<String> = rows
-            .iter()
+        let path = tmp.path().join("config.toml");
+        std::fs::write(&path, config).unwrap();
+        let cfg = Config::load_from(&path);
+        simple_rows(&cfg, store, tmp.path(), local)
+            .into_iter()
             .filter_map(|r| match r {
-                Row::Setting { label, action, .. } => Some(format!("{label}:{action:?}")),
+                Row::Setting {
+                    label,
+                    value,
+                    action,
+                } => Some((label, value, format!("{action:?}"))),
+                Row::Fact { label, value } => Some((label, value, "Fact".to_string())),
                 _ => None,
             })
-            .collect();
-        for wanted in [
-            "AI for writing:ShowProviders",
-            "AI for speech:ShowProviders",
-            "AI providers:ShowProviders",
-        ] {
-            assert!(labels.iter().any(|l| l == wanted), "{labels:?}");
+            .collect()
+    }
+
+    fn row<'a>(
+        rows: &'a [(String, String, String)],
+        label: &str,
+    ) -> Option<&'a (String, String, String)> {
+        rows.iter().find(|(l, _, _)| l == label)
+    }
+
+    #[test]
+    fn the_simple_page_offers_a_provider_a_model_and_a_key_for_each_task() {
+        use super::*;
+        let store = MemoryStore::default();
+        store.set("openai", "k").unwrap();
+        let rows = simple_page(
+            "[chat]\nchain = [\"anthropic\"]\n[transcribe]\nchain = [\"openai_whisper\"]\n",
+            &store,
+            &Local::default(),
+        );
+        let writing = row(&rows, "writing").unwrap();
+        assert_eq!(writing.1, "○ Anthropic");
+        assert_eq!(writing.2, "ChooseProvider(Chat)");
+        let model = row(&rows, "writing model").unwrap();
+        assert_eq!(model.1, "claude-sonnet-5-5");
+        assert_eq!(model.2, "ChooseModel(Chat)");
+        let key = row(&rows, "Anthropic key").unwrap();
+        assert_eq!(key.2, "StoreKey { name: \"anthropic\" }");
+        if std::env::var("ANTHROPIC_API_KEY").is_err() {
+            assert_eq!(key.1, "none — Enter to add one");
         }
+        assert_eq!(row(&rows, "speech").unwrap().1, "● OpenAI");
+        assert_eq!(row(&rows, "speech model").unwrap().1, "gpt-transcribe");
+        let openai = row(&rows, "OpenAI key").unwrap();
+        if std::env::var("OPENAI_API_KEY").is_err() {
+            assert_eq!(openai.1, "stored");
+        }
+        assert!(row(&rows, "AI providers").is_some());
+        assert!(!rows.iter().any(|(l, _, _)| l.contains("chain")));
+    }
+
+    #[test]
+    fn one_cloud_for_both_tasks_asks_for_its_key_once() {
+        use super::*;
+        let rows = simple_page(
+            "[chat]\nchain = [\"gemini\"]\n[transcribe]\nchain = [\"gemini_speech\"]\n",
+            &MemoryStore::default(),
+            &Local::default(),
+        );
+        let keys: Vec<_> = rows
+            .iter()
+            .filter(|(l, _, _)| l.ends_with(" key"))
+            .collect();
+        assert_eq!(keys.len(), 1, "{rows:?}");
+        assert_eq!(keys[0].2, "StoreKey { name: \"gemini\" }");
+    }
+
+    #[test]
+    fn a_local_choice_says_what_is_missing_and_offers_the_download() {
+        use super::*;
+        let config = "[chat]\nchain = [\"ollama\"]\n[transcribe]\nchain = [\"whisper_cpp\"]\n";
+        let rows = simple_page(config, &MemoryStore::default(), &Local::default());
+        let writing_model = row(&rows, "writing model").unwrap();
+        assert_eq!(writing_model.2, "Fact");
+        assert!(
+            writing_model.1.contains("Ollama is not"),
+            "{writing_model:?}"
+        );
+        let speech_model = row(&rows, "speech model").unwrap();
+        assert_eq!(speech_model.2, "GetLocalModel(Transcribe)");
+        assert!(!rows.iter().any(|(l, _, _)| l.ends_with(" key")));
+
+        let running = Local {
+            ollama_running: true,
+            ollama: Vec::new(),
+            whisper: vec![std::path::PathBuf::from("/m/ggml-small.bin")],
+        };
+        let rows = simple_page(config, &MemoryStore::default(), &running);
+        assert_eq!(
+            row(&rows, "writing model").unwrap().2,
+            "GetLocalModel(Chat)"
+        );
+        let speech_model = row(&rows, "speech model").unwrap();
+        assert_eq!(speech_model.2, "ChooseModel(Transcribe)");
+        assert!(
+            speech_model.1.starts_with("base.en is missing"),
+            "{speech_model:?}"
+        );
+
+        let pulled = Local {
+            ollama_running: true,
+            ollama: vec!["qwen3:8b".to_string(), "gemma3:4b".to_string()],
+            whisper: Vec::new(),
+        };
+        let rows = simple_page(config, &MemoryStore::default(), &pulled);
+        let writing_model = row(&rows, "writing model").unwrap();
+        assert_eq!(writing_model.1, "qwen3:8b");
+        assert_eq!(writing_model.2, "ChooseModel(Chat)");
+    }
+
+    #[test]
+    fn a_chain_set_by_hand_is_shown_by_name_and_left_alone() {
+        use super::*;
+        let rows = simple_page(
+            "[chat]\nchain = [\"openrouter\"]\n[transcribe]\nchain = []\n",
+            &MemoryStore::default(),
+            &Local::default(),
+        );
+        assert_eq!(
+            row(&rows, "writing").unwrap().1,
+            "○ openrouter (from config.toml)"
+        );
+        assert!(row(&rows, "writing model").is_none());
+        assert_eq!(row(&rows, "speech").unwrap().1, "○ nothing chosen");
     }
 
     /// Enter does the one thing a provider row most needs: a key when it has

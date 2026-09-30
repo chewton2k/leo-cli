@@ -13,7 +13,8 @@ impl App {
         if advanced {
             settings::rows(&cfg, store.as_ref(), &self.store.notes_dir)
         } else {
-            settings::simple_rows(&cfg, store.as_ref(), &self.store.notes_dir)
+            let local = (self.local_models)(&cfg);
+            settings::simple_rows(&cfg, store.as_ref(), &self.store.notes_dir, &local)
         }
     }
 
@@ -70,6 +71,30 @@ impl App {
         match action {
             A::ShowProviders => {
                 self.open_providers();
+                Ok(())
+            }
+            A::ChooseProvider(_) | A::ChooseModel(_) => self.step_setting(action, 1),
+            A::GetLocalModel(task) => {
+                let out =
+                    self.outside(terminal, || leo_services::providers::get_local_model(task))?;
+                match out.and_then(|model| settings::use_model(task, &model)) {
+                    Ok(changed) => self.after_settings_change(changed),
+                    Err(e) => self.open_settings(Some(e.to_string())),
+                }
+                Ok(())
+            }
+            A::StoreKey { name } => {
+                let target = name.clone();
+                let out = self.outside(terminal, || {
+                    leo_services::providers::model(leo_services::providers::ModelAction::Login {
+                        name: target,
+                    })
+                })?;
+                let status = match out {
+                    Ok(()) => "Key stored.".to_string(),
+                    Err(e) => e.to_string(),
+                };
+                self.open_settings(Some(status));
                 Ok(())
             }
             A::NextAutoPush => {
@@ -149,6 +174,21 @@ impl App {
         }
     }
 
+    fn step_setting(&mut self, action: view::settings::SettingAction, delta: isize) -> Result<()> {
+        use view::settings::SettingAction as A;
+        let changed = match action {
+            A::ChooseProvider(task) => settings::step_provider(task, delta)?,
+            A::ChooseModel(task) => {
+                let cfg = leo_services::config::Config::load();
+                let local = (self.local_models)(&cfg);
+                settings::step_model(task, delta, &local)?
+            }
+            _ => return Ok(()),
+        };
+        self.after_settings_change(changed);
+        Ok(())
+    }
+
     /// Rebuild the rows after something on the page changed.
     pub(super) fn refresh_settings(&mut self) {
         if let Some(advanced) = self.settings.as_ref().map(|s| s.advanced) {
@@ -213,6 +253,11 @@ impl App {
                     }
                     _ => {}
                 }
+            }
+            match key.code {
+                event::KeyCode::Right => return self.step_setting(action, 1),
+                event::KeyCode::Left => return self.step_setting(action, -1),
+                _ => {}
             }
             if matches!(key.code, event::KeyCode::Enter) {
                 return self.run_setting(action, terminal);

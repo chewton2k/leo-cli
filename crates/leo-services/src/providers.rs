@@ -39,13 +39,20 @@ pub fn build_one_transcriber(
         Some(ProviderKind::Hf) => Some(Box::new(ai::provider::hf::HfTranscribe::new(
             name.to_string(),
             pc,
-            resolve(name, pc.key_env.as_deref(), store),
+            resolve(pc.account(name), pc.key_env.as_deref(), store),
         ))),
         Some(ProviderKind::Groq) => Some(Box::new(ai::provider::groq::GroqTranscribe::new(
             name.to_string(),
             pc,
-            resolve(name, pc.key_env.as_deref(), store),
+            resolve(pc.account(name), pc.key_env.as_deref(), store),
         ))),
+        Some(ProviderKind::ChatAudio) => Some(Box::new(
+            ai::provider::chat_audio::ChatAudioTranscribe::new(
+                name.to_string(),
+                pc,
+                resolve(pc.account(name), pc.key_env.as_deref(), store),
+            ),
+        )),
         Some(ProviderKind::WhisperCpp) => Some(Box::new(
             ai::provider::whisper_cpp::WhisperCppTranscribe::new(name.to_string(), pc),
         )),
@@ -69,7 +76,7 @@ pub fn test_provider(name: &str) -> Result<String> {
     let started = std::time::Instant::now();
     match pc.kind {
         Some(config::provider::ProviderKind::Openai) => {
-            let key = resolve(name, pc.key_env.as_deref(), &store);
+            let key = resolve(pc.account(name), pc.key_env.as_deref(), &store);
             let p = ai::provider::openai::OpenAiChat::new(name.to_string(), pc, key);
             if !p.available() {
                 anyhow::bail!("{}", p.unavailable_reason());
@@ -104,14 +111,18 @@ pub fn test_provider(name: &str) -> Result<String> {
 pub fn providers_missing_keys(cfg: &Config, store: &dyn SecretStore) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for name in cfg.chat.chain.iter().chain(&cfg.transcribe.chain) {
-        let Some(var) = cfg.provider(name).and_then(|p| p.key_env.as_deref()) else {
+        let Some(pc) = cfg.provider(name) else {
             continue;
         };
+        let Some(var) = pc.key_env.as_deref() else {
+            continue;
+        };
+        let account = pc.account(name).to_string();
         let in_env = std::env::var(var)
             .map(|v| !v.trim().is_empty())
             .unwrap_or(false);
-        if !in_env && !store.has(name) && !out.contains(name) {
-            out.push(name.clone());
+        if !in_env && !store.has(&account) && !out.contains(&account) {
+            out.push(account);
         }
     }
     out
@@ -123,6 +134,7 @@ pub fn model(command: ModelAction) -> Result<()> {
 
     match command {
         ModelAction::Login { name } => {
+            let name = account_for(&cfg, &name);
             if cfg.provider(&name).is_none() {
                 println!(
                     "  {} no [providers.{name}] block in your config — storing the key anyway.",
@@ -167,10 +179,56 @@ pub fn model(command: ModelAction) -> Result<()> {
         }
 
         ModelAction::Logout { name } => {
-            store.delete(&name)?;
+            store.delete(&account_for(&cfg, &name))?;
             Ok(())
         }
     }
+}
+
+pub fn get_local_model(task: crate::config::edit::Task) -> Result<String> {
+    use crate::config::choice;
+    use crate::config::edit::Task;
+    match task {
+        Task::Chat => {
+            let status = std::process::Command::new("ollama")
+                .args(["pull", choice::OLLAMA_STARTER])
+                .status()
+                .map_err(|e| anyhow::anyhow!("could not run ollama: {e}"))?;
+            if !status.success() {
+                anyhow::bail!("ollama pull {} failed", choice::OLLAMA_STARTER);
+            }
+            Ok(choice::OLLAMA_STARTER.to_string())
+        }
+        Task::Transcribe => {
+            let dir = choice::models_dir();
+            std::fs::create_dir_all(&dir)?;
+            let target = dir.join(choice::WHISPER_STARTER);
+            let partial = dir.join(format!("{}.part", choice::WHISPER_STARTER));
+            println!(
+                "  Downloading {} to {}",
+                choice::WHISPER_STARTER,
+                dir.display()
+            );
+            let status = std::process::Command::new("curl")
+                .args(["-L", "--fail", "--progress-bar", "-o"])
+                .arg(&partial)
+                .arg(choice::WHISPER_STARTER_URL)
+                .status()
+                .map_err(|e| anyhow::anyhow!("could not run curl: {e}"))?;
+            if !status.success() {
+                let _ = std::fs::remove_file(&partial);
+                anyhow::bail!("the download failed; try again when online");
+            }
+            std::fs::rename(&partial, &target)?;
+            Ok(target.display().to_string())
+        }
+    }
+}
+
+pub fn account_for(cfg: &Config, name: &str) -> String {
+    cfg.provider(name)
+        .map(|pc| pc.account(name).to_string())
+        .unwrap_or_else(|| name.to_string())
 }
 
 pub fn config_file(command: ConfigAction) -> Result<()> {

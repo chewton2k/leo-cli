@@ -65,6 +65,7 @@ pub trait TranscribeProvider {
     }
 }
 
+pub mod chat_audio;
 pub mod groq;
 pub mod hf;
 pub mod openai;
@@ -93,7 +94,7 @@ pub fn build_chat_chain(cfg: &Config, store: &dyn SecretStore) -> Vec<Box<dyn Ch
             continue;
         }
         let key = match pc.key_env.as_deref() {
-            Some(var) => resolve(name, Some(var), store),
+            Some(var) => resolve(pc.account(name), Some(var), store),
             None => None,
         };
         out.push(Box::new(openai::OpenAiChat::new(name.clone(), pc, key)));
@@ -120,12 +121,20 @@ pub fn build_transcribe_chain(
         };
         match pc.kind {
             Some(ProviderKind::Hf) => {
-                let key = resolve(name, pc.key_env.as_deref(), store);
+                let key = resolve(pc.account(name), pc.key_env.as_deref(), store);
                 out.push(Box::new(hf::HfTranscribe::new(name.clone(), pc, key)))
             }
             Some(ProviderKind::Groq) => {
-                let key = resolve(name, pc.key_env.as_deref(), store);
+                let key = resolve(pc.account(name), pc.key_env.as_deref(), store);
                 out.push(Box::new(groq::GroqTranscribe::new(name.clone(), pc, key)))
+            }
+            Some(ProviderKind::ChatAudio) => {
+                let key = resolve(pc.account(name), pc.key_env.as_deref(), store);
+                out.push(Box::new(chat_audio::ChatAudioTranscribe::new(
+                    name.clone(),
+                    pc,
+                    key,
+                )))
             }
             Some(ProviderKind::WhisperCpp) => out.push(Box::new(
                 whisper_cpp::WhisperCppTranscribe::new(name.clone(), pc),

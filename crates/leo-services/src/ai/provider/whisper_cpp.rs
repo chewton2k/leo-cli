@@ -15,7 +15,7 @@ pub struct WhisperCppTranscribe {
 }
 
 /// Expand a leading `~` so config files can use it.
-fn expand_tilde(p: &str) -> PathBuf {
+pub fn expand_tilde(p: &str) -> PathBuf {
     match p.strip_prefix("~/") {
         Some(rest) => dirs::home_dir()
             .map(|h| h.join(rest))

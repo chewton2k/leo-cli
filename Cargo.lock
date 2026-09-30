@@ -1661,6 +1661,7 @@ name = "leo-services"
 version = "0.2.11"
 dependencies = [
  "anyhow",
+ "base64",
  "chrono",
  "colored",
  "dirs",

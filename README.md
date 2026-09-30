@@ -215,68 +215,71 @@ leo uses two kinds of AI:
   questions.
 - **AI for speech:** turns audio into a transcript.
 
-You can use free cloud services (easiest), models running on your own machine
-(free, private, and offline), or a mix of both. Pick **Option A** or **Option
-B**; you can add the other later.
+There are two ways to set it up. Pick one; you can switch any time.
 
-### Option A: free cloud services (easiest)
+- **Option A: your own computer.** Free, private, works offline. Nothing to sign
+  up for.
+- **Option B: one cloud account.** OpenAI, Anthropic or Gemini. One key covers
+  both kinds (Anthropic only writes, so pair it with your computer or another
+  cloud for speech).
 
-1. **Get a key for writing, from OpenRouter.** Sign up at
-   [openrouter.ai](https://openrouter.ai) and create a key under
-   [Keys](https://openrouter.ai/keys). leo uses its free models by default.
-2. **Get a key for speech, from Groq.** Sign up at
-   [console.groq.com](https://console.groq.com) and create a key under
-   [API Keys](https://console.groq.com/keys).
-3. **Give the keys to leo.** Run:
+Everything happens in Settings: press `Ctrl-S`. The top section has a row for
+each kind of AI, a row for its model, and (for a cloud) a row for its key.
+`Enter` or `→` on a row moves to the next choice, `←` goes back.
 
-   ```sh
-   leo doctor
-   ```
-
-   At the end it asks which provider to store a key for. Type `openrouter`,
-   paste the key (it is not shown as you type), then run `leo doctor` again for
-   `groq`.
-
-   You can do the same from inside the app instead: press `Ctrl-S`, select the
-   provider, and press `Enter`.
-
-4. **Check it.** Run `leo doctor` once more (or `/doctor` in the app). Under
-   **AI**, both models should say `ok`, and `openrouter answers` and
-   `groq answers` confirm the keys work.
-
-### Option B: on your own machine (free and offline)
+### Option A: your own computer (free and offline)
 
 1. **Writing: Ollama.**
 
    ```sh
    brew install ollama
-   ollama serve          # leave running, or open the Ollama app
-   ollama pull qwen3:8b  # in another terminal; a few GB
    ```
+
+   Open the Ollama app (or run `ollama serve`). In Settings, **writing** should
+   say `this Mac (Ollama)`. If **writing model** says `none yet`, press `Enter`
+   on it to download `qwen3:8b` (a few GB). Any model you have pulled with
+   `ollama pull` shows up there too; `Enter` cycles through them.
 
 2. **Speech: whisper.cpp.**
 
    ```sh
    brew install whisper-cpp
-   mkdir -p ~/.leo/models
-   curl -L -o ~/.leo/models/ggml-base.en.bin \
-     https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
    ```
 
-3. **Check it.** `leo doctor` should now show both as `ok` under **AI**.
+   In Settings, **speech** should say `this Mac (whisper.cpp)`. If **speech
+   model** says `none yet`, press `Enter` on it to download `base.en` (142 MB)
+   into `~/.leo/models`. Any other `ggml-*.bin` model you put in that folder
+   (for example `ggml-large-v3-turbo.bin`, slower but more accurate) shows up
+   there too.
 
-### How leo picks a provider
+3. **Check it.** `leo doctor` (or `/doctor` in the app) should show both as
+   `ok` under **AI**.
 
-Each kind of AI has a list of providers, tried in order: the first one that is
-ready gets the request, and if it fails, leo moves on to the next. By default
-writing tries Ollama, then OpenRouter; speech tries whisper.cpp, then Groq, then
-Hugging Face. So with both options set up, leo uses your own machine when
-Ollama is running and falls back to the cloud when it is not.
+### Option B: a cloud account
 
-`Ctrl-S` opens Settings, which says which AI each kind would use right now.
-Its **AI providers** row shows both lists in full. A filled dot `●` means that
-provider would be used right now. On a provider, `Enter` stores its key, adds it to its list, or sends
-a small test request. `J`/`K` change the order.
+1. **Get a key** from one of:
+   [OpenAI](https://platform.openai.com/api-keys),
+   [Anthropic](https://platform.claude.com/settings/keys) or
+   [Gemini](https://aistudio.google.com/apikey). These are paid per use
+   (Gemini has a free tier).
+2. **Choose it.** Press `Ctrl-S`, then `Enter` on **writing** until it shows
+   your provider, and the same on **speech** (OpenAI or Gemini).
+3. **Store the key.** `Enter` on the **key** row asks for it; it is never shown
+   as you type. One key serves both writing and speech.
+4. **Pick a model** (optional). `Enter` on **writing model** cycles through the
+   ones leo supports, for example `claude-sonnet-5-5`, `claude-opus-5-5`,
+   `claude-haiku-4-5`, `claude-sonnet-5` and `claude-opus-5` for Anthropic.
+5. **Check it.** `leo doctor` should say `ok` under **AI**, and that the
+   provider answers.
+
+### Anything else
+
+leo knows other providers too (OpenRouter, Groq, Mistral, LM Studio, a local
+whisper server, and more). Settings' **AI providers** row lists them all: there,
+`Enter` stores a key, adds a provider, or sends a test request, and `J`/`K`
+change the order they are tried in. When a list has more than one provider, the
+first one that is ready gets the request, and leo falls back to the next if it
+fails. A filled dot `●` means that provider would be used right now.
 
 ---
 
@@ -601,7 +604,7 @@ your account can read.
 | Variable | What it does |
 |----------|--------------|
 | `LEO_HOME` | Keep notes, settings and keys in this one directory instead |
-| `OPENROUTER_API_KEY`, `GROQ_API_KEY`, `HF_API_KEY`, … | A provider's key; takes precedence over a stored one |
+| `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, … | A provider's key; takes precedence over a stored one |
 | `LEO_CHAT_PROVIDER` / `LEO_TRANSCRIBE_PROVIDER` | Use only this provider for writing / speech |
 | `LEO_CHAT_MODEL` | Override the model of the first writing provider |
 | `LEO_USE_KEYCHAIN=1` | Store keys in the OS keychain instead of the key file |
@@ -621,8 +624,8 @@ external microphone or open the lid.
 
 **A recording's notes stop mid-sentence**
 The AI hit its length limit, and leo shows a warning saying so. Press `Ctrl-S`,
-then `e`, and raise `max_tokens` for that provider (8192 is plenty for an hour
-of lecture).
+then `e`, and raise `max_tokens` for that provider (the cloud providers default
+to 32000, plenty for an hour of lecture).
 
 **A note is missing from the list**
 If you deleted it, it is in the trash for 30 days: `/trash` (or `leo trash`)
@@ -634,7 +637,7 @@ fixing the header brings the note back.
 **"No API key" or nothing happens when recording**
 Run `leo doctor` (or `/doctor` in the app): it says which kind of AI is missing
 and how to add it. Keys can also be added with `Ctrl-S`, then `Enter` on the
-provider.
+**key** row.
 
 **`leo backup` fails**
 Check that `git push` works from your terminal (a signed-in account or an SSH

@@ -23,6 +23,7 @@ fn temp_app() -> (App, tempfile::TempDir) {
     let mut app = App::new(store);
     app.probe = leo_services::doctor::Probe::default();
     app.gh_ready = || false;
+    app.local_models = |_| leo_services::config::choice::Local::default();
     app.setup_steps = steps_ready;
     app.recordings = None;
     app.obsidian = |_| Err(anyhow::anyhow!("tests never launch Obsidian"));
