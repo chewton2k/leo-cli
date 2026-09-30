@@ -90,7 +90,7 @@ impl Config {
 # the key row, or run `leo doctor`.
 #
 # Type /settings to choose what writes and what listens: this computer (free and
-# private) or OpenAI, Anthropic, Gemini or xAI with one key, and which model
+# private) or OpenAI, Anthropic, Gemini, xAI or OpenRouter with one key, and which model
 # each uses. Settings writes these two lines for you.
 
 [chat]
@@ -158,6 +158,13 @@ model = "grok-4.7"
 key_env = "XAI_API_KEY"
 max_tokens = 32000
 reasoning = true
+
+[providers.openrouter]
+kind = "openai"
+base_url = "https://openrouter.ai/api/v1"
+model = "openrouter/free"
+key_env = "OPENROUTER_API_KEY"
+max_tokens = 8192
 
 [providers.whisper_cpp]
 kind = "whisper_cpp"
@@ -367,7 +374,7 @@ model_path = "~/.leo/models/ggml-base.en.bin"
         std::fs::write(&path, "").unwrap();
         let cfg = Config::load_from(&path);
         assert!(cfg.chat.chain.is_empty());
-        assert_eq!(cfg.providers.len(), 9, "{:?}", cfg.providers.keys());
+        assert_eq!(cfg.providers.len(), 10, "{:?}", cfg.providers.keys());
         assert!(cfg.providers.contains_key("ollama"));
         assert!(cfg.providers.contains_key("whisper_cpp"));
     }
@@ -463,6 +470,7 @@ model = "my-own-model"
                 "ollama",
                 "openai",
                 "openai_whisper",
+                "openrouter",
                 "whisper_cpp",
                 "xai",
                 "xai_speech"

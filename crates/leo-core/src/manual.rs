@@ -14,7 +14,7 @@ use anyhow::Result;
 use crate::store::Store;
 
 /// Bump when the manual's content changes enough to be worth re-offering.
-const MANUAL_VERSION: u32 = 11;
+const MANUAL_VERSION: u32 = 12;
 const MARKER: &str = ".manual-installed";
 pub const MANUAL_TITLE: &str = "leo manual";
 
@@ -139,8 +139,9 @@ that matter and press `Enter` after each; they lead the finished note, in bold.
 ## Setting up
 
 `/settings` opens settings. Under **writing** and **speech**, `Enter` (or `→`)
-switches between this computer (free, private) and OpenAI, Anthropic, Gemini
-or xAI; the row below picks the model, and the **key** row takes the key.
+switches between this computer (free, private) and OpenAI, Anthropic, Gemini,
+xAI or OpenRouter; the row below picks the model, and the **key** row takes
+the key.
 Speech on this computer needs nothing: its model comes with leo.
 
 `/doctor` checks that everything works and says how to fix what does not.

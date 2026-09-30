@@ -4,7 +4,6 @@ use crate::config::edit::{self, Task};
 use crate::config::Config;
 
 pub const RETIRED: &[&str] = &[
-    "openrouter",
     "lmstudio",
     "llamacpp",
     "vllm",
@@ -132,7 +131,7 @@ mod tests {
     const OLD: &str = r#"# leo configuration.
 
 [chat]
-chain = ["openrouter"]
+chain = ["openrouter", "mistral"]
 
 [transcribe]
 chain = ["whisper_cpp", "groq", "hf"]
@@ -197,7 +196,7 @@ preset = "mono"
         assert!(tidy(&mut doc));
         let text = doc.to_string();
         assert!(!text.contains("[providers"), "{text}");
-        assert!(text.contains("chain = [\"ollama\"]"), "{text}");
+        assert!(text.contains("chain = [\"openrouter\"]"), "{text}");
         assert!(text.contains("chain = [\"whisper_cpp\"]"), "{text}");
         assert!(text.contains("preset = \"mono\""));
         assert!(text.starts_with("# leo configuration."));
@@ -213,13 +212,26 @@ preset = "mono"
             Some("grok-4.7")
         );
         assert_eq!(cfg.provider("whisper_cpp").unwrap().bin, None);
-        assert!(cfg.provider("openrouter").is_none());
+        assert_eq!(
+            cfg.provider("openrouter").unwrap().model.as_deref(),
+            Some("openrouter/free")
+        );
+        assert!(cfg.provider("mistral").is_none());
+    }
+
+    #[test]
+    fn a_task_whose_only_provider_was_retired_goes_back_to_this_computer() {
+        let mut doc = "[chat]\nchain = [\"mistral\"]\n"
+            .parse::<DocumentMut>()
+            .unwrap();
+        assert!(tidy(&mut doc));
+        assert_eq!(edit::read_chain(&doc, Task::Chat), vec!["ollama"]);
     }
 
     #[test]
     fn choices_the_user_made_survive() {
         let mut doc = r#"[chat]
-chain = ["anthropic", "openrouter"]
+chain = ["anthropic", "mistral"]
 
 [transcribe]
 chain = ["gemini_speech"]
@@ -288,7 +300,8 @@ model = "house-model"
         std::fs::write(&path, OLD).unwrap();
         let cfg = Config::load_from(&path);
         let on_disk = std::fs::read_to_string(&path).unwrap();
-        assert!(!on_disk.contains("openrouter"), "{on_disk}");
+        assert!(!on_disk.contains("[providers"), "{on_disk}");
+        assert!(!on_disk.contains("mistral"), "{on_disk}");
         assert!(cfg.provider("hf").is_none());
         assert_eq!(cfg.provider("whisper_cpp").unwrap().bin, None);
         let modified = std::fs::metadata(&path).unwrap().modified().unwrap();

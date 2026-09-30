@@ -233,9 +233,10 @@ can mix them (for example, speech on your computer and writing in the cloud).
 
 - **Option A: your own computer.** Free, private, works offline. Nothing to sign
   up for.
-- **Option B: one cloud account.** OpenAI, Anthropic, Gemini or xAI. One key
-  covers both writing and speech (Anthropic only writes, so pair it with your
-  computer or another cloud for speech).
+- **Option B: one cloud account.** OpenAI, Anthropic, Gemini, xAI or
+  OpenRouter. One key covers both writing and speech (Anthropic and OpenRouter
+  only write, so pair them with your computer or another cloud for speech).
+  OpenRouter has free models, so it can cost nothing.
 
 ### Settings, in one minute
 
@@ -301,8 +302,10 @@ something is missing, and the row under it says what.
 1. **Get a key** from one of:
    [OpenAI](https://platform.openai.com/api-keys),
    [Anthropic](https://platform.claude.com/settings/keys),
-   [Gemini](https://aistudio.google.com/apikey) or
-   [xAI](https://console.x.ai). These charge per use.
+   [Gemini](https://aistudio.google.com/apikey),
+   [xAI](https://console.x.ai) or
+   [OpenRouter](https://openrouter.ai/keys). These charge per use, except
+   Gemini's free tier and OpenRouter's free models.
 2. **Choose it.** In Settings, press `Enter` on **writing** until it shows your
    provider. Do the same on **speech** (OpenAI, Gemini or xAI), or keep speech
    on your computer.
@@ -320,6 +323,7 @@ something is missing, and the row under it says what.
    | Anthropic | `claude-haiku-4-5` $1 / $5, `claude-sonnet-5-5` $2 / $10 (default), `claude-sonnet-5` $2 / $10, `claude-opus-5-5` $4 / $20, `claude-opus-5` $5 / $25 |
    | Gemini | Free tier on every Flash model, then: `gemini-3.1-flash-lite` $0.25 / $1.50, `gemini-3.5-flash-lite` $0.30 / $2.50, `gemini-3.8-flash` $0.75 / $3.75 (default), `gemini-3.5-flash` $1.50 / $9; `gemini-3.1-pro-preview` $2 / $12 (no free tier) |
    | xAI | `grok-4.3` $1.25 / $2.50, `grok-4.5`, `grok-4.6`, `grok-4.7` (default) $2 / $6 |
+   | OpenRouter | Free, with daily limits: `openrouter/free` (default; picks whichever free model is available), `qwen/qwen3.8-27b:free`, `google/gemma-4-31b-it:free`, `nvidia/nemotron-3-super-120b-a12b:free`. Paid: `deepseek/deepseek-v4-flash` $0.08 / $0.16, `openai/gpt-6-luna` $0.10 / $0.50, `google/gemini-3.1-flash-lite` $0.25 / $1.50, `anthropic/claude-haiku-4.5` $1 / $5, `anthropic/claude-sonnet-5.5` $2 / $10 |
 
    | Provider | Speech models |
    |----------|---------------|
@@ -329,7 +333,8 @@ something is missing, and the row under it says what.
 
    **Free:** your own computer costs nothing. In the cloud, Gemini's free tier
    covers writing and speech on its Flash models, with daily limits (and Google
-   may use free-tier content to improve its products). Prices are as of
+   may use free-tier content to improve its products), and OpenRouter's free
+   models cover writing, also with daily limits. Prices are as of
    September 2026 and change; check the provider's pricing page.
 
 5. **Check it.** `leo doctor` should say `ok` under **AI**, and that the
@@ -337,10 +342,10 @@ something is missing, and the row under it says what.
 
 ### Upgrading from an older leo
 
-leo used to know eighteen providers. It now keeps five: Ollama, OpenAI,
-Anthropic, Gemini and xAI. The first time a new leo starts it tidies
-`config.toml`: providers that were removed (OpenRouter, Groq, Hugging Face,
-Mistral, and so on) are dropped, and if one of them was your choice, that task
+leo used to know eighteen providers. It now keeps six: Ollama, OpenAI,
+Anthropic, Gemini, xAI and OpenRouter. The first time a new leo starts it tidies
+`config.toml`: providers that were removed (Groq, Hugging Face, Mistral, and so
+on) are dropped, and if one of them was your choice, that task
 goes back to your computer. Open Settings to pick again. A provider you added
 yourself under a new name is left alone.
 
@@ -667,7 +672,7 @@ your account can read.
 | Variable | What it does |
 |----------|--------------|
 | `LEO_HOME` | Keep notes, settings and keys in this one directory instead |
-| `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `XAI_API_KEY` | A provider's key; takes precedence over a stored one |
+| `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `XAI_API_KEY`, `OPENROUTER_API_KEY` | A provider's key; takes precedence over a stored one |
 | `LEO_CHAT_PROVIDER` / `LEO_TRANSCRIBE_PROVIDER` | Use only this provider for writing / speech |
 | `LEO_CHAT_MODEL` | Override the model of the first writing provider |
 | `LEO_USE_KEYCHAIN=1` | Store keys in the OS keychain instead of the key file |

@@ -119,6 +119,33 @@ pub const WRITING: &[Choice] = &[
             m("grok-4.7", "$2 in, $6 out per 1M tokens"),
         ],
     },
+    Choice {
+        provider: "openrouter",
+        name: "OpenRouter",
+        models: &[
+            m("openrouter/free", "free, with daily limits"),
+            m("qwen/qwen3.8-27b:free", "free, with daily limits"),
+            m("google/gemma-4-31b-it:free", "free, with daily limits"),
+            m(
+                "nvidia/nemotron-3-super-120b-a12b:free",
+                "free, with daily limits",
+            ),
+            m(
+                "deepseek/deepseek-v4-flash",
+                "$0.08 in, $0.16 out per 1M tokens",
+            ),
+            m("openai/gpt-6-luna", "$0.10 in, $0.50 out per 1M tokens"),
+            m(
+                "google/gemini-3.1-flash-lite",
+                "$0.25 in, $1.50 out per 1M tokens",
+            ),
+            m("anthropic/claude-haiku-4.5", "$1 in, $5 out per 1M tokens"),
+            m(
+                "anthropic/claude-sonnet-5.5",
+                "$2 in, $10 out per 1M tokens",
+            ),
+        ],
+    },
 ];
 
 pub const SPEECH: &[Choice] = &[
@@ -459,7 +486,7 @@ mod tests {
         for choice in WRITING.iter().chain(SPEECH) {
             for model in choice.models {
                 assert!(
-                    model.price.contains('$') || model.price == "free tier",
+                    model.price.contains('$') || model.price.starts_with("free"),
                     "{}: {}",
                     model.id,
                     model.price
@@ -555,7 +582,10 @@ mod tests {
             step_choice(Task::Chat, Some("ollama"), 1).provider,
             "openai"
         );
-        assert_eq!(step_choice(Task::Chat, Some("ollama"), -1).provider, "xai");
+        assert_eq!(
+            step_choice(Task::Chat, Some("ollama"), -1).provider,
+            "openrouter"
+        );
         assert_eq!(
             step_choice(Task::Transcribe, Some("xai_speech"), 1).provider,
             "whisper_cpp"
@@ -701,7 +731,13 @@ mod tests {
                 .map(String::as_str),
             Some("gpt-5-nano")
         );
-        assert!(model_options(Task::Chat, "openrouter", &local).is_empty());
+        assert!(model_options(Task::Chat, "mine", &local).is_empty());
+        assert_eq!(
+            model_options(Task::Chat, "openrouter", &local)
+                .first()
+                .map(String::as_str),
+            Some("openrouter/free")
+        );
     }
 
     #[test]

@@ -262,7 +262,7 @@ pub(crate) fn chain_check(config: &Config, chain: Chain, store: &dyn SecretStore
                 fix: match chain {
                     Chain::Chat => {
                         "brew install ollama && ollama pull qwen3:8b   (free, private)\n\
-                         or: /settings in leo, choose OpenAI, Anthropic, Gemini or xAI, add its key"
+                         or: /settings in leo, choose OpenAI, Anthropic, Gemini, xAI or OpenRouter, add its key"
                             .to_string()
                     }
                     Chain::Transcribe => {
