@@ -51,6 +51,10 @@ To install somewhere other than `~/.local/bin`, set `LEO_INSTALL_DIR`:
 curl -fsSL https://raw.githubusercontent.com/chewton2k/leo-cli/main/install.sh | LEO_INSTALL_DIR="$HOME/bin" bash
 ```
 
+The installer also downloads leo's speech model (`base.en`, 142 MB, into
+`~/.leo/models`) and checks it against its published checksum, so recording
+works with nothing else to set up.
+
 Then open a new terminal and run:
 
 ```sh
@@ -65,13 +69,17 @@ off; inside the app, `/doctor` does the same.
 If the download fails, there may be no ready-made build for your computer yet;
 build it from source instead (below).
 
-**To update leo**, run `leo update`. leo checks for a new version once a day
-and says so on the bottom line when there is one (`LEO_NO_UPDATE_CHECK=1` turns
-that off). **To uninstall**, run
-`leo uninstall`: it removes the program, the PATH line the installer added,
-and everything else leo made (settings, stored API keys, the `leo serve` link,
-caches, downloaded speech models in `~/.leo`), and leaves your notes folder
-exactly as it is. It lists what it will remove and asks first.
+**To update leo**, run `leo update`. It first checks the speech model (present,
+and its checksum matches) and downloads it again only if it is missing or
+damaged, then installs the new version if there is one. leo checks for a new
+version once a day and says so on the bottom line when there is one
+(`LEO_NO_UPDATE_CHECK=1` turns that off).
+
+**To uninstall**, run `leo uninstall`: it removes the program, the PATH line the
+installer added, and everything else leo made (settings, stored API keys, the
+`leo serve` link, caches, and the speech model in `~/.leo/models`), and leaves
+your notes folder exactly as it is. It lists what it will remove and asks
+first.
 
 ### Or build it from source
 
@@ -105,6 +113,10 @@ echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
 If it still says "command not found", check that leo was installed:
 `ls ~/.cargo/bin/leo` should list a file. If it does not, run
 `cargo install --path .` again and look for an error at the end.
+
+A source install does not download the speech model by itself: the first time,
+type `/settings` in leo and press `Enter` on **speech model**, which is shown
+only while the model is missing.
 
 To update a source install, `git pull` and run `cargo install --path . --force`.
 

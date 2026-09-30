@@ -157,7 +157,7 @@ enum Commands {
     Doctor,
 
     #[command(
-        about = "Update leo to the latest release, if there is a newer one",
+        about = "Update leo to the latest release, if there is a newer one, and make sure the speech model is there and intact",
         hide = true
     )]
     Update {

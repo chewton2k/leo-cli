@@ -136,6 +136,10 @@ pub const SECTIONS: &[Section] = &[
         title: "Settings",
         entries: &[
             e("/settings", "AI and models, keys, colour, backup"),
+            e("  Enter / →", "next choice: the next provider, or the next model"),
+            e("  ←", "previous choice"),
+            e("  x", "on a key row: remove the key"),
+            e("  e", "open config.toml in your editor"),
             e(
                 "leo doctor",
                 "check everything; says how to fix what does not",
@@ -146,7 +150,11 @@ pub const SECTIONS: &[Section] = &[
             ),
             e(
                 "leo update",
-                "install the newest leo (the bottom line says when)",
+                "install the newest leo and check the speech model (the bottom line says when)",
+            ),
+            e(
+                "leo uninstall",
+                "remove leo and everything it made; your notes stay",
             ),
         ],
     },
