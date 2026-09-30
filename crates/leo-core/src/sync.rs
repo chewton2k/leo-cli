@@ -13,7 +13,6 @@ pub fn is_initialized(notes_dir: &Path) -> bool {
 
 pub fn init(notes_dir: &Path) -> Result<()> {
     if is_initialized(notes_dir) {
-        println!("Notes repo already initialized.");
         return Ok(());
     }
 
@@ -31,8 +30,6 @@ pub fn init(notes_dir: &Path) -> Result<()> {
         notes_dir,
         &["commit", "-m", "init: initialize leo notes repo"],
     );
-
-    println!("Initialized notes repo in {}", notes_dir.display());
     Ok(())
 }
 
@@ -41,7 +38,9 @@ pub fn connect(notes_dir: &Path, url: &str) -> Result<()> {
         init(notes_dir)?;
     }
     run_git(notes_dir, &["remote", "add", "origin", url])?;
-    println!("Connected to {url}");
+    if !crate::diag::is_quiet() {
+        println!("Connected to {url}");
+    }
     Ok(())
 }
 
@@ -395,7 +394,7 @@ pub fn status(notes_dir: &Path) -> Result<()> {
 
 fn print_output(output: String) {
     let text = output.trim_end();
-    if !text.is_empty() {
+    if !text.is_empty() && !crate::diag::is_quiet() {
         println!("{text}");
     }
 }
@@ -450,6 +449,9 @@ pub fn prepare(notes_dir: &Path) -> Result<()> {
     let staged = !Command::new("git")
         .args(["diff", "--cached", "--quiet"])
         .current_dir(notes_dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .status()?
         .success();
     if staged {

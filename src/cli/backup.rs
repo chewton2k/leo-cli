@@ -18,7 +18,15 @@ pub fn run(command: Option<BackupCommands>) -> Result<()> {
 
 fn run_sync_command(command: BackupCommands, notes_dir: &std::path::Path) -> Result<()> {
     match command {
-        BackupCommands::Init => sync::init(notes_dir),
+        BackupCommands::Init => {
+            sync::init(notes_dir)?;
+            println!(
+                "  {} Backup repository ready in {}",
+                "ok".green(),
+                notes_dir.display()
+            );
+            Ok(())
+        }
         BackupCommands::Connect { url } => sync::connect(notes_dir, &url),
         BackupCommands::Push => sync::push(notes_dir),
         BackupCommands::Pull => sync::pull(notes_dir),

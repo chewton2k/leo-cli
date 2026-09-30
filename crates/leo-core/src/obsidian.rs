@@ -151,6 +151,8 @@ fn launch(uri: &str) -> Result<()> {
     let status = Command::new(opener)
         .arg(uri)
         .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status()
         .with_context(|| format!("could not run {opener}"))?;
     if !status.success() {

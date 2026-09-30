@@ -165,6 +165,16 @@ impl App {
         key: event::KeyEvent,
         terminal: &mut Terminal<B>,
     ) -> Result<()> {
+        let result = self.settings_key(key, terminal);
+        self.repaint = true;
+        result
+    }
+
+    fn settings_key<B: TuiBackend>(
+        &mut self,
+        key: event::KeyEvent,
+        terminal: &mut Terminal<B>,
+    ) -> Result<()> {
         // Esc and Ctrl-S both close, so the key that opened it also closes it.
         let ctrl = key.modifiers.contains(event::KeyModifiers::CONTROL);
         if key.code == event::KeyCode::Esc && self.settings.as_ref().is_some_and(|s| s.advanced) {

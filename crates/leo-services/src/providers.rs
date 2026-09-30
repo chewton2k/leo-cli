@@ -168,7 +168,6 @@ pub fn model(command: ModelAction) -> Result<()> {
 
         ModelAction::Logout { name } => {
             store.delete(&name)?;
-            println!("  {} removed key for {name}.", "ok".green());
             Ok(())
         }
     }
