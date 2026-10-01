@@ -72,7 +72,7 @@ impl Leo {
 
     /// Run and require success, returning stdout.
     fn ok(&self, args: &[&str]) -> String {
-        let out = self.cmd(args).output().unwrap();
+        let out = self.cmd(args).output_retrying();
         assert!(
             out.status.success(),
             "leo {args:?} failed:\n{}",
@@ -169,7 +169,7 @@ fn help_lists_the_everyday_commands_and_hides_the_old_ones() {
 #[test]
 fn bare_leo_without_a_terminal_says_so_and_fails() {
     let leo = Leo::new();
-    let out = leo.cmd(&[]).output().unwrap();
+    let out = leo.cmd(&[]).output_retrying();
     assert!(!out.status.success());
     assert!(
         String::from_utf8_lossy(&out.stderr).contains("terminal"),
@@ -234,7 +234,7 @@ fn list_shows_one_directory_when_named() {
     // Trailing slashes are fine.
     assert!(leo.ok(&["list", "cs130/"]).contains("Lecture 4"));
 
-    let out = leo.cmd(&["list", "nowhere"]).output().unwrap();
+    let out = leo.cmd(&["list", "nowhere"]).output_retrying();
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -464,8 +464,7 @@ fn run_obsidian(leo: &Leo) -> Output {
     std::fs::create_dir_all(&marker).unwrap();
     leo.cmd(&["obsidian"])
         .env("LEO_OBSIDIAN_APP", &marker)
-        .output()
-        .unwrap()
+        .output_retrying()
 }
 
 #[test]
@@ -545,8 +544,7 @@ fn obsidian_without_it_installed_says_where_to_get_it() {
     let out = leo
         .cmd(&["obsidian"])
         .env("LEO_OBSIDIAN_APP", leo.home.path().join("missing"))
-        .output()
-        .unwrap();
+        .output_retrying();
     assert!(!out.status.success());
     assert!(
         String::from_utf8_lossy(&out.stderr).contains("obsidian.md"),
@@ -554,6 +552,25 @@ fn obsidian_without_it_installed_says_where_to_get_it() {
         describe(&out)
     );
     assert!(!log.exists(), "opened something anyway");
+}
+
+trait Retrying {
+    fn output_retrying(&mut self) -> std::process::Output;
+}
+
+impl Retrying for Command {
+    fn output_retrying(&mut self) -> std::process::Output {
+        for _ in 0..100 {
+            match self.output() {
+                Ok(out) => return out,
+                Err(e) if e.raw_os_error() == Some(26) => {
+                    std::thread::sleep(Duration::from_millis(50))
+                }
+                Err(e) => panic!("could not run {self:?}: {e}"),
+            }
+        }
+        panic!("{self:?} stayed busy")
+    }
 }
 
 fn tripwire(leo: &Leo) -> (PathBuf, PathBuf) {
@@ -572,8 +589,7 @@ fn update_does_nothing_when_already_on_the_latest_version() {
         .cmd_at(&exe, &["update"])
         .env("LEO_UPDATE_SCRIPT", &script)
         .env("LEO_LATEST_RELEASE", env!("CARGO_PKG_VERSION"))
-        .output()
-        .unwrap();
+        .output_retrying();
     let said = String::from_utf8_lossy(&out.stdout);
     assert!(out.status.success(), "{}", describe(&out));
     assert!(said.contains("latest"), "{said}");
@@ -591,8 +607,7 @@ fn update_installs_when_a_newer_version_is_out_or_when_forced() {
         .env("LEO_INSTALL_MODEL_URL", "file:///nonexistent")
         .env("LEO_UPDATE_SCRIPT", &script)
         .env("LEO_LATEST_RELEASE", "999.0.0")
-        .output()
-        .unwrap();
+        .output_retrying();
     assert!(newer.status.success(), "{}", describe(&newer));
     assert!(String::from_utf8_lossy(&newer.stdout).contains("999.0.0"));
     assert!(ran.exists(), "did not install the newer version");
@@ -611,8 +626,7 @@ fn update_installs_when_a_newer_version_is_out_or_when_forced() {
     leo.cmd_at(&exe, &["update", "--force"])
         .env("LEO_UPDATE_SCRIPT", &script)
         .env("LEO_LATEST_RELEASE", env!("CARGO_PKG_VERSION"))
-        .output()
-        .unwrap();
+        .output_retrying();
     assert!(ran.exists(), "--force did not reinstall");
 }
 
@@ -642,8 +656,7 @@ fn update_reinstalls_in_place() {
             Path::new(env!("CARGO_MANIFEST_DIR")).join("install.sh"),
         )
         .env("LEO_INSTALL_ARCHIVE", &tarball)
-        .output()
-        .unwrap();
+        .output_retrying();
     let said = String::from_utf8_lossy(&out.stdout);
     assert!(out.status.success(), "{}", describe(&out));
     assert!(said.contains("already up to date"), "{said}");
@@ -704,8 +717,7 @@ fn update_downloads_the_speech_model_first_when_it_is_missing() {
             .env("LEO_INSTALL_MODEL_MANIFEST", manifest)
             .env("LEO_UPDATE_SCRIPT", &script)
             .env("LEO_LATEST_RELEASE", env!("CARGO_PKG_VERSION"))
-            .output()
-            .unwrap()
+            .output_retrying()
     };
     let dir = leo.home.path().join("models/parakeet-tdt-0.6b-v3-int8");
     let encoder = dir.join("encoder.int8.onnx");
@@ -778,7 +790,7 @@ fn uninstall_removes_everything_leo_made_except_the_notes() {
     std::fs::write(home.join("my-own-file.txt"), "not leo's").unwrap();
     let exe = leo.installed();
 
-    let out = leo.cmd_at(&exe, &["uninstall", "--yes"]).output().unwrap();
+    let out = leo.cmd_at(&exe, &["uninstall", "--yes"]).output_retrying();
     assert!(out.status.success(), "{}", describe(&out));
     for made in [
         "config.toml",
@@ -817,7 +829,7 @@ fn uninstall_removes_leo_and_its_path_line_but_keeps_the_notes() {
     )
     .unwrap();
 
-    let out = leo.cmd_at(&exe, &["uninstall", "--yes"]).output().unwrap();
+    let out = leo.cmd_at(&exe, &["uninstall", "--yes"]).output_retrying();
     let said = String::from_utf8_lossy(&out.stdout);
     assert!(out.status.success(), "{}", describe(&out));
     assert!(!exe.exists(), "leo is still installed");
@@ -837,7 +849,7 @@ fn uninstall_removes_leo_and_its_path_line_but_keeps_the_notes() {
 fn uninstall_asks_first() {
     let leo = Leo::new();
     let exe = leo.installed();
-    let out = leo.cmd_at(&exe, &["uninstall"]).output().unwrap();
+    let out = leo.cmd_at(&exe, &["uninstall"]).output_retrying();
     assert!(!out.status.success());
     assert!(exe.exists(), "removed without asking");
     assert!(
@@ -884,7 +896,7 @@ fn delete_moves_the_note_to_the_trash_without_asking_and_says_how_to_get_it_back
 fn an_unknown_note_is_reported_not_guessed() {
     let leo = Leo::new();
     leo.ok(&["new", "Graphs", "--body", "x"]);
-    let out = leo.cmd(&["view", "no-such-note"]).output().unwrap();
+    let out = leo.cmd(&["view", "no-such-note"]).output_retrying();
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -909,7 +921,7 @@ fn ask_across_notes_with_nothing_relevant_says_so() {
 fn ask_across_notes_without_any_ai_fails_cleanly() {
     let leo = Leo::new();
     leo.ok(&["new", "Graph traversals", "--body", "BFS uses a queue"]);
-    let out = leo.cmd(&["ask", "how does BFS work?"]).output().unwrap();
+    let out = leo.cmd(&["ask", "how does BFS work?"]).output_retrying();
     assert!(!out.status.success(), "{}", describe(&out));
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("Error"), "{}", describe(&out));
@@ -947,7 +959,7 @@ fn the_manual_is_installed_once() {
 #[test]
 fn doctor_reports_without_asking_when_nobody_is_there_to_answer() {
     let leo = Leo::new();
-    let run = leo.cmd(&["doctor"]).output().unwrap();
+    let run = leo.cmd(&["doctor"]).output_retrying();
     let out = String::from_utf8_lossy(&run.stdout).to_string();
     assert!(out.contains("notes"), "{out}");
     assert!(
@@ -970,7 +982,7 @@ fn the_old_setup_commands_are_gone() {
         &["env"],
     ] {
         assert!(
-            !leo.cmd(old).output().unwrap().status.success(),
+            !leo.cmd(old).output_retrying().status.success(),
             "{old:?} still works"
         );
     }
@@ -988,7 +1000,7 @@ fn doctor_scans_every_part_and_fails_when_something_is_broken() {
     )
     .unwrap();
 
-    let out = leo.cmd(&["doctor"]).output().unwrap();
+    let out = leo.cmd(&["doctor"]).output_retrying();
     let text = String::from_utf8_lossy(&out.stdout);
     for heading in ["leo", "notes", "AI", "recording", "backup"] {
         assert!(
@@ -1015,8 +1027,7 @@ fn backup_sends_notes_to_a_git_remote() {
     let init = Command::new("git")
         .args(["init", "--bare", "-q"])
         .arg(&remote)
-        .output()
-        .unwrap();
+        .output_retrying();
     assert!(init.status.success(), "{}", describe(&init));
 
     leo.ok(&["new", "First", "--body", "one"]);
@@ -1034,8 +1045,7 @@ fn backup_sends_notes_to_a_git_remote() {
             "--name-only",
             "--format=",
         ])
-        .output()
-        .unwrap();
+        .output_retrying();
     let files = String::from_utf8_lossy(&log.stdout);
     assert!(
         files.lines().filter(|l| l.ends_with(".md")).count() >= 2,
@@ -1056,8 +1066,7 @@ fn a_second_computer_joins_the_backup_and_both_share_notes() {
     let init = Command::new("git")
         .args(["init", "--bare", "-q"])
         .arg(&remote)
-        .output()
-        .unwrap();
+        .output_retrying();
     assert!(init.status.success(), "{}", describe(&init));
     let url = remote.to_str().unwrap();
 
@@ -1147,7 +1156,7 @@ fn backup_github_makes_the_repository_then_a_second_computer_joins_it() {
 #[test]
 fn backup_github_without_the_tool_says_how_to_get_it() {
     let leo = Leo::new();
-    let out = leo.cmd(&["backup", "github"]).output().unwrap();
+    let out = leo.cmd(&["backup", "github"]).output_retrying();
     assert!(!out.status.success());
     let said = String::from_utf8_lossy(&out.stderr);
     assert!(said.contains("gh auth login"), "{}", describe(&out));
@@ -1156,7 +1165,7 @@ fn backup_github_without_the_tool_says_how_to_get_it() {
 #[test]
 fn backup_before_setup_says_what_to_do() {
     let leo = Leo::new();
-    let out = leo.cmd(&["backup"]).output().unwrap();
+    let out = leo.cmd(&["backup"]).output_retrying();
     assert!(!out.status.success());
     assert!(
         String::from_utf8_lossy(&out.stderr).contains("leo backup"),
@@ -1374,7 +1383,7 @@ fn serve_prints_the_link_that_works_from_anywhere() {
 #[test]
 fn serve_without_cloudflared_says_how_to_get_it_and_about_local() {
     let leo = Leo::new();
-    let out = leo.cmd(&["serve", "--port", "38999"]).output().unwrap();
+    let out = leo.cmd(&["serve", "--port", "38999"]).output_retrying();
     assert!(!out.status.success());
     let said = String::from_utf8_lossy(&out.stderr);
     assert!(said.contains("cloudflared"), "{}", describe(&out));
