@@ -1,9 +1,9 @@
-use std::io::Write;
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::ai::error::{ProviderError, ProviderResult};
-use crate::ai::provider::{ChatProvider, ChatRequest};
+use crate::ai::provider::{ChatProvider, ChatRequest, Sink};
 use crate::config::provider::{ProviderConfig, ProviderKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,7 +98,9 @@ impl AgentCli {
                         "",
                         "--no-session-persistence",
                         "--output-format",
-                        "text",
+                        "stream-json",
+                        "--include-partial-messages",
+                        "--verbose",
                     ]
                     .map(String::from),
                 );
@@ -156,8 +158,44 @@ fn last_words(text: &str) -> String {
     }
 }
 
-impl ChatProvider for AgentCli {
-    fn complete(&self, req: &ChatRequest) -> ProviderResult<String> {
+#[derive(Debug, Default, PartialEq)]
+pub struct Heard {
+    pub answer: String,
+    pub result: Option<(bool, String)>,
+}
+
+pub fn read_stream(lines: impl BufRead, sink: Sink<'_>) -> Heard {
+    let mut heard = Heard::default();
+    for line in lines.lines() {
+        let Ok(line) = line else { break };
+        let Ok(event) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
+        match event["type"].as_str() {
+            Some("stream_event") => {
+                let delta = &event["event"]["delta"];
+                if event["event"]["type"] == "content_block_delta" && delta["type"] == "text_delta"
+                {
+                    if let Some(text) = delta["text"].as_str() {
+                        heard.answer.push_str(text);
+                        sink(text);
+                    }
+                }
+            }
+            Some("result") => {
+                let failed = event["is_error"].as_bool().unwrap_or(false)
+                    || event["subtype"].as_str().is_some_and(|s| s != "success");
+                let said = event["result"].as_str().unwrap_or_default().to_string();
+                heard.result = Some((failed, said));
+            }
+            _ => {}
+        }
+    }
+    heard
+}
+
+impl AgentCli {
+    fn run(&self, req: &ChatRequest, sink: Sink<'_>) -> ProviderResult<String> {
         let program =
             locate(&self.bin).ok_or_else(|| ProviderError::Retryable(self.unavailable_reason()))?;
         let (args, input) = self.arguments(req);
@@ -177,25 +215,51 @@ impl ChatProvider for AgentCli {
                 let _ = stdin.write_all(input.as_bytes());
             }
         });
-        let output = child.wait_with_output().map_err(|e| {
+        let stderr = child.stderr.take();
+        let errors = std::thread::spawn(move || {
+            let mut text = String::new();
+            if let Some(mut stderr) = stderr {
+                let _ = stderr.read_to_string(&mut text);
+            }
+            text
+        });
+        let heard = match (self.agent, child.stdout.take()) {
+            (Agent::ClaudeCode, Some(stdout)) => read_stream(BufReader::new(stdout), sink),
+            (Agent::Codex, Some(mut stdout)) => {
+                let mut answer = String::new();
+                let _ = stdout.read_to_string(&mut answer);
+                Heard {
+                    answer,
+                    result: None,
+                }
+            }
+            (_, None) => Heard::default(),
+        };
+        let status = child.wait().map_err(|e| {
             ProviderError::Retryable(format!("{}: {} did not finish: {e}", self.name, self.bin))
         })?;
         let _ = writer.join();
-        let answer = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let said = if stderr.trim().is_empty() {
-                last_words(&answer)
-            } else {
-                last_words(&stderr)
+        let stderr = errors.join().unwrap_or_default();
+        let failed_in_result = matches!(heard.result, Some((true, _)));
+        if !status.success() || failed_in_result {
+            let said = match &heard.result {
+                Some((true, said)) if !said.trim().is_empty() => last_words(said),
+                _ if !stderr.trim().is_empty() => last_words(&stderr),
+                _ => last_words(&heard.answer),
             };
             return Err(ProviderError::Retryable(format!(
                 "{}: {} stopped ({}): {said}. If it is not signed in, {}.",
                 self.name,
                 self.bin,
-                output.status,
+                status,
                 self.agent.sign_in()
             )));
+        }
+        let mut answer = heard.answer.trim().to_string();
+        if answer.is_empty() {
+            if let Some((false, said)) = &heard.result {
+                answer = said.trim().to_string();
+            }
         }
         if answer.is_empty() {
             return Err(ProviderError::Retryable(format!(
@@ -203,7 +267,20 @@ impl ChatProvider for AgentCli {
                 self.name, self.bin
             )));
         }
+        if self.agent == Agent::Codex {
+            sink(&answer);
+        }
         Ok(answer)
+    }
+}
+
+impl ChatProvider for AgentCli {
+    fn complete(&self, req: &ChatRequest) -> ProviderResult<String> {
+        self.run(req, &mut |_| {})
+    }
+
+    fn complete_streaming(&self, req: &ChatRequest, sink: Sink<'_>) -> ProviderResult<String> {
+        self.run(req, sink)
     }
 
     fn available(&self) -> bool {
@@ -311,15 +388,86 @@ mod tests {
         path.to_string_lossy().to_string()
     }
 
+    #[test]
+    fn claude_code_text_arrives_piece_by_piece_and_the_result_is_kept() {
+        let stream = [
+            r##"{"type":"system","subtype":"init"}"##,
+            r##"{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"hm"}}}"##,
+            r##"{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"# Notes\n"}}}"##,
+            "not json",
+            r##"{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"hello"}}}"##,
+            r##"{"type":"result","subtype":"success","is_error":false,"result":"# Notes\nhello"}"##,
+        ]
+        .join("\n");
+        let mut pieces = Vec::new();
+        let heard = read_stream(stream.as_bytes(), &mut |p| pieces.push(p.to_string()));
+        assert_eq!(pieces, ["# Notes\n", "hello"]);
+        assert_eq!(heard.answer, "# Notes\nhello");
+        assert_eq!(heard.result, Some((false, "# Notes\nhello".to_string())));
+        let failed = read_stream(
+            r##"{"type":"result","subtype":"success","is_error":true,"result":"Not logged in"}"##
+                .as_bytes(),
+            &mut |_| {},
+        );
+        assert_eq!(failed.result, Some((true, "Not logged in".to_string())));
+    }
+
     #[cfg(unix)]
     #[test]
-    fn the_answer_is_what_the_program_prints() {
+    fn claude_code_streams_what_it_writes() {
         let dir = tempfile::TempDir::new().unwrap();
-        let bin = script(dir.path(), "cat >/dev/null\necho '  # Notes'\necho 'hello'");
+        let bin = script(
+            dir.path(),
+            r##"cat >/dev/null
+printf '%s\n' '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"# Notes\n"}}}'
+printf '%s\n' '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"hello"}}}'
+printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"# Notes\nhello"}'"##,
+        );
         let cfg = config(ProviderKind::ClaudeCode, &bin, None);
         let agent = AgentCli::new("claude_code".into(), Agent::ClaudeCode, &cfg);
         assert!(agent.available());
+        let mut pieces = Vec::new();
+        let answer = agent
+            .complete_streaming(&request(), &mut |p| pieces.push(p.to_string()))
+            .unwrap();
+        assert_eq!(answer, "# Notes\nhello");
+        assert_eq!(pieces.len(), 2);
         assert_eq!(agent.complete(&request()).unwrap(), "# Notes\nhello");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn claude_code_reporting_an_error_is_a_failure_even_when_it_exits_cleanly() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let bin = script(
+            dir.path(),
+            r##"cat >/dev/null
+printf '%s\n' '{"type":"result","subtype":"success","is_error":true,"result":"Not logged in. Please run /login"}'"##,
+        );
+        let cfg = config(ProviderKind::ClaudeCode, &bin, None);
+        let agent = AgentCli::new("claude_code".into(), Agent::ClaudeCode, &cfg);
+        match agent.complete(&request()) {
+            Err(ProviderError::Retryable(message)) => {
+                assert!(message.contains("Not logged in"), "{message}");
+                assert!(message.contains("sign in"), "{message}");
+            }
+            other => panic!("expected a retryable failure, got {other:?}"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn codex_answers_in_one_piece() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let bin = script(dir.path(), "cat >/dev/null\necho '  # Notes'\necho 'hello'");
+        let cfg = config(ProviderKind::Codex, &bin, None);
+        let agent = AgentCli::new("codex".into(), Agent::Codex, &cfg);
+        let mut pieces = Vec::new();
+        let answer = agent
+            .complete_streaming(&request(), &mut |p| pieces.push(p.to_string()))
+            .unwrap();
+        assert_eq!(answer, "# Notes\nhello");
+        assert_eq!(pieces, ["# Notes\nhello"]);
     }
 
     #[cfg(unix)]
