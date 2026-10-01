@@ -24,6 +24,8 @@ const KNOWN_KINDS: &[&str] = &[
     "whisper_cpp",
     "chat_audio",
     "parakeet",
+    "claude_code",
+    "codex",
 ];
 
 fn stale(provider: &str, field: &str, value: &toml_edit::Value) -> bool {

@@ -150,7 +150,7 @@ fn source_for(line: &str, cursor: usize) -> (Source, usize, usize) {
             if arg >= 2 && all[1].2.eq_ignore_ascii_case("add") {
                 Source::Notes
             } else if arg == 1 {
-                Source::Words(&["add", "--screen"])
+                Source::Words(&["add", "screen"])
             } else {
                 Source::None
             }
@@ -408,7 +408,7 @@ mod tests {
     #[test]
     fn record_completes_add_and_then_a_note() {
         assert!(matches("record ").contains(&"add".to_string()));
-        assert!(matches("record ").contains(&"--screen".to_string()));
+        assert!(matches("record ").contains(&"screen".to_string()));
         let m = matches("record add own");
         assert_eq!(m.first().map(String::as_str), Some("1 Rust ownership"));
     }

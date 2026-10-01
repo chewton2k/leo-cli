@@ -74,30 +74,27 @@ pub fn test_provider(name: &str) -> Result<String> {
     };
 
     let started = std::time::Instant::now();
-    match pc.kind {
-        Some(config::provider::ProviderKind::Openai) => {
-            let key = resolve(pc.account(name), pc.key_env.as_deref(), &store);
-            let p = ai::provider::openai::OpenAiChat::new(name.to_string(), pc, key);
-            if !p.available() {
-                anyhow::bail!("{}", p.unavailable_reason());
-            }
-            use ai::provider::ChatProvider;
-            let reply = p
-                .complete(&ai::provider::ChatRequest {
-                    system: None,
-                    prompt: "Reply with the single word: ok".to_string(),
-                    temperature: 0.0,
-                    max_tokens: 16,
-                })
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
-            let reply = reply.trim().replace('\n', " ");
-            // A reasoning model can answer at length; one line is enough here.
-            let reply: String = reply.chars().take(60).collect();
-            Ok(format!(
-                "{name} responded in {:?}: {reply}",
-                started.elapsed()
-            ))
+    if let Some(p) = ai::provider::build_one_chat(name, pc, &store) {
+        if !p.available() {
+            anyhow::bail!("{}", p.unavailable_reason());
         }
+        let reply = p
+            .complete(&ai::provider::ChatRequest {
+                system: None,
+                prompt: "Reply with the single word: ok".to_string(),
+                temperature: 0.0,
+                max_tokens: 16,
+            })
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let reply = reply.trim().replace('\n', " ");
+        // A reasoning model can answer at length; one line is enough here.
+        let reply: String = reply.chars().take(60).collect();
+        return Ok(format!(
+            "{name} responded in {:?}: {reply}",
+            started.elapsed()
+        ));
+    }
+    match pc.kind {
         Some(_) => match build_one_transcriber(name, pc, &store) {
             Some(p) if p.available() => Ok(format!("{name} is reachable")),
             Some(p) => anyhow::bail!("{}", p.unavailable_reason()),

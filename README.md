@@ -47,7 +47,7 @@ It does the same: it checks the download, puts `leo.exe` in
 `%LOCALAPPDATA%\Programs\leo`, adds that to your PATH, and fetches the speech
 model. Open a new terminal afterwards. Windows Terminal works best; `leo
 update` and `leo uninstall` work there too. Recording what the computer plays
-(`leo record --screen`) needs no extra setup on Windows or macOS.
+(`leo record screen`) needs no extra setup on Windows or macOS.
 
 **If you'd rather read the script before running it:**
 
@@ -251,6 +251,9 @@ can mix them (for example, speech on your computer and writing in the cloud).
   OpenRouter. One key covers both writing and speech (Anthropic and OpenRouter
   only write, so pair them with your computer or another cloud for speech).
   OpenRouter has free models, so it can cost nothing.
+- **Option C: the coding plan you already pay for.** Claude Code or Codex
+  writes your notes with your Claude or ChatGPT plan. No key and no bill per
+  use. Writing only, so pair it with your computer or a cloud for speech.
 
 ### Settings, in one minute
 
@@ -352,6 +355,26 @@ something is missing, and the row under it says what.
 5. **Check it.** `leo doctor` should say `ok` under **AI**, and that the
    provider answers.
 
+### Option C: Claude Code or Codex
+
+If you already use [Claude Code](https://claude.com/claude-code) or
+[Codex](https://github.com/openai/codex) and are signed in, leo can write with
+them:
+
+1. In Settings, press `Enter` on **writing** until it shows **Claude Code** or
+   **Codex**.
+2. `Enter` on **writing model** to pick one: Claude Code offers `sonnet`
+   (default), `opus` and `fable`; Codex offers `gpt-6-luna` (default),
+   `gpt-6-sol` and `gpt-6-astra`. All are included in your plan, and use the
+   same allowance as your coding.
+3. `leo doctor` sends one tiny request to check that it answers. If it says
+   you are not signed in, run `claude` once and sign in, or `codex login`.
+
+leo runs them with every tool turned off, in an empty folder, so they only
+write text: they cannot read your files, run commands or change anything.
+Each request starts the program fresh, which adds a few seconds before the
+answer appears.
+
 ### Upgrading from an older leo
 
 leo used to know eighteen providers. It now keeps six: Ollama, OpenAI,
@@ -425,10 +448,10 @@ you like, and nothing is lost along the way:
 ```
 /record CS 101 Lecture 4     give the note your own title
 /record add                  add to the selected note instead of making a new one
-/record --screen             record your computer's audio (a video, a call)
+/record screen               record your computer's audio (a video, a call)
 ```
 
-**Recording computer audio** (`--screen`) is built in on Windows and on
+**Recording computer audio** (`/record screen`) is built in on Windows and on
 macOS 14.6 or newer. The first time, macOS asks to let your terminal record
 system audio; allow it. Your speakers keep playing while leo listens.
 
@@ -693,7 +716,7 @@ your account can read.
 | `LEO_CHAT_PROVIDER` / `LEO_TRANSCRIBE_PROVIDER` | Use only this provider for writing / speech |
 | `LEO_CHAT_MODEL` | Override the model of the first writing provider |
 | `LEO_USE_KEYCHAIN=1` | Store keys in the OS keychain instead of the key file |
-| `LEO_SCREEN_DEVICE` | A specific audio device for `--screen` (default: what the computer plays; `BlackHole 2ch` on macOS before 14.6) |
+| `LEO_SCREEN_DEVICE` | A specific audio device for `record screen` (default: what the computer plays; `BlackHole 2ch` on macOS before 14.6) |
 | `LEO_NO_UPDATE_CHECK=1` | Never check GitHub for a new version |
 | `LEO_INSTALL_DIR` | For the install command: where to put leo (default `~/.local/bin`; on Windows `%LOCALAPPDATA%\Programs\leo`) |
 | `LEO_NO_MICROPHONE=1` | Never open a microphone (leo's own tests set this) |

@@ -107,6 +107,23 @@ fn ai_rows(
         action: SettingAction::ChooseModel(task),
     });
     let pc = cfg.provider(&sel.provider)?;
+    if let Some(agent) = leo_services::ai::provider::agent_cli::Agent::of(pc) {
+        let bin = pc.bin.as_deref().unwrap_or(agent.program());
+        let value = if leo_services::ai::provider::agent_cli::locate(bin).is_some() {
+            format!(
+                "uses {}, no key; if asked, {}",
+                agent.plan(),
+                agent.sign_in()
+            )
+        } else {
+            format!("`{bin}` is not installed: {}", agent.install())
+        };
+        rows.push(Row::Fact {
+            label: format!("{} sign-in", chosen.name),
+            value,
+        });
+        return None;
+    }
     let account = pc.account(&sel.provider).to_string();
     if shown_key == Some(account.as_str()) {
         return Some(account);
@@ -486,6 +503,44 @@ mod tests {
             assert_eq!(openai.1, "stored");
         }
         assert!(!rows.iter().any(|(l, _, _)| l.contains("chain")));
+    }
+
+    #[test]
+    fn a_coding_plan_writes_without_a_key() {
+        use super::*;
+        for (provider, name, model, missing) in [
+            (
+                "claude_code",
+                "Claude Code",
+                "sonnet (included in your Claude plan)",
+                "leo-no-such-claude",
+            ),
+            (
+                "codex",
+                "Codex",
+                "gpt-6-luna (included in your ChatGPT plan)",
+                "leo-no-such-codex",
+            ),
+        ] {
+            let rows = simple_page(
+                &format!(
+                    "[chat]\nchain = [\"{provider}\"]\n[transcribe]\nchain = []\n[providers.{provider}]\nbin = \"{missing}\"\n"
+                ),
+                &MemoryStore::default(),
+                &Local::default(),
+            );
+            assert_eq!(row(&rows, "writing").unwrap().1, format!("○ {name}"));
+            let chosen = row(&rows, "writing model").unwrap();
+            assert_eq!(chosen.1, model);
+            assert_eq!(chosen.2, "ChooseModel(Chat)");
+            let sign_in = row(&rows, &format!("{name} sign-in")).unwrap();
+            assert_eq!(sign_in.2, "Fact");
+            assert!(sign_in.1.contains("is not installed"), "{}", sign_in.1);
+            assert!(
+                !rows.iter().any(|(l, _, _)| l.ends_with(" key")),
+                "{rows:?}"
+            );
+        }
     }
 
     #[test]

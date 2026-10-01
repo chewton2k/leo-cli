@@ -2564,6 +2564,9 @@ fn choosing_in_settings_writes_the_choice_and_moves_both_ways() {
     assert!(value(&app, "writing").unwrap().ends_with("OpenAI"));
     app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
         .unwrap();
+    assert!(value(&app, "writing").unwrap().ends_with("Codex"));
+    app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
+        .unwrap();
     assert!(value(&app, "writing").unwrap().ends_with("Anthropic"));
     app.on_key(press('j'), &mut terminal).unwrap();
     app.on_key(press_code(event::KeyCode::Right), &mut terminal)
@@ -2586,6 +2589,9 @@ fn choosing_in_settings_writes_the_choice_and_moves_both_ways() {
         .as_deref()
         .is_some_and(|s| s.contains("claude-sonnet-5-5 ($2 in")));
     app.on_key(press('k'), &mut terminal).unwrap();
+    app.on_key(press_code(event::KeyCode::Left), &mut terminal)
+        .unwrap();
+    assert!(value(&app, "writing").unwrap().ends_with("Codex"));
     app.on_key(press_code(event::KeyCode::Left), &mut terminal)
         .unwrap();
     assert!(value(&app, "writing").unwrap().ends_with("OpenAI"));

@@ -344,11 +344,14 @@ fn ai_checks(config: &Config, secrets: &dyn SecretStore, probe: Probe) -> Vec<Ch
             checks.push(match crate::providers::test_provider(&name) {
                 Ok(report) => Check::ready(&what, &needed_for, Some(report)),
                 Err(e) => {
-                    let mut c = Check::missing(
-                        &what,
-                        &needed_for,
-                        "check its key in /settings, or that the service is up",
-                    );
+                    let fix = match config
+                        .provider(&name)
+                        .and_then(crate::ai::provider::agent_cli::Agent::of)
+                    {
+                        Some(agent) => agent.sign_in().to_string(),
+                        None => "check its key in /settings, or that the service is up".to_string(),
+                    };
+                    let mut c = Check::missing(&what, &needed_for, &fix);
                     c.detail = Some(e.to_string());
                     c
                 }

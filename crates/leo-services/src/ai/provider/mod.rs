@@ -65,6 +65,7 @@ pub trait TranscribeProvider {
     }
 }
 
+pub mod agent_cli;
 pub mod audio;
 pub mod chat_audio;
 pub mod openai;
@@ -86,21 +87,36 @@ use crate::config::Config;
 /// invocation for a value that would be discarded anyway. Mirrors the same
 /// rule in `build_transcribe_chain`.
 pub fn build_chat_chain(cfg: &Config, store: &dyn SecretStore) -> Vec<Box<dyn ChatProvider>> {
-    let mut out: Vec<Box<dyn ChatProvider>> = Vec::new();
-    for name in &cfg.chat.chain {
-        let Some(pc) = cfg.provider(name) else {
-            continue;
-        };
-        if pc.kind != Some(ProviderKind::Openai) {
-            continue;
+    cfg.chat
+        .chain
+        .iter()
+        .filter_map(|name| build_one_chat(name, cfg.provider(name)?, store))
+        .collect()
+}
+
+pub fn build_one_chat(
+    name: &str,
+    pc: &crate::config::provider::ProviderConfig,
+    store: &dyn SecretStore,
+) -> Option<Box<dyn ChatProvider>> {
+    match pc.kind {
+        Some(ProviderKind::Openai) => {
+            let key = match pc.key_env.as_deref() {
+                Some(var) => resolve(pc.account(name), Some(var), store),
+                None => None,
+            };
+            Some(Box::new(openai::OpenAiChat::new(name.to_string(), pc, key)))
         }
-        let key = match pc.key_env.as_deref() {
-            Some(var) => resolve(pc.account(name), Some(var), store),
-            None => None,
-        };
-        out.push(Box::new(openai::OpenAiChat::new(name.clone(), pc, key)));
+        Some(ProviderKind::ClaudeCode | ProviderKind::Codex) => {
+            let agent = agent_cli::Agent::of(pc)?;
+            Some(Box::new(agent_cli::AgentCli::new(
+                name.to_string(),
+                agent,
+                pc,
+            )))
+        }
+        _ => None,
     }
-    out
 }
 
 /// Build the transcription chain in config order, same dropping policy.

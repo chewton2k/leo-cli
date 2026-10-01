@@ -24,6 +24,11 @@ pub struct Cli {
     command: Option<Commands>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+enum RecordWhat {
+    Screen,
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Create a new note
@@ -100,8 +105,13 @@ enum Commands {
         #[arg(short, long)]
         add: Option<String>,
 
-        /// Record what the computer plays instead of the microphone (built in on Windows and macOS 14.6+)
-        #[arg(long)]
+        #[arg(
+            value_enum,
+            help = "`screen` records what the computer plays instead of the microphone"
+        )]
+        what: Option<RecordWhat>,
+
+        #[arg(long, hide = true)]
         screen: bool,
     },
 

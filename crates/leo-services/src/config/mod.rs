@@ -90,8 +90,9 @@ impl Config {
 # the key row, or run `leo doctor`.
 #
 # Type /settings to choose what writes and what listens: this computer (free and
-# private) or OpenAI, Anthropic, Gemini, xAI or OpenRouter with one key, and which model
-# each uses. Settings writes these two lines for you.
+# private) or OpenAI, Anthropic, Gemini, xAI or OpenRouter with one key, or Claude Code
+# or Codex with the plan you already pay for, and which model each uses. Settings
+# writes these two lines for you.
 
 [chat]
 chain = [{chat}]
@@ -165,6 +166,14 @@ base_url = "https://openrouter.ai/api/v1"
 model = "openrouter/free"
 key_env = "OPENROUTER_API_KEY"
 max_tokens = 8192
+
+[providers.claude_code]
+kind = "claude_code"
+model = "sonnet"
+
+[providers.codex]
+kind = "codex"
+model = "gpt-6-luna"
 
 [providers.parakeet]
 kind = "parakeet"
@@ -374,7 +383,7 @@ model_path = "~/.leo/models/ggml-base.en.bin"
         std::fs::write(&path, "").unwrap();
         let cfg = Config::load_from(&path);
         assert!(cfg.chat.chain.is_empty());
-        assert_eq!(cfg.providers.len(), 10, "{:?}", cfg.providers.keys());
+        assert_eq!(cfg.providers.len(), 12, "{:?}", cfg.providers.keys());
         assert!(cfg.providers.contains_key("ollama"));
         assert!(cfg.providers.contains_key("parakeet"));
     }
@@ -465,6 +474,8 @@ model = "my-own-model"
             names,
             [
                 "anthropic",
+                "claude_code",
+                "codex",
                 "gemini",
                 "gemini_speech",
                 "ollama",
@@ -540,6 +551,13 @@ kind = "telepathy"
                     assert!(p.key_from.is_some(), "{name} should share its chat key");
                 }
                 ProviderKind::WhisperCpp => panic!("{name}: no built-in runs an external program"),
+                ProviderKind::ClaudeCode | ProviderKind::Codex => {
+                    assert!(
+                        p.key_env.is_none(),
+                        "{name} signs in through its own program"
+                    );
+                    assert!(p.base_url.is_none(), "{name} is a program, not a server");
+                }
                 ProviderKind::Parakeet => {
                     assert!(
                         p.model_path.is_none(),

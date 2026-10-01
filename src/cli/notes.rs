@@ -69,10 +69,15 @@ pub fn run(cmd: Commands) -> Result<()> {
         Commands::Edit { id } => action::Action::Edit { note: id },
         Commands::Delete { id, .. } => action::Action::Delete { note: id },
         Commands::Search { query, .. } => action::Action::Search { query },
-        Commands::Record { title, add, screen } => action::Action::Listen {
+        Commands::Record {
+            title,
+            add,
+            what,
+            screen,
+        } => action::Action::Listen {
             title,
             append_to: add,
-            screen,
+            screen: screen || what.is_some(),
         },
         Commands::Ask { question } => action::Action::Ask {
             note: question.join(" "),

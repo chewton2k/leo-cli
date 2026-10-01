@@ -13,6 +13,8 @@ pub enum ProviderKind {
     WhisperCpp,
     ChatAudio,
     Parakeet,
+    ClaudeCode,
+    Codex,
 }
 
 /// One named provider from `[providers.<name>]`.

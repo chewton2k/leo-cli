@@ -44,7 +44,7 @@ pub const VERBS: &[Verb] = &[
     v(
         "record",
         &[],
-        "record [title | add [note]] [--screen]",
+        "record [screen] [title | add [note]]",
         "record, and turn what was said into a note",
     ),
     v(
@@ -299,9 +299,13 @@ pub fn parse(line: &str) -> Parsed {
         "delete" | "rm" => act(Action::Delete { note: joined() }),
 
         "record" => {
-            let screen = args.iter().any(|a| a == "--screen");
+            let named = args
+                .first()
+                .is_some_and(|a| a.eq_ignore_ascii_case("screen"));
+            let screen = named || args.iter().any(|a| a == "--screen");
             let rest: Vec<String> = args
                 .iter()
+                .skip(usize::from(named))
                 .filter(|a| a.as_str() != "--screen")
                 .cloned()
                 .collect();
@@ -756,6 +760,38 @@ mod parse_tests {
                 title: None,
                 append_to: Some("1".to_string()),
                 screen: false
+            }
+        );
+        assert_eq!(
+            act("record screen"),
+            Action::Listen {
+                title: None,
+                append_to: None,
+                screen: true,
+            }
+        );
+        assert_eq!(
+            act("record screen Lecture 3"),
+            Action::Listen {
+                title: Some("Lecture 3".to_string()),
+                append_to: None,
+                screen: true,
+            }
+        );
+        assert_eq!(
+            act("record screen add 2"),
+            Action::Listen {
+                title: None,
+                append_to: Some("2".to_string()),
+                screen: true,
+            }
+        );
+        assert_eq!(
+            act("record Big screen review"),
+            Action::Listen {
+                title: Some("Big screen review".to_string()),
+                append_to: None,
+                screen: false,
             }
         );
         // --screen is positional-agnostic and never lands in the title.

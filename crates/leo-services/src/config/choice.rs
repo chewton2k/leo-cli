@@ -75,6 +75,15 @@ pub const WRITING: &[Choice] = &[
         ],
     },
     Choice {
+        provider: "codex",
+        name: "Codex",
+        models: &[
+            m("gpt-6-luna", "included in your ChatGPT plan"),
+            m("gpt-6-sol", "included in your ChatGPT plan"),
+            m("gpt-6-astra", "included in your ChatGPT plan"),
+        ],
+    },
+    Choice {
         provider: "anthropic",
         name: "Anthropic",
         models: &[
@@ -82,6 +91,15 @@ pub const WRITING: &[Choice] = &[
             m("claude-sonnet-5", "$2 in, $10 out per 1M tokens"),
             m("claude-opus-5-5", "$4 in, $20 out per 1M tokens"),
             m("claude-opus-5", "$5 in, $25 out per 1M tokens"),
+        ],
+    },
+    Choice {
+        provider: "claude_code",
+        name: "Claude Code",
+        models: &[
+            m("sonnet", "included in your Claude plan"),
+            m("opus", "included in your Claude plan"),
+            m("fable", "included in your Claude plan"),
         ],
     },
     Choice {
@@ -380,7 +398,14 @@ mod tests {
         use crate::config::provider::ProviderKind;
         for choice in WRITING {
             let pc = Config::built_in_provider(choice.provider).expect(choice.provider);
-            assert_eq!(pc.kind, Some(ProviderKind::Openai), "{}", choice.provider);
+            assert!(
+                matches!(
+                    pc.kind,
+                    Some(ProviderKind::Openai | ProviderKind::ClaudeCode | ProviderKind::Codex)
+                ),
+                "{}",
+                choice.provider
+            );
             if !choice.local() {
                 let default = pc.model.clone().unwrap();
                 assert!(
@@ -436,7 +461,9 @@ mod tests {
         for choice in WRITING.iter().chain(SPEECH) {
             for model in choice.models {
                 assert!(
-                    model.price.contains('$') || model.price.starts_with("free"),
+                    model.price.contains('$')
+                        || model.price.starts_with("free")
+                        || model.price.starts_with("included in your"),
                     "{}: {}",
                     model.id,
                     model.price

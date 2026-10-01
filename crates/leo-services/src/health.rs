@@ -162,7 +162,7 @@ pub fn microphone() -> Check {
 /// Separate from the full report so `listen` can check it before recording
 /// rather than failing partway through.
 /// `microphone` is only meaningful when the audio comes from a microphone:
-/// `--screen` captures system output through a loopback device, and the replay
+/// `record screen` captures system output through a loopback device, and the replay
 /// hook reads a file, so probing the mic for either would block a recording
 /// that would have worked.
 pub fn recording(config: &Config, store: &dyn SecretStore, uses_microphone: bool) -> Vec<Check> {
@@ -262,11 +262,20 @@ pub(crate) fn chain_check(config: &Config, chain: Chain, store: &dyn SecretStore
             needed_for: chain.needed_for().to_string(),
             state: State::Missing {
                 fix: match chain {
-                    Chain::Chat => {
-                        "brew install ollama && ollama pull qwen3:8b   (free, private)\n\
-                         or: /settings in leo, choose OpenAI, Anthropic, Gemini, xAI or OpenRouter, add its key"
-                            .to_string()
-                    }
+                    Chain::Chat => match names
+                        .first()
+                        .and_then(|n| config.provider(n))
+                        .and_then(crate::ai::provider::agent_cli::Agent::of)
+                    {
+                        Some(agent) => format!(
+                            "{}\nor: /settings in leo, choose another way to write",
+                            agent.install()
+                        ),
+                        None => "brew install ollama && ollama pull qwen3:8b   (free, private)\n\
+                         or: /settings in leo, choose OpenAI, Anthropic, Gemini, xAI or OpenRouter, add its key\n\
+                         or: /settings in leo, choose Claude Code or Codex to use the plan you have"
+                            .to_string(),
+                    },
                     Chain::Transcribe => {
                         "leo update   (downloads the speech model; free, private)\n\
                          or: /settings in leo, choose OpenAI, Gemini or xAI, add its key"
@@ -297,6 +306,10 @@ pub fn provider_usable(config: &Config, name: &str, store: &dyn SecretStore) -> 
         return crate::ai::provider::parakeet::present(&crate::ai::provider::parakeet::model_dir(
             provider,
         ));
+    }
+    if let Some(agent) = crate::ai::provider::agent_cli::Agent::of(provider) {
+        let bin = provider.bin.as_deref().unwrap_or(agent.program());
+        return crate::ai::provider::agent_cli::locate(bin).is_some();
     }
     if provider.kind == Some(crate::config::provider::ProviderKind::WhisperCpp) {
         let model = crate::ai::provider::audio::expand_tilde(
