@@ -5,15 +5,13 @@ use anyhow::{Context, Result};
 use colored::Colorize;
 
 fn ensure_speech_model() {
-    if std::env::var_os("LEO_INSTALL_SKIP_MODEL").is_some() {
+    if std::env::var_os("LEO_INSTALL_NO_MODEL").is_some() {
         return;
     }
     use leo_services::providers::ModelState;
+    leo_services::providers::remove_old_models();
     match leo_services::providers::speech_model_state() {
-        ModelState::Ready => {
-            leo_services::providers::remove_old_models();
-            return;
-        }
+        ModelState::Ready => return,
         ModelState::Missing => {
             println!();
             println!("  The speech model is missing. Downloading Parakeet (670 MB, once)…");
@@ -27,19 +25,19 @@ fn ensure_speech_model() {
         Ok(path) => println!("  Saved {}", path.display()),
         Err(e) => println!(
             "  {}",
-            format!("Could not download it ({e}). /settings in leo can try again.").dimmed()
+            format!("Could not download it ({e}). leo will try again when it starts.").dimmed()
         ),
     }
 }
 
 pub fn run(force: bool) -> Result<()> {
-    ensure_speech_model();
     let current = env!("CARGO_PKG_VERSION");
     if !force {
         match leo_services::update::latest_release() {
             Ok(latest) if !leo_services::update::is_newer(&latest, current) => {
                 println!();
-                println!("  leo {current} is the latest version. Nothing to download.");
+                println!("  leo {current} is the latest version.");
+                ensure_speech_model();
                 println!(
                     "  {}",
                     "`leo update --force` reinstalls it anyway.".dimmed()
@@ -78,7 +76,6 @@ pub fn run(force: bool) -> Result<()> {
     let status = cmd
         .env("LEO_INSTALL_DIR", dir)
         .env("LEO_INSTALL_SKIP_PATH", "1")
-        .env("LEO_INSTALL_SKIP_MODEL", "1")
         .status()
         .context("could not run the installer (is curl installed?)")?;
     if !status.success() {

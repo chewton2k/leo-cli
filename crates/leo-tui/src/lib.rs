@@ -111,6 +111,8 @@ pub struct App {
     recordings: Option<std::path::PathBuf>,
     obsidian: fn(&std::path::Path) -> Result<leo_core::obsidian::Opened>,
     update: Option<std::sync::mpsc::Receiver<String>>,
+    model_download: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
+    speech_model_wanted: fn() -> bool,
     last_disk_check: Option<Instant>,
     last_push: Option<Instant>,
     /// How many commits are waiting, refreshed when the notes change rather than
@@ -276,6 +278,10 @@ impl App {
             checking: None,
             probe: leo_services::doctor::Probe::all(),
             update: None,
+            model_download: None,
+            speech_model_wanted: || {
+                leo_services::providers::speech_model_wanted(&leo_services::config::Config::load())
+            },
             last_disk_check: None,
             gh_ready: leo_core::sync::gh_ready,
             local_models: leo_services::config::choice::local_models,
@@ -1925,6 +1931,7 @@ pub fn run() -> Result<()> {
     app.greet(installed_manual);
     app.resume_interrupted();
     app.update = Some(task::start_update_check());
+    app.fetch_speech_model();
     let result = event_loop(&mut terminal, &mut app);
     app.flush_edit();
     let _ = execute!(std::io::stdout(), DisableBracketedPaste);
@@ -1964,6 +1971,7 @@ fn event_loop<B: TuiBackend>(terminal: &mut Terminal<B>, app: &mut App) -> Resul
             app.pump_tasks(terminal)?;
             app.pump_doctor();
             app.pump_update();
+            app.pump_model_download();
             app.maybe_reload_from_disk();
             app.pump_diagnostics();
             // Only when there is no input to handle: an automatic backup must

@@ -36,6 +36,7 @@ fn temp_app() -> (App, tempfile::TempDir) {
     app.probe = leo_services::doctor::Probe::default();
     app.gh_ready = || false;
     app.local_models = |_| leo_services::config::choice::Local::default();
+    app.speech_model_wanted = || false;
     app.setup_steps = steps_ready;
     app.recordings = None;
     app.obsidian = |_| Err(anyhow::anyhow!("tests never launch Obsidian"));
@@ -3054,4 +3055,61 @@ fn pasting_at_the_slash_line_searches_on_one_line() {
     app.on_paste("own\nership");
     assert_eq!(app.cmd.text(), "ownership");
     assert_eq!(app.note_count(), 1);
+}
+
+#[test]
+fn the_speech_model_download_reports_when_it_is_done_or_failed() {
+    let (mut app, _d) = temp_app();
+    assert!(!app.pump_model_download());
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.model_download = Some(rx);
+    assert!(!app.pump_model_download(), "announced before it finished");
+    tx.send(Ok(())).unwrap();
+    assert!(app.pump_model_download());
+    let (_, text, _) = app.message.as_ref().expect("a message");
+    assert!(text.contains("ready"), "{text}");
+    assert!(app.model_download.is_none());
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.model_download = Some(rx);
+    tx.send(Err("offline".to_string())).unwrap();
+    assert!(app.pump_model_download());
+    let (_, text, _) = app.message.as_ref().expect("a message");
+    assert!(
+        text.contains("offline") && text.contains("next time"),
+        "{text}"
+    );
+}
+
+#[test]
+fn nothing_is_downloaded_when_the_model_is_not_wanted() {
+    let (mut app, _d) = temp_app();
+    app.fetch_speech_model();
+    assert!(app.model_download.is_none());
+}
+
+#[test]
+fn settings_say_the_model_is_downloading_instead_of_offering_it_again() {
+    let _one_at_a_time = CONFIG_WRITES.lock().unwrap_or_else(|e| e.into_inner());
+    let (mut app, _d) = temp_app();
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(110, 30)).unwrap();
+    let (_tx, rx) = std::sync::mpsc::channel();
+    app.model_download = Some(rx);
+    app.on_intent(Intent::OpenSettings, &mut terminal).unwrap();
+    let rows = &app.settings.as_ref().unwrap().rows;
+    assert!(
+        rows.iter()
+            .any(|r| matches!(r, SettingsRow::Fact { value, .. } if value.contains("downloading"))),
+        "{rows:?}"
+    );
+    assert!(!rows.iter().any(|r| matches!(
+        r,
+        SettingsRow::Setting {
+            action: view::settings::SettingAction::GetLocalModel(
+                leo_services::config::edit::Task::Transcribe
+            ),
+            ..
+        }
+    )));
 }

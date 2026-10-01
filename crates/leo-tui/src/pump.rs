@@ -39,6 +39,48 @@ impl App {
         }
     }
 
+    pub(super) fn fetch_speech_model(&mut self) {
+        if self.model_download.is_some() || !(self.speech_model_wanted)() {
+            return;
+        }
+        self.say(
+            Kind::Dim,
+            format!(
+                "Downloading the speech model ({} MB, once) in the background…",
+                leo_services::ai::provider::parakeet::MODEL_MB
+            ),
+        );
+        self.model_download = Some(task::start_model_download());
+    }
+
+    pub(super) fn pump_model_download(&mut self) -> bool {
+        let Some(rx) = self.model_download.as_ref() else {
+            return false;
+        };
+        match rx.try_recv() {
+            Ok(Ok(())) => {
+                self.model_download = None;
+                self.say(Kind::Good, "The speech model is ready.");
+                true
+            }
+            Ok(Err(e)) => {
+                self.model_download = None;
+                self.say(
+                    Kind::Bad,
+                    format!(
+                        "Could not download the speech model ({e}); leo tries again next time."
+                    ),
+                );
+                true
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => false,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.model_download = None;
+                false
+            }
+        }
+    }
+
     pub(super) fn pump_doctor(&mut self) -> bool {
         let Some((job, _, _)) = self.checking.as_mut() else {
             return false;

@@ -11,7 +11,26 @@ impl App {
         let cfg = leo_services::config::Config::load();
         let store = leo_services::config::secret::default_store();
         let local = (self.local_models)(&cfg);
-        settings::simple_rows(&cfg, store.as_ref(), &self.store.notes_dir, &local)
+        let mut rows = settings::simple_rows(&cfg, store.as_ref(), &self.store.notes_dir, &local);
+        if self.model_download.is_some() {
+            for row in &mut rows {
+                if let SettingsRow::Setting {
+                    label,
+                    action:
+                        view::settings::SettingAction::GetLocalModel(
+                            leo_services::config::edit::Task::Transcribe,
+                        ),
+                    ..
+                } = row
+                {
+                    *row = SettingsRow::Fact {
+                        label: label.clone(),
+                        value: "downloading in the background…".to_string(),
+                    };
+                }
+            }
+        }
+        rows
     }
 
     pub(super) fn open_settings(&mut self, status: Option<String>) {

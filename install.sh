@@ -183,7 +183,7 @@ file_state() {
         echo damaged
     fi
 }
-if [ -z "${LEO_INSTALL_SKIP_MODEL:-}" ]; then
+if [ -z "${LEO_INSTALL_NO_MODEL:-}" ]; then
     need=""
     damaged=""
     for pair in $model_files; do
@@ -234,9 +234,7 @@ if [ -z "${LEO_INSTALL_SKIP_MODEL:-}" ]; then
             say "  ${yellow}!${reset} Could not download the speech model; /settings in leo can fetch it later"
         fi
     fi
-    if [ -n "$model_ready" ]; then
-        rm -f "$models/ggml-base.en.bin"
-    fi
+    rm -f "$models/ggml-base.en.bin"
 fi
 
 # Put the directory on the PATH for every future terminal, in the file this

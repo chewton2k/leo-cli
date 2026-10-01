@@ -258,18 +258,40 @@ pub fn sha256_of(path: &std::path::Path) -> Result<String> {
 }
 
 pub fn download_speech_model() -> Result<std::path::PathBuf> {
+    fetch_speech_model(false)
+}
+
+pub fn download_speech_model_quietly() -> Result<std::path::PathBuf> {
+    fetch_speech_model(true)
+}
+
+fn fetch_speech_model(quiet: bool) -> Result<std::path::PathBuf> {
     let base = std::env::var("LEO_INSTALL_MODEL_URL")
         .unwrap_or_else(|_| crate::ai::provider::parakeet::MODEL_URL.to_string());
     let dir = speech_model_dir();
+    remove_old_models();
     for (name, sha) in crate::ai::provider::parakeet::manifest() {
         if model_state(&dir.join(&name), &sha) == ModelState::Ready {
             continue;
         }
-        println!("  {name}");
-        download_verified(&format!("{base}/{name}"), &sha, &dir, &name)?;
+        if !quiet {
+            println!("  {name}");
+        }
+        download_verified(&format!("{base}/{name}"), &sha, &dir, &name, quiet)?;
     }
-    remove_old_models();
     Ok(dir)
+}
+
+pub fn speech_model_wanted(cfg: &Config) -> bool {
+    if std::env::var_os("LEO_INSTALL_NO_MODEL").is_some() {
+        return false;
+    }
+    let uses_it = cfg.transcribe.chain.iter().any(|name| {
+        cfg.provider(name).and_then(|p| p.kind)
+            == Some(crate::config::provider::ProviderKind::Parakeet)
+    });
+    uses_it
+        && !crate::ai::provider::parakeet::present(&crate::ai::provider::parakeet::default_dir())
 }
 
 pub fn remove_old_models() {
@@ -281,14 +303,22 @@ pub fn download_verified(
     sha256: &str,
     dir: &std::path::Path,
     name: &str,
+    quiet: bool,
 ) -> Result<std::path::PathBuf> {
     std::fs::create_dir_all(dir)?;
     let target = dir.join(name);
     let partial = dir.join(format!("{name}.part"));
-    let status = std::process::Command::new("curl")
-        .args(["-L", "--fail", "--progress-bar", "-o"])
-        .arg(&partial)
-        .arg(url)
+    let mut curl = std::process::Command::new("curl");
+    curl.args(["-L", "--fail", "-o"]).arg(&partial).arg(url);
+    if quiet {
+        curl.arg("-sS")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+    } else {
+        curl.arg("--progress-bar");
+    }
+    let status = curl
         .status()
         .map_err(|e| anyhow::anyhow!("could not run curl: {e}"))?;
     if !status.success() {
@@ -340,12 +370,19 @@ mod tests {
         assert_eq!(good.len(), 64);
 
         let models = dir.path().join("models");
-        let saved = download_verified(&file_url(&source), &good, &models, "ggml-x.bin").unwrap();
+        let saved =
+            download_verified(&file_url(&source), &good, &models, "ggml-x.bin", true).unwrap();
         assert_eq!(std::fs::read(&saved).unwrap(), b"pretend model");
         assert!(!models.join("ggml-x.bin.part").exists());
 
-        let err = download_verified(&file_url(&source), &"0".repeat(64), &models, "ggml-y.bin")
-            .unwrap_err();
+        let err = download_verified(
+            &file_url(&source),
+            &"0".repeat(64),
+            &models,
+            "ggml-y.bin",
+            true,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("damaged"), "{err}");
         assert!(!models.join("ggml-y.bin").exists());
         assert!(!models.join("ggml-y.bin.part").exists());
@@ -355,6 +392,7 @@ mod tests {
             &good,
             &models,
             "ggml-z.bin",
+            true,
         )
         .unwrap_err();
         assert!(err.to_string().contains("failed"), "{err}");

@@ -69,9 +69,10 @@ off; inside the app, `/doctor` does the same.
 If the download fails, there may be no ready-made build for your computer yet;
 build it from source instead (below).
 
-**To update leo**, run `leo update`. It first checks the speech model (present,
-and its checksum matches) and downloads it again only if it is missing or
-damaged, then installs the new version if there is one. leo checks for a new
+**To update leo**, run `leo update`. It installs the new version if there is
+one, and makes sure the speech model is there: each file is checked against
+its checksum and downloaded only if it is missing or damaged, and the old
+`base.en` model from earlier versions is removed. leo checks for a new
 version once a day and says so on the bottom line when there is one
 (`LEO_NO_UPDATE_CHECK=1` turns that off).
 
@@ -114,9 +115,9 @@ If it still says "command not found", check that leo was installed:
 `ls ~/.cargo/bin/leo` should list a file. If it does not, run
 `cargo install --path .` again and look for an error at the end.
 
-A source install does not download the speech model by itself: the first time,
-type `/settings` in leo and press `Enter` on **speech model**, which is shown
-only while the model is missing.
+A source install gets the speech model the first time leo starts: it downloads
+in the background (the bottom line says when it is ready), so there is nothing
+to do.
 
 To update a source install, `git pull` and run `cargo install --path . --force`.
 
@@ -271,7 +272,8 @@ something is missing, and the row under it says what.
    English and adds punctuation and capitals. There is nothing to install or
    pick. The installer downloads it into `~/.leo/models`, and `leo update`
    checks it every time: if a file is missing, or its checksum does not match
-   (a damaged or half-finished download), that file is downloaded again. In
+   (a damaged or half-finished download), that file is downloaded again. If it
+   is ever missing when leo starts, leo downloads it in the background. In
    Settings, **speech** says `● this Mac (Parakeet)`.
 
    It is built to leave your computer usable while it works: it uses at most

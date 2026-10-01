@@ -233,6 +233,17 @@ pub fn start_update_check() -> std::sync::mpsc::Receiver<String> {
     rx
 }
 
+pub fn start_model_download() -> std::sync::mpsc::Receiver<Result<(), String>> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let result = leo_services::providers::download_speech_model_quietly()
+            .map(|_| ())
+            .map_err(|e| e.to_string());
+        let _ = tx.send(result);
+    });
+    rx
+}
+
 pub fn start_doctor(notes_dir: std::path::PathBuf, probe: leo_services::doctor::Probe) -> Job {
     let (tx, rx) = mpsc::channel();
     spawn_guarded(tx.clone(), move || {

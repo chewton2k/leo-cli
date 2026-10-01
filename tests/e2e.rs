@@ -61,7 +61,7 @@ impl Leo {
             .env("EDITOR", self.bin.join("fake-editor"))
             .env("NO_COLOR", "1")
             .env("LEO_NO_UPDATE_CHECK", "1")
-            .env("LEO_INSTALL_SKIP_MODEL", "1")
+            .env("LEO_INSTALL_NO_MODEL", "1")
             .env("GIT_AUTHOR_NAME", "leo test")
             .env("GIT_AUTHOR_EMAIL", "leo@example.com")
             .env("GIT_COMMITTER_NAME", "leo test")
@@ -559,7 +559,7 @@ fn obsidian_without_it_installed_says_where_to_get_it() {
 fn tripwire(leo: &Leo) -> (PathBuf, PathBuf) {
     let ran = leo.home.path().join("installer-ran");
     let script = leo.home.path().join("tripwire.sh");
-    std::fs::write(&script, format!("#!/bin/sh\ntouch '{}'\n", ran.display())).unwrap();
+    std::fs::write(&script, format!("#!/bin/sh\nenv > '{}'\n", ran.display())).unwrap();
     (script, ran)
 }
 
@@ -587,6 +587,8 @@ fn update_installs_when_a_newer_version_is_out_or_when_forced() {
     let (script, ran) = tripwire(&leo);
     let newer = leo
         .cmd_at(&exe, &["update"])
+        .env_remove("LEO_INSTALL_NO_MODEL")
+        .env("LEO_INSTALL_MODEL_URL", "file:///nonexistent")
         .env("LEO_UPDATE_SCRIPT", &script)
         .env("LEO_LATEST_RELEASE", "999.0.0")
         .output()
@@ -594,6 +596,16 @@ fn update_installs_when_a_newer_version_is_out_or_when_forced() {
     assert!(newer.status.success(), "{}", describe(&newer));
     assert!(String::from_utf8_lossy(&newer.stdout).contains("999.0.0"));
     assert!(ran.exists(), "did not install the newer version");
+    let installer_env = std::fs::read_to_string(&ran).unwrap();
+    assert!(
+        !installer_env.contains("LEO_INSTALL_SKIP_MODEL"),
+        "the installer was told to skip the speech model"
+    );
+    let said = String::from_utf8_lossy(&newer.stdout);
+    assert!(
+        !said.contains("speech model"),
+        "the old leo checked the model instead of leaving it to the new installer:\n{said}"
+    );
 
     std::fs::remove_file(&ran).unwrap();
     leo.cmd_at(&exe, &["update", "--force"])
@@ -687,7 +699,7 @@ fn update_downloads_the_speech_model_first_when_it_is_missing() {
     };
     let update = |url: &str, manifest: &str| {
         leo.cmd_at(&exe, &["update"])
-            .env_remove("LEO_INSTALL_SKIP_MODEL")
+            .env_remove("LEO_INSTALL_NO_MODEL")
             .env("LEO_INSTALL_MODEL_URL", url)
             .env("LEO_INSTALL_MODEL_MANIFEST", manifest)
             .env("LEO_UPDATE_SCRIPT", &script)
@@ -710,10 +722,7 @@ fn update_downloads_the_speech_model_first_when_it_is_missing() {
         "a wrong checksum was accepted:\n{said}"
     );
     assert!(!encoder.exists());
-    assert!(
-        old.exists(),
-        "the old model went before the new one arrived"
-    );
+    assert!(!old.exists(), "the unused base.en was kept");
     assert!(!ran.exists());
 
     let real = manifest(&sha256_of(&source.join("encoder.int8.onnx")));
