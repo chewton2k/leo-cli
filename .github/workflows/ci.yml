@@ -61,16 +61,32 @@ jobs:
           $env:LEO_HOME = Join-Path $work 'home'
           $env:LEO_NO_UPDATE_CHECK = '1'
           $env:LEO_NO_MICROPHONE = '1'
-          ./install.ps1
+          function Check([string]$Label, [scriptblock]$Block, [int[]]$Ok = @(0)) {
+            $global:LASTEXITCODE = 0
+            try {
+              $out = & $Block *>&1 | Out-String
+            } catch {
+              Write-Host "::error::$Label threw: $($_ | Out-String)"
+              exit 1
+            }
+            Write-Host $out
+            if ($Ok -notcontains $LASTEXITCODE) {
+              $flat = ($out -replace "`r?`n", ' | ')
+              Write-Host "::error::$Label failed (exit $LASTEXITCODE): $flat"
+              exit 1
+            }
+            return $out
+          }
           $leo = Join-Path $env:LEO_INSTALL_DIR 'leo.exe'
-          & $leo --version
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-          & $leo new "From Windows" --body "hello"
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-          $listed = & $leo list 2>&1 | Out-String
-          if ($listed -notmatch 'From Windows') { Write-Host $listed; exit 1 }
-          ./install.ps1
-          & $leo doctor
+          Check 'install.ps1' { ./install.ps1 } | Out-Null
+          Check 'leo --version' { & $leo --version } | Out-Null
+          Check 'leo new' { & $leo new "From Windows" --body "hello" } | Out-Null
+          $listed = Check 'leo list' { & $leo list }
+          if ($listed -notmatch 'From Windows') { Write-Host "::error::leo list did not show the new note: $listed"; exit 1 }
+          Check 'install.ps1 again' { ./install.ps1 } | Out-Null
+          $report = Check 'leo doctor' { & $leo doctor } @(0, 1)
+          if ($report -notmatch 'recording') { Write-Host "::error::leo doctor printed no report: $report"; exit 1 }
+          exit 0
 
   lint:
     runs-on: ubuntu-latest
