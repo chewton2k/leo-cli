@@ -41,14 +41,16 @@ pub fn simple_rows(
     store: &dyn SecretStore,
     notes_dir: &std::path::Path,
     local: &Local,
+    usage: &leo_services::usage::Seen,
 ) -> Vec<Row> {
     let mut rows = vec![Row::Section("AI".to_string())];
-    let writing_key = ai_rows(&mut rows, cfg, store, local, Task::Chat, None);
+    let writing_key = ai_rows(&mut rows, cfg, store, local, usage, Task::Chat, None);
     ai_rows(
         &mut rows,
         cfg,
         store,
         local,
+        usage,
         Task::Transcribe,
         writing_key.as_deref(),
     );
@@ -63,6 +65,7 @@ fn ai_rows(
     cfg: &Config,
     store: &dyn SecretStore,
     local: &Local,
+    usage: &leo_services::usage::Seen,
     task: Task,
     shown_key: Option<&str>,
 ) -> Option<String> {
@@ -87,9 +90,20 @@ fn ai_rows(
         });
         return None;
     };
+    let limits = cfg
+        .provider(&sel.provider)
+        .and_then(leo_services::ai::provider::agent_cli::Agent::of)
+        .and_then(|_| usage.get(&sel.provider))
+        .map(|seen| {
+            format!(
+                " ({})",
+                leo_services::usage::label(seen, chrono::Utc::now())
+            )
+        })
+        .unwrap_or_default();
     rows.push(Row::Setting {
         label: what.to_string(),
-        value: format!("{mark} {}", chosen.label()),
+        value: format!("{mark} {}{limits}", chosen.label()),
         action: SettingAction::ChooseProvider(task),
     });
     let model_label = format!("{what} model");
@@ -446,12 +460,21 @@ mod tests {
         store: &dyn SecretStore,
         local: &Local,
     ) -> Vec<(String, String, String)> {
+        simple_page_with(config, store, local, &Default::default())
+    }
+
+    fn simple_page_with(
+        config: &str,
+        store: &dyn SecretStore,
+        local: &Local,
+        usage: &leo_services::usage::Seen,
+    ) -> Vec<(String, String, String)> {
         use super::*;
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("config.toml");
         std::fs::write(&path, config).unwrap();
         let cfg = Config::load_from(&path);
-        simple_rows(&cfg, store, tmp.path(), local)
+        simple_rows(&cfg, store, tmp.path(), local, usage)
             .into_iter()
             .filter_map(|r| match r {
                 Row::Setting {
@@ -541,6 +564,46 @@ mod tests {
                 "{rows:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_coding_plan_shows_its_latest_limits_next_to_its_name() {
+        use super::*;
+        let seen = |five, week| leo_services::usage::Usage {
+            five_hour: Some(leo_services::usage::Window {
+                used: five,
+                resets_at: None,
+            }),
+            seven_day: Some(leo_services::usage::Window {
+                used: week,
+                resets_at: None,
+            }),
+            seen_at: chrono::Utc::now(),
+        };
+        let mut usage = leo_services::usage::Seen::new();
+        usage.insert("claude_code".to_string(), seen(0.45, 0.9));
+        usage.insert("codex".to_string(), seen(0.02, 0.47));
+        usage.insert("openai".to_string(), seen(0.5, 0.5));
+        let page = |chain: &str| {
+            simple_page_with(
+                &format!("[chat]\nchain = [\"{chain}\"]\n[transcribe]\nchain = []\n"),
+                &MemoryStore::default(),
+                &Local::default(),
+                &usage,
+            )
+        };
+        let rows = page("claude_code");
+        assert!(row(&rows, "writing")
+            .unwrap()
+            .1
+            .ends_with("Claude Code (5h: 45%, 7d: 90%)"));
+        let rows = page("codex");
+        assert!(row(&rows, "writing")
+            .unwrap()
+            .1
+            .ends_with("Codex (5h: 2%, 7d: 47%)"));
+        let rows = page("openai");
+        assert!(row(&rows, "writing").unwrap().1.ends_with("OpenAI"));
     }
 
     #[test]

@@ -372,6 +372,13 @@ them:
 3. `leo doctor` sends one tiny request to check that it answers. If it says
    you are not signed in, run `claude` once and sign in, or `codex login`.
 
+Settings shows how much of your plan is used next to the name, for example
+`Claude Code (5h: 9%, 7d: 93%)`: the 5-hour and 7-day limits. Codex's numbers
+are checked every minute while Settings is open, at no cost. Claude Code's come
+with each answer leo gets from it, so they are as fresh as leo's last request
+(older than five minutes, they say how old); leo never sends a request just to
+check. `leo doctor` shows the same, with when each limit resets.
+
 leo runs them with every tool turned off, in an empty folder, so they only
 write text: they cannot read your files, run commands or change anything.
 Each request starts the program fresh, which adds a few seconds before the

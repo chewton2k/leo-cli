@@ -113,6 +113,9 @@ pub struct App {
     update: Option<std::sync::mpsc::Receiver<String>>,
     model_download: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
     speech_model_wanted: fn() -> bool,
+    check_usage: fn(),
+    usage_check: Option<std::sync::mpsc::Receiver<()>>,
+    last_usage_check: Option<Instant>,
     last_disk_check: Option<Instant>,
     last_push: Option<Instant>,
     /// How many commits are waiting, refreshed when the notes change rather than
@@ -282,6 +285,11 @@ impl App {
             speech_model_wanted: || {
                 leo_services::providers::speech_model_wanted(&leo_services::config::Config::load())
             },
+            check_usage: || {
+                leo_services::usage::refresh_codex(&leo_services::config::Config::load())
+            },
+            usage_check: None,
+            last_usage_check: None,
             last_disk_check: None,
             gh_ready: leo_core::sync::gh_ready,
             local_models: leo_services::config::choice::local_models,
@@ -2018,6 +2026,7 @@ fn event_loop<B: TuiBackend>(terminal: &mut Terminal<B>, app: &mut App) -> Resul
             app.pump_doctor();
             app.pump_update();
             app.pump_model_download();
+            app.pump_usage();
             app.maybe_reload_from_disk();
             app.pump_diagnostics();
             // Only when there is no input to handle: an automatic backup must

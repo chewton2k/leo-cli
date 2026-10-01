@@ -39,6 +39,27 @@ impl App {
         }
     }
 
+    pub(super) fn pump_usage(&mut self) -> bool {
+        if let Some(rx) = self.usage_check.as_ref() {
+            return match rx.try_recv() {
+                Ok(()) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.usage_check = None;
+                    self.refresh_settings();
+                    true
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => false,
+            };
+        }
+        let due = self
+            .last_usage_check
+            .is_none_or(|at| at.elapsed() >= task::USAGE_EVERY);
+        if self.mode == Mode::Settings && due {
+            self.last_usage_check = Some(Instant::now());
+            self.usage_check = Some(task::start_usage_check(self.check_usage));
+        }
+        false
+    }
+
     pub(super) fn fetch_speech_model(&mut self) {
         if self.model_download.is_some() || !(self.speech_model_wanted)() {
             return;

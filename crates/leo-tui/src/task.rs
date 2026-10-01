@@ -233,6 +233,17 @@ pub fn start_update_check() -> std::sync::mpsc::Receiver<String> {
     rx
 }
 
+pub const USAGE_EVERY: std::time::Duration = std::time::Duration::from_secs(60);
+
+pub fn start_usage_check(check: fn()) -> std::sync::mpsc::Receiver<()> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        check();
+        let _ = tx.send(());
+    });
+    rx
+}
+
 pub fn start_model_download() -> std::sync::mpsc::Receiver<Result<(), String>> {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {

@@ -162,6 +162,7 @@ fn last_words(text: &str) -> String {
 pub struct Heard {
     pub answer: String,
     pub result: Option<(bool, String)>,
+    pub usage: Option<crate::usage::Usage>,
 }
 
 pub fn read_stream(lines: impl BufRead, sink: Sink<'_>) -> Heard {
@@ -180,6 +181,13 @@ pub fn read_stream(lines: impl BufRead, sink: Sink<'_>) -> Heard {
                         heard.answer.push_str(text);
                         sink(text);
                     }
+                }
+            }
+            Some("rate_limit_event") => {
+                if let Some(usage) =
+                    crate::usage::from_claude(&event["rate_limit_info"], chrono::Utc::now())
+                {
+                    heard.usage = Some(usage);
                 }
             }
             Some("result") => {
@@ -231,6 +239,7 @@ impl AgentCli {
                 Heard {
                     answer,
                     result: None,
+                    usage: None,
                 }
             }
             (_, None) => Heard::default(),
@@ -240,6 +249,9 @@ impl AgentCli {
         })?;
         let _ = writer.join();
         let stderr = errors.join().unwrap_or_default();
+        if let Some(usage) = heard.usage.clone() {
+            crate::usage::save(&self.name, usage);
+        }
         let failed_in_result = matches!(heard.result, Some((true, _)));
         if !status.success() || failed_in_result {
             let said = match &heard.result {
@@ -396,6 +408,7 @@ mod tests {
             r##"{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"# Notes\n"}}}"##,
             "not json",
             r##"{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"hello"}}}"##,
+            r##"{"type":"rate_limit_event","rate_limit_info":{"unifiedWindows":{"five_hour":{"utilization":0.09},"seven_day":{"utilization":0.93}}}}"##,
             r##"{"type":"result","subtype":"success","is_error":false,"result":"# Notes\nhello"}"##,
         ]
         .join("\n");
@@ -404,6 +417,11 @@ mod tests {
         assert_eq!(pieces, ["# Notes\n", "hello"]);
         assert_eq!(heard.answer, "# Notes\nhello");
         assert_eq!(heard.result, Some((false, "# Notes\nhello".to_string())));
+        let usage = heard.usage.expect("the limits that came with the answer");
+        assert_eq!(
+            crate::usage::label(&usage, usage.seen_at),
+            "5h: 9%, 7d: 93%"
+        );
         let failed = read_stream(
             r##"{"type":"result","subtype":"success","is_error":true,"result":"Not logged in"}"##
                 .as_bytes(),

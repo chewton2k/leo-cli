@@ -11,7 +11,9 @@ impl App {
         let cfg = leo_services::config::Config::load();
         let store = leo_services::config::secret::default_store();
         let local = (self.local_models)(&cfg);
-        let mut rows = settings::simple_rows(&cfg, store.as_ref(), &self.store.notes_dir, &local);
+        let usage = leo_services::usage::load();
+        let mut rows =
+            settings::simple_rows(&cfg, store.as_ref(), &self.store.notes_dir, &local, &usage);
         if self.model_download.is_some() {
             for row in &mut rows {
                 if let SettingsRow::Setting {

@@ -37,6 +37,7 @@ fn temp_app() -> (App, tempfile::TempDir) {
     app.probe = leo_services::doctor::Probe::default();
     app.gh_ready = || false;
     app.local_models = |_| leo_services::config::choice::Local::default();
+    app.check_usage = || {};
     app.speech_model_wanted = || false;
     app.setup_steps = steps_ready;
     app.recordings = None;

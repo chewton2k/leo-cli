@@ -333,6 +333,7 @@ fn ai_checks(config: &Config, secrets: &dyn SecretStore, probe: Probe) -> Vec<Ch
                 .cloned()
         };
         let chat = usable(&config.chat.chain);
+        let writer = chat.clone();
         let speech = usable(&config.transcribe.chain).filter(|name| {
             config.provider(name).and_then(|p| p.kind)
                 != Some(crate::config::provider::ProviderKind::Parakeet)
@@ -357,8 +358,25 @@ fn ai_checks(config: &Config, secrets: &dyn SecretStore, probe: Probe) -> Vec<Ch
                 }
             });
         }
+        if let Some(name) = writer {
+            checks.extend(limits_check(config, &name));
+        }
     }
     checks
+}
+
+fn limits_check(config: &Config, name: &str) -> Option<Check> {
+    use crate::ai::provider::agent_cli::Agent;
+    let agent = config.provider(name).and_then(Agent::of)?;
+    if agent == Agent::Codex {
+        crate::usage::refresh_codex(config);
+    }
+    let seen = crate::usage::load().get(name).cloned()?;
+    Some(Check::ready(
+        &format!("{name} limits"),
+        &format!("how much of {} is left", agent.plan()),
+        Some(crate::usage::detail(&seen, chrono::Utc::now())),
+    ))
 }
 
 fn recording_checks(probe: Probe) -> Vec<Check> {
