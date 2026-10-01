@@ -47,7 +47,7 @@ It does the same: it checks the download, puts `leo.exe` in
 `%LOCALAPPDATA%\Programs\leo`, adds that to your PATH, and fetches the speech
 model. Open a new terminal afterwards. Windows Terminal works best; `leo
 update` and `leo uninstall` work there too. Recording what the computer plays
-(`leo record --screen`) needs no extra setup on Windows.
+(`leo record --screen`) needs no extra setup on Windows or macOS.
 
 **If you'd rather read the script before running it:**
 
@@ -428,7 +428,11 @@ you like, and nothing is lost along the way:
 /record --screen             record your computer's audio (a video, a call)
 ```
 
-**Recording computer audio** (`--screen`) needs a virtual audio device:
+**Recording computer audio** (`--screen`) is built in on Windows and on
+macOS 14.6 or newer. The first time, macOS asks to let your terminal record
+system audio; allow it. Your speakers keep playing while leo listens.
+
+On an older Mac, install a virtual audio device instead:
 
 1. `brew install blackhole-2ch`
 2. Open Audio MIDI Setup, add a **Multi-Output Device**, and tick both your
@@ -689,7 +693,7 @@ your account can read.
 | `LEO_CHAT_PROVIDER` / `LEO_TRANSCRIBE_PROVIDER` | Use only this provider for writing / speech |
 | `LEO_CHAT_MODEL` | Override the model of the first writing provider |
 | `LEO_USE_KEYCHAIN=1` | Store keys in the OS keychain instead of the key file |
-| `LEO_SCREEN_DEVICE` | The audio device for `--screen` (default `BlackHole 2ch`) |
+| `LEO_SCREEN_DEVICE` | A specific audio device for `--screen` (default: what the computer plays; `BlackHole 2ch` on macOS before 14.6) |
 | `LEO_NO_UPDATE_CHECK=1` | Never check GitHub for a new version |
 | `LEO_INSTALL_DIR` | For the install command: where to put leo (default `~/.local/bin`; on Windows `%LOCALAPPDATA%\Programs\leo`) |
 | `LEO_NO_MICROPHONE=1` | Never open a microphone (leo's own tests set this) |

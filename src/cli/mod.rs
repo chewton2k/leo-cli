@@ -100,7 +100,7 @@ enum Commands {
         #[arg(short, long)]
         add: Option<String>,
 
-        /// Capture system audio instead of microphone (requires BlackHole: brew install blackhole-2ch)
+        /// Record what the computer plays instead of the microphone (built in on Windows and macOS 14.6+)
         #[arg(long)]
         screen: bool,
     },

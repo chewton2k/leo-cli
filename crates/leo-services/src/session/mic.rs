@@ -15,8 +15,59 @@ pub fn disabled() -> bool {
     std::env::var_os("LEO_NO_MICROPHONE").is_some_and(|v| !v.is_empty() && v != "0")
 }
 
-pub fn screen_device() -> String {
-    std::env::var("LEO_SCREEN_DEVICE").unwrap_or_else(|_| DEFAULT_SCREEN_DEVICE.to_string())
+pub fn screen_device() -> Option<String> {
+    std::env::var("LEO_SCREEN_DEVICE")
+        .ok()
+        .filter(|name| !name.trim().is_empty())
+}
+
+pub fn at_least(version: &str, wanted: (u32, u32)) -> bool {
+    let mut parts = version.trim().split('.').map(|p| p.parse::<u32>().ok());
+    match (parts.next().flatten(), parts.next().flatten().or(Some(0))) {
+        (Some(major), Some(minor)) => (major, minor) >= wanted,
+        _ => false,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn system_version() -> Option<String> {
+    let name = std::ffi::CString::new("kern.osproductversion").ok()?;
+    let mut buffer = [0u8; 32];
+    let mut size = buffer.len();
+    let status = unsafe {
+        libc::sysctlbyname(
+            name.as_ptr(),
+            buffer.as_mut_ptr().cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if status != 0 {
+        return None;
+    }
+    let text = &buffer[..size.min(buffer.len())];
+    let end = text.iter().position(|b| *b == 0).unwrap_or(text.len());
+    String::from_utf8(text[..end].to_vec()).ok()
+}
+
+pub fn records_what_plays() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        system_version().is_some_and(|v| at_least(&v, (14, 6)))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        cfg!(windows)
+    }
+}
+
+fn named(host: &cpal::Host, wanted: &str) -> Option<cpal::Device> {
+    let wanted = wanted.to_lowercase();
+    host.input_devices()
+        .ok()?
+        .chain(host.output_devices().ok()?)
+        .find(|d| device_name(d).to_lowercase().contains(&wanted))
 }
 
 fn device_name(device: &cpal::Device) -> String {
@@ -33,30 +84,43 @@ fn find_device(screen: bool) -> Result<cpal::Device> {
             anyhow!("No microphone found. Plug one in, or check your sound settings.")
         });
     }
-    if cfg!(windows) {
-        return host.default_output_device().ok_or_else(|| {
-            anyhow!("No speakers or headphones found to record what the computer plays.")
+    if let Some(wanted) = screen_device() {
+        return named(&host, &wanted).ok_or_else(|| {
+            anyhow!("No audio device named '{wanted}' (LEO_SCREEN_DEVICE). Unset it to record what the computer plays.")
         });
     }
-    let wanted = screen_device();
-    let devices = host
-        .input_devices()
-        .map_err(|e| anyhow!("could not list audio devices: {e}"))?;
-    let found = devices.into_iter().find(|d| {
-        device_name(d)
-            .to_lowercase()
-            .contains(&wanted.to_lowercase())
-    });
-    found.ok_or_else(|| {
-        anyhow!(
-            "No audio device named '{wanted}' for recording what the computer plays.\n  \
-             Set up system audio capture:\n  \
+    if records_what_plays() {
+        let output = host.default_output_device().ok_or_else(|| {
+            anyhow!("No speakers or headphones found to record what the computer plays.")
+        })?;
+        if cfg!(windows) || !output.supports_input() {
+            return Ok(output);
+        }
+        if let Some(device) = named(&host, DEFAULT_SCREEN_DEVICE) {
+            return Ok(device);
+        }
+        bail!(
+            "{} is a microphone and speakers in one, so leo cannot record only what it plays.\n  \
+             Switch the sound output to other speakers or headphones, then try again.",
+            device_name(&output)
+        );
+    }
+    if let Some(device) = named(&host, DEFAULT_SCREEN_DEVICE) {
+        return Ok(device);
+    }
+    if cfg!(target_os = "macos") {
+        bail!(
+            "Recording what the computer plays needs macOS 14.6 or newer.\n  \
+             On this Mac, set up BlackHole instead:\n  \
              1. brew install blackhole-2ch\n  \
              2. Audio MIDI Setup → New Multi-Output Device (Speakers + BlackHole 2ch)\n  \
-             3. Set that Multi-Output Device as System Output\n  \
-             To use a different device: set LEO_SCREEN_DEVICE=<name>"
-        )
-    })
+             3. Set that Multi-Output Device as System Output"
+        );
+    }
+    bail!(
+        "Recording what the computer plays is not built in here yet.\n  \
+         Set LEO_SCREEN_DEVICE to a monitor device (see: pactl list sources short)."
+    )
 }
 
 pub fn warm_up() {
@@ -337,6 +401,18 @@ pub fn listen_for(seconds: f64) -> Result<Vec<i16>> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn system_audio_needs_macos_14_6() {
+        assert!(at_least("14.6", (14, 6)));
+        assert!(at_least("14.6.1", (14, 6)));
+        assert!(at_least("15", (14, 6)));
+        assert!(at_least("27.2", (14, 6)));
+        assert!(!at_least("14.5", (14, 6)));
+        assert!(!at_least("13.7.2", (14, 6)));
+        assert!(!at_least("", (14, 6)));
+        assert!(!at_least("unknown", (14, 6)));
+    }
+
     fn tone(rate: u32, hz: f64, secs: f64) -> Vec<f32> {
         (0..(rate as f64 * secs) as usize)
             .map(|i| (2.0 * std::f64::consts::PI * hz * i as f64 / rate as f64).sin() as f32 * 0.5)
@@ -405,6 +481,46 @@ mod tests {
         assert!(!fatal(cpal::ErrorKind::DeviceChanged));
         assert!(!fatal(cpal::ErrorKind::RealtimeDenied));
         assert!(fatal(cpal::ErrorKind::DeviceNotAvailable));
+    }
+
+    #[test]
+    #[ignore]
+    fn the_screen_device_is_what_the_computer_plays() {
+        let device = find_device(true).unwrap();
+        eprintln!(
+            "screen device: {} (input: {}, built in: {})",
+            device_name(&device),
+            device.supports_input(),
+            records_what_plays()
+        );
+        if records_what_plays() && screen_device().is_none() {
+            assert!(!device.supports_input());
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn what_the_computer_plays_is_heard() {
+        let (mut mic, samples) = Mic::open(true).unwrap();
+        let until = std::time::Instant::now() + Duration::from_secs(5);
+        let mut heard: Vec<i16> = Vec::new();
+        while std::time::Instant::now() < until {
+            if let Ok(chunk) = samples.recv_timeout(Duration::from_millis(200)) {
+                heard.extend(chunk);
+            }
+        }
+        mic.close();
+        let peak = heard.iter().map(|s| s.unsigned_abs()).max().unwrap_or(0);
+        let rms = (heard.iter().map(|s| (*s as f64).powi(2)).sum::<f64>()
+            / heard.len().max(1) as f64)
+            .sqrt();
+        eprintln!(
+            "heard {:.1} s, peak {peak}, rms {rms:.0}, problem {:?}",
+            heard.len() as f64 / RATE as f64,
+            mic.problem.lock().unwrap()
+        );
+        assert!(heard.len() as f64 > RATE as f64 * 4.0);
+        assert!(peak > 300, "only silence came through");
     }
 
     #[test]
