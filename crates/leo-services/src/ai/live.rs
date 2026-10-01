@@ -64,6 +64,28 @@ const MIN_SINGLE_WORD_CHARS: usize = 8;
 /// A three-second cadence is only affordable while requests succeed. Against a
 /// rate-limited provider, retrying at the same pace makes the limit permanent,
 /// so each failure halves the request rate until it recovers.
+pub const CLOUD_ROLL_INTERVAL: Duration = Duration::from_secs(8);
+pub const SETTLE_AFTER_SECS: u64 = 12;
+pub const SETTLE_EARLIEST_SECS: u64 = 6;
+pub const SETTLE_KEEP_SECS: u64 = 2;
+
+pub fn quietest(samples: &[i16], from: usize, to: usize, frame: usize) -> usize {
+    let frame = frame.max(1);
+    let to = to.min(samples.len().saturating_sub(frame));
+    if from >= to {
+        return to.max(from).min(samples.len());
+    }
+    (from..to)
+        .step_by(frame)
+        .min_by_key(|at| {
+            samples[*at..*at + frame]
+                .iter()
+                .map(|s| (*s as i64) * (*s as i64))
+                .sum::<i64>()
+        })
+        .unwrap_or(to)
+}
+
 pub fn backoff(current: Duration) -> Duration {
     let doubled = current.saturating_mul(2);
     if doubled > MAX_ROLL_INTERVAL {
@@ -214,6 +236,19 @@ pub fn stitch(previous: &str, segment: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_quietest_moment_is_found_inside_the_range() {
+        let mut samples = vec![8000i16; 16_000 * 12];
+        let pause = 16_000 * 9;
+        for s in &mut samples[pause..pause + 3200] {
+            *s = 10;
+        }
+        let at = quietest(&samples, 16_000 * 6, 16_000 * 10, 1600);
+        assert!((pause..pause + 3200).contains(&at), "{at}");
+        assert_eq!(quietest(&samples, 500, 100, 1600), 500);
+        assert_eq!(quietest(&[], 0, 10, 1600), 0);
+    }
 
     // ── slicing ─────────────────────────────────────────────────────────────
 

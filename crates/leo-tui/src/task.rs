@@ -461,31 +461,35 @@ const SILENT_RECORDING: &str = "No sound was recorded. macOS may not be letting 
      this terminal use the microphone: System Settings > Privacy & Security > \
      Microphone, then restart the terminal. /doctor re-checks it.";
 
-const LIVE_WINDOW_SECS: u64 = 30;
+const LIVE_MOST_SECS: u64 = 20;
 
 struct Live {
+    pace: Duration,
     interval: Duration,
     silent_slices: usize,
     warned_silent: bool,
     finals: std::collections::BTreeMap<u32, String>,
     settled: u32,
     base: u64,
-    cursor: u64,
-    text: String,
+    settled_at: u64,
+    committed: String,
+    tail: String,
     shown: String,
 }
 
 impl Live {
-    fn new() -> Live {
+    fn new(pace: Duration) -> Live {
         Live {
-            interval: live::ROLL_INTERVAL,
+            pace,
+            interval: pace,
             silent_slices: 0,
             warned_silent: false,
             finals: Default::default(),
             settled: 0,
             base: 0,
-            cursor: 0,
-            text: String::new(),
+            settled_at: 0,
+            committed: String::new(),
+            tail: String::new(),
             shown: String::new(),
         }
     }
@@ -495,7 +499,7 @@ impl Live {
         for text in self.finals.values() {
             out = live::stitch(&out, text);
         }
-        live::stitch(&out, &self.text)
+        live::stitch(&out, &live::stitch(&self.committed, &self.tail))
     }
 
     fn apply(&mut self, update: Update, tx: &mpsc::Sender<TaskEvent>, segment_samples: u64) {
@@ -530,8 +534,9 @@ impl Live {
         let base = self.settled as u64 * segment_samples;
         if base > self.base {
             self.base = base;
-            self.text.clear();
-            self.cursor = self.cursor.max(base);
+            self.committed.clear();
+            self.tail.clear();
+            self.settled_at = self.settled_at.max(base);
         }
     }
 
@@ -544,19 +549,49 @@ impl Live {
     }
 }
 
+fn live_pace() -> Duration {
+    if leo_services::ai::parallel_transcriptions() == 1 {
+        live::ROLL_INTERVAL
+    } else {
+        live::CLOUD_ROLL_INTERVAL
+    }
+}
+
+fn hear(dir: &Path, samples: &[i16], tx: &mpsc::Sender<TaskEvent>) -> Option<String> {
+    let path = dir.join("live.wav");
+    wav::write(&path, samples).ok()?;
+    let result = leo_services::ai::transcribe_outcome(&path);
+    let _ = std::fs::remove_file(&path);
+    let outcome = result.ok()?;
+    for f in &outcome.fallbacks {
+        let _ = tx.send(TaskEvent::ProviderFallback {
+            from: f.from.clone(),
+            to: f.to.clone(),
+        });
+    }
+    Some(if live::is_silence_artifact(&outcome.value) {
+        String::new()
+    } else {
+        outcome.value
+    })
+}
+
 fn roll(capture: &Capture, dir: &Path, state: &mut Live, tx: &mpsc::Sender<TaskEvent>) {
     let rate = wav::RATE as u64;
-    let from = state
-        .cursor
-        .saturating_sub(live::OVERLAP.as_secs() * rate)
-        .max(state.base);
-    let (start, samples) = capture.tail(from, (LIVE_WINDOW_SECS * rate) as usize);
-    if (samples.len() as u64) < (live::OVERLAP.as_secs() + 1) * rate {
+    let from = state.settled_at.max(state.base);
+    let (start, samples) = capture.tail(from, (LIVE_MOST_SECS * rate) as usize);
+    if start > state.settled_at {
+        state.settled_at = start;
+    }
+    if (samples.len() as u64) < rate {
         return;
     }
     let end = start + samples.len() as u64;
     if live::is_silent(wav::peak(&samples)) {
-        state.cursor = end;
+        if samples.len() as u64 >= live::SETTLE_AFTER_SECS * rate {
+            state.settled_at = end;
+            state.tail.clear();
+        }
         state.silent_slices += 1;
         if state.silent_slices >= 4 && !state.warned_silent {
             state.warned_silent = true;
@@ -568,27 +603,29 @@ fn roll(capture: &Capture, dir: &Path, state: &mut Live, tx: &mpsc::Sender<TaskE
         return;
     }
     state.silent_slices = 0;
-    let path = dir.join("live.wav");
-    if wav::write(&path, &samples).is_err() {
-        return;
+    let mut open = &samples[..];
+    if samples.len() as u64 >= live::SETTLE_AFTER_SECS * rate {
+        let cut = live::quietest(
+            &samples,
+            (live::SETTLE_EARLIEST_SECS * rate) as usize,
+            samples.len() - (live::SETTLE_KEEP_SECS * rate) as usize,
+            (rate / 10) as usize,
+        );
+        let Some(settled) = hear(dir, &samples[..cut], tx) else {
+            state.interval = live::backoff(state.interval);
+            return;
+        };
+        state.committed = live::stitch(&state.committed, &settled);
+        state.settled_at = start + cut as u64;
+        state.tail.clear();
+        open = &samples[cut..];
     }
-    let result = leo_services::ai::transcribe_outcome(&path);
-    let _ = std::fs::remove_file(&path);
-    match result {
-        Ok(outcome) => {
-            for f in &outcome.fallbacks {
-                let _ = tx.send(TaskEvent::ProviderFallback {
-                    from: f.from.clone(),
-                    to: f.to.clone(),
-                });
-            }
-            state.interval = live::ROLL_INTERVAL;
-            state.cursor = end;
-            if !live::is_silence_artifact(&outcome.value) {
-                state.text = live::stitch(&state.text, &outcome.value);
-            }
+    match hear(dir, open, tx) {
+        Some(text) => {
+            state.interval = state.pace;
+            state.tail = text;
         }
-        Err(_) => state.interval = live::backoff(state.interval),
+        None => state.interval = live::backoff(state.interval),
     }
 }
 
@@ -718,7 +755,7 @@ pub fn start_listen(
             updates_tx,
         );
         let segment_samples = session.manifest.segment_secs * wav::RATE as u64;
-        let mut state = Live::new();
+        let mut state = Live::new(live_pace());
         let mut last_roll = Instant::now() - live::ROLL_INTERVAL;
         let mut saved_points = 0;
 
@@ -829,7 +866,7 @@ pub fn start_resume(dir: PathBuf) -> Job {
             false,
             updates_tx,
         );
-        let mut state = Live::new();
+        let mut state = Live::new(live::ROLL_INTERVAL);
         finish_session(session, transcriber, &updates, &mut state, &tx);
     });
 

@@ -34,6 +34,11 @@ fn stale(provider: &str, field: &str, value: &toml_edit::Value) -> bool {
                 | ("gemini", Some("gemini-2.5-flash" | "gemini-2.0-flash"))
                 | ("xai", Some("grok-3-mini"))
                 | ("openai_whisper", Some("whisper-1"))
+                | (
+                    "anthropic",
+                    Some("claude-haiku-4-5" | "claude-haiku-4-5-20251001")
+                )
+                | ("openrouter", Some("anthropic/claude-haiku-4.5"))
         ),
         ("max_tokens", v) => provider != "ollama" && matches!(v.as_integer(), Some(4096 | 8192)),
         ("kind", v) => v.as_str() == Some("groq"),
@@ -317,6 +322,23 @@ model = "house-model"
         assert_eq!(
             cfg.provider("mine").unwrap().model.as_deref(),
             Some("house-model")
+        );
+    }
+
+    #[test]
+    fn a_retired_claude_model_goes_back_to_the_default() {
+        let mut doc = "[providers.anthropic]\nmodel = \"claude-haiku-4-5\"\n[providers.openrouter]\nmodel = \"anthropic/claude-haiku-4.5\"\n"
+            .parse::<DocumentMut>()
+            .unwrap();
+        assert!(tidy(&mut doc));
+        let cfg = Config::parse_with_built_ins(&doc.to_string()).unwrap();
+        assert_eq!(
+            cfg.provider("anthropic").unwrap().model.as_deref(),
+            Some("claude-sonnet-5-5")
+        );
+        assert_eq!(
+            cfg.provider("openrouter").unwrap().model.as_deref(),
+            Some("openrouter/free")
         );
     }
 

@@ -320,10 +320,10 @@ something is missing, and the row under it says what.
    | Provider | Writing models, cheapest first (per 1M tokens in / out) |
    |----------|------------------------------------------|
    | OpenAI | `gpt-5-nano` $0.05 / $0.40, `gpt-6-luna` $0.10 / $0.50 (default), `gpt-5.4-nano` $0.20 / $1.25, `gpt-5-mini` $0.25 / $2, `gpt-5.4-mini` $0.75 / $4.50, `gpt-6.1-sol` $2 / $10, `gpt-5.4` $2.50 / $15, `gpt-5.5` $5 / $30, `gpt-6-astra` $10 / $50 |
-   | Anthropic | `claude-haiku-4-5` $1 / $5, `claude-sonnet-5-5` $2 / $10 (default), `claude-sonnet-5` $2 / $10, `claude-opus-5-5` $4 / $20, `claude-opus-5` $5 / $25 |
+   | Anthropic | `claude-sonnet-5-5` $2 / $10 (default), `claude-sonnet-5` $2 / $10, `claude-opus-5-5` $4 / $20, `claude-opus-5` $5 / $25 |
    | Gemini | Free tier on every Flash model, then: `gemini-3.1-flash-lite` $0.25 / $1.50, `gemini-3.5-flash-lite` $0.30 / $2.50, `gemini-3.8-flash` $0.75 / $3.75 (default), `gemini-3.5-flash` $1.50 / $9; `gemini-3.1-pro-preview` $2 / $12 (no free tier) |
    | xAI | `grok-4.3` $1.25 / $2.50, `grok-4.5`, `grok-4.6`, `grok-4.7` (default) $2 / $6 |
-   | OpenRouter | Free, with daily limits: `openrouter/free` (default; picks whichever free model is available), `qwen/qwen3.8-27b:free`, `google/gemma-4-31b-it:free`, `nvidia/nemotron-3-super-120b-a12b:free`. Paid: `deepseek/deepseek-v4-flash` $0.08 / $0.16, `openai/gpt-6-luna` $0.10 / $0.50, `google/gemini-3.1-flash-lite` $0.25 / $1.50, `anthropic/claude-haiku-4.5` $1 / $5, `anthropic/claude-sonnet-5.5` $2 / $10 |
+   | OpenRouter | Free, with daily limits: `openrouter/free` (default; picks whichever free model is available), `qwen/qwen3.8-27b:free`, `google/gemma-4-31b-it:free`, `nvidia/nemotron-3-super-120b-a12b:free`. Paid: `deepseek/deepseek-v4-flash` $0.08 / $0.16, `openai/gpt-6-luna` $0.10 / $0.50, `google/gemini-3.1-flash-lite` $0.25 / $1.50, `anthropic/claude-sonnet-5.5` $2 / $10 |
 
    | Provider | Speech models |
    |----------|---------------|

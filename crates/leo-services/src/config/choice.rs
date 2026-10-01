@@ -78,7 +78,6 @@ pub const WRITING: &[Choice] = &[
         provider: "anthropic",
         name: "Anthropic",
         models: &[
-            m("claude-haiku-4-5", "$1 in, $5 out per 1M tokens"),
             m("claude-sonnet-5-5", "$2 in, $10 out per 1M tokens"),
             m("claude-sonnet-5", "$2 in, $10 out per 1M tokens"),
             m("claude-opus-5-5", "$4 in, $20 out per 1M tokens"),
@@ -138,7 +137,6 @@ pub const WRITING: &[Choice] = &[
                 "google/gemini-3.1-flash-lite",
                 "$0.25 in, $1.50 out per 1M tokens",
             ),
-            m("anthropic/claude-haiku-4.5", "$1 in, $5 out per 1M tokens"),
             m(
                 "anthropic/claude-sonnet-5.5",
                 "$2 in, $10 out per 1M tokens",
@@ -505,7 +503,6 @@ mod tests {
         for model in [
             "claude-sonnet-5-5",
             "claude-opus-5-5",
-            "claude-haiku-4-5",
             "claude-sonnet-5",
             "claude-opus-5",
         ] {
@@ -577,11 +574,11 @@ mod tests {
             Some("http://localhost:11434/v1")
         );
 
-        write_model(&mut doc, "anthropic", "claude-haiku-4-5");
+        write_model(&mut doc, "anthropic", "claude-sonnet-5");
         let cfg = load(&doc.to_string());
         assert_eq!(
             cfg.provider("anthropic").unwrap().model.as_deref(),
-            Some("claude-haiku-4-5")
+            Some("claude-sonnet-5")
         );
         assert_eq!(doc.to_string().matches("[providers.anthropic]").count(), 1);
         assert!(!doc.to_string().contains("[providers]\n"));
