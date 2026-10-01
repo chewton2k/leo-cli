@@ -169,7 +169,7 @@ max_tokens = 8192
 
 [providers.claude_code]
 kind = "claude_code"
-model = "sonnet"
+model = "claude-sonnet-5-5"
 
 [providers.codex]
 kind = "codex"

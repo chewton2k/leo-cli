@@ -248,7 +248,11 @@ mod tests {
 
     #[test]
     fn claude_code_writes_with_no_tools_and_reads_the_material_from_stdin() {
-        let cfg = config(ProviderKind::ClaudeCode, "claude", Some("sonnet"));
+        let cfg = config(
+            ProviderKind::ClaudeCode,
+            "claude",
+            Some("claude-sonnet-5-5"),
+        );
         let agent = AgentCli::new("claude_code".into(), Agent::of(&cfg).unwrap(), &cfg);
         let (args, input) = agent.arguments(&request());
         assert_eq!(
@@ -261,7 +265,9 @@ mod tests {
                 "--no-session-persistence"
             ]
         );
-        assert!(args.windows(2).any(|w| w == ["--model", "sonnet"]));
+        assert!(args
+            .windows(2)
+            .any(|w| w == ["--model", "claude-sonnet-5-5"]));
         assert!(args
             .windows(2)
             .any(|w| w == ["--system-prompt", "You write notes."]));

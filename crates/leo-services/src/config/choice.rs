@@ -97,9 +97,12 @@ pub const WRITING: &[Choice] = &[
         provider: "claude_code",
         name: "Claude Code",
         models: &[
-            m("sonnet", "included in your Claude plan"),
-            m("opus", "included in your Claude plan"),
-            m("fable", "included in your Claude plan"),
+            m("claude-sonnet-5-5", "included in your Claude plan"),
+            m("claude-opus-5-5", "included in your Claude plan"),
+            m(
+                "claude-fable-5-1",
+                "needs usage credits on your Claude plan",
+            ),
         ],
     },
     Choice {
@@ -463,7 +466,8 @@ mod tests {
                 assert!(
                     model.price.contains('$')
                         || model.price.starts_with("free")
-                        || model.price.starts_with("included in your"),
+                        || model.price.starts_with("included in your")
+                        || model.price.contains("usage credits"),
                     "{}: {}",
                     model.id,
                     model.price

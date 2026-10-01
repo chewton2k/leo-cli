@@ -41,6 +41,7 @@ fn stale(provider: &str, field: &str, value: &toml_edit::Value) -> bool {
                     Some("claude-haiku-4-5" | "claude-haiku-4-5-20251001")
                 )
                 | ("openrouter", Some("anthropic/claude-haiku-4.5"))
+                | ("claude_code", Some("sonnet"))
         ),
         ("max_tokens", v) => provider != "ollama" && matches!(v.as_integer(), Some(4096 | 8192)),
         ("kind", v) => v.as_str() == Some("groq"),
@@ -329,7 +330,7 @@ model = "house-model"
 
     #[test]
     fn a_retired_claude_model_goes_back_to_the_default() {
-        let mut doc = "[providers.anthropic]\nmodel = \"claude-haiku-4-5\"\n[providers.openrouter]\nmodel = \"anthropic/claude-haiku-4.5\"\n"
+        let mut doc = "[providers.anthropic]\nmodel = \"claude-haiku-4-5\"\n[providers.openrouter]\nmodel = \"anthropic/claude-haiku-4.5\"\n[providers.claude_code]\nmodel = \"sonnet\"\n"
             .parse::<DocumentMut>()
             .unwrap();
         assert!(tidy(&mut doc));
@@ -341,6 +342,10 @@ model = "house-model"
         assert_eq!(
             cfg.provider("openrouter").unwrap().model.as_deref(),
             Some("openrouter/free")
+        );
+        assert_eq!(
+            cfg.provider("claude_code").unwrap().model.as_deref(),
+            Some("claude-sonnet-5-5")
         );
     }
 

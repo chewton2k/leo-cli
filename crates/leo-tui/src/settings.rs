@@ -512,7 +512,7 @@ mod tests {
             (
                 "claude_code",
                 "Claude Code",
-                "sonnet (included in your Claude plan)",
+                "claude-sonnet-5-5 (included in your Claude plan)",
                 "leo-no-such-claude",
             ),
             (

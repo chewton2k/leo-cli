@@ -363,10 +363,12 @@ them:
 
 1. In Settings, press `Enter` on **writing** until it shows **Claude Code** or
    **Codex**.
-2. `Enter` on **writing model** to pick one: Claude Code offers `sonnet`
-   (default), `opus` and `fable`; Codex offers `gpt-6-luna` (default),
-   `gpt-6-sol` and `gpt-6-astra`. All are included in your plan, and use the
-   same allowance as your coding.
+2. `Enter` on **writing model** to pick one: Claude Code offers
+   `claude-sonnet-5-5` (Sonnet 5.5, default) and `claude-opus-5-5` (Opus 5.5),
+   both included in your plan, and `claude-fable-5-1` (Fable 5.1), which needs
+   usage credits on top of it. Codex offers `gpt-6-luna` (default),
+   `gpt-6-sol` and `gpt-6-astra`, all included. They use the same allowance as
+   your coding.
 3. `leo doctor` sends one tiny request to check that it answers. If it says
    you are not signed in, run `claude` once and sign in, or `codex login`.
 
