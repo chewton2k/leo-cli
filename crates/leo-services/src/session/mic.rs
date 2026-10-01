@@ -410,8 +410,10 @@ mod tests {
         let bytes = std::fs::read(&input).unwrap();
         let at = bytes.windows(4).position(|w| w == b"data").unwrap() + 8;
         let samples: Vec<f32> = bytes[at..]
-            .chunks_exact(2)
-            .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0)
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|b| i16::from_le_bytes(*b) as f32 / 32768.0)
             .collect();
         let mut r = Resampler::new(48_000, 16_000);
         let mut out = Vec::new();
