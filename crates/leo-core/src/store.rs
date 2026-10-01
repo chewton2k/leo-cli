@@ -135,9 +135,16 @@ fn parse_note_from_markdown(
 
     let directory = relative_path
         .parent()
-        .and_then(|p| if p == Path::new("") { None } else { p.to_str() })
-        .unwrap_or("")
-        .to_string();
+        .map(|p| {
+            p.components()
+                .filter_map(|c| match c {
+                    std::path::Component::Normal(part) => part.to_str(),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("/")
+        })
+        .unwrap_or_default();
     let stem = relative_path
         .file_stem()
         .and_then(|s| s.to_str())

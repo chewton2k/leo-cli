@@ -42,7 +42,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          if ! cargo test --workspace --locked 2>&1 | tee test.log; then
+          if ! cargo test --workspace --locked --no-fail-fast 2>&1 | tee test.log; then
             grep -E "panicked|FAILED|^error|^failures:|assertion|left:|right:|undefined reference|could not" test.log | head -40 | while IFS= read -r line; do echo "::error::$line"; done
             exit 1
           fi
