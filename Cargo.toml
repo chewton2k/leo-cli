@@ -19,6 +19,7 @@ base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 colored = "3"
+cpal = "0.18"
 dirs = "6"
 dotenvy = "0.15"
 keyring = "4"

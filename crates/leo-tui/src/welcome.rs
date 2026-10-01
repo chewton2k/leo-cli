@@ -96,7 +96,7 @@ impl App {
                     .unwrap_or_default();
                 match what.as_str() {
                     "Recording" => {
-                        let result = if leo_services::health::on_path("rec") {
+                        let result = if leo_services::session::mic::microphone_name().is_some() {
                             let check = leo_services::health::microphone();
                             match &check.state {
                                 leo_services::health::State::Ready => {
@@ -111,7 +111,7 @@ impl App {
                                 }
                             }
                         } else {
-                            "Install SoX first: brew install sox".to_string()
+                            "No microphone was found. Plug one in, or pick an input in your sound settings.".to_string()
                         };
                         self.open_welcome(need, Some(result));
                     }

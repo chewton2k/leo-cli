@@ -1,15 +1,15 @@
 use std::collections::VecDeque;
-use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 
-use super::wav::{self, Writer, RATE};
+use super::mic::Mic;
+use super::wav::{Writer, RATE};
 use super::OVERLAP_SECS;
 
 const TAIL_SECS: u64 = 90;
@@ -53,83 +53,19 @@ pub struct Capture {
     stop: Arc<AtomicBool>,
     pause: Arc<AtomicBool>,
     shared: Arc<Shared>,
-    child: Option<Child>,
+    mic: Option<Mic>,
     thread: Option<JoinHandle<()>>,
 }
 
-fn require_sox() -> Result<()> {
-    let found = Command::new("rec")
-        .arg("--version")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok();
-    if !found {
-        bail!(
-            "Audio recording requires SoX. Install it:\n  \
-             macOS:   brew install sox\n  \
-             Linux:   sudo apt install sox\n  \
-             Windows: choco install sox"
-        );
-    }
-    Ok(())
-}
-
-fn spawn_rec(screen: bool) -> Result<Child> {
-    require_sox()?;
-    let device = screen.then(|| {
-        std::env::var("LEO_SCREEN_DEVICE").unwrap_or_else(|_| "BlackHole 2ch".to_string())
-    });
-    let mut cmd = Command::new("rec");
-    if let Some(dev) = &device {
-        cmd.env("AUDIODEV", dev);
-    }
-    cmd.args([
-        "-q",
-        "-r",
-        "16000",
-        "-c",
-        "1",
-        "-b",
-        "16",
-        "-e",
-        "signed-integer",
-        "-t",
-        "raw",
-        "-",
-    ])
-    .stdin(Stdio::null())
-    .stdout(Stdio::piped())
-    .stderr(Stdio::null())
-    .spawn()
-    .with_context(|| match &device {
-        Some(dev) => format!(
-            "Failed to start recording from screen audio device '{dev}'.\n  \
-             Set up system audio capture:\n  \
-             1. brew install blackhole-2ch\n  \
-             2. Audio MIDI Setup → New Multi-Output Device (Speakers + BlackHole 2ch)\n  \
-             3. Set that Multi-Output Device as System Output\n  \
-             To use a different device: set LEO_SCREEN_DEVICE=<name>"
-        ),
-        None => "Failed to start recording".to_string(),
-    })
-}
-
 fn replay_samples(path: &Path) -> Result<Vec<i16>> {
-    let tmp = std::env::temp_dir().join(format!("leo-replay-{}.wav", std::process::id()));
-    let ok = Command::new("sox")
-        .arg(path)
-        .args(["-r", "16000", "-c", "1", "-b", "16", "-e", "signed-integer"])
-        .arg(&tmp)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success());
-    let samples = if ok { wav::read(&tmp) } else { wav::read(path) };
-    let _ = std::fs::remove_file(&tmp);
-    samples.with_context(|| format!("could not read {}", path.display()))
+    let bytes =
+        std::fs::read(path).with_context(|| format!("could not read {}", path.display()))?;
+    let samples = crate::ai::provider::audio::read_wav(&bytes)
+        .map_err(|e| anyhow::anyhow!("could not read {}: {e}", path.display()))?;
+    Ok(samples
+        .iter()
+        .map(|x| (x.clamp(-1.0, 1.0) * 32767.0).round() as i16)
+        .collect())
 }
 
 pub fn synthetic(second: u64) -> Vec<i16> {
@@ -148,7 +84,11 @@ pub fn synthetic(second: u64) -> Vec<i16> {
 }
 
 enum Feed {
-    Pipe(std::process::ChildStdout),
+    Device {
+        rx: Receiver<Vec<i16>>,
+        pending: VecDeque<i16>,
+        problem: Arc<Mutex<Option<String>>>,
+    },
     Samples {
         samples: Vec<i16>,
         at: usize,
@@ -165,25 +105,27 @@ impl Feed {
     fn next(&mut self, stop: &AtomicBool, buf: &mut Vec<i16>) -> std::io::Result<bool> {
         buf.clear();
         match self {
-            Feed::Pipe(out) => {
-                let mut bytes = [0u8; BLOCK * 2];
-                let mut filled = 0;
-                while filled < bytes.len() {
-                    let n = out.read(&mut bytes[filled..])?;
-                    if n == 0 {
+            Feed::Device {
+                rx,
+                pending,
+                problem,
+            } => {
+                while pending.len() < BLOCK {
+                    if stop.load(Ordering::Relaxed) {
                         break;
                     }
-                    filled += n;
+                    if let Some(p) = problem.lock().ok().and_then(|p| p.clone()) {
+                        return Err(std::io::Error::other(p));
+                    }
+                    match rx.recv_timeout(Duration::from_millis(200)) {
+                        Ok(chunk) => pending.extend(chunk),
+                        Err(RecvTimeoutError::Timeout) => {}
+                        Err(RecvTimeoutError::Disconnected) => break,
+                    }
                 }
-                let even = filled & !1;
-                buf.extend(
-                    bytes[..even]
-                        .as_chunks::<2>()
-                        .0
-                        .iter()
-                        .map(|b| i16::from_le_bytes(*b)),
-                );
-                Ok(filled > 0)
+                let take = pending.len().min(BLOCK);
+                buf.extend(pending.drain(..take));
+                Ok(take > 0)
             }
             Feed::Samples { samples, at, speed } => {
                 if stop.load(Ordering::Relaxed) || *at >= samples.len() {
@@ -228,16 +170,17 @@ impl Capture {
         segment_secs: u64,
         source: Source,
     ) -> Result<Capture> {
-        let mut child = None;
+        let mut mic = None;
         let feed = match source {
             Source::Microphone | Source::Screen => {
-                let mut c = spawn_rec(source == Source::Screen)?;
-                let out = c
-                    .stdout
-                    .take()
-                    .context("the recorder gave no audio stream")?;
-                child = Some(c);
-                Feed::Pipe(out)
+                let (opened, rx) = Mic::open(source == Source::Screen)?;
+                let problem = Arc::clone(&opened.problem);
+                mic = Some(opened);
+                Feed::Device {
+                    rx,
+                    pending: VecDeque::new(),
+                    problem,
+                }
             }
             Source::Replay { path, speed } => Feed::Samples {
                 samples: replay_samples(&path)?,
@@ -270,7 +213,7 @@ impl Capture {
             stop,
             pause,
             shared,
-            child,
+            mic,
             thread: Some(thread),
         })
     }
@@ -316,9 +259,8 @@ impl Capture {
 
     fn finish(&mut self) -> Result<()> {
         self.stop.store(true, Ordering::Relaxed);
-        if let Some(child) = self.child.as_mut() {
-            let _ = child.kill();
-            let _ = child.wait();
+        if let Some(mic) = self.mic.as_mut() {
+            mic.close();
         }
         if let Some(thread) = self.thread.take() {
             thread
@@ -379,6 +321,7 @@ fn run(mut feed: Feed, mut writer: Writer, stop: &AtomicBool, pause: &AtomicBool
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::wav;
 
     fn wait_for(capture: &Capture, samples: u64) {
         let deadline = std::time::Instant::now() + Duration::from_secs(20);

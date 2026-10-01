@@ -16,6 +16,7 @@ anyhow.workspace = true
 base64.workspace = true
 chrono.workspace = true
 colored.workspace = true
+cpal.workspace = true
 dirs.workspace = true
 keyring.workspace = true
 reqwest.workspace = true

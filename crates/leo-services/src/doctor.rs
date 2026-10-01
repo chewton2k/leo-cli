@@ -356,13 +356,10 @@ fn ai_checks(config: &Config, secrets: &dyn SecretStore, probe: Probe) -> Vec<Ch
 }
 
 fn recording_checks(probe: Probe) -> Vec<Check> {
-    let has_sox = health::on_path("rec");
-    let mut checks = vec![if has_sox {
-        Check::ready("sox", "recording audio", None)
-    } else {
-        Check::missing("sox", "recording audio", health::install_hint("sox"))
-    }];
-    if probe.microphone && has_sox {
+    let device = health::microphone_device();
+    let found = device.state.is_ready();
+    let mut checks = vec![device];
+    if probe.microphone && found {
         checks.push(health::microphone());
     }
     checks

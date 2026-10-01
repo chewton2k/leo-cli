@@ -118,12 +118,20 @@ pub(crate) fn port_open(base_url: &str) -> bool {
 /// tell that from a quiet room, so a user gets a transcript of invented text
 /// instead of a reason. Probing also makes macOS raise its permission prompt,
 /// which is the fix.
-pub fn microphone() -> Check {
-    if !on_path("rec") {
-        return Check::missing("microphone", "recording audio", install_hint("sox"));
+pub fn microphone_device() -> Check {
+    match crate::session::mic::microphone_name() {
+        Some(name) => Check::ready("microphone device", "recording audio", Some(name)),
+        None => Check::missing(
+            "microphone device",
+            "recording audio",
+            "plug in a microphone, or pick an input in your sound settings",
+        ),
     }
-    match crate::listen::microphone_peak(0.4) {
-        Some(peak) if crate::ai::live::is_silent(peak) => Check {
+}
+
+pub fn microphone() -> Check {
+    match crate::session::mic::listen_for(0.4).map(|s| crate::session::wav::peak(&s)) {
+        Ok(peak) if crate::ai::live::is_silent(peak) => Check {
             what: "microphone".to_string(),
             needed_for: "recording audio".to_string(),
             state: State::Missing {
@@ -133,18 +141,18 @@ pub fn microphone() -> Check {
             },
             detail: Some("recorded silence; the mic is not being heard".to_string()),
         },
-        Some(peak) => Check::ready(
+        Ok(peak) => Check::ready(
             "microphone",
             "recording audio",
             Some(format!("hearing input (peak {peak:.3})")),
         ),
-        None => Check {
+        Err(e) => Check {
             what: "microphone".to_string(),
             needed_for: "recording audio".to_string(),
             state: State::Warn {
                 note: "could not be tested".to_string(),
             },
-            detail: None,
+            detail: Some(e.to_string()),
         },
     }
 }
@@ -160,15 +168,13 @@ pub fn microphone() -> Check {
 pub fn recording(config: &Config, store: &dyn SecretStore, uses_microphone: bool) -> Vec<Check> {
     let mut checks = Vec::new();
 
-    checks.push(if on_path("rec") {
-        Check::ready("sox", "recording audio", None)
-    } else {
-        Check::missing("sox", "recording audio", install_hint("sox"))
-    });
-
-    // Only probe once sox exists, or the probe just repeats that.
-    if uses_microphone && checks.first().is_some_and(|c| c.state.is_ready()) {
-        checks.push(microphone());
+    if uses_microphone {
+        let device = microphone_device();
+        let found = device.state.is_ready();
+        checks.push(device);
+        if found {
+            checks.push(microphone());
+        }
     }
     checks.push(chain_check(config, Chain::Transcribe, store));
     checks
@@ -186,14 +192,13 @@ pub fn setup_steps(
         check.what = what.to_string();
         check
     };
-    let recording = if on_path("rec") {
-        Check::ready(
+    let recording = match crate::session::mic::microphone_name() {
+        Some(name) => Check::ready("Recording", "recording lectures", Some(name)),
+        None => Check::missing(
             "Recording",
             "recording lectures",
-            Some("SoX is installed".to_string()),
-        )
-    } else {
-        Check::missing("Recording", "recording lectures", install_hint("sox"))
+            "plug in a microphone, or pick an input in your sound settings",
+        ),
     };
     let backup = match (
         leo_core::sync::is_initialized(notes_dir),
@@ -329,12 +334,9 @@ fn is_loopback(url: &str) -> bool {
 }
 
 /// The platform's install command for a tool, so the fix is copy-pasteable
-/// rather than "install sox".
+/// rather than "install git".
 pub(crate) fn install_hint(tool: &str) -> &'static str {
     match (tool, cfg!(target_os = "macos"), cfg!(target_os = "windows")) {
-        ("sox", true, _) => "brew install sox",
-        ("sox", _, true) => "choco install sox",
-        ("sox", ..) => "sudo apt install sox",
         ("git", true, _) => "xcode-select --install",
         ("git", _, true) => "winget install Git.Git",
         ("git", ..) => "sudo apt install git",
@@ -404,8 +406,8 @@ pub fn next_step(config: &Config, store: &dyn SecretStore) -> Option<String> {
     if let State::Missing { .. } = transcribe.state {
         return Some("The speech model is missing. Run `leo update` to download it.".to_string());
     }
-    if !on_path("rec") {
-        return Some(format!("Recording (R) needs sox: {}", install_hint("sox")));
+    if crate::session::mic::microphone_name().is_none() {
+        return Some("Recording (R) needs a microphone; none was found.".to_string());
     }
     None
 }
@@ -564,11 +566,9 @@ mod tests {
         let model = speech_model();
         let mut config = config_with(vec![("localbin", built_in(model.path()))], vec!["localbin"]);
         config.transcribe.chain = vec!["localbin".to_string()];
-        // Only sox can still be missing, and that is environment-dependent, so
-        // assert on the part this test controls.
         match next_step(&config, &store()) {
             None => {}
-            Some(step) => assert!(step.contains("sox"), "unexpected next step: {step}"),
+            Some(step) => assert!(step.contains("microphone"), "unexpected next step: {step}"),
         }
     }
 
@@ -586,9 +586,9 @@ mod tests {
 
     #[test]
     fn install_hints_are_platform_specific() {
-        let hint = install_hint("sox");
+        let hint = install_hint("git");
         if cfg!(target_os = "macos") {
-            assert_eq!(hint, "brew install sox");
+            assert_eq!(hint, "xcode-select --install");
         }
         assert!(!hint.is_empty());
     }
@@ -637,7 +637,7 @@ mod tests {
         let config = config_with(vec![], vec![]);
         let checks = recording(&config, &store(), false);
         let subjects: Vec<&str> = checks.iter().map(|c| c.what.as_str()).collect();
-        assert!(subjects.contains(&"sox"), "{subjects:?}");
+        assert!(!subjects.contains(&"sox"), "{subjects:?}");
         assert!(subjects.contains(&"a transcription model"), "{subjects:?}");
         assert!(!subjects.contains(&"a chat model"), "{subjects:?}");
     }

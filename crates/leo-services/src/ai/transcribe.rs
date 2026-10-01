@@ -1,5 +1,4 @@
 use std::path::Path;
-use std::process::{Command, Stdio};
 
 use anyhow::Result;
 
@@ -56,32 +55,12 @@ pub fn plan_chunks(file_size: u64, duration_secs: u64, max_bytes: Option<u64>) -
     chunks
 }
 
-/// Read a WAV's true duration via sox. Returns None if sox is absent or the
-/// header's DataSize was never finalized (sox reports 0 in that case).
 fn wav_duration_secs(path: &Path) -> Option<u64> {
-    let output = Command::new("sox")
-        .args(["--i", "-D", path.to_str()?])
-        .output()
-        .ok()?;
-    String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .parse::<f64>()
-        .ok()
-        .map(|d| d as u64)
-        .filter(|&d| d > 0)
+    let bytes = std::fs::read(path).ok()?;
+    let samples = crate::ai::provider::audio::read_wav(&bytes).ok()?;
+    Some(samples.len() as u64 / 16_000).filter(|&d| d > 0)
 }
 
-/// Parse a canonical WAV header's byte rate directly, needing no external
-/// process. Used only as a fallback for when sox is absent or cannot report
-/// a duration (an interrupted recording leaves DataSize unfinalized) — sox
-/// remains the primary source since it also handles non-canonical layouts
-/// where the fmt chunk isn't at this fixed offset.
-///
-/// Field offsets in the first 44 bytes of a canonical WAV:
-///   22-23 (u16 LE): channels
-///   24-27 (u32 LE): sample rate
-///   34-35 (u16 LE): bits per sample
-/// byte rate = sample_rate * channels * (bits_per_sample / 8)
 fn wav_byte_rate(path: &Path) -> Option<u64> {
     let bytes = std::fs::read(path).ok()?;
     if bytes.len() < 44 {
@@ -100,35 +79,30 @@ fn wav_byte_rate(path: &Path) -> Option<u64> {
     Some(sample_rate * channels * (bits_per_sample / 8).max(1))
 }
 
-/// Cut one slice out of a WAV with sox. Returns the temp file's path.
 fn cut_chunk(
     source: &Path,
     spec: &ChunkSpec,
     index: usize,
 ) -> Result<std::path::PathBuf, ProviderError> {
-    // Include the process id so two concurrent `leo` sessions transcribing
-    // long recordings don't overwrite each other's chunks mid-flight.
     let pid = std::process::id();
     let out = std::env::temp_dir().join(format!("leo-chunk-{pid}-{index}.wav"));
-    let status = Command::new("sox")
-        .arg(source)
-        .arg(&out)
-        .arg("trim")
-        .arg(spec.start_secs.to_string())
-        .arg(spec.duration_secs.to_string())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map_err(|e| ProviderError::Fatal(format!("sox not available: {e}")))?;
-
-    if !status.success() || !out.exists() {
-        // sox may have partially written `out` before failing — don't leak it.
+    let bytes = std::fs::read(source)
+        .map_err(|e| ProviderError::Fatal(format!("cannot read audio: {e}")))?;
+    let samples = crate::ai::provider::audio::read_wav(&bytes)
+        .map_err(|e| ProviderError::Fatal(format!("cannot read audio: {e}")))?;
+    let start = (spec.start_secs as usize * 16_000).min(samples.len());
+    let end = (start + spec.duration_secs as usize * 16_000).min(samples.len());
+    let slice: Vec<i16> = samples[start..end]
+        .iter()
+        .map(|x| (x.clamp(-1.0, 1.0) * 32767.0).round() as i16)
+        .collect();
+    crate::session::wav::write(&out, &slice).map_err(|e| {
         let _ = std::fs::remove_file(&out);
-        return Err(ProviderError::Fatal(format!(
-            "sox trim failed at {}s",
+        ProviderError::Fatal(format!(
+            "could not cut the audio at {}s: {e}",
             spec.start_secs
-        )));
-    }
+        ))
+    })?;
     Ok(out)
 }
 
@@ -148,18 +122,12 @@ fn transcribe_with_progress(
         .map_err(|e| ProviderError::Fatal(format!("cannot stat audio: {e}")))?
         .len();
 
-    // sox is the primary duration source — it handles non-canonical WAV
-    // layouts too. Fall back to parsing the header's byte rate directly only
-    // when sox is absent or cannot report a duration (e.g. an interrupted
-    // recording left DataSize unfinalized). If both fail, don't guess: a
-    // wrong guess here is what caused a prior chunk-sizing bug (see fix
-    // round 1, C2) — surface a clear error naming the file instead.
     let duration = match wav_duration_secs(audio_path) {
         Some(d) => d,
         None => {
             let byte_rate = wav_byte_rate(audio_path).ok_or_else(|| {
                 ProviderError::Fatal(format!(
-                    "cannot determine duration of {}: sox unavailable and WAV header unreadable",
+                    "cannot determine duration of {}: the WAV header is unreadable",
                     audio_path.display()
                 ))
             })?;

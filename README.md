@@ -86,8 +86,9 @@ first.
 
 If there is no ready-made build for your computer, or you want to change leo,
 you need Rust 1.88 or newer ([rustup.rs](https://rustup.rs), or
-`brew install rust`) and git. The first build downloads the speech engine's
-ready-made library (sherpa-onnx) from GitHub:
+`brew install rust`) and git (on Linux also the ALSA headers:
+`sudo apt install libasound2-dev`). The first build downloads the speech
+engine's ready-made library (sherpa-onnx) from GitHub:
 
 ```sh
 git clone https://github.com/chewton2k/leo-cli
@@ -352,7 +353,8 @@ yourself under a new name is left alone.
 
 ## 4. Record a lecture
 
-**You need:** SoX for recording (`brew install sox`), and the AI from section 3.
+**You need:** a microphone and the AI from section 3. leo records by itself;
+there is nothing else to install.
 
 **Allow the microphone (macOS, first time only).** Open System Settings →
 Privacy & Security → Microphone, turn it on for your terminal app (Terminal,
@@ -760,11 +762,10 @@ full-screen app driven through a simulated terminal, and in `tests/`:
 - `release.rs` — the scripts that pick the next version and stamp it into the
   build.
 
-Nothing touches the network, your notes or your keychain. With SoX installed,
-the audio tests run too; without it they skip themselves.
+Nothing touches the network, your notes or your keychain.
 
 CI (`.github/workflows/ci.yml`) runs on every push: the tests on Linux and
-macOS, with SoX installed so the audio tests run, plus `cargo fmt --check`,
+macOS, plus `cargo fmt --check`,
 `cargo clippy -D warnings`, and a check against the minimum Rust version, 1.88.
 
 **Every push to `main` that passes CI and changes leo is released

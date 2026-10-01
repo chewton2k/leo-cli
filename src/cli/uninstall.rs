@@ -178,7 +178,7 @@ pub fn run(yes: bool) -> Result<()> {
 
     println!();
     println!("  Your notes are still in {}.", pretty(&notes, &home));
-    println!("  Tools installed separately (SoX, cloudflared, Ollama) stay;");
+    println!("  Tools installed separately (cloudflared, Ollama) stay;");
     println!("  remove them with your package manager if you no longer want them.");
     println!("  Thank you for using leo!");
     println!();

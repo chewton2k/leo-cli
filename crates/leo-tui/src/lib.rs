@@ -1747,6 +1747,7 @@ fn suspend<B: TuiBackend>(terminal: &mut Terminal<B>) -> Result<()> {
     // and anything already queued is worth showing alongside whatever the
     // suspended command prints.
     leo_core::diag::set_quiet(false);
+    unhush_stderr();
     for message in leo_core::diag::drain() {
         eprintln!("  {message}");
     }
@@ -1771,6 +1772,7 @@ fn suspend<B: TuiBackend>(terminal: &mut Terminal<B>) -> Result<()> {
 /// round trip.
 fn resume<B: TuiBackend>(terminal: &mut Terminal<B>) -> Result<()> {
     leo_core::diag::set_quiet(true);
+    hush_stderr();
     enable_raw_mode()?;
     execute!(
         std::io::stdout(),
@@ -1886,10 +1888,49 @@ fn is_main_thread(name: Option<&str>) -> bool {
     name == Some("main")
 }
 
+static HUSHING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static SAVED_STDERR: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+
+fn hush_stderr() {
+    if !HUSHING.load(std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    #[cfg(unix)]
+    unsafe {
+        if SAVED_STDERR.load(std::sync::atomic::Ordering::SeqCst) >= 0 {
+            return;
+        }
+        let saved = libc::dup(2);
+        if saved < 0 {
+            return;
+        }
+        let null = libc::open(c"/dev/null".as_ptr(), libc::O_WRONLY);
+        if null < 0 {
+            libc::close(saved);
+            return;
+        }
+        libc::dup2(null, 2);
+        libc::close(null);
+        SAVED_STDERR.store(saved, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+fn unhush_stderr() {
+    #[cfg(unix)]
+    unsafe {
+        let saved = SAVED_STDERR.swap(-1, std::sync::atomic::Ordering::SeqCst);
+        if saved >= 0 {
+            libc::dup2(saved, 2);
+            libc::close(saved);
+        }
+    }
+}
+
 fn install_panic_hook() {
     let restoring = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         if is_main_thread(std::thread::current().name()) {
+            unhush_stderr();
             disable_mouse();
             restoring(info);
         } else {
@@ -1918,6 +1959,8 @@ pub fn run() -> Result<()> {
         .unwrap_or(None)
         .is_some();
     let mut terminal = ratatui::init();
+    HUSHING.store(true, std::sync::atomic::Ordering::SeqCst);
+    hush_stderr();
     install_panic_hook();
     // Mouse reporting is opt-in per terminal. Failing to enable it is not fatal:
     // every key still works, which is how leo is mostly driven.
@@ -1942,6 +1985,8 @@ pub fn run() -> Result<()> {
         disable_mouse();
     }
     ratatui::restore();
+    unhush_stderr();
+    HUSHING.store(false, std::sync::atomic::Ordering::SeqCst);
     leo_core::diag::set_quiet(false);
     // After the screen is handed back, so the push can say what it is doing on
     // an ordinary terminal rather than painting over the panes on the way out.
