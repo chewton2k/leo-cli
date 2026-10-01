@@ -11,6 +11,10 @@ use super::wav::RATE;
 
 pub const DEFAULT_SCREEN_DEVICE: &str = "BlackHole 2ch";
 
+pub fn disabled() -> bool {
+    std::env::var_os("LEO_NO_MICROPHONE").is_some_and(|v| !v.is_empty() && v != "0")
+}
+
 pub fn screen_device() -> String {
     std::env::var("LEO_SCREEN_DEVICE").unwrap_or_else(|_| DEFAULT_SCREEN_DEVICE.to_string())
 }
@@ -27,6 +31,11 @@ fn find_device(screen: bool) -> Result<cpal::Device> {
     if !screen {
         return host.default_input_device().ok_or_else(|| {
             anyhow!("No microphone found. Plug one in, or check your sound settings.")
+        });
+    }
+    if cfg!(windows) {
+        return host.default_output_device().ok_or_else(|| {
+            anyhow!("No speakers or headphones found to record what the computer plays.")
         });
     }
     let wanted = screen_device();
@@ -51,6 +60,9 @@ fn find_device(screen: bool) -> Result<cpal::Device> {
 }
 
 pub fn warm_up() {
+    if disabled() {
+        return;
+    }
     static STARTED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
     STARTED.get_or_init(|| {
         let _ = std::thread::Builder::new()
@@ -62,6 +74,9 @@ pub fn warm_up() {
 }
 
 pub fn microphone_name() -> Option<String> {
+    if disabled() {
+        return None;
+    }
     cpal::default_host()
         .default_input_device()
         .map(|d| device_name(&d))
@@ -152,9 +167,12 @@ fn build(
     raw: SyncSender<Vec<f32>>,
     problem: Arc<Mutex<Option<String>>>,
 ) -> Result<(cpal::Stream, u32)> {
-    let config = device
-        .default_input_config()
-        .map_err(|e| anyhow!("the microphone cannot record: {e}"))?;
+    let config = if device.supports_input() {
+        device.default_input_config()
+    } else {
+        device.default_output_config()
+    }
+    .map_err(|e| anyhow!("the microphone cannot record: {e}"))?;
     let rate = config.sample_rate();
     let channels = config.channels() as usize;
     let format = config.sample_format();
@@ -218,6 +236,9 @@ pub struct Mic {
 
 impl Mic {
     pub fn open(screen: bool) -> Result<(Mic, Receiver<Vec<i16>>)> {
+        if disabled() {
+            bail!("the microphone is turned off for leo (LEO_NO_MICROPHONE is set)");
+        }
         let (out_tx, out_rx) = mpsc::channel::<Vec<i16>>();
         let (ready_tx, ready_rx) = mpsc::sync_channel::<Result<()>>(1);
         let stop = Arc::new(AtomicBool::new(false));

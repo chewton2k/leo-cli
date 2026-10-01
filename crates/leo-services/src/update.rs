@@ -31,7 +31,11 @@ pub fn available() -> Option<String> {
 }
 
 pub fn install_command() -> String {
-    format!("curl -fsSL https://raw.githubusercontent.com/{REPO}/main/install.sh | sh")
+    if cfg!(windows) {
+        format!("irm https://raw.githubusercontent.com/{REPO}/main/install.ps1 | iex")
+    } else {
+        format!("curl -fsSL https://raw.githubusercontent.com/{REPO}/main/install.sh | sh")
+    }
 }
 
 fn check(

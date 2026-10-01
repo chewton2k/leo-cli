@@ -202,6 +202,14 @@ fn process_alive(pid: u32) -> bool {
             .stderr(std::process::Stdio::null())
             .status()
             .is_ok_and(|s| s.success())
+    } else if cfg!(windows) {
+        std::process::Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .map(|out| String::from_utf8_lossy(&out.stdout).contains(&format!("\"{pid}\"")))
+            .unwrap_or(true)
     } else {
         true
     }

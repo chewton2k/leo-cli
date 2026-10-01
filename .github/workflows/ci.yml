@@ -29,7 +29,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -46,6 +46,31 @@ jobs:
             grep -E "panicked|FAILED|^error|^failures:|assertion|left:|right:|undefined reference|could not" test.log | head -40 | while IFS= read -r line; do echo "::error::$line"; done
             exit 1
           fi
+
+      - name: Install and run on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $work = Join-Path $env:RUNNER_TEMP 'leo-install'
+          New-Item -ItemType Directory -Path $work -Force | Out-Null
+          Compress-Archive -Path target/debug/leo.exe -DestinationPath (Join-Path $work 'leo.zip') -Force
+          $env:LEO_INSTALL_ARCHIVE = Join-Path $work 'leo.zip'
+          $env:LEO_INSTALL_DIR = Join-Path $work 'bin'
+          $env:LEO_INSTALL_NO_MODEL = '1'
+          $env:LEO_INSTALL_SKIP_PATH = '1'
+          $env:LEO_HOME = Join-Path $work 'home'
+          $env:LEO_NO_UPDATE_CHECK = '1'
+          $env:LEO_NO_MICROPHONE = '1'
+          ./install.ps1
+          $leo = Join-Path $env:LEO_INSTALL_DIR 'leo.exe'
+          & $leo --version
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          & $leo new "From Windows" --body "hello"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $listed = & $leo list 2>&1 | Out-String
+          if ($listed -notmatch 'From Windows') { Write-Host $listed; exit 1 }
+          ./install.ps1
+          & $leo doctor
 
   lint:
     runs-on: ubuntu-latest

@@ -106,6 +106,7 @@ pub fn run(yes: bool) -> Result<()> {
     .collect();
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
+        .or_else(dirs::home_dir)
         .unwrap_or_default();
     let notes = Store::notes_dir()?;
     let doomed = plan(&notes, &home);
@@ -132,7 +133,7 @@ pub fn run(yes: bool) -> Result<()> {
 
     let providers: Vec<String> = Config::load().providers.keys().cloned().collect();
 
-    std::fs::remove_file(&exe).with_context(|| format!("could not remove {}", exe.display()))?;
+    remove_program(&exe)?;
     println!();
     println!("  Removed {}", pretty(&exe, &home));
 
@@ -153,6 +154,14 @@ pub fn run(yes: bool) -> Result<()> {
                 "  Removed {gone} key{} from the system keychain",
                 if gone == 1 { "" } else { "s" }
             );
+        }
+    }
+
+    if cfg!(windows) {
+        for dir in &dirs {
+            if remove_from_windows_path(dir) {
+                println!("  Removed {} from your PATH", pretty(dir, &home));
+            }
         }
     }
 
@@ -183,6 +192,76 @@ pub fn run(yes: bool) -> Result<()> {
     println!("  Thank you for using leo!");
     println!();
     Ok(())
+}
+
+fn remove_program(exe: &Path) -> Result<()> {
+    if !cfg!(windows) {
+        return std::fs::remove_file(exe)
+            .with_context(|| format!("could not remove {}", exe.display()));
+    }
+    let parked = exe.with_extension("exe.old");
+    let _ = std::fs::remove_file(&parked);
+    std::fs::rename(exe, &parked).with_context(|| format!("could not remove {}", exe.display()))?;
+    let _ = std::process::Command::new("cmd")
+        .args([
+            "/C",
+            &format!(
+                "ping -n 3 127.0.0.1 >nul & del /F /Q \"{}\"",
+                parked.display()
+            ),
+        ])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    Ok(())
+}
+
+pub fn windows_path_without(path: &str, dir: &str) -> Option<String> {
+    let same = |entry: &str| {
+        entry
+            .trim_end_matches(['\\', '/'])
+            .eq_ignore_ascii_case(dir.trim_end_matches(['\\', '/']))
+    };
+    let entries: Vec<&str> = path.split(';').filter(|e| !e.is_empty()).collect();
+    if !entries.iter().any(|e| same(e)) {
+        return None;
+    }
+    Some(
+        entries
+            .into_iter()
+            .filter(|e| !same(e))
+            .collect::<Vec<_>>()
+            .join(";"),
+    )
+}
+
+fn remove_from_windows_path(dir: &Path) -> bool {
+    let read = std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            "[Environment]::GetEnvironmentVariable('Path','User')",
+        ])
+        .output();
+    let Ok(read) = read else {
+        return false;
+    };
+    let current = String::from_utf8_lossy(&read.stdout).trim().to_string();
+    let Some(kept) = windows_path_without(&current, &dir.to_string_lossy()) else {
+        return false;
+    };
+    std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            &format!(
+                "[Environment]::SetEnvironmentVariable('Path','{}','User')",
+                kept.replace('\'', "''")
+            ),
+        ])
+        .status()
+        .is_ok_and(|s| s.success())
 }
 
 fn without_installer_lines(text: &str, dir: &Path) -> Option<String> {
@@ -220,6 +299,23 @@ fn pretty(path: &Path, home: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_windows_path_loses_only_leos_folder() {
+        let path = r"C:\Windows;C:\Users\me\AppData\Local\Programs\leo\;C:\Tools";
+        assert_eq!(
+            windows_path_without(path, r"C:\Users\me\AppData\Local\Programs\leo").as_deref(),
+            Some(r"C:\Windows;C:\Tools")
+        );
+        assert_eq!(
+            windows_path_without(r"C:\Windows;C:\Tools", r"C:\leo"),
+            None
+        );
+        assert_eq!(
+            windows_path_without(r"c:\users\me\leo;C:\Tools;", r"C:\Users\Me\leo").as_deref(),
+            Some(r"C:\Tools")
+        );
+    }
 
     fn touch(path: &Path) {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();

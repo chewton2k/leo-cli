@@ -37,6 +37,18 @@ in place of `| bash`. It downloads the ready-made leo for your computer, checks
 it against the published checksum, puts it in `~/.local/bin`, and adds that to
 your PATH for every future terminal, in the file your shell reads at startup.
 
+On Windows (64-bit Intel or AMD), paste this into PowerShell instead:
+
+```powershell
+irm https://raw.githubusercontent.com/chewton2k/leo-cli/main/install.ps1 | iex
+```
+
+It does the same: it checks the download, puts `leo.exe` in
+`%LOCALAPPDATA%\Programs\leo`, adds that to your PATH, and fetches the speech
+model. Open a new terminal afterwards. Windows Terminal works best; `leo
+update` and `leo uninstall` work there too. Recording what the computer plays
+(`leo record --screen`) needs no extra setup on Windows.
+
 **If you'd rather read the script before running it:**
 
 ```bash
@@ -679,7 +691,8 @@ your account can read.
 | `LEO_USE_KEYCHAIN=1` | Store keys in the OS keychain instead of the key file |
 | `LEO_SCREEN_DEVICE` | The audio device for `--screen` (default `BlackHole 2ch`) |
 | `LEO_NO_UPDATE_CHECK=1` | Never check GitHub for a new version |
-| `LEO_INSTALL_DIR` | For the install command: where to put leo (default `~/.local/bin`) |
+| `LEO_INSTALL_DIR` | For the install command: where to put leo (default `~/.local/bin`; on Windows `%LOCALAPPDATA%\Programs\leo`) |
+| `LEO_NO_MICROPHONE=1` | Never open a microphone (leo's own tests set this) |
 
 ---
 

@@ -61,15 +61,27 @@ pub fn run(force: bool) -> Result<()> {
     let exe = std::env::current_exe().context("could not tell where leo is installed")?;
     let dir = exe.parent().unwrap_or(Path::new("."));
 
-    let mut cmd = match std::env::var_os("LEO_UPDATE_SCRIPT") {
-        Some(script) => {
+    let mut cmd = match (std::env::var_os("LEO_UPDATE_SCRIPT"), cfg!(windows)) {
+        (Some(script), false) => {
             let mut cmd = Command::new("sh");
             cmd.arg(script);
             cmd
         }
-        None => {
+        (None, false) => {
             let mut cmd = Command::new("sh");
             cmd.arg("-c").arg(leo_services::update::install_command());
+            cmd
+        }
+        (Some(script), true) => {
+            let mut cmd = Command::new("powershell");
+            cmd.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
+                .arg(script);
+            cmd
+        }
+        (None, true) => {
+            let mut cmd = Command::new("powershell");
+            cmd.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command"])
+                .arg(leo_services::update::install_command());
             cmd
         }
     };
@@ -77,7 +89,11 @@ pub fn run(force: bool) -> Result<()> {
         .env("LEO_INSTALL_DIR", dir)
         .env("LEO_INSTALL_SKIP_PATH", "1")
         .status()
-        .context("could not run the installer (is curl installed?)")?;
+        .context(if cfg!(windows) {
+            "could not run the installer (is PowerShell available?)"
+        } else {
+            "could not run the installer (is curl installed?)"
+        })?;
     if !status.success() {
         anyhow::bail!("the update did not finish; leo was left as it was");
     }

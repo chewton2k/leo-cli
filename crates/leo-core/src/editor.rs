@@ -31,9 +31,16 @@ fn argv(command: &str, path: &std::path::Path) -> Vec<String> {
 
 fn choose(editor: Option<String>, visual: Option<String>, has_nano: bool) -> String {
     let set = |v: Option<String>| v.filter(|v| !v.trim().is_empty());
-    set(editor)
-        .or_else(|| set(visual))
-        .unwrap_or_else(|| if has_nano { "nano" } else { "vi" }.to_string())
+    set(editor).or_else(|| set(visual)).unwrap_or_else(|| {
+        if has_nano {
+            "nano"
+        } else if cfg!(windows) {
+            "notepad"
+        } else {
+            "vi"
+        }
+        .to_string()
+    })
 }
 
 #[cfg(test)]
@@ -55,8 +62,9 @@ mod tests {
     }
 
     #[test]
-    fn without_nano_it_falls_back_to_vi() {
-        assert_eq!(choose(None, None, false), "vi");
+    fn without_nano_it_falls_back_to_the_system_editor() {
+        let fallback = if cfg!(windows) { "notepad" } else { "vi" };
+        assert_eq!(choose(None, None, false), fallback);
     }
 
     /// `EDITOR="code -w"` is common; the flags must reach the program rather

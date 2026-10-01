@@ -3,8 +3,10 @@
 //! Every test gets its own `LEO_HOME`, a scrubbed environment and a PATH holding
 //! only the system directories plus git, so nothing here can read the user's
 //! notes, their API keys, their keychain, or reach the network — and no test
-//! can start recording from a microphone, since SoX is never on the PATH.
+//! can open a microphone, since LEO_NO_MICROPHONE is always set.
 //! `$EDITOR` is a small script that appends a line to whatever file it is given.
+
+#![cfg(unix)]
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -61,6 +63,7 @@ impl Leo {
             .env("EDITOR", self.bin.join("fake-editor"))
             .env("NO_COLOR", "1")
             .env("LEO_NO_UPDATE_CHECK", "1")
+            .env("LEO_NO_MICROPHONE", "1")
             .env("LEO_INSTALL_NO_MODEL", "1")
             .env("GIT_AUTHOR_NAME", "leo test")
             .env("GIT_AUTHOR_EMAIL", "leo@example.com")

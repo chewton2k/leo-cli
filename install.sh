@@ -103,6 +103,7 @@ case "$os-$arch" in
     Darwin-x86_64) target=x86_64-apple-darwin system="macOS on Intel" ;;
     Linux-x86_64) target=x86_64-unknown-linux-gnu system="Linux on x86-64" ;;
     Linux-aarch64 | Linux-arm64) target=aarch64-unknown-linux-gnu system="Linux on ARM" ;;
+    MINGW* | MSYS* | CYGWIN*) fail "on Windows, install leo from PowerShell instead: irm https://raw.githubusercontent.com/$REPO/main/install.ps1 | iex" ;;
     *) fail "there is no ready-made build for $os $arch. Build it from source instead: https://github.com/$REPO#1-install-leo" ;;
 esac
 step "Found $system"

@@ -74,6 +74,8 @@ jobs:
             os: ubuntu-22.04
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-22.04-arm
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -91,6 +93,7 @@ jobs:
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }}
       - name: Package
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           name="leo-${{ matrix.target }}.tar.gz"
@@ -100,10 +103,18 @@ jobs:
           else
             sha256sum "$name" > "$name.sha256"
           fi
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $name = "leo-${{ matrix.target }}.zip"
+          Compress-Archive -Path "target/${{ matrix.target }}/release/leo.exe" -DestinationPath $name
+          $hash = (Get-FileHash -Algorithm SHA256 $name).Hash.ToLower()
+          Set-Content -Path "$name.sha256" -Value "$hash  $name" -NoNewline
       - uses: actions/upload-artifact@v4
         with:
           name: leo-${{ matrix.target }}
-          path: leo-${{ matrix.target }}.tar.gz*
+          path: leo-${{ matrix.target }}.*
 
   publish:
     needs: [version, bump, build]
@@ -127,6 +138,12 @@ jobs:
             echo '```sh'
             echo "curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | bash"
             echo '```'
+            echo
+            echo "On Windows, in PowerShell:"
+            echo
+            echo '```powershell'
+            echo "irm https://raw.githubusercontent.com/${{ github.repository }}/main/install.ps1 | iex"
+            echo '```'
           } > notes.md
           cat notes.md
       - uses: actions/download-artifact@v4
@@ -143,3 +160,4 @@ jobs:
           files: |
             dist/*
             install.sh
+            install.ps1

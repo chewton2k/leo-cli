@@ -143,13 +143,15 @@ fn add_vault(config_path: &Path, folder: &Path) -> Result<String> {
 }
 
 fn launch(uri: &str) -> Result<()> {
-    let opener = if cfg!(target_os = "macos") {
-        "open"
+    let (opener, args): (&str, Vec<&str>) = if cfg!(target_os = "macos") {
+        ("open", vec![uri])
+    } else if cfg!(windows) {
+        ("cmd", vec!["/C", "start", "", uri])
     } else {
-        "xdg-open"
+        ("xdg-open", vec![uri])
     };
     let status = Command::new(opener)
-        .arg(uri)
+        .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -162,8 +164,9 @@ fn launch(uri: &str) -> Result<()> {
 }
 
 fn copy_to_clipboard(text: &str) -> bool {
-    let tools: [(&str, &[&str]); 4] = [
+    let tools: [(&str, &[&str]); 5] = [
         ("pbcopy", &[]),
+        ("clip", &[]),
         ("wl-copy", &[]),
         ("xclip", &["-selection", "clipboard"]),
         ("xsel", &["--clipboard", "--input"]),

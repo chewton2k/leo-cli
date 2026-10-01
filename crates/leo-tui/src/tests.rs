@@ -7,6 +7,7 @@ fn away_from_the_real_config() {
     HOME.get_or_init(|| {
         let home = tempfile::tempdir().unwrap();
         std::env::set_var("LEO_HOME", home.path());
+        std::env::set_var("LEO_NO_MICROPHONE", "1");
         home
     });
 }

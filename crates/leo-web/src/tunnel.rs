@@ -9,7 +9,7 @@ const WAIT: Duration = Duration::from_secs(45);
 
 pub const MISSING: &str =
     "leo serve opens a link that works from anywhere through Cloudflare's free tunnel tool, \
-cloudflared. Install it (brew install cloudflared; other systems: \
+cloudflared. Install it (brew install cloudflared; on Windows, winget install Cloudflare.cloudflared; other systems: \
 https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) \
 and run this again. No Cloudflare account is needed. `leo serve --local` works without it, \
 on this Wi-Fi only.";

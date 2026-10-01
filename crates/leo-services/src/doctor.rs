@@ -34,7 +34,7 @@ impl Probe {
     pub fn all() -> Probe {
         Probe {
             ai: true,
-            microphone: true,
+            microphone: !crate::session::mic::disabled(),
             remote: true,
             update: true,
         }

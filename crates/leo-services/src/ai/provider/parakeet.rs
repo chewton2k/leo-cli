@@ -74,6 +74,13 @@ fn background_priority() {
     unsafe {
         libc::setpriority(libc::PRIO_PROCESS, 0, 10);
     }
+    #[cfg(windows)]
+    unsafe {
+        windows_sys::Win32::System::Threading::SetPriorityClass(
+            windows_sys::Win32::System::Threading::GetCurrentProcess(),
+            windows_sys::Win32::System::Threading::BELOW_NORMAL_PRIORITY_CLASS,
+        );
+    }
 }
 
 struct Job {
