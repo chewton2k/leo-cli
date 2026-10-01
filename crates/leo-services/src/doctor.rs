@@ -269,21 +269,71 @@ fn notes_checks(notes_dir: &Path) -> Vec<Check> {
     checks
 }
 
+fn speech_model_check(config: &Config, secrets: &dyn SecretStore) -> Option<Check> {
+    use crate::ai::provider::parakeet;
+    use crate::providers::ModelState;
+    let name = config
+        .transcribe
+        .chain
+        .iter()
+        .find(|n| health::provider_usable(config, n, secrets))?;
+    let pc = config.provider(name)?;
+    if pc.kind != Some(crate::config::provider::ProviderKind::Parakeet) {
+        return None;
+    }
+    let dir = parakeet::model_dir(pc);
+    let what = "speech model";
+    let needed_for = "turning speech into text on this computer";
+    Some(
+        match crate::providers::files_state(&dir, &parakeet::manifest()) {
+            ModelState::Ready => Check::ready(
+                what,
+                needed_for,
+                Some(format!(
+                    "Parakeet, every file checked ({} MB)",
+                    parakeet::MODEL_MB
+                )),
+            ),
+            ModelState::Missing => Check::missing(
+                what,
+                needed_for,
+                "leo update   (downloads the missing files)",
+            ),
+            ModelState::Damaged => {
+                let mut c = Check::missing(
+                    what,
+                    needed_for,
+                    "leo update   (downloads the damaged files again)",
+                );
+                c.detail = Some(format!(
+                    "a file in {} does not match its checksum",
+                    dir.display()
+                ));
+                c
+            }
+        },
+    )
+}
+
 fn ai_checks(config: &Config, secrets: &dyn SecretStore, probe: Probe) -> Vec<Check> {
     let mut checks = vec![
         health::chain_check(config, health::Chain::Chat, secrets),
         health::chain_check(config, health::Chain::Transcribe, secrets),
         health::credentials_check(),
     ];
+    checks.extend(speech_model_check(config, secrets));
     if probe.ai {
-        let chat = crate::ai::provider::build_chat_chain(config, secrets)
-            .into_iter()
-            .find(|p| p.available())
-            .map(|p| p.name().to_string());
-        let speech = crate::ai::provider::build_transcribe_chain(config, secrets)
-            .into_iter()
-            .find(|p| p.available())
-            .map(|p| p.name().to_string());
+        let usable = |chain: &[String]| {
+            chain
+                .iter()
+                .find(|n| health::provider_usable(config, n, secrets))
+                .cloned()
+        };
+        let chat = usable(&config.chat.chain);
+        let speech = usable(&config.transcribe.chain).filter(|name| {
+            config.provider(name).and_then(|p| p.kind)
+                != Some(crate::config::provider::ProviderKind::Parakeet)
+        });
         for (label, name) in [("writing", chat), ("speech", speech)] {
             let Some(name) = name else { continue };
             let what = format!("{name} answers");
@@ -418,6 +468,45 @@ fn backup_checks(config: &Config, notes_dir: &Path, probe: Probe) -> Vec<Check> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn parakeet_at(dir: &std::path::Path) -> Config {
+        Config::parse_with_built_ins(&format!(
+            "[transcribe]\nchain = [\"parakeet\"]\n[providers.parakeet]\nmodel_path = \"{}\"\n",
+            dir.display()
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_damaged_speech_model_is_a_problem_with_its_fix() {
+        let dir = TempDir::new().unwrap();
+        for f in [
+            "encoder.int8.onnx",
+            "decoder.int8.onnx",
+            "joiner.int8.onnx",
+            "tokens.txt",
+        ] {
+            std::fs::write(dir.path().join(f), b"not the model").unwrap();
+        }
+        let store = crate::config::secret::MemoryStore::default();
+        let check = speech_model_check(&parakeet_at(dir.path()), &store).expect("a check");
+        assert!(!check.state.is_ready());
+        let text = format!("{check:?}");
+        assert!(text.contains("leo update"), "{text}");
+        assert!(text.contains("checksum"), "{text}");
+    }
+
+    #[test]
+    fn a_missing_speech_model_is_left_to_the_transcription_check() {
+        let dir = TempDir::new().unwrap();
+        let store = crate::config::secret::MemoryStore::default();
+        let config = parakeet_at(dir.path());
+        assert!(speech_model_check(&config, &store).is_none());
+        let checks = ai_checks(&config, &store, Probe::default());
+        let text = format!("{checks:?}");
+        assert!(text.contains("leo update"), "{text}");
+        assert!(!text.contains("answers"), "{text}");
+    }
     use crate::config::secret::MemoryStore;
     use tempfile::TempDir;
 
