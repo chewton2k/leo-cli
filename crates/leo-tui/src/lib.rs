@@ -258,12 +258,9 @@ impl Recording {
         }
     }
 
-    /// Typed points as the preview lists them, with when each was typed.
+    /// Typed points as the preview lists them.
     fn point_lines(&self) -> Vec<String> {
-        self.jotted
-            .iter()
-            .map(|p| format!("{} ({})", p.text, leo_services::ai::chat::clock(p.at_secs)))
-            .collect()
+        self.jotted.iter().map(|p| p.text.clone()).collect()
     }
 }
 

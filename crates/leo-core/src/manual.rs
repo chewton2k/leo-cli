@@ -14,7 +14,7 @@ use anyhow::Result;
 use crate::store::Store;
 
 /// Bump when the manual's content changes enough to be worth re-offering.
-const MANUAL_VERSION: u32 = 12;
+const MANUAL_VERSION: u32 = 13;
 const MARKER: &str = ".manual-installed";
 pub const MANUAL_TITLE: &str = "leo manual";
 
@@ -108,44 +108,49 @@ D       delete (u brings it back)
 ?       every key and command
 ```
 
-The bottom line always shows the keys that work where you are; `?` shows
-them all.
+The bottom line shows the keys that work where you are; `?` shows them all.
+
+## The commands that matter most
+
+```
+/settings          choose the AI that writes and listens
+/record            record your voice; it becomes a note
+/record screen     record what the computer plays: a video, a call
+/ask what is due?  an answer from your notes
+/doctor            check that everything works, and how to fix it
+/backup            keep a copy of your notes on GitHub
+```
+
+Settings offers this computer (free, private), a cloud with a key (OpenAI,
+Anthropic, Gemini, xAI, OpenRouter), or your Claude Code or Codex plan.
+
+In a terminal, `leo serve` puts your notes on your phone: scan the code it
+shows, or click the link.
+
+## Recording
+
+`R` (or `/record`) records and turns what was said into a note. While it runs,
+type the points that matter and press `Enter` after each; they are woven into
+the finished note. `Ctrl-P` pauses, `Esc` twice stops.
 
 ## Writing
 
 Every line shows formatted, and the line with the cursor shows its Markdown.
-`Enter` continues a list or a checklist, `Tab` indents, `Ctrl-Z` undoes, and a
-click on a box ticks it. Write `@leo` and a question on a line: when you press
-`Esc` the answer appears under it. `e` opens the note in your own editor instead.
+`Enter` continues a list, `Tab` indents, `Ctrl-Z` undoes. Write `@leo` and a
+question on a line: press `Esc` and the answer appears under it. `e` opens the
+note in your own editor instead.
 
 ## Finding and organising
 
-Type at `/` to search every note, bodies and `#tags` included; `Enter` keeps
-the results and `Esc` clears them. Start the line with a command to run it:
+Type at `/` to search every note, bodies and `#tags` included; `Esc` clears it.
 
 ```
 /new cs130/Lecture 4 #exam   a note in cs130, tagged exam
 /mkdir cs130                 a folder
 /mv cs130                    move the selected note there
-/ask what is due Friday?     an answer from your notes
 ```
 
-## Talking instead of typing
-
-`R` records and turns what was said into a note. While it runs, type the points
-that matter and press `Enter` after each; they lead the finished note, in bold.
-`Esc` twice stops.
-
-## Setting up
-
-`/settings` opens settings. Under **writing** and **speech**, `Enter` (or `→`)
-switches between this computer (free, private) and OpenAI, Anthropic, Gemini,
-xAI or OpenRouter; the row below picks the model, and the **key** row takes
-the key.
-Speech on this computer needs nothing: its model comes with leo.
-
-`/doctor` checks that everything works and says how to fix what does not.
-`/backup` keeps a copy on GitHub.
+## Where things live
 
 Notes are plain Markdown files in `{notes_dir}`. Settings live in
 `{config_path}`. API keys never do; they are kept in a store
@@ -299,7 +304,18 @@ mod tests {
     #[test]
     fn the_manual_covers_the_day_one_commands() {
         let body = manual_body();
-        for verb in ["new", "/", "mkdir", "mv", "ask", "backup", "records"] {
+        for verb in [
+            "new",
+            "/",
+            "mkdir",
+            "mv",
+            "ask",
+            "backup",
+            "records",
+            "/settings",
+            "/record screen",
+            "leo serve",
+        ] {
             assert!(body.contains(verb), "the manual never mentions `{verb}`");
         }
         // And the keys someone needs before they find the help screen.

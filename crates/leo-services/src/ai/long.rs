@@ -67,14 +67,17 @@ fn raw(points: &[Jotted], heading: &str, text: &str) -> String {
     body
 }
 
-fn within(points: &[Jotted], g: &Group) -> Vec<Jotted> {
+fn points_for(points: &[Jotted], groups: &[Group], index: usize) -> Vec<Jotted> {
+    let starts_after = |at: u64| {
+        groups
+            .get(index + 1)
+            .is_none_or(|next| at < next.start_secs)
+    };
+    let starts_from = |at: u64| index == 0 || at >= groups[index].start_secs;
     points
         .iter()
-        .filter(|p| p.at_secs >= g.start_secs && p.at_secs < g.end_secs)
-        .map(|p| Jotted {
-            at_secs: p.at_secs - g.start_secs,
-            text: p.text.clone(),
-        })
+        .filter(|p| starts_from(p.at_secs) && starts_after(p.at_secs))
+        .cloned()
         .collect()
 }
 
@@ -87,7 +90,6 @@ pub fn structure_recording(
     progress: Progress<'_>,
 ) -> Structured {
     let groups = groups(parts, WORDS_PER_PART);
-    let length = parts.last().map_or(0, |p| p.end_secs);
     let mut problems = Vec::new();
 
     if groups.len() <= 1 {
@@ -95,12 +97,12 @@ pub fn structure_recording(
         progress(0, 1);
         let result = match existing {
             Some(body) => chat_fn(
-                chat::build_append_prompt_with(&text, body, points, length),
+                chat::build_append_prompt_with(&text, body, points),
                 super::STRUCTURE_MAX_TOKENS,
             )
             .map(|reply| (fallback_title.to_string(), chat::clean_reply(&reply))),
             None => chat_fn(
-                chat::build_structure_prompt_with(&text, points, length),
+                chat::build_structure_prompt_with(&text, points),
                 super::STRUCTURE_MAX_TOKENS,
             )
             .map(|reply| chat::split_title_body(&reply)),
@@ -146,10 +148,10 @@ pub fn structure_recording(
                 let Some(g) = groups.get(i) else {
                     return;
                 };
+                let own = points_for(points, &groups, i);
                 let prompt = chat::build_part_prompt(
                     &g.text,
-                    &within(points, g),
-                    g.end_secs - g.start_secs,
+                    &own,
                     i + 1,
                     groups.len(),
                     &span(g),
@@ -159,11 +161,11 @@ pub fn structure_recording(
                         (chat::clean_reply(&reply), None)
                     }
                     Ok(_) => (
-                        format!("## Transcript\n\n{}", g.text.trim()),
+                        raw(&own, "Transcript", &g.text),
                         Some(format!("part {} came back empty; its transcript is included instead", i + 1)),
                     ),
                     Err(e) => (
-                        format!("## Transcript\n\n{}", g.text.trim()),
+                        raw(&own, "Transcript", &g.text),
                         Some(format!("part {} could not be written ({e}); its transcript is included instead", i + 1)),
                     ),
                 };
@@ -176,12 +178,13 @@ pub fn structure_recording(
         }
     });
     let mut sections = Vec::with_capacity(groups.len());
-    for (g, slot) in groups.iter().zip(results) {
-        let (notes, problem) = slot
-            .into_inner()
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| (format!("## Transcript\n\n{}", g.text.trim()), None));
+    for (i, (g, slot)) in groups.iter().zip(results).enumerate() {
+        let (notes, problem) = slot.into_inner().ok().flatten().unwrap_or_else(|| {
+            (
+                raw(&points_for(points, &groups, i), "Transcript", &g.text),
+                None,
+            )
+        });
         if let Some(p) = problem {
             problems.push(p);
         }
@@ -192,10 +195,6 @@ pub fn structure_recording(
     if let Some(_existing) = existing {
         progress(total, total);
         let mut body = format!("## Recording ({})\n\n", fallback_title);
-        if !points.is_empty() {
-            body.push_str(&points_as_markdown(points));
-            body.push('\n');
-        }
         body.push_str(&joined);
         return Structured {
             title: fallback_title.to_string(),
@@ -229,10 +228,6 @@ pub fn structure_recording(
     if !summary.trim().is_empty() {
         body.push_str(summary.trim());
         body.push_str("\n\n");
-    }
-    if !points.is_empty() {
-        body.push_str(&points_as_markdown(points));
-        body.push('\n');
     }
     body.push_str(&joined);
     Structured {
@@ -318,7 +313,7 @@ mod tests {
         );
         assert_eq!(s.title, "Recording, Sep 29");
         assert!(s.body.contains("w0 w1"), "{}", s.body);
-        assert!(s.body.contains("**exam**"), "{}", s.body);
+        assert!(s.body.contains("- exam\n"), "{}", s.body);
         assert_eq!(s.problems.len(), 1);
     }
 
@@ -360,7 +355,13 @@ mod tests {
             "{}",
             &s.body[..80]
         );
-        assert!(s.body.contains("**midterm**"));
+        assert!(
+            asked
+                .iter()
+                .any(|u| u.contains("<typed_points>\n- midterm\n")),
+            "the point never reached the part it was typed during"
+        );
+        assert!(!s.body.starts_with("## Key points"));
         assert!(s.body.contains("## Section 0"));
         assert!(
             s.body.contains("## Transcript"),
@@ -375,6 +376,32 @@ mod tests {
                 "{w} never reached the AI or the note"
             );
         }
+    }
+
+    #[test]
+    fn every_typed_point_goes_to_exactly_one_part() {
+        let group = |start_secs, end_secs| Group {
+            start_secs,
+            end_secs,
+            text: "x".into(),
+        };
+        let groups = [group(10, 100), group(100, 200), group(200, 300)];
+        let points: Vec<Jotted> = [0, 50, 100, 250, 900]
+            .into_iter()
+            .map(|at_secs| Jotted {
+                at_secs,
+                text: format!("at {at_secs}"),
+            })
+            .collect();
+        let texts = |i| -> Vec<String> {
+            points_for(&points, &groups, i)
+                .into_iter()
+                .map(|p| p.text)
+                .collect()
+        };
+        assert_eq!(texts(0), ["at 0", "at 50"]);
+        assert_eq!(texts(1), ["at 100"]);
+        assert_eq!(texts(2), ["at 250", "at 900"]);
     }
 
     #[test]

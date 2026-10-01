@@ -148,7 +148,12 @@ fn render_live(frame: &mut Frame, area: Rect, preview: &Preview<'_>, focused: bo
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let box_height = if jot.is_some() { 3 } else { 0 };
+    let field_width = inner.width.saturating_sub(2) as usize;
+    let jot_rows = jot.map(|j| typing_rows(j, field_width)).unwrap_or_default();
+    let box_height = match jot {
+        Some(_) => jot_rows.len().clamp(1, JOT_MOST_ROWS) as u16 + 2,
+        None => 0,
+    };
     let points_height = if points.is_empty() {
         0
     } else {
@@ -211,21 +216,59 @@ fn render_live(frame: &mut Frame, area: Rect, preview: &Preview<'_>, focused: bo
             .title(" your point · Enter adds it · Ctrl-P pauses · Esc twice stops ");
         let field = jot_box.inner(box_area);
         frame.render_widget(jot_box, box_area);
-        let shown = if jot.is_empty() {
-            Span::styled(
-                "type what matters — it leads the note, in bold",
+        if jot.is_empty() {
+            let hint = Span::styled(
+                "type what matters — it is woven into the note",
                 Style::default().add_modifier(Modifier::DIM),
-            )
-        } else {
-            Span::raw(jot.to_string())
-        };
-        frame.render_widget(Paragraph::new(TuiLine::from(shown)), field);
-        let x = field.x + jot.chars().count() as u16;
+            );
+            frame.render_widget(Paragraph::new(TuiLine::from(hint)), field);
+            frame.set_cursor_position(Position::new(field.x, field.y));
+            return;
+        }
+        let visible = (field.height as usize).max(1);
+        let skip = jot_rows.len().saturating_sub(visible);
+        let shown: Vec<TuiLine> = jot_rows
+            .iter()
+            .skip(skip)
+            .map(|row| TuiLine::from(row.clone()))
+            .collect();
+        let last = jot_rows.last().map(|r| r.chars().count()).unwrap_or(0) as u16;
+        let row = (jot_rows.len() - skip).saturating_sub(1) as u16;
+        frame.render_widget(Paragraph::new(shown), field);
         frame.set_cursor_position(Position::new(
-            x.min(field.x + field.width.saturating_sub(1)),
-            field.y,
+            (field.x + last).min(field.x + field.width.saturating_sub(1)),
+            field.y + row.min(field.height.saturating_sub(1)),
         ));
     }
+}
+
+const JOT_MOST_ROWS: usize = 6;
+
+/// Rows for text being typed: words wrap whole, spaces stay where they were
+/// typed so the cursor lands right after the last one, and a word longer than
+/// a row is split.
+pub fn typing_rows(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut rows = vec![String::new()];
+    let mut used = 0;
+    for piece in text.split_inclusive(' ') {
+        let word = piece.trim_end_matches(' ').chars().count();
+        if used > 0 && used + word > width {
+            rows.push(String::new());
+            used = 0;
+        }
+        for c in piece.chars() {
+            if c != ' ' && used >= width {
+                rows.push(String::new());
+                used = 0;
+            }
+            if let Some(row) = rows.last_mut() {
+                row.push(c);
+            }
+            used += 1;
+        }
+    }
+    rows
 }
 
 /// Greedy word wrap to `width` columns; a word longer than a row is split.
@@ -336,6 +379,55 @@ pub fn clamp_scroll(scroll: u16, line_count: usize, viewport_height: u16) -> u16
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_long_point_wraps_between_words_and_keeps_its_spaces() {
+        use super::typing_rows;
+        assert_eq!(typing_rows("", 10), [""]);
+        assert_eq!(
+            typing_rows("bfs uses a queue", 10),
+            ["bfs uses a ", "queue"]
+        );
+        assert_eq!(typing_rows("bfs uses ", 8), ["bfs uses "]);
+        assert_eq!(
+            typing_rows("abcdefghijklmnop xyz", 6),
+            ["abcdef", "ghijkl", "mnop ", "xyz"]
+        );
+        let text = "a point long enough to need three rows here";
+        assert_eq!(typing_rows(text, 12).concat(), text);
+        assert!(typing_rows(text, 12)
+            .iter()
+            .all(|r| r.trim_end().chars().count() <= 12));
+    }
+
+    #[test]
+    fn the_point_box_grows_to_show_a_long_point() {
+        use ratatui::{backend::TestBackend, Terminal};
+        let scroll = crate::view::livescroll::LiveScroll::new();
+        let jot = "first idea about graphs then a second thought on queues and stacks";
+        let preview = super::Preview::Live {
+            paused: false,
+            points: Vec::new(),
+            transcript: "we talked about graphs",
+            jot: Some(jot),
+            scroll: &scroll,
+        };
+        let mut terminal = Terminal::new(TestBackend::new(30, 14)).unwrap();
+        terminal
+            .draw(|f| super::render(f, f.area(), &preview, 0, true, None))
+            .unwrap();
+        let screen: Vec<String> = (0..14)
+            .map(|y| {
+                (0..30)
+                    .map(|x| terminal.backend().buffer()[(x, y)].symbol().to_string())
+                    .collect()
+            })
+            .collect();
+        let text = screen.join("\n");
+        for word in ["first", "graphs", "queues", "stacks"] {
+            assert!(text.contains(word), "{word} is not on screen:\n{text}");
+        }
+    }
+
     #[test]
     fn a_huge_live_transcript_shows_only_its_recent_words() {
         let text: String = (0..50_000).map(|i| format!("w{i} ")).collect();

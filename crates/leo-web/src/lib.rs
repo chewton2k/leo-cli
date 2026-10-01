@@ -95,7 +95,7 @@ pub async fn serve(options: ServeOptions) -> Result<()> {
         Some(tunnel) => {
             let anywhere = format!("{}/?token={token}", tunnel.url);
             println!("  {}", "Your link, from any network".bold());
-            println!("    {}", anywhere.cyan().underline());
+            println!("    {}", clickable(&anywhere));
             print_qr(&anywhere);
             println!(
                 "  {} anyone with the whole link can read and edit your notes. Keep it",
@@ -105,7 +105,7 @@ pub async fn serve(options: ServeOptions) -> Result<()> {
         }
         None => {
             println!("  {}", "On this Wi-Fi".bold());
-            println!("    {}", wifi.cyan().underline());
+            println!("    {}", clickable(&wifi));
             print_qr(&wifi);
             println!(
                 "  {}",
@@ -135,6 +135,20 @@ pub async fn serve(options: ServeOptions) -> Result<()> {
         .await?;
     drop(tunnel);
     Ok(())
+}
+
+pub fn hyperlink(url: &str, shown: &str) -> String {
+    format!("\x1b]8;;{url}\x1b\\{shown}\x1b]8;;\x1b\\")
+}
+
+fn clickable(url: &str) -> String {
+    use std::io::IsTerminal;
+    let shown = url.cyan().underline().to_string();
+    if std::io::stdout().is_terminal() {
+        hyperlink(url, &shown)
+    } else {
+        shown
+    }
 }
 
 async fn bind(wanted: u16) -> Result<(tokio::net::TcpListener, u16)> {
@@ -692,6 +706,17 @@ async fn create_dir(State(state): State<AppState>, Json(body): Json<CreateDirBod
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_link_is_clickable_and_still_reads_as_itself() {
+        let url = "https://example.trycloudflare.com/?token=abc";
+        let link = hyperlink(url, url);
+        assert_eq!(
+            link,
+            "\x1b]8;;https://example.trycloudflare.com/?token=abc\x1b\\https://example.trycloudflare.com/?token=abc\x1b]8;;\x1b\\"
+        );
+        assert!(!clickable(url).contains("\x1b]8"), "a pipe gets plain text");
+    }
 
     fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<String>) {
         let dir = tempfile::tempdir().unwrap();

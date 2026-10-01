@@ -958,7 +958,7 @@ fn typed_points_are_saved_even_without_speech() {
         .store
         .notes
         .iter()
-        .any(|n| n.body.contains("**read chapter 4**")));
+        .any(|n| n.body.contains("- read chapter 4")));
 }
 
 /// Once a recording is saved, the new note is the selected one, so you can
