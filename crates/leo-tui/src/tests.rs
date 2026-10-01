@@ -2929,6 +2929,7 @@ fn a_note_that_stops_matching_the_search_while_written_stays_the_one_being_writt
     assert_eq!(app.store.find_note(&id).unwrap().body, "zzz!");
 }
 
+#[cfg(unix)]
 #[test]
 fn a_failed_save_keeps_the_text_waiting_to_be_saved() {
     use std::os::unix::fs::PermissionsExt;
