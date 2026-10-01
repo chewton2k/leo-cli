@@ -471,7 +471,7 @@ mod tests {
 
     fn parakeet_at(dir: &std::path::Path) -> Config {
         Config::parse_with_built_ins(&format!(
-            "[transcribe]\nchain = [\"parakeet\"]\n[providers.parakeet]\nmodel_path = \"{}\"\n",
+            "[transcribe]\nchain = [\"parakeet\"]\n[providers.parakeet]\nmodel_path = '{}'\n",
             dir.display()
         ))
         .unwrap()
