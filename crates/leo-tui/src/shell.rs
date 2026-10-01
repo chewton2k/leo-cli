@@ -255,6 +255,7 @@ fn finish_interrupted(store: &mut Store, root: &std::path::Path) -> Result<()> {
 
 /// Record, transcribe, and structure into a note.
 pub fn record_and_apply(store: &mut Store, req: ListenRequest, _ai: &dyn Ai) -> Result<Outcome> {
+    leo_services::session::mic::warm_up();
     let root = session::root()?;
     finish_interrupted(store, &root)?;
 
@@ -268,6 +269,9 @@ pub fn record_and_apply(store: &mut Store, req: ListenRequest, _ai: &dyn Ai) -> 
         ),
     )?;
     let lock = session.lock()?;
+    if !matches!(Source::from_env(req.screen), Source::Replay { .. }) {
+        println!("  Opening the microphone…");
+    }
     let capture = match Capture::start(
         &session.dir,
         0,

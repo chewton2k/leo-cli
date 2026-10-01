@@ -1958,6 +1958,7 @@ pub fn run() -> Result<()> {
     let installed_manual = leo_core::manual::install_if_absent(&mut store)
         .unwrap_or(None)
         .is_some();
+    leo_services::session::mic::warm_up();
     let mut terminal = ratatui::init();
     HUSHING.store(true, std::sync::atomic::Ordering::SeqCst);
     hush_stderr();

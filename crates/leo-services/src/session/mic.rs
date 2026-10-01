@@ -50,6 +50,17 @@ fn find_device(screen: bool) -> Result<cpal::Device> {
     })
 }
 
+pub fn warm_up() {
+    static STARTED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    STARTED.get_or_init(|| {
+        let _ = std::thread::Builder::new()
+            .name("leo-audio-warm-up".into())
+            .spawn(|| {
+                let _ = cpal::default_host().default_input_device();
+            });
+    });
+}
+
 pub fn microphone_name() -> Option<String> {
     cpal::default_host()
         .default_input_device()
@@ -248,7 +259,7 @@ impl Mic {
                     drop(stream);
                 })?
         };
-        match ready_rx.recv_timeout(Duration::from_secs(10)) {
+        match ready_rx.recv_timeout(Duration::from_secs(30)) {
             Ok(Ok(())) => Ok((
                 Mic {
                     stop,
@@ -263,7 +274,7 @@ impl Mic {
             }
             Err(_) => {
                 stop.store(true, Ordering::Relaxed);
-                bail!("the microphone did not start within 10 seconds")
+                bail!("the microphone did not start within 30 seconds")
             }
         }
     }
@@ -373,6 +384,46 @@ mod tests {
         assert!(!fatal(cpal::ErrorKind::DeviceChanged));
         assert!(!fatal(cpal::ErrorKind::RealtimeDenied));
         assert!(fatal(cpal::ErrorKind::DeviceNotAvailable));
+    }
+
+    #[test]
+    #[ignore]
+    fn a_real_microphone_is_heard() {
+        let started = std::time::Instant::now();
+        let heard = listen_for(3.0).unwrap();
+        let peak = crate::session::wav::peak(&heard);
+        eprintln!(
+            "device {:?}: {} samples ({:.2} s of audio) in {:?}, peak {peak:.3}",
+            microphone_name(),
+            heard.len(),
+            heard.len() as f64 / RATE as f64,
+            started.elapsed()
+        );
+        assert!(heard.len() >= (2.9 * RATE as f64) as usize);
+    }
+
+    #[test]
+    #[ignore]
+    fn real_speech_at_48_khz_converts_cleanly() {
+        let input = std::env::var("LEO_TEST_SPEECH_48K").expect("LEO_TEST_SPEECH_48K");
+        let output = std::env::var("LEO_TEST_SPEECH_OUT").expect("LEO_TEST_SPEECH_OUT");
+        let bytes = std::fs::read(&input).unwrap();
+        let at = bytes.windows(4).position(|w| w == b"data").unwrap() + 8;
+        let samples: Vec<f32> = bytes[at..]
+            .chunks_exact(2)
+            .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0)
+            .collect();
+        let mut r = Resampler::new(48_000, 16_000);
+        let mut out = Vec::new();
+        for chunk in samples.chunks(470) {
+            r.push(chunk, &mut out);
+        }
+        crate::session::wav::write(std::path::Path::new(&output), &out).unwrap();
+        eprintln!(
+            "{} samples at 48 kHz -> {} at 16 kHz",
+            samples.len(),
+            out.len()
+        );
     }
 
     #[test]

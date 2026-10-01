@@ -192,14 +192,11 @@ pub fn setup_steps(
         check.what = what.to_string();
         check
     };
-    let recording = match crate::session::mic::microphone_name() {
-        Some(name) => Check::ready("Recording", "recording lectures", Some(name)),
-        None => Check::missing(
-            "Recording",
-            "recording lectures",
-            "plug in a microphone, or pick an input in your sound settings",
-        ),
-    };
+    let recording = Check::ready(
+        "Recording",
+        "recording lectures",
+        Some("built in; Enter checks the microphone".to_string()),
+    );
     let backup = match (
         leo_core::sync::is_initialized(notes_dir),
         leo_core::sync::remote_url(notes_dir),
@@ -405,9 +402,6 @@ pub fn next_step(config: &Config, store: &dyn SecretStore) -> Option<String> {
     let transcribe = chain_check(config, Chain::Transcribe, store);
     if let State::Missing { .. } = transcribe.state {
         return Some("The speech model is missing. Run `leo update` to download it.".to_string());
-    }
-    if crate::session::mic::microphone_name().is_none() {
-        return Some("Recording (R) needs a microphone; none was found.".to_string());
     }
     None
 }

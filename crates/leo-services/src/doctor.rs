@@ -316,6 +316,9 @@ fn speech_model_check(config: &Config, secrets: &dyn SecretStore) -> Option<Chec
 }
 
 fn ai_checks(config: &Config, secrets: &dyn SecretStore, probe: Probe) -> Vec<Check> {
+    if probe.microphone {
+        crate::session::mic::warm_up();
+    }
     let mut checks = vec![
         health::chain_check(config, health::Chain::Chat, secrets),
         health::chain_check(config, health::Chain::Transcribe, secrets),

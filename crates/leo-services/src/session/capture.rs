@@ -323,6 +323,41 @@ mod tests {
     use super::*;
     use crate::session::wav;
 
+    #[test]
+    #[ignore]
+    fn the_real_microphone_is_recorded_to_a_segment() {
+        let out = std::env::var("LEO_TEST_CAPTURE_OUT").expect("LEO_TEST_CAPTURE_OUT");
+        let dir = std::path::PathBuf::from(&out);
+        std::fs::create_dir_all(&dir).unwrap();
+        let capture = Capture::start(&dir, 0, 300, Source::Microphone).unwrap();
+        let speaker = std::thread::spawn(|| {
+            std::thread::sleep(Duration::from_millis(800));
+            let _ = std::process::Command::new("say")
+                .arg("This is a test of the built in recorder in leo.")
+                .status();
+        });
+        std::thread::sleep(Duration::from_secs(6));
+        speaker.join().unwrap();
+        eprintln!(
+            "recorded {:.2} s, problem {:?}",
+            capture.recorded_secs(),
+            capture.problem()
+        );
+        capture.stop().unwrap();
+        for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "wav") {
+                let samples = wav::read(&path).unwrap();
+                eprintln!(
+                    "{}: {:.2} s, peak {:.3}",
+                    path.display(),
+                    samples.len() as f64 / 16000.0,
+                    wav::peak(&samples)
+                );
+            }
+        }
+    }
+
     fn wait_for(capture: &Capture, samples: u64) {
         let deadline = std::time::Instant::now() + Duration::from_secs(20);
         while capture.recorded_samples() < samples && std::time::Instant::now() < deadline {
