@@ -244,9 +244,6 @@ fn render_live(frame: &mut Frame, area: Rect, preview: &Preview<'_>, focused: bo
 
 const JOT_MOST_ROWS: usize = 6;
 
-/// Rows for text being typed: words wrap whole, spaces stay where they were
-/// typed so the cursor lands right after the last one, and a word longer than
-/// a row is split.
 pub fn typing_rows(text: &str, width: usize) -> Vec<String> {
     let width = width.max(1);
     let mut rows = vec![String::new()];

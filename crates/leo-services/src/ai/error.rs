@@ -81,8 +81,6 @@ pub fn classify_reqwest(provider: &str, e: &reqwest::Error) -> ProviderError {
     }
 }
 
-/// What the user calls this provider's key, and where to replace it: the key
-/// row in /settings for a provider leo offers, otherwise its name.
 fn key_place(provider: &str) -> (String, Option<String>) {
     use crate::config::edit::Task;
     match crate::config::choice::find(Task::Chat, provider)
@@ -99,8 +97,6 @@ fn key_place(provider: &str) -> (String, Option<String>) {
     }
 }
 
-/// Whether a refusal is about the key rather than the request. Gemini and xAI
-/// answer a wrong key with 400 and say so in the body; the others use 401.
 fn about_the_key(status: u16, body: &str) -> bool {
     let body = body.to_lowercase();
     match status {
@@ -110,9 +106,6 @@ fn about_the_key(status: u16, body: &str) -> bool {
     }
 }
 
-/// `classify_status` for a request sent with the key leo stored: a refused key
-/// says so first, with where to replace it, so the fix is visible even when
-/// the line is cut short; the provider's own words follow.
 pub fn classify_status_with_key(status: u16, provider: &str, body: &str) -> ProviderError {
     if !about_the_key(status, body) {
         return classify_status(status, provider, body);

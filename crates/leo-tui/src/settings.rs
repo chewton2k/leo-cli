@@ -639,7 +639,11 @@ mod tests {
     #[test]
     fn a_local_choice_says_what_is_missing_and_offers_the_download() {
         use super::*;
-        let config = "[chat]\nchain = [\"ollama\"]\n[transcribe]\nchain = [\"parakeet\"]\n";
+        let no_model = tempfile::tempdir().unwrap();
+        let config = &format!(
+            "[chat]\nchain = [\"ollama\"]\n[transcribe]\nchain = [\"parakeet\"]\n[providers.parakeet]\nmodel_path = '{}'\n",
+            no_model.path().display()
+        );
         let rows = simple_page(config, &MemoryStore::default(), &Local::default());
         let writing_model = row(&rows, "writing model").unwrap();
         assert_eq!(writing_model.2, "Fact");
