@@ -111,20 +111,14 @@ pub fn redact(secret: &str) -> String {
     format!("…{tail}")
 }
 
-/// Resolution order: env var first, then the store. Env-first lets an operator
-/// override a stored credential for one invocation without mutating the
-/// keychain. A store error degrades to `None` — a missing key is a skipped
+/// The key leo stored for this provider, and nothing else: an environment
+/// variable with the same name is never read, so a key left over in a shell
+/// profile or another project's `.env` cannot quietly replace the one the user
+/// chose. A store error degrades to `None` — a missing key is a skipped
 /// provider, never a crash — but is not swallowed silently: it is reported to
 /// stderr first, since "denied a keychain ACL prompt" and "never logged in"
 /// are different situations for a user to act on.
-pub fn resolve(provider: &str, key_env: Option<&str>, store: &dyn SecretStore) -> Option<Secret> {
-    if let Some(var) = key_env {
-        if let Ok(value) = std::env::var(var) {
-            if !value.trim().is_empty() {
-                return Some(Secret(Zeroizing::new(value)));
-            }
-        }
-    }
+pub fn resolve(provider: &str, store: &dyn SecretStore) -> Option<Secret> {
     match store.get(provider) {
         Ok(secret) => secret,
         Err(e) => {
@@ -534,63 +528,21 @@ mod tests {
     }
 
     #[test]
-    fn env_var_wins_over_stored_secret() {
+    fn only_the_stored_key_is_used_never_an_environment_variable() {
         let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("OPENROUTER_API_KEY", "from-env");
         let store = MemoryStore::default();
-        store.set("openrouter", "from-keychain").unwrap();
-        std::env::set_var("LEO_TEST_KEY_A", "from-env");
-
-        let got = resolve("openrouter", Some("LEO_TEST_KEY_A"), &store).unwrap();
-        std::env::remove_var("LEO_TEST_KEY_A");
-
-        assert_eq!(got.as_str(), "from-env");
-    }
-
-    #[test]
-    fn falls_back_to_store_when_env_unset() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("LEO_TEST_KEY_B");
-        let store = MemoryStore::default();
-        store.set("openrouter", "from-keychain").unwrap();
-
-        let got = resolve("openrouter", Some("LEO_TEST_KEY_B"), &store).unwrap();
-        assert_eq!(got.as_str(), "from-keychain");
-    }
-
-    #[test]
-    fn empty_env_var_is_treated_as_unset() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::set_var("LEO_TEST_KEY_C", "   ");
-        let store = MemoryStore::default();
-        store.set("openrouter", "from-keychain").unwrap();
-
-        let got = resolve("openrouter", Some("LEO_TEST_KEY_C"), &store).unwrap();
-        std::env::remove_var("LEO_TEST_KEY_C");
-
-        assert_eq!(got.as_str(), "from-keychain");
-    }
-
-    #[test]
-    fn resolve_returns_none_when_nothing_configured() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("LEO_TEST_KEY_D");
-        let store = MemoryStore::default();
-        assert!(resolve("openrouter", Some("LEO_TEST_KEY_D"), &store).is_none());
-        assert!(resolve("openrouter", None, &store).is_none());
+        assert!(resolve("openrouter", &store).is_none());
+        store.set("openrouter", "from-leo").unwrap();
+        let got = resolve("openrouter", &store).unwrap();
+        std::env::remove_var("OPENROUTER_API_KEY");
+        assert_eq!(got.as_str(), "from-leo");
     }
 
     #[test]
     fn unavailable_store_degrades_instead_of_failing() {
         let _guard = ENV_LOCK.lock().unwrap();
-        std::env::set_var("LEO_TEST_KEY_E", "from-env");
-        let store = BrokenStore;
-        // Env still resolves even though the backend is dead.
-        let got = resolve("openrouter", Some("LEO_TEST_KEY_E"), &store).unwrap();
-        std::env::remove_var("LEO_TEST_KEY_E");
-        assert_eq!(got.as_str(), "from-env");
-
-        // And a store error is swallowed into None, not propagated as a panic.
-        assert!(resolve("openrouter", None, &store).is_none());
+        assert!(resolve("openrouter", &BrokenStore).is_none());
     }
 
     #[test]
@@ -603,7 +555,7 @@ mod tests {
         // warning this path prints goes to stderr, which this test does not
         // capture, but the non-panicking `None` return is the load-bearing
         // contract.)
-        assert!(resolve("openrouter", None, &store).is_none());
+        assert!(resolve("openrouter", &store).is_none());
     }
 
     /// A store whose backend is missing, like headless Linux with no

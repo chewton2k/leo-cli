@@ -40,14 +40,14 @@ pub fn build_one_transcriber(
             Some(Box::new(ai::provider::transcriptions::Transcriptions::new(
                 name.to_string(),
                 pc,
-                resolve(pc.account(name), pc.key_env.as_deref(), store),
+                resolve(pc.account(name), store),
             )))
         }
         Some(ProviderKind::ChatAudio) => Some(Box::new(
             ai::provider::chat_audio::ChatAudioTranscribe::new(
                 name.to_string(),
                 pc,
-                resolve(pc.account(name), pc.key_env.as_deref(), store),
+                resolve(pc.account(name), store),
             ),
         )),
         Some(ProviderKind::WhisperCpp) => Some(Box::new(
@@ -111,14 +111,11 @@ pub fn providers_missing_keys(cfg: &Config, store: &dyn SecretStore) -> Vec<Stri
         let Some(pc) = cfg.provider(name) else {
             continue;
         };
-        let Some(var) = pc.key_env.as_deref() else {
+        if pc.key_env.is_none() {
             continue;
-        };
+        }
         let account = pc.account(name).to_string();
-        let in_env = std::env::var(var)
-            .map(|v| !v.trim().is_empty())
-            .unwrap_or(false);
-        if !in_env && !store.has(&account) && !out.contains(&account) {
+        if !store.has(&account) && !out.contains(&account) {
             out.push(account);
         }
     }

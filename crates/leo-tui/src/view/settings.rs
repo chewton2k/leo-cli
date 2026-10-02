@@ -24,8 +24,9 @@ pub enum Credential {
     /// showing even the last four characters would mean reading the secret, and
     /// on macOS every read of a keychain item can cost a permission dialog.
     Stored,
-    /// Coming from an environment variable, which wins over the keychain.
-    Env { var: String, redacted: String },
+    /// Not stored, though an environment variable of the old name is set; leo
+    /// does not read it, and says so rather than letting it look like a key.
+    Ignored { var: String },
     /// Declared but absent.
     Missing,
 }

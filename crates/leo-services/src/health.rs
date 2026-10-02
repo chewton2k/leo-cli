@@ -321,12 +321,9 @@ pub fn provider_usable(config: &Config, name: &str, store: &dyn SecretStore) -> 
             );
     }
 
-    // A key-based provider: env var first, then the keychain, and `has` rather
-    // than a read so this cannot cost a permission prompt.
-    if let Some(var) = &provider.key_env {
-        if std::env::var(var).is_ok_and(|v| !v.trim().is_empty()) {
-            return true;
-        }
+    // A key-based provider: only the key leo stored, and `has` rather than a
+    // read so this cannot cost a permission prompt.
+    if provider.key_env.is_some() {
         return store.has(provider.account(name));
     }
 

@@ -9,7 +9,7 @@ use anyhow::Result;
 use crate::view::settings::{Credential, Row, SettingAction};
 use leo_services::config::choice::{self, Local};
 use leo_services::config::edit::{self, Task};
-use leo_services::config::secret::{redact, SecretStore};
+use leo_services::config::secret::SecretStore;
 use leo_services::config::Config;
 
 /// Describe where a provider's credential comes from, without revealing it.
@@ -21,19 +21,15 @@ fn credential_for(name: &str, key_env: Option<&str>, store: &dyn SecretStore) ->
     let Some(var) = key_env else {
         return Credential::NotNeeded;
     };
-    if let Ok(value) = std::env::var(var) {
-        if !value.trim().is_empty() {
-            return Credential::Env {
-                var: var.to_string(),
-                redacted: redact(&value),
-            };
-        }
-    }
     if store.has(name) {
-        Credential::Stored
-    } else {
-        Credential::Missing
+        return Credential::Stored;
     }
+    if std::env::var(var).is_ok_and(|v| !v.trim().is_empty()) {
+        return Credential::Ignored {
+            var: var.to_string(),
+        };
+    }
+    Credential::Missing
 }
 
 pub fn simple_rows(
@@ -144,7 +140,9 @@ fn ai_rows(
     }
     let value = match credential_for(&account, pc.key_env.as_deref(), store) {
         Credential::Stored => "stored".to_string(),
-        Credential::Env { var, .. } => format!("from ${var}"),
+        Credential::Ignored { var } => {
+            format!("none — Enter to add one (leo does not read ${var})")
+        }
         Credential::NotNeeded => "not needed".to_string(),
         Credential::Missing => "none — Enter to add one".to_string(),
     };
@@ -513,18 +511,14 @@ mod tests {
         assert_eq!(model.2, "ChooseModel(Chat)");
         let key = row(&rows, "Anthropic key").unwrap();
         assert_eq!(key.2, "StoreKey { name: \"anthropic\" }");
-        if std::env::var("ANTHROPIC_API_KEY").is_err() {
-            assert_eq!(key.1, "none — Enter to add one");
-        }
+        assert!(key.1.starts_with("none — Enter to add one"), "{}", key.1);
         assert_eq!(row(&rows, "speech").unwrap().1, "● OpenAI");
         assert_eq!(
             row(&rows, "speech model").unwrap().1,
             "gpt-transcribe ($0.27 per hour)"
         );
         let openai = row(&rows, "OpenAI key").unwrap();
-        if std::env::var("OPENAI_API_KEY").is_err() {
-            assert_eq!(openai.1, "stored");
-        }
+        assert_eq!(openai.1, "stored");
         assert!(!rows.iter().any(|(l, _, _)| l.contains("chain")));
     }
 
@@ -604,6 +598,26 @@ mod tests {
             .ends_with("Codex (5h: 2%, 7d: 47%)"));
         let rows = page("openai");
         assert!(row(&rows, "writing").unwrap().1.ends_with("OpenAI"));
+    }
+
+    #[test]
+    fn a_key_in_the_environment_is_never_used_and_the_row_says_so() {
+        use super::*;
+        let config = "[chat]\nchain = [\"openrouter\"]\n[transcribe]\nchain = []\n";
+        std::env::set_var("OPENROUTER_API_KEY", "sk-from-a-shell-profile");
+        let rows = simple_page(config, &MemoryStore::default(), &Local::default());
+        let store = MemoryStore::default();
+        store.set("openrouter", "k").unwrap();
+        let stored = simple_page(config, &store, &Local::default());
+        std::env::remove_var("OPENROUTER_API_KEY");
+        let key = row(&rows, "OpenRouter key").unwrap();
+        assert_eq!(
+            key.1,
+            "none — Enter to add one (leo does not read $OPENROUTER_API_KEY)"
+        );
+        assert!(row(&rows, "writing").unwrap().1.starts_with('○'));
+        assert_eq!(row(&stored, "OpenRouter key").unwrap().1, "stored");
+        assert!(row(&stored, "writing").unwrap().1.starts_with('●'));
     }
 
     #[test]

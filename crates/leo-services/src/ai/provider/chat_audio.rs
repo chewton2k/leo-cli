@@ -165,7 +165,7 @@ mod tests {
         assert!(!ChatAudioTranscribe::new("g".to_string(), &cfg, None).available());
         let store = MemoryStore::default();
         store.set("gemini", "k").unwrap();
-        let key = resolve("gemini", None, &store);
+        let key = resolve("gemini", &store);
         let p = ChatAudioTranscribe::new("g".to_string(), &cfg, key);
         assert!(p.available());
         let five_minutes = 300 * 16_000 * 2 + 44;

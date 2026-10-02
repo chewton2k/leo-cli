@@ -714,14 +714,16 @@ folder for 30 days; it is never backed up to GitHub. The settings folder also
 holds `serve-token` (the code in your `leo serve` link) and `update-check.json`
 (when leo last looked for a new version). Settings are in `config.toml`; type `/settings`, then press `e` to open it.
 API keys are never stored in that file: they are kept in a separate file only
-your account can read.
+your account can read. leo uses only the keys stored there (through `/settings`
+or `leo doctor`); it never reads a key from an environment variable such as
+`OPENROUTER_API_KEY`, so a key left in a shell profile or another project's
+`.env` cannot replace yours. `leo doctor` offers to store one it finds there.
 
 ### Environment variables
 
 | Variable | What it does |
 |----------|--------------|
 | `LEO_HOME` | Keep notes, settings and keys in this one directory instead |
-| `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `XAI_API_KEY`, `OPENROUTER_API_KEY` | A provider's key; takes precedence over a stored one |
 | `LEO_CHAT_PROVIDER` / `LEO_TRANSCRIBE_PROVIDER` | Use only this provider for writing / speech |
 | `LEO_CHAT_MODEL` | Override the model of the first writing provider |
 | `LEO_USE_KEYCHAIN=1` | Store keys in the OS keychain instead of the key file |

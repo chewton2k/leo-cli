@@ -114,7 +114,7 @@ chain = [{transcribe}]
 #   kind = "openai"                        # or openai_transcribe
 #   base_url = "https://api.example.com/v1"
 #   model = "some-model-id"
-#   key_env = "EXAMPLE_API_KEY"            # omit entirely for a local server
+#   key_env = "EXAMPLE_API_KEY"            # needs a key (store it in /settings); omit for a local server
 "#,
             chat = quoted_list(&DEFAULT_CHAT_CHAIN),
             transcribe = quoted_list(&DEFAULT_TRANSCRIBE_CHAIN),

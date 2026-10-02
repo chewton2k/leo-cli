@@ -407,7 +407,7 @@ mod tests {
     fn unavailable_reason_never_contains_the_key_value() {
         let store = MemoryStore::default();
         store.set("openrouter", "sk-super-secret-value").unwrap();
-        let key = resolve("openrouter", None, &store);
+        let key = resolve("openrouter", &store);
         let cfg = ProviderConfig {
             key_env: Some("LEO_TEST_UNUSED_KEY_ENV".to_string()),
             ..Default::default()

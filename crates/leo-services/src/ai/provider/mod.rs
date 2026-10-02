@@ -102,7 +102,7 @@ pub fn build_one_chat(
     match pc.kind {
         Some(ProviderKind::Openai) => {
             let key = match pc.key_env.as_deref() {
-                Some(var) => resolve(pc.account(name), Some(var), store),
+                Some(_) => resolve(pc.account(name), store),
                 None => None,
             };
             Some(Box::new(openai::OpenAiChat::new(name.to_string(), pc, key)))
@@ -138,7 +138,7 @@ pub fn build_transcribe_chain(
         };
         match pc.kind {
             Some(ProviderKind::Transcriptions) => {
-                let key = resolve(pc.account(name), pc.key_env.as_deref(), store);
+                let key = resolve(pc.account(name), store);
                 out.push(Box::new(transcriptions::Transcriptions::new(
                     name.clone(),
                     pc,
@@ -146,7 +146,7 @@ pub fn build_transcribe_chain(
                 )))
             }
             Some(ProviderKind::ChatAudio) => {
-                let key = resolve(pc.account(name), pc.key_env.as_deref(), store);
+                let key = resolve(pc.account(name), store);
                 out.push(Box::new(chat_audio::ChatAudioTranscribe::new(
                     name.clone(),
                     pc,

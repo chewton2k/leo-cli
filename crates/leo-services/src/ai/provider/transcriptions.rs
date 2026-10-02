@@ -147,7 +147,7 @@ mod tests {
 
         let store = MemoryStore::default();
         store.set("groq", "a-key").unwrap();
-        let key = resolve("groq", None, &store);
+        let key = resolve("groq", &store);
         assert!(Transcriptions::new("groq".to_string(), &keyed, key).available());
 
         // No key_env: a local server, available with no credential at all.
@@ -187,7 +187,7 @@ mod tests {
     fn unavailable_reason_never_contains_the_key_value() {
         let store = MemoryStore::default();
         store.set("groq", "sk-super-secret-value").unwrap();
-        let key = resolve("groq", None, &store);
+        let key = resolve("groq", &store);
         let cfg = ProviderConfig::default();
         let provider = Transcriptions::new("groq".to_string(), &cfg, key);
         assert!(!provider
