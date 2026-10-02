@@ -81,6 +81,57 @@ pub fn classify_reqwest(provider: &str, e: &reqwest::Error) -> ProviderError {
     }
 }
 
+/// What the user calls this provider's key, and where to replace it: the key
+/// row in /settings for a provider leo offers, otherwise its name.
+fn key_place(provider: &str) -> (String, Option<String>) {
+    use crate::config::edit::Task;
+    match crate::config::choice::find(Task::Chat, provider)
+        .or_else(|| crate::config::choice::find(Task::Transcribe, provider))
+    {
+        Some(choice) => (
+            choice.name.to_string(),
+            Some(format!(
+                "/settings, then Enter on the {} key row",
+                choice.name
+            )),
+        ),
+        None => (provider.to_string(), None),
+    }
+}
+
+/// Whether a refusal is about the key rather than the request. Gemini and xAI
+/// answer a wrong key with 400 and say so in the body; the others use 401.
+fn about_the_key(status: u16, body: &str) -> bool {
+    let body = body.to_lowercase();
+    match status {
+        401 | 403 => true,
+        400 => body.contains("api key") || body.contains("api_key"),
+        _ => false,
+    }
+}
+
+/// `classify_status` for a request sent with the key leo stored: a refused key
+/// says so first, with where to replace it, so the fix is visible even when
+/// the line is cut short; the provider's own words follow.
+pub fn classify_status_with_key(status: u16, provider: &str, body: &str) -> ProviderError {
+    if !about_the_key(status, body) {
+        return classify_status(status, provider, body);
+    }
+    let (name, place) = key_place(provider);
+    let what = if status == 403 {
+        format!(
+            "{name} refused the key stored in leo ({status}): it may be wrong, out of credit, or not allowed this model."
+        )
+    } else {
+        format!("{name} rejected the key stored in leo ({status}).")
+    };
+    let fix = match place {
+        Some(place) => format!(" To replace it: {place}."),
+        None => String::new(),
+    };
+    ProviderError::Fatal(format!("{what}{fix} It said: {}", truncate(body)))
+}
+
 /// Defense in depth for `classify_status`: replace every occurrence of
 /// `secret` in `body` with `…` before it is quoted in an error. Our own
 /// request headers are never echoed back as `body` (see `classify_status`),
@@ -133,6 +184,61 @@ mod tests {
         let msg = e.message();
         assert!(msg.contains("openrouter"), "missing provider: {msg}");
         assert!(msg.contains("401"), "missing status: {msg}");
+    }
+
+    #[test]
+    fn a_rejected_key_says_where_to_replace_it() {
+        let openrouter = classify_status_with_key(
+            401,
+            "openrouter",
+            r#"{"error":{"message":"Missing Authentication header","code":401}}"#,
+        );
+        assert!(!openrouter.is_retryable());
+        assert!(
+            openrouter.message().starts_with(
+                "OpenRouter rejected the key stored in leo (401). To replace it: /settings, then Enter on the OpenRouter key row. It said: "
+            ),
+            "{}",
+            openrouter.message()
+        );
+        let gemini = classify_status_with_key(
+            400,
+            "gemini_speech",
+            r#"{"error":{"code":400,"message":"Please pass a valid API key","status":"INVALID_ARGUMENT"}}"#,
+        );
+        assert!(gemini
+            .message()
+            .starts_with("Gemini rejected the key stored in leo (400)."));
+        assert!(gemini.message().contains("Gemini key row"));
+        let xai = classify_status_with_key(
+            400,
+            "xai",
+            r#"{"code":"invalid-argument","error":"Incorrect API key provided."}"#,
+        );
+        assert!(xai.message().starts_with("xAI rejected the key"));
+        let whisper = classify_status_with_key(401, "openai_whisper", "Incorrect API key provided");
+        assert!(
+            whisper.message().contains("OpenAI key row"),
+            "{}",
+            whisper.message()
+        );
+        let forbidden = classify_status_with_key(403, "anthropic", "forbidden");
+        assert!(forbidden.message().contains("out of credit"));
+    }
+
+    #[test]
+    fn other_refusals_and_custom_providers_keep_the_plain_message() {
+        let bad_model = classify_status_with_key(400, "openai", "model `x` does not exist");
+        assert_eq!(
+            bad_model,
+            classify_status(400, "openai", "model `x` does not exist")
+        );
+        let busy = classify_status_with_key(429, "openrouter", "slow down");
+        assert!(busy.is_retryable());
+        let mine = classify_status_with_key(401, "my-provider", "bad key");
+        assert!(mine
+            .message()
+            .starts_with("my-provider rejected the key stored in leo (401). It said:"));
     }
 
     #[test]

@@ -1,7 +1,8 @@
 use std::path::Path;
 
 use crate::ai::error::{
-    classify_reqwest, classify_status, scrub_secret, ProviderError, ProviderResult,
+    classify_reqwest, classify_status, classify_status_with_key, scrub_secret, ProviderError,
+    ProviderResult,
 };
 use crate::ai::provider::TranscribeProvider;
 use crate::config::provider::ProviderConfig;
@@ -87,7 +88,10 @@ impl TranscribeProvider for Transcriptions {
             // key back inside the body itself.
             let text = resp.text().unwrap_or_default();
             let text = scrub_secret(&text, self.key.as_ref().map(|k| k.as_str()));
-            return Err(classify_status(status, &self.name, &text));
+            return Err(match self.key {
+                Some(_) => classify_status_with_key(status, &self.name, &text),
+                None => classify_status(status, &self.name, &text),
+            });
         }
 
         let json: serde_json::Value = resp.json().map_err(|e| {

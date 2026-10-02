@@ -1,5 +1,6 @@
 use crate::ai::error::{
-    classify_reqwest, classify_status, scrub_secret, ProviderError, ProviderResult,
+    classify_reqwest, classify_status, classify_status_with_key, scrub_secret, ProviderError,
+    ProviderResult,
 };
 use crate::ai::provider::{ChatProvider, ChatRequest, Sink};
 use crate::config::provider::ProviderConfig;
@@ -160,7 +161,10 @@ impl ChatProvider for OpenAiChat {
         if !resp.status().is_success() {
             let text = resp.text().unwrap_or_default();
             let text = scrub_secret(&text, self.key.as_ref().map(Secret::as_str));
-            return Err(classify_status(status, &self.name, &text));
+            return Err(match self.key {
+                Some(_) => classify_status_with_key(status, &self.name, &text),
+                None => classify_status(status, &self.name, &text),
+            });
         }
 
         let mut answer = String::new();
@@ -230,7 +234,10 @@ impl ChatProvider for OpenAiChat {
             // back inside the body itself.
             let text = resp.text().unwrap_or_default();
             let text = scrub_secret(&text, self.key.as_ref().map(Secret::as_str));
-            return Err(classify_status(status, &self.name, &text));
+            return Err(match self.key {
+                Some(_) => classify_status_with_key(status, &self.name, &text),
+                None => classify_status(status, &self.name, &text),
+            });
         }
 
         let json: serde_json::Value = resp.json().map_err(|e| {
@@ -401,6 +408,59 @@ mod tests {
             .expect("an HTTPS connection")
             .status();
         assert!(status.is_success(), "{status}");
+    }
+
+    fn refuse_once(status: &'static str, body: &'static str) -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buffer = [0u8; 8192];
+                let _ = stream.read(&mut buffer);
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        format!("http://127.0.0.1:{port}/v1")
+    }
+
+    #[test]
+    fn a_rejected_stored_key_tells_the_user_where_to_replace_it() {
+        let store = MemoryStore::default();
+        store.set("openrouter", "sk-old-key").unwrap();
+        let cfg = ProviderConfig {
+            base_url: Some(refuse_once(
+                "401 Unauthorized",
+                r#"{"error":{"message":"User not found.","code":401}}"#,
+            )),
+            model: Some("openrouter/free".to_string()),
+            key_env: Some("OPENROUTER_API_KEY".to_string()),
+            ..Default::default()
+        };
+        let provider = OpenAiChat::new(
+            "openrouter".to_string(),
+            &cfg,
+            resolve("openrouter", &store),
+        );
+        let error = provider
+            .complete(&ChatRequest {
+                system: None,
+                prompt: "hi".to_string(),
+                temperature: 0.0,
+                max_tokens: 16,
+            })
+            .unwrap_err();
+        let message = error.to_string();
+        assert!(
+            message.starts_with("OpenRouter rejected the key stored in leo (401). To replace it: /settings, then Enter on the OpenRouter key row."),
+            "{message}"
+        );
+        assert!(message.contains("User not found."), "{message}");
+        assert!(!message.contains("sk-old-key"), "{message}");
     }
 
     #[test]
