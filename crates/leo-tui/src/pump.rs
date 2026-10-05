@@ -19,12 +19,12 @@ impl App {
     }
 
     pub(super) fn pump_update(&mut self) -> bool {
-        let Some(rx) = self.update.as_ref() else {
+        let Some(rx) = self.jobs.update.as_ref() else {
             return false;
         };
         match rx.try_recv() {
             Ok(version) => {
-                self.update = None;
+                self.jobs.update = None;
                 self.say(
                     Kind::Good,
                     format!("leo {version} is out. To update, run `leo update` in a shell."),
@@ -33,17 +33,17 @@ impl App {
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => false,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.update = None;
+                self.jobs.update = None;
                 false
             }
         }
     }
 
     pub(super) fn pump_usage(&mut self) -> bool {
-        if let Some(rx) = self.usage_check.as_ref() {
+        if let Some(rx) = self.jobs.usage_check.as_ref() {
             return match rx.try_recv() {
                 Ok(()) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    self.usage_check = None;
+                    self.jobs.usage_check = None;
                     self.refresh_settings();
                     true
                 }
@@ -51,17 +51,18 @@ impl App {
             };
         }
         let due = self
+            .jobs
             .last_usage_check
             .is_none_or(|at| at.elapsed() >= task::USAGE_EVERY);
         if self.mode == Mode::Settings && due {
-            self.last_usage_check = Some(Instant::now());
-            self.usage_check = Some(task::start_usage_check(self.check_usage));
+            self.jobs.last_usage_check = Some(Instant::now());
+            self.jobs.usage_check = Some(task::start_usage_check(self.check_usage));
         }
         false
     }
 
     pub(super) fn fetch_speech_model(&mut self) {
-        if self.model_download.is_some() || !(self.speech_model_wanted)() {
+        if self.jobs.model_download.is_some() || !(self.speech_model_wanted)() {
             return;
         }
         self.say(
@@ -71,21 +72,21 @@ impl App {
                 leo_services::ai::provider::parakeet::MODEL_MB
             ),
         );
-        self.model_download = Some(task::start_model_download());
+        self.jobs.model_download = Some(task::start_model_download());
     }
 
     pub(super) fn pump_model_download(&mut self) -> bool {
-        let Some(rx) = self.model_download.as_ref() else {
+        let Some(rx) = self.jobs.model_download.as_ref() else {
             return false;
         };
         match rx.try_recv() {
             Ok(Ok(())) => {
-                self.model_download = None;
+                self.jobs.model_download = None;
                 self.say(Kind::Good, "The speech model is ready.");
                 true
             }
             Ok(Err(e)) => {
-                self.model_download = None;
+                self.jobs.model_download = None;
                 self.say(
                     Kind::Bad,
                     format!(
@@ -96,14 +97,14 @@ impl App {
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => false,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.model_download = None;
+                self.jobs.model_download = None;
                 false
             }
         }
     }
 
     pub(super) fn pump_doctor(&mut self) -> bool {
-        let Some((job, _, _)) = self.checking.as_mut() else {
+        let Some((job, _, _)) = self.jobs.checking.as_mut() else {
             return false;
         };
         let events = job.drain();
@@ -117,7 +118,7 @@ impl App {
         });
         match sections {
             Some(sections) => {
-                self.checking = None;
+                self.jobs.checking = None;
                 let (lines, failed) = leo_services::doctor::report(&sections);
                 let verdict = match failed {
                     0 => "everything checked out".to_string(),
@@ -126,7 +127,7 @@ impl App {
                 };
                 self.unpin();
                 self.pinned = Some((format!("health check: {verdict} (Esc closes)"), lines));
-                self.preview_scroll = 0;
+                self.nav.preview_scroll = 0;
                 if failed == 0 {
                     self.say(Kind::Good, "Everything checked out.");
                 } else {
@@ -138,7 +139,7 @@ impl App {
                 true
             }
             None if done => {
-                self.checking = None;
+                self.jobs.checking = None;
                 self.say(Kind::Bad, "The health check stopped without a result.");
                 true
             }
@@ -150,7 +151,7 @@ impl App {
     /// when something changed and a redraw is warranted.
     /// Drain the streaming `:ask` job, if one is running.
     pub(super) fn pump_ask<B: TuiBackend>(&mut self, terminal: &mut Terminal<B>) -> Result<bool> {
-        let Some(ask) = self.asking.as_mut() else {
+        let Some(ask) = self.jobs.asking.as_mut() else {
             return Ok(false);
         };
 
@@ -186,19 +187,19 @@ impl App {
         }
 
         if let Some(e) = failure {
-            self.asking = None;
+            self.jobs.asking = None;
             self.say(Kind::Bad, e);
             return Ok(true);
         }
 
         if let Some((question, text)) = answered {
-            self.asking = None;
+            self.jobs.asking = None;
             self.answer = Some((question, text));
             return Ok(true);
         }
 
         if let Some((note, body, count)) = expanded {
-            self.asking = None;
+            self.jobs.asking = None;
             if count == 0 {
                 self.say(Kind::Dim, "Nothing could be expanded.");
                 return Ok(true);
@@ -213,8 +214,8 @@ impl App {
                 Action::Ask { note },
                 &mut self.store,
                 Ctx {
-                    current_dir: &self.current_dir,
-                    numbering: &self.numbering,
+                    current_dir: &self.nav.current_dir,
+                    numbering: &self.nav.numbering,
                     selected: None,
                     marked: &[],
                 },
@@ -228,7 +229,7 @@ impl App {
     }
 
     pub(super) fn resume_interrupted(&mut self) {
-        if self.recording.is_some() {
+        if self.jobs.recording.is_some() {
             return;
         }
         let Some(root) = self.recordings.clone() else {
@@ -252,7 +253,7 @@ impl App {
         let mut rec = Recording::new(task::start_resume(dir.clone()), req);
         rec.jotted = session.manifest.jotted();
         rec.session = Some(dir);
-        self.recording = Some(rec);
+        self.jobs.recording = Some(rec);
         let when = session
             .manifest
             .started
@@ -268,7 +269,7 @@ impl App {
         if self.pump_ask(terminal)? {
             return Ok(true);
         }
-        let Some(rec) = self.recording.as_mut() else {
+        let Some(rec) = self.jobs.recording.as_mut() else {
             return Ok(false);
         };
 
@@ -325,6 +326,7 @@ impl App {
 
         if let Some(e) = failure {
             let kept = self
+                .jobs
                 .recording
                 .take()
                 .and_then(|r| r.session)
@@ -345,7 +347,7 @@ impl App {
         // The recording is done; structuring is another request, so it runs on
         // its own thread and the UI keeps animating.
         if let Some((transcript, session)) = finished {
-            let mut rec = self.recording.take().expect("checked above");
+            let mut rec = self.jobs.recording.take().expect("checked above");
             rec.session = session.clone();
             if transcript.trim().is_empty() {
                 if rec.jotted.is_empty() {
@@ -376,7 +378,7 @@ impl App {
                 .and_then(|target| self.store.find_by_index_or_prefix(target))
                 .map(|n| n.body.clone());
             let fallback = fallback_title(session.as_deref());
-            self.recording = Some(Recording {
+            self.jobs.recording = Some(Recording {
                 job: task::start_structuring(
                     transcript,
                     session,
@@ -394,7 +396,7 @@ impl App {
         // Structuring finished: write the note here, on the thread that owns the
         // store.
         if let Some((title, body)) = structured {
-            let rec = self.recording.take().expect("checked above");
+            let rec = self.jobs.recording.take().expect("checked above");
             let ready = ReadyNote { title, body };
             match action::apply_transcript(&mut self.store, &rec.req, "ready", &ready) {
                 Ok(outcome) => {
@@ -414,12 +416,13 @@ impl App {
 
         // The worker ended without a terminal event.
         if self
+            .jobs
             .recording
             .as_ref()
             .map(|r| r.job.is_done())
             .unwrap_or(false)
         {
-            self.recording = None;
+            self.jobs.recording = None;
             self.say(Kind::Warn, "Recording ended unexpectedly.");
         }
         Ok(true)

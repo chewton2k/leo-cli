@@ -50,6 +50,46 @@ pub fn on_path(binary: &str) -> bool {
     })
 }
 
+pub fn validate_directory(directory: &str) -> Result<()> {
+    if directory.is_empty() {
+        return Ok(());
+    }
+    anyhow::ensure!(
+        !directory.starts_with('/')
+            && !directory.contains('\\')
+            && !directory.contains(':')
+            && !directory.chars().any(char::is_control)
+            && directory
+                .split('/')
+                .all(|part| !part.is_empty() && !part.starts_with('.')),
+        "Folders must stay inside your notes: use a relative folder name without . or .."
+    );
+    Ok(())
+}
+
+pub fn contained_path(root: &std::path::Path, relative: &std::path::Path) -> Result<PathBuf> {
+    anyhow::ensure!(
+        relative
+            .components()
+            .all(|part| matches!(part, std::path::Component::Normal(_))),
+        "Path must stay inside your notes"
+    );
+    let mut path = root.to_path_buf();
+    for part in relative.components() {
+        path.push(part);
+        match std::fs::symlink_metadata(&path) {
+            Ok(meta) => anyhow::ensure!(
+                !meta.file_type().is_symlink(),
+                "Notes cannot use symbolic links: {}",
+                path.display()
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

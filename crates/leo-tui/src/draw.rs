@@ -5,7 +5,7 @@ use super::*;
 impl App {
     pub(super) fn draw(&self, frame: &mut Frame) {
         let tabs = self.tabs();
-        let f = view::layout_with_tabs(frame.area(), !tabs.is_empty(), self.focus);
+        let f = view::layout_with_tabs(frame.area(), !tabs.is_empty(), self.nav.focus);
         view::tabs::render(frame, f.tabs, &tabs);
 
         let dir_rows = self.dir_rows();
@@ -15,8 +15,8 @@ impl App {
             frame,
             f.dirs,
             &dir_rows,
-            self.dir_sel,
-            self.focus == Pane::Dirs,
+            self.nav.dir_sel,
+            self.nav.focus == Pane::Dirs,
             "dirs",
             &view::empty::Hint::no_directories(),
         );
@@ -25,16 +25,17 @@ impl App {
             frame,
             f.notes,
             &note_rows,
-            self.note_sel,
-            self.focus == Pane::Notes,
+            self.nav.note_sel,
+            self.nav.focus == Pane::Notes,
             &empty_hint,
-            self.filter.as_deref(),
+            self.nav.filter.as_deref(),
         );
 
         let selected_note = self.selected_id().and_then(|id| self.store.find_note(id));
         // An answer arriving owns the preview: watching it appear is the point of
         // streaming, and it replaces the note only until it is saved into it.
         let streaming = self
+            .jobs
             .asking
             .as_ref()
             .filter(|a| !a.text.trim().is_empty())
@@ -45,7 +46,7 @@ impl App {
                 },
                 body: a.text.clone(),
             });
-        let preview = match (streaming, &self.recording, &self.pinned, selected_note) {
+        let preview = match (streaming, &self.jobs.recording, &self.pinned, selected_note) {
             (Some(live), ..) => live,
             // A live recording owns the preview: that stream is the reason the
             // feature exists.
@@ -60,7 +61,7 @@ impl App {
             (None, None, _, _) if self.answer.is_some() => {
                 let (question, text) = self.answer.as_ref().expect("checked");
                 Preview::Text {
-                    title: format!("from your notes: {question} (Esc closes)"),
+                    title: format!("from your notes: {question} (o sources · Esc closes)"),
                     body: text.clone(),
                 }
             }
@@ -73,6 +74,7 @@ impl App {
         };
         let now = chrono::Utc::now();
         let written = self
+            .writing
             .editing
             .as_ref()
             .filter(|_| !matches!(preview, Preview::Text { .. } | Preview::Live { .. }))
@@ -87,26 +89,27 @@ impl App {
                     view::when::long(note.updated_at, now)
                 ),
                 ed,
-                self.focus == Pane::Preview,
+                self.nav.focus == Pane::Preview,
             ),
             None => view::preview::render(
                 frame,
                 f.preview,
                 &preview,
-                self.preview_scroll,
-                self.focus == Pane::Preview,
-                self.filter.as_deref().filter(|q| !q.trim().is_empty()),
+                self.nav.preview_scroll,
+                self.nav.focus == Pane::Preview,
+                self.nav.filter.as_deref().filter(|q| !q.trim().is_empty()),
             ),
         }
 
         let ghost = self.ghost();
-        let found = (self.mode == Mode::Command && !action::is_command(self.cmd.text()))
-            .then(|| self.filter.as_ref().map(|_| self.note_count()))
+        let found = (self.mode == Mode::Search)
+            .then(|| self.nav.filter.as_ref().map(|_| self.note_count()))
             .flatten();
         view::status::render_command(
             frame,
             f.command,
-            (self.mode == Mode::Command).then(|| view::status::Typing {
+            matches!(self.mode, Mode::Command | Mode::Search).then(|| view::status::Typing {
+                search: self.mode == Mode::Search,
                 text: self.cmd.text(),
                 cursor: self.cmd.cursor(),
                 ghost: ghost.as_deref(),
@@ -117,29 +120,33 @@ impl App {
         // A job's progress replaces the plain busy label, so the user can see
         // both that something is happening and how far along it is.
         let busy = self
+            .jobs
             .asking
             .as_ref()
             .map(|a| view::progress::render(&a.progress, a.since.elapsed()))
             .or_else(|| {
-                self.recording
+                self.jobs
+                    .recording
                     .as_ref()
                     .map(|r| view::progress::render(&r.progress, r.since.elapsed()))
             })
             .or_else(|| {
-                self.checking
+                self.jobs
+                    .checking
                     .as_ref()
                     .map(|(_, p, since)| view::progress::render(p, since.elapsed()))
             })
             .or_else(|| {
-                self.busy
+                self.jobs
+                    .busy
                     .as_ref()
                     .map(|(p, since)| view::progress::render(p, since.elapsed()))
             });
         view::status::render_status(
             frame,
             f.status,
-            &self.current_dir,
-            self.live_message(),
+            &self.nav.current_dir,
+            self.live_message().or_else(|| self.tour_hint()),
             busy.as_deref(),
             self.counts(),
         );
@@ -149,6 +156,9 @@ impl App {
         }
 
         match &self.mode {
+            Mode::Actions { selected } => discovery::render(frame, frame.area(), *selected),
+            Mode::Sources { selected } => self.render_sources(frame, frame.area(), *selected),
+            Mode::Tour => tutorial::render(frame, frame.area(), self.tour.as_ref()),
             Mode::Help => view::help::render_help(frame, frame.area(), self.help_scroll),
             Mode::Confirm { prompt, .. } => view::help::render_confirm(frame, frame.area(), prompt),
             Mode::Welcome => {
@@ -198,12 +208,12 @@ impl App {
     /// Which set of key hints the idle command line shows.
     pub(super) fn hint_place(&self) -> view::hints::Place {
         use view::hints::Place;
-        if self.recording.is_some() {
+        if self.jobs.recording.is_some() {
             return Place::Recording;
         }
-        match self.focus {
+        match self.nav.focus {
             Pane::Dirs => Place::Dirs,
-            Pane::Preview if self.editing.is_some() => Place::Preview,
+            Pane::Preview if self.writing.editing.is_some() => Place::Preview,
             _ => Place::Notes,
         }
     }

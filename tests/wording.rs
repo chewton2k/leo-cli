@@ -10,31 +10,31 @@ use std::path::{Path, PathBuf};
 
 /// What users must no longer be told to type, and what replaced it.
 const STALE: &[(&str, &str)] = &[
-    ("leo model", "leo doctor, or /settings"),
-    ("leo config path", "/settings, then e"),
-    ("`leo config`", "/settings, then e"),
+    ("leo model", "leo doctor, or :settings"),
+    ("leo config path", ":settings, then e"),
+    ("`leo config`", ":settings, then e"),
     ("leo env", "leo doctor"),
-    ("leo model login", "leo doctor, or /settings"),
+    ("leo model login", "leo doctor, or :settings"),
     ("leo model list", "leo doctor"),
     ("leo setup", "leo doctor"),
-    ("/setup", "/doctor"),
-    ("leo config edit", "/settings, then e"),
+    ("/setup", ":doctor"),
+    ("leo config edit", ":settings, then e"),
     ("leo sync", "leo backup"),
     ("serve --anywhere", "leo serve"),
-    ("/sync", "/backup"),
+    ("/sync", ":backup"),
     ("leo listen", "leo record"),
-    ("/listen", "/record"),
+    ("/listen", ":record"),
     ("sync github", "backup github"),
     ("sync connect", "backup connect"),
     ("the t key", "/ then #tag"),
     ("the f key", "/"),
-    ("press a", "/ask"),
+    ("press a", ":ask"),
     ("leo remind", "(removed)"),
     ("leo export", "(removed)"),
-    (":sync init", "leo backup, or /settings"),
-    (":sync connect", "leo backup, or /settings"),
-    (":sync push", "/backup"),
-    (":sync pull", "/backup"),
+    (":sync init", "leo backup, or :settings"),
+    (":sync connect", "leo backup, or :settings"),
+    (":sync push", ":backup"),
+    (":sync pull", ":backup"),
     (":search", "/"),
     (":find", "/"),
     (":view", "j and k"),
@@ -47,36 +47,37 @@ const STALE: &[(&str, &str)] = &[
     (":rmdir", "D in the directories pane"),
     (":pwd", "the status bar"),
     (":clear", "Esc"),
-    (":model", "/settings"),
-    (":config", "/settings"),
+    (":model", ":settings"),
+    (":config", ":settings"),
     ("Ctrl-P  fuzzy", "/"),
-    ("Ctrl-S", "/settings"),
+    ("Ctrl-S", ":settings"),
     ("press l", "press Enter"),
     ("t for raw", "(the live transcript is always shown)"),
     ("Tab for raw", "(the live transcript is always shown)"),
     ("raw text", "(the live transcript is always shown)"),
     ("live notes", "live transcript"),
     ("search -f", "search"),
-    // Commands start with `/` now, and `f` finds.
-    (":new", "/new"),
-    (":edit", "/edit"),
-    (":delete", "/delete"),
-    (":rename", "/rename"),
-    (":undo", "/undo"),
-    (":listen", "/record"),
-    (":ask", "/ask"),
-    (":mkdir", "/mkdir"),
-    (":cd", "/cd"),
-    (":mv", "/mv"),
-    (":sync", "/backup"),
-    (":help", "/help"),
-    (":quit", "/quit"),
-    ("`:` line", "`/` line"),
-    ("the : line", "the / line"),
-    ("The : line", "The / line"),
+    ("/settings", ":settings"),
+    ("/record", ":record"),
+    ("/backup", ":backup"),
+    ("/doctor", ":doctor"),
+    ("/new", ":new"),
+    ("/edit", ":edit"),
+    ("/delete", ":delete"),
+    ("/rename", ":rename"),
+    ("/undo", ":undo"),
+    ("/ask", ":ask"),
+    ("/mkdir", ":mkdir"),
+    ("/cd", ":cd"),
+    ("/mv", ":mv"),
+    ("/help", ":help"),
+    ("/quit", ":quit"),
+    ("/tutorial", ":tutorial"),
+    ("/obsidian", ":obsidian"),
+    ("/trash", ":trash"),
+    ("/pin", ":pin"),
     ("Ctrl-P  fuzzy", "f, or Ctrl-F"),
     ("Ctrl-P the same as", "Ctrl-F"),
-    ("the : menu", "the / menu"),
 ];
 
 fn root() -> PathBuf {
@@ -118,7 +119,8 @@ fn shipped_lines(path: &Path) -> Vec<(usize, String)> {
 /// Whether `line` mentions `word` as a whole word: `:list` is not in
 /// `:listen`, and `:config` is not in the Rust path `leo::config`.
 fn mentions(line: &str, word: &str) -> bool {
-    let is_word = |c: char| c.is_alphanumeric() || c == '_' || c == ':';
+    let is_word =
+        |c: char| c.is_alphanumeric() || c == '_' || c == ':' || c == '/' || c == '#' || c == '\\';
     line.match_indices(word).any(|(i, _)| {
         let before = line[..i].chars().next_back();
         let after = line[i + word.len()..].chars().next();
@@ -176,4 +178,12 @@ fn nothing_shown_to_a_user_names_a_command_that_is_gone() {
         "stale instructions:\n{}",
         found.join("\n")
     );
+}
+
+#[test]
+fn command_instructions_are_distinguished_from_routes_and_links() {
+    assert!(mentions("type /settings", "/settings"));
+    assert!(!mentions("https://obsidian.md", "/obsidian"));
+    assert!(!mentions("go('#/new')", "/new"));
+    assert!(!mentions("type :settings", "/settings"));
 }

@@ -230,14 +230,16 @@
       settle();
     });
 
-    document.addEventListener('pointerup', () => {
+    function onPointerUp() {
       if (!pressed) return;
       clearTimeout(release);
       release = setTimeout(() => {
         pressed = false;
         settle();
       }, 400);
-    });
+    }
+
+    document.addEventListener('pointerup', onPointerUp);
 
     function shifted(line) {
       if (editing && line >= editing.originalEnd) return line + editing.end - editing.originalEnd;
@@ -299,6 +301,7 @@
     draw();
 
     return {
+      destroy: () => { stop(); clearTimeout(release); document.removeEventListener('pointerup', onPointerUp); },
       source: () => lines.join('\n'),
       stop,
       isEditing: () => editing !== null,

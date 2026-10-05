@@ -18,7 +18,7 @@ pub enum Place {
     Recording,
 }
 
-pub const MOST: usize = 5;
+pub const MOST: usize = 6;
 
 /// Key and what it does, most useful first. Fitting drops from the end.
 pub fn for_place(place: Place) -> &'static [(&'static str, &'static str)] {
@@ -26,14 +26,16 @@ pub fn for_place(place: Place) -> &'static [(&'static str, &'static str)] {
         Place::Notes => &[
             ("Enter", "write"),
             ("n", "new"),
-            ("/", "find or command"),
+            ("/", "search"),
+            ("F2", "actions"),
             ("D", "delete"),
             ("?", "help"),
         ],
         Place::Dirs => &[
             ("Enter", "open"),
             ("N", "new folder"),
-            ("/", "find or command"),
+            ("/", "search"),
+            ("F2", "actions"),
             ("D", "delete"),
             ("?", "help"),
         ],
@@ -61,8 +63,13 @@ pub fn spans(hints: &[(&'static str, &'static str)], width: u16) -> Vec<Span<'st
 
     let help = hints.iter().find(|(k, _)| *k == "?");
     let mut budget = (width as usize).saturating_sub(help.map(cost).unwrap_or(0));
+    let actions = hints
+        .iter()
+        .find(|(k, _)| *k == "F2")
+        .filter(|hint| cost(hint) <= budget);
+    budget = budget.saturating_sub(actions.map(cost).unwrap_or(0));
     let mut shown: Vec<&(&'static str, &'static str)> = Vec::new();
-    for hint in hints.iter().filter(|(k, _)| *k != "?") {
+    for hint in hints.iter().filter(|(k, _)| *k != "?" && *k != "F2") {
         let c = cost(hint);
         if c > budget {
             break;
@@ -70,7 +77,9 @@ pub fn spans(hints: &[(&'static str, &'static str)], width: u16) -> Vec<Span<'st
         budget -= c;
         shown.push(hint);
     }
+    shown.extend(actions);
     shown.extend(help);
+    shown.sort_by_key(|hint| hints.iter().position(|entry| entry == *hint));
 
     let key_style = Style::default()
         .fg(theme::accent())
@@ -154,6 +163,16 @@ mod tests {
         let t = text(&s);
         assert!(t.contains("? help"), "{t:?}");
         assert!(t.chars().count() <= 24, "{t:?} is wider than 24");
+    }
+
+    #[test]
+    fn actions_remain_discoverable_when_other_shortcuts_do_not_fit() {
+        for place in [Place::Notes, Place::Dirs] {
+            let t = text(&spans(for_place(place), 24));
+            assert!(t.contains("F2 actions"), "{t:?}");
+            assert!(t.contains("? help"), "{t:?}");
+            assert!(t.chars().count() <= 24, "{t:?}");
+        }
     }
 
     #[test]

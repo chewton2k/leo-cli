@@ -79,7 +79,7 @@ impl App {
             event::KeyCode::Esc | event::KeyCode::Char('q') => {
                 self.welcome = None;
                 self.mode = Mode::Normal;
-                self.say(Kind::Dim, "/doctor checks everything any time.");
+                self.say(Kind::Dim, ":doctor checks everything any time.");
             }
             event::KeyCode::Char('j') | event::KeyCode::Down => {
                 screen.selected = (screen.selected + 1).min(last);

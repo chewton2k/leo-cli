@@ -470,7 +470,7 @@ pub fn start_structuring(
 /// this is nearly always a permission that was never granted.
 const SILENT_RECORDING: &str = "No sound was recorded. macOS may not be letting \
      this terminal use the microphone: System Settings > Privacy & Security > \
-     Microphone, then restart the terminal. /doctor re-checks it.";
+     Microphone, then restart the terminal. :doctor re-checks it.";
 
 const LIVE_MOST_SECS: u64 = 20;
 

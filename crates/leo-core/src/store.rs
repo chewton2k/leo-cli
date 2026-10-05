@@ -216,13 +216,12 @@ fn hash_str(text: &str) -> u64 {
 }
 
 fn write_atomic(path: &Path, text: &str) -> Result<()> {
-    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("note");
-    let temp = path.with_file_name(format!(".{name}.leo-tmp"));
-    fs::write(&temp, text)?;
-    if let Err(e) = fs::rename(&temp, path) {
-        let _ = fs::remove_file(&temp);
-        return Err(e.into());
-    }
+    use std::io::Write;
+    let parent = path.parent().context("note has no parent directory")?;
+    let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+    temp.write_all(text.as_bytes())?;
+    temp.as_file().sync_all()?;
+    temp.persist(path).map_err(|error| error.error)?;
     Ok(())
 }
 
@@ -233,6 +232,10 @@ fn is_clean(path: &Path, expected: u64) -> bool {
 fn fingerprint_of(notes_dir: &Path) -> u64 {
     let mut paths = HashSet::new();
     let _ = collect_md_paths(notes_dir, &mut paths);
+    let directories = notes_dir.join("directories.json");
+    if directories.exists() {
+        paths.insert(directories);
+    }
     paths.iter().fold(0u64, |sum, path| {
         let (len, nanos) = fs::metadata(path)
             .map(|m| {
@@ -283,7 +286,7 @@ fn old_data_path() -> Result<PathBuf> {
 }
 
 fn load_directories(notes_dir: &Path) -> Result<Vec<String>> {
-    let path = notes_dir.join("directories.json");
+    let path = crate::paths::contained_path(notes_dir, Path::new("directories.json"))?;
     if path.exists() {
         let raw = fs::read_to_string(&path)?;
         Ok(serde_json::from_str(&raw)?)
@@ -293,10 +296,8 @@ fn load_directories(notes_dir: &Path) -> Result<Vec<String>> {
 }
 
 fn save_directories(notes_dir: &Path, directories: &[String]) -> Result<()> {
-    fs::write(
-        notes_dir.join("directories.json"),
-        serde_json::to_string_pretty(directories)?,
-    )?;
+    let path = crate::paths::contained_path(notes_dir, Path::new("directories.json"))?;
+    write_atomic(&path, &serde_json::to_string_pretty(directories)?)?;
     Ok(())
 }
 
@@ -308,6 +309,9 @@ fn collect_md_paths(dir: &Path, result: &mut HashSet<PathBuf>) -> Result<()> {
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
+        if entry.file_type()?.is_symlink() {
+            continue;
+        }
         if path.is_dir() {
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if !name.starts_with('.') {
@@ -333,7 +337,9 @@ pub struct Trashed {
 }
 
 fn trash_entries(notes_dir: &Path) -> Vec<(PathBuf, Note, DateTime<Utc>)> {
-    let trash = notes_dir.join(TRASH);
+    let Ok(trash) = crate::paths::contained_path(notes_dir, Path::new(TRASH)) else {
+        return Vec::new();
+    };
     let mut paths = HashSet::new();
     if collect_md_paths(&trash, &mut paths).is_err() {
         return Vec::new();
@@ -386,7 +392,11 @@ fn collect_notes(
         return Ok(());
     }
     for entry in fs::read_dir(dir)? {
-        let path = entry?.path();
+        let entry = entry?;
+        let path = entry.path();
+        if entry.file_type()?.is_symlink() {
+            continue;
+        }
         if path.is_dir() {
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if !name.starts_with('.') {
@@ -546,7 +556,8 @@ impl Store {
 
     pub fn load_from(notes_dir: &Path) -> Result<Self> {
         fs::create_dir_all(notes_dir)?;
-        let directories = load_directories(notes_dir)?;
+        let mut directories = load_directories(notes_dir)?;
+        directories.retain(|dir| crate::paths::validate_directory(dir).is_ok());
         let mut found = Vec::new();
         let mut unreadable = Vec::new();
         collect_notes(notes_dir, notes_dir, &mut found, &mut unreadable)?;
@@ -554,7 +565,6 @@ impl Store {
 
         // The directory list on disk only needs to remember empty directories:
         // every note's directory, and its parents, is known from where it is.
-        let mut directories = directories;
         for note in &notes {
             add_with_parents(&mut directories, &note.directory);
         }
@@ -582,18 +592,25 @@ impl Store {
 
     pub fn save_files(&self) -> Result<()> {
         fs::create_dir_all(&self.notes_dir)?;
+        for note in &self.notes {
+            self.validate_directory(&note.directory)?;
+        }
+        for dir in &self.directories {
+            self.validate_directory(dir)?;
+        }
         let mut seen = self.seen.borrow_mut();
         let targets = self.assign_paths(&seen);
         let live: HashSet<&str> = self.notes.iter().map(|n| n.id.as_str()).collect();
 
         for note in &self.notes {
             let target = targets[&note.id].clone();
+            crate::paths::contained_path(&self.notes_dir, target.strip_prefix(&self.notes_dir)?)?;
             let content = note_to_markdown(note)?;
             let model = hash_str(&content);
             let previous = seen.get(&note.id).cloned();
 
             if let Some(previous) = &previous {
-                let old_path = self.notes_dir.join(&previous.path);
+                let old_path = crate::paths::contained_path(&self.notes_dir, &previous.path)?;
                 if previous.model == model && old_path == target {
                     continue;
                 }
@@ -613,7 +630,7 @@ impl Store {
             }
             write_atomic(&target, &content)?;
             if let Some(previous) = &previous {
-                let old_path = self.notes_dir.join(&previous.path);
+                let old_path = crate::paths::contained_path(&self.notes_dir, &previous.path)?;
                 if !same_file(&old_path, &target) {
                     let _ = fs::remove_file(old_path);
                 }
@@ -641,7 +658,7 @@ impl Store {
             let Some(entry) = seen.remove(&id) else {
                 continue;
             };
-            let path = self.notes_dir.join(&entry.path);
+            let path = crate::paths::contained_path(&self.notes_dir, &entry.path)?;
             if is_clean(&path, entry.disk) {
                 self.move_to_trash(&path)?;
             }
@@ -666,6 +683,7 @@ impl Store {
     }
 
     fn conflict_copy(&self, note: &Note) -> Result<()> {
+        self.validate_directory(&note.directory)?;
         let mut copy = note.clone();
         copy.id = uuid::Uuid::new_v4().to_string();
         copy.title = format!("{}{CONFLICT_SUFFIX}", note.title);
@@ -688,7 +706,10 @@ impl Store {
         let relative = path
             .strip_prefix(&self.notes_dir)
             .context("path outside notes_dir")?;
-        let dest = unique_path(&self.notes_dir.join(TRASH).join(relative));
+        let dest = unique_path(&crate::paths::contained_path(
+            &self.notes_dir,
+            &Path::new(TRASH).join(relative),
+        )?);
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -780,6 +801,8 @@ impl Store {
         tags: Vec<String>,
         directory: &str,
     ) -> Result<&Note> {
+        self.validate_directory(directory)?;
+        add_with_parents(&mut self.directories, directory);
         let note = Note::new(title, body, tags, directory);
         self.notes.push(note);
         Ok(self.notes.last().unwrap())
@@ -908,20 +931,7 @@ impl Store {
     /// for appearing in its title, tags or text, and the best-scoring notes
     /// win. A question whose words appear nowhere finds nothing.
     pub fn relevant(&self, question: &str, limit: usize) -> Vec<&Note> {
-        const FILLER: &[&str] = &[
-            "the", "and", "for", "are", "was", "were", "what", "which", "who", "whom", "when",
-            "where", "why", "how", "did", "does", "do", "about", "with", "that", "this", "these",
-            "those", "from", "into", "have", "has", "had", "you", "your", "our", "can", "could",
-            "would", "should", "tell", "explain", "cover", "covered", "say", "said", "there",
-            "their", "they", "them", "then", "than", "been", "being", "any", "all", "some", "more",
-            "most", "also", "just", "not", "but", "out", "use", "used", "using", "give", "show",
-        ];
-        let words: Vec<String> = question
-            .to_lowercase()
-            .split(|c: char| !c.is_alphanumeric())
-            .filter(|w| w.len() >= 3 && !FILLER.contains(w))
-            .map(str::to_string)
-            .collect();
+        let words = crate::notes::question_words(question);
         if words.is_empty() {
             return Vec::new();
         }
@@ -1138,8 +1148,16 @@ impl Store {
 
     // ── Directory operations ───────────────────────────────────────────────
 
+    pub fn validate_directory(&self, directory: &str) -> Result<()> {
+        crate::paths::validate_directory(directory)?;
+        crate::paths::contained_path(&self.notes_dir, Path::new(directory))?;
+        Ok(())
+    }
+
     pub fn create_dir(&mut self, path: &str) -> bool {
-        let path = path.trim_matches('/');
+        if self.validate_directory(path).is_err() {
+            return false;
+        }
         if path.is_empty() {
             return false;
         }
@@ -1297,6 +1315,7 @@ impl Store {
     }
 
     pub fn move_note(&mut self, id_prefix: &str, new_dir: &str) -> Option<String> {
+        self.validate_directory(new_dir).ok()?;
         let note = self.find_note_mut(id_prefix)?;
         let from = note.directory.clone();
         let (id, title) = (note.id.clone(), note.title.clone());
@@ -3018,5 +3037,76 @@ mod tests {
         let bodies: HashSet<String> = reloaded.notes.iter().map(|n| n.body.clone()).collect();
         assert!(bodies.contains("the original, edited in leo"), "{bodies:?}");
         assert!(bodies.contains("the copy, edited"), "{bodies:?}");
+    }
+    #[test]
+    fn folders_cannot_escape_notes_or_use_reserved_hidden_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = Store::load_from(&temp.path().join("notes")).unwrap();
+        for dir in [
+            "../outside",
+            "a/../../outside",
+            "/outside",
+            "a\\..\\outside",
+            "C:outside",
+            ".trash",
+            ".git",
+            "a/.hidden",
+            "a//b",
+        ] {
+            assert!(
+                store.create_note("Escape", "body", vec![], dir).is_err(),
+                "{dir}"
+            );
+            assert!(!store.create_dir(dir), "{dir}");
+        }
+        store.save().unwrap();
+        assert!(store.notes.is_empty());
+        assert!(!temp.path().join("outside").exists());
+    }
+
+    #[test]
+    fn changing_a_public_note_directory_is_checked_before_any_file_is_written() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = Store::load_from(&temp.path().join("notes")).unwrap();
+        store.create_note("Escape", "body", vec![], "").unwrap();
+        store.notes[0].directory = "../outside".to_string();
+        assert!(store.save_files().is_err());
+        assert!(!temp.path().join("outside").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symbolic_links_neither_load_outside_notes_nor_allow_writes_outside() {
+        let temp = tempfile::tempdir().unwrap();
+        let notes = temp.path().join("notes");
+        let outside = temp.path().join("outside");
+        fs::create_dir_all(&notes).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("Private.md"), "private").unwrap();
+        std::os::unix::fs::symlink(&outside, notes.join("linked")).unwrap();
+        std::os::unix::fs::symlink(outside.join("Private.md"), notes.join("Alias.md")).unwrap();
+        let mut store = Store::load_from(&notes).unwrap();
+        assert!(store.notes.is_empty());
+        assert!(store
+            .create_note("Escape", "body", vec![], "linked")
+            .is_err());
+        assert!(!store.create_dir("linked/nested"));
+        assert_eq!(
+            fs::read_to_string(outside.join("Private.md")).unwrap(),
+            "private"
+        );
+    }
+
+    #[test]
+    fn a_new_empty_folder_on_disk_changes_the_store_fingerprint() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = Store::load_from(&temp.path().join("notes")).unwrap();
+        store.save_files().unwrap();
+        let mut other = Store::load_from(&store.notes_dir).unwrap();
+        other.create_dir("empty");
+        other.save_files().unwrap();
+        assert!(store.changed_on_disk());
+        store.refresh().unwrap();
+        assert!(store.dir_exists("empty"));
     }
 }

@@ -79,6 +79,7 @@ fn steps_missing(_: &std::path::Path) -> Vec<leo_services::health::Check> {
 /// Notes are sorted newest-first, so find one by title rather than index.
 fn select_titled(app: &mut App, title: &str) {
     let pos = app
+        .nav
         .numbering
         .iter()
         .position(|id| {
@@ -88,7 +89,7 @@ fn select_titled(app: &mut App, title: &str) {
                 .unwrap_or(false)
         })
         .expect("note is in the current listing");
-    app.note_sel = pos;
+    app.nav.note_sel = pos;
 }
 
 #[test]
@@ -111,6 +112,7 @@ fn tab_completes_a_note_reference_to_its_number() {
     // Notes list newest-first, so derive the expected number rather than
     // assuming creation order.
     let expected = app
+        .nav
         .numbering
         .iter()
         .position(|id| {
@@ -230,12 +232,12 @@ fn the_key_hints_follow_the_focused_pane() {
     let (mut app, _d) = temp_app();
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 20)).unwrap();
 
-    app.focus = Pane::Notes;
+    app.nav.focus = Pane::Notes;
     terminal.draw(|frame| app.draw(frame)).unwrap();
     let notes = terminal.backend().to_string();
     assert!(notes.contains("n new"), "{notes}");
 
-    app.focus = Pane::Dirs;
+    app.nav.focus = Pane::Dirs;
     terminal.draw(|frame| app.draw(frame)).unwrap();
     let dirs = terminal.backend().to_string();
     assert!(dirs.contains("N new folder"), "{dirs}");
@@ -252,7 +254,7 @@ fn the_frame_renders_the_completed_command_with_its_hint() {
     terminal.draw(|frame| app.draw(frame)).unwrap();
     let out = terminal.backend().to_string();
     assert!(
-        out.contains("/rename"),
+        out.contains(":rename"),
         "ghost hint is not rendered:\n{out}"
     );
 }
@@ -268,12 +270,12 @@ fn jumping_to_a_note_follows_it_into_its_directory() {
         .map(|n| n.id.clone())
         .unwrap();
 
-    assert_eq!(app.current_dir, "");
+    assert_eq!(app.nav.current_dir, "");
     app.jump_to(&nested);
 
-    assert_eq!(app.current_dir, "cs130");
+    assert_eq!(app.nav.current_dir, "cs130");
     assert_eq!(app.selected_id(), Some(&nested), "the note is selected");
-    assert_eq!(app.focus, Pane::Notes);
+    assert_eq!(app.nav.focus, Pane::Notes);
 }
 
 #[test]
@@ -287,7 +289,7 @@ fn jumping_to_a_note_in_the_current_directory_only_moves_the_selection() {
         .map(|n| n.id.clone())
         .unwrap();
     app.jump_to(&id);
-    assert_eq!(app.current_dir, "");
+    assert_eq!(app.nav.current_dir, "");
     assert_eq!(app.selected_id(), Some(&id));
 }
 
@@ -341,11 +343,11 @@ fn enter_on_a_note_writes_in_it_and_esc_saves_it() {
     let before = app.store.find_note(&id).unwrap().updated_at;
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
 
-    app.focus = Pane::Notes;
+    app.nav.focus = Pane::Notes;
     app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
         .unwrap();
-    assert_eq!(app.focus, Pane::Preview);
-    assert!(app.editing.is_some());
+    assert_eq!(app.nav.focus, Pane::Preview);
+    assert!(app.writing.editing.is_some());
     app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
         .unwrap();
     type_in(&mut app, &mut terminal, "hjkl typed q and D");
@@ -357,8 +359,8 @@ fn enter_on_a_note_writes_in_it_and_esc_saves_it() {
     app.on_key(press_code(event::KeyCode::Esc), &mut terminal)
         .unwrap();
 
-    assert!(app.editing.is_none());
-    assert_eq!(app.focus, Pane::Notes);
+    assert!(app.writing.editing.is_none());
+    assert_eq!(app.nav.focus, Pane::Notes);
     assert!(!app.quit, "q while writing must type, not quit");
     let note = app.store.find_note(&id).unwrap();
     assert!(
@@ -377,7 +379,7 @@ fn writing_saves_itself_after_a_pause() {
     select_titled(&mut app, "Graph traversals");
     let id = app.selected_id().cloned().unwrap();
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
-    app.focus = Pane::Notes;
+    app.nav.focus = Pane::Notes;
     app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
         .unwrap();
     type_in(&mut app, &mut terminal, " more");
@@ -386,11 +388,11 @@ fn writing_saves_itself_after_a_pause() {
         !app.store.find_note(&id).unwrap().body.ends_with(" more"),
         "saved too eagerly"
     );
-    app.editing.as_mut().unwrap().last_edit =
+    app.writing.editing.as_mut().unwrap().last_edit =
         Some(std::time::Instant::now() - crate::editor::AUTOSAVE);
     app.pump_editor();
     assert!(app.store.find_note(&id).unwrap().body.ends_with(" more"));
-    assert!(app.editing.is_some(), "still writing");
+    assert!(app.writing.editing.is_some(), "still writing");
 }
 
 #[test]
@@ -399,10 +401,10 @@ fn clicking_a_box_in_the_note_ticks_it() {
     select_titled(&mut app, "Rust ownership");
     let id = app.selected_id().cloned().unwrap();
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
-    app.focus = Pane::Notes;
+    app.nav.focus = Pane::Notes;
     app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
         .unwrap();
-    app.editing.as_mut().unwrap().place(1, 0);
+    app.writing.editing.as_mut().unwrap().place(1, 0);
     terminal.draw(|f| app.draw(f)).unwrap();
     let screen = terminal.backend().to_string();
     let (y, line) = screen
@@ -433,11 +435,15 @@ fn n_asks_for_a_title_and_opens_the_new_note_for_writing() {
     app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
         .unwrap();
     assert_eq!(app.store.notes.len(), before + 1);
-    let ed = app.editing.as_ref().expect("writing in the new note");
+    let ed = app
+        .writing
+        .editing
+        .as_ref()
+        .expect("writing in the new note");
     let note = app.store.find_note(&ed.id).unwrap();
     assert_eq!(note.title, "Shopping");
     assert_eq!(note.tags, vec!["home"]);
-    assert_eq!(app.focus, Pane::Preview);
+    assert_eq!(app.nav.focus, Pane::Preview);
 }
 
 #[test]
@@ -445,11 +451,11 @@ fn a_note_being_written_is_not_reloaded_from_under_the_cursor() {
     let (mut app, _d) = temp_app();
     select_titled(&mut app, "Graph traversals");
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
-    app.focus = Pane::Notes;
+    app.nav.focus = Pane::Notes;
     app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
         .unwrap();
     std::fs::write(app.store.notes_dir.join("Outside.md"), "from elsewhere").unwrap();
-    app.last_disk_check = None;
+    app.jobs.last_disk_check = None;
     assert!(!app.maybe_reload_from_disk());
 }
 
@@ -458,17 +464,17 @@ fn a_note_waiting_for_an_answer_cannot_be_written_over() {
     let (mut app, _d) = temp_app();
     select_titled(&mut app, "Graph traversals");
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
-    app.asking = Some(Asking {
+    app.jobs.asking = Some(Asking {
         job: task::start_ask(String::new(), String::new(), String::new()),
         question: None,
         progress: view::progress::Progress::spinner("Asking"),
         since: std::time::Instant::now(),
         text: String::new(),
     });
-    app.focus = Pane::Notes;
+    app.nav.focus = Pane::Notes;
     app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
         .unwrap();
-    assert!(app.editing.is_none());
+    assert!(app.writing.editing.is_none());
 }
 
 #[test]
@@ -477,7 +483,7 @@ fn pasting_while_writing_inserts_the_text_as_is() {
     select_titled(&mut app, "Graph traversals");
     let id = app.selected_id().cloned().unwrap();
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
-    app.focus = Pane::Notes;
+    app.nav.focus = Pane::Notes;
     app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
         .unwrap();
     app.on_paste("\n- one\n- two");
@@ -499,12 +505,12 @@ fn the_selection_follows_a_note_that_moved_in_the_list() {
     let (mut app, _d) = temp_app();
     select_titled(&mut app, "Rust ownership");
     let id = app.selected_id().cloned().unwrap();
-    let before = app.note_sel;
+    let before = app.nav.note_sel;
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
     app.on_intent(Intent::ToggleCheckbox, &mut terminal)
         .unwrap();
     assert_ne!(
-        app.numbering.iter().position(|n| *n == id),
+        app.nav.numbering.iter().position(|n| *n == id),
         Some(before),
         "fixture did not reorder"
     );
@@ -516,14 +522,14 @@ fn the_selection_follows_a_note_that_moved_in_the_list() {
 fn marked_notes_are_deleted_together_and_come_back_together() {
     let (mut app, _d) = temp_app();
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
-    app.focus = Pane::Notes;
+    app.nav.focus = Pane::Notes;
     let before = app.store.notes.len();
 
     select_titled(&mut app, "Rust ownership");
     app.on_key(press(' '), &mut terminal).unwrap();
     select_titled(&mut app, "Graph traversals");
     app.on_key(press(' '), &mut terminal).unwrap();
-    assert_eq!(app.marked.len(), 2);
+    assert_eq!(app.nav.marked.len(), 2);
 
     terminal.draw(|f| app.draw(f)).unwrap();
     let out = terminal.backend().to_string();
@@ -541,7 +547,7 @@ fn marked_notes_are_deleted_together_and_come_back_together() {
         .map(|(_, t)| t.to_string())
         .unwrap_or_default();
     assert!(said.contains("u brings"), "{said}");
-    assert!(app.marked.is_empty(), "marks outlived the notes");
+    assert!(app.nav.marked.is_empty(), "marks outlived the notes");
 
     app.on_intent(Intent::Undo, &mut terminal).unwrap();
     assert_eq!(app.store.notes.len(), before);
@@ -551,15 +557,15 @@ fn marked_notes_are_deleted_together_and_come_back_together() {
 fn space_again_unmarks_and_esc_clears_every_mark() {
     let (mut app, _d) = temp_app();
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
-    app.focus = Pane::Notes;
+    app.nav.focus = Pane::Notes;
     app.on_key(press(' '), &mut terminal).unwrap();
     app.on_key(press(' '), &mut terminal).unwrap();
-    assert!(app.marked.is_empty());
+    assert!(app.nav.marked.is_empty());
 
     app.on_key(press(' '), &mut terminal).unwrap();
     app.on_key(press_code(event::KeyCode::Esc), &mut terminal)
         .unwrap();
-    assert!(app.marked.is_empty());
+    assert!(app.nav.marked.is_empty());
 }
 
 // ── typing while recording ─────────────────────────────────────────────
@@ -572,7 +578,7 @@ fn recording_app(events: Vec<TaskEvent>) -> (App, tempfile::TempDir) {
         append_to: None,
         dir: String::new(),
     };
-    app.recording = Some(Recording::new(task::Job::scripted(events), req));
+    app.jobs.recording = Some(Recording::new(task::Job::scripted(events), req));
     (app, d)
 }
 
@@ -596,7 +602,7 @@ fn typing_while_recording_jots_points() {
     app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
         .unwrap();
 
-    let rec = app.recording.as_ref().unwrap();
+    let rec = app.jobs.recording.as_ref().unwrap();
     assert!(!rec.job.stop_requested(), "Enter stopped the recording");
     assert_eq!(rec.jotted.len(), 1);
     assert_eq!(rec.jotted[0].text, "trees are graphs");
@@ -659,7 +665,7 @@ fn a_recording_draws_at_every_terminal_size_without_panicking() {
 fn resizing_to_any_size_never_panics() {
     let (mut app, _d) = recording_app(vec![]);
     for focus in [Pane::Dirs, Pane::Notes, Pane::Preview] {
-        app.focus = focus;
+        app.nav.focus = focus;
         for width in (0..=140u16).step_by(7).chain([59, 60, 61, 89, 90, 91]) {
             for height in [0u16, 1, 2, 3, 5, 11, 12, 13, 24, 60] {
                 let resized = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -699,7 +705,7 @@ fn the_arrow_keys_scroll_back_through_the_live_transcript_without_typing() {
         out.contains("scrolled back"),
         "no sign it is not live:\n{out}"
     );
-    assert_eq!(app.recording.as_ref().unwrap().jot, "half");
+    assert_eq!(app.jobs.recording.as_ref().unwrap().jot, "half");
 
     app.on_key(press_code(event::KeyCode::Home), &mut terminal)
         .unwrap();
@@ -723,7 +729,7 @@ fn page_up_moves_a_screenful() {
     live_screen(&mut app);
     app.on_key(press_code(event::KeyCode::PageUp), &mut terminal)
         .unwrap();
-    let rec = app.recording.as_ref().unwrap();
+    let rec = app.jobs.recording.as_ref().unwrap();
     assert!(!rec.scroll.is_following());
 }
 
@@ -733,8 +739,11 @@ fn the_wheel_over_the_transcript_scrolls_it() {
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
     app.pump_tasks(&mut terminal).unwrap();
     live_screen(&mut app);
-    let frames =
-        view::layout_with_tabs(Rect::new(0, 0, 120, 24), !app.tabs().is_empty(), app.focus);
+    let frames = view::layout_with_tabs(
+        Rect::new(0, 0, 120, 24),
+        !app.tabs().is_empty(),
+        app.nav.focus,
+    );
     let over = event::MouseEvent {
         kind: event::MouseEventKind::ScrollUp,
         column: frames.preview.x + 2,
@@ -742,7 +751,7 @@ fn the_wheel_over_the_transcript_scrolls_it() {
         modifiers: event::KeyModifiers::NONE,
     };
     app.on_mouse(over, &mut terminal).unwrap();
-    assert!(!app.recording.as_ref().unwrap().scroll.is_following());
+    assert!(!app.jobs.recording.as_ref().unwrap().scroll.is_following());
     assert!(!live_screen(&mut app).contains("ENDMARK"));
 }
 
@@ -753,7 +762,8 @@ fn the_transcript_follows_again_ten_seconds_after_the_last_scroll() {
     app.pump_tasks(&mut terminal).unwrap();
     live_screen(&mut app);
     let eleven_seconds_ago = Instant::now() - Duration::from_secs(11);
-    app.recording
+    app.jobs
+        .recording
         .as_ref()
         .unwrap()
         .scroll
@@ -817,7 +827,7 @@ fn ctrl_p_pauses_and_resumes_a_recording() {
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
 
     app.on_key(ctrl('p'), &mut terminal).unwrap();
-    assert!(app.recording.as_ref().unwrap().job.paused());
+    assert!(app.jobs.recording.as_ref().unwrap().job.paused());
     terminal.draw(|f| app.draw(f)).unwrap();
     assert!(
         terminal.backend().to_string().contains("paused"),
@@ -826,8 +836,8 @@ fn ctrl_p_pauses_and_resumes_a_recording() {
     );
 
     app.on_key(ctrl('p'), &mut terminal).unwrap();
-    assert!(!app.recording.as_ref().unwrap().job.paused());
-    assert!(!app.recording.as_ref().unwrap().job.stop_requested());
+    assert!(!app.jobs.recording.as_ref().unwrap().job.paused());
+    assert!(!app.jobs.recording.as_ref().unwrap().job.stop_requested());
 }
 
 /// A typed point is stamped with recording time, which leaves out pauses, so
@@ -837,14 +847,14 @@ fn a_points_time_leaves_out_paused_time() {
     let (mut app, _d) = recording_app(vec![]);
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
     {
-        let rec = app.recording.as_mut().unwrap();
+        let rec = app.jobs.recording.as_mut().unwrap();
         rec.started -= std::time::Duration::from_secs(130);
         rec.paused_total = std::time::Duration::from_secs(100);
     }
     type_str(&mut app, "the point", &mut terminal);
     app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
         .unwrap();
-    let at = app.recording.as_ref().unwrap().jotted[0].at_secs;
+    let at = app.jobs.recording.as_ref().unwrap().jotted[0].at_secs;
     assert!((29..=31).contains(&at), "stamped {at}s, expected about 30");
 }
 
@@ -860,7 +870,7 @@ fn one_esc_only_asks_and_a_second_stops_keeping_a_half_typed_point() {
     app.on_key(press_code(event::KeyCode::Esc), &mut terminal)
         .unwrap();
     assert!(
-        !app.recording.as_ref().unwrap().job.stop_requested(),
+        !app.jobs.recording.as_ref().unwrap().job.stop_requested(),
         "one Esc stopped the recording"
     );
     let said = app
@@ -869,11 +879,11 @@ fn one_esc_only_asks_and_a_second_stops_keeping_a_half_typed_point() {
         .map(|m| m.1.clone())
         .unwrap_or_default();
     assert!(said.contains("Esc again"), "{said}");
-    assert_eq!(app.recording.as_ref().unwrap().jot, "last thing");
+    assert_eq!(app.jobs.recording.as_ref().unwrap().jot, "last thing");
 
     app.on_key(press_code(event::KeyCode::Esc), &mut terminal)
         .unwrap();
-    let rec = app.recording.as_ref().unwrap();
+    let rec = app.jobs.recording.as_ref().unwrap();
     assert!(rec.job.stop_requested());
     assert_eq!(rec.jotted.last().unwrap().text, "last thing");
 }
@@ -884,12 +894,12 @@ fn an_old_esc_does_not_count_towards_stopping() {
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
     app.on_key(press_code(event::KeyCode::Esc), &mut terminal)
         .unwrap();
-    app.recording.as_mut().unwrap().stop_armed =
+    app.jobs.recording.as_mut().unwrap().stop_armed =
         Instant::now().checked_sub(Duration::from_secs(10));
     app.on_key(press_code(event::KeyCode::Esc), &mut terminal)
         .unwrap();
     assert!(
-        !app.recording.as_ref().unwrap().job.stop_requested(),
+        !app.jobs.recording.as_ref().unwrap().job.stop_requested(),
         "an Esc from ten seconds ago counted"
     );
 }
@@ -952,7 +962,7 @@ fn typed_points_are_saved_even_without_speech() {
     let before = app.store.notes.len();
 
     app.pump_tasks(&mut terminal).unwrap();
-    assert!(app.recording.is_none());
+    assert!(app.jobs.recording.is_none());
     assert_eq!(app.store.notes.len(), before + 1);
     assert!(app
         .store
@@ -982,7 +992,7 @@ fn a_saved_recording_is_selected_and_shown() {
         "selected {:?}",
         note.title
     );
-    assert_eq!(app.focus, Pane::Notes);
+    assert_eq!(app.nav.focus, Pane::Notes);
 }
 
 /// The bug this guards: work below the UI printed to stdout while the panes
@@ -1023,8 +1033,8 @@ fn pumping_with_nothing_queued_reports_no_change() {
 #[test]
 fn d_in_the_dirs_pane_deletes_the_directory_and_u_brings_it_back() {
     let (mut app, _d) = temp_app();
-    app.focus = Pane::Dirs;
-    app.dir_sel = 0;
+    app.nav.focus = Pane::Dirs;
+    app.nav.dir_sel = 0;
     let notes_before = app.store.notes.len();
 
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(90, 24)).unwrap();
@@ -1043,9 +1053,9 @@ fn d_in_the_dirs_pane_deletes_the_directory_and_u_brings_it_back() {
 #[test]
 fn d_on_the_parent_entry_deletes_nothing() {
     let (mut app, _d) = temp_app();
-    app.current_dir = "cs130".to_string();
-    app.focus = Pane::Dirs;
-    app.dir_sel = 0; // the ".." row
+    app.nav.current_dir = "cs130".to_string();
+    app.nav.focus = Pane::Dirs;
+    app.nav.dir_sel = 0; // the ".." row
     assert_eq!(app.dir_rows()[0].target, "..");
 
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(90, 24)).unwrap();
@@ -1060,7 +1070,7 @@ fn d_on_the_parent_entry_deletes_nothing() {
 #[test]
 fn d_in_the_notes_pane_deletes_the_note() {
     let (mut app, _d) = temp_app();
-    app.focus = Pane::Notes;
+    app.nav.focus = Pane::Notes;
     select_titled(&mut app, "Rust ownership");
     let id = app.selected_id().cloned().unwrap();
 
@@ -1071,7 +1081,7 @@ fn d_in_the_notes_pane_deletes_the_note() {
     assert_eq!(app.mode, Mode::Normal);
 }
 
-/// `/delete` on its own means the note on screen, which is what someone who
+/// `:delete` on its own means the note on screen, which is what someone who
 /// just selected it expects.
 #[test]
 fn a_command_without_a_note_acts_on_the_selected_one() {
@@ -1199,13 +1209,13 @@ fn a_retired_command_explains_itself_in_one_message() {
         "does not name the old command: {text}"
     );
     assert!(
-        text.contains("/delete"),
+        text.contains(":delete"),
         "does not name the replacement: {text}"
     );
 
     app.run_line("env", &mut terminal).unwrap();
     let (_, text, _) = app.message.as_ref().expect("a message");
-    assert!(text.contains("/settings"), "{text}");
+    assert!(text.contains(":settings"), "{text}");
     assert!(text.contains("keychain"), "does not say why: {text}");
 }
 
@@ -1248,7 +1258,7 @@ fn asking_a_note_without_prompts_starts_nothing() {
     app.run_action(Action::Ask { note: id }, &mut terminal)
         .unwrap();
     assert!(
-        app.asking.is_none(),
+        app.jobs.asking.is_none(),
         "a job was started with nothing to ask"
     );
     let (_, message, _) = app.message.as_ref().expect("a message");
@@ -1262,7 +1272,7 @@ fn a_second_ask_is_refused_while_one_is_running() {
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 16)).unwrap();
 
     // Stand in for a running job without making a request.
-    app.asking = Some(Asking {
+    app.jobs.asking = Some(Asking {
         job: task::start_ask(String::new(), String::new(), String::new()),
         question: None,
         progress: view::progress::Progress::spinner("Asking"),
@@ -1287,7 +1297,7 @@ fn a_second_ask_is_refused_while_one_is_running() {
 fn an_answer_from_the_notes_is_shown_until_esc() {
     let (mut app, _d) = temp_app();
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 20)).unwrap();
-    app.asking = Some(Asking {
+    app.jobs.asking = Some(Asking {
         job: task::Job::scripted(vec![TaskEvent::Answered {
             question: "what is BFS?".to_string(),
             text: "**Breadth-first** search [Graph traversals]".to_string(),
@@ -1298,7 +1308,7 @@ fn an_answer_from_the_notes_is_shown_until_esc() {
         text: String::new(),
     });
     app.pump_tasks(&mut terminal).unwrap();
-    assert!(app.asking.is_none());
+    assert!(app.jobs.asking.is_none());
 
     terminal.draw(|f| app.draw(f)).unwrap();
     let out = terminal.backend().to_string();
@@ -1320,7 +1330,7 @@ fn a_streaming_answer_appears_in_the_preview() {
     let (mut app, _d) = temp_app();
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 16)).unwrap();
 
-    app.asking = Some(Asking {
+    app.jobs.asking = Some(Asking {
         job: task::start_ask(String::new(), String::new(), String::new()),
         question: None,
         progress: view::progress::Progress::spinner("Asking"),
@@ -1390,10 +1400,10 @@ fn tab_jumps_back_to_the_previous_note() {
 #[test]
 fn the_note_on_screen_at_startup_is_recorded_as_visited() {
     let (mut app, _d) = temp_app();
-    app.recent = crate::recent::Recent::default();
+    app.nav.recent = crate::recent::Recent::default();
 
     app.remember_visit();
-    assert_eq!(app.recent.ids().len(), 1);
+    assert_eq!(app.nav.recent.ids().len(), 1);
 
     // So after moving once, Tab has somewhere to go back to.
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 16)).unwrap();
@@ -1407,7 +1417,7 @@ fn the_note_on_screen_at_startup_is_recorded_as_visited() {
 fn tab_with_nothing_visited_says_so_rather_than_doing_nothing() {
     let (mut app, _d) = temp_app();
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 16)).unwrap();
-    app.recent = crate::recent::Recent::default();
+    app.nav.recent = crate::recent::Recent::default();
 
     app.on_intent(Intent::JumpRecent, &mut terminal).unwrap();
     let (_, message, _) = app.message.as_ref().expect("a message");
@@ -1434,7 +1444,7 @@ fn a_deleted_note_leaves_the_recent_strip() {
 #[test]
 fn the_strip_costs_no_space_until_a_note_is_visited() {
     let (mut app, _d) = temp_app();
-    app.recent = crate::recent::Recent::default();
+    app.nav.recent = crate::recent::Recent::default();
 
     let with_none = view::layout_with_tabs(Rect::new(0, 0, 80, 20), false, Pane::Notes);
     let with_some = view::layout_with_tabs(Rect::new(0, 0, 80, 20), true, Pane::Notes);
@@ -1456,22 +1466,22 @@ fn a_tag_is_found_by_typing_it_at_the_slash_line() {
         app.on_key(press(c), &mut terminal).unwrap();
     }
     assert!(app.note_count() < all, "the tag did not narrow anything");
-    for id in &app.numbering {
+    for id in &app.nav.numbering {
         let note = app.store.find_note(id).unwrap();
         assert!(note.tags.iter().any(|t| t == "rust"), "{:?}", note.tags);
     }
     app.on_key(press_code(event::KeyCode::Esc), &mut terminal)
         .unwrap();
-    assert!(app.filter.is_none());
+    assert!(app.nav.filter.is_none());
     assert_eq!(app.note_count(), all);
 }
 
 #[test]
-fn a_command_typed_at_the_slash_line_runs_and_leaves_the_list_alone() {
+fn a_command_typed_at_the_command_line_runs_and_leaves_the_list_alone() {
     let (mut app, _d) = temp_app();
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 16)).unwrap();
     let all = app.note_count();
-    app.on_key(press('/'), &mut terminal).unwrap();
+    app.on_key(press(':'), &mut terminal).unwrap();
     for c in "mkdir cs200".chars() {
         app.on_key(press(c), &mut terminal).unwrap();
     }
@@ -1479,7 +1489,7 @@ fn a_command_typed_at_the_slash_line_runs_and_leaves_the_list_alone() {
     app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
         .unwrap();
     assert!(app.store.dir_exists("cs200"));
-    assert!(app.filter.is_none());
+    assert!(app.nav.filter.is_none());
 }
 
 #[test]
@@ -1492,7 +1502,7 @@ fn a_search_kept_with_enter_can_be_refined_by_opening_the_line_again() {
     }
     app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
         .unwrap();
-    assert_eq!(app.filter.as_deref(), Some("own"));
+    assert_eq!(app.nav.filter.as_deref(), Some("own"));
     assert_eq!(app.mode, Mode::Normal);
     app.on_key(press('f'), &mut terminal).unwrap();
     assert_eq!(app.cmd.text(), "own");
@@ -1544,11 +1554,11 @@ fn numbering_follows_the_filter() {
     for c in "own".chars() {
         app.on_key(press(c), &mut terminal).unwrap();
     }
-    assert_eq!(app.numbering.len(), 1);
+    assert_eq!(app.nav.numbering.len(), 1);
 
     let visible = app
         .store
-        .find_note(&app.numbering[0])
+        .find_note(&app.nav.numbering[0])
         .unwrap()
         .title
         .clone();
@@ -1592,7 +1602,7 @@ fn esc_abandons_the_filter() {
     app.on_key(press_code(event::KeyCode::Esc), &mut terminal)
         .unwrap();
 
-    assert!(app.filter.is_none(), "the filter survived Esc");
+    assert!(app.nav.filter.is_none(), "the filter survived Esc");
     assert_eq!(app.note_count(), all);
     assert!(matches!(app.mode, Mode::Normal));
 }
@@ -1612,7 +1622,7 @@ fn enter_keeps_the_filter_and_returns_to_the_panes() {
         .unwrap();
 
     assert!(matches!(app.mode, Mode::Normal));
-    assert_eq!(app.filter.as_deref(), Some("own"));
+    assert_eq!(app.nav.filter.as_deref(), Some("own"));
     assert_eq!(app.note_count(), 1);
 }
 
@@ -1626,7 +1636,7 @@ fn committing_an_empty_filter_clears_it() {
     app.on_intent(Intent::OpenFilter, &mut terminal).unwrap();
     app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
         .unwrap();
-    assert!(app.filter.is_none());
+    assert!(app.nav.filter.is_none());
 }
 
 /// A filter matching nothing must say so, and say how to get out.
@@ -1653,7 +1663,7 @@ fn a_filter_that_matches_nothing_says_so() {
 fn slash_searches_every_directory() {
     let (mut app, _d) = temp_app();
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 16)).unwrap();
-    assert_eq!(app.current_dir, "");
+    assert_eq!(app.nav.current_dir, "");
 
     app.on_intent(Intent::OpenFilter, &mut terminal).unwrap();
     for c in "nested".chars() {
@@ -1686,8 +1696,8 @@ fn esc_after_a_search_lands_on_the_selected_note() {
 
     app.on_key(press_code(event::KeyCode::Esc), &mut terminal)
         .unwrap();
-    assert!(app.filter.is_none(), "Esc did not clear the search");
-    assert_eq!(app.current_dir, "cs130");
+    assert!(app.nav.filter.is_none(), "Esc did not clear the search");
+    assert_eq!(app.nav.current_dir, "cs130");
     assert_eq!(app.selected_id(), Some(&picked));
 }
 
@@ -1752,7 +1762,7 @@ fn frames_for(app: &App, width: u16, height: u16) -> view::Frames {
     view::layout_with_tabs(
         Rect::new(0, 0, width, height),
         !app.tabs().is_empty(),
-        app.focus,
+        app.nav.focus,
     )
 }
 
@@ -1785,18 +1795,18 @@ fn clicking_a_pane_focuses_it() {
 
     app.on_mouse(click(frames.dirs.x + 2, frames.dirs.y + 1), &mut terminal)
         .unwrap();
-    assert_eq!(app.focus, Pane::Dirs);
+    assert_eq!(app.nav.focus, Pane::Dirs);
 
     app.on_mouse(
         click(frames.preview.x + 2, frames.preview.y + 1),
         &mut terminal,
     )
     .unwrap();
-    assert_eq!(app.focus, Pane::Preview);
+    assert_eq!(app.nav.focus, Pane::Preview);
 
     app.on_mouse(click(frames.notes.x + 2, frames.notes.y + 1), &mut terminal)
         .unwrap();
-    assert_eq!(app.focus, Pane::Notes);
+    assert_eq!(app.nav.focus, Pane::Notes);
 }
 
 #[test]
@@ -1810,12 +1820,12 @@ fn clicking_a_note_selects_that_note() {
     // The second row inside the pane is the second note.
     app.on_mouse(click(frames.notes.x + 3, frames.notes.y + 2), &mut terminal)
         .unwrap();
-    assert_eq!(app.note_sel, 1);
+    assert_eq!(app.nav.note_sel, 1);
 
     // And back to the first.
     app.on_mouse(click(frames.notes.x + 3, frames.notes.y + 1), &mut terminal)
         .unwrap();
-    assert_eq!(app.note_sel, 0);
+    assert_eq!(app.nav.note_sel, 0);
 }
 
 /// A click on a border must not move the selection.
@@ -1826,10 +1836,10 @@ fn clicking_a_border_leaves_the_selection_alone() {
     terminal.draw(|f| app.draw(f)).unwrap();
     let frames = frames_for(&app, 100, 20);
 
-    app.note_sel = 1;
+    app.nav.note_sel = 1;
     app.on_mouse(click(frames.notes.x + 3, frames.notes.y), &mut terminal)
         .unwrap();
-    assert_eq!(app.note_sel, 1, "the border moved the selection");
+    assert_eq!(app.nav.note_sel, 1, "the border moved the selection");
 }
 
 /// The wheel acts on what is under the pointer, not on what has focus.
@@ -1841,8 +1851,8 @@ fn the_wheel_scrolls_the_pane_under_the_pointer() {
     let frames = frames_for(&app, 100, 20);
 
     // Focus is on the notes pane; the pointer is over the preview.
-    app.focus = Pane::Notes;
-    let before = app.note_sel;
+    app.nav.focus = Pane::Notes;
+    let before = app.nav.note_sel;
     app.on_mouse(
         wheel_event(
             MouseEventKind::ScrollDown,
@@ -1852,8 +1862,8 @@ fn the_wheel_scrolls_the_pane_under_the_pointer() {
         &mut terminal,
     )
     .unwrap();
-    assert_eq!(app.preview_scroll, 1, "the preview did not scroll");
-    assert_eq!(app.note_sel, before, "the wheel moved the wrong pane");
+    assert_eq!(app.nav.preview_scroll, 1, "the preview did not scroll");
+    assert_eq!(app.nav.note_sel, before, "the wheel moved the wrong pane");
 
     // Over the notes pane, it moves the selection.
     app.on_mouse(
@@ -1865,7 +1875,7 @@ fn the_wheel_scrolls_the_pane_under_the_pointer() {
         &mut terminal,
     )
     .unwrap();
-    assert_eq!(app.note_sel, before + 1);
+    assert_eq!(app.nav.note_sel, before + 1);
 }
 
 #[test]
@@ -1884,7 +1894,7 @@ fn scrolling_up_at_the_top_stays_put() {
         &mut terminal,
     )
     .unwrap();
-    assert_eq!(app.preview_scroll, 0);
+    assert_eq!(app.nav.preview_scroll, 0);
 }
 
 /// The profile page owns the screen when it is open, so clicks belong to it.
@@ -1973,15 +1983,15 @@ fn changing_a_note_restarts_the_quiet_period() {
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
 
     // Pretend the notes have been quiet for a while.
-    app.last_change = Instant::now() - std::time::Duration::from_secs(600);
-    assert!(app.last_change.elapsed() > std::time::Duration::from_secs(300));
+    app.jobs.last_change = Instant::now() - std::time::Duration::from_secs(600);
+    assert!(app.jobs.last_change.elapsed() > std::time::Duration::from_secs(300));
 
     // Any change resets it.
     app.run_action(Action::Undo, &mut terminal).unwrap();
     let id = app.selected_id().cloned().unwrap();
     app.store.toggle_checkbox(&id, 1);
     app.note_changed();
-    assert!(app.last_change.elapsed() < std::time::Duration::from_secs(5));
+    assert!(app.jobs.last_change.elapsed() < std::time::Duration::from_secs(5));
 }
 
 /// Nothing waiting must not start a push, or a quiet session runs git every
@@ -1989,15 +1999,15 @@ fn changing_a_note_restarts_the_quiet_period() {
 #[test]
 fn no_push_is_started_when_nothing_is_waiting() {
     let (mut app, _d) = temp_app();
-    app.unpushed = Some(0);
-    app.last_change = Instant::now() - std::time::Duration::from_secs(600);
+    app.jobs.unpushed = Some(0);
+    app.jobs.last_change = Instant::now() - std::time::Duration::from_secs(600);
     app.maybe_auto_push();
-    assert!(app.pushing.is_none());
+    assert!(app.jobs.pushing.is_none());
 
     // Nor when there is no upstream at all, where a push would only fail.
-    app.unpushed = None;
+    app.jobs.unpushed = None;
     app.maybe_auto_push();
-    assert!(app.pushing.is_none());
+    assert!(app.jobs.pushing.is_none());
 }
 
 /// The store this fixture uses has no git repo, so the default policy must
@@ -2006,10 +2016,13 @@ fn no_push_is_started_when_nothing_is_waiting() {
 fn a_store_without_a_repo_is_never_pushed() {
     let (mut app, _d) = temp_app();
     app.note_changed();
-    assert_eq!(app.unpushed, None, "a store with no repo reported a count");
-    app.last_change = Instant::now() - std::time::Duration::from_secs(600);
+    assert_eq!(
+        app.jobs.unpushed, None,
+        "a store with no repo reported a count"
+    );
+    app.jobs.last_change = Instant::now() - std::time::Duration::from_secs(600);
     app.maybe_auto_push();
-    assert!(app.pushing.is_none());
+    assert!(app.jobs.pushing.is_none());
 
     // And quitting does nothing rather than erroring.
     app.push_on_quit();
@@ -2022,15 +2035,15 @@ fn a_store_without_a_repo_is_never_pushed() {
 #[test]
 fn a_resize_moves_focus_off_a_pane_that_disappeared() {
     let (mut app, _d) = temp_app();
-    app.focus = Pane::Dirs;
+    app.nav.focus = Pane::Dirs;
 
     // Wide enough for three panes: the directories pane is real.
     app.on_resize(120, 30);
-    assert_eq!(app.focus, Pane::Dirs);
+    assert_eq!(app.nav.focus, Pane::Dirs);
 
     // Narrow enough to drop it.
     app.on_resize(70, 24);
-    assert_eq!(app.focus, Pane::Notes, "focus stayed on a hidden pane");
+    assert_eq!(app.nav.focus, Pane::Notes, "focus stayed on a hidden pane");
 }
 
 /// In the one-pane shape every pane is reachable, so focus is never moved out
@@ -2038,9 +2051,9 @@ fn a_resize_moves_focus_off_a_pane_that_disappeared() {
 #[test]
 fn a_resize_to_one_pane_leaves_focus_alone() {
     let (mut app, _d) = temp_app();
-    app.focus = Pane::Preview;
+    app.nav.focus = Pane::Preview;
     app.on_resize(40, 20);
-    assert_eq!(app.focus, Pane::Preview);
+    assert_eq!(app.nav.focus, Pane::Preview);
 }
 
 /// `h` and `l` must not stop on a pane that is not drawn.
@@ -2050,16 +2063,16 @@ fn focus_movement_skips_hidden_panes() {
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(70, 24)).unwrap();
 
     // Two-pane shape: notes and preview only.
-    app.focus = Pane::Notes;
+    app.nav.focus = Pane::Notes;
     app.on_intent(Intent::FocusLeft, &mut terminal).unwrap();
     assert_eq!(
-        app.focus,
+        app.nav.focus,
         Pane::Notes,
         "focus moved onto the hidden dirs pane"
     );
 
     app.on_intent(Intent::FocusRight, &mut terminal).unwrap();
-    assert_eq!(app.focus, Pane::Preview);
+    assert_eq!(app.nav.focus, Pane::Preview);
 }
 
 /// At the narrowest size every pane is still reachable, which is what makes
@@ -2069,17 +2082,17 @@ fn every_pane_is_reachable_on_a_narrow_terminal() {
     let (mut app, _d) = temp_app();
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(40, 20)).unwrap();
 
-    app.focus = Pane::Notes;
+    app.nav.focus = Pane::Notes;
     app.on_intent(Intent::FocusLeft, &mut terminal).unwrap();
-    assert_eq!(app.focus, Pane::Dirs);
+    assert_eq!(app.nav.focus, Pane::Dirs);
     app.on_intent(Intent::FocusRight, &mut terminal).unwrap();
-    assert_eq!(app.focus, Pane::Notes);
+    assert_eq!(app.nav.focus, Pane::Notes);
     app.on_intent(Intent::FocusRight, &mut terminal).unwrap();
-    assert_eq!(app.focus, Pane::Preview);
+    assert_eq!(app.nav.focus, Pane::Preview);
 
     // And each one draws without panicking at that size.
     for focus in [Pane::Dirs, Pane::Notes, Pane::Preview] {
-        app.focus = focus;
+        app.nav.focus = focus;
         terminal.draw(|f| app.draw(f)).unwrap();
     }
 }
@@ -2124,11 +2137,11 @@ fn a_click_is_ignored_while_an_overlay_is_open() {
     let frames = frames_for(&app, 100, 20);
 
     app.mode = Mode::Help;
-    app.focus = Pane::Notes;
+    app.nav.focus = Pane::Notes;
     app.on_mouse(click(frames.dirs.x + 2, frames.dirs.y + 1), &mut terminal)
         .unwrap();
     assert_eq!(
-        app.focus,
+        app.nav.focus,
         Pane::Notes,
         "a click reached through the help screen"
     );
@@ -2177,7 +2190,7 @@ fn an_empty_pane_explains_itself_differently_by_place() {
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(90, 14)).unwrap();
 
     // An empty root: the fixture ships notes, so clear them.
-    for id in app.numbering.clone() {
+    for id in app.nav.numbering.clone() {
         app.store.delete_note(&id);
     }
     app.resync();
@@ -2190,7 +2203,7 @@ fn an_empty_pane_explains_itself_differently_by_place() {
     // Inside a directory, where leaving matters as much as writing. A fresh
     // one, since the fixture's directories have notes in them.
     app.store.create_dir("scratch");
-    app.current_dir = "scratch".to_string();
+    app.nav.current_dir = "scratch".to_string();
     app.resync();
     terminal.draw(|f| app.draw(f)).unwrap();
     let out = terminal.backend().to_string();
@@ -2202,7 +2215,7 @@ fn an_empty_pane_explains_itself_differently_by_place() {
 #[test]
 fn an_empty_preview_says_nothing_is_selected() {
     let (mut app, _d) = temp_app();
-    for id in app.numbering.clone() {
+    for id in app.nav.numbering.clone() {
         app.store.delete_note(&id);
     }
     app.resync();
@@ -2245,7 +2258,7 @@ fn recording_with_nothing_set_up_offers_the_setup_it_needs() {
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(110, 24)).unwrap();
     app.on_key(press('R'), &mut terminal).unwrap();
     assert_eq!(app.mode, Mode::Welcome);
-    assert!(app.recording.is_none());
+    assert!(app.jobs.recording.is_none());
     terminal.draw(|f| app.draw(f)).unwrap();
     let out = terminal.backend().to_string();
     for step in [
@@ -2281,7 +2294,7 @@ fn asking_without_an_ai_offers_to_set_one_up() {
     app.run_line("ask how does BFS work?", &mut terminal)
         .unwrap();
     assert_eq!(app.mode, Mode::Welcome);
-    assert!(app.asking.is_none());
+    assert!(app.jobs.asking.is_none());
     terminal.draw(|f| app.draw(f)).unwrap();
     assert!(terminal.backend().to_string().contains("Before you ask"));
 }
@@ -2300,18 +2313,18 @@ fn esc_leaves_the_setup_screen_and_points_at_doctor() {
         .as_ref()
         .map(|m| m.1.clone())
         .unwrap_or_default();
-    assert!(said.contains("/doctor"), "{said}");
+    assert!(said.contains(":doctor"), "{said}");
 }
 
 #[test]
 fn a_note_written_by_another_program_appears_without_pressing_anything() {
     let (mut app, _d) = temp_app();
-    let before = app.numbering.len();
+    let before = app.nav.numbering.len();
     std::fs::write(app.store.notes_dir.join("From Obsidian.md"), "hello").unwrap();
-    app.last_disk_check = None;
+    app.jobs.last_disk_check = None;
 
     assert!(app.maybe_reload_from_disk());
-    assert_eq!(app.numbering.len(), before + 1);
+    assert_eq!(app.nav.numbering.len(), before + 1);
 }
 
 #[test]
@@ -2320,17 +2333,17 @@ fn nothing_reloads_while_typing_or_when_nothing_changed() {
     std::fs::write(app.store.notes_dir.join("From Obsidian.md"), "hello").unwrap();
 
     app.mode = Mode::Command;
-    app.last_disk_check = None;
+    app.jobs.last_disk_check = None;
     assert!(
         !app.maybe_reload_from_disk(),
         "reloaded under the command line"
     );
 
     app.mode = Mode::Normal;
-    app.last_disk_check = None;
+    app.jobs.last_disk_check = None;
     assert!(app.maybe_reload_from_disk());
 
-    app.last_disk_check = None;
+    app.jobs.last_disk_check = None;
     assert!(!app.maybe_reload_from_disk(), "reloaded with nothing new");
 }
 
@@ -2373,7 +2386,7 @@ fn slash_obsidian_without_obsidian_says_where_to_get_it() {
 fn a_newer_release_is_announced_with_how_to_update() {
     let (mut app, _d) = temp_app();
     let (tx, rx) = std::sync::mpsc::channel();
-    app.update = Some(rx);
+    app.jobs.update = Some(rx);
     assert!(!app.pump_update(), "announced before anything arrived");
     tx.send("9.9.9".to_string()).unwrap();
     assert!(app.pump_update());
@@ -2386,7 +2399,7 @@ fn a_newer_release_is_announced_with_how_to_update() {
         said.contains("9.9.9") && said.contains("leo update"),
         "{said}"
     );
-    assert!(app.update.is_none(), "kept listening after the answer");
+    assert!(app.jobs.update.is_none(), "kept listening after the answer");
 }
 
 #[test]
@@ -2398,7 +2411,7 @@ fn p_pins_the_selected_note_to_the_top() {
     app.on_key(press('p'), &mut terminal).unwrap();
 
     assert!(app.store.find_note(&id).unwrap().pinned);
-    assert_eq!(app.numbering.first(), Some(&id), "not first");
+    assert_eq!(app.nav.numbering.first(), Some(&id), "not first");
     assert_eq!(app.selected_id(), Some(&id), "the selection did not follow");
     terminal.draw(|f| app.draw(f)).unwrap();
     let out = terminal.backend().to_string();
@@ -2439,7 +2452,7 @@ fn slash_doctor_starts_the_check_on_a_worker() {
     let (mut app, _d) = temp_app();
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(110, 24)).unwrap();
     app.run_line("doctor", &mut terminal).unwrap();
-    assert!(app.checking.is_some(), "no check started");
+    assert!(app.jobs.checking.is_some(), "no check started");
     assert_eq!(app.mode, Mode::Normal);
     terminal.draw(|f| app.draw(f)).unwrap();
     let out = terminal.backend().to_string();
@@ -2466,13 +2479,13 @@ fn the_doctor_report_shows_in_the_preview_until_esc() {
             detail: None,
         }],
     }];
-    app.checking = Some((
+    app.jobs.checking = Some((
         task::Job::scripted(vec![TaskEvent::Checked(sections)]),
         view::progress::Progress::spinner("Checking"),
         Instant::now(),
     ));
     app.pump_doctor();
-    assert!(app.checking.is_none(), "the check never finished");
+    assert!(app.jobs.checking.is_none(), "the check never finished");
 
     terminal.draw(|f| app.draw(f)).unwrap();
     let out = terminal.backend().to_string();
@@ -2489,7 +2502,7 @@ fn the_doctor_report_shows_in_the_preview_until_esc() {
 fn one_doctor_at_a_time() {
     let (mut app, _d) = temp_app();
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(110, 24)).unwrap();
-    app.checking = Some((
+    app.jobs.checking = Some((
         task::Job::scripted(vec![]),
         view::progress::Progress::spinner("Checking"),
         Instant::now(),
@@ -2677,7 +2690,7 @@ fn foreground_work_renders_a_progress_indicator() {
     let (mut app, _d) = temp_app();
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(110, 14)).unwrap();
 
-    app.busy = Some((
+    app.jobs.busy = Some((
         view::progress::Progress::spinner("Structuring notes"),
         Instant::now(),
     ));
@@ -2686,7 +2699,7 @@ fn foreground_work_renders_a_progress_indicator() {
     assert!(out.contains("Structuring notes"), "{out}");
     assert!(out.contains("00:00"), "no clock: {out}");
 
-    app.busy = Some((
+    app.jobs.busy = Some((
         view::progress::Progress::steps("Transcribing", 3, 8),
         Instant::now(),
     ));
@@ -2747,7 +2760,7 @@ fn a_whole_session_ends_with_the_right_files_on_disk() {
         .unwrap();
     app.on_key(press_code(event::KeyCode::Esc), &mut terminal)
         .unwrap();
-    assert_eq!(app.current_dir, "cs130");
+    assert_eq!(app.nav.current_dir, "cs130");
     draw(&app, &mut terminal);
 
     // r pre-fills the title; the edited line renames it.
@@ -2761,7 +2774,7 @@ fn a_whole_session_ends_with_the_right_files_on_disk() {
     // Back to the top, untick the second box by writing in the note.
     app.run_line("cd /", &mut terminal).unwrap();
     select_titled(&mut app, "Rust ownership");
-    app.focus = Pane::Notes;
+    app.nav.focus = Pane::Notes;
     app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
         .unwrap();
     app.on_key(press_code(event::KeyCode::Home), &mut terminal)
@@ -2779,7 +2792,7 @@ fn a_whole_session_ends_with_the_right_files_on_disk() {
     draw(&app, &mut terminal);
 
     // Mark both top-level notes and move them; undo puts them back.
-    app.focus = Pane::Notes;
+    app.nav.focus = Pane::Notes;
     select_titled(&mut app, "Rust ownership");
     app.on_key(press(' '), &mut terminal).unwrap();
     select_titled(&mut app, "Graph traversals");
@@ -2852,7 +2865,7 @@ fn random_keys_across_the_whole_app_never_panic() {
                 && ["e", "a", "r", "q", "u"]
                     .iter()
                     .any(|v| text.split_whitespace().next() == Some(v));
-            if risky || app.recording.is_some() {
+            if risky || app.jobs.recording.is_some() {
                 app.on_key(press_code(event::KeyCode::Esc), &mut terminal)
                     .unwrap();
                 continue;
@@ -2887,12 +2900,12 @@ fn pauses_while_writing_save_without_a_commit_each_and_esc_commits_once() {
     select_titled(&mut app, "Graph traversals");
     let id = app.selected_id().cloned().unwrap();
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
-    app.focus = Pane::Notes;
+    app.nav.focus = Pane::Notes;
     app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
         .unwrap();
     for word in [" one", " two", " three"] {
         type_in(&mut app, &mut terminal, word);
-        app.editing.as_mut().unwrap().last_edit =
+        app.writing.editing.as_mut().unwrap().last_edit =
             Some(std::time::Instant::now() - crate::editor::AUTOSAVE);
         app.pump_editor();
     }
@@ -2943,7 +2956,7 @@ fn a_failed_save_keeps_the_text_waiting_to_be_saved() {
     let (mut app, _d) = temp_app();
     select_titled(&mut app, "Graph traversals");
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
-    app.focus = Pane::Notes;
+    app.nav.focus = Pane::Notes;
     app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
         .unwrap();
     type_in(&mut app, &mut terminal, " kept");
@@ -2952,7 +2965,7 @@ fn a_failed_save_keeps_the_text_waiting_to_be_saved() {
     app.flush_edit();
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
     assert!(
-        app.editing.as_ref().unwrap().dirty,
+        app.writing.editing.as_ref().unwrap().dirty,
         "the unsaved text was forgotten"
     );
     app.flush_edit();
@@ -2965,7 +2978,7 @@ fn a_note_changed_by_another_app_while_written_keeps_both_versions() {
     let (mut app, _d) = temp_app();
     select_titled(&mut app, "Graph traversals");
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
-    app.focus = Pane::Notes;
+    app.nav.focus = Pane::Notes;
     app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
         .unwrap();
     let path = app.store.notes_dir.join("Graph traversals.md");
@@ -2987,7 +3000,7 @@ fn a_note_changed_by_another_app_while_written_keeps_both_versions() {
 fn the_hints_say_writing_keys_only_while_writing() {
     let (mut app, _d) = temp_app();
     app.pinned = Some(("output".to_string(), vec![Line::plain("a report")]));
-    app.focus = Pane::Preview;
+    app.nav.focus = Pane::Preview;
     assert_ne!(app.hint_place(), view::hints::Place::Preview);
 }
 
@@ -2997,11 +3010,11 @@ fn opening_another_note_for_writing_saves_the_first() {
     select_titled(&mut app, "Graph traversals");
     let first = app.selected_id().cloned().unwrap();
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
-    app.focus = Pane::Notes;
+    app.nav.focus = Pane::Notes;
     app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
         .unwrap();
     type_in(&mut app, &mut terminal, " unsaved");
-    app.focus = Pane::Notes;
+    app.nav.focus = Pane::Notes;
     select_titled(&mut app, "Rust ownership");
     app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
         .unwrap();
@@ -3031,12 +3044,12 @@ fn with_no_notes_at_all_enter_does_nothing_harmful_and_n_still_works() {
         app.on_key(key, &mut terminal).unwrap();
         terminal.draw(|f| app.draw(f)).unwrap();
     }
-    assert!(app.editing.is_none());
-    app.focus = Pane::Notes;
+    assert!(app.writing.editing.is_none());
+    app.nav.focus = Pane::Notes;
     app.on_key(press('n'), &mut terminal).unwrap();
     app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
         .unwrap();
-    let ed = app.editing.as_ref().expect("writing the new note");
+    let ed = app.writing.editing.as_ref().expect("writing the new note");
     assert_eq!(app.store.find_note(&ed.id).unwrap().title, "Untitled");
 }
 
@@ -3050,7 +3063,7 @@ fn n_then_esc_makes_nothing() {
     app.on_key(press_code(event::KeyCode::Esc), &mut terminal)
         .unwrap();
     assert_eq!(app.store.notes.len(), before);
-    assert!(app.editing.is_none());
+    assert!(app.writing.editing.is_none());
     assert_eq!(app.mode, Mode::Normal);
 }
 
@@ -3070,16 +3083,16 @@ fn the_speech_model_download_reports_when_it_is_done_or_failed() {
     assert!(!app.pump_model_download());
 
     let (tx, rx) = std::sync::mpsc::channel();
-    app.model_download = Some(rx);
+    app.jobs.model_download = Some(rx);
     assert!(!app.pump_model_download(), "announced before it finished");
     tx.send(Ok(())).unwrap();
     assert!(app.pump_model_download());
     let (_, text, _) = app.message.as_ref().expect("a message");
     assert!(text.contains("ready"), "{text}");
-    assert!(app.model_download.is_none());
+    assert!(app.jobs.model_download.is_none());
 
     let (tx, rx) = std::sync::mpsc::channel();
-    app.model_download = Some(rx);
+    app.jobs.model_download = Some(rx);
     tx.send(Err("offline".to_string())).unwrap();
     assert!(app.pump_model_download());
     let (_, text, _) = app.message.as_ref().expect("a message");
@@ -3093,7 +3106,7 @@ fn the_speech_model_download_reports_when_it_is_done_or_failed() {
 fn nothing_is_downloaded_when_the_model_is_not_wanted() {
     let (mut app, _d) = temp_app();
     app.fetch_speech_model();
-    assert!(app.model_download.is_none());
+    assert!(app.jobs.model_download.is_none());
 }
 
 #[test]
@@ -3102,7 +3115,7 @@ fn settings_say_the_model_is_downloading_instead_of_offering_it_again() {
     let (mut app, _d) = temp_app();
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(110, 30)).unwrap();
     let (_tx, rx) = std::sync::mpsc::channel();
-    app.model_download = Some(rx);
+    app.jobs.model_download = Some(rx);
     app.on_intent(Intent::OpenSettings, &mut terminal).unwrap();
     let rows = &app.settings.as_ref().unwrap().rows;
     assert!(
@@ -3119,4 +3132,211 @@ fn settings_say_the_model_is_downloading_instead_of_offering_it_again() {
             ..
         }
     )));
+}
+
+#[test]
+fn searching_command_words_never_executes_them() {
+    let (mut app, _d) = temp_app();
+    app.store
+        .create_note("backup settings mkdir", "body", vec![], "")
+        .unwrap();
+    app.resync();
+    let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
+    for word in ["backup", "settings", "mkdir"] {
+        app.on_key(press('/'), &mut terminal).unwrap();
+        app.cmd.open(word);
+        app.follow_search();
+        assert_eq!(app.note_count(), 1);
+        app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
+            .unwrap();
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.nav.filter.as_deref(), Some(word));
+        app.on_key(press_code(event::KeyCode::Esc), &mut terminal)
+            .unwrap();
+    }
+}
+
+#[test]
+fn cancelling_a_command_keeps_the_current_search() {
+    let (mut app, _d) = temp_app();
+    let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
+    app.nav.filter = Some("ownership".into());
+    app.resync();
+    app.on_key(press(':'), &mut terminal).unwrap();
+    app.on_key(press_code(event::KeyCode::Esc), &mut terminal)
+        .unwrap();
+    assert_eq!(app.nav.filter.as_deref(), Some("ownership"));
+    assert_eq!(app.note_count(), 1);
+}
+
+#[test]
+fn the_action_menu_shows_shortcuts_and_opens_search_or_settings() {
+    let (mut app, _d) = temp_app();
+    let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
+    app.on_key(press_code(event::KeyCode::F(2)), &mut terminal)
+        .unwrap();
+    terminal.draw(|f| app.draw(f)).unwrap();
+    let shown = terminal.backend().to_string();
+    for text in [
+        "New note",
+        "Search notes",
+        "Record",
+        "Settings",
+        "Quick tour",
+    ] {
+        assert!(shown.contains(text));
+    }
+    app.on_key(press('/'), &mut terminal).unwrap();
+    assert_eq!(app.mode, Mode::Search);
+    app.on_key(press_code(event::KeyCode::Esc), &mut terminal)
+        .unwrap();
+    app.on_key(press(','), &mut terminal).unwrap();
+    assert_eq!(app.mode, Mode::Settings);
+}
+
+#[test]
+fn the_tour_uses_real_note_creation_writing_and_search_and_can_be_replayed() {
+    let (mut app, dir) = temp_app();
+    let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
+    app.offer_tour();
+    assert_eq!(app.mode, Mode::Tour);
+    app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
+        .unwrap();
+    app.on_key(press('n'), &mut terminal).unwrap();
+    for c in "Tour note".chars() {
+        app.on_key(press(c), &mut terminal).unwrap();
+    }
+    app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
+        .unwrap();
+    assert!(matches!(app.tour, Some(tutorial::Tour::Write(_))));
+    for c in "BFS uses a queue".chars() {
+        app.on_key(press(c), &mut terminal).unwrap();
+    }
+    app.on_key(press_code(event::KeyCode::Esc), &mut terminal)
+        .unwrap();
+    assert!(matches!(app.tour, Some(tutorial::Tour::Find(_))));
+    app.on_key(press('/'), &mut terminal).unwrap();
+    for c in "queue".chars() {
+        app.on_key(press(c), &mut terminal).unwrap();
+    }
+    app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
+        .unwrap();
+    assert!(matches!(app.tour, Some(tutorial::Tour::Complete)));
+    app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
+        .unwrap();
+    assert!(dir.path().join(".tour-completed").exists());
+    app.offer_tour();
+    assert_eq!(app.mode, Mode::Normal);
+    app.run_line("tutorial", &mut terminal).unwrap();
+    assert_eq!(app.mode, Mode::Tour);
+}
+
+#[test]
+fn skipping_the_tour_creates_no_notes_and_is_remembered() {
+    let (mut app, _d) = temp_app();
+    let before = app.store.notes.len();
+    let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
+    app.offer_tour();
+    app.on_key(press_code(event::KeyCode::Esc), &mut terminal)
+        .unwrap();
+    assert_eq!(app.store.notes.len(), before);
+    app.offer_tour();
+    assert_eq!(app.mode, Mode::Normal);
+}
+
+#[test]
+fn answer_sources_open_the_selected_note() {
+    let (mut app, _d) = temp_app();
+    let id = app
+        .store
+        .notes
+        .iter()
+        .find(|n| n.title == "Nested note")
+        .unwrap()
+        .id
+        .clone();
+    app.nav.answer_sources = vec![id.clone()];
+    app.answer = Some(("Question".into(), "Answer".into()));
+    let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
+    app.on_key(press('o'), &mut terminal).unwrap();
+    assert_eq!(app.mode, Mode::Sources { selected: 0 });
+    app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
+        .unwrap();
+    assert_eq!(app.selected_id(), Some(&id));
+    assert_eq!(app.nav.current_dir, "cs130");
+}
+
+#[test]
+fn action_menu_selection_stays_visible_and_clicks_match_on_a_short_terminal() {
+    let (mut app, _d) = temp_app();
+    let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(48, 5)).unwrap();
+    app.on_key(press_code(event::KeyCode::F(2)), &mut terminal)
+        .unwrap();
+    for _ in 0..4 {
+        app.on_key(press_code(event::KeyCode::Down), &mut terminal)
+            .unwrap();
+    }
+    terminal.draw(|f| app.draw(f)).unwrap();
+    assert!(terminal.backend().to_string().contains("Quick tour"));
+    let area = discovery::area(Rect::new(0, 0, 48, 5));
+    app.on_mouse(click(area.x + 2, area.bottom() - 1), &mut terminal)
+        .unwrap();
+    assert_eq!(app.mode, Mode::Actions { selected: 4 });
+    app.on_mouse(click(area.x + 2, area.bottom() - 2), &mut terminal)
+        .unwrap();
+    assert_eq!(app.mode, Mode::Tour);
+}
+
+#[test]
+fn answer_source_selection_stays_visible_on_a_short_terminal() {
+    let (mut app, _d) = temp_app();
+    let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(64, 5)).unwrap();
+    for i in 0..8 {
+        let id = app
+            .store
+            .create_note(format!("Source {i}"), "body", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        app.nav.answer_sources.push(id);
+    }
+    let last = app.nav.answer_sources.last().unwrap().clone();
+    app.resync();
+    app.mode = Mode::Sources { selected: 7 };
+    terminal.draw(|f| app.draw(f)).unwrap();
+    assert!(terminal.backend().to_string().contains("Source 7"));
+    app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
+        .unwrap();
+    assert_eq!(app.selected_id(), Some(&last));
+}
+
+#[test]
+fn opening_an_answer_source_clears_a_search_that_hid_it_in_the_same_folder() {
+    let (mut app, _d) = temp_app();
+    let id = app
+        .store
+        .create_note("Answer source", "body", vec![], "")
+        .unwrap()
+        .id
+        .clone();
+    app.nav.filter = Some("nowhere".into());
+    app.resync();
+    assert_eq!(app.note_count(), 0);
+    app.nav.answer_sources = vec![id.clone()];
+    app.mode = Mode::Sources { selected: 0 };
+    let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
+    app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
+        .unwrap();
+    assert_eq!(app.selected_id(), Some(&id));
+}
+
+#[test]
+fn the_tour_shows_start_and_skip_on_a_small_terminal() {
+    let (mut app, _d) = temp_app();
+    let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(24, 5)).unwrap();
+    app.offer_tour();
+    terminal.draw(|f| app.draw(f)).unwrap();
+    let text = terminal.backend().to_string();
+    assert!(text.contains("Enter: start"));
+    assert!(text.contains("Esc: skip"));
 }

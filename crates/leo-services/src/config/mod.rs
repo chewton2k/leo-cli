@@ -86,10 +86,10 @@ impl Config {
         format!(
             r#"# leo configuration.
 #
-# Keys do NOT belong in this file. Type /settings inside leo and press Enter on
+# Keys do NOT belong in this file. Type :settings inside leo and press Enter on
 # the key row, or run `leo doctor`.
 #
-# Type /settings to choose what writes and what listens: this computer (free and
+# Type :settings to choose what writes and what listens: this computer (free and
 # private) or OpenAI, Anthropic, Gemini, xAI or OpenRouter with one key, or Claude Code
 # or Codex with the plan you already pay for, and which model each uses. Settings
 # writes these two lines for you.
@@ -114,7 +114,7 @@ chain = [{transcribe}]
 #   kind = "openai"                        # or openai_transcribe
 #   base_url = "https://api.example.com/v1"
 #   model = "some-model-id"
-#   key_env = "EXAMPLE_API_KEY"            # needs a key (store it in /settings); omit for a local server
+#   key_env = "EXAMPLE_API_KEY"            # needs a key (store it in :settings); omit for a local server
 "#,
             chat = quoted_list(&DEFAULT_CHAT_CHAIN),
             transcribe = quoted_list(&DEFAULT_TRANSCRIBE_CHAIN),

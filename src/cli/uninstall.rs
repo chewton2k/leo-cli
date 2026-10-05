@@ -17,6 +17,7 @@ const KNOWN: &[&str] = &[
     "recent.json",
     ".env",
     ".manual-installed",
+    ".tour-completed",
     "notes.json",
     "notes.json.bak",
     "recordings",

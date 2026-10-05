@@ -5,12 +5,6 @@ use std::time::Instant;
 use super::*;
 
 impl App {
-    /// Clicks and the scroll wheel.
-    ///
-    /// Deliberately limited to selecting and scrolling. A click cannot delete,
-    /// edit or open anything: mouse input has no modifier discipline and no
-    /// confirmation habit, so the safe half is the useful half. Everything here
-    /// has a keyboard equivalent, and nothing here is the only way to do it.
     pub(super) fn on_mouse<B: TuiBackend>(
         &mut self,
         mouse: MouseEvent,
@@ -23,6 +17,15 @@ impl App {
         // The profile page owns the whole screen when it is open, so clicks
         // belong to it. Anything else with an overlay up ignores them: a click
         // behind one would act on something the user cannot see.
+        if let Mode::Actions { selected } = self.mode {
+            if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+                if let Some(index) = discovery::action_at(area, mouse.column, mouse.row, selected) {
+                    return self.choose_action(index, terminal);
+                }
+            }
+            self.mode = Mode::Actions { selected };
+            return Ok(());
+        }
         if matches!(self.mode, Mode::Settings) {
             return self.on_settings_mouse(mouse, area);
         }
@@ -33,9 +36,23 @@ impl App {
         // The same geometry that was painted: `layout` alone omits the tab row,
         // so every pane would be one line out whenever the strip is showing.
         let tabs = self.tabs();
-        let frames = view::layout_with_tabs(area, !tabs.is_empty(), self.focus);
+        let frames = view::layout_with_tabs(area, !tabs.is_empty(), self.nav.focus);
         let column = mouse.column;
         let row = mouse.row;
+
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left) && row == frames.command.y {
+            let hints = view::hints::spans(
+                view::hints::for_place(self.hint_place()),
+                frames.command.width,
+            );
+            let text: String = hints.iter().map(|span| span.content.as_ref()).collect();
+            if let Some(start) = text.find("F2 actions") {
+                let x = frames.command.x + start as u16;
+                if column >= x && column < x + 10 {
+                    return self.on_intent(Intent::OpenActions, terminal);
+                }
+            }
+        }
 
         let in_pane = |rect: Rect| {
             column >= rect.x
@@ -53,6 +70,7 @@ impl App {
                         // `tabs` and the recent list are in the same order, and
                         // both skip notes that no longer exist.
                         let ids: Vec<String> = self
+                            .nav
                             .recent
                             .ids()
                             .iter()
@@ -66,24 +84,24 @@ impl App {
                     return Ok(());
                 }
 
-                if !in_pane(frames.preview) && self.editing.is_some() {
+                if !in_pane(frames.preview) && self.writing.editing.is_some() {
                     self.finish_editing(terminal)?;
                 }
                 if in_pane(frames.dirs) {
-                    self.focus = Pane::Dirs;
+                    self.nav.focus = Pane::Dirs;
                     let rows = self.dir_rows();
                     if let Some(index) =
-                        view::notes::row_at(frames.dirs, row, self.dir_sel, rows.len())
+                        view::notes::row_at(frames.dirs, row, self.nav.dir_sel, rows.len())
                     {
-                        self.dir_sel = index;
+                        self.nav.dir_sel = index;
                     }
                 } else if in_pane(frames.notes) {
-                    self.focus = Pane::Notes;
+                    self.nav.focus = Pane::Notes;
                     let total = self.note_count();
                     if let Some(index) =
-                        view::notes::row_at(frames.notes, row, self.note_sel, total)
+                        view::notes::row_at(frames.notes, row, self.nav.note_sel, total)
                     {
-                        self.note_sel = index;
+                        self.nav.note_sel = index;
                         // Clicking a note is opening it, as far as the recent
                         // list is concerned.
                         self.unpin();
@@ -160,12 +178,12 @@ impl App {
         };
 
         if inside(frames.preview) {
-            if let Some(rec) = self.recording.as_ref() {
+            if let Some(rec) = self.jobs.recording.as_ref() {
                 let rows = if direction == Intent::Down { 3 } else { -3 };
                 rec.scroll.scroll_by(rows, Instant::now());
                 return;
             }
-            if let Some(ed) = self.editing.as_ref() {
+            if let Some(ed) = self.writing.editing.as_ref() {
                 let at = ed.scroll.get();
                 ed.scroll.set(match direction {
                     Intent::Down => at + 1,
@@ -173,16 +191,16 @@ impl App {
                 });
                 return;
             }
-            self.preview_scroll = match direction {
-                Intent::Down => self.preview_scroll.saturating_add(1),
-                _ => self.preview_scroll.saturating_sub(1),
+            self.nav.preview_scroll = match direction {
+                Intent::Down => self.nav.preview_scroll.saturating_add(1),
+                _ => self.nav.preview_scroll.saturating_sub(1),
             };
         } else if inside(frames.notes) {
-            self.note_sel = step(self.note_sel, self.note_count(), direction);
-            self.preview_scroll = 0;
+            self.nav.note_sel = step(self.nav.note_sel, self.note_count(), direction);
+            self.nav.preview_scroll = 0;
             self.unpin();
         } else if inside(frames.dirs) {
-            self.dir_sel = step(self.dir_sel, self.dir_rows().len(), direction);
+            self.nav.dir_sel = step(self.nav.dir_sel, self.dir_rows().len(), direction);
         }
     }
 }

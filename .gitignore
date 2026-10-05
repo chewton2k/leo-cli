@@ -8,3 +8,7 @@ todo.md
 CLAUDE.md
 docs
 DEVELOPER.md
+
+node_modules/
+playwright-report/
+test-results/

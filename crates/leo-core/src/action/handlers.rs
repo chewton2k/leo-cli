@@ -124,6 +124,7 @@ pub fn apply(action: Action, store: &mut Store, ctx: Ctx<'_>, ai: &dyn Ai) -> Re
         Action::Help => Ok(Outcome::effect(Effect::ShowHelp)),
         Action::Doctor => Ok(Outcome::effect(Effect::Doctor)),
         Action::Obsidian => Ok(Outcome::effect(Effect::Obsidian)),
+        Action::Tutorial => Ok(Outcome::effect(Effect::Tutorial)),
         Action::Settings => Ok(Outcome::effect(Effect::Settings)),
         Action::Quit => Ok(Outcome::effect(Effect::Quit)),
     }
@@ -368,7 +369,7 @@ pub(super) fn ask(
     let count = body.lines().filter(|l| is_leo_prompt(l).is_some()).count();
     if count == 0 {
         return Ok(Outcome::line(Line::dim(
-            "Type a question after /ask, or write @leo and a question in a note.",
+            "Type a question after :ask, or write @leo and a question in a note.",
         )));
     }
 
@@ -417,6 +418,7 @@ pub(super) fn under(current_dir: &str, name: &str) -> String {
 
 pub(super) fn mkdir(store: &mut Store, name: &str, current_dir: &str) -> Result<Outcome> {
     let full = under(current_dir, name);
+    store.validate_directory(&full)?;
     if store.dir_exists(&full) {
         return Ok(Outcome::line(Line::dim(format!(
             "Directory already exists: {full}/"
@@ -1144,7 +1146,7 @@ mod handler_tests {
         assert_eq!(out.select.as_deref(), Some(store.notes[0].id.as_str()));
     }
 
-    /// `/ask` with words that are not a note's name is a question for all the
+    /// `:ask` with words that are not a note's name is a question for all the
     /// notes; the shell answers it, since that needs the AI.
     #[test]
     fn ask_with_a_question_asks_across_the_notes() {
@@ -2278,7 +2280,7 @@ mod handler_tests {
                 why,
             } => {
                 assert_eq!(verb, "env");
-                assert_eq!(replacement, "/settings");
+                assert_eq!(replacement, ":settings");
                 assert!(why.contains("keychain"), "{why}");
             }
             other => panic!("expected Retired, got {other:?}"),

@@ -268,17 +268,17 @@ pub(crate) fn chain_check(config: &Config, chain: Chain, store: &dyn SecretStore
                         .and_then(crate::ai::provider::agent_cli::Agent::of)
                     {
                         Some(agent) => format!(
-                            "{}\nor: /settings in leo, choose another way to write",
+                            "{}\nor: :settings in leo, choose another way to write",
                             agent.install()
                         ),
                         None => "brew install ollama && ollama pull qwen3:8b   (free, private)\n\
-                         or: /settings in leo, choose OpenAI, Anthropic, Gemini, xAI or OpenRouter, add its key\n\
-                         or: /settings in leo, choose Claude Code or Codex to use the plan you have"
+                         or: :settings in leo, choose OpenAI, Anthropic, Gemini, xAI or OpenRouter, add its key\n\
+                         or: :settings in leo, choose Claude Code or Codex to use the plan you have"
                             .to_string(),
                     },
                     Chain::Transcribe => {
                         "leo update   (downloads the speech model; free, private)\n\
-                         or: /settings in leo, choose OpenAI, Gemini or xAI, add its key"
+                         or: :settings in leo, choose OpenAI, Gemini or xAI, add its key"
                             .to_string()
                     }
                 },
@@ -405,7 +405,7 @@ pub fn next_step(config: &Config, store: &dyn SecretStore) -> Option<String> {
     let chat = chain_check(config, Chain::Chat, store);
     if let State::Missing { .. } = chat.state {
         return Some(
-            "No AI model yet. Type /settings to choose one, or `brew install ollama` for a free local one."
+            "No AI model yet. Type :settings to choose one, or `brew install ollama` for a free local one."
                 .to_string(),
         );
     }
@@ -559,7 +559,7 @@ mod tests {
         let config = config_with(vec![], vec![]);
         let step =
             next_step(&config, &store()).expect("a config with nothing should suggest something");
-        assert!(step.contains("/settings"), "{step}");
+        assert!(step.contains(":settings"), "{step}");
         assert_eq!(step.lines().count(), 1, "more than one instruction: {step}");
     }
 

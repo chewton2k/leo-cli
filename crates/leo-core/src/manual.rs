@@ -14,7 +14,7 @@ use anyhow::Result;
 use crate::store::Store;
 
 /// Bump when the manual's content changes enough to be worth re-offering.
-const MANUAL_VERSION: u32 = 13;
+const MANUAL_VERSION: u32 = 14;
 const MARKER: &str = ".manual-installed";
 pub const MANUAL_TITLE: &str = "leo manual";
 
@@ -98,12 +98,14 @@ pub fn manual_body() -> String {
         r#"This note is the manual. It is an ordinary note, so you can search it,
 edit it, or delete it — it will not come back.
 
-## Five keys
+## Getting around
 
 ```
 Enter   write in the selected note (Esc when done; it saves itself)
 n       a new note: type a title, then Enter
-/       find a note, or pick a command from the list
+/       search notes (command words are searched too)
+:       commands, with a menu and Tab completion
+F2      Actions: New, Search, Record, Settings and Quick tour
 D       delete (u brings it back)
 ?       every key and command
 ```
@@ -113,23 +115,21 @@ The bottom line shows the keys that work where you are; `?` shows them all.
 ## The commands that matter most
 
 ```
-/settings          choose the AI that writes and listens
-/record            record your voice; it becomes a note
-/record screen     record what the computer plays: a video, a call
-/ask what is due?  an answer from your notes
-/doctor            check that everything works, and how to fix it
-/backup            keep a copy of your notes on GitHub
+:settings          choose the AI that writes and listens
+:record            record your voice; it becomes a note
+:record screen     record what the computer plays: a video, a call
+:ask what is due?  an answer from your notes
+:doctor            check that everything works, and how to fix it
+:backup            keep a copy of your notes on GitHub
 ```
 
-Settings offers this computer (free, private), a cloud with a key (OpenAI,
-Anthropic, Gemini, xAI, OpenRouter), or your Claude Code or Codex plan.
+Settings offers this computer, a cloud API key, or your Claude Code or Codex plan.
 
-In a terminal, `leo serve` puts your notes on your phone: scan the code it
-shows, or click the link.
+Run `leo serve` for your phone: scan the code it shows, or click the link.
 
 ## Recording
 
-`R` (or `/record`) records and turns what was said into a note. While it runs,
+`R` (or `:record`) records and turns what was said into a note. While it runs,
 type the points that matter and press `Enter` after each; they are woven into
 the finished note. `Ctrl-P` pauses, `Esc` twice stops.
 
@@ -145,9 +145,9 @@ note in your own editor instead.
 Type at `/` to search every note, bodies and `#tags` included; `Esc` clears it.
 
 ```
-/new cs130/Lecture 4 #exam   a note in cs130, tagged exam
-/mkdir cs130                 a folder
-/mv cs130                    move the selected note there
+:new cs130/Lecture 4 #exam   a note in cs130, tagged exam
+:mkdir cs130                 a folder
+:mv cs130                    move the selected note there
 ```
 
 ## Where things live
@@ -293,10 +293,10 @@ mod tests {
         let body = manual_body();
         assert!(body.contains("`?`"), "never mentions the help key");
         assert!(
-            body.contains("/settings"),
+            body.contains(":settings"),
             "never mentions the provider screen"
         );
-        assert!(body.contains("/doctor"), "never mentions the health check");
+        assert!(body.contains(":doctor"), "never mentions the health check");
     }
 
     /// The handful of things a first-time user needs on day one must be here,
@@ -312,8 +312,8 @@ mod tests {
             "ask",
             "backup",
             "records",
-            "/settings",
-            "/record screen",
+            ":settings",
+            ":record screen",
             "leo serve",
         ] {
             assert!(body.contains(verb), "the manual never mentions `{verb}`");
@@ -335,8 +335,8 @@ mod tests {
             // Checked as a `/` command, since short aliases like `e` and `x`
             // appear as prose elsewhere.
             assert!(
-                !body.contains(&format!("/{alias} ")) && !body.contains(&format!("/{alias}\n")),
-                "the manual still tells the user to run `/{alias}`"
+                !body.contains(&format!(":{alias} ")) && !body.contains(&format!(":{alias}\n")),
+                "the manual still tells the user to run `:{alias}`"
             );
         }
         assert!(
@@ -386,6 +386,10 @@ mod tests {
         let second = install_if_absent(&mut store).unwrap().unwrap();
         assert_eq!(second, first, "a second manual was created");
         assert_eq!(store.notes.len(), 1, "two manuals now exist");
-        assert!(store.find_note(&first).unwrap().body.contains("Five keys"));
+        assert!(store
+            .find_note(&first)
+            .unwrap()
+            .body
+            .contains("Getting around"));
     }
 }

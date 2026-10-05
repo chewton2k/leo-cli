@@ -8,9 +8,9 @@ use super::*;
 impl App {
     /// Record that the notes changed, restarting the quiet period.
     pub(super) fn note_changed(&mut self) {
-        self.last_change = Instant::now();
+        self.jobs.last_change = Instant::now();
         // Asked once per change rather than once per frame: it is a git process.
-        self.unpushed = leo_core::sync::unpushed(&self.store.notes_dir);
+        self.jobs.unpushed = leo_core::sync::unpushed(&self.store.notes_dir);
     }
 
     /// Start a background push when the policy says to.
@@ -20,15 +20,15 @@ impl App {
     pub(super) fn maybe_auto_push(&mut self) {
         let config = leo_services::config::Config::load().sync;
         let when = leo_services::config::sync::PushWhen {
-            unpushed: self.unpushed,
-            quiet_for: self.last_change.elapsed(),
-            since_last_push: self.last_push.map(|at| at.elapsed()),
-            in_flight: self.pushing.is_some(),
+            unpushed: self.jobs.unpushed,
+            quiet_for: self.jobs.last_change.elapsed(),
+            since_last_push: self.jobs.last_push.map(|at| at.elapsed()),
+            in_flight: self.jobs.pushing.is_some(),
         };
         if !leo_services::config::sync::should_push_now(&config, when) {
             return;
         }
-        self.pushing = Some((
+        self.jobs.pushing = Some((
             task::start_push(self.store.notes_dir.clone()),
             view::progress::Progress::spinner("Backing up"),
             Instant::now(),
@@ -65,7 +65,7 @@ impl App {
 
     /// Drain a running background push.
     pub(super) fn pump_push(&mut self) {
-        let Some((job, _, _)) = self.pushing.as_mut() else {
+        let Some((job, _, _)) = self.jobs.pushing.as_mut() else {
             return;
         };
         let events = job.drain();
@@ -84,18 +84,18 @@ impl App {
         }
 
         if done {
-            self.pushing = None;
-            self.last_push = Some(Instant::now());
-            self.unpushed = leo_core::sync::unpushed(&self.store.notes_dir);
+            self.jobs.pushing = None;
+            self.jobs.last_push = Some(Instant::now());
+            self.jobs.unpushed = leo_core::sync::unpushed(&self.store.notes_dir);
             self.say(Kind::Dim, "Backed up.");
         } else if let Some(e) = failure {
-            self.pushing = None;
+            self.jobs.pushing = None;
             // Recorded so the floor applies to failures too, or a broken remote
             // means a git process every time the loop goes quiet.
-            self.last_push = Some(Instant::now());
+            self.jobs.last_push = Some(Instant::now());
             self.say(
                 Kind::Warn,
-                format!("Backup failed: {e}. Try `/backup`, which pulls first."),
+                format!("Backup failed: {e}. Try `:backup`, which pulls first."),
             );
         }
     }

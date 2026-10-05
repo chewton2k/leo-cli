@@ -163,7 +163,7 @@ fn leo_checks(config_path: &Path, newer: Option<String>) -> Vec<Check> {
                     "config file",
                     "providers and settings",
                     &format!(
-                        "fix it (/settings, then e), or move it aside to start again:\n{}",
+                        "fix it (:settings, then e), or move it aside to start again:\n{}",
                         config_path.display()
                     ),
                 );
@@ -350,7 +350,7 @@ fn ai_checks(config: &Config, secrets: &dyn SecretStore, probe: Probe) -> Vec<Ch
                         .and_then(crate::ai::provider::agent_cli::Agent::of)
                     {
                         Some(agent) => agent.sign_in().to_string(),
-                        None => "check its key in /settings, or that the service is up".to_string(),
+                        None => "check its key in :settings, or that the service is up".to_string(),
                     };
                     let mut c = Check::missing(&what, &needed_for, &fix);
                     c.detail = Some(e.to_string());

@@ -2,8 +2,8 @@ use super::*;
 
 impl App {
     pub(super) fn can_write(&self) -> bool {
-        self.recording.is_none()
-            && self.asking.is_none()
+        self.jobs.recording.is_none()
+            && self.jobs.asking.is_none()
             && self.pinned.is_none()
             && self.answer.is_none()
             && self.selected_id().is_some()
@@ -16,13 +16,17 @@ impl App {
         let Some(note) = self.selected_id().and_then(|id| self.store.find_note(id)) else {
             return false;
         };
-        let already = self.editing.as_ref().is_some_and(|ed| ed.id == note.id);
+        let already = self
+            .writing
+            .editing
+            .as_ref()
+            .is_some_and(|ed| ed.id == note.id);
         if !already {
             let (id, body) = (note.id.clone(), note.body.clone());
             self.flush_edit();
-            self.editing = Some(editor::Editor::open(&id, &body));
+            self.writing.editing = Some(editor::Editor::open(&id, &body));
         }
-        self.focus = Pane::Preview;
+        self.nav.focus = Pane::Preview;
         true
     }
 
@@ -31,11 +35,11 @@ impl App {
     }
 
     fn write_edit(&mut self, commit: bool) {
-        let Some(ed) = self.editing.as_ref() else {
+        let Some(ed) = self.writing.editing.as_ref() else {
             return;
         };
         let unsaved = ed.dirty;
-        let committed_later = self.edit_uncommitted;
+        let committed_later = self.writing.edit_uncommitted;
         if !unsaved && !(commit && committed_later) {
             return;
         }
@@ -61,10 +65,10 @@ impl App {
             );
             return;
         }
-        if let Some(ed) = self.editing.as_mut() {
+        if let Some(ed) = self.writing.editing.as_mut() {
             ed.saved();
         }
-        self.edit_uncommitted = !commit;
+        self.writing.edit_uncommitted = !commit;
         self.note_changed();
         self.resync();
     }
@@ -74,10 +78,10 @@ impl App {
         terminal: &mut Terminal<B>,
     ) -> Result<()> {
         self.flush_edit();
-        let Some(ed) = self.editing.take() else {
+        let Some(ed) = self.writing.editing.take() else {
             return Ok(());
         };
-        self.focus = Pane::Notes;
+        self.nav.focus = Pane::Notes;
         let asks = ed.lines.iter().any(|l| action::is_leo_prompt(l).is_some());
         if asks && self.store.find_note(&ed.id).is_some() {
             return self.run_action(Action::Ask { note: ed.id }, terminal);
@@ -86,7 +90,12 @@ impl App {
     }
 
     pub(super) fn pump_editor(&mut self) {
-        if self.editing.as_ref().is_some_and(|ed| ed.wants_saving()) {
+        if self
+            .writing
+            .editing
+            .as_ref()
+            .is_some_and(|ed| ed.wants_saving())
+        {
             self.write_edit(false);
         }
     }
@@ -98,7 +107,7 @@ impl App {
     ) -> Result<()> {
         use event::{KeyCode, KeyModifiers};
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let Some(ed) = self.editing.as_mut() else {
+        let Some(ed) = self.writing.editing.as_mut() else {
             return Ok(());
         };
         if ctrl {
@@ -145,12 +154,13 @@ impl App {
 
     pub(super) fn on_paste(&mut self, text: &str) {
         if let Some(ed) = self
+            .writing
             .editing
             .as_mut()
-            .filter(|_| self.focus == Pane::Preview)
+            .filter(|_| self.nav.focus == Pane::Preview)
         {
             ed.paste(text);
-        } else if self.mode == Mode::Command {
+        } else if matches!(self.mode, Mode::Command | Mode::Search) {
             for c in text.chars().filter(|c| *c != '\n' && *c != '\r') {
                 self.cmd.insert(c);
             }
@@ -159,12 +169,12 @@ impl App {
     }
 
     pub(super) fn click_in_note(&mut self, column: u16, row: u16) {
-        if self.editing.is_none() && !self.start_editing() {
-            self.focus = Pane::Preview;
+        if self.writing.editing.is_none() && !self.start_editing() {
+            self.nav.focus = Pane::Preview;
             return;
         }
-        self.focus = Pane::Preview;
-        let Some(ed) = self.editing.as_mut() else {
+        self.nav.focus = Pane::Preview;
+        let Some(ed) = self.writing.editing.as_mut() else {
             return;
         };
         match view::editing::hit(ed, column, row) {
@@ -178,7 +188,7 @@ impl App {
 
     pub(super) fn create_and_edit(&mut self, title: Option<String>) -> Result<()> {
         let typed = title.unwrap_or_default();
-        let (dir, title, tags) = action::split_new(&self.store, &typed, &self.current_dir);
+        let (dir, title, tags) = action::split_new(&self.store, &typed, &self.nav.current_dir);
         let title = if title.trim().is_empty() {
             "Untitled".to_string()
         } else {
@@ -194,7 +204,7 @@ impl App {
             .clone();
         self.store.save()?;
         self.note_changed();
-        if self.filter.take().is_some() {
+        if self.nav.filter.take().is_some() {
             self.resync();
         }
         self.resync();

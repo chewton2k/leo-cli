@@ -33,13 +33,13 @@ reaching upward:
 |-------|-------|
 | `crates/leo-core` | Notes, the on-disk store and undo, git backup, and the command vocabulary (`action/`): parsing, handlers, note resolution. No terminal and no network. |
 | `crates/leo-services` | AI providers and their fallback chains, prompts, config and credentials, recording, and health checks. |
-| `crates/leo-tui` | The full-screen app. |
+| `crates/leo-tui` | The full-screen app: navigation, input, effects and grouped state. |
 | `crates/leo-web` | `leo serve`. |
 | root `leo` | `main.rs` and `src/cli/`, the command-line subcommands. |
 
 A few ideas run through all of it:
 
-- **One vocabulary.** The `/` line, the keys and the CLI all turn input into an
+- **One vocabulary.** The `:` command line, the keys and the CLI all turn input into an
   `action::Action`, and the same handlers apply it. Add a command once, in
   `crates/leo-core/src/action/`, not separately in each front end.
 - **Handlers don't touch the terminal.** When a step needs the terminal or the
@@ -47,7 +47,7 @@ A few ideas run through all of it:
   returns an `Effect` and the front end performs it. That is what keeps the
   handlers testable.
 - **One source for commands.** `VERBS` in `action/parse.rs` holds each command's
-  name, usage and summary; help, the `/` menu, completion and usage errors are
+  name, usage and summary; help, the `:` menu, completion and usage errors are
   all generated from it. A command that is removed goes in `RETIRED`, with what
   replaced it, so typing the old name explains itself.
 
@@ -76,6 +76,12 @@ What each part covers:
   version.
 - **`crates/leo-web/tests/markdown.test.js`** checks the phone page's Markdown
   renderer (run by `cargo test` through Node; skipped if Node is missing).
+- **`crates/leo-web/tests/saving.test.js`** checks durable drafts, failed saves,
+  concurrent edits, and conflict recovery (also run by `cargo test`).
+- **Browser flows** run against the real `leo serve` with isolated notes. After
+  `cargo build`, run `pnpm --dir crates/leo-web/tests/browser install`,
+  `pnpm --dir crates/leo-web/tests/browser exec playwright install chromium`,
+  then `pnpm --dir crates/leo-web/tests/browser test`. CI runs them on Linux.
 - **`tests/wording.rs`** fails if any text a user can see names a command that no
   longer exists. If you rename or remove a command, update the text it points
   at, or add the old name to its list.

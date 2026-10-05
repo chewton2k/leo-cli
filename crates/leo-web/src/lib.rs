@@ -1,7 +1,9 @@
 mod token;
 pub mod tunnel;
 
-use std::sync::{Arc, Mutex, MutexGuard};
+#[cfg(test)]
+use std::sync::MutexGuard;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use axum::{
@@ -19,15 +21,61 @@ use leo_core::store::Store;
 
 #[derive(Clone)]
 struct AppState {
-    store: Arc<Mutex<Store>>,
+    store: Arc<Mutex<Storage>>,
     token: String,
 }
 
+struct Storage {
+    store: Store,
+    reload: bool,
+}
+
+impl std::ops::Deref for Storage {
+    type Target = Store;
+    fn deref(&self) -> &Store {
+        &self.store
+    }
+}
+
+impl std::ops::DerefMut for Storage {
+    fn deref_mut(&mut self) -> &mut Store {
+        &mut self.store
+    }
+}
+
 impl AppState {
-    fn fresh(&self) -> MutexGuard<'_, Store> {
-        let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
-        if let Ok(reloaded) = Store::load_from(&store.notes_dir.clone()) {
-            *store = reloaded;
+    async fn with_store<R: Send + 'static>(
+        &self,
+        work: impl FnOnce(&mut Store) -> Result<R, StatusCode> + Send + 'static,
+    ) -> Result<R, StatusCode> {
+        let state = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut store = state
+                .store
+                .lock()
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            if store.reload || store.changed_on_disk() {
+                store
+                    .refresh()
+                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+                store.reload = false;
+            }
+            let result = work(&mut store);
+            if result.is_err() {
+                store.reload = true;
+            }
+            result
+        })
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    }
+
+    #[cfg(test)]
+    fn fresh(&self) -> MutexGuard<'_, Storage> {
+        let mut store = self.store.lock().unwrap();
+        if store.reload || store.changed_on_disk() {
+            store.refresh().unwrap();
+            store.reload = false;
         }
         store
     }
@@ -37,6 +85,7 @@ const HTML: &str = include_str!("web/index.html");
 const APP_JS: &str = include_str!("web/app.js");
 const MARKDOWN_JS: &str = include_str!("web/markdown.js");
 const EDITING_JS: &str = include_str!("web/editing.js");
+const SAVING_JS: &str = include_str!("web/saving.js");
 const DOC_JS: &str = include_str!("web/doc.js");
 
 const COOKIE_DAYS: u32 = 30;
@@ -61,7 +110,10 @@ pub async fn serve(options: ServeOptions) -> Result<()> {
 
     let (listener, port) = bind(options.port).await?;
     let app = router(AppState {
-        store: Arc::new(Mutex::new(store)),
+        store: Arc::new(Mutex::new(Storage {
+            store,
+            reload: false,
+        })),
         token: token.clone(),
     });
 
@@ -216,6 +268,7 @@ fn router(state: AppState) -> Router {
         .route("/markdown.js", get(markdown_js))
         .route("/editing.js", get(editing_js))
         .route("/doc.js", get(doc_js))
+        .route("/saving.js", get(saving_js))
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
@@ -246,6 +299,10 @@ async fn markdown_js() -> Response {
 
 async fn editing_js() -> Response {
     javascript(EDITING_JS)
+}
+
+async fn saving_js() -> Response {
+    javascript(SAVING_JS)
 }
 
 async fn doc_js() -> Response {
@@ -448,54 +505,72 @@ struct TagResponse {
 
 // ── Handlers ──────────────────────────────────────────────────────────────
 
+fn save(store: &Store) -> Result<(), StatusCode> {
+    store.save().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+fn directory(store: &Store, path: &str) -> Result<(), StatusCode> {
+    store
+        .validate_directory(path)
+        .map_err(|_| StatusCode::BAD_REQUEST)
+}
+
 async fn list_notes(
     State(state): State<AppState>,
     Query(params): Query<ListParams>,
-) -> Json<Vec<NoteResponse>> {
-    let store = state.fresh();
-    let limit = params.limit.unwrap_or(100);
-    let notes = if let Some(ref dir) = params.dir {
-        store.list_notes_in_dir(dir, params.tag.as_deref(), limit)
-    } else {
-        store.list_notes(params.tag.as_deref(), limit)
-    };
-    Json(notes.iter().map(|n| NoteResponse::from_note(n)).collect())
+) -> Result<Json<Vec<NoteResponse>>, StatusCode> {
+    state
+        .with_store(move |store| {
+            let limit = params.limit.unwrap_or(100).min(1000);
+            let notes = if let Some(ref dir) = params.dir {
+                directory(store, dir)?;
+                store.list_notes_in_dir(dir, params.tag.as_deref(), limit)
+            } else {
+                store.list_notes(params.tag.as_deref(), limit)
+            };
+            Ok(Json(
+                notes.iter().map(|n| NoteResponse::from_note(n)).collect(),
+            ))
+        })
+        .await
 }
 
 async fn get_note(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<NoteResponse>, StatusCode> {
-    let store = state.fresh();
-    match store.find_note(&id) {
-        Some(n) => Ok(Json(NoteResponse::from_note(n))),
-        None => Err(StatusCode::NOT_FOUND),
-    }
+    state
+        .with_store(move |store| {
+            let note = store.find_note(&id).ok_or(StatusCode::NOT_FOUND)?;
+            Ok(Json(NoteResponse::from_note(note)))
+        })
+        .await
 }
 
 async fn create_note(
     State(state): State<AppState>,
     Json(body): Json<CreateBody>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    let mut store = state.fresh();
-    let tags = body.tags.unwrap_or_default();
-    let note_body = body.body.unwrap_or_default();
-    let dir = body
-        .directory
-        .unwrap_or_default()
-        .trim_matches('/')
-        .to_string();
-    if !store.dir_exists(&dir) {
-        store.create_dir(&dir);
-    }
-    let resp = match store.create_note(body.title, note_body, tags, &dir) {
-        Ok(n) => NoteResponse::from_note(n),
-        Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
-    };
-    store
-        .save()
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok((StatusCode::CREATED, Json(resp)))
+    state
+        .with_store(move |store| {
+            let dir = body.directory.unwrap_or_default();
+            directory(store, &dir)?;
+            if !store.dir_exists(&dir) {
+                store.create_dir(&dir);
+            }
+            let note = store
+                .create_note(
+                    body.title,
+                    body.body.unwrap_or_default(),
+                    body.tags.unwrap_or_default(),
+                    &dir,
+                )
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            let resp = NoteResponse::from_note(note);
+            save(store)?;
+            Ok((StatusCode::CREATED, Json(resp)))
+        })
+        .await
 }
 
 async fn update_note(
@@ -503,52 +578,53 @@ async fn update_note(
     Path(id): Path<String>,
     Json(body): Json<UpdateBody>,
 ) -> Result<Json<NoteResponse>, StatusCode> {
-    let mut store = state.fresh();
-    let note = store.find_note_mut(&id).ok_or(StatusCode::NOT_FOUND)?;
-    let edited = body.title.is_some() || body.body.is_some() || body.tags.is_some();
-    if edited
-        && body
-            .base
-            .as_deref()
-            .is_some_and(|base| base != version_of(note))
-    {
-        return Err(StatusCode::CONFLICT);
-    }
-
-    if let Some(title) = body.title {
-        note.title = title;
-    }
-    if let Some(new_body) = body.body {
-        note.body = new_body;
-    }
-    if let Some(tags) = body.tags {
-        note.tags = tags;
-    }
-    if let Some(pinned) = body.pinned {
-        note.pinned = pinned;
-    }
-    if edited {
-        note.updated_at = chrono::Utc::now();
-    }
-
-    let resp = NoteResponse::from_note(note);
-    store
-        .save()
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(resp))
+    state
+        .with_store(move |store| {
+            let note = store.find_note_mut(&id).ok_or(StatusCode::NOT_FOUND)?;
+            let edited = body.title.is_some() || body.body.is_some() || body.tags.is_some();
+            if edited
+                && body
+                    .base
+                    .as_deref()
+                    .is_some_and(|base| base != version_of(note))
+            {
+                return Err(StatusCode::CONFLICT);
+            }
+            if let Some(title) = body.title {
+                note.title = title;
+            }
+            if let Some(text) = body.body {
+                note.body = text;
+            }
+            if let Some(tags) = body.tags {
+                note.tags = tags;
+            }
+            if let Some(pinned) = body.pinned {
+                note.pinned = pinned;
+            }
+            if edited {
+                note.updated_at = chrono::Utc::now();
+            }
+            let resp = NoteResponse::from_note(note);
+            save(store)?;
+            Ok(Json(resp))
+        })
+        .await
 }
 
 async fn delete_note(State(state): State<AppState>, Path(id): Path<String>) -> StatusCode {
-    let mut store = state.fresh();
-    // Exactly one note: a prefix shared by several must not delete them all.
-    let Some(full) = store.find_note(&id).map(|n| n.id.clone()) else {
-        return StatusCode::NOT_FOUND;
-    };
-    store.delete_notes(&[full]);
-    match store.save() {
-        Ok(()) => StatusCode::NO_CONTENT,
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
-    }
+    state
+        .with_store(move |store| {
+            let full = store
+                .find_note(&id)
+                .map(|n| n.id.clone())
+                .ok_or(StatusCode::NOT_FOUND)?;
+            store.delete_notes(&[full]);
+            save(store)?;
+            Ok(StatusCode::NO_CONTENT)
+        })
+        .await
+        .unwrap_or_else(|status| status)
 }
 
 async fn toggle_checkbox(
@@ -556,16 +632,16 @@ async fn toggle_checkbox(
     Path(id): Path<String>,
     Query(params): Query<ToggleParams>,
 ) -> Result<Json<NoteResponse>, StatusCode> {
-    let mut store = state.fresh();
-    store
-        .toggle_checkbox(&id, params.checkbox)
-        .ok_or(StatusCode::NOT_FOUND)?;
-    let note = store.find_note(&id).ok_or(StatusCode::NOT_FOUND)?;
-    let resp = NoteResponse::from_note(note);
-    store
-        .save()
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(resp))
+    state
+        .with_store(move |store| {
+            store
+                .toggle_checkbox(&id, params.checkbox)
+                .ok_or(StatusCode::NOT_FOUND)?;
+            let resp = NoteResponse::from_note(store.find_note(&id).ok_or(StatusCode::NOT_FOUND)?);
+            save(store)?;
+            Ok(Json(resp))
+        })
+        .await
 }
 
 async fn move_note(
@@ -573,42 +649,49 @@ async fn move_note(
     Path(id): Path<String>,
     Json(body): Json<MoveBody>,
 ) -> Result<Json<NoteResponse>, StatusCode> {
-    let mut store = state.fresh();
-    let dir = body.directory.trim_matches('/');
-    if !store.dir_exists(dir) {
-        return Err(StatusCode::NOT_FOUND);
-    }
-    store.move_note(&id, dir).ok_or(StatusCode::NOT_FOUND)?;
-    let note = store.find_note(&id).ok_or(StatusCode::NOT_FOUND)?;
-    let resp = NoteResponse::from_note(note);
-    store
-        .save()
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(resp))
+    state
+        .with_store(move |store| {
+            directory(store, &body.directory)?;
+            if !store.dir_exists(&body.directory) {
+                return Err(StatusCode::NOT_FOUND);
+            }
+            store
+                .move_note(&id, &body.directory)
+                .ok_or(StatusCode::NOT_FOUND)?;
+            let resp = NoteResponse::from_note(store.find_note(&id).ok_or(StatusCode::NOT_FOUND)?);
+            save(store)?;
+            Ok(Json(resp))
+        })
+        .await
 }
 
 async fn search_notes(
     State(state): State<AppState>,
     Query(params): Query<SearchParams>,
-) -> Json<Vec<NoteResponse>> {
-    let store = state.fresh();
-    let q = params.q.unwrap_or_default();
-    if q.is_empty() {
-        return Json(vec![]);
-    }
-    let results = store.find(&q);
-    Json(results.iter().map(|n| NoteResponse::from_note(n)).collect())
+) -> Result<Json<Vec<NoteResponse>>, StatusCode> {
+    state
+        .with_store(move |store| {
+            let q = params.q.unwrap_or_default();
+            let notes = if q.is_empty() { vec![] } else { store.find(&q) };
+            Ok(Json(
+                notes.iter().map(|n| NoteResponse::from_note(n)).collect(),
+            ))
+        })
+        .await
 }
 
-async fn list_tags(State(state): State<AppState>) -> Json<Vec<TagResponse>> {
-    let store = state.fresh();
-    Json(
-        store
-            .tags()
-            .into_iter()
-            .map(|(tag, count)| TagResponse { tag, count })
-            .collect(),
-    )
+async fn list_tags(State(state): State<AppState>) -> Result<Json<Vec<TagResponse>>, StatusCode> {
+    state
+        .with_store(|store| {
+            Ok(Json(
+                store
+                    .tags()
+                    .into_iter()
+                    .map(|(tag, count)| TagResponse { tag, count })
+                    .collect(),
+            ))
+        })
+        .await
 }
 
 #[derive(serde::Serialize)]
@@ -620,38 +703,47 @@ struct DirResponse {
 async fn list_dirs(
     State(state): State<AppState>,
     Query(params): Query<DirParams>,
-) -> Json<Vec<DirResponse>> {
-    let store = state.fresh();
-    let parent = params.parent.unwrap_or_default();
-    Json(
-        store
-            .subdirs(&parent)
-            .into_iter()
-            .map(|name| {
-                let full = if parent.is_empty() {
-                    name.clone()
-                } else {
-                    format!("{parent}/{name}")
-                };
-                let notes = store.dir_contents(&full).0;
-                DirResponse { name, notes }
-            })
-            .collect(),
-    )
+) -> Result<Json<Vec<DirResponse>>, StatusCode> {
+    state
+        .with_store(move |store| {
+            let parent = params.parent.unwrap_or_default();
+            directory(store, &parent)?;
+            Ok(Json(
+                store
+                    .subdirs(&parent)
+                    .into_iter()
+                    .map(|name| {
+                        let full = if parent.is_empty() {
+                            name.clone()
+                        } else {
+                            format!("{parent}/{name}")
+                        };
+                        DirResponse {
+                            name,
+                            notes: store.dir_contents(&full).0,
+                        }
+                    })
+                    .collect(),
+            ))
+        })
+        .await
 }
 
-async fn list_folders(State(state): State<AppState>) -> Json<Vec<DirResponse>> {
-    let store = state.fresh();
-    let mut all = store.directories.clone();
-    all.sort_by_key(|d| d.to_lowercase());
-    Json(
-        all.into_iter()
-            .map(|name| {
-                let notes = store.dir_contents(&name).0;
-                DirResponse { name, notes }
-            })
-            .collect(),
-    )
+async fn list_folders(State(state): State<AppState>) -> Result<Json<Vec<DirResponse>>, StatusCode> {
+    state
+        .with_store(|store| {
+            let mut all = store.directories.clone();
+            all.sort_by_key(|d| d.to_lowercase());
+            Ok(Json(
+                all.into_iter()
+                    .map(|name| DirResponse {
+                        notes: store.dir_contents(&name).0,
+                        name,
+                    })
+                    .collect(),
+            ))
+        })
+        .await
 }
 
 #[derive(serde::Serialize)]
@@ -662,45 +754,52 @@ struct TrashResponse {
     deleted_at: String,
 }
 
-async fn list_trash(State(state): State<AppState>) -> Json<Vec<TrashResponse>> {
-    let store = state.fresh();
-    Json(
-        store
-            .trashed()
-            .into_iter()
-            .map(|t| TrashResponse {
-                id: t.id,
-                title: t.title,
-                directory: t.directory,
-                deleted_at: t.deleted_at.to_rfc3339(),
-            })
-            .collect(),
-    )
+async fn list_trash(State(state): State<AppState>) -> Result<Json<Vec<TrashResponse>>, StatusCode> {
+    state
+        .with_store(|store| {
+            Ok(Json(
+                store
+                    .trashed()
+                    .into_iter()
+                    .map(|t| TrashResponse {
+                        id: t.id,
+                        title: t.title,
+                        directory: t.directory,
+                        deleted_at: t.deleted_at.to_rfc3339(),
+                    })
+                    .collect(),
+            ))
+        })
+        .await
 }
 
 async fn restore_note(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<NoteResponse>, StatusCode> {
-    let mut store = state.fresh();
-    store.restore(&id).ok_or(StatusCode::NOT_FOUND)?;
-    store
-        .save()
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let note = store.find_note(&id).ok_or(StatusCode::NOT_FOUND)?;
-    Ok(Json(NoteResponse::from_note(note)))
+    state
+        .with_store(move |store| {
+            store.restore(&id).ok_or(StatusCode::NOT_FOUND)?;
+            save(store)?;
+            Ok(Json(NoteResponse::from_note(
+                store.find_note(&id).ok_or(StatusCode::NOT_FOUND)?,
+            )))
+        })
+        .await
 }
 
 async fn create_dir(State(state): State<AppState>, Json(body): Json<CreateDirBody>) -> StatusCode {
-    let mut store = state.fresh();
-    if store.create_dir(&body.path) {
-        match store.save() {
-            Ok(()) => StatusCode::CREATED,
-            Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
-        }
-    } else {
-        StatusCode::CONFLICT
-    }
+    state
+        .with_store(move |store| {
+            directory(store, &body.path)?;
+            if !store.create_dir(&body.path) {
+                return Err(StatusCode::CONFLICT);
+            }
+            save(store)?;
+            Ok(StatusCode::CREATED)
+        })
+        .await
+        .unwrap_or_else(|status| status)
 }
 
 #[cfg(test)]
@@ -727,7 +826,10 @@ mod tests {
             .collect();
         store.save().unwrap();
         let state = AppState {
-            store: Arc::new(Mutex::new(store)),
+            store: Arc::new(Mutex::new(Storage {
+                store,
+                reload: false,
+            })),
             token: String::new(),
         };
         (state, dir, ids)
@@ -819,7 +921,7 @@ mod tests {
             run(delete_note(State(state.clone()), Path(ids[0].clone()))),
             StatusCode::NO_CONTENT
         );
-        let Json(trash) = run(list_trash(State(state.clone())));
+        let Json(trash) = run(list_trash(State(state.clone()))).unwrap();
         assert_eq!(trash.len(), 1);
         assert_eq!(trash[0].title, "Lecture 4");
         assert_eq!(trash[0].directory, "cs130");
@@ -827,7 +929,7 @@ mod tests {
         let Json(back) = run(restore_note(State(state.clone()), Path(ids[0].clone()))).unwrap();
         assert_eq!(back.directory, "cs130");
         assert!(state.fresh().find_note(&ids[0]).is_some());
-        let Json(trash) = run(list_trash(State(state.clone())));
+        let Json(trash) = run(list_trash(State(state.clone()))).unwrap();
         assert!(trash.is_empty());
         assert_eq!(
             run(restore_note(State(state), Path(ids[0].clone()))).unwrap_err(),
@@ -838,7 +940,7 @@ mod tests {
     #[test]
     fn folders_come_with_how_many_notes_they_hold() {
         let (state, _d, _ids) = state_with(&[("A", "cs130"), ("B", "cs130/lec"), ("C", "")]);
-        let Json(dirs) = run(list_dirs(State(state), Query(DirParams { parent: None })));
+        let Json(dirs) = run(list_dirs(State(state), Query(DirParams { parent: None }))).unwrap();
         assert_eq!(dirs.len(), 1);
         assert_eq!(dirs[0].name, "cs130");
         assert_eq!(dirs[0].notes, 2);
@@ -847,7 +949,7 @@ mod tests {
     #[test]
     fn every_folder_is_listed_for_moving_a_note() {
         let (state, _d, _ids) = state_with(&[("A", "cs130"), ("B", "cs130/lec"), ("C", "Ideas")]);
-        let Json(all) = run(list_folders(State(state)));
+        let Json(all) = run(list_folders(State(state))).unwrap();
         let names: Vec<&str> = all.iter().map(|d| d.name.as_str()).collect();
         assert_eq!(names, ["cs130", "cs130/lec", "Ideas"]);
     }
@@ -899,5 +1001,84 @@ mod tests {
         assert!(std::fs::read_to_string(&file)
             .unwrap()
             .contains("typed in Obsidian"));
+    }
+    #[test]
+    fn web_note_creation_directory_creation_and_moves_reject_traversal() {
+        let (state, dir, ids) = state_with(&[("A", "")]);
+        for path in [
+            "../outside",
+            "/tmp/outside",
+            "nested/../../outside",
+            "C:\\outside",
+            ".trash",
+        ] {
+            let created = run(create_note(
+                State(state.clone()),
+                Json(CreateBody {
+                    title: "Escape".into(),
+                    body: None,
+                    tags: None,
+                    directory: Some(path.into()),
+                }),
+            ));
+            assert_eq!(created.err(), Some(StatusCode::BAD_REQUEST));
+            assert_eq!(
+                run(create_dir(
+                    State(state.clone()),
+                    Json(CreateDirBody { path: path.into() })
+                )),
+                StatusCode::BAD_REQUEST
+            );
+            assert_eq!(
+                run(move_note(
+                    State(state.clone()),
+                    Path(ids[0].clone()),
+                    Json(MoveBody {
+                        directory: path.into()
+                    })
+                ))
+                .err(),
+                Some(StatusCode::BAD_REQUEST)
+            );
+        }
+        assert!(!dir.path().join("outside").exists());
+        assert_eq!(state.fresh().notes.len(), 1);
+    }
+
+    #[test]
+    fn a_reload_failure_is_reported_instead_of_serving_a_stale_store() {
+        let (state, dir, _) = state_with(&[("A", "")]);
+        std::fs::write(dir.path().join("notes/directories.json"), "not json").unwrap();
+        let result = run(list_notes(
+            State(state),
+            Query(ListParams {
+                tag: None,
+                limit: None,
+                dir: None,
+            }),
+        ));
+        assert_eq!(result.err(), Some(StatusCode::INTERNAL_SERVER_ERROR));
+    }
+
+    #[test]
+    fn an_empty_folder_created_by_another_app_is_visible_without_restarting() {
+        let (state, dir, _) = state_with(&[]);
+        let mut other = Store::load_from(&dir.path().join("notes")).unwrap();
+        other.create_dir("new-folder");
+        other.save_files().unwrap();
+        let Json(dirs) = run(list_dirs(State(state), Query(DirParams { parent: None }))).unwrap();
+        assert_eq!(dirs[0].name, "new-folder");
+    }
+    #[test]
+    fn failed_operations_do_not_leave_unsaved_changes_in_the_cached_store() {
+        let (state, _dir, ids) = state_with(&[("Original", "")]);
+        let id = ids[0].clone();
+        let failed: Result<(), StatusCode> = run(state.with_store(move |store| {
+            store.find_note_mut(&id).unwrap().body = "Never saved".into();
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }));
+        assert!(failed.is_err());
+        let Json(note) = run(get_note(State(state), Path(ids[0].clone()))).unwrap();
+        assert_eq!(note.body, "");
     }
 }

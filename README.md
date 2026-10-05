@@ -76,7 +76,7 @@ leo doctor
 `leo doctor` checks everything leo uses — your notes, the AI, recording and
 backup — and for anything missing, gives the command that fixes it. If an AI
 has no key yet, it offers to store one. Run it again any time something seems
-off; inside the app, `/doctor` does the same.
+off; inside the app, `:doctor` does the same.
 
 If the download fails, there may be no ready-made build for your computer yet;
 build it from source instead (below).
@@ -153,13 +153,13 @@ and the selected note:
 │ cs162/       │   2 Rust ownership   5m │ ☐ read the book           │
 │              │   3 Midterm plan  Sep 3 │ ☑ write notes             │
 └──────────────┴─────────────────────────┴───────────────────────────┘
-   Enter write   n new   / find or command   D delete   ? help
+   Enter write   n new   / search   F2 actions   D delete   ? help
  /cs130                                              3 notes · 212 words
 ```
 
 Notes work straight away; nothing needs setting up first. When you first use
 something that does — recording, asking a question, backing up — leo shows
-what it needs right then, and `Enter` on a step sets it up. `/doctor` checks
+what it needs right then, and `Enter` on a step sets it up. `:doctor` checks
 everything any time and says how to fix what is missing. The sections below
 cover each part in more detail.
 
@@ -172,7 +172,7 @@ Five keys are all you need:
 |-----|-------------|
 | `Enter` | Write in the selected note. `Esc` when you are done; it saves as you go |
 | `n` | A new note: type a title, `Enter`, and start writing |
-| `/` | Find a note, or pick a command from the list |
+| `/` | Search notes; command words are searched too |
 | `D` | Delete. `u` brings it back |
 | `?` | Every key and command |
 
@@ -201,7 +201,7 @@ Try this:
    folders pane, `j`/`k` select, and `Enter` goes in.
 5. **Undo a mistake.** Press `u` to take back the last delete, move, or tick.
    A deleted note also waits in the trash for 30 days, even after you quit:
-   `/trash` lists what is there and `/trash restore 1` brings one back to
+   `:trash` lists what is there and `:trash restore 1` brings one back to
    where it was.
 
 More keys, all listed under `?`: `e` opens the note in your own editor
@@ -210,23 +210,29 @@ top of its list (a syllabus, say; `p` again unpins), and `Space` marks several
 notes so `D` and `m` act on all of them at once. Each note in the list shows
 when it was last edited, and the note's title bar gives the day and time.
 
-### Finding and commands with `/`
+### Search with `/`, commands with `:`
 
-`/` is one line for both. Type words and the list narrows to the notes that
-match. Start with a command instead and a menu shows what it does; `Tab`
-completes names, folders and tags. If you leave the note out, a command acts on
-the selected note (or on the marked ones).
+Press `/` to search every note. All words are treated as search text, including
+`backup`, `record` and `settings`. Press `:` to open commands instead; the menu
+shows what each command does, and `Tab` completes names and arguments. A command
+with no note argument acts on the selected note (or marked notes).
+
+Press `F2` or `Ctrl-K` for **Actions**: New note (`n`), Search (`/`), Record (`R`),
+Settings (`,`), and Quick tour. Choose with the arrow keys and `Enter`, click an
+item, or press its shortcut. The first launch offers a short interactive tour:
+create a note, write a sentence, and find it. `Esc` skips the introduction;
+`:tutorial` replays it any time.
 
 ```
-/new cs130/Lecture 4 #exam     a note in folder cs130 (if it exists), tagged exam
-/rename Graph traversals       retitle the selected note
-/mv cs162                      move the selected (or marked) notes
-/mkdir cs130                   a folder here
-/cd ..                         up a folder; /cd / for the top
-/ask what is BFS?              a question answered from your notes (section 5)
-/trash                         deleted notes, kept 30 days; /trash restore 1
-/doctor                        check that everything works (AI, recording, backup)
-/backup                        back up now (section 6)
+:new cs130/Lecture 4 #exam     a note in folder cs130 (if it exists), tagged exam
+:rename Graph traversals       retitle the selected note
+:mv cs162                      move the selected (or marked) notes
+:mkdir cs130                   a folder here
+:cd ..                         up a folder; :cd / for the top
+:ask what is BFS?              a question answered from your notes (section 5)
+:trash                         deleted notes, kept 30 days; :trash restore 1
+:doctor                        check that everything works (AI, recording, backup)
+:backup                        back up now (section 6)
 ```
 
 ---
@@ -257,7 +263,7 @@ can mix them (for example, speech on your computer and writing in the cloud).
 
 ### Settings, in one minute
 
-Everything happens in Settings: type `/settings` inside leo (press `/`, type
+Everything happens in Settings: type `:settings` inside leo (press `:`, type
 `settings`, then `Enter`). The top of the page
 looks like this:
 
@@ -309,7 +315,7 @@ something is missing, and the row under it says what.
    on it to download `qwen3:8b` (about 5 GB). Every model you have pulled with
    `ollama pull` appears there too; `Enter` goes through them.
 
-3. **Check it.** `leo doctor` (or `/doctor` in the app) should show both as
+3. **Check it.** `leo doctor` (or `:doctor` in the app) should show both as
    `ok` under **AI**.
 
 ### Option B: a cloud account
@@ -407,7 +413,7 @@ iTerm, Ghostty…), then quit and reopen the terminal.
 To record:
 
 1. Select the directory the note should go in.
-2. Press `R` (or type `/record`). The live transcript appears in the right-hand
+2. Press `R` (or type `:record`). The live transcript appears in the right-hand
    pane, updating every few seconds as the speaker talks.
 3. **Type the points you care about** in the box under the transcript, and press
    `Enter` after each one. They are listed above the transcript as "Your
@@ -455,12 +461,12 @@ you like, and nothing is lost along the way:
 **Variations:**
 
 ```
-/record CS 101 Lecture 4     give the note your own title
-/record add                  add to the selected note instead of making a new one
-/record screen               record your computer's audio (a video, a call)
+:record CS 101 Lecture 4     give the note your own title
+:record add                  add to the selected note instead of making a new one
+:record screen               record your computer's audio (a video, a call)
 ```
 
-**Recording computer audio** (`/record screen`) is built in on Windows and on
+**Recording computer audio** (`:record screen`) is built in on Windows and on
 macOS 14.6 or newer. The first time, macOS asks to let your terminal record
 system audio; allow it. Your speakers keep playing while leo listens.
 
@@ -496,10 +502,10 @@ BFS visits nodes level by level using a queue; DFS goes as deep as it can…
 
 ### Ask all your notes
 
-Press `a` (or type `/ask`) followed by a question:
+Press `a` (or type `:ask`) followed by a question:
 
 ```
-/ask what did we cover about graphs?
+:ask what did we cover about graphs?
 ```
 
 leo finds the notes most about it, in any directory, and the answer streams into
@@ -522,7 +528,7 @@ leo backup github
 
 leo makes a private repository called `leo-notes` on your GitHub, connects
 your notes to it, and backs them up. (`leo backup github another-name` picks a
-different name.) In the app, `/backup github` does the same.
+different name.) In the app, `:backup github` does the same.
 
 **By hand**, without `gh`:
 
@@ -535,7 +541,7 @@ From then on:
 
 - every change is committed as you save;
 - leo pushes when you quit the app;
-- `leo backup` (or `/backup` in the app) backs up on demand: it pulls anything
+- `leo backup` (or `:backup` in the app) backs up on demand: it pulls anything
   newer from GitHub first, then pushes.
 
 **On another computer:** install leo and run `leo backup github` again (signed
@@ -543,7 +549,7 @@ in to the same GitHub account), or `leo backup` with the same repository's URL. 
 go up, and from then on both stay in step. If the same note was edited on both,
 leo keeps both versions' lines in it for you to tidy rather than losing either.
 
-To push while you work instead of on quit, type `/settings` and change **when leo
+To push while you work instead of on quit, type `:settings` and change **when leo
 backs up** on the backup row. You can also set up backup from that screen
 instead of running `leo backup`.
 
@@ -599,6 +605,13 @@ added on the phone show up in the app after `Ctrl-R`.
 
 ---
 
+Phone edits are kept as drafts on that browser as you type. If saving fails,
+the note says so and the draft remains available under **More → Drafts**, even
+after navigating away or reloading. Reconnecting retries pending saves. A draft
+is removed after leo confirms it was saved; an edit that conflicts with a change
+on your computer is kept as a separate copy. If browser storage is unavailable,
+leo says to keep the page open until the note is saved.
+
 ## 8. Use your notes in Obsidian
 
 Your notes are Markdown files in one folder, which is what
@@ -608,7 +621,7 @@ Your notes are Markdown files in one folder, which is what
 leo obsidian
 ```
 
-opens the folder in Obsidian (`/obsidian` does the same inside leo). The first
+opens the folder in Obsidian (`:obsidian` does the same inside leo). The first
 time, if Obsidian does not show your notes, choose **Open folder as vault** and
 pick the folder; leo copies its path to your clipboard. This is a separate vault
 from any you already have.
@@ -673,7 +686,11 @@ unique part of its title.
 | `Enter` | Write in the selected note; in the folders pane, open the folder |
 | `Esc` | Done writing; or clear a search, marks or pinned output |
 | `n` / `N` | New note / new folder |
-| `/` | Find a note, or run a command (`f` and `Ctrl-F` too) |
+| `/` | Search notes (`f` and `Ctrl-F` too) |
+| `:` | Commands, with a menu and Tab completion |
+| `F2` / `Ctrl-K` | Actions: New, Search, Record, Settings, Quick tour |
+| `,` | Settings |
+| `o` | Open notes supplied for the current AI answer |
 | `D` | Delete; in the folders pane, the whole folder. `u` brings it back |
 | `j` / `k` | Move down / up (arrows work too) |
 | `h` / `l` | Switch pane |
@@ -686,7 +703,7 @@ unique part of its title.
 | `Tab` | Back to a recently visited note |
 | `R` | Record |
 | `a` | Ask a question, answered from your notes |
-| `/settings` | Settings: AI and models, keys, colour, backup |
+| `:settings` | Settings: AI and models, keys, colour, backup |
 | `?` / `q` | Help / quit |
 
 While writing in a note: `Enter` continues a list, `Tab` / `Shift-Tab` indent
@@ -712,9 +729,9 @@ Each note is a Markdown file named after its title, with a small header, and dir
 directories. Deleted notes wait in a hidden `.trash` folder inside the notes
 folder for 30 days; it is never backed up to GitHub. The settings folder also
 holds `serve-token` (the code in your `leo serve` link) and `update-check.json`
-(when leo last looked for a new version). Settings are in `config.toml`; type `/settings`, then press `e` to open it.
+(when leo last looked for a new version). Settings are in `config.toml`; type `:settings`, then press `e` to open it.
 API keys are never stored in that file: they are kept in a separate file only
-your account can read. leo uses only the keys stored there (through `/settings`
+your account can read. leo uses only the keys stored there (through `:settings`
 or `leo doctor`); it never reads a key from an environment variable such as
 `OPENROUTER_API_KEY`, so a key left in a shell profile or another project's
 `.env` cannot replace yours. `leo doctor` offers to store one it finds there.
@@ -743,20 +760,20 @@ On a MacBook, the built-in microphone is off while the lid is closed, so use an
 external microphone or open the lid.
 
 **A recording's notes stop mid-sentence**
-The AI hit its length limit, and leo shows a warning saying so. Type `/settings`,
+The AI hit its length limit, and leo shows a warning saying so. Type `:settings`,
 then `e`, and raise `max_tokens` for that provider (the cloud providers default
 to 32000, plenty for an hour of lecture).
 
 **A note is missing from the list**
-If you deleted it, it is in the trash for 30 days: `/trash` (or `leo trash`)
-lists it, and `/trash restore <number>` brings it back. Otherwise run
+If you deleted it, it is in the trash for 30 days: `:trash` (or `leo trash`)
+lists it, and `:trash restore <number>` brings it back. Otherwise run
 `leo doctor`. If a note file's header was edited and leo cannot read it,
 the doctor names the file and the problem; leo never deletes such a file, so
 fixing the header brings the note back.
 
 **"No API key" or nothing happens when recording**
-Run `leo doctor` (or `/doctor` in the app): it says which kind of AI is missing
-and how to add it. Keys can also be added with `/settings`, then `Enter` on the
+Run `leo doctor` (or `:doctor` in the app): it says which kind of AI is missing
+and how to add it. Keys can also be added with `:settings`, then `Enter` on the
 **key** row.
 
 **`leo backup` fails**
@@ -796,7 +813,7 @@ and the compiler enforces that:
 
 | Crate | What it holds | Depends on |
 |-------|---------------|------------|
-| `crates/leo-core` | Notes, the on-disk store, git backup, the `/` command vocabulary and its handlers | — |
+| `crates/leo-core` | Notes, the on-disk store, git backup, the `:` command vocabulary and its handlers | — |
 | `crates/leo-services` | AI providers and fallback chains, config and credentials, recording, capability checks | core |
 | `crates/leo-tui` | The full-screen interface | core, services |
 | `crates/leo-web` | `leo serve` | core |

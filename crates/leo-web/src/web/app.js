@@ -56,7 +56,7 @@
     if (response.status === 401) throw new Locked();
     if (response.status === 204) return null;
     if (!response.ok) {
-      const error = new Error(response.status === 404 ? 'That is not there any more.' : `leo answered ${response.status}.`);
+      const error = new Error(response.status === 404 ? 'That is not there any more.' : response.status === 400 ? 'Use a folder name inside your notes, without . or ..' : `leo answered ${response.status}.`);
       error.status = response.status;
       throw error;
     }
@@ -223,89 +223,40 @@
 
   const cleanTitle = (text) => text.replace(/\s*\n\s*/g, ' ').trim();
 
-  function session(note) {
-    return { note, tags: [...note.tags], dirty: false, timer: null, saving: null, doc: null, title: null };
-  }
-
   function mark(s, text) {
     if (state.session !== s) return;
     const el = $('#save-state');
     if (el) el.textContent = text;
   }
 
-  function changed(s) {
-    s.dirty = true;
-    mark(s, 'Editing…');
-    clearTimeout(s.timer);
-    s.timer = setTimeout(() => flush(s).catch(fail), 700);
-  }
+  let local;
+  try { local = window.localStorage; } catch (_) { local = null; }
+  const saving = window.leoSaving.create({
+    api, storage: local,
+    mark,
+    storageError: () => toast('This browser cannot keep a draft. Keep the page open until your note says Saved.', { bad: true }),
+    recovered: (count) => toast(`${count} unsaved draft${count === 1 ? '' : 's'} recovered. Open Drafts in the menu.`, { action: 'Drafts', run: () => go('#/drafts') }),
+    created: (s, note) => {
+      if (state.session === s) history.replaceState(null, '', noteHash(note.id));
+    },
+    conflict: (s, note) => {
+      if (state.session === s) {
+        history.replaceState(null, '', noteHash(note.id));
+        s.title.textContent = s.edit.title;
+      }
+      toast('This note changed elsewhere. Your edits were kept in a separate copy.', { action: 'Open copy', run: () => go(noteHash(note.id)) });
+    },
+    retryable: (error) => error instanceof Offline || error.status >= 500,
+  });
 
   function snapshot(s) {
     const body = s.doc.source();
     const title = cleanTitle(s.title.textContent) || (s.note.id ? s.note.title : md.plain(body).slice(0, 60));
-    return { title: title || 'Untitled', body, tags: [...s.tags] };
+    return { title, body, tags: [...s.tags] };
   }
 
-  async function flush(s = state.session) {
-    if (!s) return;
-    clearTimeout(s.timer);
-    while (s.saving) await s.saving;
-    if (!s.dirty) return;
-    const edit = snapshot(s);
-    if (!s.note.id && !cleanTitle(s.title.textContent) && !edit.body.trim() && !edit.tags.length) {
-      s.dirty = false;
-      return;
-    }
-    s.dirty = false;
-    mark(s, 'Saving…');
-    s.saving = write(s, edit);
-    try {
-      await s.saving;
-    } finally {
-      s.saving = null;
-    }
-  }
-
-  async function write(s, edit) {
-    try {
-      if (!s.note.id) {
-        s.note = await api('/api/notes', { method: 'POST', body: { ...edit, directory: s.note.directory } });
-        if (state.session === s) history.replaceState(null, '', noteHash(s.note.id));
-      } else {
-        s.note = await api(`/api/notes/${enc(s.note.id)}`, { method: 'PATCH', body: { ...edit, base: s.note.version } });
-      }
-      mark(s, s.dirty ? 'Editing…' : 'Saved');
-    } catch (e) {
-      if (e.status === 409) return keepBoth(s, edit);
-      s.dirty = true;
-      if (e instanceof Offline) {
-        mark(s, 'Offline, will retry');
-        s.timer = setTimeout(() => flush(s).catch(fail), 4000);
-        return;
-      }
-      mark(s, 'Not saved');
-      throw e;
-    }
-  }
-
-  async function keepBoth(s, edit) {
-    let copy;
-    try {
-      copy = await api('/api/notes', {
-        method: 'POST',
-        body: { ...edit, title: `${edit.title} (conflict from phone)`, directory: s.note.directory },
-      });
-    } catch (e) {
-      s.dirty = true;
-      mark(s, 'Not saved');
-      throw e;
-    }
-    toast('This note changed on your computer, so your version was kept as a copy.', {
-      action: 'Open copy',
-      run: () => go(noteHash(copy.id)),
-    });
-    if (state.session === s) showNote(s.note.id);
-  }
+  function changed(s) { saving.changed(s, snapshot(s)); }
+  function flush(s = state.session) { return saving.flush(s); }
 
   function tagChips(s) {
     return (
@@ -358,25 +309,31 @@
       </nav>`;
   }
 
-  async function showNote(id, { fresh = null } = {}) {
+  async function showNote(id, { fresh = null, draft = null } = {}) {
     const mine = ++seq;
     const note = fresh || (await api(`/api/notes/${enc(id)}`));
     if (mine !== seq) return;
-    const s = session(note);
+    if (state.session && state.session.doc) state.session.doc.destroy();
+    const s = draft || saving.open(note);
+    s.tags = [...s.edit.tags];
     state = { view: 'note', dir: note.directory, session: s };
     chrome({ dir: note.directory, showBack: true, actions: noteActions() });
     document.title = `${note.title || 'New note'} · leo`;
     const where = `<button class="chip accent" data-action="open-folder" data-dir="${esc(note.directory)}">${ICON.folder.replace('<svg', '<svg width="13" height="13"')} ${esc(folderLabel(note.directory))}</button>`;
     const when = note.id ? `Edited ${rel(note.updated_at)}` : 'New note';
     app.innerHTML = `<article class="note">
-      <header class="note-head"><h1 id="title" contenteditable="plaintext-only" spellcheck="true" data-placeholder="Title" enterkeyhint="next">${esc(note.title)}</h1>
+      <header class="note-head"><h1 id="title" contenteditable="plaintext-only" spellcheck="true" data-placeholder="Title" enterkeyhint="next">${esc(s.edit.title)}</h1>
       <div class="note-meta">${where}<span id="save-state">${when}</span></div>
       <div class="tags" id="tags"></div></header>
       <div class="prose doc" id="doc"></div>
     </article>`;
     s.title = $('#title');
-    s.doc = leoDoc.mount($('#doc'), { source: note.body, onChange: () => changed(s), placeholder: 'Tap here to write' });
+    s.doc = leoDoc.mount($('#doc'), { source: s.edit.body, onChange: () => changed(s), placeholder: 'Tap here to write' });
     drawTags(s);
+    if (s.dirty) {
+      mark(s, 'Recovered draft · saving…');
+      flush(s).catch(fail);
+    }
     const blank = () => s.title.classList.toggle('blank', !cleanTitle(s.title.textContent));
     blank();
     s.title.addEventListener('input', () => {
@@ -398,6 +355,22 @@
     if (!note.id) {
       s.title.focus();
     }
+  }
+
+  function showDrafts() {
+    ++seq;
+    state = { view: 'drafts', dir: '' };
+    chrome({ showBack: true });
+    const drafts = saving.drafts();
+    app.innerHTML = drafts.length
+      ? '<div class="section-title">Unsaved drafts on this browser</div><div class="cards">' + drafts.map((d) => `<button class="card" data-action="open-draft" data-key="${esc(d.key)}"><div class="card-title">${esc(d.edit.title || 'Untitled')}</div><div class="card-snippet">${esc(md.plain(d.edit.body).slice(0, 180))}</div></button>`).join('') + '</div>'
+      : empty(ICON.check, 'Everything is saved', 'There are no unsaved drafts on this browser.');
+  }
+
+  function showDraft(key) {
+    const s = saving.get(key);
+    if (!s) return go('#/drafts', { replace: true });
+    return showNote(s.note.id, { fresh: s.note, draft: s });
   }
 
   function newNote(dir) {
@@ -457,7 +430,7 @@
               t.directory ? '/' + t.directory : 'All notes'
             )} · deleted ${rel(t.deleted_at)}</div></span><button class="btn plain" data-action="restore" data-id="${esc(t.id)}">Restore</button></div>`
           )
-          .join('')}</div><p class="hint" style="margin:14px 4px">Deleted notes stay here for 30 days. To empty the trash now, run /trash empty in leo on your computer.</p>`
+          .join('')}</div><p class="hint" style="margin:14px 4px">Deleted notes stay here for 30 days. To empty the trash now, run :trash empty in leo on your computer.</p>`
       : empty(ICON.trash, 'The trash is empty', 'Deleted notes wait here for 30 days, so a mistake can be undone.');
   }
 
@@ -495,6 +468,7 @@
       <button class="list-row" data-action="new" data-dir="${esc(here)}">${ICON.plus}<span class="grow">New note</span></button>
       <button class="list-row" data-action="new-folder">${ICON.folderPlus}<span class="grow">New folder${here ? ` in ${esc(folderLabel(here))}` : ''}</span></button>
       <button class="list-row" data-action="tags">${ICON.tag}<span class="grow">Tags</span></button>
+      <button class="list-row" data-action="drafts">${ICON.note}<span class="grow">Drafts (${saving.drafts().length})</span></button>
       <button class="list-row" data-action="trash">${ICON.trash}<span class="grow">Trash</span></button>
       <button class="list-row" data-action="refresh">${ICON.refresh}<span class="grow">Refresh</span></button>`);
   }
@@ -665,12 +639,15 @@
       closeSheet();
       go('#/tags');
     },
+    drafts: () => { closeSheet(); go('#/drafts'); },
+    'open-draft': (el) => go(`#/draft/${enc(el.dataset.key)}`),
     trash: () => {
       closeSheet();
       go('#/trash');
     },
     refresh: () => {
       closeSheet();
+      saving.retry();
       route();
     },
     tag: (el) => go(`#/search/${enc('#' + el.dataset.tag)}`),
@@ -724,10 +701,7 @@
     }
   });
 
-  const unsaved = () => {
-    const s = state.session;
-    return Boolean(s && (s.dirty || s.saving));
-  };
+  const unsaved = () => saving.unsaved();
 
   window.addEventListener('beforeunload', (e) => {
     if (!unsaved()) return;
@@ -740,6 +714,7 @@
     if (leaving) {
       leaving.doc.stop();
       flush(leaving).catch(fail);
+      leaving.doc.destroy();
     }
     route();
   });
@@ -783,6 +758,8 @@
       else if (kind === 'search') await showSearch(arg);
       else if (kind === 'tags') await showTags();
       else if (kind === 'trash') await showTrash();
+      else if (kind === 'drafts') showDrafts();
+      else if (kind === 'draft') await showDraft(arg);
       else await showFolder('');
     } catch (e) {
       if (e.status === 404 && hash.startsWith('#/n/')) {
@@ -796,5 +773,6 @@
     }
   }
 
+  window.addEventListener('online', () => saving.retry());
   route();
 })();

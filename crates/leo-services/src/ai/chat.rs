@@ -189,6 +189,50 @@ Reply with the title and summary only: no preamble and no remarks after them."
     Prompt { system, user }
 }
 
+fn question_excerpt(question: &str, body: &str, budget: usize) -> String {
+    let chars: Vec<char> = body.chars().collect();
+    if chars.len() <= budget {
+        return body.to_string();
+    }
+    let words = leo_core::notes::question_words(question);
+    let mut chunks: Vec<_> = (0..chars.len())
+        .step_by(500)
+        .filter_map(|start| {
+            let end = (start + 650).min(chars.len());
+            let text: String = chars[start..end].iter().collect();
+            let lower = text.to_lowercase();
+            let score: usize = words
+                .iter()
+                .map(|word| lower.matches(word.as_str()).count())
+                .sum();
+            (score > 0).then_some((score, start, end, text))
+        })
+        .collect();
+    chunks.sort_by_key(|(score, start, _, _)| (std::cmp::Reverse(*score), *start));
+    let mut chosen: Vec<(usize, usize, String)> = Vec::new();
+    for (_, start, end, text) in chunks {
+        if chosen.iter().any(|(a, b, _)| start < *b && end > *a) {
+            continue;
+        }
+        chosen.push((start, end, text));
+        if chosen.len() == 3 {
+            break;
+        }
+    }
+    if chosen.is_empty() {
+        return chars.into_iter().take(budget).collect();
+    }
+    chosen.sort_by_key(|(start, _, _)| *start);
+    chosen
+        .into_iter()
+        .map(|(_, _, text)| text)
+        .collect::<Vec<_>>()
+        .join("\n…\n")
+        .chars()
+        .take(budget)
+        .collect()
+}
+
 /// The prompt that answers a question from a set of the user's notes, given as
 /// (title, directory, body).
 pub fn build_notes_question_prompt(question: &str, notes: &[(&str, &str, &str)]) -> Prompt {
@@ -197,13 +241,13 @@ pub fn build_notes_question_prompt(question: &str, notes: &[(&str, &str, &str)])
     let system = "\
 You answer a question using only the user's own notes, given below.
 - Answer directly and concisely in Markdown.
-- After each fact, name the note it came from in square brackets, like [Graph traversals].
+- After each fact, name the note it came from in square brackets, like [cs130/Graph traversals]. Include its directory when present so equally named notes are distinguishable.
 - If the notes do not cover the question, say so plainly first; you may then add a short general answer, clearly marked as not from their notes.
 - Reply with the answer only: no preamble, no remarks after it, and do not wrap it in a code block."
         .to_string();
     let mut user = String::new();
     for (title, dir, body) in notes {
-        let body: String = body.chars().take(PER_NOTE_CHARS).collect();
+        let body = question_excerpt(question, body, PER_NOTE_CHARS);
         user.push_str(&format!(
             "<note title=\"{title}\" directory=\"{dir}\">\n{body}\n</note>\n\n"
         ));
@@ -625,5 +669,33 @@ mod tests {
         for part in ["what is BFS?", "local ctx", "Groceries", "full body here"] {
             assert!(p.user.contains(part), "{part} missing from {}", p.user);
         }
+    }
+    #[test]
+    fn question_context_includes_matching_passages_late_in_a_long_note() {
+        let body = format!(
+            "{}\nDijkstra finds the shortest path with nonnegative weights.\n{}",
+            "Unrelated introduction. ".repeat(1000),
+            "Unrelated ending. ".repeat(1000)
+        );
+        let prompt = build_notes_question_prompt(
+            "How does Dijkstra find shortest paths?",
+            &[("Algorithms", "cs130", &body)],
+        );
+        assert!(prompt.user.contains("nonnegative weights"));
+        assert!(prompt.user.chars().count() < 2300);
+    }
+
+    #[test]
+    fn excerpt_selection_is_safe_for_unicode_and_keeps_separated_matches() {
+        let body = format!(
+            "{}\nBFS uses a queue.\n{}\nDFS uses a stack.\n{}",
+            "界".repeat(3000),
+            "界".repeat(3000),
+            "界".repeat(3000)
+        );
+        let excerpt = question_excerpt("Compare BFS and DFS", &body, 2000);
+        assert!(excerpt.contains("BFS uses a queue"));
+        assert!(excerpt.contains("DFS uses a stack"));
+        assert!(excerpt.chars().count() <= 2000);
     }
 }

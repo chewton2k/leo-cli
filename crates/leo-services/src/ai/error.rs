@@ -89,7 +89,7 @@ fn key_place(provider: &str) -> (String, Option<String>) {
         Some(choice) => (
             choice.name.to_string(),
             Some(format!(
-                "/settings, then Enter on the {} key row",
+                ":settings, then Enter on the {} key row",
                 choice.name
             )),
         ),
@@ -189,7 +189,7 @@ mod tests {
         assert!(!openrouter.is_retryable());
         assert!(
             openrouter.message().starts_with(
-                "OpenRouter rejected the key stored in leo (401). To replace it: /settings, then Enter on the OpenRouter key row. It said: "
+                "OpenRouter rejected the key stored in leo (401). To replace it: :settings, then Enter on the OpenRouter key row. It said: "
             ),
             "{}",
             openrouter.message()

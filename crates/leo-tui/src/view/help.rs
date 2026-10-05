@@ -46,7 +46,7 @@ pub const SECTIONS: &[Section] = &[
         entries: &[
             e("Enter", "write in the selected note; Esc when done, it saves itself"),
             e("n", "new note: type a title, Enter, then write"),
-            e("/", "find a note, or pick a command from the list"),
+            e("/", "search notes; command words are searched too"),
             e("D", "delete (u brings it back)"),
             e("?", "this help"),
         ],
@@ -124,9 +124,15 @@ pub const SECTIONS: &[Section] = &[
         ],
     },
     Section {
-        title: "The / line",
+        title: "Search and commands",
         entries: &[
-            e("Tab", "complete commands, notes, folders, tags"),
+            e(":", "commands: pick from the menu, or type one"),
+            e("F2", "Actions: New, Search, Record, Settings and Quick tour"),
+            e("Ctrl-K", "the same Actions menu"),
+            e(",", "Settings"),
+            e(":tutorial", "replay the short interactive introduction; Ctrl-G skips"),
+            e("o", "open the notes supplied for an AI answer"),
+            e("Tab", "complete commands and arguments; search completes titles or tags"),
             e("Up / Down", "previous lines"),
             e("Ctrl-W / Ctrl-U", "delete a word / the line"),
             e("[note]", "leave it out to mean the selected note"),
@@ -135,7 +141,7 @@ pub const SECTIONS: &[Section] = &[
     Section {
         title: "Settings",
         entries: &[
-            e("/settings", "AI and models, keys, colour, backup"),
+            e(":settings", "AI and models, keys, colour, backup"),
             e("  Enter / →", "next choice: the next provider, or the next model"),
             e("  ←", "previous choice"),
             e("  x", "on a key row: remove the key"),
@@ -207,7 +213,7 @@ fn help_lines() -> Vec<TuiLine<'static>> {
     lines.push(TuiLine::from(""));
     lines.push(heading("Commands"));
     for verb in leo_core::action::VERBS {
-        lines.push(row(format!("/{}", verb.usage), verb.summary));
+        lines.push(row(format!(":{}", verb.usage), verb.summary));
     }
     lines
 }
@@ -388,8 +394,8 @@ mod tests {
         let text: String = help_lines().iter().map(|l| l.to_string()).collect();
         for (alias, _, _) in leo_core::action::RETIRED {
             assert!(
-                !text.contains(&format!("/{alias} ")),
-                "help still documents `/{alias}`"
+                !text.contains(&format!(":{alias} ")),
+                "help still documents `:{alias}`"
             );
         }
         assert!(!text.contains("leo env"), "help still documents leo env");
@@ -427,7 +433,7 @@ mod tests {
         assert_ne!(top, bottom, "scrolling changed nothing");
         assert!(top.contains("The five you need"));
         assert!(
-            bottom.contains("/quit"),
+            bottom.contains(":quit"),
             "the last section is unreachable:\n{bottom}"
         );
     }

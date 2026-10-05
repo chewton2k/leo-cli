@@ -1,4 +1,4 @@
-//! The settings screen (/settings): opening it, its keys, and
+//! The settings screen (:settings): opening it, its keys, and
 //! applying what they change. The rows themselves are built in `settings.rs`.
 
 use super::*;
@@ -14,7 +14,7 @@ impl App {
         let usage = leo_services::usage::load();
         let mut rows =
             settings::simple_rows(&cfg, store.as_ref(), &self.store.notes_dir, &local, &usage);
-        if self.model_download.is_some() {
+        if self.jobs.model_download.is_some() {
             for row in &mut rows {
                 if let SettingsRow::Setting {
                     label,

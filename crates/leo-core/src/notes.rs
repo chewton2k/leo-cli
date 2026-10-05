@@ -278,6 +278,23 @@ pub fn search_words(query: &str) -> Vec<String> {
         .collect()
 }
 
+pub fn question_words(question: &str) -> Vec<String> {
+    const FILLER: &[&str] = &[
+        "the", "and", "for", "are", "was", "were", "what", "which", "who", "whom", "when", "where",
+        "why", "how", "did", "does", "do", "about", "with", "that", "this", "these", "those",
+        "from", "into", "have", "has", "had", "you", "your", "our", "can", "could", "would",
+        "should", "tell", "explain", "cover", "covered", "say", "said", "there", "their", "they",
+        "them", "then", "than", "been", "being", "any", "all", "some", "more", "most", "also",
+        "just", "not", "but", "out", "use", "used", "using", "give", "show",
+    ];
+    question
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.len() >= 3 && !FILLER.contains(w))
+        .map(str::to_string)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

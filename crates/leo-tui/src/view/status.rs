@@ -19,6 +19,7 @@ use super::theme;
 /// the text and is never submitted. `idle` is what the line shows when it is not
 /// in use: the keys that do something where the user is.
 pub struct Typing<'a> {
+    pub search: bool,
     pub text: &'a str,
     pub cursor: usize,
     pub ghost: Option<&'a str>,
@@ -32,6 +33,7 @@ pub fn render_command(
     idle: &[(&'static str, &'static str)],
 ) {
     let Some(Typing {
+        search,
         text,
         cursor,
         ghost,
@@ -45,11 +47,21 @@ pub fn render_command(
 
     let dim = Style::default().add_modifier(Modifier::DIM);
     let mut spans = vec![
-        Span::styled("/", Style::default().fg(theme::accent())),
+        Span::styled(
+            if search { "/" } else { ":" },
+            Style::default().fg(theme::accent()),
+        ),
         Span::raw(text.to_string()),
     ];
     if text.is_empty() {
-        spans.push(Span::styled(PLACEHOLDER, dim));
+        spans.push(Span::styled(
+            if search {
+                "search notes · Esc closes"
+            } else {
+                "commands · Esc closes"
+            },
+            dim,
+        ));
     } else if let Some(ghost) = ghost {
         if !ghost.is_empty() {
             spans.push(Span::styled(ghost.to_string(), dim));
@@ -74,8 +86,6 @@ pub fn render_command(
         area.y,
     ));
 }
-
-pub const PLACEHOLDER: &str = "type to find a note, or pick a command";
 
 /// What the right-hand side of the bar reports.
 ///
@@ -289,6 +299,7 @@ mod tests {
                     f,
                     f.area(),
                     Some(Typing {
+                        search: false,
                         text: "owner",
                         cursor: 5,
                         ghost: None,
@@ -299,7 +310,7 @@ mod tests {
             })
             .unwrap();
             let out = t.backend().to_string();
-            assert!(out.contains("/owner"), "{out}");
+            assert!(out.contains(":owner"), "{out}");
             assert!(out.contains(said), "{out}");
         }
     }
@@ -312,6 +323,7 @@ mod tests {
                 f,
                 f.area(),
                 Some(Typing {
+                    search: false,
                     text: "",
                     cursor: 0,
                     ghost: None,
@@ -321,10 +333,7 @@ mod tests {
             )
         })
         .unwrap();
-        assert!(t
-            .backend()
-            .to_string()
-            .contains("find a note, or pick a command"));
+        assert!(t.backend().to_string().contains("commands · Esc closes"));
     }
 
     #[test]
@@ -352,6 +361,7 @@ mod tests {
                 f,
                 f.area(),
                 Some(Typing {
+                    search: false,
                     text: "edit",
                     cursor: 4,
                     ghost: None,
@@ -361,7 +371,7 @@ mod tests {
             )
         })
         .unwrap();
-        assert!(t.backend().to_string().contains("/edit"));
+        assert!(t.backend().to_string().contains(":edit"));
     }
 
     #[test]
@@ -372,6 +382,7 @@ mod tests {
                 f,
                 f.area(),
                 Some(Typing {
+                    search: false,
                     text: "ren",
                     cursor: 3,
                     ghost: Some("ame"),
@@ -382,7 +393,7 @@ mod tests {
         })
         .unwrap();
         assert!(
-            t.backend().to_string().contains("/rename"),
+            t.backend().to_string().contains(":rename"),
             "{}",
             t.backend().to_string()
         );
@@ -397,6 +408,7 @@ mod tests {
                 f,
                 f.area(),
                 Some(Typing {
+                    search: false,
                     text: &"x".repeat(50),
                     cursor: 50,
                     ghost: None,

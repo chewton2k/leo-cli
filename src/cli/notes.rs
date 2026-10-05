@@ -134,7 +134,7 @@ fn absorb_cli(
         action::Effect::None => return Ok(()),
 
         action::Effect::Settings => {
-            println!("  Settings live inside leo: run `leo`, then type /settings.");
+            println!("  Settings live inside leo: run `leo`, then type :settings.");
             return Ok(());
         }
 
@@ -188,6 +188,7 @@ fn absorb_cli(
 
         // Reachable only through the interactive shell.
         action::Effect::ShowHelp
+        | action::Effect::Tutorial
         | action::Effect::Doctor
         | action::Effect::Quit
         | action::Effect::Sync(_) => return Ok(()),

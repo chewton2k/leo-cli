@@ -62,6 +62,8 @@ pub enum Intent {
     JumpRecent,
     /// Open the provider and settings screen.
     OpenSettings,
+    OpenActions,
+    OpenSources,
     ToggleHelp,
     /// Leave whatever overlay or mode is active.
     Cancel,
@@ -78,6 +80,7 @@ pub fn normal(key: KeyEvent, focus: Pane) -> Intent {
         return match key.code {
             // Ctrl-P was a separate finder; search now covers everywhere.
             KeyCode::Char('f') => Intent::OpenFilter,
+            KeyCode::Char('k') => Intent::OpenActions,
             KeyCode::Char('c') => Intent::Quit,
             KeyCode::Char('d') => Intent::ScrollDown,
             KeyCode::Char('u') => Intent::ScrollUp,
@@ -109,6 +112,10 @@ pub fn normal(key: KeyEvent, focus: Pane) -> Intent {
         KeyCode::Char('R') => Intent::Record,
         KeyCode::Char('D') => Intent::DeleteSelected,
         KeyCode::Char('/') => Intent::OpenFilter,
+        KeyCode::Char(':') => Intent::OpenCommand { seed: "" },
+        KeyCode::F(2) => Intent::OpenActions,
+        KeyCode::Char(',') => Intent::OpenSettings,
+        KeyCode::Char('o') => Intent::OpenSources,
         KeyCode::Char('f') => Intent::OpenFilter,
         KeyCode::Char('?') => Intent::ToggleHelp,
         KeyCode::Esc => Intent::Cancel,
@@ -211,7 +218,10 @@ mod tests {
     #[test]
     fn slash_f_and_ctrl_f_open_the_same_line() {
         assert_eq!(normal(key('/'), Pane::Notes), Intent::OpenFilter);
-        assert_eq!(normal(key(':'), Pane::Notes), Intent::Nothing);
+        assert_eq!(
+            normal(key(':'), Pane::Notes),
+            Intent::OpenCommand { seed: "" }
+        );
         assert_eq!(normal(key('t'), Pane::Notes), Intent::Nothing);
         assert_eq!(normal(key('f'), Pane::Notes), Intent::OpenFilter);
         assert_eq!(normal(ctrl('f'), Pane::Notes), Intent::OpenFilter);

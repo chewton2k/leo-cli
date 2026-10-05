@@ -231,6 +231,38 @@ pub fn complete(line: &str, cursor: usize, sources: &Sources) -> Completion {
     }
 }
 
+pub fn search(line: &str, cursor: usize, sources: &Sources) -> Completion {
+    let before: String = line.chars().take(cursor).collect();
+    let token = before.split_whitespace().last().unwrap_or("");
+    let (start, typed, pool) = if let Some(tag) = token.strip_prefix('#') {
+        (
+            cursor - token.chars().count() + 1,
+            tag.to_string(),
+            sources.tags.clone(),
+        )
+    } else {
+        (
+            0,
+            before,
+            sources.notes.iter().map(|n| n.title.clone()).collect(),
+        )
+    };
+    Completion {
+        start,
+        end: cursor,
+        matches: rank(&typed, pool),
+    }
+}
+
+pub fn apply_literal(line: &str, completion: &Completion, choice: &str) -> (String, usize) {
+    let prefix: String = line.chars().take(completion.start).collect();
+    let suffix: String = line.chars().skip(completion.end).collect();
+    (
+        format!("{prefix}{choice}{suffix}"),
+        completion.start + choice.chars().count(),
+    )
+}
+
 /// Apply a chosen match to the line, returning the new line and cursor.
 ///
 /// A note candidate carries its title for matching but only its number is a

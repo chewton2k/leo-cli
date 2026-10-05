@@ -92,6 +92,12 @@ pub const VERBS: &[Verb] = &[
         "doctor",
         "check that everything works: AI, recording, backup",
     ),
+    v(
+        "tutorial",
+        &[],
+        "tutorial",
+        "a short interactive introduction",
+    ),
     v("help", &["?"], "help", "every key and command"),
     v("quit", &["exit", "q"], "quit", "leave"),
 ];
@@ -139,8 +145,8 @@ pub const RETIRED: &[(&str, &str, &str)] = &[
     ("list", "the notes pane", LISTED),
     ("v", "j and k", SHOWN),
     ("view", "j and k", SHOWN),
-    ("d", "/delete", ONE_NAME),
-    ("del", "/delete", ONE_NAME),
+    ("d", ":delete", ONE_NAME),
+    ("del", ":delete", ONE_NAME),
     ("n", "the n key", "it makes a note"),
     ("rec", "the R key", "it records"),
     ("move", "the m key", "it moves the selected note"),
@@ -149,7 +155,7 @@ pub const RETIRED: &[(&str, &str, &str)] = &[
     ("search", "/", ONE_SEARCH),
     (
         "expand",
-        "/ask",
+        ":ask",
         "write @leo in a note, and it is answered when you finish",
     ),
     ("check", "the x key", TICKED),
@@ -161,22 +167,22 @@ pub const RETIRED: &[(&str, &str, &str)] = &[
         "D in the directories pane",
         "it asks, then removes the directory",
     ),
-    ("model", "/settings", PROFILE),
-    ("config", "/settings", PROFILE),
+    ("model", ":settings", PROFILE),
+    ("config", ":settings", PROFILE),
     ("rem", "a note with - [ ] lines", GONE_REMIND),
     ("remind", "a note with - [ ] lines", GONE_REMIND),
     ("exp", "the .md file in your notes folder", GONE_EXPORT),
     ("export", "the .md file in your notes folder", GONE_EXPORT),
     (
         "env",
-        "/settings",
+        ":settings",
         "keys live in your OS keychain now, not a plaintext file",
     ),
     ("pwd", "the status bar", "it always shows where you are"),
     ("clear", "Esc", "it closes whatever output is pinned"),
     (
         "setup",
-        "/doctor",
+        ":doctor",
         "it checks everything and says how to fix what is missing",
     ),
 ];
@@ -204,7 +210,7 @@ pub fn all_verb_words() -> Vec<&'static str> {
 /// Whether a line typed at `/` is a command rather than a search.
 pub fn is_command(line: &str) -> bool {
     let line = line.trim_start();
-    let line = line.strip_prefix('/').unwrap_or(line);
+    let line = line.strip_prefix(['/', ':']).unwrap_or(line);
     line.split_whitespace()
         .next()
         .is_some_and(|first| all_verb_words().contains(&first.to_lowercase().as_str()))
@@ -263,7 +269,7 @@ pub fn strip_leo_prefix(tokens: &mut Vec<String>) {
 pub fn parse(line: &str) -> Parsed {
     // The prompt shows `/` already; typing another is noise.
     let line = line.trim();
-    let line = line.strip_prefix('/').unwrap_or(line);
+    let line = line.strip_prefix(['/', ':']).unwrap_or(line);
     let mut tokens = tokenize(line.trim());
     if tokens.is_empty() {
         return Parsed::Empty;
@@ -405,6 +411,7 @@ pub fn parse(line: &str) -> Parsed {
         "doctor" => act(Action::Doctor),
         "obsidian" => act(Action::Obsidian),
         "settings" => act(Action::Settings),
+        "tutorial" => act(Action::Tutorial),
         "quit" | "exit" | "q" => act(Action::Quit),
 
         _ => match RETIRED.iter().find(|(alias, _, _)| *alias == verb.as_str()) {
@@ -541,7 +548,7 @@ mod parse_tests {
             "new Lecture",
             "mv cs130",
             "backup",
-            "/doctor",
+            ":doctor",
             "Q",
             "  edit 2",
         ] {
@@ -655,7 +662,7 @@ mod parse_tests {
     /// command into an unknown one.
     #[test]
     fn a_typed_slash_prefix_is_ignored() {
-        assert_eq!(act("/edit 1"), act("edit 1"));
+        assert_eq!(act(":edit 1"), act("edit 1"));
     }
 
     #[test]
@@ -721,7 +728,7 @@ mod parse_tests {
     #[test]
     fn setup_points_at_doctor() {
         match parse("setup") {
-            Parsed::Retired { replacement, .. } => assert_eq!(replacement, "/doctor"),
+            Parsed::Retired { replacement, .. } => assert_eq!(replacement, ":doctor"),
             other => panic!("setup should be retired, got {other:?}"),
         }
     }
