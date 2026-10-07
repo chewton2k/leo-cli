@@ -583,23 +583,34 @@ there you can:
 - restore notes from the trash, and browse by tag;
 - see a **map of ideas**: how your notes connect, across subjects.
 
-**The map of ideas** (More → Map of ideas, or **Map** on any note) draws every
-note as a dot coloured by its folder. **Find connections** asks the AI you
-chose for writing to name the key ideas in each note and how ideas in
-different subjects relate, for example that a priority queue in data
-structures is what priority scheduling in operating systems uses. Ideas
-appear as hollow dots joined to the notes that cover them, and dashed lines
-join related ideas, each with a sentence saying why. Tap a note to see its
-ideas and the notes it shares them with, or an idea to see every note that
-covers it; **Open note** goes straight to it. The folder chips hide or show a
-subject, and the search box finds an idea or note on the map. `[[Note title]]`
-links you write show up even before any AI is used.
+**The map of ideas** (More → Map of ideas, or **Map** on any note) is a
+knowledge graph of your notes: every note is a dot coloured by its class (its
+top folder), sized by how connected it is. **Connect notes** asks the AI you
+chose for writing to read each note (what it teaches, its key ideas and
+methods), then to connect the notes worth studying together, especially
+across classes: the same method in two courses (dynamic programming and
+counting), an idea one class builds on (deadlock detection applies graph
+cycle search), or two approaches that contrast. Each connection has a type
+(same idea, same method, builds on, applies, contrasts), a strength, and a
+sentence saying why. Connections across classes are drawn in the accent
+colour, thicker when stronger.
 
-leo asks you before the first run, and says roughly how many requests it will
-make (about one per eight notes, plus one). After that it only reads notes you
-changed, so **Update** is quick. What it found is kept in `graph.json` next to
-your notes folder, on this computer only, and is never backed up to GitHub. The
-map is only in the browser, not in the terminal.
+- Hover a note (or tap it on a phone) to light up its connections; hover a
+  line to see why two notes are connected.
+- The panel lists a note's summary, then its connections across classes
+  first, each with its reason. **Open note** goes to it, and **Focus** shows
+  only its neighbourhood.
+- **Across classes** shows only connections between different classes;
+  **Ideas** adds the shared ideas as their own dots; the class chips hide or
+  show a class; the search box finds any note or idea.
+- Drag a note to move it, scroll or pinch to zoom, double-click a note to
+  open it. `[[Note title]]` links you write show up even before any AI is used.
+
+leo asks before the first run and says roughly how many requests it will make
+(about one per eight notes to read them, plus one to connect them for every
+90 notes or so). After that it only reads notes you changed. What it found is
+kept in `graph.json` next to your notes folder, on this computer only, and is
+never backed up to GitHub. The map is only in the browser, not in the terminal.
 
 If a note changes on your computer while you are editing it on the phone,
 nothing is overwritten: the computer's version stays, and yours is kept next to

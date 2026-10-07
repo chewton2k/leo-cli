@@ -14,12 +14,21 @@ const BATCH_NOTES: usize = 8;
 const BATCH_CHARS: usize = 18_000;
 const NOTE_CHARS: usize = 2_500;
 const VOCABULARY: usize = 150;
-const LINK_CONCEPTS: usize = 250;
-const MOST_LINKS: usize = 60;
+const GROUP_NOTES: usize = 90;
+const LINKS_PER_NOTE: usize = 4;
 const CONCEPT_CHARS: usize = 48;
-const WHY_CHARS: usize = 120;
-const READ_TOKENS: u32 = 4_000;
-const LINK_TOKENS: u32 = 6_000;
+const SUMMARY_CHARS: usize = 200;
+const WHY_CHARS: usize = 140;
+const READ_TOKENS: u32 = 6_000;
+const LINK_TOKENS: u32 = 12_000;
+
+pub const KINDS: [&str; 5] = [
+    "same idea",
+    "same method",
+    "builds on",
+    "applies",
+    "contrasts",
+];
 
 #[derive(Debug, Clone)]
 pub struct Source {
@@ -49,7 +58,7 @@ pub struct Cache {
     #[serde(default)]
     pub notes: BTreeMap<String, Read>,
     #[serde(default)]
-    pub links: Links,
+    pub pairs: BTreeMap<String, Pair>,
     #[serde(default)]
     pub built_at: Option<String>,
 }
@@ -57,29 +66,37 @@ pub struct Cache {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Read {
     pub hash: String,
+    #[serde(default)]
+    pub summary: String,
     pub concepts: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct Links {
-    pub key: String,
-    pub items: Vec<Link>,
+pub struct Pair {
+    pub hash: String,
+    pub links: Vec<NoteLink>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct Link {
+pub struct NoteLink {
     pub a: String,
     pub b: String,
+    pub kind: String,
+    pub strength: u8,
     pub why: String,
 }
 
 fn fnv(text: &str) -> String {
+    format!("{:016x}", fnv64(text))
+}
+
+fn fnv64(text: &str) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for byte in text.bytes() {
         hash ^= u64::from(byte);
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
-    format!("{hash:016x}")
+    hash
 }
 
 fn hash_of(source: &Source) -> String {
@@ -90,9 +107,12 @@ fn key(label: &str) -> String {
     label.to_lowercase()
 }
 
+fn tidy(raw: &str) -> String {
+    raw.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 pub fn concept_label(raw: &str) -> Option<String> {
-    let words: Vec<&str> = raw.split_whitespace().collect();
-    let joined = words.join(" ");
+    let joined = tidy(raw);
     let trimmed = joined.trim_matches(|c: char| {
         matches!(
             c,
@@ -112,11 +132,11 @@ fn clip(text: &str, most: usize) -> String {
     out
 }
 
-fn folder_name(directory: &str) -> &str {
+fn class_name(directory: &str) -> &str {
     if directory.is_empty() {
-        "top level"
+        "unfiled"
     } else {
-        directory
+        directory.split('/').next().unwrap_or(directory)
     }
 }
 
@@ -149,7 +169,6 @@ pub fn json_in(reply: &str) -> Option<Value> {
 struct Concept {
     label: String,
     notes: BTreeSet<String>,
-    folders: BTreeSet<String>,
 }
 
 fn concepts(sources: &[Source], cache: &Cache) -> BTreeMap<String, Concept> {
@@ -159,35 +178,37 @@ fn concepts(sources: &[Source], cache: &Cache) -> BTreeMap<String, Concept> {
             continue;
         };
         for label in &read.concepts {
-            let entry = out.entry(key(label)).or_insert_with(|| Concept {
-                label: label.clone(),
-                notes: BTreeSet::new(),
-                folders: BTreeSet::new(),
-            });
-            entry.notes.insert(source.id.clone());
-            entry
-                .folders
-                .insert(folder_name(&source.directory).to_string());
+            out.entry(key(label))
+                .or_insert_with(|| Concept {
+                    label: label.clone(),
+                    notes: BTreeSet::new(),
+                })
+                .notes
+                .insert(source.id.clone());
         }
     }
     out
 }
 
-fn by_use(table: &BTreeMap<String, Concept>, most: usize) -> Vec<(&String, &Concept)> {
+fn vocabulary(table: &BTreeMap<String, Concept>) -> Vec<String> {
     let mut list: Vec<(&String, &Concept)> = table.iter().collect();
     list.sort_by(|a, b| b.1.notes.len().cmp(&a.1.notes.len()).then(a.0.cmp(b.0)));
-    list.truncate(most);
-    list
+    list.into_iter()
+        .take(VOCABULARY)
+        .map(|(_, c)| c.label.clone())
+        .collect()
 }
 
 const READ_RULES: &str = "\
-You read a student's notes and name the ideas each one teaches, so that notes about the same idea can be linked.
+You read a student's notes so they can be connected into a knowledge graph across classes.
 
-For each note, list 3 to 8 key concepts: specific ideas, methods, terms, people or results, as short noun phrases of 1 to 4 words. Leave out generic words such as \"introduction\", \"overview\", \"lecture\", \"notes\" or \"example\".
+For each note, give:
+- summary: one sentence of at most 25 words saying what the note teaches.
+- concepts: 3 to 8 key ideas and methods, as short noun phrases of 1 to 4 words: specific concepts, techniques, methods, algorithms, theorems, people or results. Include the methods used, not only the topic (for example \"dynamic programming\", \"proof by induction\", \"Fourier transform\"). Leave out generic words such as \"introduction\", \"overview\", \"lecture\", \"notes\" or \"example\".
 When a concept is already in the vocabulary, use exactly that name, so the same idea always has the same name. Name a new concept the way a textbook would.
 
 Reply with JSON only, no other text, in this shape:
-{\"notes\": [{\"id\": \"n1\", \"concepts\": [\"breadth-first search\", \"queue\"]}]}";
+{\"notes\": [{\"id\": \"n1\", \"summary\": \"How breadth-first search explores a graph level by level\", \"concepts\": [\"breadth-first search\", \"queue\"]}]}";
 
 pub fn read_prompt(batch: &[&Source], vocabulary: &[String]) -> (String, String) {
     let mut user = String::from("<vocabulary>\n");
@@ -198,31 +219,39 @@ pub fn read_prompt(batch: &[&Source], vocabulary: &[String]) -> (String, String)
     user.push_str("</vocabulary>\n\n");
     for (i, source) in batch.iter().enumerate() {
         user.push_str(&format!(
-            "<note id=\"n{}\" folder=\"{}\">\n# {}\n{}\n</note>\n\n",
+            "<note id=\"n{}\" class=\"{}\">\n# {}\n{}\n</note>\n\n",
             i + 1,
-            folder_name(&source.directory),
+            class_name(&source.directory),
             source.title,
             clip(&source.body, NOTE_CHARS)
         ));
     }
-    user.push_str("List the key concepts of each note, as JSON.");
+    user.push_str("Give the summary and key concepts of each note, as JSON.");
     (READ_RULES.to_string(), user)
 }
 
-pub fn parse_read(reply: &str, count: usize) -> Option<Vec<Vec<String>>> {
+fn short_id(value: Option<&Value>, count: usize) -> Option<usize> {
+    value
+        .and_then(Value::as_str)
+        .and_then(|id| id.trim().trim_start_matches('n').parse::<usize>().ok())
+        .filter(|i| (1..=count).contains(i))
+}
+
+pub fn parse_read(reply: &str, count: usize) -> Option<Vec<(String, Vec<String>)>> {
     let value = json_in(reply)?;
     let notes = value.get("notes")?.as_array()?;
-    let mut out = vec![Vec::new(); count];
+    let mut out = vec![(String::new(), Vec::new()); count];
     for note in notes {
-        let Some(index) = note
-            .get("id")
-            .and_then(Value::as_str)
-            .and_then(|id| id.trim().trim_start_matches('n').parse::<usize>().ok())
-            .filter(|i| (1..=count).contains(i))
-        else {
+        let Some(index) = short_id(note.get("id"), count) else {
             continue;
         };
+        let summary = note
+            .get("summary")
+            .and_then(Value::as_str)
+            .map(tidy)
+            .unwrap_or_default();
         let mut seen = BTreeSet::new();
+        let mut list = Vec::new();
         for raw in note
             .get("concepts")
             .and_then(Value::as_array)
@@ -232,88 +261,150 @@ pub fn parse_read(reply: &str, count: usize) -> Option<Vec<Vec<String>>> {
         {
             if let Some(label) = concept_label(raw) {
                 if seen.insert(key(&label)) {
-                    out[index - 1].push(label);
+                    list.push(label);
                 }
             }
         }
+        out[index - 1] = (summary.chars().take(SUMMARY_CHARS).collect(), list);
     }
     Some(out)
 }
 
 const LINK_RULES: &str = "\
-You find how the ideas in a student's notes connect, so they can study them together.
+You connect a student's notes into a knowledge graph, so they can study related material together, especially across different classes.
 
-You get concepts, each with the folders (subjects) it appears in. List the most useful connections between pairs of them: one is a prerequisite of the other, one applies or generalises the other, they are the same idea under different names, they contrast, or one is an example of the other. Prefer connections between different folders, since those are the ones a student misses, and skip two concepts that only ever appear in the same note, since that note already ties them together. Use the exact names from the list, and connect two concepts only when the connection is real.
+Each note has an id, its class, a one-line summary and its key ideas and methods. Connect two notes when studying them together helps: they use the same method or technique, cover the same idea, one builds on the other, one applies the other, or they contrast two approaches to the same problem. Prefer connections between different classes, since those are the ones a student misses. Connect notes in the same class only when the connection is specific, never just because they share a class or a broad subject.
 
 Reply with JSON only, no other text, in this shape:
-{\"links\": [{\"a\": \"breadth-first search\", \"b\": \"queue\", \"why\": \"BFS keeps the nodes it will visit next in a queue\"}]}
-At most 60 links; each \"why\" is one short sentence of at most 12 words.";
+{\"links\": [{\"a\": \"n1\", \"b\": \"n7\", \"kind\": \"same method\", \"strength\": 2, \"why\": \"Both break the problem into overlapping subproblems with dynamic programming\"}]}
+kind is one of: same idea, same method, builds on, applies, contrasts. For builds on and applies, a is the note that builds on or applies b. strength is 1 (loosely related), 2 (clearly related) or 3 (worth studying together). why is one sentence of at most 15 words, specific to the two notes. Give each note at most 4 connections, its most useful ones, and leave a note unconnected rather than invent a link.";
 
-pub fn link_prompt(lines: &str) -> (String, String) {
-    (
-        LINK_RULES.to_string(),
-        format!("<concepts>\n{lines}</concepts>\n\nList the connections between these concepts, as JSON."),
+fn note_line(n: usize, source: &Source, read: Option<&Read>) -> String {
+    let summary = read.map(|r| r.summary.as_str()).unwrap_or("");
+    let ideas = read.map(|r| r.concepts.join(", ")).unwrap_or_default();
+    format!(
+        "n{n} [{}] {} | {} | ideas: {}\n",
+        class_name(&source.directory),
+        tidy(&source.title),
+        summary,
+        ideas
     )
 }
 
-pub fn parse_links(reply: &str, known: &HashMap<String, String>) -> Option<Vec<Link>> {
+pub fn link_prompt(notes: &[&Source], cache: &Cache) -> (String, String) {
+    let mut user = String::from("<notes>\n");
+    for (i, source) in notes.iter().enumerate() {
+        user.push_str(&note_line(i + 1, source, cache.notes.get(&source.id)));
+    }
+    user.push_str("</notes>\n\nConnect the notes worth studying together, as JSON.");
+    (LINK_RULES.to_string(), user)
+}
+
+pub fn parse_links(reply: &str, notes: &[&Source]) -> Option<Vec<NoteLink>> {
     let value = json_in(reply)?;
     let links = value.get("links")?.as_array()?;
     let mut seen = BTreeSet::new();
     let mut out = Vec::new();
     for link in links {
-        let side = |name: &str| {
-            link.get(name)
-                .and_then(Value::as_str)
-                .and_then(concept_label)
-                .and_then(|label| known.get(&key(&label)).cloned())
-        };
-        let (Some(a), Some(b)) = (side("a"), side("b")) else {
+        let (Some(a), Some(b)) = (
+            short_id(link.get("a"), notes.len()),
+            short_id(link.get("b"), notes.len()),
+        ) else {
             continue;
         };
-        let (ka, kb) = (key(&a), key(&b));
-        if ka == kb {
+        if a == b {
             continue;
         }
-        let pair = if ka < kb { (ka, kb) } else { (kb, ka) };
-        if !seen.insert(pair) {
+        let (ida, idb) = (notes[a - 1].id.clone(), notes[b - 1].id.clone());
+        if !seen.insert(ordered(&ida, &idb)) {
             continue;
         }
-        let why = link
+        let kind = link
+            .get("kind")
+            .and_then(Value::as_str)
+            .map(|k| tidy(k).to_lowercase())
+            .filter(|k| KINDS.contains(&k.as_str()))
+            .unwrap_or_else(|| "same idea".to_string());
+        let strength = link
+            .get("strength")
+            .and_then(Value::as_u64)
+            .unwrap_or(2)
+            .clamp(1, 3) as u8;
+        let why: String = link
             .get("why")
             .and_then(Value::as_str)
-            .map(|w| w.split_whitespace().collect::<Vec<_>>().join(" "))
-            .unwrap_or_default();
-        out.push(Link {
-            a,
-            b,
-            why: why.chars().take(WHY_CHARS).collect(),
+            .map(tidy)
+            .unwrap_or_default()
+            .chars()
+            .take(WHY_CHARS)
+            .collect();
+        out.push(NoteLink {
+            a: ida,
+            b: idb,
+            kind,
+            strength,
+            why,
         });
-        if out.len() >= MOST_LINKS {
+        if out.len() >= notes.len() * LINKS_PER_NOTE {
             break;
         }
     }
     Some(out)
 }
 
-fn adds_something(table: &BTreeMap<String, Concept>, a: &str, b: &str) -> bool {
-    match (table.get(&key(a)), table.get(&key(b))) {
-        (Some(a), Some(b)) => a.notes != b.notes,
-        _ => false,
-    }
+pub fn group_count(notes: usize) -> usize {
+    notes.div_ceil(GROUP_NOTES).max(1)
 }
 
-fn link_lines(table: &BTreeMap<String, Concept>) -> (String, HashMap<String, String>) {
-    let mut lines = String::new();
-    let mut known = HashMap::new();
-    let mut chosen = by_use(table, LINK_CONCEPTS);
-    chosen.sort_by(|a, b| a.0.cmp(b.0));
-    for (k, concept) in chosen {
-        let folders: Vec<&str> = concept.folders.iter().map(String::as_str).collect();
-        lines.push_str(&format!("- {} [{}]\n", concept.label, folders.join(", ")));
-        known.insert(k.clone(), concept.label.clone());
+fn group_of(id: &str, groups: usize) -> usize {
+    (fnv64(id) % groups as u64) as usize
+}
+
+pub struct Work<'a> {
+    pub name: String,
+    pub notes: Vec<&'a Source>,
+    pub hash: String,
+    split: Option<BTreeSet<String>>,
+}
+
+pub fn pair_work<'a>(sources: &'a [Source], cache: &Cache) -> Vec<Work<'a>> {
+    let read: Vec<&Source> = sources
+        .iter()
+        .filter(|s| cache.notes.get(&s.id).is_some_and(|r| r.hash == hash_of(s)))
+        .collect();
+    let groups = group_count(read.len());
+    let mut members: Vec<Vec<&Source>> = vec![Vec::new(); groups];
+    for source in &read {
+        members[group_of(&source.id, groups)].push(source);
     }
-    (lines, known)
+    for list in &mut members {
+        list.sort_by(|a, b| a.id.cmp(&b.id));
+    }
+    let mut out = Vec::new();
+    for i in 0..groups {
+        for j in i..groups {
+            let mut notes = members[i].clone();
+            if j != i {
+                notes.extend(members[j].iter().copied());
+            }
+            if notes.len() < 2 {
+                continue;
+            }
+            let mut text = String::new();
+            for (n, source) in notes.iter().enumerate() {
+                text.push_str(&source.id);
+                text.push_str(&note_line(n + 1, source, cache.notes.get(&source.id)));
+            }
+            let split = (j != i).then(|| members[i].iter().map(|s| s.id.clone()).collect());
+            out.push(Work {
+                name: format!("{groups}:{i}-{j}"),
+                notes,
+                hash: fnv(&text),
+                split,
+            });
+        }
+    }
+    out
 }
 
 pub fn stale<'a>(sources: &'a [Source], cache: &Cache) -> Vec<&'a Source> {
@@ -330,10 +421,15 @@ pub fn stale<'a>(sources: &'a [Source], cache: &Cache) -> Vec<&'a Source> {
 
 pub fn requests_needed(sources: &[Source], cache: &Cache) -> usize {
     let stale = stale(sources, cache);
-    if stale.is_empty() && cache.built_at.is_some() {
-        return 0;
+    let reads = plan(&stale).len();
+    if reads > 0 {
+        let pairs = group_count(sources.len());
+        return reads + pairs * (pairs + 1) / 2;
     }
-    plan(&stale).len() + 1
+    pair_work(sources, cache)
+        .iter()
+        .filter(|w| cache.pairs.get(&w.name).is_none_or(|p| p.hash != w.hash))
+        .count()
 }
 
 pub fn build(
@@ -346,19 +442,15 @@ pub fn build(
     cache.notes.retain(|id, _| present.contains(id.as_str()));
     let stale = stale(sources, cache);
     let batches = plan(&stale);
-    let total = batches.len() + 1;
+    let groups = group_count(sources.len());
+    let mut total = batches.len() + groups * (groups + 1) / 2;
     let mut problems = Vec::new();
     let mut worked = batches.is_empty();
     progress(0, total);
 
     for (done, batch) in batches.iter().enumerate() {
         let notes: Vec<&Source> = batch.iter().map(|&i| stale[i]).collect();
-        let table = concepts(sources, cache);
-        let vocabulary: Vec<String> = by_use(&table, VOCABULARY)
-            .into_iter()
-            .map(|(_, c)| c.label.clone())
-            .collect();
-        let (system, user) = read_prompt(&notes, &vocabulary);
+        let (system, user) = read_prompt(&notes, &vocabulary(&concepts(sources, cache)));
         let read = write(&system, &user, READ_TOKENS)
             .map_err(|e| e.to_string())
             .and_then(|reply| {
@@ -366,13 +458,14 @@ pub fn build(
                     .ok_or_else(|| "the AI did not answer in the expected form".to_string())
             });
         match read {
-            Ok(lists) => {
+            Ok(list) => {
                 worked = true;
-                for (source, concepts) in notes.iter().zip(lists) {
+                for (source, (summary, concepts)) in notes.iter().zip(list) {
                     cache.notes.insert(
                         source.id.clone(),
                         Read {
                             hash: hash_of(source),
+                            summary,
                             concepts,
                         },
                     );
@@ -383,28 +476,40 @@ pub fn build(
         progress(done + 1, total);
     }
 
-    let table = concepts(sources, cache);
-    if table.is_empty() {
-        cache.links = Links::default();
-    } else {
-        let (lines, known) = link_lines(&table);
-        let wanted = fnv(&lines);
-        if cache.links.key != wanted {
-            let (system, user) = link_prompt(&lines);
-            let linked = write(&system, &user, LINK_TOKENS)
-                .map_err(|e| e.to_string())
-                .and_then(|reply| {
-                    parse_links(&reply, &known)
-                        .ok_or_else(|| "the AI did not answer in the expected form".to_string())
-                });
-            match linked {
-                Ok(mut items) => {
-                    items.retain(|l| adds_something(&table, &l.a, &l.b));
-                    cache.links = Links { key: wanted, items };
+    let work = pair_work(sources, cache);
+    let names: BTreeSet<String> = work.iter().map(|w| w.name.clone()).collect();
+    cache.pairs.retain(|name, _| names.contains(name));
+    let due: Vec<&Work> = work
+        .iter()
+        .filter(|w| cache.pairs.get(&w.name).is_none_or(|p| p.hash != w.hash))
+        .collect();
+    total = batches.len() + due.len();
+    progress(batches.len(), total);
+    for (done, job) in due.iter().enumerate() {
+        let (system, user) = link_prompt(&job.notes, cache);
+        let linked = write(&system, &user, LINK_TOKENS)
+            .map_err(|e| e.to_string())
+            .and_then(|reply| {
+                parse_links(&reply, &job.notes)
+                    .ok_or_else(|| "the AI did not answer in the expected form".to_string())
+            });
+        match linked {
+            Ok(mut links) => {
+                worked = true;
+                if let Some(left) = &job.split {
+                    links.retain(|l| left.contains(&l.a) != left.contains(&l.b));
                 }
-                Err(e) => problems.push(e),
+                cache.pairs.insert(
+                    job.name.clone(),
+                    Pair {
+                        hash: job.hash.clone(),
+                        links,
+                    },
+                );
             }
+            Err(e) => problems.push(e),
         }
+        progress(batches.len() + done + 1, total);
     }
     progress(total, total);
     if worked {
@@ -419,7 +524,7 @@ pub struct Node {
     pub kind: &'static str,
     pub label: String,
     pub folder: String,
-    pub count: usize,
+    pub summary: String,
     pub concepts: Vec<String>,
 }
 
@@ -429,7 +534,10 @@ pub struct Edge {
     pub b: String,
     pub kind: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub relation: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub why: Option<String>,
+    pub strength: u8,
 }
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
@@ -456,39 +564,19 @@ pub fn wiki_targets(body: &str) -> Vec<String> {
     out
 }
 
-pub fn assemble(sources: &[Source], cache: &Cache) -> Graph {
-    let table = concepts(sources, cache);
-    let linked: Vec<(String, String, String)> = cache
-        .links
-        .items
-        .iter()
-        .map(|l| (key(&l.a), key(&l.b), l.why.clone()))
-        .filter(|(a, b, _)| a != b && adds_something(&table, a, b))
-        .collect();
-    let in_links: BTreeSet<&String> = linked.iter().flat_map(|(a, b, _)| [a, b]).collect();
-    let mut shown: BTreeSet<String> = table
-        .iter()
-        .filter(|(k, c)| c.notes.len() >= 2 || in_links.contains(k))
-        .map(|(k, _)| k.clone())
-        .collect();
-    if shown.is_empty() {
-        shown = table.keys().cloned().collect();
+fn ordered(a: &str, b: &str) -> (String, String) {
+    if a < b {
+        (a.to_string(), b.to_string())
+    } else {
+        (b.to_string(), a.to_string())
     }
+}
 
+pub fn assemble(sources: &[Source], cache: &Cache) -> Graph {
+    let present: BTreeSet<&str> = sources.iter().map(|s| s.id.as_str()).collect();
     let mut graph = Graph::default();
-    let mut titles: HashMap<String, String> = HashMap::new();
     for source in sources {
-        titles
-            .entry(source.title.to_lowercase())
-            .or_insert_with(|| source.id.clone());
-    }
-    for source in sources {
-        let concepts = cache
-            .notes
-            .get(&source.id)
-            .map(|r| r.concepts.clone())
-            .unwrap_or_default();
-        let count = concepts.iter().filter(|c| shown.contains(&key(c))).count();
+        let read = cache.notes.get(&source.id);
         graph.nodes.push(Node {
             id: format!("n:{}", source.id),
             kind: "note",
@@ -498,36 +586,40 @@ pub fn assemble(sources: &[Source], cache: &Cache) -> Graph {
                 source.title.clone()
             },
             folder: source.directory.clone(),
-            count,
-            concepts,
+            summary: read.map(|r| r.summary.clone()).unwrap_or_default(),
+            concepts: read.map(|r| r.concepts.clone()).unwrap_or_default(),
         });
     }
-    for k in &shown {
-        let concept = &table[k];
-        graph.nodes.push(Node {
-            id: format!("c:{k}"),
-            kind: "concept",
-            label: concept.label.clone(),
-            folder: String::new(),
-            count: concept.notes.len(),
-            concepts: Vec::new(),
-        });
-        for note in &concept.notes {
-            graph.edges.push(Edge {
-                a: format!("n:{note}"),
-                b: format!("c:{k}"),
-                kind: "covers",
-                why: None,
-            });
+
+    let mut best: BTreeMap<(String, String), &NoteLink> = BTreeMap::new();
+    for link in cache.pairs.values().flat_map(|p| &p.links) {
+        if !present.contains(link.a.as_str()) || !present.contains(link.b.as_str()) {
+            continue;
+        }
+        let pair = ordered(&link.a, &link.b);
+        if best
+            .get(&pair)
+            .is_none_or(|old| link.strength > old.strength)
+        {
+            best.insert(pair, link);
         }
     }
-    for (a, b, why) in linked {
+    for link in best.values() {
         graph.edges.push(Edge {
-            a: format!("c:{a}"),
-            b: format!("c:{b}"),
+            a: format!("n:{}", link.a),
+            b: format!("n:{}", link.b),
             kind: "related",
-            why: (!why.is_empty()).then_some(why),
+            relation: Some(link.kind.clone()),
+            why: (!link.why.is_empty()).then(|| link.why.clone()),
+            strength: link.strength,
         });
+    }
+
+    let mut titles: HashMap<String, String> = HashMap::new();
+    for source in sources {
+        titles
+            .entry(source.title.to_lowercase())
+            .or_insert_with(|| source.id.clone());
     }
     let mut wired = BTreeSet::new();
     for source in sources {
@@ -538,19 +630,41 @@ pub fn assemble(sources: &[Source], cache: &Cache) -> Graph {
             if *other == source.id {
                 continue;
             }
-            let pair = if source.id < *other {
-                (source.id.clone(), other.clone())
-            } else {
-                (other.clone(), source.id.clone())
-            };
+            let pair = ordered(&source.id, other);
             if wired.insert(pair.clone()) {
                 graph.edges.push(Edge {
                     a: format!("n:{}", pair.0),
                     b: format!("n:{}", pair.1),
                     kind: "link",
+                    relation: None,
                     why: None,
+                    strength: 2,
                 });
             }
+        }
+    }
+
+    for (k, concept) in concepts(sources, cache) {
+        if concept.notes.len() < 2 {
+            continue;
+        }
+        graph.nodes.push(Node {
+            id: format!("c:{k}"),
+            kind: "concept",
+            label: concept.label.clone(),
+            folder: String::new(),
+            summary: String::new(),
+            concepts: Vec::new(),
+        });
+        for note in &concept.notes {
+            graph.edges.push(Edge {
+                a: format!("n:{note}"),
+                b: format!("c:{k}"),
+                kind: "covers",
+                relation: None,
+                why: None,
+                strength: 1,
+            });
         }
     }
     graph
@@ -743,6 +857,16 @@ mod tests {
         ]
     }
 
+    fn short_ids(user: &str) -> Vec<(String, String)> {
+        user.lines()
+            .filter_map(|line| {
+                let (id, rest) = line.split_once(' ')?;
+                (id.starts_with('n') && id[1..].parse::<usize>().is_ok())
+                    .then(|| (id.to_string(), rest.to_string()))
+            })
+            .collect()
+    }
+
     fn fake<'a>(
         reads: &'a AtomicUsize,
         links: &'a AtomicUsize,
@@ -752,37 +876,51 @@ mod tests {
                 reads.fetch_add(1, Ordering::SeqCst);
                 let mut notes = Vec::new();
                 for (i, part) in user.split("<note id=").skip(1).enumerate() {
-                    let concepts = if part.contains("BFS") {
-                        r#"["Breadth-First Search", "queue"]"#
+                    let (summary, concepts) = if part.contains("BFS") {
+                        (
+                            "Breadth-first search",
+                            r#"["Breadth-First Search", "queue"]"#,
+                        )
                     } else if part.contains("LIFO") {
-                        r#"["stack", "depth-first search"]"#
+                        ("Stacks and DFS", r#"["stack", "depth-first search"]"#)
                     } else {
-                        r#"["Queue", "round robin"]"#
+                        ("Round robin scheduling", r#"["Queue", "round robin"]"#)
                     };
-                    notes.push(format!(r#"{{"id": "n{}", "concepts": {concepts}}}"#, i + 1));
+                    notes.push(format!(
+                        r#"{{"id": "n{}", "summary": "{summary}", "concepts": {concepts}}}"#,
+                        i + 1
+                    ));
                 }
                 Ok(format!(
                     "```json\n{{\"notes\": [{}]}}\n```",
                     notes.join(",")
                 ))
             } else {
-                if links.fetch_add(1, Ordering::SeqCst) == 0 {
-                    assert!(user.contains("- queue [cs130, cs162]"), "{user}");
-                }
-                Ok(r#"Here you go: {"links": [
-                    {"a": "queue", "b": "Round Robin", "why": "round robin takes the next process from a queue"},
-                    {"a": "breadth-first search", "b": "depth-first search", "why": "two ways to walk a graph"},
-                    {"a": "stack", "b": "depth-first search", "why": "only ever together in Stacks"},
-                    {"a": "queue", "b": "made up", "why": "x"},
-                    {"a": "queue", "b": "queue", "why": "x"}
-                ]}"#
-                .to_string())
+                links.fetch_add(1, Ordering::SeqCst);
+                let ids = short_ids(user);
+                let find = |title: &str| {
+                    ids.iter()
+                        .find(|(_, rest)| rest.contains(title))
+                        .map(|(id, _)| id.clone())
+                        .unwrap_or_else(|| "n99".into())
+                };
+                let (a, b, c) = (find("Graph traversals"), find("Stacks"), find("Scheduling"));
+                Ok(format!(
+                    r#"Here: {{"links": [
+                        {{"a": "{a}", "b": "{c}", "kind": "Same Idea", "strength": 3, "why": "both  keep work waiting in a queue"}},
+                        {{"a": "{a}", "b": "{b}", "kind": "builds on", "strength": 9, "why": "DFS needs a stack"}},
+                        {{"a": "{c}", "b": "{a}", "kind": "same idea", "strength": 1, "why": "duplicate pair"}},
+                        {{"a": "{a}", "b": "{a}", "kind": "same idea", "why": "self"}},
+                        {{"a": "{a}", "b": "n99", "kind": "same idea", "why": "unknown"}},
+                        {{"a": "{b}", "b": "{c}", "kind": "made up", "why": "odd kind"}}
+                    ]}}"#
+                ))
             }
         }
     }
 
     #[test]
-    fn notes_are_read_once_and_concepts_tie_folders_together() {
+    fn notes_are_read_once_and_linked_to_each_other_with_reasons() {
         let (reads, links) = (AtomicUsize::new(0), AtomicUsize::new(0));
         let write = fake(&reads, &links);
         let sources = library();
@@ -795,38 +933,51 @@ mod tests {
             (1, 1)
         );
         assert_eq!(steps.last(), Some(&(2, 2)));
+        assert_eq!(cache.notes["a"].summary, "Breadth-first search");
         assert_eq!(cache.notes["a"].concepts, ["Breadth-First Search", "queue"]);
-        assert_eq!(cache.links.items.len(), 2, "{:?}", cache.links.items);
 
         let graph = assemble(&sources, &cache);
-        let has = |a: &str, b: &str, kind: &str| {
+        let edge = |a: &str, b: &str, kind: &str| {
             graph
                 .edges
                 .iter()
-                .any(|e| e.kind == kind && ((e.a == a && e.b == b) || (e.a == b && e.b == a)))
+                .find(|e| e.kind == kind && ((e.a == a && e.b == b) || (e.a == b && e.b == a)))
         };
-        assert!(has("n:a", "c:queue", "covers"));
-        assert!(
-            has("n:c", "c:queue", "covers"),
-            "Queue and queue are one concept"
+        let across = edge("n:a", "n:c", "related").expect("the cross-class link");
+        assert_eq!(across.relation.as_deref(), Some("same idea"));
+        assert_eq!(across.strength, 3, "the first of a repeated pair is kept");
+        assert_eq!(
+            across.why.as_deref(),
+            Some("both keep work waiting in a queue")
         );
-        assert!(has("c:queue", "c:round robin", "related"));
+        assert_eq!(
+            edge("n:a", "n:b", "related").unwrap().strength,
+            3,
+            "strength is clamped"
+        );
+        assert_eq!(
+            edge("n:b", "n:c", "related").unwrap().relation.as_deref(),
+            Some("same idea")
+        );
+        assert_eq!(
+            graph.edges.iter().filter(|e| e.kind == "related").count(),
+            3
+        );
         assert!(
-            has("n:a", "n:b", "link"),
+            edge("n:a", "n:b", "link").is_some(),
             "the [[Stacks]] link joins the notes"
         );
+        assert!(edge("n:a", "c:queue", "covers").is_some());
         assert!(
-            graph.nodes.iter().any(|n| n.id == "c:breadth-first search"),
-            "linked concepts show"
+            edge("n:c", "c:queue", "covers").is_some(),
+            "Queue and queue are one idea"
         );
         assert!(
             !graph.nodes.iter().any(|n| n.id == "c:stack"),
-            "a concept in one note with no link stays in its note"
+            "an idea in one note is not drawn"
         );
-        assert_eq!(
-            graph.nodes.iter().find(|n| n.id == "n:b").unwrap().concepts,
-            ["stack", "depth-first search"]
-        );
+        let note = graph.nodes.iter().find(|n| n.id == "n:c").unwrap();
+        assert_eq!(note.summary, "Round robin scheduling");
 
         let again = build(&sources, &mut cache, &write, &mut |_, _| {});
         assert!(again.is_empty());
@@ -849,7 +1000,7 @@ mod tests {
         assert_eq!(
             links.load(Ordering::SeqCst),
             1,
-            "the same concepts need no new links"
+            "the same summaries and ideas need no new links"
         );
 
         changed.remove(2);
@@ -857,6 +1008,85 @@ mod tests {
         assert!(
             !cache.notes.contains_key("c"),
             "a deleted note leaves the map"
+        );
+        let graph = assemble(&changed, &cache);
+        assert!(graph.edges.iter().all(|e| e.a != "n:c" && e.b != "n:c"));
+    }
+
+    #[test]
+    fn a_large_library_is_linked_in_groups_covering_every_pair_once() {
+        let many: Vec<Source> = (0..200)
+            .map(|i| source(&format!("{i:03}"), &format!("Note {i}"), "x", ""))
+            .collect();
+        let mut cache = Cache::default();
+        for s in &many {
+            cache.notes.insert(
+                s.id.clone(),
+                Read {
+                    hash: hash_of(s),
+                    summary: "s".into(),
+                    concepts: vec![],
+                },
+            );
+        }
+        let work = pair_work(&many, &cache);
+        assert_eq!(group_count(200), 3);
+        assert_eq!(work.len(), 6);
+        let mut covered = BTreeSet::new();
+        for w in &work {
+            let ids: Vec<&str> = w.notes.iter().map(|s| s.id.as_str()).collect();
+            for (i, a) in ids.iter().enumerate() {
+                for b in &ids[i + 1..] {
+                    covered.insert(ordered(a, b));
+                }
+            }
+        }
+        assert_eq!(
+            covered.len(),
+            200 * 199 / 2,
+            "every pair of notes is seen by some request"
+        );
+
+        let cross = work.iter().find(|w| w.split.is_some()).unwrap();
+        let left = cross.split.clone().unwrap();
+        let at = |pick: &dyn Fn(&&Source) -> bool, nth: usize| {
+            cross
+                .notes
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| pick(s))
+                .nth(nth)
+                .unwrap()
+                .0
+                + 1
+        };
+        let l1 = at(&|s: &&Source| left.contains(&s.id), 0);
+        let l2 = at(&|s: &&Source| left.contains(&s.id), 1);
+        let r1 = at(&|s: &&Source| !left.contains(&s.id), 0);
+        let reply = format!(
+            r#"{{"links": [{{"a": "n{l1}", "b": "n{r1}", "kind": "same idea", "why": "across"}}, {{"a": "n{l1}", "b": "n{l2}", "kind": "same idea", "why": "inside"}}]}}"#
+        );
+        let first = cross.notes[0].id.clone();
+        let size = cross.notes.len();
+        let write = |_: &str, user: &str, _: u32| -> Result<String> {
+            let lines = short_ids(user);
+            if lines.len() == size
+                && lines[0].1.starts_with(&format!(
+                    "[unfiled] Note {}",
+                    first.trim_start_matches('0').parse::<usize>().unwrap_or(0)
+                ))
+            {
+                Ok(reply.clone())
+            } else {
+                Ok(r#"{"links": []}"#.into())
+            }
+        };
+        build(&many, &mut cache, &write, &mut |_, _| {});
+        let kept = &cache.pairs[&cross.name].links;
+        assert_eq!(kept.len(), 1, "{kept:?}");
+        assert_eq!(
+            kept[0].why, "across",
+            "a pair inside one group is left to that group's own request"
         );
     }
 
@@ -952,9 +1182,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let writer: Writer = Arc::new(|system: &str, _: &str, _| {
             if system.starts_with("You read") {
-                Ok(r#"{"notes": [{"id": "n1", "concepts": ["queue"]}, {"id": "n2", "concepts": ["stack"]}, {"id": "n3", "concepts": ["queue"]}]}"#.into())
+                Ok(r#"{"notes": [{"id": "n1", "summary": "one", "concepts": ["queue"]}, {"id": "n2", "summary": "two", "concepts": ["stack"]}, {"id": "n3", "summary": "three", "concepts": ["queue"]}]}"#.into())
             } else {
-                Ok(r#"{"links": [{"a": "queue", "b": "stack", "why": "both hold items waiting their turn"}]}"#.into())
+                Ok(r#"{"links": [{"a": "n1", "b": "n2", "kind": "contrasts", "strength": 2, "why": "a queue and a stack order work oppositely"}]}"#.into())
             }
         });
         let graphs = Arc::new(Graphs::for_notes(&dir.path().join("notes"), Some(writer)));
@@ -972,7 +1202,8 @@ mod tests {
         assert!(dir.path().join("graph.json").is_file());
         let graph = assemble(&sources, &graphs.load());
         assert!(graph.edges.iter().any(|e| e.kind == "related"
-            && e.why.as_deref() == Some("both hold items waiting their turn")));
+            && e.relation.as_deref() == Some("contrasts")
+            && e.why.as_deref() == Some("a queue and a stack order work oppositely")));
 
         let without = Arc::new(Graphs::for_notes(&dir.path().join("other/notes"), None));
         without.start(sources.clone());

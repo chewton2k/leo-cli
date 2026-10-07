@@ -108,23 +108,34 @@ test.describe('map of ideas', () => {
     for (const [title, body, directory] of [
       ['Graph traversals', 'BFS uses a queue. See [[Scheduling]].', 'cs130'],
       ['Scheduling', 'Round robin takes from a ready queue.', 'cs162'],
+      ['Heaps', 'A binary heap backs a priority queue.', 'cs130'],
     ]) {
       await page.request.post('/api/dirs', { data: { path: directory } });
       made[title] = await (await page.request.post('/api/notes', { data: { title, body, directory } })).json();
     }
+    const id = (t) => made[t].id;
     const cache = {
       notes: {
-        [made['Graph traversals'].id]: { hash: 'old', concepts: ['breadth-first search', 'queue'] },
-        [made.Scheduling.id]: { hash: 'old', concepts: ['round robin', 'queue'] },
+        [id('Graph traversals')]: { hash: 'old', summary: 'How BFS explores a graph with a queue', concepts: ['breadth-first search', 'queue'] },
+        [id('Scheduling')]: { hash: 'old', summary: 'Round robin runs the next process from a queue', concepts: ['round robin', 'queue'] },
+        [id('Heaps')]: { hash: 'old', summary: 'Binary heaps implement priority queues', concepts: ['binary heap'] },
       },
-      links: { key: 'seed', items: [{ a: 'queue', b: 'round robin', why: 'Round robin takes the next process from a queue' }] },
+      pairs: {
+        '1:0-0': {
+          hash: 'old',
+          links: [
+            { a: id('Scheduling'), b: id('Graph traversals'), kind: 'same method', strength: 3, why: 'Both take the next piece of work from a queue' },
+            { a: id('Graph traversals'), b: id('Heaps'), kind: 'builds on', strength: 1, why: 'Dijkstra swaps the queue for a heap' },
+          ],
+        },
+      },
       built_at: '2026-10-06T00:00:00Z',
     };
     fs.writeFileSync(path.join(process.env.LEO_BROWSER_HOME, 'graph.json'), JSON.stringify(cache));
     return made;
   }
 
-  test('a note opens on the map with the ideas it shares', async ({ page }) => {
+  test('a note opens on the map with its connections and why', async ({ page }) => {
     const made = await seed(page);
     await page.goto(`/#/n/${made.Scheduling.id}`);
     await page.locator('[data-action="note-map"]').click();
@@ -132,31 +143,53 @@ test.describe('map of ideas', () => {
     await expect(page.locator('#map-canvas')).toBeVisible();
     const panel = page.locator('#map-panel');
     await expect(panel.locator('h3')).toHaveText('Scheduling');
-    await expect(panel.locator('.chip', { hasText: 'queue' })).toBeVisible();
-    await expect(panel.locator('.map-row', { hasText: 'Graph traversals' })).toContainText('shares queue');
-    await panel.locator('.chip', { hasText: 'round robin' }).click();
-    await expect(panel.locator('h3')).toHaveText('round robin');
-    await expect(panel).toContainText('Round robin takes the next process from a queue');
-    await panel.locator('[data-action="map-clear"]').click();
-    await expect(panel.locator('h3')).toHaveText('Ideas that connect');
-    await panel.locator('.map-row').first().click();
-    await expect(panel.locator('h3')).toHaveText('queue');
-    await page.locator('#map-find').fill('graph trav');
-    await page.locator('#map-found .map-row').first().click();
+    await expect(panel).toContainText('Round robin runs the next process from a queue');
+    await expect(panel.locator('h4').first()).toContainText('Across classes');
+    const row = panel.locator('.map-row', { hasText: 'Graph traversals' });
+    await expect(row).toContainText('Same method');
+    await expect(row).toContainText('Both take the next piece of work from a queue');
+    await row.click();
     await expect(panel.locator('h3')).toHaveText('Graph traversals');
+    await expect(panel.locator('.map-row', { hasText: 'Heaps' })).toContainText('Builds on');
+    await expect(panel.locator('.map-row', { hasText: 'Scheduling' }).first()).toContainText('Same method');
+    await panel.locator('[data-action="map-focus"]').click();
+    await expect(page.locator('[data-action="map-unfocus"]')).toBeVisible();
+    await page.locator('[data-action="map-unfocus"]').click();
+    await panel.locator('[data-action="map-clear"]').click();
+    await expect(panel.locator('h3')).toHaveText('Strongest connections');
+    await expect(panel.locator('.map-row').first()).toContainText('Both take the next piece of work from a queue');
+    await page.locator('#map-find').fill('heap');
+    await page.locator('#map-found .map-row').first().click();
+    await expect(panel.locator('h3')).toHaveText('Heaps');
+    await expect(panel.locator('.map-row', { hasText: 'Graph traversals' })).toContainText('Built on by');
     await panel.locator('[data-action="open-note"]').click();
-    await expect(page.locator('#title')).toHaveText('Graph traversals');
+    await expect(page.locator('#title')).toHaveText('Heaps');
   });
 
-  test('finding connections without an AI says how to choose one', async ({ page }) => {
+  test('the toggles show connections across classes and shared ideas', async ({ page }) => {
     await seed(page);
-    await page.route('**/api/graph/build', (route) => route.fulfill({ status: 202, json: { state: 'building', done: 0, total: 2, message: null, notes: 2, read: 0, stale: 2, requests: 2, built_at: null } }));
-    await page.route('**/api/graph/status', (route) => route.fulfill({ json: { state: 'failed', done: 0, total: 2, message: 'no AI for writing is chosen — type :settings in leo and pick one under writing', notes: 2, read: 0, stale: 2, requests: 2, built_at: null } }));
     await page.goto('/#/map');
-    await page.locator('#map-build').click();
+    const across = page.locator('[data-action="map-across"]');
+    await expect(across).toContainText('Across classes');
+    await across.click();
+    await expect(across).toHaveAttribute('aria-pressed', 'true');
+    const ideas = page.locator('[data-action="map-ideas"]');
+    await ideas.click();
+    await expect(ideas).toHaveAttribute('aria-pressed', 'true');
+    await page.locator('#map-find').fill('queue');
+    await page.locator('#map-found .map-row', { hasText: 'queue' }).first().click();
+    await expect(page.locator('#map-panel h3')).toHaveText('queue');
+    await expect(page.locator('#map-panel')).toContainText('In 2 notes across 2 classes');
+  });
+
+  test('connecting notes without an AI says how to choose one', async ({ page }) => {
+    await seed(page);
+    await page.route('**/api/graph/build', (route) => route.fulfill({ status: 202, json: { state: 'building', done: 0, total: 2, message: null, notes: 3, read: 0, stale: 3, requests: 2, built_at: null } }));
+    await page.route('**/api/graph/status', (route) => route.fulfill({ json: { state: 'failed', done: 0, total: 2, message: 'no AI for writing is chosen — type :settings in leo and pick one under writing', notes: 3, read: 0, stale: 3, requests: 2, built_at: null } }));
+    await page.goto('/#/map');
+    await page.locator('#map-status [data-action="map-build"]').click();
     const confirm = page.locator('[data-action="map-build-now"]');
     if (await confirm.isVisible()) await confirm.click();
     await expect(page.locator('.toast.bad')).toContainText(':settings');
-    await expect(page.locator('#map-build')).toBeEnabled();
   });
 });

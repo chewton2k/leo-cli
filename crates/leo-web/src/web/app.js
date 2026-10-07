@@ -24,6 +24,8 @@
     trash: svg('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/>'),
     share: svg('<path d="M12 3v12M8 7l4-4 4 4"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/>'),
     plus: svg('<path d="M12 5v14M5 12h14"/>'),
+    minus: svg('<path d="M5 12h14"/>'),
+    fit: svg('<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>'),
     restore: svg('<path d="M4 12a8 8 0 1 0 2.3-5.6L4 8.5"/><path d="M4 4v4.5h4.5"/>'),
     tag: svg('<path d="M3 12V4h8l10 10-8 8z"/><circle cx="7.5" cy="8.5" r="1.3"/>'),
     note: svg('<path d="M6 3h9l4 4v14H6z"/><path d="M9 12h7M9 16h5"/>'),
@@ -439,9 +441,12 @@
 
   let mapView = null;
   let mapPoll = 0;
+  let mapSheet = 'peek';
   const leoGraph = window.leoGraph;
-  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  const plural = (n, word, many = `${word}s`) => `${n} ${n === 1 ? word : many}`;
   const darkScheme = () => Boolean(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  const className = (n) => (n.top ? n.top : 'Unfiled');
+  const mapWide = () => window.innerWidth >= 900;
 
   function leaveMap() {
     clearTimeout(mapPoll);
@@ -463,33 +468,46 @@
     drawMap(data, focus ? `n:${focus}` : null);
   }
 
-  function drawMap(data, select) {
-    const notes = data.graph.nodes.filter((n) => n.kind === 'note').length;
+  function drawMap(data, select, keep) {
     state.status = data.status;
-    if (!notes) {
-      app.innerHTML = empty(ICON.map, 'Nothing to map yet', 'Write a few notes, and the map shows how the ideas in them connect.');
+    if (!data.graph.nodes.some((n) => n.kind === 'note')) {
+      app.innerHTML = empty(ICON.map, 'Nothing to map yet', 'Write a few notes, and the map shows how they connect.');
       return;
     }
     document.body.classList.add('on-map');
     app.innerHTML = `<section class="map" id="map">
       <canvas id="map-canvas" role="img" aria-label="Map of how your notes connect. The panel lists the same connections."></canvas>
-      <div class="map-top">
-        <div class="map-bar"><span class="map-count" id="map-count"></span><span class="grow"></span>
-          <button class="btn plain sm" data-action="map-fit">Fit</button>
-          <button class="btn primary sm" id="map-build" data-action="map-build" hidden></button></div>
-        <label class="field map-find">${ICON.search}<input id="map-find" type="search" placeholder="Find an idea or note" autocomplete="off" enterkeyhint="go"></label>
+      <div class="map-tools">
+        <label class="map-search">${ICON.search}<input id="map-find" type="search" placeholder="Find a note or idea" autocomplete="off" enterkeyhint="go"></label>
         <div class="map-found" id="map-found"></div>
-        <div class="map-legend" id="map-legend"></div>
+        <div class="map-status" id="map-status"></div>
+        <div class="map-chips" id="map-chips"></div>
       </div>
-      <aside class="map-panel" id="map-panel" aria-live="polite"></aside>
+      <div class="map-zoom">
+        <button data-action="map-zoom-in" aria-label="Zoom in">${ICON.plus}</button>
+        <button data-action="map-zoom-out" aria-label="Zoom out">${ICON.minus}</button>
+        <button data-action="map-fit" aria-label="Fit the whole map">${ICON.fit}</button>
+      </div>
+      <aside class="map-panel ${mapSheet}" id="map-panel" aria-live="polite"></aside>
     </section>`;
     $('#map').style.top = `${Math.round($('#bar').getBoundingClientRect().bottom)}px`;
-    mapView = leoGraph.create($('#map-canvas'), data.graph, { onSelect: mapPanel, insets: mapInsets });
+    mapView = leoGraph.create($('#map-canvas'), data.graph, {
+      onSelect: mapPanel,
+      onOpen: (id) => go(noteHash(id.slice(2))),
+      onChange: mapChips,
+      insets: mapInsets,
+    });
+    if (keep) mapView.setOptions(keep);
+    mapChips(mapView.options());
     mapStatus(data.status);
-    mapLegend();
     const input = $('#map-find');
     input.addEventListener('input', () => mapFound(input.value));
     input.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        input.value = '';
+        mapFound('');
+        input.blur();
+      }
       if (e.key !== 'Enter') return;
       const first = leoGraph.find(mapView.graph, input.value)[0];
       if (first) mapPick(first.id);
@@ -503,53 +521,60 @@
     const map = $('#map');
     if (!map) return { top: 0, bottom: 0, right: 0 };
     const box = map.getBoundingClientRect();
-    const top = $('.map-top').getBoundingClientRect().bottom - box.top + 8;
-    const panel = $('#map-panel').getBoundingClientRect();
-    const beside = panel.top - box.top < top;
-    return beside ? { top, bottom: 0, right: box.right - panel.left + 8 } : { top, bottom: box.bottom - panel.top + 8, right: 0 };
+    const top = $('.map-tools').getBoundingClientRect().bottom - box.top + 10;
+    const panel = $('#map-panel');
+    if (mapWide()) return { top, bottom: 0, right: box.right - panel.getBoundingClientRect().left + 12 };
+    const tall = panel.classList.contains('open') ? Math.min(panel.scrollHeight, window.innerHeight * 0.5) : 96;
+    return { top, bottom: tall + 10, right: 0 };
+  }
+
+  function mapChips(opts) {
+    const chips = $('#map-chips');
+    if (!chips || !mapView) return;
+    const g = mapView.graph;
+    const dark = darkScheme();
+    const toggle = (action, on, label, title) =>
+      `<button class="map-chip toggle${on ? ' on' : ''}" data-action="${action}" aria-pressed="${on}" title="${esc(title)}">${label}</button>`;
+    const classes =
+      g.folders.length > 1
+        ? g.folders
+            .map((top) => {
+              const off = opts.hidden.has(top);
+              const color = leoGraph.colorOf(g, top, dark) || 'var(--faint)';
+              return `<button class="map-chip${off ? ' off' : ''}" data-action="map-class" data-top="${esc(top)}" aria-pressed="${!off}"><i style="background:${color}"></i>${esc(top || 'Unfiled')}</button>`;
+            })
+            .join('')
+        : '';
+    chips.innerHTML =
+      toggle('map-across', opts.crossOnly, `Across classes${leoGraph.counts(g).across ? ` · ${leoGraph.counts(g).across}` : ''}`, 'Show only connections between different classes') +
+      (g.nodes.some((n) => n.kind === 'concept') ? toggle('map-ideas', opts.ideas, 'Ideas', 'Show the shared ideas as their own dots') : '') +
+      (opts.focus ? `<button class="map-chip toggle on" data-action="map-unfocus">Focused · show all</button>` : '') +
+      classes;
   }
 
   function mapStatus(status) {
     state.status = status;
-    const button = $('#map-build');
-    if (!button || !mapView) return;
+    const box = $('#map-status');
+    if (!box || !mapView) return;
     const c = leoGraph.counts(mapView.graph);
-    $('#map-count').textContent = `${plural(c.notes, 'note')} · ${plural(c.ideas, 'idea')} · ${plural(c.links, 'link')}`;
-    button.disabled = status.state === 'building';
-    button.hidden = false;
-    if (status.state === 'building') {
-      button.textContent = status.total ? `Reading notes ${status.done}/${status.total}…` : 'Starting…';
-    } else if (status.read === 0) {
-      button.textContent = 'Find connections';
-    } else if (status.stale > 0) {
-      button.textContent = `Update · ${status.stale} changed`;
-    } else {
-      button.hidden = true;
-    }
-  }
-
-  function mapLegend() {
-    const g = mapView.graph;
-    const legend = $('#map-legend');
-    if (g.folders.length < 2) {
-      legend.innerHTML = '';
-      return;
-    }
-    const hidden = mapView.hidden();
-    const dark = darkScheme();
-    legend.innerHTML = g.folders
-      .map((top) => {
-        const color = leoGraph.colorOf(g, top, dark) || 'var(--faint)';
-        const off = hidden.has(top);
-        return `<button class="chip map-chip${off ? ' off' : ''}" data-action="map-folder" data-top="${esc(top)}" aria-pressed="${!off}"><i style="background:${color}"></i>${esc(top || 'Top level')}</button>`;
-      })
-      .join('');
+    const building = status.state === 'building';
+    const summary = c.connections ? `${plural(c.notes, 'note')} · ${plural(c.connections, 'connection')}` : plural(c.notes, 'note');
+    let button = '';
+    if (building) button = `<button class="btn primary sm" disabled>${status.total ? `Connecting ${status.done}/${status.total}…` : 'Starting…'}</button>`;
+    else if (status.read === 0) button = '<button class="btn primary sm" data-action="map-build">Connect notes</button>';
+    else if (status.stale > 0 || status.requests > 0) button = `<button class="btn primary sm" data-action="map-build">Update${status.stale ? ` · ${status.stale} changed` : ''}</button>`;
+    const bar = building && status.total ? `<span class="map-progress"><i style="width:${Math.round((status.done / status.total) * 100)}%"></i></span>` : '';
+    box.innerHTML = `<span class="map-summary">${summary}</span>${button}${bar}`;
   }
 
   function mapFound(query) {
     const found = leoGraph.find(mapView.graph, query);
+    const dark = darkScheme();
     $('#map-found').innerHTML = found
-      .map((n) => `<button class="map-row" data-action="map-pick" data-id="${esc(n.id)}"><span class="grow">${esc(n.label)}<span class="sub">${n.kind === 'note' ? esc(folderLabel(n.folder)) : `Idea in ${plural(n.degree, 'place')}`}</span></span></button>`)
+      .map((n) => {
+        const dot = n.kind === 'note' ? `<i class="dot" style="background:${leoGraph.colorOf(mapView.graph, n.top, dark) || 'var(--faint)'}"></i>` : '<i class="dot idea"></i>';
+        return `<button class="map-row" data-action="map-pick" data-id="${esc(n.id)}">${dot}<span class="grow">${esc(n.label)}<span class="sub">${n.kind === 'note' ? esc(className(n)) : `Idea in ${plural(n.degree, 'note')}`}</span></span></button>`;
+      })
       .join('');
   }
 
@@ -560,33 +585,62 @@
     mapView.select(id, { center: true });
   }
 
-  const noteRow = (n, sub) =>
-    `<button class="map-row" data-action="map-select" data-id="${esc(n.id)}"><i class="dot" style="background:${leoGraph.colorOf(mapView.graph, n.top, darkScheme()) || 'var(--faint)'}"></i><span class="grow">${esc(n.label)}<span class="sub">${esc(sub)}</span></span></button>`;
+  function mapSheetTo(next) {
+    mapSheet = next;
+    const panel = $('#map-panel');
+    if (!panel) return;
+    panel.classList.toggle('peek', next === 'peek');
+    panel.classList.toggle('open', next === 'open');
+  }
+
+  const dotFor = (n) => `<i class="dot" style="background:${leoGraph.colorOf(mapView.graph, n.top, darkScheme()) || 'var(--faint)'}"></i>`;
+
+  function connectionRow(c) {
+    return `<button class="map-row" data-action="map-select" data-id="${esc(c.node.id)}">${dotFor(c.node)}<span class="grow"><span class="row-head">${esc(c.node.label)}<em class="badge${c.cross ? ' across' : ''}">${esc(c.label)}</em></span>${
+      c.edge.why ? `<span class="sub">${esc(c.edge.why)}</span>` : c.edge.kind === 'link' ? '<span class="sub">A link you wrote</span>' : ''
+    }<span class="sub class">${esc(className(c.node))}${c.linked && c.edge.kind !== 'link' ? ' · you linked these' : ''}</span></span></button>`;
+  }
 
   function mapPanel(node) {
     const panel = $('#map-panel');
     if (!panel || !mapView) return;
     const g = mapView.graph;
     const status = state.status || {};
-    panel.classList.toggle('quiet', !node);
+    const grip = '<button class="map-grip" data-action="map-sheet" aria-label="Show more or less"><i></i></button>';
     if (!node) {
-      const bridges = leoGraph.bridges(g).slice(0, 12);
-      if (status.read === 0) {
-        panel.innerHTML = `<h3>How your notes connect</h3><p class="hint">Each dot is a note, coloured by folder; lines between notes are the [[links]] you wrote. <b>Find connections</b> asks your AI which ideas the notes share, and how ideas in different subjects relate.</p>`;
-      } else if (!bridges.length) {
-        panel.innerHTML = `<h3>How your notes connect</h3><p class="hint">Hollow dots are ideas; a note links to each idea it covers. Tap a note or an idea to see what it connects to.</p>`;
-      } else {
-        panel.innerHTML = `<h3>Ideas that connect</h3><div class="map-list">${bridges
-          .map((b) => `<button class="map-row" data-action="map-select" data-id="${esc(b.a.id)}"><span class="grow"><b>${esc(b.a.label)}</b> ↔ <b>${esc(b.b.label)}</b>${b.why ? `<span class="sub">${esc(b.why)}</span>` : ''}</span></button>`)
-          .join('')}</div><p class="hint">Tap a note or an idea on the map to see what it connects to.</p>`;
+      mapSheetTo(mapSheet === 'open' && !mapWide() ? 'peek' : mapSheet);
+      const c = leoGraph.counts(g);
+      if (!c.connections) {
+        const first = status.read === 0;
+        panel.innerHTML = `${grip}<div class="panel-head"><h3>Connect your notes</h3></div>
+          <p class="hint">${first
+            ? 'leo can read your notes with your AI and connect the ones worth studying together, especially across classes: the same method in two courses, an idea one class builds on, two approaches that contrast. Each connection says why.'
+            : 'No connections yet. Update reads any notes you changed and connects them.'}</p>
+          ${status.state === 'building' ? '' : `<div class="map-actions"><button class="btn primary sm" data-action="map-build">${first ? 'Connect notes' : 'Update'}</button></div>`}
+          <p class="hint small">Lines you see already are the [[links]] you wrote.</p>`;
+        return;
       }
+      const top = leoGraph.strongest(g, 12);
+      panel.innerHTML = `${grip}<div class="panel-head"><h3>Strongest connections</h3><span class="sub">${plural(c.across, 'connection')} across classes · tap one to explore</span></div>
+        <div class="map-list">${top
+          .map(
+            (x) => `<button class="map-row" data-action="map-select" data-id="${esc(x.a.id)}">${dotFor(x.a)}<span class="grow"><span class="row-head">${esc(x.a.label)} <span class="arrow">↔</span> ${esc(x.b.label)}<em class="badge${x.cross ? ' across' : ''}">${esc(leoGraph.relationFrom(x.edge, x.a.id))}</em></span>${
+              x.edge.why ? `<span class="sub">${esc(x.edge.why)}</span>` : ''
+            }<span class="sub class">${esc(className(x.a))} · ${esc(className(x.b))}</span></span>${dotFor(x.b)}</button>`
+          )
+          .join('')}</div>`;
       return;
     }
+    mapSheetTo('open');
     const close = `<button class="icon-btn map-close" data-action="map-clear" aria-label="Close">${ICON.close}</button>`;
     if (node.kind === 'note') {
       const id = node.id.slice(2);
+      const all = leoGraph.connections(g, node.id);
+      const across = all.filter((x) => x.cross);
+      const inside = all.filter((x) => !x.cross);
+      const focused = mapView.options().focus === node.id;
       const ideas = node.concepts.length
-        ? `<div class="map-chips">${node.concepts
+        ? `<h4>Ideas</h4><div class="map-ideas">${node.concepts
             .map((c) => {
               const cid = `c:${c.toLowerCase()}`;
               return g.byId.has(cid)
@@ -594,30 +648,31 @@
                 : `<span class="chip">${esc(c)}</span>`;
             })
             .join('')}</div>`
-        : `<p class="hint">${status.read === 0 || status.stale ? 'Not read yet. Find connections reads it.' : 'No ideas found in this note.'}</p>`;
-      const linked = leoGraph.connectedNotes(g, node.id).slice(0, 12);
-      panel.innerHTML = `${close}<h3>${esc(node.label)}</h3><span class="sub">${esc(folderLabel(node.folder))}</span>
-        <div class="map-actions"><button class="btn primary sm" data-action="open-note" data-id="${esc(id)}">Open note</button></div>
-        <h4>Ideas in this note</h4>${ideas}
-        ${linked.length ? `<h4>Connected notes</h4><div class="map-list">${linked
-          .map((x) => noteRow(x.node, [x.linked ? 'linked' : '', x.via.length ? `shares ${x.via.join(', ')}` : ''].filter(Boolean).join(' · ')))
-          .join('')}</div>` : ''}`;
+        : '';
+      const empty = !all.length
+        ? `<p class="hint">${status.read === 0 || status.stale ? 'Not connected yet. Connect notes reads it.' : 'No strong connections to other notes yet.'}</p>`
+        : '';
+      panel.innerHTML = `${grip}${close}<div class="panel-head"><span class="sub class">${dotFor(node)}${esc(className(node))}</span><h3>${esc(node.label)}</h3>${
+        node.summary ? `<p class="summary">${esc(node.summary)}</p>` : ''
+      }<div class="map-actions"><button class="btn primary sm" data-action="open-note" data-id="${esc(id)}">Open note</button><button class="btn plain sm" data-action="map-focus" data-id="${esc(node.id)}">${focused ? 'Show all' : 'Focus'}</button></div></div>
+        ${across.length ? `<h4>Across classes · ${across.length}</h4><div class="map-list">${across.map(connectionRow).join('')}</div>` : ''}
+        ${inside.length ? `<h4>In ${esc(className(node))} · ${inside.length}</h4><div class="map-list">${inside.map(connectionRow).join('')}</div>` : ''}
+        ${empty}${ideas}`;
       return;
     }
-    const detail = leoGraph.conceptDetail(g, node.id);
-    panel.innerHTML = `${close}<h3>${esc(node.label)}</h3><span class="sub">Idea in ${plural(detail.notes.length, 'note')}</span>
-      <h4>Notes</h4><div class="map-list">${detail.notes.map((n) => noteRow(n, folderLabel(n.folder))).join('')}</div>
-      ${detail.related.length ? `<h4>Related ideas</h4><div class="map-list">${detail.related
-        .map((r) => `<button class="map-row" data-action="map-select" data-id="${esc(r.node.id)}"><span class="grow">${esc(r.node.label)}${r.why ? `<span class="sub">${esc(r.why)}</span>` : ''}</span></button>`)
-        .join('')}</div>` : ''}`;
+    const notes = leoGraph.conceptNotes(g, node.id);
+    panel.innerHTML = `${grip}${close}<div class="panel-head"><span class="sub class"><i class="dot idea"></i>Idea</span><h3>${esc(node.label)}</h3><span class="sub">In ${plural(notes.length, 'note')} across ${plural(new Set(notes.map((n) => n.top)).size, 'class', 'classes')}</span></div>
+      <div class="map-list">${notes
+        .map((n) => `<button class="map-row" data-action="map-select" data-id="${esc(n.id)}">${dotFor(n)}<span class="grow">${esc(n.label)}${n.summary ? `<span class="sub">${esc(n.summary)}</span>` : ''}<span class="sub class">${esc(className(n))}</span></span></button>`)
+        .join('')}</div>`;
   }
 
   async function mapBuild(confirmed) {
     const status = state.status || {};
     if (!confirmed && status.read === 0) {
-      sheet(`<h3>Find how your notes connect</h3>
-        <p>leo sends your notes to the AI you chose for writing (with :settings in leo on your computer) and asks which ideas they share, and how ideas in different subjects relate. That is about ${plural(status.requests || 1, 'request')}. After that, only notes you change are read again.</p>
-        <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn primary" data-action="map-build-now">Find connections</button></div>`);
+      sheet(`<h3>Connect your notes</h3>
+        <p>leo sends your notes to the AI you chose for writing (with :settings in leo on your computer). It reads what each note teaches, then connects the notes worth studying together, especially across classes, and says why. That is about ${plural(status.requests || 1, 'request')}. After that, only notes you change are read again.</p>
+        <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn primary" data-action="map-build-now">Connect notes</button></div>`);
       return;
     }
     closeSheet();
@@ -638,15 +693,18 @@
       }
       if (status.state === 'failed') {
         mapStatus(status);
+        mapPanel(mapView && mapView.selected() ? mapView.graph.byId.get(mapView.selected()) : null);
         toast(status.message || 'The map could not be built.', { bad: true });
         return;
       }
-      const keep = mapView ? mapView.selected() : null;
+      const chosen = mapView ? mapView.selected() : null;
+      const keep = mapView ? mapView.options() : null;
       const data = await api('/api/graph');
       if (state.view !== 'map') return;
       leaveMap();
-      drawMap(data, keep);
-      toast(status.message || 'The map is up to date.');
+      drawMap(data, chosen, keep);
+      const c = mapView ? leoGraph.counts(mapView.graph) : { connections: 0, across: 0 };
+      toast(status.message || `Connected: ${plural(c.connections, 'connection')}, ${c.across} across classes.`);
     }, 1200);
   }
 
@@ -867,11 +925,30 @@
     'map-pick': (el) => mapView && mapPick(el.dataset.id),
     'map-clear': () => mapView && mapView.select(null),
     'map-fit': () => mapView && mapView.fit(),
-    'map-folder': (el) => {
+    'map-zoom-in': () => mapView && mapView.zoomBy(1.35),
+    'map-zoom-out': () => mapView && mapView.zoomBy(1 / 1.35),
+    'map-across': () => mapView && mapView.setOptions({ crossOnly: !mapView.options().crossOnly }),
+    'map-ideas': () => mapView && mapView.setOptions({ ideas: !mapView.options().ideas }),
+    'map-unfocus': () => {
       if (!mapView) return;
-      mapView.hide(el.dataset.top, !mapView.hidden().has(el.dataset.top));
-      mapLegend();
+      mapView.setOptions({ focus: null });
+      const chosen = mapView.selected();
+      if (chosen) mapPanel(mapView.graph.byId.get(chosen));
     },
+    'map-focus': (el) => {
+      if (!mapView) return;
+      const on = mapView.options().focus === el.dataset.id;
+      mapView.setOptions({ focus: on ? null : el.dataset.id, depth: 2 });
+      mapView.select(el.dataset.id);
+    },
+    'map-class': (el) => {
+      if (!mapView) return;
+      const hidden = mapView.options().hidden;
+      if (hidden.has(el.dataset.top)) hidden.delete(el.dataset.top);
+      else hidden.add(el.dataset.top);
+      mapView.setOptions({ hidden });
+    },
+    'map-sheet': () => mapSheetTo(mapSheet === 'open' ? 'peek' : 'open'),
     drafts: () => { closeSheet(); go('#/drafts'); },
     'open-draft': (el) => go(`#/draft/${enc(el.dataset.key)}`),
     trash: () => {
@@ -917,6 +994,7 @@
     if (e.key === 'Escape') {
       if ($('.scrim')) return closeSheet();
       if (typing) return e.target.blur();
+      if (state.view === 'map' && mapView && mapView.selected()) return mapView.select(null);
       if (state.view !== 'folder' || state.dir) return back();
     }
     if (e.key === 'Enter' && e.target.matches('.card')) {
