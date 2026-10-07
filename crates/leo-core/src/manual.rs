@@ -14,7 +14,7 @@ use anyhow::Result;
 use crate::store::Store;
 
 /// Bump when the manual's content changes enough to be worth re-offering.
-const MANUAL_VERSION: u32 = 14;
+const MANUAL_VERSION: u32 = 15;
 const MARKER: &str = ".manual-installed";
 pub const MANUAL_TITLE: &str = "leo manual";
 
@@ -125,7 +125,7 @@ The bottom line shows the keys that work where you are; `?` shows them all.
 
 Settings offers this computer, a cloud API key, or your Claude Code or Codex plan.
 
-Run `leo serve` for your phone: scan the code it shows, or click the link.
+`leo serve`: your notes and a map of how their ideas connect, on your phone.
 
 ## Recording
 

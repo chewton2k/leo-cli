@@ -1,5 +1,8 @@
+pub mod graph;
 mod token;
 pub mod tunnel;
+
+pub use graph::Writer;
 
 #[cfg(test)]
 use std::sync::MutexGuard;
@@ -23,6 +26,7 @@ use leo_core::store::Store;
 struct AppState {
     store: Arc<Mutex<Storage>>,
     token: String,
+    graphs: Arc<graph::Graphs>,
 }
 
 struct Storage {
@@ -87,6 +91,7 @@ const MARKDOWN_JS: &str = include_str!("web/markdown.js");
 const EDITING_JS: &str = include_str!("web/editing.js");
 const SAVING_JS: &str = include_str!("web/saving.js");
 const DOC_JS: &str = include_str!("web/doc.js");
+const GRAPH_JS: &str = include_str!("web/graph.js");
 
 const COOKIE_DAYS: u32 = 30;
 
@@ -97,8 +102,9 @@ pub struct ServeOptions {
     pub new_token: bool,
 }
 
-pub async fn serve(options: ServeOptions) -> Result<()> {
+pub async fn serve(options: ServeOptions, writer: Option<Writer>) -> Result<()> {
     let store = Store::load()?;
+    let graphs = Arc::new(graph::Graphs::for_notes(&store.notes_dir, writer));
     let count = store.notes.len();
     let token = token::load_or_create(
         &leo_core::paths::config_dir()?.join("serve-token"),
@@ -115,6 +121,7 @@ pub async fn serve(options: ServeOptions) -> Result<()> {
             reload: false,
         })),
         token: token.clone(),
+        graphs,
     });
 
     let tunnel = if !options.local {
@@ -269,6 +276,10 @@ fn router(state: AppState) -> Router {
         .route("/editing.js", get(editing_js))
         .route("/doc.js", get(doc_js))
         .route("/saving.js", get(saving_js))
+        .route("/graph.js", get(graph_js))
+        .route("/api/graph", get(get_graph))
+        .route("/api/graph/status", get(graph_status))
+        .route("/api/graph/build", post(build_graph))
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
@@ -307,6 +318,10 @@ async fn saving_js() -> Response {
 
 async fn doc_js() -> Response {
     javascript(DOC_JS)
+}
+
+async fn graph_js() -> Response {
+    javascript(GRAPH_JS)
 }
 
 async fn auth_middleware(State(state): State<AppState>, request: Request, next: Next) -> Response {
@@ -788,6 +803,53 @@ async fn restore_note(
         .await
 }
 
+#[derive(serde::Serialize)]
+struct GraphResponse {
+    graph: graph::Graph,
+    status: graph::Status,
+}
+
+async fn note_sources(state: &AppState) -> Result<Vec<graph::Source>, StatusCode> {
+    state
+        .with_store(|store| Ok(graph::sources(&store.notes)))
+        .await
+}
+
+async fn get_graph(State(state): State<AppState>) -> Result<Json<GraphResponse>, StatusCode> {
+    let sources = note_sources(&state).await?;
+    let graphs = Arc::clone(&state.graphs);
+    tokio::task::spawn_blocking(move || {
+        let cache = graphs.load();
+        Json(GraphResponse {
+            graph: graph::assemble(&sources, &cache),
+            status: graphs.status(&sources),
+        })
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn graph_status(State(state): State<AppState>) -> Result<Json<graph::Status>, StatusCode> {
+    let sources = note_sources(&state).await?;
+    let graphs = Arc::clone(&state.graphs);
+    tokio::task::spawn_blocking(move || Json(graphs.status(&sources)))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn build_graph(
+    State(state): State<AppState>,
+) -> Result<(StatusCode, Json<graph::Status>), StatusCode> {
+    let sources = note_sources(&state).await?;
+    let graphs = Arc::clone(&state.graphs);
+    tokio::task::spawn_blocking(move || {
+        graphs.start(sources.clone());
+        (StatusCode::ACCEPTED, Json(graphs.status(&sources)))
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
 async fn create_dir(State(state): State<AppState>, Json(body): Json<CreateDirBody>) -> StatusCode {
     state
         .with_store(move |store| {
@@ -825,12 +887,14 @@ mod tests {
             .map(|(title, d)| store.create_note(*title, "", vec![], d).unwrap().id.clone())
             .collect();
         store.save().unwrap();
+        let graphs = Arc::new(graph::Graphs::for_notes(&store.notes_dir, None));
         let state = AppState {
             store: Arc::new(Mutex::new(Storage {
                 store,
                 reload: false,
             })),
             token: String::new(),
+            graphs,
         };
         (state, dir, ids)
     }

@@ -349,11 +349,25 @@ pub fn run(cli: Cli) -> Result<()> {
             if !local {
                 serve::ensure_tunnel_tool()?;
             }
-            tokio::runtime::Runtime::new()?.block_on(leo_web::serve(leo_web::ServeOptions {
-                port,
-                local,
-                new_token,
-            }))
+            let writer: leo_web::Writer =
+                std::sync::Arc::new(|system: &str, user: &str, most: u32| {
+                    leo_services::ai::chat_outcome(
+                        leo_services::ai::chat::Prompt {
+                            system: system.to_string(),
+                            user: user.to_string(),
+                        },
+                        most,
+                    )
+                    .map(|outcome| outcome.value)
+                });
+            tokio::runtime::Runtime::new()?.block_on(leo_web::serve(
+                leo_web::ServeOptions {
+                    port,
+                    local,
+                    new_token,
+                },
+                Some(writer),
+            ))
         }
         Some(Commands::Doctor) => doctor::run(),
         Some(Commands::Uninstall { yes }) => uninstall::run(yes),

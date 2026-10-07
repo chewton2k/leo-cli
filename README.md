@@ -580,7 +580,26 @@ there you can:
 - move and delete notes (deleted notes go to the trash, and Undo is right
   there), and save a note as a PDF with **PDF**, which opens your phone's print
   sheet;
-- restore notes from the trash, and browse by tag.
+- restore notes from the trash, and browse by tag;
+- see a **map of ideas**: how your notes connect, across subjects.
+
+**The map of ideas** (More → Map of ideas, or **Map** on any note) draws every
+note as a dot coloured by its folder. **Find connections** asks the AI you
+chose for writing to name the key ideas in each note and how ideas in
+different subjects relate, for example that a priority queue in data
+structures is what priority scheduling in operating systems uses. Ideas
+appear as hollow dots joined to the notes that cover them, and dashed lines
+join related ideas, each with a sentence saying why. Tap a note to see its
+ideas and the notes it shares them with, or an idea to see every note that
+covers it; **Open note** goes straight to it. The folder chips hide or show a
+subject, and the search box finds an idea or note on the map. `[[Note title]]`
+links you write show up even before any AI is used.
+
+leo asks you before the first run, and says roughly how many requests it will
+make (about one per eight notes, plus one). After that it only reads notes you
+changed, so **Update** is quick. What it found is kept in `graph.json` next to
+your notes folder, on this computer only, and is never backed up to GitHub. The
+map is only in the browser, not in the terminal.
 
 If a note changes on your computer while you are editing it on the phone,
 nothing is overwritten: the computer's version stays, and yours is kept next to

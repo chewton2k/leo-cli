@@ -101,3 +101,62 @@ test.describe('plain HTTP access', () => {
     expect(saved.some((note) => note.title === 'Created over plain HTTP')).toBe(true);
   });
 });
+
+test.describe('map of ideas', () => {
+  async function seed(page) {
+    const made = {};
+    for (const [title, body, directory] of [
+      ['Graph traversals', 'BFS uses a queue. See [[Scheduling]].', 'cs130'],
+      ['Scheduling', 'Round robin takes from a ready queue.', 'cs162'],
+    ]) {
+      await page.request.post('/api/dirs', { data: { path: directory } });
+      made[title] = await (await page.request.post('/api/notes', { data: { title, body, directory } })).json();
+    }
+    const cache = {
+      notes: {
+        [made['Graph traversals'].id]: { hash: 'old', concepts: ['breadth-first search', 'queue'] },
+        [made.Scheduling.id]: { hash: 'old', concepts: ['round robin', 'queue'] },
+      },
+      links: { key: 'seed', items: [{ a: 'queue', b: 'round robin', why: 'Round robin takes the next process from a queue' }] },
+      built_at: '2026-10-06T00:00:00Z',
+    };
+    fs.writeFileSync(path.join(process.env.LEO_BROWSER_HOME, 'graph.json'), JSON.stringify(cache));
+    return made;
+  }
+
+  test('a note opens on the map with the ideas it shares', async ({ page }) => {
+    const made = await seed(page);
+    await page.goto(`/#/n/${made.Scheduling.id}`);
+    await page.locator('[data-action="note-map"]').click();
+    await expect(page).toHaveURL(new RegExp(`#/map/${made.Scheduling.id}$`));
+    await expect(page.locator('#map-canvas')).toBeVisible();
+    const panel = page.locator('#map-panel');
+    await expect(panel.locator('h3')).toHaveText('Scheduling');
+    await expect(panel.locator('.chip', { hasText: 'queue' })).toBeVisible();
+    await expect(panel.locator('.map-row', { hasText: 'Graph traversals' })).toContainText('shares queue');
+    await panel.locator('.chip', { hasText: 'round robin' }).click();
+    await expect(panel.locator('h3')).toHaveText('round robin');
+    await expect(panel).toContainText('Round robin takes the next process from a queue');
+    await panel.locator('[data-action="map-clear"]').click();
+    await expect(panel.locator('h3')).toHaveText('Ideas that connect');
+    await panel.locator('.map-row').first().click();
+    await expect(panel.locator('h3')).toHaveText('queue');
+    await page.locator('#map-find').fill('graph trav');
+    await page.locator('#map-found .map-row').first().click();
+    await expect(panel.locator('h3')).toHaveText('Graph traversals');
+    await panel.locator('[data-action="open-note"]').click();
+    await expect(page.locator('#title')).toHaveText('Graph traversals');
+  });
+
+  test('finding connections without an AI says how to choose one', async ({ page }) => {
+    await seed(page);
+    await page.route('**/api/graph/build', (route) => route.fulfill({ status: 202, json: { state: 'building', done: 0, total: 2, message: null, notes: 2, read: 0, stale: 2, requests: 2, built_at: null } }));
+    await page.route('**/api/graph/status', (route) => route.fulfill({ json: { state: 'failed', done: 0, total: 2, message: 'no AI for writing is chosen — type :settings in leo and pick one under writing', notes: 2, read: 0, stale: 2, requests: 2, built_at: null } }));
+    await page.goto('/#/map');
+    await page.locator('#map-build').click();
+    const confirm = page.locator('[data-action="map-build-now"]');
+    if (await confirm.isVisible()) await confirm.click();
+    await expect(page.locator('.toast.bad')).toContainText(':settings');
+    await expect(page.locator('#map-build')).toBeEnabled();
+  });
+});

@@ -30,6 +30,7 @@
     refresh: svg('<path d="M20 12a8 8 0 1 1-2.3-5.6L20 8.5"/><path d="M20 4v4.5h-4.5"/>'),
     check: svg('<path d="M5 12l4.5 4.5L19 7"/>'),
     lock: svg('<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>'),
+    map: svg('<circle cx="6" cy="7" r="2.2"/><circle cx="18" cy="6" r="2.2"/><circle cx="12" cy="17.5" r="2.2"/><path d="M7.4 8.9l3.5 6.7M16.9 7.9l-3.8 7.8M8.2 6.8l7.6-.6"/>'),
     cloud: svg('<path d="M7 18a4.5 4.5 0 0 1-.5-9 6 6 0 0 1 11.3 1.5A3.8 3.8 0 0 1 17.5 18z"/><path d="M4 4l16 16"/>'),
   };
 
@@ -168,6 +169,7 @@
   const noteHash = (id) => `#/n/${enc(id)}`;
 
   function back() {
+    if (state.view === 'map' && state.focus) return go(noteHash(state.focus));
     if (state.view === 'note') return go(folderHash(state.dir || ''));
     if (state.view === 'folder') return go(folderHash((state.dir || '').split('/').slice(0, -1).join('/')));
     go('#/');
@@ -301,8 +303,9 @@
     input.addEventListener('blur', add);
   }
 
-  function noteActions() {
+  function noteActions(id) {
     return `<nav class="actions" aria-label="Note">
+        ${id ? `<button data-action="note-map" data-id="${esc(id)}">${ICON.map}<span>Map</span></button>` : ''}
         <button data-action="move">${ICON.move}<span>Move</span></button>
         <button data-action="share">${ICON.share}<span>PDF</span></button>
         <button data-action="delete" class="danger">${ICON.trash}<span>Delete</span></button>
@@ -317,7 +320,7 @@
     const s = draft || saving.open(note);
     s.tags = [...s.edit.tags];
     state = { view: 'note', dir: note.directory, session: s };
-    chrome({ dir: note.directory, showBack: true, actions: noteActions() });
+    chrome({ dir: note.directory, showBack: true, actions: noteActions(note.id) });
     document.title = `${note.title || 'New note'} · leo`;
     const where = `<button class="chip accent" data-action="open-folder" data-dir="${esc(note.directory)}">${ICON.folder.replace('<svg', '<svg width="13" height="13"')} ${esc(folderLabel(note.directory))}</button>`;
     const when = note.id ? `Edited ${rel(note.updated_at)}` : 'New note';
@@ -434,6 +437,219 @@
       : empty(ICON.trash, 'The trash is empty', 'Deleted notes wait here for 30 days, so a mistake can be undone.');
   }
 
+  let mapView = null;
+  let mapPoll = 0;
+  const leoGraph = window.leoGraph;
+  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  const darkScheme = () => Boolean(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+
+  function leaveMap() {
+    clearTimeout(mapPoll);
+    if (mapView) mapView.destroy();
+    mapView = null;
+    document.body.classList.remove('on-map');
+  }
+
+  async function showMap(focus) {
+    const mine = ++seq;
+    leaveMap();
+    state = { view: 'map', dir: '', focus, status: null };
+    chrome({ showBack: true });
+    $('#crumbs').innerHTML = '<span class="sep">/</span><button data-action="map-clear">Map of ideas</button>';
+    document.title = 'Map of ideas · leo';
+    app.innerHTML = skeleton(3);
+    const data = await api('/api/graph');
+    if (mine !== seq) return;
+    drawMap(data, focus ? `n:${focus}` : null);
+  }
+
+  function drawMap(data, select) {
+    const notes = data.graph.nodes.filter((n) => n.kind === 'note').length;
+    state.status = data.status;
+    if (!notes) {
+      app.innerHTML = empty(ICON.map, 'Nothing to map yet', 'Write a few notes, and the map shows how the ideas in them connect.');
+      return;
+    }
+    document.body.classList.add('on-map');
+    app.innerHTML = `<section class="map" id="map">
+      <canvas id="map-canvas" role="img" aria-label="Map of how your notes connect. The panel lists the same connections."></canvas>
+      <div class="map-top">
+        <div class="map-bar"><span class="map-count" id="map-count"></span><span class="grow"></span>
+          <button class="btn plain sm" data-action="map-fit">Fit</button>
+          <button class="btn primary sm" id="map-build" data-action="map-build" hidden></button></div>
+        <label class="field map-find">${ICON.search}<input id="map-find" type="search" placeholder="Find an idea or note" autocomplete="off" enterkeyhint="go"></label>
+        <div class="map-found" id="map-found"></div>
+        <div class="map-legend" id="map-legend"></div>
+      </div>
+      <aside class="map-panel" id="map-panel" aria-live="polite"></aside>
+    </section>`;
+    $('#map').style.top = `${Math.round($('#bar').getBoundingClientRect().bottom)}px`;
+    mapView = leoGraph.create($('#map-canvas'), data.graph, { onSelect: mapPanel, insets: mapInsets });
+    mapStatus(data.status);
+    mapLegend();
+    const input = $('#map-find');
+    input.addEventListener('input', () => mapFound(input.value));
+    input.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      const first = leoGraph.find(mapView.graph, input.value)[0];
+      if (first) mapPick(first.id);
+    });
+    if (select && mapView.graph.byId.has(select)) mapView.select(select, { center: true });
+    else mapPanel(null);
+    if (data.status.state === 'building') pollMap();
+  }
+
+  function mapInsets() {
+    const map = $('#map');
+    if (!map) return { top: 0, bottom: 0, right: 0 };
+    const box = map.getBoundingClientRect();
+    const top = $('.map-top').getBoundingClientRect().bottom - box.top + 8;
+    const panel = $('#map-panel').getBoundingClientRect();
+    const beside = panel.top - box.top < top;
+    return beside ? { top, bottom: 0, right: box.right - panel.left + 8 } : { top, bottom: box.bottom - panel.top + 8, right: 0 };
+  }
+
+  function mapStatus(status) {
+    state.status = status;
+    const button = $('#map-build');
+    if (!button || !mapView) return;
+    const c = leoGraph.counts(mapView.graph);
+    $('#map-count').textContent = `${plural(c.notes, 'note')} · ${plural(c.ideas, 'idea')} · ${plural(c.links, 'link')}`;
+    button.disabled = status.state === 'building';
+    button.hidden = false;
+    if (status.state === 'building') {
+      button.textContent = status.total ? `Reading notes ${status.done}/${status.total}…` : 'Starting…';
+    } else if (status.read === 0) {
+      button.textContent = 'Find connections';
+    } else if (status.stale > 0) {
+      button.textContent = `Update · ${status.stale} changed`;
+    } else {
+      button.hidden = true;
+    }
+  }
+
+  function mapLegend() {
+    const g = mapView.graph;
+    const legend = $('#map-legend');
+    if (g.folders.length < 2) {
+      legend.innerHTML = '';
+      return;
+    }
+    const hidden = mapView.hidden();
+    const dark = darkScheme();
+    legend.innerHTML = g.folders
+      .map((top) => {
+        const color = leoGraph.colorOf(g, top, dark) || 'var(--faint)';
+        const off = hidden.has(top);
+        return `<button class="chip map-chip${off ? ' off' : ''}" data-action="map-folder" data-top="${esc(top)}" aria-pressed="${!off}"><i style="background:${color}"></i>${esc(top || 'Top level')}</button>`;
+      })
+      .join('');
+  }
+
+  function mapFound(query) {
+    const found = leoGraph.find(mapView.graph, query);
+    $('#map-found').innerHTML = found
+      .map((n) => `<button class="map-row" data-action="map-pick" data-id="${esc(n.id)}"><span class="grow">${esc(n.label)}<span class="sub">${n.kind === 'note' ? esc(folderLabel(n.folder)) : `Idea in ${plural(n.degree, 'place')}`}</span></span></button>`)
+      .join('');
+  }
+
+  function mapPick(id) {
+    $('#map-find').value = '';
+    $('#map-found').innerHTML = '';
+    $('#map-find').blur();
+    mapView.select(id, { center: true });
+  }
+
+  const noteRow = (n, sub) =>
+    `<button class="map-row" data-action="map-select" data-id="${esc(n.id)}"><i class="dot" style="background:${leoGraph.colorOf(mapView.graph, n.top, darkScheme()) || 'var(--faint)'}"></i><span class="grow">${esc(n.label)}<span class="sub">${esc(sub)}</span></span></button>`;
+
+  function mapPanel(node) {
+    const panel = $('#map-panel');
+    if (!panel || !mapView) return;
+    const g = mapView.graph;
+    const status = state.status || {};
+    panel.classList.toggle('quiet', !node);
+    if (!node) {
+      const bridges = leoGraph.bridges(g).slice(0, 12);
+      if (status.read === 0) {
+        panel.innerHTML = `<h3>How your notes connect</h3><p class="hint">Each dot is a note, coloured by folder; lines between notes are the [[links]] you wrote. <b>Find connections</b> asks your AI which ideas the notes share, and how ideas in different subjects relate.</p>`;
+      } else if (!bridges.length) {
+        panel.innerHTML = `<h3>How your notes connect</h3><p class="hint">Hollow dots are ideas; a note links to each idea it covers. Tap a note or an idea to see what it connects to.</p>`;
+      } else {
+        panel.innerHTML = `<h3>Ideas that connect</h3><div class="map-list">${bridges
+          .map((b) => `<button class="map-row" data-action="map-select" data-id="${esc(b.a.id)}"><span class="grow"><b>${esc(b.a.label)}</b> ↔ <b>${esc(b.b.label)}</b>${b.why ? `<span class="sub">${esc(b.why)}</span>` : ''}</span></button>`)
+          .join('')}</div><p class="hint">Tap a note or an idea on the map to see what it connects to.</p>`;
+      }
+      return;
+    }
+    const close = `<button class="icon-btn map-close" data-action="map-clear" aria-label="Close">${ICON.close}</button>`;
+    if (node.kind === 'note') {
+      const id = node.id.slice(2);
+      const ideas = node.concepts.length
+        ? `<div class="map-chips">${node.concepts
+            .map((c) => {
+              const cid = `c:${c.toLowerCase()}`;
+              return g.byId.has(cid)
+                ? `<button class="chip accent" data-action="map-select" data-id="${esc(cid)}">${esc(c)}</button>`
+                : `<span class="chip">${esc(c)}</span>`;
+            })
+            .join('')}</div>`
+        : `<p class="hint">${status.read === 0 || status.stale ? 'Not read yet. Find connections reads it.' : 'No ideas found in this note.'}</p>`;
+      const linked = leoGraph.connectedNotes(g, node.id).slice(0, 12);
+      panel.innerHTML = `${close}<h3>${esc(node.label)}</h3><span class="sub">${esc(folderLabel(node.folder))}</span>
+        <div class="map-actions"><button class="btn primary sm" data-action="open-note" data-id="${esc(id)}">Open note</button></div>
+        <h4>Ideas in this note</h4>${ideas}
+        ${linked.length ? `<h4>Connected notes</h4><div class="map-list">${linked
+          .map((x) => noteRow(x.node, [x.linked ? 'linked' : '', x.via.length ? `shares ${x.via.join(', ')}` : ''].filter(Boolean).join(' · ')))
+          .join('')}</div>` : ''}`;
+      return;
+    }
+    const detail = leoGraph.conceptDetail(g, node.id);
+    panel.innerHTML = `${close}<h3>${esc(node.label)}</h3><span class="sub">Idea in ${plural(detail.notes.length, 'note')}</span>
+      <h4>Notes</h4><div class="map-list">${detail.notes.map((n) => noteRow(n, folderLabel(n.folder))).join('')}</div>
+      ${detail.related.length ? `<h4>Related ideas</h4><div class="map-list">${detail.related
+        .map((r) => `<button class="map-row" data-action="map-select" data-id="${esc(r.node.id)}"><span class="grow">${esc(r.node.label)}${r.why ? `<span class="sub">${esc(r.why)}</span>` : ''}</span></button>`)
+        .join('')}</div>` : ''}`;
+  }
+
+  async function mapBuild(confirmed) {
+    const status = state.status || {};
+    if (!confirmed && status.read === 0) {
+      sheet(`<h3>Find how your notes connect</h3>
+        <p>leo sends your notes to the AI you chose for writing (with :settings in leo on your computer) and asks which ideas they share, and how ideas in different subjects relate. That is about ${plural(status.requests || 1, 'request')}. After that, only notes you change are read again.</p>
+        <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn primary" data-action="map-build-now">Find connections</button></div>`);
+      return;
+    }
+    closeSheet();
+    mapStatus(await api('/api/graph/build', { method: 'POST' }));
+    pollMap();
+  }
+
+  function pollMap() {
+    clearTimeout(mapPoll);
+    mapPoll = setTimeout(async () => {
+      if (state.view !== 'map') return;
+      const status = await api('/api/graph/status').catch(() => null);
+      if (!status || state.view !== 'map') return;
+      if (status.state === 'building') {
+        mapStatus(status);
+        pollMap();
+        return;
+      }
+      if (status.state === 'failed') {
+        mapStatus(status);
+        toast(status.message || 'The map could not be built.', { bad: true });
+        return;
+      }
+      const keep = mapView ? mapView.selected() : null;
+      const data = await api('/api/graph');
+      if (state.view !== 'map') return;
+      leaveMap();
+      drawMap(data, keep);
+      toast(status.message || 'The map is up to date.');
+    }, 1200);
+  }
+
   function showLocked() {
     ++seq;
     state = { view: 'locked' };
@@ -467,6 +683,7 @@
     sheet(`
       <button class="list-row" data-action="new" data-dir="${esc(here)}">${ICON.plus}<span class="grow">New note</span></button>
       <button class="list-row" data-action="new-folder">${ICON.folderPlus}<span class="grow">New folder${here ? ` in ${esc(folderLabel(here))}` : ''}</span></button>
+      <button class="list-row" data-action="map">${ICON.map}<span class="grow">Map of ideas</span></button>
       <button class="list-row" data-action="tags">${ICON.tag}<span class="grow">Tags</span></button>
       <button class="list-row" data-action="drafts">${ICON.note}<span class="grow">Drafts (${saving.drafts().length})</span></button>
       <button class="list-row" data-action="trash">${ICON.trash}<span class="grow">Trash</span></button>
@@ -639,6 +856,22 @@
       closeSheet();
       go('#/tags');
     },
+    map: () => {
+      closeSheet();
+      go('#/map');
+    },
+    'note-map': (el) => go(`#/map/${enc(el.dataset.id)}`),
+    'map-build': () => mapBuild(false),
+    'map-build-now': () => mapBuild(true),
+    'map-select': (el) => mapView && mapView.select(el.dataset.id, { center: true }),
+    'map-pick': (el) => mapView && mapPick(el.dataset.id),
+    'map-clear': () => mapView && mapView.select(null),
+    'map-fit': () => mapView && mapView.fit(),
+    'map-folder': (el) => {
+      if (!mapView) return;
+      mapView.hide(el.dataset.top, !mapView.hidden().has(el.dataset.top));
+      mapLegend();
+    },
     drafts: () => { closeSheet(); go('#/drafts'); },
     'open-draft': (el) => go(`#/draft/${enc(el.dataset.key)}`),
     trash: () => {
@@ -751,6 +984,7 @@
     const [, kind, rest = ''] = location.hash.match(/^#\/([a-z]*)\/?(.*)$/) || [null, '', ''];
     const arg = decodeURIComponent(rest);
     if (kind !== 'search') closeSearch();
+    if (kind !== 'map') leaveMap();
     try {
       if (kind === 'f') await showFolder(arg);
       else if (kind === 'n') await showNote(arg.replace(/\/edit$/, ''));
@@ -758,6 +992,7 @@
       else if (kind === 'search') await showSearch(arg);
       else if (kind === 'tags') await showTags();
       else if (kind === 'trash') await showTrash();
+      else if (kind === 'map') await showMap(arg);
       else if (kind === 'drafts') showDrafts();
       else if (kind === 'draft') await showDraft(arg);
       else await showFolder('');

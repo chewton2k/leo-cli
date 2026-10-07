@@ -1996,6 +1996,7 @@ dependencies = [
  "local-ip-address",
  "qrcode",
  "serde",
+ "serde_json",
  "tempfile",
  "tokio",
  "uuid",

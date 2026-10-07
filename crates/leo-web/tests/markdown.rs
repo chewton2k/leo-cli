@@ -11,6 +11,11 @@ fn the_editor_helpers_pass_their_tests() {
 }
 
 #[test]
+fn the_map_of_ideas_passes_its_tests() {
+    run_node_tests("graph.test.js");
+}
+
+#[test]
 fn saving_and_draft_recovery_pass_their_tests() {
     run_node_tests("saving.test.js");
 }

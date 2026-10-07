@@ -300,6 +300,46 @@ main { max-width: 760px; margin: 0 auto; padding: 8px 16px calc(var(--bottom) + 
   .note-head h1 { margin-top: 0; }
   .doc .blk pre, .doc .blk .table { break-inside: avoid; }
 }
+body.on-map { overflow: hidden; }
+body.on-map main { padding: 0; max-width: none; }
+.map { position: fixed; left: 0; right: 0; bottom: 0; top: 60px; background: var(--bg); }
+.map canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+.map canvas:active { cursor: grabbing; }
+.map-top { position: absolute; top: 8px; left: 12px; right: 12px; max-width: 480px; display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
+.map-top > * { pointer-events: auto; }
+.map-bar { display: flex; align-items: center; gap: 6px; padding: 5px 5px 5px 12px; font-size: 13.5px; color: var(--muted); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+.map-bar .grow { flex: 1; }
+.map-count { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.map-bar .btn { flex: none; white-space: nowrap; }
+.btn.sm { padding: 6px 12px; font-size: 13.5px; border-radius: 9px; }
+.map-find { flex: none; min-width: 0; box-shadow: var(--shadow); }
+.map-found { display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 4px; }
+.map-found:empty { display: none; }
+.map-legend { display: flex; flex-wrap: wrap; gap: 6px; }
+.map-legend:empty { display: none; }
+.map-chip { cursor: pointer; background: var(--surface); border: 1px solid var(--line); }
+.map-chip i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+.map-chip.off { opacity: .5; text-decoration: line-through; }
+.map-panel {
+  position: absolute; left: 12px; right: 12px; bottom: calc(var(--bottom) + 12px); max-width: 480px; max-height: 44vh; overflow-y: auto;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 12px 14px;
+}
+.map-panel.quiet { max-height: 30vh; }
+@media (min-width: 900px) {
+  .map-panel, .map-panel.quiet { left: auto; right: 16px; top: 16px; bottom: 16px; width: 360px; max-height: none; }
+}
+.map-panel h3 { margin: 0 36px 2px 0; font-size: 17px; overflow-wrap: anywhere; }
+.map-panel h4 { font-size: 12px; font-weight: 650; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 14px 0 6px; }
+.map-panel .hint { margin: 6px 0 0; font-size: 13.5px; }
+.map-panel .sub, .map-row .sub { display: block; font-size: 12.5px; color: var(--muted); font-weight: 400; }
+.map-close { position: absolute; top: 6px; right: 6px; width: 34px; height: 34px; }
+.map-row { display: flex; align-items: flex-start; gap: 10px; width: 100%; text-align: left; border: 0; background: none; padding: 8px 6px; border-radius: 10px; font-size: 14.5px; }
+.map-row:hover { background: var(--surface-2); }
+.map-row .grow { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.map-row .dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 6px; flex: none; }
+.map-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.map-chips .chip { cursor: pointer; }
+.map-actions { display: flex; gap: 8px; margin-top: 10px; }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 </style>
 </head>
@@ -323,6 +363,7 @@ main { max-width: 760px; margin: 0 auto; padding: 8px 16px calc(var(--bottom) + 
 <script src="/editing.js"></script>
 <script src="/doc.js"></script>
 <script src="/saving.js"></script>
+<script src="/graph.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>
