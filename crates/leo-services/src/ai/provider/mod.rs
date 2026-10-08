@@ -20,6 +20,32 @@ pub struct ChatRequest {
 /// prints, and tests collect into a string.
 pub type Sink<'a> = &'a mut dyn FnMut(&str);
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Image {
+    pub mime: String,
+    pub bytes: Vec<u8>,
+}
+
+impl Image {
+    pub fn data_url(&self) -> String {
+        use base64::Engine;
+        format!(
+            "data:{};base64,{}",
+            self.mime,
+            base64::engine::general_purpose::STANDARD.encode(&self.bytes)
+        )
+    }
+
+    pub fn extension(&self) -> &'static str {
+        match self.mime.as_str() {
+            "image/png" => "png",
+            "image/webp" => "webp",
+            "image/gif" => "gif",
+            _ => "jpg",
+        }
+    }
+}
+
 pub trait ChatProvider {
     fn complete(&self, req: &ChatRequest) -> ProviderResult<String>;
 
@@ -50,6 +76,16 @@ pub trait ChatProvider {
     /// takes effect instead of being silently ignored.
     fn max_tokens(&self) -> Option<u32> {
         None
+    }
+    fn complete_with_images(
+        &self,
+        _req: &ChatRequest,
+        _images: &[Image],
+    ) -> ProviderResult<String> {
+        Err(crate::ai::error::ProviderError::Fatal(format!(
+            "{} cannot read images; for photos and scans choose OpenAI, Anthropic, Gemini, xAI, Claude Code or Codex for writing",
+            self.name()
+        )))
     }
 }
 

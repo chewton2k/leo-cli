@@ -142,6 +142,81 @@ fn delta_text(payload: &str) -> Option<Delta> {
         .map(|text| Delta::Reasoning(text.to_string()))
 }
 
+impl OpenAiChat {
+    fn send(
+        &self,
+        req: &ChatRequest,
+        body: serde_json::Value,
+        secs: u64,
+    ) -> ProviderResult<String> {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(secs))
+            .build()
+            .map_err(|e| ProviderError::Fatal(format!("{}: {e}", self.name)))?;
+
+        let resp = self
+            .authorized(client.post(self.endpoint()))
+            .json(&body)
+            .send()
+            .map_err(|e| classify_reqwest(&self.name, &e))?;
+
+        let status = resp.status().as_u16();
+        if !resp.status().is_success() {
+            // Only the response body is quoted — never our request headers,
+            // so our own Authorization header cannot leak this way. Scrub
+            // defensively in case a misbehaving gateway reflects the key
+            // back inside the body itself.
+            let text = resp.text().unwrap_or_default();
+            let text = scrub_secret(&text, self.key.as_ref().map(Secret::as_str));
+            return Err(match self.key {
+                Some(_) => classify_status_with_key(status, &self.name, &text),
+                None => classify_status(status, &self.name, &text),
+            });
+        }
+
+        let json: serde_json::Value = resp.json().map_err(|e| {
+            ProviderError::Fatal(format!("{}: unreadable response: {e}", self.name))
+        })?;
+
+        let message = &json["choices"][0]["message"];
+        let finish = json["choices"][0]["finish_reason"].as_str().unwrap_or("");
+
+        // Prefer `content`. Reasoning models on OpenRouter's free tier often
+        // return an empty or null `content` while putting text in `reasoning`,
+        // especially when the token budget ran out mid-thought, so fall back to
+        // that rather than discarding a usable answer.
+        let text = message["content"]
+            .as_str()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| {
+                message["reasoning"]
+                    .as_str()
+                    .filter(|s| !s.trim().is_empty())
+            });
+
+        match text {
+            Some(t) => {
+                if let Some(note) = cut_off_warning(&self.name, finish, req.max_tokens) {
+                    leo_core::diag::warn(note);
+                }
+                Ok(t.to_string())
+            }
+            // Retryable, not fatal: an empty completion is this provider
+            // failing to answer, and the next one in the chain may well do
+            // better. Treating it as fatal would abort the whole chain over a
+            // truncated reasoning trace.
+            None if finish == "length" => Err(ProviderError::Retryable(format!(
+                "{}: hit the token limit before producing any content",
+                self.name
+            ))),
+            None => Err(ProviderError::Retryable(format!(
+                "{}: returned no content",
+                self.name
+            ))),
+        }
+    }
+}
+
 impl ChatProvider for OpenAiChat {
     fn complete_streaming(&self, req: &ChatRequest, sink: Sink<'_>) -> ProviderResult<String> {
         use std::io::{BufRead, BufReader};
@@ -215,71 +290,25 @@ impl ChatProvider for OpenAiChat {
     }
 
     fn complete(&self, req: &ChatRequest) -> ProviderResult<String> {
-        let client = reqwest::blocking::Client::builder()
-            .timeout(std::time::Duration::from_secs(120))
-            .build()
-            .map_err(|e| ProviderError::Fatal(format!("{}: {e}", self.name)))?;
+        self.send(req, self.body(req, false), 120)
+    }
 
-        let resp = self
-            .authorized(client.post(self.endpoint()))
-            .json(&self.body(req, false))
-            .send()
-            .map_err(|e| classify_reqwest(&self.name, &e))?;
-
-        let status = resp.status().as_u16();
-        if !resp.status().is_success() {
-            // Only the response body is quoted — never our request headers,
-            // so our own Authorization header cannot leak this way. Scrub
-            // defensively in case a misbehaving gateway reflects the key
-            // back inside the body itself.
-            let text = resp.text().unwrap_or_default();
-            let text = scrub_secret(&text, self.key.as_ref().map(Secret::as_str));
-            return Err(match self.key {
-                Some(_) => classify_status_with_key(status, &self.name, &text),
-                None => classify_status(status, &self.name, &text),
-            });
+    fn complete_with_images(
+        &self,
+        req: &ChatRequest,
+        images: &[crate::ai::provider::Image],
+    ) -> ProviderResult<String> {
+        let mut body = self.body(req, false);
+        let mut parts = vec![serde_json::json!({"type": "text", "text": req.prompt})];
+        for image in images {
+            parts.push(
+                serde_json::json!({"type": "image_url", "image_url": {"url": image.data_url()}}),
+            );
         }
-
-        let json: serde_json::Value = resp.json().map_err(|e| {
-            ProviderError::Fatal(format!("{}: unreadable response: {e}", self.name))
-        })?;
-
-        let message = &json["choices"][0]["message"];
-        let finish = json["choices"][0]["finish_reason"].as_str().unwrap_or("");
-
-        // Prefer `content`. Reasoning models on OpenRouter's free tier often
-        // return an empty or null `content` while putting text in `reasoning`,
-        // especially when the token budget ran out mid-thought, so fall back to
-        // that rather than discarding a usable answer.
-        let text = message["content"]
-            .as_str()
-            .filter(|s| !s.trim().is_empty())
-            .or_else(|| {
-                message["reasoning"]
-                    .as_str()
-                    .filter(|s| !s.trim().is_empty())
-            });
-
-        match text {
-            Some(t) => {
-                if let Some(note) = cut_off_warning(&self.name, finish, req.max_tokens) {
-                    leo_core::diag::warn(note);
-                }
-                Ok(t.to_string())
-            }
-            // Retryable, not fatal: an empty completion is this provider
-            // failing to answer, and the next one in the chain may well do
-            // better. Treating it as fatal would abort the whole chain over a
-            // truncated reasoning trace.
-            None if finish == "length" => Err(ProviderError::Retryable(format!(
-                "{}: hit the token limit before producing any content",
-                self.name
-            ))),
-            None => Err(ProviderError::Retryable(format!(
-                "{}: returned no content",
-                self.name
-            ))),
+        if let Some(last) = body["messages"].as_array_mut().and_then(|m| m.last_mut()) {
+            last["content"] = serde_json::Value::Array(parts);
         }
+        self.send(req, body, 300)
     }
 
     fn available(&self) -> bool {

@@ -12,12 +12,38 @@ pub trait SettingsApi: Send + Sync {
     fn test(&self, task: &str) -> Result<String>;
 }
 
+#[derive(Debug, Clone)]
+pub struct UploadFile {
+    pub name: String,
+    pub mime: String,
+    pub bytes: Vec<u8>,
+}
+
+pub type Importer = Arc<
+    dyn Fn(Vec<UploadFile>, &mut dyn FnMut(&str, usize, usize)) -> Result<(String, String)>
+        + Send
+        + Sync,
+>;
+
 #[derive(Clone, Default)]
 pub struct Powers {
     pub writer: Option<Writer>,
     pub chat: Option<Streamer>,
     pub settings: Option<Arc<dyn SettingsApi>>,
+    pub importer: Option<Importer>,
 }
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct ImportJob {
+    state: &'static str,
+    step: String,
+    done: usize,
+    total: usize,
+    note: Option<String>,
+    error: Option<String>,
+}
+
+const IMPORT_BYTES: usize = 120 * 1024 * 1024;
 
 #[cfg(test)]
 use std::sync::MutexGuard;
@@ -44,6 +70,8 @@ struct AppState {
     graphs: Arc<graph::Graphs>,
     chat: Option<Streamer>,
     settings: Option<Arc<dyn SettingsApi>>,
+    importer: Option<Importer>,
+    imports: Arc<Mutex<std::collections::HashMap<String, ImportJob>>>,
 }
 
 struct Storage {
@@ -125,6 +153,7 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
     let graphs = Arc::new(graph::Graphs::for_notes(&store.notes_dir, powers.writer));
     let chat = powers.chat;
     let settings = powers.settings;
+    let importer = powers.importer;
     let count = store.notes.len();
     let token = token::load_or_create(
         &leo_core::paths::config_dir()?.join("serve-token"),
@@ -144,6 +173,8 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
         graphs,
         chat,
         settings,
+        importer,
+        imports: Default::default(),
     });
 
     let tunnel = if !options.local {
@@ -337,6 +368,13 @@ fn router(state: AppState) -> Router {
         .route("/api/chat", post(chat_reply))
         .route("/api/settings", get(get_settings).post(change_setting))
         .route("/api/settings/test", post(test_setting))
+        .route(
+            "/api/import",
+            post(start_import).layer(axum::extract::DefaultBodyLimit::max(IMPORT_BYTES)),
+        )
+        .route("/api/import/{id}", get(import_status))
+        .route("/api/notes/{id}/originals", get(list_originals))
+        .route("/api/notes/{id}/originals/{name}", get(get_original))
         .route("/api/graph", get(get_graph))
         .route("/api/graph/status", get(graph_status))
         .route("/api/graph/build", post(build_graph))
@@ -488,6 +526,312 @@ async fn test_setting(
         )
             .into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct ImportFileBody {
+    name: String,
+    #[serde(default, rename = "type")]
+    mime: String,
+    data: String,
+}
+
+#[derive(Deserialize)]
+struct ImportBody {
+    #[serde(default)]
+    directory: String,
+    #[serde(default)]
+    title: Option<String>,
+    files: Vec<ImportFileBody>,
+}
+
+pub fn safe_file_name(name: &str) -> String {
+    let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
+    let cleaned: String = base
+        .chars()
+        .map(|c| {
+            if c.is_control() || matches!(c, '/' | '\\' | ':' | '"' | '<' | '>' | '|' | '?' | '*') {
+                '-'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let cleaned = cleaned.trim().trim_start_matches('.').to_string();
+    let cleaned: String = cleaned.chars().take(120).collect();
+    if cleaned.is_empty() {
+        "upload".to_string()
+    } else {
+        cleaned
+    }
+}
+
+fn originals_dir(notes_dir: &std::path::Path, note: &str) -> Option<std::path::PathBuf> {
+    if note.is_empty() || !note.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return None;
+    }
+    Some(
+        notes_dir
+            .parent()
+            .unwrap_or(notes_dir)
+            .join("attachments")
+            .join(note),
+    )
+}
+
+fn store_now<R>(
+    state: &AppState,
+    work: impl FnOnce(&mut Store) -> Result<R, StatusCode>,
+) -> Result<R, StatusCode> {
+    let mut store = state
+        .store
+        .lock()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if store.reload || store.changed_on_disk() {
+        store
+            .refresh()
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        store.reload = false;
+    }
+    let result = work(&mut store);
+    if result.is_err() {
+        store.reload = true;
+    }
+    result
+}
+
+fn set_job(state: &AppState, id: &str, change: impl FnOnce(&mut ImportJob)) {
+    if let Ok(mut jobs) = state.imports.lock() {
+        if let Some(job) = jobs.get_mut(id) {
+            change(job);
+        }
+    }
+}
+
+fn run_import(
+    state: AppState,
+    id: String,
+    importer: Importer,
+    dir: String,
+    title: Option<String>,
+    files: Vec<UploadFile>,
+) {
+    let names: Vec<String> = files.iter().map(|f| f.name.clone()).collect();
+    let originals = files.clone();
+    let written = importer(files, &mut |step, done, total| {
+        set_job(&state, &id, |job| {
+            job.step = step.to_string();
+            job.done = done;
+            job.total = total;
+        })
+    });
+    let (made_title, body) = match written {
+        Ok(found) => found,
+        Err(e) => {
+            set_job(&state, &id, |job| {
+                job.state = "failed";
+                job.error = Some(e.to_string());
+            });
+            return;
+        }
+    };
+    let title = title
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .or_else(|| (!made_title.trim().is_empty()).then(|| made_title.trim().to_string()))
+        .unwrap_or_else(|| names.first().cloned().unwrap_or_else(|| "Upload".into()));
+    let footer = format!(
+        "\n\n---\n*From {}, uploaded {}.*",
+        names.join(", "),
+        chrono::Local::now().format("%b %-d, %Y")
+    );
+    let made = store_now(&state, |store| {
+        if !store.dir_exists(&dir) {
+            store.create_dir(&dir);
+        }
+        let note = store
+            .create_note(title, format!("{}{footer}", body.trim()), vec![], &dir)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .id
+            .clone();
+        save(store)?;
+        Ok((note, store.notes_dir.clone()))
+    });
+    match made {
+        Ok((note, notes_dir)) => {
+            if let Some(folder) = originals_dir(&notes_dir, &note) {
+                if std::fs::create_dir_all(&folder).is_ok() {
+                    for file in &originals {
+                        let _ =
+                            std::fs::write(folder.join(safe_file_name(&file.name)), &file.bytes);
+                    }
+                }
+            }
+            set_job(&state, &id, |job| {
+                job.state = "done";
+                job.done = job.total.max(1);
+                job.note = Some(note);
+            });
+        }
+        Err(_) => set_job(&state, &id, |job| {
+            job.state = "failed";
+            job.error = Some("The note could not be saved.".into());
+        }),
+    }
+}
+
+async fn start_import(State(state): State<AppState>, Json(body): Json<ImportBody>) -> Response {
+    let Some(importer) = state.importer.clone() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": "leo serve was started without AI." })),
+        )
+            .into_response();
+    };
+    if body.files.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "Choose a file first." })),
+        )
+            .into_response();
+    }
+    let dir = body.directory.trim().to_string();
+    let checked = state.with_store({
+        let dir = dir.clone();
+        move |store| directory(store, &dir)
+    });
+    if checked.await.is_err() {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let mut files = Vec::new();
+    for file in body.files {
+        use base64::Engine;
+        let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(file.data.as_bytes())
+        else {
+            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": format!("{} did not arrive intact; try again.", file.name) }))).into_response();
+        };
+        files.push(UploadFile {
+            name: safe_file_name(&file.name),
+            mime: file.mime,
+            bytes,
+        });
+    }
+    let id = uuid::Uuid::new_v4().to_string();
+    if let Ok(mut jobs) = state.imports.lock() {
+        jobs.insert(
+            id.clone(),
+            ImportJob {
+                state: "working",
+                step: "Uploading".into(),
+                done: 0,
+                total: 1,
+                note: None,
+                error: None,
+            },
+        );
+    }
+    let worker = state.clone();
+    let job = id.clone();
+    std::thread::spawn(move || run_import(worker, job, importer, dir, body.title, files));
+    (StatusCode::ACCEPTED, Json(serde_json::json!({ "id": id }))).into_response()
+}
+
+async fn import_status(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    let job = state
+        .imports
+        .lock()
+        .ok()
+        .and_then(|jobs| jobs.get(&id).cloned());
+    match job {
+        Some(job) => Json(job).into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+async fn list_originals(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    let notes_dir = match state.with_store(|store| Ok(store.notes_dir.clone())).await {
+        Ok(dir) => dir,
+        Err(code) => return code.into_response(),
+    };
+    let Some(folder) = originals_dir(&notes_dir, &id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let mut files: Vec<serde_json::Value> = std::fs::read_dir(&folder)
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter(|e| e.path().is_file())
+                .map(|e| {
+                    serde_json::json!({
+                        "name": e.file_name().to_string_lossy(),
+                        "size": e.metadata().map(|m| m.len()).unwrap_or(0),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    files.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+    Json(files).into_response()
+}
+
+fn mime_for(name: &str) -> &'static str {
+    match name
+        .rsplit_once('.')
+        .map(|(_, e)| e.to_lowercase())
+        .as_deref()
+    {
+        Some("pdf") => "application/pdf",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("png") => "image/png",
+        Some("webp") => "image/webp",
+        Some("gif") => "image/gif",
+        Some("txt") => "text/plain; charset=utf-8",
+        Some("md") => "text/markdown; charset=utf-8",
+        Some("docx") => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        Some("pptx") => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        _ => "application/octet-stream",
+    }
+}
+
+async fn get_original(
+    State(state): State<AppState>,
+    Path((id, name)): Path<(String, String)>,
+) -> Response {
+    let notes_dir = match state.with_store(|store| Ok(store.notes_dir.clone())).await {
+        Ok(dir) => dir,
+        Err(code) => return code.into_response(),
+    };
+    let Some(folder) = originals_dir(&notes_dir, &id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if name != safe_file_name(&name) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    match std::fs::read(folder.join(&name)) {
+        Ok(bytes) => {
+            let ascii: String = name
+                .chars()
+                .map(|c| {
+                    if c.is_ascii_graphic() || c == ' ' {
+                        c
+                    } else {
+                        '_'
+                    }
+                })
+                .filter(|c| *c != '"')
+                .collect();
+            let mut response = bytes.into_response();
+            let headers = response.headers_mut();
+            if let Ok(value) = HeaderValue::from_str(mime_for(&name)) {
+                headers.insert(header::CONTENT_TYPE, value);
+            }
+            if let Ok(value) = HeaderValue::from_str(&format!("attachment; filename=\"{ascii}\"")) {
+                headers.insert(header::CONTENT_DISPOSITION, value);
+            }
+            response
+        }
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
     }
 }
 
@@ -1144,12 +1488,169 @@ mod tests {
             graphs,
             chat: None,
             settings: None,
+            importer: None,
+            imports: Default::default(),
         };
         (state, dir, ids)
     }
 
     fn run<F: std::future::Future>(f: F) -> F::Output {
         tokio::runtime::Runtime::new().unwrap().block_on(f)
+    }
+
+    fn wait_for(state: &AppState, id: &str) -> ImportJob {
+        let started = std::time::Instant::now();
+        loop {
+            let job = state.imports.lock().unwrap().get(id).cloned().unwrap();
+            if job.state != "working" {
+                return job;
+            }
+            assert!(
+                started.elapsed().as_secs() < 10,
+                "the import never finished"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn an_upload_becomes_a_note_in_its_folder_and_keeps_the_original() {
+        use base64::Engine;
+        let (mut state, _d, _ids) = state_with(&[]);
+        state.importer = Some(Arc::new(
+            |files: Vec<UploadFile>, progress: &mut dyn FnMut(&str, usize, usize)| {
+                progress("Writing the note", 0, 1);
+                assert_eq!(files[0].bytes, b"%PDF fake");
+                Ok((
+                    "Graph search".to_string(),
+                    "## BFS\n- uses a queue".to_string(),
+                ))
+            },
+        ));
+        let body = ImportBody {
+            directory: "cs130".into(),
+            title: None,
+            files: vec![ImportFileBody {
+                name: "../../lecture 4.pdf".into(),
+                mime: "application/pdf".into(),
+                data: base64::engine::general_purpose::STANDARD.encode(b"%PDF fake"),
+            }],
+        };
+        let response = run(start_import(State(state.clone()), Json(body)));
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let bytes = run(axum::body::to_bytes(response.into_body(), usize::MAX)).unwrap();
+        let id = serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let job = wait_for(&state, &id);
+        assert_eq!(job.state, "done", "{job:?}");
+        let note_id = job.note.unwrap();
+        let note = state.fresh().find_note(&note_id).unwrap().clone();
+        assert_eq!(note.title, "Graph search");
+        assert_eq!(note.directory, "cs130");
+        assert!(
+            note.body
+                .starts_with("## BFS\n- uses a queue\n\n---\n*From lecture 4.pdf, uploaded "),
+            "{}",
+            note.body
+        );
+        let listed = run(list_originals(State(state.clone()), Path(note_id.clone())));
+        let listed = run(axum::body::to_bytes(listed.into_body(), usize::MAX)).unwrap();
+        assert!(String::from_utf8_lossy(&listed).contains("\"name\":\"lecture 4.pdf\""));
+        let file = run(get_original(
+            State(state.clone()),
+            Path((note_id.clone(), "lecture 4.pdf".into())),
+        ));
+        assert_eq!(file.status(), StatusCode::OK);
+        assert_eq!(file.headers()[header::CONTENT_TYPE], "application/pdf");
+        for bad in ["../graph.json", "..", "a/b", ".hidden"] {
+            let refused = run(get_original(
+                State(state.clone()),
+                Path((note_id.clone(), bad.into())),
+            ));
+            assert_eq!(refused.status(), StatusCode::NOT_FOUND, "{bad}");
+        }
+        let refused = run(list_originals(
+            State(state.clone()),
+            Path("../notes".into()),
+        ));
+        assert_eq!(refused.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn a_failed_upload_says_why_and_bad_requests_are_refused() {
+        use base64::Engine;
+        let (mut state, _d, _ids) = state_with(&[]);
+        let file = || ImportFileBody {
+            name: "board.jpg".into(),
+            mime: "image/jpeg".into(),
+            data: base64::engine::general_purpose::STANDARD.encode([1, 2, 3]),
+        };
+        let none = run(start_import(
+            State(state.clone()),
+            Json(ImportBody {
+                directory: String::new(),
+                title: None,
+                files: vec![file()],
+            }),
+        ));
+        assert_eq!(none.status(), StatusCode::SERVICE_UNAVAILABLE);
+        state.importer = Some(Arc::new(
+            |_: Vec<UploadFile>, _: &mut dyn FnMut(&str, usize, usize)| {
+                anyhow::bail!("qwen3:8b cannot read images")
+            },
+        ));
+        let response = run(start_import(
+            State(state.clone()),
+            Json(ImportBody {
+                directory: String::new(),
+                title: None,
+                files: vec![file()],
+            }),
+        ));
+        let bytes = run(axum::body::to_bytes(response.into_body(), usize::MAX)).unwrap();
+        let id = serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let job = wait_for(&state, &id);
+        assert_eq!(job.state, "failed");
+        assert_eq!(job.error.as_deref(), Some("qwen3:8b cannot read images"));
+        let outside = run(start_import(
+            State(state.clone()),
+            Json(ImportBody {
+                directory: "../outside".into(),
+                title: None,
+                files: vec![file()],
+            }),
+        ));
+        assert_eq!(outside.status(), StatusCode::BAD_REQUEST);
+        let empty = run(start_import(
+            State(state.clone()),
+            Json(ImportBody {
+                directory: String::new(),
+                title: None,
+                files: vec![],
+            }),
+        ));
+        assert_eq!(empty.status(), StatusCode::BAD_REQUEST);
+        let garbled = run(start_import(
+            State(state.clone()),
+            Json(ImportBody {
+                directory: String::new(),
+                title: None,
+                files: vec![ImportFileBody {
+                    name: "x.pdf".into(),
+                    mime: String::new(),
+                    data: "%%%".into(),
+                }],
+            }),
+        ));
+        assert_eq!(garbled.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(safe_file_name("../../etc/passwd"), "passwd");
+        assert_eq!(safe_file_name("C:\\x\\notes?.pdf"), "notes-.pdf");
+        assert_eq!(safe_file_name(".."), "upload");
     }
 
     #[test]

@@ -26,6 +26,9 @@
     share: svg('<path d="M12 3v12M8 7l4-4 4 4"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/>'),
     plus: svg('<path d="M12 5v14M5 12h14"/>'),
     minus: svg('<path d="M5 12h14"/>'),
+    upload: svg('<path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>'),
+    image: svg('<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/>'),
+    paperclip: svg('<path d="M21 11l-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7"/>'),
     gear: svg('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>'),
     fit: svg('<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>'),
     restore: svg('<path d="M4 12a8 8 0 1 0 2.3-5.6L4 8.5"/><path d="M4 4v4.5h4.5"/>'),
@@ -199,7 +202,7 @@
     document.title = dir ? `${folderLabel(dir)} · leo` : 'leo';
   }
 
-  const newButton = (dir) => `<button class="fab" data-action="new" data-dir="${esc(dir)}">${ICON.plus}<span>New note</span></button>`;
+  const newButton = (dir) => `<div class="fabs"><button class="fab ghost" data-action="upload" aria-label="Upload a file" title="Make a note from a file or photo">${ICON.upload}<span>Upload</span></button><button class="fab" data-action="new" data-dir="${esc(dir)}">${ICON.plus}<span>New note</span></button></div>`;
 
   async function showFolder(dir) {
     const mine = ++seq;
@@ -338,6 +341,7 @@
       <div class="prose doc" id="doc"></div>
     </article>`;
     s.title = $('#title');
+    drawOriginals(note);
     s.doc = leoDoc.mount($('#doc'), { source: s.edit.body, onChange: () => changed(s), placeholder: 'Tap here to write' });
     drawTags(s);
     if (s.dirty) {
@@ -845,6 +849,168 @@
     }
   }
 
+  const UPLOAD_ACCEPT = '.pdf,.docx,.pptx,.txt,.md,image/*';
+  const UPLOAD_MOST = 90 * 1024 * 1024;
+  let picked = [];
+  let uploadPoll = 0;
+
+  const size = (n) => (n > 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+
+  async function shrink(file) {
+    if (!/^image\//.test(file.type) || file.type === 'image/gif') return { name: file.name, type: file.type, blob: file };
+    try {
+      const bitmap = await createImageBitmap(file);
+      const scale = Math.min(1, 2000 / Math.max(bitmap.width, bitmap.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(bitmap.width * scale);
+      canvas.height = Math.round(bitmap.height * scale);
+      canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.86));
+      if (!blob) throw new Error('no blob');
+      return { name: file.name.replace(/\.[^.]+$/, '') + '.jpg', type: 'image/jpeg', blob };
+    } catch (e) {
+      return { name: file.name, type: file.type, blob: file };
+    }
+  }
+
+  function base64(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+      reader.onerror = () => reject(new Error(`${blob.name || 'A file'} could not be read.`));
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  function drawPicked() {
+    const list = $('#upload-list');
+    if (!list) return;
+    list.innerHTML = picked
+      .map((f, i) => `<div class="upload-file">${/^image\//.test(f.type) ? ICON.image : ICON.note}<span class="grow">${esc(f.name)}<span class="sub">${size(f.size)}</span></span><button class="icon-btn" data-action="upload-drop" data-i="${i}" aria-label="Remove ${esc(f.name)}">${ICON.close}</button></div>`)
+      .join('');
+    $('#upload-go').disabled = !picked.length;
+    $('#upload-pick-label').textContent = picked.length ? 'Add more files' : 'Choose files, or take photos';
+  }
+
+  async function uploadSheet(files) {
+    const here = state.view === 'folder' ? state.dir : state.view === 'note' ? state.dir || '' : '';
+    picked = files ? [...files] : [];
+    let folders = [];
+    try {
+      folders = await api('/api/folders');
+    } catch (e) {
+      folders = [];
+    }
+    const options = [{ name: '' }, ...folders].map((d) => `<option value="${esc(d.name)}"${d.name === here ? ' selected' : ''}>${esc(d.name ? folderLabel(d.name) + (d.name.includes('/') ? ` (${d.name})` : '') : 'All notes (top level)')}</option>`).join('');
+    sheet(`<h3>Make a note from a file</h3>
+      <p>Slides, handouts, papers or worksheets as PDF, Word, PowerPoint or text, or photos and scans of pages. Your AI reads them and writes study notes.</p>
+      <label class="upload-drop" id="upload-zone">${ICON.upload}<span id="upload-pick-label">Choose files, or take photos</span><input type="file" id="upload-input" multiple accept="${UPLOAD_ACCEPT}"></label>
+      <div class="upload-list" id="upload-list"></div>
+      <label class="field">${ICON.folder}<select id="upload-dir">${options}</select></label>
+      <label class="field">${ICON.note}<input id="upload-title" placeholder="Title (optional; the AI names it otherwise)" autocomplete="off"></label>
+      <p class="hint upload-hint">Photos and scans need an AI that can see images: OpenAI, Anthropic, Gemini, xAI, Claude Code or Codex.</p>
+      <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn primary" id="upload-go" data-action="upload-go" disabled>Make the note</button></div>`);
+    $('#upload-input').addEventListener('change', (e) => {
+      picked.push(...e.target.files);
+      e.target.value = '';
+      drawPicked();
+    });
+    const zone = $('#upload-zone');
+    zone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      zone.classList.add('over');
+    });
+    zone.addEventListener('dragleave', () => zone.classList.remove('over'));
+    zone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      zone.classList.remove('over');
+      picked.push(...e.dataTransfer.files);
+      drawPicked();
+    });
+    drawPicked();
+  }
+
+  function uploadProgress(text, done, total) {
+    const bar = total ? Math.round((done / total) * 100) : 8;
+    const box = $('#upload-progress');
+    if (!box) return;
+    box.innerHTML = `<div class="upload-step">${esc(text)}</div><div class="upload-bar"><i style="width:${Math.max(6, bar)}%"></i></div>`;
+  }
+
+  async function uploadGo() {
+    if (!picked.length) return;
+    const dir = $('#upload-dir').value;
+    const title = $('#upload-title').value.trim();
+    const names = picked.map((f) => f.name);
+    sheet(`<div class="upload-working">${felix.felix(72, 'idle think')}<h3>Making your note</h3><p>${esc(names.length === 1 ? names[0] : `${names.length} files`)}</p><div id="upload-progress"></div><p class="hint">This can take a minute for long files. You can close this; the note appears in the folder when it is ready.</p></div>`);
+    uploadProgress('Preparing the files', 0, 0);
+    const files = [];
+    let total = 0;
+    for (const file of picked) {
+      const ready = await shrink(file);
+      total += ready.blob.size;
+      if (total > UPLOAD_MOST) {
+        closeSheet();
+        return toast('That is too much to upload at once; send fewer files.', { bad: true });
+      }
+      files.push({ name: ready.name, type: ready.type, data: await base64(ready.blob) });
+    }
+    uploadProgress('Uploading', 0, 0);
+    let started;
+    try {
+      started = await api('/api/import', { method: 'POST', body: { directory: dir, title: title || null, files } });
+    } catch (e) {
+      closeSheet();
+      throw e;
+    }
+    picked = [];
+    watchUpload(started.id, dir);
+  }
+
+  function watchUpload(id, dir) {
+    clearTimeout(uploadPoll);
+    uploadPoll = setTimeout(async () => {
+      let job;
+      try {
+        job = await api(`/api/import/${enc(id)}`);
+      } catch (e) {
+        return watchUpload(id, dir);
+      }
+      if (job.state === 'working') {
+        uploadProgress(job.step, job.done, job.total);
+        return watchUpload(id, dir);
+      }
+      const open = $('.upload-working');
+      if (job.state === 'failed') {
+        if (open) {
+          open.innerHTML = `${felix.felix(72, 'droop')}<h3>The note could not be made</h3><p class="upload-error">${esc(job.error || 'Something went wrong.')}</p><div class="buttons"><button class="btn plain" data-action="close">Close</button><button class="btn primary" data-action="upload">Try again</button></div>`;
+        } else {
+          toast(job.error || 'The upload failed.', { bad: true });
+        }
+        return;
+      }
+      if (open) {
+        closeSheet();
+        go(noteHash(job.note));
+      } else {
+        toast('Your note from the upload is ready.', { action: 'Open', run: () => go(noteHash(job.note)) });
+      }
+    }, 900);
+  }
+
+  async function drawOriginals(note) {
+    if (!note.id) return;
+    let files = [];
+    try {
+      files = await api(`/api/notes/${enc(note.id)}/originals`);
+    } catch (e) {
+      return;
+    }
+    const meta = $('.note-meta');
+    if (!files.length || !meta || state.view !== 'note' || state.session.note.id !== note.id) return;
+    meta.insertAdjacentHTML('beforeend', files.map((f) => `<a class="chip original" href="/api/notes/${enc(note.id)}/originals/${enc(f.name)}" download="${esc(f.name)}">${ICON.paperclip}${esc(f.name)}</a>`).join(''));
+  }
+
   function showLocked() {
     ++seq;
     state = { view: 'locked' };
@@ -877,6 +1043,7 @@
     const here = state.view === 'folder' ? state.dir : '';
     sheet(`
       <button class="list-row" data-action="new" data-dir="${esc(here)}">${ICON.plus}<span class="grow">New note</span></button>
+      <button class="list-row" data-action="upload">${ICON.upload}<span class="grow">Make a note from a file</span></button>
       <button class="list-row" data-action="new-folder">${ICON.folderPlus}<span class="grow">New folder${here ? ` in ${esc(folderLabel(here))}` : ''}</span></button>
       <button class="list-row" data-action="map">${ICON.map}<span class="grow">Map of ideas</span></button>
       <button class="list-row" data-action="tags">${ICON.tag}<span class="grow">Tags</span></button>
@@ -1068,6 +1235,12 @@
     },
     'test-ai': testAi,
     'note-map': (el) => go(`#/map/${enc(el.dataset.id)}`),
+    upload: () => uploadSheet().catch(fail),
+    'upload-go': () => uploadGo().catch(fail),
+    'upload-drop': (el) => {
+      picked.splice(Number(el.dataset.i), 1);
+      drawPicked();
+    },
     chat: () => chat.toggle(),
     'map-build': () => mapBuild(false),
     'map-build-now': () => mapBuild(true),
@@ -1237,6 +1410,15 @@
       }
     }
   }
+
+  window.addEventListener('dragover', (e) => {
+    if (state.view === 'folder' && !$('.scrim') && e.dataTransfer && [...e.dataTransfer.types].includes('Files')) e.preventDefault();
+  });
+  window.addEventListener('drop', (e) => {
+    if (state.view !== 'folder' || $('.scrim') || !e.dataTransfer || !e.dataTransfer.files.length) return;
+    e.preventDefault();
+    uploadSheet(e.dataTransfer.files).catch(fail);
+  });
 
   window.addEventListener('online', () => saving.retry());
   route();

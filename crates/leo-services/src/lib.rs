@@ -7,6 +7,7 @@ pub mod ai;
 pub mod config;
 pub mod doctor;
 pub mod health;
+pub mod import;
 pub mod listen;
 pub mod providers;
 pub mod session;

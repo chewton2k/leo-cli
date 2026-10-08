@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::ai::error::{ProviderError, ProviderResult};
-use crate::ai::provider::{ChatProvider, ChatRequest, Sink};
+use crate::ai::provider::{ChatProvider, ChatRequest, Image, Sink};
 use crate::config::provider::{ProviderConfig, ProviderKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,6 +65,51 @@ pub fn locate(bin: &str) -> Option<PathBuf> {
         .find_map(|dir| names.iter().map(|n| dir.join(n)).find(|p| p.is_file()))
 }
 
+const CODEX_OFF: [&str; 6] = [
+    "shell_tool",
+    "browser_use",
+    "browser_use_external",
+    "computer_use",
+    "in_app_browser",
+    "apps",
+];
+
+pub fn known_features(listing: &str) -> Vec<String> {
+    let names: std::collections::BTreeSet<&str> = listing
+        .lines()
+        .filter_map(|l| l.split_whitespace().next())
+        .collect();
+    CODEX_OFF
+        .iter()
+        .filter(|f| names.contains(*f))
+        .map(|f| f.to_string())
+        .collect()
+}
+
+fn codex_disables(program: &Path) -> Vec<String> {
+    static KNOWN: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<PathBuf, Vec<String>>>,
+    > = std::sync::OnceLock::new();
+    let cache = KNOWN.get_or_init(Default::default);
+    if let Some(found) = cache.lock().ok().and_then(|c| c.get(program).cloned()) {
+        return found;
+    }
+    let listing = Command::new(program)
+        .args(["features", "list"])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
+    let found = known_features(&listing);
+    if let Ok(mut c) = cache.lock() {
+        c.insert(program.to_path_buf(), found.clone());
+    }
+    found
+}
+
 pub struct AgentCli {
     name: String,
     agent: Agent,
@@ -86,7 +131,13 @@ impl AgentCli {
         }
     }
 
-    pub fn arguments(&self, req: &ChatRequest) -> (Vec<String>, String) {
+    pub fn arguments(
+        &self,
+        req: &ChatRequest,
+        images: &[Image],
+        disables: &[String],
+        files: &[PathBuf],
+    ) -> (Vec<String>, String) {
         let mut args: Vec<String> = Vec::new();
         let input = match self.agent {
             Agent::ClaudeCode => {
@@ -110,7 +161,30 @@ impl AgentCli {
                 if let Some(system) = &req.system {
                     args.extend(["--system-prompt".to_string(), system.clone()]);
                 }
-                req.prompt.clone()
+                if images.is_empty() {
+                    req.prompt.clone()
+                } else {
+                    use base64::Engine;
+                    args.extend(["--input-format".to_string(), "stream-json".to_string()]);
+                    let mut content: Vec<serde_json::Value> = images
+                        .iter()
+                        .map(|image| {
+                            serde_json::json!({
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": image.mime,
+                                    "data": base64::engine::general_purpose::STANDARD.encode(&image.bytes),
+                                },
+                            })
+                        })
+                        .collect();
+                    content.push(serde_json::json!({ "type": "text", "text": req.prompt }));
+                    format!(
+                        "{}\n",
+                        serde_json::json!({ "type": "user", "message": { "role": "user", "content": content } })
+                    )
+                }
             }
             Agent::Codex => {
                 args.extend(
@@ -130,6 +204,12 @@ impl AgentCli {
                 if let Some(model) = &self.model {
                     args.extend(["--model".to_string(), model.clone()]);
                 }
+                for feature in disables {
+                    args.extend(["--disable".to_string(), feature.clone()]);
+                }
+                for file in files {
+                    args.extend(["-i".to_string(), file.display().to_string()]);
+                }
                 args.push("-".to_string());
                 match &req.system {
                     Some(system) => format!("{system}\n\n{}", req.prompt),
@@ -138,6 +218,30 @@ impl AgentCli {
             }
         };
         (args, input)
+    }
+
+    fn image_files(&self, images: &[Image]) -> ProviderResult<Vec<PathBuf>> {
+        if self.agent != Agent::Codex || images.is_empty() {
+            return Ok(Vec::new());
+        }
+        static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let batch = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut files = Vec::new();
+        for (i, image) in images.iter().enumerate() {
+            let path = Self::workspace().join(format!(
+                "leo-image-{}-{batch}-{i}.{}",
+                std::process::id(),
+                image.extension()
+            ));
+            std::fs::write(&path, &image.bytes).map_err(|e| {
+                ProviderError::Retryable(format!(
+                    "{}: could not hand the image over: {e}",
+                    self.name
+                ))
+            })?;
+            files.push(path);
+        }
+        Ok(files)
     }
 
     fn workspace() -> PathBuf {
@@ -203,12 +307,31 @@ pub fn read_stream(lines: impl BufRead, sink: Sink<'_>) -> Heard {
 }
 
 impl AgentCli {
-    fn run(&self, req: &ChatRequest, sink: Sink<'_>) -> ProviderResult<String> {
+    fn run(&self, req: &ChatRequest, images: &[Image], sink: Sink<'_>) -> ProviderResult<String> {
         let program =
             locate(&self.bin).ok_or_else(|| ProviderError::Retryable(self.unavailable_reason()))?;
-        let (args, input) = self.arguments(req);
-        let mut child = Command::new(&program)
-            .args(&args)
+        let disables = match self.agent {
+            Agent::Codex => codex_disables(&program),
+            Agent::ClaudeCode => Vec::new(),
+        };
+        let files = self.image_files(images)?;
+        let (args, input) = self.arguments(req, images, &disables, &files);
+        let outcome = self.spawn(&program, &args, input, sink);
+        for file in files {
+            let _ = std::fs::remove_file(file);
+        }
+        outcome
+    }
+
+    fn spawn(
+        &self,
+        program: &Path,
+        args: &[String],
+        input: String,
+        sink: Sink<'_>,
+    ) -> ProviderResult<String> {
+        let mut child = Command::new(program)
+            .args(args)
             .current_dir(Self::workspace())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -288,11 +411,15 @@ impl AgentCli {
 
 impl ChatProvider for AgentCli {
     fn complete(&self, req: &ChatRequest) -> ProviderResult<String> {
-        self.run(req, &mut |_| {})
+        self.run(req, &[], &mut |_| {})
     }
 
     fn complete_streaming(&self, req: &ChatRequest, sink: Sink<'_>) -> ProviderResult<String> {
-        self.run(req, sink)
+        self.run(req, &[], sink)
+    }
+
+    fn complete_with_images(&self, req: &ChatRequest, images: &[Image]) -> ProviderResult<String> {
+        self.run(req, images, &mut |_| {})
     }
 
     fn available(&self) -> bool {
@@ -343,7 +470,7 @@ mod tests {
             Some("claude-sonnet-5-5"),
         );
         let agent = AgentCli::new("claude_code".into(), Agent::of(&cfg).unwrap(), &cfg);
-        let (args, input) = agent.arguments(&request());
+        let (args, input) = agent.arguments(&request(), &[], &[], &[]);
         assert_eq!(
             &args[..5],
             [
@@ -367,7 +494,7 @@ mod tests {
     fn codex_runs_read_only_outside_any_project_and_gets_one_message() {
         let cfg = config(ProviderKind::Codex, "codex", None);
         let agent = AgentCli::new("codex".into(), Agent::of(&cfg).unwrap(), &cfg);
-        let (args, input) = agent.arguments(&request());
+        let (args, input) = agent.arguments(&request(), &[], &[], &[]);
         assert_eq!(args[0], "exec");
         assert!(args.windows(2).any(|w| w == ["--sandbox", "read-only"]));
         assert!(args.contains(&"--ephemeral".to_string()));
@@ -375,6 +502,52 @@ mod tests {
         assert!(!args.contains(&"--model".to_string()));
         assert_eq!(args.last().unwrap(), "-");
         assert_eq!(input, "You write notes.\n\n<transcript>hello</transcript>");
+    }
+
+    #[test]
+    fn images_go_inside_the_message_for_claude_code_with_every_tool_still_off() {
+        let cfg = config(ProviderKind::ClaudeCode, "claude", None);
+        let agent = AgentCli::new("claude_code".into(), Agent::ClaudeCode, &cfg);
+        let image = Image {
+            mime: "image/png".into(),
+            bytes: vec![1, 2, 3],
+        };
+        let (args, input) = agent.arguments(&request(), &[image], &[], &[]);
+        assert!(args.windows(2).any(|w| w == ["--tools", ""]));
+        assert!(args
+            .windows(2)
+            .any(|w| w == ["--input-format", "stream-json"]));
+        let message: serde_json::Value = serde_json::from_str(input.trim()).unwrap();
+        assert_eq!(message["type"], "user");
+        assert_eq!(message["message"]["content"][0]["source"]["data"], "AQID");
+        assert_eq!(
+            message["message"]["content"][1]["text"],
+            "<transcript>hello</transcript>"
+        );
+    }
+
+    #[test]
+    fn codex_gets_image_files_and_its_tools_switched_off() {
+        let cfg = config(ProviderKind::Codex, "codex", None);
+        let agent = AgentCli::new("codex".into(), Agent::Codex, &cfg);
+        let off = vec!["shell_tool".to_string(), "browser_use".to_string()];
+        let files = vec![PathBuf::from("/tmp/a.jpg")];
+        let (args, _) = agent.arguments(&request(), &[], &off, &files);
+        assert!(args.windows(2).any(|w| w == ["--disable", "shell_tool"]));
+        assert!(args.windows(2).any(|w| w == ["--disable", "browser_use"]));
+        assert!(args.windows(2).any(|w| w == ["-i", "/tmp/a.jpg"]));
+        assert_eq!(args.last().unwrap(), "-");
+    }
+
+    #[test]
+    fn only_features_the_installed_codex_knows_are_switched_off() {
+        let listing = "apps                 stable   true\nshell_tool           stable   true\nbrowser_use          stable   true\nsomething_else       stable   false\n";
+        assert_eq!(
+            known_features(listing),
+            ["shell_tool", "browser_use", "apps"]
+        );
+        assert!(known_features("").is_empty());
+        assert!(known_features("Error: unknown command").is_empty());
     }
 
     #[test]

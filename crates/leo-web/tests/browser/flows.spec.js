@@ -270,3 +270,41 @@ test.describe('settings', () => {
     expect(bad.status()).toBe(400);
   });
 });
+
+test.describe('uploads', () => {
+  test('a file becomes a note and opens when it is ready', async ({ page }) => {
+    const made = await (await page.request.post('/api/notes', { data: { title: 'Lecture 9: Sorting', body: '## Merge sort\n- divide and conquer' } })).json();
+    let sent = null;
+    let polls = 0;
+    await page.route('**/api/import', async (route) => {
+      sent = route.request().postDataJSON();
+      await route.fulfill({ status: 202, json: { id: 'job-1' } });
+    });
+    await page.route('**/api/import/job-1', (route) => {
+      polls += 1;
+      route.fulfill({ json: polls < 2 ? { state: 'working', step: 'Writing the note', done: 0, total: 1 } : { state: 'done', step: '', done: 1, total: 1, note: made.id } });
+    });
+    await page.goto('/');
+    await page.locator('.fab[data-action="upload"]').click();
+    await page.locator('#upload-input').setInputFiles({ name: 'sorting.txt', mimeType: 'text/plain', buffer: Buffer.from('Merge sort splits the list in half.') });
+    await expect(page.locator('.upload-file')).toContainText('sorting.txt');
+    await page.locator('#upload-title').fill('Sorting');
+    await page.locator('#upload-go').click();
+    await expect(page).toHaveURL(new RegExp(`#/n/${made.id}$`));
+    expect(sent.title).toBe('Sorting');
+    expect(sent.files[0].name).toBe('sorting.txt');
+    expect(Buffer.from(sent.files[0].data, 'base64').toString()).toBe('Merge sort splits the list in half.');
+  });
+
+  test('a failed upload says why and offers to try again', async ({ page }) => {
+    await page.route('**/api/import', (route) => route.fulfill({ status: 202, json: { id: 'job-2' } }));
+    await page.route('**/api/import/job-2', (route) => route.fulfill({ json: { state: 'failed', step: '', done: 0, total: 1, error: 'qwen3:8b cannot read images' } }));
+    await page.goto('/');
+    await page.locator('#menu').click();
+    await page.locator('.sheet [data-action="upload"]').click();
+    await page.locator('#upload-input').setInputFiles({ name: 'board.png', mimeType: 'image/png', buffer: Buffer.from('89504e470d0a1a0a', 'hex') });
+    await page.locator('#upload-go').click();
+    await expect(page.locator('.upload-error')).toContainText('cannot read images');
+    await expect(page.locator('.sheet [data-action="upload"]')).toBeVisible();
+  });
+});

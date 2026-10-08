@@ -202,6 +202,7 @@
   function plain(markdown) {
     return String(markdown || '')
       .replace(/```[\s\S]*?```/g, ' ')
+      .replace(/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/gm, ' ')
       .replace(/^\s*(#{1,6}|>|[-*+]|\d+[.)])\s+/gm, '')
       .replace(/\[( |x|X)\]\s+/g, '')
       .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')

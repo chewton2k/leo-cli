@@ -586,7 +586,19 @@ there you can:
 - see a **map of ideas**: how your notes connect, across subjects;
 - study with **Felix**, the chat button at the top;
 - change settings under **More → Settings**: the AI for writing and speech,
-  models (with prices), API keys, and when backups push.
+  models (with prices), API keys, and when backups push;
+- **upload** slides, handouts, papers or photos and get study notes.
+
+**Uploads** (the **Upload** button beside New note, More → Make a note from a
+file, or drag files onto a folder on a computer) turn PDF, Word (.docx),
+PowerPoint (.pptx, with speaker notes), text and Markdown files into study
+notes, written by the AI you chose for writing. Photos and scans work too: a
+whiteboard, handwritten notes, or a scanned PDF are read by an AI that can see
+images (OpenAI, Anthropic, Gemini, xAI, Claude Code or Codex; most Ollama
+models cannot). Several photos of pages become one note, in order. Long
+documents are written in parts and then named. The note lands in the folder
+you pick and joins the map; the original file is kept on your computer, next
+to your notes folder (not backed up), and a chip on the note downloads it.
 
 **Felix** is leo's study buddy, in the chat at the top of every page. He
 answers from your own notes and links each answer to the notes it came from.

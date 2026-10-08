@@ -105,6 +105,18 @@ pub fn chat_outcome(prompt: chat::Prompt, max_tokens: u32) -> Result<chain::Chai
     chat::complete(&cfg, &store, prompt, max_tokens)
 }
 
+pub fn see(prompt: chat::Prompt, images: &[provider::Image], max_tokens: u32) -> Result<String> {
+    let (cfg, store) = context();
+    let req = provider::ChatRequest {
+        system: Some(prompt.system),
+        prompt: prompt.user,
+        temperature: 0.2,
+        max_tokens,
+    };
+    let providers = provider::build_chat_chain(&cfg, &store);
+    Ok(chain::run_vision_chain(providers, &req, images)?.value)
+}
+
 pub fn chat_streaming(
     prompt: chat::Prompt,
     max_tokens: u32,

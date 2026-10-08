@@ -35,6 +35,19 @@ pub fn run_chat_chain(
     run_chat_chain_with(providers, req, &mut |p, r| p.complete(r), &mut || {})
 }
 
+pub fn run_vision_chain(
+    providers: Vec<Box<dyn ChatProvider>>,
+    req: &ChatRequest,
+    images: &[crate::ai::provider::Image],
+) -> Result<ChainOutcome<String>> {
+    run_chat_chain_with(
+        providers,
+        req,
+        &mut |p, r| p.complete_with_images(r, images),
+        &mut || {},
+    )
+}
+
 /// The same fallback policy, streaming.
 ///
 /// `on_restart` fires when the chain moves to another provider, because anything
