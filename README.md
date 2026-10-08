@@ -584,7 +584,9 @@ there you can:
   sheet;
 - restore notes from the trash, and browse by tag;
 - see a **map of ideas**: how your notes connect, across subjects;
-- study with **Felix**, the chat button at the top.
+- study with **Felix**, the chat button at the top;
+- change settings under **More → Settings**: the AI for writing and speech,
+  models (with prices), API keys, and when backups push.
 
 **Felix** is leo's study buddy, in the chat at the top of every page. He
 answers from your own notes and links each answer to the notes it came from.
@@ -605,6 +607,13 @@ When your notes don't cover something, he says so and labels anything from
 general knowledge as "Beyond your notes". He uses the AI you chose for writing,
 including Claude Code or Codex. The conversation stays in that browser; **+**
 starts a new one.
+
+**Settings on the website** (More → Settings) are the same as `:settings` in
+leo, and save straight away: the AI for writing and for speech, each model
+with its price, the plan usage for Claude Code and Codex, **Test** to check the
+AI answers, and how backups push. An API key can be added, replaced or removed
+there but is never shown again, and is only accepted over the https link or on
+the computer itself, so it never crosses Wi-Fi unencrypted.
 
 **The map of ideas** (More → Map of ideas, or **Map** on any note) is a
 knowledge graph of your notes: every note is a dot coloured by its class (its

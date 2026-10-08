@@ -26,6 +26,7 @@
     share: svg('<path d="M12 3v12M8 7l4-4 4 4"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/>'),
     plus: svg('<path d="M12 5v14M5 12h14"/>'),
     minus: svg('<path d="M5 12h14"/>'),
+    gear: svg('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>'),
     fit: svg('<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>'),
     restore: svg('<path d="M4 12a8 8 0 1 0 2.3-5.6L4 8.5"/><path d="M4 4v4.5h4.5"/>'),
     tag: svg('<path d="M3 12V4h8l10 10-8 8z"/><circle cx="7.5" cy="8.5" r="1.3"/>'),
@@ -38,7 +39,7 @@
   };
 
   const chat = felix.create({ render: (text) => md.render(text), escape: md.escape, onOpen: (id) => go(noteHash(id)) });
-  $('#chat-toggle').innerHTML = chat.button(30);
+  $('#chat-toggle').innerHTML = chat.button(36);
   $('#back').innerHTML = ICON.back;
   $('#search-toggle').innerHTML = ICON.search;
   $('#menu').innerHTML = ICON.more;
@@ -713,6 +714,137 @@
     }, 1200);
   }
 
+  const TASK_TITLE = { writing: 'AI for writing', speech: 'AI for speech' };
+  const TASK_USE = {
+    writing: 'Turns recordings into notes, answers @leo questions, powers Felix and the map.',
+    speech: 'Turns what was said into text while you record.',
+  };
+
+  async function showSettings() {
+    const mine = ++seq;
+    state = { view: 'settings', dir: '' };
+    chrome({ showBack: true });
+    $('#crumbs').innerHTML = '<span class="sep">/</span><button>Settings</button>';
+    document.title = 'Settings · leo';
+    app.innerHTML = skeleton(3);
+    const page = await api('/api/settings');
+    if (mine !== seq) return;
+    drawSettings(page);
+  }
+
+  function settingsOption(value, label, current) {
+    return `<option value="${esc(value)}"${value === current ? ' selected' : ''}>${esc(label)}</option>`;
+  }
+
+  function taskCard(t, secure) {
+    const status = t.ready ? '<span class="set-status ok">Ready</span>' : '<span class="set-status missing">Not set up</span>';
+    const providers = t.choices.map((c) => settingsOption(c.id, c.label, t.provider)).join('') + (t.custom ? settingsOption(t.provider, `${t.provider} (from config.toml)`, t.provider) : '');
+    let model = '';
+    if (t.fixed_model) {
+      model = `<div class="set-row"><span class="set-label">Model</span><span class="set-value">${esc(t.model || 'Built in')} <span class="hint">free, runs on your computer</span></span></div>`;
+    } else if (t.models.length) {
+      const known = t.models.some((m) => m.id === t.model);
+      const options = (known || !t.model ? '' : settingsOption(t.model, `${t.model} (not in the list)`, t.model)) + t.models.map((m) => settingsOption(m.id, `${m.id} — ${m.price}`, t.model)).join('');
+      model = `<label class="set-row"><span class="set-label">Model</span><select data-set="model" data-task="${t.task}">${options}</select></label>`;
+    }
+    let key = '';
+    if (t.key) {
+      const has = t.key.stored;
+      const form = secure
+        ? `<div class="set-key-form"><input type="password" autocomplete="off" spellcheck="false" placeholder="${has ? 'Paste a new key to replace it' : `Paste your ${esc(t.key.name)} API key`}" data-key-input="${esc(t.key.account)}"><button class="btn primary sm" data-action="set-key" data-account="${esc(t.key.account)}">${has ? 'Replace' : 'Save key'}</button></div>`
+        : '<p class="hint">To add a key, open the https link leo serve printed (not the Wi-Fi one), or use this page on your computer. Keys never cross Wi-Fi unencrypted.</p>';
+      key = `<div class="set-row column"><div class="set-line"><span class="set-label">${esc(t.key.name)} key</span><span class="set-value">${has ? '<span class="set-status ok">Stored on your computer</span>' : '<span class="set-status missing">Not added</span>'}${has ? `<button class="btn plain sm" data-action="remove-key" data-account="${esc(t.key.account)}" data-name="${esc(t.key.name)}">Remove</button>` : ''}</span></div>${form}${t.key.ignored ? `<p class="hint">leo does not read $${esc(t.key.ignored)}; add the key here instead.</p>` : ''}</div>`;
+    }
+    const signin = t.signin ? `<p class="set-note${t.signin.installed ? '' : ' warn'}">${esc(t.signin.text)}</p>` : '';
+    const usage = t.usage ? `<p class="set-note">Plan used: ${esc(t.usage)}</p>` : '';
+    const note = t.note ? `<p class="set-note warn">${esc(t.note)}</p>` : '';
+    return `<section class="set-card" data-task-card="${t.task}">
+      <header><h3>${TASK_TITLE[t.task]}</h3>${status}</header>
+      <p class="hint">${TASK_USE[t.task]}</p>
+      <label class="set-row"><span class="set-label">Provider</span><select data-set="provider" data-task="${t.task}">${providers}</select></label>
+      ${model}${key}${signin}${usage}${note}
+      <div class="set-test"><button class="btn plain sm" data-action="test-ai" data-task="${t.task}">Test</button><span class="set-result" id="test-${t.task}"></span></div>
+    </section>`;
+  }
+
+  function drawSettings(page) {
+    state.settings = page;
+    const backup = page.backup;
+    app.innerHTML = `<div class="settings">
+      <div class="section-title">Settings</div>
+      ${page.tasks.map((t) => taskCard(t, page.secure)).join('')}
+      <section class="set-card">
+        <header><h3>Backup</h3>${backup.remote ? '<span class="set-status ok">On</span>' : '<span class="set-status missing">Not set up</span>'}</header>
+        <p class="hint">${backup.remote ? `Your notes are copied to ${esc(backup.remote)}.` : 'Backup is not set up yet. Run :backup in leo on your computer to keep a copy on GitHub.'}</p>
+        <label class="set-row"><span class="set-label">Push changes</span><select data-set="auto_push">${backup.options.map((o) => settingsOption(o.id, o.label, backup.auto_push)).join('')}</select></label>
+      </section>
+      <section class="set-card">
+        <header><h3>Where things are</h3></header>
+        <div class="set-row column"><span class="set-label">Notes</span><code class="set-path">${esc(page.paths.notes || '')}</code></div>
+        <div class="set-row column"><span class="set-label">Settings file</span><code class="set-path">${esc(page.paths.config || '')}</code></div>
+        <p class="hint">Changes here save straight away and are the same settings as :settings in leo. Keys are kept in a file only your account can read, and are never shown again.</p>
+      </section>
+    </div>`;
+  }
+
+  async function changeSetting(change) {
+    try {
+      const done = await api('/api/settings', { method: 'POST', body: change });
+      drawSettings(done.settings);
+      toast(done.message);
+    } catch (e) {
+      if (state.settings) drawSettings(state.settings);
+      throw e;
+    }
+  }
+
+  app.addEventListener('change', (e) => {
+    const el = e.target.closest('select[data-set]');
+    if (!el || state.view !== 'settings') return;
+    const change = { set: el.dataset.set, value: el.value };
+    if (el.dataset.task) change.task = el.dataset.task;
+    changeSetting(change).catch(fail);
+  });
+
+  app.addEventListener('keydown', (e) => {
+    const input = e.target.closest('[data-key-input]');
+    if (input && e.key === 'Enter') {
+      e.preventDefault();
+      saveKey(input.dataset.keyInput).catch(fail);
+    }
+  });
+
+  async function saveKey(account) {
+    const input = app.querySelector(`[data-key-input="${CSS.escape(account)}"]`);
+    const value = input ? input.value.trim() : '';
+    if (!value) return toast('Paste the key first.', { bad: true });
+    input.value = '';
+    await changeSetting({ set: 'key', account, value });
+  }
+
+  function confirmRemoveKey(el) {
+    sheet(`<h3>Remove the ${esc(el.dataset.name)} key?</h3>
+      <p>leo stops using ${esc(el.dataset.name)} until you add a key again.</p>
+      <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn danger" data-action="remove-key-now" data-account="${esc(el.dataset.account)}">Remove</button></div>`);
+  }
+
+  async function testAi(el) {
+    const out = $(`#test-${el.dataset.task}`);
+    el.disabled = true;
+    out.className = 'set-result';
+    out.textContent = 'Asking…';
+    try {
+      const done = await api('/api/settings/test', { method: 'POST', body: { task: el.dataset.task } });
+      out.className = 'set-result ok';
+      out.textContent = done.message;
+    } catch (e) {
+      out.className = 'set-result bad';
+      out.textContent = e.message;
+    } finally {
+      el.disabled = false;
+    }
+  }
+
   function showLocked() {
     ++seq;
     state = { view: 'locked' };
@@ -748,6 +880,7 @@
       <button class="list-row" data-action="new-folder">${ICON.folderPlus}<span class="grow">New folder${here ? ` in ${esc(folderLabel(here))}` : ''}</span></button>
       <button class="list-row" data-action="map">${ICON.map}<span class="grow">Map of ideas</span></button>
       <button class="list-row" data-action="tags">${ICON.tag}<span class="grow">Tags</span></button>
+      <button class="list-row" data-action="settings">${ICON.gear}<span class="grow">Settings</span></button>
       <button class="list-row" data-action="drafts">${ICON.note}<span class="grow">Drafts (${saving.drafts().length})</span></button>
       <button class="list-row" data-action="trash">${ICON.trash}<span class="grow">Trash</span></button>
       <button class="list-row" data-action="refresh">${ICON.refresh}<span class="grow">Refresh</span></button>`);
@@ -923,6 +1056,17 @@
       closeSheet();
       go('#/map');
     },
+    settings: () => {
+      closeSheet();
+      go('#/settings');
+    },
+    'set-key': (el) => saveKey(el.dataset.account),
+    'remove-key': confirmRemoveKey,
+    'remove-key-now': (el) => {
+      closeSheet();
+      return changeSetting({ set: 'key', account: el.dataset.account, value: null });
+    },
+    'test-ai': testAi,
     'note-map': (el) => go(`#/map/${enc(el.dataset.id)}`),
     chat: () => chat.toggle(),
     'map-build': () => mapBuild(false),
@@ -1078,6 +1222,7 @@
       else if (kind === 'tags') await showTags();
       else if (kind === 'trash') await showTrash();
       else if (kind === 'map') await showMap(arg);
+      else if (kind === 'settings') await showSettings();
       else if (kind === 'drafts') showDrafts();
       else if (kind === 'draft') await showDraft(arg);
       else await showFolder('');

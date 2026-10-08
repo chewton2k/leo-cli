@@ -9,6 +9,7 @@ mod prompt;
 mod serve;
 mod uninstall;
 mod update;
+mod web_settings;
 
 use std::io::IsTerminal;
 
@@ -383,8 +384,11 @@ pub fn run(cli: Cli) -> Result<()> {
                     local,
                     new_token,
                 },
-                Some(writer),
-                Some(streamer),
+                leo_web::Powers {
+                    writer: Some(writer),
+                    chat: Some(streamer),
+                    settings: Some(std::sync::Arc::new(web_settings::WebSettings)),
+                },
             ))
         }
         Some(Commands::Doctor) => doctor::run(),

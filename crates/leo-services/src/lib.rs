@@ -12,3 +12,4 @@ pub mod providers;
 pub mod session;
 pub mod update;
 pub mod usage;
+pub mod web_settings;

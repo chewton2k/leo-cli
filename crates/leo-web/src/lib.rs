@@ -6,6 +6,19 @@ pub mod tunnel;
 pub use chat::Streamer;
 pub use graph::Writer;
 
+pub trait SettingsApi: Send + Sync {
+    fn describe(&self, notes_dir: &std::path::Path) -> serde_json::Value;
+    fn apply(&self, change: &serde_json::Value, secure: bool) -> Result<String>;
+    fn test(&self, task: &str) -> Result<String>;
+}
+
+#[derive(Clone, Default)]
+pub struct Powers {
+    pub writer: Option<Writer>,
+    pub chat: Option<Streamer>,
+    pub settings: Option<Arc<dyn SettingsApi>>,
+}
+
 #[cfg(test)]
 use std::sync::MutexGuard;
 use std::sync::{Arc, Mutex};
@@ -30,6 +43,7 @@ struct AppState {
     token: String,
     graphs: Arc<graph::Graphs>,
     chat: Option<Streamer>,
+    settings: Option<Arc<dyn SettingsApi>>,
 }
 
 struct Storage {
@@ -106,13 +120,11 @@ pub struct ServeOptions {
     pub new_token: bool,
 }
 
-pub async fn serve(
-    options: ServeOptions,
-    writer: Option<Writer>,
-    chat: Option<Streamer>,
-) -> Result<()> {
+pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
     let store = Store::load()?;
-    let graphs = Arc::new(graph::Graphs::for_notes(&store.notes_dir, writer));
+    let graphs = Arc::new(graph::Graphs::for_notes(&store.notes_dir, powers.writer));
+    let chat = powers.chat;
+    let settings = powers.settings;
     let count = store.notes.len();
     let token = token::load_or_create(
         &leo_core::paths::config_dir()?.join("serve-token"),
@@ -131,6 +143,7 @@ pub async fn serve(
         token: token.clone(),
         graphs,
         chat,
+        settings,
     });
 
     let tunnel = if !options.local {
@@ -322,6 +335,8 @@ fn router(state: AppState) -> Router {
         .route("/graph.js", get(graph_js))
         .route("/chat.js", get(chat_js))
         .route("/api/chat", post(chat_reply))
+        .route("/api/settings", get(get_settings).post(change_setting))
+        .route("/api/settings/test", post(test_setting))
         .route("/api/graph", get(get_graph))
         .route("/api/graph/status", get(graph_status))
         .route("/api/graph/build", post(build_graph))
@@ -371,6 +386,109 @@ async fn graph_js() -> Response {
 
 async fn chat_js() -> Response {
     javascript(CHAT_JS)
+}
+
+fn secure_request(headers: &axum::http::HeaderMap) -> bool {
+    let forwarded = headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.eq_ignore_ascii_case("https"));
+    let host = headers
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let name = if host.starts_with('[') {
+        host.split(']')
+            .next()
+            .map(|h| format!("{h}]"))
+            .unwrap_or_default()
+    } else {
+        host.split(':').next().unwrap_or("").to_string()
+    };
+    forwarded || matches!(name.as_str(), "localhost" | "127.0.0.1" | "[::1]")
+}
+
+fn no_settings() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(serde_json::json!({ "error": "Settings are not available from this server." })),
+    )
+        .into_response()
+}
+
+async fn get_settings(State(state): State<AppState>, headers: axum::http::HeaderMap) -> Response {
+    let Some(settings) = state.settings.clone() else {
+        return no_settings();
+    };
+    let notes_dir = match state.with_store(|store| Ok(store.notes_dir.clone())).await {
+        Ok(dir) => dir,
+        Err(code) => return code.into_response(),
+    };
+    let secure = secure_request(&headers);
+    match tokio::task::spawn_blocking(move || settings.describe(&notes_dir)).await {
+        Ok(mut page) => {
+            page["secure"] = serde_json::Value::Bool(secure);
+            Json(page).into_response()
+        }
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+async fn change_setting(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(change): Json<serde_json::Value>,
+) -> Response {
+    let Some(settings) = state.settings.clone() else {
+        return no_settings();
+    };
+    let notes_dir = match state.with_store(|store| Ok(store.notes_dir.clone())).await {
+        Ok(dir) => dir,
+        Err(code) => return code.into_response(),
+    };
+    let secure = secure_request(&headers);
+    let done = tokio::task::spawn_blocking(move || {
+        settings.apply(&change, secure).map(|message| {
+            let mut page = settings.describe(&notes_dir);
+            page["secure"] = serde_json::Value::Bool(secure);
+            (message, page)
+        })
+    })
+    .await;
+    match done {
+        Ok(Ok((message, page))) => {
+            Json(serde_json::json!({ "message": message, "settings": page })).into_response()
+        }
+        Ok(Err(e)) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+async fn test_setting(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let Some(settings) = state.settings.clone() else {
+        return no_settings();
+    };
+    let task = body
+        .get("task")
+        .and_then(|t| t.as_str())
+        .unwrap_or("")
+        .to_string();
+    match tokio::task::spawn_blocking(move || settings.test(&task)).await {
+        Ok(Ok(message)) => Json(serde_json::json!({ "message": message })).into_response(),
+        Ok(Err(e)) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
 }
 
 fn ndjson(value: serde_json::Value) -> String {
@@ -1025,12 +1143,34 @@ mod tests {
             token: String::new(),
             graphs,
             chat: None,
+            settings: None,
         };
         (state, dir, ids)
     }
 
     fn run<F: std::future::Future>(f: F) -> F::Output {
         tokio::runtime::Runtime::new().unwrap().block_on(f)
+    }
+
+    #[test]
+    fn keys_count_as_safe_only_over_https_or_on_this_computer() {
+        let with = |pairs: &[(&'static str, &'static str)]| {
+            let mut headers = axum::http::HeaderMap::new();
+            for (k, v) in pairs {
+                headers.insert(*k, HeaderValue::from_static(v));
+            }
+            secure_request(&headers)
+        };
+        assert!(with(&[
+            ("host", "abc.trycloudflare.com"),
+            ("x-forwarded-proto", "https")
+        ]));
+        assert!(with(&[("host", "127.0.0.1:8742")]));
+        assert!(with(&[("host", "localhost:8742")]));
+        assert!(with(&[("host", "[::1]:8742")]));
+        assert!(!with(&[("host", "192.168.1.50:8742")]));
+        assert!(!with(&[("host", "localhost.evil.example")]));
+        assert!(!with(&[]));
     }
 
     #[test]

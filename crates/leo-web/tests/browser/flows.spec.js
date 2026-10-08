@@ -239,3 +239,34 @@ test.describe('Felix', () => {
     await expect(page.locator('#chat')).toBeHidden();
   });
 });
+
+test.describe('settings', () => {
+  test('changes the writing AI and stores a key without ever showing it again', async ({ page }) => {
+    await page.goto('/');
+    await page.locator('#menu').click();
+    await page.locator('[data-action="settings"]').click();
+    await expect(page).toHaveURL(/#\/settings$/);
+    const writing = page.locator('[data-task-card="writing"]');
+    await writing.locator('select[data-set="provider"]').selectOption('gemini');
+    await expect(page.locator('.toast')).toContainText('Writing now uses Gemini');
+    await expect(writing.locator('select[data-set="provider"]')).toHaveValue('gemini');
+    await writing.locator('select[data-set="model"]').selectOption('gemini-3.1-flash-lite');
+    await expect(page.locator('.toast')).toContainText('Model set to gemini-3.1-flash-lite');
+    await writing.locator('[data-key-input="gemini"]').fill('gm-fake-key-123');
+    await writing.locator('[data-action="set-key"]').click();
+    await expect(page.locator('.toast')).toContainText('The Gemini key is stored on this computer');
+    await expect(writing).toContainText('Stored on your computer');
+    await expect(writing.locator('[data-key-input="gemini"]')).toHaveValue('');
+    expect(await (await page.request.get('/api/settings')).text()).not.toContain('gm-fake-key-123');
+    expect(await page.content()).not.toContain('gm-fake-key-123');
+    await writing.locator('[data-action="remove-key"]').click();
+    await page.locator('[data-action="remove-key-now"]').click();
+    await expect(page.locator('.toast')).toContainText('The Gemini key is removed');
+    await expect(writing).toContainText('Not added');
+    const backup = page.locator('select[data-set="auto_push"]');
+    await backup.selectOption('when_idle');
+    await expect(page.locator('.toast')).toContainText('Backing up when idle');
+    const bad = await page.request.post('/api/settings', { data: { set: 'provider', task: 'writing', value: 'parakeet' } });
+    expect(bad.status()).toBe(400);
+  });
+});
