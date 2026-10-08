@@ -64,6 +64,7 @@ leo-services.workspace = true
 leo-tui.workspace = true
 leo-web.workspace = true
 anyhow.workspace = true
+chrono.workspace = true
 clap.workspace = true
 colored.workspace = true
 dirs.workspace = true

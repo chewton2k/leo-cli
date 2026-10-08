@@ -2,6 +2,7 @@ pub mod chat;
 pub mod chats;
 pub mod graph;
 pub mod record;
+pub mod storage;
 mod token;
 pub mod tunnel;
 
@@ -34,6 +35,7 @@ pub struct Powers {
     pub settings: Option<Arc<dyn SettingsApi>>,
     pub importer: Option<Importer>,
     pub listener: Option<record::Listener>,
+    pub housekeeper: Option<Arc<dyn storage::Housekeeper>>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -78,6 +80,7 @@ struct AppState {
     listener: Option<record::Listener>,
     recording: record::Recordings,
     chats: std::path::PathBuf,
+    housekeeper: Option<Arc<dyn storage::Housekeeper>>,
 }
 
 struct Storage {
@@ -164,6 +167,7 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
     let settings = powers.settings;
     let importer = powers.importer;
     let recorder = powers.listener;
+    let housekeeper = powers.housekeeper;
     let count = store.notes.len();
     let token = token::load_or_create(
         &leo_core::paths::config_dir()?.join("serve-token"),
@@ -188,6 +192,7 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
         listener: recorder,
         recording: Default::default(),
         chats,
+        housekeeper,
     });
 
     let tunnel = if !options.local {
@@ -395,6 +400,7 @@ fn router(state: AppState) -> Router {
         .route("/chat.js", get(chat_js))
         .route("/api/chat", post(chat_reply))
         .route("/api/chats", get(list_chats))
+        .route("/api/storage", get(get_storage).post(change_storage))
         .route(
             "/api/chats/{id}",
             get(get_chat)
@@ -903,6 +909,70 @@ async fn get_original(
 
 fn ndjson(value: serde_json::Value) -> String {
     format!("{value}\n")
+}
+
+async fn storage_now(state: &AppState) -> Result<serde_json::Value, StatusCode> {
+    let graphs = Arc::clone(&state.graphs);
+    let chats = state.chats.clone();
+    let housekeeper = state.housekeeper.clone();
+    state
+        .with_store(move |store| {
+            let mut areas = storage::areas(store, &graphs, &chats, chrono::Utc::now());
+            if let Some(more) = housekeeper {
+                areas.extend(more.areas());
+            }
+            Ok(storage::describe(areas))
+        })
+        .await
+}
+
+async fn get_storage(State(state): State<AppState>) -> Response {
+    match storage_now(&state).await {
+        Ok(page) => Json(page).into_response(),
+        Err(code) => code.into_response(),
+    }
+}
+
+async fn change_storage(
+    State(state): State<AppState>,
+    Json(request): Json<storage::Request>,
+) -> Response {
+    let graphs = Arc::clone(&state.graphs);
+    let chats = state.chats.clone();
+    let housekeeper = state.housekeeper.clone();
+    let done = state
+        .with_store(move |store| {
+            let outcome = storage::act_on(store, &graphs, &chats, &request, chrono::Utc::now())
+                .or_else(|| {
+                    housekeeper.and_then(|h| h.act(&request.area, &request.action, &request.items))
+                });
+            Ok(outcome)
+        })
+        .await;
+    let message = match done {
+        Ok(Some(Ok(message))) => message,
+        Ok(Some(Err(e))) => {
+            return (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response()
+        }
+        Ok(None) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "leo does not know how to do that." })),
+            )
+                .into_response()
+        }
+        Err(code) => return code.into_response(),
+    };
+    match storage_now(&state).await {
+        Ok(page) => {
+            Json(serde_json::json!({ "message": message, "storage": page })).into_response()
+        }
+        Err(code) => code.into_response(),
+    }
 }
 
 async fn list_chats(State(state): State<AppState>) -> Response {
@@ -1619,6 +1689,7 @@ mod tests {
             listener: None,
             recording: Default::default(),
             chats: dir.path().join("chats"),
+            housekeeper: None,
         };
         (state, dir, ids)
     }

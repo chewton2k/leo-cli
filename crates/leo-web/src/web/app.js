@@ -36,6 +36,7 @@
     note: svg('<path d="M6 3h9l4 4v14H6z"/><path d="M9 12h7M9 16h5"/>'),
     refresh: svg('<path d="M20 12a8 8 0 1 1-2.3-5.6L20 8.5"/><path d="M20 4v4.5h-4.5"/>'),
     check: svg('<path d="M5 12l4.5 4.5L19 7"/>'),
+    chevron: svg('<path d="M9 6l6 6-6 6"/>'),
     lock: svg('<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>'),
     map: svg('<circle cx="6" cy="7" r="2.2"/><circle cx="18" cy="6" r="2.2"/><circle cx="12" cy="17.5" r="2.2"/><path d="M7.4 8.9l3.5 6.7M16.9 7.9l-3.8 7.8M8.2 6.8l7.6-.6"/>'),
     mic: svg('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>'),
@@ -187,6 +188,7 @@
 
   function back() {
     if (state.view === 'map' && state.focus) return go(noteHash(state.focus));
+    if (state.view === 'storage') return go('#/settings');
     if (state.view === 'note') return go(folderHash(state.dir || ''));
     if (state.view === 'folder') return go(folderHash((state.dir || '').split('/').slice(0, -1).join('/')));
     go('#/');
@@ -811,8 +813,124 @@
         <div class="set-row column"><span class="set-label">Settings file</span><code class="set-path">${esc(page.paths.config || '')}</code></div>
         <p class="hint">Changes here save straight away and are the same settings as :settings in leo. Keys are kept in a file only your account can read, and are never shown again.</p>
       </section>
+      <section class="set-card">
+        <header><h3>Advanced</h3></header>
+        <button class="list-row set-advanced" data-action="storage">${ICON.folder}<span class="grow">Storage and data<span class="sub">See what leo keeps on this computer, how much space it takes, and delete what you no longer need</span></span>${ICON.chevron}</button>
+      </section>
     </div>`;
   }
+
+  const STORE_COLORS = ['#4f46e5', '#0ea5e9', '#16a34a', '#f59e0b', '#db2777', '#8b5cf6', '#14b8a6', '#ef4444', '#64748b', '#a3a29c'];
+
+  async function showStorage() {
+    const mine = ++seq;
+    state = { view: 'storage', dir: '', storageOpen: (state.view === 'storage' && state.storageOpen) || new Set() };
+    chrome({ showBack: true });
+    $('#crumbs').innerHTML = '<span class="sep">/</span><button data-action="settings">Settings</button><span class="sep">/</span><button>Storage</button>';
+    document.title = 'Storage · leo';
+    app.innerHTML = skeleton(4);
+    const page = await api('/api/storage');
+    if (mine !== seq) return;
+    drawStorage(page);
+  }
+
+  function storageWhen(iso) {
+    return iso ? rel(iso) : '';
+  }
+
+  function drawStorage(page) {
+    state.storage = page;
+    const open = state.storageOpen || new Set();
+    const total = Math.max(1, page.total);
+    const shown = page.areas.filter((a) => a.bytes > 0);
+    const bar = shown.map((a, i) => `<i style="width:${Math.max(0.6, (a.bytes / total) * 100)}%;background:${STORE_COLORS[page.areas.indexOf(a) % STORE_COLORS.length]}" title="${esc(a.title)}: ${esc(a.size)}"></i>`).join('');
+    const legend = page.areas.map((a, i) => `<span class="store-key"><b style="background:${STORE_COLORS[i % STORE_COLORS.length]}"></b>${esc(a.title)} <span class="store-key-size">${esc(a.size)}</span></span>`).join('');
+    const drafts = saving.drafts().length;
+    const areas = page.areas.map((a, i) => {
+      const pickable = a.actions.some((x) => x.selected);
+      const items = a.items.length
+        ? `<div class="store-items">${pickable && a.items.length > 1 ? `<label class="store-item store-all"><input type="checkbox" data-store-all="${esc(a.id)}"><span class="grow">Select all</span></label>` : ''}${a.items
+            .map((it) => `<label class="store-item${it.locked ? ' locked' : ''}">${pickable ? `<input type="checkbox" data-store-item="${esc(a.id)}" value="${esc(it.id)}"${it.locked ? ' disabled' : ''}>` : ''}<span class="grow"><span class="store-label">${esc(it.label)}</span><span class="sub">${esc([it.detail, storageWhen(it.when)].filter(Boolean).join(' · '))}</span></span>${it.size ? `<span class="store-size">${esc(it.size)}</span>` : ''}</label>`)
+            .join('')}</div>`
+        : '';
+      const actions = a.actions.length
+        ? `<div class="store-actions">${a.actions
+            .map((x) => `<button class="btn sm ${x.selected ? 'plain' : 'plain danger-text'}" data-action="storage-act" data-area="${esc(a.id)}" data-act="${esc(x.id)}"${x.selected ? ' disabled data-needs-items="1"' : ''}>${esc(x.label)}${x.selected ? ' <span class="store-count"></span>' : ''}</button>`)
+            .join('')}</div>`
+        : '';
+      return `<details class="set-card store-area" data-area="${esc(a.id)}"${open.has(a.id) ? ' open' : ''}>
+        <summary><b class="store-dot" style="background:${STORE_COLORS[i % STORE_COLORS.length]}"></b><span class="grow"><b>${esc(a.title)}</b>${a.items.length ? `<span class="sub">${a.items.length} item${a.items.length === 1 ? '' : 's'}</span>` : ''}</span><span class="store-size">${esc(a.size)}</span>${ICON.chevron}</summary>
+        <p class="hint">${esc(a.about)}</p>
+        <code class="set-path">${esc(a.path)}</code>
+        ${items}${actions}
+      </details>`;
+    }).join('');
+    app.innerHTML = `<div class="settings storage">
+      <div class="section-title">Storage and data</div>
+      <section class="set-card store-total">
+        <div class="store-big">${esc(page.total_label)}</div>
+        <p class="hint">What leo keeps on this computer. Notes are only deleted from their own page, and backups are left alone.</p>
+        <div class="store-bar" aria-hidden="true">${bar}</div>
+        <div class="store-legend">${legend}</div>
+      </section>
+      ${areas}
+      ${drafts ? `<section class="set-card"><header><h3>This browser</h3></header><p class="hint">${drafts} unsaved draft${drafts === 1 ? '' : 's'} kept here until they reach leo.</p><button class="btn sm plain" data-action="drafts">Open drafts</button></section>` : ''}
+    </div>`;
+  }
+
+  function storagePicked(area) {
+    return [...app.querySelectorAll(`input[data-store-item="${CSS.escape(area)}"]:checked`)].map((i) => i.value);
+  }
+
+  function storageCounts() {
+    for (const button of app.querySelectorAll('[data-needs-items]')) {
+      const n = storagePicked(button.dataset.area).length;
+      button.disabled = n === 0;
+      const count = button.querySelector('.store-count');
+      if (count) count.textContent = n ? `(${n})` : '';
+    }
+  }
+
+  function storageAsk(el) {
+    const area = state.storage && state.storage.areas.find((a) => a.id === el.dataset.area);
+    const action = area && area.actions.find((x) => x.id === el.dataset.act);
+    if (!action) return;
+    const items = action.selected ? storagePicked(area.id) : [];
+    if (action.selected && !items.length) return;
+    state.storagePending = { area: area.id, action: action.id, items };
+    const what = action.selected ? `${items.length} item${items.length === 1 ? '' : 's'} from ${area.title}` : area.title;
+    sheet(`<h3>${esc(action.label)}?</h3>
+      <p><b>${esc(what)}</b></p>
+      <p>${esc(action.confirm || 'This cannot be undone.')}</p>
+      <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn danger" data-action="storage-go">${esc(action.selected ? 'Delete' : action.label)}</button></div>`);
+  }
+
+  async function storageGo() {
+    const request = state.storagePending;
+    closeSheet();
+    if (!request) return;
+    state.storagePending = null;
+    const done = await api('/api/storage', { method: 'POST', body: request });
+    if (state.view !== 'storage') return;
+    drawStorage(done.storage);
+    toast(done.message);
+  }
+
+  app.addEventListener('toggle', (e) => {
+    const area = e.target.closest && e.target.closest('details.store-area');
+    if (!area || state.view !== 'storage') return;
+    if (area.open) state.storageOpen.add(area.dataset.area);
+    else state.storageOpen.delete(area.dataset.area);
+  }, true);
+
+  app.addEventListener('change', (e) => {
+    if (state.view !== 'storage') return;
+    const all = e.target.closest('[data-store-all]');
+    if (all) {
+      for (const box of app.querySelectorAll(`input[data-store-item="${CSS.escape(all.dataset.storeAll)}"]:not(:disabled)`)) box.checked = all.checked;
+    }
+    if (all || e.target.closest('[data-store-item]')) storageCounts();
+  });
 
   async function changeSetting(change) {
     try {
@@ -1251,6 +1369,9 @@
       closeSheet();
       go('#/settings');
     },
+    storage: () => go('#/settings/storage'),
+    'storage-act': storageAsk,
+    'storage-go': () => storageGo().catch(fail),
     'set-key': (el) => saveKey(el.dataset.account),
     'remove-key': confirmRemoveKey,
     'remove-key-now': (el) => {
@@ -1430,7 +1551,7 @@
       else if (kind === 'tags') await showTags();
       else if (kind === 'trash') await showTrash();
       else if (kind === 'map') await showMap(arg);
-      else if (kind === 'settings') await showSettings();
+      else if (kind === 'settings') await (arg === 'storage' ? showStorage() : showSettings());
       else if (kind === 'record') await showRecord(arg);
       else if (kind === 'drafts') showDrafts();
       else if (kind === 'draft') await showDraft(arg);

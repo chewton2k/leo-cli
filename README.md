@@ -645,6 +645,17 @@ AI answers, and how backups push. An API key can be added, replaced or removed
 there but is never shown again, and is only accepted over the https link or on
 the computer itself, so it never crosses Wi-Fi unencrypted.
 
+**Storage and data** (Settings → Advanced) shows everything leo keeps on your
+computer and how much space each part takes, with a bar to compare them: notes,
+trash, chats with Felix, uploaded files, the map of ideas, recording audio
+leo still holds, the built-in speech model, backup history, and settings. Open
+a part to see what is in it and delete what you no longer need: pick chats or
+uploads one by one or all at once, delete chats older than 30 days or uploads
+whose note is gone, empty the trash, clear the map, delete leftover recording
+audio, or remove the speech model (`leo update` downloads it again). leo asks
+before deleting anything. Notes are only deleted from their own page, and
+backup history and settings are shown but never deleted from here.
+
 **The map of ideas** (More → Map of ideas, or **Map** on any note) is a
 knowledge graph of your notes: every note is a dot coloured by its class (its
 top folder), sized by how connected it is. **Connect notes** asks the AI you

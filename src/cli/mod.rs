@@ -11,6 +11,7 @@ mod uninstall;
 mod update;
 mod web_record;
 mod web_settings;
+mod web_storage;
 
 use std::io::IsTerminal;
 
@@ -404,6 +405,7 @@ pub fn run(cli: Cli) -> Result<()> {
                         },
                     )),
                     listener: Some(web_record::listener()),
+                    housekeeper: Some(std::sync::Arc::new(web_storage::Housekeeping)),
                 },
             ))
         }

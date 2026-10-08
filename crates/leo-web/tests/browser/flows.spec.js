@@ -364,6 +364,52 @@ test.describe('settings', () => {
   });
 });
 
+test.describe('storage', () => {
+  test('shows what leo keeps and deletes only what was chosen, after asking', async ({ page }) => {
+    const tag = test.info().project.name;
+    for (const n of [1, 2]) {
+      const put = await page.request.put(`/api/chats/storage-${tag}-${n}`, { data: { mode: 'chat', refs: [], messages: [{ role: 'user', text: `storage chat ${tag} ${n}` }] } });
+      expect(put.ok()).toBe(true);
+    }
+    const note = await (await page.request.post('/api/notes', { data: { title: `Throwaway ${tag}`, body: 'x' } })).json();
+    expect((await page.request.delete(`/api/notes/${note.id}`)).ok()).toBe(true);
+
+    await page.goto('/#/settings');
+    await page.locator('[data-action="storage"]').click();
+    await expect(page).toHaveURL(/#\/settings\/storage$/);
+    await expect(page.locator('.store-big')).toContainText(/KB|MB|bytes/);
+    const chats = page.locator('details.store-area[data-area="chats"]');
+    await chats.locator('summary').click();
+    const first = chats.locator('.store-item', { hasText: `storage chat ${tag} 1` });
+    await expect(first).toBeVisible();
+    const deleteSelected = chats.locator('[data-act="delete"]');
+    await expect(deleteSelected).toBeDisabled();
+    await first.locator('input').check();
+    await expect(deleteSelected).toContainText('(1)');
+    await deleteSelected.click();
+    await expect(page.locator('.sheet')).toContainText('deleted for good');
+    await page.locator('[data-action="storage-go"]').click();
+    await expect(page.locator('.toast')).toContainText('Deleted 1 chat.');
+    await expect(chats).toHaveAttribute('open', '');
+    await expect(chats.locator('.store-item', { hasText: `storage chat ${tag} 1` })).toHaveCount(0);
+    await expect(chats.locator('.store-item', { hasText: `storage chat ${tag} 2` })).toBeVisible();
+
+    const trash = page.locator('details.store-area[data-area="trash"]');
+    await trash.locator('summary').click();
+    await expect(trash).toContainText(`Throwaway ${tag}`);
+    await trash.locator('[data-act="empty"]').click();
+    await page.locator('[data-action="close"]').click();
+    await expect(trash).toContainText(`Throwaway ${tag}`);
+    await trash.locator('[data-act="empty"]').click();
+    await page.locator('[data-action="storage-go"]').click();
+    await expect(page.locator('.toast')).toContainText('Emptied the trash');
+    expect((await (await page.request.get('/api/trash')).json()).length).toBe(0);
+    await expect(page.locator('details.store-area[data-area="notes"] [data-action="storage-act"]')).toHaveCount(0);
+    await page.locator('#back').click();
+    await expect(page).toHaveURL(/#\/settings$/);
+  });
+});
+
 test.describe('uploads', () => {
   test('a file becomes a note and opens when it is ready', async ({ page }) => {
     const made = await (await page.request.post('/api/notes', { data: { title: 'Lecture 9: Sorting', body: '## Merge sort\n- divide and conquer' } })).json();

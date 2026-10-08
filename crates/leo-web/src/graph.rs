@@ -716,6 +716,29 @@ impl Graphs {
         Graphs::new(base.join("graph.json"), writer)
     }
 
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn clear(&self) -> Result<bool> {
+        let mut job = self.job.lock().unwrap_or_else(|e| e.into_inner());
+        if job.state == "building" {
+            return Ok(false);
+        }
+        match std::fs::remove_file(&self.path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
+        *job = Job {
+            state: "idle",
+            done: 0,
+            total: 0,
+            message: None,
+        };
+        Ok(true)
+    }
+
     pub fn load(&self) -> Cache {
         std::fs::read_to_string(&self.path)
             .ok()

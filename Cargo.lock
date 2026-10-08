@@ -2084,6 +2084,7 @@ name = "leo"
 version = "0.2.44"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
  "colored",
  "dirs",
