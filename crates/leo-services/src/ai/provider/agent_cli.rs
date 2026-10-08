@@ -220,20 +220,19 @@ impl AgentCli {
         (args, input)
     }
 
-    fn image_files(&self, images: &[Image]) -> ProviderResult<Vec<PathBuf>> {
-        if self.agent != Agent::Codex || images.is_empty() {
+    fn image_files(&self, room: &Path, images: &[Image]) -> ProviderResult<Vec<PathBuf>> {
+        if self.agent != Agent::Codex {
             return Ok(Vec::new());
         }
-        static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        let batch = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut files = Vec::new();
         for (i, image) in images.iter().enumerate() {
-            let path = Self::workspace().join(format!(
-                "leo-image-{}-{batch}-{i}.{}",
-                std::process::id(),
-                image.extension()
-            ));
-            std::fs::write(&path, &image.bytes).map_err(|e| {
+            let path = room.join(format!("image-{i}.{}", image.extension()));
+            let written = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+                .and_then(|mut f| f.write_all(&image.bytes));
+            written.map_err(|e| {
                 ProviderError::Retryable(format!(
                     "{}: could not hand the image over: {e}",
                     self.name
@@ -244,10 +243,20 @@ impl AgentCli {
         Ok(files)
     }
 
-    fn workspace() -> PathBuf {
-        let dir = std::env::temp_dir().join("leo-writing");
-        let _ = std::fs::create_dir_all(&dir);
-        dir
+    fn room(&self) -> ProviderResult<tempfile::TempDir> {
+        let mut builder = tempfile::Builder::new();
+        builder.prefix("leo-writing-");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            builder.permissions(std::fs::Permissions::from_mode(0o700));
+        }
+        builder.tempdir().map_err(|e| {
+            ProviderError::Retryable(format!(
+                "{}: could not make a private folder to run in: {e}",
+                self.name
+            ))
+        })
     }
 }
 
@@ -314,25 +323,23 @@ impl AgentCli {
             Agent::Codex => codex_disables(&program),
             Agent::ClaudeCode => Vec::new(),
         };
-        let files = self.image_files(images)?;
+        let room = self.room()?;
+        let files = self.image_files(room.path(), images)?;
         let (args, input) = self.arguments(req, images, &disables, &files);
-        let outcome = self.spawn(&program, &args, input, sink);
-        for file in files {
-            let _ = std::fs::remove_file(file);
-        }
-        outcome
+        self.spawn(&program, room.path(), &args, input, sink)
     }
 
     fn spawn(
         &self,
         program: &Path,
+        room: &Path,
         args: &[String],
         input: String,
         sink: Sink<'_>,
     ) -> ProviderResult<String> {
         let mut child = Command::new(program)
             .args(args)
-            .current_dir(Self::workspace())
+            .current_dir(room)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -537,6 +544,37 @@ mod tests {
         assert!(args.windows(2).any(|w| w == ["--disable", "browser_use"]));
         assert!(args.windows(2).any(|w| w == ["-i", "/tmp/a.jpg"]));
         assert_eq!(args.last().unwrap(), "-");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn each_call_runs_in_its_own_private_folder_that_is_removed_after() {
+        use std::os::unix::fs::PermissionsExt;
+        let cfg = config(ProviderKind::Codex, "codex", None);
+        let agent = AgentCli::new("codex".into(), Agent::Codex, &cfg);
+        let room = agent.room().unwrap();
+        let mode = std::fs::metadata(room.path()).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
+        let image = Image {
+            mime: "image/png".into(),
+            bytes: vec![7],
+        };
+        let files = agent
+            .image_files(room.path(), &[image.clone(), image])
+            .unwrap();
+        assert_eq!(files.len(), 2);
+        assert!(files.iter().all(|f| f.starts_with(room.path())));
+        let again = agent.image_files(
+            room.path(),
+            &[Image {
+                mime: "image/png".into(),
+                bytes: vec![1],
+            }],
+        );
+        assert!(again.is_err(), "an existing file is never written through");
+        let path = room.path().to_path_buf();
+        drop(room);
+        assert!(!path.exists());
     }
 
     #[test]

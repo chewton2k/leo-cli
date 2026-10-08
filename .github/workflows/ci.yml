@@ -35,6 +35,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Drop a partly restored speech library
+        shell: bash
+        run: |
+          for lib in target/sherpa-onnx-prebuilt/*/lib target/*/sherpa-onnx-prebuilt/*/lib; do
+            [ -d "$lib" ] || continue
+            ls "$lib" | grep -q 'sherpa-onnx-c-api' || rm -rf "$(dirname "$lib")"
+          done
       - name: ALSA headers (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
@@ -112,6 +119,13 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - name: Drop a partly restored speech library
+        shell: bash
+        run: |
+          for lib in target/sherpa-onnx-prebuilt/*/lib target/*/sherpa-onnx-prebuilt/*/lib; do
+            [ -d "$lib" ] || continue
+            ls "$lib" | grep -q 'sherpa-onnx-c-api' || rm -rf "$(dirname "$lib")"
+          done
       - name: ALSA headers (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
@@ -127,6 +141,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.88
       - uses: Swatinem/rust-cache@v2
+      - name: Drop a partly restored speech library
+        shell: bash
+        run: |
+          for lib in target/sherpa-onnx-prebuilt/*/lib target/*/sherpa-onnx-prebuilt/*/lib; do
+            [ -d "$lib" ] || continue
+            ls "$lib" | grep -q 'sherpa-onnx-c-api' || rm -rf "$(dirname "$lib")"
+          done
       - name: ALSA headers (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
@@ -151,6 +172,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
+      - name: Drop a partly restored speech library
+        shell: bash
+        run: |
+          for lib in target/sherpa-onnx-prebuilt/*/lib target/*/sherpa-onnx-prebuilt/*/lib; do
+            [ -d "$lib" ] || continue
+            ls "$lib" | grep -q 'sherpa-onnx-c-api' || rm -rf "$(dirname "$lib")"
+          done
       - name: ALSA headers (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev

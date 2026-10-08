@@ -87,6 +87,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
+      - name: Drop a partly restored speech library
+        shell: bash
+        run: |
+          for lib in target/sherpa-onnx-prebuilt/*/lib target/*/sherpa-onnx-prebuilt/*/lib; do
+            [ -d "$lib" ] || continue
+            ls "$lib" | grep -q 'sherpa-onnx-c-api' || rm -rf "$(dirname "$lib")"
+          done
       - name: ALSA headers (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
