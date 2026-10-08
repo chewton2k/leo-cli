@@ -571,6 +571,11 @@ test.describe('folders', () => {
     await expect(page.locator('[data-action="folder-trash"]')).toBeDisabled();
     await page.locator('.folder', { hasText: 'week1' }).click();
     await page.locator('.pick-card', { hasText: 'Loose note' }).click();
+    for (const item of [page.locator('.folder', { hasText: 'week1' }), page.locator('.pick-card', { hasText: 'Loose note' })]) {
+      const box = await item.boundingBox();
+      const tick = await item.locator('.pick-box').boundingBox();
+      expect(box.x + box.width - (tick.x + tick.width), 'the checkbox sits at the right edge').toBeLessThan(24);
+    }
     await expect(page.locator('.select-bar')).toContainText('2 selected');
     await expect(page).toHaveURL(new RegExp(`#/f/${top}$`));
 
