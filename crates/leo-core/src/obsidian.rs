@@ -142,7 +142,7 @@ fn add_vault(config_path: &Path, folder: &Path) -> Result<String> {
     Ok(id)
 }
 
-fn launch(uri: &str) -> Result<()> {
+pub fn open_link(uri: &str) -> Result<()> {
     let (opener, args): (&str, Vec<&str>) = if cfg!(target_os = "macos") {
         ("open", vec![uri])
     } else if cfg!(windows) {
@@ -158,7 +158,7 @@ fn launch(uri: &str) -> Result<()> {
         .status()
         .with_context(|| format!("could not run {opener}"))?;
     if !status.success() {
-        anyhow::bail!("{opener} could not open Obsidian");
+        anyhow::bail!("{opener} could not open {uri}");
     }
     Ok(())
 }
@@ -210,7 +210,7 @@ pub fn open(notes_dir: &Path) -> Result<Opened> {
         .and_then(|p| std::fs::read_to_string(p).ok());
 
     if let Some(id) = config.as_deref().and_then(|c| vault_id_for(c, &candidates)) {
-        launch(&vault_uri(&id))?;
+        open_link(&vault_uri(&id))?;
         return Ok(Opened {
             path,
             how: How::Known,
@@ -219,7 +219,7 @@ pub fn open(notes_dir: &Path) -> Result<Opened> {
     }
     if let (Some(config_path), false) = (&config_path, running()) {
         if let Ok(id) = add_vault(config_path, &path) {
-            launch(&vault_uri(&id))?;
+            open_link(&vault_uri(&id))?;
             return Ok(Opened {
                 path,
                 how: How::Added,
@@ -228,7 +228,7 @@ pub fn open(notes_dir: &Path) -> Result<Opened> {
         }
     }
     let copied = copy_to_clipboard(&path.to_string_lossy());
-    launch("obsidian://open")?;
+    open_link("obsidian://open")?;
     Ok(Opened {
         path,
         how: How::ByHand,

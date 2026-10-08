@@ -562,7 +562,9 @@ leo serve
 ```
 
 This prints a link and a QR code that work from any network: another Wi-Fi,
-or mobile data. Scan the code with your phone's camera and your notes open in
+or mobile data. Press **Enter** to open it in a browser on the same computer
+(in most terminals you can also click the link; in macOS Terminal,
+⌘-double-click it). Scan the code with your phone's camera and your notes open in
 the browser, laid out for a phone and following its light or dark mode. From
 there you can:
 

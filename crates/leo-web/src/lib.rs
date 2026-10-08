@@ -180,11 +180,20 @@ pub async fn serve(options: ServeOptions, writer: Option<Writer>) -> Result<()> 
         }
     }
     println!();
+    let here = format!("http://127.0.0.1:{port}/?token={token}");
+    if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        println!(
+            "  {} {}",
+            "Press Enter".bold(),
+            "to open it in a browser on this computer.".dimmed()
+        );
+    }
     println!(
         "  {}",
         "Scan the code with your phone's camera. Keep this window open; Ctrl-C stops.".dimmed()
     );
     println!();
+    open_on_enter(here);
 
     let _awake = keep_awake();
     axum::serve(listener, app)
@@ -200,14 +209,39 @@ pub fn hyperlink(url: &str, shown: &str) -> String {
     format!("\x1b]8;;{url}\x1b\\{shown}\x1b]8;;\x1b\\")
 }
 
-fn clickable(url: &str) -> String {
-    use std::io::IsTerminal;
+pub fn styled_link(url: &str, terminal: bool, program: Option<&str>) -> String {
     let shown = url.cyan().underline().to_string();
-    if std::io::stdout().is_terminal() {
+    if terminal && program != Some("Apple_Terminal") {
         hyperlink(url, &shown)
     } else {
         shown
     }
+}
+
+fn clickable(url: &str) -> String {
+    use std::io::IsTerminal;
+    let program = std::env::var("TERM_PROGRAM").ok();
+    styled_link(url, std::io::stdout().is_terminal(), program.as_deref())
+}
+
+fn open_on_enter(url: String) {
+    use std::io::{BufRead, IsTerminal};
+    if !std::io::stdin().is_terminal() {
+        return;
+    }
+    std::thread::spawn(move || {
+        for line in std::io::stdin().lock().lines() {
+            if line.is_err() {
+                break;
+            }
+            match leo_core::obsidian::open_link(&url) {
+                Ok(()) => println!("  {}", "Opened in your browser.".dimmed()),
+                Err(e) => println!(
+                    "  Could not open a browser ({e}). The link above works in any browser."
+                ),
+            }
+        }
+    });
 }
 
 async fn bind(wanted: u16) -> Result<(tokio::net::TcpListener, u16)> {
@@ -877,6 +911,14 @@ mod tests {
             "\x1b]8;;https://example.trycloudflare.com/?token=abc\x1b\\https://example.trycloudflare.com/?token=abc\x1b]8;;\x1b\\"
         );
         assert!(!clickable(url).contains("\x1b]8"), "a pipe gets plain text");
+        assert!(styled_link(url, true, Some("iTerm.app")).contains("\x1b]8;;"));
+        assert!(styled_link(url, true, None).contains("\x1b]8;;"));
+        let apple = styled_link(url, true, Some("Apple_Terminal"));
+        assert!(
+            !apple.contains("\x1b]8"),
+            "Terminal.app finds plain links itself"
+        );
+        assert!(apple.contains(url));
     }
 
     fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<String>) {
