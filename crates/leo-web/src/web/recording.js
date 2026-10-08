@@ -62,9 +62,33 @@
   const fedByBrowser = (source) => source === 'browser' || source === 'tab';
 
   const QUIET = 0.2;
-  const BROWSER_STEP_MS = 80;
+  const WAVE_STEP_MS = 60;
   const SERVER_STEP_MS = 250;
-  const MOST_WAVE = 240;
+  const MOST_WAVE = 400;
+  const BAR = 3;
+  const GAP = 2.5;
+
+  function ease(current, target) {
+    const rate = target > current ? 0.55 : 0.16;
+    return current + (target - current) * rate;
+  }
+
+  function spread(from, to, steps) {
+    return Array.from({ length: steps }, (_, i) => from + ((to - from) * (i + 1)) / steps);
+  }
+
+  function freshLevels(levels, start, fedUpTo) {
+    const end = start + levels.length;
+    if (fedUpTo >= end) return { fresh: [], fedUpTo };
+    const from = Math.max(fedUpTo, start);
+    return { fresh: levels.slice(from - start), fedUpTo: end };
+  }
+
+  function sourceFor(kind, { local, canShare }) {
+    if (kind === 'microphone') return 'browser';
+    if (local) return 'screen';
+    return canShare ? 'tab' : null;
+  }
 
   function loudness(rms) {
     if (!(rms > 0)) return 0;
@@ -125,9 +149,13 @@
       node: null,
       held: [],
       wave: [],
-      waveStep: BROWSER_STEP_MS,
+      queue: [],
+      smooth: 0,
+      lastStep: 0,
+      lastFed: 0,
+      fedUpTo: 0,
+      samples: null,
       analyser: null,
-      sampling: 0,
       raf: 0,
       heard: '',
       sending: false,
@@ -139,7 +167,6 @@
       follow: true,
     };
 
-    const sourceLabel = { browser: 'This device’s microphone', tab: 'A tab’s or screen’s sound', microphone: 'Computer’s microphone', screen: 'Computer’s sound' };
     const env = () => ({ isSecureContext: root.isSecureContext, mediaDevices: root.navigator && root.navigator.mediaDevices, AudioWorkletNode: root.AudioWorkletNode });
     const shown = (message) => Object.assign(new Error(message), { shown: true });
 
@@ -181,23 +208,8 @@
       s.node = new root.AudioWorkletNode(s.context, 'leo-recorder');
       s.analyser = s.context.createAnalyser();
       s.analyser.fftSize = 2048;
+      s.samples = new Float32Array(s.analyser.fftSize);
       source.connect(s.analyser);
-      s.wave = [];
-      s.waveStep = BROWSER_STEP_MS;
-      const buffer = new Float32Array(s.analyser.fftSize);
-      clearInterval(s.sampling);
-      s.sampling = setInterval(() => {
-        if (!s.analyser) return;
-        let level = 0;
-        if (!(s.view && s.view.state === 'paused')) {
-          s.analyser.getFloatTimeDomainData(buffer);
-          let sum = 0;
-          for (const v of buffer) sum += v * v;
-          level = loudness(Math.sqrt(sum / buffer.length));
-        }
-        s.wave.push(level);
-        if (s.wave.length > MOST_WAVE) s.wave.splice(0, s.wave.length - MOST_WAVE);
-      }, BROWSER_STEP_MS);
       s.node.port.onmessage = (event) => {
         if (s.view && s.view.state === 'paused') return;
         s.held.push(new Int16Array(event.data.samples));
@@ -222,8 +234,6 @@
       if (s.node) s.node.port.onmessage = null;
       if (s.stream) s.stream.getTracks().forEach((t) => t.stop());
       if (s.context) s.context.close().catch(() => {});
-      clearInterval(s.sampling);
-      s.sampling = 0;
       s.stream = null;
       s.context = null;
       s.node = null;
@@ -314,6 +324,7 @@
       const before = s.view;
       const warnings = before && before.id === view.id ? before.warnings.filter((w) => !view.warnings.includes(w)) : [];
       s.view = { ...view, warnings: [...view.warnings, ...warnings] };
+      feedFromServer(view);
       if (!live(view) && s.mine) {
         if (view.state !== 'writing' || !s.held.length) detach();
       }
@@ -338,6 +349,7 @@
       s.view = { id: made.id, source, state: 'starting', secs: 0, step: 'Starting', steps: null, transcript: '', warnings: [], points: [], note: null, error: null };
       s.lost = 0;
       s.follow = true;
+      Object.assign(s, { wave: [], queue: [], smooth: 0, lastStep: 0, lastFed: 0, fedUpTo: 0 });
       if (fedByBrowser(source)) attach();
       draw();
       pill();
@@ -379,14 +391,44 @@
       accept(await api(`/api/record/${s.view.id}/point`, { method: 'POST', body: { text } }));
     }
 
-    function drawWave() {
+    function heardNow() {
+      if (!s.view || s.view.state === 'paused') return 0;
+      if (s.mine && s.analyser) {
+        s.analyser.getFloatTimeDomainData(s.samples);
+        let sum = 0;
+        for (const v of s.samples) sum += v * v;
+        return loudness(Math.sqrt(sum / s.samples.length));
+      }
+      if (s.queue.length > 40) s.queue.splice(0, s.queue.length - 40);
+      return s.queue.length ? s.queue.shift() : s.smooth * 0.85;
+    }
+
+    function feedFromServer(view) {
+      if (s.mine || !view || !Array.isArray(view.levels)) return;
+      const { fresh, fedUpTo } = freshLevels(view.levels.map(loudness), view.levels_start || 0, s.fedUpTo);
+      s.fedUpTo = fedUpTo;
+      const per = Math.round(SERVER_STEP_MS / WAVE_STEP_MS);
+      for (const level of fresh) {
+        s.queue.push(...spread(s.lastFed, level, per));
+        s.lastFed = level;
+      }
+    }
+
+    function advance(now) {
+      if (!s.lastStep || now - s.lastStep > 2000) s.lastStep = now;
+      while (now - s.lastStep >= WAVE_STEP_MS) {
+        s.smooth = ease(s.smooth, heardNow());
+        s.wave.push(s.smooth);
+        s.lastStep += WAVE_STEP_MS;
+      }
+      if (s.wave.length > MOST_WAVE) s.wave.splice(0, s.wave.length - MOST_WAVE);
+    }
+
+    function drawWave(now) {
       s.raf = 0;
       const canvas = root.document.getElementById('rec-wave');
       if (!canvas || !s.view || !live(s.view)) return;
-      if (!s.mine) {
-        s.wave = (s.view.levels || []).map(loudness);
-        s.waveStep = SERVER_STEP_MS;
-      }
+      advance(now);
       const paused = s.view.state === 'paused';
       const ratio = root.devicePixelRatio || 1;
       const width = canvas.clientWidth;
@@ -401,27 +443,21 @@
       const css = root.getComputedStyle(canvas);
       const on = css.getPropertyValue('--wave-on').trim() || '#d0342c';
       const off = css.getPropertyValue('--wave-off').trim() || '#c9c8c3';
-      const bar = 3;
-      const gap = 2;
-      const count = Math.max(1, Math.floor(width / (bar + gap)));
-      const shown = s.wave.slice(-count);
-      const start = width - shown.length * (bar + gap);
+      const pitch = BAR + GAP;
+      const glide = paused ? 0 : Math.min(1, (now - s.lastStep) / WAVE_STEP_MS);
+      const count = Math.ceil(width / pitch) + 2;
       for (let i = 0; i < count; i++) {
-        const x = width - (i + 1) * (bar + gap);
-        if (x < start - 0.5) {
-          ctx.fillStyle = off;
-          ctx.fillRect(x, height / 2 - 1, bar, 2);
-        }
-      }
-      shown.forEach((level, i) => {
-        const h = Math.max(2, level * (height - 4));
-        ctx.fillStyle = paused || level < QUIET ? off : on;
+        const level = s.wave[s.wave.length - 1 - i] || 0;
+        const x = width - BAR - (i + glide) * pitch;
+        if (x < -BAR) break;
+        const h = Math.max(3, level * (height - 6));
+        ctx.fillStyle = paused || level < 0.06 ? off : on;
         ctx.beginPath();
-        if (ctx.roundRect) ctx.roundRect(start + i * (bar + gap), (height - h) / 2, bar, h, 1.5);
-        else ctx.rect(start + i * (bar + gap), (height - h) / 2, bar, h);
+        if (ctx.roundRect) ctx.roundRect(x, (height - h) / 2, BAR, h, BAR / 2);
+        else ctx.rect(x, (height - h) / 2, BAR, h);
         ctx.fill();
-      });
-      const state = hearing(s.wave, s.waveStep);
+      }
+      const state = hearing(s.wave.slice(-200), WAVE_STEP_MS);
       const words = hearingWords(state, s.view.source, paused);
       const label = root.document.getElementById('rec-hear');
       if (label && s.heard !== `${state}:${words}`) {
@@ -436,27 +472,46 @@
       if (!s.raf && root.requestAnimationFrame) s.raf = root.requestAnimationFrame(drawWave);
     }
 
-    function sourceChoices(local) {
-      const sources = ['browser', ...(canShareSound(env()) ? ['tab'] : []), ...(local ? ['microphone', 'screen'] : [])];
-      if (sources.length === 1) return '';
-      return `<div class="rec-sources" role="radiogroup" aria-label="What to record">${sources
-        .map((id, i) => `<label class="rec-source"><input type="radio" name="rec-source" value="${id}"${i === 0 ? ' checked' : ''}><span>${esc(sourceLabel[id])}</span></label>`)
+    const KINDS = {
+      microphone: { title: 'Microphone', about: 'A lecture, a meeting, or your own voice' },
+      screen: { title: 'Screen', about: 'A video, a call, or anything playing' },
+    };
+
+    function screenNote(local) {
+      if (local) return 'Records what this computer plays';
+      return canShareSound(env()) ? 'Pick the tab or screen and turn on “Share tab audio”' : 'Needs Chrome or Edge on a computer';
+    }
+
+    function kindChoices(local) {
+      const canShare = canShareSound(env());
+      return `<div class="rec-kinds" role="radiogroup" aria-label="What to record">${['microphone', 'screen']
+        .map((kind, i) => {
+          const off = !sourceFor(kind, { local, canShare });
+          return `<label class="rec-kind${off ? ' off' : ''}"><input type="radio" name="rec-kind" value="${kind}"${i === 0 ? ' checked' : ''}${off ? ' disabled' : ''}>
+            <span class="rec-kind-body"><span class="rec-kind-icon">${kind === 'microphone' ? icons.mic : icons.screen}</span><b>${KINDS[kind].title}</b><span class="sub">${esc(kind === 'screen' ? screenNote(local) : KINDS[kind].about)}</span></span></label>`;
+        })
         .join('')}</div>`;
     }
 
     function drawIdle(folders, here) {
       const ov = s.overview || {};
       const options = ['', ...folders].map((f) => `<option value="${esc(f)}"${f === here ? ' selected' : ''}>${esc(f || 'All notes (top level)')}</option>`).join('');
-      const ready = micReady({ isSecureContext: root.isSecureContext, mediaDevices: root.navigator && root.navigator.mediaDevices, AudioWorkletNode: root.AudioWorkletNode });
+      const ready = micReady(env());
       const insecure = ready !== 'ok' && !ov.local ? `<p class="rec-warn">${esc(micProblem(ready))}</p>` : '';
       return `<div class="rec rec-idle">
-        <div class="rec-hero">${felix.felix(64, 'idle')}<div><h2>Record</h2><p class="sub">Lectures and meetings become notes. leo transcribes as you go and writes them up when you stop.</p></div></div>
-        ${sourceChoices(ov.local)}
-        <label class="field">${icons.folder}<select id="rec-dir">${options}</select></label>
-        <label class="field">${icons.note}<input id="rec-title" placeholder="Title (optional; the AI names it otherwise)" autocomplete="off"></label>
-        ${insecure}
-        <button class="rec-go" data-action="rec-start" ${ov.available === false ? 'disabled' : ''}><span class="rec-dot"></span><span>Start recording</span></button>
-        <p class="hint rec-tip">On a phone, keep this page open while it records; the screen stays on. Points you jot while recording are woven into the notes.${canShareSound(env()) ? ' For a lecture video or call in another tab, choose “A tab’s or screen’s sound” and turn on “Share tab audio”.' : ''}</p>
+        <div class="section-title">Record</div>
+        <section class="set-card rec-card">
+          <div class="rec-intro">${felix.felix(46, 'idle')}<p>Lectures and meetings become notes. leo writes down what is said as you go, then turns it into notes when you stop.</p></div>
+          ${kindChoices(ov.local)}
+          <label class="set-row"><span class="set-label">Folder</span><select id="rec-dir">${options}</select></label>
+          <label class="set-row"><span class="set-label">Title</span><input id="rec-title" class="rec-title-input" placeholder="Optional; the AI names it otherwise" autocomplete="off"></label>
+          ${insecure}
+          <div class="rec-start">
+            <button class="rec-go" data-action="rec-start" aria-label="Start recording" ${ov.available === false ? 'disabled' : ''}><span class="rec-go-dot"></span></button>
+            <span class="rec-start-label">Start recording</span>
+          </div>
+        </section>
+        <p class="hint rec-tip">On a phone, keep this page open while it records; the screen stays on. Points you jot while recording are woven into the notes.</p>
       </div>`;
     }
 
@@ -465,38 +520,60 @@
       const paused = v.state === 'paused';
       const orphan = fedByBrowser(v.source) && !s.mine && live(v);
       const transcript = v.transcript ? esc(v.transcript) : `<span class="hint">${paused ? 'Paused.' : 'Listening… words appear here after a few seconds.'}</span>`;
-      const points = v.points.length ? `<ul class="rec-points">${v.points.map(([at, text]) => `<li><span class="hint">${clock(at)}</span> ${esc(text)}</li>`).join('')}</ul>` : '';
+      const points = v.points.length ? `<ul class="rec-points">${v.points.map(([at, text]) => `<li><span class="rec-at">${clock(at)}</span><span>${esc(text)}</span></li>`).join('')}</ul>` : '';
       const warnings = v.warnings.map((w) => `<p class="rec-warn">${esc(w)}</p>`).join('') + (s.lost ? `<p class="rec-warn">${clock(s.lost / RATE)} of audio could not reach leo and was dropped.</p>` : '');
+      const kind = v.source === 'browser' || v.source === 'microphone' ? 'Microphone' : 'Screen';
       const controls = orphan
         ? `<p class="rec-warn">This recording lost its microphone when the page reloaded.</p><div class="rec-controls"><button class="btn plain" data-action="rec-rejoin">Keep recording here</button><button class="btn primary" data-action="rec-stop">Stop and save</button></div>`
-        : `<div class="rec-controls"><button class="btn plain" data-action="rec-pause">${paused ? 'Resume' : 'Pause'}</button><button class="btn primary rec-stop" data-action="rec-stop"><span class="rec-square"></span>Stop and save</button></div>`;
+        : `<div class="rec-buttons">
+            <button class="rec-round plain" data-action="rec-pause" aria-label="${paused ? 'Resume' : 'Pause'}">${paused ? '<svg viewBox="0 0 24 24"><path d="M8 5l12 7-12 7z" fill="currentColor"/></svg>' : '<svg viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1" fill="currentColor"/><rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor"/></svg>'}<span>${paused ? 'Resume' : 'Pause'}</span></button>
+            <button class="rec-round stop rec-stop" data-action="rec-stop" aria-label="Stop and save"><span class="rec-square"></span><span>Stop and save</span></button>
+          </div>`;
       return `<div class="rec rec-live${paused ? ' paused' : ''}">
-        <div class="rec-clock"><span class="rec-dot"></span><span id="rec-time">${clock(v.secs)}</span><span class="rec-word" id="rec-word">${esc(stateWord(v))}</span></div>
-        <div class="rec-meta">${esc(sourceLabel[v.source] || '')}</div>
-        ${orphan ? '' : `<div class="rec-wave-box"><canvas class="rec-wave" id="rec-wave" aria-hidden="true"></canvas><p class="rec-hear" id="rec-hear" role="status">${esc(hearingWords(hearing(s.wave, s.waveStep), v.source, paused))}</p></div>`}
-        ${controls}
-        ${warnings}
-        <div class="rec-transcript" id="rec-transcript" aria-live="polite">${transcript}</div>
-        <div class="rec-point"><textarea id="rec-point-text" rows="2" placeholder="Jot a point to weave into the notes"></textarea><button class="btn plain" data-action="rec-point">Add</button></div>
-        ${points}
+        <div class="section-title">Recording</div>
+        <section class="set-card rec-live-card">
+          <div class="rec-live-top"><span class="rec-state"><span class="rec-dot"></span><span id="rec-word">${esc(stateWord(v))}</span></span><span class="rec-meta">${kind}</span></div>
+          <div class="rec-clock"><span id="rec-time">${clock(v.secs)}</span></div>
+          ${orphan ? '' : `<div class="rec-wave-box"><canvas class="rec-wave" id="rec-wave" aria-hidden="true"></canvas></div><p class="rec-hear" id="rec-hear" role="status">${esc(hearingWords(hearing(s.wave, WAVE_STEP_MS), v.source, paused))}</p>`}
+          ${controls}
+          ${warnings}
+        </section>
+        <section class="set-card">
+          <header><h3>Live transcript</h3></header>
+          <div class="rec-transcript" id="rec-transcript" aria-live="polite">${transcript}</div>
+        </section>
+        <section class="set-card">
+          <header><h3>Your points</h3></header>
+          <p class="hint">Jot what matters; it is woven into the notes.</p>
+          <div class="rec-point"><textarea id="rec-point-text" rows="2" placeholder="Jot a point"></textarea><button class="btn plain" data-action="rec-point">Add</button></div>
+          ${points}
+        </section>
       </div>`;
     }
 
     function drawWriting() {
       const v = s.view;
       const bar = v.steps ? (v.steps[0] / Math.max(1, v.steps[1])) * 100 : 0;
-      return `<div class="rec rec-writing">${felix.felix(72, 'idle think')}<h3>${esc(stateWord(v) || 'Writing the notes')}</h3>
-        <div class="upload-bar"><i style="width:${Math.max(6, bar)}%"></i></div>
-        ${v.warnings.map((w) => `<p class="rec-warn">${esc(w)}</p>`).join('')}
-        <p class="hint">${clock(v.secs)} recorded. You can leave this page; the note appears in its folder when it is ready.</p></div>`;
+      return `<div class="rec rec-writing">
+        <div class="section-title">Recording</div>
+        <section class="set-card rec-done-card">${felix.felix(72, 'idle think')}<h3>${esc(stateWord(v) || 'Writing the notes')}</h3>
+          <div class="upload-bar"><i style="width:${Math.max(6, bar)}%"></i></div>
+          ${v.warnings.map((w) => `<p class="rec-warn">${esc(w)}</p>`).join('')}
+          <p class="hint">${clock(v.secs)} recorded. You can leave this page; the note appears in its folder when it is ready.</p>
+        </section>
+      </div>`;
     }
 
     function drawFailed() {
       const v = s.view;
-      return `<div class="rec rec-writing">${felix.felix(72, 'droop')}<h3>The recording could not become a note</h3>
-        <p class="upload-error">${esc(v.error || 'Something went wrong.')}</p>
-        ${v.warnings.map((w) => `<p class="rec-warn">${esc(w)}</p>`).join('')}
-        <div class="buttons"><button class="btn plain" data-action="settings">Settings</button><button class="btn primary" data-action="rec-again">Record again</button></div></div>`;
+      return `<div class="rec rec-writing">
+        <div class="section-title">Recording</div>
+        <section class="set-card rec-done-card">${felix.felix(72, 'droop')}<h3>The recording could not become a note</h3>
+          <p class="upload-error">${esc(v.error || 'Something went wrong.')}</p>
+          ${v.warnings.map((w) => `<p class="rec-warn">${esc(w)}</p>`).join('')}
+          <div class="buttons"><button class="btn plain" data-action="settings">Settings</button><button class="btn primary" data-action="rec-again">Record again</button></div>
+        </section>
+      </div>`;
     }
 
     let folders = [];
@@ -608,8 +685,10 @@
       },
       async begin() {
         const box = s.container;
-        const picked = box.querySelector('input[name="rec-source"]:checked');
-        const source = picked ? picked.value : 'browser';
+        const picked = box.querySelector('input[name="rec-kind"]:checked');
+        const kind = picked ? picked.value : 'microphone';
+        const source = sourceFor(kind, { local: Boolean(s.overview && s.overview.local), canShare: canShareSound(env()) });
+        if (!source) throw Object.assign(new Error(sharingProblem('unsupported')), { shown: true });
         const button = box.querySelector('[data-action="rec-start"]');
         if (button) button.disabled = true;
         try {
@@ -630,5 +709,5 @@
     };
   }
 
-  root.leoRecording = { create, clock, join, bytesOf, trimHeld, micReady, micProblem, stateWord, canShareSound, sharingProblem, fedByBrowser, loudness, hearing, hearingWords, QUIET };
+  root.leoRecording = { ease, spread, freshLevels, sourceFor, create, clock, join, bytesOf, trimHeld, micReady, micProblem, stateWord, canShareSound, sharingProblem, fedByBrowser, loudness, hearing, hearingWords, QUIET };
 })(typeof window !== 'undefined' ? window : globalThis);

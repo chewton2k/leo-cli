@@ -835,6 +835,11 @@ impl Graphs {
             .unwrap_or_else(|e| e.into_inner().clone())
     }
 
+    pub fn building(&self) -> Option<(usize, usize)> {
+        let job = self.job();
+        (job.state == "building").then_some((job.done, job.total))
+    }
+
     fn set(&self, change: impl FnOnce(&mut Job)) {
         let mut job = self.job.lock().unwrap_or_else(|e| e.into_inner());
         change(&mut job);

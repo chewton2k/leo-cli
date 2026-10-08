@@ -604,6 +604,39 @@ test.describe('folders', () => {
   });
 });
 
+test.describe('background work', () => {
+  test('work still going on shows its progress on every page until it is done', async ({ page }) => {
+    let tasks = [
+      { kind: 'upload', label: 'Making a note from slides.pdf', step: 'Writing the note', done: 1, total: 4, href: '#/' },
+      { kind: 'recording', label: 'Writing the notes from a recording', step: 'Transcribing the recording', done: 0, total: 0, href: '#/record' },
+    ];
+    await page.route('**/api/activity', (route) => route.fulfill({ json: { tasks } }));
+    await page.route('**/api/record', (route) => route.fulfill({ json: { available: true, local: false, job: null } }));
+    await page.goto('/');
+    await page.reload();
+    const tray = page.locator('#activity');
+    await expect(tray).toBeVisible();
+    await expect(tray.locator('.activity-head')).toContainText('2 things in the background');
+    const upload = tray.locator('.activity-row', { hasText: 'slides.pdf' });
+    await expect(upload).toContainText('Writing the note · 1/4');
+    expect(await upload.locator('.activity-bar i').evaluate((el) => el.style.width)).toBe('25%');
+    await expect(tray.locator('.activity-row', { hasText: 'recording' }).locator('.activity-bar')).toHaveClass(/busy/);
+
+    await tray.locator('.activity-head').click();
+    await expect(tray.locator('.activity-row')).toHaveCount(0);
+    await expect(tray.locator('.activity-fold')).toHaveText('Show');
+    await tray.locator('.activity-head').click();
+
+    await tray.locator('.activity-row', { hasText: 'recording' }).click();
+    await expect(page).toHaveURL(/#\/record$/);
+    await expect(tray.locator('.activity-row')).toHaveCount(1, { timeout: 4000 });
+    await expect(tray).toContainText('slides.pdf');
+
+    tasks = [];
+    await expect(tray).toBeHidden({ timeout: 5000 });
+  });
+});
+
 test.describe('trash', () => {
   test('deletes one note, the chosen notes, or everything for good, and restores the chosen ones', async ({ page }) => {
     const tag = test.info().project.name;
@@ -930,7 +963,8 @@ test.describe('recording', () => {
     await page.goto('/');
     await page.locator('.fab[data-action="record"]').click();
     await expect(page).toHaveURL(/#\/record$/);
-    await expect(page.locator('.rec-source')).toHaveCount(4);
+    await expect(page.locator('.rec-kind')).toHaveCount(2);
+    await expect(page.locator('.rec-kind b')).toHaveText(['Microphone', 'Screen']);
     await page.locator('#rec-title').fill('Graphs');
     await page.locator('[data-action="rec-start"]').click();
     await expect(page.locator('#rec-transcript')).toContainText('breadth first search');
@@ -945,6 +979,13 @@ test.describe('recording', () => {
       return painted;
     });
     expect(drawn).toBeGreaterThan(200);
+    const leftEdge = await page.locator('#rec-wave').evaluate((canvas) => {
+      const data = canvas.getContext('2d').getImageData(0, 0, Math.round(canvas.width * 0.1), canvas.height).data;
+      let painted = 0;
+      for (let i = 3; i < data.length; i += 4) if (data[i] > 0) painted++;
+      return painted;
+    });
+    expect(leftEdge, 'the wave reaches the left edge of its box').toBeGreaterThan(0);
     expect(seen.started).toEqual({ source: 'browser', directory: '', title: 'Graphs' });
 
     await page.locator('#rec-point-text').fill('exam question on BFS');
@@ -983,7 +1024,7 @@ test.describe('recording', () => {
         return stream;
       };
     });
-    await page.locator('.rec-source', { hasText: 'A tab’s or screen’s sound' }).click();
+    await page.locator('.rec-kind', { hasText: 'Screen' }).click();
     await page.locator('[data-action="rec-start"]').click();
     await expect.poll(() => seen.audioBytes, { timeout: 8000 }).toBeGreaterThan(16000);
     expect(seen.started.source).toBe('tab');
@@ -998,14 +1039,14 @@ test.describe('recording', () => {
     seen.source = 'screen';
     seen.levels = Array(12).fill(0.1);
     await page.goto('/#/record');
-    await page.locator('.rec-source', { hasText: 'Computer’s sound' }).click();
+    await page.locator('.rec-kind', { hasText: 'Screen' }).click();
     await page.locator('[data-action="rec-start"]').click();
     await expect(page.locator('#rec-wave')).toBeVisible();
     await expect(page.locator('#rec-hear')).toHaveText('Hearing sound');
     expect(seen.started.source).toBe('screen');
     expect(seen.audioBytes).toBe(0);
     seen.levels = [...Array(12).fill(0.1), ...Array(30).fill(0)];
-    await expect(page.locator('#rec-hear')).toHaveText('No sound for a while: is something playing on the computer?', { timeout: 5000 });
+    await expect(page.locator('#rec-hear')).toHaveText('No sound for a while: is something playing on the computer?', { timeout: 12000 });
     await expect(page.locator('#rec-hear')).toHaveClass(/silent/);
   });
 
@@ -1019,7 +1060,7 @@ test.describe('recording', () => {
     await page.evaluate(() => {
       navigator.mediaDevices.getDisplayMedia = async () => new MediaStream(document.createElement('canvas').captureStream().getVideoTracks());
     });
-    await page.locator('.rec-source', { hasText: 'A tab’s or screen’s sound' }).click();
+    await page.locator('.rec-kind', { hasText: 'Screen' }).click();
     await page.locator('[data-action="rec-start"]').click();
     await expect(page.locator('.toast.bad')).toContainText('Share tab audio');
     expect(started).toBe(false);
@@ -1030,7 +1071,8 @@ test.describe('recording', () => {
     stubRecorder(page, { noteId: 'x', local: false });
     await page.goto('/#/record');
     await expect(page.locator('[data-action="rec-start"]')).toBeVisible();
-    await expect(page.locator('.rec-source')).toHaveText(['This device’s microphone', 'A tab’s or screen’s sound']);
+    await expect(page.locator('.rec-kind b')).toHaveText(['Microphone', 'Screen']);
+    await expect(page.locator('.rec-kind', { hasText: 'Screen' })).toContainText('Share tab audio');
   });
 
   test('a refused microphone says how to allow it and starts nothing', async ({ page }) => {

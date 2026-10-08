@@ -83,8 +83,19 @@ pub struct RecordView {
     pub warnings: Vec<String>,
     pub points: Vec<(u64, String)>,
     pub levels: Vec<f32>,
+    pub levels_start: u64,
     pub note: Option<String>,
     pub error: Option<String>,
+}
+
+impl RecordView {
+    fn push_level(&mut self, level: f32) {
+        self.levels
+            .push((level.clamp(0.0, 1.0) * 1000.0).round() / 1000.0);
+        let extra = self.levels.len().saturating_sub(LEVELS_KEPT);
+        self.levels.drain(..extra);
+        self.levels_start += extra as u64;
+    }
 }
 
 pub(crate) struct RecordJob {
@@ -97,7 +108,6 @@ pub(crate) struct RecordJob {
 }
 
 impl RecordJob {
-    #[cfg(test)]
     pub(crate) fn view(&self) -> RecordView {
         self.view.clone()
     }
@@ -248,6 +258,7 @@ pub(crate) async fn start(
                 warnings: Vec::new(),
                 points: Vec::new(),
                 levels: Vec::new(),
+                levels_start: 0,
                 note: None,
                 error: None,
             },
@@ -316,11 +327,7 @@ fn run(
                 level,
             } => {
                 job.view.secs = secs;
-                job.view
-                    .levels
-                    .push((level.clamp(0.0, 1.0) * 1000.0).round() / 1000.0);
-                let extra = job.view.levels.len().saturating_sub(LEVELS_KEPT);
-                job.view.levels.drain(..extra);
+                job.view.push_level(level);
                 if job.live() {
                     job.view.state = if paused { "paused" } else { "recording" };
                 }
@@ -468,5 +475,42 @@ pub(crate) async fn stop(State(state): State<AppState>, Path(id): Path<String>) 
     }) {
         Ok(view) => Json(view).into_response(),
         Err((status, message)) => error(status, message),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn view() -> RecordView {
+        RecordView {
+            id: "r".into(),
+            source: Source::Browser,
+            state: "recording",
+            secs: 0,
+            step: String::new(),
+            steps: None,
+            transcript: String::new(),
+            warnings: Vec::new(),
+            points: Vec::new(),
+            levels: Vec::new(),
+            levels_start: 0,
+            note: None,
+            error: None,
+        }
+    }
+
+    #[test]
+    fn levels_keep_the_last_few_seconds_and_count_what_scrolled_away() {
+        let mut v = view();
+        for i in 0..(LEVELS_KEPT + 5) {
+            v.push_level(i as f32 / 1000.0);
+        }
+        assert_eq!(v.levels.len(), LEVELS_KEPT);
+        assert_eq!(v.levels_start, 5);
+        assert_eq!(v.levels[0], 0.005, "the first kept level is the sixth sent");
+        v.push_level(7.0);
+        assert_eq!(*v.levels.last().unwrap(), 1.0, "levels are clamped");
+        assert_eq!(v.levels_start, 6);
     }
 }

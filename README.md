@@ -592,22 +592,30 @@ there you can:
 - **record** a lecture or meeting and get notes, without the terminal.
 
 **Recording** (the **Record** button beside New note, or More → Record a
-lecture or meeting) uses the microphone of the phone or computer the page is
-open on. The words appear as it listens; **Pause** stops listening, a point you
-jot is woven into the notes, and **Stop and save** writes the note with the
-same speech and writing AI as `:record`, into the folder you picked. On the
-computer that runs `leo serve`, you can also record its own microphone or its
-sound (like `:record screen`). From any computer's browser (Chrome or Edge),
-**A tab's or screen's sound** records what a tab or the screen plays, such as a
-lecture video or a call: pick the tab and turn on "Share tab audio"; stopping
-the share stops the recording and saves it. Phones cannot share their sound.
-A browser only lends its microphone to a secure
-page, so use the link `leo serve` prints (not `--local`) or the page it opens on
-the computer. On a phone, keep the page open while it records; the screen
-stays on. A pill at the top shows the time while you browse other notes. A
-live wave, like a voice-memo app, shows the sound being picked up, for the
-microphone and for a tab's or the computer's sound alike, with "Hearing sound"
-beside it; after a few silent seconds it says what to check instead.
+lecture or meeting) has two choices:
+
+- **Microphone**: the microphone of the phone or computer the page is open on.
+- **Screen**: what the computer plays, such as a lecture video or a call. On the
+  computer that runs `leo serve` it records the computer's sound (like
+  `:record screen`); from another computer's browser (Chrome or Edge) you pick a
+  tab or the screen and turn on "Share tab audio", and stopping the share
+  stops the recording and saves it. Phones cannot record their screen.
+
+The words appear as it listens, and a smooth live wave like Voice Memos shows
+the sound being picked up, with "Hearing sound" beside it (after a few silent
+seconds it says what to check). **Pause** stops listening, a point you jot is
+woven into the notes, and **Stop and save** writes the note with the same
+speech and writing AI as `:record`, into the folder you picked. A browser only
+lends its microphone to a secure page, so use the link `leo serve` prints (not
+`--local`) or the page it opens on the computer. On a phone, keep the page open
+while it records; the screen stays on. A pill at the top shows the time while
+you browse other notes.
+
+**Background work:** while a recording is being written up, an upload is being
+turned into a note, or the map is connecting notes, a small panel in the corner
+shows each one with a progress bar, on whatever page you are on. Tap one to go
+to it, or **Hide** to fold the panel; it goes away when the work is done, and it
+comes back after a reload.
 
 **Uploads** (the **Upload** button beside New note, More → Make a note from a
 file, or drag files onto a folder on a computer) turn PDF, Word (.docx),

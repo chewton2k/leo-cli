@@ -47,6 +47,8 @@ pub struct Powers {
 #[derive(Debug, Clone, serde::Serialize)]
 struct ImportJob {
     state: &'static str,
+    label: String,
+    dir: String,
     step: String,
     done: usize,
     total: usize,
@@ -452,6 +454,7 @@ fn router(state: AppState) -> Router {
             post(start_import).layer(axum::extract::DefaultBodyLimit::max(IMPORT_BYTES)),
         )
         .route("/api/import/{id}", get(import_status))
+        .route("/api/activity", get(activity))
         .route("/api/record", get(record::overview).post(record::start))
         .route("/api/record/{id}", get(record::status))
         .route(
@@ -852,6 +855,8 @@ async fn start_import(State(state): State<AppState>, Json(body): Json<ImportBody
             id.clone(),
             ImportJob {
                 state: "working",
+                label: upload_label(&files),
+                dir: dir.clone(),
                 step: "Uploading".into(),
                 done: 0,
                 total: 1,
@@ -864,6 +869,85 @@ async fn start_import(State(state): State<AppState>, Json(body): Json<ImportBody
     let job = id.clone();
     std::thread::spawn(move || run_import(worker, job, importer, dir, body.title, files));
     (StatusCode::ACCEPTED, Json(serde_json::json!({ "id": id }))).into_response()
+}
+
+fn upload_label(files: &[UploadFile]) -> String {
+    match files {
+        [] => "Making a note".to_string(),
+        [one] => format!("Making a note from {}", one.name),
+        [first, rest @ ..] => format!("Making a note from {} and {} more", first.name, rest.len()),
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, PartialEq)]
+struct Task {
+    kind: &'static str,
+    label: String,
+    step: String,
+    done: usize,
+    total: usize,
+    href: String,
+}
+
+fn activity_tasks(
+    imports: &std::collections::HashMap<String, ImportJob>,
+    recording: Option<&record::RecordView>,
+    map: Option<(usize, usize)>,
+) -> Vec<Task> {
+    let mut out: Vec<Task> = imports
+        .values()
+        .filter(|job| job.state == "working")
+        .map(|job| Task {
+            kind: "upload",
+            label: job.label.clone(),
+            step: job.step.clone(),
+            done: job.done,
+            total: job.total,
+            href: if job.dir.is_empty() {
+                "#/".to_string()
+            } else {
+                format!("#/f/{}", job.dir)
+            },
+        })
+        .collect();
+    out.sort_by(|a, b| a.label.cmp(&b.label));
+    if let Some(view) = recording.filter(|v| v.state == "writing") {
+        let (done, total) = view.steps.unwrap_or((0, 0));
+        out.push(Task {
+            kind: "recording",
+            label: "Writing the notes from a recording".to_string(),
+            step: view.step.clone(),
+            done,
+            total,
+            href: "#/record".to_string(),
+        });
+    }
+    if let Some((done, total)) = map {
+        out.push(Task {
+            kind: "map",
+            label: "Connecting your notes on the map".to_string(),
+            step: if total > 0 {
+                format!("{done} of {total} steps")
+            } else {
+                "Starting".to_string()
+            },
+            done,
+            total,
+            href: "#/map".to_string(),
+        });
+    }
+    out
+}
+
+async fn activity(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let imports = state.imports.lock().map(|j| j.clone()).unwrap_or_default();
+    let recording = state
+        .recording
+        .lock()
+        .ok()
+        .and_then(|held| held.as_ref().map(|j| j.view()));
+    let tasks = activity_tasks(&imports, recording.as_ref(), state.graphs.building());
+    Json(serde_json::json!({ "tasks": tasks }))
 }
 
 async fn import_status(State(state): State<AppState>, Path(id): Path<String>) -> Response {
@@ -3241,6 +3325,74 @@ mod tests {
         );
         let notes_dir = state.fresh().notes_dir.clone();
         assert_eq!(leo_core::keep::load(&notes_dir).trash_days, None);
+    }
+
+    #[test]
+    fn background_work_is_listed_until_it_is_done() {
+        let file = |name: &str| UploadFile {
+            name: name.into(),
+            mime: String::new(),
+            bytes: vec![],
+        };
+        assert_eq!(
+            upload_label(&[file("slides.pdf")]),
+            "Making a note from slides.pdf"
+        );
+        assert_eq!(
+            upload_label(&[file("a.jpg"), file("b.jpg"), file("c.jpg")]),
+            "Making a note from a.jpg and 2 more"
+        );
+        let job = |state: &'static str, dir: &str| ImportJob {
+            state,
+            label: "Making a note from slides.pdf".into(),
+            dir: dir.into(),
+            step: "Writing the note".into(),
+            done: 1,
+            total: 3,
+            note: None,
+            error: None,
+        };
+        let mut imports = std::collections::HashMap::new();
+        imports.insert("a".to_string(), job("working", "cs130"));
+        imports.insert("b".to_string(), job("done", ""));
+        imports.insert("c".to_string(), job("failed", ""));
+        let writing = record::RecordView {
+            id: "r".into(),
+            source: record::Source::Browser,
+            state: "writing",
+            secs: 60,
+            step: "Writing the notes".into(),
+            steps: Some((2, 4)),
+            transcript: String::new(),
+            warnings: vec![],
+            points: vec![],
+            levels: vec![],
+            levels_start: 0,
+            note: None,
+            error: None,
+        };
+        let tasks = activity_tasks(&imports, Some(&writing), Some((3, 9)));
+        let kinds: Vec<&str> = tasks.iter().map(|t| t.kind).collect();
+        assert_eq!(
+            kinds,
+            ["upload", "recording", "map"],
+            "finished uploads are not listed"
+        );
+        assert_eq!(tasks[0].href, "#/f/cs130");
+        assert_eq!((tasks[0].done, tasks[0].total), (1, 3));
+        assert_eq!(
+            (tasks[1].done, tasks[1].total, tasks[1].href.as_str()),
+            (2, 4, "#/record")
+        );
+        assert_eq!(tasks[2].step, "3 of 9 steps");
+        let still_recording = record::RecordView {
+            state: "recording",
+            ..writing
+        };
+        assert!(
+            activity_tasks(&Default::default(), Some(&still_recording), None).is_empty(),
+            "a recording that is still going has its own timer, not a progress bar"
+        );
     }
 
     #[test]

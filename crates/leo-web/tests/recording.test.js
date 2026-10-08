@@ -99,3 +99,31 @@ test('the wave says when sound is heard, and what to check when it is not', () =
   assert.match(L.hearingWords('silent', 'screen', false), /playing on the computer/);
   assert.match(L.hearingWords('sound', 'browser', true), /Paused/);
 });
+
+test('the wave rises quickly with sound and falls back gently', () => {
+  let level = 0;
+  level = L.ease(level, 1);
+  assert.ok(level > 0.5, `a sound shows at once: ${level}`);
+  const peak = level;
+  level = L.ease(level, 0);
+  assert.ok(level > peak * 0.8, `and fades slowly: ${level}`);
+  let settled = 1;
+  for (let i = 0; i < 60; i++) settled = L.ease(settled, 0);
+  assert.ok(settled < 0.01);
+});
+
+test('levels from the computer are spread into smooth steps and never repeated', () => {
+  assert.deepEqual(L.spread(0, 1, 4), [0.25, 0.5, 0.75, 1]);
+  assert.deepEqual(L.freshLevels([0.1, 0.2, 0.3], 10, 0), { fresh: [0.1, 0.2, 0.3], fedUpTo: 13 });
+  assert.deepEqual(L.freshLevels([0.2, 0.3, 0.4], 11, 13), { fresh: [0.4], fedUpTo: 14 });
+  assert.deepEqual(L.freshLevels([0.2, 0.3, 0.4], 11, 14), { fresh: [], fedUpTo: 14 });
+  assert.deepEqual(L.freshLevels([0.5, 0.6], 50, 14), { fresh: [0.5, 0.6], fedUpTo: 52 }, 'after a gap, only what is still there');
+});
+
+test('two choices: the microphone here, or the screen, wherever that can work', () => {
+  assert.equal(L.sourceFor('microphone', { local: true, canShare: true }), 'browser');
+  assert.equal(L.sourceFor('microphone', { local: false, canShare: false }), 'browser');
+  assert.equal(L.sourceFor('screen', { local: true, canShare: false }), 'screen', 'on the computer: everything it plays');
+  assert.equal(L.sourceFor('screen', { local: false, canShare: true }), 'tab', 'elsewhere: share a tab or screen');
+  assert.equal(L.sourceFor('screen', { local: false, canShare: false }), null, 'a phone cannot record its screen');
+});

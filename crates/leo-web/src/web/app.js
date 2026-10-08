@@ -39,6 +39,7 @@
     lock: svg('<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>'),
     map: svg('<circle cx="6" cy="7" r="2.2"/><circle cx="18" cy="6" r="2.2"/><circle cx="12" cy="17.5" r="2.2"/><path d="M7.4 8.9l3.5 6.7M16.9 7.9l-3.8 7.8M8.2 6.8l7.6-.6"/>'),
     mic: svg('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>'),
+    screen: svg('<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>'),
     cloud: svg('<path d="M7 18a4.5 4.5 0 0 1-.5-9 6 6 0 0 1 11.3 1.5A3.8 3.8 0 0 1 17.5 18z"/><path d="M4 4l16 16"/>'),
   };
 
@@ -803,6 +804,7 @@
   async function mapRebuild() {
     closeSheet();
     mapStatus(await api('/api/graph/build?fresh=1', { method: 'POST' }));
+    checkActivity();
     pollMap();
   }
 
@@ -816,6 +818,7 @@
     }
     closeSheet();
     mapStatus(await api('/api/graph/build', { method: 'POST' }));
+    checkActivity();
     pollMap();
   }
 
@@ -1359,6 +1362,7 @@
     }
     picked = [];
     watchUpload(started.id, dir);
+    checkActivity();
   }
 
   function watchUpload(id, dir) {
@@ -1671,7 +1675,12 @@
     },
     'rec-start': () => recorder.begin().catch(fail),
     'rec-pause': () => recorder.pause().catch(fail),
-    'rec-stop': () => recorder.stop().catch(fail),
+    'rec-stop': () => recorder.stop().then(checkActivity).catch(fail),
+    'activity-open': (el) => go(el.dataset.href),
+    'activity-fold': () => {
+      activity.folded = !activity.folded;
+      drawActivity();
+    },
     'rec-rejoin': () => recorder.rejoin().catch(fail),
     'rec-point': () => recorder.point(),
     'rec-again': () => recorder.again(),
@@ -1853,6 +1862,53 @@
     await render();
   }
 
+  const activity = { tasks: [], timer: 0, folded: false, route: '' };
+
+  function hiddenHere(task) {
+    if (task.kind === 'recording') return activity.route === 'record';
+    if (task.kind === 'map') return activity.route === 'map';
+    return Boolean($('.upload-working'));
+  }
+
+  function drawActivity() {
+    let box = $('#activity');
+    if (!box) {
+      box = document.createElement('aside');
+      box.id = 'activity';
+      box.className = 'activity';
+      box.setAttribute('aria-label', 'Working in the background');
+      box.setAttribute('aria-live', 'polite');
+      document.body.appendChild(box);
+    }
+    const shown = activity.tasks.filter((t) => !hiddenHere(t));
+    box.hidden = !shown.length;
+    if (!shown.length) return;
+    box.classList.toggle('folded', activity.folded);
+    const rows = shown
+      .map((t) => {
+        const share = t.total ? Math.max(4, Math.round((t.done / t.total) * 100)) : 0;
+        const count = t.total ? ` · ${t.done}/${t.total}` : '';
+        return `<button class="activity-row" data-action="activity-open" data-href="${esc(t.href)}">
+          <span class="activity-label">${esc(t.label)}</span>
+          <span class="activity-step">${esc(t.step)}${count}</span>
+          <span class="activity-bar${t.total ? '' : ' busy'}"><i style="width:${share}%"></i></span>
+        </button>`;
+      })
+      .join('');
+    box.innerHTML = `<button class="activity-head" data-action="activity-fold" aria-expanded="${!activity.folded}"><span class="activity-spin"></span><span class="grow">${shown.length === 1 ? 'Working in the background' : `${shown.length} things in the background`}</span><span class="activity-fold">${activity.folded ? 'Show' : 'Hide'}</span></button>${activity.folded ? '' : rows}`;
+  }
+
+  async function checkActivity() {
+    clearTimeout(activity.timer);
+    try {
+      activity.tasks = (await api('/api/activity')).tasks;
+    } catch (e) {
+      if (e instanceof Locked) return;
+    }
+    drawActivity();
+    if (activity.tasks.length) activity.timer = setTimeout(checkActivity, 1500);
+  }
+
   async function render() {
     const hash = decodeURI(location.hash || '#/');
     const [, kind, rest = ''] = location.hash.match(/^#\/([a-z]*)\/?(.*)$/) || [null, '', ''];
@@ -1861,6 +1917,8 @@
     if (kind !== 'map') leaveMap();
     if (kind !== 'n') chat.setContext(null);
     if (kind !== 'record') recorder.leave();
+    activity.route = kind;
+    drawActivity();
     try {
       if (kind === 'f') await showFolder(arg);
       else if (kind === 'n') await showNote(arg.replace(/\/edit$/, ''));
@@ -1896,4 +1954,5 @@
 
   window.addEventListener('online', () => saving.retry());
   route();
+  checkActivity();
 })();
