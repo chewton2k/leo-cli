@@ -294,6 +294,17 @@ fn an_excerpt_starts_near_the_first_match_and_counts_only_real_tasks() {
         "{cut}"
     );
     assert_eq!(excerpt("short", &["absent".into()]), "short");
+    let words = format!(
+        "{} the queue holds work",
+        "breadth first search ".repeat(10)
+    );
+    let cut = excerpt(&words, &["queue".into()]);
+    assert!(
+        ["…breadth ", "…first ", "…search "]
+            .iter()
+            .any(|w| cut.starts_with(w)),
+        "{cut}"
+    );
     assert_eq!(
         excerpt("İstanbul needle", &["needle".into()]),
         "İstanbul needle"

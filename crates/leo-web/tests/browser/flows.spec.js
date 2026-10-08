@@ -815,6 +815,95 @@ test.describe('large libraries', () => {
   });
 });
 
+test.describe('readability', () => {
+  async function lowContrast(page) {
+    return page.evaluate(() => {
+      const parse = (s) => {
+        const m = /rgba?\(([^)]+)\)/.exec(s || '');
+        if (!m) return [0, 0, 0, 0];
+        const p = m[1].split(/[ ,/]+/).filter(Boolean).map(Number);
+        return [p[0], p[1], p[2], p.length > 3 ? p[3] : 1];
+      };
+      const over = (top, under) => {
+        const a = top[3];
+        return [0, 1, 2].map((i) => top[i] * a + under[i] * (1 - a)).concat(1);
+      };
+      const lum = (c) => {
+        const [r, g, b] = c.slice(0, 3).map((v) => {
+          v /= 255;
+          return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+        });
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      };
+      const backdrop = (el) => {
+        const layers = [];
+        for (let at = el; at; at = at.parentElement) {
+          const c = parse(getComputedStyle(at).backgroundColor);
+          if (c[3] > 0) layers.push(c);
+          if (c[3] >= 1) break;
+        }
+        let colour = parse(getComputedStyle(document.body).backgroundColor);
+        if (colour[3] < 1) colour = [255, 255, 255, 1];
+        for (const layer of layers.reverse()) colour = over(layer, colour);
+        return colour;
+      };
+      const fade = (el) => {
+        let o = 1;
+        for (let at = el; at; at = at.parentElement) o *= Number(getComputedStyle(at).opacity);
+        return o;
+      };
+      const found = [];
+      for (const el of document.querySelectorAll('body *')) {
+        if (![...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim())) continue;
+        if (el.closest('[disabled], [aria-disabled="true"], .skeleton, canvas, svg, option, select, [hidden]')) continue;
+        const style = getComputedStyle(el);
+        const box = el.getBoundingClientRect();
+        if (style.visibility !== 'visible' || box.width < 1 || box.height < 1 || style.display === 'none') continue;
+        const seen = fade(el);
+        if (seen < 0.05) continue;
+        const back = backdrop(el);
+        const fg = over(parse(style.color).slice(0, 3).concat(parse(style.color)[3] * seen), back);
+        const [a, b] = [lum(fg), lum(back)].sort((x, y) => y - x);
+        const ratio = (a + 0.05) / (b + 0.05);
+        if (ratio < 3) found.push(`${ratio.toFixed(2)} ${el.tagName.toLowerCase()}.${[...el.classList].join('.')} "${el.textContent.trim().slice(0, 40)}"`);
+      }
+      return [...new Set(found)];
+    });
+  }
+
+  for (const scheme of ['light', 'dark']) {
+    test(`every page reads clearly in ${scheme} mode`, async ({ page }) => {
+      test.skip(test.info().project.name !== 'desktop', 'colours do not depend on the screen size');
+      test.setTimeout(90000);
+      await page.emulateMedia({ colorScheme: scheme });
+      await page.request.post('/api/dirs', { data: { path: 'readable' } });
+      const note = await (await page.request.post('/api/notes', { data: { title: 'Readable note', body: '## Heading\n- [x] done\n- [ ] open\n\n> a quote\n\n`code` and a [link](https://example.com)', directory: 'readable' } })).json();
+      const gone = await (await page.request.post('/api/notes', { data: { title: 'Readable gone', body: 'x' } })).json();
+      await page.request.delete(`/api/notes/${gone.id}`);
+      const problems = {};
+      const look = async (name) => {
+        await page.waitForTimeout(300);
+        const low = await lowContrast(page);
+        if (low.length) problems[name] = low;
+      };
+      for (const [name, hash] of [['folders', '#/'], ['folder', '#/f/readable'], ['note', `#/n/${note.id}`], ['search', '#/search/readable'], ['trash', '#/trash'], ['settings', '#/settings'], ['storage', '#/settings/storage'], ['record', '#/record'], ['map', '#/map']]) {
+        await page.goto(`/${hash}`);
+        await look(name);
+      }
+      await page.goto('/');
+      await page.locator('#menu').click();
+      await look('menu');
+      await page.keyboard.press('Escape');
+      await page.locator('.fab[data-action="upload"]').click();
+      await look('upload');
+      await page.keyboard.press('Escape');
+      await page.locator('#chat-toggle').click();
+      await look('felix');
+      expect(problems).toEqual({});
+    });
+  }
+});
+
 test.describe('background work', () => {
   test('work still going on shows its progress on every page until it is done', async ({ page }) => {
     let tasks = [

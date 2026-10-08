@@ -2,7 +2,8 @@ const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const binary = process.env.LEO_TEST_BIN || path.resolve(__dirname, '../../../../target/debug/leo');
-const child = spawn(binary, ['serve', '--local', '--port', '31831'], { stdio: 'inherit', env: process.env });
+const port = process.env.LEO_TEST_PORT || '31831';
+const child = spawn(binary, ['serve', '--local', '--port', port], { stdio: 'inherit', env: process.env });
 function stop() {
   child.kill('SIGTERM');
 }

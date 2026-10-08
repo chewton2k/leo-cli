@@ -125,6 +125,7 @@ test('pictures in a note are shown from leo, and outside ones stay links', () =>
   assert.ok(!md.render('![a](data:image/png;base64,AAAA)').includes('<img'));
   assert.ok(md.render('![a"><script>](x.png)').includes('alt="a&quot;&gt;&lt;script&gt;"'));
   assert.equal(md.plain('Look ![Heap](attachments/h.png) and ![[b.png]] then [link](https://x.y)'), 'Look and then link');
+  assert.equal(md.plain('Sizes:\n\n| a | b |\n|---|:--:|\n| 1 | 2 |'), 'Sizes: a b 1 2');
 });
 
 

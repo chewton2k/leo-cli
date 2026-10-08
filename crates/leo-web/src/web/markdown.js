@@ -225,6 +225,8 @@
     return String(markdown || '')
       .replace(/```[\s\S]*?```/g, ' ')
       .replace(/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/gm, ' ')
+      .replace(/^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/gm, ' ')
+      .replace(/\s*\|\s*/g, ' ')
       .replace(/^\s*(#{1,6}|>|[-*+]|\d+[.)])\s+/gm, '')
       .replace(/\[( |x|X)\]\s+/g, '')
       .replace(/!\[\[[^\]]*\]\]/g, ' ')

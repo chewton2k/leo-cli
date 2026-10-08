@@ -154,7 +154,16 @@ pub(crate) fn excerpt(body: &str, words: &[String]) -> String {
         .and_then(|at| body.get(..at))
         .map(|before| before.chars().count().saturating_sub(120))
         .unwrap_or(0);
-    let start = body.char_indices().nth(at).map_or(body.len(), |(i, _)| i);
+    let mut start = body.char_indices().nth(at).map_or(body.len(), |(i, _)| i);
+    if at > 0 {
+        if let Some((gap, c)) = body[start..]
+            .char_indices()
+            .take(30)
+            .find(|(_, c)| c.is_whitespace())
+        {
+            start += gap + c.len_utf8();
+        }
+    }
     let mut out: String = body[start..].chars().take(EXCERPT_CHARS).collect();
     if at > 0 {
         out.insert(0, '…');

@@ -65,6 +65,22 @@ reuse a version number: people may have already downloaded it.
 `install.sh` is served from `main` on raw.githubusercontent.com, so a change to
 it reaches users as soon as it is pushed, not when a release is made.
 
+## The website's browser tests
+
+```sh
+cargo test --no-run                       # rebuilds target/debug/leo, which the tests serve
+cd crates/leo-web/tests/browser
+./node_modules/.bin/playwright test       # flows (CI runs these), desktop and phone
+pnpm visual                               # screenshots compared with the saved ones (local only)
+pnpm visual:update                        # after a deliberate look change; check the new PNGs
+```
+
+The flows include a contrast check (`readability`): every text on every page,
+light and dark, must be at least 3:1 against what is behind it. Screenshot
+baselines are saved per platform (`-darwin`), so they are compared on this Mac
+only; CI runs the flows. The visual config starts its own leo on port 31832
+with a fresh home and masks storage sizes.
+
 ## Tests that only run by hand
 
 These reach the network, so they are `#[ignore]`d:

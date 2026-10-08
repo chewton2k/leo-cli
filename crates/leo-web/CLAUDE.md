@@ -306,3 +306,9 @@
   around the first match; the page draws 60 at a time. The map shows the
   `MAP_MOST` (400) most connected notes when there are more (`visible`'s
   `most`, `limited`), with a chip saying so; a focus or map search reaches any.
+- Readability and looks: `flows.spec.js` `readability` measures every visible
+  text's contrast (blended backgrounds and opacity) on each page in light and
+  dark, failing under 3:1; that is why light `--faint` is `#86857f`.
+  `visual.spec.js` + `playwright.visual.config.js` (`pnpm visual`, own leo on
+  31832, seeded once, 4 projects: desktop/phone × light/dark) compare screenshots
+  with `visual.spec.js-snapshots/*-darwin.png`; not run in CI.
