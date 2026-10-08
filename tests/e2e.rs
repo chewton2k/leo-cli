@@ -1293,7 +1293,13 @@ fn opening_the_link_keeps_the_code_out_of_the_address_bar() {
         .expect("no cookie set");
     assert!(cookie.contains("HttpOnly"), "{cookie}");
 
-    let page = server.get("/", &format!("Cookie: leo_token={token}\r\n"));
+    let session = cookie
+        .split_whitespace()
+        .find_map(|part| part.strip_prefix("leo_session="))
+        .map(|v| v.trim_end_matches(';').to_string())
+        .expect("a session cookie");
+    assert_ne!(session, token, "the link code is not the cookie");
+    let page = server.get("/", &format!("Cookie: leo_session={session}\r\n"));
     assert!(page.starts_with("HTTP/1.1 200"), "{page}");
     let lower = page.to_lowercase();
     assert!(lower.contains("referrer-policy: no-referrer"), "{page}");
@@ -1309,7 +1315,7 @@ fn opening_the_link_keeps_the_code_out_of_the_address_bar() {
     assert!(page.contains("<script src=\"/app.js\">"), "{page}");
 
     for script in ["/app.js", "/markdown.js", "/editing.js", "/doc.js"] {
-        let served = server.get(script, &format!("Cookie: leo_token={token}\r\n"));
+        let served = server.get(script, &format!("Cookie: leo_session={session}\r\n"));
         assert!(served.starts_with("HTTP/1.1 200"), "{script}: {served}");
         assert!(
             served
@@ -1325,6 +1331,16 @@ fn opening_the_link_keeps_the_code_out_of_the_address_bar() {
 
     let tunneled = server.get(&format!("/?token={token}"), "X-Forwarded-Proto: https\r\n");
     assert!(tunneled.contains("Secure"), "{tunneled}");
+
+    let older = server.get("/", &format!("Cookie: leo_token={token}\r\n"));
+    assert!(older.starts_with("HTTP/1.1 200"), "{older}");
+    assert!(
+        older.contains("leo_session="),
+        "an old cookie is swapped for a session:\n{older}"
+    );
+    assert!(server
+        .get("/", "Cookie: leo_session=made-up\r\n")
+        .starts_with("HTTP/1.1 401"));
 
     let lost = server.get("/", "");
     assert!(lost.starts_with("HTTP/1.1 401"), "{lost}");

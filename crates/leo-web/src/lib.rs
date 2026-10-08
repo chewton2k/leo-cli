@@ -1,8 +1,10 @@
 pub mod chat;
+pub mod chat_files;
 pub mod chats;
 pub mod export;
 pub mod graph;
 pub mod record;
+pub mod sessions;
 pub mod storage;
 mod token;
 pub mod tunnel;
@@ -23,6 +25,8 @@ pub struct UploadFile {
     pub bytes: Vec<u8>,
 }
 
+pub type Reader = Arc<dyn Fn(UploadFile, &mut dyn FnMut(&str)) -> Result<String> + Send + Sync>;
+
 pub type Importer = Arc<
     dyn Fn(Vec<UploadFile>, &mut dyn FnMut(&str, usize, usize)) -> Result<(String, String)>
         + Send
@@ -37,6 +41,7 @@ pub struct Powers {
     pub importer: Option<Importer>,
     pub listener: Option<record::Listener>,
     pub housekeeper: Option<Arc<dyn storage::Housekeeper>>,
+    pub reader: Option<Reader>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -72,7 +77,7 @@ use leo_core::store::Store;
 #[derive(Clone)]
 struct AppState {
     store: Arc<Mutex<Storage>>,
-    token: String,
+    gate: Arc<sessions::Gate>,
     graphs: Arc<graph::Graphs>,
     chat: Option<Streamer>,
     settings: Option<Arc<dyn SettingsApi>>,
@@ -82,6 +87,7 @@ struct AppState {
     recording: record::Recordings,
     chats: std::path::PathBuf,
     housekeeper: Option<Arc<dyn storage::Housekeeper>>,
+    reader: Option<Reader>,
 }
 
 struct Storage {
@@ -169,11 +175,11 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
     let importer = powers.importer;
     let recorder = powers.listener;
     let housekeeper = powers.housekeeper;
+    let reader = powers.reader;
     let count = store.notes.len();
-    let token = token::load_or_create(
-        &leo_core::paths::config_dir()?.join("serve-token"),
-        options.new_token,
-    )?;
+    let token_path = leo_core::paths::config_dir()?.join("serve-token");
+    let sessions_path = leo_core::paths::config_dir()?.join("serve-sessions.json");
+    let token = token::load_or_create(&token_path, options.new_token)?;
     if !options.local && !leo_core::paths::on_path("cloudflared") {
         anyhow::bail!(tunnel::MISSING);
     }
@@ -184,7 +190,17 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
             store,
             reload: false,
         })),
-        token: token.clone(),
+        gate: Arc::new(sessions::Gate::new(
+            token.clone(),
+            Some(token_path),
+            if options.new_token {
+                let fresh = sessions::Sessions::load(&sessions_path);
+                fresh.end_all();
+                fresh
+            } else {
+                sessions::Sessions::load(&sessions_path)
+            },
+        )),
         graphs,
         chat,
         settings,
@@ -194,6 +210,7 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
         recording: Default::default(),
         chats,
         housekeeper,
+        reader,
     });
 
     let tunnel = if !options.local {
@@ -403,7 +420,23 @@ fn router(state: AppState) -> Router {
         .route("/chat.js", get(chat_js))
         .route("/api/chat", post(chat_reply))
         .route("/api/chats", get(list_chats))
+        .route(
+            "/api/chats/{id}/files",
+            get(list_chat_files)
+                .post(add_chat_file)
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    chat_files::UPLOAD_BYTES,
+                )),
+        )
+        .route(
+            "/api/chats/{id}/files/{doc}",
+            axum::routing::delete(remove_chat_file),
+        )
         .route("/api/storage", get(get_storage).post(change_storage))
+        .route("/api/keep", get(get_keep).post(set_keep))
+        .route("/api/sessions", get(list_sessions))
+        .route("/api/sessions/end", post(end_sessions))
+        .route("/api/sessions/new-link", post(new_link))
         .route("/api/export", get(export_zip))
         .route(
             "/api/chats/{id}",
@@ -431,6 +464,7 @@ fn router(state: AppState) -> Router {
         .route("/recorder.js", get(recorder_js))
         .route("/recording.js", get(recording_js))
         .route("/api/notes/{id}/originals", get(list_originals))
+        .route("/api/notes/{id}/originals.zip", get(originals_zip))
         .route("/api/notes/{id}/originals/{name}", get(get_original))
         .route("/api/graph", get(get_graph))
         .route("/api/graph/status", get(graph_status))
@@ -934,16 +968,14 @@ fn ndjson(value: serde_json::Value) -> String {
     format!("{value}\n")
 }
 
-async fn export_zip(State(state): State<AppState>, Query(parts): Query<export::Parts>) -> Response {
-    let notes_dir = match state.with_store(|store| Ok(store.notes_dir.clone())).await {
-        Ok(dir) => dir,
-        Err(code) => return code.into_response(),
-    };
-    let chats = state.chats.clone();
+async fn zip_download(
+    build: impl FnOnce(&std::fs::File) -> anyhow::Result<()> + Send + 'static,
+    file_name: String,
+) -> Response {
     let made = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
         use std::io::Seek;
         let tmp = tempfile::NamedTempFile::new()?;
-        export::write_zip(tmp.as_file(), &notes_dir, &chats, parts)?;
+        build(tmp.as_file())?;
         let (mut file, path) = tmp.into_parts();
         file.rewind()?;
         let size = file.metadata()?.len();
@@ -953,7 +985,7 @@ async fn export_zip(State(state): State<AppState>, Query(parts): Query<export::P
     let Ok(Ok((file, path, size))) = made else {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": "The export could not be made." })),
+            Json(serde_json::json!({ "error": "The zip could not be made." })),
         )
             .into_response();
     };
@@ -974,10 +1006,6 @@ async fn export_zip(State(state): State<AppState>, Query(parts): Query<export::P
             Err(e) => Some((Err(e), None)),
         }
     });
-    let name = format!(
-        "attachment; filename=\"leo-export-{}.zip\"",
-        chrono::Local::now().format("%Y-%m-%d")
-    );
     let mut response = axum::body::Body::from_stream(stream).into_response();
     let headers = response.headers_mut();
     headers.insert(
@@ -985,10 +1013,69 @@ async fn export_zip(State(state): State<AppState>, Query(parts): Query<export::P
         HeaderValue::from_static("application/zip"),
     );
     headers.insert(header::CONTENT_LENGTH, HeaderValue::from(size));
-    if let Ok(value) = HeaderValue::from_str(&name) {
+    if let Ok(value) = HeaderValue::from_str(&attachment_header(&file_name)) {
         headers.insert(header::CONTENT_DISPOSITION, value);
     }
     response
+}
+
+fn attachment_header(file_name: &str) -> String {
+    let plain: String = file_name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_graphic() && c != '"' && c != '\\' || c == ' ' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let encoded: String = file_name
+        .bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect();
+    format!("attachment; filename=\"{plain}\"; filename*=UTF-8''{encoded}")
+}
+
+async fn export_zip(State(state): State<AppState>, Query(parts): Query<export::Parts>) -> Response {
+    let notes_dir = match state.with_store(|store| Ok(store.notes_dir.clone())).await {
+        Ok(dir) => dir,
+        Err(code) => return code.into_response(),
+    };
+    let chats = state.chats.clone();
+    zip_download(
+        move |file| export::write_zip(file, &notes_dir, &chats, parts).map(|_| ()),
+        format!("leo-export-{}.zip", chrono::Local::now().format("%Y-%m-%d")),
+    )
+    .await
+}
+
+async fn originals_zip(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    let found = state
+        .with_store(move |store| {
+            let note = store.find_note(&id).ok_or(StatusCode::NOT_FOUND)?;
+            let folder = originals_dir(&store.notes_dir, &note.id).ok_or(StatusCode::NOT_FOUND)?;
+            Ok((folder, note.title.clone()))
+        })
+        .await;
+    let (folder, title) = match found {
+        Ok(found) if found.0.is_dir() => found,
+        Ok(_) => return StatusCode::NOT_FOUND.into_response(),
+        Err(code) => return code.into_response(),
+    };
+    let base = safe_file_name(&title);
+    let name = format!("{} originals.zip", base.trim_end_matches(".zip"));
+    zip_download(
+        move |file| export::write_folder(file, &folder, &base).map(|_| ()),
+        name,
+    )
+    .await
 }
 
 async fn storage_now(state: &AppState) -> Result<serde_json::Value, StatusCode> {
@@ -1055,9 +1142,140 @@ async fn change_storage(
     }
 }
 
+fn keep_page(keep: leo_core::keep::Keep) -> serde_json::Value {
+    let choices = |list: &[Option<u32>]| {
+        list.iter()
+            .map(|d| serde_json::json!({ "days": d, "label": leo_core::keep::describe(*d) }))
+            .collect::<Vec<_>>()
+    };
+    serde_json::json!({
+        "trash_days": keep.trash_days,
+        "chat_days": keep.chat_days,
+        "trash_choices": choices(&leo_core::keep::TRASH_CHOICES),
+        "chat_choices": choices(&leo_core::keep::CHAT_CHOICES),
+    })
+}
+
+async fn get_keep(State(state): State<AppState>) -> Result<Json<serde_json::Value>, StatusCode> {
+    state
+        .with_store(|store| Ok(Json(keep_page(leo_core::keep::load(&store.notes_dir)))))
+        .await
+}
+
+async fn set_keep(
+    State(state): State<AppState>,
+    Json(keep): Json<leo_core::keep::Keep>,
+) -> Response {
+    let chats_dir = state.chats.clone();
+    let done = state
+        .with_store(move |store| {
+            leo_core::keep::save(&store.notes_dir, &keep).map_err(|_| StatusCode::BAD_REQUEST)?;
+            store.tidy_trash_now();
+            chats::tidy(&chats_dir, keep.chat_days, chrono::Utc::now());
+            Ok(keep_page(keep))
+        })
+        .await;
+    match done {
+        Ok(page) => Json(page).into_response(),
+        Err(StatusCode::BAD_REQUEST) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "Pick one of the choices offered." })),
+        )
+            .into_response(),
+        Err(code) => code.into_response(),
+    }
+}
+
+async fn list_chat_files(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    if !chats::valid_id(&id) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let dir = state.chats.clone();
+    match tokio::task::spawn_blocking(move || chat_files::list(&dir, &id)).await {
+        Ok(docs) => Json(docs).into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+async fn add_chat_file(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<ImportFileBody>,
+) -> Response {
+    let refuse = |status: StatusCode, message: String| {
+        (status, Json(serde_json::json!({ "error": message }))).into_response()
+    };
+    if !chats::valid_id(&id) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let Some(reader) = state.reader.clone() else {
+        return refuse(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "leo serve was started without a way to read files.".into(),
+        );
+    };
+    let bytes = {
+        use base64::Engine;
+        match base64::engine::general_purpose::STANDARD.decode(body.data.as_bytes()) {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                return refuse(
+                    StatusCode::BAD_REQUEST,
+                    format!("{} did not arrive intact; try again.", body.name),
+                )
+            }
+        }
+    };
+    let name = safe_file_name(&body.name);
+    let dir = state.chats.clone();
+    let file = UploadFile {
+        name: name.clone(),
+        mime: body.mime,
+        bytes,
+    };
+    let done = tokio::task::spawn_blocking(move || -> Result<chat_files::Doc> {
+        if chat_files::list(&dir, &id).len() >= chat_files::MOST_FILES {
+            anyhow::bail!(
+                "a chat holds up to {} documents; remove one first",
+                chat_files::MOST_FILES
+            );
+        }
+        let text = reader(file, &mut |_| {})?;
+        chat_files::add(&dir, &id, &name, &text, chrono::Utc::now())
+    })
+    .await;
+    match done {
+        Ok(Ok(doc)) => (StatusCode::CREATED, Json(doc)).into_response(),
+        Ok(Err(e)) => refuse(StatusCode::UNPROCESSABLE_ENTITY, e.to_string()),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+async fn remove_chat_file(
+    State(state): State<AppState>,
+    Path((id, doc)): Path<(String, String)>,
+) -> StatusCode {
+    let dir = state.chats.clone();
+    match tokio::task::spawn_blocking(move || chat_files::remove(&dir, &id, &doc)).await {
+        Ok(true) => StatusCode::NO_CONTENT,
+        _ => StatusCode::NOT_FOUND,
+    }
+}
+
 async fn list_chats(State(state): State<AppState>) -> Response {
     let dir = state.chats.clone();
-    match tokio::task::spawn_blocking(move || chats::list(&dir)).await {
+    let days = state
+        .with_store(|store| Ok(leo_core::keep::load(&store.notes_dir).chat_days))
+        .await
+        .unwrap_or(None);
+    match tokio::task::spawn_blocking(move || {
+        let now = chrono::Utc::now();
+        chats::tidy(&dir, days, now);
+        chat_files::tidy_orphans(&dir, now);
+        chats::list(&dir)
+    })
+    .await
+    {
         Ok(list) => Json(list).into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
@@ -1140,7 +1358,11 @@ async fn chat_reply(State(state): State<AppState>, Json(body): Json<chat::ChatBo
         Ok(found) => found,
         Err(code) => return code.into_response(),
     };
-    let (system, user) = chat::prompt(mode, &notes, &body.messages);
+    let documents = match &body.chat {
+        Some(chat) if !body.files.is_empty() => chat_files::texts(&state.chats, chat, &body.files),
+        _ => Vec::new(),
+    };
+    let (system, user) = chat::prompt(mode, &notes, &documents, &body.messages);
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     let _ = tx.send(ndjson(serde_json::json!({ "sources": sources })));
     tokio::task::spawn_blocking(move || {
@@ -1179,41 +1401,74 @@ async fn chat_reply(State(state): State<AppState>, Json(body): Json<chat::ChatBo
     response
 }
 
-async fn auth_middleware(State(state): State<AppState>, request: Request, next: Next) -> Response {
+#[derive(Clone)]
+struct CurrentSession(String);
+
+fn user_agent(request: &Request) -> String {
+    request
+        .headers()
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string()
+}
+
+fn tunnelled(request: &Request) -> bool {
+    request
+        .headers()
+        .get("x-forwarded-proto")
+        .is_some_and(|v| v.as_bytes().eq_ignore_ascii_case(b"https"))
+}
+
+async fn auth_middleware(
+    State(state): State<AppState>,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    let now = chrono::Utc::now();
+    let https = tunnelled(&request);
     let query = request.uri().query().unwrap_or("");
     if let Some(given) = query_param(query, "token") {
-        if token::same(given, &state.token) {
-            let https = request
-                .headers()
-                .get("x-forwarded-proto")
-                .is_some_and(|v| v.as_bytes().eq_ignore_ascii_case(b"https"));
-            let cookie = session_cookie(&state.token, https);
+        if state.gate.token_matches(given) {
+            let secret = state.gate.sessions.start(&user_agent(&request), now);
+            request
+                .extensions_mut()
+                .insert(CurrentSession(secret.clone()));
             let mut response =
                 if request.method() == axum::http::Method::GET && request.uri().path() == "/" {
                     Redirect::to("/").into_response()
                 } else {
                     next.run(request).await
                 };
-            if let Ok(value) = HeaderValue::from_str(&cookie) {
-                response.headers_mut().insert(header::SET_COOKIE, value);
-            }
+            set_session_cookies(&mut response, &secret, https);
             return response;
         }
     }
 
-    let from_cookie = request
+    let cookies = request
         .headers()
         .get(header::COOKIE)
         .and_then(|c| c.to_str().ok())
-        .is_some_and(|cookies| {
-            cookies.split(';').any(|part| {
-                part.trim()
-                    .strip_prefix("leo_token=")
-                    .is_some_and(|v| token::same(v, &state.token))
-            })
-        });
-    if from_cookie {
-        return next.run(request).await;
+        .unwrap_or("")
+        .to_string();
+    if let Some(secret) = sessions::cookie_value(&cookies, sessions::COOKIE) {
+        if state.gate.sessions.check(secret, now) {
+            request
+                .extensions_mut()
+                .insert(CurrentSession(secret.to_string()));
+            return next.run(request).await;
+        }
+    }
+    let legacy = sessions::cookie_value(&cookies, sessions::LEGACY_COOKIE)
+        .is_some_and(|v| state.gate.token_matches(v));
+    if legacy {
+        let secret = state.gate.sessions.start(&user_agent(&request), now);
+        request
+            .extensions_mut()
+            .insert(CurrentSession(secret.clone()));
+        let mut response = next.run(request).await;
+        set_session_cookies(&mut response, &secret, https);
+        return response;
     }
 
     if request.uri().path() == "/" {
@@ -1222,12 +1477,89 @@ async fn auth_middleware(State(state): State<AppState>, request: Request, next: 
     StatusCode::UNAUTHORIZED.into_response()
 }
 
-fn session_cookie(token: &str, https: bool) -> String {
-    format!(
-        "leo_token={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}{}",
-        COOKIE_DAYS * 24 * 3600,
-        if https { "; Secure" } else { "" }
-    )
+async fn list_sessions(
+    State(state): State<AppState>,
+    current: Option<axum::Extension<CurrentSession>>,
+) -> Json<serde_json::Value> {
+    let current = current.map(|axum::Extension(c)| c.0);
+    Json(serde_json::json!({
+        "sessions": state.gate.sessions.list(current.as_deref(), chrono::Utc::now()),
+    }))
+}
+
+#[derive(Deserialize)]
+struct EndSessions {
+    #[serde(default)]
+    handle: Option<String>,
+    #[serde(default)]
+    others: bool,
+}
+
+async fn end_sessions(
+    State(state): State<AppState>,
+    current: Option<axum::Extension<CurrentSession>>,
+    Json(body): Json<EndSessions>,
+) -> Response {
+    let current = current.map(|axum::Extension(c)| c.0);
+    let ended = match (body.others, body.handle, current) {
+        (true, _, Some(mine)) => state.gate.sessions.end_others(&mine),
+        (false, Some(handle), _) => usize::from(state.gate.sessions.end(&handle)),
+        _ => return StatusCode::BAD_REQUEST.into_response(),
+    };
+    Json(serde_json::json!({ "ended": ended })).into_response()
+}
+
+async fn new_link(State(state): State<AppState>, headers: axum::http::HeaderMap) -> Response {
+    let host = headers
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .filter(|h| !h.is_empty() && !h.contains(['/', ' ', '\\']))
+        .unwrap_or("127.0.0.1")
+        .to_string();
+    let scheme = if headers
+        .get("x-forwarded-proto")
+        .is_some_and(|v| v.as_bytes().eq_ignore_ascii_case(b"https"))
+    {
+        "https"
+    } else {
+        "http"
+    };
+    let gate = Arc::clone(&state.gate);
+    match tokio::task::spawn_blocking(move || gate.new_link_code()).await {
+        Ok(Ok(code)) => {
+            let link = format!("{scheme}://{host}/?token={code}");
+            if !leo_core::diag::is_quiet() {
+                println!();
+                println!("  {}", "A new link was made from the website:".bold());
+                println!("    {}", clickable(&link));
+                println!(
+                    "  {}",
+                    "Older links stop working for browsers that are not signed in yet.".dimmed()
+                );
+            }
+            Json(serde_json::json!({ "link": link })).into_response()
+        }
+        _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+fn set_session_cookies(response: &mut Response, secret: &str, https: bool) {
+    let secure = if https { "; Secure" } else { "" };
+    for cookie in [
+        format!(
+            "{}={secret}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}{secure}",
+            sessions::COOKIE,
+            COOKIE_DAYS * 24 * 3600
+        ),
+        format!(
+            "{}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{secure}",
+            sessions::LEGACY_COOKIE
+        ),
+    ] {
+        if let Ok(value) = HeaderValue::from_str(&cookie) {
+            response.headers_mut().append(header::SET_COOKIE, value);
+        }
+    }
 }
 
 const LOCKED: &str = "<!doctype html><meta name=viewport content='width=device-width'>\
@@ -1844,7 +2176,11 @@ mod tests {
                 store,
                 reload: false,
             })),
-            token: String::new(),
+            gate: Arc::new(sessions::Gate::new(
+                "0123456789abcdef0123456789abcdef".into(),
+                None,
+                sessions::Sessions::in_memory(),
+            )),
             graphs,
             chat: None,
             settings: None,
@@ -1854,6 +2190,7 @@ mod tests {
             recording: Default::default(),
             chats: dir.path().join("chats"),
             housekeeper: None,
+            reader: None,
         };
         (state, dir, ids)
     }
@@ -2039,6 +2376,104 @@ mod tests {
     }
 
     #[test]
+    fn a_document_given_to_felix_is_kept_as_text_and_read_with_the_question() {
+        use base64::Engine;
+        let (mut state, _d, _ids) = state_with(&[]);
+        state.reader = Some(Arc::new(|file: UploadFile, _: &mut dyn FnMut(&str)| {
+            assert_eq!(file.bytes, b"%PDF fake");
+            Ok(format!("Text of {}: Dijkstra uses a heap.", file.name))
+        }));
+        let seen = Arc::new(Mutex::new(String::new()));
+        let saw = Arc::clone(&seen);
+        state.chat = Some(Arc::new(
+            move |_: &str, user: &str, _: u32, piece: &mut dyn FnMut(&str), _: &mut dyn FnMut()| {
+                *saw.lock().unwrap() = user.to_string();
+                piece("It says Dijkstra uses a heap (slides.pdf).");
+                Ok("done".to_string())
+            },
+        ));
+        let upload = |name: &str, data: &[u8]| {
+            run(add_chat_file(
+                State(state.clone()),
+                Path("chat-docs-0001".into()),
+                Json(ImportFileBody {
+                    name: name.into(),
+                    mime: "application/pdf".into(),
+                    data: base64::engine::general_purpose::STANDARD.encode(data),
+                }),
+            ))
+        };
+        let added = upload("../../slides.pdf", b"%PDF fake");
+        assert_eq!(added.status(), StatusCode::CREATED);
+        let doc = json_of(added);
+        assert_eq!(doc["name"], "slides.pdf");
+        let on_disk: Vec<_> = std::fs::read_dir(state.chats.join("chat-docs-0001.files"))
+            .unwrap()
+            .flatten()
+            .map(|e| std::fs::read_to_string(e.path()).unwrap())
+            .collect();
+        assert_eq!(on_disk.len(), 1);
+        assert!(
+            !on_disk[0].contains("%PDF"),
+            "only the text is kept, never the file"
+        );
+
+        let body = chat::ChatBody {
+            messages: vec![chat::Turn {
+                role: "user".into(),
+                text: "what do my slides say?".into(),
+            }],
+            mode: None,
+            note: None,
+            refs: vec![],
+            chat: Some("chat-docs-0001".into()),
+            files: vec![doc["id"].as_str().unwrap().to_string()],
+        };
+        run(async {
+            let response = chat_reply(State(state.clone()), Json(body)).await;
+            axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap()
+        });
+        let prompt = seen.lock().unwrap().clone();
+        assert!(
+            prompt.contains("<document id=\"d1\" name=\"slides.pdf\">"),
+            "{prompt}"
+        );
+        assert!(prompt.contains("Text of slides.pdf: Dijkstra uses a heap."));
+
+        let listed = json_of(run(list_chat_files(
+            State(state.clone()),
+            Path("chat-docs-0001".into()),
+        )));
+        assert_eq!(listed.as_array().unwrap().len(), 1);
+        let gone = run(remove_chat_file(
+            State(state.clone()),
+            Path(("chat-docs-0001".into(), doc["id"].as_str().unwrap().into())),
+        ));
+        assert_eq!(gone, StatusCode::NO_CONTENT);
+        let bad = run(list_chat_files(State(state.clone()), Path("../x".into())));
+        assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
+        state.reader = Some(Arc::new(|_: UploadFile, _: &mut dyn FnMut(&str)| {
+            anyhow::bail!("leo cannot read song.mp3 yet")
+        }));
+        let unreadable = run(add_chat_file(
+            State(state.clone()),
+            Path("chat-docs-0001".into()),
+            Json(ImportFileBody {
+                name: "song.mp3".into(),
+                mime: "audio/mpeg".into(),
+                data: "AAAA".into(),
+            }),
+        ));
+        assert_eq!(unreadable.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(json_of(unreadable)["error"]
+            .as_str()
+            .unwrap()
+            .contains("song.mp3"));
+    }
+
+    #[test]
     fn a_chat_reply_streams_its_sources_then_the_answer() {
         let (mut state, _d, ids) = state_with(&[("Heaps", "cs130")]);
         {
@@ -2069,6 +2504,8 @@ mod tests {
             mode: Some("study".into()),
             note: Some(ids[0].clone()),
             refs: vec![],
+            chat: None,
+            files: vec![],
         };
         let text = run(async {
             let response = chat_reply(State(state.clone()), Json(body)).await;
@@ -2104,6 +2541,8 @@ mod tests {
             mode: None,
             note: None,
             refs: vec![],
+            chat: None,
+            files: vec![],
         };
         let status = run(async {
             chat_reply(State(state.clone()), Json(ask("hi")))
@@ -2646,6 +3085,155 @@ mod tests {
             ));
             assert_eq!(refused.unwrap_err(), StatusCode::BAD_REQUEST, "{bad:?}");
         }
+    }
+
+    #[test]
+    fn browsers_are_listed_and_signed_out_one_by_one_or_all_but_this_one() {
+        let (state, _d, _ids) = state_with(&[]);
+        let now = chrono::Utc::now();
+        let mine = state
+            .gate
+            .sessions
+            .start("Chrome/130.0 (Macintosh; Mac OS X)", now);
+        let phone = state.gate.sessions.start("(iPhone) Safari/604.1", now);
+        let tablet = state.gate.sessions.start("(iPad) Safari/604.1", now);
+        let me = || Some(axum::Extension(CurrentSession(mine.clone())));
+
+        let listed = run(list_sessions(State(state.clone()), me())).0;
+        let list = listed["sessions"].as_array().unwrap();
+        assert_eq!(list.len(), 3);
+        assert_eq!(list[0]["current"], true);
+        assert_eq!(list[0]["device"], "Chrome on Mac");
+        assert!(
+            !listed.to_string().contains(&mine),
+            "secrets never reach the page"
+        );
+
+        let phone_handle = sessions::handle_of(&phone);
+        let one = run(end_sessions(
+            State(state.clone()),
+            me(),
+            Json(EndSessions {
+                handle: Some(phone_handle),
+                others: false,
+            }),
+        ));
+        assert_eq!(json_of(one)["ended"], 1);
+        assert!(!state.gate.sessions.check(&phone, now));
+        assert!(state.gate.sessions.check(&tablet, now));
+
+        let rest = run(end_sessions(
+            State(state.clone()),
+            me(),
+            Json(EndSessions {
+                handle: None,
+                others: true,
+            }),
+        ));
+        assert_eq!(json_of(rest)["ended"], 1);
+        assert!(!state.gate.sessions.check(&tablet, now));
+        assert!(state.gate.sessions.check(&mine, now));
+
+        let unclear = run(end_sessions(
+            State(state.clone()),
+            None,
+            Json(EndSessions {
+                handle: None,
+                others: true,
+            }),
+        ));
+        assert_eq!(unclear.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn a_new_link_is_built_for_the_address_in_use_and_the_old_code_stops_working() {
+        let (state, _d, _ids) = state_with(&[]);
+        let old = "0123456789abcdef0123456789abcdef";
+        assert!(state.gate.token_matches(old));
+        let mut headers = host("abc.trycloudflare.com");
+        headers.insert("x-forwarded-proto", HeaderValue::from_static("https"));
+        let made = json_of(run(new_link(State(state.clone()), headers)));
+        let link = made["link"].as_str().unwrap();
+        assert!(
+            link.starts_with("https://abc.trycloudflare.com/?token="),
+            "{link}"
+        );
+        let code = link.rsplit('=').next().unwrap();
+        assert!(state.gate.token_matches(code));
+        assert!(!state.gate.token_matches(old));
+        let local = json_of(run(new_link(State(state.clone()), host("127.0.0.1:3131"))));
+        assert!(local["link"]
+            .as_str()
+            .unwrap()
+            .starts_with("http://127.0.0.1:3131/?token="));
+    }
+
+    #[test]
+    fn a_download_name_works_in_every_browser_whatever_the_title() {
+        assert_eq!(
+            attachment_header("Lecture 4 originals.zip"),
+            "attachment; filename=\"Lecture 4 originals.zip\"; filename*=UTF-8''Lecture%204%20originals.zip"
+        );
+        let accented = attachment_header("Café \"notes\".zip");
+        assert!(
+            accented.starts_with("attachment; filename=\"Caf_ _notes_.zip\""),
+            "{accented}"
+        );
+        assert!(
+            accented.ends_with("filename*=UTF-8''Caf%C3%A9%20%22notes%22.zip"),
+            "{accented}"
+        );
+        assert!(HeaderValue::from_str(&accented).is_ok());
+    }
+
+    #[test]
+    fn keeping_choices_are_saved_and_applied_right_away() {
+        let (state, _d, _ids) = state_with(&[]);
+        let old = chrono::Utc::now() - chrono::Duration::days(45);
+        chats::save(
+            &state.chats,
+            "chat-old-0001",
+            chats::Saving {
+                title: String::new(),
+                mode: String::new(),
+                refs: vec![],
+                messages: vec![serde_json::json!({"role": "user", "text": "hi"})],
+            },
+            old,
+        )
+        .unwrap();
+        let page = run(get_keep(State(state.clone()))).unwrap().0;
+        assert_eq!(page["trash_days"], 30);
+        assert!(
+            page["chat_days"].is_null(),
+            "chats are kept forever unless asked"
+        );
+        assert_eq!(page["chat_choices"].as_array().unwrap().len(), 4);
+
+        let bad = run(set_keep(
+            State(state.clone()),
+            Json(leo_core::keep::Keep {
+                trash_days: Some(3),
+                chat_days: None,
+            }),
+        ));
+        assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(chats::list(&state.chats).len(), 1);
+
+        let set = run(set_keep(
+            State(state.clone()),
+            Json(leo_core::keep::Keep {
+                trash_days: None,
+                chat_days: Some(30),
+            }),
+        ));
+        assert_eq!(json_of(set)["chat_days"], 30);
+        assert!(
+            chats::list(&state.chats).is_empty(),
+            "a 45-day-old chat goes at once"
+        );
+        let notes_dir = state.fresh().notes_dir.clone();
+        assert_eq!(leo_core::keep::load(&notes_dir).trash_days, None);
     }
 
     #[test]

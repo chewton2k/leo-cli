@@ -275,6 +275,7 @@ test.describe('Felix', () => {
     await expect(chat.locator('.chat-pick')).toBeHidden();
 
     await chat.locator('[data-chat="attach"]').click();
+    await chat.locator('[data-chat="attach-note"]').click();
     await chat.locator('#chat-pick-search').fill(`Binary heaps ${tag}`);
     await chat.locator('.chat-pick-row', { hasText: `Binary heaps ${tag}` }).click();
     await expect(chat.locator('.chat-ref')).toHaveCount(2);
@@ -416,6 +417,43 @@ test.describe('Felix', () => {
     });
     expect(sizes[0] / sizes[1]).toBeGreaterThan(1);
     expect(sizes[0] / sizes[1]).toBeLessThan(1.4);
+  });
+
+  test('a file from this device is read for Felix, goes with each message, and can be removed', async ({ page }) => {
+    const asked = [];
+    await page.route('**/api/chat', async (route) => {
+      asked.push(route.request().postDataJSON());
+      await route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: '{"sources":[]}\n{"t":"Your file says heaps."}\n{"done":true}\n' });
+    });
+    await page.goto('/');
+    await page.locator('#chat-toggle').click();
+    const chat = page.locator('#chat');
+    await chat.locator('[data-chat="attach"]').click();
+    await expect(chat.locator('#chat-attach-menu')).toBeVisible();
+    const chooser = page.waitForEvent('filechooser');
+    await chat.locator('[data-chat="attach-file"]').click();
+    await (await chooser).setFiles({ name: 'week3.txt', mimeType: 'text/plain', buffer: Buffer.from('Heaps keep the minimum at the root.') });
+    await expect(chat.locator('#chat-attach-menu')).toBeHidden();
+    const chip = chat.locator('.chat-ref.doc', { hasText: 'week3.txt' });
+    await expect(chip).toBeVisible();
+    await expect(chip).not.toHaveClass(/reading/);
+    await chat.locator('#chat-input').fill('what does my file say?');
+    await chat.locator('#chat-input').press('Enter');
+    await expect(chat.locator('.msg.leo').last()).toContainText('Your file says heaps.');
+    expect(asked[0].files.length).toBe(1);
+    const files = await (await page.request.get(`/api/chats/${asked[0].chat}/files`)).json();
+    expect(files.map((f) => f.name)).toEqual(['week3.txt']);
+    expect(files[0].chars).toBe(35);
+    await expect(chat.locator('.msg.user .cite.doc')).toHaveText('week3.txt');
+    await chip.locator('.chat-ref-x').click();
+    await expect(chip).toHaveCount(0);
+    await expect.poll(async () => (await (await page.request.get(`/api/chats/${asked[0].chat}/files`)).json()).length).toBe(0);
+    await chat.locator('[data-chat="attach"]').click();
+    const again = page.waitForEvent('filechooser');
+    await chat.locator('[data-chat="attach-file"]').click();
+    await (await again).setFiles({ name: 'song.mp3', mimeType: 'audio/mpeg', buffer: Buffer.from('ID3') });
+    await expect(page.locator('.toast.bad')).toContainText('Felix could not read song.mp3');
+    await expect(chat.locator('.chat-ref.doc')).toHaveCount(0);
   });
 
   test('says plainly when no AI is set up', async ({ page }) => {
@@ -614,7 +652,7 @@ test.describe('export and this browser', () => {
     await expect(link).toHaveAttribute('href', '/api/export?uploads=true&chats=false&trash=true');
     const zip = await page.request.get('/api/export?uploads=false&chats=true&trash=false');
     expect(zip.headers()['content-type']).toBe('application/zip');
-    expect(zip.headers()['content-disposition']).toMatch(/^attachment; filename="leo-export-\d{4}-\d{2}-\d{2}\.zip"$/);
+    expect(zip.headers()['content-disposition']).toMatch(/^attachment; filename="leo-export-\d{4}-\d{2}-\d{2}\.zip"; filename\*=UTF-8''leo-export-\d{4}-\d{2}-\d{2}\.zip$/);
     const bytes = await zip.body();
     expect(bytes.subarray(0, 2).toString()).toBe('PK');
     expect(bytes.includes(Buffer.from('leo/README.txt'))).toBe(true);
@@ -646,6 +684,87 @@ test.describe('export and this browser', () => {
     expect(await icon.text()).toContain('#b4cfe7');
     expect((await stranger.get('/api/notes')).status()).toBe(401);
     await stranger.dispose();
+  });
+});
+
+test.describe('advanced settings', () => {
+  test('lists signed-in browsers, signs one out, and makes a new link', async ({ page, browser }) => {
+    const token = fs.readFileSync(path.join(process.env.LEO_BROWSER_HOME, 'serve-token'), 'utf8').trim();
+    const other = await browser.newContext({ userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Version/18.0 Mobile/15E148 Safari/604.1' });
+    const phone = await other.newPage();
+    await phone.goto(`/?token=${token}`);
+    await expect(phone.locator('#app')).not.toBeEmpty();
+    expect((await phone.request.get('/api/notes')).status()).toBe(200);
+
+    await page.goto('/#/settings/storage');
+    const card = page.locator('.store-sessions');
+    await expect(card.locator('.session-row').first()).toContainText('This browser');
+    const iphone = card.locator('.session-row', { hasText: 'Safari on iPhone' }).first();
+    await iphone.locator('[data-action="session-end"]').click();
+    await expect(page.locator('.sheet h3')).toHaveText('Sign out Safari on iPhone?');
+    await page.locator('[data-action="session-end-now"]').click();
+    await expect(page.locator('.toast')).toContainText('Signed out 1 browser');
+    expect((await phone.request.get('/api/notes')).status()).toBe(401);
+
+    await card.locator('[data-action="session-new-link"]').click();
+    await page.locator('[data-action="session-new-link-now"]').click();
+    const link = await page.locator('#new-link').inputValue();
+    expect(link).toMatch(/^http:\/\/127\.0\.0\.1:31831\/\?token=[0-9a-f]{32}$/);
+    expect(link).not.toContain(token);
+    await page.locator('[data-action="close"]').click();
+    expect((await page.request.get('/api/notes')).status()).toBe(200);
+    await phone.goto(`/?token=${token}`);
+    await expect(phone.locator('body')).toContainText('This page needs its link');
+    await phone.goto(link.replace('http://127.0.0.1:31831', ''));
+    expect((await phone.request.get('/api/notes')).status()).toBe(200);
+    await other.close();
+  });
+
+  test('chooses how long the trash and chats are kept, asking before deleting sooner', async ({ page }) => {
+    await page.goto('/#/settings/storage');
+    const trash = page.locator('select[data-keep="trash_days"]');
+    const chats = page.locator('select[data-keep="chat_days"]');
+    await expect(trash).toHaveValue('30');
+    await expect(chats).toHaveValue('forever');
+    const kept = async () => {
+      const k = await (await page.request.get('/api/keep')).json();
+      return [k.trash_days, k.chat_days];
+    };
+    await trash.selectOption('forever');
+    await expect.poll(kept).toEqual([null, null]);
+    await chats.selectOption('30');
+    await expect(page.locator('.sheet h3')).toHaveText('Keep chats with Felix for 30 days?');
+    await page.locator('[data-action="keep-cancel"]').click();
+    await expect(chats).toHaveValue('forever');
+    expect(await kept()).toEqual([null, null]);
+    await chats.selectOption('90');
+    await page.locator('[data-action="keep-now"]').click();
+    await expect.poll(kept).toEqual([null, 90]);
+    await expect(chats).toHaveValue('90');
+    await page.goto('/#/trash');
+    await page.request.post('/api/keep', { data: { trash_days: 7, chat_days: null } });
+    const note = await (await page.request.post('/api/notes', { data: { title: 'Keep check', body: 'x' } })).json();
+    await page.request.delete(`/api/notes/${note.id}`);
+    await page.goto('/#/');
+    await page.goto('/#/trash');
+    await expect(page.locator('.hint')).toContainText('stay here for 7 days');
+    await page.request.post('/api/keep', { data: { trash_days: 30, chat_days: null } });
+  });
+
+  test('a note with several uploaded files downloads them together', async ({ page }) => {
+    const note = await (await page.request.post('/api/notes', { data: { title: 'Lecture with slides', body: 'x' } })).json();
+    const folder = path.join(process.env.LEO_BROWSER_HOME, 'attachments', note.id);
+    fs.mkdirSync(folder, { recursive: true });
+    fs.writeFileSync(path.join(folder, 'slides.pdf'), '%PDF fake');
+    fs.writeFileSync(path.join(folder, 'board.jpg'), 'jpg');
+    await page.goto(`/#/n/${note.id}`);
+    const all = page.locator('.chip.original.all');
+    await expect(all).toHaveText(/Download all 2/);
+    const zip = await page.request.get(await all.getAttribute('href'));
+    expect(zip.headers()['content-type']).toBe('application/zip');
+    expect(zip.headers()['content-disposition']).toContain('Lecture with slides originals.zip');
+    const bytes = await zip.body();
+    expect(bytes.includes(Buffer.from('Lecture with slides/slides.pdf'))).toBe(true);
   });
 });
 

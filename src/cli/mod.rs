@@ -396,6 +396,19 @@ pub fn run(cli: Cli) -> Result<()> {
                     )),
                     listener: Some(web_record::listener()),
                     housekeeper: Some(std::sync::Arc::new(web_storage::Housekeeping)),
+                    reader: Some(std::sync::Arc::new(
+                        |file: leo_web::UploadFile, progress: &mut dyn FnMut(&str)| {
+                            leo_services::import::read_for_chat(
+                                &leo_services::import::Upload {
+                                    name: file.name,
+                                    mime: file.mime,
+                                    bytes: file.bytes,
+                                },
+                                &|prompt, images, most| leo_services::ai::see(prompt, images, most),
+                                progress,
+                            )
+                        },
+                    )),
                 },
             ))
         }

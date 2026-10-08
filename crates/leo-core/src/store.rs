@@ -326,8 +326,6 @@ fn collect_md_paths(dir: &Path, result: &mut HashSet<PathBuf>) -> Result<()> {
 
 const TRASH: &str = ".trash";
 
-pub const TRASH_DAYS: u64 = 30;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Trashed {
     pub id: String,
@@ -361,9 +359,11 @@ fn trash_entries(notes_dir: &Path) -> Vec<(PathBuf, Note, DateTime<Utc>)> {
 }
 
 fn tidy_trash(notes_dir: &Path, live: &HashSet<&str>) {
-    let cutoff = Utc::now() - chrono::Duration::days(TRASH_DAYS as i64);
+    let cutoff = crate::keep::load(notes_dir)
+        .trash_days
+        .map(|days| Utc::now() - chrono::Duration::days(i64::from(days)));
     for (path, note, deleted_at) in trash_entries(notes_dir) {
-        if live.contains(note.id.as_str()) || deleted_at < cutoff {
+        if live.contains(note.id.as_str()) || cutoff.is_some_and(|c| deleted_at < c) {
             if let Err(e) = fs::remove_file(&path) {
                 crate::diag::warn(format!("could not tidy the trash: {e}"));
             }
@@ -758,6 +758,13 @@ impl Store {
             }
         }
         Ok(gone)
+    }
+
+    pub fn tidy_trash_now(&self) {
+        tidy_trash(
+            &self.notes_dir,
+            &self.notes.iter().map(|n| n.id.as_str()).collect(),
+        );
     }
 
     pub fn empty_trash(&self) -> Result<usize> {
@@ -2270,6 +2277,64 @@ mod tests {
         let reloaded = Store::load_from(&store.notes_dir).unwrap();
         let left: Vec<String> = reloaded.trashed().into_iter().map(|t| t.id).collect();
         assert_eq!(left, vec![new]);
+    }
+
+    #[test]
+    fn the_trash_follows_how_long_it_was_asked_to_keep_notes() {
+        let (mut store, _tmp) = temp_store();
+        let id = store.create_note("Old", "", vec![], "").unwrap().id.clone();
+        store.save().unwrap();
+        store.delete_notes(std::slice::from_ref(&id));
+        store.save().unwrap();
+        fn aged(store: &Store, days: u64) {
+            for path in trash_files(store) {
+                fs::File::options()
+                    .write(true)
+                    .open(&path)
+                    .unwrap()
+                    .set_modified(
+                        std::time::SystemTime::now()
+                            - std::time::Duration::from_secs(days * 24 * 3600),
+                    )
+                    .unwrap();
+            }
+        }
+        let dir = store.notes_dir.clone();
+        let keep = |days| {
+            crate::keep::save(
+                &dir,
+                &crate::keep::Keep {
+                    trash_days: days,
+                    chat_days: None,
+                },
+            )
+            .unwrap()
+        };
+
+        keep(None);
+        aged(&store, 400);
+        store.tidy_trash_now();
+        assert_eq!(store.trashed().len(), 1, "kept forever");
+
+        keep(Some(365));
+        store.tidy_trash_now();
+        assert!(store.trashed().is_empty(), "a year is up");
+
+        let id = store
+            .create_note("Recent", "", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        store.save().unwrap();
+        store.delete_notes(std::slice::from_ref(&id));
+        store.save().unwrap();
+        keep(Some(7));
+        aged(&store, 5);
+        store.tidy_trash_now();
+        assert_eq!(store.trashed().len(), 1, "inside a week");
+        aged(&store, 8);
+        store.tidy_trash_now();
+        assert!(store.trashed().is_empty());
     }
 
     #[test]

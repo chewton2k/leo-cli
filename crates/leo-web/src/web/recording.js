@@ -142,7 +142,7 @@
 
     async function openMic(kind = 'browser') {
       s.stream = kind === 'tab' ? await shareSound() : await microphone();
-      s.context = new root.AudioContext();
+      s.context = new root.AudioContext({ sinkId: { type: 'none' } });
       await s.context.audioWorklet.addModule('/recorder.js');
       const source = s.context.createMediaStreamSource(s.stream);
       s.node = new root.AudioWorkletNode(s.context, 'leo-recorder');

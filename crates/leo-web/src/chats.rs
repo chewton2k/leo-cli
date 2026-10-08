@@ -141,8 +141,21 @@ pub fn save(dir: &Path, id: &str, saving: Saving, now: DateTime<Utc>) -> Result<
     Ok(chat)
 }
 
+pub fn tidy(dir: &Path, days: Option<u32>, now: DateTime<Utc>) -> usize {
+    let Some(days) = days else {
+        return 0;
+    };
+    let cutoff = now - chrono::Duration::days(i64::from(days));
+    list(dir)
+        .iter()
+        .filter(|c| c.updated_at < cutoff && remove(dir, &c.id))
+        .count()
+}
+
 pub fn remove(dir: &Path, id: &str) -> bool {
-    path_of(dir, id).is_some_and(|p| std::fs::remove_file(p).is_ok())
+    let gone = path_of(dir, id).is_some_and(|p| std::fs::remove_file(p).is_ok());
+    crate::chat_files::remove_all(dir, id);
+    gone
 }
 
 #[cfg(test)]
@@ -223,6 +236,26 @@ mod tests {
         assert!(remove(&dir, "chat-bbbb-2"));
         assert!(!remove(&dir, "chat-bbbb-2"));
         assert_eq!(list(&dir).len(), 1);
+    }
+
+    #[test]
+    fn old_chats_leave_when_a_limit_is_set_and_stay_forever_otherwise() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("chats");
+        let empty = || Saving {
+            title: String::new(),
+            mode: String::new(),
+            refs: vec![],
+            messages: vec![said("user", "hi")],
+        };
+        save(&dir, "chat-old-0001", empty(), at(0)).unwrap();
+        let later = at(0) + chrono::Duration::days(40);
+        save(&dir, "chat-new-0002", empty(), later).unwrap();
+        assert_eq!(tidy(&dir, None, later), 0);
+        assert_eq!(list(&dir).len(), 2);
+        assert_eq!(tidy(&dir, Some(30), later), 1);
+        let left: Vec<String> = list(&dir).into_iter().map(|c| c.id).collect();
+        assert_eq!(left, ["chat-new-0002"]);
     }
 
     #[test]

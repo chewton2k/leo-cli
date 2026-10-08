@@ -19,7 +19,7 @@ pub fn load_or_create(path: &Path, renew: bool) -> Result<String> {
     Ok(token)
 }
 
-fn write_private(path: &Path, text: &str) -> std::io::Result<()> {
+pub(crate) fn write_private(path: &Path, text: &str) -> std::io::Result<()> {
     use std::io::Write;
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);

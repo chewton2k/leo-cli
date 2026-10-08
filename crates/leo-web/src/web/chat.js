@@ -135,9 +135,12 @@
     return starter.text === 'Quiz me across my classes' ? `Quiz me across ${list}` : `${starter.text} for ${list}`;
   }
 
-  function create({ render, escape, onOpen = () => {}, storage = root.localStorage }) {
+  const MOST_FILES = 10;
+  const FILE_TYPES = '.pdf,.docx,.pptx,.txt,.md,image/*';
+
+  function create({ render, escape, onOpen = () => {}, storage = root.localStorage, prepare = null, notify = () => {} }) {
     const saved = load(storage);
-    const state = { open: false, id: saved.id || newId(), mode: modeOf(saved.mode), messages: saved.messages, refs: saved.refs, context: null, dropped: null, busy: null, streak: 0, pick: null, chats: null, sidebar: null, doomed: null, asking: null };
+    const state = { open: false, id: saved.id || newId(), mode: modeOf(saved.mode), messages: saved.messages, refs: saved.refs, context: null, dropped: null, busy: null, streak: 0, pick: null, chats: null, sidebar: null, doomed: null, asking: null, files: [], filesFor: null };
     const panel = document.createElement('aside');
     panel.className = 'chat';
     panel.id = 'chat';
@@ -163,7 +166,9 @@
         <div class="chat-pick" id="chat-pick" hidden></div>
         <div class="chat-refs" id="chat-refs"></div>
         <form class="chat-compose" id="chat-form">
-          <button class="chat-attach" type="button" data-chat="attach" aria-label="Add a note" title="Add a note to the conversation (or type @)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11l-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7"/></svg></button>
+          <div class="chat-attach-menu" id="chat-attach-menu" hidden><button type="button" data-chat="attach-note">A note from leo</button>${prepare ? '<button type="button" data-chat="attach-file">A file from this device</button>' : ''}</div>
+          <input type="file" id="chat-file" multiple accept="${FILE_TYPES}" hidden>
+          <button class="chat-attach" type="button" data-chat="attach" aria-label="Add a note or a file" title="Add a note or a file to the conversation (or type @ for a note)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11l-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7"/></svg></button>
           <textarea id="chat-input" rows="1" placeholder="Message Felix, or type @ to add a note…" enterkeyhint="send"></textarea>
           <button class="chat-send" id="chat-send" type="submit" aria-label="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button>
         </form>
@@ -342,6 +347,8 @@
       state.id = newId();
       state.messages = [];
       state.refs = [];
+      state.files = [];
+      state.filesFor = state.id;
       state.streak = 0;
       state.asking = null;
       closePick();
@@ -372,9 +379,11 @@
       state.mode = modeOf(chat.mode);
       state.messages = Array.isArray(chat.messages) ? chat.messages : [];
       state.refs = Array.isArray(chat.refs) ? chat.refs.slice(0, MOST_REFS) : [];
+      state.files = [];
       state.streak = 0;
       closePick();
       persist();
+      loadFiles();
       drawModes();
       drawRefs();
       draw();
@@ -400,9 +409,86 @@
     }
 
     function drawRefs() {
-      $('#chat-refs').innerHTML = state.refs
+      const notes = state.refs
         .map((r) => `<span class="chat-ref"><button class="chat-ref-open" data-chat="open" data-id="${escape(r.id)}" title="${escape(r.title)}">${escape(r.title)}</button><button class="chat-ref-x" data-chat="unref" data-id="${escape(r.id)}" aria-label="Remove ${escape(r.title)}">×</button></span>`)
         .join('');
+      const files = state.files
+        .map((f) => f.status === 'reading'
+          ? `<span class="chat-ref doc reading" title="Felix is reading ${escape(f.name)}"><span class="chat-ref-open">${escape(f.name)} · reading…</span></span>`
+          : `<span class="chat-ref doc"><span class="chat-ref-open" title="${escape(f.name)}">${escape(f.name)}</span><button class="chat-ref-x" data-chat="unfile" data-id="${escape(f.id)}" aria-label="Remove ${escape(f.name)}">×</button></span>`)
+        .join('');
+      $('#chat-refs').innerHTML = notes + files;
+    }
+
+    async function loadFiles() {
+      const chat = state.id;
+      state.filesFor = chat;
+      try {
+        const response = await fetch(`/api/chats/${encodeURIComponent(chat)}/files`, { credentials: 'same-origin' });
+        if (!response.ok || state.id !== chat) return;
+        state.files = (await response.json()).map((d) => ({ ...d, status: 'ready' }));
+        drawRefs();
+      } catch (e) {
+        state.files = state.id === chat ? state.files : [];
+      }
+    }
+
+    async function addFile(file) {
+      const chat = state.id;
+      const key = `${Date.now()}-${Math.random()}`;
+      state.files.push({ key, name: file.name, status: 'reading' });
+      drawRefs();
+      const drop = () => {
+        state.files = state.files.filter((f) => f.key !== key);
+        drawRefs();
+      };
+      let reply;
+      try {
+        const body = await prepare(file);
+        reply = await fetch(`/api/chats/${encodeURIComponent(chat)}/files`, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      } catch (e) {
+        if (state.id === chat) drop();
+        notify(e.message || `Felix could not read ${file.name}.`);
+        return;
+      }
+      if (state.id !== chat) return;
+      if (!reply.ok) {
+        let said = '';
+        try {
+          said = (await reply.json()).error || '';
+        } catch (e) {
+          said = '';
+        }
+        drop();
+        notify(said ? `Felix could not read ${file.name}: ${said}` : reply.status === 413 ? `${file.name} is too large for Felix.` : `Felix could not read ${file.name}.`);
+        return;
+      }
+      const doc = await reply.json();
+      state.files = state.files.map((f) => (f.key === key ? { ...doc, status: 'ready' } : f));
+      drawRefs();
+    }
+
+    function addFiles(list) {
+      const room = MOST_FILES - state.files.length;
+      const files = [...list];
+      if (files.length > room) notify(`A chat holds up to ${MOST_FILES} documents, so ${files.length - Math.max(room, 0)} ${files.length - Math.max(room, 0) === 1 ? 'was' : 'were'} left out.`);
+      for (const file of files.slice(0, Math.max(room, 0))) addFile(file);
+    }
+
+    async function removeFile(id) {
+      const chat = state.id;
+      state.files = state.files.filter((f) => f.id !== id);
+      drawRefs();
+      try {
+        await fetch(`/api/chats/${encodeURIComponent(chat)}/files/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'same-origin' });
+      } catch (e) {
+        return;
+      }
     }
 
     let pickTimer = 0;
@@ -519,7 +605,9 @@
 
     function bubble(m, i) {
       if (m.role === 'user') {
-        const refs = (m.refs || []).length ? `<div class="msg-refs">${m.refs.map((r) => `<button class="cite" data-chat="open" data-id="${escape(r.id)}">${escape(r.title)}</button>`).join('')}</div>` : '';
+        const notes = (m.refs || []).map((r) => `<button class="cite" data-chat="open" data-id="${escape(r.id)}">${escape(r.title)}</button>`);
+        const docs = (m.docs || []).map((name) => `<span class="cite doc">${escape(name)}</span>`);
+        const refs = notes.length || docs.length ? `<div class="msg-refs">${[...notes, ...docs].join('')}</div>` : '';
         return `<div class="msg user">${refs}<div class="bubble">${escape(m.text).replace(/\n/g, '<br>')}</div></div>`;
       }
       const shown = grade(m.text).text;
@@ -630,7 +718,8 @@
       const question = text.trim();
       if (!question || state.busy) return;
       closePick();
-      state.messages.push({ role: 'user', text: question, refs: state.refs.slice() });
+      const ready = state.files.filter((f) => f.status === 'ready');
+      state.messages.push({ role: 'user', text: question, refs: state.refs.slice(), docs: ready.map((f) => f.name) });
       const answer = { role: 'assistant', text: '', sources: [], pending: true };
       state.messages.push(answer);
       input.value = '';
@@ -649,7 +738,7 @@
           method: 'POST',
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: history, mode: state.mode, note: ctx, refs: state.refs.map((r) => r.id) }),
+          body: JSON.stringify({ messages: history, mode: state.mode, note: ctx, refs: state.refs.map((r) => r.id), chat: thread.id, files: ready.map((f) => f.id) }),
           signal: controller.signal,
         });
         if (response.status === 401) throw new Error('This page needs its link again. Open the link leo serve printed.');
@@ -704,6 +793,7 @@
         if (sidebarOpen()) loadChats();
         drawModes();
         drawContext();
+        if (state.filesFor !== state.id) loadFiles();
         drawRefs();
         draw();
         mood('wave', 1500);
@@ -716,6 +806,7 @@
     panel.addEventListener('keydown', awake);
     panel.addEventListener('click', (e) => {
       awake();
+      if (!e.target.closest('[data-chat^="attach"]')) $('#chat-attach-menu').hidden = true;
       if (e.target.closest('.felix') && !e.target.closest('[data-chat]')) {
         tapped();
         return;
@@ -757,9 +848,18 @@
       } else if (what === 'classes-go') answerClasses(false);
       else if (what === 'classes-all') answerClasses(true);
       else if (what === 'attach') {
+        const menu = $('#chat-attach-menu');
         if (state.pick && state.pick.from === 'button') closePick();
-        else openPick('button', '', 0);
-      } else if (what === 'pick') choose(Number(el.dataset.i));
+        else if (!prepare) openPick('button', '', 0);
+        else menu.hidden = !menu.hidden;
+      } else if (what === 'attach-note') {
+        $('#chat-attach-menu').hidden = true;
+        openPick('button', '', 0);
+      } else if (what === 'attach-file') {
+        $('#chat-attach-menu').hidden = true;
+        if (state.files.length >= MOST_FILES) notify(`A chat holds up to ${MOST_FILES} documents; remove one first.`);
+        else $('#chat-file').click();
+      } else if (what === 'unfile') removeFile(el.dataset.id); else if (what === 'pick') choose(Number(el.dataset.i));
       else if (what === 'unref') {
         state.refs = state.refs.filter((r) => r.id !== el.dataset.id);
         drawRefs();
@@ -784,6 +884,11 @@
       watchMention();
     });
     input.addEventListener('click', watchMention);
+    $('#chat-file').addEventListener('change', (e) => {
+      $('#chat-attach-menu').hidden = true;
+      addFiles(e.target.files);
+      e.target.value = '';
+    });
     function steer(e) {
       const p = state.pick;
       if (!p || !p.notes.length) return false;

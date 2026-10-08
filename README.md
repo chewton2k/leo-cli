@@ -615,7 +615,8 @@ images (OpenAI, Anthropic, Gemini, xAI, Claude Code or Codex; most Ollama
 models cannot). Several photos of pages become one note, in order. Long
 documents are written in parts and then named. The note lands in the folder
 you pick and joins the map; the original file is kept on your computer, next
-to your notes folder (not backed up), and a chip on the note downloads it.
+to your notes folder (not backed up), and a chip on the note downloads it
+(**Download all** zips them when there are several).
 
 **Felix** is leo's study buddy, in the chat at the top of every page. Talk to
 him like any AI chat; he uses your own notes when they help and links each
@@ -638,6 +639,14 @@ with different instructions:
 Switching between Chat and Study starts a new conversation (the notes you
 added come along); the old one stays in the list.
 
+**Files for Felix:** the paperclip also takes **a file from this device** (PDF,
+Word, PowerPoint, text, or photos and scans, which the AI you chose for writing
+copies out). Felix reads it alongside your notes for the rest of that chat. To
+keep leo small, only the text is kept (up to about 60,000 characters per file,
+10 files per chat), never the file itself, and it goes when the chat does,
+including when old chats expire. Settings → Advanced → Storage shows it under
+"Documents given to Felix", where it can be cleared.
+
 When your notes don't cover something, he says so and labels anything from
 general knowledge as "Beyond your notes". He uses the AI you chose for writing,
 including Claude Code or Codex. Every conversation is kept on your computer,
@@ -653,6 +662,16 @@ with its price, the plan usage for Claude Code and Codex, **Test** to check the
 AI answers, and how backups push. An API key can be added, replaced or removed
 there but is never shown again, and is only accepted over the https link or on
 the computer itself, so it never crosses Wi-Fi unencrypted.
+
+**Signed-in browsers** (Settings → Advanced) lists every browser that opened
+your link, with when it was last used. Sign one out, or every other one, and it
+needs the link again. **Make a new link** retires the old link for browsers not
+signed in yet and shows the new one (it is also printed where `leo serve` runs).
+
+**How long leo keeps things** (Settings → Advanced): notes stay in the trash for
+7 days, 30 days (the default), 90 days, a year or forever; chats with Felix for
+30 days, 90 days, a year or forever (the default). Older ones are deleted on
+their own; choosing a shorter time asks first, since it deletes right away.
 
 **Export everything** (Settings → Advanced) downloads a zip of your notes as
 Markdown in their folders, with your uploads, chats with Felix and the trash if

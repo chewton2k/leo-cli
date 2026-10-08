@@ -779,20 +779,17 @@ pub fn apply_confirmed(store: &mut Store, action: &ConfirmedAction) -> Result<Ou
 
 fn trash(store: &mut Store, action: TrashAction) -> Result<Outcome> {
     let trashed = store.trashed();
+    let kept = crate::keep::kept_for(crate::keep::load(&store.notes_dir).trash_days);
     match action {
         TrashAction::List => {
             if trashed.is_empty() {
                 return Ok(Outcome::line(Line::dim(format!(
-                    "The trash is empty. Deleted notes stay there for {} days.",
-                    crate::store::TRASH_DAYS
+                    "The trash is empty. Deleted notes stay there {kept}."
                 ))));
             }
             let now = Utc::now();
             let mut lines = vec![
-                Line::plain(format!(
-                    "In the trash, kept {} days after deleting:",
-                    crate::store::TRASH_DAYS
-                )),
+                Line::plain(format!("In the trash, kept {kept}:")),
                 Line::blank(),
             ];
             for (i, note) in trashed.iter().enumerate() {

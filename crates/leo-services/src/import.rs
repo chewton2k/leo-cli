@@ -371,6 +371,55 @@ pub fn image_prompt(
 pub type Write<'a> = &'a dyn Fn(Prompt, u32) -> Result<String>;
 pub type See<'a> = &'a dyn Fn(Prompt, &[Image], u32) -> Result<String>;
 
+pub const CHAT_DOC_CHARS: usize = 60_000;
+const TRANSCRIBE_TOKENS: u32 = 6_000;
+
+const TRANSCRIBING: &str = "\
+You copy out what is on photographed or scanned pages so someone can ask questions about them later. Write the text exactly as it appears, in reading order, in Markdown: keep headings, lists, tables and formulas. Describe each diagram or figure in one short sentence in [brackets]. Write [unreadable] for anything you cannot read. Reply with the text only.";
+
+pub fn clip_document(text: &str) -> String {
+    let text = text.trim();
+    if text.chars().count() <= CHAT_DOC_CHARS {
+        return text.to_string();
+    }
+    let mut out: String = text.chars().take(CHAT_DOC_CHARS).collect();
+    out.push_str("\n\n[…the rest of this document is left out]");
+    out
+}
+
+pub fn read_for_chat(
+    upload: &Upload,
+    see: See<'_>,
+    progress: &mut dyn FnMut(&str),
+) -> Result<String> {
+    let material = extract(upload)?;
+    let mut text = material.text.trim().to_string();
+    let groups: Vec<&[Image]> = material.images.chunks(PAGES_PER_LOOK).collect();
+    for (i, pages) in groups.iter().enumerate() {
+        progress(&if groups.len() > 1 {
+            format!("Reading the pages {}/{}", i + 1, groups.len())
+        } else {
+            "Reading the image".to_string()
+        });
+        let prompt = Prompt {
+            system: TRANSCRIBING.to_string(),
+            user: format!(
+                "These are pages from \"{}\". Copy out what they say.",
+                upload.name
+            ),
+        };
+        let seen = see(prompt, pages, TRANSCRIBE_TOKENS)?;
+        if !text.is_empty() {
+            text.push_str("\n\n");
+        }
+        text.push_str(seen.trim());
+    }
+    if text.trim().is_empty() {
+        bail!("there is no text in {} for Felix to read", upload.name);
+    }
+    Ok(clip_document(&text))
+}
+
 pub fn write_note(
     material: &Material,
     name: &str,
@@ -463,6 +512,56 @@ mod tests {
     use super::*;
     use std::cell::RefCell;
     use std::io::Write as _;
+
+    fn never(_: Prompt, _: &[Image], _: u32) -> Result<String> {
+        panic!("there are no images here")
+    }
+
+    #[test]
+    fn a_document_for_felix_keeps_only_its_text_and_is_clipped() {
+        let text = Upload {
+            name: "notes.md".into(),
+            mime: "text/markdown".into(),
+            bytes: b"# Heaps\n\nMinimum at the root.".to_vec(),
+        };
+        let read = read_for_chat(&text, &never, &mut |_| {}).unwrap();
+        assert_eq!(read, "# Heaps\n\nMinimum at the root.");
+        let long = Upload {
+            name: "long.txt".into(),
+            mime: "text/plain".into(),
+            bytes: "word ".repeat(20_000).into_bytes(),
+        };
+        let clipped = read_for_chat(&long, &never, &mut |_| {}).unwrap();
+        assert!(clipped.chars().count() < CHAT_DOC_CHARS + 60);
+        assert!(clipped.ends_with("[…the rest of this document is left out]"));
+        let blank = Upload {
+            name: "blank.txt".into(),
+            mime: "text/plain".into(),
+            bytes: b"   ".to_vec(),
+        };
+        assert!(read_for_chat(&blank, &never, &mut |_| {}).is_err());
+    }
+
+    #[test]
+    fn a_photo_for_felix_is_copied_out_by_the_ai_that_can_see() {
+        let looked = RefCell::new(0);
+        let see = |prompt: Prompt, images: &[Image], _: u32| -> Result<String> {
+            *looked.borrow_mut() += 1;
+            assert_eq!(images.len(), 1);
+            assert!(prompt.system.contains("copy out"));
+            Ok("Board: Dijkstra uses a heap".into())
+        };
+        let photo = Upload {
+            name: "board.jpg".into(),
+            mime: "image/jpeg".into(),
+            bytes: vec![0xff, 0xd8, 0xff],
+        };
+        let mut steps = Vec::new();
+        let read = read_for_chat(&photo, &see, &mut |s| steps.push(s.to_string())).unwrap();
+        assert_eq!(read, "Board: Dijkstra uses a heap");
+        assert_eq!(*looked.borrow(), 1);
+        assert_eq!(steps, ["Reading the image"]);
+    }
 
     fn office(files: &[(&str, &str)]) -> Vec<u8> {
         let mut buffer = std::io::Cursor::new(Vec::new());

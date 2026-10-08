@@ -43,7 +43,16 @@
   };
 
   const recorder = window.leoRecording.create({ api, esc, toast, go: (hash, opts) => go(hash, opts), noteHash: (id) => noteHash(id), felix, icons: ICON });
-  const chat = felix.create({ render: (text) => md.render(text), escape: md.escape, onOpen: (id) => go(noteHash(id)) });
+  const chat = felix.create({
+    render: (text) => md.render(text),
+    escape: md.escape,
+    onOpen: (id) => go(noteHash(id)),
+    prepare: async (file) => {
+      const ready = await shrink(file);
+      return { name: ready.name, type: ready.type, data: await base64(ready.blob) };
+    },
+    notify: (message) => toast(message, { bad: true }),
+  });
   $('#chat-toggle').innerHTML = chat.button(36);
   $('#back').innerHTML = ICON.back;
   $('#search-toggle').innerHTML = ICON.search;
@@ -214,8 +223,8 @@
 
   async function showFolder(dir) {
     const mine = ++seq;
-    const keep = state.view === 'folder' && state.dir === dir ? state : null;
-    state = { view: 'folder', dir, selecting: keep ? keep.selecting : false, picked: new Set() };
+    const before = state.view === 'folder' && state.dir === dir ? state : null;
+    state = { view: 'folder', dir, selecting: before ? before.selecting : false, picked: new Set() };
     chrome({ dir, showBack: Boolean(dir), fab: newButton(dir) });
     if (!app.innerHTML.trim()) app.innerHTML = skeleton(4);
     const [dirs, notes] = await Promise.all([api(`/api/dirs?parent=${enc(dir)}`), api(`/api/notes?dir=${enc(dir)}&limit=1000`)]);
@@ -456,14 +465,15 @@
 
   async function showTrash() {
     const mine = ++seq;
-    const keep = state.view === 'trash' ? state : null;
-    state = { view: 'trash', dir: '', selecting: keep ? keep.selecting : false, picked: new Set() };
+    const before = state.view === 'trash' ? state : null;
+    state = { view: 'trash', dir: '', selecting: before ? before.selecting : false, picked: new Set() };
     chrome({ showBack: true });
     $('#crumbs').innerHTML = '<span class="sep">/</span><button>Trash</button>';
     document.title = 'Trash · leo';
-    const items = await api('/api/trash');
+    const [items, keep] = await Promise.all([api('/api/trash'), api('/api/keep').catch(() => null)]);
     if (mine !== seq) return;
     state.items = items;
+    state.trashDays = keep ? keep.trash_days : 30;
     if (!items.length) state.selecting = false;
     drawTrash();
   }
@@ -489,7 +499,7 @@
     app.innerHTML = `<div class="trash-head"><div class="section-title">Trash · ${items.length} note${items.length === 1 ? '' : 's'}</div>
         <div class="trash-tools">${sel ? '<button class="btn sm plain" data-action="trash-select">Done</button>' : `<button class="btn sm plain" data-action="trash-select">Select</button><button class="btn sm plain danger-text" data-action="trash-empty">Empty trash</button>`}</div></div>
       <div class="panel">${rows}</div>
-      <p class="hint" style="margin:14px 4px">Deleted notes stay here for 30 days, then leave on their own.</p>`;
+      <p class="hint" style="margin:14px 4px">${state.trashDays === null ? 'Deleted notes stay here until you empty the trash.' : `Deleted notes stay here for ${state.trashDays === 365 ? 'a year' : plural(state.trashDays, 'day')}, then leave on their own.`} <a href="#/settings/storage">Change</a></p>`;
     floating.innerHTML = sel
       ? `<div class="select-bar" role="toolbar" aria-label="Selected notes">
           <label class="select-all"><input type="checkbox" data-trash-all${all ? ' checked' : ''}><span>All</span></label>
@@ -931,9 +941,115 @@
     $('#crumbs').innerHTML = '<span class="sep">/</span><button data-action="settings">Settings</button><span class="sep">/</span><button>Storage</button>';
     document.title = 'Storage · leo';
     app.innerHTML = skeleton(4);
-    const page = await api('/api/storage');
+    const [page, keep, sessions] = await Promise.all([api('/api/storage'), api('/api/keep'), api('/api/sessions')]);
     if (mine !== seq) return;
+    state.keep = keep;
+    state.sessions = sessions.sessions;
     drawStorage(page);
+  }
+
+  const keepValue = (days) => (days === null || days === undefined ? 'forever' : String(days));
+  const keepDays = (value) => (value === 'forever' ? null : Number(value));
+
+  function keepCard() {
+    const keep = state.keep;
+    if (!keep) return '';
+    const select = (field, choices) =>
+      `<select data-keep="${field}">${choices.map((c) => `<option value="${keepValue(c.days)}"${keepValue(c.days) === keepValue(keep[field]) ? ' selected' : ''}>${esc(c.label === 'forever' ? 'Forever' : c.label)}</option>`).join('')}</select>`;
+    return `<section class="set-card store-keep">
+        <header><h3>How long leo keeps things</h3></header>
+        <label class="set-row"><span class="set-label">Trash</span>${select('trash_days', keep.trash_choices)}</label>
+        <label class="set-row"><span class="set-label">Chats with Felix</span>${select('chat_days', keep.chat_choices)}</label>
+        <p class="set-note">Anything older is deleted on its own, along with the documents given to Felix in those chats.</p>
+      </section>`;
+  }
+
+  function sessionsCard() {
+    const list = state.sessions || [];
+    const rows = list
+      .map((b) => `<div class="set-row session-row"><span class="grow"><b>${esc(b.device)}</b>${b.current ? ' <span class="chip accent">This browser</span>' : ''}<span class="sub">Signed in ${rel(b.created_at)} · last used ${rel(b.last_seen)}</span></span>${b.current ? '' : `<button class="btn sm plain danger-text" data-action="session-end" data-handle="${esc(b.handle)}" data-device="${esc(b.device)}">Sign out</button>`}</div>`)
+      .join('');
+    const others = list.filter((b) => !b.current).length;
+    return `<section class="set-card store-sessions">
+        <header><h3>Signed-in browsers</h3></header>
+        <p class="hint">Every browser that opened your leo serve link. Signing one out means it needs the link again.</p>
+        ${rows || '<p class="set-note">No browsers yet.</p>'}
+        <div class="store-actions">${others ? `<button class="btn sm plain danger-text" data-action="session-end-others">Sign out ${others === 1 ? 'the other browser' : `the other ${others} browsers`}</button>` : ''}<button class="btn sm plain" data-action="session-new-link">Make a new link</button></div>
+      </section>`;
+  }
+
+  async function refreshSessions() {
+    state.sessions = (await api('/api/sessions')).sessions;
+    if (state.view === 'storage' && state.storage) drawStorage(state.storage);
+  }
+
+  function sessionAsk(el) {
+    state.sessionPending = el.dataset.handle ? { handle: el.dataset.handle } : { others: true };
+    const what = el.dataset.handle ? esc(el.dataset.device) : 'every other browser';
+    sheet(`<h3>Sign out ${what}?</h3>
+      <p>It needs your leo serve link to sign in again.</p>
+      <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn danger" data-action="session-end-now">Sign out</button></div>`);
+  }
+
+  async function sessionEndNow() {
+    const body = state.sessionPending;
+    closeSheet();
+    if (!body) return;
+    state.sessionPending = null;
+    const done = await api('/api/sessions/end', { method: 'POST', body });
+    toast(done.ended === 1 ? 'Signed out 1 browser' : `Signed out ${done.ended} browsers`);
+    await refreshSessions();
+  }
+
+  function newLinkAsk() {
+    sheet(`<h3>Make a new link?</h3>
+      <p>The old link stops working for browsers that are not signed in yet. Browsers already signed in stay signed in; sign them out above if you want them to need the new link.</p>
+      <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn primary" data-action="session-new-link-now">Make a new link</button></div>`);
+  }
+
+  async function newLinkNow() {
+    closeSheet();
+    const made = await api('/api/sessions/new-link', { method: 'POST' });
+    sheet(`<h3>Your new link</h3>
+      <p>Open it on each device you want to use. It is also printed in the terminal running leo serve.</p>
+      <input class="new-link" id="new-link" readonly value="${esc(made.link)}">
+      <div class="buttons"><button class="btn plain" data-action="close">Done</button><button class="btn primary" data-action="copy-link">Copy</button></div>`);
+    const field = $('#new-link');
+    if (field) field.select();
+  }
+
+  async function copyLink() {
+    const field = $('#new-link');
+    if (!field) return;
+    try {
+      await navigator.clipboard.writeText(field.value);
+      toast('Copied the new link');
+    } catch (e) {
+      field.select();
+      toast('Select the link and copy it');
+    }
+  }
+
+  async function changeKeep(el) {
+    const before = state.keep;
+    const next = { trash_days: before.trash_days, chat_days: before.chat_days, [el.dataset.keep]: keepDays(el.value) };
+    const shorter = (a, b) => b !== null && (a === null || b < a);
+    const what = el.dataset.keep === 'trash_days' ? 'notes in the trash' : 'chats with Felix';
+    if (shorter(before[el.dataset.keep], next[el.dataset.keep])) {
+      sheet(`<h3>Keep ${what} for ${esc(el.selectedOptions[0].textContent.toLowerCase())}?</h3>
+        <p>Any older than that are deleted now, and from then on as they age.</p>
+        <div class="buttons"><button class="btn plain" data-action="keep-cancel">Cancel</button><button class="btn danger" data-action="keep-now">Keep for ${esc(el.selectedOptions[0].textContent.toLowerCase())}</button></div>`);
+      state.keepPending = next;
+      return;
+    }
+    await saveKeep(next);
+  }
+
+  async function saveKeep(next) {
+    state.keep = await api('/api/keep', { method: 'POST', body: next });
+    toast('Saved');
+    const page = await api('/api/storage');
+    if (state.view === 'storage') drawStorage(page);
   }
 
   function storageWhen(iso) {
@@ -975,6 +1091,8 @@
         <div class="store-bar" aria-hidden="true">${bar}</div>
         <div class="store-legend">${legend}</div>
       </section>
+      ${keepCard()}
+      ${sessionsCard()}
       <section class="set-card store-export">
         <header><h3>Export everything</h3></header>
         <p class="hint">A zip of your notes as Markdown, in their folders, to keep or open in another app. Settings and API keys are never included.</p>
@@ -1056,6 +1174,8 @@
     }
     if (all || e.target.closest('[data-store-item]')) storageCounts();
     if (e.target.closest('[data-export]')) $('#export-link').href = exportHref();
+    const keep = e.target.closest('select[data-keep]');
+    if (keep) changeKeep(keep).catch(fail);
   });
 
   async function changeSetting(change) {
@@ -1275,7 +1395,8 @@
     }
     const meta = $('.note-meta');
     if (!files.length || !meta || state.view !== 'note' || state.session.note.id !== note.id) return;
-    meta.insertAdjacentHTML('beforeend', files.map((f) => `<a class="chip original" href="/api/notes/${enc(note.id)}/originals/${enc(f.name)}" download="${esc(f.name)}">${ICON.paperclip}${esc(f.name)}</a>`).join(''));
+    const all = files.length > 1 ? `<a class="chip original all" href="/api/notes/${enc(note.id)}/originals.zip" download>${ICON.paperclip}Download all ${files.length}</a>` : '';
+    meta.insertAdjacentHTML('beforeend', files.map((f) => `<a class="chip original" href="/api/notes/${enc(note.id)}/originals/${enc(f.name)}" download="${esc(f.name)}">${ICON.paperclip}${esc(f.name)}</a>`).join('') + all);
   }
 
   function showLocked() {
@@ -1304,6 +1425,10 @@
   function closeSheet() {
     const open = $('.scrim');
     if (open) open.remove();
+    if (state.keepPending) {
+      state.keepPending = null;
+      if (state.view === 'storage' && state.storage) drawStorage(state.storage);
+    }
   }
 
   function menu() {
@@ -1493,6 +1618,19 @@
     storage: () => go('#/settings/storage'),
     'storage-act': storageAsk,
     'storage-go': () => storageGo().catch(fail),
+    'session-end': sessionAsk,
+    'session-end-others': sessionAsk,
+    'session-end-now': () => sessionEndNow().catch(fail),
+    'session-new-link': newLinkAsk,
+    'session-new-link-now': () => newLinkNow().catch(fail),
+    'copy-link': () => copyLink(),
+    'keep-now': () => {
+      const next = state.keepPending;
+      state.keepPending = null;
+      closeSheet();
+      if (next) saveKeep(next).catch(fail);
+    },
+    'keep-cancel': () => closeSheet(),
     'drafts-clear': () => {
       const n = saving.drafts().length;
       sheet(`<h3>Clear ${plural(n, 'unsaved draft')}?</h3>

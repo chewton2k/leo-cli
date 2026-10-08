@@ -145,10 +145,13 @@ pub fn areas(store: &Store, graphs: &Graphs, chats_dir: &Path, now: DateTime<Utc
     out.push(Area {
         id: "trash".into(),
         title: "Trash".into(),
-        about: format!(
-            "Deleted notes, kept {} days so they can be restored, then removed on their own.",
-            leo_core::store::TRASH_DAYS
-        ),
+        about: match leo_core::keep::load(notes_dir).trash_days {
+            Some(days) => format!(
+                "Deleted notes, kept {} so they can be restored, then removed on their own.",
+                leo_core::keep::describe(Some(days))
+            ),
+            None => "Deleted notes, kept until you empty the trash.".to_string(),
+        },
         path: notes_dir.join(".trash").display().to_string(),
         bytes: size_of(&notes_dir.join(".trash")),
         items: trashed
@@ -287,6 +290,55 @@ pub fn areas(store: &Store, graphs: &Graphs, chats_dir: &Path, now: DateTime<Utc
         actions: original_actions,
     });
 
+    let held = crate::chat_files::held(chats_dir);
+    let titles: std::collections::HashMap<String, String> = summaries
+        .iter()
+        .map(|c| (c.id.clone(), c.title.clone()))
+        .collect();
+    out.push(Area {
+        id: "chat-docs".into(),
+        title: "Documents given to Felix".into(),
+        about: "The text read from files you gave Felix in a chat. The files themselves are never kept, and the text goes when its chat is deleted.".into(),
+        path: chats_dir.display().to_string(),
+        bytes: held.iter().map(|h| h.bytes).sum(),
+        items: held
+            .iter()
+            .map(|h| Item {
+                id: h.chat.clone(),
+                label: titles
+                    .get(&h.chat)
+                    .cloned()
+                    .unwrap_or_else(|| "A chat that never started".into()),
+                detail: format!(
+                    "{} document{}",
+                    h.docs,
+                    if h.docs == 1 { "" } else { "s" }
+                ),
+                bytes: h.bytes,
+                when: h.last,
+                locked: false,
+            })
+            .collect(),
+        actions: if held.is_empty() {
+            Vec::new()
+        } else {
+            vec![
+                act(
+                    "delete",
+                    "Delete selected",
+                    Some("Felix forgets these documents; the chats themselves stay."),
+                    true,
+                ),
+                act(
+                    "all",
+                    "Delete every document",
+                    Some("Felix forgets every document given to him; the chats stay."),
+                    false,
+                ),
+            ]
+        },
+    });
+
     let map_bytes = size_of(graphs.path());
     out.push(Area {
         id: "map".into(),
@@ -359,6 +411,27 @@ pub fn act_on(
                 .filter(|c| chats::remove(chats_dir, &c.id))
                 .count();
             Ok(plural_deleted(gone, "chat"))
+        }
+        ("chat-docs", "delete") => {
+            let gone = request
+                .items
+                .iter()
+                .filter(|chat| crate::chat_files::remove_all(chats_dir, chat))
+                .count();
+            Ok(format!(
+                "Felix forgot the documents of {gone} chat{}.",
+                if gone == 1 { "" } else { "s" }
+            ))
+        }
+        ("chat-docs", "all") => {
+            let gone = crate::chat_files::held(chats_dir)
+                .iter()
+                .filter(|h| crate::chat_files::remove_all(chats_dir, &h.chat))
+                .count();
+            Ok(format!(
+                "Felix forgot the documents of {gone} chat{}.",
+                if gone == 1 { "" } else { "s" }
+            ))
         }
         ("originals", "delete") => remove_originals(notes_dir, request.items.iter().cloned()),
         ("originals", "orphans") => {
@@ -493,7 +566,11 @@ mod tests {
         let (_tmp, store, graphs, chats_dir) = setup();
         let list = areas(&store, &graphs, &chats_dir, at(31));
         let ids: Vec<&str> = list.iter().map(|a| a.id.as_str()).collect();
-        assert_eq!(ids, ["notes", "trash", "chats", "originals", "map"]);
+        assert_eq!(
+            ids,
+            ["notes", "trash", "chats", "originals", "chat-docs", "map"]
+        );
+        assert!(area(&list, "chat-docs").items.is_empty());
         assert!(area(&list, "notes").bytes > 0);
         assert!(area(&list, "notes").actions.is_empty());
         assert_eq!(area(&list, "trash").items[0].label, "Gone");
@@ -531,7 +608,30 @@ mod tests {
             .unwrap()
             .unwrap()
         };
+        crate::chat_files::add(&chats_dir, "chat-new-0002", "slides.pdf", "text", at(30)).unwrap();
+        crate::chat_files::add(&chats_dir, "chat-old-0001", "notes.txt", "text", at(1)).unwrap();
+        let docs = areas(&store, &graphs, &chats_dir, at(31));
+        let docs = area(&docs, "chat-docs");
+        assert_eq!(docs.items.len(), 2);
+        assert!(docs
+            .items
+            .iter()
+            .any(|i| i.label == "chat-new-0002" && i.detail == "1 document"));
+        assert_eq!(
+            run("chat-docs", "delete", &["chat-new-0002", "../escape"]),
+            "Felix forgot the documents of 1 chat."
+        );
+        assert!(crate::chat_files::list(&chats_dir, "chat-new-0002").is_empty());
+        assert_eq!(
+            chats::list(&chats_dir).len(),
+            2,
+            "the chats themselves stay"
+        );
         assert_eq!(run("chats", "older", &[]), "Deleted 1 chat.");
+        assert!(
+            crate::chat_files::held(&chats_dir).is_empty(),
+            "a deleted chat takes its documents with it"
+        );
         assert_eq!(chats::list(&chats_dir).len(), 1);
         assert_eq!(
             run("originals", "orphans", &[]),

@@ -21,6 +21,7 @@ const TOTAL_CHARS: usize = 64_000;
 const NEIGHBOURS: usize = 5;
 const MATCHES: usize = 8;
 const TURNS: usize = 14;
+const DOCS_CHARS: usize = 60_000;
 const TURN_CHARS: usize = 4_000;
 pub const REPLY_TOKENS: u32 = 4_000;
 
@@ -41,6 +42,10 @@ pub struct ChatBody {
     pub note: Option<String>,
     #[serde(default)]
     pub refs: Vec<String>,
+    #[serde(default)]
+    pub chat: Option<String>,
+    #[serde(default)]
+    pub files: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -215,6 +220,7 @@ You are Felix, the friendly study buddy built into leo, the user's notes app. Yo
 
 - Ground what you say in the notes and cite them with their id in square brackets right after the sentence, like [n2]. Cite only notes you actually used.
 - When the notes do not cover something, say so in one short sentence, then answer from general knowledge under the words \"Beyond your notes:\". Never present general knowledge as if it came from the notes.
+- The user may also give you documents, in <document> tags with ids like d1; they are files from their device, not notes. Use them when the question is about them and name the document when you use it, like (slides.pdf). Do not cite documents with square brackets.
 - Point out connections between notes, especially across different classes, when they help.
 - Write in Markdown: short paragraphs, bullet lists, bold key terms, fenced code blocks for code and formulas. Be concise and start with the answer, with no preamble.";
 
@@ -229,9 +235,32 @@ Mode: chat. Talk with the user the way a helpful assistant would: answer any que
     }
 }
 
-pub fn prompt(mode: &str, notes: &str, messages: &[Turn]) -> (String, String) {
+pub fn documents_block(docs: &[(String, String)]) -> String {
+    if docs.is_empty() {
+        return String::new();
+    }
+    let share = DOCS_CHARS / docs.len();
+    let mut out = String::from("<documents>\n");
+    for (i, (name, text)) in docs.iter().enumerate() {
+        out.push_str(&format!(
+            "<document id=\"d{}\" name=\"{}\">\n{}\n</document>\n",
+            i + 1,
+            name.replace('"', "'"),
+            clip(text.trim(), share)
+        ));
+    }
+    out.push_str("</documents>\n\n");
+    out
+}
+
+pub fn prompt(
+    mode: &str,
+    notes: &str,
+    documents: &[(String, String)],
+    messages: &[Turn],
+) -> (String, String) {
     let system = format!("{BASE}\n\n{}", style(mode));
-    let mut user = String::new();
+    let mut user = documents_block(documents);
     if notes.trim().is_empty() {
         user.push_str("<notes>\nNo notes matched this conversation.\n</notes>\n\n");
     } else {
@@ -404,7 +433,7 @@ mod tests {
                 text: format!("turn {i}"),
             })
             .collect();
-        let (_, user) = prompt("ask", &text, &many);
+        let (_, user) = prompt("ask", &text, &[], &many);
         assert!(!user.contains("turn 0\n"), "old turns are dropped");
         assert!(user.contains("User: turn 38"));
         assert!(user.contains("Felix: turn 39"));
@@ -423,17 +452,43 @@ mod tests {
             role: "user".into(),
             text: "go".into(),
         }];
-        let systems: BTreeSet<String> = MODES.iter().map(|m| prompt(m, "", &turns).0).collect();
+        let systems: BTreeSet<String> =
+            MODES.iter().map(|m| prompt(m, "", &[], &turns).0).collect();
         assert_eq!(systems.len(), MODES.len());
-        let (system, user) = prompt("study", "", &turns);
+        let (system, user) = prompt("study", "", &[], &turns);
         assert!(system.contains("Score: 3/4"));
         assert!(system.contains("[[correct]]"));
         assert!(system.contains("[n2]"));
         assert!(user.contains("No notes matched"));
-        let chat = prompt("chat", "", &turns).0;
+        let chat = prompt("chat", "", &[], &turns).0;
         assert!(chat.contains("Never invent names"));
         assert!(chat.contains("everyday analogy"));
         assert!(!chat.contains("[[correct]] if"));
+    }
+
+    #[test]
+    fn documents_go_before_the_notes_and_share_a_budget() {
+        let docs = vec![
+            (
+                "slides.pdf".to_string(),
+                "Heaps keep the minimum at the root.".to_string(),
+            ),
+            ("big \"one\".txt".to_string(), "x".repeat(DOCS_CHARS)),
+        ];
+        let turns = vec![Turn {
+            role: "user".into(),
+            text: "what do the slides say?".into(),
+        }];
+        let (system, user) = prompt("chat", "<note id=\"n1\">", &docs, &turns);
+        assert!(system.contains("<document> tags"));
+        assert!(user.starts_with("<documents>\n<document id=\"d1\" name=\"slides.pdf\">"));
+        assert!(user.contains("name=\"big 'one'.txt\""));
+        assert!(user.find("</documents>").unwrap() < user.find("<notes>").unwrap());
+        assert!(
+            user.chars().count() < DOCS_CHARS + 2_000,
+            "two documents share the budget"
+        );
+        assert!(documents_block(&[]).is_empty());
     }
 
     #[test]

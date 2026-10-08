@@ -99,6 +99,14 @@ pub fn write_zip<W: Write + Seek>(
     Ok(packed)
 }
 
+pub fn write_folder<W: Write + Seek>(out: W, folder: &Path, under: &str) -> Result<Packed> {
+    let mut zip = zip::ZipWriter::new(out);
+    let mut packed = Packed::default();
+    add_dir(&mut zip, folder, under, true, &mut packed)?;
+    zip.finish()?;
+    Ok(packed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,5 +163,19 @@ mod tests {
             assert!(listed.iter().any(|n| n == want), "{want} in {listed:?}");
         }
         assert!(!listed.iter().any(|n| n.contains(".git")), "{listed:?}");
+    }
+
+    #[test]
+    fn a_notes_uploads_are_zipped_together_in_one_folder() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("slides.pdf"), "pdf").unwrap();
+        std::fs::write(tmp.path().join("board.jpg"), "jpg").unwrap();
+        let mut out = std::io::Cursor::new(Vec::new());
+        let packed = write_folder(&mut out, tmp.path(), "Lecture 4").unwrap();
+        assert_eq!(packed.files, 2);
+        assert_eq!(
+            names(out.into_inner()),
+            ["Lecture 4/board.jpg", "Lecture 4/slides.pdf"]
+        );
     }
 }
