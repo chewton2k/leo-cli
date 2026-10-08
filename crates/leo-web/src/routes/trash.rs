@@ -56,6 +56,8 @@ pub(crate) struct TrashChoice {
     pub(crate) ids: Vec<String>,
     #[serde(default)]
     pub(crate) all: bool,
+    #[serde(default)]
+    pub(crate) dirs: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -81,6 +83,25 @@ pub(crate) async fn move_to_trash(
                 }
                 directory(store, dir)?;
             }
+            let under = |path: &str| {
+                body.dirs.iter().any(|d| {
+                    let d = d.trim().trim_matches('/');
+                    path == d || path.starts_with(&format!("{d}/"))
+                })
+            };
+            let mut gone_ids: Vec<String> = store
+                .notes
+                .iter()
+                .filter(|n| under(&n.directory) || body.notes.contains(&n.id))
+                .map(|n| n.id.clone())
+                .collect();
+            gone_ids.dedup();
+            let gone_dirs: Vec<String> = store
+                .directories
+                .iter()
+                .filter(|d| under(d))
+                .cloned()
+                .collect();
             for dir in &body.dirs {
                 let (gone_notes, gone_dirs) =
                     store.delete_dir_recursive(dir.trim().trim_matches('/'));
@@ -103,9 +124,12 @@ pub(crate) async fn move_to_trash(
                 store.delete_notes(&ids);
             }
             save(store)?;
-            Ok(Json(
-                serde_json::json!({ "notes": notes, "folders": folders }),
-            ))
+            Ok(Json(serde_json::json!({
+                "notes": notes,
+                "folders": folders,
+                "ids": gone_ids,
+                "dirs": gone_dirs,
+            })))
         })
         .await
 }
@@ -133,6 +157,12 @@ pub(crate) async fn restore_many(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     state
         .with_store(move |store| {
+            for dir in &choice.dirs {
+                directory(store, dir)?;
+            }
+            for dir in &choice.dirs {
+                store.create_dir(dir);
+            }
             let restored = choice
                 .ids
                 .iter()

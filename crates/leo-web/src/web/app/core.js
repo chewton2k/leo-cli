@@ -313,9 +313,20 @@ async function folderTrashNow() {
   const parts = [];
   if (done.notes) parts.push(plural(done.notes, 'note'));
   if (done.folders) parts.push(plural(done.folders, 'folder'));
-  toast(`Moved ${parts.join(' and ') || 'nothing'} to the trash`, { action: 'Open trash', run: () => go('#/trash') });
+  const undo = done.ids && (done.ids.length || (done.dirs && done.dirs.length)) ? { action: 'Undo', run: () => undoTrashMove(done) } : { action: 'Open trash', run: () => go('#/trash') };
+  toast(`Moved ${parts.join(' and ') || 'nothing'} to the trash`, undo);
   state.selecting = false;
   await showFolder(state.dir);
+}
+
+async function undoTrashMove(done) {
+  try {
+    const back = await api('/api/trash/restore', { method: 'POST', body: { ids: done.ids, dirs: done.dirs || [] } });
+    toast(back.restored === done.ids.length ? 'Brought back' : `Brought back ${plural(back.restored, 'note')}`);
+    if (state.view === 'folder') await showFolder(state.dir);
+  } catch (e) {
+    fail(e);
+  }
 }
 
 floating.addEventListener('change', (e) => {

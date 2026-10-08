@@ -60,3 +60,61 @@ fn chosen_notes_and_folders_go_to_the_trash_and_the_root_is_refused() {
         assert_eq!(refused.unwrap_err(), StatusCode::BAD_REQUEST, "{bad:?}");
     }
 }
+
+#[test]
+fn undo_brings_back_every_note_and_folder_a_move_to_the_trash_took() {
+    let (state, _d, ids) = state_with(&[
+        ("Loose", ""),
+        ("Graphs", "cs130"),
+        ("Deep", "cs130/week1"),
+        ("Other", "math"),
+    ]);
+    {
+        let mut store = state.fresh();
+        assert!(store.create_dir("cs130/empty"));
+        store.save().unwrap();
+    }
+    let moved = run(move_to_trash(
+        State(state.clone()),
+        Json(TrashMove {
+            notes: vec![ids[0].clone()],
+            dirs: vec!["cs130".into()],
+        }),
+    ))
+    .unwrap()
+    .0;
+    let mut taken: Vec<String> = serde_json::from_value(moved["ids"].clone()).unwrap();
+    taken.sort();
+    let mut expected = ids[..3].to_vec();
+    expected.sort();
+    assert_eq!(taken, expected);
+    let dirs: Vec<String> = serde_json::from_value(moved["dirs"].clone()).unwrap();
+    assert!(dirs.contains(&"cs130/empty".to_string()), "{dirs:?}");
+
+    let undone = run(restore_many(
+        State(state.clone()),
+        Json(TrashChoice {
+            ids: taken,
+            all: false,
+            dirs,
+        }),
+    ))
+    .unwrap();
+    assert_eq!(undone.0["restored"], 3);
+    let store = state.fresh();
+    assert_eq!(store.notes.len(), 4);
+    assert!(store.dir_exists("cs130/empty"));
+    assert!(store.dir_exists("cs130/week1"));
+    assert!(store.trashed().is_empty());
+    drop(store);
+
+    let refused = run(restore_many(
+        State(state.clone()),
+        Json(TrashChoice {
+            ids: vec![],
+            all: false,
+            dirs: vec!["../outside".into()],
+        }),
+    ));
+    assert_eq!(refused.unwrap_err(), StatusCode::BAD_REQUEST);
+}

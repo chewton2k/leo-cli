@@ -631,6 +631,24 @@ test.describe('folders', () => {
     await expect(page.locator('.select-bar')).toHaveCount(0);
     await expect(page.locator('.fab[data-action="new"]')).toBeVisible();
   });
+
+  test('undo in the toast brings back what was just moved to the trash', async ({ page }) => {
+    const top = `undo-${test.info().project.name}`;
+    for (const dir of [top, `${top}/week2`, `${top}/week2/empty`]) await page.request.post('/api/dirs', { data: { path: dir } });
+    const inside = await (await page.request.post('/api/notes', { data: { title: 'Week 2 notes', body: 'x', directory: `${top}/week2` } })).json();
+    await page.goto(`/#/f/${top}`);
+    await page.locator('[data-action="folder-select"]').click();
+    await page.locator('.folder', { hasText: 'week2' }).click();
+    await page.locator('[data-action="folder-trash"]').click();
+    await page.locator('[data-action="folder-trash-now"]').click();
+    await expect(page.locator('.folder', { hasText: 'week2' })).toHaveCount(0);
+    await page.locator('.toast button', { hasText: 'Undo' }).click();
+    await expect(page.locator('.toast')).toContainText('Brought back');
+    await expect(page.locator('.folder', { hasText: 'week2' })).toBeVisible();
+    expect((await page.request.get(`/api/notes/${inside.id}`)).ok()).toBe(true);
+    const dirs = await (await page.request.get(`/api/dirs?parent=${encodeURIComponent(`${top}/week2`)}`)).json();
+    expect(dirs.map((d) => d.name)).toContain('empty');
+  });
 });
 
 test.describe('background work', () => {

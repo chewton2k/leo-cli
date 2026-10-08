@@ -253,3 +253,8 @@
   one in the title or an idea; `Store::find`'s fuzzy title matches follow.
   Hits carry `why` = `{kind: "idea", name}` or `{kind: "summary"}` when the map
   was needed; the card shows it (`.card-why`).
+- Undo after Select → Move to trash: POST `/api/trash/move` also returns `ids`
+  (every note it removed) and `dirs` (every folder, empty ones too); the toast's
+  Undo POSTs them to `/api/trash/restore {ids, dirs}`, which recreates the
+  folders (validated) before restoring. A single note's delete already undid
+  through `restore`.
