@@ -517,6 +517,74 @@ test.describe('Felix', () => {
     await expect.poll(async () => (await (await page.request.get('/api/review')).json()).some((m) => m.question === question)).toBe(false);
   });
 
+  test('Felix shows what it looked at and its suggestions wait for the user', async ({ page }) => {
+    const tag = test.info().project.name;
+    const note = await (await page.request.post('/api/notes', { data: { title: `BFS facts ${tag}`, body: 'BFS takes the newest vertex.' } })).json();
+    const lines = [
+      { sources: [{ n: 1, id: note.id, title: note.title, folder: '', why: 'found by searching' }] },
+      { step: 'Searched your notes for “BFS”', tool: 'search_notes', found: [note.title, 'Heaps'] },
+      { step: `Suggested a change to “${note.title}”`, tool: 'edit_note', found: [] },
+      { proposal: { kind: 'edit', note: note.id, title: note.title, find: 'newest', replace: 'oldest', why: 'a queue is first in, first out' } },
+      { proposal: { kind: 'create', title: `Waiting lines ${tag}`, body: '## Waiting lines\n- first in, first out', folder: '' } },
+      { t: 'Your note had BFS backwards [n1]; I suggested a fix and a new note.' },
+      { done: true },
+    ];
+    await page.route('**/api/chat', (route) => route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: lines.map((l) => JSON.stringify(l)).join('\n') + '\n' }));
+    await page.goto('/');
+    await page.locator('#chat-toggle').click();
+    const chat = page.locator('#chat');
+    await chat.locator('#chat-input').fill('is my BFS note right?');
+    await chat.locator('#chat-input').press('Enter');
+    const answer = chat.locator('.msg.leo').last();
+    const steps = answer.locator('.msg-step');
+    await expect(steps).toHaveCount(2);
+    await expect(steps.first()).toContainText('Searched your notes for “BFS”');
+    await expect(steps.nth(1)).toContainText(`Suggested a change to “${note.title}”`);
+    await expect(answer.locator('.msg-step-busy')).toHaveCount(0);
+    await expect(steps.first().locator('.msg-step-count')).toHaveText('2');
+    await expect(steps.first().locator('li').first()).toBeHidden();
+    await steps.first().locator('summary').click();
+    await expect(steps.first().locator('li')).toHaveText([note.title, 'Heaps']);
+    const cards = answer.locator('.proposal');
+    await expect(cards).toHaveCount(2);
+    await expect(cards.first().locator('.proposal-old')).toHaveText('newest');
+    await expect(cards.first().locator('.proposal-new')).toHaveText('oldest');
+    expect((await (await page.request.get(`/api/notes/${note.id}`)).json()).body).toBe('BFS takes the newest vertex.');
+    await cards.first().locator('[data-chat="apply"]').click();
+    await expect(cards.first().locator('.proposal-done')).toContainText('Applied');
+    expect((await (await page.request.get(`/api/notes/${note.id}`)).json()).body).toBe('BFS takes the oldest vertex.');
+    await cards.nth(1).locator('[data-chat="apply"]').click();
+    await expect(cards.nth(1).locator('.proposal-done')).toContainText('Made');
+    const made = await (await page.request.get(`/api/search?q=${encodeURIComponent(`Waiting lines ${tag}`)}`)).json();
+    expect(made.some((n) => n.title === `Waiting lines ${tag}`)).toBe(true);
+    await page.reload();
+    await page.locator('#chat-toggle').click();
+    await expect(page.locator('#chat .msg.leo').last().locator('.proposal-done').first()).toContainText('Applied');
+  });
+
+  test('Felix holds the prop for the tool he is using, and only that one', async ({ page }) => {
+    await page.goto('/');
+    const shown = await page.evaluate(() => {
+      const out = {};
+      for (const pose of ['tool-search', 'tool-open', 'tool-map', 'tool-edit', 'tool-create', 'idle']) {
+        const holder = document.createElement('div');
+        holder.innerHTML = window.leoChat.felix(80, pose);
+        document.body.appendChild(holder);
+        out[pose] = [...holder.querySelectorAll('.felix-tool')].filter((g) => getComputedStyle(g).opacity === '1').map((g) => g.getAttribute('class').replace('felix-tool ', ''));
+        holder.remove();
+      }
+      return out;
+    });
+    expect(shown).toEqual({
+      'tool-search': ['felix-tool-search'],
+      'tool-open': ['felix-tool-open'],
+      'tool-map': ['felix-tool-map'],
+      'tool-edit': ['felix-tool-edit'],
+      'tool-create': ['felix-tool-create'],
+      idle: [],
+    });
+  });
+
   test('a file from this device is read for Felix, leaves the box once sent, and can be removed before', async ({ page }) => {
     const asked = [];
     await page.route('**/api/chat', async (route) => {

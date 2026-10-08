@@ -32,11 +32,18 @@
         <g class="felix-cheeks"><rect x="8" y="21" width="4" height="2"/><rect x="24" y="21" width="4" height="2"/></g>
         <g class="felix-gaze"><g class="felix-eyes" shape-rendering="geometricPrecision"><rect x="11" y="16" width="4" height="4"/><rect x="21" y="16" width="4" height="4"/></g></g>
         <g class="felix-sweat"><rect x="34" y="5" width="2" height="2"/><rect x="33" y="7" width="4" height="3"/></g>
+        <g class="felix-tool felix-tool-search"><rect class="glass" x="20" y="14" width="8" height="8"/><rect class="metal" x="20" y="12" width="8" height="2"/><rect class="metal" x="20" y="22" width="8" height="2"/><rect class="metal" x="18" y="14" width="2" height="8"/><rect class="metal" x="28" y="14" width="2" height="8"/><rect class="wood" x="30" y="23" width="2" height="2"/><rect class="wood" x="32" y="25" width="2" height="2"/><rect class="wood" x="34" y="27" width="3" height="3"/></g>
+        <g class="felix-tool felix-tool-open"><rect class="paper-old" x="10" y="22" width="24" height="8"/><rect class="ink-old" x="13" y="24" width="14" height="1"/><rect class="ink-old" x="13" y="27" width="10" height="1"/><rect class="roll" x="7" y="21" width="4" height="10"/><rect class="roll" x="33" y="21" width="4" height="10"/></g>
+        <g class="felix-tool felix-tool-map"><rect class="paper-old" x="30" y="5" width="15" height="11"/><rect class="fold" x="35" y="5" width="1" height="11"/><rect class="fold" x="40" y="5" width="1" height="11"/><rect class="pin" x="32" y="8" width="2" height="2"/><rect class="pin" x="42" y="7" width="2" height="2"/><rect class="pin" x="37" y="12" width="2" height="2"/></g>
+        <g class="felix-tool felix-tool-edit"><rect class="paper" x="8" y="21" width="16" height="10"/><rect class="ink" x="10" y="24" width="11" height="1"/><rect class="ink" x="10" y="27" width="8" height="1"/><g class="pen"><rect class="cap" x="29" y="18" width="2" height="2"/><rect class="barrel" x="27" y="20" width="2" height="2"/><rect class="barrel" x="25" y="22" width="2" height="2"/><rect class="tip" x="23" y="24" width="2" height="2"/></g></g>
+        <g class="felix-tool felix-tool-create"><rect class="wood" x="42" y="5" width="2" height="15"/><rect class="metal" x="38" y="1" width="10" height="5"/><rect class="shine" x="39" y="2" width="2" height="1"/></g>
       </g>
     </svg>`;
   }
 
   const TAPS = ['boop', 'hop', 'spin', 'giggle'];
+  const POSES = { search_notes: 'tool-search', open_note: 'tool-open', connected_notes: 'tool-map', edit_note: 'tool-edit', create_note: 'tool-create' };
+  const poseOf = (tool) => POSES[tool] || null;
 
   function splitLines(buffer) {
     const parts = buffer.split('\n');
@@ -184,7 +191,7 @@
   }
   const FILE_TYPES = '.pdf,.docx,.pptx,.txt,.md,image/*';
 
-  function create({ render, escape, onOpen = () => {}, storage = root.localStorage, prepare = null, notify = () => {}, onSaved = () => {} }) {
+  function create({ render, escape, onOpen = () => {}, storage = root.localStorage, prepare = null, notify = () => {}, onSaved = () => {}, onChanged = () => {} }) {
     const saved = load(storage);
     const state = { open: false, id: saved.id || newId(), mode: modeOf(saved.mode), messages: saved.messages, refs: saved.refs, context: null, dropped: null, busy: null, streak: 0, pick: null, chats: null, sidebar: null, doomed: null, asking: null, files: [], sent: [], filesFor: null, review: [] };
     const panel = document.createElement('aside');
@@ -248,6 +255,7 @@
       }
     }
     function thinking(on) {
+      if (!on) pose(null);
       for (const f of faces()) {
         f.classList.toggle('think', on);
         if (!on) f.classList.remove('talk');
@@ -255,9 +263,17 @@
     }
 
     function talking() {
+      pose(null);
       for (const f of faces()) {
         f.classList.remove('think');
         f.classList.add('talk');
+      }
+    }
+
+    function pose(tool) {
+      const wanted = poseOf(tool);
+      for (const f of faces()) {
+        for (const name of Object.values(POSES)) f.classList.toggle(name, name === wanted);
       }
     }
 
@@ -696,7 +712,9 @@
           ? `<button class="msg-act" data-chat="open" data-id="${escape(m.saved)}">Open the saved note</button>`
           : `<button class="msg-act" data-chat="save" data-i="${i}">Save as note</button>`}</div>`
         : '';
-      return `<div class="msg leo${m.pending ? ' pending' : ''}" data-i="${i}">${badge}<div class="prose">${html}</div>${error}${from}${keep}</div>`;
+      const steps = (m.steps || []).length ? `<div class="msg-steps">${m.steps.map((t, k) => stepLine(t, m.pending && !shown && k === m.steps.length - 1)).join('')}</div>` : '';
+      const offers = (m.proposals || []).map((p, j) => proposalCard(p, i, j)).join('');
+      return `<div class="msg leo${m.pending ? ' pending' : ''}" data-i="${i}">${badge}${steps}<div class="prose">${html}</div>${offers}${error}${from}${keep}</div>`;
     }
 
     function onNote() {
@@ -779,6 +797,86 @@
       } catch (e) {
         return;
       }
+    }
+
+    const TOOL_ICONS = {
+      search_notes: '<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/>',
+      open_note: '<path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5"/>',
+      connected_notes: '<circle cx="6" cy="7" r="2.2"/><circle cx="18" cy="6" r="2.2"/><circle cx="12" cy="17.5" r="2.2"/><path d="M7.4 8.9l3.5 6.7M16.9 7.9l-3.8 7.8"/>',
+      edit_note: '<path d="M4 20h4L19 9l-4-4L4 16z"/>',
+      create_note: '<path d="M12 5v14M5 12h14"/>',
+    };
+
+    function stepLine(step, working) {
+      const item = typeof step === 'string' ? { text: step, tool: '', found: [] } : step;
+      const icon = `<svg class="msg-step-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${TOOL_ICONS[item.tool] || '<circle cx="12" cy="12" r="3"/>'}</svg>`;
+      const label = `${icon}<span>${escape(item.text || '')}</span>${working ? '<span class="msg-step-busy" aria-label="working"></span>' : ''}`;
+      const found = (item.found || []).filter((f) => f && f !== item.text);
+      if (!found.length || item.tool === 'open_note') return `<div class="msg-step">${label}</div>`;
+      return `<details class="msg-step"><summary>${label}<span class="msg-step-count">${found.length}</span></summary><ul>${found.map((f) => `<li>${escape(f)}</li>`).join('')}</ul></details>`;
+    }
+
+    function proposalCard(p, i, j) {
+      const where = `data-i="${i}" data-j="${j}"`;
+      const done = p.state === 'applied'
+        ? `<div class="proposal-done">${p.kind === 'create' ? 'Made' : 'Applied'} · <button class="msg-act" data-chat="open" data-id="${escape(p.made || p.note || '')}">Open the note</button></div>`
+        : p.state === 'dismissed'
+          ? '<div class="proposal-done">Dismissed</div>'
+          : `<div class="proposal-buttons"><button class="btn primary sm" data-chat="apply" ${where}>${p.kind === 'create' ? 'Create' : 'Apply'}</button><button class="btn plain sm" data-chat="dismiss" ${where}>Dismiss</button></div>`;
+      if (p.kind === 'create') {
+        const body = String(p.body || '');
+        return `<div class="proposal"><div class="proposal-title">New note: “${escape(p.title || 'Untitled')}”${p.folder ? ` in ${escape(p.folder)}` : ''}</div>
+          <div class="proposal-body prose">${render(body.length > 900 ? `${body.slice(0, 900)}…` : body)}</div>${done}</div>`;
+      }
+      const old = p.find ? `<div class="proposal-old">${escape(p.find)}</div>` : '<div class="proposal-note">Added at the end:</div>';
+      return `<div class="proposal"><div class="proposal-title">Change to “${escape(p.title || 'a note')}”</div>${p.why ? `<div class="proposal-why">${escape(p.why)}</div>` : ''}
+        ${old}<div class="proposal-new">${escape(p.replace || '')}</div>${done}</div>`;
+    }
+
+    async function decide(i, j, apply) {
+      const m = state.messages[i];
+      const p = m && m.proposals && m.proposals[j];
+      if (!p || p.state !== 'new') return;
+      if (!apply) {
+        p.state = 'dismissed';
+        remember();
+        draw(false);
+        return;
+      }
+      const post = p.kind === 'create'
+        ? ['/api/notes', { title: p.title, body: p.body || '', directory: p.folder || '' }]
+        : [`/api/notes/${encodeURIComponent(p.note)}/suggestion`, { find: p.find || '', replace: p.replace || '' }];
+      let note;
+      try {
+        const response = await fetch(post[0], {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(post[1]),
+        });
+        if (!response.ok) {
+          let said = '';
+          try {
+            said = (await response.json()).error || '';
+          } catch (e) {
+            said = '';
+          }
+          throw new Error(said || (p.kind === 'create' ? 'The note could not be made.' : 'The change could not be applied.'));
+        }
+        note = await response.json();
+      } catch (e) {
+        notify(e.message);
+        return;
+      }
+      p.state = 'applied';
+      if (p.kind === 'create') {
+        p.made = note.id;
+        onSaved(note);
+      } else {
+        onChanged(note);
+      }
+      remember();
+      draw(false);
     }
 
     async function saveAnswer(i) {
@@ -928,6 +1026,9 @@
           for (const e of events) {
             if (e.sources) answer.sources = e.sources;
             if (e.restart) answer.text = '';
+            if (typeof e.step === 'string') pose(e.tool);
+            if (typeof e.step === 'string') answer.steps = [...(answer.steps || []), { text: e.step, tool: typeof e.tool === 'string' ? e.tool : '', found: Array.isArray(e.found) ? e.found.filter((f) => typeof f === 'string').slice(0, 12) : [] }];
+            if (e.proposal && typeof e.proposal === 'object') answer.proposals = [...(answer.proposals || []), { ...e.proposal, state: 'new' }];
             if (typeof e.t === 'string') {
               if (!answer.text) talking();
               answer.text += e.t;
@@ -989,6 +1090,7 @@
       } else if (what === 'history') showSidebar(!panel.classList.contains('with-history'));
       else if (what === 'resume') resume(el.dataset.id);
       else if (what === 'save') saveAnswer(Number(el.dataset.i));
+      else if (what === 'apply' || what === 'dismiss') decide(Number(el.dataset.i), Number(el.dataset.j), what === 'apply');
       else if (what === 'review') startReview();
       else if (what === 'forget') forget(el.dataset.id);
       else if (what === 'mode') {
@@ -1130,5 +1232,5 @@
     };
   }
 
-  root.leoChat = { create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, MODES, MOST_REFS };
+  root.leoChat = { create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS };
 })(typeof window !== 'undefined' ? window : globalThis);

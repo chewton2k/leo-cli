@@ -17,7 +17,9 @@ const OPEN_CHARS: usize = 14_000;
 const ATTACHED_CHARS: usize = 12_000;
 pub const MOST_ATTACHED: usize = 8;
 const NOTE_CHARS: usize = 4_000;
-const TOTAL_CHARS: usize = 64_000;
+pub const ROOM: usize = 64_000;
+pub const LEAST_ROOM: usize = 12_000;
+pub const MOST_ROOM: usize = 96_000;
 const NEIGHBOURS: usize = 5;
 const MATCHES: usize = 8;
 const EXPANDED_MATCHES: usize = 3;
@@ -65,11 +67,11 @@ struct Picked<'a> {
     most: usize,
 }
 
-fn studied(note: &Note) -> bool {
+pub(crate) fn studied(note: &Note) -> bool {
     !(note.title == leo_core::manual::MANUAL_TITLE && note.tags.iter().any(|t| t == "manual"))
 }
 
-fn clip(text: &str, most: usize) -> String {
+pub(crate) fn clip(text: &str, most: usize) -> String {
     let mut out: String = text.chars().take(most).collect();
     if text.chars().count() > most {
         out.push_str("\n[…the rest of this note is left out]");
@@ -77,7 +79,11 @@ fn clip(text: &str, most: usize) -> String {
     out
 }
 
-fn connected<'a>(store: &'a Store, cache: &'a Cache, id: &str) -> Vec<(&'a Note, String, String)> {
+pub(crate) fn connected<'a>(
+    store: &'a Store,
+    cache: &'a Cache,
+    id: &str,
+) -> Vec<(&'a Note, String, String)> {
     let mut out: Vec<(u8, &Note, String, String)> = Vec::new();
     let mut seen = BTreeSet::new();
     for link in cache.all_links() {
@@ -101,7 +107,7 @@ fn connected<'a>(store: &'a Store, cache: &'a Cache, id: &str) -> Vec<(&'a Note,
         .collect()
 }
 
-fn attribute(text: &str) -> String {
+pub(crate) fn attribute(text: &str) -> String {
     text.replace('"', "'").replace(['\n', '\r'], " ")
 }
 
@@ -175,7 +181,12 @@ pub fn gather(
     open: Option<&str>,
     attached: &[String],
     question: &str,
+    room: usize,
 ) -> (Vec<SourceRef>, String) {
+    let room = room.clamp(LEAST_ROOM, MOST_ROOM);
+    let share = |at_default: usize| at_default * room / ROOM;
+    let (open_chars, attached_chars, note_chars) =
+        (share(OPEN_CHARS), share(ATTACHED_CHARS), share(NOTE_CHARS));
     let mut picked: Vec<Picked> = Vec::new();
     let mut have = BTreeSet::new();
     for id in attached.iter().take(MOST_ATTACHED) {
@@ -184,7 +195,7 @@ pub fn gather(
                 picked.push(Picked {
                     note,
                     why: "attached by the user".into(),
-                    most: ATTACHED_CHARS,
+                    most: attached_chars,
                 });
             }
         }
@@ -195,7 +206,7 @@ pub fn gather(
             picked.push(Picked {
                 note,
                 why: "open".into(),
-                most: OPEN_CHARS,
+                most: open_chars,
             });
         }
         for (other, kind, why) in connected(store, cache, &note.id)
@@ -211,7 +222,7 @@ pub fn gather(
                 picked.push(Picked {
                     note: other,
                     why: reason,
-                    most: NOTE_CHARS,
+                    most: note_chars,
                 });
             }
         }
@@ -226,7 +237,7 @@ pub fn gather(
             picked.push(Picked {
                 note,
                 why: "matches the question".into(),
-                most: NOTE_CHARS,
+                most: note_chars,
             });
         }
     }
@@ -245,7 +256,7 @@ pub fn gather(
                 picked.push(Picked {
                     note: other,
                     why: reason,
-                    most: NOTE_CHARS,
+                    most: note_chars,
                 });
             }
         }
@@ -254,7 +265,7 @@ pub fn gather(
     let mut sources = Vec::new();
     let mut text = String::new();
     for (i, p) in picked.iter().enumerate() {
-        if text.chars().count() >= TOTAL_CHARS {
+        if text.chars().count() >= room {
             break;
         }
         let n = i + 1;
@@ -455,6 +466,7 @@ mod tests {
             Some(&ids[0]),
             &[],
             "what about priority queue heaps?",
+            ROOM,
         );
         let titles: Vec<&str> = sources.iter().map(|s| s.title.as_str()).collect();
         assert_eq!(titles[..3], ["Graph traversals", "Scheduling", "Heaps"]);
@@ -483,7 +495,7 @@ mod tests {
             "missing".to_string(),
             ids[2].clone(),
         ];
-        let (sources, text) = gather(&store, &cache(&ids), Some(&ids[0]), &attached, "zzz");
+        let (sources, text) = gather(&store, &cache(&ids), Some(&ids[0]), &attached, "zzz", ROOM);
         let picked: Vec<&str> = sources.iter().map(|s| s.id.as_str()).collect();
         assert_eq!(picked[..2], [ids[2].as_str(), ids[0].as_str()]);
         assert_eq!(sources[0].why, "attached by the user");
@@ -527,7 +539,7 @@ mod tests {
     fn notes_that_match_bring_their_connections_on_the_map() {
         let (store, _d, ids) = store();
         let cache = cache(&ids);
-        let (sources, text) = gather(&store, &cache, None, &[], "round robin");
+        let (sources, text) = gather(&store, &cache, None, &[], "round robin", ROOM);
         assert_eq!(sources[0].id, ids[1], "Scheduling matches the question");
         let joined = sources
             .iter()
@@ -548,12 +560,19 @@ mod tests {
     #[test]
     fn without_an_open_note_the_question_picks_the_notes() {
         let (store, _d, ids) = store();
-        let (sources, _) = gather(&store, &cache(&ids), None, &[], "who sends the forecast");
+        let (sources, _) = gather(
+            &store,
+            &cache(&ids),
+            None,
+            &[],
+            "who sends the forecast",
+            ROOM,
+        );
         assert_eq!(
             sources.first().map(|s| s.title.as_str()),
             Some("Budget meeting")
         );
-        let (none, text) = gather(&store, &Cache::default(), None, &[], "zzz");
+        let (none, text) = gather(&store, &Cache::default(), None, &[], "zzz", ROOM);
         assert!(none.is_empty());
         assert!(text.is_empty());
     }
@@ -562,7 +581,7 @@ mod tests {
     fn long_notes_and_conversations_are_clipped() {
         let (mut store, _d, ids) = store();
         store.find_note_mut(&ids[0]).unwrap().body = "x".repeat(100_000);
-        let (_, text) = gather(&store, &Cache::default(), Some(&ids[0]), &[], "x");
+        let (_, text) = gather(&store, &Cache::default(), Some(&ids[0]), &[], "x", ROOM);
         assert!(text.chars().count() < OPEN_CHARS + 2_000);
         let many: Vec<Turn> = (0..40)
             .map(|i| Turn {
@@ -656,6 +675,44 @@ mod tests {
         assert_eq!(
             question_of(&turns),
             "and their running time? tell me about heaps"
+        );
+    }
+
+    #[test]
+    fn a_small_model_gets_fewer_notes_and_a_big_one_more() {
+        let (mut store, _d, ids) = store();
+        for i in 0..30 {
+            store
+                .create_note(
+                    format!("Queue drill {i}"),
+                    "queue ".repeat(2_000),
+                    vec![],
+                    "",
+                )
+                .unwrap();
+        }
+        let sizes: Vec<usize> = [LEAST_ROOM, ROOM, MOST_ROOM, 1]
+            .iter()
+            .map(|room| {
+                gather(
+                    &store,
+                    &Cache::default(),
+                    Some(&ids[0]),
+                    &[],
+                    "queue",
+                    *room,
+                )
+                .1
+                .chars()
+                .count()
+            })
+            .collect();
+        assert!(sizes[0] < sizes[1] && sizes[1] < sizes[2], "{sizes:?}");
+        assert!(sizes[0] <= LEAST_ROOM + NOTE_CHARS + 600, "{sizes:?}");
+        assert!(sizes[2] > 40_000, "{sizes:?}");
+        assert_eq!(
+            sizes[3], sizes[0],
+            "a tiny room is raised to the least that is useful"
         );
     }
 }

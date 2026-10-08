@@ -157,3 +157,13 @@ test('reviewPrompt asks each missed question again with the old answer', () => {
   assert.match(text, /one at a time/);
   assert.match(text, /\n1\. What does BFS use\? \(last time I said: a stack\)\n2\. Define a heap\.$/);
 });
+
+test('each tool gives Felix its own prop, and anything else none', () => {
+  assert.equal(C.poseOf('search_notes'), 'tool-search');
+  assert.equal(C.poseOf('open_note'), 'tool-open');
+  assert.equal(C.poseOf('connected_notes'), 'tool-map');
+  assert.equal(C.poseOf('edit_note'), 'tool-edit');
+  assert.equal(C.poseOf('create_note'), 'tool-create');
+  assert.equal(C.poseOf('delete_everything'), null);
+  for (const prop of ['search', 'open', 'map', 'edit', 'create']) assert.ok(C.felix(40).includes(`felix-tool-${prop}`), prop);
+});

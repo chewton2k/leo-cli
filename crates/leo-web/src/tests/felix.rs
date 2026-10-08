@@ -201,3 +201,187 @@ fn a_chat_without_ai_or_a_question_is_refused() {
         "{text}"
     );
 }
+
+fn chat_lines(state: &AppState, question: &str) -> Vec<serde_json::Value> {
+    let body = chat::ChatBody {
+        messages: vec![chat::Turn {
+            role: "user".into(),
+            text: question.into(),
+        }],
+        mode: None,
+        note: None,
+        refs: vec![],
+        chat: None,
+        files: vec![],
+    };
+    let text = run(async {
+        let response = chat_reply(State(state.clone()), Json(body)).await;
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        String::from_utf8(bytes.to_vec()).unwrap()
+    });
+    text.lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect()
+}
+
+fn scripted(replies: Vec<&'static str>) -> (chat::Streamer, Arc<Mutex<Vec<String>>>) {
+    let prompts = Arc::new(Mutex::new(Vec::new()));
+    let seen = Arc::clone(&prompts);
+    let replies = Arc::new(Mutex::new(replies.into_iter()));
+    let streamer: chat::Streamer = Arc::new(
+        move |system: &str,
+              user: &str,
+              _: u32,
+              piece: &mut dyn FnMut(&str),
+              _: &mut dyn FnMut()| {
+            seen.lock().unwrap().push(format!("{system}\n{user}"));
+            let reply = replies.lock().unwrap().next().unwrap_or("Out of script.");
+            for chunk in reply.as_bytes().chunks(7) {
+                piece(std::str::from_utf8(chunk).unwrap());
+            }
+            Ok(reply.to_string())
+        },
+    );
+    (streamer, prompts)
+}
+
+#[test]
+fn felix_searches_opens_and_suggests_a_change_with_tools_then_answers() {
+    let (mut state, _d, ids) = state_with(&[("Graph traversals", "cs130"), ("Calendar", "")]);
+    {
+        let mut store = state.fresh();
+        store.find_note_mut(&ids[0]).unwrap().body =
+            "BFS takes the newest vertex from a queue.".into();
+        store.save().unwrap();
+    }
+    let (streamer, prompts) = scripted(vec![
+        "<tool>{\"name\": \"search_notes\", \"query\": \"queue\"}</tool>",
+        "Let me check it.\n<tool>{\"name\": \"edit_note\", \"note\": \"n1\", \"find\": \"newest\", \"replace\": \"oldest\", \"why\": \"a queue is first in, first out\"}</tool>",
+        "Your note says BFS takes the newest vertex [n1], but a queue gives the oldest; I suggested a fix.",
+    ]);
+    state.chat = Some(streamer);
+    let lines = chat_lines(&state, "is my BFS note right?");
+    let steps: Vec<&str> = lines.iter().filter_map(|l| l["step"].as_str()).collect();
+    assert_eq!(
+        steps,
+        [
+            "Searched your notes for “queue”",
+            "Suggested a change to “Graph traversals”"
+        ]
+    );
+    let sources = lines.iter().rfind(|l| l.get("sources").is_some()).unwrap();
+    assert_eq!(sources["sources"][0]["title"], "Graph traversals");
+    let proposal = lines.iter().find_map(|l| l.get("proposal")).unwrap();
+    assert_eq!(proposal["kind"], "edit");
+    assert_eq!(proposal["note"], ids[0].as_str());
+    assert_eq!(proposal["find"], "newest");
+    let shown: String = lines.iter().filter_map(|l| l["t"].as_str()).collect();
+    assert!(
+        !shown.contains("<tool"),
+        "a tool call never reaches the page: {shown}"
+    );
+    let last_restart = lines
+        .iter()
+        .rposition(|l| l.get("restart").is_some())
+        .unwrap();
+    let before: String = lines[..last_restart]
+        .iter()
+        .filter_map(|l| l["t"].as_str())
+        .collect();
+    assert_eq!(
+        before, "Let me check it.\n",
+        "words before a tool call are shown, then taken back"
+    );
+    let after: String = lines[last_restart..]
+        .iter()
+        .filter_map(|l| l["t"].as_str())
+        .collect();
+    assert_eq!(after, "Your note says BFS takes the newest vertex [n1], but a queue gives the oldest; I suggested a fix.");
+    assert_eq!(lines.last().unwrap()["done"], true);
+    let prompts = prompts.lock().unwrap();
+    assert_eq!(prompts.len(), 3);
+    assert!(prompts[0].contains("search_notes {\"query\"}"));
+    assert!(prompts[1].contains("<tool_result name=\"search_notes\">\n[n1] \"Graph traversals\" in cs130: BFS takes the newest"), "{}", prompts[1]);
+    assert!(prompts[2].contains("Suggested. The user sees the change"));
+    assert_eq!(
+        state.fresh().find_note(&ids[0]).unwrap().body,
+        "BFS takes the newest vertex from a queue.",
+        "a suggestion changes nothing by itself"
+    );
+}
+
+#[test]
+fn felix_stops_using_tools_after_six_and_answers() {
+    let (mut state, _d, _ids) = state_with(&[("Heaps", "")]);
+    let (streamer, prompts) =
+        scripted(vec!["<tool>{\"name\": \"search_notes\", \"query\": \"heap\"}</tool>"; 6]);
+    state.chat = Some(streamer);
+    let lines = chat_lines(&state, "loop forever");
+    assert_eq!(lines.iter().filter(|l| l.get("step").is_some()).count(), 6);
+    let prompts = prompts.lock().unwrap();
+    assert_eq!(prompts.len(), 7);
+    assert!(prompts[6].contains("You have used all the tools"));
+    assert!(!prompts[6].contains("search_notes {\"query\"}"));
+    let shown: String = lines.iter().filter_map(|l| l["t"].as_str()).collect();
+    assert!(shown.ends_with("Out of script."));
+}
+
+#[test]
+fn a_broken_tool_call_is_explained_to_the_model_instead_of_failing() {
+    let (mut state, _d, _ids) = state_with(&[]);
+    let (streamer, prompts) = scripted(vec![
+        "<tool>{search_notes: heaps}</tool>",
+        "Sorry, here is the answer.",
+    ]);
+    state.chat = Some(streamer);
+    let lines = chat_lines(&state, "heaps?");
+    assert_eq!(lines.last().unwrap()["done"], true);
+    assert!(
+        prompts.lock().unwrap()[1].contains("That did not work: that tool call is not valid JSON")
+    );
+}
+
+#[test]
+fn a_suggested_change_is_applied_only_while_the_text_is_still_there() {
+    let (state, _d, ids) = state_with(&[("Graph traversals", "")]);
+    {
+        let mut store = state.fresh();
+        store.find_note_mut(&ids[0]).unwrap().body = "BFS takes the newest vertex.".into();
+        store.save().unwrap();
+    }
+    let apply = |find: &str, replace: &str| {
+        run(apply_suggestion(
+            State(state.clone()),
+            Path(ids[0].clone()),
+            Json(Suggestion {
+                find: find.into(),
+                replace: replace.into(),
+            }),
+        ))
+    };
+    assert_eq!(apply("newest", "oldest").status(), StatusCode::OK);
+    assert_eq!(
+        state.fresh().find_note(&ids[0]).unwrap().body,
+        "BFS takes the oldest vertex."
+    );
+    assert_eq!(apply("newest", "oldest").status(), StatusCode::CONFLICT);
+    assert_eq!(
+        apply("", "## Practice\n- trace BFS").status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        state.fresh().find_note(&ids[0]).unwrap().body,
+        "BFS takes the oldest vertex.\n\n## Practice\n- trace BFS"
+    );
+    let missing = run(apply_suggestion(
+        State(state.clone()),
+        Path("nope".into()),
+        Json(Suggestion {
+            find: String::new(),
+            replace: "x".into(),
+        }),
+    ));
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+}

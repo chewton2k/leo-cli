@@ -409,6 +409,9 @@ pub fn run(cli: Cli) -> Result<()> {
                     )),
                     listener: Some(web_record::listener()),
                     housekeeper: Some(std::sync::Arc::new(web_storage::Housekeeping)),
+                    room: Some(std::sync::Arc::new(|| {
+                        leo_services::ai::writing_budget().chars()
+                    })),
                     reader: Some(std::sync::Arc::new(
                         |file: leo_web::UploadFile, progress: &mut dyn FnMut(&str)| {
                             leo_services::import::read_for_chat(

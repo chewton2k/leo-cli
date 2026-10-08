@@ -312,3 +312,23 @@
   `visual.spec.js` + `playwright.visual.config.js` (`pnpm visual`, own leo on
   31832, seeded once, 4 projects: desktop/phone × light/dark) compare screenshots
   with `visual.spec.js-snapshots/*-darwin.png`; not run in CI.
+- Felix tools (`tools.rs`, loop in `routes/felix.rs` `answer`): a text
+  protocol so every provider works (Codex, Claude Code, OpenAI-compatible
+  APIs, local models): the system prompt gets `TOOLS`; a reply that is
+  `<tool>{"name": ..., ...}</tool>` (also fenced, bare JSON naming a tool,
+  `tool`/`args`/`arguments`/`input` spellings) is run by `Desk::run` and fed
+  back with `continued` (`<tool_result>`), at most `MOST_STEPS` (6) times, then
+  `NO_MORE_TOOLS`. A broken call is explained to the model, not failed. `Gate`
+  streams answers at once but holds back anything that could be `<tool>`; text
+  shown before a call is taken back with `restart`. Tools: search_notes
+  (`search::search`, excerpts), open_note, connected_notes (map links),
+  edit_note and create_note, which only *propose* (`Proposal`, at most 3): the
+  page shows a card and Apply POSTs `/api/notes/{id}/suggestion {find,
+  replace}` (409 unless `find` is there exactly once; empty find appends) or
+  creates the note. Notes found get the next `nX` ids, and `sources` is resent.
+  Events: `{step, tool, found}`, `{proposal}`. The page draws steps with an
+  icon, an expandable list of what was found and a spinner, and Felix holds a
+  prop per tool (`POSES`: magnifier, scroll, map, paper and pen, hammer).
+- How much note text Felix gets follows the writing AI: `Powers.room` (from
+  `writing_budget().chars()`, read per message) clamped to 12k-96k chars;
+  `gather` scales every per-note share from the 64k defaults.

@@ -21,7 +21,9 @@ use crate::routes::auth::{
     EndSessions, Peer,
 };
 use crate::routes::downloads::attachment_header;
-use crate::routes::felix::{add_chat_file, chat_reply, list_chat_files, remove_chat_file};
+use crate::routes::felix::{
+    add_chat_file, apply_suggestion, chat_reply, list_chat_files, remove_chat_file, Suggestion,
+};
 use crate::routes::housekeeping::{get_keep, set_keep};
 use crate::routes::notes::{
     create_dir, create_note, delete_note, excerpt, get_note, list_dirs, list_folders, list_notes,
@@ -67,6 +69,7 @@ fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<Strin
         chats: dir.path().join("chats"),
         housekeeper: None,
         reader: None,
+        room: None,
     };
     (state, dir, ids)
 }

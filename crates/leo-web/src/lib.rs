@@ -13,6 +13,7 @@ mod terminal;
 #[cfg(test)]
 mod tests;
 mod token;
+pub mod tools;
 pub mod tunnel;
 
 #[cfg(test)]
@@ -38,8 +39,8 @@ use crate::routes::auth::{
 };
 use crate::routes::downloads::{export_zip, originals_zip};
 use crate::routes::felix::{
-    add_chat_file, chat_reply, delete_chat, get_chat, get_review, list_chat_files, list_chats,
-    mark_reviewed, put_chat, remove_chat_file,
+    add_chat_file, apply_suggestion, chat_reply, delete_chat, get_chat, get_review,
+    list_chat_files, list_chats, mark_reviewed, put_chat, remove_chat_file,
 };
 use crate::routes::housekeeping::{change_storage, get_keep, get_storage, set_keep};
 use crate::routes::map::{build_graph, get_graph, graph_status};
@@ -73,6 +74,8 @@ pub struct UploadFile {
     pub bytes: Vec<u8>,
 }
 
+pub type Room = Arc<dyn Fn() -> usize + Send + Sync>;
+
 pub type Reader = Arc<dyn Fn(UploadFile, &mut dyn FnMut(&str)) -> Result<String> + Send + Sync>;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -101,6 +104,7 @@ pub struct Powers {
     pub listener: Option<record::Listener>,
     pub housekeeper: Option<Arc<dyn storage::Housekeeper>>,
     pub reader: Option<Reader>,
+    pub room: Option<Room>,
 }
 
 #[derive(Clone)]
@@ -117,6 +121,7 @@ struct AppState {
     chats: std::path::PathBuf,
     housekeeper: Option<Arc<dyn storage::Housekeeper>>,
     reader: Option<Reader>,
+    room: Option<Room>,
 }
 
 struct Storage {
@@ -192,6 +197,7 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
     let recorder = powers.listener;
     let housekeeper = powers.housekeeper;
     let reader = powers.reader;
+    let room = powers.room;
     let count = store.notes.len();
     let token_path = leo_core::paths::config_dir()?.join("serve-token");
     let sessions_path = leo_core::paths::config_dir()?.join("serve-sessions.json");
@@ -227,6 +233,7 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
         chats,
         housekeeper,
         reader,
+        room,
     });
 
     let tunnel = if !options.local {
@@ -334,6 +341,7 @@ fn router(state: AppState) -> Router {
         )
         .route("/api/notes/{id}/toggle", post(toggle_checkbox))
         .route("/api/notes/{id}/move", post(move_note))
+        .route("/api/notes/{id}/suggestion", post(apply_suggestion))
         .route("/api/search", get(search_notes))
         .route("/api/dirs", get(list_dirs).post(create_dir))
         .route("/api/folders", get(list_folders))

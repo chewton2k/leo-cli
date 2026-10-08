@@ -50,6 +50,11 @@ const chat = felix.create({
     return { name: ready.name, type: ready.type, data: await base64(ready.blob) };
   },
   notify: (message) => toast(message, { bad: true }),
+  onChanged: (note) => {
+    const open = state.view === 'note' && state.session && state.session.note.id === note.id;
+    if (open && !saving.unsaved()) showNote(note.id);
+    toast(open && saving.unsaved() ? 'Felix changed this note while you were typing; reopen it to see the change.' : `Changed “${note.title}”`, { action: 'Open', run: () => go(noteHash(note.id)) });
+  },
   onSaved: (note) => {
     showLatest().catch(() => {});
     toast(`Saved as a note${note.directory ? ` in ${note.directory}` : ''}`, { action: 'Open', run: () => go(noteHash(note.id)) });

@@ -6,8 +6,9 @@ use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 
+use crate::routes::notes::{save, NoteResponse};
 use crate::routes::uploads::{safe_file_name, ImportFileBody};
-use crate::{chat, chat_files, chats, review, AppState, UploadFile};
+use crate::{chat, chat_files, chats, review, store_now, tools, AppState, UploadFile};
 
 fn ndjson(value: serde_json::Value) -> String {
     format!("{value}\n")
@@ -183,6 +184,129 @@ pub(crate) async fn delete_chat(
     }
 }
 
+fn answer(
+    state: &AppState,
+    streamer: &chat::Streamer,
+    system: &str,
+    mut conversation: String,
+    sources: Vec<chat::SourceRef>,
+    room: usize,
+    tx: &tokio::sync::mpsc::UnboundedSender<String>,
+) -> Result<()> {
+    let send = |value: serde_json::Value| {
+        let _ = tx.send(ndjson(value));
+    };
+    let with_tools = format!("{system}\n\n{}", tools::TOOLS);
+    let last_word = format!("{system}\n\n{}", tools::NO_MORE_TOOLS);
+    let mut desk = tools::Desk::new(sources, room);
+    for step in 0..=tools::MOST_STEPS {
+        let last = step == tools::MOST_STEPS;
+        let gate = std::cell::RefCell::new(tools::Gate::default());
+        let reply = streamer(
+            if last { &last_word } else { &with_tools },
+            &conversation,
+            chat::REPLY_TOKENS,
+            &mut |piece| {
+                gate.borrow_mut()
+                    .push(piece, &mut |t| send(serde_json::json!({ "t": t })))
+            },
+            &mut || {
+                gate.borrow_mut().reset();
+                send(serde_json::json!({ "restart": true }));
+            },
+        )?;
+        let mut gate = gate.into_inner();
+        let call = if last { None } else { tools::find_call(&reply) };
+        let call = match call {
+            None => {
+                gate.finish(&mut |t| send(serde_json::json!({ "t": t })));
+                return Ok(());
+            }
+            Some(Ok(call)) => call,
+            Some(Err(problem)) => tools::Call {
+                name: "invalid".into(),
+                args: serde_json::json!({ "problem": problem }),
+            },
+        };
+        if gate.shown {
+            send(serde_json::json!({ "restart": true }));
+        }
+        let before = desk.sources.len();
+        let done = if call.name == "invalid" {
+            tools::Done {
+                step: "Tried to use a tool".into(),
+                result: format!(
+                    "That did not work: {}. Write the call as one line: <tool>{{\"name\": \"search_notes\", \"query\": \"...\"}}</tool>",
+                    call.text("problem")
+                ),
+                proposal: None,
+                found: Vec::new(),
+            }
+        } else {
+            let graphs = Arc::clone(&state.graphs);
+            store_now(state, |store| {
+                let cache = graphs.load();
+                Ok(desk.run(store, &cache, &call))
+            })
+            .map_err(|_| anyhow::anyhow!("leo could not read the notes"))?
+        };
+        send(serde_json::json!({ "step": done.step, "tool": call.name, "found": done.found }));
+        if desk.sources.len() != before {
+            send(serde_json::json!({ "sources": desk.sources }));
+        }
+        if let Some(proposal) = &done.proposal {
+            send(serde_json::json!({ "proposal": proposal }));
+        }
+        conversation = tools::continued(&conversation, &call, &done);
+    }
+    Ok(())
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct Suggestion {
+    #[serde(default)]
+    pub(crate) find: String,
+    pub(crate) replace: String,
+}
+
+pub(crate) async fn apply_suggestion(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(change): Json<Suggestion>,
+) -> Response {
+    let applied = state
+        .with_store(move |store| {
+            let note = store.find_note_mut(&id).ok_or(StatusCode::NOT_FOUND)?;
+            let body = if change.find.is_empty() {
+                let base = note.body.trim_end();
+                if base.is_empty() {
+                    change.replace.clone()
+                } else {
+                    format!("{base}\n\n{}", change.replace.trim_start())
+                }
+            } else if note.body.matches(change.find.as_str()).count() == 1 {
+                note.body.replacen(&change.find, &change.replace, 1)
+            } else {
+                return Err(StatusCode::CONFLICT);
+            };
+            note.body = body;
+            note.updated_at = chrono::Utc::now();
+            let note = NoteResponse::from_note(note);
+            save(store)?;
+            Ok(note)
+        })
+        .await;
+    match applied {
+        Ok(note) => Json(note).into_response(),
+        Err(StatusCode::CONFLICT) => (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": "The note changed since Felix suggested this, so the text it would replace is not there any more." })),
+        )
+            .into_response(),
+        Err(code) => code.into_response(),
+    }
+}
+
 pub(crate) async fn chat_reply(
     State(state): State<AppState>,
     Json(body): Json<chat::ChatBody>,
@@ -206,6 +330,11 @@ pub(crate) async fn chat_reply(
     let graphs = Arc::clone(&state.graphs);
     let note = body.note.clone();
     let attached = body.refs.clone();
+    let room = state
+        .room
+        .as_ref()
+        .map_or(chat::ROOM, |measure| measure())
+        .clamp(chat::LEAST_ROOM, chat::MOST_ROOM);
     let gathered = state
         .with_store(move |store| {
             let cache = graphs.load();
@@ -215,6 +344,7 @@ pub(crate) async fn chat_reply(
                 note.as_deref(),
                 &attached,
                 &question,
+                room,
             ))
         })
         .await;
@@ -229,22 +359,10 @@ pub(crate) async fn chat_reply(
     let (system, user) = chat::prompt(mode, &notes, &documents, &body.messages);
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     let _ = tx.send(ndjson(serde_json::json!({ "sources": sources })));
+    let worker = state.clone();
     tokio::task::spawn_blocking(move || {
-        let pieces = tx.clone();
-        let restarts = tx.clone();
-        let result = streamer(
-            &system,
-            &user,
-            chat::REPLY_TOKENS,
-            &mut |text| {
-                let _ = pieces.send(ndjson(serde_json::json!({ "t": text })));
-            },
-            &mut || {
-                let _ = restarts.send(ndjson(serde_json::json!({ "restart": true })));
-            },
-        );
-        let end = match result {
-            Ok(_) => serde_json::json!({ "done": true }),
+        let end = match answer(&worker, &streamer, &system, user, sources, room, &tx) {
+            Ok(()) => serde_json::json!({ "done": true }),
             Err(e) => serde_json::json!({ "error": e.to_string() }),
         };
         let _ = tx.send(ndjson(end));
