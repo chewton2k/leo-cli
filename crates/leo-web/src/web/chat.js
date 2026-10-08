@@ -78,6 +78,30 @@
     return (sources || []).filter((s) => used.has(`n${s.n}`));
   }
 
+  function asNote(question, text, sources) {
+    const byN = new Map((sources || []).map((s) => [`n${s.n}`, s]));
+    const answer = grade(String(text || '')).text.replace(/\[(n\d+(?:\s*,\s*n\d+)*)\]/g, (whole, list) => {
+      const links = list
+        .split(/\s*,\s*/)
+        .map((n) => byN.get(n))
+        .filter(Boolean)
+        .map((s) => `[[${s.title.replace(/[[\]|]/g, '')}]]`);
+      return links.length ? links.join(' ') : whole;
+    }).trim();
+    const asked = String(question || '').replace(/\s+/g, ' ').trim();
+    let title = asked;
+    if (title.length > 70) {
+      const cut = title.slice(0, 70);
+      title = `${cut.slice(0, cut.lastIndexOf(' ') > 30 ? cut.lastIndexOf(' ') : 70)}…`;
+    }
+    return { title: title || 'From Felix', body: asked ? `**Q:** ${asked}\n\n${answer}` : answer };
+  }
+
+  function reviewPrompt(items) {
+    const lines = items.map((m, i) => `${i + 1}. ${m.question}${m.answer ? ` (last time I said: ${m.answer})` : ''}`);
+    return `Let's review questions I got wrong before. Ask me each one again, one at a time, and wait for my answer:\n${lines.join('\n')}`;
+  }
+
   function mentionAt(text, caret) {
     const before = text.slice(0, caret);
     const at = before.lastIndexOf('@');
@@ -152,9 +176,9 @@
   }
   const FILE_TYPES = '.pdf,.docx,.pptx,.txt,.md,image/*';
 
-  function create({ render, escape, onOpen = () => {}, storage = root.localStorage, prepare = null, notify = () => {} }) {
+  function create({ render, escape, onOpen = () => {}, storage = root.localStorage, prepare = null, notify = () => {}, onSaved = () => {} }) {
     const saved = load(storage);
-    const state = { open: false, id: saved.id || newId(), mode: modeOf(saved.mode), messages: saved.messages, refs: saved.refs, context: null, dropped: null, busy: null, streak: 0, pick: null, chats: null, sidebar: null, doomed: null, asking: null, files: [], sent: [], filesFor: null };
+    const state = { open: false, id: saved.id || newId(), mode: modeOf(saved.mode), messages: saved.messages, refs: saved.refs, context: null, dropped: null, busy: null, streak: 0, pick: null, chats: null, sidebar: null, doomed: null, asking: null, files: [], sent: [], filesFor: null, review: [] };
     const panel = document.createElement('aside');
     panel.className = 'chat';
     panel.id = 'chat';
@@ -371,6 +395,7 @@
       persist();
       draw();
       drawChats();
+      loadReview();
       mood('wave', 1500);
     }
 
@@ -638,7 +663,12 @@
       const error = m.error ? `<div class="msg-error">${escape(m.error)}</div>` : '';
       const verdict = grade(m.text).verdict;
       const badge = verdict ? `<span class="verdict ${verdict}">${verdict === 'correct' ? 'Correct' : 'Not quite'}</span>` : '';
-      return `<div class="msg leo${m.pending ? ' pending' : ''}" data-i="${i}">${badge}<div class="prose">${html}</div>${error}${from}</div>`;
+      const keep = !m.pending && !m.error && shown
+        ? `<div class="msg-acts">${m.saved
+          ? `<button class="msg-act" data-chat="open" data-id="${escape(m.saved)}">Open the saved note</button>`
+          : `<button class="msg-act" data-chat="save" data-i="${i}">Save as note</button>`}</div>`
+        : '';
+      return `<div class="msg leo${m.pending ? ' pending' : ''}" data-i="${i}">${badge}<div class="prose">${html}</div>${error}${from}${keep}</div>`;
     }
 
     function onNote() {
@@ -666,9 +696,93 @@
         ${felix(96, 'idle big')}
         <h3>Hi, I'm Felix!</h3>
         <p>${escape(info.hint)}. I also read ${where}, and the notes connected to it on your map.</p>
+        ${reviewCard()}
         <div class="chat-starters">${info.starters.map((s, i) => `<button class="starter${state.asking && state.asking.starter === s ? ' on' : ''}" data-chat="starter" data-i="${i}">${escape(s.text)}</button>`).join('')}</div>
         ${asking()}
       </div>`;
+    }
+
+    function reviewCard() {
+      const all = state.review || [];
+      const due = all.filter((m) => m.due);
+      if (!due.length && !(state.mode === 'study' && all.length)) return '';
+      const n = due.length || all.length;
+      const what = `${n} question${n === 1 ? '' : 's'}`;
+      return `<div class="chat-review">
+        <b>${due.length ? `Time to review ${what} you missed` : `You missed ${what} recently`}</b>
+        <span>From your study chats. Felix asks ${n === 1 ? 'it' : 'them'} again, one at a time.</span>
+        <button class="btn primary" data-chat="review">Review now</button>
+      </div>`;
+    }
+
+    async function loadReview() {
+      try {
+        const response = await fetch('/api/review', { credentials: 'same-origin' });
+        if (!response.ok) return;
+        state.review = await response.json();
+      } catch (e) {
+        return;
+      }
+      if (state.open && !state.messages.length) draw();
+    }
+
+    async function startReview() {
+      const all = state.review || [];
+      const due = all.filter((m) => m.due);
+      const items = (due.length ? due : all).slice(0, 5);
+      if (!items.length || state.busy) return;
+      if (state.messages.length || state.mode !== 'study') begin();
+      state.mode = 'study';
+      const refs = [];
+      for (const m of items) for (const r of m.notes || []) if (!refs.some((x) => x.id === r.id) && refs.length < MOST_REFS) refs.push(r);
+      state.refs = refs;
+      drawModes();
+      drawRefs();
+      const keys = items.map((m) => m.key);
+      state.review = all.filter((m) => !keys.includes(m.key));
+      send(reviewPrompt(items));
+      try {
+        await fetch('/api/review', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ done: keys }),
+        });
+      } catch (e) {
+        return;
+      }
+    }
+
+    async function saveAnswer(i) {
+      const m = state.messages[i];
+      if (!m || m.role !== 'assistant' || m.saved) return;
+      let question = '';
+      for (let j = i - 1; j >= 0; j--) {
+        if (state.messages[j].role === 'user') {
+          question = state.messages[j].text;
+          break;
+        }
+      }
+      const note = asNote(question, m.text, m.sources);
+      const directory = (state.context && state.context.directory) || '';
+      let made;
+      try {
+        const response = await fetch('/api/notes', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...note, directory }),
+        });
+        if (!response.ok) throw new Error();
+        made = await response.json();
+      } catch (e) {
+        notify('Felix could not save that answer as a note.');
+        return;
+      }
+      m.saved = made.id;
+      remember();
+      draw(false);
+      onSaved(made);
     }
 
     async function startWith(starter) {
@@ -797,6 +911,7 @@
         if (e.name !== 'AbortError') answer.error = e.message || "Can't reach leo. Is leo serve still running?";
       }
       answer.pending = false;
+      answer.at = new Date().toISOString();
       if (!answer.text && !answer.error) answer.error = 'Stopped.';
       state.busy = null;
       thinking(false);
@@ -818,6 +933,7 @@
         if (state.filesFor !== state.id) loadFiles();
         drawRefs();
         draw();
+        loadReview();
         mood('wave', 1500);
         awake();
         if (root.matchMedia && root.matchMedia('(pointer: fine)').matches) input.focus();
@@ -843,6 +959,8 @@
         if (!wide()) showSidebar(false);
       } else if (what === 'history') showSidebar(!panel.classList.contains('with-history'));
       else if (what === 'resume') resume(el.dataset.id);
+      else if (what === 'save') saveAnswer(Number(el.dataset.i));
+      else if (what === 'review') startReview();
       else if (what === 'forget') forget(el.dataset.id);
       else if (what === 'mode') {
         if (el.dataset.mode === state.mode) return;
@@ -856,6 +974,7 @@
         drawRefs();
         draw();
         persist();
+        loadReview();
       } else if (what === 'starter') startWith(modeInfo().starters[Number(el.dataset.i)]);
       else if (what === 'ask-cancel') {
         state.asking = null;
@@ -959,7 +1078,7 @@
       toggle,
       isOpen: () => state.open,
       setContext(ctx) {
-        const next = ctx && ctx.id ? { id: ctx.id, title: ctx.title } : null;
+        const next = ctx && ctx.id ? { id: ctx.id, title: ctx.title, directory: ctx.directory || '' } : null;
         if ((next && next.id) === (state.context && state.context.id) && (!next || next.title === state.context.title)) return;
         state.context = next;
         if (state.open) {
@@ -971,5 +1090,5 @@
     };
   }
 
-  root.leoChat = { create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, MODES, MOST_REFS };
+  root.leoChat = { create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, MODES, MOST_REFS };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -7,7 +7,7 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 
 use crate::routes::uploads::{safe_file_name, ImportFileBody};
-use crate::{chat, chat_files, chats, AppState, UploadFile};
+use crate::{chat, chat_files, chats, review, AppState, UploadFile};
 
 fn ndjson(value: serde_json::Value) -> String {
     format!("{value}\n")
@@ -89,6 +89,34 @@ pub(crate) async fn remove_chat_file(
     match tokio::task::spawn_blocking(move || chat_files::remove(&dir, &id, &doc)).await {
         Ok(true) => StatusCode::NO_CONTENT,
         _ => StatusCode::NOT_FOUND,
+    }
+}
+
+pub(crate) async fn get_review(State(state): State<AppState>) -> Response {
+    let dir = state.chats.clone();
+    match tokio::task::spawn_blocking(move || review::missed(&dir, chrono::Utc::now())).await {
+        Ok(missed) => Json(missed).into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct ReviewDone {
+    #[serde(default)]
+    pub(crate) done: Vec<String>,
+}
+
+pub(crate) async fn mark_reviewed(
+    State(state): State<AppState>,
+    Json(body): Json<ReviewDone>,
+) -> Response {
+    if body.done.iter().any(|key| !review::valid_key(key)) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let dir = state.chats.clone();
+    match tokio::task::spawn_blocking(move || review::mark_reviewed(&dir, &body.done)).await {
+        Ok(Ok(added)) => Json(serde_json::json!({ "reviewed": added })).into_response(),
+        _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
 

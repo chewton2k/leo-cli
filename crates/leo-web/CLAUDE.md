@@ -258,3 +258,17 @@
   Undo POSTs them to `/api/trash/restore {ids, dirs}`, which recreates the
   folders (validated) before restoring. A single note's delete already undid
   through `restore`.
+- Felix "Save as note": finished answers get a button; `asNote(question,
+  text, sources)` makes `**Q:** question` + the answer with `[nX]` turned into
+  `[[Title]]`, title = the question (≤70 chars); saved into the open note's
+  folder (`setContext` carries `directory`); `m.saved` keeps the note id so the
+  button becomes "Open the saved note"; app toasts and refreshes (`onSaved`).
+- Study review (`review.rs`, GET/POST `/api/review`): misses are read from the
+  saved chats (assistant replies starting `[[incorrect]]`; question = the last
+  paragraph with "?" of the reply before the answer, answer = the user's text,
+  notes = sources cited), `at` from the reply (the page stamps it) or the chat.
+  Only reviewed keys are stored, in `<chats>/review.json` (`chat:fnv64(reply)`,
+  pruned when the chat is gone), so a page re-saving its chat cannot undo it.
+  Due after `DUE_AFTER_HOURS` (20). Welcome shows `.chat-review` in Study when
+  any, in Chat when due; Review now starts a Study chat with `reviewPrompt` (≤5)
+  and their notes attached, then POSTs `{done: keys}`.

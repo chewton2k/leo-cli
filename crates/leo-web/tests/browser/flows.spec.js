@@ -459,6 +459,64 @@ test.describe('Felix', () => {
     expect(sizes[0] / sizes[1]).toBeLessThan(1.4);
   });
 
+  test('a good answer is saved as a note in the folder of the open note', async ({ page }) => {
+    const dir = `saved-${test.info().project.name}`;
+    await page.request.post('/api/dirs', { data: { path: dir } });
+    const open = await (await page.request.post('/api/notes', { data: { title: 'Graph traversals', body: 'BFS uses a queue.', directory: dir } })).json();
+    await page.route('**/api/chat', (route) => route.fulfill({
+      status: 200,
+      headers: { 'content-type': 'application/x-ndjson' },
+      body: `{"sources":[{"n":1,"id":"${open.id}","title":"Graph traversals","why":"open"}]}\n{"t":"BFS takes the oldest vertex from a queue [n1]."}\n{"done":true}\n`,
+    }));
+    await page.goto(`/#/n/${open.id}`);
+    await page.locator('#chat-toggle').click();
+    const chat = page.locator('#chat');
+    await chat.locator('#chat-input').fill('How does BFS pick the next vertex?');
+    await chat.locator('#chat-input').press('Enter');
+    await chat.locator('.msg.leo [data-chat="save"]').click();
+    await expect(page.locator('.toast')).toContainText(`Saved as a note in ${dir}`);
+    await expect(chat.locator('.msg.leo [data-chat="open"]', { hasText: 'Open the saved note' })).toBeVisible();
+    const found = await (await page.request.get(`/api/notes?directory=${encodeURIComponent(dir)}`)).json();
+    const saved = found.find((n) => n.title === 'How does BFS pick the next vertex?');
+    expect(saved, JSON.stringify(found.map((n) => n.title))).toBeTruthy();
+    expect(saved.body).toBe('**Q:** How does BFS pick the next vertex?\n\nBFS takes the oldest vertex from a queue [[Graph traversals]].');
+  });
+
+  test('a question missed a day ago is offered for review and asked again', async ({ page }) => {
+    const id = `review-chat-${test.info().project.name}`;
+    const note = await (await page.request.post('/api/notes', { data: { title: 'Queues', body: 'First in, first out.' } })).json();
+    const question = `Which structure does BFS use (${test.info().project.name})?`;
+    await page.request.put(`/api/chats/${id}`, {
+      data: {
+        mode: 'study',
+        refs: [],
+        messages: [
+          { role: 'user', text: 'quiz me' },
+          { role: 'assistant', text: `First question.\n\n${question}` },
+          { role: 'user', text: 'a stack' },
+          { role: 'assistant', text: '[[incorrect]] Not quite, it is a queue [n1].', sources: [{ n: 1, id: note.id, title: 'Queues' }], at: '2026-01-02T10:00:00Z' },
+        ],
+      },
+    });
+    const asked = [];
+    await page.route('**/api/chat', async (route) => {
+      asked.push(route.request().postDataJSON());
+      await route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: '{"sources":[]}\n{"t":"First one: which structure?"}\n{"done":true}\n' });
+    });
+    await page.goto('/');
+    await page.locator('#chat-toggle').click();
+    const chat = page.locator('#chat');
+    const card = chat.locator('.chat-review');
+    await expect(card).toContainText('Time to review');
+    await card.locator('[data-chat="review"]').click();
+    await expect(chat.locator('.msg.leo').last()).toContainText('First one: which structure?');
+    const sent = asked[asked.length - 1];
+    expect(sent.mode).toBe('study');
+    expect(sent.refs).toContain(note.id);
+    expect(sent.messages[sent.messages.length - 1].text).toContain(`${question} (last time I said: a stack)`);
+    await expect.poll(async () => (await (await page.request.get('/api/review')).json()).some((m) => m.question === question)).toBe(false);
+  });
+
   test('a file from this device is read for Felix, leaves the box once sent, and can be removed before', async ({ page }) => {
     const asked = [];
     await page.route('**/api/chat', async (route) => {

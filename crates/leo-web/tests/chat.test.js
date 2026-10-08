@@ -136,3 +136,24 @@ test('splitFiles keeps files already sent out of the box for the next message', 
   assert.deepEqual(C.splitFiles(docs, []).waiting.length, 3);
   assert.deepEqual(C.splitFiles(undefined, undefined), { sent: [], waiting: [] });
 });
+
+test('asNote keeps the question, links cited notes and drops the grade', () => {
+  const sources = [{ n: 1, id: 'a', title: 'Graph traversals' }, { n: 2, id: 'b', title: 'Queues [old]' }];
+  const note = C.asNote('  how does   BFS work? ', '[[correct]] It takes vertices from a queue [n1, n2] in order [n9].', sources);
+  assert.equal(note.title, 'how does BFS work?');
+  assert.equal(note.body, '**Q:** how does BFS work?\n\nIt takes vertices from a queue [[Graph traversals]] [[Queues old]] in order [n9].');
+  const long = C.asNote('Explain why breadth first search finds the shortest path in an unweighted graph every time', 'Because.', []);
+  assert.ok(long.title.endsWith('…'));
+  assert.ok(long.title.length <= 71);
+  assert.ok(!long.title.includes('  '));
+  assert.deepEqual(C.asNote('', 'Just text', []), { title: 'From Felix', body: 'Just text' });
+});
+
+test('reviewPrompt asks each missed question again with the old answer', () => {
+  const text = C.reviewPrompt([
+    { question: 'What does BFS use?', answer: 'a stack' },
+    { question: 'Define a heap.', answer: '' },
+  ]);
+  assert.match(text, /one at a time/);
+  assert.match(text, /\n1\. What does BFS use\? \(last time I said: a stack\)\n2\. Define a heap\.$/);
+});

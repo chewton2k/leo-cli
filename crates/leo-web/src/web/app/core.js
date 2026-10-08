@@ -50,6 +50,10 @@ const chat = felix.create({
     return { name: ready.name, type: ready.type, data: await base64(ready.blob) };
   },
   notify: (message) => toast(message, { bad: true }),
+  onSaved: (note) => {
+    showLatest().catch(() => {});
+    toast(`Saved as a note${note.directory ? ` in ${note.directory}` : ''}`, { action: 'Open', run: () => go(noteHash(note.id)) });
+  },
 });
 $('#chat-toggle').innerHTML = chat.button(36);
 $('#back').innerHTML = ICON.back;
@@ -391,7 +395,7 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
   state = { view: 'note', dir: note.directory, session: s };
   chrome({ dir: note.directory, showBack: true, actions: noteActions(note.id) });
   document.title = `${note.title || 'New note'} · leo`;
-  chat.setContext(note.id ? { id: note.id, title: note.title } : null);
+  chat.setContext(note.id ? { id: note.id, title: note.title, directory: note.directory } : null);
   const where = `<button class="chip accent" data-action="open-folder" data-dir="${esc(note.directory)}">${ICON.folder.replace('<svg', '<svg width="13" height="13"')} ${esc(folderLabel(note.directory))}</button>`;
   const when = note.id ? `Edited ${rel(note.updated_at)}` : 'New note';
   app.innerHTML = `<article class="note">

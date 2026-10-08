@@ -4,6 +4,7 @@ pub mod chats;
 pub mod export;
 pub mod graph;
 pub mod record;
+pub mod review;
 mod routes;
 pub mod search;
 pub mod sessions;
@@ -37,8 +38,8 @@ use crate::routes::auth::{
 };
 use crate::routes::downloads::{export_zip, originals_zip};
 use crate::routes::felix::{
-    add_chat_file, chat_reply, delete_chat, get_chat, list_chat_files, list_chats, put_chat,
-    remove_chat_file,
+    add_chat_file, chat_reply, delete_chat, get_chat, get_review, list_chat_files, list_chats,
+    mark_reviewed, put_chat, remove_chat_file,
 };
 use crate::routes::housekeeping::{change_storage, get_keep, get_storage, set_keep};
 use crate::routes::map::{build_graph, get_graph, graph_status};
@@ -338,6 +339,7 @@ fn router(state: AppState) -> Router {
         .route("/chat.js", get(chat_js))
         .route("/api/chat", post(chat_reply))
         .route("/api/chats", get(list_chats))
+        .route("/api/review", get(get_review).post(mark_reviewed))
         .route(
             "/api/chats/{id}/files",
             get(list_chat_files)
