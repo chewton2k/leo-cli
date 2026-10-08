@@ -1769,7 +1769,7 @@ mod tests {
                 role: "user".into(),
                 text: "how do heaps work?".into(),
             }],
-            mode: Some("coach".into()),
+            mode: Some("study".into()),
             note: Some(ids[0].clone()),
             refs: vec![],
         };
@@ -1791,7 +1791,7 @@ mod tests {
         assert_eq!(lines[2]["t"], "[n1].");
         assert_eq!(lines[3]["done"], true);
         let prompt = seen.lock().unwrap().clone();
-        assert!(prompt.contains("Mode: study coach"), "{prompt}");
+        assert!(prompt.contains("Mode: study."), "{prompt}");
         assert!(prompt.contains("A binary heap backs a priority queue."));
         assert!(prompt.contains("User: how do heaps work?"));
     }

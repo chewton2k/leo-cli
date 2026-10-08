@@ -617,18 +617,17 @@ answer to the notes it came from. Type **@** (or tap the paperclip) to add any
 note to the conversation: added notes show as chips above the message box, go
 with every message until you remove them, and are what he reads first. He also
 reads the note you have open and the notes connected to it on the map, plus
-any notes that match your question. Each style below is the same Felix with
-different instructions:
+any notes that match your question. There are two styles, the same Felix
+with different instructions:
 
-- **Chat**: anything you like, with your notes as sources.
-- **Coach**: teaches by asking you to recall first, gives a hint before the
-  answer, ties ideas across classes, and plans spaced review.
-- **Quiz**: one question at a time, marks each answer, keeps score. Felix
-  dances when you get one right.
-- **Explain**: plain words, an analogy, a small example, then the precise
-  version.
-- **Meeting**: for work notes: summary, decisions, action items with owners
-  and dates (only when the notes say them), open questions, a follow-up draft.
+- **Chat**: anything you like, with your notes as sources. Ask him to explain
+  something and he uses plain words, an analogy and a small example before
+  the precise version; ask him to go over meeting notes and you get a summary,
+  decisions, action items (owners and dates only when the notes say them), open
+  questions and a follow-up draft.
+- **Study**: quizzes you one question at a time, marks each answer, gives a
+  hint before the answer, keeps score, and plans spaced review. Felix dances
+  when you get one right.
 
 When your notes don't cover something, he says so and labels anything from
 general knowledge as "Beyond your notes". He uses the AI you chose for writing,

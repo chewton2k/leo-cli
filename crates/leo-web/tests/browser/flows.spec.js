@@ -212,11 +212,11 @@ test.describe('Felix', () => {
     const chat = page.locator('#chat');
     await expect(chat).toBeVisible();
     await expect(chat.locator('.chat-context')).toContainText('Heaps');
-    await chat.locator('[data-mode="quiz"]').click();
+    await chat.locator('[data-mode="study"]').click();
     await chat.locator('.starter').first().click();
     await expect(chat.locator('.msg.leo').first()).toContainText('Where is the smallest element');
     await expect(chat.locator('.msg.leo .cite').first()).toHaveText('Heaps');
-    expect(asked[0].mode).toBe('quiz');
+    expect(asked[0].mode).toBe('study');
     expect(asked[0].note).toBe(note.id);
     await chat.locator('#chat-input').fill('At the root');
     await chat.locator('#chat-input').press('Enter');
@@ -240,7 +240,7 @@ test.describe('Felix', () => {
     await page.goto('/');
     await page.locator('#chat-toggle').click();
     const chat = page.locator('#chat');
-    await expect(chat.locator('[data-mode="ask"]')).toHaveText('Chat');
+    await expect(chat.locator('.chat-mode')).toHaveText(['Chat', 'Study']);
     await chat.locator('#chat-input').pressSequentially(`compare @dijkstra shortest paths ${tag}`);
     await expect(chat.locator('.chat-pick-row').first()).toContainText('Dijkstra shortest paths');
     await chat.locator('#chat-input').press('Enter');

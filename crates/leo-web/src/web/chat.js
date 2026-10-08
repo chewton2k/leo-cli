@@ -5,12 +5,11 @@
   const MOST_KEPT = 40;
   const MOST_REFS = 8;
   const MODES = [
-    { id: 'ask', label: 'Chat', hint: 'Talk about anything, and type @ to bring in a note', starters: ['What are the key ideas here?', 'How does this connect to my other classes?', 'Help me plan what to study this week'] },
-    { id: 'coach', label: 'Coach', hint: 'Teaches with recall questions and hints', starters: ['Help me learn this note', 'Make me a 3-day review plan', 'Check whether I really understand this'] },
-    { id: 'quiz', label: 'Quiz', hint: 'One question at a time, with a score', starters: ['Quiz me on this note', 'Quiz me across my classes', 'Give me 5 hard questions'] },
-    { id: 'explain', label: 'Explain', hint: 'Plain words, an analogy, an example', starters: ['Explain this simply', 'What do people usually get wrong here?', 'Give me an analogy'] },
-    { id: 'meeting', label: 'Meeting', hint: 'Decisions, action items, follow-ups', starters: ['Summarize this meeting', 'List the action items and owners', 'Draft a follow-up message'] },
+    { id: 'chat', label: 'Chat', hint: 'Ask anything, get things explained, or go over meeting notes; type @ to bring in a note', starters: ['What are the key ideas here?', 'Explain this simply', 'Summarize this meeting and list the action items'] },
+    { id: 'study', label: 'Study', hint: 'Quizzes you one question at a time, with hints, a score and review plans', starters: ['Quiz me on this note', 'Quiz me across my classes', 'Make me a 3-day review plan'] },
   ];
+  const OLD_MODES = { ask: 'chat', explain: 'chat', meeting: 'chat', quiz: 'study', coach: 'study' };
+  const modeOf = (id) => (MODES.some((m) => m.id === id) ? id : OLD_MODES[id] || 'chat');
 
   function felix(width, extra = '') {
     return `<svg class="felix ${extra}" viewBox="-2 -8 48 40" width="${width}" height="${Math.round((width * 40) / 48)}" shape-rendering="crispEdges" aria-hidden="true">
@@ -79,10 +78,10 @@
   }
 
   function load(storage) {
-    const fresh = { mode: 'ask', messages: [], refs: [] };
+    const fresh = { mode: 'chat', messages: [], refs: [] };
     try {
       const saved = JSON.parse(storage.getItem(KEY) || 'null');
-      if (saved && Array.isArray(saved.messages)) return { mode: saved.mode || 'ask', messages: saved.messages, refs: Array.isArray(saved.refs) ? saved.refs.slice(0, MOST_REFS) : [] };
+      if (saved && Array.isArray(saved.messages)) return { mode: modeOf(saved.mode), messages: saved.messages, refs: Array.isArray(saved.refs) ? saved.refs.slice(0, MOST_REFS) : [] };
     } catch (e) {
       return fresh;
     }
@@ -99,7 +98,7 @@
 
   function create({ render, escape, onOpen = () => {}, storage = root.localStorage }) {
     const saved = load(storage);
-    const state = { open: false, mode: MODES.some((m) => m.id === saved.mode) ? saved.mode : 'ask', messages: saved.messages, refs: saved.refs, context: null, dropped: null, busy: null, streak: 0, pick: null };
+    const state = { open: false, mode: modeOf(saved.mode), messages: saved.messages, refs: saved.refs, context: null, dropped: null, busy: null, streak: 0, pick: null };
     const panel = document.createElement('aside');
     panel.className = 'chat';
     panel.id = 'chat';
@@ -261,7 +260,7 @@
         b.classList.toggle('on', on);
         b.setAttribute('aria-selected', String(on));
       }
-      input.placeholder = state.mode === 'quiz' ? 'Answer, or ask for a question…' : state.mode === 'meeting' ? 'Ask about your meeting notes, or type @…' : 'Message Felix, or type @ to add a note…';
+      input.placeholder = state.mode === 'study' ? 'Answer, or ask for a question…' : 'Message Felix, or type @ to add a note…';
     }
 
     function drawContext() {
@@ -514,5 +513,5 @@
     };
   }
 
-  root.leoChat = { create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, MODES, MOST_REFS };
+  root.leoChat = { create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, MODES, MOST_REFS };
 })(typeof window !== 'undefined' ? window : globalThis);

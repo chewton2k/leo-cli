@@ -37,13 +37,13 @@ test('citations become note chips, and unknown ones are left alone', () => {
 test('the conversation is kept per browser and survives broken storage', () => {
   const values = new Map();
   const storage = { getItem: (k) => values.get(k) || null, setItem: (k, v) => values.set(k, v) };
-  C.save(storage, 'quiz', Array.from({ length: 60 }, (_, i) => ({ role: 'user', text: `m${i}` })));
+  C.save(storage, 'study', Array.from({ length: 60 }, (_, i) => ({ role: 'user', text: `m${i}` })));
   const back = C.load(storage);
-  assert.equal(back.mode, 'quiz');
+  assert.equal(back.mode, 'study');
   assert.equal(back.messages.length, 40);
   assert.equal(back.messages[0].text, 'm20');
   const broken = { getItem: () => { throw new Error('blocked'); }, setItem: () => { throw new Error('blocked'); } };
-  assert.deepEqual(C.load(broken), { mode: 'ask', messages: [], refs: [] });
+  assert.deepEqual(C.load(broken), { mode: 'chat', messages: [], refs: [] });
   C.save(broken, 'ask', []);
 });
 
@@ -55,7 +55,7 @@ test('Felix keeps his colour and shape', () => {
   assert.ok(ratio > 1 && ratio < 1.4, `a box a little wider than tall, not ${ratio}`);
   assert.equal((svg.match(/width="4" height="4"/g) || []).length, 2, 'two eyes');
   assert.equal((svg.match(/class="felix-arm/g) || []).length, 2, 'two arms');
-  assert.deepEqual(C.MODES.map((m) => m.id), ['ask', 'coach', 'quiz', 'explain', 'meeting']);
+  assert.deepEqual(C.MODES.map((m) => m.id), ['chat', 'study']);
 });
 
 test('typing @ starts a note search, but an email address does not', () => {
@@ -80,6 +80,17 @@ test('a note is added once, and only up to the limit', () => {
 test('attached notes are kept with the conversation', () => {
   const store = new Map();
   const storage = { getItem: (k) => store.get(k) || null, setItem: (k, v) => store.set(k, v) };
-  C.save(storage, 'quiz', [{ role: 'user', text: 'hi' }], [{ id: 'a', title: 'Heaps' }]);
-  assert.deepEqual(C.load(storage), { mode: 'quiz', messages: [{ role: 'user', text: 'hi' }], refs: [{ id: 'a', title: 'Heaps' }] });
+  C.save(storage, 'study', [{ role: 'user', text: 'hi' }], [{ id: 'a', title: 'Heaps' }]);
+  assert.deepEqual(C.load(storage), { mode: 'study', messages: [{ role: 'user', text: 'hi' }], refs: [{ id: 'a', title: 'Heaps' }] });
+});
+
+test('a style saved before there were two lands in the one that took it over', () => {
+  assert.equal(C.modeOf('quiz'), 'study');
+  assert.equal(C.modeOf('coach'), 'study');
+  assert.equal(C.modeOf('meeting'), 'chat');
+  assert.equal(C.modeOf('explain'), 'chat');
+  assert.equal(C.modeOf('ask'), 'chat');
+  assert.equal(C.modeOf(undefined), 'chat');
+  const storage = { getItem: () => JSON.stringify({ mode: 'quiz', messages: [] }), setItem() {} };
+  assert.equal(C.load(storage).mode, 'study');
 });

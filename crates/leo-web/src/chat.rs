@@ -24,7 +24,7 @@ const TURNS: usize = 14;
 const TURN_CHARS: usize = 4_000;
 pub const REPLY_TOKENS: u32 = 4_000;
 
-pub const MODES: [&str; 5] = ["ask", "coach", "quiz", "explain", "meeting"];
+pub const MODES: [&str; 2] = ["chat", "study"];
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Turn {
@@ -220,16 +220,12 @@ You are Felix, the friendly study buddy built into leo, the user's notes app. Yo
 
 fn style(mode: &str) -> &'static str {
     match mode {
-        "coach" => "\
-Mode: study coach. Help the user learn the material, not just read it, using techniques that work: retrieval practice (ask them to recall before you tell), elaboration (ask why and how), connecting ideas across notes and classes, worked examples, and suggesting what to review again and when. Ask one question at a time and wait for the answer. When you judge an answer the user gave, begin your reply with [[correct]] if it was right or [[incorrect]] if it was wrong or incomplete, then say plainly what was right and what was not, give a hint before the full solution, and keep each turn short. If they ask for a study plan, base it on the notes and spread review over days.",
-        "quiz" => "\
-Mode: quiz. Quiz the user on the notes, starting with the open note if there is one. Ask one question at a time, mixing recall, application and questions that connect two notes. Wait for the answer. When you judge it, begin your reply with [[correct]] or [[incorrect]], then explain briefly with a citation, and ask the next question. Keep a running score at the end of each reply, like (Score: 3/4). Do not reveal answers before the user tries.",
-        "explain" => "\
-Mode: explain simply. Explain the topic the way the Feynman technique does: plain words first, an everyday analogy, one small worked example, then the precise version with the correct terms. Point out the most common misunderstanding. End with one short question that checks understanding.",
-        "meeting" => "\
-Mode: meeting and work notes. Treat the notes as meeting or work notes. When asked to review, give: a two-sentence summary, decisions made, action items as a checklist (- [ ]) with the owner and due date only when the notes state them, open questions, and risks. When asked, draft a short follow-up message. Never invent names, owners, dates or numbers.",
+        "study" => "\
+Mode: study. Help the user learn the material, not just read it. Use retrieval practice: ask them to recall before you tell, one question at a time, mixing recall, application and questions that connect two notes (start with the attached or open notes when there are any), and wait for the answer. When you judge an answer, begin your reply with [[correct]] if it was right or [[incorrect]] if it was wrong or incomplete, then say plainly what was right and what was not, give a hint before the full solution, cite the note, and ask the next question. When you are quizzing, keep a running score at the end of each reply, like (Score: 3/4). Do not reveal answers before the user tries. If they ask for a study plan, base it on the notes and spread review over days. Keep each turn short.",
         _ => "\
-Mode: chat. Talk with the user the way a helpful assistant would: answer any question, help with writing, planning or thinking something through, and carry the conversation naturally. Use the notes whenever they are relevant, and always use the ones the user attached.",
+Mode: chat. Talk with the user the way a helpful assistant would: answer any question, help with writing, planning or thinking something through, and carry the conversation naturally. Use the notes whenever they are relevant, and always use the ones the user attached.
+- When asked to explain something, use plain words first, an everyday analogy, one small worked example, then the precise version with the correct terms, and point out the most common misunderstanding.
+- When the notes are meeting or work notes and the user asks for a review, give a two-sentence summary, decisions made, action items as a checklist (- [ ]) with the owner and due date only when the notes state them, open questions and risks, and draft a short follow-up message when asked. Never invent names, owners, dates or numbers.",
     }
 }
 
@@ -257,10 +253,10 @@ pub fn prompt(mode: &str, notes: &str, messages: &[Turn]) -> (String, String) {
 }
 
 pub fn mode_of(requested: Option<&str>) -> &'static str {
-    requested
-        .and_then(|m| MODES.iter().find(|known| **known == m))
-        .copied()
-        .unwrap_or("ask")
+    match requested {
+        Some("study" | "quiz" | "coach") => "study",
+        _ => "chat",
+    }
 }
 
 #[cfg(test)]
@@ -414,24 +410,29 @@ mod tests {
     }
 
     #[test]
-    fn each_mode_has_its_own_instructions_and_unknown_modes_ask() {
-        assert_eq!(mode_of(Some("quiz")), "quiz");
-        assert_eq!(mode_of(Some("delete everything")), "ask");
-        assert_eq!(mode_of(None), "ask");
+    fn there_are_two_styles_and_the_old_ones_land_in_them() {
+        assert_eq!(mode_of(Some("study")), "study");
+        assert_eq!(mode_of(Some("quiz")), "study");
+        assert_eq!(mode_of(Some("coach")), "study");
+        assert_eq!(mode_of(Some("explain")), "chat");
+        assert_eq!(mode_of(Some("meeting")), "chat");
+        assert_eq!(mode_of(Some("delete everything")), "chat");
+        assert_eq!(mode_of(None), "chat");
         let turns = vec![Turn {
             role: "user".into(),
             text: "go".into(),
         }];
         let systems: BTreeSet<String> = MODES.iter().map(|m| prompt(m, "", &turns).0).collect();
         assert_eq!(systems.len(), MODES.len());
-        let (system, user) = prompt("quiz", "", &turns);
+        let (system, user) = prompt("study", "", &turns);
         assert!(system.contains("Score: 3/4"));
         assert!(system.contains("[[correct]]"));
         assert!(system.contains("[n2]"));
         assert!(user.contains("No notes matched"));
-        assert!(prompt("meeting", "", &turns)
-            .0
-            .contains("Never invent names"));
+        let chat = prompt("chat", "", &turns).0;
+        assert!(chat.contains("Never invent names"));
+        assert!(chat.contains("everyday analogy"));
+        assert!(!chat.contains("[[correct]] if"));
     }
 
     #[test]
