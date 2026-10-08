@@ -1,6 +1,6 @@
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Response};
 use axum::Json;
 use leo_core::store::Store;
 use serde::Deserialize;
@@ -12,11 +12,19 @@ pub(crate) struct ListParams {
     pub(crate) tag: Option<String>,
     pub(crate) limit: Option<usize>,
     pub(crate) dir: Option<String>,
+    #[serde(default)]
+    pub(crate) offset: usize,
+    #[serde(default)]
+    pub(crate) brief: bool,
 }
 
 #[derive(Deserialize)]
 pub(crate) struct SearchParams {
     pub(crate) q: Option<String>,
+    #[serde(default)]
+    pub(crate) limit: Option<usize>,
+    #[serde(default)]
+    pub(crate) brief: bool,
 }
 
 #[derive(Deserialize)]
@@ -67,6 +75,8 @@ pub(crate) struct NoteResponse {
     pub(crate) directory: String,
     pub(crate) pinned: bool,
     pub(crate) version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) tasks: Option<[usize; 2]>,
 }
 
 fn version_of(note: &leo_core::notes::Note) -> String {
@@ -97,8 +107,59 @@ impl NoteResponse {
             directory: n.directory.clone(),
             pinned: n.pinned,
             version: version_of(n),
+            tasks: None,
         }
     }
+
+    pub(crate) fn brief(n: &leo_core::notes::Note, words: &[String]) -> Self {
+        NoteResponse {
+            body: excerpt(&n.body, words),
+            tasks: Some(tasks_in(&n.body)),
+            ..NoteResponse::from_note(n)
+        }
+    }
+}
+
+pub(crate) const EXCERPT_CHARS: usize = 400;
+
+pub(crate) fn tasks_in(body: &str) -> [usize; 2] {
+    let mut done = 0;
+    let mut all = 0;
+    for line in body.lines() {
+        let Some(rest) = line.trim_start().strip_prefix("- [") else {
+            continue;
+        };
+        let mut chars = rest.chars();
+        let (Some(mark), Some(']'), Some(' ')) = (chars.next(), chars.next(), chars.next()) else {
+            continue;
+        };
+        match mark {
+            ' ' => all += 1,
+            'x' | 'X' => {
+                all += 1;
+                done += 1;
+            }
+            _ => {}
+        }
+    }
+    [done, all]
+}
+
+pub(crate) fn excerpt(body: &str, words: &[String]) -> String {
+    let lower = body.to_lowercase();
+    let at = words
+        .iter()
+        .filter_map(|w| lower.find(w.as_str()))
+        .min()
+        .and_then(|at| body.get(..at))
+        .map(|before| before.chars().count().saturating_sub(120))
+        .unwrap_or(0);
+    let start = body.char_indices().nth(at).map_or(body.len(), |(i, _)| i);
+    let mut out: String = body[start..].chars().take(EXCERPT_CHARS).collect();
+    if at > 0 {
+        out.insert(0, '…');
+    }
+    out
 }
 
 pub(crate) fn save(store: &Store) -> Result<(), StatusCode> {
@@ -114,19 +175,30 @@ pub(crate) fn directory(store: &Store, path: &str) -> Result<(), StatusCode> {
 pub(crate) async fn list_notes(
     State(state): State<AppState>,
     Query(params): Query<ListParams>,
-) -> Result<Json<Vec<NoteResponse>>, StatusCode> {
+) -> Result<Response, StatusCode> {
     state
         .with_store(move |store| {
             let limit = params.limit.unwrap_or(100).min(1000);
             let notes = if let Some(ref dir) = params.dir {
                 directory(store, dir)?;
-                store.list_notes_in_dir(dir, params.tag.as_deref(), limit)
+                store.list_notes_in_dir(dir, params.tag.as_deref(), usize::MAX)
             } else {
-                store.list_notes(params.tag.as_deref(), limit)
+                store.list_notes(params.tag.as_deref(), usize::MAX)
             };
-            Ok(Json(
-                notes.iter().map(|n| NoteResponse::from_note(n)).collect(),
-            ))
+            let total = notes.len();
+            let page: Vec<NoteResponse> = notes
+                .iter()
+                .skip(params.offset)
+                .take(limit)
+                .map(|n| {
+                    if params.brief {
+                        NoteResponse::brief(n, &[])
+                    } else {
+                        NoteResponse::from_note(n)
+                    }
+                })
+                .collect();
+            Ok(([("x-total", total.to_string())], Json(page)).into_response())
         })
         .await
 }
@@ -264,6 +336,8 @@ pub(crate) async fn move_note(
         .await
 }
 
+pub(crate) const SEARCH_MOST: usize = 300;
+
 #[derive(serde::Serialize)]
 pub(crate) struct SearchHit {
     #[serde(flatten)]
@@ -281,11 +355,22 @@ pub(crate) async fn search_notes(
         .with_store(move |store| {
             let q = params.q.unwrap_or_default();
             let cache = graphs.load();
+            let words: Vec<String> = q
+                .split_whitespace()
+                .map(|w| w.trim_start_matches('#').to_lowercase())
+                .filter(|w| !w.is_empty())
+                .collect();
+            let limit = params.limit.unwrap_or(SEARCH_MOST).min(SEARCH_MOST);
             Ok(Json(
                 crate::search::search(store, &cache, &q)
                     .into_iter()
+                    .take(limit)
                     .map(|hit| SearchHit {
-                        note: NoteResponse::from_note(hit.note),
+                        note: if params.brief {
+                            NoteResponse::brief(hit.note, &words)
+                        } else {
+                            NoteResponse::from_note(hit.note)
+                        },
                         why: hit.why,
                     })
                     .collect(),

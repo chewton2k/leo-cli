@@ -90,7 +90,23 @@
       .slice(0, most);
   }
 
-  function visible(g, { hidden = new Set(), ideas = false, crossOnly = false, focus = null, depth = 1 } = {}) {
+  const MAP_MOST = 400;
+
+  function busiest(g, notes, usable, most) {
+    if (notes.size <= most) return { notes, of: notes.size };
+    const degree = new Map();
+    for (const e of g.edges) {
+      if (!usable(e) || e.kind === 'covers' || !notes.has(e.a) || !notes.has(e.b)) continue;
+      degree.set(e.a, (degree.get(e.a) || 0) + 1);
+      degree.set(e.b, (degree.get(e.b) || 0) + 1);
+    }
+    const kept = [...notes]
+      .sort((a, b) => (degree.get(b) || 0) - (degree.get(a) || 0) || g.byId.get(a).label.localeCompare(g.byId.get(b).label))
+      .slice(0, most);
+    return { notes: new Set(kept), of: notes.size };
+  }
+
+  function visible(g, { hidden = new Set(), ideas = false, crossOnly = false, focus = null, depth = 1, most = MAP_MOST } = {}) {
     let notes = new Set(g.nodes.filter((n) => n.kind === 'note' && !hidden.has(n.top)).map((n) => n.id));
     const usable = (e) => {
       if (e.kind === 'covers') return ideas;
@@ -98,6 +114,7 @@
       return true;
     };
     const shown = new Set();
+    let limited = null;
     if (focus && g.byId.has(focus)) {
       const near = new Set([focus]);
       let frontier = [focus];
@@ -115,6 +132,9 @@
       }
       for (const id of near) if (g.byId.get(id).kind === 'note' || ideas) shown.add(id);
     } else {
+      const top = busiest(g, notes, usable, most);
+      if (top.notes.size < top.of) limited = { shown: top.notes.size, of: top.of };
+      notes = top.notes;
       for (const id of notes) shown.add(id);
       if (ideas) {
         for (const n of g.nodes) {
@@ -122,7 +142,7 @@
         }
       }
     }
-    return { nodes: shown, edges: g.edges.filter((e) => usable(e) && shown.has(e.a) && shown.has(e.b)) };
+    return { nodes: shown, edges: g.edges.filter((e) => usable(e) && shown.has(e.a) && shown.has(e.b)), limited };
   }
 
   function find(g, query, most = 8) {
@@ -894,6 +914,7 @@
       selected: () => selected,
       setOptions,
       options: () => ({ ...opts, hidden: new Set(opts.hidden) }),
+      limited: () => vis.limited || null,
       fit: () => {
         touched = true;
         fit(false);
@@ -918,5 +939,5 @@
     };
   }
 
-  root.leoGraph = { prepare, colorOf, isCross, counts, connections, conceptNotes, strongest, visible, find, createSim, tick, bounds, radiusOf, relationFrom, create, topFolder };
+  root.leoGraph = { MAP_MOST, prepare, colorOf, isCross, counts, connections, conceptNotes, strongest, visible, find, createSim, tick, bounds, radiusOf, relationFrom, create, topFolder };
 })(typeof window !== 'undefined' ? window : globalThis);

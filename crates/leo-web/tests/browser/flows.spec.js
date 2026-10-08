@@ -788,6 +788,33 @@ test.describe('pictures', () => {
   });
 });
 
+test.describe('large libraries', () => {
+  test('a big folder loads in pages as you scroll, and Select all takes every note', async ({ page }) => {
+    test.setTimeout(90000);
+    const dir = `big-${test.info().project.name}`;
+    await page.request.post('/api/dirs', { data: { path: dir } });
+    for (let i = 0; i < 230; i += 10) {
+      await Promise.all(Array.from({ length: 10 }, (_, j) => page.request.post('/api/notes', { data: { title: `Big note ${String(i + j).padStart(3, '0')}`, body: '- [x] done\n- [ ] not yet', directory: dir } })));
+    }
+    const listed = await page.request.get(`/api/notes?dir=${dir}&limit=200&brief=true`);
+    expect(listed.headers()['x-total']).toBe('230');
+    await page.goto(`/#/f/${dir}`);
+    const cards = page.locator('.cards .card');
+    await expect(cards).toHaveCount(200);
+    await expect(page.locator('.section-title', { hasText: 'Notes' })).toHaveText('Notes · 230');
+    await expect(cards.first().locator('.chip.progress')).toContainText('1/2');
+    await page.locator('#more-notes').scrollIntoViewIfNeeded();
+    await expect(cards).toHaveCount(230);
+    await expect(page.locator('#more-notes')).toHaveCount(0);
+
+    await page.reload();
+    await expect(cards).toHaveCount(200);
+    await page.locator('[data-action="folder-select"]').click();
+    await page.locator('[data-folder-all]').check();
+    await expect(page.locator('.select-bar')).toContainText('230 selected');
+  });
+});
+
 test.describe('background work', () => {
   test('work still going on shows its progress on every page until it is done', async ({ page }) => {
     let tasks = [

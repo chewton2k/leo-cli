@@ -87,6 +87,12 @@ function mapInsets() {
   return { top, bottom: tall + 10, right: 0 };
 }
 
+function limitNote() {
+  const limited = mapView && mapView.limited();
+  if (!limited) return '';
+  return `<span class="map-chip note" title="Search the map to find any note">The ${limited.shown.toLocaleString()} most connected of ${limited.of.toLocaleString()} notes</span>`;
+}
+
 function mapChips(opts) {
   const chips = $('#map-chips');
   if (!chips || !mapView) return;
@@ -108,7 +114,8 @@ function mapChips(opts) {
     toggle('map-across', opts.crossOnly, `Across classes${leoGraph.counts(g).across ? ` · ${leoGraph.counts(g).across}` : ''}`, 'Show only connections between different classes') +
     (g.nodes.some((n) => n.kind === 'concept') ? toggle('map-ideas', opts.ideas, 'Ideas', 'Show the shared ideas as their own dots') : '') +
     (opts.focus ? `<button class="map-chip toggle on" data-action="map-unfocus">Focused · show all</button>` : '') +
-    classes;
+    classes +
+    limitNote();
 }
 
 function mapStatus(status) {

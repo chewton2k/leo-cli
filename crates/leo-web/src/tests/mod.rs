@@ -24,9 +24,9 @@ use crate::routes::downloads::attachment_header;
 use crate::routes::felix::{add_chat_file, chat_reply, list_chat_files, remove_chat_file};
 use crate::routes::housekeeping::{get_keep, set_keep};
 use crate::routes::notes::{
-    create_dir, create_note, delete_note, get_note, list_dirs, list_folders, list_notes, move_note,
-    update_note, CreateBody, CreateDirBody, DirParams, ListParams, MoveBody, NoteResponse,
-    UpdateBody,
+    create_dir, create_note, delete_note, excerpt, get_note, list_dirs, list_folders, list_notes,
+    move_note, tasks_in, update_note, CreateBody, CreateDirBody, DirParams, ListParams, MoveBody,
+    NoteResponse, UpdateBody, EXCERPT_CHARS,
 };
 use crate::routes::pictures::{add_picture, get_picture, NewPicture, PictureAt};
 use crate::routes::trash::{

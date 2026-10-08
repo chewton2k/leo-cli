@@ -64,7 +64,7 @@ $('#search-icon').innerHTML = ICON.search;
 class Offline extends Error {}
 class Locked extends Error {}
 
-async function api(path, { method = 'GET', body } = {}) {
+async function api(path, { method = 'GET', body, total = false } = {}) {
   let response;
   try {
     response = await fetch(path, {
@@ -89,6 +89,7 @@ async function api(path, { method = 'GET', body } = {}) {
     error.status = response.status;
     throw error;
   }
+  if (total) return { items: await response.json(), total: Number(response.headers.get('x-total')) || 0 };
   return response.json();
 }
 
@@ -131,11 +132,18 @@ function rel(iso) {
 
 const folderLabel = (dir) => (dir ? dir.split('/').pop() : 'All notes');
 
-function progress(body) {
-  const boxes = body.match(/^\s*- \[( |x|X)\] /gm) || [];
-  if (!boxes.length) return '';
-  const done = boxes.filter((b) => !b.includes('[ ]')).length;
-  return `<span class="chip progress">${ICON.check.replace('<svg', '<svg width="14" height="14"')} ${done}/${boxes.length}</span>`;
+function progress(note) {
+  let done;
+  let all;
+  if (note.tasks) {
+    [done, all] = note.tasks;
+  } else {
+    const boxes = String(note.body || '').match(/^\s*- \[( |x|X)\] /gm) || [];
+    all = boxes.length;
+    done = boxes.filter((b) => !b.includes('[ ]')).length;
+  }
+  if (!all) return '';
+  return `<span class="chip progress">${ICON.check.replace('<svg', '<svg width="14" height="14"')} ${done}/${all}</span>`;
 }
 
 function highlight(text, words) {
@@ -174,7 +182,7 @@ function card(note, { words = [], showFolder = false, pick = null, why = null } 
     <div class="card-title"><span>${words.length ? highlight(note.title, words) : esc(note.title)}</span>${corner}</div>
     ${text ? `<div class="card-snippet">${text}</div>` : ''}
     ${why ? `<div class="card-why">${ICON.map}${why.kind === 'idea' ? `Through the idea “${esc(why.name)}” on the map` : 'Through its summary on the map'}</div>` : ''}
-    <div class="card-meta">${where}<span>${rel(note.updated_at)}</span>${progress(note.body)}</div>
+    <div class="card-meta">${where}<span>${rel(note.updated_at)}</span>${progress(note)}</div>
   </div>`;
 }
 
@@ -234,10 +242,65 @@ async function showFolder(dir) {
   state = { view: 'folder', dir, selecting: before ? before.selecting : false, picked: new Set() };
   chrome({ dir, showBack: Boolean(dir), fab: newButton(dir) });
   if (!app.innerHTML.trim()) app.innerHTML = skeleton(4);
-  const [dirs, notes] = await Promise.all([api(`/api/dirs?parent=${enc(dir)}`), api(`/api/notes?dir=${enc(dir)}&limit=1000`)]);
+  const [dirs, page] = await Promise.all([api(`/api/dirs?parent=${enc(dir)}`), api(`/api/notes?dir=${enc(dir)}&limit=${PAGE}&brief=true`, { total: true })]);
   if (mine !== seq) return;
-  state.listing = { dirs, notes };
+  state.listing = { dirs, notes: page.items, total: page.total };
   drawFolder();
+}
+
+const PAGE = 200;
+let moreWatch = null;
+
+function noteCard(n) {
+  const key = `n:${n.id}`;
+  return card(n, state.selecting ? { pick: { key, on: state.picked.has(key) } } : {});
+}
+
+function watchMore() {
+  if (moreWatch) moreWatch.disconnect();
+  moreWatch = null;
+  const sentinel = $('#more-notes');
+  if (!sentinel || typeof IntersectionObserver !== 'function') return;
+  moreWatch = new IntersectionObserver((seen) => {
+    if (seen.some((e) => e.isIntersecting)) loadMoreNotes();
+  }, { rootMargin: '600px 0px' });
+  moreWatch.observe(sentinel);
+}
+
+let loadingMore = null;
+function loadMoreNotes() {
+  if (loadingMore) return loadingMore;
+  const listing = state.listing;
+  if (state.view !== 'folder' || !listing || listing.notes.length >= listing.total) return Promise.resolve();
+  const dir = state.dir;
+  loadingMore = (async () => {
+    try {
+      const page = await api(`/api/notes?dir=${enc(dir)}&limit=${PAGE}&offset=${listing.notes.length}&brief=true`, { total: true });
+      if (state.listing !== listing) return;
+      const known = new Set(listing.notes.map((n) => n.id));
+      const fresh = page.items.filter((n) => !known.has(n.id));
+      listing.notes.push(...fresh);
+      listing.total = Math.max(page.total, listing.notes.length);
+      if (!fresh.length) listing.total = listing.notes.length;
+      const cards = $('.cards');
+      if (cards) cards.insertAdjacentHTML('beforeend', fresh.map(noteCard).join(''));
+      const sentinel = $('#more-notes');
+      if (sentinel && listing.notes.length >= listing.total) sentinel.remove();
+    } catch (e) {
+      fail(e);
+    } finally {
+      loadingMore = null;
+    }
+  })();
+  return loadingMore;
+}
+
+async function loadAllNotes() {
+  while (state.view === 'folder' && state.listing && state.listing.notes.length < state.listing.total) {
+    const before = state.listing.notes.length;
+    await loadMoreNotes();
+    if (!state.listing || state.listing.notes.length === before) break;
+  }
 }
 
 function folderKeys() {
@@ -271,14 +334,12 @@ function drawFolder() {
       .join('')}</div>`;
   }
   if (notes.length) {
-    html += `<div class="section-title">Notes</div><div class="cards${sel ? ' picking' : ''}">${notes
-      .map((n) => {
-        const key = `n:${n.id}`;
-        return card(n, sel ? { pick: { key, on: picked.has(key) } } : {});
-      })
-      .join('')}</div>`;
+    const total = Math.max(state.listing.total || 0, notes.length);
+    html += `<div class="section-title">${total > notes.length ? `Notes · ${total}` : 'Notes'}</div><div class="cards${sel ? ' picking' : ''}">${notes.map(noteCard).join('')}</div>`;
+    if (total > notes.length) html += '<div class="more-notes" id="more-notes" aria-hidden="true">Loading more notes…</div>';
   }
   app.innerHTML = html;
+  watchMore();
   if (sel) {
     const all = picked.size === folderKeys().length;
     floating.innerHTML = `<div class="select-bar" role="toolbar" aria-label="Selected notes and folders">
@@ -333,9 +394,12 @@ async function undoTrashMove(done) {
   }
 }
 
-floating.addEventListener('change', (e) => {
+floating.addEventListener('change', async (e) => {
   if (state.view !== 'folder' || !e.target.closest('[data-folder-all]')) return;
-  state.picked = e.target.checked ? new Set(folderKeys()) : new Set();
+  const on = e.target.checked;
+  if (on) await loadAllNotes();
+  if (state.view !== 'folder') return;
+  state.picked = on ? new Set(folderKeys()) : new Set();
   drawFolder();
 });
 
@@ -475,15 +539,32 @@ async function showSearch(query) {
     app.innerHTML = empty(ICON.search, 'Search every note', 'Titles, text and the ideas on the map. Abbreviations like BFS work too.');
     return;
   }
-  const results = await api(`/api/search?q=${enc(query)}`);
+  const results = await api(`/api/search?q=${enc(query)}&brief=true`);
   if (mine !== seq) return;
   const words = query.split(/\s+/).map((w) => w.replace(/^#/, '')).filter(Boolean);
+  const draw = (list) => list.map((n) => card(n, { words, showFolder: true, why: n.why })).join('');
+  const count = results.length >= SEARCH_MOST ? `The first ${SEARCH_MOST} notes` : plural(results.length, 'note');
   app.innerHTML = results.length
-    ? `<div class="section-title">${results.length} note${results.length === 1 ? '' : 's'}</div><div class="cards">${results
-        .map((n) => card(n, { words, showFolder: true, why: n.why }))
-        .join('')}</div>`
+    ? `<div class="section-title">${count}</div><div class="cards">${draw(results.slice(0, SEARCH_STEP))}</div>${results.length > SEARCH_STEP ? '<div class="more-notes" id="more-notes" aria-hidden="true">Loading more notes…</div>' : ''}`
     : empty(ICON.search, 'Nothing found', `No note mentions “${query}”.`);
+  let shown = SEARCH_STEP;
+  if (moreWatch) moreWatch.disconnect();
+  const sentinel = $('#more-notes');
+  if (!sentinel || typeof IntersectionObserver !== 'function') return;
+  moreWatch = new IntersectionObserver((seen) => {
+    if (mine !== seq || !seen.some((x) => x.isIntersecting)) return;
+    $('.cards').insertAdjacentHTML('beforeend', draw(results.slice(shown, shown + SEARCH_STEP)));
+    shown += SEARCH_STEP;
+    if (shown >= results.length) {
+      moreWatch.disconnect();
+      sentinel.remove();
+    }
+  }, { rootMargin: '600px 0px' });
+  moreWatch.observe(sentinel);
 }
+
+const SEARCH_MOST = 300;
+const SEARCH_STEP = 60;
 
 async function showRecord(dir) {
   state = { view: 'record', dir: '' };

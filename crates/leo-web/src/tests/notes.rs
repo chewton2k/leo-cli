@@ -193,6 +193,8 @@ fn a_reload_failure_is_reported_instead_of_serving_a_stale_store() {
             tag: None,
             limit: None,
             dir: None,
+            offset: 0,
+            brief: false,
         }),
     ));
     assert_eq!(result.err(), Some(StatusCode::INTERNAL_SERVER_ERROR));
@@ -218,4 +220,86 @@ fn failed_operations_do_not_leave_unsaved_changes_in_the_cached_store() {
     assert!(failed.is_err());
     let Json(note) = run(get_note(State(state), Path(ids[0].clone()))).unwrap();
     assert_eq!(note.body, "");
+}
+
+#[test]
+fn a_large_folder_comes_in_pages_with_its_total_and_short_cards() {
+    let names: Vec<String> = (0..250).map(|i| format!("Note {i:03}")).collect();
+    let notes: Vec<(&str, &str)> = names.iter().map(|n| (n.as_str(), "big")).collect();
+    let (state, _d, ids) = state_with(&notes);
+    {
+        let mut store = state.fresh();
+        let body = format!("- [x] read\n- [ ] write\n{}", "long text ".repeat(200));
+        store.find_note_mut(&ids[0]).unwrap().body = body;
+        store.save().unwrap();
+    }
+    let page = |offset: usize, limit: usize| {
+        let response = run(list_notes(
+            State(state.clone()),
+            Query(ListParams {
+                tag: None,
+                limit: Some(limit),
+                dir: Some("big".into()),
+                offset,
+                brief: true,
+            }),
+        ))
+        .unwrap();
+        let total: usize = response.headers()["x-total"]
+            .to_str()
+            .unwrap()
+            .parse()
+            .unwrap();
+        (total, json_of(response))
+    };
+    let (total, first) = page(0, 200);
+    assert_eq!(total, 250);
+    assert_eq!(first.as_array().unwrap().len(), 200);
+    let (_, rest) = page(200, 200);
+    assert_eq!(rest.as_array().unwrap().len(), 50);
+    let mut seen: Vec<String> = first
+        .as_array()
+        .unwrap()
+        .iter()
+        .chain(rest.as_array().unwrap())
+        .map(|n| n["id"].as_str().unwrap().to_string())
+        .collect();
+    seen.sort();
+    seen.dedup();
+    assert_eq!(
+        seen.len(),
+        250,
+        "no note is skipped or repeated across pages"
+    );
+    let long = first
+        .as_array()
+        .unwrap()
+        .iter()
+        .chain(rest.as_array().unwrap())
+        .find(|n| n["id"] == ids[0].as_str())
+        .unwrap();
+    assert_eq!(long["tasks"], serde_json::json!([1, 2]));
+    assert_eq!(
+        long["body"].as_str().unwrap().chars().count(),
+        EXCERPT_CHARS
+    );
+}
+
+#[test]
+fn an_excerpt_starts_near_the_first_match_and_counts_only_real_tasks() {
+    let body = format!("{}needle in the text", "é".repeat(500));
+    let cut = excerpt(&body, &["needle".into()]);
+    assert!(
+        cut.starts_with('…') && cut.contains("needle in the text"),
+        "{cut}"
+    );
+    assert_eq!(excerpt("short", &["absent".into()]), "short");
+    assert_eq!(
+        excerpt("İstanbul needle", &["needle".into()]),
+        "İstanbul needle"
+    );
+    assert_eq!(
+        tasks_in("- [x] a\n  - [X] b\n- [ ] c\n- [y] no\n-[ ] no\n* [ ] other bullet"),
+        [2, 3]
+    );
 }

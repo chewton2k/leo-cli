@@ -127,3 +127,16 @@ test('a large graph lays out quickly', () => {
   assert.ok(Date.now() - started < 3000, `60 ticks took ${Date.now() - started} ms`);
   for (const p of sim.pos.values()) assert.ok(Number.isFinite(p.x) && Number.isFinite(p.y));
 });
+
+test('a large map shows the most connected notes, and a focus still reaches any note', () => {
+  const g = G.prepare(data);
+  const top = G.visible(g, { most: 2 });
+  assert.deepEqual([...top.nodes].sort(), ['n:a', 'n:b']);
+  assert.deepEqual(top.limited, { shown: 2, of: 5 });
+  assert.ok(top.edges.every((e) => top.nodes.has(e.a) && top.nodes.has(e.b)));
+  const focused = G.visible(g, { most: 2, focus: 'n:e' });
+  assert.ok(focused.nodes.has('n:e'));
+  assert.equal(focused.limited, null);
+  assert.equal(G.visible(g).limited, null, 'small maps are whole');
+  assert.equal(G.MAP_MOST, 400);
+});

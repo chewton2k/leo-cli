@@ -298,3 +298,11 @@
   link, drops repeats and unknown numbers, adds `## Figures` only if the AI
   placed none, and photos under `## Photos`. Vector drawings in PDFs are not
   pictures and are not extracted.
+- Large libraries: GET `/api/notes` takes `offset` and `brief=true` (body =
+  400-char `excerpt`, plus `tasks: [done, all]`) and answers with `x-total`; a
+  folder loads `PAGE` (200) at a time and an IntersectionObserver on
+  `#more-notes` fetches the next page; Select all loads every page first.
+  `/api/search?brief=true` returns at most `SEARCH_MOST` (300) with excerpts
+  around the first match; the page draws 60 at a time. The map shows the
+  `MAP_MOST` (400) most connected notes when there are more (`visible`'s
+  `most`, `limited`), with a chip saying so; a focus or map search reaches any.
