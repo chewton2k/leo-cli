@@ -136,11 +136,25 @@
   }
 
   const MOST_FILES = 10;
+
+  function splitFiles(docs, messages) {
+    const ids = new Set();
+    const names = new Set();
+    for (const m of messages || []) {
+      if (m.role !== 'user') continue;
+      for (const id of m.files || []) ids.add(id);
+      if (!m.files) for (const name of m.docs || []) names.add(name);
+    }
+    const sent = [];
+    const waiting = [];
+    for (const d of docs || []) (ids.has(d.id) || names.has(d.name) ? sent : waiting).push(d);
+    return { sent, waiting };
+  }
   const FILE_TYPES = '.pdf,.docx,.pptx,.txt,.md,image/*';
 
   function create({ render, escape, onOpen = () => {}, storage = root.localStorage, prepare = null, notify = () => {} }) {
     const saved = load(storage);
-    const state = { open: false, id: saved.id || newId(), mode: modeOf(saved.mode), messages: saved.messages, refs: saved.refs, context: null, dropped: null, busy: null, streak: 0, pick: null, chats: null, sidebar: null, doomed: null, asking: null, files: [], filesFor: null };
+    const state = { open: false, id: saved.id || newId(), mode: modeOf(saved.mode), messages: saved.messages, refs: saved.refs, context: null, dropped: null, busy: null, streak: 0, pick: null, chats: null, sidebar: null, doomed: null, asking: null, files: [], sent: [], filesFor: null };
     const panel = document.createElement('aside');
     panel.className = 'chat';
     panel.id = 'chat';
@@ -348,6 +362,7 @@
       state.messages = [];
       state.refs = [];
       state.files = [];
+      state.sent = [];
       state.filesFor = state.id;
       state.streak = 0;
       state.asking = null;
@@ -380,6 +395,7 @@
       state.messages = Array.isArray(chat.messages) ? chat.messages : [];
       state.refs = Array.isArray(chat.refs) ? chat.refs.slice(0, MOST_REFS) : [];
       state.files = [];
+      state.sent = [];
       state.streak = 0;
       closePick();
       persist();
@@ -426,7 +442,9 @@
       try {
         const response = await fetch(`/api/chats/${encodeURIComponent(chat)}/files`, { credentials: 'same-origin' });
         if (!response.ok || state.id !== chat) return;
-        state.files = (await response.json()).map((d) => ({ ...d, status: 'ready' }));
+        const split = splitFiles(await response.json(), state.messages);
+        state.sent = split.sent;
+        state.files = split.waiting.map((d) => ({ ...d, status: 'ready' }));
         drawRefs();
       } catch (e) {
         state.files = state.id === chat ? state.files : [];
@@ -474,7 +492,7 @@
     }
 
     function addFiles(list) {
-      const room = MOST_FILES - state.files.length;
+      const room = MOST_FILES - state.files.length - state.sent.length;
       const files = [...list];
       if (files.length > room) notify(`A chat holds up to ${MOST_FILES} documents, so ${files.length - Math.max(room, 0)} ${files.length - Math.max(room, 0) === 1 ? 'was' : 'were'} left out.`);
       for (const file of files.slice(0, Math.max(room, 0))) addFile(file);
@@ -719,7 +737,11 @@
       if (!question || state.busy) return;
       closePick();
       const ready = state.files.filter((f) => f.status === 'ready');
-      state.messages.push({ role: 'user', text: question, refs: state.refs.slice(), docs: ready.map((f) => f.name) });
+      state.messages.push({ role: 'user', text: question, refs: state.refs.slice(), docs: ready.map((f) => f.name), files: ready.map((f) => f.id) });
+      state.sent = [...state.sent, ...ready.map((f) => ({ id: f.id, name: f.name }))];
+      state.files = state.files.filter((f) => f.status !== 'ready');
+      drawRefs();
+      const files = state.sent.map((f) => f.id);
       const answer = { role: 'assistant', text: '', sources: [], pending: true };
       state.messages.push(answer);
       input.value = '';
@@ -738,7 +760,7 @@
           method: 'POST',
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: history, mode: state.mode, note: ctx, refs: state.refs.map((r) => r.id), chat: thread.id, files: ready.map((f) => f.id) }),
+          body: JSON.stringify({ messages: history, mode: state.mode, note: ctx, refs: state.refs.map((r) => r.id), chat: thread.id, files }),
           signal: controller.signal,
         });
         if (response.status === 401) throw new Error('This page needs its link again. Open the link leo serve printed.');
@@ -857,7 +879,7 @@
         openPick('button', '', 0);
       } else if (what === 'attach-file') {
         $('#chat-attach-menu').hidden = true;
-        if (state.files.length >= MOST_FILES) notify(`A chat holds up to ${MOST_FILES} documents; remove one first.`);
+        if (state.files.length + state.sent.length >= MOST_FILES) notify(`A chat holds up to ${MOST_FILES} documents; remove one first.`);
         else $('#chat-file').click();
       } else if (what === 'unfile') removeFile(el.dataset.id); else if (what === 'pick') choose(Number(el.dataset.i));
       else if (what === 'unref') {
@@ -949,5 +971,5 @@
     };
   }
 
-  root.leoChat = { create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, MODES, MOST_REFS };
+  root.leoChat = { create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, MODES, MOST_REFS };
 })(typeof window !== 'undefined' ? window : globalThis);

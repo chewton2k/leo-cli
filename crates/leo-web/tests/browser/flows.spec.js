@@ -449,7 +449,7 @@ test.describe('Felix', () => {
     expect(sizes[0] / sizes[1]).toBeLessThan(1.4);
   });
 
-  test('a file from this device is read for Felix, goes with each message, and can be removed', async ({ page }) => {
+  test('a file from this device is read for Felix, leaves the box once sent, and can be removed before', async ({ page }) => {
     const asked = [];
     await page.route('**/api/chat', async (route) => {
       asked.push(route.request().postDataJSON());
@@ -458,12 +458,15 @@ test.describe('Felix', () => {
     await page.goto('/');
     await page.locator('#chat-toggle').click();
     const chat = page.locator('#chat');
-    await chat.locator('[data-chat="attach"]').click();
-    await expect(chat.locator('#chat-attach-menu')).toBeVisible();
-    const chooser = page.waitForEvent('filechooser');
-    await chat.locator('[data-chat="attach-file"]').click();
-    await (await chooser).setFiles({ name: 'week3.txt', mimeType: 'text/plain', buffer: Buffer.from('Heaps keep the minimum at the root.') });
-    await expect(chat.locator('#chat-attach-menu')).toBeHidden();
+    const attach = async (file) => {
+      await chat.locator('[data-chat="attach"]').click();
+      await expect(chat.locator('#chat-attach-menu')).toBeVisible();
+      const chooser = page.waitForEvent('filechooser');
+      await chat.locator('[data-chat="attach-file"]').click();
+      await (await chooser).setFiles(file);
+      await expect(chat.locator('#chat-attach-menu')).toBeHidden();
+    };
+    await attach({ name: 'week3.txt', mimeType: 'text/plain', buffer: Buffer.from('Heaps keep the minimum at the root.') });
     const chip = chat.locator('.chat-ref.doc', { hasText: 'week3.txt' });
     await expect(chip).toBeVisible();
     await expect(chip).not.toHaveClass(/reading/);
@@ -475,13 +478,29 @@ test.describe('Felix', () => {
     expect(files.map((f) => f.name)).toEqual(['week3.txt']);
     expect(files[0].chars).toBe(35);
     await expect(chat.locator('.msg.user .cite.doc')).toHaveText('week3.txt');
-    await chip.locator('.chat-ref-x').click();
-    await expect(chip).toHaveCount(0);
-    await expect.poll(async () => (await (await page.request.get(`/api/chats/${asked[0].chat}/files`)).json()).length).toBe(0);
-    await chat.locator('[data-chat="attach"]').click();
-    const again = page.waitForEvent('filechooser');
-    await chat.locator('[data-chat="attach-file"]').click();
-    await (await again).setFiles({ name: 'song.mp3', mimeType: 'audio/mpeg', buffer: Buffer.from('ID3') });
+    await expect(chat.locator('.chat-ref.doc')).toHaveCount(0);
+
+    await chat.locator('#chat-input').fill('and where is the minimum?');
+    await chat.locator('#chat-input').press('Enter');
+    await expect(chat.locator('.msg.leo')).toHaveCount(2);
+    await expect(chat.locator('.msg.user').last().locator('.cite.doc')).toHaveCount(0);
+    expect(asked[1].files, 'Felix still has the file for questions after it').toEqual(asked[0].files);
+
+    await attach({ name: 'draft.txt', mimeType: 'text/plain', buffer: Buffer.from('A draft not meant to go.') });
+    const draft = chat.locator('.chat-ref.doc', { hasText: 'draft.txt' });
+    await expect(draft).not.toHaveClass(/reading/);
+    await draft.locator('.chat-ref-x').click();
+    await expect(draft).toHaveCount(0);
+    await expect.poll(async () => (await (await page.request.get(`/api/chats/${asked[0].chat}/files`)).json()).map((f) => f.name)).toEqual(['week3.txt']);
+
+    await page.reload();
+    const listed = page.waitForResponse((r) => r.url().endsWith(`/api/chats/${asked[0].chat}/files`));
+    await page.locator('#chat-toggle').click();
+    await listed;
+    await expect(chat.locator('.msg.user .cite.doc')).toHaveText('week3.txt');
+    await expect(chat.locator('.chat-ref.doc')).toHaveCount(0);
+
+    await attach({ name: 'song.mp3', mimeType: 'audio/mpeg', buffer: Buffer.from('ID3') });
     await expect(page.locator('.toast.bad')).toContainText('Felix could not read song.mp3');
     await expect(chat.locator('.chat-ref.doc')).toHaveCount(0);
   });
@@ -1005,6 +1024,29 @@ test.describe('recording', () => {
     await page.locator('[data-action="rec-stop"]').click();
     await expect(page).toHaveURL(new RegExp(`#/n/${made.id}$`), { timeout: 8000 });
     await expect(page.locator('#rec-pill')).toHaveCount(0);
+  });
+
+  test('a recording finished while away shows up in the open folder, without a refresh', async ({ page, context }) => {
+    await context.grantPermissions(['microphone']);
+    const title = `Recorded later ${test.info().project.name}`;
+    const seen = stubRecorder(page, { noteId: null });
+    let polls = 0;
+    let made = null;
+    await page.route('**/api/record/rec-1', async (route) => {
+      if (!seen.stopped) return route.fulfill({ json: { id: 'rec-1', source: 'browser', state: 'recording', secs: 3, step: '', steps: null, transcript: '', warnings: [], points: [], levels: [], note: null, error: null } });
+      polls += 1;
+      if (polls < 4) return route.fulfill({ json: { id: 'rec-1', source: 'browser', state: 'writing', secs: 3, step: 'Writing the notes', steps: null, transcript: '', warnings: [], points: [], levels: [], note: null, error: null } });
+      if (!made) made = await (await page.request.post('/api/notes', { data: { title, body: 'From the recording.' } })).json();
+      return route.fulfill({ json: { id: 'rec-1', source: 'browser', state: 'done', secs: 3, step: '', steps: null, transcript: '', warnings: [], points: [], levels: [], note: made.id, error: null } });
+    });
+    await page.goto('/#/record');
+    await page.locator('[data-action="rec-start"]').click();
+    await expect(page.locator('[data-action="rec-stop"]')).toBeVisible();
+    await page.locator('[data-action="rec-stop"]').click();
+    await page.goto('/#/');
+    await expect(page.locator('.card', { hasText: title })).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('.toast')).toContainText('Your recording is now a note.');
+    expect(page.url()).not.toContain('#/n/');
   });
 
   test('a tab’s sound is shared and recorded, and stopping the share saves it', async ({ page }) => {

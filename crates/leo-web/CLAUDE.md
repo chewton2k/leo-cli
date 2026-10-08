@@ -218,3 +218,9 @@
   polls it every 1.5 s while anything is listed (and once on load, and after
   starting an upload, a map build or stopping a recording), and hides a task on
   its own page (record, map, the upload sheet). `#activity`, foldable.
+- A recording that finishes while the page is elsewhere refreshes the open
+  folder or search (`noteReady` → `showLatest`, like uploads) and toasts Open.
+- Felix files go with one message: sending moves the composer's ready files to
+  the message (`files` ids, `docs` names) and `state.sent`; every later request
+  still sends `state.sent` so follow-ups can use them. `splitFiles` sorts a
+  chat's stored files into sent/waiting on load (old messages match by name).

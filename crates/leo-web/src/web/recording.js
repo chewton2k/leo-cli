@@ -139,7 +139,7 @@
   const live = (view) => Boolean(view) && ['starting', 'recording', 'paused'].includes(view.state);
 
   function create(deps) {
-    const { api, esc, toast, go, noteHash, felix, icons } = deps;
+    const { api, esc, toast, go, noteHash, felix, icons, noteReady } = deps;
     const s = {
       view: null,
       overview: null,
@@ -330,8 +330,9 @@
       }
       if (view.state === 'done' && before && before.state !== 'done') {
         detach();
-        toast('Your recording is now a note.', { action: 'Open', run: () => go(noteHash(view.note)) });
         if (s.container && s.container.isConnected) go(noteHash(view.note), { replace: true });
+        else if (noteReady) noteReady();
+        toast('Your recording is now a note.', { action: 'Open', run: () => go(noteHash(view.note)) });
       }
       draw();
       pill();

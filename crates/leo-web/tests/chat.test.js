@@ -122,3 +122,17 @@ test('a starter that needs classes names the ones picked', () => {
   assert.equal(C.starterWords(across, ['cs130', 'math61']), 'Quiz me across cs130 and math61');
   for (const m of C.MODES) for (const s of m.starters) assert.ok(s.ask, `${s.text} asks when nothing is open`);
 });
+
+test('splitFiles keeps files already sent out of the box for the next message', () => {
+  const docs = [{ id: 'a', name: 'week3.txt' }, { id: 'b', name: 'week4.txt' }, { id: 'c', name: 'old.pdf' }];
+  const messages = [
+    { role: 'user', text: 'what is in it?', docs: ['week3.txt'], files: ['a'] },
+    { role: 'assistant', text: 'heaps', files: ['b'] },
+    { role: 'user', text: 'before files had ids', docs: ['old.pdf'] },
+  ];
+  const { sent, waiting } = C.splitFiles(docs, messages);
+  assert.deepEqual(sent.map((d) => d.id), ['a', 'c']);
+  assert.deepEqual(waiting.map((d) => d.id), ['b']);
+  assert.deepEqual(C.splitFiles(docs, []).waiting.length, 3);
+  assert.deepEqual(C.splitFiles(undefined, undefined), { sent: [], waiting: [] });
+});
