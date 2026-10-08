@@ -77,35 +77,59 @@
     return [...refs, { id: note.id, title: note.title || 'Untitled' }];
   }
 
+  function newId() {
+    if (root.crypto && typeof root.crypto.randomUUID === 'function') return root.crypto.randomUUID();
+    return `chat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  }
+
   function load(storage) {
-    const fresh = { mode: 'chat', messages: [], refs: [] };
+    const fresh = { id: null, mode: 'chat', messages: [], refs: [] };
     try {
       const saved = JSON.parse(storage.getItem(KEY) || 'null');
-      if (saved && Array.isArray(saved.messages)) return { mode: modeOf(saved.mode), messages: saved.messages, refs: Array.isArray(saved.refs) ? saved.refs.slice(0, MOST_REFS) : [] };
+      if (saved && Array.isArray(saved.messages)) return { id: typeof saved.id === 'string' ? saved.id : null, mode: modeOf(saved.mode), messages: saved.messages, refs: Array.isArray(saved.refs) ? saved.refs.slice(0, MOST_REFS) : [] };
     } catch (e) {
       return fresh;
     }
     return fresh;
   }
 
-  function save(storage, mode, messages, refs = []) {
+  function save(storage, mode, messages, refs = [], id = null) {
     try {
-      storage.setItem(KEY, JSON.stringify({ mode, messages: messages.slice(-MOST_KEPT), refs }));
+      storage.setItem(KEY, JSON.stringify({ id, mode, messages: messages.slice(-MOST_KEPT), refs }));
     } catch (e) {
       return;
     }
   }
 
+  function groups(list, now = new Date()) {
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const day = 86400000;
+    const order = ['Today', 'Yesterday', 'Previous 7 days', 'Previous 30 days', 'Older'];
+    const out = new Map(order.map((name) => [name, []]));
+    for (const chat of list) {
+      const t = new Date(chat.updated_at).getTime();
+      const name = t >= start ? 'Today' : t >= start - day ? 'Yesterday' : t >= start - 7 * day ? 'Previous 7 days' : t >= start - 30 * day ? 'Previous 30 days' : 'Older';
+      out.get(name).push(chat);
+    }
+    return order.filter((name) => out.get(name).length).map((name) => ({ name, chats: out.get(name) }));
+  }
+
   function create({ render, escape, onOpen = () => {}, storage = root.localStorage }) {
     const saved = load(storage);
-    const state = { open: false, mode: modeOf(saved.mode), messages: saved.messages, refs: saved.refs, context: null, dropped: null, busy: null, streak: 0, pick: null };
+    const state = { open: false, id: saved.id || newId(), mode: modeOf(saved.mode), messages: saved.messages, refs: saved.refs, context: null, dropped: null, busy: null, streak: 0, pick: null, chats: null, sidebar: null, doomed: null };
     const panel = document.createElement('aside');
     panel.className = 'chat';
     panel.id = 'chat';
     panel.hidden = true;
     panel.setAttribute('aria-label', 'Ask Felix');
     panel.innerHTML = `
+      <nav class="chat-history" id="chat-history" aria-label="Your chats">
+        <div class="chat-history-head"><button class="icon-btn chat-history-back" data-chat="history" aria-label="Back to the chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button><b>Chats</b><button class="chat-history-new" data-chat="new"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>New chat</button></div>
+        <div class="chat-history-list" id="chat-history-list"></div>
+      </nav>
+      <section class="chat-main">
       <header class="chat-head">
+        <button class="icon-btn chat-history-toggle" data-chat="history" aria-label="Your chats" title="Your chats"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg></button>
         <span class="chat-face" id="chat-face">${felix(40, 'idle')}</span>
         <span class="chat-name"><b>Felix</b><span>your study buddy</span></span>
         <button class="icon-btn" data-chat="new" aria-label="New chat" title="New chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
@@ -122,7 +146,8 @@
           <textarea id="chat-input" rows="1" placeholder="Message Felix, or type @ to add a note…" enterkeyhint="send"></textarea>
           <button class="chat-send" id="chat-send" type="submit" aria-label="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button>
         </form>
-      </footer>`;
+      </footer>
+      </section>`;
     document.body.appendChild(panel);
     const $ = (sel) => panel.querySelector(sel);
     const body = $('#chat-body');
@@ -155,8 +180,160 @@
     }
     blink();
 
+    const SIDEBAR = 'leo-chat-sidebar';
+    const wide = () => Boolean(root.matchMedia && root.matchMedia('(min-width: 900px)').matches);
+
+    function sidebarOpen() {
+      if (state.sidebar !== null) return state.sidebar;
+      try {
+        const kept = storage.getItem(SIDEBAR);
+        if (kept !== null) return kept === '1' && wide();
+      } catch (e) {
+        return wide();
+      }
+      return wide();
+    }
+
+    function showSidebar(on) {
+      state.sidebar = on;
+      if (wide()) {
+        try {
+          storage.setItem(SIDEBAR, on ? '1' : '0');
+        } catch (e) {
+          state.sidebar = on;
+        }
+      }
+      panel.classList.toggle('with-history', on);
+      if (on) loadChats();
+    }
+
+    function stored() {
+      return state.messages.filter((m) => !m.pending);
+    }
+
     function persist() {
-      save(storage, state.mode, state.messages.filter((m) => !m.pending), state.refs);
+      save(storage, state.mode, stored(), state.refs, state.id);
+    }
+
+    let upload = Promise.resolve();
+    function snapshot() {
+      return { id: state.id, mode: state.mode, refs: state.refs, messages: stored() };
+    }
+
+    function remember(chat = snapshot()) {
+      if (chat.id === state.id) persist();
+      const messages = chat.messages.filter((m) => !m.pending);
+      if (!messages.length) return upload;
+      const id = chat.id;
+      const sending = { mode: chat.mode, refs: chat.refs, messages: messages.map(({ pending, ...m }) => m) };
+      upload = upload.then(async () => {
+        try {
+          const response = await fetch(`/api/chats/${encodeURIComponent(id)}`, {
+            method: 'PUT',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(sending),
+          });
+          if (!response.ok) return;
+          const summary = await response.json();
+          if (state.chats) {
+            state.chats = [summary, ...state.chats.filter((c) => c.id !== summary.id)];
+            drawChats();
+          }
+        } catch (e) {
+          return;
+        }
+      });
+      return upload;
+    }
+
+    async function loadChats() {
+      try {
+        const response = await fetch('/api/chats', { credentials: 'same-origin' });
+        if (response.ok) state.chats = await response.json();
+      } catch (e) {
+        state.chats = state.chats || [];
+      }
+      drawChats();
+    }
+
+    function drawChats() {
+      const box = $('#chat-history-list');
+      if (!box) return;
+      if (!state.chats) {
+        box.innerHTML = '<div class="chat-history-none">Loading…</div>';
+        return;
+      }
+      if (!state.chats.length) {
+        box.innerHTML = '<div class="chat-history-none">Your conversations with Felix are kept here, on this computer.</div>';
+        return;
+      }
+      box.innerHTML = groups(state.chats)
+        .map((g) => `<div class="chat-history-group">${escape(g.name)}</div>${g.chats
+          .map((c) => `<div class="chat-history-row${c.id === state.id ? ' on' : ''}"><button class="chat-history-item" data-chat="resume" data-id="${escape(c.id)}" title="${escape(c.title)}">${escape(c.title)}</button><button class="chat-history-x${state.doomed === c.id ? ' sure' : ''}" data-chat="forget" data-id="${escape(c.id)}" aria-label="${state.doomed === c.id ? 'Confirm delete' : 'Delete'} ${escape(c.title)}">${state.doomed === c.id ? 'Delete' : '×'}</button></div>`)
+          .join('')}`)
+        .join('');
+    }
+
+    function begin() {
+      if (state.busy) state.busy.abort();
+      state.id = newId();
+      state.messages = [];
+      state.refs = [];
+      state.streak = 0;
+      closePick();
+      drawRefs();
+      persist();
+      draw();
+      drawChats();
+      mood('wave', 1500);
+    }
+
+    async function resume(id) {
+      if (id === state.id) {
+        if (!wide()) showSidebar(false);
+        return;
+      }
+      if (state.busy) state.busy.abort();
+      let chat;
+      try {
+        const response = await fetch(`/api/chats/${encodeURIComponent(id)}`, { credentials: 'same-origin' });
+        if (!response.ok) throw new Error('gone');
+        chat = await response.json();
+      } catch (e) {
+        state.chats = (state.chats || []).filter((c) => c.id !== id);
+        drawChats();
+        return;
+      }
+      state.id = chat.id;
+      state.mode = modeOf(chat.mode);
+      state.messages = Array.isArray(chat.messages) ? chat.messages : [];
+      state.refs = Array.isArray(chat.refs) ? chat.refs.slice(0, MOST_REFS) : [];
+      state.streak = 0;
+      closePick();
+      persist();
+      drawModes();
+      drawRefs();
+      draw();
+      drawChats();
+      if (!wide()) showSidebar(false);
+    }
+
+    async function forget(id) {
+      if (state.doomed !== id) {
+        state.doomed = id;
+        drawChats();
+        return;
+      }
+      state.doomed = null;
+      try {
+        await fetch(`/api/chats/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'same-origin' });
+      } catch (e) {
+        return;
+      }
+      state.chats = (state.chats || []).filter((c) => c.id !== id);
+      if (id === state.id) begin();
+      else drawChats();
     }
 
     function drawRefs() {
@@ -239,7 +416,7 @@
       }
       closePick();
       drawRefs();
-      persist();
+      remember();
       if (!state.messages.length) draw();
       input.focus();
     }
@@ -338,6 +515,7 @@
       fit();
       const controller = new AbortController();
       state.busy = controller;
+      const thread = { id: state.id, mode: state.mode, refs: state.refs.slice(), messages: state.messages };
       thinking(true);
       draw();
       const ctx = state.context && state.dropped !== state.context.id ? state.context.id : null;
@@ -385,8 +563,8 @@
       state.busy = null;
       thinking(false);
       draw(false);
-      persist();
-      react(answer);
+      remember({ ...thread, messages: thread.messages.slice() });
+      if (thread.id === state.id) react(answer);
     }
 
     function toggle(force) {
@@ -394,6 +572,8 @@
       panel.hidden = !state.open;
       document.body.classList.toggle('chat-open', state.open);
       if (state.open) {
+        panel.classList.toggle('with-history', sidebarOpen());
+        if (sidebarOpen()) loadChats();
         drawModes();
         drawContext();
         drawRefs();
@@ -410,20 +590,16 @@
       const what = el.dataset.chat;
       if (what === 'close') toggle(false);
       else if (what === 'new') {
-        if (state.busy) state.busy.abort();
-        state.messages = [];
-        state.refs = [];
-        state.streak = 0;
-        closePick();
-        drawRefs();
-        persist();
-        draw();
-        mood('wave', 1500);
-      } else if (what === 'mode') {
+        begin();
+        if (!wide()) showSidebar(false);
+      } else if (what === 'history') showSidebar(!panel.classList.contains('with-history'));
+      else if (what === 'resume') resume(el.dataset.id);
+      else if (what === 'forget') forget(el.dataset.id);
+      else if (what === 'mode') {
         state.mode = el.dataset.mode;
         drawModes();
         if (!state.messages.length) draw();
-        persist();
+        remember();
       } else if (what === 'starter') send(el.textContent);
       else if (what === 'attach') {
         if (state.pick && state.pick.from === 'button') closePick();
@@ -432,7 +608,7 @@
       else if (what === 'unref') {
         state.refs = state.refs.filter((r) => r.id !== el.dataset.id);
         drawRefs();
-        persist();
+        remember();
       }
       else if (what === 'drop') {
         state.dropped = state.context && state.context.id;
@@ -513,5 +689,5 @@
     };
   }
 
-  root.leoChat = { create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, MODES, MOST_REFS };
+  root.leoChat = { create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, MODES, MOST_REFS };
 })(typeof window !== 'undefined' ? window : globalThis);

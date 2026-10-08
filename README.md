@@ -631,8 +631,12 @@ with different instructions:
 
 When your notes don't cover something, he says so and labels anything from
 general knowledge as "Beyond your notes". He uses the AI you chose for writing,
-including Claude Code or Codex. The conversation stays in that browser; **+**
-starts a new one.
+including Claude Code or Codex. Every conversation is kept on your computer,
+next to your notes folder (in `chats/`, never backed up), and listed beside the
+chat like ChatGPT or Claude, grouped by day, so you can go back to one from any
+browser and after restarting `leo serve`. **+** starts a new one; × then
+**Delete** removes one. On a phone the list opens from the button at the top
+left of the chat.
 
 **Settings on the website** (More → Settings) are the same as `:settings` in
 leo, and save straight away: the AI for writing and for speech, each model

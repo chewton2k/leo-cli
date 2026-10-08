@@ -43,7 +43,7 @@ test('the conversation is kept per browser and survives broken storage', () => {
   assert.equal(back.messages.length, 40);
   assert.equal(back.messages[0].text, 'm20');
   const broken = { getItem: () => { throw new Error('blocked'); }, setItem: () => { throw new Error('blocked'); } };
-  assert.deepEqual(C.load(broken), { mode: 'chat', messages: [], refs: [] });
+  assert.deepEqual(C.load(broken), { id: null, mode: 'chat', messages: [], refs: [] });
   C.save(broken, 'ask', []);
 });
 
@@ -80,8 +80,8 @@ test('a note is added once, and only up to the limit', () => {
 test('attached notes are kept with the conversation', () => {
   const store = new Map();
   const storage = { getItem: (k) => store.get(k) || null, setItem: (k, v) => store.set(k, v) };
-  C.save(storage, 'study', [{ role: 'user', text: 'hi' }], [{ id: 'a', title: 'Heaps' }]);
-  assert.deepEqual(C.load(storage), { mode: 'study', messages: [{ role: 'user', text: 'hi' }], refs: [{ id: 'a', title: 'Heaps' }] });
+  C.save(storage, 'study', [{ role: 'user', text: 'hi' }], [{ id: 'a', title: 'Heaps' }], 'chat-1234');
+  assert.deepEqual(C.load(storage), { id: 'chat-1234', mode: 'study', messages: [{ role: 'user', text: 'hi' }], refs: [{ id: 'a', title: 'Heaps' }] });
 });
 
 test('a style saved before there were two lands in the one that took it over', () => {
@@ -93,4 +93,22 @@ test('a style saved before there were two lands in the one that took it over', (
   assert.equal(C.modeOf(undefined), 'chat');
   const storage = { getItem: () => JSON.stringify({ mode: 'quiz', messages: [] }), setItem() {} };
   assert.equal(C.load(storage).mode, 'study');
+});
+
+test('past chats are grouped the way chat apps group them', () => {
+  const now = new Date(2026, 9, 7, 15, 0);
+  const at = (days, hour = 10) => ({ id: `c${days}`, title: 't', updated_at: new Date(2026, 9, 7 - days, hour).toISOString() });
+  const g = C.groups([at(0), at(1), at(3), at(20), at(90)], now);
+  assert.deepEqual(g.map((x) => x.name), ['Today', 'Yesterday', 'Previous 7 days', 'Previous 30 days', 'Older']);
+  assert.deepEqual(C.groups([at(0, 1), at(0, 9)], now).map((x) => x.chats.length), [2]);
+  assert.deepEqual(C.groups([], now), []);
+});
+
+test('a chat id is safe in a file name even without randomUUID', () => {
+  const saved = globalThis.crypto;
+  Object.defineProperty(globalThis, 'crypto', { value: {}, configurable: true });
+  const id = C.newId();
+  Object.defineProperty(globalThis, 'crypto', { value: saved, configurable: true });
+  assert.match(id, /^[a-z0-9-]{8,64}$/);
+  assert.match(C.newId(), /^[a-zA-Z0-9-]{8,64}$/);
 });

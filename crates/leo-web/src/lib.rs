@@ -1,4 +1,5 @@
 pub mod chat;
+pub mod chats;
 pub mod graph;
 pub mod record;
 mod token;
@@ -76,6 +77,7 @@ struct AppState {
     imports: Arc<Mutex<std::collections::HashMap<String, ImportJob>>>,
     listener: Option<record::Listener>,
     recording: record::Recordings,
+    chats: std::path::PathBuf,
 }
 
 struct Storage {
@@ -157,6 +159,7 @@ pub struct ServeOptions {
 pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
     let store = Store::load()?;
     let graphs = Arc::new(graph::Graphs::for_notes(&store.notes_dir, powers.writer));
+    let chats = chats::dir_for(&store.notes_dir);
     let chat = powers.chat;
     let settings = powers.settings;
     let importer = powers.importer;
@@ -184,6 +187,7 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
         imports: Default::default(),
         listener: recorder,
         recording: Default::default(),
+        chats,
     });
 
     let tunnel = if !options.local {
@@ -390,6 +394,14 @@ fn router(state: AppState) -> Router {
         .route("/graph.js", get(graph_js))
         .route("/chat.js", get(chat_js))
         .route("/api/chat", post(chat_reply))
+        .route("/api/chats", get(list_chats))
+        .route(
+            "/api/chats/{id}",
+            get(get_chat)
+                .put(put_chat)
+                .delete(delete_chat)
+                .layer(axum::extract::DefaultBodyLimit::max(chats::CHAT_BYTES)),
+        )
         .route("/api/settings", get(get_settings).post(change_setting))
         .route("/api/settings/test", post(test_setting))
         .route(
@@ -891,6 +903,55 @@ async fn get_original(
 
 fn ndjson(value: serde_json::Value) -> String {
     format!("{value}\n")
+}
+
+async fn list_chats(State(state): State<AppState>) -> Response {
+    let dir = state.chats.clone();
+    match tokio::task::spawn_blocking(move || chats::list(&dir)).await {
+        Ok(list) => Json(list).into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+async fn get_chat(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    let dir = state.chats.clone();
+    match tokio::task::spawn_blocking(move || chats::load(&dir, &id)).await {
+        Ok(Some(chat)) => Json(chat).into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+async fn put_chat(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<chats::Saving>,
+) -> Response {
+    if !chats::valid_id(&id) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let dir = state.chats.clone();
+    match tokio::task::spawn_blocking(move || chats::save(&dir, &id, body, chrono::Utc::now()))
+        .await
+    {
+        Ok(Ok(chat)) => Json(chats::Summary {
+            id: chat.id,
+            title: chat.title,
+            mode: chat.mode,
+            count: chat.messages.len(),
+            updated_at: chat.updated_at,
+        })
+        .into_response(),
+        _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+async fn delete_chat(State(state): State<AppState>, Path(id): Path<String>) -> StatusCode {
+    let dir = state.chats.clone();
+    match tokio::task::spawn_blocking(move || chats::remove(&dir, &id)).await {
+        Ok(true) => StatusCode::NO_CONTENT,
+        _ => StatusCode::NOT_FOUND,
+    }
 }
 
 async fn chat_reply(State(state): State<AppState>, Json(body): Json<chat::ChatBody>) -> Response {
@@ -1557,6 +1618,7 @@ mod tests {
             imports: Default::default(),
             listener: None,
             recording: Default::default(),
+            chats: dir.path().join("chats"),
         };
         (state, dir, ids)
     }

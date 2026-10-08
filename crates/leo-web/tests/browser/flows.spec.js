@@ -24,7 +24,9 @@ test('a failed save survives navigation and reload, then saves on reconnection',
     ? route.fulfill({ status: 500 }) : route.continue());
   await page.locator('.line-edit').fill('Keep this phone draft');
   await expect(page.locator('#save-state')).toContainText('draft kept');
+  const refused = page.waitForResponse((r) => r.request().method() === 'PATCH' && r.status() === 500);
   await page.locator('#back').click();
+  await refused;
   await page.reload();
   await page.locator('#menu').click();
   await page.locator('[data-action="drafts"]').click();
@@ -267,8 +269,56 @@ test.describe('Felix', () => {
     await page.locator('#chat-input').press('Enter');
     await expect.poll(() => asked.length).toBe(2);
     expect(asked[1].refs).toEqual([dijkstra.id]);
-    await page.locator('#chat [data-chat="new"]').click();
+    await page.locator('#chat .chat-head [data-chat="new"]').click();
     await expect(page.locator('#chat .chat-ref')).toHaveCount(0);
+  });
+
+  test('past chats are kept on the computer and listed beside the chat', async ({ page }) => {
+    const tag = test.info().project.name;
+    await page.route('**/api/chat', async (route) => {
+      const sent = route.request().postDataJSON();
+      const last = sent.messages[sent.messages.length - 1].text;
+      await route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: `{"sources":[]}\n{"t":"About ${last}"}\n{"done":true}\n` });
+    });
+    await page.goto('/');
+    await page.locator('#chat-toggle').click();
+    const chat = page.locator('#chat');
+    const sidebar = chat.locator('#chat-history');
+    const openSidebar = async () => {
+      if (!(await sidebar.isVisible())) await chat.locator('.chat-head [data-chat="history"]').click();
+      await expect(sidebar).toBeVisible();
+    };
+    await chat.locator('#chat-input').fill(`first question ${tag}`);
+    await chat.locator('#chat-input').press('Enter');
+    await expect(chat.locator('.msg.leo').last()).toContainText(`About first question ${tag}`);
+    await expect.poll(async () => (await (await page.request.get('/api/chats')).json()).some((c) => c.title === `first question ${tag}`)).toBe(true);
+
+    await chat.locator('.chat-head [data-chat="new"]').click();
+    await expect(chat.locator('.msg')).toHaveCount(0);
+    await chat.locator('#chat-input').fill(`second question ${tag}`);
+    await chat.locator('#chat-input').press('Enter');
+    await expect(chat.locator('.msg.leo').last()).toContainText(`About second question ${tag}`);
+
+    await openSidebar();
+    await expect(sidebar.locator('.chat-history-item', { hasText: `second question ${tag}` })).toBeVisible();
+    await sidebar.locator('.chat-history-item', { hasText: `first question ${tag}` }).click();
+    await expect(chat.locator('.msg.leo').last()).toContainText(`About first question ${tag}`);
+    await expect(chat.locator('.msg.user')).toHaveCount(1);
+
+    await page.evaluate(() => localStorage.clear());
+    await page.reload();
+    await page.locator('#chat-toggle').click();
+    await openSidebar();
+    const second = sidebar.locator('.chat-history-row', { hasText: `second question ${tag}` });
+    await second.locator('.chat-history-item').click();
+    await expect(chat.locator('.msg.leo').last()).toContainText(`About second question ${tag}`);
+    await openSidebar();
+    await second.locator('.chat-history-x').click();
+    await expect(second.locator('.chat-history-x')).toHaveText('Delete');
+    await second.locator('.chat-history-x').click();
+    await expect(second).toHaveCount(0);
+    await expect(chat.locator('.msg')).toHaveCount(0);
+    expect((await (await page.request.get('/api/chats')).json()).some((c) => c.title === `second question ${tag}`)).toBe(false);
   });
 
   test('says plainly when no AI is set up', async ({ page }) => {
