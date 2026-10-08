@@ -327,6 +327,46 @@ test.describe('Felix', () => {
     expect((await (await page.request.get('/api/chats')).json()).some((c) => c.title === `second question ${tag}`)).toBe(false);
   });
 
+  test('a suggestion asks which note or classes when nothing is open', async ({ page }) => {
+    const tag = test.info().project.name;
+    const note = await (await page.request.post('/api/notes', { data: { title: `Sorting lecture ${tag}`, body: 'Merge sort.' } })).json();
+    await page.request.post('/api/dirs', { data: { path: `algos-${tag}` } });
+    const asked = [];
+    await page.route('**/api/chat', async (route) => {
+      asked.push(route.request().postDataJSON());
+      await route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: '{"sources":[]}\n{"t":"Here we go."}\n{"done":true}\n' });
+    });
+    await page.goto('/');
+    await page.locator('#chat-toggle').click();
+    const chat = page.locator('#chat');
+    await chat.locator('[data-mode="study"]').click();
+    await chat.locator('.starter', { hasText: 'Quiz me on this note' }).click();
+    await expect(chat.locator('.chat-ask')).toContainText('Which note should I quiz you on?');
+    expect(asked.length).toBe(0);
+    await chat.locator('#chat-pick-search').fill(`Sorting lecture ${tag}`);
+    await chat.locator('.chat-pick-row', { hasText: `Sorting lecture ${tag}` }).click();
+    await expect(chat.locator('.msg.leo').last()).toContainText('Here we go.');
+    expect(asked[0].messages[0].text).toBe('Quiz me on this note');
+    expect(asked[0].refs).toEqual([note.id]);
+
+    await chat.locator('.chat-head [data-chat="new"]').click();
+    await chat.locator('.starter', { hasText: 'Make me a 3-day review plan' }).click();
+    await expect(chat.locator('.chat-ask')).toContainText('Which classes should the plan cover?');
+    await expect(chat.locator('[data-chat="classes-go"]')).toBeDisabled();
+    await chat.locator('.chat-class', { hasText: `algos-${tag}` }).click();
+    await chat.locator('[data-chat="classes-go"]').click();
+    await expect.poll(() => asked.length).toBe(2);
+    expect(asked[1].messages[0].text).toBe(`Make me a 3-day review plan for algos-${tag}`);
+
+    await chat.locator('.chat-head [data-chat="new"]').click();
+    await chat.locator('[data-mode="chat"]').click();
+    await chat.locator('.starter', { hasText: 'Explain this simply' }).click();
+    await expect(chat.locator('.chat-ask')).toContainText('Which note should I explain?');
+    await chat.locator('[data-chat="ask-cancel"]').click();
+    await expect(chat.locator('.chat-ask')).toHaveCount(0);
+    expect(asked.length).toBe(2);
+  });
+
   test('says plainly when no AI is set up', async ({ page }) => {
     await page.route('**/api/chat', (route) => route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: '{"sources":[]}\n{"error":"no AI for writing is chosen — type :settings in leo and pick one under writing"}\n' }));
     await page.goto('/');

@@ -112,3 +112,12 @@ test('a chat id is safe in a file name even without randomUUID', () => {
   assert.match(id, /^[a-z0-9-]{8,64}$/);
   assert.match(C.newId(), /^[a-zA-Z0-9-]{8,64}$/);
 });
+
+test('a starter that needs classes names the ones picked', () => {
+  const plan = C.MODES[1].starters[2];
+  const across = C.MODES[1].starters[1];
+  assert.equal(C.starterWords(plan, ['cs130']), 'Make me a 3-day review plan for cs130');
+  assert.equal(C.starterWords(plan, ['cs130', 'math61', 'phys1b']), 'Make me a 3-day review plan for cs130, math61 and phys1b');
+  assert.equal(C.starterWords(across, ['cs130', 'math61']), 'Quiz me across cs130 and math61');
+  for (const m of C.MODES) for (const s of m.starters) assert.ok(s.ask, `${s.text} asks when nothing is open`);
+});

@@ -5,8 +5,16 @@
   const MOST_KEPT = 40;
   const MOST_REFS = 8;
   const MODES = [
-    { id: 'chat', label: 'Chat', hint: 'Ask anything, get things explained, or go over meeting notes; type @ to bring in a note', starters: ['What are the key ideas here?', 'Explain this simply', 'Summarize this meeting and list the action items'] },
-    { id: 'study', label: 'Study', hint: 'Quizzes you one question at a time, with hints, a score and review plans', starters: ['Quiz me on this note', 'Quiz me across my classes', 'Make me a 3-day review plan'] },
+    { id: 'chat', label: 'Chat', hint: 'Ask anything, get things explained, or go over meeting notes; type @ to bring in a note', starters: [
+      { text: 'What are the key ideas here?', needs: 'note', ask: 'Which note should I pull the key ideas from?' },
+      { text: 'Explain this simply', needs: 'note', ask: 'Which note should I explain?' },
+      { text: 'Summarize this meeting and list the action items', needs: 'note', ask: 'Which meeting notes should I summarize?' },
+    ] },
+    { id: 'study', label: 'Study', hint: 'Quizzes you one question at a time, with hints, a score and review plans', starters: [
+      { text: 'Quiz me on this note', needs: 'note', ask: 'Which note should I quiz you on?' },
+      { text: 'Quiz me across my classes', needs: 'classes', ask: 'Which classes should the quiz cover?' },
+      { text: 'Make me a 3-day review plan', needs: 'classes', ask: 'Which classes should the plan cover?' },
+    ] },
   ];
   const OLD_MODES = { ask: 'chat', explain: 'chat', meeting: 'chat', quiz: 'study', coach: 'study' };
   const modeOf = (id) => (MODES.some((m) => m.id === id) ? id : OLD_MODES[id] || 'chat');
@@ -114,9 +122,15 @@
     return order.filter((name) => out.get(name).length).map((name) => ({ name, chats: out.get(name) }));
   }
 
+  function starterWords(starter, picked) {
+    if (starter.needs !== 'classes' || !picked.length) return starter.text;
+    const list = picked.length === 1 ? picked[0] : `${picked.slice(0, -1).join(', ')} and ${picked[picked.length - 1]}`;
+    return starter.text === 'Quiz me across my classes' ? `Quiz me across ${list}` : `${starter.text} for ${list}`;
+  }
+
   function create({ render, escape, onOpen = () => {}, storage = root.localStorage }) {
     const saved = load(storage);
-    const state = { open: false, id: saved.id || newId(), mode: modeOf(saved.mode), messages: saved.messages, refs: saved.refs, context: null, dropped: null, busy: null, streak: 0, pick: null, chats: null, sidebar: null, doomed: null };
+    const state = { open: false, id: saved.id || newId(), mode: modeOf(saved.mode), messages: saved.messages, refs: saved.refs, context: null, dropped: null, busy: null, streak: 0, pick: null, chats: null, sidebar: null, doomed: null, asking: null };
     const panel = document.createElement('aside');
     panel.className = 'chat';
     panel.id = 'chat';
@@ -281,6 +295,7 @@
       state.messages = [];
       state.refs = [];
       state.streak = 0;
+      state.asking = null;
       closePick();
       drawRefs();
       persist();
@@ -417,6 +432,12 @@
       closePick();
       drawRefs();
       remember();
+      if (state.asking && state.asking.starter.needs === 'note') {
+        const starter = state.asking.starter;
+        state.asking = null;
+        send(starter.text);
+        return;
+      }
       if (!state.messages.length) draw();
       input.focus();
     }
@@ -466,15 +487,67 @@
       return `<div class="msg leo${m.pending ? ' pending' : ''}" data-i="${i}">${badge}<div class="prose">${html}</div>${error}${from}</div>`;
     }
 
+    function onNote() {
+      return Boolean(state.context && state.dropped !== state.context.id);
+    }
+
+    function asking() {
+      const a = state.asking;
+      if (!a) return '';
+      const body = a.starter.needs === 'note'
+        ? '<p class="chat-ask-how">Pick one below, or type @ and its name.</p>'
+        : a.folders === null
+          ? '<p class="chat-ask-how">Looking at your folders…</p>'
+          : a.folders.length
+            ? `<div class="chat-ask-classes">${a.folders.map((f) => `<button class="chat-class${a.picked.includes(f) ? ' on' : ''}" data-chat="class" data-name="${escape(f)}" aria-pressed="${a.picked.includes(f)}">${escape(f)}</button>`).join('')}</div>
+              <div class="chat-ask-go"><button class="btn sm plain" data-chat="classes-all">All of them</button><button class="btn sm primary" data-chat="classes-go"${a.picked.length ? '' : ' disabled'}>Go</button></div>`
+            : '<p class="chat-ask-how">You have no folders yet, so I will use all your notes.</p><div class="chat-ask-go"><button class="btn sm primary" data-chat="classes-all">Go</button></div>';
+      return `<div class="chat-ask"><div class="chat-ask-top">${felix(34, 'idle')}<b>${escape(a.starter.ask)}</b><button class="chat-ask-x" data-chat="ask-cancel" aria-label="Never mind">×</button></div>${body}</div>`;
+    }
+
     function welcome() {
       const info = modeInfo();
-      const where = state.context && state.dropped !== state.context.id ? 'this note' : 'your notes';
+      const where = onNote() ? 'this note' : 'your notes';
       return `<div class="chat-hello">
         ${felix(96, 'idle big')}
         <h3>Hi, I'm Felix!</h3>
         <p>${escape(info.hint)}. I also read ${where}, and the notes connected to it on your map.</p>
-        <div class="chat-starters">${info.starters.map((s) => `<button class="starter" data-chat="starter">${escape(s)}</button>`).join('')}</div>
+        <div class="chat-starters">${info.starters.map((s, i) => `<button class="starter${state.asking && state.asking.starter === s ? ' on' : ''}" data-chat="starter" data-i="${i}">${escape(s.text)}</button>`).join('')}</div>
+        ${asking()}
       </div>`;
+    }
+
+    async function startWith(starter) {
+      const ready = onNote() || state.refs.length > 0;
+      if (!starter.needs || ready) {
+        state.asking = null;
+        return send(starter.text);
+      }
+      state.asking = { starter, folders: starter.needs === 'classes' ? null : [], picked: [] };
+      draw();
+      if (starter.needs === 'note') {
+        openPick('button', '', 0);
+        return;
+      }
+      let folders = [];
+      try {
+        const response = await fetch('/api/folders', { credentials: 'same-origin' });
+        if (response.ok) folders = (await response.json()).map((f) => f.name).filter((n) => n && !n.includes('/'));
+      } catch (e) {
+        folders = [];
+      }
+      if (state.asking && state.asking.starter === starter) {
+        state.asking.folders = folders;
+        draw();
+      }
+    }
+
+    function answerClasses(all) {
+      const a = state.asking;
+      if (!a) return;
+      const picked = all ? [] : a.picked;
+      state.asking = null;
+      send(all ? (a.starter.text === 'Quiz me across my classes' ? 'Quiz me across all my classes' : `${a.starter.text} for all my classes`) : starterWords(a.starter, picked));
     }
 
     function draw(stick = true) {
@@ -599,13 +672,27 @@
         if (el.dataset.mode === state.mode) return;
         const refs = state.refs;
         if (state.messages.length) begin();
+        state.asking = null;
+        closePick();
         state.mode = el.dataset.mode;
         state.refs = refs;
         drawModes();
         drawRefs();
         draw();
         persist();
-      } else if (what === 'starter') send(el.textContent);
+      } else if (what === 'starter') startWith(modeInfo().starters[Number(el.dataset.i)]);
+      else if (what === 'ask-cancel') {
+        state.asking = null;
+        closePick();
+        draw();
+      } else if (what === 'class') {
+        const a = state.asking;
+        if (!a) return;
+        const name = el.dataset.name;
+        a.picked = a.picked.includes(name) ? a.picked.filter((n) => n !== name) : [...a.picked, name];
+        draw();
+      } else if (what === 'classes-go') answerClasses(false);
+      else if (what === 'classes-all') answerClasses(true);
       else if (what === 'attach') {
         if (state.pick && state.pick.from === 'button') closePick();
         else openPick('button', '', 0);
@@ -694,5 +781,5 @@
     };
   }
 
-  root.leoChat = { create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, MODES, MOST_REFS };
+  root.leoChat = { create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, MODES, MOST_REFS };
 })(typeof window !== 'undefined' ? window : globalThis);
