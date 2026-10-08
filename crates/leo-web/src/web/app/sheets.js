@@ -1,0 +1,181 @@
+function showLocked() {
+  ++seq;
+  state = { view: 'locked' };
+  chrome({});
+  app.innerHTML = empty(
+    ICON.lock,
+    'This page needs its link',
+    'Open the link `leo serve` printed on your computer, or scan its QR code again. If the link was renewed with --new-token, older links stop working.'
+  );
+}
+
+function sheet(html) {
+  closeSheet();
+  const scrim = document.createElement('div');
+  scrim.className = 'scrim';
+  scrim.innerHTML = `<div class="sheet" role="dialog" aria-modal="true"><div class="grip"></div>${html}</div>`;
+  scrim.addEventListener('click', (e) => {
+    if (e.target === scrim) closeSheet();
+  });
+  document.body.appendChild(scrim);
+  return scrim;
+}
+
+function closeSheet() {
+  const open = $('.scrim');
+  if (open) open.remove();
+  if (state.keepPending) {
+    state.keepPending = null;
+    if (state.view === 'storage' && state.storage) drawStorage(state.storage);
+  }
+}
+
+function menu() {
+  const here = state.view === 'folder' ? state.dir : '';
+  sheet(`
+    <button class="list-row" data-action="new" data-dir="${esc(here)}">${ICON.plus}<span class="grow">New note</span></button>
+    <button class="list-row" data-action="record" data-dir="${esc(here)}">${ICON.mic}<span class="grow">Record a lecture or meeting</span></button>
+    <button class="list-row" data-action="upload">${ICON.upload}<span class="grow">Make a note from a file</span></button>
+    <button class="list-row" data-action="new-folder">${ICON.folderPlus}<span class="grow">New folder${here ? ` in ${esc(folderLabel(here))}` : ''}</span></button>
+    <button class="list-row" data-action="map">${ICON.map}<span class="grow">Map of ideas</span></button>
+    <button class="list-row" data-action="settings">${ICON.gear}<span class="grow">Settings</span></button>
+    <button class="list-row" data-action="drafts">${ICON.note}<span class="grow">Drafts (${saving.drafts().length})</span></button>
+    <button class="list-row" data-action="trash">${ICON.trash}<span class="grow">Trash</span></button>
+    <button class="list-row" data-action="refresh">${ICON.refresh}<span class="grow">Refresh</span></button>`);
+}
+
+function newFolder() {
+  const parent = state.view === 'folder' ? state.dir : '';
+  const scrim = sheet(`<h3>New folder${parent ? ` in ${esc(folderLabel(parent))}` : ''}</h3>
+    <label class="field">${ICON.folder}<input id="folder-name" placeholder="Name, e.g. cs130" autocomplete="off" enterkeyhint="done"></label>
+    <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn primary" data-action="create-folder">Create</button></div>`);
+  const input = $('#folder-name', scrim);
+  input.focus();
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') createFolder();
+  });
+}
+
+async function createFolder() {
+  const name = $('#folder-name').value.trim().replace(/^\/+|\/+$/g, '');
+  if (!name) return;
+  const parent = state.view === 'folder' ? state.dir : '';
+  const path = parent ? `${parent}/${name}` : name;
+  try {
+    await api('/api/dirs', { method: 'POST', body: { path } });
+    closeSheet();
+    go(folderHash(path));
+  } catch (e) {
+    if (e.status === 409) toast('That folder already exists.', { bad: true });
+    else fail(e);
+  }
+}
+
+async function moveSheet() {
+  const s = await ready();
+  if (!s) return toast('Write something first.');
+  const note = s.note;
+  const folders = await api('/api/folders');
+  const row = (name, label) =>
+    `<button class="list-row" data-action="move-to" data-dir="${esc(name)}">${ICON.folder}<span class="grow">${esc(label)}</span>${
+      name === note.directory ? ICON.check : ''
+    }</button>`;
+  sheet(`<h3>Move “${esc(note.title)}”</h3>${row('', 'All notes (top level)')}${folders.map((f) => row(f.name, f.name)).join('')}`);
+}
+
+async function moveTo(dir) {
+  const note = state.session.note;
+  closeSheet();
+  if (dir === note.directory) return;
+  try {
+    await api(`/api/notes/${enc(note.id)}/move`, { method: 'POST', body: { directory: dir } });
+    toast(`Moved to ${folderLabel(dir)}`);
+    showNote(note.id);
+  } catch (e) {
+    fail(e);
+  }
+}
+
+async function confirmDelete() {
+  const s = await ready();
+  if (!s) return back();
+  sheet(`<h3>Move “${esc(s.note.title)}” to the trash?</h3><p>You can restore it for 30 days, from Trash in the menu.</p>
+    <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn danger" data-action="delete-now">Move to trash</button></div>`);
+}
+
+async function deleteNow() {
+  const note = state.session.note;
+  state.session = null;
+  closeSheet();
+  try {
+    await api(`/api/notes/${enc(note.id)}`, { method: 'DELETE' });
+    go(folderHash(note.directory), { replace: true });
+    toast('Moved to the trash', { action: 'Undo', run: () => restore(note.id, true) });
+  } catch (e) {
+    fail(e);
+  }
+}
+
+async function restore(id, open) {
+  try {
+    const note = await api(`/api/trash/${enc(id)}/restore`, { method: 'POST' });
+    if (open) return go(noteHash(note.id));
+    toast(`Restored “${note.title}”`, { action: 'Open', run: () => go(noteHash(note.id)) });
+    showTrash();
+  } catch (e) {
+    fail(e);
+  }
+}
+
+async function pinCard(el) {
+  const on = !el.classList.contains('on');
+  el.classList.toggle('on', on);
+  el.setAttribute('aria-pressed', String(on));
+  try {
+    await api(`/api/notes/${enc(el.dataset.id)}`, { method: 'PATCH', body: { pinned: on } });
+    toast(on ? 'Pinned to the top of its folder' : 'Unpinned');
+    await render();
+  } catch (e) {
+    el.classList.toggle('on', !on);
+    el.setAttribute('aria-pressed', String(!on));
+    fail(e);
+  }
+}
+
+async function share() {
+  const s = await ready();
+  if (!s) return toast('Write something first.');
+  const before = document.title;
+  document.title = s.note.title;
+  const restore = () => {
+    document.title = before;
+    window.removeEventListener('afterprint', restore);
+  };
+  window.addEventListener('afterprint', restore);
+  window.print();
+}
+
+function openSearch(value) {
+  const box = $('#search');
+  box.hidden = false;
+  const input = $('#search-input');
+  if (value !== undefined && document.activeElement !== input) input.value = value;
+  $('#search-toggle').innerHTML = ICON.close;
+}
+
+function closeSearch() {
+  $('#search').hidden = true;
+  $('#search-input').value = '';
+  $('#search-toggle').innerHTML = ICON.search;
+}
+
+let searchTimer;
+$('#search-input').addEventListener('input', (e) => {
+  clearTimeout(searchTimer);
+  const query = e.target.value;
+  searchTimer = setTimeout(() => {
+    if (state.view === 'search') history.replaceState(null, '', `#/search/${enc(query)}`);
+    else history.pushState(null, '', `#/search/${enc(query)}`);
+    showSearch(query).catch(fail);
+  }, 160);
+});

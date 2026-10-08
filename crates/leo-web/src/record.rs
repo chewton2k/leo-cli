@@ -13,7 +13,9 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{directory as valid_directory, local_request, save, store_now, AppState};
+use crate::routes::auth::local_request;
+use crate::routes::notes::{directory as valid_directory, save};
+use crate::{store_now, AppState};
 
 pub const FORGOTTEN_AFTER: Duration = Duration::from_secs(60);
 pub const MOST_POINTS: usize = 200;

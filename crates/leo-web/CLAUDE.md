@@ -1,5 +1,20 @@
 # leo-web: `leo serve` and the phone page
 
+### Layout
+
+- `lib.rs`: `Powers`, `AppState` (+ `with_store`, `store_now`), `serve`,
+  `router`. Handlers live in `routes/<area>.rs` (assets, auth, settings,
+  uploads, downloads, activity, housekeeping, felix, notes, trash, map);
+  `record.rs` keeps its own. `terminal.rs` is what `serve` prints. Items are
+  `pub(crate)` only when another file uses them. Handler tests are in
+  `src/tests/<area>.rs`, helpers (`state_with`, `run`, `json_of`, `host`) in
+  `src/tests/mod.rs`.
+- `/app.js` is `web/app/*.js` joined in one closure by `routes/assets.rs`
+  (`concat!`, order: core, trash, map, settings, storage, uploads, sheets,
+  actions, events). The parts share scope on purpose: pages reassign `state`.
+  Add a part to the `concat!` list; `every_part_of_the_page_script_is_served`
+  fails otherwise and `the_page_script_parses` runs `node --check` on the whole.
+
 ### Notes
 
 - `leo serve` (`leo-web`): code in `<config>/serve-token` (0600, 32 hex,

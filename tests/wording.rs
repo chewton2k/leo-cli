@@ -156,14 +156,17 @@ fn nothing_shown_to_a_user_names_a_command_that_is_gone() {
         }
         stale_in(&shipped_lines(file), file, &mut found);
     }
-    for doc in [
+    let page_parts = std::fs::read_dir(root().join("crates/leo-web/src/web/app"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path());
+    let docs = [
         "README.md",
         "CONTRIBUTING.md",
         "install.sh",
         "crates/leo-web/src/web/index.html",
-        "crates/leo-web/src/web/app.js",
-    ] {
-        let path = root().join(doc);
+    ]
+    .map(|doc| root().join(doc));
+    for path in docs.into_iter().chain(page_parts) {
         let lines: Vec<(usize, String)> = std::fs::read_to_string(&path)
             .unwrap()
             .lines()

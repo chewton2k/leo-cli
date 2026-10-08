@@ -13,7 +13,7 @@ the compiler enforces it — do not add an upward dependency:
 | `crates/leo-core` | `notes`, `store` (+ undo), `sync` (git), `filename`, `obsidian`, `diag`, `manual`, `action/` (vocabulary, parser, handlers, resolution, frontmatter) | — |
 | `crates/leo-services` | `ai/` (chains, prompts, `RealAi`, live transcription), `config/` (providers, credentials, theme data, sync policy), `listen`, `health`, `providers` | core |
 | `crates/leo-tui` | The full-screen app (`lib.rs` = `App`), its views, and `shell` (terminal effect performers shared with the CLI) | core, services |
-| `crates/leo-web` | `leo serve`: `lib.rs` (API, auth), `token.rs`, `tunnel.rs`, and the page in `src/web/` (`index.html`, `app.js`, `markdown.js`) | core |
+| `crates/leo-web` | `leo serve`: `lib.rs` (state, `serve`, router), `routes/` (handlers by area), `terminal.rs`, `token.rs`, `tunnel.rs`, and the page in `src/web/` (`index.html`, `app/*.js` served as `/app.js`, `markdown.js`, …) | core |
 | root `leo` | `main.rs` (28 lines) and `cli/` (clap surface; `notes`, `doctor`, `sync` subcommands) | all |
 
 Verify with `cargo test` at the root (runs every crate) and

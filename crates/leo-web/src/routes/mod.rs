@@ -1,0 +1,11 @@
+pub(crate) mod activity;
+pub(crate) mod assets;
+pub(crate) mod auth;
+pub(crate) mod downloads;
+pub(crate) mod felix;
+pub(crate) mod housekeeping;
+pub(crate) mod map;
+pub(crate) mod notes;
+pub(crate) mod settings;
+pub(crate) mod trash;
+pub(crate) mod uploads;
