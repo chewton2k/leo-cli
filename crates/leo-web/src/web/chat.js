@@ -3,8 +3,9 @@
 
   const KEY = 'leo-chat-v1';
   const MOST_KEPT = 40;
+  const MOST_REFS = 8;
   const MODES = [
-    { id: 'ask', label: 'Ask', hint: 'Answers from your notes, with sources', starters: ['What are the key ideas here?', 'How does this connect to my other classes?', 'What should I review before the exam?'] },
+    { id: 'ask', label: 'Chat', hint: 'Talk about anything, and type @ to bring in a note', starters: ['What are the key ideas here?', 'How does this connect to my other classes?', 'Help me plan what to study this week'] },
     { id: 'coach', label: 'Coach', hint: 'Teaches with recall questions and hints', starters: ['Help me learn this note', 'Make me a 3-day review plan', 'Check whether I really understand this'] },
     { id: 'quiz', label: 'Quiz', hint: 'One question at a time, with a score', starters: ['Quiz me on this note', 'Quiz me across my classes', 'Give me 5 hard questions'] },
     { id: 'explain', label: 'Explain', hint: 'Plain words, an analogy, an example', starters: ['Explain this simply', 'What do people usually get wrong here?', 'Give me an analogy'] },
@@ -12,13 +13,13 @@
   ];
 
   function felix(width, extra = '') {
-    return `<svg class="felix ${extra}" viewBox="-2 -8 64 38" width="${width}" height="${Math.round((width * 38) / 64)}" shape-rendering="crispEdges" aria-hidden="true">
-      <g class="felix-spark"><rect x="-1" y="-6" width="2" height="2"/><rect x="58" y="-4" width="2" height="2"/><rect x="29" y="-8" width="2" height="2"/></g>
+    return `<svg class="felix ${extra}" viewBox="-2 -8 48 40" width="${width}" height="${Math.round((width * 40) / 48)}" shape-rendering="crispEdges" aria-hidden="true">
+      <g class="felix-spark"><rect x="-1" y="-6" width="2" height="2"/><rect x="42" y="-4" width="2" height="2"/><rect x="21" y="-8" width="2" height="2"/></g>
       <g class="felix-body">
-        <rect class="felix-arm felix-left" x="0" y="17" width="5" height="6"/>
-        <rect class="felix-arm felix-right" x="55" y="17" width="5" height="6"/>
-        <rect class="felix-skin" x="5" y="2" width="50" height="26"/>
-        <g class="felix-eyes"><rect x="12" y="16" width="4" height="4"/><rect x="26" y="16" width="4" height="4"/></g>
+        <rect class="felix-arm felix-left" x="0" y="18" width="5" height="6"/>
+        <rect class="felix-arm felix-right" x="39" y="18" width="5" height="6"/>
+        <rect class="felix-skin" x="5" y="2" width="34" height="28"/>
+        <g class="felix-eyes"><rect x="11" y="16" width="4" height="4"/><rect x="21" y="16" width="4" height="4"/></g>
       </g>
     </svg>`;
   }
@@ -63,19 +64,34 @@
     return (sources || []).filter((s) => used.has(`n${s.n}`));
   }
 
-  function load(storage) {
-    try {
-      const saved = JSON.parse(storage.getItem(KEY) || 'null');
-      if (saved && Array.isArray(saved.messages)) return { mode: saved.mode || 'ask', messages: saved.messages };
-    } catch (e) {
-      return { mode: 'ask', messages: [] };
-    }
-    return { mode: 'ask', messages: [] };
+  function mentionAt(text, caret) {
+    const before = text.slice(0, caret);
+    const at = before.lastIndexOf('@');
+    if (at < 0 || (at > 0 && !/\s/.test(before[at - 1]))) return null;
+    const query = before.slice(at + 1);
+    if (/\n/.test(query) || query.length > 40 || /^\s/.test(query)) return null;
+    return { start: at, query };
   }
 
-  function save(storage, mode, messages) {
+  function addRef(refs, note) {
+    if (!note || !note.id || refs.some((r) => r.id === note.id) || refs.length >= MOST_REFS) return refs;
+    return [...refs, { id: note.id, title: note.title || 'Untitled' }];
+  }
+
+  function load(storage) {
+    const fresh = { mode: 'ask', messages: [], refs: [] };
     try {
-      storage.setItem(KEY, JSON.stringify({ mode, messages: messages.slice(-MOST_KEPT) }));
+      const saved = JSON.parse(storage.getItem(KEY) || 'null');
+      if (saved && Array.isArray(saved.messages)) return { mode: saved.mode || 'ask', messages: saved.messages, refs: Array.isArray(saved.refs) ? saved.refs.slice(0, MOST_REFS) : [] };
+    } catch (e) {
+      return fresh;
+    }
+    return fresh;
+  }
+
+  function save(storage, mode, messages, refs = []) {
+    try {
+      storage.setItem(KEY, JSON.stringify({ mode, messages: messages.slice(-MOST_KEPT), refs }));
     } catch (e) {
       return;
     }
@@ -83,7 +99,7 @@
 
   function create({ render, escape, onOpen = () => {}, storage = root.localStorage }) {
     const saved = load(storage);
-    const state = { open: false, mode: MODES.some((m) => m.id === saved.mode) ? saved.mode : 'ask', messages: saved.messages, context: null, dropped: null, busy: null, streak: 0 };
+    const state = { open: false, mode: MODES.some((m) => m.id === saved.mode) ? saved.mode : 'ask', messages: saved.messages, refs: saved.refs, context: null, dropped: null, busy: null, streak: 0, pick: null };
     const panel = document.createElement('aside');
     panel.className = 'chat';
     panel.id = 'chat';
@@ -100,8 +116,11 @@
       <div class="chat-body" id="chat-body" aria-live="polite"></div>
       <footer class="chat-foot">
         <div class="chat-context" id="chat-context"></div>
+        <div class="chat-pick" id="chat-pick" hidden></div>
+        <div class="chat-refs" id="chat-refs"></div>
         <form class="chat-compose" id="chat-form">
-          <textarea id="chat-input" rows="1" placeholder="Ask Felix about your notes…" enterkeyhint="send"></textarea>
+          <button class="chat-attach" type="button" data-chat="attach" aria-label="Add a note" title="Add a note to the conversation (or type @)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11l-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7"/></svg></button>
+          <textarea id="chat-input" rows="1" placeholder="Message Felix, or type @ to add a note…" enterkeyhint="send"></textarea>
           <button class="chat-send" id="chat-send" type="submit" aria-label="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button>
         </form>
       </footer>`;
@@ -138,7 +157,98 @@
     blink();
 
     function persist() {
-      save(storage, state.mode, state.messages.filter((m) => !m.pending));
+      save(storage, state.mode, state.messages.filter((m) => !m.pending), state.refs);
+    }
+
+    function drawRefs() {
+      $('#chat-refs').innerHTML = state.refs
+        .map((r) => `<span class="chat-ref"><button class="chat-ref-open" data-chat="open" data-id="${escape(r.id)}" title="${escape(r.title)}">${escape(r.title)}</button><button class="chat-ref-x" data-chat="unref" data-id="${escape(r.id)}" aria-label="Remove ${escape(r.title)}">×</button></span>`)
+        .join('');
+    }
+
+    let pickTimer = 0;
+    let pickSeq = 0;
+    async function findNotes(query) {
+      const url = query.trim() ? `/api/search?q=${encodeURIComponent(query.trim())}` : '/api/notes?limit=12';
+      const response = await fetch(url, { credentials: 'same-origin' });
+      if (!response.ok) return [];
+      const notes = await response.json();
+      return notes.filter((n) => !state.refs.some((r) => r.id === n.id)).slice(0, 8);
+    }
+
+    function closePick() {
+      state.pick = null;
+      const box = $('#chat-pick');
+      box.hidden = true;
+      box.innerHTML = '';
+    }
+
+    function drawPick() {
+      const box = $('#chat-pick');
+      const p = state.pick;
+      if (!p) return closePick();
+      box.hidden = false;
+      const search = p.from === 'button' ? `<input class="chat-pick-search" id="chat-pick-search" placeholder="Find a note…" autocomplete="off" value="${escape(p.query)}">` : '';
+      const rows = p.notes.length
+        ? p.notes.map((n, i) => `<button class="chat-pick-row${i === p.at ? ' on' : ''}" data-chat="pick" data-i="${i}" role="option" aria-selected="${i === p.at}"><b>${escape(n.title || 'Untitled')}</b><span>${escape(n.directory || 'All notes')}</span></button>`).join('')
+        : `<div class="chat-pick-none">${p.loading ? 'Looking…' : state.refs.length >= MOST_REFS ? `Up to ${MOST_REFS} notes at once.` : 'No notes match.'}</div>`;
+      box.innerHTML = `${search}<div class="chat-pick-list" role="listbox" aria-label="Notes">${rows}</div>`;
+      const field = $('#chat-pick-search');
+      if (field && p.focusSearch) {
+        field.focus();
+        field.setSelectionRange(field.value.length, field.value.length);
+        p.focusSearch = false;
+      }
+    }
+
+    function openPick(from, query, start) {
+      if (state.refs.length >= MOST_REFS) {
+        state.pick = { from, query, start, notes: [], at: 0, loading: false };
+        return drawPick();
+      }
+      const same = state.pick && state.pick.from === from && state.pick.query === query;
+      if (same) return;
+      state.pick = { from, query, start, notes: state.pick ? state.pick.notes : [], at: 0, loading: true, focusSearch: from === 'button' && !state.pick };
+      drawPick();
+      clearTimeout(pickTimer);
+      const mine = ++pickSeq;
+      pickTimer = setTimeout(async () => {
+        let notes = [];
+        try {
+          notes = await findNotes(query);
+        } catch (e) {
+          notes = [];
+        }
+        if (mine !== pickSeq || !state.pick) return;
+        state.pick.notes = notes;
+        state.pick.loading = false;
+        state.pick.at = 0;
+        drawPick();
+      }, 120);
+    }
+
+    function choose(i) {
+      const p = state.pick;
+      const note = p && p.notes[i];
+      if (!note) return;
+      state.refs = addRef(state.refs, note);
+      if (p.from === 'mention') {
+        const caret = input.selectionStart;
+        input.value = input.value.slice(0, p.start) + input.value.slice(caret);
+        input.setSelectionRange(p.start, p.start);
+        fit();
+      }
+      closePick();
+      drawRefs();
+      persist();
+      if (!state.messages.length) draw();
+      input.focus();
+    }
+
+    function watchMention() {
+      const m = mentionAt(input.value, input.selectionStart);
+      if (m) openPick('mention', m.query, m.start);
+      else if (state.pick && state.pick.from === 'mention') closePick();
     }
 
     function modeInfo() {
@@ -151,19 +261,22 @@
         b.classList.toggle('on', on);
         b.setAttribute('aria-selected', String(on));
       }
-      input.placeholder = state.mode === 'quiz' ? 'Answer, or ask for a question…' : state.mode === 'meeting' ? 'Ask about your meeting notes…' : 'Ask Felix about your notes…';
+      input.placeholder = state.mode === 'quiz' ? 'Answer, or ask for a question…' : state.mode === 'meeting' ? 'Ask about your meeting notes, or type @…' : 'Message Felix, or type @ to add a note…';
     }
 
     function drawContext() {
       const box = $('#chat-context');
       const ctx = state.context && state.dropped !== state.context.id ? state.context : null;
       box.innerHTML = ctx
-        ? `<span class="chat-using">Reading <b>${escape(ctx.title || 'Untitled')}</b> and notes connected to it</span><button class="chat-drop" data-chat="drop" aria-label="Stop using this note">×</button>`
-        : '<span class="chat-using">Searching all your notes</span>';
+        ? `<span class="chat-using">Also reading <b>${escape(ctx.title || 'Untitled')}</b> and notes connected to it</span><button class="chat-drop" data-chat="drop" aria-label="Stop using this note">×</button>`
+        : '<span class="chat-using">Looks through your notes when they help</span>';
     }
 
     function bubble(m, i) {
-      if (m.role === 'user') return `<div class="msg user"><div class="bubble">${escape(m.text).replace(/\n/g, '<br>')}</div></div>`;
+      if (m.role === 'user') {
+        const refs = (m.refs || []).length ? `<div class="msg-refs">${m.refs.map((r) => `<button class="cite" data-chat="open" data-id="${escape(r.id)}">${escape(r.title)}</button>`).join('')}</div>` : '';
+        return `<div class="msg user">${refs}<div class="bubble">${escape(m.text).replace(/\n/g, '<br>')}</div></div>`;
+      }
       const shown = grade(m.text).text;
       let html = shown ? cite(render(shown), m.sources, escape).replace(/<input /g, '<input disabled ') : '';
       if (!html && m.pending) html = '<span class="typing"><i></i><i></i><i></i></span>';
@@ -183,7 +296,7 @@
       return `<div class="chat-hello">
         ${felix(96, 'idle big')}
         <h3>Hi, I'm Felix!</h3>
-        <p>${escape(info.hint)}. I read ${where}, and the notes connected to it on your map.</p>
+        <p>${escape(info.hint)}. I also read ${where}, and the notes connected to it on your map.</p>
         <div class="chat-starters">${info.starters.map((s) => `<button class="starter" data-chat="starter">${escape(s)}</button>`).join('')}</div>
       </div>`;
     }
@@ -218,7 +331,8 @@
     async function send(text) {
       const question = text.trim();
       if (!question || state.busy) return;
-      state.messages.push({ role: 'user', text: question });
+      closePick();
+      state.messages.push({ role: 'user', text: question, refs: state.refs.slice() });
       const answer = { role: 'assistant', text: '', sources: [], pending: true };
       state.messages.push(answer);
       input.value = '';
@@ -234,7 +348,7 @@
           method: 'POST',
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: history, mode: state.mode, note: ctx }),
+          body: JSON.stringify({ messages: history, mode: state.mode, note: ctx, refs: state.refs.map((r) => r.id) }),
           signal: controller.signal,
         });
         if (response.status === 401) throw new Error('This page needs its link again. Open the link leo serve printed.');
@@ -283,6 +397,7 @@
       if (state.open) {
         drawModes();
         drawContext();
+        drawRefs();
         draw();
         mood('wave', 1500);
         if (root.matchMedia && root.matchMedia('(pointer: fine)').matches) input.focus();
@@ -298,7 +413,10 @@
       else if (what === 'new') {
         if (state.busy) state.busy.abort();
         state.messages = [];
+        state.refs = [];
         state.streak = 0;
+        closePick();
+        drawRefs();
         persist();
         draw();
         mood('wave', 1500);
@@ -308,6 +426,15 @@
         if (!state.messages.length) draw();
         persist();
       } else if (what === 'starter') send(el.textContent);
+      else if (what === 'attach') {
+        if (state.pick && state.pick.from === 'button') closePick();
+        else openPick('button', '', 0);
+      } else if (what === 'pick') choose(Number(el.dataset.i));
+      else if (what === 'unref') {
+        state.refs = state.refs.filter((r) => r.id !== el.dataset.id);
+        drawRefs();
+        persist();
+      }
       else if (what === 'drop') {
         state.dropped = state.context && state.context.id;
         drawContext();
@@ -322,8 +449,45 @@
       if (state.busy) state.busy.abort();
       else send(input.value);
     });
-    input.addEventListener('input', fit);
+    input.addEventListener('input', () => {
+      fit();
+      watchMention();
+    });
+    input.addEventListener('click', watchMention);
+    function steer(e) {
+      const p = state.pick;
+      if (!p || !p.notes.length) return false;
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        p.at = (p.at + (e.key === 'ArrowDown' ? 1 : p.notes.length - 1)) % p.notes.length;
+        drawPick();
+        return true;
+      }
+      if ((e.key === 'Enter' || e.key === 'Tab') && !e.isComposing) {
+        e.preventDefault();
+        choose(p.at);
+        return true;
+      }
+      return false;
+    }
+    panel.addEventListener('input', (e) => {
+      if (e.target.id === 'chat-pick-search') openPick('button', e.target.value, 0);
+    });
+    panel.addEventListener('keydown', (e) => {
+      if (e.target.id !== 'chat-pick-search') return;
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        closePick();
+        input.focus();
+      } else steer(e);
+    });
     input.addEventListener('keydown', (e) => {
+      if (state.pick && e.key === 'Escape') {
+        e.stopPropagation();
+        closePick();
+        return;
+      }
+      if (state.pick && state.pick.from === 'mention' && steer(e)) return;
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
         e.preventDefault();
         if (!state.busy) send(input.value);
@@ -350,5 +514,5 @@
     };
   }
 
-  root.leoChat = { create, felix, splitLines, grade, cite, cited, load, save, MODES };
+  root.leoChat = { create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, MODES, MOST_REFS };
 })(typeof window !== 'undefined' ? window : globalThis);

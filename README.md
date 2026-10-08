@@ -563,7 +563,7 @@ leo serve
 
 This prints a link and a QR code that work from any network: another Wi-Fi,
 or mobile data, and opens the page in your browser on this computer (press
-**Enter** to open it again; `leo serve --no-open` skips that). Scan the code with your phone's camera and your notes open in
+**Enter** to open it again). Scan the code with your phone's camera and your notes open in
 the browser, laid out for a phone and following its light or dark mode. From
 there you can:
 
@@ -611,12 +611,16 @@ documents are written in parts and then named. The note lands in the folder
 you pick and joins the map; the original file is kept on your computer, next
 to your notes folder (not backed up), and a chip on the note downloads it.
 
-**Felix** is leo's study buddy, in the chat at the top of every page. He
-answers from your own notes and links each answer to the notes it came from.
-He reads the note you have open and the notes connected to it on the map, plus
-any notes that match your question. Pick how he helps:
+**Felix** is leo's study buddy, in the chat at the top of every page. Talk to
+him like any AI chat; he uses your own notes when they help and links each
+answer to the notes it came from. Type **@** (or tap the paperclip) to add any
+note to the conversation: added notes show as chips above the message box, go
+with every message until you remove them, and are what he reads first. He also
+reads the note you have open and the notes connected to it on the map, plus
+any notes that match your question. Each style below is the same Felix with
+different instructions:
 
-- **Ask**: answers with sources.
+- **Chat**: anything you like, with your notes as sources.
 - **Coach**: teaches by asking you to recall first, gives a hint before the
   answer, ties ideas across classes, and plans spaced review.
 - **Quiz**: one question at a time, marks each answer, keeps score. Felix

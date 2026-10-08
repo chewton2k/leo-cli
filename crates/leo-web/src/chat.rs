@@ -14,8 +14,10 @@ pub type Streamer = Arc<
 >;
 
 const OPEN_CHARS: usize = 14_000;
+const ATTACHED_CHARS: usize = 12_000;
+pub const MOST_ATTACHED: usize = 8;
 const NOTE_CHARS: usize = 4_000;
-const TOTAL_CHARS: usize = 48_000;
+const TOTAL_CHARS: usize = 64_000;
 const NEIGHBOURS: usize = 5;
 const MATCHES: usize = 8;
 const TURNS: usize = 14;
@@ -37,6 +39,8 @@ pub struct ChatBody {
     pub mode: Option<String>,
     #[serde(default)]
     pub note: Option<String>,
+    #[serde(default)]
+    pub refs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -105,18 +109,31 @@ pub fn gather(
     store: &Store,
     cache: &Cache,
     open: Option<&str>,
+    attached: &[String],
     question: &str,
 ) -> (Vec<SourceRef>, String) {
     let mut picked: Vec<Picked> = Vec::new();
     let mut have = BTreeSet::new();
+    for id in attached.iter().take(MOST_ATTACHED) {
+        if let Some(note) = store.notes.iter().find(|n| &n.id == id) {
+            if have.insert(note.id.clone()) {
+                picked.push(Picked {
+                    note,
+                    why: "attached by the user".into(),
+                    most: ATTACHED_CHARS,
+                });
+            }
+        }
+    }
     let open_note = open.and_then(|id| store.notes.iter().find(|n| n.id == id && studied(n)));
     if let Some(note) = open_note {
-        have.insert(note.id.clone());
-        picked.push(Picked {
-            note,
-            why: "open".into(),
-            most: OPEN_CHARS,
-        });
+        if have.insert(note.id.clone()) {
+            picked.push(Picked {
+                note,
+                why: "open".into(),
+                most: OPEN_CHARS,
+            });
+        }
         for (other, kind, why) in connected(store, cache, &note.id)
             .into_iter()
             .take(NEIGHBOURS)
@@ -194,7 +211,7 @@ pub fn gather(
 }
 
 const BASE: &str = "\
-You are Felix, the friendly study buddy built into leo, the user's notes app. You work from the user's own notes, given in <note> tags with ids like n1. Each note says why it was included: the note the user has open, notes connected to it in their knowledge graph (with the reason), or notes that match the question.
+You are Felix, the friendly study buddy built into leo, the user's notes app. You work from the user's own notes, given in <note> tags with ids like n1. Each note says why it was included: notes the user attached to the conversation (treat these as what they are asking about), the note the user has open, notes connected to it in their knowledge graph (with the reason), or notes that match the question.
 
 - Ground what you say in the notes and cite them with their id in square brackets right after the sentence, like [n2]. Cite only notes you actually used.
 - When the notes do not cover something, say so in one short sentence, then answer from general knowledge under the words \"Beyond your notes:\". Never present general knowledge as if it came from the notes.
@@ -212,7 +229,7 @@ Mode: explain simply. Explain the topic the way the Feynman technique does: plai
         "meeting" => "\
 Mode: meeting and work notes. Treat the notes as meeting or work notes. When asked to review, give: a two-sentence summary, decisions made, action items as a checklist (- [ ]) with the owner and due date only when the notes state them, open questions, and risks. When asked, draft a short follow-up message. Never invent names, owners, dates or numbers.",
         _ => "\
-Mode: ask. Answer the user's question directly from the notes.",
+Mode: chat. Talk with the user the way a helpful assistant would: answer any question, help with writing, planning or thinking something through, and carry the conversation naturally. Use the notes whenever they are relevant, and always use the ones the user attached.",
     }
 }
 
@@ -326,6 +343,7 @@ mod tests {
             &store,
             &cache,
             Some(&ids[0]),
+            &[],
             "what about priority queue heaps?",
         );
         let titles: Vec<&str> = sources.iter().map(|s| s.title.as_str()).collect();
@@ -347,14 +365,32 @@ mod tests {
     }
 
     #[test]
+    fn notes_the_user_attached_come_first_and_only_once() {
+        let (store, _d, ids) = store();
+        let attached = vec![
+            ids[2].clone(),
+            ids[0].clone(),
+            "missing".to_string(),
+            ids[2].clone(),
+        ];
+        let (sources, text) = gather(&store, &cache(&ids), Some(&ids[0]), &attached, "zzz");
+        let picked: Vec<&str> = sources.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(picked[..2], [ids[2].as_str(), ids[0].as_str()]);
+        assert_eq!(sources[0].why, "attached by the user");
+        assert_eq!(sources[1].why, "attached by the user");
+        assert_eq!(picked.iter().filter(|id| **id == ids[0]).count(), 1);
+        assert!(text.contains("included=\"attached by the user\""));
+    }
+
+    #[test]
     fn without_an_open_note_the_question_picks_the_notes() {
         let (store, _d, ids) = store();
-        let (sources, _) = gather(&store, &cache(&ids), None, "who sends the forecast");
+        let (sources, _) = gather(&store, &cache(&ids), None, &[], "who sends the forecast");
         assert_eq!(
             sources.first().map(|s| s.title.as_str()),
             Some("Budget meeting")
         );
-        let (none, text) = gather(&store, &Cache::default(), None, "zzz");
+        let (none, text) = gather(&store, &Cache::default(), None, &[], "zzz");
         assert!(none.is_empty());
         assert!(text.is_empty());
     }
@@ -363,7 +399,7 @@ mod tests {
     fn long_notes_and_conversations_are_clipped() {
         let (mut store, _d, ids) = store();
         store.find_note_mut(&ids[0]).unwrap().body = "x".repeat(100_000);
-        let (_, text) = gather(&store, &Cache::default(), Some(&ids[0]), "x");
+        let (_, text) = gather(&store, &Cache::default(), Some(&ids[0]), &[], "x");
         assert!(text.chars().count() < OPEN_CHARS + 2_000);
         let many: Vec<Turn> = (0..40)
             .map(|i| Turn {

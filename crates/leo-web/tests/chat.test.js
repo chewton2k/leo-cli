@@ -43,15 +43,43 @@ test('the conversation is kept per browser and survives broken storage', () => {
   assert.equal(back.messages.length, 40);
   assert.equal(back.messages[0].text, 'm20');
   const broken = { getItem: () => { throw new Error('blocked'); }, setItem: () => { throw new Error('blocked'); } };
-  assert.deepEqual(C.load(broken), { mode: 'ask', messages: [] });
+  assert.deepEqual(C.load(broken), { mode: 'ask', messages: [], refs: [] });
   C.save(broken, 'ask', []);
 });
 
 test('Felix keeps his colour and shape', () => {
   const svg = C.felix(40, 'idle');
   assert.ok(svg.includes('class="felix idle"'));
-  assert.ok(svg.includes('x="5" y="2" width="50" height="26"'), 'his body');
+  const body = /class="felix-skin" x="\d+" y="\d+" width="(\d+)" height="(\d+)"/.exec(svg);
+  const ratio = Number(body[1]) / Number(body[2]);
+  assert.ok(ratio > 1 && ratio < 1.4, `a box a little wider than tall, not ${ratio}`);
   assert.equal((svg.match(/width="4" height="4"/g) || []).length, 2, 'two eyes');
   assert.equal((svg.match(/class="felix-arm/g) || []).length, 2, 'two arms');
   assert.deepEqual(C.MODES.map((m) => m.id), ['ask', 'coach', 'quiz', 'explain', 'meeting']);
+});
+
+test('typing @ starts a note search, but an email address does not', () => {
+  assert.deepEqual(C.mentionAt('compare @heap', 13), { start: 8, query: 'heap' });
+  assert.deepEqual(C.mentionAt('@', 1), { start: 0, query: '' });
+  assert.deepEqual(C.mentionAt('see @graph trav', 15), { start: 4, query: 'graph trav' });
+  assert.equal(C.mentionAt('mail me at a@b.com', 18), null);
+  assert.equal(C.mentionAt('@ nothing', 9), null);
+  assert.equal(C.mentionAt('@line\nnext', 10), null);
+  assert.equal(C.mentionAt('no mention here', 15), null);
+});
+
+test('a note is added once, and only up to the limit', () => {
+  let refs = C.addRef([], { id: 'a', title: 'Heaps' });
+  refs = C.addRef(refs, { id: 'a', title: 'Heaps' });
+  assert.deepEqual(refs, [{ id: 'a', title: 'Heaps' }]);
+  for (let i = 0; i < 20; i++) refs = C.addRef(refs, { id: `n${i}`, title: '' });
+  assert.equal(refs.length, C.MOST_REFS);
+  assert.equal(refs[1].title, 'Untitled');
+});
+
+test('attached notes are kept with the conversation', () => {
+  const store = new Map();
+  const storage = { getItem: (k) => store.get(k) || null, setItem: (k, v) => store.set(k, v) };
+  C.save(storage, 'quiz', [{ role: 'user', text: 'hi' }], [{ id: 'a', title: 'Heaps' }]);
+  assert.deepEqual(C.load(storage), { mode: 'quiz', messages: [{ role: 'user', text: 'hi' }], refs: [{ id: 'a', title: 'Heaps' }] });
 });

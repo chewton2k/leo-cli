@@ -228,6 +228,49 @@ test.describe('Felix', () => {
     await expect(page).toHaveURL(new RegExp(`#/n/${note.id}$`));
   });
 
+  test('notes are added with @ or the paperclip and go with every message', async ({ page }) => {
+    const tag = test.info().project.name;
+    const dijkstra = await (await page.request.post('/api/notes', { data: { title: `Dijkstra shortest paths ${tag}`, body: 'Uses a priority queue.' } })).json();
+    const heaps = await (await page.request.post('/api/notes', { data: { title: `Binary heaps ${tag}`, body: 'Minimum at the root.' } })).json();
+    const asked = [];
+    await page.route('**/api/chat', async (route) => {
+      asked.push(route.request().postDataJSON());
+      await route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: '{"sources":[]}\n{"t":"Both use a heap."}\n{"done":true}\n' });
+    });
+    await page.goto('/');
+    await page.locator('#chat-toggle').click();
+    const chat = page.locator('#chat');
+    await expect(chat.locator('[data-mode="ask"]')).toHaveText('Chat');
+    await chat.locator('#chat-input').pressSequentially(`compare @dijkstra shortest paths ${tag}`);
+    await expect(chat.locator('.chat-pick-row').first()).toContainText('Dijkstra shortest paths');
+    await chat.locator('#chat-input').press('Enter');
+    await expect(chat.locator('.chat-ref')).toHaveCount(1);
+    await expect(chat.locator('#chat-input')).toHaveValue('compare ');
+    await expect(chat.locator('.chat-pick')).toBeHidden();
+
+    await chat.locator('[data-chat="attach"]').click();
+    await chat.locator('#chat-pick-search').fill(`Binary heaps ${tag}`);
+    await chat.locator('.chat-pick-row', { hasText: `Binary heaps ${tag}` }).click();
+    await expect(chat.locator('.chat-ref')).toHaveCount(2);
+
+    await chat.locator('#chat-input').fill('compare these two');
+    await chat.locator('#chat-input').press('Enter');
+    await expect(chat.locator('.msg.leo').last()).toContainText('Both use a heap.');
+    expect(asked[0].refs).toEqual([dijkstra.id, heaps.id]);
+    await expect(chat.locator('.msg.user .msg-refs .cite')).toHaveCount(2);
+
+    await chat.locator(`.chat-ref-x[data-id="${heaps.id}"]`).click();
+    await page.reload();
+    await page.locator('#chat-toggle').click();
+    await expect(page.locator('#chat .chat-ref')).toHaveCount(1);
+    await page.locator('#chat-input').fill('and now?');
+    await page.locator('#chat-input').press('Enter');
+    await expect.poll(() => asked.length).toBe(2);
+    expect(asked[1].refs).toEqual([dijkstra.id]);
+    await page.locator('#chat [data-chat="new"]').click();
+    await expect(page.locator('#chat .chat-ref')).toHaveCount(0);
+  });
+
   test('says plainly when no AI is set up', async ({ page }) => {
     await page.route('**/api/chat', (route) => route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: '{"sources":[]}\n{"error":"no AI for writing is chosen — type :settings in leo and pick one under writing"}\n' }));
     await page.goto('/');

@@ -152,7 +152,6 @@ pub struct ServeOptions {
     pub port: u16,
     pub local: bool,
     pub new_token: bool,
-    pub open: bool,
 }
 
 pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
@@ -245,7 +244,6 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
     println!();
     let here = format!("http://127.0.0.1:{port}/?token={token}");
     let opened = should_open(
-        options.open,
         std::io::IsTerminal::is_terminal(&std::io::stdin()),
         std::io::IsTerminal::is_terminal(&std::io::stdout()),
         std::env::var_os("LEO_NO_OPEN").is_some(),
@@ -280,8 +278,8 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
     Ok(())
 }
 
-fn should_open(wanted: bool, typing: bool, showing: bool, refused: bool) -> bool {
-    wanted && typing && showing && !refused
+fn should_open(typing: bool, showing: bool, refused: bool) -> bool {
+    typing && showing && !refused
 }
 
 pub fn hyperlink(url: &str, shown: &str) -> String {
@@ -914,10 +912,17 @@ async fn chat_reply(State(state): State<AppState>, Json(body): Json<chat::ChatBo
     let question = chat::question_of(&body.messages);
     let graphs = Arc::clone(&state.graphs);
     let note = body.note.clone();
+    let attached = body.refs.clone();
     let gathered = state
         .with_store(move |store| {
             let cache = graphs.load();
-            Ok(chat::gather(store, &cache, note.as_deref(), &question))
+            Ok(chat::gather(
+                store,
+                &cache,
+                note.as_deref(),
+                &attached,
+                &question,
+            ))
         })
         .await;
     let (sources, notes) = match gathered {
@@ -1516,11 +1521,10 @@ mod tests {
             "\x1b]8;;https://example.trycloudflare.com/?token=abc\x1b\\https://example.trycloudflare.com/?token=abc\x1b]8;;\x1b\\"
         );
         assert!(!clickable(url).contains("\x1b]8"), "a pipe gets plain text");
-        assert!(should_open(true, true, true, false));
-        assert!(!should_open(false, true, true, false));
-        assert!(!should_open(true, false, true, false));
-        assert!(!should_open(true, true, false, false));
-        assert!(!should_open(true, true, true, true));
+        assert!(should_open(true, true, false));
+        assert!(!should_open(false, true, false));
+        assert!(!should_open(true, false, false));
+        assert!(!should_open(true, true, true));
         assert!(styled_link(url, true, Some("iTerm.app")).contains("\x1b]8;;"));
         assert!(styled_link(url, true, None).contains("\x1b]8;;"));
         let apple = styled_link(url, true, Some("Apple_Terminal"));
@@ -1767,6 +1771,7 @@ mod tests {
             }],
             mode: Some("coach".into()),
             note: Some(ids[0].clone()),
+            refs: vec![],
         };
         let text = run(async {
             let response = chat_reply(State(state.clone()), Json(body)).await;
@@ -1801,6 +1806,7 @@ mod tests {
             }],
             mode: None,
             note: None,
+            refs: vec![],
         };
         let status = run(async {
             chat_reply(State(state.clone()), Json(ask("hi")))
