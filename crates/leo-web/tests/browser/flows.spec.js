@@ -308,3 +308,96 @@ test.describe('uploads', () => {
     await expect(page.locator('.sheet [data-action="upload"]')).toBeVisible();
   });
 });
+
+test.describe('recording', () => {
+  function stubRecorder(page, { noteId, local = true }) {
+    const seen = { audioBytes: 0, posts: 0, started: null, points: [], stopped: false, paused: false };
+    let polls = 0;
+    const view = (over = {}) => ({ id: 'rec-1', source: 'browser', state: seen.paused ? 'paused' : 'recording', secs: 3, step: '', steps: null, transcript: 'Today we cover breadth first search.', warnings: [], points: seen.points.map((t) => [3, t]), note: null, error: null, ...over });
+    page.route('**/api/record', async (route) => {
+      if (route.request().method() === 'GET') return route.fulfill({ json: { available: true, local, job: null } });
+      seen.started = route.request().postDataJSON();
+      return route.fulfill({ status: 202, json: { id: 'rec-1' } });
+    });
+    page.route('**/api/record/rec-1', (route) => {
+      if (!seen.stopped) return route.fulfill({ json: view() });
+      polls += 1;
+      return route.fulfill({ json: polls < 2 ? view({ state: 'writing', step: 'Writing the notes', steps: [1, 2] }) : view({ state: 'done', note: noteId }) });
+    });
+    page.route('**/api/record/rec-1/audio', (route) => {
+      seen.audioBytes += route.request().postDataBuffer().length;
+      seen.posts += 1;
+      return route.fulfill({ status: 204 });
+    });
+    page.route('**/api/record/rec-1/point', (route) => {
+      seen.points.push(route.request().postDataJSON().text);
+      return route.fulfill({ json: view() });
+    });
+    page.route('**/api/record/rec-1/pause', (route) => {
+      seen.paused = route.request().postDataJSON().paused;
+      return route.fulfill({ json: view() });
+    });
+    page.route('**/api/record/rec-1/stop', (route) => {
+      seen.stopped = true;
+      return route.fulfill({ json: view({ state: 'writing', step: 'Transcribing the recording' }) });
+    });
+    return seen;
+  }
+
+  test('the microphone streams to leo, takes points, and the note opens when written', async ({ page, context }) => {
+    await context.grantPermissions(['microphone']);
+    const made = await (await page.request.post('/api/notes', { data: { title: 'BFS lecture', body: '## BFS\n- queue' } })).json();
+    const seen = stubRecorder(page, { noteId: made.id });
+    await page.goto('/');
+    await page.locator('.fab[data-action="record"]').click();
+    await expect(page).toHaveURL(/#\/record$/);
+    await expect(page.locator('.rec-source')).toHaveCount(3);
+    await page.locator('#rec-title').fill('Graphs');
+    await page.locator('[data-action="rec-start"]').click();
+    await expect(page.locator('#rec-transcript')).toContainText('breadth first search');
+    await expect.poll(() => seen.audioBytes, { timeout: 8000 }).toBeGreaterThan(16000);
+    expect(seen.audioBytes % 2).toBe(0);
+    expect(seen.started).toEqual({ source: 'browser', directory: '', title: 'Graphs' });
+
+    await page.locator('#rec-point-text').fill('exam question on BFS');
+    await page.locator('#rec-point-text').press('Enter');
+    await expect(page.locator('.rec-points')).toContainText('exam question on BFS');
+    await expect(page.locator('#rec-point-text')).toHaveValue('');
+
+    await page.locator('[data-action="rec-pause"]').click();
+    await expect(page.locator('[data-action="rec-pause"]')).toHaveText('Resume');
+    await page.locator('[data-action="rec-pause"]').click();
+    await expect(page.locator('[data-action="rec-pause"]')).toHaveText('Pause');
+
+    await page.locator('#back').click();
+    await expect(page.locator('#rec-pill')).toContainText('Recording');
+    await page.locator('#rec-pill').click();
+    await expect(page.locator('[data-action="rec-stop"]')).toBeVisible();
+    await page.locator('[data-action="rec-stop"]').click();
+    await expect(page).toHaveURL(new RegExp(`#/n/${made.id}$`), { timeout: 8000 });
+    await expect(page.locator('#rec-pill')).toHaveCount(0);
+  });
+
+  test('a page opened over the internet records only its own microphone', async ({ page, context }) => {
+    await context.grantPermissions(['microphone']);
+    stubRecorder(page, { noteId: 'x', local: false });
+    await page.goto('/#/record');
+    await expect(page.locator('[data-action="rec-start"]')).toBeVisible();
+    await expect(page.locator('.rec-source')).toHaveCount(0);
+  });
+
+  test('a refused microphone says how to allow it and starts nothing', async ({ page }) => {
+    let started = false;
+    await page.route('**/api/record', (route) => {
+      if (route.request().method() === 'POST') started = true;
+      return route.fulfill({ json: { available: true, local: false, job: null } });
+    });
+    await page.goto('/#/record');
+    await page.evaluate(() => {
+      navigator.mediaDevices.getUserMedia = () => Promise.reject(Object.assign(new Error('denied'), { name: 'NotAllowedError' }));
+    });
+    await page.locator('[data-action="rec-start"]').click();
+    await expect(page.locator('.toast.bad')).toContainText('Allow it for this site');
+    expect(started).toBe(false);
+  });
+});

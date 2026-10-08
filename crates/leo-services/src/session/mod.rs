@@ -1,5 +1,6 @@
 pub mod capture;
 pub mod mic;
+pub mod recorder;
 #[cfg(test)]
 mod stress;
 pub mod transcriber;

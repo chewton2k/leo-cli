@@ -1,5 +1,6 @@
 pub mod chat;
 pub mod graph;
+pub mod record;
 mod token;
 pub mod tunnel;
 
@@ -31,6 +32,7 @@ pub struct Powers {
     pub chat: Option<Streamer>,
     pub settings: Option<Arc<dyn SettingsApi>>,
     pub importer: Option<Importer>,
+    pub listener: Option<record::Listener>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -72,6 +74,8 @@ struct AppState {
     settings: Option<Arc<dyn SettingsApi>>,
     importer: Option<Importer>,
     imports: Arc<Mutex<std::collections::HashMap<String, ImportJob>>>,
+    listener: Option<record::Listener>,
+    recording: record::Recordings,
 }
 
 struct Storage {
@@ -138,6 +142,8 @@ const SAVING_JS: &str = include_str!("web/saving.js");
 const DOC_JS: &str = include_str!("web/doc.js");
 const GRAPH_JS: &str = include_str!("web/graph.js");
 const CHAT_JS: &str = include_str!("web/chat.js");
+const RECORDER_JS: &str = include_str!("web/recorder.js");
+const RECORDING_JS: &str = include_str!("web/recording.js");
 
 const COOKIE_DAYS: u32 = 30;
 
@@ -146,6 +152,7 @@ pub struct ServeOptions {
     pub port: u16,
     pub local: bool,
     pub new_token: bool,
+    pub open: bool,
 }
 
 pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
@@ -154,6 +161,7 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
     let chat = powers.chat;
     let settings = powers.settings;
     let importer = powers.importer;
+    let recorder = powers.listener;
     let count = store.notes.len();
     let token = token::load_or_create(
         &leo_core::paths::config_dir()?.join("serve-token"),
@@ -175,6 +183,8 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
         settings,
         importer,
         imports: Default::default(),
+        listener: recorder,
+        recording: Default::default(),
     });
 
     let tunnel = if !options.local {
@@ -234,7 +244,19 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
     }
     println!();
     let here = format!("http://127.0.0.1:{port}/?token={token}");
-    if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+    let opened = should_open(
+        options.open,
+        std::io::IsTerminal::is_terminal(&std::io::stdin()),
+        std::io::IsTerminal::is_terminal(&std::io::stdout()),
+        std::env::var_os("LEO_NO_OPEN").is_some(),
+    ) && leo_core::obsidian::open_link(&here).is_ok();
+    if opened {
+        println!(
+            "  {} {}",
+            "Opened in your browser.".bold(),
+            "Press Enter to open it again.".dimmed()
+        );
+    } else if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
         println!(
             "  {} {}",
             "Press Enter".bold(),
@@ -256,6 +278,10 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
         .await?;
     drop(tunnel);
     Ok(())
+}
+
+fn should_open(wanted: bool, typing: bool, showing: bool, refused: bool) -> bool {
+    wanted && typing && showing && !refused
 }
 
 pub fn hyperlink(url: &str, shown: &str) -> String {
@@ -373,6 +399,17 @@ fn router(state: AppState) -> Router {
             post(start_import).layer(axum::extract::DefaultBodyLimit::max(IMPORT_BYTES)),
         )
         .route("/api/import/{id}", get(import_status))
+        .route("/api/record", get(record::overview).post(record::start))
+        .route("/api/record/{id}", get(record::status))
+        .route(
+            "/api/record/{id}/audio",
+            post(record::audio).layer(axum::extract::DefaultBodyLimit::max(record::AUDIO_BYTES)),
+        )
+        .route("/api/record/{id}/pause", post(record::pause))
+        .route("/api/record/{id}/point", post(record::point))
+        .route("/api/record/{id}/stop", post(record::stop))
+        .route("/recorder.js", get(recorder_js))
+        .route("/recording.js", get(recording_js))
         .route("/api/notes/{id}/originals", get(list_originals))
         .route("/api/notes/{id}/originals/{name}", get(get_original))
         .route("/api/graph", get(get_graph))
@@ -426,11 +463,30 @@ async fn chat_js() -> Response {
     javascript(CHAT_JS)
 }
 
+async fn recorder_js() -> Response {
+    javascript(RECORDER_JS)
+}
+
+async fn recording_js() -> Response {
+    javascript(RECORDING_JS)
+}
+
 fn secure_request(headers: &axum::http::HeaderMap) -> bool {
     let forwarded = headers
         .get("x-forwarded-proto")
         .and_then(|v| v.to_str().ok())
         .is_some_and(|v| v.eq_ignore_ascii_case("https"));
+    forwarded || local_host(headers)
+}
+
+fn local_request(headers: &axum::http::HeaderMap) -> bool {
+    !headers.contains_key("x-forwarded-proto")
+        && !headers.contains_key("x-forwarded-for")
+        && !headers.contains_key("cf-connecting-ip")
+        && local_host(headers)
+}
+
+fn local_host(headers: &axum::http::HeaderMap) -> bool {
     let host = headers
         .get(header::HOST)
         .and_then(|v| v.to_str().ok())
@@ -443,7 +499,7 @@ fn secure_request(headers: &axum::http::HeaderMap) -> bool {
     } else {
         host.split(':').next().unwrap_or("").to_string()
     };
-    forwarded || matches!(name.as_str(), "localhost" | "127.0.0.1" | "[::1]")
+    matches!(name.as_str(), "localhost" | "127.0.0.1" | "[::1]")
 }
 
 fn no_settings() -> Response {
@@ -1460,6 +1516,11 @@ mod tests {
             "\x1b]8;;https://example.trycloudflare.com/?token=abc\x1b\\https://example.trycloudflare.com/?token=abc\x1b]8;;\x1b\\"
         );
         assert!(!clickable(url).contains("\x1b]8"), "a pipe gets plain text");
+        assert!(should_open(true, true, true, false));
+        assert!(!should_open(false, true, true, false));
+        assert!(!should_open(true, false, true, false));
+        assert!(!should_open(true, true, false, false));
+        assert!(!should_open(true, true, true, true));
         assert!(styled_link(url, true, Some("iTerm.app")).contains("\x1b]8;;"));
         assert!(styled_link(url, true, None).contains("\x1b]8;;"));
         let apple = styled_link(url, true, Some("Apple_Terminal"));
@@ -1490,6 +1551,8 @@ mod tests {
             settings: None,
             importer: None,
             imports: Default::default(),
+            listener: None,
+            recording: Default::default(),
         };
         (state, dir, ids)
     }
@@ -2014,5 +2077,213 @@ mod tests {
         assert!(failed.is_err());
         let Json(note) = run(get_note(State(state), Path(ids[0].clone()))).unwrap();
         assert_eq!(note.body, "");
+    }
+
+    fn hearing() -> record::Listener {
+        Arc::new(
+            |listening: record::Listening, heard: &mut dyn FnMut(record::Heard)| {
+                use std::sync::atomic::Ordering;
+                use std::sync::mpsc::RecvTimeoutError;
+                let rx = listening.audio.expect("audio from the browser");
+                let mut samples = 0;
+                loop {
+                    heard(record::Heard::Clock {
+                        secs: 1,
+                        paused: listening.pause.load(Ordering::Relaxed),
+                    });
+                    match rx.recv_timeout(std::time::Duration::from_millis(20)) {
+                        Ok(chunk) => samples += chunk.len(),
+                        Err(RecvTimeoutError::Timeout) => {
+                            if listening.stop.load(Ordering::Relaxed) {
+                                break;
+                            }
+                        }
+                        Err(RecvTimeoutError::Disconnected) => break,
+                    }
+                }
+                heard(record::Heard::Step {
+                    label: "Writing the notes".into(),
+                    steps: Some((1, 2)),
+                });
+                let points: Vec<String> = listening
+                    .points
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .map(|(_, text)| text.clone())
+                    .collect();
+                Ok((
+                    "Lecture".to_string(),
+                    format!("heard {samples} samples; points: {}", points.join(", ")),
+                ))
+            },
+        )
+    }
+
+    fn host(name: &str) -> axum::http::HeaderMap {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(header::HOST, HeaderValue::from_str(name).unwrap());
+        headers
+    }
+
+    fn json_of(response: Response) -> serde_json::Value {
+        let bytes = run(axum::body::to_bytes(response.into_body(), usize::MAX)).unwrap();
+        serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null)
+    }
+
+    fn start_recording(state: &AppState, source: record::Source, at: &str) -> Response {
+        run(record::start(
+            State(state.clone()),
+            host(at),
+            Json(
+                serde_json::from_value(serde_json::json!({
+                    "directory": "cs130",
+                    "source": source,
+                }))
+                .unwrap(),
+            ),
+        ))
+    }
+
+    fn recording_until(state: &AppState, done: impl Fn(&str) -> bool) -> record::RecordView {
+        let started = std::time::Instant::now();
+        loop {
+            let view = state
+                .recording
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|j| j.view())
+                .unwrap();
+            if done(view.state) {
+                return view;
+            }
+            assert!(started.elapsed().as_secs() < 10, "stuck at {view:?}");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn a_recording_from_the_browser_hears_every_chunk_and_becomes_a_note() {
+        let (mut state, _d, _ids) = state_with(&[]);
+        state.listener = Some(hearing());
+        let started = start_recording(
+            &state,
+            record::Source::Browser,
+            "my-laptop.trycloudflare.com",
+        );
+        assert_eq!(started.status(), StatusCode::ACCEPTED);
+        let id = json_of(started)["id"].as_str().unwrap().to_string();
+        recording_until(&state, |s| s == "recording");
+
+        let chunk: Vec<u8> = (0..1600i16).flat_map(|s| s.to_le_bytes()).collect();
+        for _ in 0..3 {
+            let sent = run(record::audio(
+                State(state.clone()),
+                Path(id.clone()),
+                axum::body::Bytes::from(chunk.clone()),
+            ));
+            assert_eq!(sent.status(), StatusCode::NO_CONTENT);
+        }
+        let jotted = run(record::point(
+            State(state.clone()),
+            Path(id.clone()),
+            Json(serde_json::from_value(serde_json::json!({ "text": "exam is on BFS" })).unwrap()),
+        ));
+        assert_eq!(json_of(jotted)["points"][0][1], "exam is on BFS");
+        let paused = run(record::pause(
+            State(state.clone()),
+            Path(id.clone()),
+            Json(serde_json::from_value(serde_json::json!({ "paused": true })).unwrap()),
+        ));
+        assert_eq!(json_of(paused)["state"], "paused");
+        recording_until(&state, |s| s == "paused");
+
+        let busy = start_recording(&state, record::Source::Browser, "localhost:4000");
+        assert_eq!(busy.status(), StatusCode::CONFLICT);
+
+        let stopped = run(record::stop(State(state.clone()), Path(id.clone())));
+        assert_eq!(json_of(stopped)["state"], "writing");
+        let late = run(record::audio(
+            State(state.clone()),
+            Path(id.clone()),
+            axum::body::Bytes::from(chunk.clone()),
+        ));
+        assert_eq!(late.status(), StatusCode::CONFLICT);
+
+        let view = recording_until(&state, |s| s == "done" || s == "failed");
+        assert_eq!(view.state, "done", "{view:?}");
+        let note = state
+            .fresh()
+            .find_note(view.note.as_deref().unwrap())
+            .unwrap()
+            .clone();
+        assert_eq!(note.title, "Lecture");
+        assert_eq!(note.directory, "cs130");
+        assert_eq!(note.body, "heard 4800 samples; points: exam is on BFS");
+
+        let gone = run(record::status(State(state.clone()), Path("nope".into())));
+        assert_eq!(gone.status(), StatusCode::NOT_FOUND);
+        let again = start_recording(&state, record::Source::Browser, "localhost");
+        assert_eq!(again.status(), StatusCode::ACCEPTED);
+        let id = json_of(again)["id"].as_str().unwrap().to_string();
+        run(record::stop(State(state.clone()), Path(id)));
+        recording_until(&state, |s| s == "done");
+    }
+
+    #[test]
+    fn the_computers_own_microphone_only_answers_a_page_on_that_computer() {
+        let (mut state, _d, _ids) = state_with(&[]);
+        state.listener = Some(Arc::new(
+            |_: record::Listening, _: &mut dyn FnMut(record::Heard)| {
+                Err(anyhow::anyhow!("No sound was recorded."))
+            },
+        ));
+        for (source, at) in [
+            (record::Source::Microphone, "my-laptop.trycloudflare.com"),
+            (record::Source::Screen, "192.168.1.20:4000"),
+        ] {
+            let refused = start_recording(&state, source, at);
+            assert_eq!(refused.status(), StatusCode::FORBIDDEN, "{at}");
+            assert!(state.recording.lock().unwrap().is_none());
+        }
+        let mut tunnelled = host("localhost");
+        tunnelled.insert("x-forwarded-proto", HeaderValue::from_static("https"));
+        assert!(!local_request(&tunnelled));
+        assert!(local_request(&host("127.0.0.1:4000")));
+        assert!(local_request(&host("[::1]:4000")));
+
+        let allowed = start_recording(&state, record::Source::Screen, "127.0.0.1:4000");
+        assert_eq!(allowed.status(), StatusCode::ACCEPTED);
+        let view = recording_until(&state, |s| s == "failed" || s == "done");
+        assert_eq!(view.state, "failed");
+        assert_eq!(view.error.as_deref(), Some("No sound was recorded."));
+        assert!(state.fresh().notes.is_empty());
+    }
+
+    #[test]
+    fn recording_is_refused_without_a_recorder_or_into_a_folder_outside_the_notes() {
+        let (mut state, _d, _ids) = state_with(&[]);
+        let none = start_recording(&state, record::Source::Browser, "localhost");
+        assert_eq!(none.status(), StatusCode::SERVICE_UNAVAILABLE);
+        state.listener = Some(hearing());
+        let outside = run(record::start(
+            State(state.clone()),
+            host("localhost"),
+            Json(
+                serde_json::from_value(serde_json::json!({
+                    "directory": "../outside",
+                    "source": "browser",
+                }))
+                .unwrap(),
+            ),
+        ));
+        assert_eq!(outside.status(), StatusCode::BAD_REQUEST);
+        assert!(state.recording.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn audio_arrives_as_little_endian_samples_and_an_odd_byte_is_ignored() {
+        assert_eq!(record::decode(&[1, 0, 0xfe, 0xff, 7]), vec![1, -2]);
     }
 }

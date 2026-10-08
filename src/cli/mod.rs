@@ -9,6 +9,7 @@ mod prompt;
 mod serve;
 mod uninstall;
 mod update;
+mod web_record;
 mod web_settings;
 
 use std::io::IsTerminal;
@@ -154,6 +155,9 @@ enum Commands {
 
         #[arg(long, help = "Make a new link, so every old one stops working")]
         new_token: bool,
+
+        #[arg(long, help = "Do not open the page in a browser on this computer")]
+        no_open: bool,
     },
 
     #[command(
@@ -346,6 +350,7 @@ pub fn run(cli: Cli) -> Result<()> {
             local,
             anywhere: _,
             new_token,
+            no_open,
         }) => {
             if !local {
                 serve::ensure_tunnel_tool()?;
@@ -383,6 +388,7 @@ pub fn run(cli: Cli) -> Result<()> {
                     port,
                     local,
                     new_token,
+                    open: !no_open,
                 },
                 leo_web::Powers {
                     writer: Some(writer),
@@ -402,6 +408,7 @@ pub fn run(cli: Cli) -> Result<()> {
                             leo_services::import::import(&uploads, progress)
                         },
                     )),
+                    listener: Some(web_record::listener()),
                 },
             ))
         }

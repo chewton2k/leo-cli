@@ -38,9 +38,11 @@
     check: svg('<path d="M5 12l4.5 4.5L19 7"/>'),
     lock: svg('<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>'),
     map: svg('<circle cx="6" cy="7" r="2.2"/><circle cx="18" cy="6" r="2.2"/><circle cx="12" cy="17.5" r="2.2"/><path d="M7.4 8.9l3.5 6.7M16.9 7.9l-3.8 7.8M8.2 6.8l7.6-.6"/>'),
+    mic: svg('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>'),
     cloud: svg('<path d="M7 18a4.5 4.5 0 0 1-.5-9 6 6 0 0 1 11.3 1.5A3.8 3.8 0 0 1 17.5 18z"/><path d="M4 4l16 16"/>'),
   };
 
+  const recorder = window.leoRecording.create({ api, esc, toast, go: (hash, opts) => go(hash, opts), noteHash: (id) => noteHash(id), felix, icons: ICON });
   const chat = felix.create({ render: (text) => md.render(text), escape: md.escape, onOpen: (id) => go(noteHash(id)) });
   $('#chat-toggle').innerHTML = chat.button(36);
   $('#back').innerHTML = ICON.back;
@@ -66,7 +68,13 @@
     if (response.status === 401) throw new Locked();
     if (response.status === 204) return null;
     if (!response.ok) {
-      const error = new Error(response.status === 404 ? 'That is not there any more.' : response.status === 400 ? 'Use a folder name inside your notes, without . or ..' : `leo answered ${response.status}.`);
+      let said = '';
+      try {
+        said = (await response.json()).error || '';
+      } catch (e) {
+        said = '';
+      }
+      const error = new Error(said || (response.status === 404 ? 'That is not there any more.' : response.status === 400 ? 'Use a folder name inside your notes, without . or ..' : `leo answered ${response.status}.`));
       error.status = response.status;
       throw error;
     }
@@ -202,7 +210,7 @@
     document.title = dir ? `${folderLabel(dir)} · leo` : 'leo';
   }
 
-  const newButton = (dir) => `<div class="fabs"><button class="fab ghost" data-action="upload" aria-label="Upload a file" title="Make a note from a file or photo">${ICON.upload}<span>Upload</span></button><button class="fab" data-action="new" data-dir="${esc(dir)}">${ICON.plus}<span>New note</span></button></div>`;
+  const newButton = (dir) => `<div class="fabs"><button class="fab ghost" data-action="record" data-dir="${esc(dir)}" aria-label="Record" title="Record a lecture or meeting">${ICON.mic}<span>Record</span></button><button class="fab ghost" data-action="upload" aria-label="Upload a file" title="Make a note from a file or photo">${ICON.upload}<span>Upload</span></button><button class="fab" data-action="new" data-dir="${esc(dir)}">${ICON.plus}<span>New note</span></button></div>`;
 
   async function showFolder(dir) {
     const mine = ++seq;
@@ -724,6 +732,21 @@
     speech: 'Turns what was said into text while you record.',
   };
 
+  async function showRecord(dir) {
+    state = { view: 'record', dir: '' };
+    chrome({ showBack: true });
+    $('#crumbs').innerHTML = '<span class="sep">/</span><button>Record</button>';
+    document.title = 'Record · leo';
+    app.innerHTML = '<div id="rec-box"></div>';
+    let folders = [];
+    try {
+      folders = await api('/api/folders');
+    } catch (e) {
+      if (e instanceof Locked) throw e;
+    }
+    await recorder.show($('#rec-box'), { dir, folders: folders.map((f) => f.name).filter(Boolean) });
+  }
+
   async function showSettings() {
     const mine = ++seq;
     state = { view: 'settings', dir: '' };
@@ -1043,6 +1066,7 @@
     const here = state.view === 'folder' ? state.dir : '';
     sheet(`
       <button class="list-row" data-action="new" data-dir="${esc(here)}">${ICON.plus}<span class="grow">New note</span></button>
+      <button class="list-row" data-action="record" data-dir="${esc(here)}">${ICON.mic}<span class="grow">Record a lecture or meeting</span></button>
       <button class="list-row" data-action="upload">${ICON.upload}<span class="grow">Make a note from a file</span></button>
       <button class="list-row" data-action="new-folder">${ICON.folderPlus}<span class="grow">New folder${here ? ` in ${esc(folderLabel(here))}` : ''}</span></button>
       <button class="list-row" data-action="map">${ICON.map}<span class="grow">Map of ideas</span></button>
@@ -1235,6 +1259,16 @@
     },
     'test-ai': testAi,
     'note-map': (el) => go(`#/map/${enc(el.dataset.id)}`),
+    record: (el) => {
+      closeSheet();
+      go(el.dataset.dir ? `#/record/${enc(el.dataset.dir)}` : '#/record');
+    },
+    'rec-start': () => recorder.begin().catch(fail),
+    'rec-pause': () => recorder.pause().catch(fail),
+    'rec-stop': () => recorder.stop().catch(fail),
+    'rec-rejoin': () => recorder.rejoin().catch(fail),
+    'rec-point': () => recorder.point(),
+    'rec-again': () => recorder.again(),
     upload: () => uploadSheet().catch(fail),
     'upload-go': () => uploadGo().catch(fail),
     'upload-drop': (el) => {
@@ -1387,6 +1421,7 @@
     if (kind !== 'search') closeSearch();
     if (kind !== 'map') leaveMap();
     if (kind !== 'n') chat.setContext(null);
+    if (kind !== 'record') recorder.leave();
     try {
       if (kind === 'f') await showFolder(arg);
       else if (kind === 'n') await showNote(arg.replace(/\/edit$/, ''));
@@ -1396,6 +1431,7 @@
       else if (kind === 'trash') await showTrash();
       else if (kind === 'map') await showMap(arg);
       else if (kind === 'settings') await showSettings();
+      else if (kind === 'record') await showRecord(arg);
       else if (kind === 'drafts') showDrafts();
       else if (kind === 'draft') await showDraft(arg);
       else await showFolder('');

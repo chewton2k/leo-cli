@@ -562,9 +562,8 @@ leo serve
 ```
 
 This prints a link and a QR code that work from any network: another Wi-Fi,
-or mobile data. Press **Enter** to open it in a browser on the same computer
-(in most terminals you can also click the link; in macOS Terminal,
-⌘-double-click it). Scan the code with your phone's camera and your notes open in
+or mobile data, and opens the page in your browser on this computer (press
+**Enter** to open it again; `leo serve --no-open` skips that). Scan the code with your phone's camera and your notes open in
 the browser, laid out for a phone and following its light or dark mode. From
 there you can:
 
@@ -587,7 +586,19 @@ there you can:
 - study with **Felix**, the chat button at the top;
 - change settings under **More → Settings**: the AI for writing and speech,
   models (with prices), API keys, and when backups push;
-- **upload** slides, handouts, papers or photos and get study notes.
+- **upload** slides, handouts, papers or photos and get study notes;
+- **record** a lecture or meeting and get notes, without the terminal.
+
+**Recording** (the **Record** button beside New note, or More → Record a
+lecture or meeting) uses the microphone of the phone or computer the page is
+open on. The words appear as it listens; **Pause** stops listening, a point you
+jot is woven into the notes, and **Stop and save** writes the note with the
+same speech and writing AI as `:record`, into the folder you picked. On the
+computer that runs `leo serve`, you can also record its own microphone or its
+sound (like `:record screen`). A browser only lends its microphone to a secure
+page, so use the link `leo serve` prints (not `--local`) or the page it opens on
+the computer. On a phone, keep the page open while it records; the screen
+stays on. A pill at the top shows the time while you browse other notes.
 
 **Uploads** (the **Upload** button beside New note, More → Make a note from a
 file, or drag files onto a folder on a computer) turn PDF, Word (.docx),

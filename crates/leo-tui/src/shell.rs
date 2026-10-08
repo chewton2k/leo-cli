@@ -115,14 +115,6 @@ fn say(text: &str) {
     let _ = std::io::stdout().flush();
 }
 
-fn transcribe_segment() -> session::transcriber::TranscribeFn {
-    std::sync::Arc::new(|path: &std::path::Path| {
-        leo_services::ai::transcribe_outcome(path)
-            .map(|o| o.value)
-            .map_err(|e| e.to_string())
-    })
-}
-
 fn wait_for_transcripts(
     session: &Session,
     transcriber: Transcriber,
@@ -237,7 +229,7 @@ fn finish_interrupted(store: &mut Store, root: &std::path::Path) -> Result<()> {
         let (tx, rx) = std::sync::mpsc::channel();
         let transcriber = Transcriber::start(
             &dir,
-            transcribe_segment(),
+            session::recorder::transcribe_segment(),
             Policy {
                 workers: leo_services::ai::parallel_transcriptions(),
                 ..Policy::default()
@@ -287,7 +279,7 @@ pub fn record_and_apply(store: &mut Store, req: ListenRequest, _ai: &dyn Ai) -> 
     let (tx, rx) = std::sync::mpsc::channel();
     let transcriber = Transcriber::start(
         &session.dir,
-        transcribe_segment(),
+        session::recorder::transcribe_segment(),
         Policy {
             workers: leo_services::ai::parallel_transcriptions(),
             ..Policy::default()

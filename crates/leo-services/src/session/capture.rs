@@ -112,6 +112,7 @@ impl Feed {
             } => {
                 while pending.len() < BLOCK {
                     if stop.load(Ordering::Relaxed) {
+                        pending.extend(rx.try_iter().flatten());
                         break;
                     }
                     if let Some(p) = problem.lock().ok().and_then(|p| p.clone()) {
@@ -193,6 +194,16 @@ impl Capture {
                 speed,
             },
         };
+        Self::begin(dir, first_index, segment_secs, feed, mic)
+    }
+
+    fn begin(
+        dir: &Path,
+        first_index: u32,
+        segment_secs: u64,
+        feed: Feed,
+        mic: Option<Mic>,
+    ) -> Result<Capture> {
         let writer = Writer::open(
             dir,
             first_index,
@@ -216,6 +227,20 @@ impl Capture {
             mic,
             thread: Some(thread),
         })
+    }
+
+    pub fn fed(
+        dir: &Path,
+        first_index: u32,
+        segment_secs: u64,
+        rx: Receiver<Vec<i16>>,
+    ) -> Result<Capture> {
+        let feed = Feed::Device {
+            rx,
+            pending: VecDeque::new(),
+            problem: Arc::new(Mutex::new(None)),
+        };
+        Self::begin(dir, first_index, segment_secs, feed, None)
     }
 
     pub fn recorded_samples(&self) -> u64 {
@@ -322,6 +347,29 @@ fn run(mut feed: Feed, mut writer: Writer, stop: &AtomicBool, pause: &AtomicBool
 mod tests {
     use super::*;
     use crate::session::wav;
+
+    #[test]
+    fn audio_sent_from_a_browser_is_kept_even_when_stop_follows_at_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut capture = Capture::fed(dir.path(), 0, 300, rx).unwrap();
+        for _ in 0..3 {
+            tx.send(vec![1000i16; RATE as usize]).unwrap();
+        }
+        capture.finish().unwrap();
+        assert_eq!(capture.recorded_samples(), 3 * RATE as u64);
+        assert!(capture.problem().is_none());
+    }
+
+    #[test]
+    fn a_browser_that_never_sends_anything_is_not_a_crash() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_tx, rx) = std::sync::mpsc::channel();
+        let capture = Capture::fed(dir.path(), 0, 300, rx).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(!capture.ended());
+        assert!(capture.stop().is_ok());
+    }
 
     #[test]
     #[ignore]

@@ -12,7 +12,7 @@ module.exports = defineConfig({
   use: {
     baseURL: 'http://127.0.0.1:31831',
     trace: 'retain-on-failure',
-    launchOptions: { args: ['--host-resolver-rules=MAP leo-http.test 127.0.0.1', '--no-proxy-server'] },
+    launchOptions: { args: ['--host-resolver-rules=MAP leo-http.test 127.0.0.1', '--no-proxy-server', '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] },
   },
   projects: [
     { name: 'desktop', use: { browserName: 'chromium' } },
@@ -22,6 +22,6 @@ module.exports = defineConfig({
     command: 'node server.js',
     url: 'http://127.0.0.1:31831',
     reuseExistingServer: false,
-    env: { LEO_HOME: home, LEO_NO_UPDATE_CHECK: '1', LEO_NO_MICROPHONE: '1' },
+    env: { LEO_HOME: home, LEO_NO_UPDATE_CHECK: '1', LEO_NO_MICROPHONE: '1', LEO_NO_OPEN: '1' },
   },
 });

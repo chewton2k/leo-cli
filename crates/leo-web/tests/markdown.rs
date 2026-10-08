@@ -25,6 +25,11 @@ fn saving_and_draft_recovery_pass_their_tests() {
     run_node_tests("saving.test.js");
 }
 
+#[test]
+fn recording_in_the_browser_passes_its_tests() {
+    run_node_tests("recording.test.js");
+}
+
 fn run_node_tests(file: &str) {
     let dir = env!("CARGO_MANIFEST_DIR");
     let Ok(out) = Command::new("node")

@@ -64,6 +64,7 @@ impl Leo {
             .env("NO_COLOR", "1")
             .env("LEO_NO_UPDATE_CHECK", "1")
             .env("LEO_NO_MICROPHONE", "1")
+            .env("LEO_NO_OPEN", "1")
             .env("LEO_INSTALL_NO_MODEL", "1")
             .env("GIT_AUTHOR_NAME", "leo test")
             .env("GIT_AUTHOR_EMAIL", "leo@example.com")
