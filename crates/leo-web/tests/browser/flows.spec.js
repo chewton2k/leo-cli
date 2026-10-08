@@ -484,7 +484,7 @@ test.describe('Felix', () => {
 
   test('a question missed a day ago is offered for review and asked again', async ({ page }) => {
     const id = `review-chat-${test.info().project.name}`;
-    const note = await (await page.request.post('/api/notes', { data: { title: 'Queues', body: 'First in, first out.' } })).json();
+    const note = await (await page.request.post('/api/notes', { data: { title: 'First in, first out', body: 'The oldest item leaves first.' } })).json();
     const question = `Which structure does BFS use (${test.info().project.name})?`;
     await page.request.put(`/api/chats/${id}`, {
       data: {
@@ -494,7 +494,7 @@ test.describe('Felix', () => {
           { role: 'user', text: 'quiz me' },
           { role: 'assistant', text: `First question.\n\n${question}` },
           { role: 'user', text: 'a stack' },
-          { role: 'assistant', text: '[[incorrect]] Not quite, it is a queue [n1].', sources: [{ n: 1, id: note.id, title: 'Queues' }], at: '2026-01-02T10:00:00Z' },
+          { role: 'assistant', text: '[[incorrect]] Not quite, it is a queue [n1].', sources: [{ n: 1, id: note.id, title: 'First in, first out' }], at: '2026-01-02T10:00:00Z' },
         ],
       },
     });
