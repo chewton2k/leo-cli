@@ -80,6 +80,7 @@ pub const WRITING: &[Choice] = &[
         models: &[
             m("gpt-6-luna", "included in your ChatGPT plan"),
             m("gpt-6-sol", "included in your ChatGPT plan"),
+            m("gpt-6.1-sol", "included in your ChatGPT plan"),
             m("gpt-6-astra", "included in your ChatGPT plan"),
         ],
     },
@@ -87,6 +88,10 @@ pub const WRITING: &[Choice] = &[
         provider: "anthropic",
         name: "Anthropic",
         models: &[
+            m(
+                "claude-haiku-5-5",
+                "$0.10 in, $0.50 out per 1M tokens (more above 100K-token prompts)",
+            ),
             m("claude-sonnet-5-5", "$2 in, $10 out per 1M tokens"),
             m("claude-sonnet-5", "$2 in, $10 out per 1M tokens"),
             m("claude-opus-5-5", "$4 in, $20 out per 1M tokens"),
@@ -97,6 +102,7 @@ pub const WRITING: &[Choice] = &[
         provider: "claude_code",
         name: "Claude Code",
         models: &[
+            m("claude-haiku-5-5", "included in your Claude plan"),
             m("claude-sonnet-5-5", "included in your Claude plan"),
             m("claude-opus-5-5", "included in your Claude plan"),
             m(
@@ -529,9 +535,32 @@ mod tests {
     }
 
     #[test]
+    fn signed_in_agents_offer_the_newest_models_and_keep_the_older_ones() {
+        let has = |provider: &str, model: &str| {
+            find(Task::Chat, provider)
+                .unwrap()
+                .models
+                .iter()
+                .any(|m| m.id == model)
+        };
+        for model in [
+            "claude-haiku-5-5",
+            "claude-sonnet-5-5",
+            "claude-opus-5-5",
+            "claude-fable-5-1",
+        ] {
+            assert!(has("claude_code", model), "{model}");
+        }
+        for model in ["gpt-6-luna", "gpt-6-sol", "gpt-6.1-sol", "gpt-6-astra"] {
+            assert!(has("codex", model), "{model}");
+        }
+    }
+
+    #[test]
     fn the_anthropic_models_the_user_asked_for_are_offered() {
         let anthropic = find(Task::Chat, "anthropic").unwrap();
         for model in [
+            "claude-haiku-5-5",
             "claude-sonnet-5-5",
             "claude-opus-5-5",
             "claude-sonnet-5",
