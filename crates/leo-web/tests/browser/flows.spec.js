@@ -729,7 +729,7 @@ test.describe('recording', () => {
     await page.goto('/');
     await page.locator('.fab[data-action="record"]').click();
     await expect(page).toHaveURL(/#\/record$/);
-    await expect(page.locator('.rec-source')).toHaveCount(3);
+    await expect(page.locator('.rec-source')).toHaveCount(4);
     await page.locator('#rec-title').fill('Graphs');
     await page.locator('[data-action="rec-start"]').click();
     await expect(page.locator('#rec-transcript')).toContainText('breadth first search');
@@ -756,12 +756,54 @@ test.describe('recording', () => {
     await expect(page.locator('#rec-pill')).toHaveCount(0);
   });
 
-  test('a page opened over the internet records only its own microphone', async ({ page, context }) => {
+  test('a tab’s sound is shared and recorded, and stopping the share saves it', async ({ page }) => {
+    const made = await (await page.request.post('/api/notes', { data: { title: 'Shared tab lecture', body: 'x' } })).json();
+    const seen = stubRecorder(page, { noteId: made.id, local: false });
+    await page.goto('/#/record');
+    await page.evaluate(() => {
+      navigator.mediaDevices.getDisplayMedia = async () => {
+        const ctx = new AudioContext();
+        const tone = ctx.createOscillator();
+        const out = ctx.createMediaStreamDestination();
+        tone.connect(out);
+        tone.start();
+        const canvas = document.createElement('canvas');
+        const stream = new MediaStream([...out.stream.getAudioTracks(), ...canvas.captureStream().getVideoTracks()]);
+        window.sharedStream = stream;
+        return stream;
+      };
+    });
+    await page.locator('.rec-source', { hasText: 'A tab’s or screen’s sound' }).click();
+    await page.locator('[data-action="rec-start"]').click();
+    await expect.poll(() => seen.audioBytes, { timeout: 8000 }).toBeGreaterThan(16000);
+    expect(seen.started.source).toBe('tab');
+    await page.evaluate(() => window.sharedStream.getAudioTracks()[0].dispatchEvent(new Event('ended')));
+    await expect.poll(() => seen.stopped).toBe(true);
+    await expect(page).toHaveURL(new RegExp(`#/n/${made.id}$`), { timeout: 8000 });
+  });
+
+  test('a share without sound says how to include it and starts nothing', async ({ page }) => {
+    let started = false;
+    await page.route('**/api/record', (route) => {
+      if (route.request().method() === 'POST') started = true;
+      return route.fulfill({ json: { available: true, local: false, job: null } });
+    });
+    await page.goto('/#/record');
+    await page.evaluate(() => {
+      navigator.mediaDevices.getDisplayMedia = async () => new MediaStream(document.createElement('canvas').captureStream().getVideoTracks());
+    });
+    await page.locator('.rec-source', { hasText: 'A tab’s or screen’s sound' }).click();
+    await page.locator('[data-action="rec-start"]').click();
+    await expect(page.locator('.toast.bad')).toContainText('Share tab audio');
+    expect(started).toBe(false);
+  });
+
+  test('a page opened over the internet records its own device, not the computer', async ({ page, context }) => {
     await context.grantPermissions(['microphone']);
     stubRecorder(page, { noteId: 'x', local: false });
     await page.goto('/#/record');
     await expect(page.locator('[data-action="rec-start"]')).toBeVisible();
-    await expect(page.locator('.rec-source')).toHaveCount(0);
+    await expect(page.locator('.rec-source')).toHaveText(['This device’s microphone', 'A tab’s or screen’s sound']);
   });
 
   test('a refused microphone says how to allow it and starts nothing', async ({ page }) => {

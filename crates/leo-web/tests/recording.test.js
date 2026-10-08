@@ -62,3 +62,15 @@ test('the state line says what is happening, with steps while writing', () => {
   assert.equal(L.stateWord({ state: 'writing', step: 'Writing the notes', steps: [1, 3] }), 'Writing the notes 1/3');
   assert.equal(L.stateWord({ state: 'writing', step: 'Transcribing the recording', steps: null }), 'Transcribing the recording');
 });
+
+test('a tab or screen can be shared only where the browser offers it, and refusals say what to do', () => {
+  const full = { isSecureContext: true, mediaDevices: { getUserMedia() {}, getDisplayMedia() {} }, AudioWorkletNode: function () {} };
+  assert.equal(L.canShareSound(full), true);
+  assert.equal(L.canShareSound({ ...full, mediaDevices: { getUserMedia() {} } }), false, 'phones have no getDisplayMedia');
+  assert.equal(L.canShareSound({ ...full, isSecureContext: false }), false);
+  assert.match(L.sharingProblem('no-audio'), /Share tab audio/);
+  assert.match(L.sharingProblem('unsupported'), /Chrome or Edge/);
+  assert.match(L.sharingProblem({ name: 'NotAllowedError' }), /Nothing was shared/);
+  assert.equal(L.fedByBrowser('tab'), true);
+  assert.equal(L.fedByBrowser('screen'), false);
+});

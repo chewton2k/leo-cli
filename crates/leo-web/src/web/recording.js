@@ -59,6 +59,20 @@
     return 'The microphone could not be opened' + (reason && reason.message ? ` (${reason.message})` : '') + '.';
   }
 
+  const fedByBrowser = (source) => source === 'browser' || source === 'tab';
+
+  function canShareSound(env) {
+    return Boolean(env.isSecureContext && env.mediaDevices && typeof env.mediaDevices.getDisplayMedia === 'function' && typeof env.AudioWorkletNode === 'function');
+  }
+
+  function sharingProblem(reason) {
+    const name = typeof reason === 'string' ? reason : reason && reason.name;
+    if (name === 'no-audio') return 'The share had no sound. Share again and turn on “Share tab audio” (or “Share system audio”) in the browser’s window.';
+    if (name === 'unsupported') return 'This browser cannot share a tab’s sound. Use Chrome or Edge on a computer, or record the computer’s sound from the page open on that computer.';
+    if (name === 'NotAllowedError' || name === 'AbortError') return 'Nothing was shared, so nothing is recording.';
+    return 'The tab’s sound could not be shared' + (reason && reason.message ? ` (${reason.message})` : '') + '.';
+  }
+
   function stateWord(view) {
     if (!view) return '';
     if (view.state === 'paused') return 'Paused';
@@ -92,16 +106,42 @@
       follow: true,
     };
 
-    const sourceLabel = { browser: 'This device', microphone: "Computer's microphone", screen: "Computer's sound" };
+    const sourceLabel = { browser: 'This device’s microphone', tab: 'A tab’s or screen’s sound', microphone: 'Computer’s microphone', screen: 'Computer’s sound' };
+    const env = () => ({ isSecureContext: root.isSecureContext, mediaDevices: root.navigator && root.navigator.mediaDevices, AudioWorkletNode: root.AudioWorkletNode });
+    const shown = (message) => Object.assign(new Error(message), { shown: true });
 
-    async function openMic() {
-      const ready = micReady({ isSecureContext: root.isSecureContext, mediaDevices: root.navigator && root.navigator.mediaDevices, AudioWorkletNode: root.AudioWorkletNode });
-      if (ready !== 'ok') throw Object.assign(new Error(micProblem(ready)), { shown: true });
+    async function microphone() {
+      const ready = micReady(env());
+      if (ready !== 'ok') throw shown(micProblem(ready));
       try {
-        s.stream = await root.navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
+        return await root.navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
       } catch (e) {
-        throw Object.assign(new Error(micProblem(e)), { shown: true });
+        throw shown(micProblem(e));
       }
+    }
+
+    async function shareSound() {
+      if (!canShareSound(env())) throw shown(sharingProblem('unsupported'));
+      let stream;
+      try {
+        stream = await root.navigator.mediaDevices.getDisplayMedia({
+          video: true,
+          audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+          systemAudio: 'include',
+          selfBrowserSurface: 'exclude',
+        });
+      } catch (e) {
+        throw shown(sharingProblem(e));
+      }
+      if (!stream.getAudioTracks().length) {
+        stream.getTracks().forEach((t) => t.stop());
+        throw shown(sharingProblem('no-audio'));
+      }
+      return stream;
+    }
+
+    async function openMic(kind = 'browser') {
+      s.stream = kind === 'tab' ? await shareSound() : await microphone();
       s.context = new root.AudioContext();
       await s.context.audioWorklet.addModule('/recorder.js');
       const source = s.context.createMediaStreamSource(s.stream);
@@ -114,9 +154,15 @@
       };
       source.connect(s.node);
       if (s.context.state === 'suspended') await s.context.resume();
-      s.stream.getAudioTracks().forEach((track) => {
+      s.stream.getTracks().forEach((track) => {
         track.onended = () => {
-          if (live(s.view)) note('The microphone was disconnected. What was recorded is kept; stop to save it.');
+          if (!live(s.view) || !s.mine) return;
+          if (kind === 'tab') {
+            note('Sharing stopped, so the recording stopped and is being saved.');
+            stop().catch(() => {});
+          } else if (track.kind === 'audio') {
+            note('The microphone was disconnected. What was recorded is kept; stop to save it.');
+          }
         };
       });
     }
@@ -228,7 +274,7 @@
     }
 
     async function start(source, directory, title) {
-      if (source === 'browser') await openMic();
+      if (fedByBrowser(source)) await openMic(source);
       let made;
       try {
         made = await api('/api/record', { method: 'POST', body: { source, directory, title } });
@@ -239,15 +285,15 @@
       s.view = { id: made.id, source, state: 'starting', secs: 0, step: 'Starting', steps: null, transcript: '', warnings: [], points: [], note: null, error: null };
       s.lost = 0;
       s.follow = true;
-      if (source === 'browser') attach();
+      if (fedByBrowser(source)) attach();
       draw();
       pill();
       schedule();
     }
 
     async function rejoin() {
-      if (!s.view || s.view.source !== 'browser') return;
-      await openMic();
+      if (!s.view || !fedByBrowser(s.view.source)) return;
+      await openMic(s.view.source);
       attach();
       draw();
     }
@@ -287,7 +333,7 @@
     }
 
     function sourceChoices(local) {
-      const sources = local ? ['browser', 'microphone', 'screen'] : ['browser'];
+      const sources = ['browser', ...(canShareSound(env()) ? ['tab'] : []), ...(local ? ['microphone', 'screen'] : [])];
       if (sources.length === 1) return '';
       return `<div class="rec-sources" role="radiogroup" aria-label="What to record">${sources
         .map((id, i) => `<label class="rec-source"><input type="radio" name="rec-source" value="${id}"${i === 0 ? ' checked' : ''}><span>${esc(sourceLabel[id])}</span></label>`)
@@ -306,14 +352,14 @@
         <label class="field">${icons.note}<input id="rec-title" placeholder="Title (optional; the AI names it otherwise)" autocomplete="off"></label>
         ${insecure}
         <button class="rec-go" data-action="rec-start" ${ov.available === false ? 'disabled' : ''}><span class="rec-dot"></span><span>Start recording</span></button>
-        <p class="hint rec-tip">On a phone, keep this page open while it records; the screen stays on. Points you jot while recording are woven into the notes.</p>
+        <p class="hint rec-tip">On a phone, keep this page open while it records; the screen stays on. Points you jot while recording are woven into the notes.${canShareSound(env()) ? ' For a lecture video or call in another tab, choose “A tab’s or screen’s sound” and turn on “Share tab audio”.' : ''}</p>
       </div>`;
     }
 
     function drawLive() {
       const v = s.view;
       const paused = v.state === 'paused';
-      const orphan = v.source === 'browser' && !s.mine && live(v);
+      const orphan = fedByBrowser(v.source) && !s.mine && live(v);
       const transcript = v.transcript ? esc(v.transcript) : `<span class="hint">${paused ? 'Paused.' : 'Listening… words appear here after a few seconds.'}</span>`;
       const points = v.points.length ? `<ul class="rec-points">${v.points.map(([at, text]) => `<li><span class="hint">${clock(at)}</span> ${esc(text)}</li>`).join('')}</ul>` : '';
       const warnings = v.warnings.map((w) => `<p class="rec-warn">${esc(w)}</p>`).join('') + (s.lost ? `<p class="rec-warn">${clock(s.lost / RATE)} of audio could not reach leo and was dropped.</p>` : '');
@@ -481,5 +527,5 @@
     };
   }
 
-  root.leoRecording = { create, clock, join, bytesOf, trimHeld, micReady, micProblem, stateWord };
+  root.leoRecording = { create, clock, join, bytesOf, trimHeld, micReady, micProblem, stateWord, canShareSound, sharingProblem, fedByBrowser };
 })(typeof window !== 'undefined' ? window : globalThis);

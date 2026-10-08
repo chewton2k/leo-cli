@@ -24,8 +24,23 @@ pub const AUDIO_BYTES: usize = 4 * 1024 * 1024;
 #[serde(rename_all = "lowercase")]
 pub enum Source {
     Browser,
+    Tab,
     Microphone,
     Screen,
+}
+
+impl Source {
+    pub fn fed_by_browser(self) -> bool {
+        matches!(self, Source::Browser | Source::Tab)
+    }
+
+    pub fn on_this_computer(self) -> bool {
+        matches!(self, Source::Microphone | Source::Screen)
+    }
+
+    pub fn is_sound(self) -> bool {
+        matches!(self, Source::Tab | Source::Screen)
+    }
 }
 
 pub struct Listening {
@@ -180,7 +195,7 @@ pub(crate) async fn start(
             "leo serve was started without recording.",
         );
     };
-    if body.source != Source::Browser && !local_request(&headers) {
+    if body.source.on_this_computer() && !local_request(&headers) {
         return error(
             StatusCode::FORBIDDEN,
             "The computer's own microphone and sound can only be recorded from a page open on that computer.",
@@ -202,12 +217,11 @@ pub(crate) async fn start(
     let stop = Arc::new(AtomicBool::new(false));
     let pause = Arc::new(AtomicBool::new(false));
     let points: Arc<Mutex<Vec<(u64, String)>>> = Default::default();
-    let (sender, audio) = match body.source {
-        Source::Browser => {
-            let (tx, rx) = std::sync::mpsc::channel();
-            (Some(tx), Some(rx))
-        }
-        _ => (None, None),
+    let (sender, audio) = if body.source.fed_by_browser() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        (Some(tx), Some(rx))
+    } else {
+        (None, None)
     };
     {
         let Ok(mut held) = state.recording.lock() else {
@@ -242,7 +256,7 @@ pub(crate) async fn start(
     }
     let listening = Listening {
         audio,
-        screen: body.source == Source::Screen,
+        screen: body.source.is_sound(),
         directory: directory.clone(),
         title: title.clone(),
         stop,

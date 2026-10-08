@@ -2565,6 +2565,31 @@ mod tests {
     }
 
     #[test]
+    fn a_tabs_sound_is_recorded_from_any_browser_as_screen_audio() {
+        let (mut state, _d, _ids) = state_with(&[]);
+        let seen: Arc<Mutex<Option<(bool, bool)>>> = Default::default();
+        let saw = Arc::clone(&seen);
+        state.listener = Some(Arc::new(
+            move |listening: record::Listening, _: &mut dyn FnMut(record::Heard)| {
+                *saw.lock().unwrap() = Some((listening.screen, listening.audio.is_some()));
+                Ok(("Lecture video".to_string(), "notes".to_string()))
+            },
+        ));
+        let started = start_recording(&state, record::Source::Tab, "my-laptop.trycloudflare.com");
+        assert_eq!(started.status(), StatusCode::ACCEPTED);
+        let view = recording_until(&state, |s| s == "done" || s == "failed");
+        assert_eq!(view.state, "done", "{view:?}");
+        assert_eq!(
+            *seen.lock().unwrap(),
+            Some((true, true)),
+            "screen audio, sent by the browser"
+        );
+        assert!(record::Source::Tab.fed_by_browser());
+        assert!(!record::Source::Tab.on_this_computer());
+        assert!(!record::Source::Browser.is_sound());
+    }
+
+    #[test]
     fn recording_is_refused_without_a_recorder_or_into_a_folder_outside_the_notes() {
         let (mut state, _d, _ids) = state_with(&[]);
         let none = start_recording(&state, record::Source::Browser, "localhost");

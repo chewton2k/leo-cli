@@ -597,7 +597,11 @@ open on. The words appear as it listens; **Pause** stops listening, a point you
 jot is woven into the notes, and **Stop and save** writes the note with the
 same speech and writing AI as `:record`, into the folder you picked. On the
 computer that runs `leo serve`, you can also record its own microphone or its
-sound (like `:record screen`). A browser only lends its microphone to a secure
+sound (like `:record screen`). From any computer's browser (Chrome or Edge),
+**A tab's or screen's sound** records what a tab or the screen plays, such as a
+lecture video or a call: pick the tab and turn on "Share tab audio"; stopping
+the share stops the recording and saves it. Phones cannot share their sound.
+A browser only lends its microphone to a secure
 page, so use the link `leo serve` prints (not `--local`) or the page it opens on
 the computer. On a phone, keep the page open while it records; the screen
 stays on. A pill at the top shows the time while you browse other notes.
