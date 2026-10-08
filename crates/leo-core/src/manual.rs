@@ -14,7 +14,7 @@ use anyhow::Result;
 use crate::store::Store;
 
 /// Bump when the manual's content changes enough to be worth re-offering.
-const MANUAL_VERSION: u32 = 16;
+const MANUAL_VERSION: u32 = 17;
 const MARKER: &str = ".manual-installed";
 pub const MANUAL_TITLE: &str = "leo manual";
 
@@ -142,7 +142,7 @@ note in your own editor instead.
 
 ## Finding and organising
 
-Type at `/` to search every note, bodies and `#tags` included; `Esc` clears it.
+Type at `/` to search every note, bodies included; `Esc` clears it.
 
 ```
 :new cs130/Lecture 4 #exam   a note in cs130, tagged exam

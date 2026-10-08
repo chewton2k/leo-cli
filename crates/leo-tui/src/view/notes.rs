@@ -15,7 +15,6 @@ pub struct NoteRow {
     pub number: usize,
     pub id: String,
     pub title: String,
-    pub tags: Vec<String>,
     /// The note's directory, when it is not the one being shown — a search
     /// lists notes from everywhere, and a title alone would hide where they are.
     pub elsewhere: Option<String>,
@@ -37,7 +36,6 @@ pub fn rows(notes: &[&Note], current_dir: &str) -> Vec<NoteRow> {
             number: i + 1,
             id: n.id.clone(),
             title: n.title.clone(),
-            tags: n.tags.clone(),
             elsewhere: (n.directory != current_dir).then(|| n.directory.clone()),
             marked: false,
             pinned: n.pinned,
@@ -76,12 +74,6 @@ fn item(row: &NoteRow, width: usize) -> ListItem<'static> {
         ));
     }
     spans.push(Span::raw(row.title.clone()));
-    if !row.tags.is_empty() {
-        spans.push(Span::styled(
-            format!("  [{}]", row.tags.join(", ")),
-            Style::default().add_modifier(Modifier::DIM),
-        ));
-    }
     if let Some(snippet) = &row.snippet {
         spans.push(Span::styled(
             format!("  … {snippet}"),
@@ -329,11 +321,10 @@ mod tests {
         let r = rows(&[&a, &b], "");
         assert_eq!(r[0].number, 1);
         assert_eq!(r[1].number, 2);
-        assert_eq!(r[1].tags, vec!["rust"]);
     }
 
     #[test]
-    fn renders_numbers_titles_and_tags() {
+    fn renders_numbers_and_titles_but_not_tags() {
         let a = note("Rust ownership", &["rust", "learning"]);
         let r = rows(&[&a], "");
         let mut terminal = Terminal::new(TestBackend::new(50, 5)).unwrap();
@@ -353,7 +344,7 @@ mod tests {
 
         let out = terminal.backend().to_string();
         assert!(out.contains("Rust ownership"), "{out}");
-        assert!(out.contains("rust, learning"), "{out}");
+        assert!(!out.contains("rust, learning"), "{out}");
         assert!(out.contains("1"), "{out}");
         assert!(out.contains("notes (1)"), "{out}");
     }

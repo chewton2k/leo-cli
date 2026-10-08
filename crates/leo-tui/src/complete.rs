@@ -3,7 +3,7 @@
 //! What can be completed depends on the verb and on the token's position
 //! *relative to the end of the line*, not just its index: `mv 1 2 cs130` puts
 //! the directory last and lets the note references occupy everything before it. Candidates are always leo's own data — verbs,
-//! directories, note titles, tags — so no filesystem completion is needed.
+//! directories, note titles — so no filesystem completion is needed.
 //!
 //! The engine is a pure function of (line, cursor, sources), which makes the
 //! whole position table table-testable.
@@ -31,8 +31,6 @@ pub struct Sources {
     pub dirs: Vec<String>,
     /// Notes in the current numbering.
     pub notes: Vec<NoteChoice>,
-    /// Tag names, without the `#`.
-    pub tags: Vec<String>,
 }
 
 /// One completion result.
@@ -93,7 +91,6 @@ enum Source {
     Verbs,
     Dirs,
     Notes,
-    Tags,
     Words(&'static [&'static str]),
     /// A directory, or a note: `mv` takes either in most slots.
     DirsThenNotes,
@@ -110,16 +107,11 @@ fn source_for(line: &str, cursor: usize) -> (Source, usize, usize) {
         .enumerate()
         .find(|(_, (s, e, _))| cursor >= *s && cursor <= *e);
 
-    let (index, (start, end, text)) = match current {
+    let (index, (start, end, _)) = match current {
         Some((i, span)) => (i, span.clone()),
         // The cursor is in whitespace: a brand new token at the cursor.
         None => (all.len(), (cursor, cursor, String::new())),
     };
-
-    // A `#tag` anywhere means tags, whatever the verb is.
-    if text.starts_with('#') {
-        return (Source::Tags, start + 1, end);
-    }
 
     if index == 0 {
         return (Source::Verbs, start, end);
@@ -181,7 +173,6 @@ fn candidates(source: &Source, sources: &Sources) -> Vec<String> {
             // and strip the title when it is accepted.
             .map(|n| format!("{} {}", n.number, n.title))
             .collect(),
-        Source::Tags => sources.tags.clone(),
         Source::Words(words) => words.iter().map(|s| s.to_string()).collect(),
         Source::DirsThenNotes => {
             let mut out = candidates(&Source::Dirs, sources);
@@ -233,20 +224,15 @@ pub fn complete(line: &str, cursor: usize, sources: &Sources) -> Completion {
 
 pub fn search(line: &str, cursor: usize, sources: &Sources) -> Completion {
     let before: String = line.chars().take(cursor).collect();
-    let token = before.split_whitespace().last().unwrap_or("");
-    let (start, typed, pool) = if let Some(tag) = token.strip_prefix('#') {
-        (
-            cursor - token.chars().count() + 1,
-            tag.to_string(),
-            sources.tags.clone(),
-        )
-    } else {
-        (
-            0,
-            before,
-            sources.notes.iter().map(|n| n.title.clone()).collect(),
-        )
-    };
+    let (start, typed, pool) = (
+        0,
+        before,
+        sources
+            .notes
+            .iter()
+            .map(|n| n.title.clone())
+            .collect::<Vec<_>>(),
+    );
     Completion {
         start,
         end: cursor,
@@ -305,11 +291,6 @@ mod tests {
                     number: 3,
                     title: "Midterm plan".to_string(),
                 },
-            ],
-            tags: vec![
-                "rust".to_string(),
-                "reminder".to_string(),
-                "learning".to_string(),
             ],
         }
     }
@@ -410,23 +391,6 @@ mod tests {
         // A note can still be named first.
         let named = matches("mv own");
         assert_eq!(named.first().map(String::as_str), Some("1 Rust ownership"));
-    }
-
-    // ── tags ────────────────────────────────────────────────────────────────
-
-    #[test]
-    fn a_hash_completes_tags_anywhere_in_the_line() {
-        let m = matches("new Lecture #ru");
-        assert_eq!(m.first().map(String::as_str), Some("rust"));
-        assert!(!matches("mv #remin").is_empty());
-    }
-
-    #[test]
-    fn accepting_a_tag_keeps_the_hash() {
-        let line = "new Lecture #ru";
-        let c = at_end(line);
-        let (new_line, _) = apply(line, &c, c.best().unwrap());
-        assert_eq!(new_line, "new Lecture #rust");
     }
 
     // ── flags and subcommands ───────────────────────────────────────────────

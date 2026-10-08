@@ -71,13 +71,6 @@ impl Hint {
     pub fn no_selection() -> Self {
         Self::new("No note selected", "j and k to move")
     }
-
-    pub fn no_tags() -> Self {
-        Self::new(
-            "No tags yet",
-            "#tag when you make a note, or tags: in the editor",
-        )
-    }
 }
 
 /// Draw a hint centred in `area`, which is expected to be inside a pane's
@@ -153,7 +146,6 @@ mod tests {
             Hint::no_matches("xyz"),
             Hint::no_directories(),
             Hint::no_selection(),
-            Hint::no_tags(),
         ];
         for hint in hints {
             assert!(!hint.reason.trim().is_empty(), "{hint:?}");

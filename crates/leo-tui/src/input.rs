@@ -495,7 +495,6 @@ impl App {
                     })
                 })
                 .collect(),
-            tags: self.store.tags().into_iter().map(|(t, _)| t).collect(),
         }
     }
 

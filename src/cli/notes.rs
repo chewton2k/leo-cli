@@ -26,15 +26,13 @@ pub fn run(cmd: Commands) -> Result<()> {
     if let Commands::New {
         title,
         body: Some(body),
-        tags,
     } = cmd
     {
-        let (dir, title, mut named) = action::split_new(&store, &title, "");
-        named.extend(tags);
+        let (dir, title) = action::split_new(&store, &title, "");
         if !store.dir_exists(&dir) {
             store.create_dir(&dir);
         }
-        let note = store.create_note(title, body, named, &dir)?;
+        let note = store.create_note(title, body, vec![], &dir)?;
         let short = note.id[..8].to_string();
         store.save()?;
         println!("Created note {short}");
@@ -64,7 +62,7 @@ pub fn run(cmd: Commands) -> Result<()> {
 
     let action = match cmd {
         Commands::New { title, .. } => action::Action::New { title: Some(title) },
-        Commands::List { tag, limit, .. } => action::Action::List { tag, limit },
+        Commands::List { limit, .. } => action::Action::List { tag: None, limit },
         Commands::View { id } => action::Action::View { note: id },
         Commands::Edit { id } => action::Action::Edit { note: id },
         Commands::Delete { id, .. } => action::Action::Delete { note: id },

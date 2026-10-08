@@ -14,22 +14,6 @@ pub struct DirRow {
     pub target: String,
 }
 
-/// Build the rows for a tag listing: every tag with how many notes carry it.
-///
-/// Sorted by count, because "which tags do I actually use" is the question this
-/// pane answers, and alphabetical order buries it.
-pub fn tag_rows(tags: &[(String, usize)]) -> Vec<DirRow> {
-    let mut sorted = tags.to_vec();
-    sorted.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-    sorted
-        .into_iter()
-        .map(|(tag, count)| DirRow {
-            label: format!("#{tag}  {count}"),
-            target: tag,
-        })
-        .collect()
-}
-
 /// Build the rows for a directory listing: an "up" entry when not at the root,
 /// then each child.
 pub fn rows(current_dir: &str, children: &[String]) -> Vec<DirRow> {
@@ -87,27 +71,6 @@ pub fn render(
 
 #[cfg(test)]
 mod tests {
-    /// Tags are listed by how much they are used, since "which tags do I
-    /// actually use" is what this pane is for.
-    #[test]
-    fn tags_are_listed_by_count_then_alphabetically() {
-        let tags = vec![
-            ("rust".to_string(), 2),
-            ("cs130".to_string(), 5),
-            ("apple".to_string(), 2),
-        ];
-        let rows = super::tag_rows(&tags);
-        let labels: Vec<&str> = rows.iter().map(|r| r.label.as_str()).collect();
-        assert_eq!(labels, vec!["#cs130  5", "#apple  2", "#rust  2"]);
-        // The target is the bare tag, which is what the filter needs.
-        assert_eq!(rows[0].target, "cs130");
-    }
-
-    #[test]
-    fn no_tags_is_an_empty_listing_rather_than_a_panic() {
-        assert!(super::tag_rows(&[]).is_empty());
-    }
-
     use super::*;
     use ratatui::{backend::TestBackend, Terminal};
 

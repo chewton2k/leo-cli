@@ -188,7 +188,7 @@ impl App {
 
     pub(super) fn create_and_edit(&mut self, title: Option<String>) -> Result<()> {
         let typed = title.unwrap_or_default();
-        let (dir, title, tags) = action::split_new(&self.store, &typed, &self.nav.current_dir);
+        let (dir, title) = action::split_new(&self.store, &typed, &self.nav.current_dir);
         let title = if title.trim().is_empty() {
             "Untitled".to_string()
         } else {
@@ -199,7 +199,7 @@ impl App {
         }
         let id = self
             .store
-            .create_note(title, String::new(), tags, &dir)?
+            .create_note(title, String::new(), vec![], &dir)?
             .id
             .clone();
         self.store.save()?;

@@ -749,6 +749,17 @@ impl Store {
         Some(title)
     }
 
+    pub fn delete_from_trash(&self, ids: &[String]) -> Result<usize> {
+        let mut gone = 0;
+        for (path, note, _) in trash_entries(&self.notes_dir) {
+            if ids.contains(&note.id) {
+                fs::remove_file(path)?;
+                gone += 1;
+            }
+        }
+        Ok(gone)
+    }
+
     pub fn empty_trash(&self) -> Result<usize> {
         let entries = trash_entries(&self.notes_dir);
         for (path, ..) in &entries {
@@ -2209,6 +2220,25 @@ mod tests {
         assert_eq!(store.empty_trash().unwrap(), 1);
         assert!(store.trashed().is_empty());
         assert!(trash_files(&store).is_empty());
+    }
+
+    #[test]
+    fn chosen_notes_leave_the_trash_for_good_and_the_rest_stay() {
+        let (mut store, _tmp) = temp_store();
+        let ids: Vec<String> = ["A", "B", "C"]
+            .iter()
+            .map(|t| store.create_note(*t, "x", vec![], "").unwrap().id.clone())
+            .collect();
+        store.save().unwrap();
+        for id in &ids {
+            store.delete_note(id);
+        }
+        store.save().unwrap();
+        let chosen = vec![ids[0].clone(), ids[2].clone(), "not-in-trash".to_string()];
+        assert_eq!(store.delete_from_trash(&chosen).unwrap(), 2);
+        let left: Vec<String> = store.trashed().into_iter().map(|t| t.title).collect();
+        assert_eq!(left, ["B"]);
+        assert_eq!(trash_files(&store).len(), 1);
     }
 
     #[test]

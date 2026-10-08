@@ -187,21 +187,13 @@ fn bare_leo_without_a_terminal_says_so_and_fails() {
 #[test]
 fn a_note_made_from_the_shell_is_listed_found_and_on_disk() {
     let leo = Leo::new();
-    leo.ok(&[
-        "new",
-        "Rust ownership",
-        "--body",
-        "borrow checker rules",
-        "--tags",
-        "rust,lang",
-    ]);
+    leo.ok(&["new", "Rust ownership", "--body", "borrow checker rules"]);
 
     let list = leo.ok(&["list"]);
     assert!(list.contains("Rust ownership"), "{list}");
 
-    // Search reaches bodies without a flag, and #tags.
+    // Search reaches bodies without a flag.
     assert!(leo.ok(&["search", "checker"]).contains("Rust ownership"));
-    assert!(leo.ok(&["search", "#rust"]).contains("Rust ownership"));
     assert!(!leo
         .ok(&["search", "nothing-like-this"])
         .contains("Rust ownership"));
@@ -248,16 +240,15 @@ fn list_shows_one_directory_when_named() {
 }
 
 #[test]
-fn new_puts_a_note_in_a_directory_with_tags() {
+fn new_puts_a_note_in_a_directory() {
     let leo = Leo::new();
-    leo.ok(&["new", "cs130/ Lecture 4 #exam", "--body", "graphs"]);
+    leo.ok(&["new", "cs130/ Lecture 4", "--body", "graphs"]);
     let path = leo.notes_dir().join("cs130");
     assert!(path.is_dir(), "no cs130 directory on disk");
     let mut here = Vec::new();
     collect_md(&path, &mut here);
     assert_eq!(here.len(), 1, "{here:?}");
     assert!(here[0].contains("title: Lecture 4"), "{}", here[0]);
-    assert!(here[0].contains("exam"), "{}", here[0]);
 }
 
 #[test]

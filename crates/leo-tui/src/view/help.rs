@@ -80,7 +80,7 @@ pub const SECTIONS: &[Section] = &[
     Section {
         title: "Finding things",
         entries: &[
-            e("/", "type words to search every note: titles, text, tags"),
+            e("/", "type words to search every note: titles and text"),
             e("  #word", "only notes with that tag"),
             e("  Enter", "keep the results, and return to the list"),
             e("  Esc", "clear it, staying on the note you picked"),
@@ -132,7 +132,7 @@ pub const SECTIONS: &[Section] = &[
             e(",", "Settings"),
             e(":tutorial", "replay the short interactive introduction; Ctrl-G skips"),
             e("o", "open the notes supplied for an AI answer"),
-            e("Tab", "complete commands and arguments; search completes titles or tags"),
+            e("Tab", "complete commands and arguments; search completes titles"),
             e("Up / Down", "previous lines"),
             e("Ctrl-W / Ctrl-U", "delete a word / the line"),
             e("[note]", "leave it out to mean the selected note"),

@@ -36,17 +36,12 @@ enum RecordWhat {
 enum Commands {
     /// Create a new note
     New {
-        /// Title, optionally led by an existing `dir/` and followed by #tags,
-        /// e.g. "cs130/Lecture 4 #exam"
+        /// Title, optionally led by an existing `dir/`, e.g. "cs130/Lecture 4"
         title: String,
 
         /// Body text
         #[arg(short, long, allow_hyphen_values = true)]
         body: Option<String>,
-
-        /// Tags, comma-separated (e.g. rust,cli)
-        #[arg(short, long, value_delimiter = ',')]
-        tags: Vec<String>,
     },
 
     /// List notes and directories, newest first: the top level, or DIR
@@ -54,10 +49,6 @@ enum Commands {
     List {
         /// A directory to list instead of the top level, e.g. cs130
         dir: Option<String>,
-
-        /// Filter by tag
-        #[arg(short, long)]
-        tag: Option<String>,
 
         /// Maximum number of notes to show
         #[arg(short, long, default_value_t = 20)]
@@ -88,9 +79,9 @@ enum Commands {
         force: bool,
     },
 
-    /// Search every note: titles, bodies, and #tags
+    /// Search every note: titles and bodies
     Search {
-        /// Search query; every word must match, and #word means a tag
+        /// Search query; every word must match
         query: String,
 
         /// Accepted for old scripts. Bodies are always searched now.
@@ -240,8 +231,8 @@ enum BackupCommands {
 const EXAMPLES: &[(&str, &str)] = &[
     ("leo", "open the app"),
     (
-        "leo new \"Lecture 4 #exam\"",
-        "a note tagged exam; \"cs130/ Lecture 4\" puts it in cs130",
+        "leo new \"cs130/ Lecture 4\"",
+        "a note in folder cs130, opened in your editor",
     ),
     ("leo search graphs", "every note that mentions it"),
     ("leo record", "record, then turn what was said into a note"),
@@ -262,7 +253,6 @@ const MORE_EXAMPLES: &[(&str, &str)] = &[
         "leo list",
         "notes at the top level; add a folder: leo list cs130",
     ),
-    ("leo list --tag exam", "only notes tagged exam"),
     (
         "leo view 2",
         "a note, by its number in leo list, its title or ID",

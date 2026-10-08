@@ -16,12 +16,7 @@ use super::*;
 /// panes there, and `d` deleted a note here while dropping a provider from a
 /// chain on the settings screen.
 pub const VERBS: &[Verb] = &[
-    v(
-        "new",
-        &[],
-        "new [dir/][title] [#tag...]",
-        "a note, opening $EDITOR",
-    ),
+    v("new", &[], "new [dir/][title]", "a note, opening $EDITOR"),
     v("edit", &["e"], "edit [note]", "open a note in $EDITOR"),
     v(
         "delete",
@@ -161,7 +156,11 @@ pub const RETIRED: &[(&str, &str, &str)] = &[
     ("check", "the x key", TICKED),
     ("x", "the x key", TICKED),
     ("uncheck", "the x key", TICKED),
-    ("tags", "/", "type #tag at / to see the notes with that tag"),
+    (
+        "tags",
+        "/",
+        "tags are gone: folders, search at / and the map of ideas on leo serve find notes",
+    ),
     (
         "rmdir",
         "D in the directories pane",
@@ -195,7 +194,7 @@ pub(super) const GONE_REMIND: &str = "reminders were removed; a checklist note d
 pub(super) const GONE_EXPORT: &str = "export was removed; every note is already a Markdown file";
 pub(super) const TICKED: &str = "x ticks the first open box; in the preview, j/k pick one first";
 pub(super) const ONE_SEARCH: &str =
-    "one search now: type at / to look in every note, bodies and tags included";
+    "one search now: type at / to look in every note, bodies included";
 
 /// Every word that can start a command, canonical names and aliases alike.
 pub fn all_verb_words() -> Vec<&'static str> {

@@ -596,10 +596,15 @@
       else if (what === 'resume') resume(el.dataset.id);
       else if (what === 'forget') forget(el.dataset.id);
       else if (what === 'mode') {
+        if (el.dataset.mode === state.mode) return;
+        const refs = state.refs;
+        if (state.messages.length) begin();
         state.mode = el.dataset.mode;
+        state.refs = refs;
         drawModes();
-        if (!state.messages.length) draw();
-        remember();
+        drawRefs();
+        draw();
+        persist();
       } else if (what === 'starter') send(el.textContent);
       else if (what === 'attach') {
         if (state.pick && state.pick.from === 'button') closePick();

@@ -386,11 +386,12 @@ fn router(state: AppState) -> Router {
         .route("/api/notes/{id}/toggle", post(toggle_checkbox))
         .route("/api/notes/{id}/move", post(move_note))
         .route("/api/search", get(search_notes))
-        .route("/api/tags", get(list_tags))
         .route("/api/dirs", get(list_dirs).post(create_dir))
         .route("/api/folders", get(list_folders))
         .route("/api/trash", get(list_trash))
         .route("/api/trash/{id}/restore", post(restore_note))
+        .route("/api/trash/delete", post(delete_from_trash))
+        .route("/api/trash/restore", post(restore_many))
         .route("/app.js", get(app_js))
         .route("/markdown.js", get(markdown_js))
         .route("/editing.js", get(editing_js))
@@ -1287,12 +1288,6 @@ impl NoteResponse {
     }
 }
 
-#[derive(serde::Serialize)]
-struct TagResponse {
-    tag: String,
-    count: usize,
-}
-
 // ── Handlers ──────────────────────────────────────────────────────────────
 
 fn save(store: &Store) -> Result<(), StatusCode> {
@@ -1470,20 +1465,6 @@ async fn search_notes(
         .await
 }
 
-async fn list_tags(State(state): State<AppState>) -> Result<Json<Vec<TagResponse>>, StatusCode> {
-    state
-        .with_store(|store| {
-            Ok(Json(
-                store
-                    .tags()
-                    .into_iter()
-                    .map(|(tag, count)| TagResponse { tag, count })
-                    .collect(),
-            ))
-        })
-        .await
-}
-
 #[derive(serde::Serialize)]
 struct DirResponse {
     name: String,
@@ -1574,6 +1555,48 @@ async fn restore_note(
             Ok(Json(NoteResponse::from_note(
                 store.find_note(&id).ok_or(StatusCode::NOT_FOUND)?,
             )))
+        })
+        .await
+}
+
+#[derive(Deserialize)]
+struct TrashChoice {
+    #[serde(default)]
+    ids: Vec<String>,
+    #[serde(default)]
+    all: bool,
+}
+
+async fn delete_from_trash(
+    State(state): State<AppState>,
+    Json(choice): Json<TrashChoice>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    state
+        .with_store(move |store| {
+            let gone = if choice.all {
+                store.empty_trash()
+            } else {
+                store.delete_from_trash(&choice.ids)
+            }
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            Ok(Json(serde_json::json!({ "deleted": gone })))
+        })
+        .await
+}
+
+async fn restore_many(
+    State(state): State<AppState>,
+    Json(choice): Json<TrashChoice>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    state
+        .with_store(move |store| {
+            let restored = choice
+                .ids
+                .iter()
+                .filter(|id| store.restore(id).is_some())
+                .count();
+            save(store)?;
+            Ok(Json(serde_json::json!({ "restored": restored })))
         })
         .await
 }

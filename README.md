@@ -178,8 +178,8 @@ Five keys are all you need:
 
 Try this:
 
-1. **Write a note.** Press `n`, type `Lecture 1 #exam`, press `Enter`. The note
-   opens for writing, tagged `exam`. Type as you would anywhere else:
+1. **Write a note.** Press `n`, type `Lecture 1`, press `Enter`. The note
+   opens for writing. Type as you would anywhere else:
 
    ```markdown
    ## Graphs
@@ -194,7 +194,7 @@ Try this:
 2. **Tick a checkbox.** Click the box, or press `x` in the list to tick the
    note's first open box.
 3. **Find something.** Press `/` and type. The search covers every note in every
-   folder: titles, the text inside notes, and `#tags`. Each result shows the
+   folder: titles and the text inside notes. Each result shows the
    line that matched. Press `Enter` to keep the results, or `Esc` to clear the
    search and jump to the note you picked.
 4. **Make a folder.** Press `N`, type `cs130`, press `Enter`. `h` moves to the
@@ -224,7 +224,7 @@ create a note, write a sentence, and find it. `Esc` skips the introduction;
 `:tutorial` replays it any time.
 
 ```
-:new cs130/Lecture 4 #exam     a note in folder cs130 (if it exists), tagged exam
+:new cs130/Lecture 4           a note in folder cs130 (if it exists)
 :rename Graph traversals       retitle the selected note
 :mv cs162                      move the selected (or marked) notes
 :mkdir cs130                   a folder here
@@ -571,8 +571,8 @@ there you can:
   tables, quotes and links;
 - edit in place, the way Obsidian does: tap any line and type. The line shows
   its Markdown while you edit it and goes back to formatted when you move on.
-  Enter continues a list or checklist, and the title and tags are edited in
-  place too. There is no Edit or Save button, because changes save themselves
+  Enter continues a list or checklist, and the title is edited in place
+  too. There is no Edit or Save button, because changes save themselves
   a moment after you stop typing;
 - tick checkboxes with a tap;
 - pin a note with the pin beside its title in the list. The pin is hollow when
@@ -581,7 +581,8 @@ there you can:
 - move and delete notes (deleted notes go to the trash, and Undo is right
   there), and save a note as a PDF with **PDF**, which opens your phone's print
   sheet;
-- restore notes from the trash, and browse by tag;
+- restore notes from the trash, or delete them for good: one at a time,
+  several with **Select**, or all with **Empty trash**;
 - see a **map of ideas**: how your notes connect, across subjects;
 - study with **Felix**, the chat button at the top;
 - change settings under **More → Settings**: the AI for writing and speech,
@@ -628,6 +629,9 @@ with different instructions:
 - **Study**: quizzes you one question at a time, marks each answer, gives a
   hint before the answer, keeps score, and plans spaced review. Felix dances
   when you get one right.
+
+Switching between Chat and Study starts a new conversation (the notes you
+added come along); the old one stays in the list.
 
 When your notes don't cover something, he says so and labels anything from
 general knowledge as "Beyond your notes". He uses the AI you chose for writing,
@@ -750,8 +754,8 @@ quick captures. `leo --help` lists them with examples, `leo help --all` lists
 every command, and `leo <command> --help` shows a command's options.
 
 ```sh
-leo new "Quick thought" --body "Refactor auth" --tags todo
-leo new "cs130/Lecture 4 #exam"     # opens your editor
+leo new "Quick thought" --body "Refactor auth"
+leo new "cs130/Lecture 4"           # opens your editor
 leo search "refactor"               # shows the line that matched
 leo record --title "Meeting notes"  # records until you press Enter
 leo ask "what did we cover about graphs?"
@@ -763,7 +767,6 @@ leo doctor                          # check everything, store an API key; exits 
 And the rest, from `leo help --all`:
 
 ```sh
-leo list --tag todo
 leo list cs130                      # one folder
 leo view "Rust ownership"
 leo edit 3f2a

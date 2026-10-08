@@ -298,7 +298,6 @@ fn completion_sources_come_from_the_current_directory_and_store() {
     let (app, _d) = temp_app();
     let s = app.sources();
     assert!(s.dirs.contains(&"cs130".to_string()));
-    assert!(s.tags.contains(&"rust".to_string()));
     // Only notes in the current listing are numbered.
     assert_eq!(s.notes.len(), 2);
     assert!(s.notes.iter().any(|n| n.title == "Rust ownership"));
@@ -431,7 +430,7 @@ fn n_asks_for_a_title_and_opens_the_new_note_for_writing() {
     app.on_key(press('n'), &mut terminal).unwrap();
     assert_eq!(app.mode, Mode::Command);
     assert_eq!(app.cmd.text(), "new ");
-    type_in(&mut app, &mut terminal, "Shopping #home");
+    type_in(&mut app, &mut terminal, "Shopping");
     app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
         .unwrap();
     assert_eq!(app.store.notes.len(), before + 1);
@@ -442,7 +441,7 @@ fn n_asks_for_a_title_and_opens_the_new_note_for_writing() {
         .expect("writing in the new note");
     let note = app.store.find_note(&ed.id).unwrap();
     assert_eq!(note.title, "Shopping");
-    assert_eq!(note.tags, vec!["home"]);
+    assert!(note.tags.is_empty());
     assert_eq!(app.nav.focus, Pane::Preview);
 }
 

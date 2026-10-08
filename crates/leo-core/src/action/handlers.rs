@@ -132,10 +132,10 @@ pub fn apply(action: Action, store: &mut Store, ctx: Ctx<'_>, ai: &dyn Ai) -> Re
 
 /// `new` — ask the shell to open an editor on a frontmatter template.
 pub(super) fn new_note(store: &Store, line: Option<String>, current_dir: &str) -> Outcome {
-    let (dir, title, tags) = split_new(store, line.as_deref().unwrap_or(""), current_dir);
+    let (dir, title) = split_new(store, line.as_deref().unwrap_or(""), current_dir);
     let path = std::env::temp_dir().join(format!("leo-new-{}.md", uuid::Uuid::new_v4()));
     Outcome::effect(Effect::Edit(EditRequest {
-        seed: format!("---\ntitle: {title}\ntags: {}\n---\n", tags.join(", ")),
+        seed: format!("---\ntitle: {title}\n---\n"),
         path,
         target: EditTarget::NewNote {
             fallback_title: title,
@@ -144,17 +144,14 @@ pub(super) fn new_note(store: &Store, line: Option<String>, current_dir: &str) -
     }))
 }
 
-/// Split `new`'s line into where the note goes, its title, and its tags.
+/// Split `new`'s line into where the note goes and its title.
 ///
-/// `#word` is a tag. A leading `dir/` names a directory, relative to the
+/// A leading `dir/` names a directory, relative to the
 /// current one, when that directory exists — or when nothing follows the slash,
 /// which asks for it to be made. Otherwise a slash is part of the title, so
 /// "TCP/IP basics" stays a title.
-pub fn split_new(store: &Store, line: &str, current_dir: &str) -> (String, String, Vec<String>) {
-    let (tags, words): (Vec<&str>, Vec<&str>) = line
-        .split_whitespace()
-        .partition(|w| w.len() > 1 && w.starts_with('#'));
-    let tags = tags.iter().map(|t| t[1..].to_string()).collect();
+pub fn split_new(store: &Store, line: &str, current_dir: &str) -> (String, String) {
+    let words: Vec<&str> = line.split_whitespace().collect();
 
     if let Some((prefix, first)) = words.first().and_then(|w| w.rsplit_once('/')) {
         let dir = under(current_dir, prefix);
@@ -164,10 +161,10 @@ pub fn split_new(store: &Store, line: &str, current_dir: &str) -> (String, Strin
                 .filter(|w| !w.is_empty())
                 .collect::<Vec<_>>()
                 .join(" ");
-            return (dir, title, tags);
+            return (dir, title);
         }
     }
-    (current_dir.to_string(), words.join(" "), tags)
+    (current_dir.to_string(), words.join(" "))
 }
 
 /// `list` — subdirectories first, then notes, and renumber.
@@ -1338,15 +1335,15 @@ mod handler_tests {
         }
     }
 
-    /// One line names where the note goes, its title and its tags.
+    /// One line names where the note goes and its title; a # is just part of it.
     #[test]
-    fn new_puts_the_note_in_a_named_directory_with_tags() {
+    fn new_puts_the_note_in_a_named_directory() {
         let (mut store, _d) = temp_store();
         store.create_dir("cs130");
-        let req = new_request(&mut store, "", "cs130/Lecture 4 #exam #graphs");
+        let req = new_request(&mut store, "", "cs130/Lecture 4 #1");
         assert_eq!(target_dir(&req), "cs130");
-        assert!(req.seed.contains("title: Lecture 4\n"), "{}", req.seed);
-        assert!(req.seed.contains("tags: exam, graphs\n"), "{}", req.seed);
+        assert!(req.seed.contains("title: Lecture 4 #1\n"), "{}", req.seed);
+        assert!(!req.seed.contains("tags:"), "{}", req.seed);
     }
 
     /// A slash in an ordinary title is not a directory.

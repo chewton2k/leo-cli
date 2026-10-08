@@ -228,6 +228,12 @@ test.describe('Felix', () => {
     expect(asked[1].messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user']);
     await chat.locator('.msg.leo .cite').first().click();
     await expect(page).toHaveURL(new RegExp(`#/n/${note.id}$`));
+    if (!(await chat.isVisible())) await page.locator('#chat-toggle').click();
+    await chat.locator('[data-mode="chat"]').click();
+    await expect(chat.locator('.msg')).toHaveCount(0);
+    await expect(chat.locator('.chat-hello')).toBeVisible();
+    const kept = await (await page.request.get('/api/chats')).json();
+    expect(kept.some((c) => c.mode === 'study' && c.count === 4)).toBe(true);
   });
 
   test('notes are added with @ or the paperclip and go with every message', async ({ page }) => {
@@ -361,6 +367,57 @@ test.describe('settings', () => {
     await expect(page.locator('.toast')).toContainText('Backing up when idle');
     const bad = await page.request.post('/api/settings', { data: { set: 'provider', task: 'writing', value: 'parakeet' } });
     expect(bad.status()).toBe(400);
+  });
+});
+
+test.describe('trash', () => {
+  test('deletes one note, the chosen notes, or everything for good, and restores the chosen ones', async ({ page }) => {
+    const tag = test.info().project.name;
+    const made = [];
+    for (const n of [1, 2, 3, 4]) {
+      const note = await (await page.request.post('/api/notes', { data: { title: `Trashed ${n} ${tag}`, body: 'x' } })).json();
+      made.push(note);
+      expect((await page.request.delete(`/api/notes/${note.id}`)).ok()).toBe(true);
+    }
+    await page.goto('/#/trash');
+    const row = (n) => page.locator('.trash-row', { hasText: `Trashed ${n} ${tag}` });
+    await expect(row(1)).toBeVisible();
+
+    await row(1).locator('[data-action="trash-forget"]').click();
+    await expect(page.locator('.sheet h3')).toContainText(`Trashed 1 ${tag}`);
+    await page.locator('[data-action="trash-delete-now"]').click();
+    await expect(page.locator('.toast')).toContainText('Deleted 1 note for good');
+    await expect(row(1)).toHaveCount(0);
+
+    await page.locator('[data-action="trash-select"]').click();
+    await expect(page.locator('.select-bar')).toContainText('0 selected');
+    await expect(page.locator('[data-action="trash-delete-picked"]')).toBeDisabled();
+    await row(2).click();
+    await expect(page.locator('.select-bar')).toContainText('1 selected');
+    await page.locator('[data-action="trash-restore-picked"]').click();
+    await expect(page.locator('.toast')).toContainText('Restored 1 note');
+    expect((await page.request.get(`/api/notes/${made[1].id}`)).ok()).toBe(true);
+    await expect(row(2)).toHaveCount(0);
+
+    await page.locator('[data-action="trash-select"]').click();
+    await page.locator('[data-trash-all]').check();
+    await expect(page.locator('.trash-row.picked')).toHaveCount(await page.locator('.trash-row').count());
+    await page.locator('[data-action="trash-delete-picked"]').click();
+    await page.locator('[data-action="close"]').click();
+    await expect(row(3)).toBeVisible();
+    await page.locator('[data-action="trash-delete-picked"]').click();
+    await page.locator('[data-action="trash-delete-now"]').click();
+    await expect(page.locator('.empty')).toContainText('The trash is empty');
+    await expect(page.locator('.select-bar')).toHaveCount(0);
+    expect((await (await page.request.get('/api/trash')).json()).length).toBe(0);
+
+    const again = await (await page.request.post('/api/notes', { data: { title: `Trashed 5 ${tag}`, body: 'x' } })).json();
+    await page.request.delete(`/api/notes/${again.id}`);
+    await page.goto('/#/');
+    await page.goto('/#/trash');
+    await page.locator('[data-action="trash-empty"]').click();
+    await page.locator('[data-action="trash-delete-now"]').click();
+    await expect(page.locator('.empty')).toContainText('The trash is empty');
   });
 });
 
