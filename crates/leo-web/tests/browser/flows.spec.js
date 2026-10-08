@@ -486,6 +486,30 @@ test.describe('Felix', () => {
     await expect(chat.locator('.chat-ref.doc')).toHaveCount(0);
   });
 
+  test('the chat panel follows the size of the window', async ({ page }) => {
+    test.skip(test.info().project.name !== 'desktop', 'one browser is enough to resize');
+    await page.goto('/');
+    await page.locator('#chat-toggle').click();
+    const chat = page.locator('#chat');
+    for (const [width, expected] of [[390, 390], [768, 476], [1024, 560], [1440, 691], [2200, 820]]) {
+      await page.setViewportSize({ width, height: 800 });
+      await expect.poll(async () => Math.round((await chat.boundingBox()).width)).toBe(expected);
+      const fits = await chat.evaluate((el) => el.scrollWidth <= el.clientWidth + 1);
+      expect(fits, `nothing spills sideways at ${width}px`).toBe(true);
+      await expect(page.locator('#chat-input')).toBeInViewport();
+      await expect(page.locator('#chat-send')).toBeInViewport();
+      if (width >= 1200) {
+        const panel = await chat.boundingBox();
+        const button = await page.locator('.fab[data-action="new"]').boundingBox();
+        const list = await page.locator('main').boundingBox();
+        expect(button.x + button.width, `the New note button stays beside the chat at ${width}px`).toBeLessThanOrEqual(panel.x);
+        expect(list.x + list.width, `the page moves over at ${width}px`).toBeLessThanOrEqual(panel.x + 1);
+      }
+    }
+    await page.locator('#chat [data-chat="close"]').click();
+    await expect.poll(async () => (await page.locator('main').boundingBox()).width).toBeGreaterThan(700);
+  });
+
   test('says plainly when no AI is set up', async ({ page }) => {
     await page.route('**/api/chat', (route) => route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: '{"sources":[]}\n{"error":"no AI for writing is chosen — type :settings in leo and pick one under writing"}\n' }));
     await page.goto('/');
