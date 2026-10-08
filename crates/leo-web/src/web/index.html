@@ -393,6 +393,95 @@ body.on-map main { padding: 0; max-width: none; }
 .map-ideas { display: flex; flex-wrap: wrap; gap: 6px; }
 .map-ideas .chip { cursor: pointer; }
 .map-actions { display: flex; gap: 8px; margin-top: 12px; }
+.chat-btn { width: 44px; }
+.chat-btn .felix { display: block; }
+.felix { overflow: visible; display: inline-block; }
+.felix .felix-body rect { fill: #b4cfe7; }
+.felix .felix-eyes rect { fill: #19191b; }
+.felix .felix-spark rect { fill: #b4cfe7; opacity: 0; }
+.felix .felix-body, .felix .felix-eyes, .felix .felix-arm { transform-box: fill-box; }
+.felix .felix-body { transform-origin: 50% 100%; }
+.felix .felix-eyes { transform-origin: 50% 50%; transition: transform .2s; }
+.felix .felix-arm { transform-origin: 50% 100%; }
+.felix.idle .felix-body { animation: felix-bob 2.8s ease-in-out infinite; }
+.felix.blink .felix-eyes { animation: felix-blink .2s ease-in-out; }
+.felix.think .felix-eyes { animation: felix-look 1.6s ease-in-out infinite; }
+.felix.think .felix-body { animation: felix-bob 1.2s ease-in-out infinite; }
+.felix.wave .felix-right { animation: felix-arm 0.32s steps(2, jump-none) 4; }
+.felix.dance .felix-body { animation: felix-dance .9s ease-in-out 2; }
+.felix.dance .felix-left { animation: felix-arm .3s steps(2, jump-none) 6; }
+.felix.dance .felix-right { animation: felix-arm .3s steps(2, jump-none) .15s 6; }
+.felix.dance .felix-eyes, .felix.cheer .felix-eyes { transform: scaleY(.3); }
+.felix.cheer .felix-body { animation: felix-jump .5s cubic-bezier(.3, 1.6, .5, 1) 4; }
+.felix.cheer .felix-left, .felix.cheer .felix-right { animation: felix-arm .25s steps(2, jump-none) 8; }
+.felix.cheer .felix-spark rect { animation: felix-spark .6s ease-out 4; }
+.felix.droop .felix-eyes { transform: translateY(2px); }
+.felix.droop .felix-body { animation: felix-shake .5s ease-in-out 1; }
+@keyframes felix-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-1.5px); } }
+@keyframes felix-blink { 0%, 100% { transform: scaleY(1); } 50% { transform: scaleY(.1); } }
+@keyframes felix-look { 0%, 100% { transform: translateX(0); } 30% { transform: translateX(-3px); } 70% { transform: translateX(4px); } }
+@keyframes felix-arm { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-7px); } }
+@keyframes felix-dance { 0%, 100% { transform: translateY(0) rotate(0); } 25% { transform: translateY(-5px) rotate(-9deg); } 50% { transform: translateY(0) rotate(0); } 75% { transform: translateY(-5px) rotate(9deg); } }
+@keyframes felix-jump { 0%, 100% { transform: translateY(0) scale(1, 1); } 15% { transform: translateY(0) scale(1.08, .9); } 50% { transform: translateY(-8px) scale(.96, 1.05); } }
+@keyframes felix-spark { 0% { opacity: 0; transform: translateY(4px); } 40% { opacity: 1; } 100% { opacity: 0; transform: translateY(-6px); } }
+@keyframes felix-shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-2px); } 75% { transform: translateX(2px); } }
+
+.chat {
+  position: fixed; z-index: 45; right: 0; top: 0; bottom: 0; width: min(440px, 100%);
+  display: flex; flex-direction: column; background: var(--surface);
+  border-left: 1px solid var(--line); box-shadow: -12px 0 40px rgba(0, 0, 0, .12);
+  padding-top: var(--top); animation: chat-in .22s ease-out;
+}
+@keyframes chat-in { from { transform: translateX(24px); opacity: 0; } }
+@media (max-width: 599px) { .chat { width: 100%; border-left: 0; } }
+.chat-head { display: flex; align-items: center; gap: 10px; padding: 12px 10px 8px 16px; }
+.chat-face { flex: none; display: grid; place-items: center; width: 46px; height: 34px; }
+.chat-name { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.2; }
+.chat-name b { font-size: 16px; }
+.chat-name span { font-size: 12.5px; color: var(--muted); }
+.chat-modes { display: flex; gap: 6px; padding: 2px 16px 10px; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--line); }
+.chat-modes::-webkit-scrollbar { display: none; }
+.chat-mode { flex: none; height: 30px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); font-size: 13px; }
+.chat-mode.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.chat-body { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 14px 16px 6px; display: flex; flex-direction: column; gap: 14px; }
+.chat-hello { margin: auto 0; text-align: center; padding: 10px 6px 20px; }
+.chat-hello h3 { margin: 14px 0 4px; font-size: 18px; }
+.chat-hello p { margin: 0 auto 16px; color: var(--muted); font-size: 14.5px; max-width: 320px; line-height: 1.5; }
+.chat-starters { display: flex; flex-direction: column; gap: 8px; align-items: stretch; }
+.starter { text-align: left; padding: 10px 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); font-size: 14px; }
+.starter:hover { border-color: var(--accent); color: var(--accent); }
+.msg.user { align-self: flex-end; max-width: 86%; }
+.msg.user .bubble { background: var(--accent); color: var(--accent-text); padding: 9px 13px; border-radius: 16px 16px 4px 16px; font-size: 15px; line-height: 1.45; overflow-wrap: anywhere; }
+.msg.leo { align-self: stretch; }
+.msg.leo .prose { margin: 0; font-size: 15px; line-height: 1.6; }
+.msg.leo .prose > :first-child { margin-top: 0; }
+.msg.leo .prose > :last-child { margin-bottom: 0; }
+.msg.leo .prose h2 { font-size: 17px; }
+.msg.leo .prose h3 { font-size: 16px; }
+.verdict { display: inline-block; font-size: 12px; font-weight: 700; padding: 2px 9px; border-radius: 999px; margin-bottom: 6px; }
+.verdict.correct { background: color-mix(in srgb, var(--good) 16%, transparent); color: var(--good); }
+.verdict.incorrect { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
+.cite { display: inline-flex; align-items: center; max-width: 100%; margin: 0 2px; padding: 0 7px; height: 20px; vertical-align: 1px; border: 0; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cite:hover { filter: brightness(.95); }
+.msg-from { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+.msg-from::before { content: 'From'; font-size: 12px; color: var(--faint); margin-right: 2px; line-height: 20px; }
+.msg-error { margin-top: 6px; font-size: 13.5px; color: var(--danger); }
+.typing { display: inline-flex; gap: 4px; padding: 6px 0; }
+.typing i { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); animation: typing 1s ease-in-out infinite; }
+.typing i:nth-child(2) { animation-delay: .15s; }
+.typing i:nth-child(3) { animation-delay: .3s; }
+@keyframes typing { 0%, 100% { opacity: .3; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-3px); } }
+.chat-foot { border-top: 1px solid var(--line); padding: 8px 12px calc(var(--bottom) + 12px); }
+.chat-context { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); padding: 0 4px 8px; }
+.chat-using { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-drop { border: 0; background: var(--surface-2); border-radius: 50%; width: 20px; height: 20px; line-height: 18px; padding: 0; color: var(--muted); }
+.chat-compose { display: flex; align-items: flex-end; gap: 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 16px; padding: 6px 6px 6px 14px; }
+.chat-compose:focus-within { border-color: var(--accent); }
+.chat-compose textarea { flex: 1; min-width: 0; border: 0; outline: 0; resize: none; background: none; font-size: 15px; line-height: 1.45; padding: 6px 0; max-height: 160px; }
+.chat-send { flex: none; width: 34px; height: 34px; border-radius: 50%; border: 0; display: grid; place-items: center; background: var(--accent); color: var(--accent-text); }
+.chat-send svg { width: 18px; height: 18px; }
+.chat-send.stop { background: var(--text); color: var(--bg); }
+.chat .icon-btn svg { width: 20px; height: 20px; }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 </style>
 </head>
@@ -402,6 +491,7 @@ body.on-map main { padding: 0; max-width: none; }
     <button class="icon-btn" id="back" data-action="back" aria-label="Back" hidden></button>
     <button class="brand" data-action="home">leo</button>
     <nav class="crumbs" id="crumbs" aria-label="Folder"></nav>
+    <button class="icon-btn chat-btn" id="chat-toggle" data-action="chat" aria-label="Ask Felix" title="Ask Felix"></button>
     <button class="icon-btn" id="search-toggle" data-action="toggle-search" aria-label="Search"></button>
     <button class="icon-btn" id="menu" data-action="menu" aria-label="More"></button>
   </div>
@@ -417,6 +507,7 @@ body.on-map main { padding: 0; max-width: none; }
 <script src="/doc.js"></script>
 <script src="/saving.js"></script>
 <script src="/graph.js"></script>
+<script src="/chat.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

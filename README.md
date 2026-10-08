@@ -583,7 +583,28 @@ there you can:
   there), and save a note as a PDF with **PDF**, which opens your phone's print
   sheet;
 - restore notes from the trash, and browse by tag;
-- see a **map of ideas**: how your notes connect, across subjects.
+- see a **map of ideas**: how your notes connect, across subjects;
+- study with **Felix**, the chat button at the top.
+
+**Felix** is leo's study buddy, in the chat at the top of every page. He
+answers from your own notes and links each answer to the notes it came from.
+He reads the note you have open and the notes connected to it on the map, plus
+any notes that match your question. Pick how he helps:
+
+- **Ask**: answers with sources.
+- **Coach**: teaches by asking you to recall first, gives a hint before the
+  answer, ties ideas across classes, and plans spaced review.
+- **Quiz**: one question at a time, marks each answer, keeps score. Felix
+  dances when you get one right.
+- **Explain**: plain words, an analogy, a small example, then the precise
+  version.
+- **Meeting**: for work notes: summary, decisions, action items with owners
+  and dates (only when the notes say them), open questions, a follow-up draft.
+
+When your notes don't cover something, he says so and labels anything from
+general knowledge as "Beyond your notes". He uses the AI you chose for writing,
+including Claude Code or Codex. The conversation stays in that browser; **+**
+starts a new one.
 
 **The map of ideas** (More → Map of ideas, or **Map** on any note) is a
 knowledge graph of your notes: every note is a dot coloured by its class (its

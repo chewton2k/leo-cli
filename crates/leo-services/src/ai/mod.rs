@@ -105,6 +105,16 @@ pub fn chat_outcome(prompt: chat::Prompt, max_tokens: u32) -> Result<chain::Chai
     chat::complete(&cfg, &store, prompt, max_tokens)
 }
 
+pub fn chat_streaming(
+    prompt: chat::Prompt,
+    max_tokens: u32,
+    on_fragment: &mut dyn FnMut(&str),
+    on_restart: &mut dyn FnMut(),
+) -> Result<String> {
+    let (cfg, store) = context();
+    Ok(chat::complete_streaming(&cfg, &store, prompt, max_tokens, on_fragment, on_restart)?.value)
+}
+
 /// Expand every `@leo` line, reporting text as it arrives.
 ///
 /// `on_fragment` receives the answer in pieces and `on_restart` says to discard

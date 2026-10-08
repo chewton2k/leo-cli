@@ -1,7 +1,9 @@
+pub mod chat;
 pub mod graph;
 mod token;
 pub mod tunnel;
 
+pub use chat::Streamer;
 pub use graph::Writer;
 
 #[cfg(test)]
@@ -27,6 +29,7 @@ struct AppState {
     store: Arc<Mutex<Storage>>,
     token: String,
     graphs: Arc<graph::Graphs>,
+    chat: Option<Streamer>,
 }
 
 struct Storage {
@@ -92,6 +95,7 @@ const EDITING_JS: &str = include_str!("web/editing.js");
 const SAVING_JS: &str = include_str!("web/saving.js");
 const DOC_JS: &str = include_str!("web/doc.js");
 const GRAPH_JS: &str = include_str!("web/graph.js");
+const CHAT_JS: &str = include_str!("web/chat.js");
 
 const COOKIE_DAYS: u32 = 30;
 
@@ -102,7 +106,11 @@ pub struct ServeOptions {
     pub new_token: bool,
 }
 
-pub async fn serve(options: ServeOptions, writer: Option<Writer>) -> Result<()> {
+pub async fn serve(
+    options: ServeOptions,
+    writer: Option<Writer>,
+    chat: Option<Streamer>,
+) -> Result<()> {
     let store = Store::load()?;
     let graphs = Arc::new(graph::Graphs::for_notes(&store.notes_dir, writer));
     let count = store.notes.len();
@@ -122,6 +130,7 @@ pub async fn serve(options: ServeOptions, writer: Option<Writer>) -> Result<()> 
         })),
         token: token.clone(),
         graphs,
+        chat,
     });
 
     let tunnel = if !options.local {
@@ -311,6 +320,8 @@ fn router(state: AppState) -> Router {
         .route("/doc.js", get(doc_js))
         .route("/saving.js", get(saving_js))
         .route("/graph.js", get(graph_js))
+        .route("/chat.js", get(chat_js))
+        .route("/api/chat", post(chat_reply))
         .route("/api/graph", get(get_graph))
         .route("/api/graph/status", get(graph_status))
         .route("/api/graph/build", post(build_graph))
@@ -356,6 +367,82 @@ async fn doc_js() -> Response {
 
 async fn graph_js() -> Response {
     javascript(GRAPH_JS)
+}
+
+async fn chat_js() -> Response {
+    javascript(CHAT_JS)
+}
+
+fn ndjson(value: serde_json::Value) -> String {
+    format!("{value}\n")
+}
+
+async fn chat_reply(State(state): State<AppState>, Json(body): Json<chat::ChatBody>) -> Response {
+    let Some(streamer) = state.chat.clone() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": "leo serve was started without AI." })),
+        )
+            .into_response();
+    };
+    if body
+        .messages
+        .last()
+        .is_none_or(|t| t.role != "user" || t.text.trim().is_empty())
+    {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let mode = chat::mode_of(body.mode.as_deref());
+    let question = chat::question_of(&body.messages);
+    let graphs = Arc::clone(&state.graphs);
+    let note = body.note.clone();
+    let gathered = state
+        .with_store(move |store| {
+            let cache = graphs.load();
+            Ok(chat::gather(store, &cache, note.as_deref(), &question))
+        })
+        .await;
+    let (sources, notes) = match gathered {
+        Ok(found) => found,
+        Err(code) => return code.into_response(),
+    };
+    let (system, user) = chat::prompt(mode, &notes, &body.messages);
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let _ = tx.send(ndjson(serde_json::json!({ "sources": sources })));
+    tokio::task::spawn_blocking(move || {
+        let pieces = tx.clone();
+        let restarts = tx.clone();
+        let result = streamer(
+            &system,
+            &user,
+            chat::REPLY_TOKENS,
+            &mut |text| {
+                let _ = pieces.send(ndjson(serde_json::json!({ "t": text })));
+            },
+            &mut || {
+                let _ = restarts.send(ndjson(serde_json::json!({ "restart": true })));
+            },
+        );
+        let end = match result {
+            Ok(_) => serde_json::json!({ "done": true }),
+            Err(e) => serde_json::json!({ "error": e.to_string() }),
+        };
+        let _ = tx.send(ndjson(end));
+    });
+    let stream = futures_util::stream::unfold(rx, |mut rx| async move {
+        rx.recv()
+            .await
+            .map(|line| (Ok::<_, std::io::Error>(line), rx))
+    });
+    let mut response = axum::body::Body::from_stream(stream).into_response();
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/x-ndjson; charset=utf-8"),
+    );
+    response
+        .headers_mut()
+        .insert("x-accel-buffering", HeaderValue::from_static("no"));
+    response
 }
 
 async fn auth_middleware(State(state): State<AppState>, request: Request, next: Next) -> Response {
@@ -937,12 +1024,112 @@ mod tests {
             })),
             token: String::new(),
             graphs,
+            chat: None,
         };
         (state, dir, ids)
     }
 
     fn run<F: std::future::Future>(f: F) -> F::Output {
         tokio::runtime::Runtime::new().unwrap().block_on(f)
+    }
+
+    #[test]
+    fn a_chat_reply_streams_its_sources_then_the_answer() {
+        let (mut state, _d, ids) = state_with(&[("Heaps", "cs130")]);
+        {
+            let mut store = state.fresh();
+            store.find_note_mut(&ids[0]).unwrap().body =
+                "A binary heap backs a priority queue.".into();
+            store.save().unwrap();
+        }
+        let seen = Arc::new(Mutex::new(String::new()));
+        let saw = Arc::clone(&seen);
+        state.chat = Some(Arc::new(
+            move |system: &str,
+                  user: &str,
+                  _: u32,
+                  piece: &mut dyn FnMut(&str),
+                  _: &mut dyn FnMut()| {
+                *saw.lock().unwrap() = format!("{system}\n{user}");
+                piece("Heaps keep the minimum on top ");
+                piece("[n1].");
+                Ok("done".to_string())
+            },
+        ));
+        let body = chat::ChatBody {
+            messages: vec![chat::Turn {
+                role: "user".into(),
+                text: "how do heaps work?".into(),
+            }],
+            mode: Some("coach".into()),
+            note: Some(ids[0].clone()),
+        };
+        let text = run(async {
+            let response = chat_reply(State(state.clone()), Json(body)).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            String::from_utf8(bytes.to_vec()).unwrap()
+        });
+        let lines: Vec<serde_json::Value> = text
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert_eq!(lines[0]["sources"][0]["title"], "Heaps");
+        assert_eq!(lines[0]["sources"][0]["why"], "open");
+        assert_eq!(lines[1]["t"], "Heaps keep the minimum on top ");
+        assert_eq!(lines[2]["t"], "[n1].");
+        assert_eq!(lines[3]["done"], true);
+        let prompt = seen.lock().unwrap().clone();
+        assert!(prompt.contains("Mode: study coach"), "{prompt}");
+        assert!(prompt.contains("A binary heap backs a priority queue."));
+        assert!(prompt.contains("User: how do heaps work?"));
+    }
+
+    #[test]
+    fn a_chat_without_ai_or_a_question_is_refused() {
+        let (state, _d, _ids) = state_with(&[]);
+        let ask = |text: &str| chat::ChatBody {
+            messages: vec![chat::Turn {
+                role: "user".into(),
+                text: text.into(),
+            }],
+            mode: None,
+            note: None,
+        };
+        let status = run(async {
+            chat_reply(State(state.clone()), Json(ask("hi")))
+                .await
+                .status()
+        });
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        let mut with = state.clone();
+        with.chat = Some(Arc::new(
+            |_: &str, _: &str, _: u32, _: &mut dyn FnMut(&str), _: &mut dyn FnMut()| {
+                anyhow::bail!("no AI for writing is chosen")
+            },
+        ));
+        let status = run(async {
+            chat_reply(State(with.clone()), Json(ask("   ")))
+                .await
+                .status()
+        });
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let text = run(async {
+            let response = chat_reply(State(with.clone()), Json(ask("hi"))).await;
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            String::from_utf8(bytes.to_vec()).unwrap()
+        });
+        assert!(
+            text.lines()
+                .last()
+                .unwrap()
+                .contains("no AI for writing is chosen"),
+            "{text}"
+        );
     }
 
     /// An ID prefix shared by several notes must not delete all of them.

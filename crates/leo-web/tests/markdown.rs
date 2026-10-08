@@ -16,6 +16,11 @@ fn the_map_of_ideas_passes_its_tests() {
 }
 
 #[test]
+fn the_chat_with_felix_passes_its_tests() {
+    run_node_tests("chat.test.js");
+}
+
+#[test]
 fn saving_and_draft_recovery_pass_their_tests() {
     run_node_tests("saving.test.js");
 }

@@ -360,6 +360,23 @@ pub fn run(cli: Cli) -> Result<()> {
                     )
                     .map(|outcome| outcome.value)
                 });
+            let streamer: leo_web::Streamer = std::sync::Arc::new(
+                |system: &str,
+                 user: &str,
+                 most: u32,
+                 piece: &mut dyn FnMut(&str),
+                 restart: &mut dyn FnMut()| {
+                    leo_services::ai::chat_streaming(
+                        leo_services::ai::chat::Prompt {
+                            system: system.to_string(),
+                            user: user.to_string(),
+                        },
+                        most,
+                        piece,
+                        restart,
+                    )
+                },
+            );
             tokio::runtime::Runtime::new()?.block_on(leo_web::serve(
                 leo_web::ServeOptions {
                     port,
@@ -367,6 +384,7 @@ pub fn run(cli: Cli) -> Result<()> {
                     new_token,
                 },
                 Some(writer),
+                Some(streamer),
             ))
         }
         Some(Commands::Doctor) => doctor::run(),

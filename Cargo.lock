@@ -1992,6 +1992,7 @@ dependencies = [
  "axum",
  "chrono",
  "colored",
+ "futures-util",
  "leo-core",
  "local-ip-address",
  "qrcode",

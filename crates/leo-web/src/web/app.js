@@ -3,6 +3,7 @@
 
   const md = window.leoMarkdown;
   const leoDoc = window.leoDoc;
+  const felix = window.leoChat;
   const esc = md.escape;
   const enc = encodeURIComponent;
   const $ = (selector, root = document) => root.querySelector(selector);
@@ -36,6 +37,8 @@
     cloud: svg('<path d="M7 18a4.5 4.5 0 0 1-.5-9 6 6 0 0 1 11.3 1.5A3.8 3.8 0 0 1 17.5 18z"/><path d="M4 4l16 16"/>'),
   };
 
+  const chat = felix.create({ render: (text) => md.render(text), escape: md.escape, onOpen: (id) => go(noteHash(id)) });
+  $('#chat-toggle').innerHTML = chat.button(30);
   $('#back').innerHTML = ICON.back;
   $('#search-toggle').innerHTML = ICON.search;
   $('#menu').innerHTML = ICON.more;
@@ -324,6 +327,7 @@
     state = { view: 'note', dir: note.directory, session: s };
     chrome({ dir: note.directory, showBack: true, actions: noteActions(note.id) });
     document.title = `${note.title || 'New note'} · leo`;
+    chat.setContext(note.id ? { id: note.id, title: note.title } : null);
     const where = `<button class="chip accent" data-action="open-folder" data-dir="${esc(note.directory)}">${ICON.folder.replace('<svg', '<svg width="13" height="13"')} ${esc(folderLabel(note.directory))}</button>`;
     const when = note.id ? `Edited ${rel(note.updated_at)}` : 'New note';
     app.innerHTML = `<article class="note">
@@ -632,6 +636,7 @@
       return;
     }
     mapSheetTo('open');
+    chat.setContext(node.kind === 'note' ? { id: node.id.slice(2), title: node.label } : null);
     const close = `<button class="icon-btn map-close" data-action="map-clear" aria-label="Close">${ICON.close}</button>`;
     if (node.kind === 'note') {
       const id = node.id.slice(2);
@@ -919,6 +924,7 @@
       go('#/map');
     },
     'note-map': (el) => go(`#/map/${enc(el.dataset.id)}`),
+    chat: () => chat.toggle(),
     'map-build': () => mapBuild(false),
     'map-build-now': () => mapBuild(true),
     'map-select': (el) => mapView && mapView.select(el.dataset.id, { center: true }),
@@ -1063,6 +1069,7 @@
     const arg = decodeURIComponent(rest);
     if (kind !== 'search') closeSearch();
     if (kind !== 'map') leaveMap();
+    if (kind !== 'n') chat.setContext(null);
     try {
       if (kind === 'f') await showFolder(arg);
       else if (kind === 'n') await showNote(arg.replace(/\/edit$/, ''));

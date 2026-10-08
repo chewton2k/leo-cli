@@ -193,3 +193,49 @@ test.describe('map of ideas', () => {
     await expect(page.locator('.toast.bad')).toContainText(':settings');
   });
 });
+
+test.describe('Felix', () => {
+  test('quizzes from the open note, cites it, and dances on a right answer', async ({ page }) => {
+    const note = await (await page.request.post('/api/notes', { data: { title: 'Heaps', body: 'A binary heap keeps the minimum at the root.' } })).json();
+    const asked = [];
+    await page.route('**/api/chat', async (route) => {
+      const sent = route.request().postDataJSON();
+      asked.push(sent);
+      const source = { n: 1, id: note.id, title: 'Heaps', folder: '', why: 'open' };
+      const lines = asked.length === 1
+        ? [{ sources: [source] }, { t: 'Where is the smallest element of a min-heap? ' }, { t: '[n1]' }, { done: true }]
+        : [{ sources: [source] }, { t: '[[correct]] Yes, at the **root** [n1].' }, { done: true }];
+      await route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: lines.map((l) => JSON.stringify(l)).join('\n') + '\n' });
+    });
+    await page.goto(`/#/n/${note.id}`);
+    await page.locator('#chat-toggle').click();
+    const chat = page.locator('#chat');
+    await expect(chat).toBeVisible();
+    await expect(chat.locator('.chat-context')).toContainText('Heaps');
+    await chat.locator('[data-mode="quiz"]').click();
+    await chat.locator('.starter').first().click();
+    await expect(chat.locator('.msg.leo').first()).toContainText('Where is the smallest element');
+    await expect(chat.locator('.msg.leo .cite').first()).toHaveText('Heaps');
+    expect(asked[0].mode).toBe('quiz');
+    expect(asked[0].note).toBe(note.id);
+    await chat.locator('#chat-input').fill('At the root');
+    await chat.locator('#chat-input').press('Enter');
+    await expect(chat.locator('.verdict.correct')).toBeVisible();
+    await expect(chat.locator('.msg.leo').last()).not.toContainText('[[correct]]');
+    await expect(chat.locator('#chat-face .felix')).toHaveClass(/dance/);
+    expect(asked[1].messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user']);
+    await chat.locator('.msg.leo .cite').first().click();
+    await expect(page).toHaveURL(new RegExp(`#/n/${note.id}$`));
+  });
+
+  test('says plainly when no AI is set up', async ({ page }) => {
+    await page.route('**/api/chat', (route) => route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: '{"sources":[]}\n{"error":"no AI for writing is chosen — type :settings in leo and pick one under writing"}\n' }));
+    await page.goto('/');
+    await page.locator('#chat-toggle').click();
+    await page.locator('#chat-input').fill('hello');
+    await page.locator('#chat-input').press('Enter');
+    await expect(page.locator('.msg-error')).toContainText(':settings');
+    await page.locator('#chat [data-chat="close"]').click();
+    await expect(page.locator('#chat')).toBeHidden();
+  });
+});
