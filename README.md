@@ -579,8 +579,9 @@ there you can:
   the note is unpinned and filled purple when it is pinned;
 - search every note, with the matching words highlighted;
 - move and delete notes (deleted notes go to the trash, and Undo is right
-  there), and save a note as a PDF with **PDF**, which opens your phone's print
-  sheet;
+  there), or **Select** notes and folders in a folder and move them to the
+  trash together, after a confirmation; save a note as a PDF with **PDF**,
+  which opens your phone's print sheet;
 - restore notes from the trash, or delete them for good: one at a time,
   several with **Select**, or all with **Empty trash**;
 - see a **map of ideas**: how your notes connect, across subjects;
@@ -649,6 +650,11 @@ AI answers, and how backups push. An API key can be added, replaced or removed
 there but is never shown again, and is only accepted over the https link or on
 the computer itself, so it never crosses Wi-Fi unencrypted.
 
+**Export everything** (Settings → Advanced) downloads a zip of your notes as
+Markdown in their folders, with your uploads, chats with Felix and the trash if
+you tick them. Settings and API keys are never in it. The same page can clear
+unsaved drafts kept in this browser.
+
 **Storage and data** (Settings → Advanced) shows everything leo keeps on your
 computer and how much space each part takes, with a bar to compare them: notes,
 trash, chats with Felix, uploaded files, the map of ideas, recording audio
@@ -685,7 +691,9 @@ colour, thicker when stronger.
 
 leo asks before the first run and says roughly how many requests it will make
 (about one per eight notes to read them, plus one to connect them for every
-90 notes or so). After that it only reads notes you changed. What it found is
+90 notes or so). After that it only reads notes that are new or changed, and
+connects just those to the rest; the connections already found stay.
+**Rebuild** (next to Update) starts over from scratch, after asking. What it found is
 kept in `graph.json` next to your notes folder, on this computer only, and is
 never backed up to GitHub. The map is only in the browser, not in the terminal.
 

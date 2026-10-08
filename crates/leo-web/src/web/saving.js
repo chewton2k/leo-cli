@@ -136,6 +136,16 @@
       drafts: () => [...pending.values()].map((s) => ({ key: s.key, note: copy(s.note), edit: copy(s.edit) })),
       changed, flush,
       unsaved: () => pending.size > 0,
+      discardAll: () => {
+        const all = [...pending.values()];
+        for (const s of all) {
+          if (s.timer) cancel(s.timer);
+          s.timer = null;
+          s.dirty = false;
+          remove(s);
+        }
+        return all.length;
+      },
       retry: () => Promise.allSettled([...pending.values()].map(flush)),
     };
   }

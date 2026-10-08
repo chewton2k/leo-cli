@@ -214,31 +214,104 @@
 
   async function showFolder(dir) {
     const mine = ++seq;
-    state = { view: 'folder', dir };
+    const keep = state.view === 'folder' && state.dir === dir ? state : null;
+    state = { view: 'folder', dir, selecting: keep ? keep.selecting : false, picked: new Set() };
     chrome({ dir, showBack: Boolean(dir), fab: newButton(dir) });
     if (!app.innerHTML.trim()) app.innerHTML = skeleton(4);
     const [dirs, notes] = await Promise.all([api(`/api/dirs?parent=${enc(dir)}`), api(`/api/notes?dir=${enc(dir)}&limit=1000`)]);
     if (mine !== seq) return;
+    state.listing = { dirs, notes };
+    drawFolder();
+  }
+
+  function folderKeys() {
+    const { dirs, notes } = state.listing;
+    const dir = state.dir;
+    return [...dirs.map((d) => `d:${dir ? `${dir}/${d.name}` : d.name}`), ...notes.map((n) => `n:${n.id}`)];
+  }
+
+  function drawFolder() {
+    const { dirs, notes } = state.listing;
+    const dir = state.dir;
+    const sel = state.selecting;
+    const picked = state.picked;
     if (!dirs.length && !notes.length) {
+      state.selecting = false;
+      chrome({ dir, showBack: Boolean(dir), fab: newButton(dir) });
       app.innerHTML = dir
         ? empty(ICON.folder, 'This folder is empty', 'Tap “New note” to write the first one here.')
         : empty(ICON.note, 'No notes yet', 'Tap “New note” to write one. Notes you make in leo on your computer show up here too.');
       return;
     }
-    let html = '';
+    const tick = (key) => (sel ? `<span class="pick-box${picked.has(key) ? ' on' : ''}" aria-hidden="true">${ICON.check}</span>` : '');
+    let html = `<div class="folder-tools">${sel ? '<button class="btn sm plain" data-action="folder-select">Done</button>' : '<button class="btn sm plain" data-action="folder-select">Select</button>'}</div>`;
     if (dirs.length) {
       html += `<div class="section-title">Folders</div><div class="folders">${dirs
         .map((d) => {
           const full = dir ? `${dir}/${d.name}` : d.name;
-          return `<button class="folder" data-action="open-folder" data-dir="${esc(full)}">${ICON.folder}<span><span class="name">${esc(d.name)}</span><span class="count">${d.notes} note${d.notes === 1 ? '' : 's'}</span></span></button>`;
+          const key = `d:${full}`;
+          return `<button class="folder${sel ? ' picking' : ''}${picked.has(key) ? ' picked' : ''}" data-action="${sel ? 'folder-pick' : 'open-folder'}" data-key="${esc(key)}" data-dir="${esc(full)}" aria-pressed="${sel ? picked.has(key) : ''}">${tick(key)}${ICON.folder}<span><span class="name">${esc(d.name)}</span><span class="count">${d.notes} note${d.notes === 1 ? '' : 's'}</span></span></button>`;
         })
         .join('')}</div>`;
     }
     if (notes.length) {
-      html += `<div class="section-title">Notes</div><div class="cards">${notes.map((n) => card(n)).join('')}</div>`;
+      html += `<div class="section-title">Notes</div><div class="cards${sel ? ' picking' : ''}">${notes
+        .map((n) => {
+          const key = `n:${n.id}`;
+          if (!sel) return card(n);
+          return `<div class="card pick-card${picked.has(key) ? ' picked' : ''}" role="checkbox" tabindex="0" aria-checked="${picked.has(key)}" data-action="folder-pick" data-key="${esc(key)}">${tick(key)}<div class="card-title"><span>${esc(n.title)}</span></div><div class="card-meta"><span>${rel(n.updated_at)}</span></div></div>`;
+        })
+        .join('')}</div>`;
     }
     app.innerHTML = html;
+    if (sel) {
+      const all = picked.size === folderKeys().length;
+      floating.innerHTML = `<div class="select-bar" role="toolbar" aria-label="Selected notes and folders">
+          <label class="select-all"><input type="checkbox" data-folder-all${all ? ' checked' : ''}><span>All</span></label>
+          <span class="select-count">${picked.size} selected</span>
+          <button class="btn sm danger" data-action="folder-trash"${picked.size ? '' : ' disabled'}>Move to trash</button>
+        </div>`;
+    } else {
+      chrome({ dir, showBack: Boolean(dir), fab: newButton(dir) });
+    }
   }
+
+  function folderTrashAsk() {
+    const keys = [...state.picked];
+    if (!keys.length) return;
+    const dirs = keys.filter((k) => k.startsWith('d:')).map((k) => k.slice(2));
+    const notes = keys.filter((k) => k.startsWith('n:')).map((k) => k.slice(2));
+    const inside = state.listing.dirs
+      .filter((d) => dirs.includes(state.dir ? `${state.dir}/${d.name}` : d.name))
+      .reduce((sum, d) => sum + d.notes, 0);
+    const parts = [];
+    if (notes.length) parts.push(plural(notes.length, 'note'));
+    if (dirs.length) parts.push(`${plural(dirs.length, 'folder')}${inside ? ` (with ${plural(inside, 'note')} inside)` : ''}`);
+    state.trashMove = { notes, dirs };
+    sheet(`<h3>Move ${esc(parts.join(' and '))} to the trash?</h3>
+      <p>Notes stay in the trash for 30 days, so you can restore them from there.</p>
+      <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn danger" data-action="folder-trash-now">Move to trash</button></div>`);
+  }
+
+  async function folderTrashNow() {
+    const move = state.trashMove;
+    closeSheet();
+    if (!move) return;
+    state.trashMove = null;
+    const done = await api('/api/trash/move', { method: 'POST', body: move });
+    const parts = [];
+    if (done.notes) parts.push(plural(done.notes, 'note'));
+    if (done.folders) parts.push(plural(done.folders, 'folder'));
+    toast(`Moved ${parts.join(' and ') || 'nothing'} to the trash`, { action: 'Open trash', run: () => go('#/trash') });
+    state.selecting = false;
+    await showFolder(state.dir);
+  }
+
+  floating.addEventListener('change', (e) => {
+    if (state.view !== 'folder' || !e.target.closest('[data-folder-all]')) return;
+    state.picked = e.target.checked ? new Set(folderKeys()) : new Set();
+    drawFolder();
+  });
 
   const cleanTitle = (text) => text.replace(/\s*\n\s*/g, ' ').trim();
 
@@ -598,7 +671,8 @@
     else if (status.read === 0) button = '<button class="btn primary sm" data-action="map-build">Connect notes</button>';
     else if (status.stale > 0 || status.requests > 0) button = `<button class="btn primary sm" data-action="map-build">Update${status.stale ? ` · ${status.stale} changed` : ''}</button>`;
     const bar = building && status.total ? `<span class="map-progress"><i style="width:${Math.round((status.done / status.total) * 100)}%"></i></span>` : '';
-    box.innerHTML = `<span class="map-summary">${summary}</span>${button}${bar}`;
+    const again = !building && status.read > 0 ? '<button class="btn plain sm map-rebuild" data-action="map-rebuild" title="Read and connect every note again">Rebuild</button>' : '';
+    box.innerHTML = `<span class="map-summary">${summary}</span>${button}${again}${bar}`;
   }
 
   function mapFound(query) {
@@ -700,6 +774,19 @@
       <div class="map-list">${notes
         .map((n) => `<button class="map-row" data-action="map-select" data-id="${esc(n.id)}">${dotFor(n)}<span class="grow">${esc(n.label)}${n.summary ? `<span class="sub">${esc(n.summary)}</span>` : ''}<span class="sub class">${esc(className(n))}</span></span></button>`)
         .join('')}</div>`;
+  }
+
+  function mapRebuildAsk() {
+    const status = state.status || {};
+    sheet(`<h3>Rebuild the map from scratch?</h3>
+      <p>leo forgets what it found and reads and connects every note again with the AI you chose for writing. That is about ${plural(status.rebuild_requests || 1, 'request')}. Usually Update is enough: it only reads notes that are new or changed.</p>
+      <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn primary" data-action="map-rebuild-now">Rebuild</button></div>`);
+  }
+
+  async function mapRebuild() {
+    closeSheet();
+    mapStatus(await api('/api/graph/build?fresh=1', { method: 'POST' }));
+    pollMap();
   }
 
   async function mapBuild(confirmed) {
@@ -888,9 +975,32 @@
         <div class="store-bar" aria-hidden="true">${bar}</div>
         <div class="store-legend">${legend}</div>
       </section>
+      <section class="set-card store-export">
+        <header><h3>Export everything</h3></header>
+        <p class="hint">A zip of your notes as Markdown, in their folders, to keep or open in another app. Settings and API keys are never included.</p>
+        <div class="store-export-parts">
+          <label><input type="checkbox" checked disabled> Notes</label>
+          <label><input type="checkbox" data-export="uploads" checked> Uploaded files</label>
+          <label><input type="checkbox" data-export="chats" checked> Chats with Felix</label>
+          <label><input type="checkbox" data-export="trash"> Trash</label>
+        </div>
+        <a class="btn primary sm" id="export-link" download href="${exportHref()}">Download zip</a>
+      </section>
       ${areas}
-      ${drafts ? `<section class="set-card"><header><h3>This browser</h3></header><p class="hint">${drafts} unsaved draft${drafts === 1 ? '' : 's'} kept here until they reach leo.</p><button class="btn sm plain" data-action="drafts">Open drafts</button></section>` : ''}
+      <section class="set-card store-browser">
+        <header><h3>This browser</h3></header>
+        <p class="hint">${drafts ? `${plural(drafts, 'unsaved draft')} kept here until they reach leo. Clearing them throws those edits away; the notes keep their last saved version.` : 'No unsaved drafts are kept here.'}</p>
+        ${drafts ? '<div class="store-actions"><button class="btn sm plain" data-action="drafts">Open drafts</button><button class="btn sm plain danger-text" data-action="drafts-clear">Clear drafts</button></div>' : ''}
+      </section>
     </div>`;
+  }
+
+  function exportHref() {
+    const on = (part, fallback) => {
+      const box = app.querySelector(`[data-export="${part}"]`);
+      return box ? box.checked : fallback;
+    };
+    return `/api/export?uploads=${on('uploads', true)}&chats=${on('chats', true)}&trash=${on('trash', false)}`;
   }
 
   function storagePicked(area) {
@@ -945,6 +1055,7 @@
       for (const box of app.querySelectorAll(`input[data-store-item="${CSS.escape(all.dataset.storeAll)}"]:not(:disabled)`)) box.checked = all.checked;
     }
     if (all || e.target.closest('[data-store-item]')) storageCounts();
+    if (e.target.closest('[data-export]')) $('#export-link').href = exportHref();
   });
 
   async function changeSetting(change) {
@@ -1382,6 +1493,18 @@
     storage: () => go('#/settings/storage'),
     'storage-act': storageAsk,
     'storage-go': () => storageGo().catch(fail),
+    'drafts-clear': () => {
+      const n = saving.drafts().length;
+      sheet(`<h3>Clear ${plural(n, 'unsaved draft')}?</h3>
+        <p>The edits in ${n === 1 ? 'it are' : 'them are'} thrown away. Each note keeps its last saved version.</p>
+        <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn danger" data-action="drafts-clear-now">Clear drafts</button></div>`);
+    },
+    'drafts-clear-now': () => {
+      closeSheet();
+      const n = saving.discardAll();
+      toast(`Cleared ${plural(n, 'draft')}`);
+      if (state.view === 'storage' && state.storage) drawStorage(state.storage);
+    },
     'set-key': (el) => saveKey(el.dataset.account),
     'remove-key': confirmRemoveKey,
     'remove-key-now': (el) => {
@@ -1409,6 +1532,8 @@
     chat: () => chat.toggle(),
     'map-build': () => mapBuild(false),
     'map-build-now': () => mapBuild(true),
+    'map-rebuild': mapRebuildAsk,
+    'map-rebuild-now': () => mapRebuild().catch(fail),
     'map-select': (el) => mapView && mapView.select(el.dataset.id, { center: true }),
     'map-pick': (el) => mapView && mapPick(el.dataset.id),
     'map-clear': () => mapView && mapView.select(null),
@@ -1454,6 +1579,24 @@
     delete: confirmDelete,
     'delete-now': deleteNow,
     restore: (el) => restore(el.dataset.id, false),
+    'folder-select': () => {
+      state.selecting = !state.selecting;
+      state.picked = new Set();
+      drawFolder();
+    },
+    'folder-pick': (el) => {
+      const key = el.dataset.key;
+      const focused = document.activeElement === el;
+      if (state.picked.has(key)) state.picked.delete(key);
+      else state.picked.add(key);
+      drawFolder();
+      if (focused) {
+        const again = app.querySelector(`[data-key="${CSS.escape(key)}"]`);
+        if (again) again.focus();
+      }
+    },
+    'folder-trash': folderTrashAsk,
+    'folder-trash-now': () => folderTrashNow().catch(fail),
     'trash-select': () => {
       state.selecting = !state.selecting;
       state.picked = new Set();
@@ -1485,8 +1628,18 @@
     if (e.key === 'Escape') {
       if ($('.scrim')) return closeSheet();
       if (typing) return e.target.blur();
+      if ((state.view === 'folder' || state.view === 'trash') && state.selecting) {
+        state.selecting = false;
+        state.picked = new Set();
+        return state.view === 'folder' ? drawFolder() : drawTrash();
+      }
       if (state.view === 'map' && mapView && mapView.selected()) return mapView.select(null);
       if (state.view !== 'folder' || state.dir) return back();
+    }
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('.pick-card')) {
+      e.preventDefault();
+      e.target.click();
+      return;
     }
     if (e.key === 'Enter' && e.target.matches('.card')) {
       e.preventDefault();

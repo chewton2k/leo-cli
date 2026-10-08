@@ -20,16 +20,23 @@
   const modeOf = (id) => (MODES.some((m) => m.id === id) ? id : OLD_MODES[id] || 'chat');
 
   function felix(width, extra = '') {
-    return `<svg class="felix ${extra}" viewBox="-2 -8 48 40" width="${width}" height="${Math.round((width * 40) / 48)}" shape-rendering="crispEdges" aria-hidden="true">
+    return `<svg class="felix ${extra}" viewBox="-2 -10 50 42" width="${width}" height="${Math.round((width * 42) / 50)}" shape-rendering="crispEdges" aria-hidden="true">
       <g class="felix-spark"><rect x="-1" y="-6" width="2" height="2"/><rect x="42" y="-4" width="2" height="2"/><rect x="21" y="-8" width="2" height="2"/></g>
+      <g class="felix-heart"><rect x="17" y="-9" width="2" height="1"/><rect x="21" y="-9" width="2" height="1"/><rect x="16" y="-8" width="8" height="2"/><rect x="17" y="-6" width="6" height="1"/><rect x="18" y="-5" width="4" height="1"/><rect x="19" y="-4" width="2" height="1"/></g>
+      <g class="felix-thought"><rect x="37" y="-1" width="2" height="2"/><rect x="40" y="-4" width="2" height="2"/><rect x="43" y="-7" width="3" height="3"/></g>
+      <g class="felix-z"><text x="37" y="-2" font-size="10" font-weight="800" font-family="system-ui, sans-serif">z</text></g>
       <g class="felix-body">
         <rect class="felix-arm felix-left" x="0" y="18" width="5" height="6"/>
         <rect class="felix-arm felix-right" x="39" y="18" width="5" height="6"/>
         <rect class="felix-skin" x="5" y="2" width="34" height="28"/>
-        <g class="felix-eyes"><rect x="11" y="16" width="4" height="4"/><rect x="21" y="16" width="4" height="4"/></g>
+        <g class="felix-cheeks"><rect x="8" y="21" width="4" height="2"/><rect x="24" y="21" width="4" height="2"/></g>
+        <g class="felix-gaze"><g class="felix-eyes"><rect x="11" y="16" width="4" height="4"/><rect x="21" y="16" width="4" height="4"/></g></g>
+        <g class="felix-sweat"><rect x="34" y="5" width="2" height="2"/><rect x="33" y="7" width="4" height="3"/></g>
       </g>
     </svg>`;
   }
+
+  const TAPS = ['boop', 'hop', 'spin', 'giggle'];
 
   function splitLines(buffer) {
     const parts = buffer.split('\n');
@@ -183,14 +190,55 @@
     }
     function mood(name, ms) {
       for (const f of faces()) {
-        f.classList.remove('dance', 'droop', 'wave', 'cheer');
+        f.classList.remove('dance', 'droop', 'wave', 'cheer', 'nod', 'wake', 'perk', ...TAPS);
         void f.getBoundingClientRect();
         f.classList.add(name);
         setTimeout(() => f.classList.remove(name), ms);
       }
     }
     function thinking(on) {
-      for (const f of faces()) f.classList.toggle('think', on);
+      for (const f of faces()) {
+        f.classList.toggle('think', on);
+        if (!on) f.classList.remove('talk');
+      }
+    }
+
+    function talking() {
+      for (const f of faces()) {
+        f.classList.remove('think');
+        f.classList.add('talk');
+      }
+    }
+
+    let sleepTimer = 0;
+    function awake() {
+      clearTimeout(sleepTimer);
+      const sleeping = faces().some((f) => f.classList.contains('sleep'));
+      for (const f of faces()) f.classList.remove('sleep');
+      if (sleeping) mood('wake', 900);
+      sleepTimer = setTimeout(() => {
+        if (state.open && !state.busy) for (const f of faces()) f.classList.add('sleep');
+      }, 60000);
+    }
+
+    let lastTap = -1;
+    function tapped() {
+      let pick = Math.floor(Math.random() * TAPS.length);
+      if (pick === lastTap) pick = (pick + 1) % TAPS.length;
+      lastTap = pick;
+      mood(TAPS[pick], 900);
+    }
+
+    function gaze(e) {
+      for (const f of faces()) {
+        const box = f.getBoundingClientRect();
+        if (!box.width) continue;
+        const dx = e.clientX - (box.left + box.width / 2);
+        const dy = e.clientY - (box.top + box.height / 2);
+        const far = Math.max(1, Math.hypot(dx, dy));
+        f.style.setProperty('--gaze-x', `${((dx / far) * Math.min(1, far / 160) * 2).toFixed(2)}px`);
+        f.style.setProperty('--gaze-y', `${((dy / far) * Math.min(1, far / 160) * 1.5).toFixed(2)}px`);
+      }
     }
     blink();
 
@@ -573,7 +621,8 @@
         mood(state.streak >= 3 ? 'cheer' : 'dance', state.streak >= 3 ? 2400 : 1800);
       } else if (verdict === 'incorrect') {
         state.streak = 0;
-        mood('droop', 1400);
+        mood('droop', 1600);
+        setTimeout(() => mood('perk', 700), 1650);
       }
     }
 
@@ -589,6 +638,8 @@
       const controller = new AbortController();
       state.busy = controller;
       const thread = { id: state.id, mode: state.mode, refs: state.refs.slice(), messages: state.messages };
+      awake();
+      mood('nod', 450);
       thinking(true);
       draw();
       const ctx = state.context && state.dropped !== state.context.id ? state.context.id : null;
@@ -623,7 +674,10 @@
           for (const e of events) {
             if (e.sources) answer.sources = e.sources;
             if (e.restart) answer.text = '';
-            if (typeof e.t === 'string') answer.text += e.t;
+            if (typeof e.t === 'string') {
+              if (!answer.text) talking();
+              answer.text += e.t;
+            }
             if (e.error) answer.error = e.error;
           }
           draw(false);
@@ -638,6 +692,7 @@
       draw(false);
       remember({ ...thread, messages: thread.messages.slice() });
       if (thread.id === state.id) react(answer);
+      awake();
     }
 
     function toggle(force) {
@@ -652,11 +707,19 @@
         drawRefs();
         draw();
         mood('wave', 1500);
+        awake();
         if (root.matchMedia && root.matchMedia('(pointer: fine)').matches) input.focus();
       }
     }
 
+    panel.addEventListener('pointermove', gaze);
+    panel.addEventListener('keydown', awake);
     panel.addEventListener('click', (e) => {
+      awake();
+      if (e.target.closest('.felix') && !e.target.closest('[data-chat]')) {
+        tapped();
+        return;
+      }
       const el = e.target.closest('[data-chat]');
       if (!el) return;
       e.preventDefault();

@@ -58,9 +58,19 @@ pub struct Cache {
     #[serde(default)]
     pub notes: BTreeMap<String, Read>,
     #[serde(default)]
+    pub links: Vec<NoteLink>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub pairs: BTreeMap<String, Pair>,
     #[serde(default)]
     pub built_at: Option<String>,
+}
+
+impl Cache {
+    pub fn all_links(&self) -> impl Iterator<Item = &NoteLink> {
+        self.links
+            .iter()
+            .chain(self.pairs.values().flat_map(|p| &p.links))
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -69,6 +79,8 @@ pub struct Read {
     #[serde(default)]
     pub summary: String,
     pub concepts: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linked: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -356,51 +368,74 @@ pub fn group_count(notes: usize) -> usize {
     notes.div_ceil(GROUP_NOTES).max(1)
 }
 
-fn group_of(id: &str, groups: usize) -> usize {
-    (fnv64(id) % groups as u64) as usize
+fn link_key(source: &Source, read: &Read) -> String {
+    fnv(&note_line(0, source, Some(read)))
 }
 
 pub struct Work<'a> {
-    pub name: String,
     pub notes: Vec<&'a Source>,
-    pub hash: String,
-    split: Option<BTreeSet<String>>,
+    left: Option<BTreeSet<String>>,
+    pub fresh: BTreeSet<String>,
 }
 
-pub fn pair_work<'a>(sources: &'a [Source], cache: &Cache) -> Vec<Work<'a>> {
-    let read: Vec<&Source> = sources
-        .iter()
-        .filter(|s| cache.notes.get(&s.id).is_some_and(|r| r.hash == hash_of(s)))
-        .collect();
-    let groups = group_count(read.len());
-    let mut members: Vec<Vec<&Source>> = vec![Vec::new(); groups];
-    for source in &read {
-        members[group_of(&source.id, groups)].push(source);
+fn chunks<'a>(list: &[&'a Source]) -> Vec<Vec<&'a Source>> {
+    let groups = group_count(list.len());
+    let size = list.len().div_ceil(groups).max(1);
+    list.chunks(size).map(|c| c.to_vec()).collect()
+}
+
+pub fn link_work<'a>(sources: &'a [Source], cache: &Cache) -> Vec<Work<'a>> {
+    let mut fresh: Vec<&Source> = Vec::new();
+    let mut settled: Vec<&Source> = Vec::new();
+    for source in sources {
+        let Some(read) = cache
+            .notes
+            .get(&source.id)
+            .filter(|r| r.hash == hash_of(source))
+        else {
+            continue;
+        };
+        if read.linked.as_deref() == Some(link_key(source, read).as_str()) {
+            settled.push(source);
+        } else {
+            fresh.push(source);
+        }
     }
-    for list in &mut members {
-        list.sort_by(|a, b| a.id.cmp(&b.id));
-    }
+    fresh.sort_by(|a, b| a.id.cmp(&b.id));
+    settled.sort_by(|a, b| a.id.cmp(&b.id));
+    let new_groups = chunks(&fresh);
+    let old_groups = if settled.is_empty() {
+        Vec::new()
+    } else {
+        chunks(&settled)
+    };
+    let ids = |list: &[&Source]| list.iter().map(|s| s.id.clone()).collect::<BTreeSet<_>>();
     let mut out = Vec::new();
-    for i in 0..groups {
-        for j in i..groups {
-            let mut notes = members[i].clone();
-            if j != i {
-                notes.extend(members[j].iter().copied());
+    for (i, group) in new_groups.iter().enumerate() {
+        for other in &new_groups[i..] {
+            let same = std::ptr::eq(group, other);
+            let mut notes = group.clone();
+            if !same {
+                notes.extend(other.iter().copied());
             }
             if notes.len() < 2 {
                 continue;
             }
-            let mut text = String::new();
-            for (n, source) in notes.iter().enumerate() {
-                text.push_str(&source.id);
-                text.push_str(&note_line(n + 1, source, cache.notes.get(&source.id)));
-            }
-            let split = (j != i).then(|| members[i].iter().map(|s| s.id.clone()).collect());
+            let mut touched = ids(group);
+            touched.extend(ids(other));
             out.push(Work {
-                name: format!("{groups}:{i}-{j}"),
                 notes,
-                hash: fnv(&text),
-                split,
+                left: (!same).then(|| ids(group)),
+                fresh: touched,
+            });
+        }
+        for old in &old_groups {
+            let mut notes = group.clone();
+            notes.extend(old.iter().copied());
+            out.push(Work {
+                notes,
+                left: Some(ids(group)),
+                fresh: ids(group),
             });
         }
     }
@@ -422,14 +457,39 @@ pub fn stale<'a>(sources: &'a [Source], cache: &Cache) -> Vec<&'a Source> {
 pub fn requests_needed(sources: &[Source], cache: &Cache) -> usize {
     let stale = stale(sources, cache);
     let reads = plan(&stale).len();
-    if reads > 0 {
-        let pairs = group_count(sources.len());
-        return reads + pairs * (pairs + 1) / 2;
+    if reads == 0 {
+        return link_work(sources, cache).len();
     }
-    pair_work(sources, cache)
-        .iter()
-        .filter(|w| cache.pairs.get(&w.name).is_none_or(|p| p.hash != w.hash))
-        .count()
+    let unread: BTreeSet<&str> = stale.iter().map(|s| s.id.as_str()).collect();
+    let mut guess = cache.clone();
+    for source in sources.iter().filter(|s| unread.contains(s.id.as_str())) {
+        guess.notes.insert(
+            source.id.clone(),
+            Read {
+                hash: hash_of(source),
+                ..Read::default()
+            },
+        );
+    }
+    reads + link_work(sources, &guess).len()
+}
+
+fn settle_old_pairs(sources: &[Source], cache: &mut Cache) {
+    if cache.pairs.is_empty() {
+        return;
+    }
+    let old: Vec<NoteLink> = std::mem::take(&mut cache.pairs)
+        .into_values()
+        .flat_map(|p| p.links)
+        .collect();
+    cache.links.extend(old);
+    for source in sources {
+        if let Some(read) = cache.notes.get_mut(&source.id) {
+            if read.hash == hash_of(source) && read.linked.is_none() {
+                read.linked = Some(link_key(source, read));
+            }
+        }
+    }
 }
 
 pub fn build(
@@ -440,10 +500,13 @@ pub fn build(
 ) -> Vec<String> {
     let present: BTreeSet<&str> = sources.iter().map(|s| s.id.as_str()).collect();
     cache.notes.retain(|id, _| present.contains(id.as_str()));
+    settle_old_pairs(sources, cache);
+    cache
+        .links
+        .retain(|l| present.contains(l.a.as_str()) && present.contains(l.b.as_str()));
     let stale = stale(sources, cache);
     let batches = plan(&stale);
-    let groups = group_count(sources.len());
-    let mut total = batches.len() + groups * (groups + 1) / 2;
+    let mut total = requests_needed(sources, cache);
     let mut problems = Vec::new();
     let mut worked = batches.is_empty();
     progress(0, total);
@@ -461,14 +524,16 @@ pub fn build(
             Ok(list) => {
                 worked = true;
                 for (source, (summary, concepts)) in notes.iter().zip(list) {
-                    cache.notes.insert(
-                        source.id.clone(),
-                        Read {
-                            hash: hash_of(source),
-                            summary,
-                            concepts,
-                        },
-                    );
+                    let mut read = Read {
+                        hash: hash_of(source),
+                        summary,
+                        concepts,
+                        linked: None,
+                    };
+                    let key = link_key(source, &read);
+                    let before = cache.notes.get(&source.id).and_then(|r| r.linked.clone());
+                    read.linked = before.filter(|k| *k == key);
+                    cache.notes.insert(source.id.clone(), read);
                 }
             }
             Err(e) => problems.push(e),
@@ -476,16 +541,15 @@ pub fn build(
         progress(done + 1, total);
     }
 
-    let work = pair_work(sources, cache);
-    let names: BTreeSet<String> = work.iter().map(|w| w.name.clone()).collect();
-    cache.pairs.retain(|name, _| names.contains(name));
-    let due: Vec<&Work> = work
-        .iter()
-        .filter(|w| cache.pairs.get(&w.name).is_none_or(|p| p.hash != w.hash))
-        .collect();
-    total = batches.len() + due.len();
+    let work = link_work(sources, cache);
+    let redo: BTreeSet<String> = work.iter().flat_map(|w| w.fresh.iter().cloned()).collect();
+    cache
+        .links
+        .retain(|l| !redo.contains(&l.a) && !redo.contains(&l.b));
+    total = batches.len() + work.len();
     progress(batches.len(), total);
-    for (done, job) in due.iter().enumerate() {
+    let mut failed: BTreeSet<String> = BTreeSet::new();
+    for (done, job) in work.iter().enumerate() {
         let (system, user) = link_prompt(&job.notes, cache);
         let linked = write(&system, &user, LINK_TOKENS)
             .map_err(|e| e.to_string())
@@ -496,20 +560,27 @@ pub fn build(
         match linked {
             Ok(mut links) => {
                 worked = true;
-                if let Some(left) = &job.split {
+                if let Some(left) = &job.left {
                     links.retain(|l| left.contains(&l.a) != left.contains(&l.b));
                 }
-                cache.pairs.insert(
-                    job.name.clone(),
-                    Pair {
-                        hash: job.hash.clone(),
-                        links,
-                    },
-                );
+                cache.links.extend(links);
             }
-            Err(e) => problems.push(e),
+            Err(e) => {
+                failed.extend(job.fresh.iter().cloned());
+                problems.push(e);
+            }
         }
         progress(batches.len() + done + 1, total);
+    }
+    for source in sources {
+        if failed.contains(&source.id) {
+            continue;
+        }
+        if let Some(read) = cache.notes.get_mut(&source.id) {
+            if read.hash == hash_of(source) {
+                read.linked = Some(link_key(source, read));
+            }
+        }
     }
     progress(total, total);
     if worked {
@@ -592,7 +663,7 @@ pub fn assemble(sources: &[Source], cache: &Cache) -> Graph {
     }
 
     let mut best: BTreeMap<(String, String), &NoteLink> = BTreeMap::new();
-    for link in cache.pairs.values().flat_map(|p| &p.links) {
+    for link in cache.all_links() {
         if !present.contains(link.a.as_str()) || !present.contains(link.b.as_str()) {
             continue;
         }
@@ -680,6 +751,7 @@ pub struct Status {
     pub read: usize,
     pub stale: usize,
     pub requests: usize,
+    pub rebuild_requests: usize,
     pub built_at: Option<String>,
 }
 
@@ -784,6 +856,7 @@ impl Graphs {
             read,
             stale: stale(sources, &cache).len(),
             requests: requests_needed(sources, &cache),
+            rebuild_requests: requests_needed(sources, &Cache::default()),
             built_at: cache.built_at,
         }
     }
@@ -1049,10 +1122,11 @@ mod tests {
                     hash: hash_of(s),
                     summary: "s".into(),
                     concepts: vec![],
+                    linked: None,
                 },
             );
         }
-        let work = pair_work(&many, &cache);
+        let work = link_work(&many, &cache);
         assert_eq!(group_count(200), 3);
         assert_eq!(work.len(), 6);
         let mut covered = BTreeSet::new();
@@ -1070,8 +1144,8 @@ mod tests {
             "every pair of notes is seen by some request"
         );
 
-        let cross = work.iter().find(|w| w.split.is_some()).unwrap();
-        let left = cross.split.clone().unwrap();
+        let cross = work.iter().find(|w| w.left.is_some()).unwrap();
+        let left = cross.left.clone().unwrap();
         let at = |pick: &dyn Fn(&&Source) -> bool, nth: usize| {
             cross
                 .notes
@@ -1105,12 +1179,166 @@ mod tests {
             }
         };
         build(&many, &mut cache, &write, &mut |_, _| {});
-        let kept = &cache.pairs[&cross.name].links;
+        let kept = &cache.links;
         assert_eq!(kept.len(), 1, "{kept:?}");
         assert_eq!(
             kept[0].why, "across",
             "a pair inside one group is left to that group's own request"
         );
+        assert!(
+            link_work(&many, &cache).is_empty(),
+            "every note is linked now"
+        );
+    }
+
+    fn linked_library(count: usize) -> (Vec<Source>, Cache) {
+        let many: Vec<Source> = (0..count)
+            .map(|i| source(&format!("{i:03}"), &format!("Note {i}"), "x", ""))
+            .collect();
+        let mut cache = Cache::default();
+        for s in &many {
+            let mut read = Read {
+                hash: hash_of(s),
+                summary: format!("about {}", s.id),
+                concepts: vec![],
+                linked: None,
+            };
+            read.linked = Some(link_key(s, &read));
+            cache.notes.insert(s.id.clone(), read);
+        }
+        cache.links.push(NoteLink {
+            a: "000".into(),
+            b: "001".into(),
+            kind: "same idea".into(),
+            strength: 2,
+            why: "kept".into(),
+        });
+        (many, cache)
+    }
+
+    #[test]
+    fn a_new_note_is_linked_to_the_others_without_redoing_their_links() {
+        let (mut many, mut cache) = linked_library(200);
+        many.push(source("new", "Fresh note", "brand new", ""));
+        let calls = AtomicUsize::new(0);
+        let seen = Mutex::new(Vec::new());
+        let write = |_: &str, user: &str, _: u32| -> Result<String> {
+            calls.fetch_add(1, Ordering::SeqCst);
+            if user.contains("<note id=") {
+                return Ok(
+                    r#"{"notes": [{"id": "n1", "summary": "fresh", "concepts": []}]}"#.into(),
+                );
+            }
+            let lines = short_ids(user);
+            seen.lock().unwrap().push(lines.len());
+            let new = lines
+                .iter()
+                .find(|(_, l)| l.contains("Fresh note"))
+                .unwrap()
+                .0
+                .clone();
+            let other = lines
+                .iter()
+                .find(|(_, l)| !l.contains("Fresh note"))
+                .unwrap()
+                .0
+                .clone();
+            let third = lines
+                .iter()
+                .filter(|(_, l)| !l.contains("Fresh note"))
+                .nth(1)
+                .unwrap()
+                .0
+                .clone();
+            Ok(format!(
+                r#"{{"links": [{{"a": "{new}", "b": "{other}", "kind": "same idea", "why": "new one"}}, {{"a": "{other}", "b": "{third}", "kind": "same idea", "why": "old pair"}}]}}"#
+            ))
+        };
+        assert_eq!(requests_needed(&many, &cache), 1 + 3);
+        let problems = build(&many, &mut cache, &write, &mut |_, _| {});
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1 + 3,
+            "one read, then the new note against each group"
+        );
+        assert!(
+            seen.lock().unwrap().iter().all(|n| *n <= 68),
+            "{:?}",
+            seen.lock().unwrap()
+        );
+        assert!(
+            cache.links.iter().any(|l| l.why == "kept"),
+            "old links stay"
+        );
+        assert_eq!(cache.links.iter().filter(|l| l.why == "new one").count(), 3);
+        assert!(
+            !cache.links.iter().any(|l| l.why == "old pair"),
+            "links between two old notes are not redone"
+        );
+        assert_eq!(requests_needed(&many, &cache), 0);
+    }
+
+    #[test]
+    fn a_new_note_whose_links_failed_is_tried_again() {
+        let (mut many, mut cache) = linked_library(5);
+        many.push(source("new", "Fresh note", "brand new", ""));
+        let read_only = |_: &str, user: &str, _: u32| -> Result<String> {
+            if user.contains("<note id=") {
+                Ok(r#"{"notes": [{"id": "n1", "summary": "fresh", "concepts": []}]}"#.into())
+            } else {
+                anyhow::bail!("rate limited")
+            }
+        };
+        let problems = build(&many, &mut cache, &read_only, &mut |_, _| {});
+        assert_eq!(problems, ["rate limited"]);
+        assert_eq!(cache.notes["new"].linked, None);
+        assert_eq!(requests_needed(&many, &cache), 1);
+        assert!(cache.links.iter().any(|l| l.why == "kept"));
+    }
+
+    #[test]
+    fn a_map_saved_by_an_older_leo_keeps_its_links_and_asks_for_nothing() {
+        let sources = library();
+        let mut cache = Cache::default();
+        for s in &sources {
+            cache.notes.insert(
+                s.id.clone(),
+                Read {
+                    hash: hash_of(s),
+                    summary: "s".into(),
+                    concepts: vec![],
+                    linked: None,
+                },
+            );
+        }
+        cache.pairs.insert(
+            "1:0-0".into(),
+            Pair {
+                hash: "old".into(),
+                links: vec![NoteLink {
+                    a: "a".into(),
+                    b: "c".into(),
+                    kind: "same idea".into(),
+                    strength: 3,
+                    why: "from before".into(),
+                }],
+            },
+        );
+        let asked = AtomicUsize::new(0);
+        let write = |_: &str, _: &str, _: u32| -> Result<String> {
+            asked.fetch_add(1, Ordering::SeqCst);
+            Ok(r#"{"links": []}"#.into())
+        };
+        build(&sources, &mut cache, &write, &mut |_, _| {});
+        assert_eq!(asked.load(Ordering::SeqCst), 0);
+        assert!(cache.pairs.is_empty());
+        assert_eq!(cache.links.len(), 1);
+        let graph = assemble(&sources, &cache);
+        assert!(graph
+            .edges
+            .iter()
+            .any(|e| e.why.as_deref() == Some("from before")));
     }
 
     #[test]

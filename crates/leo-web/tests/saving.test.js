@@ -133,3 +133,20 @@ test('new-note drafts work on HTTP origins without randomUUID', async () => {
   await assert.rejects(m.flush(two));
   assert.equal(local.length, 2);
 });
+
+test('clearing drafts forgets every unsaved edit in this browser and nothing else', async () => {
+  const local = storage();
+  local.setItem('other-app', 'keep');
+  const failure = Object.assign(new Error('offline'), { status: 500 });
+  const m = manager(async () => { throw failure; }, local);
+  const s = m.open(note());
+  m.changed(s, edit('Throw this away'));
+  await assert.rejects(m.flush(s), /offline/);
+  assert.equal(m.drafts().length, 1);
+  assert.equal(m.discardAll(), 1);
+  assert.equal(m.unsaved(), false);
+  assert.deepEqual(m.drafts(), []);
+  assert.equal(local.length, 1);
+  assert.equal(local.getItem('other-app'), 'keep');
+  assert.equal(manager(async () => note(), local).drafts().length, 0, 'nothing comes back after a reload');
+});

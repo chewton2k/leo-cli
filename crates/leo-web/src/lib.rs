@@ -1,5 +1,6 @@
 pub mod chat;
 pub mod chats;
+pub mod export;
 pub mod graph;
 pub mod record;
 pub mod storage;
@@ -391,6 +392,7 @@ fn router(state: AppState) -> Router {
         .route("/api/trash", get(list_trash))
         .route("/api/trash/{id}/restore", post(restore_note))
         .route("/api/trash/delete", post(delete_from_trash))
+        .route("/api/trash/move", post(move_to_trash))
         .route("/api/trash/restore", post(restore_many))
         .route("/app.js", get(app_js))
         .route("/markdown.js", get(markdown_js))
@@ -402,6 +404,7 @@ fn router(state: AppState) -> Router {
         .route("/api/chat", post(chat_reply))
         .route("/api/chats", get(list_chats))
         .route("/api/storage", get(get_storage).post(change_storage))
+        .route("/api/export", get(export_zip))
         .route(
             "/api/chats/{id}",
             get(get_chat)
@@ -436,6 +439,7 @@ fn router(state: AppState) -> Router {
             state.clone(),
             auth_middleware,
         ))
+        .route("/favicon.svg", get(favicon))
         .layer(axum::middleware::from_fn(security_headers))
         .with_state(state)
 }
@@ -474,6 +478,24 @@ async fn doc_js() -> Response {
 
 async fn graph_js() -> Response {
     javascript(GRAPH_JS)
+}
+
+const FAVICON: &str = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"-1 -1 46 34\" shape-rendering=\"crispEdges\">\
+<rect x=\"0\" y=\"18\" width=\"5\" height=\"6\" fill=\"#b4cfe7\"/>\
+<rect x=\"39\" y=\"18\" width=\"5\" height=\"6\" fill=\"#b4cfe7\"/>\
+<rect x=\"5\" y=\"2\" width=\"34\" height=\"28\" fill=\"#b4cfe7\"/>\
+<rect x=\"11\" y=\"16\" width=\"4\" height=\"4\" fill=\"#19191b\"/>\
+<rect x=\"21\" y=\"16\" width=\"4\" height=\"4\" fill=\"#19191b\"/></svg>";
+
+async fn favicon() -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, "image/svg+xml"),
+            (header::CACHE_CONTROL, "public, max-age=86400"),
+        ],
+        FAVICON,
+    )
+        .into_response()
 }
 
 async fn chat_js() -> Response {
@@ -910,6 +932,63 @@ async fn get_original(
 
 fn ndjson(value: serde_json::Value) -> String {
     format!("{value}\n")
+}
+
+async fn export_zip(State(state): State<AppState>, Query(parts): Query<export::Parts>) -> Response {
+    let notes_dir = match state.with_store(|store| Ok(store.notes_dir.clone())).await {
+        Ok(dir) => dir,
+        Err(code) => return code.into_response(),
+    };
+    let chats = state.chats.clone();
+    let made = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+        use std::io::Seek;
+        let tmp = tempfile::NamedTempFile::new()?;
+        export::write_zip(tmp.as_file(), &notes_dir, &chats, parts)?;
+        let (mut file, path) = tmp.into_parts();
+        file.rewind()?;
+        let size = file.metadata()?.len();
+        Ok((file, path, size))
+    })
+    .await;
+    let Ok(Ok((file, path, size))) = made else {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": "The export could not be made." })),
+        )
+            .into_response();
+    };
+    let file = tokio::fs::File::from_std(file);
+    let stream = futures_util::stream::unfold(Some((file, path)), |held| async move {
+        use tokio::io::AsyncReadExt;
+        let (mut file, path) = held?;
+        let mut chunk = vec![0u8; 64 * 1024];
+        match file.read(&mut chunk).await {
+            Ok(0) => {
+                drop(path);
+                None
+            }
+            Ok(n) => {
+                chunk.truncate(n);
+                Some((Ok::<_, std::io::Error>(chunk), Some((file, path))))
+            }
+            Err(e) => Some((Err(e), None)),
+        }
+    });
+    let name = format!(
+        "attachment; filename=\"leo-export-{}.zip\"",
+        chrono::Local::now().format("%Y-%m-%d")
+    );
+    let mut response = axum::body::Body::from_stream(stream).into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/zip"),
+    );
+    headers.insert(header::CONTENT_LENGTH, HeaderValue::from(size));
+    if let Ok(value) = HeaderValue::from_str(&name) {
+        headers.insert(header::CONTENT_DISPOSITION, value);
+    }
+    response
 }
 
 async fn storage_now(state: &AppState) -> Result<serde_json::Value, StatusCode> {
@@ -1567,6 +1646,58 @@ struct TrashChoice {
     all: bool,
 }
 
+#[derive(Deserialize)]
+struct TrashMove {
+    #[serde(default)]
+    notes: Vec<String>,
+    #[serde(default)]
+    dirs: Vec<String>,
+}
+
+async fn move_to_trash(
+    State(state): State<AppState>,
+    Json(body): Json<TrashMove>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    state
+        .with_store(move |store| {
+            let mut folders = 0;
+            let mut notes = 0;
+            for dir in &body.dirs {
+                let dir = dir.trim().trim_matches('/');
+                if dir.is_empty() {
+                    return Err(StatusCode::BAD_REQUEST);
+                }
+                directory(store, dir)?;
+            }
+            for dir in &body.dirs {
+                let (gone_notes, gone_dirs) =
+                    store.delete_dir_recursive(dir.trim().trim_matches('/'));
+                notes += gone_notes;
+                folders += usize::from(gone_dirs > 0);
+            }
+            let ids: Vec<String> = body
+                .notes
+                .iter()
+                .filter_map(|id| {
+                    store
+                        .notes
+                        .iter()
+                        .find(|n| &n.id == id)
+                        .map(|n| n.id.clone())
+                })
+                .collect();
+            notes += ids.len();
+            if !ids.is_empty() {
+                store.delete_notes(&ids);
+            }
+            save(store)?;
+            Ok(Json(
+                serde_json::json!({ "notes": notes, "folders": folders }),
+            ))
+        })
+        .await
+}
+
 async fn delete_from_trash(
     State(state): State<AppState>,
     Json(choice): Json<TrashChoice>,
@@ -1635,12 +1766,22 @@ async fn graph_status(State(state): State<AppState>) -> Result<Json<graph::Statu
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
+#[derive(Deserialize)]
+struct BuildParams {
+    #[serde(default)]
+    fresh: bool,
+}
+
 async fn build_graph(
     State(state): State<AppState>,
+    Query(params): Query<BuildParams>,
 ) -> Result<(StatusCode, Json<graph::Status>), StatusCode> {
     let sources = note_sources(&state).await?;
     let graphs = Arc::clone(&state.graphs);
     tokio::task::spawn_blocking(move || {
+        if params.fresh && !graphs.clear().unwrap_or(false) {
+            return (StatusCode::CONFLICT, Json(graphs.status(&sources)));
+        }
         graphs.start(sources.clone());
         (StatusCode::ACCEPTED, Json(graphs.status(&sources)))
     })
@@ -2442,6 +2583,44 @@ mod tests {
         ));
         assert_eq!(outside.status(), StatusCode::BAD_REQUEST);
         assert!(state.recording.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn chosen_notes_and_folders_go_to_the_trash_and_the_root_is_refused() {
+        let (state, _d, ids) = state_with(&[
+            ("Keep", ""),
+            ("Loose", ""),
+            ("Graphs", "cs130"),
+            ("Deep", "cs130/week1"),
+            ("Other", "math"),
+        ]);
+        let moved = run(move_to_trash(
+            State(state.clone()),
+            Json(TrashMove {
+                notes: vec![ids[1].clone(), "missing".into()],
+                dirs: vec!["cs130".into()],
+            }),
+        ))
+        .unwrap();
+        assert_eq!(moved.0["notes"], 3);
+        assert_eq!(moved.0["folders"], 1);
+        let store = state.fresh();
+        let left: Vec<&str> = store.notes.iter().map(|n| n.title.as_str()).collect();
+        assert_eq!(left.len(), 2, "{left:?}");
+        assert!(left.contains(&"Keep") && left.contains(&"Other"));
+        assert!(!store.dir_exists("cs130"));
+        assert_eq!(store.trashed().len(), 3);
+        drop(store);
+        for bad in ["", "/", "../outside"] {
+            let refused = run(move_to_trash(
+                State(state.clone()),
+                Json(TrashMove {
+                    notes: vec![],
+                    dirs: vec![bad.into()],
+                }),
+            ));
+            assert_eq!(refused.unwrap_err(), StatusCode::BAD_REQUEST, "{bad:?}");
+        }
     }
 
     #[test]

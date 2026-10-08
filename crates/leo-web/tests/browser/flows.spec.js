@@ -184,6 +184,24 @@ test.describe('map of ideas', () => {
     await expect(page.locator('#map-panel')).toContainText('In 2 notes across 2 classes');
   });
 
+  test('rebuilding from scratch asks first, then starts a fresh build', async ({ page }) => {
+    await seed(page);
+    const builds = [];
+    await page.route('**/api/graph/build*', (route) => {
+      builds.push(new URL(route.request().url()).search);
+      return route.fulfill({ status: 202, json: { state: 'building', done: 0, total: 3, message: null, notes: 3, read: 0, stale: 3, requests: 3, rebuild_requests: 3, built_at: null } });
+    });
+    await page.goto('/#/map');
+    await page.locator('[data-action="map-rebuild"]').click();
+    await expect(page.locator('.sheet')).toContainText('Rebuild the map from scratch?');
+    await page.locator('[data-action="close"]').click();
+    expect(builds).toEqual([]);
+    await page.locator('[data-action="map-rebuild"]').click();
+    await page.locator('[data-action="map-rebuild-now"]').click();
+    await expect.poll(() => builds).toEqual(['?fresh=1']);
+    await expect(page.locator('#map-status')).toContainText('Connecting 0/3');
+  });
+
   test('connecting notes without an AI says how to choose one', async ({ page }) => {
     await seed(page);
     await page.route('**/api/graph/build', (route) => route.fulfill({ status: 202, json: { state: 'building', done: 0, total: 2, message: null, notes: 3, read: 0, stale: 3, requests: 2, built_at: null } }));
@@ -367,6 +385,39 @@ test.describe('Felix', () => {
     expect(asked.length).toBe(2);
   });
 
+  test('Felix thinks, talks, reacts to answers and to being tapped', async ({ page }) => {
+    let release;
+    const hold = new Promise((resolve) => { release = resolve; });
+    let replies = 0;
+    await page.route('**/api/chat', async (route) => {
+      replies += 1;
+      if (replies === 1) await hold;
+      const text = replies === 1 ? 'Hello there' : '[[incorrect]] Not quite.';
+      await route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: `{"sources":[]}\n{"t":${JSON.stringify(text)}}\n{"done":true}\n` });
+    });
+    await page.goto('/');
+    await page.locator('#chat-toggle').click();
+    const face = page.locator('#chat-face .felix');
+    await page.locator('#chat-input').fill('hi');
+    await page.locator('#chat-input').press('Enter');
+    await expect(face).toHaveClass(/think/);
+    release();
+    await expect(page.locator('.msg.leo').last()).toContainText('Hello there');
+    await expect(face).not.toHaveClass(/think|talk/);
+    await page.locator('#chat-input').fill('the root?');
+    await page.locator('#chat-input').press('Enter');
+    await expect(face).toHaveClass(/droop/);
+    await expect(face).toHaveClass(/perk/, { timeout: 4000 });
+    await face.click();
+    await expect(face).toHaveClass(/boop|hop|spin|giggle/);
+    const sizes = await face.evaluate((svg) => {
+      const skin = svg.querySelector('.felix-skin');
+      return [Number(skin.getAttribute('width')), Number(skin.getAttribute('height'))];
+    });
+    expect(sizes[0] / sizes[1]).toBeGreaterThan(1);
+    expect(sizes[0] / sizes[1]).toBeLessThan(1.4);
+  });
+
   test('says plainly when no AI is set up', async ({ page }) => {
     await page.route('**/api/chat', (route) => route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: '{"sources":[]}\n{"error":"no AI for writing is chosen — type :settings in leo and pick one under writing"}\n' }));
     await page.goto('/');
@@ -407,6 +458,52 @@ test.describe('settings', () => {
     await expect(page.locator('.toast')).toContainText('Backing up when idle');
     const bad = await page.request.post('/api/settings', { data: { set: 'provider', task: 'writing', value: 'parakeet' } });
     expect(bad.status()).toBe(400);
+  });
+});
+
+test.describe('folders', () => {
+  test('chosen notes and folders move to the trash after asking', async ({ page }) => {
+    const tag = test.info().project.name;
+    const top = `pick-${tag}`;
+    await page.request.post('/api/dirs', { data: { path: top } });
+    await page.request.post('/api/dirs', { data: { path: `${top}/week1` } });
+    const make = async (title, directory) => (await page.request.post('/api/notes', { data: { title, body: 'x', directory } })).json();
+    const loose = await make('Loose note', top);
+    const kept = await make('Keep me', top);
+    const inside = await make('Inside week1', `${top}/week1`);
+    await page.goto(`/#/f/${top}`);
+    await expect(page.locator('.card', { hasText: 'Keep me' })).toBeVisible();
+
+    await page.locator('[data-action="folder-select"]').click();
+    await expect(page.locator('.select-bar')).toContainText('0 selected');
+    await expect(page.locator('[data-action="folder-trash"]')).toBeDisabled();
+    await page.locator('.folder', { hasText: 'week1' }).click();
+    await page.locator('.pick-card', { hasText: 'Loose note' }).click();
+    await expect(page.locator('.select-bar')).toContainText('2 selected');
+    await expect(page).toHaveURL(new RegExp(`#/f/${top}$`));
+
+    await page.locator('[data-action="folder-trash"]').click();
+    await expect(page.locator('.sheet h3')).toHaveText('Move 1 note and 1 folder (with 1 note inside) to the trash?');
+    await page.locator('[data-action="close"]').click();
+    expect((await page.request.get(`/api/notes/${loose.id}`)).ok()).toBe(true);
+
+    await page.locator('[data-action="folder-trash"]').click();
+    await page.locator('[data-action="folder-trash-now"]').click();
+    await expect(page.locator('.toast')).toContainText('Moved 2 notes and 1 folder to the trash');
+    await expect(page.locator('.select-bar')).toHaveCount(0);
+    await expect(page.locator('.card', { hasText: 'Keep me' })).toBeVisible();
+    await expect(page.locator('.card', { hasText: 'Loose note' })).toHaveCount(0);
+    await expect(page.locator('.folder', { hasText: 'week1' })).toHaveCount(0);
+    const trashed = (await (await page.request.get('/api/trash')).json()).map((t) => t.id);
+    expect(trashed).toEqual(expect.arrayContaining([loose.id, inside.id]));
+    expect((await page.request.get(`/api/notes/${kept.id}`)).ok()).toBe(true);
+
+    await page.locator('[data-action="folder-select"]').click();
+    await page.locator('[data-folder-all]').check();
+    await expect(page.locator('.select-bar')).toContainText('1 selected');
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.select-bar')).toHaveCount(0);
+    await expect(page.locator('.fab[data-action="new"]')).toBeVisible();
   });
 });
 
@@ -504,6 +601,51 @@ test.describe('storage', () => {
     await expect(page.locator('details.store-area[data-area="notes"] [data-action="storage-act"]')).toHaveCount(0);
     await page.locator('#back').click();
     await expect(page).toHaveURL(/#\/settings$/);
+  });
+});
+
+test.describe('export and this browser', () => {
+  test('exports a zip with the parts chosen and clears drafts kept in this browser', async ({ page }) => {
+    await page.goto('/#/settings/storage');
+    const link = page.locator('#export-link');
+    await expect(link).toHaveAttribute('href', '/api/export?uploads=true&chats=true&trash=false');
+    await page.locator('[data-export="chats"]').uncheck();
+    await page.locator('[data-export="trash"]').check();
+    await expect(link).toHaveAttribute('href', '/api/export?uploads=true&chats=false&trash=true');
+    const zip = await page.request.get('/api/export?uploads=false&chats=true&trash=false');
+    expect(zip.headers()['content-type']).toBe('application/zip');
+    expect(zip.headers()['content-disposition']).toMatch(/^attachment; filename="leo-export-\d{4}-\d{2}-\d{2}\.zip"$/);
+    const bytes = await zip.body();
+    expect(bytes.subarray(0, 2).toString()).toBe('PK');
+    expect(bytes.includes(Buffer.from('leo/README.txt'))).toBe(true);
+    expect(bytes.includes(Buffer.from('serve-token'))).toBe(false);
+
+    const note = await (await page.request.post('/api/notes', { data: { title: `Draft to clear ${test.info().project.name}`, body: 'saved text' } })).json();
+    await page.route('**/api/notes/*', (route) => (route.request().method() === 'PATCH' ? route.fulfill({ status: 500 }) : route.continue()));
+    await page.goto(`/#/n/${note.id}`);
+    await page.locator('.blk').first().click();
+    await page.locator('.line-edit').fill('unsaved text');
+    await expect(page.locator('#save-state')).toContainText('draft kept');
+    await page.goto('/#/settings/storage');
+    const browser = page.locator('.store-browser');
+    await expect(browser).toContainText('1 unsaved draft');
+    await browser.locator('[data-action="drafts-clear"]').click();
+    await page.locator('[data-action="drafts-clear-now"]').click();
+    await expect(page.locator('.toast')).toContainText('Cleared 1 draft');
+    await expect(browser).toContainText('No unsaved drafts are kept here.');
+    expect(await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith('leo-draft-v1:')))).toEqual([]);
+    expect((await (await page.request.get(`/api/notes/${note.id}`)).json()).body).toBe('saved text');
+  });
+
+  test('Felix is the tab icon, even before signing in', async ({ page, playwright }) => {
+    await expect(page.locator('link[rel="icon"]')).toHaveAttribute('href', '/favicon.svg');
+    const stranger = await playwright.request.newContext({ baseURL: 'http://127.0.0.1:31831' });
+    const icon = await stranger.get('/favicon.svg');
+    expect(icon.status()).toBe(200);
+    expect(icon.headers()['content-type']).toBe('image/svg+xml');
+    expect(await icon.text()).toContain('#b4cfe7');
+    expect((await stranger.get('/api/notes')).status()).toBe(401);
+    await stranger.dispose();
   });
 });
 

@@ -8,6 +8,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="leo">
 <meta name="referrer" content="no-referrer">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <title>leo</title>
 <style>
 :root {
@@ -259,6 +260,16 @@ label.trash-row { cursor: pointer; }
 .trash-forget svg { width: 18px; height: 18px; color: var(--muted); }
 .trash-forget:hover svg { color: var(--danger); }
 .select-bar { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--bottom) + 18px); z-index: 25; display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 14px; border-radius: 16px; background: var(--surface); border: 1px solid var(--line); box-shadow: 0 8px 28px rgba(0, 0, 0, .14); width: max-content; max-width: calc(100% - 24px); }
+.folder-tools { display: flex; justify-content: flex-end; margin: 6px 4px -6px; }
+.folder.picking, .pick-card { position: relative; }
+.folder.picked, .pick-card.picked { border-color: var(--accent); background: var(--accent-soft); }
+.pick-box { width: 22px; height: 22px; border-radius: 7px; border: 2px solid var(--line); background: var(--surface); display: grid; place-items: center; flex: none; }
+.pick-box svg { width: 14px; height: 14px; opacity: 0; color: var(--accent-text); }
+.pick-box.on { background: var(--accent); border-color: var(--accent); }
+.pick-box.on svg { opacity: 1; }
+.pick-card { display: flex; align-items: center; gap: 12px; cursor: pointer; }
+.pick-card .card-title { flex: 1; min-width: 0; margin: 0; }
+.pick-card .card-meta { margin: 0; }
 .select-all { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600; cursor: pointer; }
 .select-all input { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); }
 .select-count { font-size: 13.5px; color: var(--muted); min-width: 74px; }
@@ -398,36 +409,84 @@ body.on-map main { padding: 0; max-width: none; }
 .map-actions { display: flex; gap: 8px; margin-top: 12px; }
 .chat-btn { width: 48px; }
 .chat-btn .felix { display: block; }
-.felix { overflow: visible; display: inline-block; }
+.felix { overflow: visible; display: inline-block; cursor: pointer; -webkit-tap-highlight-color: transparent; }
 .felix .felix-body rect { fill: #b4cfe7; }
 .felix .felix-eyes rect { fill: #19191b; }
 .felix .felix-spark rect { fill: #b4cfe7; opacity: 0; }
-.felix .felix-body, .felix .felix-eyes, .felix .felix-arm { transform-box: fill-box; }
+.felix .felix-heart rect { fill: #f28ba8; }
+.felix .felix-heart, .felix .felix-thought, .felix .felix-z, .felix .felix-cheeks, .felix .felix-sweat { opacity: 0; }
+.felix .felix-thought rect { fill: #8fb3d6; }
+.felix .felix-z text { fill: var(--muted); }
+.felix .felix-body .felix-cheeks rect { fill: #f4a3b9; }
+.felix .felix-body .felix-sweat rect { fill: #7cc4f0; }
+.felix .felix-body, .felix .felix-eyes, .felix .felix-gaze, .felix .felix-arm, .felix .felix-heart, .felix .felix-thought rect, .felix .felix-z, .felix .felix-sweat { transform-box: fill-box; }
 .felix .felix-body { transform-origin: 50% 100%; }
 .felix .felix-eyes { transform-origin: 50% 50%; transition: transform .2s; }
+.felix .felix-gaze { transform: translate(var(--gaze-x, 0px), var(--gaze-y, 0px)); transition: transform .25s ease-out; }
 .felix .felix-arm { transform-origin: 50% 100%; }
+.felix .felix-heart { transform-origin: 50% 100%; }
 .felix.idle .felix-body { animation: felix-bob 2.8s ease-in-out infinite; }
 .felix.blink .felix-eyes { animation: felix-blink .2s ease-in-out; }
 .felix.think .felix-eyes { animation: felix-look 1.6s ease-in-out infinite; }
 .felix.think .felix-body { animation: felix-bob 1.2s ease-in-out infinite; }
+.felix.think .felix-thought { opacity: 1; }
+.felix.think .felix-thought rect { animation: felix-pop 1.2s ease-in-out infinite; opacity: .2; }
+.felix.think .felix-thought rect:nth-child(2) { animation-delay: .2s; }
+.felix.think .felix-thought rect:nth-child(3) { animation-delay: .4s; }
+.felix.talk .felix-left { animation: felix-type .36s steps(2, jump-none) infinite; }
+.felix.talk .felix-right { animation: felix-type .36s steps(2, jump-none) .18s infinite; }
+.felix.talk .felix-body { animation: felix-bob .9s ease-in-out infinite; }
+.felix.nod .felix-body { animation: felix-nod .45s ease-out 1; }
 .felix.wave .felix-right { animation: felix-arm 0.32s steps(2, jump-none) 4; }
 .felix.dance .felix-body { animation: felix-dance .9s ease-in-out 2; }
 .felix.dance .felix-left { animation: felix-arm .3s steps(2, jump-none) 6; }
 .felix.dance .felix-right { animation: felix-arm .3s steps(2, jump-none) .15s 6; }
 .felix.dance .felix-eyes, .felix.cheer .felix-eyes { transform: scaleY(.3); }
+.felix.dance .felix-cheeks, .felix.cheer .felix-cheeks, .felix.giggle .felix-cheeks, .felix.boop .felix-cheeks, .felix.wake .felix-cheeks { opacity: 1; transition: opacity .2s; }
+.felix.dance .felix-heart { animation: felix-float 1.6s ease-out 1; }
+.felix.cheer .felix-heart { animation: felix-float 1.2s ease-out 2; }
 .felix.cheer .felix-body { animation: felix-jump .5s cubic-bezier(.3, 1.6, .5, 1) 4; }
 .felix.cheer .felix-left, .felix.cheer .felix-right { animation: felix-arm .25s steps(2, jump-none) 8; }
 .felix.cheer .felix-spark rect { animation: felix-spark .6s ease-out 4; }
-.felix.droop .felix-eyes { transform: translateY(2px); }
-.felix.droop .felix-body { animation: felix-shake .5s ease-in-out 1; }
+.felix.droop .felix-eyes { transform: translateY(2px) scaleY(.7); }
+.felix.droop .felix-body { animation: felix-sag 1.6s ease-in-out 1; }
+.felix.droop .felix-sweat { animation: felix-drip 1.5s ease-in 1; }
+.felix.droop .felix-left, .felix.droop .felix-right { transform: translateY(2px); }
+.felix.perk .felix-body { animation: felix-jump .55s cubic-bezier(.3, 1.6, .5, 1) 1; }
+.felix.perk .felix-left { animation: felix-arm .3s steps(2, jump-none) 2; }
+.felix.boop .felix-body { animation: felix-squish .5s cubic-bezier(.3, 1.6, .5, 1) 1; }
+.felix.boop .felix-eyes { transform: scaleY(.25); }
+.felix.hop .felix-body { animation: felix-jump .6s cubic-bezier(.3, 1.6, .5, 1) 1; }
+.felix.hop .felix-left, .felix.hop .felix-right { animation: felix-arm .3s steps(2, jump-none) 2; }
+.felix.spin .felix-body { animation: felix-spin .8s cubic-bezier(.5, 0, .3, 1) 1; transform-origin: 50% 50%; }
+.felix.giggle .felix-body { animation: felix-shake .18s ease-in-out 4; }
+.felix.giggle .felix-eyes { transform: scaleY(.3); }
+.felix.sleep .felix-eyes { transform: scaleY(.12); transition: transform 1.2s ease-in; }
+.felix.sleep .felix-body { animation: felix-breathe 3.6s ease-in-out infinite; }
+.felix.sleep .felix-z { opacity: 1; animation: felix-snooze 2.4s ease-in-out infinite; }
+.felix.wake .felix-body { animation: felix-jump .5s cubic-bezier(.3, 1.6, .5, 1) 1; }
 @keyframes felix-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-1.5px); } }
 @keyframes felix-blink { 0%, 100% { transform: scaleY(1); } 50% { transform: scaleY(.1); } }
-@keyframes felix-look { 0%, 100% { transform: translateX(0); } 30% { transform: translateX(-3px); } 70% { transform: translateX(4px); } }
+@keyframes felix-look { 0%, 100% { transform: translate(0, 0); } 30% { transform: translate(-3px, -1px); } 70% { transform: translate(4px, -2px); } }
 @keyframes felix-arm { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-7px); } }
+@keyframes felix-type { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+@keyframes felix-pop { 0%, 100% { opacity: .2; transform: scale(.8); } 40% { opacity: 1; transform: scale(1.15); } }
+@keyframes felix-nod { 0%, 100% { transform: translateY(0) scale(1, 1); } 40% { transform: translateY(1px) scale(1.04, .94); } }
 @keyframes felix-dance { 0%, 100% { transform: translateY(0) rotate(0); } 25% { transform: translateY(-5px) rotate(-9deg); } 50% { transform: translateY(0) rotate(0); } 75% { transform: translateY(-5px) rotate(9deg); } }
 @keyframes felix-jump { 0%, 100% { transform: translateY(0) scale(1, 1); } 15% { transform: translateY(0) scale(1.08, .9); } 50% { transform: translateY(-8px) scale(.96, 1.05); } }
 @keyframes felix-spark { 0% { opacity: 0; transform: translateY(4px); } 40% { opacity: 1; } 100% { opacity: 0; transform: translateY(-6px); } }
+@keyframes felix-float { 0% { opacity: 0; transform: translateY(6px) scale(.6); } 25% { opacity: 1; transform: translateY(0) scale(1.1); } 100% { opacity: 0; transform: translateY(-8px) scale(1); } }
 @keyframes felix-shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-2px); } 75% { transform: translateX(2px); } }
+@keyframes felix-sag { 0% { transform: translateX(0) scale(1, 1); } 10% { transform: translateX(-2px); } 20% { transform: translateX(2px); } 30%, 85% { transform: translateY(1px) scale(1.04, .93); } 100% { transform: translateY(0) scale(1, 1); } }
+@keyframes felix-drip { 0% { opacity: 0; transform: translateY(0); } 15% { opacity: 1; } 80% { opacity: 1; transform: translateY(6px); } 100% { opacity: 0; transform: translateY(8px); } }
+@keyframes felix-squish { 0% { transform: scale(1, 1); } 30% { transform: scale(1.12, .82); } 60% { transform: scale(.94, 1.08); } 100% { transform: scale(1, 1); } }
+@keyframes felix-spin { 0% { transform: rotate(0); } 100% { transform: rotate(360deg); } }
+@keyframes felix-breathe { 0%, 100% { transform: scale(1, 1); } 50% { transform: scale(1.03, .97); } }
+@keyframes felix-snooze { 0% { opacity: 0; transform: translate(0, 2px) scale(.7); } 30% { opacity: 1; } 100% { opacity: 0; transform: translate(3px, -4px) scale(1.1); } }
+@media (prefers-reduced-motion: reduce) {
+  .felix *, .felix .felix-body, .felix .felix-eyes { animation: none !important; transition: none !important; }
+  .felix.think .felix-thought, .felix.sleep .felix-z, .felix.think .felix-thought rect { opacity: 1; }
+}
 
 .chat {
   position: fixed; z-index: 45; right: 0; top: 0; bottom: 0; width: min(440px, 100%);
@@ -604,6 +663,10 @@ body.on-map main { padding: 0; max-width: none; }
 .store-all { background: var(--bg); position: sticky; top: 0; z-index: 1; }
 .store-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .btn.danger-text { color: var(--danger); }
+.store-export-parts { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 4px 0 12px; font-size: 14px; }
+.store-export-parts label { display: inline-flex; align-items: center; gap: 6px; }
+.store-export-parts input { width: 17px; height: 17px; margin: 0; accent-color: var(--accent); }
+.store-export .btn { display: inline-block; text-decoration: none; }
 .set-path { font: 12.5px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--code-bg); padding: 6px 8px; border-radius: 8px; overflow-wrap: anywhere; }
 @media (max-width: 520px) { .set-row:not(.column) { flex-direction: column; align-items: stretch; gap: 6px; } .set-label { width: auto; } }
 .fabs { position: fixed; right: max(20px, calc(50% - 360px)); bottom: calc(var(--bottom) + 22px); z-index: 25; display: flex; gap: 10px; }

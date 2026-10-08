@@ -73,7 +73,7 @@ fn clip(text: &str, most: usize) -> String {
 fn connected<'a>(store: &'a Store, cache: &'a Cache, id: &str) -> Vec<(&'a Note, String, String)> {
     let mut out: Vec<(u8, &Note, String, String)> = Vec::new();
     let mut seen = BTreeSet::new();
-    for link in cache.pairs.values().flat_map(|p| &p.links) {
+    for link in cache.all_links() {
         let other = if link.a == id {
             &link.b
         } else if link.b == id {
@@ -313,6 +313,7 @@ mod tests {
                 hash: String::new(),
                 summary: "How BFS explores a graph".into(),
                 concepts: vec![],
+                linked: None,
             },
         );
         cache.pairs.insert(
