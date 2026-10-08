@@ -68,6 +68,7 @@ const actions = {
   },
   'test-ai': testAi,
   'note-map': (el) => go(`#/map/${enc(el.dataset.id)}`),
+  'note-picture': () => choosePictures(),
   record: (el) => {
     closeSheet();
     go(el.dataset.dir ? `#/record/${enc(el.dataset.dir)}` : '#/record');

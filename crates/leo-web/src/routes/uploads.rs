@@ -2,10 +2,11 @@ use axum::extract::{Path, State};
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
+use leo_core::attachments;
 use serde::Deserialize;
 
 use crate::routes::notes::{directory, save};
-use crate::{store_now, AppState, Importer, UploadFile};
+use crate::{store_now, AppState, Figure, Importer, Made, UploadFile};
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub(crate) struct ImportJob {
@@ -80,6 +81,71 @@ fn set_job(state: &AppState, id: &str, change: impl FnOnce(&mut ImportJob)) {
     }
 }
 
+fn figure_number(target: &str) -> Option<usize> {
+    target.strip_prefix("figure:")?.parse().ok()
+}
+
+pub(crate) fn settle_figures(
+    body: &str,
+    figures: &[Figure],
+    save: &mut dyn FnMut(&Figure) -> Option<String>,
+) -> String {
+    let mut saved: Vec<Option<Option<String>>> = vec![None; figures.len()];
+    let mut placed = false;
+    let mut lines = Vec::new();
+    for line in body.lines() {
+        let found = attachments::pictures_in(line);
+        if !found.iter().any(|(_, s)| s.target.starts_with("figure:")) {
+            lines.push(line.to_string());
+            continue;
+        }
+        let mut out = String::new();
+        let mut at = 0;
+        for (range, shown) in found {
+            out.push_str(&line[at..range.start]);
+            at = range.end;
+            let Some(n) = figure_number(&shown.target) else {
+                out.push_str(&line[range]);
+                continue;
+            };
+            let Some(figure) = n.checked_sub(1).and_then(|i| figures.get(i)) else {
+                continue;
+            };
+            let slot = &mut saved[n - 1];
+            if slot.is_some() || figure.photo {
+                continue;
+            }
+            let path = save(figure);
+            if let Some(path) = &path {
+                out.push_str(&format!("![{}]({path})", shown.alt));
+                placed = true;
+            }
+            *slot = Some(path);
+        }
+        out.push_str(&line[at..]);
+        if !out.trim().is_empty() || line.trim().is_empty() {
+            lines.push(out.trim_end().to_string());
+        }
+    }
+    let mut body = lines.join("\n");
+    let mut section = |heading: &str, which: &dyn Fn(&Figure) -> bool| {
+        let shown: Vec<String> = figures
+            .iter()
+            .enumerate()
+            .filter(|(i, f)| which(f) && saved[*i].is_none())
+            .filter_map(|(_, f)| save(f).map(|path| format!("![{}]({path})", f.place)))
+            .collect();
+        if !shown.is_empty() {
+            body.push_str(&format!("\n\n## {heading}\n\n{}", shown.join("\n\n")));
+        }
+    };
+    if !placed {
+        section("Figures", &|f| !f.photo);
+    }
+    section("Photos", &|f| f.photo);
+    body
+}
+
 fn run_import(
     state: AppState,
     id: String,
@@ -97,7 +163,11 @@ fn run_import(
             job.total = total;
         })
     });
-    let (made_title, body) = match written {
+    let Made {
+        title: made_title,
+        body,
+        figures,
+    } = match written {
         Ok(found) => found,
         Err(e) => {
             set_job(&state, &id, |job| {
@@ -117,10 +187,23 @@ fn run_import(
         names.join(", "),
         chrono::Local::now().format("%b %-d, %Y")
     );
+    let stem = names
+        .first()
+        .and_then(|n| n.rsplit_once('.').map(|(s, _)| s.to_string()))
+        .unwrap_or_else(|| "upload".into());
     let made = store_now(&state, |store| {
         if !store.dir_exists(&dir) {
             store.create_dir(&dir);
         }
+        let notes_dir = store.notes_dir.clone();
+        let body = settle_figures(&body, &figures, &mut |figure| {
+            let name = format!(
+                "{stem} {}.{}",
+                figure.place,
+                attachments::kind_of(&figure.bytes)?
+            );
+            attachments::save(&notes_dir, &name, &figure.bytes).ok()
+        });
         let note = store
             .create_note(title, format!("{}{footer}", body.trim()), vec![], &dir)
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?

@@ -47,6 +47,7 @@ use crate::routes::notes::{
     create_dir, create_note, delete_note, get_note, list_dirs, list_folders, list_notes, move_note,
     search_notes, toggle_checkbox, update_note,
 };
+use crate::routes::pictures::{add_picture, get_picture, PICTURE_BYTES};
 use crate::routes::settings::{change_setting, get_settings, test_setting};
 use crate::routes::trash::{
     delete_from_trash, list_trash, move_to_trash, restore_many, restore_note,
@@ -74,11 +75,22 @@ pub struct UploadFile {
 
 pub type Reader = Arc<dyn Fn(UploadFile, &mut dyn FnMut(&str)) -> Result<String> + Send + Sync>;
 
-pub type Importer = Arc<
-    dyn Fn(Vec<UploadFile>, &mut dyn FnMut(&str, usize, usize)) -> Result<(String, String)>
-        + Send
-        + Sync,
->;
+#[derive(Debug, Clone, PartialEq)]
+pub struct Figure {
+    pub place: String,
+    pub bytes: Vec<u8>,
+    pub photo: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Made {
+    pub title: String,
+    pub body: String,
+    pub figures: Vec<Figure>,
+}
+
+pub type Importer =
+    Arc<dyn Fn(Vec<UploadFile>, &mut dyn FnMut(&str, usize, usize)) -> Result<Made> + Send + Sync>;
 
 #[derive(Clone, Default)]
 pub struct Powers {
@@ -373,6 +385,11 @@ fn router(state: AppState) -> Router {
         )
         .route("/api/import/{id}", get(import_status))
         .route("/api/activity", get(activity))
+        .route("/api/image", get(get_picture))
+        .route(
+            "/api/images",
+            post(add_picture).layer(axum::extract::DefaultBodyLimit::max(PICTURE_BYTES)),
+        )
         .route("/api/record", get(record::overview).post(record::start))
         .route("/api/record/{id}", get(record::status))
         .route(

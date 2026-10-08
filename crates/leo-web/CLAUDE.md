@@ -272,3 +272,29 @@
   Due after `DUE_AFTER_HOURS` (20). Welcome shows `.chat-review` in Study when
   any, in Chat when due; Review now starts a Study chat with `reviewPrompt` (≤5)
   and their notes attached, then POSTs `{done: keys}`.
+- Pictures in notes (`leo_core::attachments`): files live in
+  `<notes>/attachments/` (synced and seen by Obsidian; not a leo folder because
+  folders come from notes), named `<stamp>-<slug>.<ext>`, type from the bytes
+  (PNG/JPEG/GIF/WebP only, never SVG, ≤20 MB). Notes use `![alt](attachments/x.png)`
+  or `![[x.png]]`. `resolve(notes, from_dir, link)`: beside the note, then from
+  the top, then `attachments/<name>`; a bad `from` or anything outside is None.
+  GET `/api/image?path=&from=` serves after sniffing the bytes; POST
+  `/api/images {name, data}` saves. `markdown.js` turns local pictures into
+  `<img class="note-img">` (outside ones stay links: CSP and privacy); `render`
+  takes `dir`. Notes: paste or drop in `doc.js` (`onPictures`, `insert`), or
+  the Picture action; small PNGs stay PNG, others go through `shrink`. Pasting
+  on a folder page opens the upload sheet; pasting into the sheet adds files
+  (`pastedFiles` names them `pasted-N.png`). The TUI shows `[image: alt]`
+  (`attachments::with_placeholders` in `view/markdown.rs` `line`).
+- Felix pictures: pasting into the box adds them as files (read by the AI that
+  sees); chips and the sent message show a ≤240 px JPEG data-URL thumbnail
+  (`pics`, checked against `THUMB` before drawing).
+- Upload figures (`leo_services::figures`): pptx/docx images the slide or
+  document embeds (its .rels, masters skipped), PDF images (DCT as is unless
+  CMYK; Flate RGB/gray 8-bit rewrapped as PNG, predictor data as-is), filtered
+  by `keep` (≥150x100, ≥40k px, ≥3 KB, stretch ≤6, used on <3 places, deduped,
+  ≤24). The prompt lists them (`offered`, `PLACING`) and the AI writes
+  `![caption](figure:N)`; `settle_figures` saves each once and rewrites the
+  link, drops repeats and unknown numbers, adds `## Figures` only if the AI
+  placed none, and photos under `## Photos`. Vector drawings in PDFs are not
+  pictures and are not extracted.

@@ -4,6 +4,7 @@ use anyhow::{bail, Context, Result};
 
 use crate::ai::chat::{self, Prompt};
 use crate::ai::provider::Image;
+use crate::figures::{self, Figure};
 
 const PART_CHARS: usize = 24_000;
 const PAGES_PER_LOOK: usize = 6;
@@ -22,6 +23,14 @@ pub struct Upload {
 pub struct Material {
     pub text: String,
     pub images: Vec<Image>,
+    pub figures: Vec<Figure>,
+}
+
+#[derive(Debug, Default, PartialEq)]
+pub struct Imported {
+    pub title: String,
+    pub body: String,
+    pub figures: Vec<Figure>,
 }
 
 fn extension(name: &str) -> String {
@@ -205,6 +214,7 @@ fn pdf(bytes: &[u8]) -> Result<Material> {
         return Ok(Material {
             text: text.trim().to_string(),
             images: Vec::new(),
+            figures: figures::from_pdf(&doc),
         });
     }
     let mut images = Vec::new();
@@ -227,6 +237,7 @@ fn pdf(bytes: &[u8]) -> Result<Material> {
             return Ok(Material {
                 text: text.trim().to_string(),
                 images: Vec::new(),
+                figures: figures::from_pdf(&doc),
             });
         }
         bail!("this PDF looks scanned, but leo cannot read its pages; take photos of them, or export them as images, and upload those");
@@ -234,6 +245,7 @@ fn pdf(bytes: &[u8]) -> Result<Material> {
     Ok(Material {
         text: text.trim().to_string(),
         images,
+        figures: Vec::new(),
     })
 }
 
@@ -242,32 +254,42 @@ pub fn extract(upload: &Upload) -> Result<Material> {
     let mime = upload.mime.to_lowercase();
     let text = |t: String| Material {
         text: t,
-        images: Vec::new(),
+        ..Material::default()
+    };
+    let photo = |mime: String| Material {
+        text: String::new(),
+        images: vec![Image {
+            mime: mime.clone(),
+            bytes: upload.bytes.clone(),
+        }],
+        figures: vec![Figure {
+            mime,
+            bytes: upload.bytes.clone(),
+            place: upload.name.clone(),
+            photo: true,
+        }],
     };
     if matches!(
         mime.as_str(),
         "image/jpeg" | "image/png" | "image/webp" | "image/gif"
     ) {
-        return Ok(Material {
-            text: String::new(),
-            images: vec![Image {
-                mime,
-                bytes: upload.bytes.clone(),
-            }],
-        });
+        return Ok(photo(mime));
     }
     match ext.as_str() {
         "pdf" => pdf(&upload.bytes),
-        "docx" => docx(&upload.bytes).map(text),
-        "pptx" => pptx(&upload.bytes).map(text),
-        "txt" | "md" | "markdown" | "text" => Ok(text(String::from_utf8_lossy(&upload.bytes).into_owned())),
-        "jpg" | "jpeg" | "png" | "webp" | "gif" => Ok(Material {
-            text: String::new(),
-            images: vec![Image {
-                mime: format!("image/{}", if ext == "jpg" { "jpeg" } else { ext.as_str() }),
-                bytes: upload.bytes.clone(),
-            }],
+        "docx" => docx(&upload.bytes).map(|t| Material {
+            figures: figures::from_docx(&upload.bytes),
+            ..text(t)
         }),
+        "pptx" => pptx(&upload.bytes).map(|t| Material {
+            figures: figures::from_pptx(&upload.bytes),
+            ..text(t)
+        }),
+        "txt" | "md" | "markdown" | "text" => Ok(text(String::from_utf8_lossy(&upload.bytes).into_owned())),
+        "jpg" | "jpeg" | "png" | "webp" | "gif" => Ok(photo(format!(
+            "image/{}",
+            if ext == "jpg" { "jpeg" } else { ext.as_str() }
+        ))),
         "heic" | "heif" => bail!("{} is a HEIC photo; upload it from the phone's photo picker, which converts it, or save it as JPEG", upload.name),
         "doc" | "ppt" => bail!("{} is an old Office format; save it as .{}x and upload that", upload.name, ext),
         _ => bail!("leo cannot read {} yet: upload a PDF, Word, PowerPoint, text file, or photos", upload.name),
@@ -286,7 +308,19 @@ pub fn gather(uploads: &[Upload]) -> Result<Material> {
             all.text.push_str("\n\n");
         }
         all.images.extend(found.images);
+        let many = uploads.len() > 1;
+        all.figures.extend(found.figures.into_iter().map(|mut f| {
+            if many && !f.photo {
+                f.place = format!("{} of {}", f.place, upload.name);
+            }
+            f
+        }));
     }
+    let mut documents = 0;
+    all.figures.retain(|f| {
+        documents += usize::from(!f.photo);
+        f.photo || documents <= figures::MOST_FIGURES
+    });
     if all.images.len() > MOST_IMAGES {
         bail!("that is {} pages of images; leo reads up to {MOST_IMAGES} at a time, so upload them in smaller groups", all.images.len());
     }
@@ -305,6 +339,9 @@ You turn material a student uploaded (lecture slides, a handout, a paper, a work
 - Organise with ## headings and bullet points (- ); bold a term where it is defined; put formulas and code in code blocks or inline code.
 - Put tasks or deadlines that the material states in a final \"## Action items\" section as checkboxes (- [ ] ); leave the section out otherwise.
 - Do not add material that is not in the source. If something is unreadable, write [unreadable] rather than guessing.";
+
+const PLACING: &str = "\
+Pictures from the material can go in the notes. They are listed in <figures> as figure:N, with the slide or page each comes from. Put a picture where it helps someone understand, on its own line, as ![what it shows, in a few words](figure:N), next to the notes for its slide or page. Use each one at most once and only the ones listed, and leave out pictures that are only decoration.";
 
 const SEEING: &str = "\
 The images are photos or scans of pages, in order. Read all of them, including handwriting, tables and diagrams.";
@@ -340,14 +377,32 @@ pub fn text_parts(text: &str) -> Vec<String> {
     parts
 }
 
-pub fn text_prompt(text: &str, name: &str, part: Option<(usize, usize)>) -> Prompt {
+pub fn offered(figures: &[Figure]) -> String {
+    figures
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| !f.photo)
+        .map(|(i, f)| format!("figure:{} is from {}", i + 1, f.place))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+pub fn text_prompt(text: &str, name: &str, part: Option<(usize, usize)>, figures: &str) -> Prompt {
     let shape = match part {
         Some((p, n)) => part_shape(p, n),
         None => whole_shape().to_string(),
     };
+    let (rules, listed) = if figures.is_empty() {
+        (String::new(), String::new())
+    } else {
+        (
+            format!("\n\n{PLACING}"),
+            format!("\n\n<figures>\n{figures}\n</figures>"),
+        )
+    };
     Prompt {
-        system: format!("{DOC_RULES}\n\n{shape}"),
-        user: format!("<material name=\"{name}\">\n{}\n</material>\n\nWrite the study notes for this material.", text.trim()),
+        system: format!("{DOC_RULES}{rules}\n\n{shape}"),
+        user: format!("<material name=\"{name}\">\n{}\n</material>{listed}\n\nWrite the study notes for this material.", text.trim()),
     }
 }
 
@@ -434,6 +489,7 @@ pub fn write_note(
         text_parts(&material.text)
     };
     let looks: Vec<&[Image]> = material.images.chunks(PAGES_PER_LOOK).collect();
+    let figures = offered(&material.figures);
     let jobs = texts.len() + looks.len();
     if jobs == 0 {
         bail!("there is nothing in that file for leo to read");
@@ -441,7 +497,7 @@ pub fn write_note(
     if jobs == 1 {
         progress("Writing the note", 0, 1);
         let reply = if let Some(text) = texts.first() {
-            write(text_prompt(text, name, None), NOTE_TOKENS)?
+            write(text_prompt(text, name, None, &figures), NOTE_TOKENS)?
         } else {
             let n = material.images.len();
             see(image_prompt(name, None, (1, n, n)), looks[0], NOTE_TOKENS)?
@@ -455,7 +511,7 @@ pub fn write_note(
     for (i, text) in texts.iter().enumerate() {
         progress(&format!("Writing part {} of {}", i + 1, jobs), i, total);
         sections.push(chat::clean_reply(&write(
-            text_prompt(text, name, Some((i + 1, jobs))),
+            text_prompt(text, name, Some((i + 1, jobs)), &figures),
             NOTE_TOKENS,
         )?));
     }
@@ -497,7 +553,7 @@ pub fn write_note(
 pub fn import(
     uploads: &[Upload],
     progress: &mut dyn FnMut(&str, usize, usize),
-) -> Result<(String, String)> {
+) -> Result<Imported> {
     progress("Reading the file", 0, 1);
     let material = gather(uploads)?;
     let name = uploads.first().map(|u| u.name.as_str()).unwrap_or("upload");
@@ -505,7 +561,12 @@ pub fn import(
         Ok(crate::ai::chat_outcome(prompt, most)?.value)
     };
     let see = |prompt: Prompt, images: &[Image], most: u32| crate::ai::see(prompt, images, most);
-    write_note(&material, name, &write, &see, progress)
+    let (title, body) = write_note(&material, name, &write, &see, progress)?;
+    Ok(Imported {
+        title,
+        body,
+        figures: material.figures,
+    })
 }
 
 #[cfg(test)]
@@ -519,8 +580,46 @@ mod tests {
     }
 
     #[test]
+    fn photos_are_kept_as_pictures_and_document_figures_are_offered_by_place() {
+        let photo = Upload {
+            name: "board.png".into(),
+            mime: "image/png".into(),
+            bytes: b"\x89PNG\r\n\x1a\nrest".to_vec(),
+        };
+        let text = Upload {
+            name: "notes.md".into(),
+            mime: "text/markdown".into(),
+            bytes: b"# Heaps".to_vec(),
+        };
+        let gathered = gather(&[photo.clone(), text]).unwrap();
+        assert_eq!(gathered.images.len(), 1);
+        assert_eq!(gathered.figures.len(), 1);
+        assert!(gathered.figures[0].photo);
+        assert_eq!(gathered.figures[0].place, "board.png");
+        let figures = vec![
+            gathered.figures[0].clone(),
+            Figure {
+                mime: "image/png".into(),
+                bytes: vec![],
+                place: "slide 3".into(),
+                photo: false,
+            },
+        ];
+        assert_eq!(offered(&figures), "figure:2 is from slide 3");
+        let with = text_prompt("x", "deck.pptx", None, &offered(&figures));
+        assert!(with
+            .system
+            .contains("![what it shows, in a few words](figure:N)"));
+        assert!(with
+            .user
+            .contains("<figures>\nfigure:2 is from slide 3\n</figures>"));
+        let without = text_prompt("x", "notes.md", None, "");
+        assert!(!without.system.contains("figure:N") && !without.user.contains("<figures>"));
+    }
+
+    #[test]
     fn notes_from_uploads_are_written_in_interpretable_language() {
-        assert!(text_prompt("x", "a.pdf", None)
+        assert!(text_prompt("x", "a.pdf", None, "")
             .system
             .contains("Use interpretable language"));
         assert!(image_prompt("a.jpg", None, (1, 1, 1))
@@ -766,7 +865,7 @@ mod tests {
         };
         let short = Material {
             text: "Heaps keep the minimum on top.".into(),
-            images: vec![],
+            ..Material::default()
         };
         let mut steps = Vec::new();
         let (title, body) = write_note(&short, "heaps.txt", &write, &see, &mut |s, d, t| {
@@ -787,6 +886,7 @@ mod tests {
                     bytes: vec![i],
                 })
                 .collect(),
+            figures: vec![],
         };
         let (title, body) =
             write_note(&long, "handout.pdf", &write, &see, &mut |_, _, _| {}).unwrap();

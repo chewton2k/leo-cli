@@ -6,6 +6,7 @@
 pub mod ai;
 pub mod config;
 pub mod doctor;
+pub mod figures;
 pub mod health;
 pub mod import;
 pub mod listen;

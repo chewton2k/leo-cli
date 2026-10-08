@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
-const { render } = require('../src/web/markdown.js');
+const md = require('../src/web/markdown.js');
+const { render } = md;
 
 const cases = [];
 const test = (name, fn) => cases.push([name, fn]);
@@ -112,6 +113,20 @@ test('an answered @leo question reads as a question and answer', () => {
   const html = render('**Q:** what is BFS?\nIt explores level by level.');
   assert.ok(html.includes('<strong>Q:</strong> what is BFS?'), html);
 });
+
+test('pictures in a note are shown from leo, and outside ones stay links', () => {
+  const html = md.render('![Heap diagram](attachments/heap.png)\n\n![](<attachments/a b.png>)\n\n![[board.png|300]]\n\n![x](https://example.com/x.png)', { dir: 'cs130' });
+  assert.ok(html.includes('<img class="note-img" src="/api/image?path=attachments%2Fheap.png&amp;from=cs130" alt="Heap diagram" loading="lazy">'), html);
+  assert.ok(html.includes('src="/api/image?path=attachments%2Fa%20b.png&amp;from=cs130" alt=""'), html);
+  assert.ok(html.includes('src="/api/image?path=board.png&amp;from=cs130" alt="board.png"'), html);
+  assert.ok(html.includes('<a href="https://example.com/x.png"'), html);
+  assert.ok(!/<img[^>]*example\.com/.test(html), 'no picture is loaded from elsewhere');
+  assert.ok(!md.render('![a](javascript:alert(1))').includes('<img'));
+  assert.ok(!md.render('![a](data:image/png;base64,AAAA)').includes('<img'));
+  assert.ok(md.render('![a"><script>](x.png)').includes('alt="a&quot;&gt;&lt;script&gt;"'));
+  assert.equal(md.plain('Look ![Heap](attachments/h.png) and ![[b.png]] then [link](https://x.y)'), 'Look and then link');
+});
+
 
 let failed = 0;
 for (const [name, fn] of cases) {

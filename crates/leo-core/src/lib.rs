@@ -3,6 +3,7 @@
 //! makes a network request, which is what keeps it testable on its own.
 
 pub mod action;
+pub mod attachments;
 pub mod diag;
 pub mod editor;
 pub mod filename;

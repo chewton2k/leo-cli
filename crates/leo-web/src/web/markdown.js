@@ -18,11 +18,28 @@
       .replace(/(^|[^_\w])_(?=\S)([^_]*?\S)_(?![_\w])/g, '$1<em>$2</em>');
   }
 
+  let pictureDir = '';
+
+  function picture(target, alt) {
+    const src = String(target || '').trim().replace(/^<(.*)>$/, '$1');
+    if (!src || /^[a-z][a-z0-9+.-]*:/i.test(src) || src.startsWith('//')) return null;
+    const url = `/api/image?path=${encodeURIComponent(src)}&from=${encodeURIComponent(pictureDir)}`;
+    return `<img class="note-img" src="${escape(url)}" alt="${escape(alt || '')}" loading="lazy">`;
+  }
+
   function inline(text) {
     const slots = [];
     const keep = (html) => `\u0000${slots.push(html) - 1}\u0000`;
     let s = text;
     s = s.replace(/`([^`]+)`/g, (_, code) => keep(`<code>${escape(code)}</code>`));
+    s = s.replace(/!\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/g, (whole, name) => {
+      const img = picture(name.trim(), name.trim());
+      return img ? keep(img) : whole;
+    });
+    s = s.replace(/!\[([^\]]*)\]\((<[^>]+>|[^)\s]+)(?:\s+"[^"]*")?\)/g, (whole, alt, target) => {
+      const img = picture(target, alt);
+      return img ? keep(img) : whole;
+    });
     s = s.replace(/!?\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g, (whole, label, url) => {
       const safe = safeUrl(url);
       return safe ? keep(link(safe, emphasis(escape(label || safe)))) : whole;
@@ -193,10 +210,15 @@
   }
 
   function render(markdown, options = {}) {
-    return blocks(String(markdown || '').replace(/\r\n?/g, '\n').split('\n'), {
-      boxes: options.boxOffset || 0,
-      interactive: true,
-    });
+    pictureDir = options.dir || '';
+    try {
+      return blocks(String(markdown || '').replace(/\r\n?/g, '\n').split('\n'), {
+        boxes: options.boxOffset || 0,
+        interactive: true,
+      });
+    } finally {
+      pictureDir = '';
+    }
   }
 
   function plain(markdown) {
@@ -205,7 +227,9 @@
       .replace(/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/gm, ' ')
       .replace(/^\s*(#{1,6}|>|[-*+]|\d+[.)])\s+/gm, '')
       .replace(/\[( |x|X)\]\s+/g, '')
-      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+      .replace(/!\[\[[^\]]*\]\]/g, ' ')
+      .replace(/!\[([^\]]*)\]\([^)]*\)/g, ' ')
+      .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
       .replace(/[*_~`]/g, '')
       .replace(/\s+/g, ' ')
       .trim();

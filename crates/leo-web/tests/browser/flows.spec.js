@@ -709,6 +709,85 @@ test.describe('folders', () => {
   });
 });
 
+test.describe('pictures', () => {
+  async function pastePicture(page, target, name = 'image.png') {
+    await page.evaluate(async ({ target, name }) => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 320;
+      canvas.height = 200;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#4f46e5';
+      ctx.fillRect(0, 0, 320, 200);
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(40, 40, 120, 80);
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+      const data = new DataTransfer();
+      data.items.add(new File([blob], name, { type: 'image/png' }));
+      const el = document.querySelector(target);
+      el.focus();
+      el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+    }, { target, name });
+  }
+
+  test('a pasted picture goes into the note and shows in full', async ({ page }) => {
+    const note = await (await page.request.post('/api/notes', { data: { title: `Pictured ${test.info().project.name}`, body: 'Before the picture.' } })).json();
+    await page.goto(`/#/n/${note.id}`);
+    await expect(page.locator('#doc')).toContainText('Before the picture.');
+    await pastePicture(page, '#doc');
+    const img = page.locator('#doc img.note-img');
+    await expect(img).toBeVisible();
+    await expect.poll(() => img.evaluate((el) => el.naturalWidth)).toBe(320);
+    await expect(page.locator('.toast')).toContainText('Picture added');
+    await expect.poll(async () => (await (await page.request.get(`/api/notes/${note.id}`)).json()).body).toMatch(/^Before the picture\.\n\n!\[Pasted picture\]\(attachments\/\d{8}-\d{6}-pasted-1\.png\)$/);
+    await page.reload();
+    await expect.poll(() => page.locator('#doc img.note-img').evaluate((el) => el.naturalWidth)).toBe(320);
+  });
+
+  test('the Picture button adds a picture from the device', async ({ page }) => {
+    const note = await (await page.request.post('/api/notes', { data: { title: `Chosen ${test.info().project.name}`, body: 'x' } })).json();
+    await page.goto(`/#/n/${note.id}`);
+    const chooser = page.waitForEvent('filechooser');
+    await page.locator('[data-action="note-picture"]').click();
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP8z8DAwMDAxMDAwMAAAAwqAQXxT7KxAAAAAElFTkSuQmCC', 'base64');
+    await (await chooser).setFiles({ name: 'Heap diagram.png', mimeType: 'image/png', buffer: png });
+    await expect(page.locator('#doc img.note-img')).toHaveAttribute('alt', 'Heap diagram');
+    await expect.poll(async () => (await (await page.request.get(`/api/notes/${note.id}`)).json()).body).toContain('![Heap diagram](attachments/');
+  });
+
+  test('a picture pasted on a folder page opens the upload sheet with it', async ({ page }) => {
+    await page.goto('/');
+    await pastePicture(page, 'body');
+    await expect(page.locator('.upload-file')).toContainText('pasted-1.png');
+    await expect(page.locator('#upload-go')).toBeEnabled();
+    await pastePicture(page, '#upload-title', 'board.png');
+    await expect(page.locator('.upload-file')).toHaveCount(2);
+  });
+
+  test('a picture pasted into Felix shows as a thumbnail and goes with the message', async ({ page }) => {
+    const asked = [];
+    await page.route('**/api/chats/*/files', (route) => {
+      if (route.request().method() !== 'POST') return route.fulfill({ json: [] });
+      return route.fulfill({ status: 201, json: { id: 'doc-pic-1', name: route.request().postDataJSON().name, chars: 40 } });
+    });
+    await page.route('**/api/chat', async (route) => {
+      asked.push(route.request().postDataJSON());
+      await route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: '{"sources":[]}\n{"t":"That diagram shows a heap."}\n{"done":true}\n' });
+    });
+    await page.goto('/');
+    await page.locator('#chat-toggle').click();
+    await pastePicture(page, '#chat-input');
+    const chip = page.locator('#chat .chat-ref.doc');
+    await expect(chip).toContainText('pasted-1.png');
+    await expect(chip.locator('img.chat-thumb')).toBeVisible();
+    await page.locator('#chat-input').fill('what is this?');
+    await page.locator('#chat-input').press('Enter');
+    await expect(page.locator('#chat .msg.leo').last()).toContainText('That diagram shows a heap.');
+    await expect(page.locator('#chat .msg.user .msg-pics img')).toHaveAttribute('src', /^data:image\/jpeg;base64,/);
+    expect(asked[0].files).toEqual(['doc-pic-1']);
+    await expect(chip).toHaveCount(0);
+  });
+});
+
 test.describe('background work', () => {
   test('work still going on shows its progress on every page until it is done', async ({ page }) => {
     let tasks = [

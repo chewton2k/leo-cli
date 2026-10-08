@@ -31,6 +31,49 @@ function base64(blob) {
   });
 }
 
+async function pictureFor(file) {
+  if (file.type === 'image/png' && file.size <= 3 * 1024 * 1024) return { name: file.name, type: file.type, blob: file };
+  return shrink(file);
+}
+
+function altFor(name) {
+  const stem = String(name || '').replace(/\.[^.]+$/, '').replace(/[[\]()]/g, ' ').replace(/\s+/g, ' ').trim();
+  return !stem || /^image$/i.test(stem) ? 'Pasted picture' : stem;
+}
+
+const pastedName = (file, i) => (file.name && !/^image\.\w+$/i.test(file.name) ? file.name : `pasted-${i + 1}.${(file.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`);
+const pastedFiles = (files, from = 0) => files.map((f, i) => (pastedName(f, from + i) === f.name ? f : new File([f], pastedName(f, from + i), { type: f.type })));
+
+async function addPictures(s, files) {
+  const list = [...files].filter((f) => /^image\//.test(f.type));
+  if (!list.length || !s || !s.doc) return;
+  toast(list.length === 1 ? 'Adding the picture…' : `Adding ${list.length} pictures…`);
+  let added = 0;
+  for (const [i, file] of list.entries()) {
+    try {
+      const ready = await pictureFor(file);
+      const saved = await api('/api/images', { method: 'POST', body: { name: pastedName(ready, i), data: await base64(ready.blob) } });
+      if (state.session !== s || !s.doc) return;
+      s.doc.insert(`![${altFor(file.name)}](${saved.path})`);
+      added += 1;
+    } catch (e) {
+      fail(e);
+      return;
+    }
+  }
+  toast(added === 1 ? 'Picture added' : `${added} pictures added`);
+}
+
+function choosePictures() {
+  const s = state.session;
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.multiple = true;
+  input.addEventListener('change', () => addPictures(s, input.files));
+  input.click();
+}
+
 function drawPicked() {
   const list = $('#upload-list');
   if (!list) return;
@@ -57,7 +100,7 @@ async function uploadSheet(files) {
     <div class="upload-list" id="upload-list"></div>
     <label class="field">${ICON.folder}<select id="upload-dir">${options}</select></label>
     <label class="field">${ICON.note}<input id="upload-title" placeholder="Title (optional; the AI names it otherwise)" autocomplete="off"></label>
-    <p class="hint upload-hint">Photos and scans need an AI that can see images: OpenAI, Anthropic, Gemini, xAI, Claude Code or Codex.</p>
+    <p class="hint upload-hint">You can also paste a picture here. Photos stay in the note, and pictures and diagrams in slides and documents are kept beside the text. Reading photos and scans needs an AI that can see images: OpenAI, Anthropic, Gemini, xAI, Claude Code or Codex.</p>
     <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn primary" id="upload-go" data-action="upload-go" disabled>Make the note</button></div>`);
   $('#upload-input').addEventListener('change', (e) => {
     picked.push(...e.target.files);

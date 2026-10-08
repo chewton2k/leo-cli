@@ -1,0 +1,375 @@
+use std::io::Write as _;
+use std::path::{Path, PathBuf};
+
+use anyhow::{bail, Context, Result};
+
+pub const DIR: &str = "attachments";
+pub const MOST_BYTES: usize = 20 * 1024 * 1024;
+
+pub fn kind_of(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("png")
+    } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        Some("jpg")
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        Some("gif")
+    } else if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        Some("webp")
+    } else {
+        None
+    }
+}
+
+pub fn mime_of(extension: &str) -> Option<&'static str> {
+    match extension.to_ascii_lowercase().as_str() {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        _ => None,
+    }
+}
+
+fn be16(bytes: &[u8], at: usize) -> Option<u32> {
+    Some(u32::from(u16::from_be_bytes(
+        bytes.get(at..at + 2)?.try_into().ok()?,
+    )))
+}
+
+fn le16(bytes: &[u8], at: usize) -> Option<u32> {
+    Some(u32::from(u16::from_le_bytes(
+        bytes.get(at..at + 2)?.try_into().ok()?,
+    )))
+}
+
+fn le24(bytes: &[u8], at: usize) -> Option<u32> {
+    let b = bytes.get(at..at + 3)?;
+    Some(u32::from(b[0]) | u32::from(b[1]) << 8 | u32::from(b[2]) << 16)
+}
+
+pub fn dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    match kind_of(bytes)? {
+        "png" => Some((
+            u32::from_be_bytes(bytes.get(16..20)?.try_into().ok()?),
+            u32::from_be_bytes(bytes.get(20..24)?.try_into().ok()?),
+        )),
+        "gif" => Some((le16(bytes, 6)?, le16(bytes, 8)?)),
+        "webp" => match bytes.get(12..16)? {
+            b"VP8 " => Some((le16(bytes, 26)? & 0x3fff, le16(bytes, 28)? & 0x3fff)),
+            b"VP8L" => {
+                let bits = u32::from_le_bytes(bytes.get(21..25)?.try_into().ok()?);
+                Some(((bits & 0x3fff) + 1, ((bits >> 14) & 0x3fff) + 1))
+            }
+            b"VP8X" => Some((le24(bytes, 24)? + 1, le24(bytes, 27)? + 1)),
+            _ => None,
+        },
+        _ => {
+            let mut at = 2;
+            while at + 9 < bytes.len() {
+                if bytes[at] != 0xff {
+                    return None;
+                }
+                let marker = bytes[at + 1];
+                if marker == 0xff {
+                    at += 1;
+                    continue;
+                }
+                let length = be16(bytes, at + 2)? as usize;
+                let frame = matches!(marker, 0xc0..=0xcf) && !matches!(marker, 0xc4 | 0xc8 | 0xcc);
+                if frame {
+                    return Some((be16(bytes, at + 7)?, be16(bytes, at + 5)?));
+                }
+                at += 2 + length;
+            }
+            None
+        }
+    }
+}
+
+fn stem_of(name: &str) -> String {
+    let stem = name.rsplit_once('.').map_or(name, |(s, _)| s);
+    let mut out = String::new();
+    for c in stem.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_lowercase());
+        } else if !out.ends_with('-') && !out.is_empty() {
+            out.push('-');
+        }
+        if out.len() >= 40 {
+            break;
+        }
+    }
+    let out = out.trim_matches('-').to_string();
+    if out.is_empty() {
+        "image".to_string()
+    } else {
+        out
+    }
+}
+
+pub fn save(notes_dir: &Path, name: &str, bytes: &[u8]) -> Result<String> {
+    let Some(extension) = kind_of(bytes) else {
+        bail!("{name} is not a picture leo can show: use PNG, JPEG, GIF or WebP");
+    };
+    if bytes.len() > MOST_BYTES {
+        bail!("{name} is larger than {} MB", MOST_BYTES / (1024 * 1024));
+    }
+    let dir = crate::paths::contained_path(notes_dir, Path::new(DIR))?;
+    std::fs::create_dir_all(&dir).with_context(|| format!("could not make {}", dir.display()))?;
+    let base = format!(
+        "{}-{}",
+        chrono::Local::now().format("%Y%m%d-%H%M%S"),
+        stem_of(name)
+    );
+    for n in 1..1000 {
+        let file = if n == 1 {
+            format!("{base}.{extension}")
+        } else {
+            format!("{base}-{n}.{extension}")
+        };
+        let path = dir.join(&file);
+        let mut out = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(out) => out,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e).with_context(|| format!("could not write {}", path.display())),
+        };
+        if let Err(e) = out.write_all(bytes).and_then(|()| out.sync_all()) {
+            let _ = std::fs::remove_file(&path);
+            return Err(e).with_context(|| format!("could not write {}", path.display()));
+        }
+        return Ok(format!("{DIR}/{file}"));
+    }
+    bail!("could not find a free name for {name}")
+}
+
+fn decoded(link: &str) -> Option<String> {
+    let link = link.trim();
+    let link = link
+        .strip_prefix('<')
+        .and_then(|l| l.strip_suffix('>'))
+        .unwrap_or(link);
+    let link = link.split(['?', '#']).next().unwrap_or("");
+    let bytes = link.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let hex = std::str::from_utf8(bytes.get(i + 1..i + 3)?).ok()?;
+            out.push(u8::from_str_radix(hex, 16).ok()?);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+fn inside(notes_dir: &Path, relative: &str) -> Option<PathBuf> {
+    if relative.is_empty()
+        || relative.starts_with('/')
+        || relative.contains('\\')
+        || relative.contains(':')
+        || relative
+            .split('/')
+            .any(|part| part.is_empty() || part.starts_with('.'))
+    {
+        return None;
+    }
+    let path = crate::paths::contained_path(notes_dir, Path::new(relative)).ok()?;
+    let extension = path.extension()?.to_str()?;
+    (mime_of(extension).is_some() && path.is_file()).then_some(path)
+}
+
+pub fn resolve(notes_dir: &Path, from_dir: &str, link: &str) -> Option<PathBuf> {
+    let link = decoded(link)?;
+    let link = link.strip_prefix("./").unwrap_or(&link);
+    let from_dir = from_dir.trim_matches('/');
+    if crate::paths::validate_directory(from_dir).is_err() {
+        return None;
+    }
+    let mut tries = Vec::new();
+    if !from_dir.is_empty() {
+        tries.push(format!("{from_dir}/{link}"));
+    }
+    tries.push(link.to_string());
+    if !link.contains('/') {
+        tries.push(format!("{DIR}/{link}"));
+    }
+    tries.iter().find_map(|t| inside(notes_dir, t))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Shown {
+    pub alt: String,
+    pub target: String,
+}
+
+pub fn pictures_in(line: &str) -> Vec<(std::ops::Range<usize>, Shown)> {
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(start) = line[from..].find('!').map(|i| from + i) {
+        let rest = &line[start..];
+        if let Some(inner) = rest.strip_prefix("![[") {
+            if let Some(end) = inner.find("]]") {
+                let name = inner[..end].split('|').next().unwrap_or("").trim();
+                let len = 3 + end + 2;
+                if !name.is_empty() {
+                    out.push((
+                        start..start + len,
+                        Shown {
+                            alt: name.to_string(),
+                            target: name.to_string(),
+                        },
+                    ));
+                }
+                from = start + len;
+                continue;
+            }
+        } else if let Some(inner) = rest.strip_prefix("![") {
+            if let Some(close) = inner.find("](") {
+                let after = &inner[close + 2..];
+                if let Some(end) = after.find(')') {
+                    let target = after[..end].split_whitespace().next().unwrap_or("");
+                    let len = 2 + close + 2 + end + 1;
+                    if !target.is_empty() {
+                        out.push((
+                            start..start + len,
+                            Shown {
+                                alt: inner[..close].trim().to_string(),
+                                target: target.to_string(),
+                            },
+                        ));
+                    }
+                    from = start + len;
+                    continue;
+                }
+            }
+        }
+        from = start + 1;
+    }
+    out
+}
+
+pub fn placeholder(shown: &Shown) -> String {
+    let name = if shown.alt.is_empty() {
+        shown.target.rsplit('/').next().unwrap_or(&shown.target)
+    } else {
+        &shown.alt
+    };
+    format!("[image: {name}]")
+}
+
+pub fn with_placeholders(text: &str) -> String {
+    text.lines()
+        .map(|line| {
+            let found = pictures_in(line);
+            if found.is_empty() {
+                return line.to_string();
+            }
+            let mut out = String::new();
+            let mut at = 0;
+            for (range, shown) in found {
+                out.push_str(&line[at..range.start]);
+                out.push_str(&placeholder(&shown));
+                at = range.end;
+            }
+            out.push_str(&line[at..]);
+            out
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PNG: &[u8] = &[
+        0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n', 0, 0, 0, 13, b'I', b'H', b'D', b'R', 0,
+        0, 2, 128, 0, 0, 1, 224, 8, 2, 0, 0, 0,
+    ];
+
+    #[test]
+    fn pictures_are_known_by_their_bytes_not_their_names() {
+        assert_eq!(kind_of(PNG), Some("png"));
+        assert_eq!(dimensions(PNG), Some((640, 480)));
+        assert_eq!(kind_of(b"GIF89a\x10\x00\x20\x00"), Some("gif"));
+        assert_eq!(dimensions(b"GIF89a\x10\x00\x20\x00"), Some((16, 32)));
+        let jpeg = [
+            0xff, 0xd8, 0xff, 0xe0, 0, 4, 0, 0, 0xff, 0xc0, 0, 11, 8, 0, 90, 0, 120, 3, 1, 1,
+        ];
+        assert_eq!(kind_of(&jpeg), Some("jpg"));
+        assert_eq!(dimensions(&jpeg), Some((120, 90)));
+        assert_eq!(kind_of(b"<svg onload=alert(1)>"), None);
+        assert_eq!(kind_of(b""), None);
+        assert_eq!(dimensions(&[0xff, 0xd8, 0xff]), None);
+    }
+
+    #[test]
+    fn a_saved_picture_gets_its_own_name_in_the_attachments_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = save(dir.path(), "Board Photo!.PNG", PNG).unwrap();
+        let second = save(dir.path(), "Board Photo!.PNG", PNG).unwrap();
+        assert!(
+            first.starts_with("attachments/") && first.ends_with("-board-photo.png"),
+            "{first}"
+        );
+        assert_ne!(first, second);
+        assert!(dir.path().join(&second).is_file());
+        assert!(save(dir.path(), "x.svg", b"<svg/>").is_err());
+        assert!(save(dir.path(), "x.png", &vec![0; MOST_BYTES + 1]).is_err());
+    }
+
+    #[test]
+    fn a_link_is_found_beside_the_note_then_from_the_top_and_never_outside() {
+        let dir = tempfile::tempdir().unwrap();
+        let saved = save(dir.path(), "a.png", PNG).unwrap();
+        let file = saved.rsplit('/').next().unwrap().to_string();
+        std::fs::create_dir_all(dir.path().join("cs130")).unwrap();
+        std::fs::write(dir.path().join("cs130/local.png"), PNG).unwrap();
+        std::fs::write(dir.path().join("notes.md"), "x").unwrap();
+        let at = |from: &str, link: &str| resolve(dir.path(), from, link);
+        assert_eq!(
+            at("cs130", "local.png"),
+            Some(dir.path().join("cs130/local.png"))
+        );
+        assert_eq!(at("cs130", &saved), Some(dir.path().join(&saved)));
+        assert_eq!(at("", &file), Some(dir.path().join(&saved)));
+        assert_eq!(at("", &format!("<{saved}>")), Some(dir.path().join(&saved)));
+        assert_eq!(
+            at("", &saved.replace('-', "%2D")),
+            Some(dir.path().join(&saved))
+        );
+        assert_eq!(
+            at("../..", &saved),
+            None,
+            "a bad folder is refused, not skipped"
+        );
+        for bad in [
+            "../secret.png",
+            "/etc/passwd",
+            "notes.md",
+            ".git/x.png",
+            "https://x/y.png",
+            "cs130/../a.png",
+            "missing.png",
+            "%zz",
+        ] {
+            assert_eq!(at("cs130", bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_terminal_shows_a_placeholder_where_a_picture_is() {
+        assert_eq!(
+            with_placeholders("Before ![Heap diagram](attachments/heap.png) after\n![](a/b/tree.jpg)\n![[board.png|300]]\nplain ![not closed"),
+            "Before [image: Heap diagram] after\n[image: tree.jpg]\n[image: board.png]\nplain ![not closed"
+        );
+        assert_eq!(pictures_in("no pictures! here").len(), 0);
+    }
+}

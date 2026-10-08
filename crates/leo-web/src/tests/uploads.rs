@@ -1,5 +1,7 @@
 use super::*;
 
+const PICTURE: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\x01\0\0\0\0\xc8\x08\x02\0\0\0";
+
 #[test]
 fn an_upload_becomes_a_note_in_its_folder_and_keeps_the_original() {
     use base64::Engine;
@@ -8,10 +10,22 @@ fn an_upload_becomes_a_note_in_its_folder_and_keeps_the_original() {
         |files: Vec<UploadFile>, progress: &mut dyn FnMut(&str, usize, usize)| {
             progress("Writing the note", 0, 1);
             assert_eq!(files[0].bytes, b"%PDF fake");
-            Ok((
-                "Graph search".to_string(),
-                "## BFS\n- uses a queue".to_string(),
-            ))
+            Ok(Made {
+                title: "Graph search".to_string(),
+                body: "## BFS\n- uses a queue\n\n![The BFS tree](figure:1)\n\n![again](figure:1)\n![nothing](figure:9)".to_string(),
+                figures: vec![
+                    Figure {
+                        place: "slide 2".into(),
+                        bytes: PICTURE.to_vec(),
+                        photo: false,
+                    },
+                    Figure {
+                        place: "board.jpg".into(),
+                        bytes: PICTURE.to_vec(),
+                        photo: true,
+                    },
+                ],
+            })
         },
     ));
     let body = ImportBody {
@@ -36,12 +50,40 @@ fn an_upload_becomes_a_note_in_its_folder_and_keeps_the_original() {
     let note = state.fresh().find_note(&note_id).unwrap().clone();
     assert_eq!(note.title, "Graph search");
     assert_eq!(note.directory, "cs130");
+    let pictures: Vec<String> = note
+        .body
+        .lines()
+        .flat_map(|l| {
+            leo_core::attachments::pictures_in(l)
+                .into_iter()
+                .map(|(_, s)| s.target)
+        })
+        .collect();
+    assert_eq!(pictures.len(), 2, "{}", note.body);
     assert!(
         note.body
-            .starts_with("## BFS\n- uses a queue\n\n---\n*From lecture 4.pdf, uploaded "),
+            .starts_with("## BFS\n- uses a queue\n\n![The BFS tree](attachments/"),
         "{}",
         note.body
     );
+    assert!(
+        note.body
+            .contains("\n\n## Photos\n\n![board.jpg](attachments/"),
+        "{}",
+        note.body
+    );
+    assert!(!note.body.contains("figure:"), "{}", note.body);
+    assert!(
+        note.body
+            .contains("\n\n---\n*From lecture 4.pdf, uploaded "),
+        "{}",
+        note.body
+    );
+    let notes_dir = state.fresh().notes_dir.clone();
+    for picture in &pictures {
+        assert!(picture.ends_with(".png"), "{picture}");
+        assert_eq!(std::fs::read(notes_dir.join(picture)).unwrap(), PICTURE);
+    }
     let listed = run(list_originals(State(state.clone()), Path(note_id.clone())));
     let listed = run(axum::body::to_bytes(listed.into_body(), usize::MAX)).unwrap();
     assert!(String::from_utf8_lossy(&listed).contains("\"name\":\"lecture 4.pdf\""));
@@ -223,5 +265,39 @@ fn background_work_is_listed_until_it_is_done() {
     assert!(
         activity_tasks(&Default::default(), Some(&still_recording), None).is_empty(),
         "a recording that is still going has its own timer, not a progress bar"
+    );
+}
+
+#[test]
+fn figures_the_ai_did_not_place_are_kept_under_their_own_heading() {
+    let figures = vec![
+        Figure {
+            place: "page 3".into(),
+            bytes: PICTURE.to_vec(),
+            photo: false,
+        },
+        Figure {
+            place: "page 5".into(),
+            bytes: PICTURE.to_vec(),
+            photo: false,
+        },
+    ];
+    let mut n = 0;
+    let mut save = |f: &Figure| {
+        n += 1;
+        (f.place != "page 5").then(|| format!("attachments/{n}.png"))
+    };
+    assert_eq!(
+        settle_figures("## Heaps\n- tree", &figures, &mut save),
+        "## Heaps\n- tree\n\n## Figures\n\n![page 3](attachments/1.png)"
+    );
+    let kept = settle_figures(
+        "Intro ![a heap](figure:2) and ![x](attachments/old.png)\n![the tree](figure:1)",
+        &figures,
+        &mut |f: &Figure| Some(format!("attachments/{}.png", f.place.replace(' ', "-"))),
+    );
+    assert_eq!(
+        kept,
+        "Intro ![a heap](attachments/page-5.png) and ![x](attachments/old.png)\n![the tree](attachments/page-3.png)"
     );
 }

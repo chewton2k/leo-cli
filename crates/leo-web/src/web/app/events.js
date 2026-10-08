@@ -183,3 +183,24 @@ window.addEventListener('drop', (e) => {
 window.addEventListener('online', () => saving.retry());
 route();
 checkActivity();
+
+document.addEventListener('paste', (e) => {
+  if (e.defaultPrevented) return;
+  const files = [...((e.clipboardData && e.clipboardData.files) || [])];
+  if (!files.length) return;
+  if ($('#upload-list')) {
+    e.preventDefault();
+    picked.push(...pastedFiles(files, picked.length));
+    drawPicked();
+    return;
+  }
+  if ($('.scrim') || e.target.closest('#chat')) return;
+  if (state.view === 'note' && state.session && files.some((f) => /^image\//.test(f.type))) {
+    e.preventDefault();
+    addPictures(state.session, files);
+    return;
+  }
+  if (!['folder', 'search', 'drafts'].includes(state.view)) return;
+  e.preventDefault();
+  uploadSheet(pastedFiles(files));
+});

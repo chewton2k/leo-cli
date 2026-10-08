@@ -78,6 +78,14 @@
     return (sources || []).filter((s) => used.has(`n${s.n}`));
   }
 
+  const THUMB = /^data:image\/(?:jpeg|png);base64,[A-Za-z0-9+/=]+$/;
+
+  function pastedNames(files) {
+    return [...files].map((f, i) => (f.name && !/^image\.\w+$/i.test(f.name)
+      ? f
+      : new File([f], `pasted-${i + 1}.${(f.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`, { type: f.type })));
+  }
+
   function asNote(question, text, sources) {
     const byN = new Map((sources || []).map((s) => [`n${s.n}`, s]));
     const answer = grade(String(text || '')).text.replace(/\[(n\d+(?:\s*,\s*n\d+)*)\]/g, (whole, list) => {
@@ -453,10 +461,11 @@
       const notes = state.refs
         .map((r) => `<span class="chat-ref"><button class="chat-ref-open" data-chat="open" data-id="${escape(r.id)}" title="${escape(r.title)}">${escape(r.title)}</button><button class="chat-ref-x" data-chat="unref" data-id="${escape(r.id)}" aria-label="Remove ${escape(r.title)}">×</button></span>`)
         .join('');
+      const pic = (f) => (f.thumb && THUMB.test(f.thumb) ? `<img class="chat-thumb" src="${escape(f.thumb)}" alt="">` : '');
       const files = state.files
         .map((f) => f.status === 'reading'
-          ? `<span class="chat-ref doc reading" title="Felix is reading ${escape(f.name)}"><span class="chat-ref-open">${escape(f.name)} · reading…</span></span>`
-          : `<span class="chat-ref doc"><span class="chat-ref-open" title="${escape(f.name)}">${escape(f.name)}</span><button class="chat-ref-x" data-chat="unfile" data-id="${escape(f.id)}" aria-label="Remove ${escape(f.name)}">×</button></span>`)
+          ? `<span class="chat-ref doc reading" title="Felix is reading ${escape(f.name)}">${pic(f)}<span class="chat-ref-open">${escape(f.name)} · reading…</span></span>`
+          : `<span class="chat-ref doc">${pic(f)}<span class="chat-ref-open" title="${escape(f.name)}">${escape(f.name)}</span><button class="chat-ref-x" data-chat="unfile" data-id="${escape(f.id)}" aria-label="Remove ${escape(f.name)}">×</button></span>`)
         .join('');
       $('#chat-refs').innerHTML = notes + files;
     }
@@ -476,10 +485,27 @@
       }
     }
 
+    async function thumbOf(file) {
+      if (!/^image\//.test(file.type) || typeof createImageBitmap !== 'function') return null;
+      try {
+        const bitmap = await createImageBitmap(file);
+        const scale = Math.min(1, 240 / Math.max(bitmap.width, bitmap.height));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+        canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+        canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        const url = canvas.toDataURL('image/jpeg', 0.72);
+        return THUMB.test(url) ? url : null;
+      } catch (e) {
+        return null;
+      }
+    }
+
     async function addFile(file) {
       const chat = state.id;
       const key = `${Date.now()}-${Math.random()}`;
-      state.files.push({ key, name: file.name, status: 'reading' });
+      const thumb = await thumbOf(file);
+      state.files.push({ key, name: file.name, status: 'reading', thumb });
       drawRefs();
       const drop = () => {
         state.files = state.files.filter((f) => f.key !== key);
@@ -512,7 +538,7 @@
         return;
       }
       const doc = await reply.json();
-      state.files = state.files.map((f) => (f.key === key ? { ...doc, status: 'ready' } : f));
+      state.files = state.files.map((f) => (f.key === key ? { ...doc, status: 'ready', thumb } : f));
       drawRefs();
     }
 
@@ -651,7 +677,9 @@
         const notes = (m.refs || []).map((r) => `<button class="cite" data-chat="open" data-id="${escape(r.id)}">${escape(r.title)}</button>`);
         const docs = (m.docs || []).map((name) => `<span class="cite doc">${escape(name)}</span>`);
         const refs = notes.length || docs.length ? `<div class="msg-refs">${[...notes, ...docs].join('')}</div>` : '';
-        return `<div class="msg user">${refs}<div class="bubble">${escape(m.text).replace(/\n/g, '<br>')}</div></div>`;
+        const shown = (m.pics || []).filter((p) => p && THUMB.test(p.thumb || ''));
+        const pics = shown.length ? `<div class="msg-pics">${shown.map((p) => `<img src="${escape(p.thumb)}" alt="${escape(p.name || 'picture')}" title="${escape(p.name || '')}">`).join('')}</div>` : '';
+        return `<div class="msg user">${refs}${pics}<div class="bubble">${escape(m.text).replace(/\n/g, '<br>')}</div></div>`;
       }
       const shown = grade(m.text).text;
       let html = shown ? cite(render(shown), m.sources, escape).replace(/<input /g, '<input disabled ') : '';
@@ -851,7 +879,8 @@
       if (!question || state.busy) return;
       closePick();
       const ready = state.files.filter((f) => f.status === 'ready');
-      state.messages.push({ role: 'user', text: question, refs: state.refs.slice(), docs: ready.map((f) => f.name), files: ready.map((f) => f.id) });
+      const pics = ready.filter((f) => f.thumb).map((f) => ({ name: f.name, thumb: f.thumb }));
+      state.messages.push({ role: 'user', text: question, refs: state.refs.slice(), docs: ready.filter((f) => !f.thumb).map((f) => f.name), files: ready.map((f) => f.id), ...(pics.length ? { pics } : {}) });
       state.sent = [...state.sent, ...ready.map((f) => ({ id: f.id, name: f.name }))];
       state.files = state.files.filter((f) => f.status !== 'ready');
       drawRefs();
@@ -1020,6 +1049,17 @@
       if (state.busy) state.busy.abort();
       else send(input.value);
     });
+    input.addEventListener('paste', (e) => {
+      const found = [...((e.clipboardData && e.clipboardData.files) || [])];
+      if (!found.length) return;
+      e.preventDefault();
+      if (state.files.length + state.sent.length >= MOST_FILES) {
+        notify(`A chat holds up to ${MOST_FILES} documents; remove one first.`);
+        return;
+      }
+      addFiles(pastedNames(found));
+    });
+
     input.addEventListener('input', () => {
       fit();
       watchMention();
@@ -1090,5 +1130,5 @@
     };
   }
 
-  root.leoChat = { create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, MODES, MOST_REFS };
+  root.leoChat = { create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, MODES, MOST_REFS };
 })(typeof window !== 'undefined' ? window : globalThis);

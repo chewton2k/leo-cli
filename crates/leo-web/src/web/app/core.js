@@ -379,6 +379,7 @@ function flush(s = state.session) { return saving.flush(s); }
 function noteActions(id) {
   return `<nav class="actions" aria-label="Note">
       ${id ? `<button data-action="note-map" data-id="${esc(id)}">${ICON.map}<span>Map</span></button>` : ''}
+      <button data-action="note-picture">${ICON.image}<span>Picture</span></button>
       <button data-action="move">${ICON.move}<span>Move</span></button>
       <button data-action="share">${ICON.share}<span>PDF</span></button>
       <button data-action="delete" class="danger">${ICON.trash}<span>Delete</span></button>
@@ -405,7 +406,7 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
   </article>`;
   s.title = $('#title');
   drawOriginals(note);
-  s.doc = leoDoc.mount($('#doc'), { source: s.edit.body, onChange: () => changed(s), placeholder: 'Tap here to write' });
+  s.doc = leoDoc.mount($('#doc'), { source: s.edit.body, onChange: () => changed(s), placeholder: 'Tap here to write', dir: note.directory || '', onPictures: (files) => addPictures(s, files) });
   if (s.dirty) {
     mark(s, 'Recovered draft · saving…');
     flush(s).catch(fail);

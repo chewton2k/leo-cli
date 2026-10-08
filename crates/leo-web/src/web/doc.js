@@ -4,7 +4,7 @@
   const md = root.leoMarkdown;
   const ed = root.leoEditing;
 
-  function mount(container, { source, onChange, placeholder }) {
+  function mount(container, { source, onChange, placeholder, dir = '', onPictures = null }) {
     let lines = String(source || '').replace(/\r\n?/g, '\n').split('\n');
     let blocks = [];
     let editing = null;
@@ -24,6 +24,7 @@
       }
       return md.render(text.replace(/^\s+/, ''), {
         boxOffset: ed.boxesBefore(lines, block.start),
+        dir,
       });
     }
 
@@ -300,8 +301,50 @@
 
     draw();
 
+    function insert(text) {
+      if (editing) {
+        const { area } = editing;
+        const at = area.selectionStart;
+        const before = area.value.slice(0, at);
+        const lead = before && !before.endsWith('\n') ? '\n' : '';
+        area.setRangeText(`${lead}${text}\n`, at, area.selectionEnd, 'end');
+        onInput();
+        return;
+      }
+      const last = lines[lines.length - 1];
+      if (last.trim()) lines.push('');
+      if (lines.length === 1 && !lines[0].trim()) lines[0] = text;
+      else lines.push(text);
+      changed();
+      draw();
+    }
+
+    const pictures = (list) => [...(list || [])].filter((f) => /^image\//.test(f.type));
+    function onPaste(e) {
+      const found = pictures(e.clipboardData && e.clipboardData.files);
+      if (!onPictures || !found.length) return;
+      e.preventDefault();
+      onPictures(found);
+    }
+    function onDrop(e) {
+      const found = pictures(e.dataTransfer && e.dataTransfer.files);
+      if (!onPictures || !found.length) return;
+      e.preventDefault();
+      e.stopPropagation();
+      onPictures(found);
+    }
+    container.addEventListener('paste', onPaste);
+    container.addEventListener('drop', onDrop);
+
     return {
-      destroy: () => { stop(); clearTimeout(release); document.removeEventListener('pointerup', onPointerUp); },
+      destroy: () => {
+        stop();
+        clearTimeout(release);
+        document.removeEventListener('pointerup', onPointerUp);
+        container.removeEventListener('paste', onPaste);
+        container.removeEventListener('drop', onDrop);
+      },
+      insert,
       source: () => lines.join('\n'),
       stop,
       isEditing: () => editing !== null,

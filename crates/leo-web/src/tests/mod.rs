@@ -2,6 +2,7 @@ mod auth;
 mod felix;
 mod housekeeping;
 mod notes;
+mod pictures;
 mod recording;
 mod trash;
 mod uploads;
@@ -27,12 +28,13 @@ use crate::routes::notes::{
     update_note, CreateBody, CreateDirBody, DirParams, ListParams, MoveBody, NoteResponse,
     UpdateBody,
 };
+use crate::routes::pictures::{add_picture, get_picture, NewPicture, PictureAt};
 use crate::routes::trash::{
     list_trash, move_to_trash, restore_many, restore_note, TrashChoice, TrashMove,
 };
 use crate::routes::uploads::{
-    get_original, list_originals, safe_file_name, start_import, upload_label, ImportBody,
-    ImportFileBody, ImportJob,
+    get_original, list_originals, safe_file_name, settle_figures, start_import, upload_label,
+    ImportBody, ImportFileBody, ImportJob,
 };
 use crate::*;
 

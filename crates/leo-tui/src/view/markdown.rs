@@ -125,6 +125,13 @@ pub fn on_box(raw: &str, shown: usize) -> bool {
 
 /// Render one line outside a code fence.
 fn line(trimmed: &str, indent: usize) -> TuiLine<'static> {
+    let pictured;
+    let trimmed = if trimmed.contains("![") {
+        pictured = leo_core::attachments::with_placeholders(trimmed);
+        pictured.as_str()
+    } else {
+        trimmed
+    };
     let pad = " ".repeat(indent);
 
     // A horizontal rule becomes an actual rule.
@@ -376,6 +383,25 @@ fn flush(spans: &mut Vec<Span<'static>>, plain: &mut String, base: Style) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn shown(line: &TuiLine) -> String {
+        line.spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    #[test]
+    fn a_picture_shows_as_a_placeholder_in_the_terminal() {
+        let lines = render("![Heap diagram](attachments/heap.png)\n- see ![](x/tree.jpg)\n```\n![kept](a.png)\n```");
+        assert_eq!(shown(&lines[0]), "[image: Heap diagram]");
+        assert!(
+            shown(&lines[1]).ends_with("see [image: tree.jpg]"),
+            "{}",
+            shown(&lines[1])
+        );
+        assert!(
+            shown(&lines[2]).contains("![kept](a.png)"),
+            "code is shown as written"
+        );
+    }
 
     #[test]
     fn a_click_on_formatted_text_lands_on_the_same_place_in_the_markdown() {

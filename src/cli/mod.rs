@@ -391,7 +391,20 @@ pub fn run(cli: Cli) -> Result<()> {
                                     bytes: f.bytes,
                                 })
                                 .collect();
-                            leo_services::import::import(&uploads, progress)
+                            let made = leo_services::import::import(&uploads, progress)?;
+                            Ok(leo_web::Made {
+                                title: made.title,
+                                body: made.body,
+                                figures: made
+                                    .figures
+                                    .into_iter()
+                                    .map(|f| leo_web::Figure {
+                                        place: f.place,
+                                        bytes: f.bytes,
+                                        photo: f.photo,
+                                    })
+                                    .collect(),
+                            })
                         },
                     )),
                     listener: Some(web_record::listener()),
