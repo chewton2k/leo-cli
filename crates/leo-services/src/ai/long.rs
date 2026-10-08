@@ -3,10 +3,7 @@ use anyhow::Result;
 use super::chat::{self, clock, points_as_markdown, Jotted, Prompt};
 use crate::session::Part;
 
-pub const WORDS_PER_PART: usize = 4000;
 const SUMMARY_INPUT_CHARS: usize = 24_000;
-
-pub const PARALLEL_PARTS: usize = 3;
 
 type Written = (String, Option<String>);
 
@@ -88,8 +85,9 @@ pub fn structure_recording(
     fallback_title: &str,
     chat_fn: Chat<'_>,
     progress: Progress<'_>,
+    budget: super::budget::Budget,
 ) -> Structured {
-    let groups = groups(parts, WORDS_PER_PART);
+    let groups = groups(parts, budget.words);
     let mut problems = Vec::new();
 
     if groups.len() <= 1 {
@@ -142,7 +140,7 @@ pub fn structure_recording(
         groups.iter().map(|_| std::sync::Mutex::new(None)).collect();
     progress(0, total);
     std::thread::scope(|scope| {
-        for _ in 0..PARALLEL_PARTS.min(groups.len()) {
+        for _ in 0..budget.at_once.max(1).min(groups.len()) {
             scope.spawn(|| loop {
                 let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let Some(g) = groups.get(i) else {
@@ -240,6 +238,12 @@ pub fn structure_recording(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai::budget::Budget;
+
+    const TEST: Budget = Budget {
+        words: 4000,
+        at_once: 3,
+    };
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn part(index: u32, words: usize, tag: &str) -> Part {
@@ -288,6 +292,7 @@ mod tests {
             "Recording",
             &chat,
             &|_, _| {},
+            TEST,
         );
         assert_eq!(calls.load(Ordering::Relaxed), 1);
         assert_eq!(s.title, "Graphs");
@@ -310,6 +315,7 @@ mod tests {
             "Recording, Sep 29",
             &chat,
             &|_, _| {},
+            TEST,
         );
         assert_eq!(s.title, "Recording, Sep 29");
         assert!(s.body.contains("w0 w1"), "{}", s.body);
@@ -339,11 +345,17 @@ mod tests {
             text: "midterm".into(),
         }];
         let steps = std::sync::Mutex::new(Vec::new());
-        let s = structure_recording(&parts, &points, None, "Recording", &chat, &|d, t| {
-            steps.lock().unwrap().push((d, t))
-        });
+        let s = structure_recording(
+            &parts,
+            &points,
+            None,
+            "Recording",
+            &chat,
+            &|d, t| steps.lock().unwrap().push((d, t)),
+            TEST,
+        );
         let asked = prompts.lock().unwrap();
-        let group_count = groups(&parts, WORDS_PER_PART).len();
+        let group_count = groups(&parts, TEST.words).len();
         assert_eq!(asked.len(), group_count + 1);
         assert!(
             asked.iter().all(|u| u.chars().count() < 60_000),
@@ -425,13 +437,13 @@ mod tests {
                 .to_string();
             Ok(format!("## From {first}\n- x"))
         };
-        let s = structure_recording(&parts, &[], None, "R", &chat, &|_, _| {});
+        let s = structure_recording(&parts, &[], None, "R", &chat, &|_, _| {}, TEST);
         assert!(
             most.load(Ordering::SeqCst) >= 2,
             "parts were not written in parallel"
         );
-        assert!(most.load(Ordering::SeqCst) <= PARALLEL_PARTS);
-        let firsts: Vec<usize> = groups(&parts, WORDS_PER_PART)
+        assert!(most.load(Ordering::SeqCst) <= TEST.at_once);
+        let firsts: Vec<usize> = groups(&parts, TEST.words)
             .iter()
             .map(|g| {
                 s.body
@@ -457,10 +469,10 @@ mod tests {
             assert!(!p.system.contains("name and summarize"));
             Ok("## More\n- x".to_string())
         };
-        let s = structure_recording(&parts, &[], Some("old"), "Sep 29", &chat, &|_, _| {});
+        let s = structure_recording(&parts, &[], Some("old"), "Sep 29", &chat, &|_, _| {}, TEST);
         assert_eq!(
             calls.load(Ordering::Relaxed),
-            groups(&parts, WORDS_PER_PART).len()
+            groups(&parts, TEST.words).len()
         );
         assert!(s.body.starts_with("## Recording (Sep 29)"));
     }

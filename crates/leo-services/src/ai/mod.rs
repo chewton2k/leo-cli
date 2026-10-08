@@ -1,3 +1,4 @@
+pub mod budget;
 pub mod chain;
 pub mod chat;
 pub mod error;
@@ -15,6 +16,10 @@ use crate::config::Config;
 /// Token budget for full note structuring.
 /// Room for a long lecture's notes, for a provider with no cap of its own.
 pub const STRUCTURE_MAX_TOKENS: u32 = 8192;
+
+pub fn writing_budget() -> budget::Budget {
+    budget::writing_budget(&crate::config::Config::load())
+}
 /// Token budget for expanding one inline @leo prompt.
 const EXPAND_MAX_TOKENS: u32 = 2000;
 /// An answer drawn from several notes can run longer than one @leo answer.

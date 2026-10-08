@@ -2,11 +2,14 @@ use std::io::Read;
 
 use anyhow::{bail, Context, Result};
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
+
+use crate::ai::budget::Budget;
 use crate::ai::chat::{self, Prompt};
 use crate::ai::provider::Image;
 use crate::figures::{self, Figure};
 
-const PART_CHARS: usize = 24_000;
 const PAGES_PER_LOOK: usize = 6;
 const MOST_IMAGES: usize = 40;
 const SCAN_CHARS_PER_PAGE: usize = 40;
@@ -354,16 +357,16 @@ fn part_shape(part: usize, parts: usize) -> String {
     format!("This is part {part} of {parts} of the material; the other parts are handled separately. Write ## sections for this part only: no title and no summary of the whole.\n\nReply with the notes only: no preamble, no remarks after them, and do not wrap them in a code block.")
 }
 
-pub fn text_parts(text: &str) -> Vec<String> {
+pub fn text_parts(text: &str, most: usize) -> Vec<String> {
     let mut parts = Vec::new();
     let mut current = String::new();
     for paragraph in text.split("\n\n") {
-        if current.chars().count() + paragraph.chars().count() > PART_CHARS && !current.is_empty() {
+        if current.chars().count() + paragraph.chars().count() > most && !current.is_empty() {
             parts.push(std::mem::take(&mut current));
         }
-        if paragraph.chars().count() > PART_CHARS {
+        if paragraph.chars().count() > most {
             let chars: Vec<char> = paragraph.chars().collect();
-            for chunk in chars.chunks(PART_CHARS) {
+            for chunk in chars.chunks(most.max(1)) {
                 parts.push(chunk.iter().collect());
             }
             continue;
@@ -424,8 +427,8 @@ pub fn image_prompt(
     }
 }
 
-pub type Write<'a> = &'a dyn Fn(Prompt, u32) -> Result<String>;
-pub type See<'a> = &'a dyn Fn(Prompt, &[Image], u32) -> Result<String>;
+pub type Write<'a> = &'a (dyn Fn(Prompt, u32) -> Result<String> + Sync);
+pub type See<'a> = &'a (dyn Fn(Prompt, &[Image], u32) -> Result<String> + Sync);
 
 pub const CHAT_DOC_CHARS: usize = 60_000;
 const TRANSCRIBE_TOKENS: u32 = 6_000;
@@ -482,11 +485,12 @@ pub fn write_note(
     write: Write<'_>,
     see: See<'_>,
     progress: &mut dyn FnMut(&str, usize, usize),
+    budget: Budget,
 ) -> Result<(String, String)> {
     let texts = if material.text.trim().is_empty() {
         Vec::new()
     } else {
-        text_parts(&material.text)
+        text_parts(&material.text, budget.chars())
     };
     let looks: Vec<&[Image]> = material.images.chunks(PAGES_PER_LOOK).collect();
     let figures = offered(&material.figures);
@@ -507,32 +511,69 @@ pub fn write_note(
         return Ok((title, body));
     }
     let total = jobs + 1;
-    let mut sections = Vec::new();
-    for (i, text) in texts.iter().enumerate() {
-        progress(&format!("Writing part {} of {}", i + 1, jobs), i, total);
-        sections.push(chat::clean_reply(&write(
-            text_prompt(text, name, Some((i + 1, jobs)), &figures),
-            NOTE_TOKENS,
-        )?));
-    }
     let n = material.images.len();
-    for (j, batch) in looks.iter().enumerate() {
-        let part = texts.len() + j + 1;
+    let run = |i: usize| -> Result<String> {
+        let reply = if let Some(text) = texts.get(i) {
+            write(
+                text_prompt(text, name, Some((i + 1, jobs)), &figures),
+                NOTE_TOKENS,
+            )?
+        } else {
+            let j = i - texts.len();
+            let batch = looks[j];
+            let pages = (j * PAGES_PER_LOOK + 1, j * PAGES_PER_LOOK + batch.len(), n);
+            see(
+                image_prompt(name, Some((i + 1, jobs)), pages),
+                batch,
+                NOTE_TOKENS,
+            )?
+        };
+        Ok(chat::clean_reply(&reply))
+    };
+    let next = AtomicUsize::new(0);
+    let results: Vec<Mutex<Option<Result<String>>>> = (0..jobs).map(|_| Mutex::new(None)).collect();
+    let mut step = |done: usize| {
         progress(
-            &format!(
-                "Reading pages {}-{} of {n}",
-                j * PAGES_PER_LOOK + 1,
-                j * PAGES_PER_LOOK + batch.len()
-            ),
-            part - 1,
+            &format!("Writing part {} of {jobs}", (done + 1).min(jobs)),
+            done,
             total,
         );
-        let pages = (j * PAGES_PER_LOOK + 1, j * PAGES_PER_LOOK + batch.len(), n);
-        sections.push(chat::clean_reply(&see(
-            image_prompt(name, Some((part, jobs)), pages),
-            batch,
-            NOTE_TOKENS,
-        )?));
+    };
+    step(0);
+    std::thread::scope(|scope| {
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        for _ in 0..budget.at_once.max(1).min(jobs) {
+            let tx = tx.clone();
+            let (next, results, run) = (&next, &results, &run);
+            scope.spawn(move || loop {
+                let i = next.fetch_add(1, Ordering::Relaxed);
+                if i >= jobs {
+                    return;
+                }
+                let written = run(i);
+                let failed = written.is_err();
+                if let Ok(mut slot) = results[i].lock() {
+                    *slot = Some(written);
+                }
+                if failed {
+                    next.store(jobs, Ordering::Relaxed);
+                    return;
+                }
+                let _ = tx.send(());
+            });
+        }
+        drop(tx);
+        for (done, ()) in rx.iter().enumerate() {
+            step(done + 1);
+        }
+    });
+    let mut sections = Vec::with_capacity(jobs);
+    for slot in results {
+        match slot.into_inner().ok().flatten() {
+            Some(Ok(text)) => sections.push(text),
+            Some(Err(e)) => return Err(e),
+            None => bail!("a part of the note was not written"),
+        }
     }
     progress("Naming the note", jobs, total);
     let joined = sections.join("\n\n");
@@ -561,7 +602,8 @@ pub fn import(
         Ok(crate::ai::chat_outcome(prompt, most)?.value)
     };
     let see = |prompt: Prompt, images: &[Image], most: u32| crate::ai::see(prompt, images, most);
-    let (title, body) = write_note(&material, name, &write, &see, progress)?;
+    let budget = crate::ai::writing_budget();
+    let (title, body) = write_note(&material, name, &write, &see, progress, budget)?;
     Ok(Imported {
         title,
         body,
@@ -572,7 +614,6 @@ pub fn import(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::RefCell;
     use std::io::Write as _;
 
     fn never(_: Prompt, _: &[Image], _: u32) -> Result<String> {
@@ -654,9 +695,9 @@ mod tests {
 
     #[test]
     fn a_photo_for_felix_is_copied_out_by_the_ai_that_can_see() {
-        let looked = RefCell::new(0);
+        let looked = Mutex::new(0);
         let see = |prompt: Prompt, images: &[Image], _: u32| -> Result<String> {
-            *looked.borrow_mut() += 1;
+            *looked.lock().unwrap() += 1;
             assert_eq!(images.len(), 1);
             assert!(prompt.system.contains("copy out"));
             Ok("Board: Dijkstra uses a heap".into())
@@ -669,7 +710,7 @@ mod tests {
         let mut steps = Vec::new();
         let read = read_for_chat(&photo, &see, &mut |s| steps.push(s.to_string())).unwrap();
         assert_eq!(read, "Board: Dijkstra uses a heap");
-        assert_eq!(*looked.borrow(), 1);
+        assert_eq!(*looked.lock().unwrap(), 1);
         assert_eq!(steps, ["Reading the image"]);
     }
 
@@ -836,19 +877,25 @@ mod tests {
     fn long_text_is_split_into_parts_without_losing_any() {
         let paragraph = "word ".repeat(1000);
         let text = [paragraph.as_str(); 12].join("\n\n");
-        let parts = text_parts(&text);
+        let most = Budget::FREE.chars();
+        let parts = text_parts(&text, most);
         assert!(parts.len() >= 3);
-        assert!(parts.iter().all(|p| p.chars().count() <= PART_CHARS + 2));
+        assert!(parts.iter().all(|p| p.chars().count() <= most + 2));
         assert_eq!(parts.concat().matches("word").count(), 12_000);
-        let huge = "x".repeat(PART_CHARS * 2 + 5);
-        assert_eq!(text_parts(&huge).len(), 3);
+        let huge = "x".repeat(most * 2 + 5);
+        assert_eq!(text_parts(&huge, most).len(), 3);
+        assert_eq!(
+            text_parts(&text, Budget::AGENT.chars()).len(),
+            1,
+            "a big model reads it in one go"
+        );
     }
 
     #[test]
     fn a_short_file_is_one_request_and_a_long_one_is_written_in_parts_then_named() {
-        let asked = RefCell::new(Vec::new());
+        let asked = Mutex::new(Vec::new());
         let write = |p: Prompt, _: u32| -> Result<String> {
-            asked.borrow_mut().push(p.system.clone());
+            asked.lock().unwrap().push(p.system.clone());
             if p.system.contains("name and summarize") {
                 Ok("Graphs and queues\n\nA long handout about graphs.".into())
             } else if p.system.contains("This is part") {
@@ -857,10 +904,10 @@ mod tests {
                 Ok("Heaps\n\nHow heaps work.\n\n## Insert\n- sift up".into())
             }
         };
-        let saw = RefCell::new(0);
+        let saw = Mutex::new(0);
         let see = |p: Prompt, images: &[Image], _: u32| -> Result<String> {
             assert!(p.system.contains("photos or scans"));
-            *saw.borrow_mut() += images.len();
+            *saw.lock().unwrap() += images.len();
             Ok("## Whiteboard\n- drawing".into())
         };
         let short = Material {
@@ -868,16 +915,21 @@ mod tests {
             ..Material::default()
         };
         let mut steps = Vec::new();
-        let (title, body) = write_note(&short, "heaps.txt", &write, &see, &mut |s, d, t| {
-            steps.push((s.to_string(), d, t))
-        })
+        let (title, body) = write_note(
+            &short,
+            "heaps.txt",
+            &write,
+            &see,
+            &mut |s, d, t| steps.push((s.to_string(), d, t)),
+            Budget::FREE,
+        )
         .unwrap();
         assert_eq!(title, "Heaps");
         assert!(body.starts_with("How heaps work."));
-        assert_eq!(asked.borrow().len(), 1);
+        assert_eq!(asked.lock().unwrap().len(), 1);
         assert_eq!(steps.last().unwrap().1, steps.last().unwrap().2);
 
-        asked.borrow_mut().clear();
+        asked.lock().unwrap().clear();
         let long = Material {
             text: vec!["word ".repeat(1000); 10].join("\n\n"),
             images: (0..8)
@@ -888,17 +940,109 @@ mod tests {
                 .collect(),
             figures: vec![],
         };
-        let (title, body) =
-            write_note(&long, "handout.pdf", &write, &see, &mut |_, _, _| {}).unwrap();
+        let (title, body) = write_note(
+            &long,
+            "handout.pdf",
+            &write,
+            &see,
+            &mut |_, _, _| {},
+            Budget::FREE,
+        )
+        .unwrap();
         assert_eq!(title, "Graphs and queues");
         assert!(body.starts_with("A long handout about graphs."));
         assert!(body.contains("## Whiteboard"));
-        assert_eq!(*saw.borrow(), 8, "every page image is looked at once");
+        assert_eq!(
+            *saw.lock().unwrap(),
+            8,
+            "every page image is looked at once"
+        );
         assert!(asked
-            .borrow()
+            .lock()
+            .unwrap()
             .last()
             .unwrap()
             .contains("name and summarize"));
+    }
+
+    #[test]
+    fn parts_are_written_at_the_same_time_and_kept_in_order() {
+        use std::sync::atomic::AtomicUsize;
+        let now = AtomicUsize::new(0);
+        let most = AtomicUsize::new(0);
+        let write = |p: Prompt, _: u32| -> Result<String> {
+            if p.system.contains("name and summarize") {
+                return Ok("Title\n\nSummary.".into());
+            }
+            let busy = now.fetch_add(1, Ordering::SeqCst) + 1;
+            most.fetch_max(busy, Ordering::SeqCst);
+            std::thread::sleep(std::time::Duration::from_millis(40));
+            now.fetch_sub(1, Ordering::SeqCst);
+            let part = p
+                .system
+                .split("This is part ")
+                .nth(1)
+                .unwrap()
+                .split(' ')
+                .next()
+                .unwrap()
+                .to_string();
+            Ok(format!("## Part {part}"))
+        };
+        let see = |_: Prompt, _: &[Image], _: u32| -> Result<String> { unreachable!() };
+        let material = Material {
+            text: vec!["word ".repeat(1000); 6].join("\n\n"),
+            ..Material::default()
+        };
+        let budget = Budget {
+            words: 1000,
+            at_once: 3,
+        };
+        let mut steps = Vec::new();
+        let (_, body) = write_note(
+            &material,
+            "a.pdf",
+            &write,
+            &see,
+            &mut |_, d, t| steps.push((d, t)),
+            budget,
+        )
+        .unwrap();
+        let order: Vec<&str> = body.lines().filter(|l| l.starts_with("## Part")).collect();
+        assert_eq!(
+            order,
+            [
+                "## Part 1",
+                "## Part 2",
+                "## Part 3",
+                "## Part 4",
+                "## Part 5",
+                "## Part 6"
+            ]
+        );
+        assert_eq!(most.load(Ordering::SeqCst), 3);
+        assert_eq!(steps.last(), Some(&(7, 7)));
+        assert!(
+            steps.windows(2).all(|w| w[0].0 <= w[1].0),
+            "progress only goes forward"
+        );
+
+        let failing = |p: Prompt, _: u32| -> Result<String> {
+            if p.system.contains("part 2 of") {
+                anyhow::bail!("rate limited")
+            }
+            Ok("## fine".into())
+        };
+        let err = write_note(
+            &material,
+            "a.pdf",
+            &failing,
+            &see,
+            &mut |_, _, _| {},
+            budget,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("rate limited"));
     }
 
     #[test]

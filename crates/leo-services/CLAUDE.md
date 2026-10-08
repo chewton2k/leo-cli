@@ -200,3 +200,17 @@ it is never enabled), Codex gets `-i` files written into that private dir and
 removed after. Codex always runs with `--disable` for shell, browser, computer
 and app tools that `codex features list` reports (unknown names make Codex
 fail, so only listed ones are passed; cached per program).
+
+### Part sizes follow the writing provider (`ai/budget.rs`)
+
+`writing_budget(cfg)` = the tightest `Budget { words, at_once }` over the
+`[chat]` chain: Codex / Claude Code `AGENT` (16k words, 3 at once: a 1¾-hour
+lecture is one request; every `exec` has start-up cost and repeats the
+instructions), paid APIs `CLOUD` (10k, 3), free OpenRouter models `FREE` (4k,
+2), Ollama or any localhost URL `LOCAL` (3k, 1: small context, one GPU). Long
+recordings (`long::structure_recording(.., budget)`) and uploads
+(`import::write_note(.., budget)`, text parts of `budget.chars()`, now run
+`at_once` at a time; progress is reported from the calling thread) both use it.
+Transcription is unchanged: Parakeet's 20-25 s cuts are for memory, cloud
+speech is only split past a provider's `max_bytes`, and 5-minute segments are
+transcribed while recording.

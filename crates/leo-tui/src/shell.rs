@@ -187,6 +187,7 @@ fn save_session(store: &mut Store, dir: &std::path::Path) -> Result<Outcome> {
         &fallback,
         &|prompt, max| leo_services::ai::chat_outcome(prompt, max).map(|o| o.value),
         &|done, total| say(&format!("{} {done}/{total}", "Writing the notes".cyan())),
+        leo_services::ai::writing_budget(),
     );
     println!();
     for problem in &structured.problems {

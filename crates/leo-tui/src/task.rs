@@ -434,6 +434,7 @@ pub fn start_structuring(
                     steps: (total > 1).then_some((done, total)),
                 });
             },
+            leo_services::ai::writing_budget(),
         );
         for problem in structured.problems {
             let _ = tx.send(TaskEvent::Warning(problem));

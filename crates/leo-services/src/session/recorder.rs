@@ -514,6 +514,7 @@ pub fn write_up(
         &fallback,
         &|prompt, max| crate::ai::chat_outcome(prompt, max).map(|o| o.value),
         progress,
+        crate::ai::writing_budget(),
     );
     let notice = session::failure_notice(&assembled.failed, dir);
     let body = if notice.is_empty() {
