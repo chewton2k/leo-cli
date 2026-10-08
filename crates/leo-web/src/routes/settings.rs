@@ -1,9 +1,10 @@
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use axum::Extension;
 use axum::Json;
 
-use crate::routes::auth::secure_request;
+use crate::routes::auth::{secure_request, Peer};
 use crate::AppState;
 
 fn no_settings() -> Response {
@@ -16,6 +17,7 @@ fn no_settings() -> Response {
 
 pub(crate) async fn get_settings(
     State(state): State<AppState>,
+    Extension(peer): Extension<Peer>,
     headers: axum::http::HeaderMap,
 ) -> Response {
     let Some(settings) = state.settings.clone() else {
@@ -25,7 +27,7 @@ pub(crate) async fn get_settings(
         Ok(dir) => dir,
         Err(code) => return code.into_response(),
     };
-    let secure = secure_request(&headers);
+    let secure = secure_request(&headers, peer);
     match tokio::task::spawn_blocking(move || settings.describe(&notes_dir)).await {
         Ok(mut page) => {
             page["secure"] = serde_json::Value::Bool(secure);
@@ -37,6 +39,7 @@ pub(crate) async fn get_settings(
 
 pub(crate) async fn change_setting(
     State(state): State<AppState>,
+    Extension(peer): Extension<Peer>,
     headers: axum::http::HeaderMap,
     Json(change): Json<serde_json::Value>,
 ) -> Response {
@@ -47,7 +50,7 @@ pub(crate) async fn change_setting(
         Ok(dir) => dir,
         Err(code) => return code.into_response(),
     };
-    let secure = secure_request(&headers);
+    let secure = secure_request(&headers, peer);
     let done = tokio::task::spawn_blocking(move || {
         settings.apply(&change, secure).map(|message| {
             let mut page = settings.describe(&notes_dir);

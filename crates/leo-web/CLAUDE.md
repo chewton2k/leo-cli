@@ -239,3 +239,9 @@
   the message (`files` ids, `docs` names) and `state.sent`; every later request
   still sends `state.sent` so follow-ups can use them. `splitFiles` sorts a
   chat's stored files into sent/waiting on load (old messages match by name).
+- "This computer" is the TCP peer, not the Host header: `serve` uses
+  `into_make_service_with_connect_info`, `note_peer` puts `Peer { loopback }`
+  in the request (`peer_of`; no address = not loopback), and `local_request` /
+  `secure_request` require it. A forwarded `https` counts only from loopback
+  (cloudflared runs on this computer). Handlers take `Extension<Peer>`, so a
+  router without the layer refuses rather than trusting.

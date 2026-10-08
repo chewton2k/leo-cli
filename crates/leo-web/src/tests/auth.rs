@@ -7,7 +7,7 @@ fn keys_count_as_safe_only_over_https_or_on_this_computer() {
         for (k, v) in pairs {
             headers.insert(*k, HeaderValue::from_static(v));
         }
-        secure_request(&headers)
+        secure_request(&headers, HERE)
     };
     assert!(with(&[
         ("host", "abc.trycloudflare.com"),
@@ -100,4 +100,24 @@ fn a_new_link_is_built_for_the_address_in_use_and_the_old_code_stops_working() {
         .as_str()
         .unwrap()
         .starts_with("http://127.0.0.1:3131/?token="));
+}
+
+#[test]
+fn only_a_connection_from_this_computer_counts_as_this_computer() {
+    use axum::extract::ConnectInfo;
+    let from = |addr: &str| peer_of(Some(&ConnectInfo(addr.parse().unwrap())));
+    assert_eq!(from("127.0.0.1:50000"), HERE);
+    assert_eq!(from("[::1]:50000"), HERE);
+    assert_eq!(from("192.168.1.20:50000"), ELSEWHERE);
+    assert_eq!(peer_of(None), ELSEWHERE, "an unknown peer is not trusted");
+
+    let mut spoofed = host("127.0.0.1:8742");
+    assert!(!secure_request(&spoofed, ELSEWHERE));
+    assert!(!local_request(&spoofed, ELSEWHERE));
+    spoofed.insert("x-forwarded-proto", HeaderValue::from_static("https"));
+    assert!(
+        !secure_request(&spoofed, ELSEWHERE),
+        "a forwarded https header counts only from the tunnel on this computer"
+    );
+    assert!(secure_request(&spoofed, HERE));
 }

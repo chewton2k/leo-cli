@@ -9,11 +9,11 @@ use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    Json,
+    Extension, Json,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::routes::auth::local_request;
+use crate::routes::auth::{local_request, Peer};
 use crate::routes::notes::{directory as valid_directory, save};
 use crate::{store_now, AppState};
 
@@ -176,7 +176,11 @@ fn keep_tail(text: String) -> String {
     text.chars().skip(count - MOST_TRANSCRIPT_CHARS).collect()
 }
 
-pub(crate) async fn overview(State(state): State<AppState>, headers: HeaderMap) -> Response {
+pub(crate) async fn overview(
+    State(state): State<AppState>,
+    Extension(peer): Extension<Peer>,
+    headers: HeaderMap,
+) -> Response {
     let job = state
         .recording
         .lock()
@@ -184,7 +188,7 @@ pub(crate) async fn overview(State(state): State<AppState>, headers: HeaderMap) 
         .and_then(|held| held.as_ref().map(|j| j.view.clone()));
     Json(serde_json::json!({
         "available": state.listener.is_some(),
-        "local": local_request(&headers),
+        "local": local_request(&headers, peer),
         "job": job,
     }))
     .into_response()
@@ -201,6 +205,7 @@ pub(crate) struct StartBody {
 
 pub(crate) async fn start(
     State(state): State<AppState>,
+    Extension(peer): Extension<Peer>,
     headers: HeaderMap,
     Json(body): Json<StartBody>,
 ) -> Response {
@@ -210,7 +215,7 @@ pub(crate) async fn start(
             "leo serve was started without recording.",
         );
     };
-    if body.source.on_this_computer() && !local_request(&headers) {
+    if body.source.on_this_computer() && !local_request(&headers, peer) {
         return error(
             StatusCode::FORBIDDEN,
             "The computer's own microphone and sound can only be recorded from a page open on that computer.",

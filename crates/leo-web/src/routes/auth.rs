@@ -1,6 +1,7 @@
+use std::net::SocketAddr;
 use std::sync::Arc;
 
-use axum::extract::{Request, State};
+use axum::extract::{ConnectInfo, Request, State};
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::response::{Html, IntoResponse, Redirect, Response};
@@ -13,16 +14,34 @@ use crate::{sessions, AppState};
 
 const COOKIE_DAYS: u32 = 30;
 
-pub(crate) fn secure_request(headers: &axum::http::HeaderMap) -> bool {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Peer {
+    pub(crate) loopback: bool,
+}
+
+pub(crate) fn peer_of(connected: Option<&ConnectInfo<SocketAddr>>) -> Peer {
+    Peer {
+        loopback: connected.is_some_and(|ConnectInfo(addr)| addr.ip().is_loopback()),
+    }
+}
+
+pub(crate) async fn note_peer(mut request: Request, next: Next) -> Response {
+    let peer = peer_of(request.extensions().get::<ConnectInfo<SocketAddr>>());
+    request.extensions_mut().insert(peer);
+    next.run(request).await
+}
+
+pub(crate) fn secure_request(headers: &axum::http::HeaderMap, peer: Peer) -> bool {
     let forwarded = headers
         .get("x-forwarded-proto")
         .and_then(|v| v.to_str().ok())
         .is_some_and(|v| v.eq_ignore_ascii_case("https"));
-    forwarded || local_host(headers)
+    peer.loopback && (forwarded || local_host(headers))
 }
 
-pub(crate) fn local_request(headers: &axum::http::HeaderMap) -> bool {
-    !headers.contains_key("x-forwarded-proto")
+pub(crate) fn local_request(headers: &axum::http::HeaderMap, peer: Peer) -> bool {
+    peer.loopback
+        && !headers.contains_key("x-forwarded-proto")
         && !headers.contains_key("x-forwarded-for")
         && !headers.contains_key("cf-connecting-ip")
         && local_host(headers)

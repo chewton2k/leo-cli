@@ -45,6 +45,7 @@ fn hearing() -> record::Listener {
 fn start_recording(state: &AppState, source: record::Source, at: &str) -> Response {
     run(record::start(
         State(state.clone()),
+        Extension(peer_at(at)),
         host(at),
         Json(
             serde_json::from_value(serde_json::json!({
@@ -166,9 +167,13 @@ fn the_computers_own_microphone_only_answers_a_page_on_that_computer() {
     }
     let mut tunnelled = host("localhost");
     tunnelled.insert("x-forwarded-proto", HeaderValue::from_static("https"));
-    assert!(!local_request(&tunnelled));
-    assert!(local_request(&host("127.0.0.1:4000")));
-    assert!(local_request(&host("[::1]:4000")));
+    assert!(!local_request(&tunnelled, HERE));
+    assert!(local_request(&host("127.0.0.1:4000"), HERE));
+    assert!(local_request(&host("[::1]:4000"), HERE));
+    assert!(
+        !local_request(&host("127.0.0.1:4000"), ELSEWHERE),
+        "a device on the network that claims to be this computer is not"
+    );
 
     let allowed = start_recording(&state, record::Source::Screen, "127.0.0.1:4000");
     assert_eq!(allowed.status(), StatusCode::ACCEPTED);
@@ -211,6 +216,7 @@ fn recording_is_refused_without_a_recorder_or_into_a_folder_outside_the_notes() 
     state.listener = Some(hearing());
     let outside = run(record::start(
         State(state.clone()),
+        Extension(HERE),
         host("localhost"),
         Json(
             serde_json::from_value(serde_json::json!({

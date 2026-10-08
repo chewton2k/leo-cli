@@ -32,7 +32,7 @@ use crate::routes::assets::{
     recording_js, saving_js,
 };
 use crate::routes::auth::{
-    auth_middleware, end_sessions, list_sessions, new_link, security_headers,
+    auth_middleware, end_sessions, list_sessions, new_link, note_peer, security_headers,
 };
 use crate::routes::downloads::{export_zip, originals_zip};
 use crate::routes::felix::{
@@ -298,11 +298,14 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
     open_on_enter(here);
 
     let _awake = keep_awake();
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
-        })
-        .await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(async {
+        let _ = tokio::signal::ctrl_c().await;
+    })
+    .await?;
     drop(tunnel);
     Ok(())
 }
@@ -390,6 +393,7 @@ fn router(state: AppState) -> Router {
         ))
         .route("/favicon.svg", get(favicon))
         .layer(axum::middleware::from_fn(security_headers))
+        .layer(axum::middleware::from_fn(note_peer))
         .with_state(state)
 }
 

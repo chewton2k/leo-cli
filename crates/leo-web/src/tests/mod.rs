@@ -11,13 +11,13 @@ use std::sync::{Arc, Mutex};
 use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderValue};
 use axum::response::Response;
-use axum::Json;
+use axum::{Extension, Json};
 use leo_core::store::Store;
 
 use crate::routes::activity::activity_tasks;
 use crate::routes::auth::{
-    end_sessions, list_sessions, local_request, new_link, secure_request, CurrentSession,
-    EndSessions,
+    end_sessions, list_sessions, local_request, new_link, peer_of, secure_request, CurrentSession,
+    EndSessions, Peer,
 };
 use crate::routes::downloads::attachment_header;
 use crate::routes::felix::{add_chat_file, chat_reply, list_chat_files, remove_chat_file};
@@ -83,6 +83,15 @@ fn wait_for(state: &AppState, id: &str) -> ImportJob {
             "the import never finished"
         );
         std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+const HERE: Peer = Peer { loopback: true };
+const ELSEWHERE: Peer = Peer { loopback: false };
+
+fn peer_at(host: &str) -> Peer {
+    Peer {
+        loopback: !host.starts_with("192.168."),
     }
 }
 
