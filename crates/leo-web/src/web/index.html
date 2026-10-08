@@ -144,8 +144,8 @@ main { max-width: 760px; margin: 0 auto; padding: 8px 16px calc(var(--bottom) + 
 .empty h3 { color: var(--text); margin: 10px 0 4px; font-size: 17px; }
 .empty p { margin: 0; font-size: 14.5px; }
 
-.note-head h1 { font-size: 27px; line-height: 1.25; letter-spacing: -.02em; margin: 10px 0 8px; outline: 0; overflow-wrap: anywhere; cursor: text; }
-.note-head h1.blank::before { content: attr(data-placeholder); color: var(--faint); }
+.note-head h1 { position: relative; min-height: 1.25em; font-size: 27px; line-height: 1.25; letter-spacing: -.02em; margin: 10px 0 8px; outline: 0; overflow-wrap: anywhere; cursor: text; }
+.note-head h1.blank::before { content: attr(data-placeholder); color: var(--faint); position: absolute; left: 0; top: 0; pointer-events: none; }
 .note-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--muted); font-size: 13.5px; }
 .note-meta .chip { cursor: pointer; }
 #save-state { color: var(--faint); }
@@ -267,9 +267,8 @@ label.trash-row { cursor: pointer; }
 .pick-box svg { width: 14px; height: 14px; opacity: 0; color: var(--accent-text); }
 .pick-box.on { background: var(--accent); border-color: var(--accent); }
 .pick-box.on svg { opacity: 1; }
-.pick-card { display: flex; align-items: center; gap: 12px; cursor: pointer; }
-.pick-card .card-title { flex: 1; min-width: 0; margin: 0; }
-.pick-card .card-meta { margin: 0; }
+.pick-card { cursor: pointer; }
+.pick-card .pick-box { margin-left: auto; }
 .select-all { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600; cursor: pointer; }
 .select-all input { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); }
 .select-count { font-size: 13.5px; color: var(--muted); min-width: 74px; }
@@ -501,8 +500,8 @@ body.on-map main { padding: 0; max-width: none; }
 .chat-history { display: none; flex-direction: column; background: var(--bg); }
 .chat.with-history .chat-history { display: flex; }
 @media (min-width: 900px) {
-  .chat.with-history { width: min(720px, 100%); }
-  .chat-history { flex: none; width: 250px; border-right: 1px solid var(--line); }
+  .chat { width: min(700px, 100%); }
+  .chat-history { flex: none; width: 240px; border-right: 1px solid var(--line); }
 }
 @media (max-width: 899px) {
   .chat-history { position: absolute; inset: var(--top) 0 0 0; z-index: 3; }
@@ -711,9 +710,15 @@ body.on-map main { padding: 0; max-width: none; }
 .rec-live.paused .rec-clock .rec-dot { background: #d99a1e; animation: none; }
 @keyframes rec-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(.8); } }
 .rec-meta { display: flex; align-items: center; justify-content: center; gap: 12px; color: var(--muted); font-size: 13px; }
-.rec-level { display: inline-flex; gap: 2px; align-items: flex-end; height: 14px; }
-.rec-level i { width: 4px; height: 100%; border-radius: 2px; background: var(--line); }
-.rec-level i.on { background: var(--good); }
+.rec-wave-box { --wave-on: var(--danger); --wave-off: var(--line); display: flex; flex-direction: column; align-items: stretch; gap: 6px; padding: 10px 12px 8px; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--line); }
+.rec-live.paused .rec-wave-box { --wave-on: var(--faint); }
+.rec-wave { display: block; width: 100%; height: 64px; }
+.rec-hear { margin: 0; display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--muted); }
+.rec-hear::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex: none; }
+.rec-hear.sound { color: var(--text); }
+.rec-hear.sound::before { background: var(--good); box-shadow: 0 0 0 3px color-mix(in srgb, var(--good) 22%, transparent); }
+.rec-hear.silent { color: var(--danger); }
+.rec-hear.silent::before { background: var(--danger); }
 .rec-controls { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
 .rec-controls .btn { min-width: 120px; padding: 12px 18px; }
 .rec-stop { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
@@ -769,7 +774,7 @@ body.on-map main { padding: 0; max-width: none; }
   </div>
   <label class="search" id="search" hidden>
     <span id="search-icon"></span>
-    <input id="search-input" type="search" placeholder="Search every note, or #tag" autocomplete="off" enterkeyhint="search">
+    <input id="search-input" type="search" placeholder="Search every note" autocomplete="off" enterkeyhint="search">
   </label>
 </header>
 <main id="app" aria-live="polite"></main>

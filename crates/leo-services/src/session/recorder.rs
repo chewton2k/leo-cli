@@ -21,7 +21,7 @@ pub const SILENT_BROWSER: &str = "No sound was recorded. Check that the browser 
 
 const LIVE_MOST_SECS: u64 = 20;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Event {
     Started(String),
     Progress {
@@ -31,6 +31,7 @@ pub enum Event {
     Clock {
         secs: u64,
         paused: bool,
+        level: f32,
     },
     Transcript(String),
     Fallback {
@@ -408,6 +409,7 @@ pub fn record(request: Request, controls: &Controls, emit: &dyn Fn(Event)) {
     let mut state = Live::new(live_pace());
     let mut last_roll = Instant::now() - live::ROLL_INTERVAL;
     let mut saved_points = 0;
+    let mut heard_up_to = 0;
 
     while !controls.stop.load(Ordering::Relaxed) && !capture.ended() {
         std::thread::sleep(POLL);
@@ -435,9 +437,17 @@ pub fn record(request: Request, controls: &Controls, emit: &dyn Fn(Event)) {
         if backlog > 1 {
             label.push_str(&format!(" · {backlog} parts waiting to be transcribed"));
         }
+        let recorded = capture.recorded_samples();
+        let level = if capture.paused() {
+            0.0
+        } else {
+            capture.level_since(heard_up_to)
+        };
+        heard_up_to = recorded;
         emit(Event::Clock {
             secs,
             paused: capture.paused(),
+            level,
         });
         emit(Event::Progress { label, steps: None });
 

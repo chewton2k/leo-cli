@@ -74,3 +74,28 @@ test('a tab or screen can be shared only where the browser offers it, and refusa
   assert.equal(L.fedByBrowser('tab'), true);
   assert.equal(L.fedByBrowser('screen'), false);
 });
+
+test('loudness follows how loud it sounds, not raw amplitude', () => {
+  assert.equal(L.loudness(0), 0);
+  assert.equal(L.loudness(-1), 0);
+  assert.equal(L.loudness(Number.NaN), 0);
+  assert.equal(L.loudness(1), 1);
+  const whisper = L.loudness(0.005);
+  const speech = L.loudness(0.1);
+  assert.ok(whisper > 0 && whisper < L.QUIET, `a whisper of noise reads as quiet: ${whisper}`);
+  assert.ok(speech > 0.5, `normal speech fills most of the wave: ${speech}`);
+});
+
+test('the wave says when sound is heard, and what to check when it is not', () => {
+  const loud = Array(10).fill(0.6);
+  assert.equal(L.hearing([], 80), 'waiting');
+  assert.equal(L.hearing(loud, 80), 'sound');
+  assert.equal(L.hearing([...loud, ...Array(10).fill(0)], 80), 'sound', 'a short pause between words still counts');
+  assert.equal(L.hearing([...loud, ...Array(30).fill(0)], 80), 'quiet');
+  assert.equal(L.hearing(Array(30).fill(0), 250), 'silent');
+  assert.equal(L.hearingWords('sound', 'browser', false), 'Hearing sound');
+  assert.match(L.hearingWords('silent', 'browser', false), /microphone/);
+  assert.match(L.hearingWords('silent', 'tab', false), /Share tab audio/);
+  assert.match(L.hearingWords('silent', 'screen', false), /playing on the computer/);
+  assert.match(L.hearingWords('sound', 'browser', true), /Paused/);
+});

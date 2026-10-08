@@ -55,6 +55,7 @@ Where the recording is patchy or the speaker was vague, fill the gap with accura
 
 /// Formatting rules both note prompts share.
 const FORMATTING: &str = "\
+- Use interpretable language: plain words someone new to the subject can follow, with each technical term explained the first time it appears.
 - Bold a term where it is defined. Put formulas and code in code blocks.
 - Use a table only to compare two or more things across the same attributes.
 - Put tasks in a final \"## Action items\" section as checkboxes (- [ ] ), and only if the speaker assigned or mentioned some; otherwise leave the section out.";
@@ -239,7 +240,7 @@ pub fn build_notes_question_prompt(question: &str, notes: &[(&str, &str, &str)])
     // Enough of each note to answer from, while a handful still fits.
     const PER_NOTE_CHARS: usize = 2000;
     let system = "\
-You answer a question using only the user's own notes, given below.
+You answer a question using only the user's own notes, given below. Use interpretable language: plain words someone new to the subject can follow, with each technical term explained the first time it appears.
 - Answer directly and concisely in Markdown.
 - After each fact, name the note it came from in square brackets, like [cs130/Graph traversals]. Include its directory when present so equally named notes are distinguishable.
 - If the notes do not cover the question, say so plainly first; you may then add a short general answer, clearly marked as not from their notes.
@@ -264,7 +265,7 @@ pub fn build_expand_prompt(
     full_body: &str,
 ) -> Prompt {
     let system = "\
-You answer a question the user wrote inside their own notes. Your answer is placed in the note directly under the question.
+You answer a question the user wrote inside their own notes. Your answer is placed in the note directly under the question. Use interpretable language: plain words someone new to the subject can follow, with each technical term explained the first time it appears.
 - Answer directly and concisely in Markdown: short paragraphs or bullets.
 - Use the note for context and tie the answer back to it where that helps.
 - Do not repeat what the note already says.
@@ -410,6 +411,24 @@ pub fn complete_streaming(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_writing_instruction_asks_for_interpretable_language() {
+        let prompts = [
+            build_structure_prompt("t"),
+            build_append_prompt("t", "body"),
+            build_part_prompt("t", &[], 1, 2, "0:00-5:00"),
+            build_notes_question_prompt("q", &[("n1", "Heaps", "body")]),
+            build_expand_prompt("q", "ctx", "Heaps", "body"),
+        ];
+        for prompt in prompts {
+            assert!(
+                prompt.system.contains("Use interpretable language"),
+                "{}",
+                prompt.system
+            );
+        }
+    }
 
     fn points() -> Vec<Jotted> {
         vec![

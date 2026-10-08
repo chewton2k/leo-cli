@@ -61,6 +61,34 @@
 
   const fedByBrowser = (source) => source === 'browser' || source === 'tab';
 
+  const QUIET = 0.2;
+  const BROWSER_STEP_MS = 80;
+  const SERVER_STEP_MS = 250;
+  const MOST_WAVE = 240;
+
+  function loudness(rms) {
+    if (!(rms > 0)) return 0;
+    const db = 20 * Math.log10(rms);
+    return Math.max(0, Math.min(1, (db + 54) / 48));
+  }
+
+  function hearing(levels, stepMs) {
+    if (!levels.length) return 'waiting';
+    let quietMs = 0;
+    for (let i = levels.length - 1; i >= 0 && levels[i] < QUIET; i--) quietMs += stepMs;
+    if (quietMs < 1500) return 'sound';
+    return quietMs < 6000 ? 'quiet' : 'silent';
+  }
+
+  function hearingWords(state, source, paused) {
+    if (paused) return 'Paused: nothing is being recorded';
+    if (state === 'sound') return 'Hearing sound';
+    if (state === 'waiting' || state === 'quiet') return 'Listening…';
+    if (source === 'tab') return 'No sound for a while: is the tab playing, with “Share tab audio” on?';
+    if (source === 'screen') return 'No sound for a while: is something playing on the computer?';
+    return 'No sound for a while: is the right microphone chosen, and not muted?';
+  }
+
   function canShareSound(env) {
     return Boolean(env.isSecureContext && env.mediaDevices && typeof env.mediaDevices.getDisplayMedia === 'function' && typeof env.AudioWorkletNode === 'function');
   }
@@ -96,7 +124,12 @@
       context: null,
       node: null,
       held: [],
-      level: 0,
+      wave: [],
+      waveStep: BROWSER_STEP_MS,
+      analyser: null,
+      sampling: 0,
+      raf: 0,
+      heard: '',
       sending: false,
       lost: 0,
       poll: 0,
@@ -146,8 +179,26 @@
       await s.context.audioWorklet.addModule('/recorder.js');
       const source = s.context.createMediaStreamSource(s.stream);
       s.node = new root.AudioWorkletNode(s.context, 'leo-recorder');
+      s.analyser = s.context.createAnalyser();
+      s.analyser.fftSize = 2048;
+      source.connect(s.analyser);
+      s.wave = [];
+      s.waveStep = BROWSER_STEP_MS;
+      const buffer = new Float32Array(s.analyser.fftSize);
+      clearInterval(s.sampling);
+      s.sampling = setInterval(() => {
+        if (!s.analyser) return;
+        let level = 0;
+        if (!(s.view && s.view.state === 'paused')) {
+          s.analyser.getFloatTimeDomainData(buffer);
+          let sum = 0;
+          for (const v of buffer) sum += v * v;
+          level = loudness(Math.sqrt(sum / buffer.length));
+        }
+        s.wave.push(level);
+        if (s.wave.length > MOST_WAVE) s.wave.splice(0, s.wave.length - MOST_WAVE);
+      }, BROWSER_STEP_MS);
       s.node.port.onmessage = (event) => {
-        s.level = Math.max(event.data.peak, s.level * 0.7);
         if (s.view && s.view.state === 'paused') return;
         s.held.push(new Int16Array(event.data.samples));
         s.lost += trimHeld(s.held, MOST_HELD_SECS * RATE);
@@ -171,10 +222,12 @@
       if (s.node) s.node.port.onmessage = null;
       if (s.stream) s.stream.getTracks().forEach((t) => t.stop());
       if (s.context) s.context.close().catch(() => {});
+      clearInterval(s.sampling);
+      s.sampling = 0;
       s.stream = null;
       s.context = null;
       s.node = null;
-      s.level = 0;
+      s.analyser = null;
     }
 
     async function keepAwake() {
@@ -326,10 +379,61 @@
       accept(await api(`/api/record/${s.view.id}/point`, { method: 'POST', body: { text } }));
     }
 
-    function levelBars() {
-      const n = 14;
-      const lit = Math.round(Math.min(1, s.level * 3) * n);
-      return Array.from({ length: n }, (_, i) => `<i class="${i < lit ? 'on' : ''}"></i>`).join('');
+    function drawWave() {
+      s.raf = 0;
+      const canvas = root.document.getElementById('rec-wave');
+      if (!canvas || !s.view || !live(s.view)) return;
+      if (!s.mine) {
+        s.wave = (s.view.levels || []).map(loudness);
+        s.waveStep = SERVER_STEP_MS;
+      }
+      const paused = s.view.state === 'paused';
+      const ratio = root.devicePixelRatio || 1;
+      const width = canvas.clientWidth;
+      const height = canvas.clientHeight;
+      if (canvas.width !== Math.round(width * ratio) || canvas.height !== Math.round(height * ratio)) {
+        canvas.width = Math.round(width * ratio);
+        canvas.height = Math.round(height * ratio);
+      }
+      const ctx = canvas.getContext('2d');
+      ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+      ctx.clearRect(0, 0, width, height);
+      const css = root.getComputedStyle(canvas);
+      const on = css.getPropertyValue('--wave-on').trim() || '#d0342c';
+      const off = css.getPropertyValue('--wave-off').trim() || '#c9c8c3';
+      const bar = 3;
+      const gap = 2;
+      const count = Math.max(1, Math.floor(width / (bar + gap)));
+      const shown = s.wave.slice(-count);
+      const start = width - shown.length * (bar + gap);
+      for (let i = 0; i < count; i++) {
+        const x = width - (i + 1) * (bar + gap);
+        if (x < start - 0.5) {
+          ctx.fillStyle = off;
+          ctx.fillRect(x, height / 2 - 1, bar, 2);
+        }
+      }
+      shown.forEach((level, i) => {
+        const h = Math.max(2, level * (height - 4));
+        ctx.fillStyle = paused || level < QUIET ? off : on;
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(start + i * (bar + gap), (height - h) / 2, bar, h, 1.5);
+        else ctx.rect(start + i * (bar + gap), (height - h) / 2, bar, h);
+        ctx.fill();
+      });
+      const state = hearing(s.wave, s.waveStep);
+      const words = hearingWords(state, s.view.source, paused);
+      const label = root.document.getElementById('rec-hear');
+      if (label && s.heard !== `${state}:${words}`) {
+        s.heard = `${state}:${words}`;
+        label.textContent = words;
+        label.className = `rec-hear ${paused ? 'paused' : state}`;
+      }
+      s.raf = root.requestAnimationFrame(drawWave);
+    }
+
+    function startWave() {
+      if (!s.raf && root.requestAnimationFrame) s.raf = root.requestAnimationFrame(drawWave);
     }
 
     function sourceChoices(local) {
@@ -368,7 +472,8 @@
         : `<div class="rec-controls"><button class="btn plain" data-action="rec-pause">${paused ? 'Resume' : 'Pause'}</button><button class="btn primary rec-stop" data-action="rec-stop"><span class="rec-square"></span>Stop and save</button></div>`;
       return `<div class="rec rec-live${paused ? ' paused' : ''}">
         <div class="rec-clock"><span class="rec-dot"></span><span id="rec-time">${clock(v.secs)}</span><span class="rec-word" id="rec-word">${esc(stateWord(v))}</span></div>
-        <div class="rec-meta">${esc(sourceLabel[v.source] || '')}${s.mine ? `<span class="rec-level" id="rec-level" aria-hidden="true">${levelBars()}</span>` : ''}</div>
+        <div class="rec-meta">${esc(sourceLabel[v.source] || '')}</div>
+        ${orphan ? '' : `<div class="rec-wave-box"><canvas class="rec-wave" id="rec-wave" aria-hidden="true"></canvas><p class="rec-hear" id="rec-hear" role="status">${esc(hearingWords(hearing(s.wave, s.waveStep), v.source, paused))}</p></div>`}
         ${controls}
         ${warnings}
         <div class="rec-transcript" id="rec-transcript" aria-live="polite">${transcript}</div>
@@ -406,7 +511,11 @@
       const old = box.querySelector('#rec-transcript');
       if (old) s.follow = old.scrollTop + old.clientHeight >= old.scrollHeight - 24;
       if (!v || v.state === 'done') box.innerHTML = drawIdle(folders, here);
-      else if (live(v)) box.innerHTML = drawLive();
+      else if (live(v)) {
+        box.innerHTML = drawLive();
+        s.heard = '';
+        startWave();
+      }
       else if (v.state === 'writing') box.innerHTML = drawWriting();
       else box.innerHTML = drawFailed();
       const area = box.querySelector('#rec-point-text');
@@ -440,12 +549,6 @@
       });
     }
 
-    function tick() {
-      const level = root.document.getElementById('rec-level');
-      if (level) level.innerHTML = levelBars();
-      s.level *= 0.85;
-    }
-    setInterval(tick, 120);
 
     function pill() {
       let el = root.document.getElementById('rec-pill');
@@ -527,5 +630,5 @@
     };
   }
 
-  root.leoRecording = { create, clock, join, bytesOf, trimHeld, micReady, micProblem, stateWord, canShareSound, sharingProblem, fedByBrowser };
+  root.leoRecording = { create, clock, join, bytesOf, trimHeld, micReady, micProblem, stateWord, canShareSound, sharingProblem, fedByBrowser, loudness, hearing, hearingWords, QUIET };
 })(typeof window !== 'undefined' ? window : globalThis);

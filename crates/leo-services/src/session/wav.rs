@@ -62,6 +62,14 @@ pub fn peak(samples: &[i16]) -> f64 {
         / 32768.0
 }
 
+pub fn rms(samples: &[i16]) -> f64 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    let sum: f64 = samples.iter().map(|s| (*s as f64 / 32768.0).powi(2)).sum();
+    (sum / samples.len() as f64).sqrt()
+}
+
 pub fn seal(path: &Path) -> Result<()> {
     let len = std::fs::metadata(path)?.len();
     let data = len.saturating_sub(HEADER) & !1;

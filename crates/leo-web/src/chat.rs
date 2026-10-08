@@ -20,6 +20,8 @@ const NOTE_CHARS: usize = 4_000;
 const TOTAL_CHARS: usize = 64_000;
 const NEIGHBOURS: usize = 5;
 const MATCHES: usize = 8;
+const EXPANDED_MATCHES: usize = 3;
+const NEIGHBOURS_PER_MATCH: usize = 2;
 const TURNS: usize = 14;
 const DOCS_CHARS: usize = 60_000;
 const TURN_CHARS: usize = 4_000;
@@ -99,6 +101,63 @@ fn connected<'a>(store: &'a Store, cache: &'a Cache, id: &str) -> Vec<(&'a Note,
         .collect()
 }
 
+fn attribute(text: &str) -> String {
+    text.replace('"', "'").replace(['\n', '\r'], " ")
+}
+
+fn flat(text: &str) -> String {
+    text.to_lowercase().replace(['-', '_'], " ")
+}
+
+fn match_score(note: &Note, read: Option<&crate::graph::Read>, words: &[String]) -> usize {
+    let title = flat(&note.title);
+    let body = flat(&note.body);
+    let summary = read.map(|r| flat(&r.summary)).unwrap_or_default();
+    let concepts: Vec<String> = read
+        .map(|r| r.concepts.iter().map(|c| flat(c)).collect())
+        .unwrap_or_default();
+    words
+        .iter()
+        .map(|word| {
+            let mut score = 0;
+            if title.contains(word.as_str()) {
+                score += 3;
+            }
+            if concepts
+                .iter()
+                .any(|c| c.split_whitespace().any(|part| part == word))
+            {
+                score += 3;
+            }
+            if summary.contains(word.as_str()) {
+                score += 2;
+            }
+            if body.contains(word.as_str()) {
+                score += 1;
+            }
+            score
+        })
+        .sum()
+}
+
+pub fn matches<'a>(store: &'a Store, cache: &Cache, question: &str, limit: usize) -> Vec<&'a Note> {
+    let words: Vec<String> = leo_core::notes::question_words(&flat(question));
+    if words.is_empty() {
+        return Vec::new();
+    }
+    let mut scored: Vec<(usize, &Note)> = store
+        .notes
+        .iter()
+        .filter(|note| studied(note))
+        .filter_map(|note| {
+            let score = match_score(note, cache.notes.get(&note.id), &words);
+            (score > 0).then_some((score, note))
+        })
+        .collect();
+    scored.sort_by(|(sa, a), (sb, b)| sb.cmp(sa).then(b.updated_at.cmp(&a.updated_at)));
+    scored.into_iter().take(limit).map(|(_, n)| n).collect()
+}
+
 pub fn question_of(messages: &[Turn]) -> String {
     messages
         .iter()
@@ -157,16 +216,38 @@ pub fn gather(
             }
         }
     }
-    for note in store.relevant(question, MATCHES * 2) {
-        if picked.len() > MATCHES + NEIGHBOURS {
+    let mut found: Vec<&Note> = Vec::new();
+    for note in matches(store, cache, question, MATCHES * 2) {
+        if found.len() >= MATCHES {
             break;
         }
-        if studied(note) && have.insert(note.id.clone()) {
+        if have.insert(note.id.clone()) {
+            found.push(note);
             picked.push(Picked {
                 note,
                 why: "matches the question".into(),
                 most: NOTE_CHARS,
             });
+        }
+    }
+    for note in found.iter().take(EXPANDED_MATCHES) {
+        for (other, kind, why) in connected(store, cache, &note.id)
+            .into_iter()
+            .filter(|(other, _, _)| studied(other))
+            .take(NEIGHBOURS_PER_MATCH)
+        {
+            if have.insert(other.id.clone()) {
+                let reason = if why.is_empty() {
+                    format!("connected to {} ({kind})", note.title)
+                } else {
+                    format!("connected to {} ({kind}): {why}", note.title)
+                };
+                picked.push(Picked {
+                    note: other,
+                    why: reason,
+                    most: NOTE_CHARS,
+                });
+            }
         }
     }
 
@@ -193,8 +274,10 @@ pub fn gather(
             p.note.directory.clone()
         };
         text.push_str(&format!(
-            "<note id=\"n{n}\" title=\"{}\" class=\"{class}\" included=\"{}\">\n",
-            p.note.title, p.why
+            "<note id=\"n{n}\" title=\"{}\" class=\"{}\" included=\"{}\">\n",
+            attribute(&p.note.title),
+            attribute(&class),
+            attribute(&p.why)
         ));
         if let Some(summary) = summary {
             text.push_str(&format!("Summary: {summary}\n"));
@@ -216,11 +299,12 @@ pub fn gather(
 }
 
 const BASE: &str = "\
-You are Felix, the friendly study buddy built into leo, the user's notes app. You work from the user's own notes, given in <note> tags with ids like n1. Each note says why it was included: notes the user attached to the conversation (treat these as what they are asking about), the note the user has open, notes connected to it in their knowledge graph (with the reason), or notes that match the question.
+You are Felix, the friendly study buddy built into leo, the user's notes app. You work from the user's own notes, given in <note> tags with ids like n1. Each note says why it was included: notes the user attached to the conversation (treat these as what they are asking about), the note the user has open, notes that match the question, or notes connected to one of those in their knowledge graph (with the reason). Use those connections to relate ideas across notes and classes.
 
 - Ground what you say in the notes and cite them with their id in square brackets right after the sentence, like [n2]. Cite only notes you actually used.
 - When the notes do not cover something, say so in one short sentence, then answer from general knowledge under the words \"Beyond your notes:\". Never present general knowledge as if it came from the notes.
 - The user may also give you documents, in <document> tags with ids like d1; they are files from their device, not notes. Use them when the question is about them and name the document when you use it, like (slides.pdf). Do not cite documents with square brackets.
+- Use interpretable language: plain words someone new to the subject can follow, with each technical term explained the first time it appears.
 - Point out connections between notes, especially across different classes, when they help.
 - Write in Markdown: short paragraphs, bullet lists, bold key terms, fenced code blocks for code and formulas. Be concise and start with the answer, with no preamble.";
 
@@ -409,6 +493,59 @@ mod tests {
     }
 
     #[test]
+    fn a_question_finds_notes_by_the_ideas_on_the_map_even_in_other_words() {
+        let (store, _d, ids) = store();
+        let mut cache = cache(&ids);
+        cache.notes.get_mut(&ids[0]).unwrap().concepts =
+            vec!["breadth-first search".into(), "queue".into()];
+        assert!(
+            store.relevant("explain breadth first search", 8).is_empty(),
+            "the note's own words never say it"
+        );
+        let found = matches(&store, &cache, "explain breadth first search", 8);
+        assert_eq!(found.first().map(|n| n.id.as_str()), Some(ids[0].as_str()));
+        let summary = matches(&store, &cache, "how does something explore a graph?", 8);
+        assert_eq!(
+            summary.first().map(|n| n.id.as_str()),
+            Some(ids[0].as_str())
+        );
+        assert!(matches(&store, &cache, "", 8).is_empty());
+        assert!(
+            !matches(&store, &cache, "queue", 8)
+                .iter()
+                .any(|n| n.title == leo_core::manual::MANUAL_TITLE),
+            "the manual is never study material"
+        );
+    }
+
+    #[test]
+    fn a_title_with_quotes_cannot_break_the_note_tags() {
+        assert_eq!(attribute("The \"Big O\"\nnotes"), "The 'Big O' notes");
+    }
+
+    #[test]
+    fn notes_that_match_bring_their_connections_on_the_map() {
+        let (store, _d, ids) = store();
+        let cache = cache(&ids);
+        let (sources, text) = gather(&store, &cache, None, &[], "round robin");
+        assert_eq!(sources[0].id, ids[1], "Scheduling matches the question");
+        let joined = sources
+            .iter()
+            .find(|s| s.id == ids[0])
+            .expect("its neighbour on the map comes along");
+        assert_eq!(
+            joined.why,
+            "connected to Scheduling (same method): Both take the next item from a queue"
+        );
+        assert!(text.contains("included=\"connected to Scheduling (same method)"));
+        assert_eq!(
+            sources.iter().filter(|s| s.id == ids[0]).count(),
+            1,
+            "a note is never sent twice"
+        );
+    }
+
+    #[test]
     fn without_an_open_note_the_question_picks_the_notes() {
         let (store, _d, ids) = store();
         let (sources, _) = gather(&store, &cache(&ids), None, &[], "who sends the forecast");
@@ -464,6 +601,15 @@ mod tests {
         assert!(chat.contains("Never invent names"));
         assert!(chat.contains("everyday analogy"));
         assert!(!chat.contains("[[correct]] if"));
+    }
+
+    #[test]
+    fn felix_is_told_to_use_interpretable_language_in_every_style() {
+        for mode in MODES {
+            assert!(prompt(mode, "", &[], &[])
+                .0
+                .contains("Use interpretable language"));
+        }
     }
 
     #[test]

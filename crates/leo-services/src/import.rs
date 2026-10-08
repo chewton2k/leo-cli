@@ -299,6 +299,7 @@ pub fn gather(uploads: &[Upload]) -> Result<Material> {
 const DOC_RULES: &str = "\
 You turn material a student uploaded (lecture slides, a handout, a paper, a worksheet, a textbook page, or photos of a whiteboard or handwritten notes) into study notes in Markdown.
 
+- Use interpretable language: plain words someone new to the subject can follow, with each technical term explained the first time it appears.
 - Keep everything that matters for learning: definitions, steps, formulas, worked examples, results, and what figures or diagrams show, described in words.
 - Leave out page furniture: headers, footers, page numbers, repeated slide titles, copyright lines.
 - Organise with ## headings and bullet points (- ); bold a term where it is defined; put formulas and code in code blocks or inline code.
@@ -515,6 +516,16 @@ mod tests {
 
     fn never(_: Prompt, _: &[Image], _: u32) -> Result<String> {
         panic!("there are no images here")
+    }
+
+    #[test]
+    fn notes_from_uploads_are_written_in_interpretable_language() {
+        assert!(text_prompt("x", "a.pdf", None)
+            .system
+            .contains("Use interpretable language"));
+        assert!(image_prompt("a.jpg", None, (1, 1, 1))
+            .system
+            .contains("Use interpretable language"));
     }
 
     #[test]

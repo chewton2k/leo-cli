@@ -278,6 +278,16 @@ impl Capture {
         (start, tail.iter().skip(skip).copied().collect())
     }
 
+    pub fn level_since(&self, since: u64) -> f32 {
+        let end = self.recorded_samples();
+        if end <= since {
+            return 0.0;
+        }
+        let window = (end - since).min(RATE as u64 / 2) as usize;
+        let (_, samples) = self.tail(end - window as u64, window);
+        super::wav::rms(&samples) as f32
+    }
+
     pub fn stop(mut self) -> Result<()> {
         self.finish()
     }
@@ -359,6 +369,37 @@ mod tests {
         capture.finish().unwrap();
         assert_eq!(capture.recorded_samples(), 3 * RATE as u64);
         assert!(capture.problem().is_none());
+    }
+
+    #[test]
+    fn the_sound_level_covers_only_what_arrived_since_the_last_look() {
+        let dir = tempfile::tempdir().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let capture = Capture::fed(dir.path(), 0, 300, rx).unwrap();
+        let wait_for = |samples: u64| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while capture.recorded_samples() < samples {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the audio never arrived"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        let blocks = 3 * BLOCK;
+        tx.send(vec![0i16; blocks]).unwrap();
+        wait_for(blocks as u64);
+        assert_eq!(capture.level_since(0), 0.0);
+        tx.send(vec![16384i16; blocks]).unwrap();
+        wait_for(2 * blocks as u64);
+        let loud = capture.level_since(blocks as u64);
+        assert!((loud - 0.5).abs() < 0.01, "{loud}");
+        assert_eq!(
+            capture.level_since(capture.recorded_samples()),
+            0.0,
+            "nothing new, no sound"
+        );
+        capture.stop().unwrap();
     }
 
     #[test]

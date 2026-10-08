@@ -81,6 +81,27 @@ test('authenticated requests cannot create notes outside the notes folder', asyn
   expect(fs.existsSync(path.join(process.env.LEO_BROWSER_HOME, 'outside'))).toBe(false);
 });
 
+test('the title placeholder sits behind the cursor and comes back when the title is cleared', async ({ page }) => {
+  await page.goto('/#/new');
+  const title = page.locator('#title');
+  await expect(title).toHaveClass(/blank/);
+  const before = await title.evaluate((el) => {
+    const style = getComputedStyle(el, '::before');
+    return { content: style.content, position: style.position };
+  });
+  expect(before).toEqual({ content: '"Title"', position: 'absolute' });
+  await title.click();
+  await page.locator('.blk').first().click();
+  await title.click();
+  expect(await title.evaluate(() => getSelection().anchorOffset)).toBe(0);
+  await page.keyboard.type('Graphs');
+  await expect(title).toHaveText('Graphs');
+  await expect(title).not.toHaveClass(/blank/);
+  for (let i = 0; i < 6; i++) await page.keyboard.press('Backspace');
+  await expect(title).toHaveClass(/blank/);
+  expect(await title.evaluate((el) => el.innerHTML)).toBe('');
+});
+
 test('search finds a note named after a command', async ({ page }) => {
   await page.request.post('/api/notes', { data: { title: 'backup checklist', body: 'Check my backups' } });
   await page.locator('#search-toggle').click();
@@ -324,7 +345,16 @@ test.describe('Felix', () => {
     await chat.locator('#chat-input').press('Enter');
     await expect(chat.locator('.msg.leo').last()).toContainText(`About second question ${tag}`);
 
+    const width = async () => (await chat.boundingBox()).width;
+    const before = await width();
     await openSidebar();
+    expect(await width()).toBe(before);
+    if (tag === 'desktop') {
+      await chat.locator('.chat-head [data-chat="history"]').click();
+      await expect(sidebar).toBeHidden();
+      expect(await width()).toBe(before);
+      await openSidebar();
+    }
     await expect(sidebar.locator('.chat-history-item', { hasText: `second question ${tag}` })).toBeVisible();
     await sidebar.locator('.chat-history-item', { hasText: `first question ${tag}` }).click();
     await expect(chat.locator('.msg.leo').last()).toContainText(`About first question ${tag}`);
@@ -793,6 +823,29 @@ test.describe('uploads', () => {
     expect(Buffer.from(sent.files[0].data, 'base64').toString()).toBe('Merge sort splits the list in half.');
   });
 
+  test('a finished upload shows up in the folder that is open, without a refresh', async ({ page }) => {
+    const title = `Uploaded later ${test.info().project.name}`;
+    let polls = 0;
+    let made = null;
+    await page.route('**/api/import', (route) => route.fulfill({ status: 202, json: { id: 'job-late' } }));
+    await page.route('**/api/import/job-late', async (route) => {
+      polls += 1;
+      if (polls < 3) return route.fulfill({ json: { state: 'working', step: 'Writing the note', done: 0, total: 1 } });
+      if (!made) made = await (await page.request.post('/api/notes', { data: { title, body: 'From the upload.' } })).json();
+      return route.fulfill({ json: { state: 'done', step: '', done: 1, total: 1, note: made.id } });
+    });
+    await page.goto('/');
+    await page.locator('.fab[data-action="upload"]').click();
+    await page.locator('#upload-input').setInputFiles({ name: 'later.txt', mimeType: 'text/plain', buffer: Buffer.from('From the upload.') });
+    await page.locator('#upload-go').click();
+    await expect(page.locator('.upload-working')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.scrim')).toHaveCount(0);
+    await expect(page.locator('.card', { hasText: title })).toBeVisible({ timeout: 8000 });
+    await expect(page.locator('.toast')).toContainText('Your note from the upload is ready.');
+    expect(page.url()).not.toContain('#/n/');
+  });
+
   test('a failed upload says why and offers to try again', async ({ page }) => {
     await page.route('**/api/import', (route) => route.fulfill({ status: 202, json: { id: 'job-2' } }));
     await page.route('**/api/import/job-2', (route) => route.fulfill({ json: { state: 'failed', step: '', done: 0, total: 1, error: 'qwen3:8b cannot read images' } }));
@@ -808,9 +861,9 @@ test.describe('uploads', () => {
 
 test.describe('recording', () => {
   function stubRecorder(page, { noteId, local = true }) {
-    const seen = { audioBytes: 0, posts: 0, started: null, points: [], stopped: false, paused: false };
+    const seen = { audioBytes: 0, posts: 0, started: null, points: [], stopped: false, paused: false, levels: [], source: 'browser' };
     let polls = 0;
-    const view = (over = {}) => ({ id: 'rec-1', source: 'browser', state: seen.paused ? 'paused' : 'recording', secs: 3, step: '', steps: null, transcript: 'Today we cover breadth first search.', warnings: [], points: seen.points.map((t) => [3, t]), note: null, error: null, ...over });
+    const view = (over = {}) => ({ id: 'rec-1', source: seen.source, state: seen.paused ? 'paused' : 'recording', secs: 3, step: '', steps: null, transcript: 'Today we cover breadth first search.', warnings: [], points: seen.points.map((t) => [3, t]), levels: seen.levels, note: null, error: null, ...over });
     page.route('**/api/record', async (route) => {
       if (route.request().method() === 'GET') return route.fulfill({ json: { available: true, local, job: null } });
       seen.started = route.request().postDataJSON();
@@ -854,6 +907,15 @@ test.describe('recording', () => {
     await expect(page.locator('#rec-transcript')).toContainText('breadth first search');
     await expect.poll(() => seen.audioBytes, { timeout: 8000 }).toBeGreaterThan(16000);
     expect(seen.audioBytes % 2).toBe(0);
+    await expect(page.locator('#rec-wave')).toBeVisible();
+    await expect(page.locator('#rec-hear')).toHaveText('Hearing sound', { timeout: 8000 });
+    const drawn = await page.locator('#rec-wave').evaluate((canvas) => {
+      const data = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+      let painted = 0;
+      for (let i = 3; i < data.length; i += 4) if (data[i] > 0) painted++;
+      return painted;
+    });
+    expect(drawn).toBeGreaterThan(200);
     expect(seen.started).toEqual({ source: 'browser', directory: '', title: 'Graphs' });
 
     await page.locator('#rec-point-text').fill('exam question on BFS');
@@ -899,6 +961,23 @@ test.describe('recording', () => {
     await page.evaluate(() => window.sharedStream.getAudioTracks()[0].dispatchEvent(new Event('ended')));
     await expect.poll(() => seen.stopped).toBe(true);
     await expect(page).toHaveURL(new RegExp(`#/n/${made.id}$`), { timeout: 8000 });
+  });
+
+  test('the computer’s own sound shows its wave too, and says when nothing is heard', async ({ page }) => {
+    const made = await (await page.request.post('/api/notes', { data: { title: 'Computer sound lecture', body: 'x' } })).json();
+    const seen = stubRecorder(page, { noteId: made.id, local: true });
+    seen.source = 'screen';
+    seen.levels = Array(12).fill(0.1);
+    await page.goto('/#/record');
+    await page.locator('.rec-source', { hasText: 'Computer’s sound' }).click();
+    await page.locator('[data-action="rec-start"]').click();
+    await expect(page.locator('#rec-wave')).toBeVisible();
+    await expect(page.locator('#rec-hear')).toHaveText('Hearing sound');
+    expect(seen.started.source).toBe('screen');
+    expect(seen.audioBytes).toBe(0);
+    seen.levels = [...Array(12).fill(0.1), ...Array(30).fill(0)];
+    await expect(page.locator('#rec-hear')).toHaveText('No sound for a while: is something playing on the computer?', { timeout: 5000 });
+    await expect(page.locator('#rec-hear')).toHaveClass(/silent/);
   });
 
   test('a share without sound says how to include it and starts nothing', async ({ page }) => {

@@ -518,8 +518,8 @@ const FAVICON: &str = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"-1 -1
 <rect x=\"0\" y=\"18\" width=\"5\" height=\"6\" fill=\"#b4cfe7\"/>\
 <rect x=\"39\" y=\"18\" width=\"5\" height=\"6\" fill=\"#b4cfe7\"/>\
 <rect x=\"5\" y=\"2\" width=\"34\" height=\"28\" fill=\"#b4cfe7\"/>\
-<rect x=\"11\" y=\"16\" width=\"4\" height=\"4\" fill=\"#19191b\"/>\
-<rect x=\"21\" y=\"16\" width=\"4\" height=\"4\" fill=\"#19191b\"/></svg>";
+<g shape-rendering=\"geometricPrecision\" fill=\"#19191b\">\
+<rect x=\"11\" y=\"16\" width=\"4\" height=\"4\"/><rect x=\"21\" y=\"16\" width=\"4\" height=\"4\"/></g></svg>";
 
 async fn favicon() -> Response {
     (
@@ -2832,6 +2832,7 @@ mod tests {
                     heard(record::Heard::Clock {
                         secs: 1,
                         paused: listening.pause.load(Ordering::Relaxed),
+                        level: 0.25,
                     });
                     match rx.recv_timeout(std::time::Duration::from_millis(20)) {
                         Ok(chunk) => samples += chunk.len(),
@@ -2963,6 +2964,12 @@ mod tests {
         assert_eq!(note.title, "Lecture");
         assert_eq!(note.directory, "cs130");
         assert_eq!(note.body, "heard 4800 samples; points: exam is on BFS");
+        assert!(!view.levels.is_empty());
+        assert!(
+            view.levels.len() <= record::LEVELS_KEPT,
+            "only the last few seconds are kept"
+        );
+        assert!(view.levels.iter().all(|l| *l == 0.25));
 
         let gone = run(record::status(State(state.clone()), Path("nope".into())));
         assert_eq!(gone.status(), StatusCode::NOT_FOUND);

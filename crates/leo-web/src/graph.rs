@@ -215,7 +215,7 @@ const READ_RULES: &str = "\
 You read a student's notes so they can be connected into a knowledge graph across classes.
 
 For each note, give:
-- summary: one sentence of at most 25 words saying what the note teaches.
+- summary: one sentence of at most 25 words saying what the note teaches. Use interpretable language: plain words someone new to the subject can follow.
 - concepts: 3 to 8 key ideas and methods, as short noun phrases of 1 to 4 words: specific concepts, techniques, methods, algorithms, theorems, people or results. Include the methods used, not only the topic (for example \"dynamic programming\", \"proof by induction\", \"Fourier transform\"). Leave out generic words such as \"introduction\", \"overview\", \"lecture\", \"notes\" or \"example\".
 When a concept is already in the vocabulary, use exactly that name, so the same idea always has the same name. Name a new concept the way a textbook would.
 

@@ -30,7 +30,7 @@
         <rect class="felix-arm felix-right" x="39" y="18" width="5" height="6"/>
         <rect class="felix-skin" x="5" y="2" width="34" height="28"/>
         <g class="felix-cheeks"><rect x="8" y="21" width="4" height="2"/><rect x="24" y="21" width="4" height="2"/></g>
-        <g class="felix-gaze"><g class="felix-eyes"><rect x="11" y="16" width="4" height="4"/><rect x="21" y="16" width="4" height="4"/></g></g>
+        <g class="felix-gaze"><g class="felix-eyes" shape-rendering="geometricPrecision"><rect x="11" y="16" width="4" height="4"/><rect x="21" y="16" width="4" height="4"/></g></g>
         <g class="felix-sweat"><rect x="34" y="5" width="2" height="2"/><rect x="33" y="7" width="4" height="3"/></g>
       </g>
     </svg>`;

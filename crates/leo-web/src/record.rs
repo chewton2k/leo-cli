@@ -19,6 +19,7 @@ pub const FORGOTTEN_AFTER: Duration = Duration::from_secs(60);
 pub const MOST_POINTS: usize = 200;
 pub const MOST_TRANSCRIPT_CHARS: usize = 200_000;
 pub const AUDIO_BYTES: usize = 4 * 1024 * 1024;
+pub const LEVELS_KEPT: usize = 48;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -57,6 +58,7 @@ pub enum Heard {
     Clock {
         secs: u64,
         paused: bool,
+        level: f32,
     },
     Step {
         label: String,
@@ -80,6 +82,7 @@ pub struct RecordView {
     pub transcript: String,
     pub warnings: Vec<String>,
     pub points: Vec<(u64, String)>,
+    pub levels: Vec<f32>,
     pub note: Option<String>,
     pub error: Option<String>,
 }
@@ -244,6 +247,7 @@ pub(crate) async fn start(
                 transcript: String::new(),
                 warnings: Vec::new(),
                 points: Vec::new(),
+                levels: Vec::new(),
                 note: None,
                 error: None,
             },
@@ -306,8 +310,17 @@ fn run(
     let recordings = Arc::clone(&state.recording);
     let written = listener(listening, &mut |heard| {
         change(&recordings, &id, |job| match heard {
-            Heard::Clock { secs, paused } => {
+            Heard::Clock {
+                secs,
+                paused,
+                level,
+            } => {
                 job.view.secs = secs;
+                job.view
+                    .levels
+                    .push((level.clamp(0.0, 1.0) * 1000.0).round() / 1000.0);
+                let extra = job.view.levels.len().saturating_sub(LEVELS_KEPT);
+                job.view.levels.drain(..extra);
                 if job.live() {
                     job.view.state = if paused { "paused" } else { "recording" };
                 }

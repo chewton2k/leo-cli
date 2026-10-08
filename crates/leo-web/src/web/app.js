@@ -161,11 +161,15 @@
     return `<button class="pin-toggle${note.pinned ? ' on' : ''}" data-action="pin-card" data-id="${esc(note.id)}" aria-pressed="${note.pinned}" aria-label="${label}" title="${label}">${ICON.pin}</button>`;
   }
 
-  function card(note, { words = [], showFolder = false } = {}) {
+  function card(note, { words = [], showFolder = false, pick = null } = {}) {
     const where = showFolder && note.directory ? `<span class="chip accent">${esc(note.directory)}</span>` : '';
     const text = snippet(note.body, words);
-    return `<div class="card" role="link" tabindex="0" data-action="open-note" data-id="${esc(note.id)}">
-      <div class="card-title"><span>${words.length ? highlight(note.title, words) : esc(note.title)}</span>${pinButton(note)}</div>
+    const open = pick
+      ? `class="card pick-card${pick.on ? ' picked' : ''}" role="checkbox" tabindex="0" aria-checked="${pick.on}" data-action="folder-pick" data-key="${esc(pick.key)}"`
+      : `class="card" role="link" tabindex="0" data-action="open-note" data-id="${esc(note.id)}"`;
+    const corner = pick ? `<span class="pick-box${pick.on ? ' on' : ''}" aria-hidden="true">${ICON.check}</span>` : pinButton(note);
+    return `<div ${open}>
+      <div class="card-title"><span>${words.length ? highlight(note.title, words) : esc(note.title)}</span>${corner}</div>
       ${text ? `<div class="card-snippet">${text}</div>` : ''}
       <div class="card-meta">${where}<span>${rel(note.updated_at)}</span>${progress(note.body)}</div>
     </div>`;
@@ -267,8 +271,7 @@
       html += `<div class="section-title">Notes</div><div class="cards${sel ? ' picking' : ''}">${notes
         .map((n) => {
           const key = `n:${n.id}`;
-          if (!sel) return card(n);
-          return `<div class="card pick-card${picked.has(key) ? ' picked' : ''}" role="checkbox" tabindex="0" aria-checked="${picked.has(key)}" data-action="folder-pick" data-key="${esc(key)}">${tick(key)}<div class="card-title"><span>${esc(n.title)}</span></div><div class="card-meta"><span>${rel(n.updated_at)}</span></div></div>`;
+          return card(n, sel ? { pick: { key, on: picked.has(key) } } : {});
         })
         .join('')}</div>`;
     }
@@ -393,7 +396,11 @@
       mark(s, 'Recovered draft · saving…');
       flush(s).catch(fail);
     }
-    const blank = () => s.title.classList.toggle('blank', !cleanTitle(s.title.textContent));
+    const blank = () => {
+      const empty = !cleanTitle(s.title.textContent);
+      if (empty && s.title.innerHTML !== '') s.title.textContent = '';
+      s.title.classList.toggle('blank', empty);
+    };
     blank();
     s.title.addEventListener('input', () => {
       blank();
@@ -1091,6 +1098,7 @@
         <div class="store-bar" aria-hidden="true">${bar}</div>
         <div class="store-legend">${legend}</div>
       </section>
+      ${areas}
       ${keepCard()}
       ${sessionsCard()}
       <section class="set-card store-export">
@@ -1104,7 +1112,6 @@
         </div>
         <a class="btn primary sm" id="export-link" download href="${exportHref()}">Download zip</a>
       </section>
-      ${areas}
       <section class="set-card store-browser">
         <header><h3>This browser</h3></header>
         <p class="hint">${drafts ? `${plural(drafts, 'unsaved draft')} kept here until they reach leo. Clearing them throws those edits away; the notes keep their last saved version.` : 'No unsaved drafts are kept here.'}</p>
@@ -1380,9 +1387,16 @@
         closeSheet();
         go(noteHash(job.note));
       } else {
+        await showLatest().catch(() => {});
         toast('Your note from the upload is ready.', { action: 'Open', run: () => go(noteHash(job.note)) });
       }
     }, 900);
+  }
+
+  async function showLatest() {
+    if ($('.scrim')) return;
+    if (state.view === 'folder' && !state.selecting) await showFolder(state.dir);
+    else if (state.view === 'search') await render();
   }
 
   async function drawOriginals(note) {

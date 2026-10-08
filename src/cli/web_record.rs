@@ -62,7 +62,15 @@ fn listen(listening: Listening, heard: &mut dyn FnMut(Heard)) -> Result<(String,
             let mut tell = heard.borrow_mut();
             match event {
                 Event::Started(_) => {}
-                Event::Clock { secs, paused } => tell(Heard::Clock { secs, paused }),
+                Event::Clock {
+                    secs,
+                    paused,
+                    level,
+                } => tell(Heard::Clock {
+                    secs,
+                    paused,
+                    level,
+                }),
                 Event::Progress { label, steps } => tell(Heard::Step { label, steps }),
                 Event::Transcript(text) => tell(Heard::Transcript(text)),
                 Event::Fallback { from, to } => tell(Heard::Warning(format!("{from}: {to}"))),

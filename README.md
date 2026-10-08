@@ -604,7 +604,10 @@ the share stops the recording and saves it. Phones cannot share their sound.
 A browser only lends its microphone to a secure
 page, so use the link `leo serve` prints (not `--local`) or the page it opens on
 the computer. On a phone, keep the page open while it records; the screen
-stays on. A pill at the top shows the time while you browse other notes.
+stays on. A pill at the top shows the time while you browse other notes. A
+live wave, like a voice-memo app, shows the sound being picked up, for the
+microphone and for a tab's or the computer's sound alike, with "Hearing sound"
+beside it; after a few silent seconds it says what to check instead.
 
 **Uploads** (the **Upload** button beside New note, More → Make a note from a
 file, or drag files onto a folder on a computer) turn PDF, Word (.docx),
@@ -623,8 +626,12 @@ him like any AI chat; he uses your own notes when they help and links each
 answer to the notes it came from. Type **@** (or tap the paperclip) to add any
 note to the conversation: added notes show as chips above the message box, go
 with every message until you remove them, and are what he reads first. He also
-reads the note you have open and the notes connected to it on the map, plus
-any notes that match your question. There are two styles, the same Felix
+reads the note you have open and the notes connected to it on the map, and
+looks up notes that match your question, by their words and by the summaries
+and key ideas the map of ideas found in them (so "breadth first search" finds a
+note that only says "BFS"). The best matches bring their own connections on the
+map along, each with the reason they are connected, so answers can tie ideas
+across classes. There are two styles, the same Felix
 with different instructions:
 
 - **Chat**: anything you like, with your notes as sources. Ask him to explain
