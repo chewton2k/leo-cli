@@ -5,6 +5,7 @@ pub mod export;
 pub mod graph;
 pub mod record;
 mod routes;
+pub mod search;
 pub mod sessions;
 pub mod storage;
 mod terminal;

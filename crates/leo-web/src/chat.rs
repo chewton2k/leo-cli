@@ -105,7 +105,7 @@ fn attribute(text: &str) -> String {
     text.replace('"', "'").replace(['\n', '\r'], " ")
 }
 
-fn flat(text: &str) -> String {
+pub(crate) fn flat(text: &str) -> String {
     text.to_lowercase().replace(['-', '_'], " ")
 }
 

@@ -245,3 +245,11 @@
   `secure_request` require it. A forwarded `https` counts only from loopback
   (cloudflared runs on this computer). Handlers take `Extension<Peer>`, so a
   router without the layer refuses rather than trusting.
+- Main search (`search.rs`, GET `/api/search`, also Felix's note picker):
+  `#tag` queries go to `Store::find`; otherwise words (`flat`: hyphens
+  folded) are looked up in the title (plus acronyms of 3-5 word windows, or the
+  whole title), text, map concepts (word, prefix of ≥4 letters, acronym) and
+  map summary. Groups: all in title, all found, then (3+ words) two thirds with
+  one in the title or an idea; `Store::find`'s fuzzy title matches follow.
+  Hits carry `why` = `{kind: "idea", name}` or `{kind: "summary"}` when the map
+  was needed; the card shows it (`.card-why`).

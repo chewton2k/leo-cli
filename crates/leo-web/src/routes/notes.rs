@@ -264,16 +264,31 @@ pub(crate) async fn move_note(
         .await
 }
 
+#[derive(serde::Serialize)]
+pub(crate) struct SearchHit {
+    #[serde(flatten)]
+    pub(crate) note: NoteResponse,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) why: Option<crate::search::Why>,
+}
+
 pub(crate) async fn search_notes(
     State(state): State<AppState>,
     Query(params): Query<SearchParams>,
-) -> Result<Json<Vec<NoteResponse>>, StatusCode> {
+) -> Result<Json<Vec<SearchHit>>, StatusCode> {
+    let graphs = state.graphs.clone();
     state
         .with_store(move |store| {
             let q = params.q.unwrap_or_default();
-            let notes = if q.is_empty() { vec![] } else { store.find(&q) };
+            let cache = graphs.load();
             Ok(Json(
-                notes.iter().map(|n| NoteResponse::from_note(n)).collect(),
+                crate::search::search(store, &cache, &q)
+                    .into_iter()
+                    .map(|hit| SearchHit {
+                        note: NoteResponse::from_note(hit.note),
+                        why: hit.why,
+                    })
+                    .collect(),
             ))
         })
         .await

@@ -159,7 +159,7 @@ function pinButton(note) {
   return `<button class="pin-toggle${note.pinned ? ' on' : ''}" data-action="pin-card" data-id="${esc(note.id)}" aria-pressed="${note.pinned}" aria-label="${label}" title="${label}">${ICON.pin}</button>`;
 }
 
-function card(note, { words = [], showFolder = false, pick = null } = {}) {
+function card(note, { words = [], showFolder = false, pick = null, why = null } = {}) {
   const where = showFolder && note.directory ? `<span class="chip accent">${esc(note.directory)}</span>` : '';
   const text = snippet(note.body, words);
   const open = pick
@@ -169,6 +169,7 @@ function card(note, { words = [], showFolder = false, pick = null } = {}) {
   return `<div ${open}>
     <div class="card-title"><span>${words.length ? highlight(note.title, words) : esc(note.title)}</span>${corner}</div>
     ${text ? `<div class="card-snippet">${text}</div>` : ''}
+    ${why ? `<div class="card-why">${ICON.map}${why.kind === 'idea' ? `Through the idea “${esc(why.name)}” on the map` : 'Through its summary on the map'}</div>` : ''}
     <div class="card-meta">${where}<span>${rel(note.updated_at)}</span>${progress(note.body)}</div>
   </div>`;
 }
@@ -455,7 +456,7 @@ async function showSearch(query) {
   chrome({});
   openSearch(query);
   if (!query.trim()) {
-    app.innerHTML = empty(ICON.search, 'Search every note', 'Titles and text of every note.');
+    app.innerHTML = empty(ICON.search, 'Search every note', 'Titles, text and the ideas on the map. Abbreviations like BFS work too.');
     return;
   }
   const results = await api(`/api/search?q=${enc(query)}`);
@@ -463,7 +464,7 @@ async function showSearch(query) {
   const words = query.split(/\s+/).map((w) => w.replace(/^#/, '')).filter(Boolean);
   app.innerHTML = results.length
     ? `<div class="section-title">${results.length} note${results.length === 1 ? '' : 's'}</div><div class="cards">${results
-        .map((n) => card(n, { words, showFolder: true }))
+        .map((n) => card(n, { words, showFolder: true, why: n.why }))
         .join('')}</div>`
     : empty(ICON.search, 'Nothing found', `No note mentions “${query}”.`);
 }

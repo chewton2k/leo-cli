@@ -158,6 +158,16 @@ test.describe('map of ideas', () => {
     return made;
   }
 
+  test('search finds a note through the ideas on its map and says so', async ({ page }) => {
+    const made = await seed(page);
+    await page.goto('/#/search/breadth');
+    const card = page.locator(`.card[data-id="${made['Graph traversals'].id}"]`);
+    await expect(card).toBeVisible();
+    await expect(card.locator('.card-why')).toHaveText('Through the idea “breadth-first search” on the map');
+    await page.goto('/#/search/binary%20heaps%20priority');
+    await expect(page.locator(`.card[data-id="${made.Heaps.id}"]`)).toBeVisible();
+  });
+
   test('a note opens on the map with its connections and why', async ({ page }) => {
     const made = await seed(page);
     await page.goto(`/#/n/${made.Scheduling.id}`);
