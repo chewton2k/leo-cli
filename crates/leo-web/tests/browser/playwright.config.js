@@ -7,6 +7,7 @@ const home = process.env.LEO_BROWSER_HOME || fs.mkdtempSync(path.join(os.tmpdir(
 process.env.LEO_BROWSER_HOME = home;
 module.exports = defineConfig({
   testMatch: 'flows.spec.js',
+  globalTeardown: './teardown.js',
   workers: 1,
   timeout: 30000,
   use: {
