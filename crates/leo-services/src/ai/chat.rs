@@ -104,8 +104,8 @@ Reply with the note only: no preamble before the title, no remarks after the not
     );
     let user = format!(
         "{}<transcript>\n{transcript}\n</transcript>\n\n\
-         Write the notes for this transcript: the title alone on the first line, then the \
-         summary, then the sections.",
+         Write the notes for this transcript in interpretable language: the title alone on the \
+         first line, then the summary, then the sections.",
         points_block(points)
     );
     Prompt { system, user }
@@ -137,7 +137,8 @@ Reply with the addition only: no preamble, no remarks after it, and do not wrap 
     );
     let user = format!(
         "<existing_notes>\n{existing_body}\n</existing_notes>\n\n{}<transcript>\n{transcript}\n</transcript>\n\n\
-         Write only the new notes to add for this transcript, with no title.",
+         Write only the new notes to add for this transcript, in interpretable language, with no \
+         title.",
         points_block(points)
     );
     Prompt { system, user }
@@ -169,7 +170,8 @@ Reply with the notes for this part only: no preamble, no remarks after them, and
     );
     let user = format!(
         "{}<transcript>\n{transcript}\n</transcript>\n\n\
-         Write the notes for this part ({span}): ## sections only, no title.",
+         Write the notes for this part ({span}) in interpretable language: ## sections only, no \
+         title.",
         points_block(points)
     );
     Prompt { system, user }
@@ -181,6 +183,8 @@ pub fn build_summary_prompt(part_notes: &str) -> Prompt {
 Shape of the reply:
 1. The first line is the title, as plain text: no \"Title:\", no #, no quotes, no bold.
 2. A blank line, then a 2-4 sentence summary of the whole recording.
+
+Use interpretable language: plain words someone new to the subject can follow, with each technical term explained the first time it appears.
 
 Reply with the title and summary only: no preamble and no remarks after them."
         .to_string();
@@ -418,6 +422,7 @@ mod tests {
             build_structure_prompt("t"),
             build_append_prompt("t", "body"),
             build_part_prompt("t", &[], 1, 2, "0:00-5:00"),
+            build_summary_prompt("notes"),
             build_notes_question_prompt("q", &[("n1", "Heaps", "body")]),
             build_expand_prompt("q", "ctx", "Heaps", "body"),
         ];
@@ -427,6 +432,18 @@ mod tests {
                 "{}",
                 prompt.system
             );
+        }
+    }
+
+    #[test]
+    fn the_last_words_after_a_transcript_ask_for_interpretable_language_again() {
+        for prompt in [
+            build_structure_prompt("t"),
+            build_append_prompt("t", "body"),
+            build_part_prompt("t", &[], 1, 2, "0:00-5:00"),
+        ] {
+            let after = prompt.user.rsplit("</transcript>").next().unwrap();
+            assert!(after.contains("interpretable language"), "{after}");
         }
     }
 
