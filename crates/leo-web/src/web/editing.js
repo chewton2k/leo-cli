@@ -4,7 +4,7 @@
   const FENCE = /^\s*(```|~~~)/;
   const TABLE_RULE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
   const QUOTE = /^\s*>/;
-  const BOX = /^(?:[-*+]|\d+[.)]) \[( |x|X)\](?: |$)/;
+  const BOX = /^(?:[-*+]|\d+[.)]) {1,4}\[( |x|X)\](?: |$)/;
 
   const isBox = (line) => BOX.test(line.trimStart());
 
@@ -70,7 +70,7 @@
   }
 
   function toggleBox(line) {
-    const m = line.match(/^(\s*(?:[-*+]|\d+[.)]) \[)( |x|X)(\](?: .*)?)$/s);
+    const m = line.match(/^(\s*(?:[-*+]|\d+[.)]) {1,4}\[)( |x|X)(\](?: .*)?)$/s);
     if (!m) return line;
     return m[1] + (m[2] === ' ' ? 'x' : ' ') + m[3];
   }

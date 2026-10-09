@@ -76,6 +76,10 @@ test('checkbox numbers match the ones leo ticks', () => {
   ]);
 });
 
+test('a checkbox with extra spaces after the dash is a checkbox too', () => {
+  assert.deepEqual(boxes(render('-   [ ] wide\n*  [x] also\n- [ ] plain')), [[1, false], [2, true], [3, false]]);
+});
+
 test('a checkbox inside a code block still counts, but is not a checkbox', () => {
   const html = render('```\n- [ ] in code\n```\n- [ ] real');
   assert.deepEqual(boxes(html), [[2, false]]);

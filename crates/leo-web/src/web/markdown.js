@@ -54,7 +54,7 @@
   const RULE = /^\s{0,3}([-*_])(\s*\1){2,}\s*$/;
   const ITEM = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
   const TABLE_RULE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
-  const BOX = /^(?:[-*+]|\d+[.)]) \[( |x|X)\](?: |$)/;
+  const BOX = /^(?:[-*+]|\d+[.)]) {1,4}\[( |x|X)\](?: |$)/;
 
   const isBox = (line) => BOX.test(line.trimStart());
 

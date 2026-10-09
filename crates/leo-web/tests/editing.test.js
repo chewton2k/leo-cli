@@ -32,6 +32,9 @@ test('star, plus, numbered and empty boxes count and toggle like leo', () => {
   assert.equal(ed.toggleBox('3. [x] three'), '3. [ ] three');
   assert.equal(ed.toggleBox('- [ ]'), '- [x]');
   assert.equal(ed.boxLine(lines, 5), 4);
+  assert.deepEqual(['-   [ ] wide', '*  [x] wide', '1.    [ ] wide', '-     [ ] code'].map(ed.isBox), [true, true, true, false]);
+  assert.equal(ed.toggleBox('-   [ ] wide'), '-   [x] wide');
+  assert.equal(ed.toggleBox('  *    [x] wide'), '  *    [ ] wide');
   const html = md.render(lines.slice(0, 5).join('\n'));
   assert.equal((html.match(/data-box="/g) || []).length, 5, html);
   assert.ok(!html.includes('disabled'), html);

@@ -248,7 +248,12 @@ pub fn checkbox_line(line: &str) -> Option<Checkbox<'_>> {
         }
         _ => return None,
     };
-    let rest = trimmed[marker..].strip_prefix(" [")?;
+    let after_marker = &trimmed[marker..];
+    let gap = after_marker.len() - after_marker.trim_start_matches(' ').len();
+    if !(1..=4).contains(&gap) {
+        return None;
+    }
+    let rest = after_marker[gap..].strip_prefix('[')?;
     let mut chars = rest.chars();
     let ticked = match chars.next()? {
         ' ' => false,
@@ -263,7 +268,7 @@ pub fn checkbox_line(line: &str) -> Option<Checkbox<'_>> {
     };
     Some(Checkbox {
         ticked,
-        state: indent + marker + 2,
+        state: indent + marker + gap + 1,
         text,
     })
 }
@@ -303,22 +308,22 @@ mod tests {
     fn every_list_style_of_checkbox_counts_and_toggles() {
         let mut note = Note::new(
             "T",
-            "- [ ] dash\n* [ ] star\n+ [x] plus\n1. [ ] one\n2) [X] two\n  - [ ]\n-[ ] not\n- [y] not\ncode [ ] not\n",
+            "- [ ] dash\n* [ ] star\n+ [x] plus\n1. [ ] one\n2) [X] two\n  - [ ]\n-   [ ] wide\n*  [x] wide\n-[ ] not\n-     [ ] code\n- [y] not\ncode [ ] not\n",
             vec![],
             "",
         );
         assert_eq!(
             note.checkboxes(),
-            vec![false, false, true, false, true, false]
+            vec![false, false, true, false, true, false, false, true]
         );
-        for n in 1..=6 {
+        for n in 1..=8 {
             assert!(note.toggle_checkbox(n).is_some(), "box {n}");
         }
         assert_eq!(
             note.body,
-            "- [x] dash\n* [x] star\n+ [ ] plus\n1. [x] one\n2) [ ] two\n  - [x]\n-[ ] not\n- [y] not\ncode [ ] not\n"
+            "- [x] dash\n* [x] star\n+ [ ] plus\n1. [x] one\n2) [ ] two\n  - [x]\n-   [x] wide\n*  [ ] wide\n-[ ] not\n-     [ ] code\n- [y] not\ncode [ ] not\n"
         );
-        assert!(note.toggle_checkbox(7).is_none());
+        assert!(note.toggle_checkbox(9).is_none());
     }
 
     /// The line a search matched inside the note, so results can show where.
