@@ -160,17 +160,26 @@ fn missed_in(chat: &Chat, now: DateTime<Utc>) -> Vec<Missed> {
         if !matches!(verdict_off(text), Some(("incorrect", _))) {
             continue;
         }
-        let answer = i
+        let said = i
             .checked_sub(1)
             .map(|j| &chat.messages[j])
-            .filter(|m| role_of(m) == "user")
-            .map(|m| clip(&plain(text_of(m)), 200))
+            .filter(|m| role_of(m) == "user");
+        let quiz = said.and_then(|m| m.get("quiz")).filter(|q| q.is_object());
+        let field = |key: &str| {
+            quiz.and_then(|q| q.get(key))
+                .and_then(|v| v.as_str())
+                .map(|v| clip(&plain(v), 200))
+        };
+        let answer = field("given")
+            .or_else(|| said.map(|m| clip(&plain(text_of(m)), 200)))
             .unwrap_or_default();
         let asked = i
             .checked_sub(2)
             .map(|j| &chat.messages[j])
             .filter(|m| role_of(m) == "assistant");
-        let question = asked.map(|m| question_in(text_of(m))).unwrap_or_default();
+        let question = field("question")
+            .or_else(|| asked.map(|m| question_in(text_of(m))))
+            .unwrap_or_default();
         let mut notes = cited_in(reply);
         if notes.is_empty() {
             notes = asked.map(cited_in).unwrap_or_default();
@@ -316,6 +325,30 @@ mod tests {
             )[0]
             .due
         );
+    }
+
+    #[test]
+    fn a_missed_quiz_card_is_remembered_with_its_own_question_and_the_choice_made() {
+        let dir = tempfile::tempdir().unwrap();
+        study(
+            dir.path(),
+            "chat-quiz-1",
+            vec![
+                said("user", "quiz me on BFS"),
+                said("assistant", "Here is one to try."),
+                serde_json::json!({
+                    "role": "user",
+                    "text": "Quiz answer. Question: What does BFS use?",
+                    "quiz": { "question": "What does BFS use?", "given": "a stack", "correct": false }
+                }),
+                said("assistant", "[[incorrect]] It uses a queue."),
+            ],
+            at(1, 9),
+        );
+        let found = missed(dir.path(), at(3, 9));
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].question, "What does BFS use?");
+        assert_eq!(found[0].answer, "a stack");
     }
 
     #[test]

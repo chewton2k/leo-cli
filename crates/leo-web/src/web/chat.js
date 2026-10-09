@@ -56,7 +56,7 @@
   }
 
   const TAPS = ['boop', 'hop', 'spin', 'giggle'];
-  const POSES = { search_notes: 'tool-search', open_note: 'tool-open', connected_notes: 'tool-map', edit_note: 'tool-edit', create_note: 'tool-create', web_search: 'tool-search', open_page: 'tool-open' };
+  const POSES = { search_notes: 'tool-search', open_note: 'tool-open', connected_notes: 'tool-map', edit_note: 'tool-edit', create_note: 'tool-create', web_search: 'tool-search', open_page: 'tool-open', read_document: 'tool-open', look_at_picture: 'tool-search' };
   const poseOf = (tool) => POSES[tool] || null;
 
   function splitLines(buffer) {
@@ -81,15 +81,39 @@
     return { verdict: null, text };
   }
 
+  const QUIZ_KINDS = { multiple_choice: 'Multiple choice', fill_blank: 'Fill in the blank', free_response: 'Free response' };
+
+  function plainAnswer(text) {
+    return String(text || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  }
+
+  function accepted(quiz) {
+    return (quiz.kind === 'fill_blank' ? String(quiz.answer || '').split('|') : [String(quiz.answer || '')]).map((a) => a.trim()).filter(Boolean);
+  }
+
+  function checkQuiz(quiz, given) {
+    if (!quiz || quiz.kind === 'free_response') return null;
+    const said = plainAnswer(given);
+    return Boolean(said) && accepted(quiz).some((a) => plainAnswer(a) === said);
+  }
+
+  function quizSay(quiz, given, correct) {
+    const lines = [`Quiz answer. Question: ${quiz.question}`, `My answer: ${given}`];
+    if (correct === null) lines.push(`Mark it: start your reply with [[correct]] or [[incorrect]], then say in a few sentences what was right and what was missing. A model answer to compare with: ${quiz.answer}`);
+    else if (correct) lines.push('leo checked it: right. Start your reply with [[correct]], add one line on why it is right, then give the next question if we are practising.');
+    else lines.push(`leo checked it: wrong; the right answer is ${accepted(quiz)[0] || quiz.answer}. Start your reply with [[incorrect]], explain briefly why mine is wrong and the right one is right, then go on.`);
+    return lines.join('\n');
+  }
+
   function cite(html, sources, escape) {
     const byN = new Map((sources || []).map((s) => [`n${s.n}`, s]));
-    return html.replace(/\[(n\d+(?:\s*,\s*n\d+)*)\]/g, (whole, list) => {
+    return html.replace(/\s?\[(n\d+(?:\s*,\s*n\d+)*)\]/g, (whole, list) => {
       const chips = list
         .split(/\s*,\s*/)
         .map((n) => byN.get(n))
         .filter(Boolean)
         .map((s) => `<button class="cite" data-chat="open" data-id="${escape(s.id)}" title="${escape(s.title)}">${escape(s.title.length > 28 ? s.title.slice(0, 27) + '…' : s.title)}</button>`);
-      return chips.length ? chips.join('') : whole;
+      return chips.length ? `${whole.startsWith(' ') ? ' ' : ''}${chips.join('')}` : '';
     });
   }
 
@@ -288,7 +312,7 @@
 
   function create({ render, escape, onOpen = () => {}, storage = root.localStorage, prepare = null, notify = () => {}, onSaved = () => {}, onChanged = () => {}, onUndone = () => {}, onToggle = () => {} }) {
     const saved = load(storage);
-    const state = { open: false, id: saved.id || newId(), mode: modeOf(saved.mode), messages: saved.messages, refs: saved.refs, context: null, dropped: null, busy: null, streak: 0, pick: null, chats: null, sidebar: null, doomed: null, asking: null, files: [], sent: [], filesFor: null, review: [] };
+    const state = { open: false, id: saved.id || newId(), mode: modeOf(saved.mode), messages: saved.messages, refs: saved.refs, context: null, dropped: null, busy: null, streak: 0, pick: null, chats: null, sidebar: null, doomed: null, asking: null, files: [], sent: [], filesFor: null, review: [], drafts: {} };
     const panel = document.createElement('aside');
     panel.className = 'chat';
     panel.id = 'chat';
@@ -946,7 +970,11 @@
           : [...(m.docs || []).map((name) => ({ name })), ...(m.pics || []).filter((p) => p && typeof p.name === 'string')];
         const refs = notes.length ? `<div class="msg-refs">${notes.join('')}</div>` : '';
         const files = cards.length ? `<div class="file-cards sent">${cards.filter(Boolean).map((c) => fileCard(c, escape, { reading: c.reading === true })).join('')}</div>` : '';
-        return `<div class="msg user">${refs}${files}<div class="bubble">${escape(m.text).replace(/\n/g, '<br>')}</div></div>`;
+        const quiz = m.quiz && typeof m.quiz === 'object'
+          ? `<div class="msg-note">${m.quiz.correct === true ? 'Practice answer · correct' : m.quiz.correct === false ? 'Practice answer · not quite' : 'Practice answer'}</div>`
+          : '';
+        const steer = m.steer === 'waiting' ? '<div class="msg-note">Felix reads this at his next step</div>' : m.steer === 'read' ? '<div class="msg-note">Sent while Felix worked</div>' : '';
+        return `<div class="msg user${m.steer === 'waiting' ? ' queued' : ''}">${refs}${files}<div class="bubble">${escape(m.text).replace(/\n/g, '<br>')}</div>${quiz}${steer}</div>`;
       }
       const shown = grade(m.text).text;
       let html = shown ? cite(render(shown), m.sources, escape).replace(/<input /g, '<input disabled ') : '';
@@ -968,7 +996,9 @@
       const keep = save || meta ? `<div class="msg-acts">${save}${meta}</div>` : '';
       const steps = (m.steps || []).length ? `<div class="msg-steps">${m.steps.map((t, k) => stepLine(t, m.pending && !shown && k === m.steps.length - 1)).join('')}</div>` : '';
       const offers = (m.proposals || []).map((p, j) => proposalCard(p, i, j)).join('');
-      return `<div class="msg leo${m.pending ? ' pending' : ''}" data-i="${i}">${badge}${steps}<div class="prose">${html}</div>${offers}${error}${from}${keep}</div>`;
+      const asks = (m.asks || []).map((a, k) => askCard(a, i, k, m.pending)).join('');
+      const quizzes = (m.quizzes || []).map((q, k) => quizCard(q, i, k, m.pending)).join('');
+      return `<div class="msg leo${m.pending ? ' pending' : ''}" data-i="${i}">${badge}${steps}<div class="prose">${html}</div>${quizzes}${asks}${offers}${error}${from}${keep}</div>`;
     }
 
     function onNote() {
@@ -1061,6 +1091,10 @@
       create_note: '<path d="M12 5v14M5 12h14"/>',
       web_search: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.2 3 14.8 0 18M12 3c-3 3.2-3 14.8 0 18"/>',
       open_page: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M7 13h10M7 16h6"/>',
+      read_document: '<path d="M6 3h8l4 4v14H6z"/><path d="M9 12h6M9 16h6"/>',
+      look_at_picture: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="M21 17l-5-5-8 7"/>',
+      ask_user: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17.2v.1"/>',
+      quiz: '<path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/>',
     };
 
     function stepLine(step, working) {
@@ -1087,6 +1121,112 @@
       const old = p.find ? `<div class="proposal-old">${escape(p.find)}</div>` : '<div class="proposal-note">Added at the end:</div>';
       return `<div class="proposal"><div class="proposal-title">Change to “${escape(p.title || 'a note')}”</div>${p.why ? `<div class="proposal-why">${escape(p.why)}</div>` : ''}
         ${old}<div class="proposal-new">${escape(p.replace || '')}</div>${done}</div>`;
+    }
+
+    function askCard(a, i, k, pending) {
+      const where = `data-i="${i}" data-k="${k}"`;
+      const answered = typeof a.answered === 'string';
+      const off = answered || pending ? ' disabled' : '';
+      const options = (a.options || []).map((o, n) => `<button type="button" class="ask-option${answered && a.answered === o ? ' chosen' : ''}" data-chat="ask-pick" ${where} data-o="${n}"${off}>${escape(o)}</button>`).join('');
+      const hint = answered ? `You answered: ${escape(a.answered)}` : options ? 'Tap one, or type your own answer below.' : 'Type your answer below.';
+      return `<div class="ask-card"><div class="ask-q">${escape(a.question)}</div>${options ? `<div class="ask-options">${options}</div>` : ''}<div class="ask-hint">${hint}</div></div>`;
+    }
+
+    const BLANK = 'QUIZBLANKMARK';
+
+    function quizCard(q, i, k, pending) {
+      const where = `data-i="${i}" data-k="${k}"`;
+      const done = typeof q.given === 'string';
+      const off = done || pending ? ' disabled' : '';
+      const asked = q.kind === 'fill_blank'
+        ? render(String(q.question || '').replace(/_{3,}/g, BLANK)).split(BLANK).join('<span class="quiz-blank" aria-label="blank"></span>')
+        : render(String(q.question || ''));
+      const draft = escape(done ? q.given : state.drafts[`${i}:${k}`] || '');
+      let answer = '';
+      if (q.kind === 'multiple_choice') {
+        answer = `<div class="quiz-options">${(q.options || []).map((o, n) => {
+          const mark = !done ? '' : plainAnswer(o) === plainAnswer(q.answer) ? ' right' : o === q.given ? ' wrong' : '';
+          return `<button type="button" class="quiz-option${mark}" data-chat="quiz-pick" ${where} data-o="${n}"${off}><span class="quiz-letter">${String.fromCharCode(65 + n)}</span><span>${escape(o)}</span></button>`;
+        }).join('')}</div>`;
+      } else if (q.kind === 'fill_blank') {
+        answer = `<div class="quiz-row"><input class="quiz-input" ${where} placeholder="The missing words" autocomplete="off" value="${draft}"${off}><button type="button" class="btn primary sm" data-chat="quiz-check" ${where}${off}>Check</button></div>`;
+      } else {
+        answer = `<div class="quiz-row column"><textarea class="quiz-input" ${where} rows="3" placeholder="Your answer, in your own words"${off}>${draft}</textarea><button type="button" class="btn primary sm" data-chat="quiz-check" ${where}${off}>Send to Felix</button></div>`;
+      }
+      const shown = q.kind === 'fill_blank' ? String(q.answer || '').split('|')[0].trim() : q.answer;
+      const result = !done ? ''
+        : q.correct === true ? `<div class="quiz-result right">Correct</div>`
+          : q.correct === false ? `<div class="quiz-result wrong">Not quite. The answer: ${escape(shown)}</div>`
+            : '<div class="quiz-result">Sent to Felix to mark.</div>';
+      const why = done && q.correct !== null && q.explain ? `<div class="quiz-explain">${escape(q.explain)}</div>` : '';
+      return `<div class="quiz-card${done ? ' done' : ''}"><div class="quiz-kind">${escape(QUIZ_KINDS[q.kind] || 'Question')}</div><div class="quiz-q prose">${asked}</div>${answer}${result}${why}</div>`;
+    }
+
+    function answerAsk(i, k, given) {
+      const m = state.messages[i];
+      const a = m && m.asks && m.asks[k];
+      if (!a || typeof a.answered === 'string' || state.busy) return;
+      send(given);
+    }
+
+    function answerQuiz(i, k, given) {
+      const m = state.messages[i];
+      const q = m && m.quizzes && m.quizzes[k];
+      const text = String(given || '').trim();
+      if (!q || typeof q.given === 'string' || state.busy || m.pending || !text) return;
+      const correct = checkQuiz(q, text);
+      q.given = text;
+      q.correct = correct;
+      delete state.drafts[`${i}:${k}`];
+      if (correct === true) {
+        state.streak += 1;
+        mood(state.streak >= 3 ? 'cheer' : 'dance', state.streak >= 3 ? 2400 : 1800);
+      } else if (correct === false) {
+        state.streak = 0;
+        mood('droop', 1600);
+        setTimeout(() => mood('perk', 700), 1650);
+      }
+      send(text, { say: quizSay(q, text, correct), quiz: { question: q.question, given: text, correct, kind: q.kind } });
+    }
+
+    async function postSteer(work, m) {
+      if (!work.answerId || m.posted) return;
+      m.posted = true;
+      try {
+        const response = await fetch(`/api/chat/${encodeURIComponent(work.answerId)}/steer`, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: m.text }),
+        });
+        if (!response.ok) m.late = true;
+      } catch (e) {
+        m.late = true;
+      }
+    }
+
+    function steerNow(text) {
+      const said = text.trim();
+      const work = state.busy;
+      if (!said || !work) return;
+      const m = { role: 'user', text: said, steer: 'waiting' };
+      work.thread.messages.push(m);
+      work.waiting.push(m);
+      input.value = '';
+      fit();
+      draw();
+      postSteer(work, m);
+    }
+
+    function steered(work, texts) {
+      for (const text of texts) {
+        const m = work.waiting.find((w) => w.steer === 'waiting' && w.text.slice(0, 4000) === text);
+        if (!m) continue;
+        m.steer = 'read';
+        const list = work.thread.messages;
+        list.splice(list.indexOf(m), 1);
+        list.splice(list.indexOf(work.answer), 0, m);
+      }
     }
 
     async function decide(i, j, apply) {
@@ -1241,13 +1381,30 @@
 
     function draw(stick = true) {
       const near = body.scrollHeight - body.scrollTop - body.clientHeight < 80;
+      const typing = document.activeElement && document.activeElement.classList && document.activeElement.classList.contains('quiz-input') && body.contains(document.activeElement)
+        ? { i: document.activeElement.dataset.i, k: document.activeElement.dataset.k, from: document.activeElement.selectionStart, to: document.activeElement.selectionEnd }
+        : null;
+      const kept = body.scrollTop;
       body.innerHTML = state.messages.length ? state.messages.map(bubble).join('') : welcome();
-      if (stick || near) body.scrollTop = body.scrollHeight;
-      $('#chat-send').classList.toggle('stop', Boolean(state.busy));
-      $('#chat-send').setAttribute('aria-label', state.busy ? 'Stop' : 'Send');
-      $('#chat-send').innerHTML = state.busy
+      if (typing) {
+        const again = body.querySelector(`.quiz-input[data-i="${typing.i}"][data-k="${typing.k}"]`);
+        if (again && !again.disabled) {
+          again.focus();
+          again.setSelectionRange(typing.from, typing.to);
+          body.scrollTop = kept;
+        }
+      } else if (stick || near) body.scrollTop = body.scrollHeight;
+      drawSend();
+    }
+
+    function drawSend() {
+      const stop = Boolean(state.busy) && !input.value.trim();
+      $('#chat-send').classList.toggle('stop', stop);
+      $('#chat-send').setAttribute('aria-label', stop ? 'Stop' : state.busy ? 'Send to Felix while he works' : 'Send');
+      $('#chat-send').innerHTML = stop
         ? '<svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor"/></svg>'
         : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"/></svg>';
+      input.placeholder = state.busy ? 'Add to what Felix is doing…' : 'Message Felix, or type @ to add a note…';
     }
 
     function fit() {
@@ -1267,9 +1424,13 @@
       }
     }
 
-    async function send(text) {
+    async function send(text, extra = {}) {
       const question = text.trim();
       if (!question || state.busy) return;
+      if (!extra.quiz) {
+        const last = [...state.messages].reverse().find((m) => m.role === 'assistant');
+        for (const a of (last && last.asks) || []) if (typeof a.answered !== 'string') a.answered = question;
+      }
       closePick();
       const ctx = state.context && state.dropped !== state.context.id ? state.context.id : null;
       const access = state.access;
@@ -1278,7 +1439,7 @@
       state.files = state.files.filter((f) => !going.includes(f));
       state.refs = [];
       drawRefs();
-      const asked = { role: 'user', text: question, refs: attached, docs: [], files: [], cards: going.map(cardOf) };
+      const asked = { role: 'user', text: question, refs: attached, docs: [], files: [], cards: going.map(cardOf), ...(extra.say ? { say: extra.say } : {}), ...(extra.quiz ? { quiz: extra.quiz } : {}) };
       const settle = (i, doc) => {
         if (!doc) {
           asked.cards[i] = null;
@@ -1298,8 +1459,9 @@
       input.value = '';
       fit();
       const controller = new AbortController();
-      state.busy = controller;
       const thread = { id: state.id, mode: state.mode, refs: state.refs.slice(), messages: state.messages };
+      const work = { abort: () => controller.abort(), thread, answer, waiting: [], answerId: null };
+      state.busy = work;
       awake();
       mood('nod', 450);
       thinking(true);
@@ -1313,7 +1475,7 @@
       asked.cards = asked.cards.filter(Boolean);
       if (!asked.cards.length) delete asked.cards;
       const files = state.sent.map((f) => f.id);
-      const history = state.messages.filter((m) => m !== answer && !m.error).map((m) => ({ role: m.role, text: grade(m.text).text || m.text }));
+      const history = state.messages.filter((m) => m !== answer && !m.error && m.steer !== 'waiting').map((m) => ({ role: m.role, text: m.say || grade(m.text).text || m.text }));
       try {
         const response = await fetch('/api/chat', {
           method: 'POST',
@@ -1342,6 +1504,18 @@
           const { events, rest } = splitLines(buffer);
           buffer = rest;
           for (const e of events) {
+            if (typeof e.answer === 'string') {
+              work.answerId = e.answer;
+              for (const m of work.waiting) postSteer(work, m);
+            }
+            if (Array.isArray(e.steered)) steered(work, e.steered);
+            if (e.ask && typeof e.ask === 'object' && typeof e.ask.question === 'string') {
+              answer.asks = [...(answer.asks || []), { question: e.ask.question, options: Array.isArray(e.ask.options) ? e.ask.options.filter((o) => typeof o === 'string') : [] }];
+              pose('');
+            }
+            if (e.quiz && typeof e.quiz === 'object' && typeof e.quiz.question === 'string') {
+              answer.quizzes = [...(answer.quizzes || []), { kind: String(e.quiz.kind || ''), question: e.quiz.question, options: Array.isArray(e.quiz.options) ? e.quiz.options.filter((o) => typeof o === 'string') : [], answer: String(e.quiz.answer || ''), explain: String(e.quiz.explain || '') }];
+            }
             if (e.sources) answer.sources = e.sources;
             if (e.restart) answer.text = '';
             if (typeof e.step === 'string') pose(e.tool);
@@ -1366,13 +1540,26 @@
       }
       answer.pending = false;
       answer.at = new Date().toISOString();
-      if (!answer.text && !answer.error) answer.error = 'Stopped.';
+      const asking = (answer.asks || []).length || (answer.quizzes || []).length;
+      if (!answer.text && !answer.error && !asking) answer.error = 'Stopped.';
+      const stopped = answer.error === 'Stopped.';
+      const left = work.waiting.filter((m) => m.steer === 'waiting');
+      for (const m of left) thread.messages.splice(thread.messages.indexOf(m), 1);
+      for (const m of work.waiting) {
+        delete m.posted;
+        delete m.late;
+      }
       state.busy = null;
       thinking(false);
+      if (stopped && left.length && thread.id === state.id) {
+        input.value = [input.value, ...left.map((m) => m.text)].filter((t) => t.trim()).join('\n\n');
+        fit();
+      }
       draw(false);
       remember({ ...thread, messages: thread.messages.slice() });
-      if (thread.id === state.id) react(answer);
+      if (thread.id === state.id && !(asked.quiz && asked.quiz.correct !== null)) react(answer);
       awake();
+      if (!stopped && left.length && thread.id === state.id) send(left.map((m) => m.text).join('\n\n'));
     }
 
     function toggle(force) {
@@ -1421,6 +1608,18 @@
       else if (what === 'save') saveAnswer(Number(el.dataset.i));
       else if (what === 'apply' || what === 'dismiss') decide(Number(el.dataset.i), Number(el.dataset.j), what === 'apply');
       else if (what === 'undo') undo(Number(el.dataset.i), Number(el.dataset.j));
+      else if (what === 'ask-pick') {
+        const m = state.messages[Number(el.dataset.i)];
+        const a = m && m.asks && m.asks[Number(el.dataset.k)];
+        if (a) answerAsk(Number(el.dataset.i), Number(el.dataset.k), a.options[Number(el.dataset.o)]);
+      } else if (what === 'quiz-pick') {
+        const m = state.messages[Number(el.dataset.i)];
+        const q = m && m.quizzes && m.quizzes[Number(el.dataset.k)];
+        if (q) answerQuiz(Number(el.dataset.i), Number(el.dataset.k), q.options[Number(el.dataset.o)]);
+      } else if (what === 'quiz-check') {
+        const box = body.querySelector(`.quiz-input[data-i="${el.dataset.i}"][data-k="${el.dataset.k}"]`);
+        if (box) answerQuiz(Number(el.dataset.i), Number(el.dataset.k), box.value);
+      }
       else if (what === 'review') startReview();
       else if (what === 'forget') forget(el.dataset.id);
       else if (what === 'mode') {
@@ -1485,8 +1684,17 @@
     });
     $('#chat-form').addEventListener('submit', (e) => {
       e.preventDefault();
-      if (state.busy) state.busy.abort();
+      if (state.busy && input.value.trim()) steerNow(input.value);
+      else if (state.busy) state.busy.abort();
       else send(input.value);
+    });
+    body.addEventListener('input', (e) => {
+      if (e.target.classList.contains('quiz-input')) state.drafts[`${e.target.dataset.i}:${e.target.dataset.k}`] = e.target.value;
+    });
+    body.addEventListener('keydown', (e) => {
+      if (!e.target.classList.contains('quiz-input') || e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
+      e.preventDefault();
+      answerQuiz(Number(e.target.dataset.i), Number(e.target.dataset.k), e.target.value);
     });
     const carries = (e, type) => Boolean(e.dataTransfer && [...e.dataTransfer.types].includes(type));
     panel.addEventListener('dragover', (e) => {
@@ -1537,6 +1745,7 @@
     input.addEventListener('input', () => {
       fit();
       watchMention();
+      drawSend();
     });
     input.addEventListener('click', watchMention);
     $('#chat-file').addEventListener('change', (e) => {
@@ -1585,7 +1794,8 @@
       if (state.pick && state.pick.from === 'mention' && steer(e)) return;
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
         e.preventDefault();
-        if (!state.busy) send(input.value);
+        if (state.busy) steerNow(input.value);
+        else send(input.value);
       }
       if (e.key === 'Escape') {
         e.stopPropagation();
@@ -1609,5 +1819,5 @@
     };
   }
 
-  root.leoChat = { recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS };
+  root.leoChat = { checkQuiz, quizSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS };
 })(typeof window !== 'undefined' ? window : globalThis);

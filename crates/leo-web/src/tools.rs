@@ -115,7 +115,7 @@ const NOTE: Param = Param {
     about: "which note: an id like n3 from a <note> tag or an earlier result, or the note's exact title",
 };
 
-pub const SPECS: [Spec; 7] = [
+pub const SPECS: [Spec; 9] = [
     Spec {
         name: "search_notes",
         purpose: "Find the user's notes that match words, abbreviations (BFS finds breadth-first search) or ideas in their knowledge graph.",
@@ -140,6 +140,57 @@ pub const SPECS: [Spec; 7] = [
         params: &[NOTE],
         returns: "Up to 10 lines, each: [n5] \"Title\" (kind of link): why they connect. Or a line saying it has no connections yet.",
         example: r#"<tool>{"name": "connected_notes", "note": "Heaps"}</tool>"#,
+    },
+    Spec {
+        name: "ask_user",
+        purpose: "Ask the user a short question when you need their answer before going on (what they mean, which note, how deep to go). Your answer stops there and waits for them.",
+        params: &[
+            Param {
+                name: "question",
+                required: true,
+                about: "the question, in one sentence",
+            },
+            Param {
+                name: "options",
+                required: false,
+                about: "up to 5 short answers to tap, separated by | ; leave it out for a free answer",
+            },
+        ],
+        returns: "\"Asked.\" Then end your reply in one short sentence; the user's answer comes as their next message.",
+        example: r#"<tool>{"name": "ask_user", "question": "Should I cover BFS or DFS first?", "options": "BFS | DFS | Both"}</tool>"#,
+    },
+    Spec {
+        name: "quiz",
+        purpose: "Give the user a practice question they answer in the chat: multiple choice, fill in the blank, or free response. Use it to check understanding, especially in study.",
+        params: &[
+            Param {
+                name: "kind",
+                required: true,
+                about: "multiple_choice, fill_blank or free_response",
+            },
+            Param {
+                name: "question",
+                required: true,
+                about: "the question; for fill_blank write ___ where the missing words go",
+            },
+            Param {
+                name: "options",
+                required: false,
+                about: "for multiple_choice: 2 to 6 choices separated by |",
+            },
+            Param {
+                name: "answer",
+                required: true,
+                about: "the correct choice exactly as written in options, the missing words (other accepted answers separated by |), or a model answer for free_response",
+            },
+            Param {
+                name: "explain",
+                required: false,
+                about: "one or two sentences shown after they answer, saying why",
+            },
+        ],
+        returns: "\"Asked.\" Then end your reply in one short sentence; how the user did comes as their next message.",
+        example: r#"<tool>{"name": "quiz", "kind": "multiple_choice", "question": "What does BFS use to pick the next node?", "options": "a stack | a queue | a heap", "answer": "a queue", "explain": "BFS explores the oldest node found first."}</tool>"#,
     },
     Spec {
         name: "look_at_picture",
@@ -254,6 +305,25 @@ pub fn spec_of(name: &str) -> Option<&'static Spec> {
         .find(|s| s.name == name)
 }
 
+pub fn is_interaction(name: &str) -> bool {
+    matches!(name, "ask_user" | "quiz")
+}
+
+pub const ASKED: &str = "Asked. The user sees it now and answers in their next message. End your reply here with one short sentence; do not answer it for them and do not call more tools.";
+
+pub const ALREADY_ASKED: &str = "That did not work: you already asked the user something in this reply. End your reply now with one short sentence and wait for their answer.";
+
+pub fn asked_from(call: &Call) -> Result<Asked, String> {
+    let question = call.text("question").trim().to_string();
+    if question.is_empty() {
+        return Err("\"question\" is empty".into());
+    }
+    Ok(Asked {
+        question,
+        options: choices(&call.text("options"), 5),
+    })
+}
+
 pub fn is_web(name: &str) -> bool {
     WEB_SPECS.iter().any(|s| s.name == name)
 }
@@ -311,6 +381,8 @@ const WHEN_ASK: &str = "When to use them:
 - The question is about notes you were not given, or you need a note's full text or its connections: use search_notes, open_note or connected_notes.
 - The question is about a document the user gave and needs a part you were not shown: use read_document.
 - The question is about a picture in a note and its description is not enough: use look_at_picture.
+- You cannot tell what the user means and a wrong guess would waste their time: use ask_user, once.
+- You want to check what the user understands, or they ask to be quizzed: use quiz, one question at a time.
 - Otherwise answer straight away without tools.
 After suggesting a change or a note, tell the user what you suggested and that they can apply it; never claim it is already done.";
 
@@ -320,6 +392,8 @@ const WHEN_AUTO: &str = "When to use them:
 - The question is about notes you were not given, or you need a note's full text or its connections: use search_notes, open_note or connected_notes.
 - The question is about a document the user gave and needs a part you were not shown: use read_document.
 - The question is about a picture in a note and its description is not enough: use look_at_picture.
+- You cannot tell what the user means and a wrong guess would waste their time: use ask_user, once.
+- You want to check what the user understands, or they ask to be quizzed: use quiz, one question at a time.
 - Otherwise answer straight away without tools.
 After a change or a new note, tell the user plainly what you changed or made.";
 
@@ -327,6 +401,8 @@ const WHEN_READ: &str = "When to use them:
 - The question is about notes you were not given, or you need a note's full text or its connections: use search_notes, open_note or connected_notes.
 - The question is about a document the user gave and needs a part you were not shown: use read_document.
 - The question is about a picture in a note and its description is not enough: use look_at_picture.
+- You cannot tell what the user means and a wrong guess would waste their time: use ask_user, once.
+- You want to check what the user understands, or they ask to be quizzed: use quiz, one question at a time.
 - Otherwise answer straight away without tools.
 The user chose Read only for this chat, so you cannot change or make notes. When they ask for a change, say exactly what you would change and where, and tell them they can switch Felix to Ask or Auto, beside the message box, to let you make it.";
 
@@ -711,6 +787,67 @@ impl Gate {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct Asked {
+    pub question: String,
+    pub options: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct Quiz {
+    pub kind: String,
+    pub question: String,
+    pub options: Vec<String>,
+    pub answer: String,
+    pub explain: String,
+}
+
+pub const QUIZ_KINDS: [&str; 3] = ["multiple_choice", "fill_blank", "free_response"];
+
+pub fn choices(text: &str, most: usize) -> Vec<String> {
+    text.split('|')
+        .map(|c| c.trim().to_string())
+        .filter(|c| !c.is_empty())
+        .take(most)
+        .collect()
+}
+
+pub fn quiz_from(call: &Call) -> Result<Quiz, String> {
+    let kind = call
+        .text("kind")
+        .trim()
+        .to_lowercase()
+        .replace([' ', '-'], "_");
+    if !QUIZ_KINDS.contains(&kind.as_str()) {
+        return Err(format!("\"kind\" must be one of {}", QUIZ_KINDS.join(", ")));
+    }
+    let question = call.text("question").trim().to_string();
+    let answer = call.text("answer").trim().to_string();
+    let options = choices(&call.text("options"), 6);
+    if kind == "multiple_choice" {
+        if options.len() < 2 {
+            return Err("a multiple_choice quiz needs 2 to 6 options separated by |".into());
+        }
+        if !options.iter().any(|o| o.eq_ignore_ascii_case(&answer)) {
+            return Err("the answer must be one of the options, written the same way".into());
+        }
+    }
+    if kind == "fill_blank" && !question.contains("___") {
+        return Err("a fill_blank question needs ___ where the missing words go".into());
+    }
+    Ok(Quiz {
+        options: if kind == "multiple_choice" {
+            options
+        } else {
+            Vec::new()
+        },
+        kind,
+        question,
+        answer,
+        explain: call.text("explain").trim().to_string(),
+    })
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Proposal {
     Edit {
@@ -744,6 +881,8 @@ pub struct Desk {
     access: Access,
     documents: Vec<(String, String)>,
     captions: Option<std::sync::Arc<crate::captions::Captions>>,
+    pub asked: usize,
+    steer: Option<crate::steer::Steer>,
 }
 
 const WEB_RESULTS: usize = 6;
@@ -760,7 +899,21 @@ impl Desk {
             access: Access::Ask,
             documents: Vec::new(),
             captions: None,
+            asked: 0,
+            steer: None,
         }
+    }
+
+    pub fn with_steer(mut self, steer: crate::steer::Steer) -> Desk {
+        self.steer = Some(steer);
+        self
+    }
+
+    pub fn take_steering(&self) -> Vec<String> {
+        self.steer
+            .as_ref()
+            .map(crate::steer::Steer::take)
+            .unwrap_or_default()
     }
 
     pub fn with_captions(mut self, captions: std::sync::Arc<crate::captions::Captions>) -> Desk {
@@ -1463,7 +1616,7 @@ mod tests {
         assert!(number.contains("must be text in double quotes"));
         let unknown = wrong(serde_json::json!({"name": "delete_note", "note": "n1"}));
         assert!(unknown.contains(
-            "the tools are search_notes, open_note, connected_notes, look_at_picture, read_document, edit_note, create_note"
+            "the tools are search_notes, open_note, connected_notes, ask_user, quiz, look_at_picture, read_document, edit_note, create_note"
         ));
         assert_eq!(
             check(&Call {

@@ -220,6 +220,75 @@ struct Ask {
     wanted: String,
     access: tools::Access,
     documents: Vec<(String, String)>,
+    steer: crate::steer::Steer,
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct Steering {
+    pub(crate) text: String,
+}
+
+pub(crate) async fn steer_answer(
+    State(state): State<AppState>,
+    Path(answer): Path<String>,
+    Json(body): Json<Steering>,
+) -> Response {
+    match state.steering.add(&answer, &body.text) {
+        Ok(waiting) => (
+            StatusCode::ACCEPTED,
+            Json(serde_json::json!({ "waiting": waiting })),
+        )
+            .into_response(),
+        Err("empty") => StatusCode::BAD_REQUEST.into_response(),
+        Err("full") => (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(serde_json::json!({ "error": "Felix already has several messages waiting." })),
+        )
+            .into_response(),
+        Err(_) => (
+            StatusCode::GONE,
+            Json(serde_json::json!({ "error": "That answer has finished." })),
+        )
+            .into_response(),
+    }
+}
+
+fn interact(
+    desk: &mut tools::Desk,
+    call: &tools::Call,
+    send: &dyn Fn(serde_json::Value),
+) -> tools::Done {
+    let quiet = |result: String| tools::Done {
+        step: "Tried to ask you something".into(),
+        result,
+        proposal: None,
+        found: Vec::new(),
+    };
+    if desk.asked > 0 {
+        return quiet(tools::ALREADY_ASKED.into());
+    }
+    let (step, shown) = if call.name == "quiz" {
+        match tools::quiz_from(call) {
+            Ok(quiz) => (
+                "Asked you a practice question",
+                serde_json::json!({ "quiz": quiz }),
+            ),
+            Err(why) => return quiet(format!("That did not work: {why}.")),
+        }
+    } else {
+        match tools::asked_from(call) {
+            Ok(asked) => ("Asked you a question", serde_json::json!({ "ask": asked })),
+            Err(why) => return quiet(format!("That did not work: {why}.")),
+        }
+    };
+    desk.asked += 1;
+    send(shown);
+    tools::Done {
+        step: step.into(),
+        result: tools::ASKED.into(),
+        proposal: None,
+        found: Vec::new(),
+    }
 }
 
 fn run_tool(
@@ -247,6 +316,15 @@ fn run_tool(
             proposal: None,
             found: Vec::new(),
         }
+    } else if tools::is_interaction(&call.name) {
+        interact(desk, call, send)
+    } else if desk.asked > 0 {
+        tools::Done {
+            step: "Waited for your answer".into(),
+            result: tools::ALREADY_ASKED.into(),
+            proposal: None,
+            found: Vec::new(),
+        }
     } else if tools::is_web(&call.name) {
         desk.run_web(call)
     } else if call.name == "look_at_picture" {
@@ -260,6 +338,11 @@ fn run_tool(
         .map_err(|_| anyhow::anyhow!("leo could not read the notes"))?
     };
     send(serde_json::json!({ "step": done.step, "tool": call.name, "found": done.found }));
+    let added = desk.take_steering();
+    if !added.is_empty() {
+        send(serde_json::json!({ "steered": added }));
+        done.result.push_str(&crate::steer::added(&added));
+    }
     if desk.sources.len() != before {
         send(serde_json::json!({ "sources": desk.sources }));
     }
@@ -390,6 +473,7 @@ fn answer(
         wanted,
         access,
         documents,
+        steer,
     } = ask;
     let send = |value: serde_json::Value| {
         let _ = tx.send(ndjson(value));
@@ -403,7 +487,8 @@ fn answer(
         .with_web(web)
         .with_access(access)
         .with_documents(documents)
-        .with_captions(Arc::clone(&state.captions));
+        .with_captions(Arc::clone(&state.captions))
+        .with_steer(steer);
     let chosen = state.converse.as_ref().and_then(|converse| {
         converse(
             &chat::Instructions {
@@ -545,7 +630,7 @@ fn text_answer(
     let mut spent: Option<chat::Spent> = None;
     let mut message = conversation.to_string();
     for step in 0..=tools::MOST_STEPS {
-        let last = step == tools::MOST_STEPS;
+        let last = step == tools::MOST_STEPS || desk.asked > 0;
         let gate = std::cell::RefCell::new(tools::Gate::default());
         let reply = talk.say(
             &message,
@@ -778,6 +863,8 @@ pub(crate) async fn chat_reply(
         .map(|t| t.text.clone())
         .unwrap_or_default();
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let steer = state.steering.open();
+    let _ = tx.send(ndjson(serde_json::json!({ "answer": steer.id() })));
     let _ = tx.send(ndjson(serde_json::json!({ "sources": sources })));
     let worker = state.clone();
     tokio::task::spawn_blocking(move || {
@@ -789,6 +876,7 @@ pub(crate) async fn chat_reply(
             wanted,
             access,
             documents,
+            steer,
         };
         let end = match answer(&worker, &streamer, ask, &tx) {
             Ok(spent) => {

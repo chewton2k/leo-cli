@@ -147,11 +147,15 @@ fn a_chat_reply_streams_its_sources_then_the_answer() {
         .lines()
         .map(|l| serde_json::from_str(l).unwrap())
         .collect();
-    assert_eq!(lines[0]["sources"][0]["title"], "Heaps");
-    assert_eq!(lines[0]["sources"][0]["why"], "open");
-    assert_eq!(lines[1]["t"], "Heaps keep the minimum on top ");
-    assert_eq!(lines[2]["t"], "[n1].");
-    assert_eq!(lines[3]["done"], true);
+    assert!(
+        lines[0]["answer"].is_string(),
+        "the answer's id comes first, for steering"
+    );
+    assert_eq!(lines[1]["sources"][0]["title"], "Heaps");
+    assert_eq!(lines[1]["sources"][0]["why"], "open");
+    assert_eq!(lines[2]["t"], "Heaps keep the minimum on top ");
+    assert_eq!(lines[3]["t"], "[n1].");
+    assert_eq!(lines[4]["done"], true);
     let prompt = seen.lock().unwrap().clone();
     assert!(prompt.contains("Mode: study."), "{prompt}");
     assert!(prompt.contains("A binary heap backs a priority queue."));
@@ -854,4 +858,140 @@ fn felix_looks_at_a_notes_pictures_and_their_captions_come_along_next_time() {
         ),
         "the caption is now part of the note Felix reads"
     );
+}
+
+#[test]
+fn felix_gives_a_practice_question_then_stops_and_waits_for_the_answer() {
+    let (mut state, _d, _) = state_with(&[("Graph traversals", "cs130")]);
+    let (streamer, prompts) = scripted(vec![
+        "<tool>{\"name\": \"quiz\", \"kind\": \"multiple_choice\", \"question\": \"What does BFS use?\", \"options\": \"a stack | a queue\", \"answer\": \"a heap\"}</tool>",
+        "<tool>{\"name\": \"quiz\", \"kind\": \"multiple_choice\", \"question\": \"What does BFS use?\", \"options\": \"a stack | a queue | a heap\", \"answer\": \"a queue\", \"explain\": \"Oldest first.\"}</tool>",
+        "Give it a try!",
+    ]);
+    state.chat = Some(streamer);
+    let lines = chat_lines(&state, "quiz me on BFS");
+    let quizzes: Vec<&serde_json::Value> = lines.iter().filter_map(|l| l.get("quiz")).collect();
+    assert_eq!(quizzes.len(), 1, "only the valid quiz is shown: {lines:?}");
+    assert_eq!(quizzes[0]["kind"], "multiple_choice");
+    assert_eq!(
+        quizzes[0]["options"],
+        serde_json::json!(["a stack", "a queue", "a heap"])
+    );
+    assert_eq!(quizzes[0]["answer"], "a queue");
+    assert_eq!(quizzes[0]["explain"], "Oldest first.");
+    let prompts = prompts.lock().unwrap();
+    assert!(prompts[1].contains("the answer must be one of the options"));
+    assert!(prompts[2].contains(tools::ASKED));
+    assert!(
+        prompts[2].contains("You have used all the tools"),
+        "after asking, Felix only finishes his reply"
+    );
+    let shown: String = lines.iter().filter_map(|l| l["t"].as_str()).collect();
+    assert_eq!(shown, "Give it a try!");
+    assert!(lines.first().unwrap()["answer"].is_string());
+}
+
+#[test]
+fn felix_asks_a_question_with_choices_once_per_reply() {
+    let (mut state, _d, _) = state_with(&[]);
+    let results = Arc::new(Mutex::new(Vec::new()));
+    let seen = Arc::clone(&results);
+    state.converse = Some(Arc::new(
+        move |_: &chat::Instructions, specs: &[chat::ToolSpec]| {
+            assert!(specs.iter().any(|s| s.name == "ask_user"));
+            assert!(specs.iter().any(|s| s.name == "quiz"));
+            Some(Box::new(Native {
+                script: vec![
+                    (
+                        "ask_user",
+                        serde_json::json!({ "question": "Which week?", "options": "Week 1 | Week 2 |  | Week 3" }),
+                    ),
+                    ("ask_user", serde_json::json!({ "question": "And again?" })),
+                    ("search_notes", serde_json::json!({ "query": "heap" })),
+                ],
+                answer: "Tell me which week.",
+                results: Arc::clone(&seen),
+                fail: false,
+            }) as Box<dyn chat::Conversation>)
+        },
+    ));
+    state.chat = Some(scripted(vec!["never used"]).0);
+    let lines = chat_lines_with(&state, "summarise the lecture", Some("read"));
+    let asks: Vec<&serde_json::Value> = lines.iter().filter_map(|l| l.get("ask")).collect();
+    assert_eq!(asks.len(), 1);
+    assert_eq!(asks[0]["question"], "Which week?");
+    assert_eq!(
+        asks[0]["options"],
+        serde_json::json!(["Week 1", "Week 2", "Week 3"])
+    );
+    let results = results.lock().unwrap();
+    assert_eq!(results[0], tools::ASKED);
+    assert_eq!(results[1], tools::ALREADY_ASKED);
+    assert_eq!(
+        results[2],
+        tools::ALREADY_ASKED,
+        "nothing else runs once the user was asked"
+    );
+}
+
+#[test]
+fn a_message_sent_while_felix_works_reaches_him_at_his_next_step() {
+    let (mut state, _d, _) = state_with(&[("Heaps", "")]);
+    let steering = state.steering.clone();
+    let prompts = Arc::new(Mutex::new(Vec::new()));
+    let seen = Arc::clone(&prompts);
+    let step = Arc::new(Mutex::new(0));
+    state.chat = Some(Arc::new(
+        move |system: &str,
+              user: &str,
+              _: u32,
+              piece: &mut dyn FnMut(&str),
+              _: &mut dyn FnMut()| {
+            seen.lock().unwrap().push(format!("{system}\n{user}"));
+            let mut at = step.lock().unwrap();
+            *at += 1;
+            let reply = if *at == 1 {
+                for id in steering.open_ids() {
+                    steering.add(&id, "only the min-heap part").unwrap();
+                }
+                "<tool>{\"name\": \"search_notes\", \"query\": \"heap\"}</tool>"
+            } else {
+                "A min-heap keeps the smallest at the root."
+            };
+            piece(reply);
+            Ok(reply.into())
+        },
+    ));
+    let lines = chat_lines(&state, "explain heaps");
+    let steered: Vec<&serde_json::Value> = lines.iter().filter_map(|l| l.get("steered")).collect();
+    assert_eq!(steered, [&serde_json::json!(["only the min-heap part"])]);
+    let prompts = prompts.lock().unwrap();
+    assert!(prompts[1].contains("User: only the min-heap part"));
+    assert!(prompts[1].contains("take it into account"));
+    assert!(
+        state.steering.open_ids().is_empty(),
+        "a finished answer takes no more messages"
+    );
+}
+
+#[test]
+fn messages_can_be_added_only_to_an_answer_still_being_written() {
+    let (state, _d, _) = state_with(&[]);
+    let steer = state.steering.open();
+    let post = |id: &str, text: &str| {
+        run(steer_answer(
+            State(state.clone()),
+            Path(id.to_string()),
+            Json(crate::routes::felix::Steering { text: text.into() }),
+        ))
+    };
+    let accepted = post(steer.id(), "shorter please");
+    assert_eq!(accepted.status(), StatusCode::ACCEPTED);
+    assert_eq!(json_of(accepted)["waiting"], 1);
+    assert_eq!(post(steer.id(), " ").status(), StatusCode::BAD_REQUEST);
+    let id = steer.id().to_string();
+    drop(steer);
+    let late = post(&id, "too late");
+    assert_eq!(late.status(), StatusCode::GONE);
+    assert_eq!(json_of(late)["error"], "That answer has finished.");
 }

@@ -23,13 +23,15 @@ test('a graded answer is marked, and the marker never shows', () => {
   assert.deepEqual(C.grade('A [[link]] in the middle'), { verdict: null, text: 'A [[link]] in the middle' });
 });
 
-test('citations become note chips, and unknown ones are left alone', () => {
+test('citations become note chips, and ones Felix was never given are dropped', () => {
   const sources = [{ n: 1, id: 'a', title: 'Heaps' }, { n: 2, id: 'b', title: 'A <long> title that keeps going on and on' }];
   const html = C.cite('<p>Min on top [n1]. Both [n1, n2]. Nope [n9].</p>', sources, esc);
   assert.equal((html.match(/class="cite"/g) || []).length, 3);
   assert.ok(html.includes('data-id="a"'));
   assert.ok(html.includes('&lt;long&gt;'), 'titles are escaped');
-  assert.ok(html.includes('[n9]'));
+  assert.ok(!html.includes('[n9]'), 'a citation of nothing is not shown');
+  assert.ok(html.includes('Nope.</p>'), 'and leaves no gap');
+  assert.ok(html.includes('Min on top <button'), 'a kept citation keeps its space');
   assert.deepEqual(C.cited('one [n2] and [n1, n2]', sources).map((s) => s.id), ['a', 'b']);
   assert.deepEqual(C.cited('no citations here n1', sources), []);
 });
@@ -234,4 +236,31 @@ test('notes cited in the last three answers are sent along, newest first', () =>
   ];
   assert.deepEqual(C.recentNotes(messages), ['d', 'a', 'b']);
   assert.deepEqual(C.recentNotes([]), []);
+});
+
+test('a practice answer is checked kindly: case, accents, spaces and punctuation do not count', () => {
+  const mc = { kind: 'multiple_choice', question: 'What does BFS use?', options: ['a stack', 'a queue'], answer: 'a queue' };
+  assert.equal(C.checkQuiz(mc, 'A Queue'), true);
+  assert.equal(C.checkQuiz(mc, 'a stack'), false);
+  const blank = { kind: 'fill_blank', question: 'BFS takes the ___ vertex first.', answer: 'oldest | earliest' };
+  assert.equal(C.checkQuiz(blank, '  Oldest. '), true);
+  assert.equal(C.checkQuiz(blank, 'earliest'), true);
+  assert.equal(C.checkQuiz(blank, 'newest'), false);
+  assert.equal(C.checkQuiz(blank, '   '), false);
+  assert.equal(C.checkQuiz({ kind: 'fill_blank', answer: 'Schrödinger' }, 'schrodinger'), true);
+  assert.equal(C.checkQuiz({ kind: 'free_response', answer: 'Because…' }, 'anything'), null, 'free answers are marked by Felix');
+});
+
+test('what Felix is told about a practice answer says how it went and how to reply', () => {
+  const mc = { kind: 'multiple_choice', question: 'What does BFS use?', answer: 'a queue' };
+  const wrong = C.quizSay(mc, 'a stack', false);
+  assert.ok(wrong.includes('Question: What does BFS use?'));
+  assert.ok(wrong.includes('My answer: a stack'));
+  assert.ok(wrong.includes('the right answer is a queue'));
+  assert.ok(wrong.includes('[[incorrect]]'));
+  assert.ok(C.quizSay(mc, 'a queue', true).includes('[[correct]]'));
+  const free = C.quizSay({ kind: 'free_response', question: 'Why a queue?', answer: 'Oldest first.' }, 'it is fair', null);
+  assert.ok(free.includes('[[correct]] or [[incorrect]]'));
+  assert.ok(free.includes('Oldest first.'));
+  assert.ok(C.quizSay({ kind: 'fill_blank', question: 'q', answer: 'oldest | earliest' }, 'x', false).includes('the right answer is oldest.'));
 });

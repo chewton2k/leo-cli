@@ -2556,3 +2556,156 @@ test.describe('the kinds of bugs that reached people before', () => {
     }
   });
 });
+
+test.describe('Felix asks, quizzes and listens while he works', () => {
+  const lines = (list) => list.map((l) => JSON.stringify(l)).join('\n') + '\n';
+  const answerWith = (list) => ({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: lines(list) });
+
+  async function openFelix(page) {
+    await page.goto('/');
+    await page.locator('#chat-toggle').click();
+    return page.locator('#chat');
+  }
+
+  test('a multiple choice question is checked at once, Felix reacts, and he is told how it went', async ({ page }) => {
+    const asked = [];
+    await page.route('**/api/chat', async (route) => {
+      const body = route.request().postDataJSON();
+      asked.push(body);
+      if (asked.length === 1) {
+        return route.fulfill(answerWith([{ answer: 'a1' }, { sources: [] }, { step: 'Asked you a practice question', tool: 'quiz', found: [] }, { quiz: { kind: 'multiple_choice', question: 'What does BFS use?', options: ['a stack', 'a queue', 'a heap'], answer: 'a queue', explain: 'BFS takes the oldest vertex first.' } }, { t: 'Give it a try!' }, { done: true }]));
+      }
+      return route.fulfill(answerWith([{ answer: 'a2' }, { sources: [] }, { t: '[[incorrect]] A stack gives the newest vertex; BFS needs the oldest.' }, { done: true }]));
+    });
+    const chat = await openFelix(page);
+    await chat.locator('#chat-input').fill('quiz me on BFS');
+    await chat.locator('#chat-input').press('Enter');
+    const card = chat.locator('.quiz-card');
+    await expect(card.locator('.quiz-kind')).toHaveText(/Multiple choice/i);
+    await expect(card.locator('.quiz-option')).toHaveCount(3);
+    await card.locator('.quiz-option', { hasText: 'a stack' }).click();
+    await expect(card.locator('.quiz-option.wrong')).toContainText('a stack');
+    await expect(card.locator('.quiz-option.right')).toContainText('a queue');
+    await expect(card.locator('.quiz-result')).toContainText('Not quite. The answer: a queue');
+    await expect(card.locator('.quiz-explain')).toContainText('oldest vertex first');
+    await expect(card.locator('.quiz-option').first()).toBeDisabled();
+    await expect(chat.locator('.msg.user').last()).toContainText('a stack');
+    await expect(chat.locator('.msg.user').last().locator('.msg-note')).toHaveText('Practice answer · not quite');
+    await expect(chat.locator('.msg.leo').last()).toContainText('BFS needs the oldest');
+    const told = asked[1].messages.at(-1).text;
+    expect(told).toContain('Question: What does BFS use?');
+    expect(told).toContain('My answer: a stack');
+    expect(told).toContain('the right answer is a queue');
+    await page.reload();
+    await page.locator('#chat-toggle').click();
+    await expect(page.locator('#chat .quiz-result')).toContainText('Not quite', { timeout: 5000 });
+    await expect(page.locator('#chat .quiz-option').first()).toBeDisabled();
+  });
+
+  test('a fill in the blank takes typed words, and a free answer goes to Felix to mark', async ({ page }) => {
+    const asked = [];
+    await page.route('**/api/chat', async (route) => {
+      asked.push(route.request().postDataJSON());
+      const n = asked.length;
+      if (n === 1) return route.fulfill(answerWith([{ sources: [] }, { quiz: { kind: 'fill_blank', question: 'BFS takes the ___ vertex first.', options: [], answer: 'oldest | earliest', explain: '' } }, { t: 'Fill it in.' }, { done: true }]));
+      if (n === 2) return route.fulfill(answerWith([{ sources: [] }, { t: '[[correct]] Yes.' }, { quiz: { kind: 'free_response', question: 'Why does BFS find shortest paths?', options: [], answer: 'It explores level by level.', explain: '' } }, { done: true }]));
+      return route.fulfill(answerWith([{ sources: [] }, { t: '[[correct]] Right: level by level.' }, { done: true }]));
+    });
+    const chat = await openFelix(page);
+    await chat.locator('#chat-input').fill('practice');
+    await chat.locator('#chat-input').press('Enter');
+    const blank = chat.locator('.quiz-card').first();
+    await expect(blank.locator('.quiz-blank')).toHaveCount(1);
+    const box = blank.locator('.quiz-input');
+    await box.pressSequentially('  Earliest ', { delay: 20 });
+    await box.press('Enter');
+    await expect(blank.locator('.quiz-result')).toHaveText('Correct');
+    await expect(chat.locator('.quiz-card')).toHaveCount(2);
+    const free = chat.locator('.quiz-card').nth(1);
+    await expect(free.locator('textarea.quiz-input')).toBeEnabled();
+    await free.locator('textarea.quiz-input').fill('Because it goes out one level at a time.');
+    await free.locator('[data-chat="quiz-check"]').click();
+    await expect(free.locator('.quiz-result')).toHaveText('Sent to Felix to mark.');
+    await expect(chat.locator('.msg.leo').last().locator('.verdict')).toHaveText('Correct');
+    const told = asked[2].messages.at(-1).text;
+    expect(told).toContain('[[correct]] or [[incorrect]]');
+    expect(told).toContain('It explores level by level.');
+  });
+
+  test('Felix asks which one, and a tap on a choice answers him', async ({ page }) => {
+    const asked = [];
+    await page.route('**/api/chat', async (route) => {
+      asked.push(route.request().postDataJSON());
+      if (asked.length === 1) return route.fulfill(answerWith([{ sources: [] }, { step: 'Asked you a question', tool: 'ask_user', found: [] }, { ask: { question: 'Which week should I cover?', options: ['Week 1', 'Week 2'] } }, { t: 'Tell me which week.' }, { done: true }]));
+      return route.fulfill(answerWith([{ sources: [] }, { t: 'Week 2 covers heaps.' }, { done: true }]));
+    });
+    const chat = await openFelix(page);
+    await chat.locator('#chat-input').fill('summarise the lecture');
+    await chat.locator('#chat-input').press('Enter');
+    const card = chat.locator('.ask-card');
+    await expect(card.locator('.ask-q')).toHaveText('Which week should I cover?');
+    await card.locator('.ask-option', { hasText: 'Week 2' }).click();
+    await expect(chat.locator('.msg.leo').last()).toContainText('Week 2 covers heaps.');
+    expect(asked[1].messages.at(-1).text).toBe('Week 2');
+    await expect(chat.locator('.ask-option.chosen')).toHaveText('Week 2');
+    await expect(chat.locator('.ask-option').first()).toBeDisabled();
+    await expect(chat.locator('.ask-hint')).toHaveText('You answered: Week 2');
+  });
+
+  test('a message sent while Felix works reaches him, and one too late is asked next', async ({ page }) => {
+    let release;
+    const held = new Promise((resolve) => { release = resolve; });
+    const steers = [];
+    const asked = [];
+    await page.route('**/api/chat/answer-1/steer', async (route) => {
+      steers.push(route.request().postDataJSON().text);
+      await route.fulfill({ status: 202, json: { waiting: steers.length } });
+    });
+    await page.route('**/api/chat', async (route) => {
+      asked.push(route.request().postDataJSON());
+      if (asked.length === 1) {
+        await held;
+        return route.fulfill(answerWith([{ answer: 'answer-1' }, { sources: [] }, { step: 'Searched your notes for “heap”', tool: 'search_notes', found: [] }, { steered: ['only the min-heap part'] }, { t: 'A min-heap keeps the smallest on top.' }, { done: true }]));
+      }
+      return route.fulfill(answerWith([{ answer: 'answer-2' }, { sources: [] }, { t: 'And in Python, heapq.' }, { done: true }]));
+    });
+    const chat = await openFelix(page);
+    const input = chat.locator('#chat-input');
+    await input.fill('explain heaps');
+    await input.press('Enter');
+    await expect(chat.locator('.msg.leo.pending')).toBeVisible();
+    await expect(input).toHaveAttribute('placeholder', 'Add to what Felix is doing…');
+    await input.fill('only the min-heap part');
+    await expect(chat.locator('#chat-send')).not.toHaveClass(/stop/);
+    await input.press('Enter');
+    await expect(chat.locator('.msg.user.queued')).toContainText('only the min-heap part');
+    await expect(chat.locator('.msg.user.queued .msg-note')).toHaveText('Felix reads this at his next step');
+    await input.fill('and in Python?');
+    await chat.locator('#chat-send').click();
+    await expect(chat.locator('.msg.user.queued')).toHaveCount(2);
+    await expect(chat.locator('#chat-send')).toHaveClass(/stop/);
+    release();
+    await expect.poll(() => steers).toEqual(['only the min-heap part', 'and in Python?']);
+    await expect(chat.locator('.msg.leo').last()).toContainText('And in Python, heapq.');
+    const texts = await chat.locator('.msg').evaluateAll((all) => all.map((m) => (m.classList.contains('user') ? 'U: ' : 'F: ') + m.querySelector('.bubble, .prose').textContent.trim()));
+    expect(texts).toEqual(['U: explain heaps', 'U: only the min-heap part', 'F: A min-heap keeps the smallest on top.', 'U: and in Python?', 'F: And in Python, heapq.']);
+    await expect(chat.locator('.msg-note', { hasText: 'Sent while Felix worked' })).toHaveCount(1);
+    expect(asked[1].messages.map((m) => m.text)).toEqual(['explain heaps', 'only the min-heap part', 'A min-heap keeps the smallest on top.', 'and in Python?']);
+  });
+
+  test('stopping Felix puts messages he never read back in the box', async ({ page }) => {
+    await page.route('**/api/chat', async () => {});
+    await page.route('**/api/chat/*/steer', (route) => route.fulfill({ status: 410, json: { error: 'That answer has finished.' } }));
+    const chat = await openFelix(page);
+    const input = chat.locator('#chat-input');
+    await input.fill('explain heaps');
+    await input.press('Enter');
+    await input.fill('shorter please');
+    await input.press('Enter');
+    await expect(chat.locator('.msg.user.queued')).toHaveCount(1);
+    await chat.locator('#chat-send').click();
+    await expect(chat.locator('.msg.user.queued')).toHaveCount(0);
+    await expect(input).toHaveValue('shorter please');
+    await expect(chat.locator('.msg-error')).toHaveText('Stopped.');
+  });
+});

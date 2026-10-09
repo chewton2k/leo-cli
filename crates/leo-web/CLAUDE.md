@@ -551,3 +551,26 @@
   2000 chars) → `ImportBody.wants` → the `Importer`'s second argument →
   `import::import(.., wants, ..)`, which puts it in `<what_the_user_wants>`
   and repeats it at the end of every part's request.
+- Felix asks and quizzes: tools `ask_user {question, options?}` and `quiz
+  {kind: multiple_choice|fill_blank|free_response, question, options?,
+  answer, explain?}` (`tools::asked_from` / `quiz_from` validate: a choice
+  answer must be one of the options, a blank needs `___`). `run_tool` →
+  `interact` sends `{ask}` / `{quiz}`, answers the model `ASKED`, and refuses
+  every later call that reply (`ALREADY_ASKED`); the text loop makes the next
+  step the last. The page draws `.ask-card` (tap a choice = send it; typing
+  answers it too) and `.quiz-card`: choices and blanks are checked on the page
+  (`checkQuiz`: case, accents, punctuation ignored; `a | b` accepts either),
+  Felix reacts at once, and the user message carries `say` (what the model
+  is told, `quizSay`, asking for `[[correct]]`/`[[incorrect]]`) and `quiz`
+  (question, given, correct) — `review.rs` reads `quiz` for Study review. Free
+  answers go to Felix to mark. Typed quiz drafts survive redraws (`drafts`).
+- Steering: `/api/chat` first sends `{"answer": id}` (`steer::Steering`,
+  `AppState.steering`); while Felix works, Enter (or the send button when the
+  box has text) POSTs `/api/chat/{answer}/steer {text}` (202, 410 once the
+  answer finished, 429 past `MOST_WAITING`). `run_tool` takes waiting
+  messages after every tool step, appends them to the tool result
+  (`steer::added`) and sends `{"steered": [...]}`; the page moves those before
+  the answer ("Sent while Felix worked"). Ones never read are sent as the next
+  message when the answer ends, or go back into the box if it was stopped.
+- Citations of notes Felix was never given (`[n9]` with no source) are
+  dropped from the answer rather than shown raw (`cite`).

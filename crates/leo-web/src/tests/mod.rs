@@ -22,7 +22,8 @@ use crate::routes::auth::{
 };
 use crate::routes::downloads::attachment_header;
 use crate::routes::felix::{
-    add_chat_file, apply_suggestion, chat_reply, list_chat_files, remove_chat_file, Suggestion,
+    add_chat_file, apply_suggestion, chat_reply, list_chat_files, remove_chat_file, steer_answer,
+    Suggestion,
 };
 use crate::routes::housekeeping::{get_keep, set_keep};
 use crate::routes::notes::{
@@ -75,6 +76,7 @@ fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<Strin
         seer: None,
         captions: Arc::new(captions::Captions::at(dir.path().join("captions.json"))),
         activity: Default::default(),
+        steering: Default::default(),
     };
     (state, dir, ids)
 }
