@@ -56,7 +56,7 @@ Where the recording is patchy or the speaker was vague, fill the gap with accura
 /// Formatting rules both note prompts share.
 const FORMATTING: &str = "\
 - Use interpretable language: plain words someone new to the subject can follow, with each technical term explained the first time it appears.
-- Bold a term where it is defined. Put formulas and code in code blocks.
+- Bold a term where it is defined. Write math in LaTeX: $...$ inside a sentence and $$...$$ on lines of their own. Put code in fenced code blocks.
 - Use a table only to compare two or more things across the same attributes.
 - Put tasks in a final \"## Action items\" section as checkboxes (- [ ] ), and only if the speaker assigned or mentioned some; otherwise leave the section out.";
 
@@ -595,6 +595,7 @@ mod tests {
             "order",         // sections follow the lecture
             "Bold",          // defined terms stand out
             "code block",    // formulas and code
+            "LaTeX",         // math the page can draw
             "compare",       // tables only for real comparisons
             "Action items",  // tasks only when there were some
             "no preamble",   // nothing before the title

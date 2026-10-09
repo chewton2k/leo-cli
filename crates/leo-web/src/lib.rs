@@ -462,6 +462,10 @@ fn router(state: AppState) -> Router {
             routes::assets::MERMAID_PATH,
             get(routes::assets::mermaid_js),
         )
+        .route(
+            "/vendor/katex-0.16.11/{*path}",
+            get(routes::assets::katex_file),
+        )
         .route("/editing.js", get(editing_js))
         .route("/doc.js", get(doc_js))
         .route("/saving.js", get(saving_js))

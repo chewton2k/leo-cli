@@ -339,7 +339,7 @@ You turn material a student uploaded (lecture slides, a handout, a paper, a work
 - Use interpretable language: plain words someone new to the subject can follow, with each technical term explained the first time it appears.
 - Keep everything that matters for learning: definitions, steps, formulas, worked examples, results, and what figures or diagrams show, described in words.
 - Leave out page furniture: headers, footers, page numbers, repeated slide titles, copyright lines.
-- Organise with ## headings and bullet points (- ); bold a term where it is defined; put formulas and code in code blocks or inline code.
+- Organise with ## headings and bullet points (- ); bold a term where it is defined; write math in LaTeX ($...$ inside a sentence, $$...$$ on lines of their own) and code in fenced code blocks.
 - Put tasks or deadlines that the material states in a final \"## Action items\" section as checkboxes (- [ ] ); leave the section out otherwise.
 - Do not add material that is not in the source. If something is unreadable, write [unreadable] rather than guessing.";
 
@@ -434,7 +434,7 @@ pub const CHAT_DOC_CHARS: usize = 2_000_000;
 const TRANSCRIBE_TOKENS: u32 = 6_000;
 
 const TRANSCRIBING: &str = "\
-You copy out what is on photographed or scanned pages so someone can ask questions about them later. Write the text exactly as it appears, in reading order, in Markdown: keep headings, lists, tables and formulas. Describe each diagram or figure in one short sentence in [brackets]. Write [unreadable] for anything you cannot read. Reply with the text only.";
+You copy out what is on photographed or scanned pages so someone can ask questions about them later. Write the text exactly as it appears, in reading order, in Markdown: keep headings, lists, tables, and formulas written in LaTeX ($...$ inline, $$...$$ on their own lines). Describe each diagram or figure in one short sentence in [brackets]. Write [unreadable] for anything you cannot read. Reply with the text only.";
 
 pub fn clip_document(text: &str) -> String {
     let text = text.trim();

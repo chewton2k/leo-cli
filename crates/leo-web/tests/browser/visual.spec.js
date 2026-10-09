@@ -138,3 +138,14 @@ test('a note with a diagram looks the same', async ({ page }) => {
   await expect(page).toHaveScreenshot('diagram.png', { fullPage: true });
   await page.request.delete(`/api/notes/${note.id}`);
 });
+
+test('a note with math looks the same', async ({ page }) => {
+  const body = 'The **quadratic formula** solves $ax^2 + bx + c = 0$:\n\n$$\nx = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}\n$$\n\nThe sum $\\sum_{k=1}^{n} k = \\frac{n(n+1)}{2}$ grows like $O(n^2)$.';
+  const note = await (await page.request.post('/api/notes', { data: { title: 'Math', body } })).json();
+  await page.goto(`/#/n/${note.id}`);
+  await expect(page.locator('#doc .math[data-drawn="yes"]')).toHaveCount(4, { timeout: 10000 });
+  await page.evaluate(() => document.fonts.ready);
+  await settle(page);
+  await expect(page).toHaveScreenshot('math.png');
+  await page.request.delete(`/api/notes/${note.id}`);
+});

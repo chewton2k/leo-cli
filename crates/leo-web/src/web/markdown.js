@@ -32,6 +32,7 @@
     const keep = (html) => `\u0000${slots.push(html) - 1}\u0000`;
     let s = text;
     s = s.replace(/`([^`]+)`/g, (_, code) => keep(`<code>${escape(code)}</code>`));
+    s = s.replace(/(^|[^\\$])\$(?!\s)([^$\n]+?)(?<!\s)\$(?!\d)/g, (_, lead, tex) => lead + keep(`<span class="math" data-tex="${escape(tex)}">${escape(tex)}</span>`));
     s = s.replace(/!\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/g, (whole, name) => {
       const img = picture(name.trim(), name.trim());
       return img ? keep(img) : whole;
@@ -139,6 +140,26 @@
         continue;
       }
 
+      const math = line.trim();
+      if (math.startsWith('$$')) {
+        let tex;
+        if (math.length > 4 && math.endsWith('$$')) {
+          tex = math.slice(2, -2);
+          i++;
+        } else {
+          const body = [math.slice(2)];
+          i++;
+          while (i < lines.length && !lines[i].trim().endsWith('$$')) {
+            body.push(lines[i]);
+            i++;
+          }
+          if (i < lines.length) body.push(lines[i].trim().slice(0, -2));
+          i++;
+          tex = body.join('\n');
+        }
+        html += `<div class="math math-block" data-tex="${escape(tex.trim())}">${escape(tex.trim())}</div>`;
+        continue;
+      }
       const fence = line.match(FENCE);
       if (fence) {
         const code = [];

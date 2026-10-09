@@ -112,3 +112,8 @@ for (const [name, fn] of cases) {
 }
 console.log(`${cases.length - failed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
+
+test('a $$ math block is one block to edit, and a one-line $$x$$ is a line', () => {
+  const lines = ['intro', '$$', 'a^2 + b^2', '= c^2$$', 'after', '$$x$$'];
+  assert.deepEqual(ed.splitBlocks(lines).map((b) => [b.start, b.end, b.kind]), [[0, 1, 'line'], [1, 4, 'math'], [4, 5, 'line'], [5, 6, 'line']]);
+});

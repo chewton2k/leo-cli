@@ -704,6 +704,10 @@ audio, or remove the speech model (`leo update` downloads it again). leo asks
 before deleting anything. Notes are only deleted from their own page, and
 backup history and settings are shown but never deleted from here.
 
+**Math.** Write LaTeX between `$...$` in a sentence, or `$$...$$` on lines of
+their own, and leo draws it (Obsidian reads the same). Felix and the notes leo
+writes use it for formulas.
+
 **Diagrams.** Ask Felix to draw something ("draw how BFS works", "chart my
 study time") and he answers with a diagram: flowcharts, mind maps, timelines,
 sequence diagrams and charts. They are Mermaid blocks in Markdown, so they can go

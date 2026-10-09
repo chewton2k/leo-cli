@@ -14,6 +14,7 @@ const APP_JS: &str = concat!(
     include_str!("../web/app/side.js"),
     include_str!("../web/app/drag.js"),
     include_str!("../web/app/diagrams.js"),
+    include_str!("../web/app/math.js"),
     include_str!("../web/app/actions.js"),
     include_str!("../web/app/events.js"),
     "})();\n",
@@ -43,6 +44,136 @@ fn javascript(source: &'static str) -> Response {
 
 pub(crate) async fn app_js() -> Response {
     javascript(APP_JS)
+}
+
+const KATEX: &[(&str, &[u8], &str)] = &[
+    (
+        "katex.min.js",
+        include_bytes!("../web/vendor/katex/katex.min.js"),
+        "text/javascript; charset=utf-8",
+    ),
+    (
+        "katex.min.css",
+        include_bytes!("../web/vendor/katex/katex.min.css"),
+        "text/css; charset=utf-8",
+    ),
+    (
+        "fonts/KaTeX_AMS-Regular.woff2",
+        include_bytes!("../web/vendor/katex/fonts/KaTeX_AMS-Regular.woff2"),
+        "font/woff2",
+    ),
+    (
+        "fonts/KaTeX_Caligraphic-Bold.woff2",
+        include_bytes!("../web/vendor/katex/fonts/KaTeX_Caligraphic-Bold.woff2"),
+        "font/woff2",
+    ),
+    (
+        "fonts/KaTeX_Caligraphic-Regular.woff2",
+        include_bytes!("../web/vendor/katex/fonts/KaTeX_Caligraphic-Regular.woff2"),
+        "font/woff2",
+    ),
+    (
+        "fonts/KaTeX_Fraktur-Bold.woff2",
+        include_bytes!("../web/vendor/katex/fonts/KaTeX_Fraktur-Bold.woff2"),
+        "font/woff2",
+    ),
+    (
+        "fonts/KaTeX_Fraktur-Regular.woff2",
+        include_bytes!("../web/vendor/katex/fonts/KaTeX_Fraktur-Regular.woff2"),
+        "font/woff2",
+    ),
+    (
+        "fonts/KaTeX_Main-Bold.woff2",
+        include_bytes!("../web/vendor/katex/fonts/KaTeX_Main-Bold.woff2"),
+        "font/woff2",
+    ),
+    (
+        "fonts/KaTeX_Main-BoldItalic.woff2",
+        include_bytes!("../web/vendor/katex/fonts/KaTeX_Main-BoldItalic.woff2"),
+        "font/woff2",
+    ),
+    (
+        "fonts/KaTeX_Main-Italic.woff2",
+        include_bytes!("../web/vendor/katex/fonts/KaTeX_Main-Italic.woff2"),
+        "font/woff2",
+    ),
+    (
+        "fonts/KaTeX_Main-Regular.woff2",
+        include_bytes!("../web/vendor/katex/fonts/KaTeX_Main-Regular.woff2"),
+        "font/woff2",
+    ),
+    (
+        "fonts/KaTeX_Math-BoldItalic.woff2",
+        include_bytes!("../web/vendor/katex/fonts/KaTeX_Math-BoldItalic.woff2"),
+        "font/woff2",
+    ),
+    (
+        "fonts/KaTeX_Math-Italic.woff2",
+        include_bytes!("../web/vendor/katex/fonts/KaTeX_Math-Italic.woff2"),
+        "font/woff2",
+    ),
+    (
+        "fonts/KaTeX_SansSerif-Bold.woff2",
+        include_bytes!("../web/vendor/katex/fonts/KaTeX_SansSerif-Bold.woff2"),
+        "font/woff2",
+    ),
+    (
+        "fonts/KaTeX_SansSerif-Italic.woff2",
+        include_bytes!("../web/vendor/katex/fonts/KaTeX_SansSerif-Italic.woff2"),
+        "font/woff2",
+    ),
+    (
+        "fonts/KaTeX_SansSerif-Regular.woff2",
+        include_bytes!("../web/vendor/katex/fonts/KaTeX_SansSerif-Regular.woff2"),
+        "font/woff2",
+    ),
+    (
+        "fonts/KaTeX_Script-Regular.woff2",
+        include_bytes!("../web/vendor/katex/fonts/KaTeX_Script-Regular.woff2"),
+        "font/woff2",
+    ),
+    (
+        "fonts/KaTeX_Size1-Regular.woff2",
+        include_bytes!("../web/vendor/katex/fonts/KaTeX_Size1-Regular.woff2"),
+        "font/woff2",
+    ),
+    (
+        "fonts/KaTeX_Size2-Regular.woff2",
+        include_bytes!("../web/vendor/katex/fonts/KaTeX_Size2-Regular.woff2"),
+        "font/woff2",
+    ),
+    (
+        "fonts/KaTeX_Size3-Regular.woff2",
+        include_bytes!("../web/vendor/katex/fonts/KaTeX_Size3-Regular.woff2"),
+        "font/woff2",
+    ),
+    (
+        "fonts/KaTeX_Size4-Regular.woff2",
+        include_bytes!("../web/vendor/katex/fonts/KaTeX_Size4-Regular.woff2"),
+        "font/woff2",
+    ),
+    (
+        "fonts/KaTeX_Typewriter-Regular.woff2",
+        include_bytes!("../web/vendor/katex/fonts/KaTeX_Typewriter-Regular.woff2"),
+        "font/woff2",
+    ),
+];
+
+pub(crate) async fn katex_file(axum::extract::Path(path): axum::extract::Path<String>) -> Response {
+    match KATEX.iter().find(|(name, _, _)| *name == path) {
+        Some((_, bytes, kind)) => (
+            [
+                (header::CONTENT_TYPE, *kind),
+                (
+                    header::CACHE_CONTROL,
+                    "private, max-age=31536000, immutable",
+                ),
+            ],
+            *bytes,
+        )
+            .into_response(),
+        None => axum::http::StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 pub(crate) async fn mermaid_js() -> Response {
@@ -129,7 +260,7 @@ mod tests {
                 parts += 1;
             }
         }
-        assert_eq!(parts, 12);
+        assert_eq!(parts, 13);
     }
 
     #[test]

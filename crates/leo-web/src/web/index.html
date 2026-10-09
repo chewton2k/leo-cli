@@ -1084,6 +1084,10 @@ body.files-over main::after {
 .pick-chip:hover { border-color: var(--accent); }
 .pick-chip.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 .pick-hint { margin: 2px 10px 6px; font-size: 12px; line-height: 1.4; color: var(--muted); }
+.math-block { margin: 12px 0; overflow-x: auto; overflow-y: hidden; text-align: center; }
+.math:not([data-drawn="yes"]) { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; color: var(--muted); }
+.math-block:not([data-drawn="yes"]) { white-space: pre-wrap; text-align: left; }
+.math .katex { font-size: 1.08em; }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 </style>
 </head>

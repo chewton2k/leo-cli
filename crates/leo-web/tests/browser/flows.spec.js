@@ -294,6 +294,28 @@ test.describe('editing like Obsidian', () => {
   });
 });
 
+test.describe('math', () => {
+  test('LaTeX in a note and in Felix is drawn as math, with its fonts', async ({ page }) => {
+    const fonts = [];
+    page.on('response', (r) => { if (r.url().includes('/vendor/katex-0.16.11/fonts/')) fonts.push(r.status()); });
+    const body = 'Energy is $E = mc^2$, not $5.\n\n$$\n\\int_0^1 x^2\\,dx = \\frac{1}{3}\n$$';
+    const note = await (await page.request.post('/api/notes', { data: { title: `Math ${test.info().project.name}`, body } })).json();
+    await page.goto(`/#/n/${note.id}`);
+    const inline = page.locator('#doc .math[data-drawn="yes"]:not(.math-block) .katex');
+    await expect(inline).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('#doc .math-block[data-drawn="yes"] .katex-display')).toBeVisible();
+    await expect(page.locator('#doc')).toContainText('not $5.');
+    await expect.poll(() => fonts.length).toBeGreaterThan(0);
+    expect(fonts.every((status) => status === 200)).toBe(true);
+
+    await page.route('**/api/chat', (route) => route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: '{"sources":[]}\n{"t":"The area is $\\\\pi r^2$."}\n{"done":true}\n' }));
+    await page.locator('#chat-toggle').click();
+    await page.locator('#chat-input').fill('area of a circle?');
+    await page.locator('#chat-input').press('Enter');
+    await expect(page.locator('#chat .msg.leo .math[data-drawn="yes"] .katex')).toBeVisible();
+  });
+});
+
 test.describe('diagrams', () => {
   test('a mermaid block in a note is drawn, a broken one says why, and labels cannot run code', async ({ page }) => {
     const body = [

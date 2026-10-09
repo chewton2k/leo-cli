@@ -151,6 +151,16 @@ test('a [[Title]] link to another note opens it, with an optional label, and sta
   assert.doesNotMatch(render('![[pic.png]]'), /wiki-link/);
 });
 
+test('math in LaTeX becomes slots the page draws, and prices stay prices', () => {
+  assert.equal(render('Energy $E = mc^2$ here.'), '<p>Energy <span class="math" data-tex="E = mc^2">E = mc^2</span> here.</p>');
+  assert.equal(render('It costs $5 and $10.'), '<p>It costs $5 and $10.</p>');
+  assert.doesNotMatch(render('Keep \\$x$ literal'), /class="math"/);
+  assert.doesNotMatch(render('`$a$` is code'), /class="math"/);
+  assert.equal(render('$$\n\\frac{a}{b} < c\n$$'), '<div class="math math-block" data-tex="\\frac{a}{b} &lt; c">\\frac{a}{b} &lt; c</div>');
+  assert.equal(render('$$ x^2 $$'), '<div class="math math-block" data-tex="x^2">x^2</div>');
+  assert.match(render('$$\nx\n$$\n- [ ] after'), /data-box="1"/);
+});
+
 for (const [name, fn] of cases) {
   try {
     fn();

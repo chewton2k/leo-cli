@@ -22,6 +22,15 @@
         i = end;
         continue;
       }
+      const math = line.trim();
+      if (math.startsWith('$$') && !(math.length > 4 && math.endsWith('$$'))) {
+        let end = i + 1;
+        while (end < lines.length && !lines[end].trim().endsWith('$$')) end++;
+        end = Math.min(end + 1, lines.length);
+        blocks.push({ start: i, end, kind: 'math' });
+        i = end;
+        continue;
+      }
       if (line.includes('|') && i + 1 < lines.length && TABLE_RULE.test(lines[i + 1]) && lines[i + 1].includes('-')) {
         let end = i + 2;
         while (end < lines.length && lines[end].includes('|') && lines[end].trim()) end++;

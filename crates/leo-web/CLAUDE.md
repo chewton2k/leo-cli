@@ -10,7 +10,7 @@
   `src/tests/<area>.rs`, helpers (`state_with`, `run`, `json_of`, `host`) in
   `src/tests/mod.rs`.
 - `/app.js` is `web/app/*.js` joined in one closure by `routes/assets.rs`
-  (`concat!`, order: core, trash, map, settings, storage, uploads, sheets, side, drag, diagrams,
+  (`concat!`, order: core, trash, map, settings, storage, uploads, sheets, side, drag, diagrams, math,
   actions, events). The parts share scope on purpose: pages reassign `state`.
   Add a part to the `concat!` list; `every_part_of_the_page_script_is_served`
   fails otherwise and `the_page_script_parses` runs `node --check` on the whole.
@@ -517,3 +517,11 @@
   Documents given to Felix are kept whole (`CHAT_DOC_CHARS` 2M); the prompt
   shows each one's share with a "[The document goes on…]" marker, and the
   `read_document` tool reads any part (`Desk::part_chars` = room/3, 12k..120k).
+- Math: `$...$` and `$$...$$` (also a `$$` block over several lines, one
+  block to edit in `editing.js`) become `.math` slots in `markdown.js`; the
+  inline rule skips prices (`$5 and $10`), `\$` and code. `app/math.js`
+  loads KaTeX 0.16.11 (vendored in `web/vendor/katex/`, MIT, checked against
+  npm's sha512; script, CSS and woff2 fonts served by `katex_file` under
+  `/vendor/katex-0.16.11/`, immutable) the first time a formula appears, renders
+  with `trust: false`, and caches the HTML per formula. The CSP allows
+  `font-src 'self'`. Felix and every note prompt write math this way.
