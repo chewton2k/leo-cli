@@ -69,6 +69,8 @@ const actions = {
   'test-ai': testAi,
   'note-map': (el) => go(`#/map/${enc(el.dataset.id)}`),
   'note-picture': () => choosePictures(),
+  'view-original': (el) => viewOriginal(el.dataset.id, el.dataset.name),
+  'viewer-zoom': (el) => setViewerZoom(Number(el.dataset.step) === 0 ? 1 : state.viewerZoom * (Number(el.dataset.step) > 0 ? 1.5 : 1 / 1.5)),
   record: (el) => {
     closeSheet();
     go(el.dataset.dir ? `#/record/${enc(el.dataset.dir)}` : '#/record');

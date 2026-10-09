@@ -36,7 +36,7 @@ use crate::routes::trash::{
 };
 use crate::routes::uploads::{
     get_original, list_originals, safe_file_name, settle_figures, start_import, upload_label,
-    ImportBody, ImportFileBody, ImportJob,
+    viewable, ImportBody, ImportFileBody, ImportJob, OriginalView,
 };
 use crate::*;
 

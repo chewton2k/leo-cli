@@ -1,4 +1,4 @@
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
@@ -379,9 +379,21 @@ fn mime_for(name: &str) -> &'static str {
     }
 }
 
+#[derive(Deserialize, Default)]
+pub(crate) struct OriginalView {
+    #[serde(default)]
+    pub(crate) view: Option<String>,
+}
+
+pub(crate) fn viewable(name: &str) -> bool {
+    let mime = mime_for(name);
+    mime == "application/pdf" || mime.starts_with("image/")
+}
+
 pub(crate) async fn get_original(
     State(state): State<AppState>,
     Path((id, name)): Path<(String, String)>,
+    Query(how): Query<OriginalView>,
 ) -> Response {
     let notes_dir = match state.with_store(|store| Ok(store.notes_dir.clone())).await {
         Ok(dir) => dir,
@@ -411,8 +423,19 @@ pub(crate) async fn get_original(
             if let Ok(value) = HeaderValue::from_str(mime_for(&name)) {
                 headers.insert(header::CONTENT_TYPE, value);
             }
-            if let Ok(value) = HeaderValue::from_str(&format!("attachment; filename=\"{ascii}\"")) {
+            let inline = how.view.is_some() && viewable(&name);
+            let disposition = if inline { "inline" } else { "attachment" };
+            if let Ok(value) =
+                HeaderValue::from_str(&format!("{disposition}; filename=\"{ascii}\""))
+            {
                 headers.insert(header::CONTENT_DISPOSITION, value);
+            }
+            if inline {
+                headers.insert("x-frame-options", HeaderValue::from_static("SAMEORIGIN"));
+                headers.insert(
+                    "content-security-policy",
+                    HeaderValue::from_static("default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'self'"),
+                );
             }
             response
         }

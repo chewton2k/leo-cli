@@ -50,6 +50,7 @@ pub fn place_of(site: &str) -> String {
     match site {
         "" => String::new(),
         "localhost" | "127.0.0.1" | "[::1]" => "on this computer".into(),
+        ON_THE_NETWORK => "on your Wi-Fi".into(),
         s if s.ends_with(LINK_DOMAIN) => "through the link from any network".into(),
         _ => "on your Wi-Fi".into(),
     }
@@ -251,7 +252,11 @@ pub struct Gate {
     token: std::sync::RwLock<String>,
     token_path: Option<PathBuf>,
     pub sessions: Sessions,
+    link: std::sync::RwLock<Option<String>>,
 }
+
+pub const ON_THIS_COMPUTER: &str = "localhost";
+pub const ON_THE_NETWORK: &str = "lan";
 
 impl Gate {
     pub fn new(token: String, token_path: Option<PathBuf>, sessions: Sessions) -> Gate {
@@ -259,7 +264,25 @@ impl Gate {
             token: std::sync::RwLock::new(token),
             token_path,
             sessions,
+            link: std::sync::RwLock::new(None),
         }
+    }
+
+    pub fn set_link(&self, host: Option<&str>) {
+        let mut link = self.link.write().unwrap_or_else(|e| e.into_inner());
+        *link = host.map(site_of);
+    }
+
+    pub fn site_for(&self, from_this_computer: bool, through_link: bool) -> String {
+        if !from_this_computer {
+            return ON_THE_NETWORK.into();
+        }
+        if through_link {
+            if let Some(link) = self.link.read().unwrap_or_else(|e| e.into_inner()).clone() {
+                return link;
+            }
+        }
+        ON_THIS_COMPUTER.into()
     }
 
     pub fn token_matches(&self, given: &str) -> bool {
@@ -441,5 +464,24 @@ mod tests {
         assert_eq!(site_of("[::1]:8742"), "[::1]");
         assert_eq!(site_of("ABC.trycloudflare.com"), "abc.trycloudflare.com");
         assert_eq!(place_of(""), "");
+        let gate = Gate::new(
+            "0123456789abcdef0123456789abcdef".into(),
+            None,
+            Sessions::in_memory(),
+        );
+        assert_eq!(
+            gate.site_for(false, true),
+            ON_THE_NETWORK,
+            "only a connection from this computer can be the link"
+        );
+        assert_eq!(
+            gate.site_for(true, true),
+            ON_THIS_COMPUTER,
+            "no link is open"
+        );
+        gate.set_link(Some("words.trycloudflare.com"));
+        assert_eq!(gate.site_for(true, true), "words.trycloudflare.com");
+        assert_eq!(gate.site_for(true, false), ON_THIS_COMPUTER);
+        assert_eq!(place_of(ON_THE_NETWORK), "on your Wi-Fi");
     }
 }

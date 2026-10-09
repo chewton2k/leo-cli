@@ -90,13 +90,38 @@ fn an_upload_becomes_a_note_in_its_folder_and_keeps_the_original() {
     let file = run(get_original(
         State(state.clone()),
         Path((note_id.clone(), "lecture 4.pdf".into())),
+        Query(OriginalView::default()),
     ));
     assert_eq!(file.status(), StatusCode::OK);
     assert_eq!(file.headers()[header::CONTENT_TYPE], "application/pdf");
+    assert!(file.headers()[header::CONTENT_DISPOSITION]
+        .to_str()
+        .unwrap()
+        .starts_with("attachment"));
+    assert!(file.headers().get("x-frame-options").is_none());
+    let shown = run(get_original(
+        State(state.clone()),
+        Path((note_id.clone(), "lecture 4.pdf".into())),
+        Query(OriginalView {
+            view: Some("1".into()),
+        }),
+    ));
+    assert!(shown.headers()[header::CONTENT_DISPOSITION]
+        .to_str()
+        .unwrap()
+        .starts_with("inline"));
+    assert_eq!(shown.headers()["x-frame-options"], "SAMEORIGIN");
+    assert!(shown.headers()["content-security-policy"]
+        .to_str()
+        .unwrap()
+        .contains("frame-ancestors 'self'"));
+    assert!(viewable("board.JPG") && viewable("a.pdf"));
+    assert!(!viewable("slides.pptx") && !viewable("page.html") && !viewable("x.svg"));
     for bad in ["../graph.json", "..", "a/b", ".hidden"] {
         let refused = run(get_original(
             State(state.clone()),
             Path((note_id.clone(), bad.into())),
+            Query(OriginalView::default()),
         ));
         assert_eq!(refused.status(), StatusCode::NOT_FOUND, "{bad}");
     }

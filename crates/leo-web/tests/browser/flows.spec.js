@@ -685,6 +685,21 @@ test.describe('Felix', () => {
     await expect.poll(async () => (await page.locator('main').boundingBox()).width).toBeGreaterThan(700);
   });
 
+  test('with Felix beside the page, sheets and the note toolbar stay beside him', async ({ page }) => {
+    test.skip(test.info().project.name !== 'desktop', 'the page only moves over on wide screens');
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const note = await (await page.request.post('/api/notes', { data: { title: 'Beside Felix', body: 'x' } })).json();
+    await page.goto(`/#/n/${note.id}`);
+    await page.locator('#chat-toggle').click();
+    const chat = await page.locator('#chat').boundingBox();
+    const bar = await page.locator('nav.actions').boundingBox();
+    expect(bar.x + bar.width).toBeLessThanOrEqual(chat.x);
+    await page.locator('[data-action="move"]').click();
+    const sheet = await page.locator('.sheet').boundingBox();
+    expect(sheet.x + sheet.width).toBeLessThanOrEqual(chat.x);
+    expect(Math.abs(sheet.x + sheet.width / 2 - chat.x / 2)).toBeLessThan(30);
+  });
+
   test('says plainly when no AI is set up', async ({ page }) => {
     await page.route('**/api/chat', (route) => route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: '{"sources":[]}\n{"error":"no AI for writing is chosen — type :settings in leo and pick one under writing"}\n' }));
     await page.goto('/');
@@ -1278,6 +1293,50 @@ test.describe('advanced settings', () => {
     await page.request.post('/api/keep', { data: { trash_days: 30, chat_days: null } });
   });
 
+  test('an uploaded PDF, picture or text opens in a viewer inside the page', async ({ page, browser }) => {
+    const note = await (await page.request.post('/api/notes', { data: { title: `Viewer ${test.info().project.name}`, body: 'x' } })).json();
+    const folder = path.join(process.env.LEO_BROWSER_HOME, 'attachments', note.id);
+    fs.mkdirSync(folder, { recursive: true });
+    const maker = await browser.newPage();
+    await maker.setContent('<h1>Neuro symbolic</h1><p>Rules and networks.</p>');
+    fs.writeFileSync(path.join(folder, 'paper.pdf'), await maker.pdf());
+    await maker.close();
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP8z8DAwMDAxMDAwMAAAAwqAQXxT7KxAAAAAElFTkSuQmCC', 'base64');
+    fs.writeFileSync(path.join(folder, 'board.png'), png);
+    fs.writeFileSync(path.join(folder, 'notes.txt'), 'Plain text from the upload.');
+    fs.writeFileSync(path.join(folder, 'slides.pptx'), 'pptx');
+    await page.goto(`/#/n/${note.id}`);
+    await expect(page.locator('.chip.original')).toHaveCount(5);
+    await expect(page.locator('.chip.original', { hasText: 'slides.pptx' })).not.toHaveAttribute('data-action', /./);
+
+    const served = page.waitForResponse((r) => r.url().includes('paper.pdf?view=1'));
+    await page.locator('.chip.original', { hasText: 'paper.pdf' }).click();
+    const viewer = page.locator('.sheet.viewer');
+    await expect(viewer.locator('iframe.viewer-frame')).toHaveAttribute('src', /paper\.pdf\?view=1$/);
+    const pdf = await served;
+    expect(pdf.status()).toBe(200);
+    expect(pdf.headers()['content-disposition']).toMatch(/^inline/);
+    expect(pdf.headers()['x-frame-options']).toBe('SAMEORIGIN');
+    await expect(viewer.locator('a[download]')).toHaveText('Download');
+    await page.keyboard.press('Escape');
+    await expect(viewer).toHaveCount(0);
+
+    await page.locator('.chip.original', { hasText: 'board.png' }).click();
+    const img = page.locator('.viewer-img');
+    await expect.poll(() => img.evaluate((el) => el.naturalWidth)).toBe(2);
+    const before = (await img.boundingBox()).width;
+    await page.locator('[data-action="viewer-zoom"][data-step="1"]').click();
+    await expect.poll(async () => (await img.boundingBox()).width).toBeGreaterThan(before * 1.4);
+    await page.mouse.click(5, 5);
+    await expect(page.locator('.sheet.viewer')).toHaveCount(0);
+
+    await page.locator('.chip.original', { hasText: 'notes.txt' }).click();
+    await expect(page.locator('.viewer-text')).toHaveText('Plain text from the upload.');
+    await page.locator('.sheet.viewer [data-action="close"]').click();
+    await expect(page.locator('.sheet.viewer')).toHaveCount(0);
+    expect(page.url()).toContain(`#/n/${note.id}`);
+  });
+
   test('a note with several uploaded files downloads them together', async ({ page }) => {
     const note = await (await page.request.post('/api/notes', { data: { title: 'Lecture with slides', body: 'x' } })).json();
     const folder = path.join(process.env.LEO_BROWSER_HOME, 'attachments', note.id);
@@ -1444,7 +1503,7 @@ test.describe('recording', () => {
 
   test('a recording finished while away shows up in the open folder, without a refresh', async ({ page, context }) => {
     await context.grantPermissions(['microphone']);
-    const title = `Recorded later ${test.info().project.name}`;
+    const title = `Recorded later ${test.info().project.name} ${test.info().repeatEachIndex}`;
     const seen = stubRecorder(page, { noteId: null });
     let polls = 0;
     let made = null;
@@ -1458,8 +1517,8 @@ test.describe('recording', () => {
     await page.goto('/#/record');
     await page.locator('[data-action="rec-start"]').click();
     await expect(page.locator('[data-action="rec-stop"]')).toBeVisible();
-    await page.locator('[data-action="rec-stop"]').click();
-    await page.goto('/#/');
+    await Promise.all([page.waitForResponse('**/api/record/rec-1/stop'), page.locator('[data-action="rec-stop"]').click()]);
+    await page.evaluate(() => { location.hash = '#/'; });
     await expect(page.locator('.card', { hasText: title })).toBeVisible({ timeout: 10000 });
     await expect(page.locator('.toast')).toContainText('Your recording is now a note.');
     expect(page.url()).not.toContain('#/n/');

@@ -366,8 +366,19 @@
   (`onUndone`).
 - Signed-in browsers: opening the `?token=` link in a browser that already has
   a valid `leo_session` reuses it (leo serve opens the link on every start, and
-  each start used to add a session). Each session keeps its `site` (Host or
-  X-Forwarded-Host, without the port) and the list shows `place` (this
+  each start used to add a session). Each session keeps its `site`, decided by the
+  server (`Gate::site_for`: not loopback = `lan`, loopback through the tunnel =
+  the tunnel host given to `Gate::set_link`, else `localhost`; never a request
+  header, which anyone could set) and the list shows `place` (this
   computer / your Wi-Fi / the link from any network). On start, `serve` calls
   `Sessions::retire_links` with the current tunnel host, dropping sessions made
   through older trycloudflare addresses, which no browser can reach again.
+- Originals viewer: a chip for a PDF, picture or text original opens a
+  `.sheet.viewer` (`viewOriginal` in `uploads.js`): PDFs in an iframe of
+  `/api/notes/{id}/originals/{name}?view=1`, which is served inline only when
+  `viewable` (PDF or a raster image; never HTML or SVG) with SAMEORIGIN and a
+  locked-down CSP; pictures pan and zoom (`setViewerZoom`, 0.5-4, double-click
+  2x); text is fetched and Markdown rendered. Without `view` it stays a
+  download. The main CSP allows `frame-src 'self'` for it.
+- With Felix open beside the page (>=1200 px), sheets, the scrim and the note
+  toolbar (`.actions`) are centred in the space left of the chat too.

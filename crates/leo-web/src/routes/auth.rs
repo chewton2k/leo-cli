@@ -66,14 +66,12 @@ fn local_host(headers: &axum::http::HeaderMap) -> bool {
 #[derive(Clone)]
 pub(crate) struct CurrentSession(pub(crate) String);
 
-fn site(request: &Request) -> String {
-    let headers = request.headers();
-    headers
-        .get("x-forwarded-host")
-        .or_else(|| headers.get(header::HOST))
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_string()
+fn site(gate: &sessions::Gate, request: &Request) -> String {
+    let local = request
+        .extensions()
+        .get::<Peer>()
+        .is_some_and(|peer| peer.loopback);
+    gate.site_for(local, local && tunnelled(request))
 }
 
 pub(crate) fn user_agent(request: &Request) -> String {
@@ -113,10 +111,11 @@ pub(crate) async fn auth_middleware(
         if state.gate.token_matches(given) {
             let secret = match &signed_in {
                 Some(secret) => secret.clone(),
-                None => state
-                    .gate
-                    .sessions
-                    .start(&user_agent(&request), &site(&request), now),
+                None => state.gate.sessions.start(
+                    &user_agent(&request),
+                    &site(&state.gate, &request),
+                    now,
+                ),
             };
             request
                 .extensions_mut()
@@ -139,10 +138,11 @@ pub(crate) async fn auth_middleware(
     let legacy = sessions::cookie_value(&cookies, sessions::LEGACY_COOKIE)
         .is_some_and(|v| state.gate.token_matches(v));
     if legacy {
-        let secret = state
-            .gate
-            .sessions
-            .start(&user_agent(&request), &site(&request), now);
+        let secret =
+            state
+                .gate
+                .sessions
+                .start(&user_agent(&request), &site(&state.gate, &request), now);
         request
             .extensions_mut()
             .insert(CurrentSession(secret.clone()));
@@ -262,11 +262,13 @@ pub(crate) async fn security_headers(request: Request, next: Next) -> Response {
         (
             "content-security-policy",
             "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
-             img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'self'; \
+             img-src 'self' data:; connect-src 'self'; frame-src 'self'; base-uri 'none'; form-action 'self'; \
              frame-ancestors 'none'",
         ),
     ] {
-        headers.insert(name, HeaderValue::from_static(value));
+        if !headers.contains_key(name) {
+            headers.insert(name, HeaderValue::from_static(value));
+        }
     }
     response
 }

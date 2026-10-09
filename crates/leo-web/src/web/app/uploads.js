@@ -209,5 +209,53 @@ async function drawOriginals(note) {
   const meta = $('.note-meta');
   if (!files.length || !meta || state.view !== 'note' || state.session.note.id !== note.id) return;
   const all = files.length > 1 ? `<a class="chip original all" href="/api/notes/${enc(note.id)}/originals.zip" download>${ICON.paperclip}Download all ${files.length}</a>` : '';
-  meta.insertAdjacentHTML('beforeend', files.map((f) => `<a class="chip original" href="/api/notes/${enc(note.id)}/originals/${enc(f.name)}" download="${esc(f.name)}">${ICON.paperclip}${esc(f.name)}</a>`).join('') + all);
+  meta.insertAdjacentHTML('beforeend', files.map((f) => {
+    const look = viewKind(f.name) ? ` data-action="view-original" data-id="${esc(note.id)}" data-name="${esc(f.name)}" title="Open ${esc(f.name)}"` : '';
+    return `<a class="chip original" href="/api/notes/${enc(note.id)}/originals/${enc(f.name)}" download="${esc(f.name)}"${look}>${ICON.paperclip}${esc(f.name)}</a>`;
+  }).join('') + all);
+}
+
+function viewKind(name) {
+  if (/\.pdf$/i.test(name)) return 'pdf';
+  if (/\.(png|jpe?g|gif|webp)$/i.test(name)) return 'image';
+  if (/\.(txt|md)$/i.test(name)) return 'text';
+  return null;
+}
+
+async function viewOriginal(id, name) {
+  const kind = viewKind(name);
+  if (!kind) return;
+  const url = `/api/notes/${enc(id)}/originals/${enc(name)}`;
+  const zoom = kind === 'image'
+    ? '<button class="btn sm plain" data-action="viewer-zoom" data-step="-1" aria-label="Zoom out">−</button><button class="btn sm plain" data-action="viewer-zoom" data-step="1" aria-label="Zoom in">+</button><button class="btn sm plain" data-action="viewer-zoom" data-step="0">Fit</button>'
+    : '';
+  const tab = kind === 'text' ? '' : `<a class="btn sm plain" href="${url}?view=1" target="_blank" rel="noopener">Open in a new tab</a>`;
+  const body = kind === 'pdf'
+    ? `<iframe class="viewer-frame" src="${url}?view=1" title="${esc(name)}"></iframe>`
+    : kind === 'image'
+      ? `<div class="viewer-pan"><img class="viewer-img" src="${url}?view=1" alt="${esc(name)}"></div>`
+      : '<div class="viewer-text prose">Loading…</div>';
+  const scrim = sheet(`<div class="viewer-head"><b title="${esc(name)}">${esc(name)}</b><span class="viewer-tools">${zoom}<a class="btn sm plain" href="${url}" download="${esc(name)}">Download</a>${tab}<button class="icon-btn" data-action="close" aria-label="Close">${ICON.close}</button></span></div>${body}`);
+  scrim.querySelector('.sheet').classList.add('viewer');
+  state.viewerZoom = 1;
+  const img = scrim.querySelector('.viewer-img');
+  if (img) img.addEventListener('dblclick', () => setViewerZoom(state.viewerZoom > 1 ? 1 : 2));
+  if (kind === 'text') {
+    const box = scrim.querySelector('.viewer-text');
+    try {
+      const response = await fetch(url, { credentials: 'same-origin' });
+      if (!response.ok) throw new Error();
+      const text = await response.text();
+      if (!box.isConnected) return;
+      box.innerHTML = /\.md$/i.test(name) ? md.render(text) : `<pre>${esc(text)}</pre>`;
+    } catch (e) {
+      box.textContent = 'This file could not be shown. Download it instead.';
+    }
+  }
+}
+
+function setViewerZoom(level) {
+  state.viewerZoom = Math.min(4, Math.max(0.5, level));
+  const img = $('.viewer-img');
+  if (img) img.style.setProperty('--zoom', String(state.viewerZoom));
 }

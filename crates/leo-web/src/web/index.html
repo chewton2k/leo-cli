@@ -133,6 +133,17 @@ main { max-width: 760px; margin: 0 auto; padding: 8px 16px calc(var(--bottom) + 
 .card-snippet mark { background: var(--mark); color: inherit; border-radius: 3px; padding: 0 1px; }
 .card-why { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 13px; color: var(--accent); }
 .card-why svg { width: 14px; height: 14px; flex: none; stroke: currentColor; fill: none; }
+.sheet.viewer { width: 96vw; max-width: 1100px; height: 90vh; max-height: 90vh; display: flex; flex-direction: column; padding: 8px; overflow: hidden; }
+.sheet.viewer .grip { display: none; }
+.viewer-head { display: flex; align-items: center; gap: 8px; padding: 2px 4px 8px 8px; flex-wrap: wrap; }
+.viewer-head b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.viewer-tools { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.viewer-tools a.btn { text-decoration: none; }
+.viewer-frame { flex: 1; width: 100%; border: 0; border-radius: 12px; background: var(--surface-2); }
+.viewer-pan { flex: 1; overflow: auto; border-radius: 12px; background: var(--surface-2); text-align: center; }
+.viewer-img { width: calc(var(--zoom, 1) * 100%); max-width: none; height: auto; cursor: zoom-in; vertical-align: top; }
+.viewer-text { flex: 1; overflow: auto; padding: 12px 16px; }
+.viewer-text pre { white-space: pre-wrap; margin: 0; }
 .map-chip.note { cursor: default; background: none; border-style: dashed; color: var(--muted); }
 .more-notes { text-align: center; color: var(--faint); font-size: 13px; padding: 18px 0 8px; }
 .chat-thumb { width: 22px; height: 22px; object-fit: cover; border-radius: 5px; margin-left: 4px; flex: none; }
@@ -595,7 +606,8 @@ body.on-map main { padding: 0; max-width: none; }
 @media (min-width: 1200px) {
   body.chat-open:not(.on-map) { padding-right: var(--chat-w); }
   body.chat-open:not(.on-map) .fab, body.chat-open:not(.on-map) .fabs { right: calc(var(--chat-w) + max(20px, (100vw - var(--chat-w)) / 2 - 360px)); }
-  body.chat-open:not(.on-map) .select-bar, body.chat-open:not(.on-map) .toast, body.chat-open:not(.on-map) .rec-pill { left: calc((100vw - var(--chat-w)) / 2); }
+  body.chat-open:not(.on-map) .select-bar, body.chat-open:not(.on-map) .toast, body.chat-open:not(.on-map) .rec-pill, body.chat-open:not(.on-map) .actions { left: calc((100vw - var(--chat-w)) / 2); }
+  body.chat-open:not(.on-map) .scrim { right: var(--chat-w); }
 }
 .chat-history-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 14px 10px 10px 16px; }
 .chat-history-head b { font-size: 16px; flex: 1; }
