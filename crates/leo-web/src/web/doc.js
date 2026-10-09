@@ -9,7 +9,80 @@
     let blocks = [];
     let editing = null;
 
-    const changed = () => onChange(lines.join('\n'));
+    const MOST_UNDO = 200;
+    const TYPING_PAUSE = 1000;
+    const TYPING_GROUP = 4000;
+    const past = [];
+    const future = [];
+    let current = lines.join('\n');
+    let typing = { in: null, last: 0, since: 0 };
+
+    function changed() {
+      const next = lines.join('\n');
+      if (next !== current) {
+        const now = Date.now();
+        const keystroke = Math.abs(next.length - current.length) <= 1;
+        const same = keystroke && editing && typing.in === editing.area && now - typing.last < TYPING_PAUSE && now - typing.since < TYPING_GROUP;
+        if (!same) {
+          past.push(current);
+          if (past.length > MOST_UNDO) past.shift();
+          typing = { in: keystroke && editing ? editing.area : null, last: now, since: now };
+        } else {
+          typing.last = now;
+        }
+        future.length = 0;
+        current = next;
+      }
+      onChange(next);
+    }
+
+    function restore(text) {
+      const before = current;
+      stop();
+      typing = { in: null, last: 0, since: 0 };
+      current = text;
+      lines = text.split('\n');
+      onChange(text);
+      draw();
+      let from = 0;
+      while (from < before.length && from < text.length && before[from] === text[from]) from++;
+      let tail = 0;
+      while (tail < before.length - from && tail < text.length - from && before[before.length - 1 - tail] === text[text.length - 1 - tail]) tail++;
+      editSpan(from, Math.max(from, text.length - tail));
+    }
+
+    function undo() {
+      if (!past.length) return false;
+      if (editing) stop();
+      future.push(current);
+      restore(past.pop());
+      return true;
+    }
+
+    function redo() {
+      if (!future.length) return false;
+      if (editing) stop();
+      past.push(current);
+      restore(future.pop());
+      return true;
+    }
+
+    function historyKey(e) {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey) return false;
+      const key = e.key.toLowerCase();
+      if (key === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+        return true;
+      }
+      if (key === 'y' && e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        redo();
+        return true;
+      }
+      return false;
+    }
 
     function levelOf(text) {
       const lead = text.match(/^\s*/)[0].replace(/\t/g, '    ').length;
@@ -174,6 +247,7 @@
       if (!container.isConnected || e.isComposing || e.defaultPrevented) return;
       if (editing && document.activeElement === editing.area) return;
       const focus = document.activeElement;
+      if ((!focus || focus === document.body || container.contains(focus)) && historyKey(e)) return;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a' && (!focus || focus === document.body || container.contains(focus))) {
         e.preventDefault();
         stop();
@@ -213,6 +287,7 @@
 
     function onKey(e) {
       if (e.isComposing || e.keyCode === 229) return;
+      if (historyKey(e)) return;
       const { area, start, kind } = editing;
       const pos = area.selectionStart;
       const collapsed = pos === area.selectionEnd;

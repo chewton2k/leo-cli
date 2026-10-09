@@ -18,7 +18,56 @@ function sheet(html) {
     if (e.target === scrim) closeSheet();
   });
   document.body.appendChild(scrim);
+  swipeToClose(scrim.querySelector('.sheet'));
   return scrim;
+}
+
+const SWIPE_CLOSE = 90;
+const SWIPE_FLICK = 0.6;
+
+function swipeToClose(panel) {
+  let start = null;
+  const reset = () => {
+    panel.style.transition = '';
+    panel.style.transform = '';
+    start = null;
+  };
+  panel.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1 || window.matchMedia('(min-width: 600px)').matches) return;
+    const inside = e.target.closest('textarea, input, select, .viewer-pan, .viewer-frame');
+    if (inside || panel.scrollTop > 0) return;
+    start = { y: e.touches[0].clientY, at: performance.now(), moved: 0 };
+  }, { passive: true });
+  panel.addEventListener('touchmove', (e) => {
+    if (!start) return;
+    const moved = e.touches[0].clientY - start.y;
+    if (moved <= 0) {
+      panel.style.transform = '';
+      start.moved = 0;
+      return;
+    }
+    start.moved = moved;
+    panel.style.transition = 'none';
+    panel.style.transform = `translateY(${moved}px)`;
+    if (e.cancelable) e.preventDefault();
+  }, { passive: false });
+  const finish = () => {
+    if (!start) return;
+    const { moved, at } = start;
+    const speed = moved / Math.max(1, performance.now() - at);
+    if (moved > SWIPE_CLOSE || (moved > 24 && speed > SWIPE_FLICK)) {
+      panel.style.transition = 'transform .18s ease-in';
+      panel.style.transform = 'translateY(110%)';
+      start = null;
+      setTimeout(closeSheet, 170);
+      return;
+    }
+    panel.style.transition = 'transform .2s ease-out';
+    panel.style.transform = '';
+    setTimeout(reset, 210);
+  };
+  panel.addEventListener('touchend', finish);
+  panel.addEventListener('touchcancel', reset);
 }
 
 function closeSheet() {
