@@ -141,6 +141,16 @@ test('a mermaid block becomes a diagram slot that keeps its source, escaped', ()
   assert.doesNotMatch(render('```js\nx\n```'), /diagram/);
 });
 
+test('a [[Title]] link to another note opens it, with an optional label, and stays escaped', () => {
+  assert.equal(
+    render('See [[Graph traversals]] and [[Heaps|heaps]].'),
+    '<p>See <a class="wiki-link" href="#/search/Graph%20traversals" data-action="open-title" data-title="Graph traversals">Graph traversals</a> and <a class="wiki-link" href="#/search/Heaps" data-action="open-title" data-title="Heaps">heaps</a>.</p>'
+  );
+  assert.match(render('[[A <b> & "c"]]'), /data-title="A &lt;b&gt; &amp; &quot;c&quot;">A &lt;b&gt; &amp; &quot;c&quot;<\/a>/);
+  assert.match(render('[[Lecture#Part 2]]'), /data-title="Lecture">Lecture<\/a>/);
+  assert.doesNotMatch(render('![[pic.png]]'), /wiki-link/);
+});
+
 for (const [name, fn] of cases) {
   try {
     fn();

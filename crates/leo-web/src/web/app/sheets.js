@@ -155,6 +155,14 @@ async function share() {
   window.print();
 }
 
+async function openTitle(title) {
+  const want = title.trim().toLowerCase();
+  if (!want) return;
+  const hits = await api(`/api/search?q=${enc(title)}&brief=true`);
+  const hit = hits.find((n) => n.title.trim().toLowerCase() === want);
+  go(hit ? noteHash(hit.id) : `#/search/${enc(title)}`);
+}
+
 function openSearch(value) {
   const box = $('#search');
   box.hidden = false;

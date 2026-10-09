@@ -218,6 +218,7 @@ struct Ask {
     sources: Vec<chat::SourceRef>,
     room: usize,
     wanted: String,
+    access: tools::Access,
 }
 
 fn answer(
@@ -232,15 +233,18 @@ fn answer(
         sources,
         room,
         wanted,
+        access,
     } = ask;
     let send = |value: serde_json::Value| {
         let _ = tx.send(ndjson(value));
     };
     let web = state.web.clone().filter(|w| (w.needed)());
-    let with_tools = format!("{system}\n\n{}", tools::manual_with(web.is_some()));
+    let with_tools = format!("{system}\n\n{}", tools::manual_for(web.is_some(), access));
     let last_word = format!("{system}\n\n{}", tools::NO_MORE_TOOLS);
-    let mut desk = tools::Desk::new(sources, room).with_web(web);
-    let mut nudged = !tools::wants_change(&wanted);
+    let mut desk = tools::Desk::new(sources, room)
+        .with_web(web)
+        .with_access(access);
+    let mut nudged = !access.changes() || !tools::wants_change(&wanted);
     let mut unstuck = false;
     let mut spent: Option<chat::Spent> = None;
     for step in 0..=tools::MOST_STEPS {
@@ -249,7 +253,7 @@ fn answer(
         let asked = if last {
             conversation.clone()
         } else {
-            format!("{conversation}\n\n{}", tools::REMINDER)
+            format!("{conversation}\n\n{}", tools::reminder(access))
         };
         let reply = streamer(
             if last { &last_word } else { &with_tools },
@@ -313,7 +317,7 @@ fn answer(
             send(serde_json::json!({ "restart": true }));
         }
         let before = desk.sources.len();
-        let done = if call.name == "invalid" {
+        let mut done = if call.name == "invalid" {
             tools::Done {
                 step: "Tried to use a tool".into(),
                 result: format!(
@@ -338,7 +342,28 @@ fn answer(
             send(serde_json::json!({ "sources": desk.sources }));
         }
         if let Some(proposal) = &done.proposal {
-            send(serde_json::json!({ "proposal": proposal }));
+            let shown = match access {
+                tools::Access::Auto => match apply_now(state, proposal) {
+                    Ok(applied) => {
+                        done.result = match proposal {
+                            tools::Proposal::Edit { .. } => {
+                                "Changed. leo applied it; the user can undo it."
+                            }
+                            tools::Proposal::Create { .. } => {
+                                "Made. leo made the note; the user can undo it."
+                            }
+                        }
+                        .into();
+                        applied
+                    }
+                    Err(why) => {
+                        done.result = format!("Suggested, but leo could not apply it ({why}); the user can press Apply.");
+                        serde_json::json!(proposal)
+                    }
+                },
+                _ => serde_json::json!(proposal),
+            };
+            send(serde_json::json!({ "proposal": shown }));
         }
         conversation = tools::continued(&conversation, &call, &done);
     }
@@ -359,6 +384,72 @@ pub(crate) struct Applied {
     pub(crate) before: String,
 }
 
+pub(crate) fn change_note(
+    store: &mut leo_core::store::Store,
+    id: &str,
+    find: &str,
+    replace: &str,
+) -> Result<Applied, StatusCode> {
+    let note = store.find_note_mut(id).ok_or(StatusCode::NOT_FOUND)?;
+    let body = if find.is_empty() {
+        let base = note.body.trim_end();
+        if base.is_empty() {
+            replace.to_string()
+        } else {
+            format!("{base}\n\n{}", replace.trim_start())
+        }
+    } else if note.body.matches(find).count() == 1 {
+        note.body.replacen(find, replace, 1)
+    } else {
+        return Err(StatusCode::CONFLICT);
+    };
+    let before = std::mem::replace(&mut note.body, body);
+    note.updated_at = chrono::Utc::now();
+    Ok(Applied {
+        note: NoteResponse::from_note(note),
+        before,
+    })
+}
+
+fn apply_now(state: &AppState, proposal: &tools::Proposal) -> Result<serde_json::Value, String> {
+    let mut shown = serde_json::json!(proposal);
+    store_now(state, |store| {
+        match proposal {
+            tools::Proposal::Edit {
+                note,
+                find,
+                replace,
+                ..
+            } => {
+                let applied = change_note(store, note, find, replace)?;
+                save(store)?;
+                shown["before"] = serde_json::json!(applied.before);
+                shown["after"] = serde_json::json!(applied.note.version);
+            }
+            tools::Proposal::Create {
+                title,
+                body,
+                folder,
+            } => {
+                let made = crate::routes::notes::make_note(store, title, body, folder)?;
+                save(store)?;
+                shown["made"] = serde_json::json!(made.id);
+                shown["folder"] = serde_json::json!(made.directory);
+            }
+        }
+        Ok(())
+    })
+    .map_err(|code| match code {
+        StatusCode::CONFLICT => {
+            "the text it would replace is not in the note exactly once".to_string()
+        }
+        StatusCode::NOT_FOUND => "the note is not there any more".to_string(),
+        _ => "leo could not save it".to_string(),
+    })?;
+    shown["state"] = serde_json::json!("applied");
+    Ok(shown)
+}
+
 pub(crate) async fn apply_suggestion(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -366,25 +457,7 @@ pub(crate) async fn apply_suggestion(
 ) -> Response {
     let applied = state
         .with_store(move |store| {
-            let note = store.find_note_mut(&id).ok_or(StatusCode::NOT_FOUND)?;
-            let body = if change.find.is_empty() {
-                let base = note.body.trim_end();
-                if base.is_empty() {
-                    change.replace.clone()
-                } else {
-                    format!("{base}\n\n{}", change.replace.trim_start())
-                }
-            } else if note.body.matches(change.find.as_str()).count() == 1 {
-                note.body.replacen(&change.find, &change.replace, 1)
-            } else {
-                return Err(StatusCode::CONFLICT);
-            };
-            let before = std::mem::replace(&mut note.body, body);
-            note.updated_at = chrono::Utc::now();
-            let applied = Applied {
-                note: NoteResponse::from_note(note),
-                before,
-            };
+            let applied = change_note(store, &id, &change.find, &change.replace)?;
             save(store)?;
             Ok(applied)
         })
@@ -419,6 +492,7 @@ pub(crate) async fn chat_reply(
         return StatusCode::BAD_REQUEST.into_response();
     }
     let mode = chat::mode_of(body.mode.as_deref());
+    let access = tools::Access::named(body.access.as_deref().unwrap_or(""));
     let question = chat::question_of(&body.messages);
     let graphs = Arc::clone(&state.graphs);
     let note = body.note.clone();
@@ -465,6 +539,7 @@ pub(crate) async fn chat_reply(
             sources,
             room,
             wanted,
+            access,
         };
         let end = match answer(&worker, &streamer, ask, &tx) {
             Ok(spent) => {

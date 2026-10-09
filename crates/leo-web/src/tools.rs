@@ -20,12 +20,93 @@ pub struct Param {
     pub about: &'static str,
 }
 
+#[derive(Clone, Copy)]
 pub struct Spec {
     pub name: &'static str,
     pub purpose: &'static str,
     pub params: &'static [Param],
     pub returns: &'static str,
     pub example: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Access {
+    #[default]
+    Ask,
+    Auto,
+    Read,
+}
+
+impl Access {
+    pub fn named(name: &str) -> Access {
+        match name {
+            "auto" => Access::Auto,
+            "read" => Access::Read,
+            _ => Access::Ask,
+        }
+    }
+
+    pub fn changes(self) -> bool {
+        self != Access::Read
+    }
+}
+
+pub fn linked(text: &str, sources: &[SourceRef], own: Option<&str>) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find("[n") {
+        let (before, from) = rest.split_at(at);
+        let cited = from.find(']').and_then(|end| {
+            if from[end + 1..].starts_with('(') || before.ends_with('[') {
+                return None;
+            }
+            let numbers: Option<Vec<usize>> = from[1..end]
+                .split(',')
+                .map(|part| part.trim().strip_prefix('n')?.parse().ok())
+                .collect();
+            numbers.map(|numbers| (end, numbers))
+        });
+        let Some((end, numbers)) = cited else {
+            out.push_str(before);
+            out.push_str("[n");
+            rest = &from[2..];
+            continue;
+        };
+        let mut titles: Vec<String> = Vec::new();
+        for n in numbers {
+            let Some(source) = sources.iter().find(|s| s.n == n) else {
+                continue;
+            };
+            let title: String = source
+                .title
+                .chars()
+                .filter(|c| !matches!(c, '[' | ']' | '|' | '#'))
+                .collect();
+            let title = title.split_whitespace().collect::<Vec<_>>().join(" ");
+            if Some(source.id.as_str()) != own && !title.is_empty() && !titles.contains(&title) {
+                titles.push(title);
+            }
+        }
+        if titles.is_empty() {
+            out.push_str(before.trim_end_matches([' ', '\t']));
+        } else {
+            out.push_str(before);
+            out.push_str(
+                &titles
+                    .iter()
+                    .map(|t| format!("[[{t}]]"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+        }
+        rest = &from[end + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+pub fn changes_notes(name: &str) -> bool {
+    matches!(name, "edit_note" | "create_note")
 }
 
 const NOTE: Param = Param {
@@ -73,7 +154,7 @@ pub const SPECS: [Spec; 5] = [
             Param {
                 name: "replace",
                 required: true,
-                about: "the Markdown that goes in place of \"find\", or that is added at the end",
+                about: "the Markdown that goes in place of \"find\", or that is added at the end; write it as note text, with no citations like [n2] (to point to another note, write [[Its title]])",
             },
             Param {
                 name: "why",
@@ -96,7 +177,7 @@ pub const SPECS: [Spec; 5] = [
             Param {
                 name: "body",
                 required: true,
-                about: "the note in Markdown, using \\n for new lines",
+                about: "the note in Markdown, using \\n for new lines, with no citations like [n2] (to point to another note, write [[Its title]])",
             },
             Param {
                 name: "folder",
@@ -173,11 +254,61 @@ pub fn manual() -> String {
 }
 
 pub fn manual_with(web: bool) -> String {
+    manual_for(web, Access::Ask)
+}
+
+fn as_access(spec: &Spec, access: Access) -> Spec {
+    match (access, spec.name) {
+        (Access::Auto, "edit_note") => Spec {
+            purpose: "Change a note. leo applies it at once, and the user can undo it.",
+            returns: "\"Changed.\" when leo applied it, or \"That did not work: ...\" when \"find\" is not in the note exactly once.",
+            ..*spec
+        },
+        (Access::Auto, "create_note") => Spec {
+            purpose: "Make a new note. leo makes it at once, and the user can undo it.",
+            returns: "\"Made.\" when leo made the note.",
+            ..*spec
+        },
+        _ => *spec,
+    }
+}
+
+const WHEN_ASK: &str = "When to use them:
+- The user asks you to fix, correct, update, add to or rewrite a note, or you find a mistake they asked you to fix: use edit_note, once per change, with \"find\" copied exactly from the note text you were given or opened. This is how you change notes here, so never say you cannot edit or change notes.
+- The user asks for a new note: use create_note.
+- The question is about notes you were not given, or you need a note's full text or its connections: use search_notes, open_note or connected_notes.
+- Otherwise answer straight away without tools.
+After suggesting a change or a note, tell the user what you suggested and that they can apply it; never claim it is already done.";
+
+const WHEN_AUTO: &str = "When to use them:
+- The user asks you to fix, correct, update, add to or rewrite a note, or you find a mistake they asked you to fix: use edit_note, once per change, with \"find\" copied exactly from the note text you were given or opened. The user chose Auto, so leo applies your changes at once and they can undo them; make only the changes they asked for.
+- The user asks for a new note: use create_note.
+- The question is about notes you were not given, or you need a note's full text or its connections: use search_notes, open_note or connected_notes.
+- Otherwise answer straight away without tools.
+After a change or a new note, tell the user plainly what you changed or made.";
+
+const WHEN_READ: &str = "When to use them:
+- The question is about notes you were not given, or you need a note's full text or its connections: use search_notes, open_note or connected_notes.
+- Otherwise answer straight away without tools.
+The user chose Read only for this chat, so you cannot change or make notes. When they ask for a change, say exactly what you would change and where, and tell them they can switch Felix to Ask or Auto, beside the message box, to let you make it.";
+
+pub fn manual_for(web: bool, access: Access) -> String {
     let tools: Vec<String> = SPECS
         .iter()
+        .filter(|spec| access.changes() || !changes_notes(spec.name))
         .chain(WEB_SPECS.iter().filter(|_| web))
-        .map(describe)
+        .map(|spec| describe(&as_access(spec, access)))
         .collect();
+    let limits = if access.changes() {
+        format!("At most {MOST_STEPS} calls per answer, and at most {MOST_PROPOSALS} changes (edit_note or create_note).")
+    } else {
+        format!("At most {MOST_STEPS} calls per answer.")
+    };
+    let when = match access {
+        Access::Ask => WHEN_ASK,
+        Access::Auto => WHEN_AUTO,
+        Access::Read => WHEN_READ,
+    };
     let outside = if web {
         "For outside or current facts, use web_search and open_page below, and say which parts came from the web and from where. For anything in the user's notes, use the note tools."
     } else {
@@ -193,18 +324,13 @@ How to call a tool:
 - The part inside the tags is one JSON object: \"name\" is the tool, every other key is a parameter, and every value is a string in double quotes. Write new lines inside values as \\n.
 - One tool per reply. leo runs it and sends back <tool_result name=\"<tool>\">the result</tool_result>, then you continue: call another tool or answer the user.
 - A result that starts with \"That did not work:\" says what was wrong; correct the call and try again.
-- At most {MOST_STEPS} calls per answer, and at most {MOST_PROPOSALS} suggestions (edit_note or create_note). Notes that tools find get ids like n7; cite them like [n7].
+- {limits} Notes that tools find get ids like n7; cite them like [n7].
 
 The tools:
 
 {}
 
-When to use them:
-- The user asks you to fix, correct, update, add to or rewrite a note, or you find a mistake they asked you to fix: use edit_note, once per change, with \"find\" copied exactly from the note text you were given or opened. This is how you change notes here, so never say you cannot edit or change notes.
-- The user asks for a new note: use create_note.
-- The question is about notes you were not given, or you need a note's full text or its connections: use search_notes, open_note or connected_notes.
-- Otherwise answer straight away without tools.
-After suggesting a change or a note, tell the user what you suggested and that they can apply it; never claim it is already done.",
+{when}",
         tools.join("\n\n"),
         outside = outside
     )
@@ -258,6 +384,16 @@ pub fn check(call: &Call) -> Result<(), String> {
 }
 
 pub const REMINDER: &str = "Remember your tools: if the user wants a note fixed, corrected, changed, added to or made, or you need a note you were not given, your whole reply is a single <tool>{...}</tool> line instead of an answer. When they asked you to fix something and you found what is wrong, suggest the fix with edit_note before you answer; do not only explain it. You can open and change notes this way, so do not ask the user to do it. Otherwise reply to the user.";
+
+pub const READ_REMINDER: &str = "Remember your tools: if you need a note you were not given, your whole reply is a single <tool>{...}</tool> line instead of an answer. This chat is read only, so do not try to change notes. Otherwise reply to the user.";
+
+pub fn reminder(access: Access) -> &'static str {
+    if access.changes() {
+        REMINDER
+    } else {
+        READ_REMINDER
+    }
+}
 
 pub const NUDGE: &str = "The user asked for a change to their notes, but your reply suggested none. If a note should be fixed, changed, added to or made, reply now with only the edit_note or create_note line; the tools are available. If nothing needs changing, reply to the user again.";
 
@@ -501,6 +637,7 @@ pub struct Desk {
     room: usize,
     web: Option<crate::Web>,
     pages: Vec<String>,
+    access: Access,
 }
 
 const WEB_RESULTS: usize = 6;
@@ -514,7 +651,13 @@ impl Desk {
             room,
             web: None,
             pages: Vec::new(),
+            access: Access::Ask,
         }
+    }
+
+    pub fn with_access(mut self, access: Access) -> Desk {
+        self.access = access;
+        self
     }
 
     pub fn with_web(mut self, web: Option<crate::Web>) -> Desk {
@@ -678,6 +821,14 @@ impl Desk {
     }
 
     pub fn run(&mut self, store: &Store, cache: &Cache, call: &Call) -> Done {
+        if !self.access.changes() && changes_notes(&call.name) {
+            return Done {
+                step: "Wanted to change a note (read only)".into(),
+                result: "That did not work: this chat is read only, so notes cannot be changed or made. Tell the user what you would change and that they can switch Felix to Ask or Auto.".into(),
+                proposal: None,
+                found: Vec::new(),
+            };
+        }
         let fail = |step: &str, why: String| Done {
             step: step.to_string(),
             result: format!("That did not work: {why}."),
@@ -837,7 +988,8 @@ impl Desk {
                         format!("at most {MOST_PROPOSALS} suggestions fit in one answer"),
                     );
                 }
-                let (find, replace) = (call.text("find"), call.text("replace"));
+                let find = call.text("find");
+                let replace = linked(&call.text("replace"), &self.sources, Some(&note.id));
                 if find.is_empty() && replace.trim().is_empty() {
                     return fail(&step, "the change is empty".into());
                 }
@@ -869,7 +1021,7 @@ impl Desk {
             }
             "create_note" => {
                 let title = call.text("title").trim().to_string();
-                let body = call.text("body");
+                let body = linked(&call.text("body"), &self.sources, None);
                 let folder = call.text("folder").trim().trim_matches('/').to_string();
                 let step = format!("Suggested a new note, “{}”", clip(&title, 60));
                 if self.proposals >= MOST_PROPOSALS {
@@ -914,6 +1066,43 @@ pub fn continued(conversation: &str, call: &Call, done: &Done) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn source(n: usize, id: &str, title: &str) -> SourceRef {
+        SourceRef {
+            n,
+            id: id.into(),
+            title: title.into(),
+            folder: String::new(),
+            why: String::new(),
+        }
+    }
+
+    #[test]
+    fn citations_written_into_a_note_become_links_or_go() {
+        let sources = [
+            source(1, "a", "Neuro-Symbolic Drive"),
+            source(2, "b", "Driving [rules] | v2"),
+            source(3, "c", "Heaps"),
+        ];
+        assert_eq!(
+            linked("Reduces miss rate. [n2]", &sources, Some("a")),
+            "Reduces miss rate. [[Driving rules v2]]"
+        );
+        assert_eq!(linked("It helps [n1].", &sources, Some("a")), "It helps.");
+        assert_eq!(
+            linked("Both [n1, n3] and [n3][n9] here", &sources, None),
+            "Both [[Neuro-Symbolic Drive]], [[Heaps]] and [[Heaps]] here"
+        );
+        assert_eq!(linked("Gone [n9] now", &sources, None), "Gone now");
+        assert_eq!(
+            linked(
+                "keep [n1](https://x.y) and [[n1]] and [note] and [n]",
+                &sources,
+                None
+            ),
+            "keep [n1](https://x.y) and [[n1]] and [note] and [n]"
+        );
+    }
 
     #[test]
     fn a_tool_call_is_read_however_a_model_writes_it() {

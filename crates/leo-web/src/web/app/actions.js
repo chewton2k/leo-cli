@@ -2,6 +2,7 @@ const actions = {
   back,
   home: () => go('#/'),
   'side-fold': foldSide,
+  'open-title': (el) => openTitle(el.dataset.title || ''),
   'side-search': searchEverywhere,
   'toggle-search': () => {
     if ($('#search').hidden) {

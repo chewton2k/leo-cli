@@ -202,3 +202,13 @@ test('a file card names its type and shows a small example of what is inside', (
   assert.doesNotMatch(odd, /<img/);
   assert.match(odd, /Reading…/);
 });
+
+test('Felix has three ways of handling notes and Shift+Tab goes round them', () => {
+  assert.deepEqual(C.ACCESS.map((a) => a.id), ['ask', 'auto', 'read']);
+  assert.equal(C.accessOf('auto'), 'auto');
+  assert.equal(C.accessOf('everything'), 'ask');
+  assert.equal(C.accessOf(null), 'ask');
+  assert.equal(C.nextAccess('ask'), 'auto');
+  assert.equal(C.nextAccess('auto'), 'read');
+  assert.equal(C.nextAccess('read'), 'ask');
+});

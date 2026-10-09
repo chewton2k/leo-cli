@@ -36,6 +36,10 @@
       const img = picture(name.trim(), name.trim());
       return img ? keep(img) : whole;
     });
+    s = s.replace(/(?<!!)\[\[([^\[\]|#]+)(?:#[^\[\]|]*)?(?:\|([^\[\]]+))?\]\]/g, (_, title, label) => {
+      const name = title.trim();
+      return keep(`<a class="wiki-link" href="#/search/${encodeURIComponent(name)}" data-action="open-title" data-title="${escape(name)}">${escape((label || name).trim())}</a>`);
+    });
     s = s.replace(/!\[([^\]]*)\]\((<[^>]+>|[^)\s]+)(?:\s+"[^"]*")?\)/g, (whole, alt, target) => {
       const img = picture(target, alt);
       return img ? keep(img) : whole;

@@ -438,3 +438,29 @@
   (`.msg.pending`) wait; a broken diagram keeps its source and says why. Felix's
   `BASE` prompt says when and how to draw them (also into notes through
   edit_note / create_note). Obsidian and GitHub draw the same blocks.
+- Felix's access (`tools::Access`, the page's `ACCESS`, kept in
+  `leo-felix-access`, Shift+Tab or the pill under the box): **Ask first**
+  (default; edit_note / create_note are cards to Apply), **Auto** (the route
+  applies each change on the server at once through `change_note` /
+  `notes::make_note`, tells the model "Changed."/"Made.", and sends the card
+  already `applied` with `before`/`after`/`made` so Undo works), **Read only**
+  (`manual_for` leaves the change tools out, `READ_REMINDER`, no NUDGE, and
+  the Desk refuses them).
+- Citations never go into notes: `tools::linked` turns `[n2]` in edit_note's
+  `replace` and create_note's `body` into `[[Title]]` (a citation of the note
+  being edited, or of nothing, is dropped). `markdown.js` draws `[[Title]]`,
+  `[[Title|label]]` and `[[Title#part]]` as links (`open-title` opens the note
+  with that exact title, else searches).
+- A message sent while a file is still being read takes it along: the card
+  shows "Reading…" in the message, Felix thinks, and the request goes once
+  every file is read (`reading` promises in chat.js). What the request uses
+  (open note, attached notes, style, access, the answer's folder for Save as
+  note) is fixed when the user presses send, so moving to another note while
+  Felix works changes nothing about that answer or its changes.
+- Selecting in a note works like Obsidian's live preview: a selection over
+  rendered text (drag, double or triple click, Shift+click from the caret, ⌘A)
+  turns the lines it covers into one source textarea with the same selection
+  (`doc.js` `open(first, last, from, to)`, `pointAt` maps DOM points to text
+  offsets with `rawOffset`), so Delete, Backspace or typing apply to all of it;
+  a key pressed over a rendered selection does that in one step. Selections
+  that neither start nor end inside the note are ignored.

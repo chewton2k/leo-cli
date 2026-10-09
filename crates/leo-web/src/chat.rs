@@ -100,6 +100,8 @@ pub struct ChatBody {
     pub chat: Option<String>,
     #[serde(default)]
     pub files: Vec<String>,
+    #[serde(default)]
+    pub access: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]

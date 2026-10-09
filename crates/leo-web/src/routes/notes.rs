@@ -230,26 +230,45 @@ pub(crate) async fn get_note(
         .await
 }
 
+pub(crate) fn make_note(
+    store: &mut Store,
+    title: &str,
+    body: &str,
+    dir: &str,
+) -> Result<NoteResponse, StatusCode> {
+    make_tagged_note(store, title, body, Vec::new(), dir)
+}
+
+fn make_tagged_note(
+    store: &mut Store,
+    title: &str,
+    body: &str,
+    tags: Vec<String>,
+    dir: &str,
+) -> Result<NoteResponse, StatusCode> {
+    directory(store, dir)?;
+    if !store.dir_exists(dir) {
+        store.create_dir(dir);
+    }
+    let note = store
+        .create_note(title.to_string(), body.to_string(), tags, dir)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(NoteResponse::from_note(note))
+}
+
 pub(crate) async fn create_note(
     State(state): State<AppState>,
     Json(body): Json<CreateBody>,
 ) -> Result<impl IntoResponse, StatusCode> {
     state
         .with_store(move |store| {
-            let dir = body.directory.unwrap_or_default();
-            directory(store, &dir)?;
-            if !store.dir_exists(&dir) {
-                store.create_dir(&dir);
-            }
-            let note = store
-                .create_note(
-                    body.title,
-                    body.body.unwrap_or_default(),
-                    body.tags.unwrap_or_default(),
-                    &dir,
-                )
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-            let resp = NoteResponse::from_note(note);
+            let resp = make_tagged_note(
+                store,
+                &body.title,
+                body.body.as_deref().unwrap_or_default(),
+                body.tags.unwrap_or_default(),
+                body.directory.as_deref().unwrap_or_default(),
+            )?;
             save(store)?;
             Ok((StatusCode::CREATED, Json(resp)))
         })

@@ -190,6 +190,88 @@ test('on a wide screen the sidebar reaches every place and can be narrowed', asy
   expect((await side.boundingBox()).width).toBe(full);
 });
 
+test.describe('editing like Obsidian', () => {
+  const body = ['First line here', 'Second **bold** line', '- Third item', 'Fourth line'].join('\n');
+  async function open(page, tag) {
+    const note = await (await page.request.post('/api/notes', { data: { title: `Select ${tag} ${test.info().project.name}`, body } })).json();
+    await page.goto(`/#/n/${note.id}`);
+    await expect(page.locator('#doc .blk')).toHaveCount(4);
+    return async () => (await (await page.request.get(`/api/notes/${note.id}`)).json()).body;
+  }
+  async function select(page, from, to) {
+    await page.evaluate(([a, b]) => {
+      const text = (i) => {
+        const walker = document.createTreeWalker(document.querySelectorAll('#doc .blk')[i], NodeFilter.SHOW_TEXT);
+        return walker.nextNode();
+      };
+      const range = document.createRange();
+      range.setStart(text(a[0]), a[1]);
+      range.setEnd(text(b[0]), b[1]);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      document.activeElement.blur();
+    }, [from, to]);
+  }
+
+  test('a dragged selection across lines becomes editable, so Delete removes all of it', async ({ page }) => {
+    test.skip(test.info().project.name !== 'desktop', 'dragging is for a mouse');
+    const saved = await open(page, 'drag');
+    const first = await page.locator('#doc .blk').nth(0).locator('p').boundingBox();
+    const third = await page.locator('#doc .blk').nth(2).locator('li').boundingBox();
+    await page.mouse.move(first.x + 2, first.y + first.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(third.x + third.width - 2, third.y + third.height / 2, { steps: 8 });
+    await page.mouse.up();
+    const area = page.locator('#doc textarea.line-edit');
+    await expect(area).toHaveCount(1);
+    expect(await area.evaluate((a) => a.value.slice(a.selectionStart, a.selectionEnd))).toContain('Second **bold** line');
+    await page.keyboard.press('Backspace');
+    await expect.poll(saved, { timeout: 5000 }).toBe('\nFourth line');
+  });
+
+  test('typing over a selection replaces it, keeping the rest of both lines', async ({ page }) => {
+    const saved = await open(page, 'type');
+    await select(page, [0, 6], [2, 5]);
+    await page.keyboard.press('X');
+    await expect.poll(saved, { timeout: 5000 }).toBe(['First X item', 'Fourth line'].join('\n'));
+    await expect(page.locator('#doc textarea.line-edit')).toBeFocused();
+  });
+
+  test('Shift+click from the caret selects every line between, and Cmd+A takes the whole note', async ({ page }) => {
+    test.skip(test.info().project.name !== 'desktop', 'Shift+click is for a mouse');
+    const saved = await open(page, 'shift');
+    await page.locator('#doc .blk').nth(1).click();
+    const area = page.locator('#doc textarea.line-edit');
+    await area.evaluate((a) => a.setSelectionRange(0, 0));
+    const last = await page.locator('#doc .blk').nth(3).locator('p').boundingBox();
+    await page.keyboard.down('Shift');
+    await page.mouse.click(last.x + last.width - 1, last.y + last.height / 2);
+    await page.keyboard.up('Shift');
+    expect(await area.evaluate((a) => a.value.slice(a.selectionStart, a.selectionEnd))).toBe(['Second **bold** line', '- Third item', 'Fourth line'].join('\n'));
+    await page.keyboard.press('Delete');
+    await expect.poll(saved, { timeout: 5000 }).toBe('First line here\n');
+    await page.keyboard.press('ControlOrMeta+a');
+    await page.keyboard.press('ControlOrMeta+a');
+    await page.keyboard.press('Backspace');
+    await expect.poll(saved, { timeout: 5000 }).toBe('');
+  });
+
+  test('a selection that starts and ends outside the note leaves it alone', async ({ page }) => {
+    const saved = await open(page, 'outside');
+    await page.evaluate(() => {
+      const range = document.createRange();
+      range.setStartBefore(document.querySelector('#title'));
+      range.setEndAfter(document.querySelector('#doc'));
+      window.getSelection().removeAllRanges();
+      window.getSelection().addRange(range);
+    });
+    await page.keyboard.press('Backspace');
+    await page.waitForTimeout(900);
+    expect(await saved()).toBe(body);
+  });
+});
+
 test.describe('diagrams', () => {
   test('a mermaid block in a note is drawn, a broken one says why, and labels cannot run code', async ({ page }) => {
     const body = [
@@ -956,6 +1038,111 @@ test.describe('Felix', () => {
 
     await grip.dblclick();
     expect(Math.abs((await chat.boundingBox()).width - before.width)).toBeLessThan(2);
+  });
+
+  test('Felix can ask first, change notes himself, or only read, and remembers the choice', async ({ page }) => {
+    const note = await (await page.request.post('/api/notes', { data: { title: `Auto target ${test.info().project.name}`, body: 'BFS uses a queue.' } })).json();
+    const asked = [];
+    await page.route('**/api/chat', async (route) => {
+      asked.push(route.request().postDataJSON());
+      const applied = { kind: 'edit', note: note.id, title: note.title, find: 'queue', replace: 'queue (first in, first out)', why: '', state: 'applied', before: 'BFS uses a queue.', after: 'v' };
+      await route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: [{ sources: [] }, { step: `Changed “${note.title}”`, tool: 'edit_note', found: [] }, { proposal: applied }, { t: 'I changed it.' }, { done: true }].map((l) => JSON.stringify(l)).join('\n') + '\n' });
+    });
+    await page.goto('/');
+    await page.locator('#chat-toggle').click();
+    const chat = page.locator('#chat');
+    const access = chat.locator('#chat-access');
+    await expect(access).toHaveText(/Ask first/);
+    await access.click();
+    await chat.locator('[data-chat="access-pick"][data-access="auto"]').click();
+    await expect(access).toHaveText(/Auto/);
+    await expect(chat.locator('#chat-access-menu')).toBeHidden();
+    await chat.locator('#chat-input').fill('fix my bfs note');
+    await chat.locator('#chat-input').press('Enter');
+    await expect(chat.locator('.proposal-done')).toContainText('Applied');
+    await expect(chat.locator('.proposal [data-chat="undo"]')).toBeVisible();
+    await expect(chat.locator('.proposal [data-chat="apply"]')).toHaveCount(0);
+    expect(asked[0].access).toBe('auto');
+
+    await chat.locator('#chat-input').press('Shift+Tab');
+    await expect(access).toHaveText(/Read only/);
+    await page.reload();
+    await page.locator('#chat-toggle').click();
+    await expect(page.locator('#chat-access')).toHaveText(/Read only/);
+    await page.locator('#chat-input').press('Shift+Tab');
+    await expect(page.locator('#chat-access')).toHaveText(/Ask first/);
+  });
+
+  test('a message sent while a file is still being read waits for it, with Felix thinking', async ({ page }) => {
+    let release;
+    const held = new Promise((resolve) => { release = resolve; });
+    await page.route('**/api/chats/*/files', async (route) => {
+      if (route.request().method() !== 'POST') return route.fulfill({ json: [] });
+      await held;
+      return route.fulfill({ status: 201, json: { id: 'doc-slow-1', name: 'slow.pdf', chars: 30, excerpt: 'Week 4: Graphs' } });
+    });
+    const asked = [];
+    await page.route('**/api/chat', async (route) => {
+      asked.push(route.request().postDataJSON());
+      await route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: '{"sources":[]}\n{"t":"It covers graphs."}\n{"done":true}\n' });
+    });
+    await page.goto('/');
+    await page.locator('#chat-toggle').click();
+    const chat = page.locator('#chat');
+    await chat.locator('[data-chat="attach"]').click();
+    const chooser = page.waitForEvent('filechooser');
+    await chat.locator('[data-chat="attach-file"]').click();
+    await (await chooser).setFiles({ name: 'slow.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4') });
+    await expect(chat.locator('#chat-refs .file-card.reading')).toBeVisible();
+    await chat.locator('#chat-input').fill('what is in it?');
+    await chat.locator('#chat-input').press('Enter');
+    await expect(chat.locator('#chat-refs .file-card')).toHaveCount(0);
+    await expect(chat.locator('.msg.user .file-card.reading')).toContainText('slow.pdf');
+    await expect(chat.locator('.msg.leo.pending')).toBeVisible();
+    expect(asked).toHaveLength(0);
+    release();
+    await expect(chat.locator('.msg.leo').last()).toContainText('It covers graphs.');
+    expect(asked[0].files).toEqual(['doc-slow-1']);
+    await expect(chat.locator('.msg.user .file-card')).not.toHaveClass(/reading/);
+    await expect(chat.locator('.msg.user .file-page')).toContainText('Week 4: Graphs');
+  });
+
+  test('moving to another note while Felix works keeps his answer and changes on the first note', async ({ page }) => {
+    const tag = `${test.info().project.name}-${Date.now().toString(36)}`;
+    const make = async (title, body, directory) => {
+      await page.request.post('/api/dirs', { data: { path: directory } });
+      return (await page.request.post('/api/notes', { data: { title, body, directory } })).json();
+    };
+    const first = await make(`Asked about ${tag}`, 'BFS uses a stack.', `switch-a-${tag}`);
+    const other = await make(`Opened later ${tag}`, 'Untouched text.', `switch-b-${tag}`);
+    let release;
+    const held = new Promise((resolve) => { release = resolve; });
+    const asked = [];
+    await page.route('**/api/chat', async (route) => {
+      asked.push(route.request().postDataJSON());
+      await held;
+      const proposal = { kind: 'edit', note: first.id, title: first.title, find: 'stack', replace: 'queue', why: 'BFS is first in, first out' };
+      await route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: [{ sources: [] }, { proposal }, { t: 'Your note says stack; BFS uses a queue.' }, { done: true }].map((l) => JSON.stringify(l)).join('\n') + '\n' });
+    });
+    await page.goto(`/#/n/${first.id}`);
+    await page.locator('#chat-toggle').click();
+    const chat = page.locator('#chat');
+    await chat.locator('#chat-input').fill('is this right?');
+    await chat.locator('#chat-input').press('Enter');
+    await expect.poll(() => asked.length).toBe(1);
+    await page.evaluate((id) => { location.hash = `#/n/${id}`; }, other.id);
+    await expect(page.locator('#title')).toHaveText(other.title);
+    release();
+    await expect(chat.locator('.msg.leo').last()).toContainText('BFS uses a queue.');
+    expect(asked[0].note).toBe(first.id);
+    await chat.locator('.proposal [data-chat="apply"]').click();
+    await expect(chat.locator('.proposal-done')).toContainText('Applied');
+    const body = async (id) => (await (await page.request.get(`/api/notes/${id}`)).json()).body;
+    expect(await body(first.id)).toBe('BFS uses a queue.');
+    expect(await body(other.id)).toBe('Untouched text.');
+    await expect(page.locator('#title')).toHaveText(other.title);
+    await chat.locator('[data-chat="save"]').click();
+    await expect(page.locator('.toast')).toContainText(`Saved as a note in switch-a-${tag}`);
   });
 
   test('says plainly when no AI is set up', async ({ page }) => {

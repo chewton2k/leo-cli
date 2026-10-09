@@ -821,6 +821,22 @@ body.chat-resizing iframe, body.chat-resizing canvas { pointer-events: none; }
 .chat-pick-none { padding: 10px 12px; font-size: 13.5px; color: var(--muted); }
 .msg-refs { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; margin-bottom: 4px; }
 .chat-compose:focus-within { border-color: var(--accent); }
+.chat-under { position: relative; display: flex; align-items: center; gap: 8px; margin-top: 6px; padding: 0 2px; }
+.chat-access { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px 0 9px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--muted); font-size: 12.5px; font-weight: 650; }
+.chat-access svg { width: 15px; height: 15px; flex: none; }
+.chat-access .chev { width: 13px; height: 13px; opacity: .7; }
+.chat-access:hover { color: var(--text); border-color: var(--muted); }
+.chat-access.is-auto { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 45%, transparent); color: var(--accent); }
+.chat-access.is-read { border-style: dashed; }
+.chat-under-hint { margin-left: auto; font-size: 11.5px; color: var(--muted); }
+@media (hover: none) { .chat-under-hint { display: none; } }
+.chat-access-menu { position: absolute; z-index: 6; left: 0; bottom: calc(100% + 6px); width: min(330px, 100%); padding: 4px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow); }
+.chat-access-menu button { display: flex; align-items: flex-start; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: 8px; background: none; color: var(--text); text-align: left; }
+.chat-access-menu button:hover, .chat-access-menu button[aria-checked="true"] { background: var(--surface-2); }
+.chat-access-menu button[aria-checked="true"] svg { color: var(--accent); }
+.chat-access-menu svg { width: 18px; height: 18px; flex: none; margin-top: 1px; color: var(--muted); }
+.chat-access-menu b { display: block; font-size: 13.5px; font-weight: 650; }
+.chat-access-menu small { display: block; margin-top: 1px; font-size: 12px; line-height: 1.4; color: var(--muted); }
 .chat-compose textarea { flex: 1; min-width: 0; border: 0; outline: 0; resize: none; background: none; font-size: 15px; line-height: 1.45; padding: 6px 0; max-height: 160px; }
 .chat-send { flex: none; width: 34px; height: 34px; border-radius: 50%; border: 0; display: grid; place-items: center; background: var(--accent); color: var(--accent-text); }
 .chat-send svg { width: 18px; height: 18px; }

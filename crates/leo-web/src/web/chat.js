@@ -4,6 +4,20 @@
   const KEY = 'leo-chat-v1';
   const MOST_KEPT = 40;
   const MOST_REFS = 8;
+  const ACCESS = [
+    { id: 'ask', label: 'Ask before changing notes', short: 'Ask first', hint: 'Felix suggests changes and new notes; you apply each one.' },
+    { id: 'auto', label: 'Change notes automatically', short: 'Auto', hint: 'Felix makes changes and new notes himself; each one can be undone.' },
+    { id: 'read', label: 'Read only', short: 'Read only', hint: 'Felix reads your notes but never changes or makes any.' },
+  ];
+  const ACCESS_KEY = 'leo-felix-access';
+  const accessOf = (id) => (ACCESS.some((a) => a.id === id) ? id : 'ask');
+  const nextAccess = (id) => ACCESS[(ACCESS.findIndex((a) => a.id === accessOf(id)) + 1) % ACCESS.length].id;
+  const ACCESS_GLYPHS = {
+    ask: '<path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9.5 12l2 2 3.5-4"/>',
+    auto: '<path d="M5 12h9M10 7l5 5-5 5"/><path d="M15 7l5 5-5 5"/>',
+    read: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  };
+
   const MODES = [
     { id: 'chat', label: 'Chat', hint: 'Ask anything, get things explained, or go over meeting notes; type @ to bring in a note', starters: [
       { text: 'What are the key ideas here?', needs: 'note', ask: 'Which note should I pull the key ideas from?' },
@@ -285,6 +299,11 @@
           <textarea id="chat-input" rows="1" placeholder="Message Felix, or type @ to add a note…" enterkeyhint="send"></textarea>
           <button class="chat-send" id="chat-send" type="submit" aria-label="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button>
         </form>
+        <div class="chat-under">
+          <button type="button" class="chat-access" id="chat-access" data-chat="access" aria-haspopup="menu" aria-expanded="false"></button>
+          <span class="chat-under-hint">⇧Tab to switch</span>
+          <div class="chat-access-menu" id="chat-access-menu" role="menu" hidden>${ACCESS.map((a) => `<button type="button" role="menuitemradio" data-chat="access-pick" data-access="${a.id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ACCESS_GLYPHS[a.id]}</svg><span><b>${escape(a.label)}</b><small>${escape(a.hint)}</small></span></button>`).join('')}</div>
+        </div>
       </footer>
       </section>`;
     document.body.appendChild(panel);
@@ -368,6 +387,32 @@
       }
     }
     blink();
+
+    try {
+      state.access = accessOf(storage.getItem(ACCESS_KEY));
+    } catch (e) {
+      state.access = 'ask';
+    }
+
+    function drawAccess() {
+      const now = ACCESS.find((a) => a.id === state.access);
+      const button = $('#chat-access');
+      button.className = `chat-access is-${now.id}`;
+      button.title = `${now.label}: ${now.hint} Shift+Tab switches.`;
+      button.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ACCESS_GLYPHS[now.id]}</svg><span>${escape(now.short)}</span><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M7 10l5 5 5-5"/></svg>`;
+      for (const item of panel.querySelectorAll('[data-chat="access-pick"]')) item.setAttribute('aria-checked', String(item.dataset.access === now.id));
+    }
+
+    function setAccess(id) {
+      state.access = accessOf(id);
+      try {
+        storage.setItem(ACCESS_KEY, state.access);
+      } catch (e) {}
+      $('#chat-access-menu').hidden = true;
+      $('#chat-access').setAttribute('aria-expanded', 'false');
+      drawAccess();
+    }
+    drawAccess();
 
     const SIDEBAR = 'leo-chat-sidebar';
     const wide = () => Boolean(root.matchMedia && root.matchMedia('(min-width: 900px)').matches);
@@ -674,15 +719,28 @@
       }
     }
 
-    async function addFile(file) {
-      const chat = state.id;
+    const reading = new Map();
+
+    function addFile(file) {
       const key = `${Date.now()}-${Math.random()}`;
-      const thumb = await thumbOf(file);
-      state.files.push({ key, name: file.name, status: 'reading', thumb });
+      state.files.push({ key, name: file.name, status: 'reading', thumb: null });
       drawRefs();
+      const work = readFile(file, key, state.id);
+      reading.set(key, work);
+      work.then(() => reading.delete(key));
+      return work;
+    }
+
+    async function readFile(file, key, chat) {
+      const thumb = await thumbOf(file);
+      if (thumb) {
+        state.files = state.files.map((f) => (f.key === key ? { ...f, thumb } : f));
+        drawRefs();
+      }
       const drop = () => {
         state.files = state.files.filter((f) => f.key !== key);
         drawRefs();
+        return null;
       };
       let reply;
       try {
@@ -694,11 +752,9 @@
           body: JSON.stringify(body),
         });
       } catch (e) {
-        if (state.id === chat) drop();
         notify(e.message || `Felix could not read ${file.name}.`);
-        return;
+        return drop();
       }
-      if (state.id !== chat) return;
       if (!reply.ok) {
         let said = '';
         try {
@@ -706,13 +762,23 @@
         } catch (e) {
           said = '';
         }
-        drop();
         notify(said ? `Felix could not read ${file.name}: ${said}` : reply.status === 413 ? `${file.name} is too large for Felix.` : `Felix could not read ${file.name}.`);
-        return;
+        return drop();
       }
-      const doc = await reply.json();
-      state.files = state.files.map((f) => (f.key === key ? { ...doc, status: 'ready', thumb } : f));
-      drawRefs();
+      const doc = { ...(await reply.json()), key, status: 'ready', thumb };
+      if (state.id === chat) {
+        state.files = state.files.map((f) => (f.key === key ? doc : f));
+        drawRefs();
+      }
+      return doc;
+    }
+
+    function cardOf(f) {
+      const card = { name: f.name };
+      if (f.thumb) card.thumb = f.thumb;
+      else if (f.excerpt) card.excerpt = String(f.excerpt).slice(0, 320);
+      if (f.status === 'reading') card.reading = true;
+      return card;
     }
 
     function addFiles(list) {
@@ -852,7 +918,7 @@
           ? m.cards.filter((c) => c && typeof c.name === 'string')
           : [...(m.docs || []).map((name) => ({ name })), ...(m.pics || []).filter((p) => p && typeof p.name === 'string')];
         const refs = notes.length ? `<div class="msg-refs">${notes.join('')}</div>` : '';
-        const files = cards.length ? `<div class="file-cards sent">${cards.map((c) => fileCard(c, escape)).join('')}</div>` : '';
+        const files = cards.length ? `<div class="file-cards sent">${cards.filter(Boolean).map((c) => fileCard(c, escape, { reading: c.reading === true })).join('')}</div>` : '';
         return `<div class="msg user">${refs}${files}<div class="bubble">${escape(m.text).replace(/\n/g, '<br>')}</div></div>`;
       }
       const shown = grade(m.text).text;
@@ -1092,7 +1158,7 @@
         }
       }
       const note = asNote(question, m.text, m.sources);
-      const directory = (state.context && state.context.directory) || '';
+      const directory = typeof m.folder === 'string' ? m.folder : (state.context && state.context.directory) || '';
       let made;
       try {
         const response = await fetch('/api/notes', {
@@ -1178,15 +1244,27 @@
       const question = text.trim();
       if (!question || state.busy) return;
       closePick();
-      const ready = state.files.filter((f) => f.status === 'ready');
-      const pics = ready.filter((f) => f.thumb).map((f) => ({ name: f.name, thumb: f.thumb }));
-      const cards = ready.map((f) => ({ name: f.name, ...(f.thumb ? { thumb: f.thumb } : { excerpt: (f.excerpt || '').slice(0, 320) }) }));
-      state.messages.push({ role: 'user', text: question, refs: state.refs.slice(), docs: ready.filter((f) => !f.thumb).map((f) => f.name), files: ready.map((f) => f.id), ...(pics.length ? { pics } : {}), ...(cards.length ? { cards } : {}) });
-      state.sent = [...state.sent, ...ready.map((f) => ({ id: f.id, name: f.name }))];
-      state.files = state.files.filter((f) => f.status !== 'ready');
+      const ctx = state.context && state.dropped !== state.context.id ? state.context.id : null;
+      const access = state.access;
+      const going = state.files.filter((f) => f.status === 'ready' || f.status === 'reading');
+      state.files = state.files.filter((f) => !going.includes(f));
       drawRefs();
-      const files = state.sent.map((f) => f.id);
-      const answer = { role: 'assistant', text: '', sources: [], pending: true };
+      const asked = { role: 'user', text: question, refs: state.refs.slice(), docs: [], files: [], cards: going.map(cardOf) };
+      const settle = (i, doc) => {
+        if (!doc) {
+          asked.cards[i] = null;
+          return;
+        }
+        asked.cards[i] = cardOf(doc);
+        asked.files.push(doc.id);
+        if (!doc.thumb) asked.docs.push(doc.name);
+        state.sent = [...state.sent, { id: doc.id, name: doc.name }];
+      };
+      going.forEach((f, i) => {
+        if (f.status === 'ready') settle(i, f);
+      });
+      state.messages.push(asked);
+      const answer = { role: 'assistant', text: '', sources: [], pending: true, folder: (state.context && state.context.directory) || '' };
       state.messages.push(answer);
       input.value = '';
       fit();
@@ -1197,14 +1275,22 @@
       mood('nod', 450);
       thinking(true);
       draw();
-      const ctx = state.context && state.dropped !== state.context.id ? state.context.id : null;
+      const waiting = going.map((f, i) => [f, i]).filter(([f]) => f.status === 'reading');
+      if (waiting.length) {
+        const docs = await Promise.all(waiting.map(([f]) => reading.get(f.key) || Promise.resolve(null)));
+        waiting.forEach(([, i], k) => settle(i, docs[k]));
+        draw();
+      }
+      asked.cards = asked.cards.filter(Boolean);
+      if (!asked.cards.length) delete asked.cards;
+      const files = state.sent.map((f) => f.id);
       const history = state.messages.filter((m) => m !== answer && !m.error).map((m) => ({ role: m.role, text: grade(m.text).text || m.text }));
       try {
         const response = await fetch('/api/chat', {
           method: 'POST',
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: history, mode: state.mode, note: ctx, refs: state.refs.map((r) => r.id), chat: thread.id, files }),
+          body: JSON.stringify({ messages: history, mode: thread.mode, note: ctx, refs: asked.refs.map((r) => r.id), chat: thread.id, files, access }),
           signal: controller.signal,
         });
         if (response.status === 401) throw new Error('This page needs its link again. Open the link leo serve printed.');
@@ -1232,7 +1318,12 @@
             if (typeof e.step === 'string') pose(e.tool);
             if (typeof e.step === 'string') answer.steps = [...(answer.steps || []), { text: e.step, tool: typeof e.tool === 'string' ? e.tool : '', found: Array.isArray(e.found) ? e.found.filter((f) => typeof f === 'string').slice(0, 12) : [] }];
             if (e.spent && typeof e.spent === 'object') answer.spent = e.spent;
-            if (e.proposal && typeof e.proposal === 'object') answer.proposals = [...(answer.proposals || []), { ...e.proposal, state: 'new' }];
+            if (e.proposal && typeof e.proposal === 'object') {
+              const done = e.proposal.state === 'applied';
+              answer.proposals = [...(answer.proposals || []), { ...e.proposal, state: done ? 'applied' : 'new' }];
+              if (done && e.proposal.kind === 'create' && e.proposal.made) onSaved({ id: e.proposal.made, title: e.proposal.title, directory: e.proposal.folder || '' });
+              else if (done) onChanged({ id: e.proposal.note, title: e.proposal.title });
+            }
             if (typeof e.t === 'string') {
               if (!answer.text) talking();
               answer.text += e.t;
@@ -1280,6 +1371,10 @@
     panel.addEventListener('click', (e) => {
       awake();
       if (!e.target.closest('[data-chat^="attach"]')) $('#chat-attach-menu').hidden = true;
+      if (!e.target.closest('[data-chat^="access"]')) {
+        $('#chat-access-menu').hidden = true;
+        $('#chat-access').setAttribute('aria-expanded', 'false');
+      }
       if (e.target.closest('.felix') && !e.target.closest('[data-chat]')) {
         tapped();
         return;
@@ -1325,7 +1420,14 @@
         draw();
       } else if (what === 'classes-go') answerClasses(false);
       else if (what === 'classes-all') answerClasses(true);
-      else if (what === 'attach') {
+      else if (what === 'access') {
+        const menu = $('#chat-access-menu');
+        menu.hidden = !menu.hidden;
+        el.setAttribute('aria-expanded', String(!menu.hidden));
+      } else if (what === 'access-pick') {
+        setAccess(el.dataset.access);
+        input.focus();
+      } else if (what === 'attach') {
         const menu = $('#chat-attach-menu');
         if (state.pick && state.pick.from === 'button') closePick();
         else if (!prepare) openPick('button', '', 0);
@@ -1441,6 +1543,11 @@
       } else steer(e);
     });
     input.addEventListener('keydown', (e) => {
+      if (e.key === 'Tab' && e.shiftKey && !state.pick) {
+        e.preventDefault();
+        setAccess(nextAccess(state.access));
+        return;
+      }
       if (state.pick && e.key === 'Escape') {
         e.stopPropagation();
         closePick();
@@ -1473,5 +1580,5 @@
     };
   }
 
-  root.leoChat = { NOTE_DRAG, spentLabel, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS };
+  root.leoChat = { ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS };
 })(typeof window !== 'undefined' ? window : globalThis);

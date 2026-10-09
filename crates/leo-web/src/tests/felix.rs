@@ -53,6 +53,7 @@ fn a_document_given_to_felix_is_kept_as_text_and_read_with_the_question() {
         refs: vec![],
         chat: Some("chat-docs-0001".into()),
         files: vec![doc["id"].as_str().unwrap().to_string()],
+        access: None,
     };
     run(async {
         let response = chat_reply(State(state.clone()), Json(body)).await;
@@ -130,6 +131,7 @@ fn a_chat_reply_streams_its_sources_then_the_answer() {
         refs: vec![],
         chat: None,
         files: vec![],
+        access: None,
     };
     let text = run(async {
         let response = chat_reply(State(state.clone()), Json(body)).await;
@@ -167,6 +169,7 @@ fn a_chat_without_ai_or_a_question_is_refused() {
         refs: vec![],
         chat: None,
         files: vec![],
+        access: None,
     };
     let status = run(async {
         chat_reply(State(state.clone()), Json(ask("hi")))
@@ -203,6 +206,14 @@ fn a_chat_without_ai_or_a_question_is_refused() {
 }
 
 fn chat_lines(state: &AppState, question: &str) -> Vec<serde_json::Value> {
+    chat_lines_with(state, question, None)
+}
+
+fn chat_lines_with(
+    state: &AppState,
+    question: &str,
+    access: Option<&str>,
+) -> Vec<serde_json::Value> {
     let body = chat::ChatBody {
         messages: vec![chat::Turn {
             role: "user".into(),
@@ -213,6 +224,7 @@ fn chat_lines(state: &AppState, question: &str) -> Vec<serde_json::Value> {
         refs: vec![],
         chat: None,
         files: vec![],
+        access: access.map(str::to_string),
     };
     let text = run(async {
         let response = chat_reply(State(state.clone()), Json(body)).await;
@@ -590,4 +602,71 @@ fn once_felix_has_answered_the_writing_ai_names_the_chat_in_the_background() {
         .unwrap()
         .starts_with("BFS uses a queue."));
     assert_eq!(*asked.lock().unwrap(), 1);
+}
+
+#[test]
+fn in_auto_felix_changes_and_makes_notes_at_once_and_links_instead_of_citing_itself() {
+    let (mut state, _d, ids) = state_with(&[("Graph traversals", "cs130"), ("Heaps", "cs130")]);
+    {
+        let mut store = state.fresh();
+        store.find_note_mut(&ids[0]).unwrap().body = "BFS takes the newest vertex.".into();
+        store.save().unwrap();
+    }
+    let (streamer, prompts) = scripted(vec![
+        "<tool>{\"name\": \"search_notes\", \"query\": \"heaps\"}</tool>",
+        "<tool>{\"name\": \"edit_note\", \"note\": \"Graph traversals\", \"find\": \"newest\", \"replace\": \"oldest [n1]\"}</tool>",
+        "<tool>{\"name\": \"create_note\", \"title\": \"Queues\", \"body\": \"First in, first out. See [n1].\", \"folder\": \"cs130\"}</tool>",
+        "I fixed it and made a note on queues.",
+    ]);
+    state.chat = Some(streamer);
+    let lines = chat_lines_with(
+        &state,
+        "fix my bfs note and make one on queues",
+        Some("auto"),
+    );
+    let shown: Vec<&serde_json::Value> = lines.iter().filter_map(|l| l.get("proposal")).collect();
+    assert_eq!(shown.len(), 2);
+    assert!(shown.iter().all(|p| p["state"] == "applied"));
+    assert_eq!(shown[0]["before"], "BFS takes the newest vertex.");
+    assert!(shown[0]["after"].as_str().is_some_and(|v| !v.is_empty()));
+    let store = state.fresh();
+    assert_eq!(
+        store.find_note(&ids[0]).unwrap().body,
+        "BFS takes the oldest vertex."
+    );
+    let made = store.find_note(shown[1]["made"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        (
+            made.title.as_str(),
+            made.directory.as_str(),
+            made.body.as_str()
+        ),
+        (
+            "Queues",
+            "cs130",
+            "First in, first out. See [[Graph traversals]]."
+        )
+    );
+    let prompts = prompts.lock().unwrap();
+    assert!(prompts[0].contains("leo applies your changes at once"));
+    assert!(prompts[2].contains("Changed. leo applied it"));
+}
+
+#[test]
+fn read_only_felix_has_no_change_tools_and_is_refused_if_it_tries() {
+    let (mut state, _d, ids) = state_with(&[("Graph traversals", "cs130")]);
+    let (streamer, prompts) = scripted(vec![
+        "<tool>{\"name\": \"edit_note\", \"note\": \"Graph traversals\", \"replace\": \"more\"}</tool>",
+        "I would add a line about queues; switch to Ask or Auto to let me.",
+    ]);
+    state.chat = Some(streamer);
+    let lines = chat_lines_with(&state, "please fix my note", Some("read"));
+    assert!(lines.iter().all(|l| l.get("proposal").is_none()));
+    assert_eq!(state.fresh().find_note(&ids[0]).unwrap().body, "");
+    let prompts = prompts.lock().unwrap();
+    assert!(!prompts[0].contains("### edit_note") && !prompts[0].contains("### create_note"));
+    assert!(prompts[0].contains("Read only"));
+    assert!(prompts[0].trim_end().ends_with(tools::READ_REMINDER));
+    assert!(prompts[1].contains("this chat is read only"));
+    assert_eq!(prompts.len(), 2, "no nudge to change anything");
 }
