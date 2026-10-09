@@ -257,6 +257,28 @@ test.describe('editing like Obsidian', () => {
     await expect.poll(saved, { timeout: 5000 }).toBe('');
   });
 
+  test('Cmd/Ctrl+Z brings back a deleted section and Shift+Cmd+Z takes it away again', async ({ page }) => {
+    test.skip(test.info().project.name !== 'desktop', 'undo is a keyboard shortcut');
+    const saved = await open(page, 'undo');
+    await select(page, [0, 0], [2, 5]);
+    await page.keyboard.press('Backspace');
+    await expect.poll(saved, { timeout: 5000 }).toBe(' item\nFourth line');
+    await page.keyboard.type('New start');
+    await expect.poll(saved, { timeout: 5000 }).toBe('New start item\nFourth line');
+    await page.keyboard.press('ControlOrMeta+z');
+    await expect.poll(saved, { timeout: 5000 }).toBe(' item\nFourth line');
+    await page.keyboard.press('ControlOrMeta+z');
+    await expect.poll(saved, { timeout: 5000 }).toBe(body);
+    const area = page.locator('#doc textarea.line-edit');
+    expect(await area.evaluate((a) => a.value.slice(a.selectionStart, a.selectionEnd))).toContain('Second **bold** line');
+    await page.keyboard.press('ControlOrMeta+Shift+z');
+    await expect.poll(saved, { timeout: 5000 }).toBe(' item\nFourth line');
+    await page.locator('#doc').click({ position: { x: 5, y: 5 } });
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('ControlOrMeta+z');
+    await expect.poll(saved, { timeout: 5000 }).toBe(body);
+  });
+
   test('a selection that starts and ends outside the note leaves it alone', async ({ page }) => {
     const saved = await open(page, 'outside');
     await page.evaluate(() => {
@@ -372,6 +394,35 @@ test.describe('drag and drop', () => {
     await page.locator(`.card[data-id="${note.id}"]`).dragTo(chat.locator('#chat-input'));
     await expect(chat.locator('.chat-ref', { hasText: 'Dragged to Felix' })).toBeVisible();
   });
+});
+
+test('on a phone a sheet swipes down to close, and a small drag springs back', async ({ page }) => {
+  test.skip(test.info().project.name !== 'phone', 'sheets slide up from the bottom on phones');
+  await page.goto('/');
+  const swipe = (distance, ms) => page.evaluate(async ([distance, ms]) => {
+    const sheet = document.querySelector('.sheet');
+    const box = sheet.getBoundingClientRect();
+    const at = (y) => [new Touch({ identifier: 1, target: sheet, clientX: box.left + 40, clientY: y })];
+    const top = box.top + 20;
+    sheet.dispatchEvent(new TouchEvent('touchstart', { touches: at(top), changedTouches: at(top), bubbles: true, cancelable: true }));
+    const steps = 6;
+    for (let i = 1; i <= steps; i++) {
+      await new Promise((r) => setTimeout(r, ms / steps));
+      const y = top + (distance * i) / steps;
+      sheet.dispatchEvent(new TouchEvent('touchmove', { touches: at(y), changedTouches: at(y), bubbles: true, cancelable: true }));
+    }
+    sheet.dispatchEvent(new TouchEvent('touchend', { touches: [], changedTouches: at(top + distance), bubbles: true, cancelable: true }));
+  }, [distance, ms]);
+  await page.locator('#menu').click();
+  await expect(page.locator('.sheet')).toBeVisible();
+  await swipe(20, 400);
+  await page.waitForTimeout(300);
+  await expect(page.locator('.sheet')).toBeVisible();
+  await swipe(160, 300);
+  await expect(page.locator('.scrim')).toHaveCount(0);
+  await page.locator('#menu').click();
+  await swipe(40, 40);
+  await expect(page.locator('.scrim'), 'a quick flick closes it too').toHaveCount(0);
 });
 
 test('search finds a note named after a command', async ({ page }) => {

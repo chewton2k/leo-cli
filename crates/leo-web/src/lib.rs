@@ -141,6 +141,78 @@ struct AppState {
     reader: Option<Reader>,
     room: Option<Room>,
     web: Option<Web>,
+    activity: Arc<Activity>,
+}
+
+struct Activity {
+    born: std::time::Instant,
+    last: std::sync::atomic::AtomicU64,
+}
+
+impl Default for Activity {
+    fn default() -> Activity {
+        Activity {
+            born: std::time::Instant::now(),
+            last: std::sync::atomic::AtomicU64::new(0),
+        }
+    }
+}
+
+impl Activity {
+    fn touch(&self) {
+        let now = self.born.elapsed().as_millis() as u64;
+        self.last.store(now, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn idle(&self) -> std::time::Duration {
+        let last = self.last.load(std::sync::atomic::Ordering::Relaxed);
+        self.born
+            .elapsed()
+            .saturating_sub(std::time::Duration::from_millis(last))
+    }
+}
+
+fn counts_as_use(method: &axum::http::Method, path: &str) -> bool {
+    if !path.starts_with("/api/") {
+        return false;
+    }
+    let polling = path == "/api/activity"
+        || path == "/api/graph/status"
+        || path.starts_with("/api/record/")
+        || path.starts_with("/api/import/");
+    !(method == axum::http::Method::GET && polling)
+}
+
+async fn note_activity(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    if counts_as_use(request.method(), request.uri().path()) {
+        state.activity.touch();
+    }
+    next.run(request).await
+}
+
+const GRAPH_CHECK: std::time::Duration = std::time::Duration::from_secs(30);
+
+async fn keep_graph_current(state: AppState) {
+    let mut tick = tokio::time::interval(GRAPH_CHECK);
+    loop {
+        tick.tick().await;
+        let idle = state.activity.idle();
+        if idle < graph::UPDATE_WHEN_IDLE {
+            continue;
+        }
+        let Ok(sources) = state
+            .with_store(|store| Ok(graph::sources(&store.notes)))
+            .await
+        else {
+            continue;
+        };
+        let graphs = Arc::clone(&state.graphs);
+        let _ = tokio::task::spawn_blocking(move || graphs.update_if_due(sources, idle)).await;
+    }
 }
 
 struct Storage {
@@ -240,7 +312,7 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
             sessions::Sessions::load(&sessions_path)
         },
     ));
-    let app = router(AppState {
+    let state = AppState {
         store: Arc::new(Mutex::new(Storage {
             store,
             reload: false,
@@ -258,7 +330,10 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
         reader,
         room,
         web,
-    });
+        activity: Default::default(),
+    };
+    tokio::spawn(keep_graph_current(state.clone()));
+    let app = router(state);
 
     let tunnel = if !options.local {
         println!();
@@ -450,6 +525,10 @@ fn router(state: AppState) -> Router {
             state.clone(),
             auth_middleware,
         ))
+        .route_layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            note_activity,
+        ))
         .route("/favicon.svg", get(favicon))
         .layer(axum::middleware::from_fn(security_headers))
         .layer(axum::middleware::from_fn(note_peer))
@@ -484,3 +563,34 @@ fn store_now<R>(
 // ── Response types ────────────────────────────────────────────────────────
 
 // ── Handlers ──────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod activity_tests {
+    use super::*;
+
+    #[test]
+    fn polling_does_not_count_as_someone_using_leo() {
+        use axum::http::Method;
+        assert!(counts_as_use(&Method::PATCH, "/api/notes/abc"));
+        assert!(counts_as_use(&Method::GET, "/api/notes"));
+        assert!(counts_as_use(&Method::POST, "/api/record/r1/stop"));
+        for polled in [
+            "/api/activity",
+            "/api/graph/status",
+            "/api/record/r1",
+            "/api/import/j1",
+        ] {
+            assert!(!counts_as_use(&Method::GET, polled), "{polled}");
+        }
+        assert!(!counts_as_use(&Method::GET, "/app.js"));
+    }
+
+    #[test]
+    fn idle_time_restarts_whenever_leo_is_used() {
+        let activity = Activity::default();
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        assert!(activity.idle() >= std::time::Duration::from_millis(30));
+        activity.touch();
+        assert!(activity.idle() < std::time::Duration::from_millis(20));
+    }
+}

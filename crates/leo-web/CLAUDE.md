@@ -477,3 +477,19 @@
   the cache and progress stay deterministic).
 - `api()` in the page treats an empty reply body as `null` (POST `/api/dirs`
   answers 201 with no body; parsing it used to fail after the folder was made).
+- Undo in notes: `doc.js` keeps up to `MOST_UNDO` (200) snapshots per open
+  note. Typing groups into one step until a 1 s pause or 4 s of typing; any
+  change bigger than one character (a deleted selection, a ticked box, a
+  pasted picture) is its own step. Cmd/Ctrl+Z undoes, Shift+Cmd+Z or Ctrl+Y
+  redoes, inside the editor or with nothing else focused; the restored text
+  comes back selected.
+- Sheets on phones (< 600 px) swipe down to close (`swipeToClose` in
+  sheets.js): past `SWIPE_CLOSE` (90 px) or a quick flick; a small drag
+  springs back; not from inputs or a scrolled sheet.
+- The knowledge graph keeps itself current: `keep_graph_current` (in `serve`)
+  checks every 30 s, and `Graphs::update_if_due` starts an update when
+  `should_update`: built at least once (the first build is the user's call),
+  something to do, nobody has used leo for `UPDATE_WHEN_IDLE` (2 min;
+  `note_activity` marks use on every API request except polling, see
+  `counts_as_use`), and not within `RETRY_AUTO_AFTER` (10 min) of a failed
+  automatic try. It reloads the store first, so Obsidian or TUI edits count.

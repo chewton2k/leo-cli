@@ -128,10 +128,11 @@ function mapStatus(status) {
   let button = '';
   if (building) button = `<button class="btn primary sm" disabled>${status.total ? `Connecting ${status.done}/${status.total}…` : 'Starting…'}</button>`;
   else if (status.read === 0) button = '<button class="btn primary sm" data-action="map-build">Connect notes</button>';
-  else if (status.stale > 0 || status.requests > 0) button = `<button class="btn primary sm" data-action="map-build">Update${status.stale ? ` · ${status.stale} changed` : ''}</button>`;
+  else if (status.stale > 0 || status.requests > 0) button = `<button class="btn primary sm" data-action="map-build" title="Changed notes are also connected on their own after 2 minutes without using leo">Update${status.stale ? ` · ${status.stale} changed` : ''}</button>`;
   const bar = building && status.total ? `<span class="map-progress"><i style="width:${Math.round((status.done / status.total) * 100)}%"></i></span>` : '';
   const again = !building && status.read > 0 ? '<button class="btn plain sm map-rebuild" data-action="map-rebuild" title="Read and connect every note again">Rebuild</button>' : '';
-  box.innerHTML = `<span class="map-summary">${summary}</span>${button}${again}${bar}`;
+  const auto = status.built_at ? ' title="Keeps itself up to date: changed notes are connected after 2 minutes without using leo"' : '';
+  box.innerHTML = `<span class="map-summary"${auto}>${summary}</span>${button}${again}${bar}`;
 }
 
 function mapFound(query) {

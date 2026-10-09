@@ -22,6 +22,21 @@ const WHY_CHARS: usize = 140;
 const READ_TOKENS: u32 = 6_000;
 const LINK_TOKENS: u32 = 12_000;
 const BASE_ROOM: usize = 64_000;
+pub const UPDATE_WHEN_IDLE: std::time::Duration = std::time::Duration::from_secs(120);
+pub const RETRY_AUTO_AFTER: std::time::Duration = std::time::Duration::from_secs(600);
+
+pub fn should_update(
+    status: &Status,
+    idle: std::time::Duration,
+    since_auto: Option<std::time::Duration>,
+) -> bool {
+    let waited = status.state != "failed" || since_auto.is_none_or(|s| s >= RETRY_AUTO_AFTER);
+    status.state != "building"
+        && status.built_at.is_some()
+        && status.requests > 0
+        && idle >= UPDATE_WHEN_IDLE
+        && waited
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Scale {
@@ -880,6 +895,7 @@ pub struct Graphs {
     writer: Option<Writer>,
     room: Option<crate::Room>,
     job: Mutex<Job>,
+    auto: Mutex<Option<std::time::Instant>>,
 }
 
 impl Graphs {
@@ -903,6 +919,7 @@ impl Graphs {
             path,
             writer,
             room: None,
+            auto: Mutex::new(None),
             job: Mutex::new(Job {
                 state: "idle",
                 done: 0,
@@ -993,6 +1010,29 @@ impl Graphs {
             rebuild_requests: requests_needed_at(sources, &Cache::default(), &self.scale()),
             built_at: cache.built_at,
         }
+    }
+
+    pub fn update_if_due(
+        self: &Arc<Self>,
+        sources: Vec<Source>,
+        idle: std::time::Duration,
+    ) -> bool {
+        if self.writer.is_none() {
+            return false;
+        }
+        let since = self
+            .auto
+            .lock()
+            .ok()
+            .and_then(|auto| auto.map(|at| at.elapsed()));
+        if !should_update(&self.status(&sources), idle, since) {
+            return false;
+        }
+        if let Ok(mut auto) = self.auto.lock() {
+            *auto = Some(std::time::Instant::now());
+        }
+        self.start(sources);
+        true
     }
 
     pub fn start(self: &Arc<Self>, sources: Vec<Source>) {
@@ -1149,6 +1189,112 @@ mod tests {
                 ))
             }
         }
+    }
+
+    #[test]
+    fn the_graph_updates_itself_only_when_built_before_changed_and_left_alone() {
+        let minutes = |m: u64| std::time::Duration::from_secs(m * 60);
+        let ready = Status {
+            state: "done",
+            done: 0,
+            total: 0,
+            message: None,
+            notes: 3,
+            read: 3,
+            stale: 1,
+            requests: 2,
+            rebuild_requests: 4,
+            built_at: Some("2026-10-09T00:00:00Z".into()),
+        };
+        assert!(should_update(&ready, minutes(2), None));
+        assert!(
+            !should_update(&ready, minutes(1), None),
+            "someone is still using leo"
+        );
+        assert!(
+            !should_update(
+                &Status {
+                    requests: 0,
+                    ..ready.clone()
+                },
+                minutes(5),
+                None
+            ),
+            "nothing changed"
+        );
+        assert!(
+            !should_update(
+                &Status {
+                    built_at: None,
+                    ..ready.clone()
+                },
+                minutes(5),
+                None
+            ),
+            "never built: the first build is the user's call"
+        );
+        assert!(!should_update(
+            &Status {
+                state: "building",
+                ..ready.clone()
+            },
+            minutes(5),
+            None
+        ));
+        let failed = Status {
+            state: "failed",
+            ..ready.clone()
+        };
+        assert!(
+            !should_update(&failed, minutes(5), Some(minutes(3))),
+            "a failed try waits"
+        );
+        assert!(should_update(&failed, minutes(5), Some(minutes(11))));
+        assert!(
+            should_update(&ready, minutes(5), Some(minutes(1))),
+            "after a good update, new edits are picked up"
+        );
+    }
+
+    #[test]
+    fn an_idle_update_starts_one_build_and_not_another_while_it_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        let notes = [source(
+            "a",
+            "Graph traversals",
+            "BFS uses a queue.",
+            "cs130",
+        )];
+        let started = Arc::new(AtomicUsize::new(0));
+        let count = Arc::clone(&started);
+        let writer: Writer = Arc::new(move |_: &str, _: &str, _: u32| {
+            count.fetch_add(1, Ordering::SeqCst);
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            Ok(r#"{"notes": [{"id": "n1", "summary": "BFS", "concepts": ["queue"]}]}"#.into())
+        });
+        let graphs = Arc::new(Graphs::new(dir.path().join("graph.json"), Some(writer)));
+        let idle = std::time::Duration::from_secs(300);
+        assert!(
+            !graphs.update_if_due(notes.to_vec(), idle),
+            "never built yet"
+        );
+        let cache = Cache {
+            built_at: Some("2026-10-09T00:00:00Z".into()),
+            ..Cache::default()
+        };
+        std::fs::write(graphs.path(), serde_json::to_string(&cache).unwrap()).unwrap();
+        assert!(graphs.update_if_due(notes.to_vec(), idle));
+        assert!(!graphs.update_if_due(notes.to_vec(), idle), "one at a time");
+        let waited = std::time::Instant::now();
+        while graphs.status(&notes).state == "building" {
+            assert!(waited.elapsed().as_secs() < 5);
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(started.load(Ordering::SeqCst) >= 1);
+        assert_eq!(
+            graphs.load().notes.get("a").map(|r| r.summary.as_str()),
+            Some("BFS")
+        );
     }
 
     #[test]
