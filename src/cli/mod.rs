@@ -9,6 +9,7 @@ mod prompt;
 mod serve;
 mod uninstall;
 mod update;
+mod web_felix;
 mod web_record;
 mod web_settings;
 mod web_storage;
@@ -363,18 +364,7 @@ pub fn run(cli: Cli) -> Result<()> {
                     )?;
                     Ok(leo_web::Reply {
                         text,
-                        spent: answered.map(|a| leo_web::Spent {
-                            by: a.by,
-                            model: a.model,
-                            effort: a.effort,
-                            input: a.input,
-                            output: a.output,
-                            estimated: a.estimated,
-                            cost: a.cost,
-                            plan: a.plan,
-                            local: a.local,
-                            steps: 1,
-                        }),
+                        spent: answered.map(web_felix::spent_of),
                     })
                 },
             );
@@ -447,7 +437,7 @@ pub fn run(cli: Cli) -> Result<()> {
                             )
                         },
                     )),
-                    converse: None,
+                    converse: Some(web_felix::converser()),
                 },
             ))
         }

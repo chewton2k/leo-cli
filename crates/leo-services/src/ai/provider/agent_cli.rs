@@ -99,7 +99,7 @@ pub fn known_features(listing: &str) -> Vec<String> {
         .collect()
 }
 
-fn codex_disables(program: &Path) -> Vec<String> {
+pub(crate) fn codex_disables(program: &Path) -> Vec<String> {
     static KNOWN: std::sync::OnceLock<
         std::sync::Mutex<std::collections::HashMap<PathBuf, Vec<String>>>,
     > = std::sync::OnceLock::new();
@@ -123,7 +123,7 @@ fn codex_disables(program: &Path) -> Vec<String> {
     found
 }
 
-fn stop_all(child: &mut std::process::Child) {
+pub(crate) fn stop_all(child: &mut std::process::Child) {
     #[cfg(unix)]
     if let Ok(group) = libc::pid_t::try_from(child.id()) {
         unsafe {
@@ -315,7 +315,7 @@ impl AgentCli {
         Ok(files)
     }
 
-    fn room(&self) -> ProviderResult<tempfile::TempDir> {
+    pub(crate) fn room(&self) -> ProviderResult<tempfile::TempDir> {
         let mut builder = tempfile::Builder::new();
         builder.prefix("leo-writing-");
         #[cfg(unix)]
@@ -378,55 +378,250 @@ pub fn read_stream(lines: impl BufRead, sink: Sink<'_>) -> Heard {
     let mut heard = Heard::default();
     for line in lines.lines() {
         let Ok(line) = line else { break };
-        let Ok(event) = serde_json::from_str::<serde_json::Value>(&line) else {
-            continue;
-        };
-        match event["type"].as_str() {
-            Some("stream_event") => {
-                let delta = &event["event"]["delta"];
-                if event["event"]["type"] == "content_block_delta" && delta["type"] == "text_delta"
-                {
-                    if let Some(text) = delta["text"].as_str() {
-                        heard.answer.push_str(text);
-                        sink(text);
-                    }
-                }
-            }
-            Some("system") if event["subtype"] == "init" => {
-                heard.model = event["model"].as_str().map(str::to_string);
-            }
-            Some("rate_limit_event") => {
-                if let Some(usage) =
-                    crate::usage::from_claude(&event["rate_limit_info"], chrono::Utc::now())
-                {
-                    heard.usage = Some(usage);
-                }
-            }
-            Some("result") => {
-                let failed = event["is_error"].as_bool().unwrap_or(false)
-                    || event["subtype"].as_str().is_some_and(|s| s != "success");
-                let said = event["result"].as_str().unwrap_or_default().to_string();
-                heard.result = Some((failed, said));
-                let usage = &event["usage"];
-                let input = [
-                    "input_tokens",
-                    "cache_read_input_tokens",
-                    "cache_creation_input_tokens",
-                ]
-                .iter()
-                .filter_map(|k| usage[*k].as_u64())
-                .sum::<u64>();
-                if let Some(output) = usage["output_tokens"].as_u64() {
-                    heard.tokens = Some((input, output));
-                }
-            }
-            _ => {}
-        }
+        hear(&line, &mut heard, sink);
     }
     heard
 }
 
+pub fn hear(line: &str, heard: &mut Heard, sink: Sink<'_>) -> bool {
+    let Ok(event) = serde_json::from_str::<serde_json::Value>(line) else {
+        return false;
+    };
+    match event["type"].as_str() {
+        Some("stream_event") => {
+            let delta = &event["event"]["delta"];
+            if event["event"]["type"] == "content_block_delta" && delta["type"] == "text_delta" {
+                if let Some(text) = delta["text"].as_str() {
+                    heard.answer.push_str(text);
+                    sink(text);
+                }
+            }
+            false
+        }
+        Some("system") if event["subtype"] == "init" => {
+            heard.model = event["model"].as_str().map(str::to_string);
+            false
+        }
+        Some("rate_limit_event") => {
+            if let Some(usage) =
+                crate::usage::from_claude(&event["rate_limit_info"], chrono::Utc::now())
+            {
+                heard.usage = Some(usage);
+            }
+            false
+        }
+        Some("result") => {
+            let failed = event["is_error"].as_bool().unwrap_or(false)
+                || event["subtype"].as_str().is_some_and(|s| s != "success");
+            let said = event["result"].as_str().unwrap_or_default().to_string();
+            heard.result = Some((failed, said));
+            let usage = &event["usage"];
+            let input = [
+                "input_tokens",
+                "cache_read_input_tokens",
+                "cache_creation_input_tokens",
+            ]
+            .iter()
+            .filter_map(|k| usage[*k].as_u64())
+            .sum::<u64>();
+            if let Some(output) = usage["output_tokens"].as_u64() {
+                heard.tokens = Some((input, output));
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
+pub struct ClaudeSession {
+    name: String,
+    child: std::process::Child,
+    stdin: Option<std::process::ChildStdin>,
+    lines: std::sync::mpsc::Receiver<String>,
+    quiet: Duration,
+    model: Option<String>,
+    effort: Option<String>,
+    _room: tempfile::TempDir,
+}
+
+impl ClaudeSession {
+    pub fn say(&mut self, text: &str, sink: Sink<'_>) -> ProviderResult<(String, Spent)> {
+        let message = serde_json::json!({
+            "type": "user",
+            "message": { "role": "user", "content": [{ "type": "text", "text": text }] },
+        });
+        let stdin = self.stdin.as_mut().ok_or_else(|| {
+            ProviderError::Retryable(format!("{}: the session has ended", self.name))
+        })?;
+        writeln!(stdin, "{message}")
+            .and_then(|_| stdin.flush())
+            .map_err(|e| {
+                ProviderError::Retryable(format!("{}: the session ended: {e}", self.name))
+            })?;
+        let mut heard = Heard::default();
+        loop {
+            match self.lines.recv_timeout(self.quiet) {
+                Ok(line) => {
+                    if hear(&line, &mut heard, sink) {
+                        break;
+                    }
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    stop_all(&mut self.child);
+                    return Err(ProviderError::Retryable(format!(
+                        "{}: claude stopped answering and was stopped",
+                        self.name
+                    )));
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(ProviderError::Retryable(format!(
+                        "{}: claude ended the session. If it is not signed in, {}.",
+                        self.name,
+                        Agent::ClaudeCode.sign_in()
+                    )));
+                }
+            }
+        }
+        if let Some(usage) = heard.usage.clone() {
+            crate::usage::save(&self.name, usage);
+        }
+        if heard.model.is_some() {
+            self.model = heard.model.clone();
+        }
+        let answer = match &heard.result {
+            Some((true, said)) => {
+                return Err(ProviderError::Retryable(format!(
+                    "{}: claude stopped: {}",
+                    self.name,
+                    last_words(said)
+                )))
+            }
+            Some((false, said)) if heard.answer.trim().is_empty() => said.trim().to_string(),
+            _ => heard.answer.trim().to_string(),
+        };
+        let (input, output, estimated) = match heard.tokens {
+            Some((input, output)) => (input, output, false),
+            None => (
+                text.chars().count().div_ceil(4) as u64,
+                answer.chars().count().div_ceil(4) as u64,
+                true,
+            ),
+        };
+        Ok((
+            answer,
+            Spent {
+                model: self.model.clone(),
+                effort: self.effort.clone(),
+                input,
+                output,
+                estimated,
+            },
+        ))
+    }
+}
+
+impl Drop for ClaudeSession {
+    fn drop(&mut self) {
+        self.stdin.take();
+        stop_all(&mut self.child);
+        let _ = self.child.wait();
+    }
+}
+
 impl AgentCli {
+    pub fn is_claude(&self) -> bool {
+        self.agent == Agent::ClaudeCode
+    }
+
+    pub fn provider_name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn bin(&self) -> &str {
+        &self.bin
+    }
+
+    pub fn model(&self) -> Option<&str> {
+        self.model.as_deref()
+    }
+
+    pub fn effort(&self) -> Option<&str> {
+        self.effort.as_deref()
+    }
+
+    pub fn quiet_limit(&self) -> Duration {
+        self.quiet_limit
+    }
+
+    pub fn session_arguments(&self, system: &str) -> Vec<String> {
+        let mut args: Vec<String> = [
+            "-p",
+            "--safe-mode",
+            "--tools",
+            "WebSearch",
+            "--allowedTools",
+            "WebSearch",
+            "--no-session-persistence",
+            "--input-format",
+            "stream-json",
+            "--output-format",
+            "stream-json",
+            "--include-partial-messages",
+            "--verbose",
+        ]
+        .map(String::from)
+        .to_vec();
+        if let Some(model) = &self.model {
+            args.extend(["--model".to_string(), model.clone()]);
+        }
+        if let Some(effort) = &self.effort {
+            args.extend(["--effort".to_string(), effort.clone()]);
+        }
+        args.extend(["--system-prompt".to_string(), system.to_string()]);
+        args
+    }
+
+    pub fn claude_session(&self, system: &str) -> ProviderResult<ClaudeSession> {
+        let program = locate(&self.bin).ok_or_else(|| {
+            ProviderError::Retryable(format!("{}: {} is not installed", self.name, self.bin))
+        })?;
+        let room = self.room()?;
+        let mut command = Command::new(program);
+        command
+            .args(self.session_arguments(system))
+            .current_dir(room.path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        #[cfg(unix)]
+        std::os::unix::process::CommandExt::process_group(&mut command, 0);
+        let mut child = command.spawn().map_err(|e| {
+            ProviderError::Retryable(format!("{}: could not run {}: {e}", self.name, self.bin))
+        })?;
+        let stdin = child.stdin.take();
+        let stdout = child.stdout.take().ok_or_else(|| {
+            ProviderError::Retryable(format!("{}: could not read {}", self.name, self.bin))
+        })?;
+        let (tx, lines) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                if tx.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+        Ok(ClaudeSession {
+            name: self.name.clone(),
+            child,
+            stdin,
+            lines,
+            quiet: self.quiet_limit,
+            model: self.model.clone(),
+            effort: self.effort.clone(),
+            _room: room,
+        })
+    }
+
     fn run(&self, req: &ChatRequest, images: &[Image], sink: Sink<'_>) -> ProviderResult<String> {
         let program =
             locate(&self.bin).ok_or_else(|| ProviderError::Retryable(self.unavailable_reason()))?;
@@ -873,6 +1068,85 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"#
         assert_eq!(answer, "# Notes\nhello");
         assert_eq!(pieces.len(), 2);
         assert_eq!(agent.complete(&request()).unwrap(), "# Notes\nhello");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_claude_session_stays_open_and_answers_each_message_in_turn() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let log = dir.path().join("heard.log");
+        let bin = script(
+            dir.path(),
+            &format!(
+                r##"echo "$@" > "{log}.args"
+printf '%s\n' '{{"type":"system","subtype":"init","model":"claude-sonnet-5-5"}}'
+n=0
+while IFS= read -r line; do
+  n=$((n+1))
+  echo "$line" >> "{log}"
+  printf '%s\n' '{{"type":"stream_event","event":{{"type":"content_block_delta","delta":{{"type":"text_delta","text":"answer '$n'"}}}}}}'
+  printf '%s\n' '{{"type":"result","subtype":"success","is_error":false,"result":"answer '$n'","usage":{{"input_tokens":10,"cache_read_input_tokens":90,"output_tokens":5}}}}'
+done"##,
+                log = log.display()
+            ),
+        );
+        let mut cfg = config(ProviderKind::ClaudeCode, &bin, Some("claude-sonnet-5-5"));
+        cfg.effort = Some("high".into());
+        let agent = AgentCli::new("claude_code".into(), Agent::ClaudeCode, &cfg);
+        let mut session = agent.claude_session("You are Felix.").unwrap();
+        let mut pieces = Vec::new();
+        let (first, spent) = session
+            .say("hello", &mut |p| pieces.push(p.to_string()))
+            .unwrap();
+        assert_eq!(first, "answer 1");
+        assert_eq!(
+            (
+                spent.model.as_deref(),
+                spent.effort.as_deref(),
+                spent.input,
+                spent.output,
+                spent.estimated
+            ),
+            (Some("claude-sonnet-5-5"), Some("high"), 100, 5, false)
+        );
+        let (second, _) = session
+            .say("<tool_result>x</tool_result>", &mut |_| {})
+            .unwrap();
+        assert_eq!(
+            second, "answer 2",
+            "the same process answers the next message"
+        );
+        assert_eq!(pieces, ["answer 1"]);
+        let heard = std::fs::read_to_string(&log).unwrap();
+        let sent: Vec<serde_json::Value> = heard
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert_eq!(
+            sent[1]["message"]["content"][0]["text"],
+            "<tool_result>x</tool_result>"
+        );
+        let args = std::fs::read_to_string(format!("{}.args", log.display())).unwrap();
+        assert!(args.contains("--input-format stream-json") && args.contains("--effort high"));
+        assert!(args.contains("--system-prompt You are Felix."));
+    }
+
+    #[test]
+    #[ignore = "talks to the real Claude Code on this computer"]
+    fn real_claude_session_remembers_between_messages() {
+        let cfg = config(ProviderKind::ClaudeCode, "claude", None);
+        let agent = AgentCli::new("claude_code".into(), Agent::ClaudeCode, &cfg);
+        let mut session = agent
+            .claude_session("Answer in one short sentence.")
+            .unwrap();
+        let (first, spent) = session
+            .say("The secret word is maple. Reply only: noted.", &mut |_| {})
+            .unwrap();
+        let (second, _) = session
+            .say("What is the secret word? One word.", &mut |_| {})
+            .unwrap();
+        println!("first: {first}\nsecond: {second}\nspent: {spent:?}");
+        assert!(second.to_lowercase().contains("maple"));
     }
 
     #[cfg(unix)]

@@ -1199,6 +1199,24 @@ test.describe('Felix', () => {
     await expect(page.locator('.toast')).toContainText(`Saved as a note in switch-a-${tag}`);
   });
 
+  test('the note picker keeps its search box while typing, until a note is chosen', async ({ page }) => {
+    const tag = `${test.info().project.name}-${Date.now().toString(36)}`;
+    await page.request.post('/api/notes', { data: { title: `Dijkstra picker ${tag}`, body: 'x' } });
+    await page.goto('/');
+    await page.locator('#chat-toggle').click();
+    const chat = page.locator('#chat');
+    await chat.locator('[data-chat="attach"]').click();
+    await chat.locator('[data-chat="attach-note"]').click();
+    const search = chat.locator('#chat-pick-search');
+    await expect(search).toBeFocused();
+    await search.pressSequentially(`dijkstra picker ${tag}`, { delay: 30 });
+    await expect(search).toHaveValue(`dijkstra picker ${tag}`);
+    await expect(search).toBeFocused();
+    await expect(chat.locator('.chat-pick-row').first()).toContainText(`Dijkstra picker ${tag}`);
+    await chat.locator('.chat-pick-row').first().click();
+    await expect(chat.locator('#chat-refs .chat-ref')).toContainText(`Dijkstra picker ${tag}`);
+  });
+
   test('says plainly when no AI is set up', async ({ page }) => {
     await page.route('**/api/chat', (route) => route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: '{"sources":[]}\n{"error":"no AI for writing is chosen — type :settings in leo and pick one under writing"}\n' }));
     await page.goto('/');

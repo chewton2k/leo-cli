@@ -832,12 +832,18 @@
       const p = state.pick;
       if (!p) return closePick();
       box.hidden = false;
-      const search = p.from === 'button' ? `<input class="chat-pick-search" id="chat-pick-search" placeholder="Find a note…" autocomplete="off" value="${escape(p.query)}">` : '';
       const rows = p.notes.length
         ? p.notes.map((n, i) => `<button class="chat-pick-row${i === p.at ? ' on' : ''}" data-chat="pick" data-i="${i}" role="option" aria-selected="${i === p.at}"><b>${escape(n.title || 'Untitled')}</b><span>${escape(n.directory || 'All notes')}</span></button>`).join('')
         : `<div class="chat-pick-none">${p.loading ? 'Looking…' : state.refs.length >= MOST_REFS ? `Up to ${MOST_REFS} notes at once.` : 'No notes match.'}</div>`;
-      box.innerHTML = `${search}<div class="chat-pick-list" role="listbox" aria-label="Notes">${rows}</div>`;
-      const field = $('#chat-pick-search');
+      const wantsSearch = p.from === 'button';
+      let field = $('#chat-pick-search');
+      let list = box.querySelector('.chat-pick-list');
+      if (!list || Boolean(field) !== wantsSearch) {
+        box.innerHTML = `${wantsSearch ? `<input class="chat-pick-search" id="chat-pick-search" placeholder="Find a note…" autocomplete="off" value="${escape(p.query)}">` : ''}<div class="chat-pick-list" role="listbox" aria-label="Notes"></div>`;
+        field = $('#chat-pick-search');
+        list = box.querySelector('.chat-pick-list');
+      }
+      list.innerHTML = rows;
       if (field && p.focusSearch) {
         field.focus();
         field.setSelectionRange(field.value.length, field.value.length);

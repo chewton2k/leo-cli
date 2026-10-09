@@ -130,6 +130,7 @@ pub trait TranscribeProvider {
 pub mod agent_cli;
 pub mod audio;
 pub mod chat_audio;
+pub mod codex_app;
 pub mod openai;
 pub mod parakeet;
 pub mod transcriptions;

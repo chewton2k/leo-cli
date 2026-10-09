@@ -5,6 +5,7 @@ pub mod error;
 pub mod live;
 pub mod long;
 pub mod provider;
+pub mod session;
 pub mod spend;
 pub mod transcribe;
 
@@ -20,6 +21,14 @@ pub const STRUCTURE_MAX_TOKENS: u32 = 8192;
 
 pub fn writing_budget() -> budget::Budget {
     budget::writing_budget(&crate::config::Config::load())
+}
+
+pub fn open_session(
+    systems: &session::Systems,
+    tools: &[session::ToolDef],
+) -> Option<Box<dyn session::Session>> {
+    let (cfg, store) = context();
+    session::open(&cfg, store.as_ref(), systems, tools)
 }
 
 pub fn felix_room() -> usize {
