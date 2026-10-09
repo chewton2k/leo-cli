@@ -505,3 +505,9 @@
   keeps an edit that could not reach leo in localStorage; on the next load the
   page says "Saving N edits that had not reached leo yet" and `retry()`s them,
   and opening that note shows the kept text.
+- Model and effort: Settings shows one picker per AI (`modelPicker`): models
+  with prices, and effort chips when `choice::efforts` offers some for that
+  provider and model (Claude Code low..max, Codex low..xhigh, OpenAI reasoning
+  models minimal..high, Gemini low..high). POST `/api/settings {set: "effort",
+  value}` (empty = default) writes `[providers.X] effort`; the TUI's writing
+  effort row steps through the same list (`choice::step_effort`).

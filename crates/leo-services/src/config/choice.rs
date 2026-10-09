@@ -367,6 +367,64 @@ pub fn write_choice(doc: &mut DocumentMut, task: Task, provider: &str) {
     edit::write_chain(doc, task, &[provider.to_string()]);
 }
 
+pub fn efforts(provider: &str, model: &str) -> &'static [&'static str] {
+    let model = model.to_ascii_lowercase();
+    match provider {
+        "claude_code" => &["low", "medium", "high", "xhigh", "max"],
+        "codex" => &["low", "medium", "high", "xhigh"],
+        "openai"
+            if model.starts_with("gpt-5")
+                || model.starts_with("gpt-6")
+                || model.starts_with('o') =>
+        {
+            &["minimal", "low", "medium", "high"]
+        }
+        "gemini" => &["low", "medium", "high"],
+        _ => &[],
+    }
+}
+
+pub fn step_effort(
+    provider: &str,
+    model: &str,
+    current: Option<&str>,
+    delta: isize,
+) -> Option<Option<&'static str>> {
+    let levels = efforts(provider, model);
+    if levels.is_empty() {
+        return None;
+    }
+    let ring: Vec<Option<&'static str>> = std::iter::once(None)
+        .chain(levels.iter().map(|l| Some(*l)))
+        .collect();
+    let at = ring.iter().position(|l| *l == current).unwrap_or(0) as isize;
+    let next = (at + delta).rem_euclid(ring.len() as isize) as usize;
+    Some(ring[next])
+}
+
+pub fn write_effort(doc: &mut DocumentMut, provider: &str, effort: Option<&str>) {
+    let providers = doc
+        .entry("providers")
+        .or_insert(Item::Table(implicit_table()));
+    let Some(providers) = providers.as_table_mut() else {
+        return;
+    };
+    providers.set_implicit(true);
+    let block = providers
+        .entry(provider)
+        .or_insert_with(|| Item::Table(Table::new()));
+    if let Some(table) = block.as_table_mut() {
+        match effort {
+            Some(effort) => {
+                table.insert("effort", toml_edit::value(effort));
+            }
+            None => {
+                table.remove("effort");
+            }
+        }
+    }
+}
+
 pub fn write_model(doc: &mut DocumentMut, provider: &str, model: &str) {
     let field = match Config::built_in_provider(provider) {
         Some(pc) if pc.kind == Some(ProviderKind::Parakeet) => "model_path",
@@ -397,6 +455,37 @@ fn implicit_table() -> Table {
 mod tests {
     use super::*;
     use crate::config::secret::MemoryStore;
+
+    #[test]
+    fn effort_levels_follow_the_program_and_model_and_default_is_one_of_them() {
+        assert_eq!(
+            efforts("claude_code", "claude-sonnet-5-5"),
+            ["low", "medium", "high", "xhigh", "max"]
+        );
+        assert_eq!(
+            efforts("openai", "gpt-6-luna"),
+            ["minimal", "low", "medium", "high"]
+        );
+        assert!(efforts("openai", "gpt-4.1").is_empty());
+        assert!(efforts("ollama", "qwen3:8b").is_empty());
+        assert_eq!(step_effort("codex", "", None, 1), Some(Some("low")));
+        assert_eq!(
+            step_effort("codex", "", Some("xhigh"), 1),
+            Some(None),
+            "past the last comes back to default"
+        );
+        assert_eq!(step_effort("codex", "", None, -1), Some(Some("xhigh")));
+        assert_eq!(step_effort("ollama", "", None, 1), None);
+        let mut doc: DocumentMut = "".parse().unwrap();
+        write_effort(&mut doc, "codex", Some("high"));
+        assert!(
+            doc.to_string()
+                .contains("[providers.codex]\neffort = \"high\""),
+            "{doc}"
+        );
+        write_effort(&mut doc, "codex", None);
+        assert!(!doc.to_string().contains("effort"), "{doc}");
+    }
 
     fn load(text: &str) -> Config {
         Config::parse_with_built_ins(text).unwrap()

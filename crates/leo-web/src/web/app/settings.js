@@ -20,6 +20,52 @@ function settingsOption(value, label, current) {
   return `<option value="${esc(value)}"${value === current ? ' selected' : ''}>${esc(label)}</option>`;
 }
 
+const effortName = (e) => (e === 'default' ? 'Default' : e === 'xhigh' ? 'Extra high' : e[0].toUpperCase() + e.slice(1));
+
+function modelPicker(t) {
+  const known = t.models.some((m) => m.id === t.model);
+  const list = (known || !t.model ? [] : [{ id: t.model, price: 'not in the list' }]).concat(t.models);
+  const efforts = Array.isArray(t.efforts) ? t.efforts : [];
+  const effort = t.effort || 'default';
+  const shown = `${esc(t.model || 'Default model')}${efforts.length ? `<span class="picker-effort"> · ${esc(effort === 'default' ? 'default effort' : `${effortName(effort).toLowerCase()} effort`)}</span>` : ''}`;
+  const rows = list
+    .map((m) => {
+      const on = m.id === t.model;
+      return `<button type="button" class="pick-model${on ? ' on' : ''}" role="menuitemradio" aria-checked="${on}" data-action="set-model" data-task="${t.task}" data-model="${esc(m.id)}"><span class="pick-text"><span class="pick-name">${esc(m.id)}</span><span class="pick-price">${esc(m.price)}</span></span>${on ? ICON.check : ''}</button>`;
+    })
+    .join('');
+  const chips = efforts.length
+    ? `<div class="pick-effort"><div class="pick-head">Effort</div><div class="pick-chips">${['default', ...efforts].map((e) => `<button type="button" class="pick-chip${effort === e ? ' on' : ''}" aria-pressed="${effort === e}" data-action="set-effort" data-effort="${e}">${effortName(e)}</button>`).join('')}</div><p class="pick-hint">More effort means the model thinks longer: better answers, but slower and more of your plan or credit.</p></div>`
+    : '';
+  return `<div class="set-row"><span class="set-label">Model</span><div class="picker"><button type="button" class="picker-button" data-action="toggle-picker" aria-haspopup="menu" aria-expanded="false" data-task="${t.task}"><span class="picker-text">${shown}</span>${ICON.chevron}</button><div class="picker-menu" role="menu" hidden><div class="pick-head">Model</div><div class="pick-models">${rows}</div>${chips}</div></div></div>`;
+}
+
+function closePickers(except) {
+  for (const menu of app.querySelectorAll('.picker-menu')) {
+    if (menu === except) continue;
+    menu.hidden = true;
+    const button = menu.parentElement.querySelector('.picker-button');
+    if (button) button.setAttribute('aria-expanded', 'false');
+  }
+}
+
+function togglePicker(el) {
+  const menu = el.parentElement.querySelector('.picker-menu');
+  closePickers(menu);
+  menu.hidden = !menu.hidden;
+  el.setAttribute('aria-expanded', String(!menu.hidden));
+}
+
+document.addEventListener('click', (e) => {
+  if (state.view === 'settings' && !e.target.closest('.picker')) closePickers();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && state.view === 'settings' && app.querySelector('.picker-menu:not([hidden])')) {
+    e.stopPropagation();
+    closePickers();
+  }
+}, true);
+
 function taskCard(t, secure) {
   const status = t.ready ? '<span class="set-status ok">Ready</span>' : '<span class="set-status missing">Not set up</span>';
   const providers = t.choices.map((c) => settingsOption(c.id, c.label, t.provider)).join('') + (t.custom ? settingsOption(t.provider, `${t.provider} (from config.toml)`, t.provider) : '');
@@ -27,9 +73,7 @@ function taskCard(t, secure) {
   if (t.fixed_model) {
     model = `<div class="set-row"><span class="set-label">Model</span><span class="set-value">${esc(t.model || 'Built in')} <span class="hint">free, runs on your computer</span></span></div>`;
   } else if (t.models.length) {
-    const known = t.models.some((m) => m.id === t.model);
-    const options = (known || !t.model ? '' : settingsOption(t.model, `${t.model} (not in the list)`, t.model)) + t.models.map((m) => settingsOption(m.id, `${m.id} — ${m.price}`, t.model)).join('');
-    model = `<label class="set-row"><span class="set-label">Model</span><select data-set="model" data-task="${t.task}">${options}</select></label>`;
+    model = modelPicker(t);
   }
   let key = '';
   if (t.key) {

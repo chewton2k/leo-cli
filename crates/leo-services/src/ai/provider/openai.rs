@@ -19,6 +19,7 @@ pub struct OpenAiChat {
     needs_key: bool,
     max_tokens: u32,
     reasoning: bool,
+    effort: Option<String>,
     spent: std::sync::Mutex<Option<Spent>>,
 }
 
@@ -39,6 +40,11 @@ impl OpenAiChat {
             needs_key: cfg.key_env.is_some(),
             max_tokens: cfg.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
             reasoning: cfg.reasoning.unwrap_or(false),
+            effort: cfg
+                .effort
+                .clone()
+                .map(|e| e.trim().to_lowercase())
+                .filter(|e| !e.is_empty() && e.chars().all(|c| c.is_ascii_alphanumeric())),
             spent: std::sync::Mutex::new(None),
         }
     }
@@ -51,6 +57,7 @@ impl OpenAiChat {
 
     fn note_spent(&self, req: &ChatRequest, answer: &str, usage: Option<(u64, u64)>) {
         let mut spent = Spent::guessed(Some(self.model.clone()), req, answer);
+        spent.effort = self.effort.clone();
         if let Some((input, output)) = usage {
             spent.input = input;
             spent.output = output;
@@ -98,6 +105,9 @@ impl OpenAiChat {
                 "stream": stream,
             })
         };
+        if let Some(effort) = &self.effort {
+            body["reasoning_effort"] = serde_json::json!(effort);
+        }
         if stream && self.reports_streamed_usage() {
             body["stream_options"] = serde_json::json!({ "include_usage": true });
         }

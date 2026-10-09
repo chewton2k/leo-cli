@@ -117,6 +117,15 @@ fn ai_rows(
         action: SettingAction::ChooseModel(task),
     });
     let pc = cfg.provider(&sel.provider)?;
+    if task == Task::Chat
+        && !choice::efforts(&sel.provider, sel.model.as_deref().unwrap_or("")).is_empty()
+    {
+        rows.push(Row::Setting {
+            label: format!("{what} effort"),
+            value: pc.effort.clone().unwrap_or_else(|| "default".to_string()),
+            action: SettingAction::ChooseEffort,
+        });
+    }
     if let Some(agent) = leo_services::ai::provider::agent_cli::Agent::of(pc) {
         let bin = pc.bin.as_deref().unwrap_or(agent.program());
         let value = if leo_services::ai::provider::agent_cli::locate(bin).is_some() {
@@ -431,6 +440,26 @@ pub fn step_model(task: Task, delta: isize, local: &Local) -> Result<Changed> {
     )))
 }
 
+pub fn step_effort(delta: isize) -> Result<Changed> {
+    let cfg = Config::load();
+    let store = leo_services::config::secret::default_store();
+    let Some(sel) = choice::selection(&cfg, store.as_ref(), Task::Chat) else {
+        return Ok(Changed::No);
+    };
+    let model = sel.model.clone().unwrap_or_default();
+    let current = cfg.provider(&sel.provider).and_then(|p| p.effort.clone());
+    let Some(next) = choice::step_effort(&sel.provider, &model, current.as_deref(), delta) else {
+        return Ok(Changed::No);
+    };
+    let (path, mut doc) = edit::load_document()?;
+    choice::write_effort(&mut doc, &sel.provider, next);
+    edit::save_document(&path, &doc)?;
+    Ok(Changed::Yes(match next {
+        Some(effort) => format!("Effort set to {effort}."),
+        None => "Effort set to the model's default.".to_string(),
+    }))
+}
+
 pub fn use_model(task: Task, model: &str) -> Result<Changed> {
     if task == Task::Transcribe {
         return Ok(Changed::Yes("Downloaded. Speech uses it now.".to_string()));
@@ -491,6 +520,34 @@ mod tests {
         label: &str,
     ) -> Option<&'a (String, String, String)> {
         rows.iter().find(|(l, _, _)| l == label)
+    }
+
+    #[test]
+    fn writing_with_codex_or_claude_code_offers_an_effort_and_ollama_does_not() {
+        use super::*;
+        let store = MemoryStore::default();
+        let rows = simple_page(
+            "[chat]\nchain = [\"codex\"]\n[providers.codex]\neffort = \"high\"\n[transcribe]\nchain = []\n",
+            &store,
+            &Local::default(),
+        );
+        let effort = row(&rows, "writing effort").unwrap();
+        assert_eq!(
+            (effort.1.as_str(), effort.2.as_str()),
+            ("high", "ChooseEffort")
+        );
+        let rows = simple_page(
+            "[chat]\nchain = [\"claude_code\"]\n[transcribe]\nchain = []\n",
+            &store,
+            &Local::default(),
+        );
+        assert_eq!(row(&rows, "writing effort").unwrap().1, "default");
+        let rows = simple_page(
+            "[chat]\nchain = [\"ollama\"]\n[transcribe]\nchain = []\n",
+            &store,
+            &Local::default(),
+        );
+        assert!(row(&rows, "writing effort").is_none());
     }
 
     #[test]

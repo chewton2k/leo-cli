@@ -71,6 +71,7 @@ pub enum SettingAction {
     EditConfig,
     ChooseProvider(Task),
     ChooseModel(Task),
+    ChooseEffort,
     GetLocalModel(Task),
     StoreKey {
         name: String,
@@ -91,6 +92,7 @@ impl SettingAction {
             SettingAction::EditConfig => "Enter opens config.toml",
             SettingAction::ChooseProvider(_) => "Enter or → switches to the next · ← goes back",
             SettingAction::ChooseModel(_) => "Enter or → picks the next model · ← goes back",
+            SettingAction::ChooseEffort => "Enter or → picks the next effort · ← goes back",
             SettingAction::GetLocalModel(Task::Chat) => "Enter downloads it with ollama pull",
             SettingAction::GetLocalModel(Task::Transcribe) => "Enter downloads it (142 MB, once)",
             SettingAction::StoreKey { .. } => "Enter asks for the key (never shown) · x removes it",

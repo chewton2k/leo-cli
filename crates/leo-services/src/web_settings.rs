@@ -123,9 +123,17 @@ fn task_view(
         .get(&provider)
         .filter(|_| agent.is_some())
         .map(|seen| crate::usage::label(seen, chrono::Utc::now()));
+    let model = selection.as_ref().and_then(|s| s.model.clone());
+    let efforts = if task == Task::Chat {
+        choice::efforts(&provider, model.as_deref().unwrap_or(""))
+    } else {
+        &[]
+    };
     json!({
         "task": task_name(task),
         "provider": provider,
+        "effort": pc.and_then(|p| p.effort.clone()).filter(|e| efforts.contains(&e.as_str())),
+        "efforts": efforts,
         "ready": selection.as_ref().is_some_and(|s| s.ready),
         "custom": chosen.is_none() && !provider.is_empty(),
         "choices": choice::choices(task).iter().map(|c| json!({ "id": c.provider, "label": c.label() })).collect::<Vec<_>>(),
@@ -256,6 +264,38 @@ pub fn apply(
                 }
             }
         }
+        "effort" => {
+            let cfg = Config::load_from(config_path);
+            let Some(selection) = choice::selection(&cfg, store, Task::Chat) else {
+                bail!("choose an AI first");
+            };
+            let levels = choice::efforts(
+                &selection.provider,
+                selection.model.as_deref().unwrap_or(""),
+            );
+            if levels.is_empty() {
+                bail!("{} has no effort setting", selection.provider);
+            }
+            let value = change
+                .get("value")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim();
+            let effort = if value.is_empty() || value == "default" {
+                None
+            } else if levels.contains(&value) {
+                Some(value)
+            } else {
+                bail!("{value} is not an effort {} offers", selection.provider);
+            };
+            let mut doc = open(config_path)?;
+            choice::write_effort(&mut doc, &selection.provider, effort);
+            edit::save_document(config_path, &doc)?;
+            Ok(match effort {
+                Some(effort) => format!("Effort set to {effort}."),
+                None => "Effort set to the model's default.".to_string(),
+            })
+        }
         "auto_push" => {
             let value = text(change, "value")?;
             let Some(chosen) = AUTO_PUSH.iter().find(|a| a.as_str() == value) else {
@@ -349,6 +389,49 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("npm install -g @openai/codex"));
+    }
+
+    #[test]
+    fn effort_is_chosen_from_what_the_program_offers_and_can_go_back_to_default() {
+        let (_d, path) = setup("[chat]\nchain = [\"codex\"]\n[transcribe]\nchain = []\n");
+        let store = MemoryStore::default();
+        let local = Local::default();
+        let set = |value: &str| {
+            apply(
+                &json!({"set": "effort", "value": value}),
+                &path,
+                &store,
+                false,
+                &local,
+            )
+        };
+        let writing = &view(&path, &store)["tasks"][0];
+        assert_eq!(
+            writing["efforts"],
+            json!(["low", "medium", "high", "xhigh"])
+        );
+        assert_eq!(writing["effort"], Value::Null);
+        assert_eq!(set("high").unwrap(), "Effort set to high.");
+        assert_eq!(view(&path, &store)["tasks"][0]["effort"], "high");
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("effort = \"high\""));
+        assert!(set("max")
+            .unwrap_err()
+            .to_string()
+            .contains("not an effort"));
+        assert_eq!(set("").unwrap(), "Effort set to the model's default.");
+        assert_eq!(view(&path, &store)["tasks"][0]["effort"], Value::Null);
+        let (_d2, other) = setup("[chat]\nchain = [\"ollama\"]\n[transcribe]\nchain = []\n");
+        assert!(apply(
+            &json!({"set": "effort", "value": "high"}),
+            &other,
+            &store,
+            false,
+            &local
+        )
+        .is_err());
+        assert_eq!(view(&other, &store)["tasks"][0]["efforts"], json!([]));
     }
 
     #[test]

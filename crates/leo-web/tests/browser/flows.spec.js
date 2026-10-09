@@ -1238,8 +1238,12 @@ test.describe('settings', () => {
     await writing.locator('select[data-set="provider"]').selectOption('gemini');
     await expect(page.locator('.toast')).toContainText('Writing now uses Gemini');
     await expect(writing.locator('select[data-set="provider"]')).toHaveValue('gemini');
-    await writing.locator('select[data-set="model"]').selectOption('gemini-3.1-flash-lite');
+    const picker = writing.locator('.picker-button');
+    await picker.click();
+    await expect(writing.locator('.picker-menu')).toBeVisible();
+    await writing.locator('.pick-model[data-model="gemini-3.1-flash-lite"]').click();
     await expect(page.locator('.toast')).toContainText('Model set to gemini-3.1-flash-lite');
+    await expect(picker).toContainText('gemini-3.1-flash-lite');
     await writing.locator('[data-key-input="gemini"]').fill('gm-fake-key-123');
     await writing.locator('[data-action="set-key"]').click();
     await expect(page.locator('.toast')).toContainText('The Gemini key is stored on this computer');
@@ -1256,6 +1260,22 @@ test.describe('settings', () => {
     await expect(page.locator('.toast')).toContainText('Backing up when idle');
     const bad = await page.request.post('/api/settings', { data: { set: 'provider', task: 'writing', value: 'parakeet' } });
     expect(bad.status()).toBe(400);
+
+    await writing.locator('select[data-set="provider"]').selectOption('codex');
+    await expect(page.locator('.toast')).toContainText('Writing now uses Codex');
+    await writing.locator('.picker-button').click();
+    await expect(writing.locator('.pick-chip')).toHaveText(['Default', 'Low', 'Medium', 'High', 'Extra high']);
+    await writing.locator('.pick-chip[data-effort="high"]').click();
+    await expect(page.locator('.toast')).toContainText('Effort set to high.');
+    await expect(writing.locator('.picker-button')).toContainText('high effort');
+    await writing.locator('.picker-button').click();
+    await page.keyboard.press('Escape');
+    await expect(writing.locator('.picker-menu')).toBeHidden();
+    await expect(page).toHaveURL(/#\/settings$/);
+    await writing.locator('.picker-button').click();
+    await writing.locator('.pick-chip[data-effort="default"]').click();
+    await expect(page.locator('.toast')).toContainText("Effort set to the model's default.");
+    await writing.locator('select[data-set="provider"]').selectOption('gemini');
   });
 });
 

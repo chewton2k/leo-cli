@@ -1050,6 +1050,27 @@ body.files-over main::after {
 .diagram[data-drawn="yes"] .diagram-src { display: none; }
 .diagram:not([data-drawn="yes"]) .diagram-src { opacity: .75; }
 .diagram-error { margin-top: 4px; font-size: 12.5px; color: var(--danger); }
+.picker { position: relative; flex: 1; min-width: 0; display: flex; justify-content: flex-end; }
+.picker-button { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; min-height: 38px; padding: 0 10px 0 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--text); font-size: 14.5px; text-align: left; }
+.picker-button:hover, .picker-button[aria-expanded="true"] { border-color: var(--accent); }
+.picker-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker-effort { color: var(--muted); }
+.picker-button svg { width: 15px; height: 15px; flex: none; color: var(--muted); transform: rotate(90deg); }
+.picker-menu { position: absolute; z-index: 20; right: 0; top: calc(100% + 6px); width: min(360px, calc(100vw - 32px)); max-height: min(70vh, 520px); overflow-y: auto; padding: 6px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); box-shadow: var(--shadow); }
+.pick-head { padding: 8px 10px 4px; font-size: 11.5px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.pick-model { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: 9px; background: none; color: var(--text); text-align: left; }
+.pick-model:hover { background: var(--surface-2); }
+.pick-model.on { background: var(--accent-soft); }
+.pick-model svg { width: 16px; height: 16px; flex: none; color: var(--accent); }
+.pick-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.pick-name { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.pick-price { font-size: 12.5px; color: var(--muted); }
+.pick-effort { margin-top: 6px; padding-top: 4px; border-top: 1px solid var(--line); }
+.pick-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 10px 6px; }
+.pick-chip { height: 30px; padding: 0 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--text); font-size: 13px; font-weight: 600; }
+.pick-chip:hover { border-color: var(--accent); }
+.pick-chip.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.pick-hint { margin: 2px 10px 6px; font-size: 12px; line-height: 1.4; color: var(--muted); }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 </style>
 </head>

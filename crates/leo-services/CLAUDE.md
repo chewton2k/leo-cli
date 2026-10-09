@@ -257,3 +257,8 @@ is 45% of it, capped at 50k tokens for paid APIs (cost) and 120k for plans.
 `felix_room` turns that into Felix's note budget; `budget_of` (recording and
 upload part sizes) is the same reading budget in words, capped by what the
 notes can fill in the provider's output limit (`max_tokens`, 32k for agents).
+
+Effort: `choice::efforts(provider, model)` is the one list of levels; the
+provider's `effort` setting goes to Claude Code as `--effort`, to Codex as the
+turn's `effort` (or `-c model_reasoning_effort`), and to OpenAI-compatible
+APIs as `reasoning_effort`. Codex reports its default effort when none is set.

@@ -62,7 +62,9 @@ impl App {
     ) -> Result<()> {
         use view::settings::SettingAction as A;
         match action {
-            A::ChooseProvider(_) | A::ChooseModel(_) => self.step_setting(action, 1),
+            A::ChooseProvider(_) | A::ChooseModel(_) | A::ChooseEffort => {
+                self.step_setting(action, 1)
+            }
             A::GetLocalModel(task) => {
                 let out =
                     self.outside(terminal, || leo_services::providers::get_local_model(task))?;
@@ -172,6 +174,7 @@ impl App {
                 let local = (self.local_models)(&cfg);
                 settings::step_model(task, delta, &local)?
             }
+            A::ChooseEffort => settings::step_effort(delta)?,
             _ => return Ok(()),
         };
         self.after_settings_change(changed);
