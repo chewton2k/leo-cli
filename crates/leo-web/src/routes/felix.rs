@@ -315,6 +315,13 @@ pub(crate) struct Suggestion {
     pub(crate) replace: String,
 }
 
+#[derive(serde::Serialize)]
+pub(crate) struct Applied {
+    #[serde(flatten)]
+    pub(crate) note: NoteResponse,
+    pub(crate) before: String,
+}
+
 pub(crate) async fn apply_suggestion(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -335,15 +342,18 @@ pub(crate) async fn apply_suggestion(
             } else {
                 return Err(StatusCode::CONFLICT);
             };
-            note.body = body;
+            let before = std::mem::replace(&mut note.body, body);
             note.updated_at = chrono::Utc::now();
-            let note = NoteResponse::from_note(note);
+            let applied = Applied {
+                note: NoteResponse::from_note(note),
+                before,
+            };
             save(store)?;
-            Ok(note)
+            Ok(applied)
         })
         .await;
     match applied {
-        Ok(note) => Json(note).into_response(),
+        Ok(applied) => Json(applied).into_response(),
         Err(StatusCode::CONFLICT) => (
             StatusCode::CONFLICT,
             Json(serde_json::json!({ "error": "The note changed since Felix suggested this, so the text it would replace is not there any more." })),

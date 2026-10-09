@@ -559,7 +559,27 @@ test.describe('Felix', () => {
     expect(made.some((n) => n.title === `Waiting lines ${tag}`)).toBe(true);
     await page.reload();
     await page.locator('#chat-toggle').click();
-    await expect(page.locator('#chat .msg.leo').last().locator('.proposal-done').first()).toContainText('Applied');
+    const again = page.locator('#chat .msg.leo').last().locator('.proposal');
+    await expect(again.first().locator('.proposal-done')).toContainText('Applied');
+
+    await again.first().locator('[data-chat="undo"]').click();
+    await expect(page.locator('.toast')).toContainText(`Undid the change to “${note.title}”`);
+    await expect(again.first().locator('[data-chat="apply"]')).toBeVisible();
+    expect((await (await page.request.get(`/api/notes/${note.id}`)).json()).body).toBe('BFS takes the newest vertex.');
+
+    await again.nth(1).locator('[data-chat="undo"]').click();
+    await expect(page.locator('.toast')).toContainText(`Moved “Waiting lines ${tag}” to the trash`);
+    await expect(again.nth(1).locator('[data-chat="apply"]')).toBeVisible();
+    const trashed = await (await page.request.get('/api/trash')).json();
+    expect(trashed.some((t) => t.title === `Waiting lines ${tag}`)).toBe(true);
+
+    await again.first().locator('[data-chat="apply"]').click();
+    await expect(again.first().locator('.proposal-done')).toContainText('Applied');
+    const current = await (await page.request.get(`/api/notes/${note.id}`)).json();
+    await page.request.patch(`/api/notes/${note.id}`, { data: { body: `${current.body}\nEdited by hand.`, base: current.version } });
+    await again.first().locator('[data-chat="undo"]').click();
+    await expect(page.locator('.toast.bad')).toContainText('edited after this change');
+    expect((await (await page.request.get(`/api/notes/${note.id}`)).json()).body).toBe('BFS takes the oldest vertex.\nEdited by hand.');
   });
 
   test('Felix holds the prop for the tool he is using, and only that one', async ({ page }) => {

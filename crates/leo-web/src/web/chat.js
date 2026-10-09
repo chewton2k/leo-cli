@@ -191,7 +191,7 @@
   }
   const FILE_TYPES = '.pdf,.docx,.pptx,.txt,.md,image/*';
 
-  function create({ render, escape, onOpen = () => {}, storage = root.localStorage, prepare = null, notify = () => {}, onSaved = () => {}, onChanged = () => {} }) {
+  function create({ render, escape, onOpen = () => {}, storage = root.localStorage, prepare = null, notify = () => {}, onSaved = () => {}, onChanged = () => {}, onUndone = () => {} }) {
     const saved = load(storage);
     const state = { open: false, id: saved.id || newId(), mode: modeOf(saved.mode), messages: saved.messages, refs: saved.refs, context: null, dropped: null, busy: null, streak: 0, pick: null, chats: null, sidebar: null, doomed: null, asking: null, files: [], sent: [], filesFor: null, review: [] };
     const panel = document.createElement('aside');
@@ -821,7 +821,7 @@
     function proposalCard(p, i, j) {
       const where = `data-i="${i}" data-j="${j}"`;
       const done = p.state === 'applied'
-        ? `<div class="proposal-done">${p.kind === 'create' ? 'Made' : 'Applied'} · <button class="msg-act" data-chat="open" data-id="${escape(p.made || p.note || '')}">Open the note</button></div>`
+        ? `<div class="proposal-done">${p.kind === 'create' ? 'Made' : 'Applied'} · <button class="msg-act" data-chat="open" data-id="${escape(p.made || p.note || '')}">Open the note</button><button class="msg-act" data-chat="undo" ${where}>Undo</button></div>`
         : p.state === 'dismissed'
           ? '<div class="proposal-done">Dismissed</div>'
           : `<div class="proposal-buttons"><button class="btn primary sm" data-chat="apply" ${where}>${p.kind === 'create' ? 'Create' : 'Apply'}</button><button class="btn plain sm" data-chat="dismiss" ${where}>Dismiss</button></div>`;
@@ -875,10 +875,49 @@
         p.made = note.id;
         onSaved(note);
       } else {
+        p.before = typeof note.before === 'string' ? note.before : null;
+        p.after = note.version || null;
         onChanged(note);
       }
       remember();
       draw(false);
+    }
+
+    async function undo(i, j) {
+      const m = state.messages[i];
+      const p = m && m.proposals && m.proposals[j];
+      if (!p || p.state !== 'applied') return;
+      const create = p.kind === 'create';
+      if (!create && (p.before === null || p.before === undefined || !p.after)) {
+        notify('This change was applied before leo could undo it; open the note to change it back.');
+        return;
+      }
+      const [url, method, body] = create
+        ? [`/api/notes/${encodeURIComponent(p.made)}`, 'DELETE', undefined]
+        : [`/api/notes/${encodeURIComponent(p.note)}`, 'PATCH', JSON.stringify({ body: p.before, base: p.after })];
+      let response;
+      try {
+        response = await fetch(url, { method, credentials: 'same-origin', headers: body ? { 'Content-Type': 'application/json' } : {}, body });
+      } catch (e) {
+        notify("Can't reach leo. Is leo serve still running?");
+        return;
+      }
+      if (response.status === 409) {
+        notify('The note was edited after this change, so leo did not undo it. Open the note to change it back.');
+        return;
+      }
+      if (!response.ok && response.status !== 404) {
+        notify('The change could not be undone.');
+        return;
+      }
+      const note = create ? { id: p.made, title: p.title } : await response.json().catch(() => ({ id: p.note, title: p.title }));
+      p.state = 'new';
+      delete p.before;
+      delete p.after;
+      delete p.made;
+      remember();
+      draw(false);
+      onUndone(note, create);
     }
 
     async function saveAnswer(i) {
@@ -1093,6 +1132,7 @@
       else if (what === 'resume') resume(el.dataset.id);
       else if (what === 'save') saveAnswer(Number(el.dataset.i));
       else if (what === 'apply' || what === 'dismiss') decide(Number(el.dataset.i), Number(el.dataset.j), what === 'apply');
+      else if (what === 'undo') undo(Number(el.dataset.i), Number(el.dataset.j));
       else if (what === 'review') startReview();
       else if (what === 'forget') forget(el.dataset.id);
       else if (what === 'mode') {

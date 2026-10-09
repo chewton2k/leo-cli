@@ -366,6 +366,34 @@ fn a_suggested_change_is_applied_only_while_the_text_is_still_there() {
             }),
         ))
     };
+    let applied = apply("newest", "oldest");
+    assert_eq!(applied.status(), StatusCode::OK);
+    let applied = json_of(applied);
+    assert_eq!(applied["before"], "BFS takes the newest vertex.");
+    assert_eq!(applied["body"], "BFS takes the oldest vertex.");
+    let after = applied["version"].as_str().unwrap().to_string();
+    let undo = |base: &str| {
+        run(update_note(
+            State(state.clone()),
+            Path(ids[0].clone()),
+            Json(UpdateBody {
+                title: None,
+                body: Some("BFS takes the newest vertex.".into()),
+                tags: None,
+                pinned: None,
+                base: Some(base.into()),
+            }),
+        ))
+    };
+    assert!(
+        undo("stale-version").is_err(),
+        "an undo after another edit is refused"
+    );
+    assert!(undo(&after).is_ok());
+    assert_eq!(
+        state.fresh().find_note(&ids[0]).unwrap().body,
+        "BFS takes the newest vertex."
+    );
     assert_eq!(apply("newest", "oldest").status(), StatusCode::OK);
     assert_eq!(
         state.fresh().find_note(&ids[0]).unwrap().body,

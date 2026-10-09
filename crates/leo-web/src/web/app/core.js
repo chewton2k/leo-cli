@@ -50,6 +50,13 @@ const chat = felix.create({
     return { name: ready.name, type: ready.type, data: await base64(ready.blob) };
   },
   notify: (message) => toast(message, { bad: true }),
+  onUndone: (note, removed) => {
+    const open = state.view === 'note' && state.session && state.session.note.id === note.id;
+    if (open && removed) go(folderHash(state.dir || ''), { replace: true });
+    else if (open && !saving.unsaved()) showNote(note.id);
+    else showLatest().catch(() => {});
+    toast(removed ? `Moved “${note.title}” to the trash` : `Undid the change to “${note.title}”`);
+  },
   onChanged: (note) => {
     const open = state.view === 'note' && state.session && state.session.note.id === note.id;
     if (open && !saving.unsaved()) showNote(note.id);

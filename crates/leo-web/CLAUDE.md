@@ -358,3 +358,9 @@
   never local or private hosts: `web::allowed` checks the address, and the client's DNS resolver (`PublicOnly`) refuses a name unless every address it resolves to is public, so a name pointing at 127.0.0.1 (localtest.me) and redirects are covered and the vetted addresses are the ones connected to. Web
   tools run outside the store lock (`Desk::run_web`). A reply that claims the
   tools are missing (`claims_no_tools`) is answered once with `UNSTUCK`.
+- Undo for Felix's suggestions: `apply_suggestion` answers with the note plus
+  `before` (its old body); the card keeps `before` and the new `version` and
+  Undo PATCHes `{body: before, base: version}`, so a note edited since is left
+  alone (409, said plainly). Undo of a created note DELETEs it (trash). Either
+  way the card goes back to Apply; the app refreshes or leaves the open note
+  (`onUndone`).
