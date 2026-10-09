@@ -123,7 +123,6 @@ pub fn apply(action: Action, store: &mut Store, ctx: Ctx<'_>, ai: &dyn Ai) -> Re
         Action::Trash(a) => trash(store, a),
         Action::Help => Ok(Outcome::effect(Effect::ShowHelp)),
         Action::Doctor => Ok(Outcome::effect(Effect::Doctor)),
-        Action::Obsidian => Ok(Outcome::effect(Effect::Obsidian)),
         Action::Tutorial => Ok(Outcome::effect(Effect::Tutorial)),
         Action::Settings => Ok(Outcome::effect(Effect::Settings)),
         Action::Quit => Ok(Outcome::effect(Effect::Quit)),

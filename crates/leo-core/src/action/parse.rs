@@ -74,7 +74,6 @@ pub const VERBS: &[Verb] = &[
         "trash [restore <number> | empty]",
         "deleted notes: bring one back, or empty it",
     ),
-    v("obsidian", &[], "obsidian", "open your notes in Obsidian"),
     v(
         "settings",
         &[],
@@ -178,6 +177,11 @@ pub const RETIRED: &[(&str, &str, &str)] = &[
         "keys live in your OS keychain now, not a plaintext file",
     ),
     ("pwd", "the status bar", "it always shows where you are"),
+    (
+        "obsidian",
+        "your notes folder",
+        "leo no longer opens Obsidian; your notes are Markdown files any app can open",
+    ),
     ("clear", "Esc", "it closes whatever output is pinned"),
     (
         "setup",
@@ -408,7 +412,6 @@ pub fn parse(line: &str) -> Parsed {
 
         "help" | "?" => act(Action::Help),
         "doctor" => act(Action::Doctor),
-        "obsidian" => act(Action::Obsidian),
         "settings" => act(Action::Settings),
         "tutorial" => act(Action::Tutorial),
         "quit" | "exit" | "q" => act(Action::Quit),
@@ -715,8 +718,8 @@ mod parse_tests {
     }
 
     #[test]
-    fn obsidian_opens_the_notes_in_obsidian() {
-        assert_eq!(act("obsidian"), Action::Obsidian);
+    fn obsidian_is_retired_and_says_where_the_notes_are() {
+        assert!(matches!(parse("obsidian"), Parsed::Retired { .. }));
     }
 
     #[test]

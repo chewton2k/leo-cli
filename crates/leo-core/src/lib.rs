@@ -10,7 +10,7 @@ pub mod filename;
 pub mod keep;
 pub mod manual;
 pub mod notes;
-pub mod obsidian;
+pub mod open;
 pub mod paths;
 pub mod store;
 pub mod sync;

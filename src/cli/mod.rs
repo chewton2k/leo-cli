@@ -150,12 +150,6 @@ enum Commands {
     },
 
     #[command(
-        about = "Open your notes in Obsidian (they are already Markdown files it can read)",
-        hide = true
-    )]
-    Obsidian,
-
-    #[command(
         about = "Check that everything works (leo, your notes, the AI, recording, backup) and say how to fix what does not"
     )]
     Doctor,
@@ -277,7 +271,6 @@ const MORE_EXAMPLES: &[(&str, &str)] = &[
         "leo backup connect <url>",
         "back up to a repository you made",
     ),
-    ("leo obsidian", "open your notes in Obsidian"),
     ("leo update", "install a newer version, if there is one"),
     ("leo uninstall", "remove leo; your notes stay"),
 ];
@@ -564,7 +557,6 @@ mod cli_tests {
             "delete",
             "pin",
             "trash",
-            "obsidian",
             "update",
             "uninstall",
         ] {
@@ -580,15 +572,7 @@ mod cli_tests {
     fn help_all_lists_every_command() {
         let help = command(true).render_help().to_string();
         let shown = listed(&help);
-        for every in [
-            "list",
-            "trash",
-            "obsidian",
-            "update",
-            "uninstall",
-            "record",
-            "backup",
-        ] {
+        for every in ["list", "trash", "update", "uninstall", "record", "backup"] {
             assert!(shown.iter().any(|c| c == every), "{every} missing:\n{help}");
         }
         let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();

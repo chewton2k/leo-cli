@@ -34,7 +34,7 @@ pub(crate) fn open_on_enter(url: String) {
             if line.is_err() {
                 break;
             }
-            match leo_core::obsidian::open_link(&url) {
+            match leo_core::open::link(&url) {
                 Ok(()) => println!("  {}", "Opened in your browser.".dimmed()),
                 Err(e) => println!(
                     "  Could not open a browser ({e}). The link above works in any browser."

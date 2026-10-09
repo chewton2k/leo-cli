@@ -142,9 +142,6 @@ and a fake `cloudflared` that prints a trycloudflare address.
   `str::get`.
 - **Unit tests must not open the microphone.** `rec` hangs when no input device
   exists (lid closed), which hung the whole suite.
-- To try Obsidian for real: `LEO_HOME=/tmp/leo-obsidian leo new "Hi" --body x`
-  then `LEO_HOME=/tmp/leo-obsidian leo obsidian`.
-
 - **`Store::save` reconciles the notes directory with memory.** Any `.md` file
   it did not load gets deleted, except files listed in `Store::unreadable`. Keep
   that exception if you touch saving.

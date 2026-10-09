@@ -266,19 +266,6 @@ impl App {
                 Ok(())
             }
 
-            Effect::Obsidian => {
-                match (self.obsidian)(&self.store.notes_dir) {
-                    Ok(opened) => {
-                        let lines = opened.describe().into_iter().map(Line::plain).collect();
-                        self.unpin();
-                        self.pinned = Some(("obsidian (Esc closes)".to_string(), lines));
-                        self.nav.preview_scroll = 0;
-                    }
-                    Err(e) => self.say(Kind::Bad, e.to_string()),
-                }
-                Ok(())
-            }
-
             Effect::Doctor => {
                 if self.jobs.checking.is_some() {
                     self.say(Kind::Warn, "Already checking — one at a time.");

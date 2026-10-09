@@ -73,7 +73,6 @@ const STALE: &[(&str, &str)] = &[
     ("/help", ":help"),
     ("/quit", ":quit"),
     ("/tutorial", ":tutorial"),
-    ("/obsidian", ":obsidian"),
     ("/trash", ":trash"),
     ("/pin", ":pin"),
     ("Ctrl-P  fuzzy", "f, or Ctrl-F"),

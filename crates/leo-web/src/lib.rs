@@ -318,7 +318,7 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
         std::io::IsTerminal::is_terminal(&std::io::stdin()),
         std::io::IsTerminal::is_terminal(&std::io::stdout()),
         std::env::var_os("LEO_NO_OPEN").is_some(),
-    ) && leo_core::obsidian::open_link(&here).is_ok();
+    ) && leo_core::open::link(&here).is_ok();
     if opened {
         println!(
             "  {} {}",

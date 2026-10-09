@@ -23,8 +23,8 @@ pub struct Packed {
 
 const README: &str = "Everything leo exported.
 
-notes/    your notes as Markdown files, in their folders. Obsidian and any
-          editor open them; leo reads them back if you copy them into its
+notes/    your notes as Markdown files, in their folders. Any Markdown
+          editor opens them; leo reads them back if you copy them into its
           notes folder.
 uploads/  the files you uploaded, in a folder per note (named by the note's id,
           which is the id: line at the top of the note).

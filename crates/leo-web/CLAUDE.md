@@ -84,7 +84,7 @@
 - Links: `styled_link` wraps the URL in OSC 8 for terminals that support it,
   but not for `TERM_PROGRAM=Apple_Terminal` (no OSC 8; its own ⌘-double-click
   finds plain URLs). `open_on_enter` reads stdin lines on a thread and opens the
-  local `127.0.0.1` link with `leo_core::obsidian::open_link`.
+  local `127.0.0.1` link with `leo_core::open::link`.
 - Felix chat (`chat.rs`, `web/chat.js`): POST `/api/chat {messages, mode, note}`
   streams NDJSON (`{"sources"}`, `{"t"}`, `{"restart"}`, `{"done"}` or
   `{"error"}`) from a `Streamer` (prompt→fragments) passed in from

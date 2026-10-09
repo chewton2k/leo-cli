@@ -10,7 +10,7 @@ the compiler enforces it — do not add an upward dependency:
 
 | Crate | Holds | Depends on |
 |-------|-------|------------|
-| `crates/leo-core` | `notes`, `store` (+ undo), `sync` (git), `filename`, `obsidian`, `diag`, `manual`, `action/` (vocabulary, parser, handlers, resolution, frontmatter) | — |
+| `crates/leo-core` | `notes`, `store` (+ undo), `sync` (git), `filename`, `open` (opens a link with the system), `diag`, `manual`, `action/` (vocabulary, parser, handlers, resolution, frontmatter) | — |
 | `crates/leo-services` | `ai/` (chains, prompts, `RealAi`, live transcription), `config/` (providers, credentials, theme data, sync policy), `listen`, `health`, `providers` | core |
 | `crates/leo-tui` | The full-screen app (`lib.rs` = `App`), its views, and `shell` (terminal effect performers shared with the CLI) | core, services |
 | `crates/leo-web` | `leo serve`: `lib.rs` (state, `serve`, router), `routes/` (handlers by area), `terminal.rs`, `token.rs`, `tunnel.rs`, and the page in `src/web/` (`index.html`, `app/*.js` served as `/app.js`, `markdown.js`, …) | core |
@@ -110,8 +110,11 @@ scan, or a loopback connect with a 300 ms timeout. Never a real request.
 
 ### One name per command
 
-`action::VERBS` holds 18 verbs: new, edit, delete, rename, undo, record, ask,
-pin, mkdir, cd, mv, backup, trash, obsidian, settings, doctor, help, quit.
+`action::VERBS` holds 17 verbs: new, edit, delete, rename, undo, record, ask,
+pin, mkdir, cd, mv, backup, trash, settings, doctor, help, quit. `obsidian` was
+removed (2026-10-08, the user's call) and is retired: it says the notes are
+Markdown files any app can open. Reading files other editors write (no front
+matter, renamed files, unknown properties, `.obsidian/` not backed up) stays.
 `/settings` (Action::Settings → Effect::Settings) opens settings; Ctrl-S no
 longer does (it only saves while writing), and tests/wording.rs rejects it. `record screen`
 (first word; `--screen` still parses) records what the computer plays. `listen` and
@@ -252,10 +255,6 @@ way.
   `Name (2).md` and committed), then merge. git's union driver otherwise glues
   add/add files together. `sync::now` commits before pushing. `.obsidian/` is
   gitignored.
-- `leo obsidian` / `/obsidian`: `leo_core::obsidian::open` opens
-  `obsidian://open?path=<dir>` via `open`/`xdg-open`, copies the path
-  (pbcopy/wl-copy/xclip/xsel). `App.obsidian` is a fn field (tests never
-  launch it); `LEO_OBSIDIAN_APP` overrides detection for tests.
 - Crash-proofing: worker threads run through `task::spawn_guarded` (a panic
   becomes `TaskEvent::Failed`), live rolls are `caught`, the panic hook only
   restores the terminal for main-thread panics. Mouse reporting is

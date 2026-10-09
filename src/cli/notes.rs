@@ -81,7 +81,6 @@ pub fn run(cmd: Commands) -> Result<()> {
             note: question.join(" "),
         },
         Commands::Pin { id } => action::Action::Pin { note: id },
-        Commands::Obsidian => action::Action::Obsidian,
         Commands::Trash { command } => action::Action::Trash(match command {
             None => action::TrashAction::List,
             Some(super::TrashCommands::Restore { which }) => action::TrashAction::Restore {
@@ -133,14 +132,6 @@ fn absorb_cli(
 
         action::Effect::Settings => {
             println!("  Settings live inside leo: run `leo`, then type :settings.");
-            return Ok(());
-        }
-
-        action::Effect::Obsidian => {
-            let opened = leo_core::obsidian::open(&store.notes_dir)?;
-            for line in opened.describe() {
-                println!("  {line}");
-            }
             return Ok(());
         }
 

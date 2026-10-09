@@ -765,30 +765,21 @@ is removed after leo confirms it was saved; an edit that conflicts with a change
 on your computer is kept as a separate copy. If browser storage is unavailable,
 leo says to keep the page open until the note is saved.
 
-## 8. Use your notes in Obsidian
+## 8. Your notes are plain files
 
-Your notes are Markdown files in one folder, which is what
-[Obsidian](https://obsidian.md) reads.
-
-```sh
-leo obsidian
-```
-
-opens the folder in Obsidian (`:obsidian` does the same inside leo). The first
-time, if Obsidian does not show your notes, choose **Open folder as vault** and
-pick the folder; leo copies its path to your clipboard. This is a separate vault
-from any you already have.
+Your notes are Markdown files in one folder (`leo doctor` shows where), so any
+Markdown editor can open them alongside leo.
 
 - Files are named after their titles, so the file list reads well. Renaming a
-  file in Obsidian renames the note in leo.
-- Notes made in Obsidian show up in leo, and leo leaves them exactly as they are
-  until you edit them there. Properties leo does not know (aliases, anything a
-  plugin adds) are kept.
-- leo picks up changes made in Obsidian within a couple of seconds. If a note
-  was changed in Obsidian while leo had it open and you edited it in leo too,
-  leo keeps both, calling yours `<title> (conflict from leo)`; `leo doctor`
-  lists them.
-- Obsidian's own settings folder (`.obsidian`) is not backed up to GitHub.
+  file in another app renames the note in leo.
+- Notes made in another app show up in leo, and leo leaves them exactly as they
+  are until you edit them there. Properties leo does not know (aliases, anything
+  a plugin adds) are kept.
+- leo picks up changes made elsewhere within a couple of seconds. If a note was
+  changed elsewhere while leo had it open and you edited it in leo too, leo
+  keeps both, calling yours `<title> (conflict from leo)`; `leo doctor` lists
+  them.
+- An editor's own settings folder such as `.obsidian` is not backed up to GitHub.
 - `[[links]]` between notes are shown as plain text in leo for now.
 
 ---
@@ -819,7 +810,6 @@ leo edit 3f2a
 leo delete 3f2a                     # goes to the trash
 leo trash                           # what was deleted; leo trash restore 1
 leo pin "Syllabus"                  # keep it at the top of the list
-leo obsidian                        # open your notes in Obsidian
 leo update                          # install a newer version, if there is one
 leo uninstall                       # remove leo; your notes stay
 ```

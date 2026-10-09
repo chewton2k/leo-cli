@@ -41,7 +41,6 @@ fn temp_app() -> (App, tempfile::TempDir) {
     app.speech_model_wanted = || false;
     app.setup_steps = steps_ready;
     app.recordings = None;
-    app.obsidian = |_| Err(anyhow::anyhow!("tests never launch Obsidian"));
     (app, dir)
 }
 
@@ -2347,30 +2346,8 @@ fn nothing_reloads_while_typing_or_when_nothing_changed() {
 }
 
 #[test]
-fn slash_obsidian_says_how_to_add_the_folder_as_a_vault() {
+fn slash_obsidian_is_retired_and_says_the_notes_are_markdown_files() {
     let (mut app, _d) = temp_app();
-    app.obsidian = |dir| {
-        Ok(leo_core::obsidian::Opened {
-            path: dir.to_path_buf(),
-            how: leo_core::obsidian::How::ByHand,
-            copied: true,
-        })
-    };
-    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(140, 30)).unwrap();
-    app.run_line("obsidian", &mut terminal).unwrap();
-    let (_, lines) = app.pinned.as_ref().expect("nothing was shown");
-    assert!(
-        lines
-            .iter()
-            .any(|l| l.text.contains("Open folder as vault")),
-        "{lines:?}"
-    );
-}
-
-#[test]
-fn slash_obsidian_without_obsidian_says_where_to_get_it() {
-    let (mut app, _d) = temp_app();
-    app.obsidian = |_| Err(anyhow::anyhow!(leo_core::obsidian::NOT_INSTALLED));
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(140, 30)).unwrap();
     app.run_line("obsidian", &mut terminal).unwrap();
     let said = app
@@ -2378,7 +2355,8 @@ fn slash_obsidian_without_obsidian_says_where_to_get_it() {
         .as_ref()
         .map(|m| m.1.clone())
         .unwrap_or_default();
-    assert!(said.contains("obsidian.md"), "{said}");
+    assert!(said.contains("your notes folder"), "{said}");
+    assert!(said.contains("no longer opens Obsidian"), "{said}");
 }
 
 #[test]
