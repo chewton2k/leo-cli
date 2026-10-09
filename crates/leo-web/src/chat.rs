@@ -179,6 +179,8 @@ pub struct ChatBody {
     #[serde(default)]
     pub refs: Vec<String>,
     #[serde(default)]
+    pub recent: Vec<String>,
+    #[serde(default)]
     pub chat: Option<String>,
     #[serde(default)]
     pub files: Vec<String>,
@@ -309,11 +311,25 @@ pub fn question_of(messages: &[Turn]) -> String {
         .join(" ")
 }
 
+pub const MOST_RECENT: usize = 6;
+
 pub fn gather(
     store: &Store,
     cache: &Cache,
     open: Option<&str>,
     attached: &[String],
+    question: &str,
+    room: usize,
+) -> (Vec<SourceRef>, String) {
+    gather_with(store, cache, open, attached, &[], question, room)
+}
+
+pub fn gather_with(
+    store: &Store,
+    cache: &Cache,
+    open: Option<&str>,
+    attached: &[String],
+    recent: &[String],
     question: &str,
     room: usize,
 ) -> (Vec<SourceRef>, String) {
@@ -337,6 +353,17 @@ pub fn gather(
                 picked.push(Picked {
                     note,
                     why: "attached by the user".into(),
+                    most: attached_chars,
+                });
+            }
+        }
+    }
+    for id in recent.iter().take(MOST_RECENT) {
+        if let Some(note) = store.notes.iter().find(|n| &n.id == id && studied(n)) {
+            if have.insert(note.id.clone()) {
+                picked.push(Picked {
+                    note,
+                    why: "used earlier in this chat".into(),
                     most: attached_chars,
                 });
             }
@@ -492,11 +519,17 @@ fn documents_within(docs: &[(String, String)], budget: usize) -> String {
     let share = budget / docs.len();
     let mut out = String::from("<documents>\n");
     for (i, (name, text)) in docs.iter().enumerate() {
+        let text = text.trim();
+        let more = if text.chars().count() > share {
+            "\n[The document goes on. Use read_document to read any part of it.]"
+        } else {
+            ""
+        };
         out.push_str(&format!(
-            "<document id=\"d{}\" name=\"{}\">\n{}\n</document>\n",
+            "<document id=\"d{}\" name=\"{}\">\n{}{more}\n</document>\n",
             i + 1,
             name.replace('"', "'"),
-            clip(text.trim(), share)
+            clip(text, share)
         ));
     }
     out.push_str("</documents>\n\n");
@@ -551,6 +584,40 @@ pub fn mode_of(requested: Option<&str>) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn notes_felix_used_earlier_in_the_chat_come_along_with_the_next_question() {
+        let mut store =
+            Store::load_from(&tempfile::tempdir().unwrap().keep().join("notes")).unwrap();
+        let paper = store
+            .create_note(
+                "Neuro-Symbolic Drive",
+                "The method pairs planner traces with trajectories.",
+                vec![],
+                "research",
+            )
+            .unwrap()
+            .id
+            .clone();
+        let other = store
+            .create_note("Heaps", "Minimum at the root.", vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        let (sources, text) = gather_with(
+            &store,
+            &Cache::default(),
+            None,
+            &[],
+            &[paper.clone(), "missing".into()],
+            "what are the weaknesses?",
+            ROOM,
+        );
+        assert_eq!(sources[0].id, paper);
+        assert_eq!(sources[0].why, "used earlier in this chat");
+        assert!(text.contains("planner traces"));
+        assert!(!sources.iter().any(|s| s.id == other));
+    }
     use crate::graph::{NoteLink, Pair, Read};
 
     fn store() -> (Store, tempfile::TempDir, Vec<String>) {

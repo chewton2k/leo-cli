@@ -54,6 +54,7 @@ fn a_document_given_to_felix_is_kept_as_text_and_read_with_the_question() {
         chat: Some("chat-docs-0001".into()),
         files: vec![doc["id"].as_str().unwrap().to_string()],
         access: None,
+        recent: vec![],
     };
     run(async {
         let response = chat_reply(State(state.clone()), Json(body)).await;
@@ -132,6 +133,7 @@ fn a_chat_reply_streams_its_sources_then_the_answer() {
         chat: None,
         files: vec![],
         access: None,
+        recent: vec![],
     };
     let text = run(async {
         let response = chat_reply(State(state.clone()), Json(body)).await;
@@ -170,6 +172,7 @@ fn a_chat_without_ai_or_a_question_is_refused() {
         chat: None,
         files: vec![],
         access: None,
+        recent: vec![],
     };
     let status = run(async {
         chat_reply(State(state.clone()), Json(ask("hi")))
@@ -225,6 +228,7 @@ fn chat_lines_with(
         chat: None,
         files: vec![],
         access: access.map(str::to_string),
+        recent: vec![],
     };
     let text = run(async {
         let response = chat_reply(State(state.clone()), Json(body)).await;

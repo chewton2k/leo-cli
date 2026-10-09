@@ -430,7 +430,7 @@ pub fn image_prompt(
 pub type Write<'a> = &'a (dyn Fn(Prompt, u32) -> Result<String> + Sync);
 pub type See<'a> = &'a (dyn Fn(Prompt, &[Image], u32) -> Result<String> + Sync);
 
-pub const CHAT_DOC_CHARS: usize = 60_000;
+pub const CHAT_DOC_CHARS: usize = 2_000_000;
 const TRANSCRIBE_TOKENS: u32 = 6_000;
 
 const TRANSCRIBING: &str = "\
@@ -680,7 +680,7 @@ mod tests {
         let long = Upload {
             name: "long.txt".into(),
             mime: "text/plain".into(),
-            bytes: "word ".repeat(20_000).into_bytes(),
+            bytes: "word ".repeat(CHAT_DOC_CHARS / 5 + 100).into_bytes(),
         };
         let clipped = read_for_chat(&long, &never, &mut |_| {}).unwrap();
         assert!(clipped.chars().count() < CHAT_DOC_CHARS + 60);

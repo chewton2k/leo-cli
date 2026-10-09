@@ -221,3 +221,17 @@ test('notes attached earlier in a chat come along with later questions, newest f
   const many = Array.from({ length: 12 }, (_, i) => said([{ id: `n${i}`, title: 'N' }]));
   assert.equal(C.threadRefs(many).length, C.MOST_REFS);
 });
+
+test('notes cited in the last three answers are sent along, newest first', () => {
+  const said = (text, sources) => ({ role: 'assistant', text, sources });
+  const s = (n, id) => ({ n, id, title: id });
+  const messages = [
+    said('old [n1]', [s(1, 'oldest')]),
+    { role: 'user', text: 'q' },
+    said('uses [n1] and [n2]', [s(1, 'a'), s(2, 'b')]),
+    said('nothing cited', [s(1, 'c')]),
+    said('only [n2]', [s(1, 'x'), s(2, 'd')]),
+  ];
+  assert.deepEqual(C.recentNotes(messages), ['d', 'a', 'b']);
+  assert.deepEqual(C.recentNotes([]), []);
+});

@@ -115,7 +115,7 @@ const NOTE: Param = Param {
     about: "which note: an id like n3 from a <note> tag or an earlier result, or the note's exact title",
 };
 
-pub const SPECS: [Spec; 5] = [
+pub const SPECS: [Spec; 6] = [
     Spec {
         name: "search_notes",
         purpose: "Find the user's notes that match words, abbreviations (BFS finds breadth-first search) or ideas in their knowledge graph.",
@@ -140,6 +140,24 @@ pub const SPECS: [Spec; 5] = [
         params: &[NOTE],
         returns: "Up to 10 lines, each: [n5] \"Title\" (kind of link): why they connect. Or a line saying it has no connections yet.",
         example: r#"<tool>{"name": "connected_notes", "note": "Heaps"}</tool>"#,
+    },
+    Spec {
+        name: "read_document",
+        purpose: "Read a document the user gave in this chat, part by part. Use it when the question needs a part of the document you were not shown.",
+        params: &[
+            Param {
+                name: "document",
+                required: true,
+                about: "the document's id like d1, or its file name",
+            },
+            Param {
+                name: "part",
+                required: false,
+                about: "which part to read, starting at 1; leave it out for part 1",
+            },
+        ],
+        returns: "<document name=\"...\" part=\"2\" of=\"5\">that part's text</document>, or \"That did not work: ...\" when there is no such document or part.",
+        example: r#"<tool>{"name": "read_document", "document": "d1", "part": "2"}</tool>"#,
     },
     Spec {
         name: "edit_note",
@@ -277,6 +295,7 @@ const WHEN_ASK: &str = "When to use them:
 - The user asks you to fix, correct, update, add to or rewrite a note, or you find a mistake they asked you to fix: use edit_note, once per change, with \"find\" copied exactly from the note text you were given or opened. This is how you change notes here, so never say you cannot edit or change notes.
 - The user asks for a new note: use create_note.
 - The question is about notes you were not given, or you need a note's full text or its connections: use search_notes, open_note or connected_notes.
+- The question is about a document the user gave and needs a part you were not shown: use read_document.
 - Otherwise answer straight away without tools.
 After suggesting a change or a note, tell the user what you suggested and that they can apply it; never claim it is already done.";
 
@@ -284,11 +303,13 @@ const WHEN_AUTO: &str = "When to use them:
 - The user asks you to fix, correct, update, add to or rewrite a note, or you find a mistake they asked you to fix: use edit_note, once per change, with \"find\" copied exactly from the note text you were given or opened. The user chose Auto, so leo applies your changes at once and they can undo them; make only the changes they asked for.
 - The user asks for a new note: use create_note.
 - The question is about notes you were not given, or you need a note's full text or its connections: use search_notes, open_note or connected_notes.
+- The question is about a document the user gave and needs a part you were not shown: use read_document.
 - Otherwise answer straight away without tools.
 After a change or a new note, tell the user plainly what you changed or made.";
 
 const WHEN_READ: &str = "When to use them:
 - The question is about notes you were not given, or you need a note's full text or its connections: use search_notes, open_note or connected_notes.
+- The question is about a document the user gave and needs a part you were not shown: use read_document.
 - Otherwise answer straight away without tools.
 The user chose Read only for this chat, so you cannot change or make notes. When they ask for a change, say exactly what you would change and where, and tell them they can switch Felix to Ask or Auto, beside the message box, to let you make it.";
 
@@ -704,6 +725,7 @@ pub struct Desk {
     web: Option<crate::Web>,
     pages: Vec<String>,
     access: Access,
+    documents: Vec<(String, String)>,
 }
 
 const WEB_RESULTS: usize = 6;
@@ -718,6 +740,80 @@ impl Desk {
             web: None,
             pages: Vec::new(),
             access: Access::Ask,
+            documents: Vec::new(),
+        }
+    }
+
+    pub fn with_documents(mut self, documents: Vec<(String, String)>) -> Desk {
+        self.documents = documents;
+        self
+    }
+
+    pub fn part_chars(&self) -> usize {
+        (self.room / 3).clamp(12_000, 120_000)
+    }
+
+    fn read_document(&self, call: &Call) -> Done {
+        let wanted = call.text("document").trim().to_string();
+        let fail = |why: String| Done {
+            step: format!("Looked for the document “{}”", clip(&wanted, 60)),
+            result: format!("That did not work: {why}."),
+            proposal: None,
+            found: Vec::new(),
+        };
+        let index = wanted
+            .strip_prefix('d')
+            .and_then(|n| n.parse::<usize>().ok())
+            .and_then(|n| n.checked_sub(1))
+            .filter(|i| *i < self.documents.len())
+            .or_else(|| {
+                self.documents
+                    .iter()
+                    .position(|(name, _)| name.eq_ignore_ascii_case(&wanted))
+            });
+        let Some(index) = index else {
+            let names: Vec<String> = self
+                .documents
+                .iter()
+                .enumerate()
+                .map(|(i, (name, _))| format!("d{} {name}", i + 1))
+                .collect();
+            return fail(if names.is_empty() {
+                "no documents were given in this chat".into()
+            } else {
+                format!(
+                    "there is no document called \"{wanted}\"; the documents are {}",
+                    names.join(", ")
+                )
+            });
+        };
+        let (name, text) = &self.documents[index];
+        let chars: Vec<char> = text.chars().collect();
+        let size = self.part_chars();
+        let parts = chars.len().div_ceil(size).max(1);
+        let part = call
+            .text("part")
+            .trim()
+            .parse::<usize>()
+            .unwrap_or(1)
+            .max(1);
+        if part > parts {
+            return fail(format!(
+                "{name} has {parts} part{}",
+                if parts == 1 { "" } else { "s" }
+            ));
+        }
+        let piece: String = chars[(part - 1) * size..(part * size).min(chars.len())]
+            .iter()
+            .collect();
+        Done {
+            step: format!("Read part {part} of {parts} of {name}"),
+            result: format!(
+                "<document name=\"{}\" part=\"{part}\" of=\"{parts}\">\n{piece}\n</document>",
+                attribute(name)
+            ),
+            proposal: None,
+            found: Vec::new(),
         }
     }
 
@@ -997,6 +1093,7 @@ impl Desk {
                     found: vec![note.title.clone()],
                 }
             }
+            "read_document" => self.read_document(call),
             "connected_notes" => {
                 let wanted = call.text("note");
                 let note = match self.resolve(store, &wanted) {
@@ -1135,6 +1232,42 @@ pub fn continued(conversation: &str, call: &Call, done: &Done) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_long_document_is_read_part_by_part_by_id_or_name() {
+        let text = format!("{}{}", "a".repeat(12_000), "b".repeat(5_000));
+        let desk = Desk::new(Vec::new(), 36_000).with_documents(vec![("paper.pdf".into(), text)]);
+        assert_eq!(desk.part_chars(), 12_000);
+        let read = |args: serde_json::Value| {
+            desk.read_document(&Call {
+                name: "read_document".into(),
+                args,
+            })
+        };
+        let first = read(serde_json::json!({ "document": "d1" }));
+        assert!(first
+            .result
+            .starts_with("<document name=\"paper.pdf\" part=\"1\" of=\"2\">\naaa"));
+        assert_eq!(first.step, "Read part 1 of 2 of paper.pdf");
+        let second = read(serde_json::json!({ "document": "PAPER.pdf", "part": "2" }));
+        assert!(
+            second.result.contains("part=\"2\" of=\"2\">\nbbbbb") && !second.result.contains("aaa")
+        );
+        assert!(read(serde_json::json!({ "document": "d1", "part": "3" }))
+            .result
+            .contains("paper.pdf has 2 parts"));
+        assert!(read(serde_json::json!({ "document": "d9" }))
+            .result
+            .contains("the documents are d1 paper.pdf"));
+        let none = Desk::new(Vec::new(), 36_000);
+        assert!(none
+            .read_document(&Call {
+                name: "read_document".into(),
+                args: serde_json::json!({ "document": "d1" })
+            })
+            .result
+            .contains("no documents were given"));
+    }
 
     fn source(n: usize, id: &str, title: &str) -> SourceRef {
         SourceRef {
@@ -1284,7 +1417,7 @@ mod tests {
         assert!(number.contains("must be text in double quotes"));
         let unknown = wrong(serde_json::json!({"name": "delete_note", "note": "n1"}));
         assert!(unknown.contains(
-            "the tools are search_notes, open_note, connected_notes, edit_note, create_note"
+            "the tools are search_notes, open_note, connected_notes, read_document, edit_note, create_note"
         ));
         assert_eq!(
             check(&Call {

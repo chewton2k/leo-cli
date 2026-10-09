@@ -199,6 +199,16 @@
     return { start: at, query };
   }
 
+  function recentNotes(messages, most = 6) {
+    const out = [];
+    for (const m of [...messages].reverse().filter((x) => x.role === 'assistant').slice(0, 3)) {
+      for (const s of cited(m.text || '', m.sources || [])) {
+        if (s && s.id && !out.includes(s.id) && out.length < most) out.push(s.id);
+      }
+    }
+    return out;
+  }
+
   function threadRefs(messages) {
     const out = [];
     for (const m of [...messages].reverse()) {
@@ -1309,7 +1319,7 @@
           method: 'POST',
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: history, mode: thread.mode, note: ctx, refs: threadRefs(thread.messages).map((r) => r.id), chat: thread.id, files, access }),
+          body: JSON.stringify({ messages: history, mode: thread.mode, note: ctx, refs: threadRefs(thread.messages).map((r) => r.id), recent: recentNotes(thread.messages.filter((m) => m !== answer)), chat: thread.id, files, access }),
           signal: controller.signal,
         });
         if (response.status === 401) throw new Error('This page needs its link again. Open the link leo serve printed.');
@@ -1599,5 +1609,5 @@
     };
   }
 
-  root.leoChat = { threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS };
+  root.leoChat = { recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -219,6 +219,7 @@ struct Ask {
     room: usize,
     wanted: String,
     access: tools::Access,
+    documents: Vec<(String, String)>,
 }
 
 fn run_tool(
@@ -315,6 +316,7 @@ fn answer(
         room,
         wanted,
         access,
+        documents,
     } = ask;
     let send = |value: serde_json::Value| {
         let _ = tx.send(ndjson(value));
@@ -326,7 +328,8 @@ fn answer(
     let native = format!("{system}\n\n{}", tools::guidance_for(web_on, access));
     let mut desk = tools::Desk::new(sources, room)
         .with_web(web)
-        .with_access(access);
+        .with_access(access)
+        .with_documents(documents);
     let chosen = state.converse.as_ref().and_then(|converse| {
         converse(
             &chat::Instructions {
@@ -664,6 +667,7 @@ pub(crate) async fn chat_reply(
     let graphs = Arc::clone(&state.graphs);
     let note = body.note.clone();
     let attached = body.refs.clone();
+    let recent = body.recent.clone();
     let room = state
         .room
         .as_ref()
@@ -672,11 +676,12 @@ pub(crate) async fn chat_reply(
     let gathered = state
         .with_store(move |store| {
             let cache = graphs.load();
-            Ok(chat::gather(
+            Ok(chat::gather_with(
                 store,
                 &cache,
                 note.as_deref(),
                 &attached,
+                &recent,
                 &question,
                 room,
             ))
@@ -707,6 +712,7 @@ pub(crate) async fn chat_reply(
             room,
             wanted,
             access,
+            documents,
         };
         let end = match answer(&worker, &streamer, ask, &tx) {
             Ok(spent) => {

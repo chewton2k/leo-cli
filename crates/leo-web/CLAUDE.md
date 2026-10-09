@@ -511,3 +511,9 @@
   models minimal..high, Gemini low..high). POST `/api/settings {set: "effort",
   value}` (empty = default) writes `[providers.X] effort`; the TUI's writing
   effort row steps through the same list (`choice::step_effort`).
+- Felix keeps track of what a chat is about: the page sends `recent` (notes
+  cited in the last three answers, `recentNotes`), gathered as "used earlier
+  in this chat" right after attached notes (`gather_with`, `MOST_RECENT` 6).
+  Documents given to Felix are kept whole (`CHAT_DOC_CHARS` 2M); the prompt
+  shows each one's share with a "[The document goes on…]" marker, and the
+  `read_document` tool reads any part (`Desk::part_chars` = room/3, 12k..120k).
