@@ -475,8 +475,18 @@
   ones) and `at_once` (3 / 2 / 1) requests run side by side per round
   (`build_at`, `in_parallel` on scoped threads; results merged in order, so
   the cache and progress stay deterministic).
-- `api()` in the page treats an empty reply body as `null` (POST `/api/dirs`
-  answers 201 with no body; parsing it used to fail after the folder was made).
+- `api()` in the page treats an empty reply body as `null`, and POST
+  `/api/dirs` now answers 201 `{path}`: an empty 201 once made folder
+  creation fail after the folder was made. A success is JSON or a bodiless 204;
+  the browser test "every successful answer from leo is JSON" sweeps the API.
+- Bug classes guarded in CI (`flows.spec.js`): every test fails if the page
+  throws or shows a programmer error (`guard` fixture: `pageerror`, and
+  toasts / `.msg-error` matching `TECHNICAL`). The describe block "the kinds of
+  bugs that reached people before" covers typing that keeps focus in every text
+  box across results and saves, edits and answers that stay with the note or
+  chat they started in, slow pages never drawing over the next one (every
+  page bumps `seq`; Record did not), each checkbox changing only its own line,
+  selections across every block kind (both directions), and double presses.
 - Undo in notes: `doc.js` keeps up to `MOST_UNDO` (200) snapshots per open
   note. Typing groups into one step until a 1 s pause or 4 s of typing; any
   change bigger than one character (a deleted selection, a ticked box, a

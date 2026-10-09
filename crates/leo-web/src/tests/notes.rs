@@ -141,6 +141,30 @@ fn an_edit_based_on_an_old_version_is_refused_and_changes_nothing() {
         .contains("typed in Obsidian"));
 }
 #[test]
+fn a_new_folder_answers_with_json_so_the_page_can_read_it() {
+    let (state, _dir, _) = state_with(&[]);
+    let (status, Json(body)) = run(create_dir(
+        State(state.clone()),
+        Json(CreateDirBody {
+            path: "cs130/week1".into(),
+        }),
+    ))
+    .unwrap();
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(body, serde_json::json!({ "path": "cs130/week1" }));
+    assert_eq!(
+        run(create_dir(
+            State(state),
+            Json(CreateDirBody {
+                path: "cs130/week1".into(),
+            }),
+        ))
+        .err(),
+        Some(StatusCode::CONFLICT)
+    );
+}
+
+#[test]
 fn web_note_creation_directory_creation_and_moves_reject_traversal() {
     let (state, dir, ids) = state_with(&[("A", "")]);
     for path in [
@@ -164,8 +188,9 @@ fn web_note_creation_directory_creation_and_moves_reject_traversal() {
             run(create_dir(
                 State(state.clone()),
                 Json(CreateDirBody { path: path.into() })
-            )),
-            StatusCode::BAD_REQUEST
+            ))
+            .err(),
+            Some(StatusCode::BAD_REQUEST)
         );
         assert_eq!(
             run(move_note(

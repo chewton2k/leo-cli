@@ -509,7 +509,7 @@ fn remove_emptied(top: &std::path::Path) {
 pub(crate) async fn create_dir(
     State(state): State<AppState>,
     Json(body): Json<CreateDirBody>,
-) -> StatusCode {
+) -> Result<(StatusCode, Json<serde_json::Value>), StatusCode> {
     state
         .with_store(move |store| {
             directory(store, &body.path)?;
@@ -517,8 +517,10 @@ pub(crate) async fn create_dir(
                 return Err(StatusCode::CONFLICT);
             }
             save(store)?;
-            Ok(StatusCode::CREATED)
+            Ok((
+                StatusCode::CREATED,
+                Json(serde_json::json!({ "path": body.path })),
+            ))
         })
         .await
-        .unwrap_or_else(|status| status)
 }

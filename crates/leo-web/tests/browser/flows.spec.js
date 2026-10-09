@@ -1,4 +1,29 @@
-const { test, expect } = require('@playwright/test');
+const base = require('@playwright/test');
+const { expect } = base;
+
+const TECHNICAL = /Unexpected end of JSON|is not valid JSON|Failed to execute|Cannot read propert|is not a function|is not defined|\bundefined\b|\[object |\bNaN\b|SyntaxError|TypeError|ReferenceError/;
+const test = base.test.extend({
+  guard: [async ({ page }, use) => {
+    const crashes = [];
+    const shown = [];
+    page.on('pageerror', (e) => crashes.push(e.message));
+    await page.exposeFunction('__leoShown', (text) => { shown.push(text); });
+    await page.addInitScript(() => {
+      const seen = new WeakSet();
+      const look = () => {
+        for (const el of document.querySelectorAll('.toast, .msg-error, [role="alert"]')) {
+          if (seen.has(el)) continue;
+          seen.add(el);
+          window.__leoShown(el.textContent || '');
+        }
+      };
+      new MutationObserver(look).observe(document, { childList: true, subtree: true, characterData: true });
+    });
+    await use();
+    expect(crashes, 'the page threw').toEqual([]);
+    expect(shown.filter((t) => TECHNICAL.test(t)), 'a programmer error was shown to the user').toEqual([]);
+  }, { auto: true }],
+});
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -2196,5 +2221,338 @@ test.describe('recording', () => {
     await page.locator('[data-action="rec-start"]').click();
     await expect(page.locator('.toast.bad')).toContainText('Allow it for this site');
     expect(started).toBe(false);
+  });
+});
+
+test.describe('the kinds of bugs that reached people before', () => {
+  const kind = () => test.info().project.name;
+  const stamp = () => `${kind()}-${Date.now().toString(36)}`;
+  const bodyOf = async (page, id) => (await (await page.request.get(`/api/notes/${id}`)).json()).body;
+
+  async function typeWithPauses(page, box, first, second) {
+    await box.pressSequentially(first, { delay: 40 });
+    await page.waitForTimeout(900);
+    await expect(box, 'still typing in the same box after a pause').toBeFocused();
+    await box.pressSequentially(second, { delay: 40 });
+    await expect(box).toBeFocused();
+  }
+
+  test('every text box keeps focus and every letter while results and saves arrive', async ({ page }) => {
+    const tag = stamp();
+    const note = await (await page.request.post('/api/notes', { data: { title: `Typing target ${tag}`, body: 'Line one' } })).json();
+    await page.request.post('/api/notes', { data: { title: `Dijkstra typing ${tag}`, body: 'Priority queue.' } });
+
+    await page.goto('/');
+    await openSearchBox(page);
+    const search = page.locator('#search-input');
+    await typeWithPauses(page, search, 'dijkstra', ' typing');
+    await expect(search).toHaveValue('dijkstra typing');
+    await page.keyboard.press('Escape');
+
+    await page.goto('/');
+    if (await page.locator('#side').isHidden()) {
+      await page.locator('#menu').click();
+      await page.locator('.sheet [data-action="new-folder"]').click();
+    } else {
+      await page.locator('#side .side-group [data-action="new-folder"]').click();
+    }
+    const folder = page.locator('#folder-name');
+    await typeWithPauses(page, folder, 'week', ' three');
+    await expect(folder).toHaveValue('week three');
+    await page.locator('.sheet [data-action="close"]').click();
+
+    await page.goto('/');
+    await control(page, 'upload').click();
+    await page.locator('#upload-input').setInputFiles({ name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('Merge sort.') });
+    for (const id of ['#upload-title', '#upload-wants']) {
+      const box = page.locator(id);
+      await box.click();
+      await typeWithPauses(page, box, 'merge', ' sort');
+      await expect(box).toHaveValue('merge sort');
+    }
+    await page.locator('.sheet [data-action="close"]').first().click();
+
+    await page.goto(`/#/n/${note.id}`);
+    await page.locator('.blk').first().click();
+    const line = page.locator('.line-edit');
+    await line.press('End');
+    await typeWithPauses(page, line, ' and', ' more');
+    await expect.poll(() => bodyOf(page, note.id), { timeout: 5000 }).toBe('Line one and more');
+    await expect(line).toBeFocused();
+
+    const title = page.locator('#title');
+    await title.click();
+    await page.keyboard.press('End');
+    await typeWithPauses(page, title, ' A', 'B');
+    await expect(title).toHaveText(`Typing target ${tag} AB`);
+
+    await page.goto('/');
+    await page.locator('#chat-toggle').click();
+    const input = page.locator('#chat-input');
+    await typeWithPauses(page, input, 'compare @dijkstra', ' typing');
+    await expect(page.locator('.chat-pick-row').first()).toContainText(`Dijkstra typing ${tag}`);
+    await expect(input).toHaveValue('compare @dijkstra typing');
+    await page.locator('#chat [data-chat="close"]').click();
+
+    await page.goto('/#/settings');
+    const key = page.locator('[data-task-card="writing"] [data-key-input]').first();
+    if (await key.count()) {
+      await key.click();
+      await typeWithPauses(page, key, 'sk-not', '-real');
+      await expect(key).toHaveValue('sk-not-real');
+      await key.fill('');
+    }
+
+    await page.goto('/#/record');
+    const rec = page.locator('#rec-title');
+    await rec.click();
+    await typeWithPauses(page, rec, 'graph', ' lecture');
+    await expect(rec).toHaveValue('graph lecture');
+  });
+
+  test('an edit typed just before opening another note is saved to the note it was typed in', async ({ page }) => {
+    const tag = stamp();
+    const first = await (await page.request.post('/api/notes', { data: { title: `Typed in ${tag}`, body: 'Start' } })).json();
+    const second = await (await page.request.post('/api/notes', { data: { title: `Opened next ${tag}`, body: 'Leave me' } })).json();
+    await page.goto(`/#/n/${first.id}`);
+    await page.locator('.blk').first().click();
+    await page.locator('.line-edit').press('End');
+    await page.keyboard.type(' typed fast');
+    await page.evaluate((id) => { location.hash = `#/n/${id}`; }, second.id);
+    await expect(page.locator('#title')).toHaveText(second.title);
+    await expect.poll(() => bodyOf(page, first.id), { timeout: 5000 }).toBe('Start typed fast');
+    await page.waitForTimeout(900);
+    expect(await bodyOf(page, second.id)).toBe('Leave me');
+    await expect(page.locator('#doc')).toContainText('Leave me');
+    await expect(page.locator('#doc')).not.toContainText('typed fast');
+    await page.goBack();
+    await expect(page.locator('#doc')).toContainText('Start typed fast');
+  });
+
+  test('an answer still coming when a new chat starts stays in the chat it was asked in', async ({ page }) => {
+    let release;
+    const held = new Promise((resolve) => { release = resolve; });
+    const asked = [];
+    await page.route('**/api/chat', async (route) => {
+      asked.push(route.request().postDataJSON());
+      await held;
+      await route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: '{"sources":[]}\n{"t":"Late answer about heaps."}\n{"done":true}\n' });
+    });
+    await page.goto('/');
+    await page.locator('#chat-toggle').click();
+    const chat = page.locator('#chat');
+    await chat.locator('#chat-input').fill('what is a heap?');
+    await chat.locator('#chat-input').press('Enter');
+    await expect.poll(() => asked.length).toBe(1);
+    await chat.locator('.chat-head [data-chat="new"]').click();
+    release();
+    await page.waitForTimeout(600);
+    await expect(chat.locator('.msg')).toHaveCount(0);
+    await expect(chat).not.toContainText('Late answer about heaps.');
+    await chat.locator('#chat-input').fill('a new question');
+    await expect(chat.locator('#chat-input')).toHaveValue('a new question');
+    const old = await (await page.request.get(`/api/chats/${asked[0].chat}`)).json();
+    expect(old.messages[0].text).toBe('what is a heap?');
+    expect(old.messages).toHaveLength(2);
+  });
+
+  test('a page that loads slowly never draws over the page opened after it', async ({ page }) => {
+    const note = await (await page.request.post('/api/notes', { data: { title: `Slow note ${kind()}`, body: 'Slow body' } })).json();
+    await page.request.post('/api/dirs', { data: { path: `slow-${kind()}` } });
+    const slow = [
+      ['#/settings', '**/api/settings'],
+      ['#/trash', '**/api/trash'],
+      ['#/settings/storage', '**/api/storage'],
+      ['#/map', '**/api/graph'],
+      ['#/search/slow', '**/api/search?*'],
+      [`#/f/slow-${kind()}`, '**/api/dirs?*'],
+      [`#/n/${note.id}`, `**/api/notes/${note.id}`],
+    ];
+    for (const [hash, api] of slow) {
+      await page.goto('/');
+      let release;
+      const held = new Promise((resolve) => { release = resolve; });
+      let seen = false;
+      await page.route(api, async (route) => {
+        seen = true;
+        await held;
+        await route.continue().catch(() => {});
+      });
+      await page.evaluate((h) => { location.hash = h; }, hash);
+      await expect.poll(() => seen, { message: `${hash} asked leo` }).toBe(true);
+      await page.evaluate(() => { location.hash = '#/record'; });
+      await expect(page.locator('#rec-title')).toBeVisible();
+      release();
+      await page.waitForTimeout(700);
+      await expect(page.locator('#rec-title'), `${hash} finished late and must not replace Record`).toBeVisible();
+      await page.unroute(api);
+    }
+  });
+
+  test('each checkbox changes its own line, whatever comes before it', async ({ page }) => {
+    const body = [
+      '- [ ] first',
+      '```',
+      '- [ ] inside code',
+      '```',
+      '- [ ] after code',
+      '> - [ ] inside a quote',
+      '> [!todo]- Folded tasks',
+      '> - [ ] inside a callout',
+      '$$',
+      'x^2',
+      '$$',
+      '```mermaid',
+      'graph TD; A-->B',
+      '```',
+      '1) [ ] paren number',
+      '- [X] capital done',
+      '    - [ ] deep',
+      '| a | b |',
+      '|---|---|',
+      '| - [ ] cell | 2 |',
+      '- [ ] last',
+    ].join('\n');
+    const note = await (await page.request.post('/api/notes', { data: { title: `Boxes everywhere ${kind()}`, body } })).json();
+    await page.goto(`/#/n/${note.id}`);
+    const boxes = page.locator('.doc input[data-box]');
+    await expect(boxes.first()).toBeVisible();
+    const count = await boxes.count();
+    expect(count).toBeGreaterThanOrEqual(6);
+    let before = body.split('\n');
+    for (let i = 0; i < count; i++) {
+      const box = boxes.nth(i);
+      if (!(await box.isVisible())) continue;
+      const label = (await box.evaluate((el) => (el.closest('li, .task-item') || el.parentElement).textContent)).trim();
+      await box.click();
+      await expect(page.locator('.doc textarea')).toHaveCount(0);
+      let after;
+      await expect.poll(async () => {
+        after = (await bodyOf(page, note.id)).split('\n');
+        return after.filter((l, n) => l !== before[n]).length;
+      }, { timeout: 5000, message: `box ${i + 1} (${label}) changes one line` }).toBe(1);
+      const changed = after.findIndex((l, n) => l !== before[n]);
+      expect(after[changed], `box ${i + 1} changed the line it shows`).toContain(label.split('\n')[0].trim());
+      expect(before[changed].replace(/\[[ xX]\]/, '')).toBe(after[changed].replace(/\[[ xX]\]/, ''));
+      before = after;
+    }
+  });
+
+  test.describe('a selection across any kind of block deletes exactly what it covers', () => {
+    const kinds = {
+      'a code block': ['```js', 'const a = 1;', '```'],
+      'a table': ['| a | b |', '|---|---|', '| 1 | 2 |'],
+      'a folded callout': ['> [!example]- Why', '> Because.'],
+      'a quote': ['> quoted', '> twice'],
+      'a math block': ['$$', 'e^{i\\pi} + 1 = 0', '$$'],
+      'a diagram': ['```mermaid', 'graph TD; A-->B', '```'],
+      'checkboxes': ['- [ ] one', '- [x] two'],
+      'a heading and a rule': ['## Heading', '---'],
+      'a nested list': ['1. one', '   - inner', '2. two'],
+    };
+    for (const [name, lines] of Object.entries(kinds)) {
+      for (const backwards of [false, true]) {
+        test(`${name}${backwards ? ', selected backwards' : ''}`, async ({ page }) => {
+          const body = ['Start here', '', ...lines, '', 'End here'].join('\n');
+          const note = await (await page.request.post('/api/notes', { data: { title: `Across ${name} ${backwards} ${kind()}`, body } })).json();
+          await page.goto(`/#/n/${note.id}`);
+          await expect(page.locator('#doc .blk').last()).toContainText('End here');
+          await page.evaluate((back) => {
+            const blocks = document.querySelectorAll('#doc .blk');
+            const text = (block, word) => {
+              const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+              for (let node = walker.nextNode(); node; node = walker.nextNode()) if (node.data.includes(word)) return node;
+              return null;
+            };
+            const start = text(blocks[0], 'Start here');
+            const end = text(blocks[blocks.length - 1], 'End here');
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            if (back) selection.setBaseAndExtent(end, end.data.indexOf('End here') + 4, start, start.data.indexOf('Start here') + 5);
+            else selection.setBaseAndExtent(start, start.data.indexOf('Start here') + 5, end, end.data.indexOf('End here') + 4);
+            document.activeElement.blur();
+          }, backwards);
+          await page.keyboard.press('Backspace');
+          await expect.poll(() => bodyOf(page, note.id), { timeout: 5000 }).toBe('Starthere');
+        });
+      }
+    }
+  });
+
+  test('pressing Create twice makes one folder and no error', async ({ page }) => {
+    const name = `twice-${stamp()}`;
+    await page.goto('/');
+    if (await page.locator('#side').isHidden()) {
+      await page.locator('#menu').click();
+      await page.locator('.sheet [data-action="new-folder"]').click();
+    } else {
+      await page.locator('#side .side-group [data-action="new-folder"]').click();
+    }
+    await page.locator('#folder-name').fill(name);
+    await page.locator('#folder-name').press('Enter');
+    await page.locator('[data-action="create-folder"]').click({ force: true, timeout: 1000 }).catch(() => {});
+    await expect(page).toHaveURL(new RegExp(`#/f/${name}$`));
+    await page.waitForTimeout(500);
+    await expect(page.locator('.toast.bad')).toHaveCount(0);
+    const folders = await (await page.request.get('/api/folders')).json();
+    expect(folders.filter((f) => f.name === name)).toHaveLength(1);
+  });
+
+  test('pressing Apply twice on a suggestion changes the note once, without an error', async ({ page }) => {
+    const note = await (await page.request.post('/api/notes', { data: { title: `Apply twice ${kind()}`, body: 'BFS uses a stack.' } })).json();
+    await page.route('**/api/chat', (route) => route.fulfill({
+      status: 200,
+      headers: { 'content-type': 'application/x-ndjson' },
+      body: [{ sources: [] }, { proposal: { kind: 'edit', note: note.id, title: note.title, find: 'stack', replace: 'queue', why: '' } }, { t: 'Fixed.' }, { done: true }].map((l) => JSON.stringify(l)).join('\n') + '\n',
+    }));
+    await page.goto('/');
+    await page.locator('#chat-toggle').click();
+    await page.locator('#chat-input').fill('fix it');
+    await page.locator('#chat-input').press('Enter');
+    const apply = page.locator('#chat .proposal [data-chat="apply"]');
+    await expect(apply).toBeVisible();
+    await apply.dblclick();
+    await expect(page.locator('#chat .proposal-done')).toContainText('Applied');
+    await page.waitForTimeout(500);
+    expect(await bodyOf(page, note.id)).toBe('BFS uses a queue.');
+    await expect(page.locator('.toast.bad')).toHaveCount(0);
+  });
+
+  test('every successful answer from leo is JSON, or 204 with nothing', async ({ page }) => {
+    const tag = stamp();
+    const answers = [];
+    const call = async (method, url, data) => {
+      const response = await page.request.fetch(url, { method, data });
+      answers.push({ what: `${method} ${url}`, status: response.status(), type: response.headers()['content-type'] || '', text: await response.text() });
+      return answers[answers.length - 1];
+    };
+    const json = (answer) => JSON.parse(answer.text);
+    const made = json(await call('POST', '/api/notes', { title: `Contract ${tag}`, body: '- [ ] box\nold words' }));
+    await call('PATCH', `/api/notes/${made.id}`, { body: '- [ ] box\nnew words' });
+    await call('POST', `/api/notes/${made.id}/toggle?checkbox=1`);
+    await call('POST', '/api/dirs', { path: `contract-${tag}` });
+    await call('POST', '/api/dirs', { path: `contract-${tag}/inner` });
+    await call('POST', `/api/notes/${made.id}/move`, { directory: `contract-${tag}` });
+    await call('POST', '/api/dirs', { path: `contract-moved-${tag}` });
+    await call('POST', '/api/dirs/move', { from: `contract-moved-${tag}`, into: `contract-${tag}` });
+    await call('POST', `/api/notes/${made.id}/suggestion`, { find: 'new', replace: 'newer' });
+    await call('PUT', `/api/chats/contract-${tag}`, { title: 'Contract', mode: 'chat', messages: [{ role: 'user', text: 'hi' }] });
+    for (const url of ['/api/notes', '/api/folders', '/api/dirs', `/api/search?q=contract`, '/api/trash', '/api/chats', `/api/chats/contract-${tag}`, '/api/review', '/api/activity', '/api/settings', '/api/storage', '/api/keep', '/api/sessions', '/api/graph/status', '/api/record']) {
+      await call('GET', url);
+    }
+    const trashed = json(await call('POST', '/api/trash/move', { notes: [made.id], dirs: [] }));
+    await call('POST', '/api/trash/restore', { ids: trashed.ids || [made.id] });
+    await call('DELETE', `/api/notes/${made.id}`);
+    await call('DELETE', `/api/chats/contract-${tag}`);
+
+    for (const a of answers) {
+      expect(a.status, `${a.what} succeeded`).toBeLessThan(300);
+      if (a.status === 204) {
+        expect(a.text, `${a.what} is 204, so it has no body`).toBe('');
+        continue;
+      }
+      expect(a.type, `${a.what} says it is JSON`).toContain('application/json');
+      expect(() => JSON.parse(a.text), `${a.what} answers JSON`).not.toThrow();
+    }
   });
 });

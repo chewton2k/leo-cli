@@ -582,6 +582,7 @@ const SEARCH_MOST = 300;
 const SEARCH_STEP = 60;
 
 async function showRecord(dir) {
+  const mine = ++seq;
   state = { view: 'record', dir: '' };
   chrome({ showBack: true });
   $('#crumbs').innerHTML = '<span class="sep">/</span><button>Record</button>';
@@ -593,5 +594,6 @@ async function showRecord(dir) {
   } catch (e) {
     if (e instanceof Locked) throw e;
   }
+  if (mine !== seq) return;
   await recorder.show($('#rec-box'), { dir, folders: folders.map((f) => f.name).filter(Boolean) });
 }
