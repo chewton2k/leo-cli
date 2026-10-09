@@ -12,6 +12,7 @@ use crate::graph::{Cache, Read};
 pub enum Why {
     Idea(String),
     Summary,
+    Meaning,
 }
 
 #[derive(Debug)]
@@ -172,6 +173,29 @@ pub fn search<'a>(store: &'a Store, cache: &Cache, query: &str) -> Vec<Hit<'a>> 
         .collect();
     rest.sort_by_key(|n| Reverse(n.updated_at));
     hits.extend(plain(rest));
+    hits
+}
+
+pub fn with_meaning<'a>(
+    store: &'a Store,
+    query: &str,
+    mut hits: Vec<Hit<'a>>,
+    close: &[(String, f32)],
+) -> Vec<Hit<'a>> {
+    if query.split_whitespace().any(|w| w.starts_with('#')) {
+        return hits;
+    }
+    let mut taken: HashSet<String> = hits.iter().map(|h| h.note.id.clone()).collect();
+    for (id, _) in close {
+        if let Some(note) = store.notes.iter().find(|n| &n.id == id) {
+            if taken.insert(note.id.clone()) {
+                hits.push(Hit {
+                    note,
+                    why: Some(Why::Meaning),
+                });
+            }
+        }
+    }
     hits
 }
 

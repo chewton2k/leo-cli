@@ -77,6 +77,8 @@ fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<Strin
         captions: Arc::new(captions::Captions::at(dir.path().join("captions.json"))),
         activity: Default::default(),
         steering: Default::default(),
+        meaning: None,
+        vectors: Arc::new(vectors::Vectors::at(dir.path().join("meaning.json"))),
     };
     (state, dir, ids)
 }

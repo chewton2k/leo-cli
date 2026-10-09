@@ -918,6 +918,10 @@ pub struct Desk {
     captions: Option<std::sync::Arc<crate::captions::Captions>>,
     pub asked: usize,
     steer: Option<crate::steer::Steer>,
+    meaning: Option<(
+        crate::vectors::Meaning,
+        std::sync::Arc<crate::vectors::Vectors>,
+    )>,
 }
 
 const WEB_RESULTS: usize = 6;
@@ -936,7 +940,17 @@ impl Desk {
             captions: None,
             asked: 0,
             steer: None,
+            meaning: None,
         }
+    }
+
+    pub fn with_meaning(
+        mut self,
+        meaning: Option<crate::vectors::Meaning>,
+        vectors: std::sync::Arc<crate::vectors::Vectors>,
+    ) -> Desk {
+        self.meaning = meaning.map(|m| (m, vectors));
+        self
     }
 
     pub fn with_steer(mut self, steer: crate::steer::Steer) -> Desk {
@@ -1252,7 +1266,19 @@ impl Desk {
                 let step = format!("Searched your notes for “{}”", clip(query.trim(), 60));
                 let words: Vec<String> =
                     query.split_whitespace().map(|w| w.to_lowercase()).collect();
-                let hits = crate::search::search(store, cache, &query);
+                let close = self
+                    .meaning
+                    .as_ref()
+                    .map(|(meaning, vectors)| {
+                        crate::vectors::close_to(Some(meaning), vectors, &query, FOUND)
+                    })
+                    .unwrap_or_default();
+                let hits = crate::search::with_meaning(
+                    store,
+                    &query,
+                    crate::search::search(store, cache, &query),
+                    &close,
+                );
                 if hits.is_empty() {
                     return Done {
                         step,
@@ -1272,6 +1298,9 @@ impl Desk {
                         }
                         Some(crate::search::Why::Summary) => {
                             " (through its summary in the knowledge graph)".into()
+                        }
+                        Some(crate::search::Why::Meaning) => {
+                            " (close in meaning, not in words)".into()
                         }
                         None => String::new(),
                     };

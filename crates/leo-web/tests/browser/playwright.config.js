@@ -23,6 +23,6 @@ module.exports = defineConfig({
     command: 'node server.js',
     url: 'http://127.0.0.1:31831',
     reuseExistingServer: false,
-    env: { LEO_HOME: home, LEO_NO_UPDATE_CHECK: '1', LEO_NO_MICROPHONE: '1', LEO_NO_OPEN: '1' },
+    env: { LEO_HOME: home, LEO_INSTALL_NO_MODEL: '1', LEO_NO_UPDATE_CHECK: '1', LEO_NO_MICROPHONE: '1', LEO_NO_OPEN: '1' },
   },
 });

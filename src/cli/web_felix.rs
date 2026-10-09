@@ -91,3 +91,12 @@ pub fn converser() -> leo_web::Converser {
         },
     )
 }
+
+pub fn meaning() -> leo_web::Meaning {
+    if leo_services::meaning::wanted() {
+        std::thread::spawn(|| {
+            let _ = leo_services::meaning::fetch(true);
+        });
+    }
+    std::sync::Arc::new(|texts: &[String], query: bool| leo_services::meaning::embed(texts, query))
+}

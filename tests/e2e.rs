@@ -66,6 +66,7 @@ impl Leo {
             .env("LEO_NO_MICROPHONE", "1")
             .env("LEO_NO_OPEN", "1")
             .env("LEO_INSTALL_NO_MODEL", "1")
+            .env("LEO_NO_MEANING_MODEL", "1")
             .env("GIT_AUTHOR_NAME", "leo test")
             .env("GIT_AUTHOR_EMAIL", "leo@example.com")
             .env("GIT_COMMITTER_NAME", "leo test")
@@ -619,6 +620,40 @@ fn update_downloads_the_speech_model_first_when_it_is_missing() {
         std::fs::read(&encoder).unwrap(),
         b"a small stand-in encoder"
     );
+}
+
+#[test]
+fn update_fetches_the_model_that_finds_notes_by_meaning_once() {
+    let leo = Leo::new();
+    let exe = leo.installed();
+    let (script, ran) = tripwire(&leo);
+    let source = leo.home.path().join("meaning-source");
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::write(source.join("config.json"), b"{}").unwrap();
+    let manifest = format!("config.json={}", sha256_of(&source.join("config.json")));
+    let update = || {
+        leo.cmd_at(&exe, &["update"])
+            .env_remove("LEO_NO_MEANING_MODEL")
+            .env_remove("LEO_INSTALL_NO_MODEL")
+            .env("LEO_INSTALL_MODEL_URL", "file:///nonexistent")
+            .env("LEO_MEANING_URL", format!("file://{}", source.display()))
+            .env("LEO_MEANING_MANIFEST", &manifest)
+            .env("LEO_UPDATE_SCRIPT", &script)
+            .env("LEO_LATEST_RELEASE", env!("CARGO_PKG_VERSION"))
+            .output_retrying()
+    };
+    let out = update();
+    assert!(out.status.success(), "{}", describe(&out));
+    let said = String::from_utf8_lossy(&out.stdout);
+    assert!(said.contains("finds notes by meaning"), "{said}");
+    assert!(leo
+        .home
+        .path()
+        .join("models/bge-small-en-v1.5/config.json")
+        .is_file());
+    let again = update();
+    assert!(!String::from_utf8_lossy(&again.stdout).contains("by meaning"));
+    assert!(!ran.exists());
 }
 
 fn installer_block(dir: &Path) -> String {

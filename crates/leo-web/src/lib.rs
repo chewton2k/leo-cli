@@ -17,6 +17,7 @@ mod tests;
 mod token;
 pub mod tools;
 pub mod tunnel;
+pub mod vectors;
 
 #[cfg(test)]
 use std::sync::MutexGuard;
@@ -62,6 +63,7 @@ use crate::terminal::{bind, clickable, keep_awake, open_on_enter, print_qr, shou
 
 pub use chat::{Conversation, Converser, Exchange, Instructions, Reply, Spent, Streamer, ToolSpec};
 pub use graph::Writer;
+pub use vectors::Meaning;
 
 pub trait SettingsApi: Send + Sync {
     fn describe(&self, notes_dir: &std::path::Path) -> serde_json::Value;
@@ -128,6 +130,7 @@ pub struct Powers {
     pub web: Option<Web>,
     pub converse: Option<chat::Converser>,
     pub seer: Option<captions::Seer>,
+    pub meaning: Option<vectors::Meaning>,
 }
 
 #[derive(Clone)]
@@ -151,6 +154,8 @@ struct AppState {
     captions: Arc<captions::Captions>,
     activity: Arc<Activity>,
     steering: steer::Steering,
+    meaning: Option<vectors::Meaning>,
+    vectors: Arc<vectors::Vectors>,
 }
 
 struct Activity {
@@ -210,6 +215,25 @@ async fn keep_graph_current(state: AppState) {
     let mut tick = tokio::time::interval(GRAPH_CHECK);
     loop {
         tick.tick().await;
+        if let Some(meaning) = state.meaning.clone() {
+            let vectors = Arc::clone(&state.vectors);
+            let listed = Arc::clone(&vectors);
+            if let Ok(work) = state
+                .with_store(move |store| {
+                    let work = listed.stale(store, vectors::PIECES_PER_TICK);
+                    if listed.forget_gone(store) > 0 && work.is_empty() {
+                        listed.save();
+                    }
+                    Ok(work)
+                })
+                .await
+            {
+                let _ = tokio::task::spawn_blocking(move || {
+                    vectors::read_in(&vectors, &meaning, &work)
+                })
+                .await;
+            }
+        }
         let idle = state.activity.idle();
         if idle < graph::UPDATE_WHEN_IDLE {
             continue;
@@ -308,8 +332,11 @@ pub struct ServeOptions {
 
 pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
     let store = Store::load()?;
+    let vectors = Arc::new(vectors::Vectors::for_notes(&store.notes_dir));
     let graphs = Arc::new(
-        graph::Graphs::for_notes(&store.notes_dir, powers.writer).with_room(powers.room.clone()),
+        graph::Graphs::for_notes(&store.notes_dir, powers.writer)
+            .with_room(powers.room.clone())
+            .with_vectors(Arc::clone(&vectors)),
     );
     let chats = chats::dir_for(&store.notes_dir);
     let chat = powers.chat;
@@ -322,6 +349,7 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
     let web = powers.web;
     let converse = powers.converse;
     let seer = powers.seer;
+    let meaning = powers.meaning;
     let captions = Arc::new(captions::Captions::for_notes(&store.notes_dir));
     let count = store.notes.len();
     let token_path = leo_core::paths::config_dir()?.join("serve-token");
@@ -366,6 +394,8 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
         captions,
         activity: Default::default(),
         steering: Default::default(),
+        meaning,
+        vectors,
     };
     tokio::spawn(keep_graph_current(state.clone()));
     let app = router(state);

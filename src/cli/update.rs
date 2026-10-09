@@ -30,6 +30,23 @@ fn ensure_speech_model() {
     }
 }
 
+fn ensure_meaning_model() {
+    if !leo_services::meaning::wanted() {
+        return;
+    }
+    println!(
+        "  Downloading the model that finds notes by meaning ({} MB, once)…",
+        leo_services::meaning::MODEL_MB
+    );
+    match leo_services::meaning::fetch(false) {
+        Ok(path) => println!("  Saved {}", path.display()),
+        Err(e) => println!(
+            "  {}",
+            format!("Could not download it ({e}). leo serve will try again.").dimmed()
+        ),
+    }
+}
+
 pub fn run(force: bool) -> Result<()> {
     let current = env!("CARGO_PKG_VERSION");
     if !force {
@@ -38,6 +55,7 @@ pub fn run(force: bool) -> Result<()> {
                 println!();
                 println!("  leo {current} is the latest version.");
                 ensure_speech_model();
+                ensure_meaning_model();
                 println!(
                     "  {}",
                     "`leo update --force` reinstalls it anyway.".dimmed()

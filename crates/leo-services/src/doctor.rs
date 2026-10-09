@@ -175,6 +175,28 @@ fn leo_checks(config_path: &Path, newer: Option<String>) -> Vec<Check> {
     checks
 }
 
+fn meaning_check(state: crate::providers::ModelState) -> Check {
+    use crate::providers::ModelState;
+    let what = "finding notes by meaning";
+    let needed_for = "Felix and search in leo serve";
+    match state {
+        ModelState::Ready => Check::ready(what, needed_for, Some("bge-small, every file checked".into())),
+        ModelState::Missing => warn(
+            what,
+            needed_for,
+            format!(
+                "the model ({} MB) downloads on the next `leo serve` or `leo update`; until then search matches words only",
+                crate::meaning::MODEL_MB
+            ),
+        ),
+        ModelState::Damaged => warn(
+            what,
+            needed_for,
+            "the model is damaged: `leo update` downloads the damaged parts again".into(),
+        ),
+    }
+}
+
 fn notes_checks(notes_dir: &Path) -> Vec<Check> {
     let mut checks = Vec::new();
 
@@ -198,6 +220,7 @@ fn notes_checks(notes_dir: &Path) -> Vec<Check> {
             ),
         )
     });
+    checks.push(meaning_check(crate::meaning::state()));
 
     let store = match leo_core::store::Store::load_from(notes_dir) {
         Ok(store) => store,
@@ -654,6 +677,14 @@ mod tests {
         );
         let titles: Vec<&str> = sections.iter().map(|s| s.title).collect();
         assert_eq!(titles, ["leo", "notes", "AI", "recording", "backup"]);
+        assert!(matches!(
+            meaning_check(crate::providers::ModelState::Missing).state,
+            State::Warn { ref note } if note.contains("leo update")
+        ));
+        assert!(matches!(
+            meaning_check(crate::providers::ModelState::Ready).state,
+            State::Ready
+        ));
     }
 
     #[test]

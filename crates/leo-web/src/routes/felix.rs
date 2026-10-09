@@ -533,6 +533,7 @@ fn answer(
         .with_access(access)
         .with_documents(documents)
         .with_captions(Arc::clone(&state.captions))
+        .with_meaning(state.meaning.clone(), Arc::clone(&state.vectors))
         .with_steer(steer);
     let chosen = state.converse.as_ref().and_then(|converse| {
         converse(
@@ -878,6 +879,16 @@ pub(crate) async fn chat_reply(
         .as_ref()
         .map_or(chat::ROOM, |measure| measure())
         .clamp(chat::LEAST_ROOM, chat::MOST_ROOM);
+    let close = {
+        let meaning = state.meaning.clone();
+        let vectors = Arc::clone(&state.vectors);
+        let asked = question.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::vectors::close_to(meaning.as_ref(), &vectors, &asked, 24)
+        })
+        .await
+        .unwrap_or_default()
+    };
     let gathered = state
         .with_store(move |store| {
             let cache = graphs.load();
@@ -890,6 +901,7 @@ pub(crate) async fn chat_reply(
                 &question,
                 room,
                 Some(&seen),
+                &close,
             ))
         })
         .await;

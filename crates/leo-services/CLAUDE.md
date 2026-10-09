@@ -301,3 +301,17 @@ OpenAI's `prompt_tokens_details.cached_tokens`, Anthropic's
 `cache_read_share` of input (Anthropic 0.1, Opus/Sonnet 5.5 0.05, Fable/Mythos
 5.1 0.025, OpenAI 0.1, Gemini and xAI 0.25, unknown 1.0) and writes at 1.25.
 Tests use local fake servers (`session::tests::serve`); never a paid API.
+
+### Finding notes by meaning (`meaning.rs`)
+
+BAAI bge-small-en-v1.5 (384 numbers per text, 134 MB) runs on the CPU through
+candle (`candle-transformers` BERT, `tokenizers` without onig): CLS pooling,
+unit length, queries prefixed with `QUERY`. Files pinned to a Hugging Face
+commit with SHA-256s (`MODEL_MANIFEST`), kept in
+`models_dir()/bge-small-en-v1.5`, loaded once (`model()`). `leo update`
+fetches it (`ensure_meaning_model`), and `leo serve` fetches it quietly in
+the background when missing (`web_felix::meaning`). `LEO_INSTALL_NO_MODEL`
+or `LEO_NO_MEANING_MODEL` turns that off (e2e and Playwright set them);
+`LEO_MEANING_URL` / `LEO_MEANING_MANIFEST` point tests at file:// stand-ins.
+Doctor's notes section says whether it is ready. The real-model test is
+`#[ignore]`d.

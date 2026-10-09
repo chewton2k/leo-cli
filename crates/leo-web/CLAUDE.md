@@ -586,3 +586,16 @@
   more changes or listed steps, or a long message) get `tools::PLAN` added:
   plan first, work through it, list what was done.
 - The cost line's tooltip names tokens read from the cache (`Spent.cached`).
+- Meaning (`vectors.rs`, `Powers.meaning`): each note is cut into pieces of
+  ~`PIECE_CHARS` at paragraphs (title first, at most `MOST_PIECES`), read by
+  the meaning model in the background loop (`PIECES_PER_TICK` per 30 s, store
+  lock only to list them) and kept in `<data>/meaning.json` (base64 f32 per
+  piece, by note hash; deleted notes dropped). `close_to` embeds a question and
+  returns notes whose best piece is at least `CLOSE_ENOUGH` (0.62). Felix's
+  `gather_seeing(.., close)` adds them as "close in meaning to the question"
+  after word matches; GET `/api/search` and the `search_notes` tool append them
+  (`search::with_meaning`, `Why::Meaning`: "Close in meaning, though the words
+  differ"). The knowledge graph asks only about note groups that relate:
+  `Vectors::neighbours` (24 nearest per note, by mean vector, cached in
+  `Graphs::near` until the vectors change) and `link_work_near` skip a group
+  pair with no neighbour across it, unless a note in it has no vectors yet.

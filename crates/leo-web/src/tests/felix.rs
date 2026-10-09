@@ -1115,3 +1115,38 @@ fn a_big_request_asks_felix_to_plan_before_he_starts() {
     assert!(prompts[0].contains(tools::PLAN));
     assert!(!prompts[1].contains(tools::PLAN));
 }
+
+#[test]
+fn felix_and_search_find_a_note_that_means_the_same_without_sharing_a_word() {
+    let (mut state, _d, ids) = state_with(&[("Graph search", ""), ("Biology", "")]);
+    {
+        let mut store = state.fresh();
+        store.find_note_mut(&ids[0]).unwrap().body =
+            "Take the oldest item from a FIFO queue.".into();
+        store.find_note_mut(&ids[1]).unwrap().body = "Leaves turn light into sugar.".into();
+        store.save().unwrap();
+    }
+    let meaning = crate::vectors::fake_meaning();
+    state.meaning = Some(Arc::clone(&meaning));
+    crate::vectors::catch_up(&state.fresh(), &state.vectors, &meaning, 100);
+    let (streamer, prompts) = scripted(vec!["It uses a queue [n1]."]);
+    state.chat = Some(streamer);
+    chat_lines(&state, "explain breadth first please");
+    let prompt = prompts.lock().unwrap()[0].clone();
+    assert!(
+        prompt.contains("close in meaning to the question"),
+        "{prompt}"
+    );
+    assert!(prompt.contains("oldest item from a FIFO queue"));
+    assert!(!prompt.contains("Leaves turn light"));
+    let found = json_of(
+        run(crate::routes::notes::search_notes(
+            State(state.clone()),
+            Query(serde_json::from_value(serde_json::json!({ "q": "breadth first" })).unwrap()),
+        ))
+        .map(axum::response::IntoResponse::into_response)
+        .unwrap(),
+    );
+    assert_eq!(found[0]["title"], "Graph search");
+    assert_eq!(found[0]["why"]["kind"], "meaning");
+}

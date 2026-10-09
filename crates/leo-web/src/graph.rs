@@ -466,6 +466,33 @@ pub fn link_work<'a>(sources: &'a [Source], cache: &Cache) -> Vec<Work<'a>> {
 }
 
 pub fn link_work_at<'a>(sources: &'a [Source], cache: &Cache, scale: &Scale) -> Vec<Work<'a>> {
+    link_work_near(sources, cache, scale, None)
+}
+
+pub type Near = crate::vectors::Near;
+
+fn may_relate(a: &[&Source], b: &[&Source], near: Option<&Near>) -> bool {
+    let Some(near) = near else {
+        return true;
+    };
+    let known = |s: &Source| near.get(&s.id);
+    if a.iter().chain(b).any(|s| known(s).is_none()) {
+        return true;
+    }
+    a.iter().any(|x| {
+        b.iter().any(|y| {
+            known(x).is_some_and(|n| n.contains(&y.id))
+                || known(y).is_some_and(|n| n.contains(&x.id))
+        })
+    })
+}
+
+pub fn link_work_near<'a>(
+    sources: &'a [Source],
+    cache: &Cache,
+    scale: &Scale,
+    near: Option<&Near>,
+) -> Vec<Work<'a>> {
     let mut fresh: Vec<&Source> = Vec::new();
     let mut settled: Vec<&Source> = Vec::new();
     for source in sources {
@@ -495,6 +522,9 @@ pub fn link_work_at<'a>(sources: &'a [Source], cache: &Cache, scale: &Scale) -> 
     for (i, group) in new_groups.iter().enumerate() {
         for other in &new_groups[i..] {
             let same = std::ptr::eq(group, other);
+            if !same && !may_relate(group, other, near) {
+                continue;
+            }
             let mut notes = group.clone();
             if !same {
                 notes.extend(other.iter().copied());
@@ -511,6 +541,9 @@ pub fn link_work_at<'a>(sources: &'a [Source], cache: &Cache, scale: &Scale) -> 
             });
         }
         for old in &old_groups {
+            if !may_relate(group, old, near) {
+                continue;
+            }
             let mut notes = group.clone();
             notes.extend(old.iter().copied());
             out.push(Work {
@@ -540,10 +573,19 @@ pub fn requests_needed(sources: &[Source], cache: &Cache) -> usize {
 }
 
 pub fn requests_needed_at(sources: &[Source], cache: &Cache, scale: &Scale) -> usize {
+    requests_needed_near(sources, cache, scale, None)
+}
+
+pub fn requests_needed_near(
+    sources: &[Source],
+    cache: &Cache,
+    scale: &Scale,
+    near: Option<&Near>,
+) -> usize {
     let stale = stale(sources, cache);
     let reads = plan_at(&stale, scale).len();
     if reads == 0 {
-        return link_work_at(sources, cache, scale).len();
+        return link_work_near(sources, cache, scale, near).len();
     }
     let unread: BTreeSet<&str> = stale.iter().map(|s| s.id.as_str()).collect();
     let mut guess = cache.clone();
@@ -556,7 +598,7 @@ pub fn requests_needed_at(sources: &[Source], cache: &Cache, scale: &Scale) -> u
             },
         );
     }
-    reads + link_work_at(sources, &guess, scale).len()
+    reads + link_work_near(sources, &guess, scale, near).len()
 }
 
 fn settle_old_pairs(sources: &[Source], cache: &mut Cache) {
@@ -602,6 +644,17 @@ pub fn build_at(
     progress: &mut dyn FnMut(usize, usize),
     scale: &Scale,
 ) -> Vec<String> {
+    build_near(sources, cache, write, progress, scale, None)
+}
+
+pub fn build_near(
+    sources: &[Source],
+    cache: &mut Cache,
+    write: Write,
+    progress: &mut dyn FnMut(usize, usize),
+    scale: &Scale,
+    near: Option<&Near>,
+) -> Vec<String> {
     let present: BTreeSet<&str> = sources.iter().map(|s| s.id.as_str()).collect();
     cache.notes.retain(|id, _| present.contains(id.as_str()));
     settle_old_pairs(sources, cache);
@@ -610,7 +663,7 @@ pub fn build_at(
         .retain(|l| present.contains(l.a.as_str()) && present.contains(l.b.as_str()));
     let stale = stale(sources, cache);
     let batches = plan_at(&stale, scale);
-    let mut total = requests_needed_at(sources, cache, scale);
+    let mut total = requests_needed_near(sources, cache, scale, near);
     let mut problems = Vec::new();
     let mut worked = batches.is_empty();
     let mut finished = 0;
@@ -659,7 +712,7 @@ pub fn build_at(
         }
     }
 
-    let work = link_work_at(sources, cache, scale);
+    let work = link_work_near(sources, cache, scale, near);
     let redo: BTreeSet<String> = work.iter().flat_map(|w| w.fresh.iter().cloned()).collect();
     cache
         .links
@@ -894,6 +947,8 @@ pub struct Graphs {
     path: PathBuf,
     writer: Option<Writer>,
     room: Option<crate::Room>,
+    vectors: Option<Arc<crate::vectors::Vectors>>,
+    near: Mutex<Option<(u64, Arc<Near>)>>,
     job: Mutex<Job>,
     auto: Mutex<Option<std::time::Instant>>,
 }
@@ -902,6 +957,27 @@ impl Graphs {
     pub fn with_room(mut self, room: Option<crate::Room>) -> Graphs {
         self.room = room;
         self
+    }
+
+    pub fn with_vectors(mut self, vectors: Arc<crate::vectors::Vectors>) -> Graphs {
+        self.vectors = Some(vectors);
+        self
+    }
+
+    pub fn near(&self) -> Option<Arc<Near>> {
+        let vectors = self.vectors.as_ref()?;
+        if vectors.is_empty() {
+            return None;
+        }
+        let version = vectors.version();
+        let mut held = self.near.lock().ok()?;
+        if let Some((at, near)) = held.as_ref().filter(|(at, _)| *at == version) {
+            let _ = at;
+            return Some(Arc::clone(near));
+        }
+        let near = Arc::new(vectors.neighbours(crate::vectors::NEIGHBOURS));
+        *held = Some((version, Arc::clone(&near)));
+        Some(near)
     }
 
     pub fn scale(&self) -> Scale {
@@ -919,6 +995,8 @@ impl Graphs {
             path,
             writer,
             room: None,
+            vectors: None,
+            near: Mutex::new(None),
             auto: Mutex::new(None),
             job: Mutex::new(Job {
                 state: "idle",
@@ -1006,8 +1084,13 @@ impl Graphs {
             notes: sources.len(),
             read,
             stale: stale(sources, &cache).len(),
-            requests: requests_needed_at(sources, &cache, &self.scale()),
-            rebuild_requests: requests_needed_at(sources, &Cache::default(), &self.scale()),
+            requests: requests_needed_near(sources, &cache, &self.scale(), self.near().as_deref()),
+            rebuild_requests: requests_needed_near(
+                sources,
+                &Cache::default(),
+                &self.scale(),
+                self.near().as_deref(),
+            ),
             built_at: cache.built_at,
         }
     }
@@ -1063,7 +1146,8 @@ impl Graphs {
         };
         let mut cache = self.load();
         let scale = self.scale();
-        let problems = build_at(
+        let near = self.near();
+        let problems = build_near(
             sources,
             &mut cache,
             &|system: &str, user: &str, most: u32| writer(system, user, most),
@@ -1074,6 +1158,7 @@ impl Graphs {
                 })
             },
             &scale,
+            near.as_deref(),
         );
         let saved = self.save(&cache);
         self.set(|job| {
@@ -1472,6 +1557,46 @@ mod tests {
         );
         let graph = assemble(&changed, &cache);
         assert!(graph.edges.iter().all(|e| e.a != "n:c" && e.b != "n:c"));
+    }
+
+    #[test]
+    fn groups_that_share_nothing_in_meaning_are_not_asked_about() {
+        let many: Vec<Source> = (0..200)
+            .map(|i| source(&format!("{i:03}"), &format!("Note {i}"), "x", ""))
+            .collect();
+        let mut cache = Cache::default();
+        for s in &many {
+            cache.notes.insert(
+                s.id.clone(),
+                Read {
+                    hash: hash_of(s),
+                    summary: "s".into(),
+                    concepts: vec![],
+                    linked: None,
+                },
+            );
+        }
+        let scale = Scale::default();
+        let all = link_work_near(&many, &cache, &scale, None).len();
+        let mut near = Near::new();
+        for s in &many {
+            near.insert(s.id.clone(), BTreeSet::new());
+        }
+        near.get_mut("000").unwrap().insert("199".into());
+        let close = link_work_near(&many, &cache, &scale, Some(&near));
+        assert_eq!(all, 6);
+        assert_eq!(
+            close.len(),
+            4,
+            "each group with itself, plus the one pair that relates"
+        );
+        near.remove("150");
+        assert_eq!(
+            link_work_near(&many, &cache, &scale, Some(&near)).len(),
+            5,
+            "a group holding a note not yet read for meaning is linked against every group"
+        );
+        assert!(requests_needed_near(&many, &cache, &scale, Some(&near)) >= 4);
     }
 
     #[test]

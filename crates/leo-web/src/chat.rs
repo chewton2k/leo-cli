@@ -336,7 +336,17 @@ pub fn gather_with(
     question: &str,
     room: usize,
 ) -> (Vec<SourceRef>, String) {
-    gather_seeing(store, cache, open, attached, recent, question, room, None)
+    gather_seeing(
+        store,
+        cache,
+        open,
+        attached,
+        recent,
+        question,
+        room,
+        None,
+        &[],
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -349,6 +359,7 @@ pub fn gather_seeing(
     question: &str,
     room: usize,
     captions: Option<&crate::captions::Captions>,
+    close: &[(String, f32)],
 ) -> (Vec<SourceRef>, String) {
     let room = room.clamp(LEAST_ROOM, MOST_ROOM);
     let (open_chars, attached_chars, note_chars) = (
@@ -425,6 +436,22 @@ pub fn gather_seeing(
                 why: "matches the question".into(),
                 most: note_chars,
             });
+        }
+    }
+    let by_meaning = matches_wanted / 2 + 2;
+    for (id, _) in close.iter().take(by_meaning * 2) {
+        if found.len() >= matches_wanted + by_meaning {
+            break;
+        }
+        if let Some(note) = store.notes.iter().find(|n| &n.id == id && studied(n)) {
+            if have.insert(note.id.clone()) {
+                found.push(note);
+                picked.push(Picked {
+                    note,
+                    why: "close in meaning to the question".into(),
+                    most: note_chars,
+                });
+            }
         }
     }
     for note in found.iter().take(expanded) {

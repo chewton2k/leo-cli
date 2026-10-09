@@ -440,6 +440,7 @@ pub fn run(cli: Cli) -> Result<()> {
                     )),
                     converse: Some(web_felix::converser()),
                     seer: Some(web_felix::seer()),
+                    meaning: Some(web_felix::meaning()),
                 },
             ))
         }

@@ -385,9 +385,19 @@ pub(crate) async fn search_notes(
     Query(params): Query<SearchParams>,
 ) -> Result<Json<Vec<SearchHit>>, StatusCode> {
     let graphs = state.graphs.clone();
+    let q = params.q.clone().unwrap_or_default();
+    let close = {
+        let meaning = state.meaning.clone();
+        let vectors = std::sync::Arc::clone(&state.vectors);
+        let asked = q.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::vectors::close_to(meaning.as_ref(), &vectors, &asked, 20)
+        })
+        .await
+        .unwrap_or_default()
+    };
     state
         .with_store(move |store| {
-            let q = params.q.unwrap_or_default();
             let cache = graphs.load();
             let words: Vec<String> = q
                 .split_whitespace()
@@ -396,18 +406,23 @@ pub(crate) async fn search_notes(
                 .collect();
             let limit = params.limit.unwrap_or(SEARCH_MOST).min(SEARCH_MOST);
             Ok(Json(
-                crate::search::search(store, &cache, &q)
-                    .into_iter()
-                    .take(limit)
-                    .map(|hit| SearchHit {
-                        note: if params.brief {
-                            NoteResponse::brief(hit.note, &words)
-                        } else {
-                            NoteResponse::from_note(hit.note)
-                        },
-                        why: hit.why,
-                    })
-                    .collect(),
+                crate::search::with_meaning(
+                    store,
+                    &q,
+                    crate::search::search(store, &cache, &q),
+                    &close,
+                )
+                .into_iter()
+                .take(limit)
+                .map(|hit| SearchHit {
+                    note: if params.brief {
+                        NoteResponse::brief(hit.note, &words)
+                    } else {
+                        NoteResponse::from_note(hit.note)
+                    },
+                    why: hit.why,
+                })
+                .collect(),
             ))
         })
         .await

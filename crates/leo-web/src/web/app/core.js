@@ -199,7 +199,7 @@ function card(note, { words = [], showFolder = false, pick = null, why = null } 
   return `<div ${open}>
     <div class="card-title"><span>${words.length ? highlight(note.title, words) : esc(note.title)}</span>${corner}</div>
     ${text ? `<div class="card-snippet">${text}</div>` : ''}
-    ${why ? `<div class="card-why">${ICON.map}${why.kind === 'idea' ? `Through the idea “${esc(why.name)}” in the knowledge graph` : 'Through its summary in the knowledge graph'}</div>` : ''}
+    ${why ? `<div class="card-why">${ICON.map}${why.kind === 'idea' ? `Through the idea “${esc(why.name)}” in the knowledge graph` : why.kind === 'meaning' ? 'Close in meaning, though the words differ' : 'Through its summary in the knowledge graph'}</div>` : ''}
     <div class="card-meta">${where}<span>${rel(note.updated_at)}</span>${progress(note)}</div>
   </div>`;
 }
