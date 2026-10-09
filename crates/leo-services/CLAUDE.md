@@ -262,3 +262,14 @@ Effort: `choice::efforts(provider, model)` is the one list of levels; the
 provider's `effort` setting goes to Claude Code as `--effort`, to Codex as the
 turn's `effort` (or `-c model_reasoning_effort`), and to OpenAI-compatible
 APIs as `reasoning_effort`. Codex reports its default effort when none is set.
+
+### How notes are shaped (`ai::chat::LEARNING`)
+
+Recording notes (whole, appended and per part) and upload notes share one
+guide: tell it as a story (why it matters, the core idea, build up from the
+simple case), examples right where ideas appear, connections and common
+mistakes, Mermaid diagrams and the material's pictures where they help; code
+problems get a breakdown, then the code, then foldable `> [!example]-`
+explanations; every note ends with `## Check yourself` questions whose
+answers fold away (only the last part of a long recording or upload writes
+it). Uploads may explain beyond the source; facts stay the source's.

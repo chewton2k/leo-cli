@@ -533,3 +533,11 @@
   list them). `gather_seeing` and `open_note` show `[Picture: …]` after each
   picture link, and `look_at_picture {note, question?}` looks at up to 4 of a
   note's pictures on demand (a plain look also stores the caption).
+- Callouts: `> [!type] Title` renders a box, `> [!type]- Title` a closed
+  dropdown and `+` an open one (`markdown.js`; tones per type; Obsidian
+  reads the same). Taps on a dropdown's title open it rather than edit;
+  printing opens every dropdown (`beforeprint`) and closes them after.
+- Uploads take "What do you want from it?" (`#upload-wants`, ≤`MOST_WANTS`
+  2000 chars) → `ImportBody.wants` → the `Importer`'s second argument →
+  `import::import(.., wants, ..)`, which puts it in `<what_the_user_wants>`
+  and repeats it at the end of every part's request.

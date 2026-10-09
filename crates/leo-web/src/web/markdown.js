@@ -199,6 +199,16 @@
           quoted.push(lines[i].replace(/^\s*> ?/, ''));
           i++;
         }
+        const callout = quoted[0].match(/^\s*\[!([A-Za-z-]+)\]([+-]?)\s*(.*)$/);
+        if (callout) {
+          const kind = callout[1].toLowerCase().replace(/[^a-z-]/g, '');
+          const title = callout[3].trim() || kind.charAt(0).toUpperCase() + kind.slice(1);
+          const inner = blocks(quoted.slice(1), { boxes: 0, interactive: false });
+          html += callout[2]
+            ? `<details class="callout callout-${kind}"${callout[2] === '+' ? ' open' : ''}><summary>${inline(title)}</summary><div class="callout-body">${inner}</div></details>`
+            : `<div class="callout callout-${kind}"><div class="callout-title">${inline(title)}</div><div class="callout-body">${inner}</div></div>`;
+          continue;
+        }
         const inner = blocks(quoted, { boxes: 0, interactive: false });
         html += `<blockquote>${inner}</blockquote>`;
         continue;

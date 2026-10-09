@@ -110,8 +110,9 @@ pub struct Made {
     pub figures: Vec<Figure>,
 }
 
-pub type Importer =
-    Arc<dyn Fn(Vec<UploadFile>, &mut dyn FnMut(&str, usize, usize)) -> Result<Made> + Send + Sync>;
+pub type Importer = Arc<
+    dyn Fn(Vec<UploadFile>, &str, &mut dyn FnMut(&str, usize, usize)) -> Result<Made> + Send + Sync,
+>;
 
 #[derive(Clone, Default)]
 pub struct Powers {

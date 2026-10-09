@@ -36,8 +36,12 @@ pub(crate) struct ImportBody {
     pub(crate) directory: String,
     #[serde(default)]
     pub(crate) title: Option<String>,
+    #[serde(default)]
+    pub(crate) wants: String,
     pub(crate) files: Vec<ImportFileBody>,
 }
+
+pub(crate) const MOST_WANTS: usize = 2_000;
 
 pub fn safe_file_name(name: &str) -> String {
     let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
@@ -159,11 +163,12 @@ fn run_import(
     importer: Importer,
     dir: String,
     title: Option<String>,
+    wants: String,
     files: Vec<UploadFile>,
 ) {
     let names: Vec<String> = files.iter().map(|f| f.name.clone()).collect();
     let originals = files.clone();
-    let written = importer(files, &mut |step, done, total| {
+    let written = importer(files, &wants, &mut |step, done, total| {
         set_job(&state, &id, |job| {
             job.step = step.to_string();
             job.done = done;
@@ -304,7 +309,8 @@ pub(crate) async fn start_import(
     }
     let worker = state.clone();
     let job = id.clone();
-    std::thread::spawn(move || run_import(worker, job, importer, dir, body.title, files));
+    let wants: String = body.wants.chars().take(MOST_WANTS).collect();
+    std::thread::spawn(move || run_import(worker, job, importer, dir, body.title, wants, files));
     (StatusCode::ACCEPTED, Json(serde_json::json!({ "id": id }))).into_response()
 }
 

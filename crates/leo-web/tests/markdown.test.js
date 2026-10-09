@@ -161,6 +161,17 @@ test('math in LaTeX becomes slots the page draws, and prices stay prices', () =>
   assert.match(render('$$\nx\n$$\n- [ ] after'), /data-box="1"/);
 });
 
+test('Obsidian callouts become boxes, and a - or + makes them fold', () => {
+  assert.equal(
+    render('> [!example]- How the loop works\n> It walks the **queue**.'),
+    '<details class="callout callout-example"><summary>How the loop works</summary><div class="callout-body"><p>It walks the <strong>queue</strong>.</p></div></details>'
+  );
+  assert.match(render('> [!tip]+ Open by default\n> x'), /<details class="callout callout-tip" open><summary>Open by default<\/summary>/);
+  assert.equal(render('> [!warning]\n> Careful'), '<div class="callout callout-warning"><div class="callout-title">Warning</div><div class="callout-body"><p>Careful</p></div></div>');
+  assert.match(render('> [!note"><img src=x>] t\n> x'), /^<blockquote>/);
+  assert.match(render('> plain quote'), /^<blockquote>/);
+});
+
 for (const [name, fn] of cases) {
   try {
     fn();

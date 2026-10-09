@@ -380,6 +380,7 @@ pub fn run(cli: Cli) -> Result<()> {
                     settings: Some(std::sync::Arc::new(web_settings::WebSettings)),
                     importer: Some(std::sync::Arc::new(
                         |files: Vec<leo_web::UploadFile>,
+                         wants: &str,
                          progress: &mut dyn FnMut(&str, usize, usize)| {
                             let uploads: Vec<leo_services::import::Upload> = files
                                 .into_iter()
@@ -389,7 +390,7 @@ pub fn run(cli: Cli) -> Result<()> {
                                     bytes: f.bytes,
                                 })
                                 .collect();
-                            let made = leo_services::import::import(&uploads, progress)?;
+                            let made = leo_services::import::import(&uploads, wants, progress)?;
                             Ok(leo_web::Made {
                                 title: made.title,
                                 body: made.body,

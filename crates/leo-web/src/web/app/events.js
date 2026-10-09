@@ -176,6 +176,18 @@ async function render() {
 }
 
 window.addEventListener('online', () => saving.retry());
+window.addEventListener('beforeprint', () => {
+  for (const fold of document.querySelectorAll('details.callout:not([open])')) {
+    fold.dataset.printed = '1';
+    fold.open = true;
+  }
+});
+window.addEventListener('afterprint', () => {
+  for (const fold of document.querySelectorAll('details.callout[data-printed]')) {
+    fold.open = false;
+    delete fold.dataset.printed;
+  }
+});
 route();
 checkActivity();
 

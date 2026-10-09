@@ -7,7 +7,8 @@ fn an_upload_becomes_a_note_in_its_folder_and_keeps_the_original() {
     use base64::Engine;
     let (mut state, _d, _ids) = state_with(&[]);
     state.importer = Some(Arc::new(
-        |files: Vec<UploadFile>, progress: &mut dyn FnMut(&str, usize, usize)| {
+        |files: Vec<UploadFile>, wants: &str, progress: &mut dyn FnMut(&str, usize, usize)| {
+            assert_eq!(wants, "the problem, then the code");
             progress("Writing the note", 0, 1);
             assert_eq!(files[0].bytes, b"%PDF fake");
             Ok(Made {
@@ -31,6 +32,7 @@ fn an_upload_becomes_a_note_in_its_folder_and_keeps_the_original() {
     let body = ImportBody {
         directory: "cs130".into(),
         title: None,
+        wants: "the problem, then the code".into(),
         files: vec![ImportFileBody {
             name: "../../lecture 4.pdf".into(),
             mime: "application/pdf".into(),
@@ -146,12 +148,13 @@ fn a_failed_upload_says_why_and_bad_requests_are_refused() {
         Json(ImportBody {
             directory: String::new(),
             title: None,
+            wants: String::new(),
             files: vec![file()],
         }),
     ));
     assert_eq!(none.status(), StatusCode::SERVICE_UNAVAILABLE);
     state.importer = Some(Arc::new(
-        |_: Vec<UploadFile>, _: &mut dyn FnMut(&str, usize, usize)| {
+        |_: Vec<UploadFile>, _: &str, _: &mut dyn FnMut(&str, usize, usize)| {
             anyhow::bail!("qwen3:8b cannot read images")
         },
     ));
@@ -160,6 +163,7 @@ fn a_failed_upload_says_why_and_bad_requests_are_refused() {
         Json(ImportBody {
             directory: String::new(),
             title: None,
+            wants: String::new(),
             files: vec![file()],
         }),
     ));
@@ -176,6 +180,7 @@ fn a_failed_upload_says_why_and_bad_requests_are_refused() {
         Json(ImportBody {
             directory: "../outside".into(),
             title: None,
+            wants: String::new(),
             files: vec![file()],
         }),
     ));
@@ -185,6 +190,7 @@ fn a_failed_upload_says_why_and_bad_requests_are_refused() {
         Json(ImportBody {
             directory: String::new(),
             title: None,
+            wants: String::new(),
             files: vec![],
         }),
     ));
@@ -194,6 +200,7 @@ fn a_failed_upload_says_why_and_bad_requests_are_refused() {
         Json(ImportBody {
             directory: String::new(),
             title: None,
+            wants: String::new(),
             files: vec![ImportFileBody {
                 name: "x.pdf".into(),
                 mime: String::new(),

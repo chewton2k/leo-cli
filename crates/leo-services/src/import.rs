@@ -340,8 +340,12 @@ You turn material a student uploaded (lecture slides, a handout, a paper, a work
 - Keep everything that matters for learning: definitions, steps, formulas, worked examples, results, and what figures or diagrams show, described in words.
 - Leave out page furniture: headers, footers, page numbers, repeated slide titles, copyright lines.
 - Organise with ## headings and bullet points (- ); bold a term where it is defined; write math in LaTeX ($...$ inside a sentence, $$...$$ on lines of their own) and code in fenced code blocks.
+- Unlike the rest, explanations, examples, diagrams and the Check yourself questions may go beyond the source to help the reader learn, as long as they are accurate.
 - Put tasks or deadlines that the material states in a final \"## Action items\" section as checkboxes (- [ ] ); leave the section out otherwise.
-- Do not add material that is not in the source. If something is unreadable, write [unreadable] rather than guessing.";
+- Do not add facts that are not in the source, except to explain. If something is unreadable, write [unreadable] rather than guessing.";
+
+const WANTS: &str = "\
+The user said what they want from this material in <what_the_user_wants>. Shape the notes around it wherever it fits (what to focus on, how to lay it out, how deep to go), without leaving out what matters for learning.";
 
 const PLACING: &str = "\
 Pictures from the material can go in the notes. They are listed in <figures> as figure:N, with the slide or page each comes from. Put a picture where it helps someone understand, on its own line, as ![what it shows, in a few words](figure:N), next to the notes for its slide or page. Use each one at most once and only the ones listed, and leave out pictures that are only decoration.";
@@ -350,11 +354,28 @@ const SEEING: &str = "\
 The images are photos or scans of pages, in order. Read all of them, including handwriting, tables and diagrams.";
 
 fn whole_shape() -> &'static str {
-    "Shape of the reply:\n1. The first line is the title, as plain text: no \"Title:\", no #, no quotes, no bold.\n2. A blank line, then a 2-3 sentence summary.\n3. ## sections with bullet points.\n\nReply with the note only: no preamble, no remarks after it, and do not wrap it in a code block."
+    "Shape of the reply:\n1. The first line is the title, as plain text: no \"Title:\", no #, no quotes, no bold.\n2. A blank line, then a 2-3 sentence summary.\n3. ## sections telling the story, ending with ## Check yourself.\n\nReply with the note only: no preamble, no remarks after it, and do not wrap it in a code block."
 }
 
 fn part_shape(part: usize, parts: usize) -> String {
-    format!("This is part {part} of {parts} of the material; the other parts are handled separately. Write ## sections for this part only: no title and no summary of the whole.\n\nReply with the notes only: no preamble, no remarks after them, and do not wrap them in a code block.")
+    let check = if part == parts {
+        "End with ## Check yourself for the whole material."
+    } else {
+        "Leave ## Check yourself to the last part."
+    };
+    format!("This is part {part} of {parts} of the material; the other parts are handled separately. Write ## sections for this part only: no title and no summary of the whole. {check}\n\nReply with the notes only: no preamble, no remarks after them, and do not wrap them in a code block.")
+}
+
+fn wants_block(wants: &str) -> (String, String, String) {
+    let wants = wants.trim();
+    if wants.is_empty() {
+        return (String::new(), String::new(), String::new());
+    }
+    (
+        format!("\n\n{WANTS}"),
+        format!("<what_the_user_wants>\n{wants}\n</what_the_user_wants>\n\n"),
+        " Follow what the user wants from it.".to_string(),
+    )
 }
 
 pub fn text_parts(text: &str, most: usize) -> Vec<String> {
@@ -390,7 +411,13 @@ pub fn offered(figures: &[Figure]) -> String {
         .join("\n")
 }
 
-pub fn text_prompt(text: &str, name: &str, part: Option<(usize, usize)>, figures: &str) -> Prompt {
+pub fn text_prompt(
+    text: &str,
+    name: &str,
+    part: Option<(usize, usize)>,
+    figures: &str,
+    wants: &str,
+) -> Prompt {
     let shape = match part {
         Some((p, n)) => part_shape(p, n),
         None => whole_shape().to_string(),
@@ -403,9 +430,11 @@ pub fn text_prompt(text: &str, name: &str, part: Option<(usize, usize)>, figures
             format!("\n\n<figures>\n{figures}\n</figures>"),
         )
     };
+    let (asked, wanted, follow) = wants_block(wants);
+    let learning = crate::ai::chat::LEARNING;
     Prompt {
-        system: format!("{DOC_RULES}{rules}\n\n{shape}"),
-        user: format!("<material name=\"{name}\">\n{}\n</material>{listed}\n\nWrite the study notes for this material.", text.trim()),
+        system: format!("{DOC_RULES}\n\n{learning}{rules}{asked}\n\n{shape}"),
+        user: format!("{wanted}<material name=\"{name}\">\n{}\n</material>{listed}\n\nWrite the study notes for this material.{follow}", text.trim()),
     }
 }
 
@@ -413,15 +442,18 @@ pub fn image_prompt(
     name: &str,
     part: Option<(usize, usize)>,
     pages: (usize, usize, usize),
+    wants: &str,
 ) -> Prompt {
     let shape = match part {
         Some((p, n)) => part_shape(p, n),
         None => whole_shape().to_string(),
     };
+    let (asked, wanted, follow) = wants_block(wants);
+    let learning = crate::ai::chat::LEARNING;
     Prompt {
-        system: format!("{DOC_RULES}\n\n{SEEING}\n\n{shape}"),
+        system: format!("{DOC_RULES}\n\n{learning}\n\n{SEEING}{asked}\n\n{shape}"),
         user: format!(
-            "These are pages {}-{} of {} from \"{name}\". Write the study notes for them.",
+            "{wanted}These are pages {}-{} of {} from \"{name}\". Write the study notes for them.{follow}",
             pages.0, pages.1, pages.2
         ),
     }
@@ -482,6 +514,7 @@ pub fn read_for_chat(
 pub fn write_note(
     material: &Material,
     name: &str,
+    wants: &str,
     write: Write<'_>,
     see: See<'_>,
     progress: &mut dyn FnMut(&str, usize, usize),
@@ -501,10 +534,14 @@ pub fn write_note(
     if jobs == 1 {
         progress("Writing the note", 0, 1);
         let reply = if let Some(text) = texts.first() {
-            write(text_prompt(text, name, None, &figures), NOTE_TOKENS)?
+            write(text_prompt(text, name, None, &figures, wants), NOTE_TOKENS)?
         } else {
             let n = material.images.len();
-            see(image_prompt(name, None, (1, n, n)), looks[0], NOTE_TOKENS)?
+            see(
+                image_prompt(name, None, (1, n, n), wants),
+                looks[0],
+                NOTE_TOKENS,
+            )?
         };
         progress("Writing the note", 1, 1);
         let (title, body) = chat::split_title_body(&chat::clean_reply(&reply));
@@ -515,7 +552,7 @@ pub fn write_note(
     let run = |i: usize| -> Result<String> {
         let reply = if let Some(text) = texts.get(i) {
             write(
-                text_prompt(text, name, Some((i + 1, jobs)), &figures),
+                text_prompt(text, name, Some((i + 1, jobs)), &figures, wants),
                 NOTE_TOKENS,
             )?
         } else {
@@ -523,7 +560,7 @@ pub fn write_note(
             let batch = looks[j];
             let pages = (j * PAGES_PER_LOOK + 1, j * PAGES_PER_LOOK + batch.len(), n);
             see(
-                image_prompt(name, Some((i + 1, jobs)), pages),
+                image_prompt(name, Some((i + 1, jobs)), pages, wants),
                 batch,
                 NOTE_TOKENS,
             )?
@@ -593,6 +630,7 @@ pub fn write_note(
 
 pub fn import(
     uploads: &[Upload],
+    wants: &str,
     progress: &mut dyn FnMut(&str, usize, usize),
 ) -> Result<Imported> {
     progress("Reading the file", 0, 1);
@@ -603,7 +641,7 @@ pub fn import(
     };
     let see = |prompt: Prompt, images: &[Image], most: u32| crate::ai::see(prompt, images, most);
     let budget = crate::ai::writing_budget();
-    let (title, body) = write_note(&material, name, &write, &see, progress, budget)?;
+    let (title, body) = write_note(&material, name, wants, &write, &see, progress, budget)?;
     Ok(Imported {
         title,
         body,
@@ -618,6 +656,34 @@ mod tests {
 
     fn never(_: Prompt, _: &[Image], _: u32) -> Result<String> {
         panic!("there are no images here")
+    }
+
+    #[test]
+    fn notes_from_uploads_tell_a_story_and_follow_what_the_user_wants() {
+        let plain = text_prompt("x", "interview.pdf", None, "", "");
+        assert!(plain.system.contains("## Check yourself") && plain.system.contains("[!example]-"));
+        assert!(plain.system.contains("break the problem down"));
+        assert!(!plain.user.contains("what_the_user_wants"));
+        let steered = text_prompt(
+            "x",
+            "interview.pdf",
+            None,
+            "",
+            "  The problem, then the code, explained step by step.  ",
+        );
+        assert!(steered.system.contains("<what_the_user_wants>"));
+        assert!(steered.user.starts_with("<what_the_user_wants>\nThe problem, then the code, explained step by step.\n</what_the_user_wants>"));
+        assert!(steered
+            .user
+            .ends_with("Follow what the user wants from it."));
+        let pages = image_prompt("board.jpg", Some((2, 2)), (3, 4, 4), "only the proofs");
+        assert!(
+            pages.user.contains("only the proofs")
+                && pages.system.contains("End with ## Check yourself")
+        );
+        assert!(image_prompt("board.jpg", Some((1, 2)), (1, 2, 4), "")
+            .system
+            .contains("Leave ## Check yourself to the last part"));
     }
 
     #[test]
@@ -647,23 +713,23 @@ mod tests {
             },
         ];
         assert_eq!(offered(&figures), "figure:2 is from slide 3");
-        let with = text_prompt("x", "deck.pptx", None, &offered(&figures));
+        let with = text_prompt("x", "deck.pptx", None, &offered(&figures), "");
         assert!(with
             .system
             .contains("![what it shows, in a few words](figure:N)"));
         assert!(with
             .user
             .contains("<figures>\nfigure:2 is from slide 3\n</figures>"));
-        let without = text_prompt("x", "notes.md", None, "");
+        let without = text_prompt("x", "notes.md", None, "", "");
         assert!(!without.system.contains("figure:N") && !without.user.contains("<figures>"));
     }
 
     #[test]
     fn notes_from_uploads_are_written_in_interpretable_language() {
-        assert!(text_prompt("x", "a.pdf", None, "")
+        assert!(text_prompt("x", "a.pdf", None, "", "")
             .system
             .contains("Use interpretable language"));
-        assert!(image_prompt("a.jpg", None, (1, 1, 1))
+        assert!(image_prompt("a.jpg", None, (1, 1, 1), "")
             .system
             .contains("Use interpretable language"));
     }
@@ -918,6 +984,7 @@ mod tests {
         let (title, body) = write_note(
             &short,
             "heaps.txt",
+            "",
             &write,
             &see,
             &mut |s, d, t| steps.push((s.to_string(), d, t)),
@@ -943,6 +1010,7 @@ mod tests {
         let (title, body) = write_note(
             &long,
             "handout.pdf",
+            "",
             &write,
             &see,
             &mut |_, _, _| {},
@@ -1002,6 +1070,7 @@ mod tests {
         let (_, body) = write_note(
             &material,
             "a.pdf",
+            "",
             &write,
             &see,
             &mut |_, d, t| steps.push((d, t)),
@@ -1036,6 +1105,7 @@ mod tests {
         let err = write_note(
             &material,
             "a.pdf",
+            "",
             &failing,
             &see,
             &mut |_, _, _| {},

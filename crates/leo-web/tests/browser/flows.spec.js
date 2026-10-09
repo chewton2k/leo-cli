@@ -1962,9 +1962,11 @@ test.describe('uploads', () => {
     await page.locator('#upload-input').setInputFiles({ name: 'sorting.txt', mimeType: 'text/plain', buffer: Buffer.from('Merge sort splits the list in half.') });
     await expect(page.locator('.upload-file')).toContainText('sorting.txt');
     await page.locator('#upload-title').fill('Sorting');
+    await page.locator('#upload-wants').fill('The algorithm, then the code, explained step by step');
     await page.locator('#upload-go').click();
     await expect(page).toHaveURL(new RegExp(`#/n/${made.id}$`));
     expect(sent.title).toBe('Sorting');
+    expect(sent.wants).toBe('The algorithm, then the code, explained step by step');
     expect(sent.files[0].name).toBe('sorting.txt');
     expect(Buffer.from(sent.files[0].data, 'base64').toString()).toBe('Merge sort splits the list in half.');
   });

@@ -1088,6 +1088,23 @@ body.files-over main::after {
 .math:not([data-drawn="yes"]) { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; color: var(--muted); }
 .math-block:not([data-drawn="yes"]) { white-space: pre-wrap; text-align: left; }
 .math .katex { font-size: 1.08em; }
+.callout { --tone: var(--accent); margin: 10px 0; border: 1px solid color-mix(in srgb, var(--tone) 30%, var(--line)); border-left: 3px solid var(--tone); border-radius: 10px; background: color-mix(in srgb, var(--tone) 7%, var(--surface)); }
+.callout-tip, .callout-success, .callout-check, .callout-done { --tone: var(--good); }
+.callout-warning, .callout-caution, .callout-attention { --tone: #c27a12; }
+.callout-danger, .callout-error, .callout-bug, .callout-failure { --tone: var(--danger); }
+.callout-example { --tone: var(--tone-image); }
+.callout-question, .callout-help, .callout-faq { --tone: var(--tone-doc); }
+.callout-quote, .callout-cite, .callout-abstract, .callout-summary { --tone: var(--muted); }
+.callout > summary, .callout-title { display: flex; align-items: center; gap: 8px; padding: 9px 12px; font-weight: 650; color: var(--text); }
+.callout > summary { cursor: pointer; list-style: none; }
+.callout > summary::-webkit-details-marker { display: none; }
+.callout > summary::before { content: ""; width: 7px; height: 7px; flex: none; border-right: 2px solid var(--tone); border-bottom: 2px solid var(--tone); transform: rotate(-45deg); transition: transform .15s; }
+.callout[open] > summary::before { transform: rotate(45deg); }
+.callout-body { padding: 0 14px 10px; }
+.callout-body > :first-child { margin-top: 0; }
+.callout-body > :last-child { margin-bottom: 0; }
+.upload-wants { align-items: flex-start; padding-top: 8px; padding-bottom: 8px; }
+.upload-wants textarea { flex: 1; min-width: 0; border: 0; outline: 0; resize: vertical; background: none; font: inherit; font-size: 15px; line-height: 1.45; min-height: 44px; }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 </style>
 </head>

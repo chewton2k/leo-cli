@@ -483,6 +483,7 @@
         }
         return;
       }
+      if (e.target.closest('summary')) return;
       if (e.target.closest('label.task')) e.preventDefault();
       const blk = e.target.closest('.blk');
       const tail = !blk && e.target.closest('.doc-tail');

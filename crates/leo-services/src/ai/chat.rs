@@ -60,6 +60,19 @@ const FORMATTING: &str = "\
 - Use a table only to compare two or more things across the same attributes.
 - Put tasks in a final \"## Action items\" section as checkboxes (- [ ] ), and only if the speaker assigned or mentioned some; otherwise leave the section out.";
 
+pub const LEARNING: &str = "\
+How to shape the notes so they are understood and remembered:
+- Tell it as a story a learner can follow: open with why the topic matters (the question or problem it answers), give the core idea in plain words before any detail, then build up from the simple case to the full picture, each section leaning on the one before. Make each heading say what its section teaches.
+- Make every abstract idea concrete right where it appears: a short example, a worked case or an analogy first, then the precise version.
+- Say how ideas connect to each other, and point out the common mistakes and misunderstandings.
+- Where a process, structure, comparison or timeline is easier to see than read, add a Mermaid diagram in a ```mermaid block (flowchart, sequenceDiagram, mindmap or timeline); where the material has a picture that explains something, put it there.
+- For code or a programming problem: first break the problem down under its own heading (what is asked, the inputs and outputs, the constraints, the key insight, the approach step by step, and its time and space cost), then give the complete code in one fenced block with its language, then explain it in foldable sections, one per part of the code, written as Obsidian callouts like this:
+  > [!example]- How the loop picks the next node
+  > The explanation, in plain words.
+- End with a \"## Check yourself\" section: 3 to 6 questions that make the reader recall the key ideas, each written as a foldable callout whose body is the answer, like this:
+  > [!question]- What does breadth-first search use to pick the next node?
+  > A queue: the node found earliest is explored first.";
+
 /// What to do with points the listener typed while recording.
 const POINTS_RULE: &str = "\
 The listener typed points while recording; they show what mattered most to them. Weave each one into the notes where its topic belongs, as part of that section, in your own words or theirs. Do not give them a section of their own, do not mark them out, and do not add times. Keep every typed point: if the transcript never mentions one, put it with the closest topic and explain it from your own knowledge.";
@@ -97,8 +110,10 @@ pub fn build_structure_prompt_with(transcript: &str, points: &[Jotted]) -> Promp
 Shape of the reply:
 1. The first line is the title, as plain text: no \"Title:\", no #, no quotes, no bold.
 2. A blank line, then a 2-3 sentence summary of the whole recording.
-3. ## sections for the topics, in the order they came up, with bullet points (- ).
-{FORMATTING}{key_points}
+3. ## sections for the topics, in the order they came up unless another order tells the story more clearly, with bullet points (- ).
+{FORMATTING}
+
+{LEARNING}{key_points}
 
 Reply with the note only: no preamble before the title, no remarks after the note, and do not wrap it in a code block."
     );
@@ -131,7 +146,9 @@ Rules for the addition:
 - Write only the new material. No title, no summary of the existing notes.
 - Do not repeat anything the existing notes already cover.
 - Match the existing notes' style; start each new topic with a ## heading and use bullet points (- ).
-{FORMATTING}{key_points}
+{FORMATTING}
+
+{LEARNING}{key_points}
 
 Reply with the addition only: no preamble, no remarks after it, and do not wrap it in a code block."
     );
@@ -164,7 +181,9 @@ pub fn build_part_prompt(
 This is part {part} of {parts} ({span}). Other parts are handled separately, so:
 - No title and no summary of the whole recording.
 - ## sections for the topics in this part, in the order they came up, with bullet points (- ).
-{FORMATTING}{key_points}
+{FORMATTING}
+
+{LEARNING} Leave \"## Check yourself\" to the last part only (part {parts}).{key_points}
 
 Reply with the notes for this part only: no preamble, no remarks after them, and do not wrap them in a code block."
     );
@@ -433,6 +452,20 @@ mod tests {
                 prompt.system
             );
         }
+    }
+
+    #[test]
+    fn recording_notes_follow_the_learning_guide() {
+        for prompt in [
+            build_structure_prompt("t"),
+            build_append_prompt("t", "body"),
+            build_part_prompt("t", &[], 1, 2, "0:00-5:00"),
+        ] {
+            assert!(prompt.system.contains(LEARNING), "{}", prompt.system);
+        }
+        assert!(build_part_prompt("t", &[], 1, 3, "x")
+            .system
+            .contains("to the last part only (part 3)"));
     }
 
     #[test]
