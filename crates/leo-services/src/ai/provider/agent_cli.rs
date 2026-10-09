@@ -125,12 +125,10 @@ fn codex_disables(program: &Path) -> Vec<String> {
 
 fn stop_all(child: &mut std::process::Child) {
     #[cfg(unix)]
-    {
-        let _ = Command::new("kill")
-            .args(["-KILL", &format!("-{}", child.id())])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+    if let Ok(group) = libc::pid_t::try_from(child.id()) {
+        unsafe {
+            libc::kill(-group, libc::SIGKILL);
+        }
     }
     let _ = child.kill();
 }
