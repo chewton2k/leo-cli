@@ -493,3 +493,11 @@
   `note_activity` marks use on every API request except polling, see
   `counts_as_use`), and not within `RETRY_AUTO_AFTER` (10 min) of a failed
   automatic try. It reloads the store first, so Obsidian or TUI edits count.
+- Sidebar folders are a tree (`folderTree` over `/api/folders`): a twist
+  arrow opens a folder's subfolders (open ones kept in `leo-side-open`; the
+  way to the current folder always unfolds), and "+" on a folder makes a
+  folder inside it (`new-folder` with `data-parent`; the sheet keeps the
+  parent on `#folder-name`). Folder pages already list their subfolders.
+- Screenshot baselines: `pnpm visual:update` rewrites every image
+  (`--update-snapshots=all`); plain `--update-snapshots` keeps old images that
+  differ by less than the 1% tolerance, which let stale baselines linger.

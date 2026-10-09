@@ -93,10 +93,11 @@ function menu() {
     <button class="list-row" data-action="refresh">${ICON.refresh}<span class="grow">Refresh</span></button>`);
 }
 
-function newFolder() {
-  const parent = state.view === 'folder' ? state.dir : '';
+function newFolder(el) {
+  const given = el && el.dataset && el.dataset.parent;
+  const parent = given !== undefined ? given : state.view === 'folder' || state.view === 'note' ? state.dir || '' : '';
   const scrim = sheet(`<h3>New folder${parent ? ` in ${esc(folderLabel(parent))}` : ''}</h3>
-    <label class="field">${ICON.folder}<input id="folder-name" placeholder="Name, e.g. cs130" autocomplete="off" enterkeyhint="done"></label>
+    <label class="field">${ICON.folder}<input id="folder-name" data-parent="${esc(parent)}" placeholder="${parent ? 'Name, e.g. week 3' : 'Name, e.g. cs130'}" autocomplete="off" enterkeyhint="done"></label>
     <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn primary" data-action="create-folder">Create</button></div>`);
   const input = $('#folder-name', scrim);
   input.focus();
@@ -106,9 +107,10 @@ function newFolder() {
 }
 
 async function createFolder() {
-  const name = $('#folder-name').value.trim().replace(/^\/+|\/+$/g, '');
+  const input = $('#folder-name');
+  const name = input.value.trim().replace(/^\/+|\/+$/g, '');
   if (!name) return;
-  const parent = state.view === 'folder' ? state.dir : '';
+  const parent = input.dataset.parent || '';
   const path = parent ? `${parent}/${name}` : name;
   try {
     await api('/api/dirs', { method: 'POST', body: { path } });

@@ -1242,6 +1242,33 @@ test.describe('settings', () => {
 });
 
 test.describe('folders', () => {
+  test('folders hold folders: the sidebar shows them as a tree and makes one inside another', async ({ page }) => {
+    test.skip(test.info().project.name !== 'desktop', 'the sidebar is for wide screens');
+    const top = `tree-${Date.now().toString(36)}`;
+    await page.request.post('/api/dirs', { data: { path: `${top}/week1` } });
+    await page.goto('/');
+    const side = page.locator('#side');
+    const row = (path) => side.locator(`.side-row[data-action="open-folder"][data-dir="${path}"]`);
+    await expect(row(top)).toBeVisible();
+    await expect(row(`${top}/week1`)).toHaveCount(0);
+    await side.locator(`.side-twist[data-dir="${top}"]`).click();
+    await expect(row(`${top}/week1`)).toBeVisible();
+    await row(`${top}/week1`).hover();
+    await side.locator(`.side-sub[data-parent="${top}/week1"]`).click();
+    await expect(page.locator('.sheet h3')).toHaveText('New folder in week1');
+    await page.locator('#folder-name').fill('lab');
+    await page.locator('[data-action="create-folder"]').click();
+    await expect.poll(() => decodeURIComponent(page.url())).toMatch(new RegExp(`#/f/${top}/week1/lab$`));
+    await expect(row(`${top}/week1/lab`)).toHaveAttribute('aria-current', 'page');
+    await page.reload();
+    await expect(row(`${top}/week1`), 'open folders stay open').toBeVisible();
+    await side.locator(`.side-twist[data-dir="${top}"]`).click();
+    await page.goto('/');
+    await expect(row(`${top}/week1`)).toHaveCount(0);
+    await page.goto(`/#/f/${top}/week1/lab`);
+    await expect(row(`${top}/week1/lab`), 'the way to the open folder unfolds').toBeVisible();
+  });
+
   test('a new folder is made on the first try and opens', async ({ page }) => {
     const name = `fresh-${test.info().project.name}-${Date.now().toString(36)}`;
     await page.goto('/');
@@ -1249,7 +1276,7 @@ test.describe('folders', () => {
       await page.locator('#menu').click();
       await page.locator('.sheet [data-action="new-folder"]').click();
     } else {
-      await page.locator('#side [data-action="new-folder"]').click();
+      await page.locator('#side .side-group [data-action="new-folder"]').click();
     }
     await page.locator('#folder-name').fill(name);
     await page.locator('[data-action="create-folder"]').click();
