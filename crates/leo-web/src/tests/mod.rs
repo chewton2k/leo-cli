@@ -71,6 +71,7 @@ fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<Strin
         reader: None,
         room: None,
         web: None,
+        converse: None,
         activity: Default::default(),
     };
     (state, dir, ids)

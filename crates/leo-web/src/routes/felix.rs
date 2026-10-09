@@ -221,6 +221,87 @@ struct Ask {
     access: tools::Access,
 }
 
+fn run_tool(
+    state: &AppState,
+    desk: &mut tools::Desk,
+    access: tools::Access,
+    call: &tools::Call,
+    send: &dyn Fn(serde_json::Value),
+) -> Result<tools::Done> {
+    let before = desk.sources.len();
+    let mut done = if call.name == "invalid" {
+        tools::Done {
+            step: "Tried to use a tool".into(),
+            result: format!(
+                "That did not work: {}. Write the call as one line: <tool>{{\"name\": \"search_notes\", \"query\": \"...\"}}</tool>",
+                call.text("problem")
+            ),
+            proposal: None,
+            found: Vec::new(),
+        }
+    } else if let Err(problem) = tools::check(call) {
+        tools::Done {
+            step: "Tried to use a tool".into(),
+            result: format!("That did not work: {problem}"),
+            proposal: None,
+            found: Vec::new(),
+        }
+    } else if tools::is_web(&call.name) {
+        desk.run_web(call)
+    } else {
+        let graphs = Arc::clone(&state.graphs);
+        store_now(state, |store| {
+            let cache = graphs.load();
+            Ok(desk.run(store, &cache, call))
+        })
+        .map_err(|_| anyhow::anyhow!("leo could not read the notes"))?
+    };
+    send(serde_json::json!({ "step": done.step, "tool": call.name, "found": done.found }));
+    if desk.sources.len() != before {
+        send(serde_json::json!({ "sources": desk.sources }));
+    }
+    if let Some(proposal) = &done.proposal {
+        let shown = match access {
+            tools::Access::Auto => match apply_now(state, proposal) {
+                Ok(applied) => {
+                    done.result = match proposal {
+                        tools::Proposal::Edit { .. } => {
+                            "Changed. leo applied it; the user can undo it."
+                        }
+                        tools::Proposal::Create { .. } => {
+                            "Made. leo made the note; the user can undo it."
+                        }
+                    }
+                    .into();
+                    applied
+                }
+                Err(why) => {
+                    done.result = format!(
+                        "Suggested, but leo could not apply it ({why}); the user can press Apply."
+                    );
+                    serde_json::json!(proposal)
+                }
+            },
+            _ => serde_json::json!(proposal),
+        };
+        send(serde_json::json!({ "proposal": shown }));
+    }
+    Ok(done)
+}
+
+fn counted(spent: &mut Option<chat::Spent>, more: Option<chat::Spent>) {
+    if let Some(more) = more {
+        let more = chat::Spent {
+            steps: more.steps.max(1),
+            ..more
+        };
+        *spent = Some(match spent.take() {
+            Some(so_far) => so_far.plus(more),
+            None => more,
+        });
+    }
+}
+
 fn answer(
     state: &AppState,
     streamer: &chat::Streamer,
@@ -229,7 +310,7 @@ fn answer(
 ) -> Result<Option<chat::Spent>> {
     let Ask {
         system,
-        mut conversation,
+        conversation,
         sources,
         room,
         wanted,
@@ -239,42 +320,181 @@ fn answer(
         let _ = tx.send(ndjson(value));
     };
     let web = state.web.clone().filter(|w| (w.needed)());
-    let with_tools = format!("{system}\n\n{}", tools::manual_for(web.is_some(), access));
-    let last_word = format!("{system}\n\n{}", tools::NO_MORE_TOOLS);
+    let web_on = web.is_some();
+    let text = format!("{system}\n\n{}", tools::manual_for(web_on, access));
+    let last = format!("{system}\n\n{}", tools::NO_MORE_TOOLS);
+    let native = format!("{system}\n\n{}", tools::guidance_for(web_on, access));
     let mut desk = tools::Desk::new(sources, room)
         .with_web(web)
         .with_access(access);
-    let mut nudged = !access.changes() || !tools::wants_change(&wanted);
+    let chosen = state.converse.as_ref().and_then(|converse| {
+        converse(
+            &chat::Instructions {
+                native: &native,
+                text: &text,
+                last: &last,
+            },
+            &tools::native_specs(web_on, access),
+        )
+    });
+    if let Some(mut talk) = chosen {
+        let shown = std::cell::Cell::new(false);
+        let tried = if talk.native() {
+            native_answer(
+                state,
+                talk.as_mut(),
+                &mut desk,
+                access,
+                &wanted,
+                &conversation,
+                &send,
+                &shown,
+            )
+        } else {
+            text_answer(
+                state,
+                talk.as_mut(),
+                &mut desk,
+                access,
+                &wanted,
+                &conversation,
+                &send,
+                &shown,
+            )
+        };
+        match tried {
+            Ok(spent) => return Ok(spent),
+            Err(e) if shown.get() => return Err(e),
+            Err(_) => send(serde_json::json!({ "restart": true })),
+        }
+    }
+    let mut restated = chat::Restated::new(Arc::clone(streamer), text, last);
+    let shown = std::cell::Cell::new(false);
+    text_answer(
+        state,
+        &mut restated,
+        &mut desk,
+        access,
+        &wanted,
+        &conversation,
+        &send,
+        &shown,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn native_answer(
+    state: &AppState,
+    talk: &mut dyn chat::Conversation,
+    desk: &mut tools::Desk,
+    access: tools::Access,
+    wanted: &str,
+    conversation: &str,
+    send: &dyn Fn(serde_json::Value),
+    shown: &std::cell::Cell<bool>,
+) -> Result<Option<chat::Spent>> {
+    let mut spent = None;
+    let mut calls = 0usize;
+    let mut failure: Option<anyhow::Error> = None;
+    let mut message = conversation.to_string();
+    let mut nudged = !access.changes() || !tools::wants_change(wanted);
+    loop {
+        let reply = {
+            let mut piece = |t: &str| {
+                shown.set(true);
+                send(serde_json::json!({ "t": t }));
+            };
+            let mut restart = || send(serde_json::json!({ "restart": true }));
+            let mut call = |name: &str, args: &serde_json::Value| -> String {
+                calls += 1;
+                if calls > tools::MOST_STEPS {
+                    return format!("That did not work: {}", tools::NO_MORE_TOOLS);
+                }
+                let mut call = tools::Call {
+                    name: name.to_string(),
+                    args: args.clone(),
+                };
+                if !call.args.is_object() {
+                    call.args = serde_json::json!({});
+                }
+                match run_tool(state, desk, access, &call, send) {
+                    Ok(done) => done.result,
+                    Err(e) => {
+                        let said = e.to_string();
+                        failure = Some(e);
+                        format!("That did not work: {said}")
+                    }
+                }
+            };
+            talk.say(
+                &message,
+                chat::Exchange {
+                    tail: "",
+                    last: false,
+                    max_tokens: chat::REPLY_TOKENS,
+                    most_calls: tools::MOST_STEPS,
+                    piece: &mut piece,
+                    restart: &mut restart,
+                    call: &mut call,
+                },
+            )?
+        };
+        if let Some(e) = failure.take() {
+            return Err(e);
+        }
+        counted(&mut spent, reply.spent);
+        if nudged || desk.proposals > 0 {
+            return Ok(spent);
+        }
+        nudged = true;
+        send(serde_json::json!({ "restart": true }));
+        message = tools::NUDGE.to_string();
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn text_answer(
+    state: &AppState,
+    talk: &mut dyn chat::Conversation,
+    desk: &mut tools::Desk,
+    access: tools::Access,
+    wanted: &str,
+    conversation: &str,
+    send: &dyn Fn(serde_json::Value),
+    shown: &std::cell::Cell<bool>,
+) -> Result<Option<chat::Spent>> {
+    let mut nudged = !access.changes() || !tools::wants_change(wanted);
     let mut unstuck = false;
     let mut spent: Option<chat::Spent> = None;
+    let mut message = conversation.to_string();
     for step in 0..=tools::MOST_STEPS {
         let last = step == tools::MOST_STEPS;
         let gate = std::cell::RefCell::new(tools::Gate::default());
-        let asked = if last {
-            conversation.clone()
-        } else {
-            format!("{conversation}\n\n{}", tools::reminder(access))
-        };
-        let reply = streamer(
-            if last { &last_word } else { &with_tools },
-            &asked,
-            chat::REPLY_TOKENS,
-            &mut |piece| {
-                gate.borrow_mut()
-                    .push(piece, &mut |t| send(serde_json::json!({ "t": t })))
-            },
-            &mut || {
-                gate.borrow_mut().reset();
-                send(serde_json::json!({ "restart": true }));
+        let reply = talk.say(
+            &message,
+            chat::Exchange {
+                tail: if last {
+                    tools::NO_MORE_TOOLS
+                } else {
+                    tools::reminder(access)
+                },
+                last,
+                max_tokens: chat::REPLY_TOKENS,
+                most_calls: 0,
+                piece: &mut |piece| {
+                    gate.borrow_mut().push(piece, &mut |t| {
+                        shown.set(true);
+                        send(serde_json::json!({ "t": t }))
+                    })
+                },
+                restart: &mut || {
+                    gate.borrow_mut().reset();
+                    send(serde_json::json!({ "restart": true }));
+                },
+                call: &mut |_, _| String::new(),
             },
         )?;
-        if let Some(more) = reply.spent {
-            let more = chat::Spent { steps: 1, ..more };
-            spent = Some(match spent {
-                Some(so_far) => so_far.plus(more),
-                None => more,
-            });
-        }
+        counted(&mut spent, reply.spent);
         let reply = reply.text;
         let mut gate = gate.into_inner();
         let call = if last { None } else { tools::find_call(&reply) };
@@ -284,11 +504,7 @@ fn answer(
                 if gate.shown {
                     send(serde_json::json!({ "restart": true }));
                 }
-                conversation = format!(
-                    "{conversation}\n\nFelix replied: {}\n\n{}",
-                    tools::without_calls(&reply),
-                    tools::UNSTUCK
-                );
+                message = tools::UNSTUCK.to_string();
                 continue;
             }
             None if !last && !nudged && desk.proposals == 0 => {
@@ -296,15 +512,14 @@ fn answer(
                 if gate.shown {
                     send(serde_json::json!({ "restart": true }));
                 }
-                conversation = format!(
-                    "{conversation}\n\nFelix replied: {}\n\n{}",
-                    tools::without_calls(&reply),
-                    tools::NUDGE
-                );
+                message = tools::NUDGE.to_string();
                 continue;
             }
             None => {
-                gate.finish(&mut |t| send(serde_json::json!({ "t": t })));
+                gate.finish(&mut |t| {
+                    shown.set(true);
+                    send(serde_json::json!({ "t": t }))
+                });
                 return Ok(spent);
             }
             Some(Ok(call)) => call,
@@ -316,56 +531,8 @@ fn answer(
         if gate.shown {
             send(serde_json::json!({ "restart": true }));
         }
-        let before = desk.sources.len();
-        let mut done = if call.name == "invalid" {
-            tools::Done {
-                step: "Tried to use a tool".into(),
-                result: format!(
-                    "That did not work: {}. Write the call as one line: <tool>{{\"name\": \"search_notes\", \"query\": \"...\"}}</tool>",
-                    call.text("problem")
-                ),
-                proposal: None,
-                found: Vec::new(),
-            }
-        } else if tools::is_web(&call.name) {
-            desk.run_web(&call)
-        } else {
-            let graphs = Arc::clone(&state.graphs);
-            store_now(state, |store| {
-                let cache = graphs.load();
-                Ok(desk.run(store, &cache, &call))
-            })
-            .map_err(|_| anyhow::anyhow!("leo could not read the notes"))?
-        };
-        send(serde_json::json!({ "step": done.step, "tool": call.name, "found": done.found }));
-        if desk.sources.len() != before {
-            send(serde_json::json!({ "sources": desk.sources }));
-        }
-        if let Some(proposal) = &done.proposal {
-            let shown = match access {
-                tools::Access::Auto => match apply_now(state, proposal) {
-                    Ok(applied) => {
-                        done.result = match proposal {
-                            tools::Proposal::Edit { .. } => {
-                                "Changed. leo applied it; the user can undo it."
-                            }
-                            tools::Proposal::Create { .. } => {
-                                "Made. leo made the note; the user can undo it."
-                            }
-                        }
-                        .into();
-                        applied
-                    }
-                    Err(why) => {
-                        done.result = format!("Suggested, but leo could not apply it ({why}); the user can press Apply.");
-                        serde_json::json!(proposal)
-                    }
-                },
-                _ => serde_json::json!(proposal),
-            };
-            send(serde_json::json!({ "proposal": shown }));
-        }
-        conversation = tools::continued(&conversation, &call, &done);
+        let done = run_tool(state, desk, access, &call, send)?;
+        message = tools::result_message(&call.name, &done.result);
     }
     Ok(spent)
 }

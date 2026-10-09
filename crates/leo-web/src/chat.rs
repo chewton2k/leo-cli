@@ -13,6 +13,88 @@ pub type Streamer = Arc<
     dyn Fn(&str, &str, u32, &mut dyn FnMut(&str), &mut dyn FnMut()) -> Result<Reply> + Send + Sync,
 >;
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolSpec {
+    pub name: String,
+    pub description: String,
+    pub schema: serde_json::Value,
+}
+
+pub struct Exchange<'a> {
+    pub tail: &'a str,
+    pub last: bool,
+    pub max_tokens: u32,
+    pub most_calls: usize,
+    pub piece: &'a mut dyn FnMut(&str),
+    pub restart: &'a mut dyn FnMut(),
+    pub call: &'a mut dyn FnMut(&str, &serde_json::Value) -> String,
+}
+
+pub trait Conversation: Send {
+    fn native(&self) -> bool;
+    fn say(&mut self, text: &str, exchange: Exchange<'_>) -> Result<Reply>;
+}
+
+pub struct Instructions<'a> {
+    pub native: &'a str,
+    pub text: &'a str,
+    pub last: &'a str,
+}
+
+pub type Converser =
+    Arc<dyn Fn(&Instructions, &[ToolSpec]) -> Option<Box<dyn Conversation>> + Send + Sync>;
+
+pub struct Restated {
+    streamer: Streamer,
+    system: String,
+    last_system: String,
+    transcript: String,
+}
+
+impl Restated {
+    pub fn new(streamer: Streamer, system: String, last_system: String) -> Restated {
+        Restated {
+            streamer,
+            system,
+            last_system,
+            transcript: String::new(),
+        }
+    }
+}
+
+impl Conversation for Restated {
+    fn native(&self) -> bool {
+        false
+    }
+
+    fn say(&mut self, text: &str, exchange: Exchange<'_>) -> Result<Reply> {
+        if !self.transcript.is_empty() {
+            self.transcript.push_str("\n\n");
+        }
+        self.transcript.push_str(text);
+        let asked = if exchange.tail.is_empty() {
+            self.transcript.clone()
+        } else {
+            format!("{}\n\n{}", self.transcript, exchange.tail)
+        };
+        let system = if exchange.last {
+            &self.last_system
+        } else {
+            &self.system
+        };
+        let reply = (self.streamer)(
+            system,
+            &asked,
+            exchange.max_tokens,
+            exchange.piece,
+            exchange.restart,
+        )?;
+        self.transcript
+            .push_str(&format!("\n\nFelix replied: {}", reply.text));
+        Ok(reply)
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Reply {
     pub text: String,

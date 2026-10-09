@@ -676,3 +676,138 @@ fn read_only_felix_has_no_change_tools_and_is_refused_if_it_tries() {
     assert!(prompts[1].contains("this chat is read only"));
     assert_eq!(prompts.len(), 2, "no nudge to change anything");
 }
+
+struct Native {
+    script: Vec<(&'static str, serde_json::Value)>,
+    answer: &'static str,
+    results: Arc<Mutex<Vec<String>>>,
+    fail: bool,
+}
+
+impl chat::Conversation for Native {
+    fn native(&self) -> bool {
+        true
+    }
+
+    fn say(&mut self, _text: &str, exchange: chat::Exchange<'_>) -> anyhow::Result<chat::Reply> {
+        if self.fail {
+            anyhow::bail!("the session could not start");
+        }
+        for (name, args) in self.script.drain(..) {
+            let result = (exchange.call)(name, &args);
+            self.results.lock().unwrap().push(result);
+        }
+        (exchange.piece)(self.answer);
+        Ok(chat::Reply {
+            text: self.answer.into(),
+            spent: None,
+        })
+    }
+}
+
+#[test]
+fn a_model_with_native_tools_calls_leos_tools_directly_and_answers() {
+    let (mut state, _d, _) = state_with(&[("Graph traversals", "cs130")]);
+    let results = Arc::new(Mutex::new(Vec::new()));
+    let seen = Arc::clone(&results);
+    let instructions = Arc::new(Mutex::new(String::new()));
+    let told = Arc::clone(&instructions);
+    state.converse = Some(Arc::new(
+        move |given: &chat::Instructions, specs: &[chat::ToolSpec]| {
+            *told.lock().unwrap() = given.native.to_string();
+            assert!(specs
+                .iter()
+                .any(|s| s.name == "search_notes" && s.schema["required"][0] == "query"));
+            Some(Box::new(Native {
+                script: vec![
+                    ("search_notes", serde_json::json!({ "query": "graph" })),
+                    ("open_note", serde_json::json!({})),
+                ],
+                answer: "BFS uses a queue [n1].",
+                results: Arc::clone(&seen),
+                fail: false,
+            }) as Box<dyn chat::Conversation>)
+        },
+    ));
+    state.chat = Some(scripted(vec!["never used"]).0);
+    let lines = chat_lines(&state, "what is in my graph note?");
+    let steps: Vec<&str> = lines.iter().filter_map(|l| l["step"].as_str()).collect();
+    assert_eq!(steps[0], "Searched your notes for “graph”");
+    let results = results.lock().unwrap();
+    assert!(results[0].contains("Graph traversals"));
+    assert!(
+        results[1].starts_with("That did not work:"),
+        "{}",
+        results[1]
+    );
+    let shown: String = lines.iter().filter_map(|l| l["t"].as_str()).collect();
+    assert_eq!(shown, "BFS uses a queue [n1].");
+    assert!(instructions.lock().unwrap().contains("call them as tools"));
+    assert!(!instructions.lock().unwrap().contains("<tool>{"));
+}
+
+#[test]
+fn a_session_hears_only_what_is_new_and_a_failed_native_start_falls_back() {
+    struct Session(Arc<Mutex<Vec<String>>>, Vec<&'static str>);
+    impl chat::Conversation for Session {
+        fn native(&self) -> bool {
+            false
+        }
+        fn say(&mut self, text: &str, exchange: chat::Exchange<'_>) -> anyhow::Result<chat::Reply> {
+            self.0
+                .lock()
+                .unwrap()
+                .push(format!("{text}|{}", exchange.tail));
+            let reply = self.1.remove(0);
+            (exchange.piece)(reply);
+            Ok(chat::Reply::from(reply))
+        }
+    }
+    let (mut state, _d, _) = state_with(&[("Heaps", "")]);
+    let heard = Arc::new(Mutex::new(Vec::new()));
+    let ears = Arc::clone(&heard);
+    state.converse = Some(Arc::new(
+        move |_: &chat::Instructions, _: &[chat::ToolSpec]| {
+            Some(Box::new(Session(
+                Arc::clone(&ears),
+                vec![
+                    "<tool>{\"name\": \"search_notes\", \"query\": \"heap\"}</tool>",
+                    "Heaps keep the minimum on top.",
+                ],
+            )) as Box<dyn chat::Conversation>)
+        },
+    ));
+    state.chat = Some(scripted(vec!["never used"]).0);
+    let lines = chat_lines(&state, "what is a heap?");
+    let heard = heard.lock().unwrap();
+    assert_eq!(heard.len(), 2);
+    assert!(heard[0].contains("<conversation>") && heard[0].ends_with(tools::REMINDER));
+    assert!(
+        heard[1].starts_with("<tool_result name=\"search_notes\">"),
+        "{}",
+        heard[1]
+    );
+    assert!(
+        !heard[1].contains("<conversation>"),
+        "only the new part goes to a live session"
+    );
+    let shown: String = lines.iter().filter_map(|l| l["t"].as_str()).collect();
+    assert_eq!(shown, "Heaps keep the minimum on top.");
+
+    let (mut state, _d, _) = state_with(&[("Heaps", "")]);
+    state.converse = Some(Arc::new(|_: &chat::Instructions, _: &[chat::ToolSpec]| {
+        Some(Box::new(Native {
+            script: vec![],
+            answer: "",
+            results: Default::default(),
+            fail: true,
+        }) as Box<dyn chat::Conversation>)
+    }));
+    let (streamer, prompts) = scripted(vec!["Answered the old way."]);
+    state.chat = Some(streamer);
+    let lines = chat_lines(&state, "what is a heap?");
+    let shown: String = lines.iter().filter_map(|l| l["t"].as_str()).collect();
+    assert_eq!(shown, "Answered the old way.");
+    assert_eq!(prompts.lock().unwrap().len(), 1);
+    assert_eq!(lines.last().unwrap()["done"], true);
+}

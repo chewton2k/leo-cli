@@ -58,7 +58,7 @@ use crate::routes::uploads::{
 };
 use crate::terminal::{bind, clickable, keep_awake, open_on_enter, print_qr, should_open};
 
-pub use chat::{Reply, Spent, Streamer};
+pub use chat::{Conversation, Converser, Exchange, Instructions, Reply, Spent, Streamer, ToolSpec};
 pub use graph::Writer;
 
 pub trait SettingsApi: Send + Sync {
@@ -123,6 +123,7 @@ pub struct Powers {
     pub reader: Option<Reader>,
     pub room: Option<Room>,
     pub web: Option<Web>,
+    pub converse: Option<chat::Converser>,
 }
 
 #[derive(Clone)]
@@ -141,6 +142,7 @@ struct AppState {
     reader: Option<Reader>,
     room: Option<Room>,
     web: Option<Web>,
+    converse: Option<chat::Converser>,
     activity: Arc<Activity>,
 }
 
@@ -292,6 +294,7 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
     let reader = powers.reader;
     let room = powers.room;
     let web = powers.web;
+    let converse = powers.converse;
     let count = store.notes.len();
     let token_path = leo_core::paths::config_dir()?.join("serve-token");
     let sessions_path = leo_core::paths::config_dir()?.join("serve-sessions.json");
@@ -330,6 +333,7 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
         reader,
         room,
         web,
+        converse,
         activity: Default::default(),
     };
     tokio::spawn(keep_graph_current(state.clone()));

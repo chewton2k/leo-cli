@@ -447,6 +447,7 @@ pub fn run(cli: Cli) -> Result<()> {
                             )
                         },
                     )),
+                    converse: None,
                 },
             ))
         }

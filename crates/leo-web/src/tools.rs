@@ -336,6 +336,72 @@ The tools:
     )
 }
 
+fn offered(web: bool, access: Access) -> impl Iterator<Item = Spec> {
+    SPECS
+        .iter()
+        .filter(move |spec| access.changes() || !changes_notes(spec.name))
+        .chain(WEB_SPECS.iter().filter(move |_| web))
+        .map(move |spec| as_access(spec, access))
+}
+
+pub fn native_specs(web: bool, access: Access) -> Vec<crate::chat::ToolSpec> {
+    offered(web, access)
+        .map(|spec| {
+            let properties: serde_json::Map<String, serde_json::Value> = spec
+                .params
+                .iter()
+                .map(|p| {
+                    (
+                        p.name.to_string(),
+                        serde_json::json!({ "type": "string", "description": p.about }),
+                    )
+                })
+                .collect();
+            let required: Vec<&str> = spec
+                .params
+                .iter()
+                .filter(|p| p.required)
+                .map(|p| p.name)
+                .collect();
+            crate::chat::ToolSpec {
+                name: spec.name.to_string(),
+                description: format!("{} Returns: {}", spec.purpose, spec.returns),
+                schema: serde_json::json!({
+                    "type": "object",
+                    "properties": properties,
+                    "required": required,
+                    "additionalProperties": false,
+                }),
+            }
+        })
+        .collect()
+}
+
+pub fn guidance_for(web: bool, access: Access) -> String {
+    let limits = if access.changes() {
+        format!("At most {MOST_STEPS} tool calls per answer, and at most {MOST_PROPOSALS} changes (edit_note or create_note).")
+    } else {
+        format!("At most {MOST_STEPS} tool calls per answer.")
+    };
+    let when = match access {
+        Access::Ask => WHEN_ASK,
+        Access::Auto => WHEN_AUTO,
+        Access::Read => WHEN_READ,
+    };
+    let outside = if web {
+        "For outside or current facts, use web_search and open_page, and say which parts came from the web and from where."
+    } else {
+        "Your own web search, if you have it, is fine for outside or current facts: say which parts came from the web."
+    };
+    format!(
+        "## Your tools\nleo gives you tools for the user's notes; call them as tools, several at once when they do not depend on each other. {outside} A result that starts with \"That did not work:\" says what was wrong; correct the call and try again. {limits} Notes that tools find get ids like n7; cite them like [n7].\n\n{when}"
+    )
+}
+
+pub fn result_message(name: &str, result: &str) -> String {
+    format!("<tool_result name=\"{name}\">\n{result}\n</tool_result>\n\nContinue: use another tool, or reply to the user.")
+}
+
 pub fn check(call: &Call) -> Result<(), String> {
     let Some(spec) = spec_of(&call.name) else {
         let names: Vec<&str> = SPECS.iter().map(|s| s.name).collect();
