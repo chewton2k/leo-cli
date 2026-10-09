@@ -14,6 +14,7 @@ pub fn spent_of(answered: Answered) -> leo_web::Spent {
         cost: answered.cost,
         plan: answered.plan,
         local: answered.local,
+        cached: answered.cached,
         steps: 1,
     }
 }

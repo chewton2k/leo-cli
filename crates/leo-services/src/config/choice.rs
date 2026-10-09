@@ -380,6 +380,11 @@ pub fn efforts(provider: &str, model: &str) -> &'static [&'static str] {
             &["minimal", "low", "medium", "high"]
         }
         "gemini" => &["low", "medium", "high"],
+        "anthropic"
+            if model.starts_with("claude-") && !model.contains("-4-5") && !model.contains("-3") =>
+        {
+            &["low", "medium", "high", "xhigh", "max"]
+        }
         _ => &[],
     }
 }

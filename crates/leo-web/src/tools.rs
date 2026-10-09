@@ -634,6 +634,41 @@ pub fn wants_change(message: &str) -> bool {
         .any(|word| CHANGE_WORDS.contains(&word))
 }
 
+const WIDE_WORDS: [&str; 9] = [
+    "all",
+    "every",
+    "each",
+    "whole",
+    "entire",
+    "across",
+    "throughout",
+    "everything",
+    "reorganize",
+];
+
+pub fn wants_plan(message: &str) -> bool {
+    let lower = message.to_lowercase();
+    let words: Vec<&str> = lower
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect();
+    let changes = words.iter().filter(|w| CHANGE_WORDS.contains(w)).count();
+    let wide = words.iter().any(|w| WIDE_WORDS.contains(w));
+    let steps = message
+        .lines()
+        .filter(|l| {
+            let l = l.trim_start();
+            l.starts_with("- ")
+                || l.starts_with("* ")
+                || l.chars().next().is_some_and(|c| c.is_ascii_digit()) && l.contains(". ")
+        })
+        .count();
+    (changes > 0 && wide) || changes >= 3 || steps >= 3 || words.len() > 120
+}
+
+pub const PLAN: &str = "## This is a big request
+Before you start, make a short plan for yourself: what you need to read or find, what you will change or write, and in what order. Then work through it step by step with your tools, checking each part against the notes. Finish with a short list of what you did and anything you left for the user to decide.";
+
 pub const NO_MORE_TOOLS: &str =
     "You have used all the tools you can for this answer. Do not ask for another; answer the user now with what you have.";
 
@@ -1431,6 +1466,23 @@ pub fn continued(conversation: &str, call: &Call, done: &Done) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_big_request_is_planned_first_and_a_small_one_is_not() {
+        assert!(wants_plan("fix every typo in all my cs130 notes"));
+        assert!(wants_plan(
+            "rewrite the intro, add an example and fix the formula"
+        ));
+        assert!(wants_plan(
+            "Please:\n1. read the paper\n2. list its claims\n3. compare with my notes"
+        ));
+        assert!(!wants_plan("what is a heap?"));
+        assert!(!wants_plan("fix the typo in this note"));
+        assert!(
+            !wants_plan("explain all of it"),
+            "wide but nothing to change"
+        );
+    }
 
     #[test]
     fn a_long_document_is_read_part_by_part_by_id_or_name() {

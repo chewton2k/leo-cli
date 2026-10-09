@@ -30,8 +30,35 @@ pub struct Chat {
     pub named: bool,
     #[serde(default)]
     pub about: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory: Option<Memory>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Memory {
+    pub upto: usize,
+    pub hash: String,
+    pub text: String,
+}
+
+static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+pub fn set_memory(dir: &Path, id: &str, memory: Memory) -> bool {
+    let _held = WRITING.lock();
+    let Some(mut chat) = load(dir, id) else {
+        return false;
+    };
+    if chat
+        .memory
+        .as_ref()
+        .is_some_and(|old| old.upto > memory.upto)
+    {
+        return false;
+    }
+    chat.memory = Some(memory);
+    write(dir, &chat).is_ok()
 }
 
 impl Chat {
@@ -192,6 +219,7 @@ fn about_of(messages: &[serde_json::Value]) -> String {
 }
 
 pub fn rename(dir: &Path, id: &str, title: &str) -> bool {
+    let _held = WRITING.lock();
     let title = clipped(title, MOST_TITLE);
     let Some(mut chat) = load(dir, id).filter(|_| !title.is_empty()) else {
         return false;
@@ -248,8 +276,10 @@ pub fn list(dir: &Path) -> Vec<Summary> {
 
 pub fn save(dir: &Path, id: &str, saving: Saving, now: DateTime<Utc>) -> Result<Chat> {
     path_of(dir, id).context("that is not a chat id")?;
+    let _held = WRITING.lock();
     let old = load(dir, id);
     let created_at = old.as_ref().map_or(now, |old| old.created_at);
+    let memory = old.as_ref().and_then(|old| old.memory.clone());
     let kept_name = old
         .filter(|old| old.named && saving.title.trim().is_empty())
         .map(|old| old.title);
@@ -267,6 +297,7 @@ pub fn save(dir: &Path, id: &str, saving: Saving, now: DateTime<Utc>) -> Result<
         named: kept_name.is_some(),
         title: kept_name.unwrap_or_else(|| title_of(&saving.title, &refs, &messages)),
         about: about_of(&messages),
+        memory,
         mode: saving.mode,
         refs,
         messages,

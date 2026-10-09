@@ -2573,7 +2573,7 @@ test.describe('Felix asks, quizzes and listens while he works', () => {
       const body = route.request().postDataJSON();
       asked.push(body);
       if (asked.length === 1) {
-        return route.fulfill(answerWith([{ answer: 'a1' }, { sources: [] }, { step: 'Asked you a practice question', tool: 'quiz', found: [] }, { quiz: { kind: 'multiple_choice', question: 'What does BFS use?', options: ['a stack', 'a queue', 'a heap'], answer: 'a queue', explain: 'BFS takes the oldest vertex first.' } }, { t: 'Give it a try!' }, { done: true }]));
+        return route.fulfill(answerWith([{ answer: 'a1' }, { sources: [{ n: 1, id: 'note-bfs', title: 'Graph traversals', folder: '', why: 'open' }] }, { step: 'Asked you a practice question', tool: 'quiz', found: [] }, { quiz: { kind: 'multiple_choice', question: 'What does BFS use?', options: ['a stack', 'a queue', 'a heap'], answer: 'a queue', explain: 'BFS takes the oldest vertex first [n1].' } }, { t: 'Give it a try!' }, { done: true }]));
       }
       return route.fulfill(answerWith([{ answer: 'a2' }, { sources: [] }, { t: '[[incorrect]] A stack gives the newest vertex; BFS needs the oldest.' }, { done: true }]));
     });
@@ -2588,6 +2588,8 @@ test.describe('Felix asks, quizzes and listens while he works', () => {
     await expect(card.locator('.quiz-option.right')).toContainText('a queue');
     await expect(card.locator('.quiz-result')).toContainText('Not quite. The answer: a queue');
     await expect(card.locator('.quiz-explain')).toContainText('oldest vertex first');
+    await expect(card.locator('.quiz-explain .cite')).toHaveText('Graph traversals');
+    await expect(card.locator('.quiz-explain')).not.toContainText('[n1]');
     await expect(card.locator('.quiz-option').first()).toBeDisabled();
     await expect(chat.locator('.msg.user').last()).toContainText('a stack');
     await expect(chat.locator('.msg.user').last().locator('.msg-note')).toHaveText('Practice answer · not quite');

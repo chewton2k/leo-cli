@@ -27,6 +27,8 @@ pub struct Spent {
     pub input: u64,
     pub output: u64,
     pub estimated: bool,
+    pub cached: u64,
+    pub cache_written: u64,
 }
 
 impl Spent {
@@ -39,6 +41,7 @@ impl Spent {
             input: asked.div_ceil(4) as u64,
             output: answer.chars().count().div_ceil(4) as u64,
             estimated: true,
+            ..Spent::default()
         }
     }
 }
@@ -128,6 +131,7 @@ pub trait TranscribeProvider {
 }
 
 pub mod agent_cli;
+pub mod anthropic;
 pub mod audio;
 pub mod chat_audio;
 pub mod codex_app;
@@ -168,6 +172,13 @@ pub fn build_one_chat(
                 Some(_) => resolve(pc.account(name), store),
                 None => None,
             };
+            if pc.base_url.as_deref().is_some_and(anthropic::is_anthropic) {
+                return Some(Box::new(anthropic::Anthropic::new(
+                    name.to_string(),
+                    pc,
+                    key,
+                )));
+            }
             Some(Box::new(openai::OpenAiChat::new(name.to_string(), pc, key)))
         }
         Some(ProviderKind::ClaudeCode | ProviderKind::Codex) => {

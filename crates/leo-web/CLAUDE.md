@@ -574,3 +574,15 @@
   message when the answer ends, or go back into the box if it was stopped.
 - Citations of notes Felix was never given (`[n9]` with no source) are
   dropped from the answer rather than shown raw (`cite`).
+- Long chats: `chat::turns_for(room)` keeps 14 turns word for word at the
+  default room, up to `MOST_TURNS` (40) for big models. Older messages go in
+  `<earlier_in_this_chat>`: the chat's `memory` summary (stored in the chat
+  file, kept by `chats::save`, written under `WRITING`), then the turns it does
+  not cover, shortened (`earlier_of`, `EARLIER_CHARS`). A summary is used only
+  while `hash_of` the turns it covers still matches. After every
+  `MEMORY_EVERY` (6) new turns beyond the kept ones, `remember_in_background`
+  asks the writing AI to fold them into the summary (`MEMORY_RULES`).
+- Big requests (`tools::wants_plan`: a change across all/every notes, three or
+  more changes or listed steps, or a long message) get `tools::PLAN` added:
+  plan first, work through it, list what was done.
+- The cost line's tooltip names tokens read from the cache (`Spent.cached`).

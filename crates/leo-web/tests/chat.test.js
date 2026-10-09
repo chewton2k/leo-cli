@@ -264,3 +264,9 @@ test('what Felix is told about a practice answer says how it went and how to rep
   assert.ok(free.includes('Oldest first.'));
   assert.ok(C.quizSay({ kind: 'fill_blank', question: 'q', answer: 'oldest | earliest' }, 'x', false).includes('the right answer is oldest.'));
 });
+
+test('tokens read from the cache are named in the cost line tooltip', () => {
+  const label = C.spentLabel({ by: 'Anthropic', model: 'claude-sonnet-5-5', input: 12000, cached: 9000, output: 800, cost: 0.01, steps: 3 });
+  assert.equal(label.title, '12,000 tokens in (9,000 from the cache), 800 out over 3 steps');
+  assert.ok(!C.spentLabel({ by: 'Anthropic', model: 'm', input: 5, output: 1, cost: 0 }).title.includes('cache'));
+});

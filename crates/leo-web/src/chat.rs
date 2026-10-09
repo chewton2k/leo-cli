@@ -124,6 +124,8 @@ pub struct Spent {
     pub cost: Option<f64>,
     pub plan: bool,
     pub local: bool,
+    #[serde(default)]
+    pub cached: u64,
     pub steps: u32,
 }
 
@@ -137,6 +139,7 @@ impl Spent {
         Spent {
             input: self.input + more.input,
             output: self.output + more.output,
+            cached: self.cached + more.cached,
             estimated: self.estimated || more.estimated,
             cost,
             steps: self.steps + more.steps.max(1),
@@ -565,7 +568,107 @@ pub fn prompt(
     documents: &[(String, String)],
     messages: &[Turn],
 ) -> (String, String) {
-    prompt_within(mode, notes, documents, messages, ROOM)
+    prompt_within(mode, notes, documents, messages, ROOM, None)
+}
+
+pub const MOST_TURNS: usize = 40;
+pub const MEMORY_EVERY: usize = 6;
+const EARLIER_CHARS: usize = 6_000;
+const MEMORY_WORDS: u32 = 400;
+
+pub fn turns_for(room: usize) -> usize {
+    (TURNS * room.clamp(LEAST_ROOM, MOST_ROOM) / ROOM).clamp(TURNS, MOST_TURNS)
+}
+
+pub fn first_kept(messages: &[Turn], room: usize) -> usize {
+    messages.len().saturating_sub(turns_for(room))
+}
+
+pub fn hash_of(messages: &[Turn]) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for turn in messages {
+        for byte in turn
+            .role
+            .bytes()
+            .chain([0])
+            .chain(turn.text.bytes())
+            .chain([0])
+        {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x0100_0000_01b3);
+        }
+    }
+    format!("{hash:016x}")
+}
+
+pub fn memory_fits(memory: &crate::chats::Memory, messages: &[Turn], start: usize) -> bool {
+    memory.upto <= start
+        && memory.upto <= messages.len()
+        && hash_of(&messages[..memory.upto]) == memory.hash
+}
+
+fn line_of(turn: &Turn, most: usize) -> String {
+    let who = if turn.role == "user" { "User" } else { "Felix" };
+    let flat = turn.text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut text: String = flat.chars().take(most).collect();
+    if flat.chars().count() > most {
+        text.push('…');
+    }
+    format!("{who}: {text}")
+}
+
+pub fn earlier_of(
+    messages: &[Turn],
+    start: usize,
+    memory: Option<&crate::chats::Memory>,
+) -> String {
+    let memory = memory.filter(|m| memory_fits(m, messages, start));
+    let from = memory.map_or(0, |m| m.upto);
+    let mut lines: Vec<String> = Vec::new();
+    let mut used = 0;
+    for turn in messages[from..start].iter().rev() {
+        let line = line_of(turn, if turn.role == "user" { 400 } else { 240 });
+        used += line.len();
+        if used > EARLIER_CHARS {
+            lines.push("…".into());
+            break;
+        }
+        lines.push(line);
+    }
+    lines.reverse();
+    let mut out = String::new();
+    if let Some(memory) = memory {
+        out.push_str(&format!(
+            "What the chat covered before (a summary):\n{}\n",
+            memory.text.trim()
+        ));
+    }
+    if !lines.is_empty() {
+        out.push_str(&format!(
+            "Earlier messages, shortened:\n{}\n",
+            lines.join("\n")
+        ));
+    }
+    out
+}
+
+pub const MEMORY_RULES: &str = "You keep the memory of a long study chat between a student and Felix, their study buddy, so Felix can keep helping once older messages are out of view. Write a summary of at most 300 words in plain sentences and short lists: what the student is working on and why, what they asked and what Felix explained or changed in their notes, facts they gave about themselves, their course or deadlines, what they understood well and what they got wrong, decisions made, and questions still open. Keep names, numbers, note titles and terms exactly. Use interpretable language. Reply with the summary only.";
+
+pub fn memory_prompt(old: Option<&crate::chats::Memory>, more: &[Turn]) -> (String, String, u32) {
+    let mut user = String::new();
+    if let Some(old) = old {
+        user.push_str(&format!(
+            "<summary_so_far>\n{}\n</summary_so_far>\n\n",
+            old.text.trim()
+        ));
+    }
+    user.push_str("<more_of_the_chat>\n");
+    for turn in more {
+        user.push_str(&line_of(turn, TURN_CHARS));
+        user.push_str("\n\n");
+    }
+    user.push_str("</more_of_the_chat>\n\nWrite the updated summary: everything that matters from the summary so far and from these messages.");
+    (MEMORY_RULES.to_string(), user, MEMORY_WORDS * 2)
 }
 
 pub fn prompt_within(
@@ -574,6 +677,7 @@ pub fn prompt_within(
     documents: &[(String, String)],
     messages: &[Turn],
     room: usize,
+    memory: Option<&crate::chats::Memory>,
 ) -> (String, String) {
     let system = format!("{BASE}\n\n{}", style(mode));
     let mut user = documents_within(documents, scaled(DOCS_CHARS, room));
@@ -584,8 +688,14 @@ pub fn prompt_within(
         user.push_str(notes);
         user.push_str("</notes>\n\n");
     }
+    let start = first_kept(messages, room);
+    let earlier = earlier_of(messages, start, memory);
+    if !earlier.is_empty() {
+        user.push_str(&format!(
+            "<earlier_in_this_chat>\n{earlier}</earlier_in_this_chat>\n\n"
+        ));
+    }
     user.push_str("<conversation>\n");
-    let start = messages.len().saturating_sub(TURNS);
     for turn in &messages[start..] {
         let who = if turn.role == "user" { "User" } else { "Felix" };
         user.push_str(&format!(
@@ -607,6 +717,59 @@ pub fn mode_of(requested: Option<&str>) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn turns(n: usize) -> Vec<Turn> {
+        (0..n)
+            .map(|i| Turn {
+                role: if i % 2 == 0 { "user" } else { "assistant" }.into(),
+                text: format!("message {i}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn bigger_models_see_more_of_the_chat_word_for_word() {
+        assert_eq!(turns_for(LEAST_ROOM), TURNS);
+        assert_eq!(turns_for(ROOM), TURNS);
+        assert_eq!(turns_for(ROOM * 2), TURNS * 2);
+        assert_eq!(turns_for(MOST_ROOM), MOST_TURNS);
+        assert_eq!(first_kept(&turns(10), ROOM), 0);
+        assert_eq!(first_kept(&turns(20), ROOM), 6);
+    }
+
+    #[test]
+    fn a_summary_is_used_only_while_it_matches_the_chat_it_was_made_from() {
+        let messages = turns(20);
+        let memory = crate::chats::Memory {
+            upto: 4,
+            hash: hash_of(&messages[..4]),
+            text: "Summary of the start.".into(),
+        };
+        let with = earlier_of(&messages, 6, Some(&memory));
+        assert!(
+            with.starts_with("What the chat covered before (a summary):\nSummary of the start.")
+        );
+        assert!(with.contains("User: message 4\nFelix: message 5"));
+        assert!(!with.contains("message 3"));
+        let changed = crate::chats::Memory {
+            hash: "0".into(),
+            ..memory.clone()
+        };
+        let without = earlier_of(&messages, 6, Some(&changed));
+        assert!(!without.contains("Summary of the start."));
+        assert!(without.contains("User: message 0"));
+        assert_eq!(earlier_of(&messages, 0, None), "");
+        let long: Vec<Turn> = (0..200)
+            .map(|i| Turn {
+                role: "user".into(),
+                text: format!("{i} {}", "word ".repeat(200)),
+            })
+            .collect();
+        let clipped = earlier_of(&long, 190, None);
+        assert!(clipped.len() < EARLIER_CHARS + 600);
+        assert!(clipped.contains("User: 189 "), "the most recent are kept");
+        assert!(!clipped.contains("User: 0 "));
+    }
 
     #[test]
     fn notes_felix_used_earlier_in_the_chat_come_along_with_the_next_question() {
@@ -845,7 +1008,15 @@ mod tests {
             })
             .collect();
         let (_, user) = prompt("ask", &text, &[], &many);
-        assert!(!user.contains("turn 0\n"), "old turns are dropped");
+        let conversation = user.split("<conversation>").nth(1).unwrap();
+        assert!(
+            !conversation.contains("turn 0\n"),
+            "old turns leave the conversation"
+        );
+        assert!(
+            user.contains("<earlier_in_this_chat>\nEarlier messages, shortened:\nUser: turn 0\n"),
+            "and come along shortened"
+        );
         assert!(user.contains("User: turn 38"));
         assert!(user.contains("Felix: turn 39"));
     }

@@ -181,7 +181,8 @@
     const effort = typeof spent.effort === 'string' && spent.effort ? `${spent.effort} effort` : '';
     const about = spent.estimated ? 'about ' : '';
     const steps = spent.steps > 1 ? ` over ${spent.steps} steps` : '';
-    const title = `${about}${Number(spent.input || 0).toLocaleString('en-US')} tokens in, ${Number(spent.output || 0).toLocaleString('en-US')} out${steps}`;
+    const cached = Number(spent.cached || 0) > 0 ? ` (${Number(spent.cached).toLocaleString('en-US')} from the cache)` : '';
+    const title = `${about}${Number(spent.input || 0).toLocaleString('en-US')} tokens in${cached}, ${Number(spent.output || 0).toLocaleString('en-US')} out${steps}`;
     let parts;
     if (spent.plan) parts = [spent.by, model, effort || 'default effort', 'on your plan'];
     else if (spent.local) parts = [spent.by, model, 'free on this computer'];
@@ -997,7 +998,7 @@
       const steps = (m.steps || []).length ? `<div class="msg-steps">${m.steps.map((t, k) => stepLine(t, m.pending && !shown && k === m.steps.length - 1)).join('')}</div>` : '';
       const offers = (m.proposals || []).map((p, j) => proposalCard(p, i, j)).join('');
       const asks = (m.asks || []).map((a, k) => askCard(a, i, k, m.pending)).join('');
-      const quizzes = (m.quizzes || []).map((q, k) => quizCard(q, i, k, m.pending)).join('');
+      const quizzes = (m.quizzes || []).map((q, k) => quizCard(q, i, k, m.pending, m.sources)).join('');
       return `<div class="msg leo${m.pending ? ' pending' : ''}" data-i="${i}">${badge}${steps}<div class="prose">${html}</div>${quizzes}${asks}${offers}${error}${from}${keep}</div>`;
     }
 
@@ -1134,13 +1135,13 @@
 
     const BLANK = 'QUIZBLANKMARK';
 
-    function quizCard(q, i, k, pending) {
+    function quizCard(q, i, k, pending, sources) {
       const where = `data-i="${i}" data-k="${k}"`;
       const done = typeof q.given === 'string';
       const off = done || pending ? ' disabled' : '';
-      const asked = q.kind === 'fill_blank'
+      const asked = cite(q.kind === 'fill_blank'
         ? render(String(q.question || '').replace(/_{3,}/g, BLANK)).split(BLANK).join('<span class="quiz-blank" aria-label="blank"></span>')
-        : render(String(q.question || ''));
+        : render(String(q.question || '')), sources, escape);
       const draft = escape(done ? q.given : state.drafts[`${i}:${k}`] || '');
       let answer = '';
       if (q.kind === 'multiple_choice') {
@@ -1158,7 +1159,7 @@
         : q.correct === true ? `<div class="quiz-result right">Correct</div>`
           : q.correct === false ? `<div class="quiz-result wrong">Not quite. The answer: ${escape(shown)}</div>`
             : '<div class="quiz-result">Sent to Felix to mark.</div>';
-      const why = done && q.correct !== null && q.explain ? `<div class="quiz-explain">${escape(q.explain)}</div>` : '';
+      const why = done && q.correct !== null && q.explain ? `<div class="quiz-explain">${cite(escape(q.explain), sources, escape)}</div>` : '';
       return `<div class="quiz-card${done ? ' done' : ''}"><div class="quiz-kind">${escape(QUIZ_KINDS[q.kind] || 'Question')}</div><div class="quiz-q prose">${asked}</div>${answer}${result}${why}</div>`;
     }
 

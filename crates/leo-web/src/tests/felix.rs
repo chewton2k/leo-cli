@@ -995,3 +995,123 @@ fn messages_can_be_added_only_to_an_answer_still_being_written() {
     assert_eq!(late.status(), StatusCode::GONE);
     assert_eq!(json_of(late)["error"], "That answer has finished.");
 }
+
+#[test]
+fn a_long_chat_is_remembered_in_a_summary_instead_of_forgotten() {
+    let (mut state, dir, _) = state_with(&[]);
+    let summaries = Arc::new(Mutex::new(Vec::new()));
+    let told = Arc::clone(&summaries);
+    let writer: crate::graph::Writer = Arc::new(move |system: &str, user: &str, _: u32| {
+        if system.contains("You name a conversation") {
+            return Ok("A name".into());
+        }
+        assert!(system.contains("You keep the memory of a long study chat"));
+        told.lock().unwrap().push(user.to_string());
+        Ok("The student is revising graph search for a Friday exam.".into())
+    });
+    state.graphs = Arc::new(crate::graph::Graphs::for_notes(
+        &dir.path().join("notes"),
+        Some(writer),
+    ));
+    let (streamer, prompts) = scripted(vec!["First.", "Second."]);
+    state.chat = Some(streamer);
+    let mut messages: Vec<chat::Turn> = (0..31)
+        .map(|i| chat::Turn {
+            role: if i % 2 == 0 { "user" } else { "assistant" }.into(),
+            text: if i == 0 {
+                "My exam is on Friday; I study graph search.".into()
+            } else {
+                format!("message {i}")
+            },
+        })
+        .collect();
+    let id = "chat-memory-0001";
+    crate::chats::save(
+        &state.chats,
+        id,
+        serde_json::from_value(serde_json::json!({ "mode": "study", "messages": [] })).unwrap(),
+        chrono::Utc::now(),
+    )
+    .unwrap();
+    let ask = |messages: &[chat::Turn]| {
+        let body = chat::ChatBody {
+            messages: messages.to_vec(),
+            mode: None,
+            note: None,
+            refs: vec![],
+            chat: Some(id.into()),
+            files: vec![],
+            access: None,
+            recent: vec![],
+        };
+        run(async {
+            let response = chat_reply(State(state.clone()), Json(body)).await;
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            assert!(String::from_utf8_lossy(&bytes).contains("done"));
+        });
+    };
+    ask(&messages);
+    let first = prompts.lock().unwrap()[0].clone();
+    assert!(
+        first.contains("<earlier_in_this_chat>") && first.contains("User: My exam is on Friday"),
+        "before a summary exists, older messages come along shortened"
+    );
+    let started = std::time::Instant::now();
+    while crate::chats::load(&state.chats, id).is_none_or(|c| c.memory.is_none()) {
+        assert!(started.elapsed().as_secs() < 5, "nothing was remembered");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let memory = crate::chats::load(&state.chats, id)
+        .unwrap()
+        .memory
+        .unwrap();
+    assert_eq!(memory.upto, 31 - chat::turns_for(chat::ROOM));
+    assert!(summaries.lock().unwrap()[0].contains("My exam is on Friday"));
+    crate::chats::save(
+        &state.chats,
+        id,
+        serde_json::from_value(
+            serde_json::json!({ "mode": "study", "messages": [{ "role": "user", "text": "x" }] }),
+        )
+        .unwrap(),
+        chrono::Utc::now(),
+    )
+    .unwrap();
+    assert!(
+        crate::chats::load(&state.chats, id)
+            .unwrap()
+            .memory
+            .is_some(),
+        "the page saving the chat keeps the memory"
+    );
+    messages.push(chat::Turn {
+        role: "assistant".into(),
+        text: "message 31".into(),
+    });
+    messages.push(chat::Turn {
+        role: "user".into(),
+        text: "what was my deadline?".into(),
+    });
+    ask(&messages);
+    let second = prompts.lock().unwrap()[1].clone();
+    assert!(second.contains("What the chat covered before (a summary):\nThe student is revising graph search for a Friday exam."));
+    assert!(
+        !second.contains("User: My exam is on Friday"),
+        "what the summary covers is not repeated"
+    );
+    assert!(second.contains("User: message 18"), "{second}");
+}
+
+#[test]
+fn a_big_request_asks_felix_to_plan_before_he_starts() {
+    let (mut state, _d, _) = state_with(&[]);
+    let (streamer, prompts) = scripted(vec!["Done.", "Done."]);
+    state.chat = Some(streamer);
+    chat_lines_with(&state, "fix every typo in all my notes", Some("read"));
+    chat_lines_with(&state, "what is a heap?", Some("read"));
+    let prompts = prompts.lock().unwrap();
+    assert!(prompts[0].contains(tools::PLAN));
+    assert!(!prompts[1].contains(tools::PLAN));
+}

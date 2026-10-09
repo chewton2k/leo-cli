@@ -201,6 +201,46 @@ pub(crate) fn name_in_background(
     });
 }
 
+static REMEMBERING: std::sync::LazyLock<std::sync::Mutex<std::collections::BTreeSet<String>>> =
+    std::sync::LazyLock::new(Default::default);
+
+pub(crate) fn remember_in_background(
+    dir: std::path::PathBuf,
+    id: String,
+    old: Option<chats::Memory>,
+    upto: Vec<chat::Turn>,
+    from: usize,
+    writer: crate::graph::Writer,
+) {
+    if !chats::valid_id(&id)
+        || !REMEMBERING
+            .lock()
+            .is_ok_and(|mut busy| busy.insert(id.clone()))
+    {
+        return;
+    }
+    std::thread::spawn(move || {
+        let (system, user, most) = chat::memory_prompt(old.as_ref(), &upto[from..]);
+        if let Ok(text) = writer(&system, &user, most) {
+            let text = text.trim();
+            if !text.is_empty() {
+                chats::set_memory(
+                    &dir,
+                    &id,
+                    chats::Memory {
+                        upto: upto.len(),
+                        hash: chat::hash_of(&upto),
+                        text: text.to_string(),
+                    },
+                );
+            }
+        }
+        if let Ok(mut busy) = REMEMBERING.lock() {
+            busy.remove(&id);
+        }
+    });
+}
+
 pub(crate) async fn delete_chat(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -480,6 +520,11 @@ fn answer(
     };
     let web = state.web.clone().filter(|w| (w.needed)());
     let web_on = web.is_some();
+    let system = if tools::wants_plan(&wanted) {
+        format!("{system}\n\n{}", tools::PLAN)
+    } else {
+        system
+    };
     let text = format!("{system}\n\n{}", tools::manual_for(web_on, access));
     let last = format!("{system}\n\n{}", tools::NO_MORE_TOOLS);
     let native = format!("{system}\n\n{}", tools::guidance_for(web_on, access));
@@ -856,7 +901,36 @@ pub(crate) async fn chat_reply(
         Some(chat) if !body.files.is_empty() => chat_files::texts(&state.chats, chat, &body.files),
         _ => Vec::new(),
     };
-    let (system, user) = chat::prompt_within(mode, &notes, &documents, &body.messages, room);
+    let start = chat::first_kept(&body.messages, room);
+    let memory = body
+        .chat
+        .as_deref()
+        .and_then(|id| chats::load(&state.chats, id))
+        .and_then(|c| c.memory);
+    let (system, user) = chat::prompt_within(
+        mode,
+        &notes,
+        &documents,
+        &body.messages,
+        room,
+        memory.as_ref(),
+    );
+    if let (Some(id), Some(writer)) = (body.chat.clone(), state.graphs.writer()) {
+        let from = memory
+            .as_ref()
+            .filter(|m| chat::memory_fits(m, &body.messages, start))
+            .map_or(0, |m| m.upto);
+        if start >= from + chat::MEMORY_EVERY {
+            remember_in_background(
+                state.chats.clone(),
+                id,
+                memory.filter(|m| m.upto == from && from > 0),
+                body.messages[..start].to_vec(),
+                from,
+                writer,
+            );
+        }
+    }
     let wanted = body
         .messages
         .last()

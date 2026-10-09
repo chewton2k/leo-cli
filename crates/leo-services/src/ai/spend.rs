@@ -14,7 +14,21 @@ pub struct Answered {
     pub cost: Option<f64>,
     pub plan: bool,
     pub local: bool,
+    pub cached: u64,
 }
+
+pub fn cache_read_share(provider: &str, model: &str) -> f64 {
+    let model = model.to_lowercase();
+    match provider {
+        "anthropic" if model.contains("fable-5-1") || model.contains("mythos-5-1") => 0.025,
+        "anthropic" if model.contains("opus-5-5") || model.contains("sonnet-5-5") => 0.05,
+        "anthropic" | "openai" => 0.1,
+        "gemini" | "xai" => 0.25,
+        _ => 1.0,
+    }
+}
+
+pub const CACHE_WRITE_SHARE: f64 = 1.25;
 
 pub fn rates(price: &str) -> Option<(f64, f64)> {
     if !price.contains('$') {
@@ -69,7 +83,15 @@ pub fn answered(cfg: &Config, provider: &str, spent: Spent) -> Answered {
             .and_then(|model| choice.and_then(|c| c.price(model)))
             .and_then(rates)
             .map(|(input, output)| {
-                (spent.input as f64 * input + spent.output as f64 * output) / 1_000_000.0
+                let read = cache_read_share(provider, spent.model.as_deref().unwrap_or(""));
+                let cached = spent.cached.min(spent.input);
+                let written = spent.cache_written.min(spent.input - cached);
+                let fresh = spent.input - cached - written;
+                (fresh as f64 * input
+                    + cached as f64 * input * read
+                    + written as f64 * input * CACHE_WRITE_SHARE
+                    + spent.output as f64 * output)
+                    / 1_000_000.0
             })
     };
     Answered {
@@ -82,6 +104,7 @@ pub fn answered(cfg: &Config, provider: &str, spent: Spent) -> Answered {
         cost,
         plan,
         local,
+        cached: spent.cached,
     }
 }
 
@@ -137,5 +160,32 @@ mod tests {
 
         let unknown = answered(&cfg, "openai", spent("not-a-listed-model", 10, 10));
         assert_eq!(unknown.cost, None);
+    }
+
+    #[test]
+    fn tokens_read_from_the_cache_cost_a_fraction_and_tokens_written_a_little_more() {
+        let cfg = Config::default();
+        let cached = answered(
+            &cfg,
+            "anthropic",
+            Spent {
+                cached: 800_000,
+                cache_written: 100_000,
+                ..spent("claude-sonnet-5-5", 1_000_000, 0)
+            },
+        );
+        assert_eq!(cached.cached, 800_000);
+        let rate = 2.0;
+        let expected = (100_000.0 * rate + 800_000.0 * rate * 0.05 + 100_000.0 * rate * 1.25) / 1e6;
+        assert!(
+            (cached.cost.unwrap() - expected).abs() < 1e-9,
+            "{:?}",
+            cached.cost
+        );
+        assert!((cache_read_share("openai", "gpt-5") - 0.1).abs() < 1e-9);
+        assert!(
+            (cache_read_share("openrouter", "x") - 1.0).abs() < 1e-9,
+            "unknown discounts are not assumed"
+        );
     }
 }

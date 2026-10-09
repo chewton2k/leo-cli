@@ -515,6 +515,7 @@ impl ClaudeSession {
                 input,
                 output,
                 estimated,
+                ..Spent::default()
             },
         ))
     }
@@ -657,6 +658,7 @@ impl AgentCli {
             input: asked.div_ceil(4) as u64,
             output: answer.chars().count().div_ceil(4) as u64,
             estimated: true,
+            ..Spent::default()
         };
         if let Some((input, output)) = heard.tokens {
             (spent.input, spent.output, spent.estimated) = (input, output, false);

@@ -327,6 +327,8 @@ impl CodexThread {
                     used.output
                 },
                 estimated,
+                cached: used.cached,
+                cache_written: 0,
             },
         ))
     }

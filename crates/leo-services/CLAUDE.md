@@ -273,3 +273,31 @@ problems get a breakdown, then the code, then foldable `> [!example]-`
 explanations; every note ends with `## Check yourself` questions whose
 answers fold away (only the last part of a long recording or upload writes
 it). Uploads may explain beyond the source; facts stay the source's.
+
+### Native tools and prompt caching for API providers (`ai/session.rs`)
+
+`session::open` now gives every API writer a native session (`ApiTalk`), not
+only Codex and Claude Code: OpenAI-compatible endpoints (OpenAI, Gemini, xAI,
+OpenRouter, Ollama) use chat-completions tool calling (`openai::read_round`
+puts streamed `tool_calls` pieces together, by `index` or, for Gemini, by
+`id`), and Anthropic uses the Messages API (`provider/anthropic.rs`), chosen
+by `anthropic::is_anthropic(base_url)`; `build_one_chat` returns the same
+`Anthropic` provider for note writing and pictures. Each round streams text,
+runs the calls through `Turn.call`, and sends results back (`tool` messages,
+or `tool_result` blocks); text shown before a call is taken back with
+`restart`; at `most_calls` the next request forbids tools (`tool_choice`
+none). Unparseable arguments are answered with how to fix them, never run. A
+model that rejects tools fails before showing anything, so Felix falls back to
+the text protocol.
+
+Anthropic requests cache three ways (top-level automatic `cache_control`, the
+system block, the last tool), set `output_config.effort` (low..max; `choice::
+efforts("anthropic", ..)` offers them for Claude 5-era models), and replay
+every content block of an assistant turn, thinking and its `signature`
+included, which tool use requires. `Spent` has `cached` and `cache_written`:
+OpenAI's `prompt_tokens_details.cached_tokens`, Anthropic's
+`cache_read_input_tokens` / `cache_creation_input_tokens`, Codex's
+`cachedInputTokens`. `spend::answered` prices cache reads at
+`cache_read_share` of input (Anthropic 0.1, Opus/Sonnet 5.5 0.05, Fable/Mythos
+5.1 0.025, OpenAI 0.1, Gemini and xAI 0.25, unknown 1.0) and writes at 1.25.
+Tests use local fake servers (`session::tests::serve`); never a paid API.

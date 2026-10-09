@@ -69,6 +69,154 @@ impl OpenAiChat {
     }
 }
 
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct Round {
+    pub text: String,
+    pub calls: Vec<(String, String, String)>,
+    pub usage: Option<(u64, u64, u64)>,
+    pub finish: String,
+}
+
+pub fn function_of(name: &str, description: &str, schema: &serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "type": "function",
+        "function": { "name": name, "description": description, "parameters": schema },
+    })
+}
+
+fn cached_of(json: &serde_json::Value) -> u64 {
+    let usage = &json["usage"];
+    usage["prompt_tokens_details"]["cached_tokens"]
+        .as_u64()
+        .or_else(|| usage["input_tokens_details"]["cached_tokens"].as_u64())
+        .unwrap_or(0)
+}
+
+pub fn read_round(
+    reader: impl std::io::BufRead,
+    name: &str,
+    sink: Sink<'_>,
+) -> ProviderResult<Round> {
+    let mut round = Round::default();
+    let mut calls: Vec<(String, String, String)> = Vec::new();
+    for line in reader.lines() {
+        let line =
+            line.map_err(|e| ProviderError::Retryable(format!("{name}: stream ended early: {e}")))?;
+        let Some(payload) = line.strip_prefix("data:") else {
+            continue;
+        };
+        let payload = payload.trim();
+        if payload.is_empty() || payload == "[DONE]" {
+            continue;
+        }
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(payload) else {
+            continue;
+        };
+        if let Some(error) = json.get("error").filter(|e| !e.is_null()) {
+            let message = error["message"].as_str().unwrap_or("the stream failed");
+            return Err(ProviderError::Retryable(format!("{name}: {message}")));
+        }
+        if let Some((input, output)) = usage_of(&json) {
+            round.usage = Some((input, output, cached_of(&json)));
+        }
+        let choice = &json["choices"][0];
+        if let Some(reason) = choice["finish_reason"].as_str().filter(|r| !r.is_empty()) {
+            round.finish = reason.to_string();
+        }
+        let delta = &choice["delta"];
+        if let Some(text) = delta["content"].as_str().filter(|t| !t.is_empty()) {
+            round.text.push_str(text);
+            sink(text);
+        }
+        for call in delta["tool_calls"].as_array().into_iter().flatten() {
+            let id = call["id"].as_str().unwrap_or("");
+            let at = match call["index"].as_u64() {
+                Some(index) => index as usize,
+                None if !id.is_empty() && calls.iter().all(|(known, _, _)| known != id) => {
+                    calls.len()
+                }
+                None => calls.len().saturating_sub(1),
+            };
+            while calls.len() <= at {
+                calls.push((String::new(), String::new(), String::new()));
+            }
+            let slot = &mut calls[at];
+            if !id.is_empty() {
+                slot.0 = id.to_string();
+            }
+            if let Some(name) = call["function"]["name"].as_str() {
+                slot.1.push_str(name);
+            }
+            if let Some(args) = call["function"]["arguments"].as_str() {
+                slot.2.push_str(args);
+            }
+        }
+    }
+    round.calls = calls
+        .into_iter()
+        .enumerate()
+        .filter(|(_, (_, name, _))| !name.is_empty())
+        .map(|(n, (id, name, args))| {
+            let id = if id.is_empty() {
+                format!("call_{n}")
+            } else {
+                id
+            };
+            (id, name, args)
+        })
+        .collect();
+    Ok(round)
+}
+
+impl OpenAiChat {
+    pub fn model(&self) -> &str {
+        &self.model
+    }
+
+    pub fn effort(&self) -> Option<&str> {
+        self.effort.as_deref()
+    }
+
+    pub fn tool_body(
+        &self,
+        messages: &[serde_json::Value],
+        tools: &[serde_json::Value],
+        max_tokens: u32,
+        no_tools: bool,
+    ) -> serde_json::Value {
+        let mut body = self.body_of(messages.to_vec(), max_tokens, 0.3, true);
+        if !tools.is_empty() {
+            body["tools"] = serde_json::Value::Array(tools.to_vec());
+            if no_tools {
+                body["tool_choice"] = serde_json::json!("none");
+            }
+        }
+        body
+    }
+
+    pub fn stream_round(&self, body: &serde_json::Value, sink: Sink<'_>) -> ProviderResult<Round> {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(600))
+            .build()
+            .map_err(|e| ProviderError::Fatal(format!("{}: {e}", self.name)))?;
+        let resp = self
+            .authorized(client.post(self.endpoint()))
+            .json(body)
+            .send()
+            .map_err(|e| classify_reqwest(&self.name, &e))?;
+        let status = resp.status().as_u16();
+        if !resp.status().is_success() {
+            let text = resp.text().unwrap_or_default();
+            let text = scrub_secret(&text, self.key.as_ref().map(Secret::as_str));
+            return Err(match self.key {
+                Some(_) => classify_status_with_key(status, &self.name, &text),
+                None => classify_status(status, &self.name, &text),
+            });
+        }
+        read_round(std::io::BufReader::new(resp), &self.name, sink)
+    }
+}
+
 fn usage_of(json: &serde_json::Value) -> Option<(u64, u64)> {
     let usage = &json["usage"];
     let input = usage["prompt_tokens"]
@@ -89,19 +237,29 @@ impl OpenAiChat {
             messages.push(serde_json::json!({"role": "system", "content": system}));
         }
         messages.push(serde_json::json!({"role": "user", "content": req.prompt}));
+        self.body_of(messages, req.max_tokens, req.temperature, stream)
+    }
+
+    fn body_of(
+        &self,
+        messages: Vec<serde_json::Value>,
+        max_tokens: u32,
+        temperature: f32,
+        stream: bool,
+    ) -> serde_json::Value {
         let mut body = if self.reasoning {
             serde_json::json!({
                 "model": self.model,
                 "messages": messages,
-                "max_completion_tokens": req.max_tokens,
+                "max_completion_tokens": max_tokens,
                 "stream": stream,
             })
         } else {
             serde_json::json!({
                 "model": self.model,
                 "messages": messages,
-                "temperature": req.temperature,
-                "max_tokens": req.max_tokens,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
                 "stream": stream,
             })
         };
@@ -393,6 +551,71 @@ impl ChatProvider for OpenAiChat {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_streamed_round_gives_text_and_tool_calls_put_together_from_pieces() {
+        let stream = [
+            r#"data: {"choices":[{"delta":{"content":"Let me look."}}]}"#,
+            r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_a","function":{"name":"search_notes","arguments":"{\"que"}}]}}]}"#,
+            r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"ry\": \"heap\"}"}}]}}]}"#,
+            r#"data: {"choices":[{"delta":{"tool_calls":[{"index":1,"id":"call_b","function":{"name":"open_note","arguments":"{\"note\":\"n1\"}"}}]}}]}"#,
+            r#"data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
+            r#"data: {"choices":[],"usage":{"prompt_tokens":5000,"completion_tokens":30,"prompt_tokens_details":{"cached_tokens":4096}}}"#,
+            "data: [DONE]",
+        ]
+        .join("\n\n");
+        let mut shown = String::new();
+        let round = read_round(stream.as_bytes(), "OpenAI", &mut |t| shown.push_str(t)).unwrap();
+        assert_eq!(shown, "Let me look.");
+        assert_eq!(round.finish, "tool_calls");
+        assert_eq!(
+            round.calls,
+            [
+                (
+                    "call_a".into(),
+                    "search_notes".into(),
+                    "{\"query\": \"heap\"}".into()
+                ),
+                (
+                    "call_b".into(),
+                    "open_note".into(),
+                    "{\"note\":\"n1\"}".into()
+                )
+            ]
+        );
+        assert_eq!(round.usage, Some((5000, 30, 4096)));
+    }
+
+    #[test]
+    fn whole_tool_calls_without_an_index_are_each_kept() {
+        let stream = r#"data: {"choices":[{"delta":{"tool_calls":[{"id":"g1","function":{"name":"search_notes","arguments":"{}"}},{"id":"g2","function":{"name":"open_note","arguments":"{}"}}]}}]}"#;
+        let round = read_round(stream.as_bytes(), "Gemini", &mut |_| {}).unwrap();
+        let names: Vec<&str> = round.calls.iter().map(|c| c.1.as_str()).collect();
+        assert_eq!(names, ["search_notes", "open_note"]);
+    }
+
+    #[test]
+    fn a_tool_request_offers_functions_and_can_forbid_them() {
+        let chat = OpenAiChat::new("openai".into(), &ProviderConfig::default(), None);
+        let tools = [function_of(
+            "search_notes",
+            "Search.",
+            &serde_json::json!({"type": "object"}),
+        )];
+        let body = chat.tool_body(
+            &[serde_json::json!({"role": "user", "content": "hi"})],
+            &tools,
+            900,
+            false,
+        );
+        assert_eq!(body["tools"][0]["function"]["name"], "search_notes");
+        assert_eq!(body["stream"], true);
+        assert!(body.get("tool_choice").is_none());
+        assert_eq!(
+            chat.tool_body(&[], &tools, 900, true)["tool_choice"],
+            "none"
+        );
+    }
     use crate::ai::provider::ChatProvider;
     use crate::config::secret::{resolve, MemoryStore, SecretStore};
 
