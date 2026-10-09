@@ -212,3 +212,12 @@ test('Felix has three ways of handling notes and Shift+Tab goes round them', () 
   assert.equal(C.nextAccess('auto'), 'read');
   assert.equal(C.nextAccess('read'), 'ask');
 });
+
+test('notes attached earlier in a chat come along with later questions, newest first', () => {
+  const said = (refs) => ({ role: 'user', text: 'q', refs });
+  const messages = [said([{ id: 'a', title: 'A' }, { id: 'b', title: 'B' }]), { role: 'assistant', text: 'x', refs: [{ id: 'z' }] }, said([]), said([{ id: 'c', title: 'C' }, { id: 'a', title: 'A' }])];
+  assert.deepEqual(C.threadRefs(messages).map((r) => r.id), ['c', 'a', 'b']);
+  assert.deepEqual(C.threadRefs([]), []);
+  const many = Array.from({ length: 12 }, (_, i) => said([{ id: `n${i}`, title: 'N' }]));
+  assert.equal(C.threadRefs(many).length, C.MOST_REFS);
+});

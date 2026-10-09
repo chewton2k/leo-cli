@@ -199,6 +199,17 @@
     return { start: at, query };
   }
 
+  function threadRefs(messages) {
+    const out = [];
+    for (const m of [...messages].reverse()) {
+      if (m.role !== 'user' || !Array.isArray(m.refs)) continue;
+      for (const r of m.refs) {
+        if (r && r.id && !out.some((x) => x.id === r.id) && out.length < MOST_REFS) out.push(r);
+      }
+    }
+    return out;
+  }
+
   function addRef(refs, note) {
     if (!note || !note.id || refs.some((r) => r.id === note.id) || refs.length >= MOST_REFS) return refs;
     return [...refs, { id: note.id, title: note.title || 'Untitled' }];
@@ -1247,9 +1258,11 @@
       const ctx = state.context && state.dropped !== state.context.id ? state.context.id : null;
       const access = state.access;
       const going = state.files.filter((f) => f.status === 'ready' || f.status === 'reading');
+      const attached = state.refs.slice();
       state.files = state.files.filter((f) => !going.includes(f));
+      state.refs = [];
       drawRefs();
-      const asked = { role: 'user', text: question, refs: state.refs.slice(), docs: [], files: [], cards: going.map(cardOf) };
+      const asked = { role: 'user', text: question, refs: attached, docs: [], files: [], cards: going.map(cardOf) };
       const settle = (i, doc) => {
         if (!doc) {
           asked.cards[i] = null;
@@ -1290,7 +1303,7 @@
           method: 'POST',
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: history, mode: thread.mode, note: ctx, refs: asked.refs.map((r) => r.id), chat: thread.id, files, access }),
+          body: JSON.stringify({ messages: history, mode: thread.mode, note: ctx, refs: threadRefs(thread.messages).map((r) => r.id), chat: thread.id, files, access }),
           signal: controller.signal,
         });
         if (response.status === 401) throw new Error('This page needs its link again. Open the link leo serve printed.');
@@ -1580,5 +1593,5 @@
     };
   }
 
-  root.leoChat = { ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS };
+  root.leoChat = { threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS };
 })(typeof window !== 'undefined' ? window : globalThis);

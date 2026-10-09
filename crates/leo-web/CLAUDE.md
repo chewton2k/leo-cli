@@ -134,8 +134,10 @@
 - Chat references: `ChatBody.refs` (note ids, at most `MOST_ATTACHED` 8) are
   gathered first ("attached by the user", 12k chars each). The page adds them
   with `@` (`mentionAt`: an @ at the start or after whitespace, no newline) or
-  the paperclip (picker with its own search), shows chips (`.chat-ref`), sends
-  them with every message and keeps them in `leo-chat-v1` until removed or +.
+  the paperclip (picker with its own search), shows chips (`.chat-ref`); sending moves
+  them into the message and empties the box, and every later request in that
+  chat sends the notes attached so far (`threadRefs`, newest first, at most 8),
+  so follow-ups still use them.
   Two styles only (`MODES` = chat, study; the user asked to merge
   ask/explain/meeting into chat and quiz/coach into study). Old ids map over in
   `mode_of` and `modeOf` (saved conversations and old pages). Felix's body is 34x28 (a box a bit wider than

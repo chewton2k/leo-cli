@@ -612,17 +612,20 @@ test.describe('Felix', () => {
     await expect(chat.locator('.msg.leo').last()).toContainText('Both use a heap.');
     expect(asked[0].refs).toEqual([dijkstra.id, heaps.id]);
     await expect(chat.locator('.msg.user .msg-refs .cite')).toHaveCount(2);
+    await expect(chat.locator('#chat-refs .chat-ref'), 'sent notes leave the box').toHaveCount(0);
 
-    await chat.locator(`.chat-ref-x[data-id="${heaps.id}"]`).click();
     await page.reload();
     await page.locator('#chat-toggle').click();
-    await expect(page.locator('#chat .chat-ref')).toHaveCount(1);
+    await expect(page.locator('#chat #chat-refs .chat-ref')).toHaveCount(0);
     await page.locator('#chat-input').fill('and now?');
     await page.locator('#chat-input').press('Enter');
     await expect.poll(() => asked.length).toBe(2);
-    expect(asked[1].refs).toEqual([dijkstra.id]);
+    expect(asked[1].refs, 'follow-ups still bring the notes attached earlier').toEqual([dijkstra.id, heaps.id]);
     await page.locator('#chat .chat-head [data-chat="new"]').click();
-    await expect(page.locator('#chat .chat-ref')).toHaveCount(0);
+    await page.locator('#chat-input').fill('fresh start');
+    await page.locator('#chat-input').press('Enter');
+    await expect.poll(() => asked.length).toBe(3);
+    expect(asked[2].refs).toEqual([]);
   });
 
   test('past chats are kept on the computer and listed beside the chat', async ({ page }) => {
