@@ -1122,6 +1122,22 @@ test.describe('storage', () => {
   });
 });
 
+test.describe('signed-in browsers', () => {
+  test('opening the link again in the same browser does not add another sign-in', async ({ page }) => {
+    const token = fs.readFileSync(path.join(process.env.LEO_BROWSER_HOME, 'serve-token'), 'utf8').trim();
+    const count = async () => (await (await page.request.get('/api/sessions')).json()).sessions.length;
+    const before = await count();
+    for (let i = 0; i < 3; i++) {
+      await page.goto(`/?token=${token}`);
+      await expect(page.locator('#app')).not.toBeEmpty();
+    }
+    expect(await count()).toBe(before);
+    await page.goto('/#/settings/storage');
+    const mine = page.locator('.session-row', { hasText: 'This browser' });
+    await expect(mine).toContainText('on this computer');
+  });
+});
+
 test.describe('storage of pictures', () => {
   test('pictures are listed with the notes that use them, and unused ones can be deleted', async ({ page }) => {
     const tag = test.info().project.name;

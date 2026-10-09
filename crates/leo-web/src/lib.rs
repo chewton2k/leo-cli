@@ -227,22 +227,23 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
     }
 
     let (listener, port) = bind(options.port).await?;
+    let gate = Arc::new(sessions::Gate::new(
+        token.clone(),
+        Some(token_path),
+        if options.new_token {
+            let fresh = sessions::Sessions::load(&sessions_path);
+            fresh.end_all();
+            fresh
+        } else {
+            sessions::Sessions::load(&sessions_path)
+        },
+    ));
     let app = router(AppState {
         store: Arc::new(Mutex::new(Storage {
             store,
             reload: false,
         })),
-        gate: Arc::new(sessions::Gate::new(
-            token.clone(),
-            Some(token_path),
-            if options.new_token {
-                let fresh = sessions::Sessions::load(&sessions_path);
-                fresh.end_all();
-                fresh
-            } else {
-                sessions::Sessions::load(&sessions_path)
-            },
-        )),
+        gate: Arc::clone(&gate),
         graphs,
         chat,
         settings,
@@ -264,6 +265,8 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
     } else {
         None
     };
+    gate.sessions
+        .retire_links(tunnel.as_ref().and_then(|t| t.url.split("://").nth(1)));
 
     let local_ip = local_ip_address::local_ip()
         .map(|ip| ip.to_string())

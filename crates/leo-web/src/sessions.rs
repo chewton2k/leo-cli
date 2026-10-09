@@ -18,6 +18,8 @@ pub struct Session {
     pub device: String,
     pub created_at: DateTime<Utc>,
     pub last_seen: DateTime<Utc>,
+    #[serde(default)]
+    pub site: String,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -27,6 +29,30 @@ pub struct Seen {
     pub created_at: DateTime<Utc>,
     pub last_seen: DateTime<Utc>,
     pub current: bool,
+    pub place: String,
+}
+
+const LINK_DOMAIN: &str = ".trycloudflare.com";
+
+pub fn site_of(host: &str) -> String {
+    let host = host.trim().to_ascii_lowercase();
+    if host.starts_with('[') {
+        return host
+            .split(']')
+            .next()
+            .map(|h| format!("{h}]"))
+            .unwrap_or_default();
+    }
+    host.split(':').next().unwrap_or("").to_string()
+}
+
+pub fn place_of(site: &str) -> String {
+    match site {
+        "" => String::new(),
+        "localhost" | "127.0.0.1" | "[::1]" => "on this computer".into(),
+        s if s.ends_with(LINK_DOMAIN) => "through the link from any network".into(),
+        _ => "on your Wi-Fi".into(),
+    }
 }
 
 pub struct Sessions {
@@ -120,7 +146,7 @@ impl Sessions {
         out
     }
 
-    pub fn start(&self, user_agent: &str, now: DateTime<Utc>) -> String {
+    pub fn start(&self, user_agent: &str, site: &str, now: DateTime<Utc>) -> String {
         let secret = format!(
             "{}{}",
             uuid::Uuid::new_v4().simple(),
@@ -131,6 +157,7 @@ impl Sessions {
             device: device_of(user_agent),
             created_at: now,
             last_seen: now,
+            site: site_of(site),
         };
         self.change(|list| {
             list.retain(|s| now - s.last_seen < Duration::days(KEEP_DAYS));
@@ -170,6 +197,7 @@ impl Sessions {
                 created_at: s.created_at,
                 last_seen: s.last_seen,
                 current: current.is_some_and(|c| token::same(c, &s.secret)),
+                place: place_of(&s.site),
             })
             .collect();
         out.sort_by(|a, b| {
@@ -193,6 +221,18 @@ impl Sessions {
         self.change(|list| {
             let before = list.len();
             list.retain(|s| token::same(&s.secret, current));
+            let gone = before - list.len();
+            (gone, gone > 0)
+        })
+    }
+
+    pub fn retire_links(&self, current: Option<&str>) -> usize {
+        let current = current.map(site_of);
+        self.change(|list| {
+            let before = list.len();
+            list.retain(|s| {
+                !s.site.ends_with(LINK_DOMAIN) || current.as_deref() == Some(s.site.as_str())
+            });
             let gone = before - list.len();
             (gone, gone > 0)
         })
@@ -260,11 +300,12 @@ mod tests {
         let path = tmp.path().join("serve-sessions.json");
         let sessions = Sessions::load(&path);
         let phone = sessions.start(
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Version/18.0 Mobile/15E148 Safari/604.1",
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Version/18.0 Mobile/15E148 Safari/604.1", "127.0.0.1:8742",
             at(0),
         );
         let laptop = sessions.start(
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/130.0 Safari/537.36",
+            "127.0.0.1:8742",
             at(1),
         );
         assert_ne!(phone, laptop);
@@ -296,8 +337,8 @@ mod tests {
     #[test]
     fn signing_out_the_others_keeps_this_browser_and_old_sessions_expire() {
         let sessions = Sessions::in_memory();
-        let mine = sessions.start("Firefox/131.0 (Windows NT 10.0)", at(0));
-        let other = sessions.start("", at(0));
+        let mine = sessions.start("Firefox/131.0 (Windows NT 10.0)", "127.0.0.1:8742", at(0));
+        let other = sessions.start("", "127.0.0.1:8742", at(0));
         assert_eq!(sessions.end_others(&mine), 1);
         assert!(!sessions.check(&other, at(1)));
         assert!(sessions.check(&mine, at(1)));
@@ -306,7 +347,7 @@ mod tests {
             !sessions.check(&mine, at(month + 10)),
             "a session unused for a month expires"
         );
-        let a = sessions.start("", at(0));
+        let a = sessions.start("", "127.0.0.1:8742", at(0));
         assert_eq!(sessions.end_all(), 1);
         assert!(!sessions.check(&a, at(1)));
     }
@@ -316,7 +357,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("s.json");
         let sessions = Sessions::load(&path);
-        let id = sessions.start("", at(0));
+        let id = sessions.start("", "127.0.0.1:8742", at(0));
         let written = std::fs::metadata(&path).unwrap().modified().unwrap();
         std::thread::sleep(std::time::Duration::from_millis(20));
         assert!(sessions.check(&id, at(1)));
@@ -361,5 +402,44 @@ mod tests {
         assert_eq!(cookie_value(header, COOKIE), Some("abc"));
         assert_eq!(cookie_value(header, LEGACY_COOKIE), Some("old"));
         assert_eq!(cookie_value("xleo_session=bad", COOKIE), None);
+    }
+
+    #[test]
+    fn a_session_says_where_it_signed_in_and_old_links_are_retired() {
+        let sessions = Sessions::in_memory();
+        let here = sessions.start(
+            "Chrome/130.0 (Macintosh; Mac OS X)",
+            "127.0.0.1:8742",
+            at(0),
+        );
+        let wifi = sessions.start("(iPhone) Safari/604.1", "192.168.1.20:8742", at(0));
+        sessions.start(
+            "(iPhone) Safari/604.1",
+            "old-words.trycloudflare.com",
+            at(0),
+        );
+        sessions.start("(iPad) Safari/604.1", "new-words.trycloudflare.com", at(0));
+        let places: Vec<String> = sessions
+            .list(Some(&here), at(1))
+            .into_iter()
+            .map(|s| s.place)
+            .collect();
+        assert!(places.contains(&"on this computer".to_string()));
+        assert!(places.contains(&"on your Wi-Fi".to_string()));
+        assert!(places.contains(&"through the link from any network".to_string()));
+        assert_eq!(
+            sessions.retire_links(Some("new-words.trycloudflare.com")),
+            1
+        );
+        assert_eq!(sessions.list(None, at(1)).len(), 3);
+        assert_eq!(
+            sessions.retire_links(None),
+            1,
+            "without a link, no link session can be used"
+        );
+        assert!(sessions.check(&here, at(2)) && sessions.check(&wifi, at(2)));
+        assert_eq!(site_of("[::1]:8742"), "[::1]");
+        assert_eq!(site_of("ABC.trycloudflare.com"), "abc.trycloudflare.com");
+        assert_eq!(place_of(""), "");
     }
 }

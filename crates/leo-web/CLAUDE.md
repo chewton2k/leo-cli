@@ -364,3 +364,10 @@
   alone (409, said plainly). Undo of a created note DELETEs it (trash). Either
   way the card goes back to Apply; the app refreshes or leaves the open note
   (`onUndone`).
+- Signed-in browsers: opening the `?token=` link in a browser that already has
+  a valid `leo_session` reuses it (leo serve opens the link on every start, and
+  each start used to add a session). Each session keeps its `site` (Host or
+  X-Forwarded-Host, without the port) and the list shows `place` (this
+  computer / your Wi-Fi / the link from any network). On start, `serve` calls
+  `Sessions::retire_links` with the current tunnel host, dropping sessions made
+  through older trycloudflare addresses, which no browser can reach again.

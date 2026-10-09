@@ -25,12 +25,19 @@ fn keys_count_as_safe_only_over_https_or_on_this_computer() {
 fn browsers_are_listed_and_signed_out_one_by_one_or_all_but_this_one() {
     let (state, _d, _ids) = state_with(&[]);
     let now = chrono::Utc::now();
-    let mine = state
+    let mine =
+        state
+            .gate
+            .sessions
+            .start("Chrome/130.0 (Macintosh; Mac OS X)", "127.0.0.1:8742", now);
+    let phone = state
         .gate
         .sessions
-        .start("Chrome/130.0 (Macintosh; Mac OS X)", now);
-    let phone = state.gate.sessions.start("(iPhone) Safari/604.1", now);
-    let tablet = state.gate.sessions.start("(iPad) Safari/604.1", now);
+        .start("(iPhone) Safari/604.1", "abc.trycloudflare.com", now);
+    let tablet = state
+        .gate
+        .sessions
+        .start("(iPad) Safari/604.1", "192.168.1.20:8742", now);
     let me = || Some(axum::Extension(CurrentSession(mine.clone())));
 
     let listed = run(list_sessions(State(state.clone()), me())).0;

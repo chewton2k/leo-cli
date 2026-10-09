@@ -66,6 +66,16 @@ fn local_host(headers: &axum::http::HeaderMap) -> bool {
 #[derive(Clone)]
 pub(crate) struct CurrentSession(pub(crate) String);
 
+fn site(request: &Request) -> String {
+    let headers = request.headers();
+    headers
+        .get("x-forwarded-host")
+        .or_else(|| headers.get(header::HOST))
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string()
+}
+
 pub(crate) fn user_agent(request: &Request) -> String {
     request
         .headers()
@@ -90,9 +100,24 @@ pub(crate) async fn auth_middleware(
     let now = chrono::Utc::now();
     let https = tunnelled(&request);
     let query = request.uri().query().unwrap_or("");
+    let cookies = request
+        .headers()
+        .get(header::COOKIE)
+        .and_then(|c| c.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let signed_in = sessions::cookie_value(&cookies, sessions::COOKIE)
+        .filter(|secret| state.gate.sessions.check(secret, now))
+        .map(str::to_string);
     if let Some(given) = query_param(query, "token") {
         if state.gate.token_matches(given) {
-            let secret = state.gate.sessions.start(&user_agent(&request), now);
+            let secret = match &signed_in {
+                Some(secret) => secret.clone(),
+                None => state
+                    .gate
+                    .sessions
+                    .start(&user_agent(&request), &site(&request), now),
+            };
             request
                 .extensions_mut()
                 .insert(CurrentSession(secret.clone()));
@@ -107,24 +132,17 @@ pub(crate) async fn auth_middleware(
         }
     }
 
-    let cookies = request
-        .headers()
-        .get(header::COOKIE)
-        .and_then(|c| c.to_str().ok())
-        .unwrap_or("")
-        .to_string();
-    if let Some(secret) = sessions::cookie_value(&cookies, sessions::COOKIE) {
-        if state.gate.sessions.check(secret, now) {
-            request
-                .extensions_mut()
-                .insert(CurrentSession(secret.to_string()));
-            return next.run(request).await;
-        }
+    if let Some(secret) = signed_in {
+        request.extensions_mut().insert(CurrentSession(secret));
+        return next.run(request).await;
     }
     let legacy = sessions::cookie_value(&cookies, sessions::LEGACY_COOKIE)
         .is_some_and(|v| state.gate.token_matches(v));
     if legacy {
-        let secret = state.gate.sessions.start(&user_agent(&request), now);
+        let secret = state
+            .gate
+            .sessions
+            .start(&user_agent(&request), &site(&request), now);
         request
             .extensions_mut()
             .insert(CurrentSession(secret.clone()));
