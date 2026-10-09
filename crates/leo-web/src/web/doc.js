@@ -61,12 +61,25 @@
     }
 
     function edit(index, caret) {
-      if (editing) stop();
       const block = blocks[index];
       if (!block) return;
-      const el = container.querySelector(`.blk[data-i="${index}"]`);
+      const length = lines.slice(block.start, block.end).join('\n').length;
+      const at = caret === 'start' ? 0 : caret === 'end' || caret == null ? length : Math.max(0, Math.min(caret, length));
+      open(index, index, at, at);
+    }
+
+    function open(first, last, from, to) {
+      if (editing) stop();
+      const block = blocks[first];
+      const end = blocks[last];
+      if (!block || !end) return;
+      const el = container.querySelector(`.blk[data-i="${first}"]`);
       if (!el) return;
-      const raw = lines.slice(block.start, block.end).join('\n');
+      for (let i = first + 1; i <= last; i++) {
+        const covered = container.querySelector(`.blk[data-i="${i}"]`);
+        if (covered) covered.remove();
+      }
+      const raw = lines.slice(block.start, end.end).join('\n');
       const area = document.createElement('textarea');
       area.className = 'line-edit';
       area.value = raw;
@@ -76,16 +89,107 @@
       el.removeAttribute('style');
       el.replaceChildren(area);
       el.classList.add('editing');
-      editing = { index, start: block.start, end: block.end, originalEnd: block.end, kind: block.kind, area };
+      editing = { index: first, last, start: block.start, end: end.end, originalEnd: end.end, kind: first === last ? block.kind : 'span', area };
       fit(area);
       area.addEventListener('input', onInput);
       area.addEventListener('keydown', onKey);
       area.addEventListener('blur', onBlur);
       area.focus({ preventScroll: true });
-      const at = caret === 'start' ? 0 : caret === 'end' || caret == null ? raw.length : Math.max(0, Math.min(caret, raw.length));
-      area.setSelectionRange(at, at);
-      area.scrollIntoView({ block: 'nearest' });
+      area.setSelectionRange(Math.max(0, Math.min(from, raw.length)), Math.max(0, Math.min(to, raw.length)));
+      if (from === to) area.scrollIntoView({ block: 'nearest' });
     }
+
+    function lineStart(line) {
+      let at = 0;
+      for (let k = 0; k < line && k < lines.length; k++) at += lines[k].length + 1;
+      return at;
+    }
+
+    function lineOf(at) {
+      let start = 0;
+      for (let k = 0; k < lines.length; k++) {
+        if (at <= start + lines[k].length) return k;
+        start += lines[k].length + 1;
+      }
+      return lines.length - 1;
+    }
+
+    const docLength = () => lines.join('\n').length;
+
+    function editSpan(from, to) {
+      if (from > to) [from, to] = [to, from];
+      const first = blockAtLine(lineOf(from));
+      const last = blockAtLine(lineOf(to));
+      if (first < 0 || last < 0) return;
+      const base = lineStart(blocks[first].start);
+      open(first, last, from - base, to - base);
+    }
+
+    function pointAt(node, offset, side) {
+      if (node === container) {
+        if (offset >= blocks.length) return docLength();
+        if (side === 'start') return lineStart(shifted(blocks[offset].start));
+        return offset > 0 ? lineStart(shifted(blocks[offset - 1].start) + blocks[offset - 1].end - blocks[offset - 1].start) - 1 : 0;
+      }
+      const el = node.nodeType === 1 ? node : node.parentElement;
+      const blk = el && el.closest('.blk');
+      if (!blk || !container.contains(blk) || blk.classList.contains('editing')) return side === 'start' ? 0 : docLength();
+      const block = blocks[Number(blk.dataset.i)];
+      const start = shifted(block.start);
+      const raw = lines.slice(start, start + block.end - block.start).join('\n');
+      let inside = side === 'start' ? 0 : raw.length;
+      if (block.kind === 'line' && raw.trim()) {
+        const range = document.createRange();
+        range.setStart(blk, 0);
+        try {
+          range.setEnd(node, offset);
+          inside = ed.rawOffset(raw, range.toString().replace(/\u200b/g, ''));
+        } catch (e) {
+          inside = side === 'start' ? 0 : raw.length;
+        }
+      }
+      return lineStart(start) + inside;
+    }
+
+    function selectedSpan() {
+      if (editing && document.activeElement === editing.area) return null;
+      const selection = root.getSelection ? root.getSelection() : null;
+      if (!selection || selection.isCollapsed || !selection.rangeCount) return null;
+      const range = selection.getRangeAt(0);
+      if (!container.contains(range.startContainer) && !container.contains(range.endContainer)) return null;
+      const from = container.contains(range.startContainer) ? pointAt(range.startContainer, range.startOffset, 'start') : 0;
+      const to = container.contains(range.endContainer) ? pointAt(range.endContainer, range.endOffset, 'end') : docLength();
+      return from === to ? null : [from, to];
+    }
+
+    function takeSelection() {
+      const span = selectedSpan();
+      if (!span) return false;
+      stop();
+      editSpan(span[0], span[1]);
+      return true;
+    }
+
+    function onDocumentKey(e) {
+      if (!container.isConnected || e.isComposing || e.defaultPrevented) return;
+      if (editing && document.activeElement === editing.area) return;
+      const focus = document.activeElement;
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a' && (!focus || focus === document.body || container.contains(focus))) {
+        e.preventDefault();
+        stop();
+        editSpan(0, docLength());
+        return;
+      }
+      const typing = e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey;
+      if (e.key !== 'Backspace' && e.key !== 'Delete' && !typing) return;
+      if (!takeSelection()) return;
+      e.preventDefault();
+      const area = editing.area;
+      area.setRangeText(typing ? e.key : '', area.selectionStart, area.selectionEnd, 'end');
+      onInput();
+    }
+
+    document.addEventListener('keydown', onDocumentKey);
 
     function editLine(line, caret) {
       const index = blockAtLine(line);
@@ -165,19 +269,25 @@
         return;
       }
 
-      if (e.key === 'ArrowUp' && collapsed && (pos === 0 || (kind === 'line' && singleRow(area))) && editing.index > 0) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a' && area.selectionStart === 0 && area.selectionEnd === value.length && (start > 0 || editing.end < lines.length)) {
         e.preventDefault();
-        const target = editing.index - 1;
         stop();
-        edit(target, 'end');
+        editSpan(0, docLength());
         return;
       }
 
-      if (e.key === 'ArrowDown' && collapsed && (pos === value.length || (kind === 'line' && singleRow(area))) && editing.index < blocks.length - 1) {
+      if (e.key === 'ArrowUp' && collapsed && (pos === 0 || (kind === 'line' && singleRow(area))) && start > 0) {
         e.preventDefault();
-        const target = editing.index + 1;
         stop();
-        edit(target, 'start');
+        editLine(start - 1, 'end');
+        return;
+      }
+
+      if (e.key === 'ArrowDown' && collapsed && (pos === value.length || (kind === 'line' && singleRow(area))) && editing.end < lines.length) {
+        e.preventDefault();
+        const below = editing.end;
+        stop();
+        editLine(below, 'start');
       }
     }
 
@@ -221,9 +331,26 @@
     let pressed = false;
     let release;
 
-    container.addEventListener('pointerdown', () => {
+    let extended = false;
+
+    container.addEventListener('pointerdown', (e) => {
       pressed = true;
       clearTimeout(release);
+      if (!e.shiftKey || !editing || e.target.closest('.editing')) return;
+      const blk = e.target.closest('.blk');
+      if (!blk) return;
+      const block = blocks[Number(blk.dataset.i)];
+      const start = shifted(block.start);
+      const raw = lines.slice(start, start + block.end - block.start).join('\n');
+      const prefix = block.kind === 'line' ? caretIn(blk, e.clientX, e.clientY) : null;
+      const anchor = lineStart(editing.start) + editing.area.selectionStart;
+      const below = start >= editing.end;
+      const inside = prefix !== null && raw.trim() ? ed.rawOffset(raw, prefix) : below ? raw.length : 0;
+      e.preventDefault();
+      extended = true;
+      const target = lineStart(start) + inside;
+      stop();
+      editSpan(anchor, target);
     });
 
     container.addEventListener('pointercancel', () => {
@@ -260,6 +387,14 @@
     container.addEventListener('click', (e) => {
       pressed = false;
       clearTimeout(release);
+      if (extended) {
+        extended = false;
+        return;
+      }
+      if (!e.target.closest('input[data-box], a') && takeSelection()) {
+        e.preventDefault();
+        return;
+      }
       const box = boxFor(e);
       if (box) {
         e.preventDefault();
@@ -341,6 +476,7 @@
         stop();
         clearTimeout(release);
         document.removeEventListener('pointerup', onPointerUp);
+        document.removeEventListener('keydown', onDocumentKey);
         container.removeEventListener('paste', onPaste);
         container.removeEventListener('drop', onDrop);
       },
