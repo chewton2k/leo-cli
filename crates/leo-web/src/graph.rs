@@ -21,6 +21,52 @@ const SUMMARY_CHARS: usize = 200;
 const WHY_CHARS: usize = 140;
 const READ_TOKENS: u32 = 6_000;
 const LINK_TOKENS: u32 = 12_000;
+const BASE_ROOM: usize = 64_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Scale {
+    pub batch_notes: usize,
+    pub batch_chars: usize,
+    pub note_chars: usize,
+    pub group_notes: usize,
+    pub read_tokens: u32,
+    pub link_tokens: u32,
+    pub at_once: usize,
+}
+
+impl Default for Scale {
+    fn default() -> Scale {
+        Scale {
+            batch_notes: BATCH_NOTES,
+            batch_chars: BATCH_CHARS,
+            note_chars: NOTE_CHARS,
+            group_notes: GROUP_NOTES,
+            read_tokens: READ_TOKENS,
+            link_tokens: LINK_TOKENS,
+            at_once: 1,
+        }
+    }
+}
+
+impl Scale {
+    pub fn for_room(room: usize) -> Scale {
+        let times = (room as f64 / BASE_ROOM as f64).max(1.0);
+        let grow = |base: usize, most: f64| (base as f64 * times.min(most)) as usize;
+        Scale {
+            batch_notes: grow(BATCH_NOTES, 5.0),
+            batch_chars: grow(BATCH_CHARS, 6.0).min(room.max(BATCH_CHARS) / 2),
+            note_chars: grow(NOTE_CHARS, 6.0),
+            group_notes: grow(GROUP_NOTES, 2.0),
+            read_tokens: (f64::from(READ_TOKENS) * times.min(4.0)) as u32,
+            link_tokens: (f64::from(LINK_TOKENS) * times.min(2.0)) as u32,
+            at_once: match room {
+                r if r >= BASE_ROOM => 3,
+                r if r >= 40_000 => 2,
+                _ => 1,
+            },
+        }
+    }
+}
 
 pub const KINDS: [&str; 5] = [
     "same idea",
@@ -153,13 +199,17 @@ fn class_name(directory: &str) -> &str {
 }
 
 pub fn plan(stale: &[&Source]) -> Vec<Vec<usize>> {
+    plan_at(stale, &Scale::default())
+}
+
+pub fn plan_at(stale: &[&Source], scale: &Scale) -> Vec<Vec<usize>> {
     let mut batches: Vec<Vec<usize>> = Vec::new();
     let mut chars = 0;
     for (i, source) in stale.iter().enumerate() {
-        let size = source.title.chars().count() + source.body.chars().count().min(NOTE_CHARS);
+        let size = source.title.chars().count() + source.body.chars().count().min(scale.note_chars);
         let full = batches
             .last()
-            .is_none_or(|b| b.len() >= BATCH_NOTES || chars + size > BATCH_CHARS);
+            .is_none_or(|b| b.len() >= scale.batch_notes || chars + size > scale.batch_chars);
         if full {
             batches.push(Vec::new());
             chars = 0;
@@ -223,6 +273,14 @@ Reply with JSON only, no other text, in this shape:
 {\"notes\": [{\"id\": \"n1\", \"summary\": \"How breadth-first search explores a graph level by level\", \"concepts\": [\"breadth-first search\", \"queue\"]}]}";
 
 pub fn read_prompt(batch: &[&Source], vocabulary: &[String]) -> (String, String) {
+    read_prompt_at(batch, vocabulary, NOTE_CHARS)
+}
+
+pub fn read_prompt_at(
+    batch: &[&Source],
+    vocabulary: &[String],
+    note_chars: usize,
+) -> (String, String) {
     let mut user = String::from("<vocabulary>\n");
     for word in vocabulary {
         user.push_str(word);
@@ -235,7 +293,7 @@ pub fn read_prompt(batch: &[&Source], vocabulary: &[String]) -> (String, String)
             i + 1,
             class_name(&source.directory),
             source.title,
-            clip(&source.body, NOTE_CHARS)
+            clip(&source.body, note_chars)
         ));
     }
     user.push_str("Give the summary and key concepts of each note, as JSON.");
@@ -365,7 +423,11 @@ pub fn parse_links(reply: &str, notes: &[&Source]) -> Option<Vec<NoteLink>> {
 }
 
 pub fn group_count(notes: usize) -> usize {
-    notes.div_ceil(GROUP_NOTES).max(1)
+    group_count_at(notes, GROUP_NOTES)
+}
+
+fn group_count_at(notes: usize, group_notes: usize) -> usize {
+    notes.div_ceil(group_notes.max(1)).max(1)
 }
 
 fn link_key(source: &Source, read: &Read) -> String {
@@ -378,13 +440,17 @@ pub struct Work<'a> {
     pub fresh: BTreeSet<String>,
 }
 
-fn chunks<'a>(list: &[&'a Source]) -> Vec<Vec<&'a Source>> {
-    let groups = group_count(list.len());
+fn chunks<'a>(list: &[&'a Source], group_notes: usize) -> Vec<Vec<&'a Source>> {
+    let groups = group_count_at(list.len(), group_notes);
     let size = list.len().div_ceil(groups).max(1);
     list.chunks(size).map(|c| c.to_vec()).collect()
 }
 
 pub fn link_work<'a>(sources: &'a [Source], cache: &Cache) -> Vec<Work<'a>> {
+    link_work_at(sources, cache, &Scale::default())
+}
+
+pub fn link_work_at<'a>(sources: &'a [Source], cache: &Cache, scale: &Scale) -> Vec<Work<'a>> {
     let mut fresh: Vec<&Source> = Vec::new();
     let mut settled: Vec<&Source> = Vec::new();
     for source in sources {
@@ -403,11 +469,11 @@ pub fn link_work<'a>(sources: &'a [Source], cache: &Cache) -> Vec<Work<'a>> {
     }
     fresh.sort_by(|a, b| a.id.cmp(&b.id));
     settled.sort_by(|a, b| a.id.cmp(&b.id));
-    let new_groups = chunks(&fresh);
+    let new_groups = chunks(&fresh, scale.group_notes);
     let old_groups = if settled.is_empty() {
         Vec::new()
     } else {
-        chunks(&settled)
+        chunks(&settled, scale.group_notes)
     };
     let ids = |list: &[&Source]| list.iter().map(|s| s.id.clone()).collect::<BTreeSet<_>>();
     let mut out = Vec::new();
@@ -455,10 +521,14 @@ pub fn stale<'a>(sources: &'a [Source], cache: &Cache) -> Vec<&'a Source> {
 }
 
 pub fn requests_needed(sources: &[Source], cache: &Cache) -> usize {
+    requests_needed_at(sources, cache, &Scale::default())
+}
+
+pub fn requests_needed_at(sources: &[Source], cache: &Cache, scale: &Scale) -> usize {
     let stale = stale(sources, cache);
-    let reads = plan(&stale).len();
+    let reads = plan_at(&stale, scale).len();
     if reads == 0 {
-        return link_work(sources, cache).len();
+        return link_work_at(sources, cache, scale).len();
     }
     let unread: BTreeSet<&str> = stale.iter().map(|s| s.id.as_str()).collect();
     let mut guess = cache.clone();
@@ -471,7 +541,7 @@ pub fn requests_needed(sources: &[Source], cache: &Cache) -> usize {
             },
         );
     }
-    reads + link_work(sources, &guess).len()
+    reads + link_work_at(sources, &guess, scale).len()
 }
 
 fn settle_old_pairs(sources: &[Source], cache: &mut Cache) {
@@ -492,11 +562,30 @@ fn settle_old_pairs(sources: &[Source], cache: &mut Cache) {
     }
 }
 
+pub type Write<'a> = &'a (dyn Fn(&str, &str, u32) -> Result<String> + Sync);
+
 pub fn build(
     sources: &[Source],
     cache: &mut Cache,
-    write: &dyn Fn(&str, &str, u32) -> Result<String>,
+    write: Write,
     progress: &mut dyn FnMut(usize, usize),
+) -> Vec<String> {
+    build_at(sources, cache, write, progress, &Scale::default())
+}
+
+fn in_parallel<T: Send>(jobs: Vec<Box<dyn FnOnce() -> T + Send + '_>>) -> Vec<Option<T>> {
+    std::thread::scope(|scope| {
+        let running: Vec<_> = jobs.into_iter().map(|job| scope.spawn(job)).collect();
+        running.into_iter().map(|job| job.join().ok()).collect()
+    })
+}
+
+pub fn build_at(
+    sources: &[Source],
+    cache: &mut Cache,
+    write: Write,
+    progress: &mut dyn FnMut(usize, usize),
+    scale: &Scale,
 ) -> Vec<String> {
     let present: BTreeSet<&str> = sources.iter().map(|s| s.id.as_str()).collect();
     cache.notes.retain(|id, _| present.contains(id.as_str()));
@@ -505,43 +594,57 @@ pub fn build(
         .links
         .retain(|l| present.contains(l.a.as_str()) && present.contains(l.b.as_str()));
     let stale = stale(sources, cache);
-    let batches = plan(&stale);
-    let mut total = requests_needed(sources, cache);
+    let batches = plan_at(&stale, scale);
+    let mut total = requests_needed_at(sources, cache, scale);
     let mut problems = Vec::new();
     let mut worked = batches.is_empty();
+    let mut finished = 0;
     progress(0, total);
+    let expected = || "the AI did not answer in the expected form".to_string();
 
-    for (done, batch) in batches.iter().enumerate() {
-        let notes: Vec<&Source> = batch.iter().map(|&i| stale[i]).collect();
-        let (system, user) = read_prompt(&notes, &vocabulary(&concepts(sources, cache)));
-        let read = write(&system, &user, READ_TOKENS)
-            .map_err(|e| e.to_string())
-            .and_then(|reply| {
-                parse_read(&reply, notes.len())
-                    .ok_or_else(|| "the AI did not answer in the expected form".to_string())
-            });
-        match read {
-            Ok(list) => {
-                worked = true;
-                for (source, (summary, concepts)) in notes.iter().zip(list) {
-                    let mut read = Read {
-                        hash: hash_of(source),
-                        summary,
-                        concepts,
-                        linked: None,
-                    };
-                    let key = link_key(source, &read);
-                    let before = cache.notes.get(&source.id).and_then(|r| r.linked.clone());
-                    read.linked = before.filter(|k| *k == key);
-                    cache.notes.insert(source.id.clone(), read);
+    for round in batches.chunks(scale.at_once.max(1)) {
+        let vocabulary = vocabulary(&concepts(sources, cache));
+        let groups: Vec<Vec<&Source>> = round
+            .iter()
+            .map(|batch| batch.iter().map(|&i| stale[i]).collect())
+            .collect();
+        let jobs = groups
+            .iter()
+            .map(|notes| {
+                let (system, user) = read_prompt_at(notes, &vocabulary, scale.note_chars);
+                Box::new(move || {
+                    write(&system, &user, scale.read_tokens)
+                        .map_err(|e| e.to_string())
+                        .and_then(|reply| parse_read(&reply, notes.len()).ok_or_else(expected))
+                })
+                    as Box<dyn FnOnce() -> Result<Vec<(String, Vec<String>)>, String> + Send + '_>
+            })
+            .collect();
+        for (notes, read) in groups.iter().zip(in_parallel(jobs)) {
+            match read.unwrap_or_else(|| Err("reading notes stopped unexpectedly".into())) {
+                Ok(list) => {
+                    worked = true;
+                    for (source, (summary, concepts)) in notes.iter().zip(list) {
+                        let mut read = Read {
+                            hash: hash_of(source),
+                            summary,
+                            concepts,
+                            linked: None,
+                        };
+                        let key = link_key(source, &read);
+                        let before = cache.notes.get(&source.id).and_then(|r| r.linked.clone());
+                        read.linked = before.filter(|k| *k == key);
+                        cache.notes.insert(source.id.clone(), read);
+                    }
                 }
+                Err(e) => problems.push(e),
             }
-            Err(e) => problems.push(e),
+            finished += 1;
+            progress(finished, total);
         }
-        progress(done + 1, total);
     }
 
-    let work = link_work(sources, cache);
+    let work = link_work_at(sources, cache, scale);
     let redo: BTreeSet<String> = work.iter().flat_map(|w| w.fresh.iter().cloned()).collect();
     cache
         .links
@@ -549,28 +652,37 @@ pub fn build(
     total = batches.len() + work.len();
     progress(batches.len(), total);
     let mut failed: BTreeSet<String> = BTreeSet::new();
-    for (done, job) in work.iter().enumerate() {
-        let (system, user) = link_prompt(&job.notes, cache);
-        let linked = write(&system, &user, LINK_TOKENS)
-            .map_err(|e| e.to_string())
-            .and_then(|reply| {
-                parse_links(&reply, &job.notes)
-                    .ok_or_else(|| "the AI did not answer in the expected form".to_string())
-            });
-        match linked {
-            Ok(mut links) => {
-                worked = true;
-                if let Some(left) = &job.left {
-                    links.retain(|l| left.contains(&l.a) != left.contains(&l.b));
+    for round in work.chunks(scale.at_once.max(1)) {
+        let snapshot: &Cache = cache;
+        let jobs = round
+            .iter()
+            .map(|job| {
+                let (system, user) = link_prompt(&job.notes, snapshot);
+                Box::new(move || {
+                    write(&system, &user, scale.link_tokens)
+                        .map_err(|e| e.to_string())
+                        .and_then(|reply| parse_links(&reply, &job.notes).ok_or_else(expected))
+                }) as Box<dyn FnOnce() -> Result<Vec<NoteLink>, String> + Send + '_>
+            })
+            .collect();
+        let replies = in_parallel(jobs);
+        for (job, linked) in round.iter().zip(replies) {
+            match linked.unwrap_or_else(|| Err("linking notes stopped unexpectedly".into())) {
+                Ok(mut links) => {
+                    worked = true;
+                    if let Some(left) = &job.left {
+                        links.retain(|l| left.contains(&l.a) != left.contains(&l.b));
+                    }
+                    cache.links.extend(links);
                 }
-                cache.links.extend(links);
+                Err(e) => {
+                    failed.extend(job.fresh.iter().cloned());
+                    problems.push(e);
+                }
             }
-            Err(e) => {
-                failed.extend(job.fresh.iter().cloned());
-                problems.push(e);
-            }
+            finished += 1;
+            progress(finished, total);
         }
-        progress(batches.len() + done + 1, total);
     }
     for source in sources {
         if failed.contains(&source.id) {
@@ -766,10 +878,22 @@ struct Job {
 pub struct Graphs {
     path: PathBuf,
     writer: Option<Writer>,
+    room: Option<crate::Room>,
     job: Mutex<Job>,
 }
 
 impl Graphs {
+    pub fn with_room(mut self, room: Option<crate::Room>) -> Graphs {
+        self.room = room;
+        self
+    }
+
+    pub fn scale(&self) -> Scale {
+        self.room
+            .as_ref()
+            .map_or_else(Scale::default, |room| Scale::for_room(room()))
+    }
+
     pub fn writer(&self) -> Option<Writer> {
         self.writer.clone()
     }
@@ -778,6 +902,7 @@ impl Graphs {
         Graphs {
             path,
             writer,
+            room: None,
             job: Mutex::new(Job {
                 state: "idle",
                 done: 0,
@@ -864,8 +989,8 @@ impl Graphs {
             notes: sources.len(),
             read,
             stale: stale(sources, &cache).len(),
-            requests: requests_needed(sources, &cache),
-            rebuild_requests: requests_needed(sources, &Cache::default()),
+            requests: requests_needed_at(sources, &cache, &self.scale()),
+            rebuild_requests: requests_needed_at(sources, &Cache::default(), &self.scale()),
             built_at: cache.built_at,
         }
     }
@@ -897,7 +1022,8 @@ impl Graphs {
             return;
         };
         let mut cache = self.load();
-        let problems = build(
+        let scale = self.scale();
+        let problems = build_at(
             sources,
             &mut cache,
             &|system: &str, user: &str, most: u32| writer(system, user, most),
@@ -907,6 +1033,7 @@ impl Graphs {
                     job.total = total;
                 })
             },
+            &scale,
         );
         let saved = self.save(&cache);
         self.set(|job| {
@@ -1022,6 +1149,89 @@ mod tests {
                 ))
             }
         }
+    }
+
+    #[test]
+    fn a_bigger_model_reads_more_notes_at_once_and_runs_requests_side_by_side() {
+        assert_eq!(
+            Scale::for_room(14_000),
+            Scale {
+                batch_chars: 9_000,
+                at_once: 1,
+                ..Scale::default()
+            },
+            "a small local model gets batches that fit its context"
+        );
+        let wide = Scale::for_room(360_000);
+        assert_eq!(
+            (
+                wide.batch_notes,
+                wide.note_chars,
+                wide.group_notes,
+                wide.at_once
+            ),
+            (40, 14_062, 180, 3)
+        );
+        assert_eq!(Scale::for_room(57_600).at_once, 2);
+
+        let many: Vec<Source> = (0..36)
+            .map(|i| {
+                source(
+                    &format!("{i:03}"),
+                    &format!("Note {i}"),
+                    "BFS uses a queue.",
+                    "cs130",
+                )
+            })
+            .collect();
+        let running = AtomicUsize::new(0);
+        let most = AtomicUsize::new(0);
+        let calls = AtomicUsize::new(0);
+        let write = |system: &str, user: &str, _: u32| -> Result<String> {
+            let now = running.fetch_add(1, Ordering::SeqCst) + 1;
+            most.fetch_max(now, Ordering::SeqCst);
+            calls.fetch_add(1, Ordering::SeqCst);
+            std::thread::sleep(std::time::Duration::from_millis(60));
+            running.fetch_sub(1, Ordering::SeqCst);
+            if system.starts_with("You read") {
+                let notes: Vec<String> = (1..=user.split("<note id=").count() - 1)
+                    .map(|i| {
+                        format!(r#"{{"id": "n{i}", "summary": "BFS", "concepts": ["queue"]}}"#)
+                    })
+                    .collect();
+                Ok(format!("{{\"notes\": [{}]}}", notes.join(",")))
+            } else {
+                Ok(r#"{"links": []}"#.into())
+            }
+        };
+        let scale = Scale {
+            batch_notes: 6,
+            at_once: 3,
+            ..Scale::default()
+        };
+        let mut cache = Cache::default();
+        let mut seen = Vec::new();
+        let problems = build_at(
+            &many,
+            &mut cache,
+            &write,
+            &mut |done, total| seen.push((done, total)),
+            &scale,
+        );
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(most.load(Ordering::SeqCst), 3, "three requests at a time");
+        assert_eq!(cache.notes.len(), 36);
+        assert!(cache
+            .notes
+            .values()
+            .all(|r| r.summary == "BFS" && r.linked.is_some()));
+        let (done, total) = *seen.last().unwrap();
+        assert_eq!(done, total);
+        assert_eq!(calls.load(Ordering::SeqCst), total);
+        assert!(
+            seen.windows(2).all(|w| w[0].0 <= w[1].0),
+            "progress only moves forward"
+        );
     }
 
     #[test]

@@ -208,7 +208,9 @@ pub struct ServeOptions {
 
 pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
     let store = Store::load()?;
-    let graphs = Arc::new(graph::Graphs::for_notes(&store.notes_dir, powers.writer));
+    let graphs = Arc::new(
+        graph::Graphs::for_notes(&store.notes_dir, powers.writer).with_room(powers.room.clone()),
+    );
     let chats = chats::dir_for(&store.notes_dir);
     let chat = powers.chat;
     let settings = powers.settings;

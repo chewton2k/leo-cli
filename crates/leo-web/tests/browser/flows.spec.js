@@ -1191,6 +1191,23 @@ test.describe('settings', () => {
 });
 
 test.describe('folders', () => {
+  test('a new folder is made on the first try and opens', async ({ page }) => {
+    const name = `fresh-${test.info().project.name}-${Date.now().toString(36)}`;
+    await page.goto('/');
+    if (await page.locator('#side').isHidden()) {
+      await page.locator('#menu').click();
+      await page.locator('.sheet [data-action="new-folder"]').click();
+    } else {
+      await page.locator('#side [data-action="new-folder"]').click();
+    }
+    await page.locator('#folder-name').fill(name);
+    await page.locator('[data-action="create-folder"]').click();
+    await expect(page).toHaveURL(new RegExp(`#/f/${name}$`));
+    await expect(page.locator('.toast.bad')).toHaveCount(0);
+    await expect(page.locator('.scrim')).toHaveCount(0);
+  });
+
+
   test('chosen notes and folders move to the trash after asking', async ({ page }) => {
     const tag = test.info().project.name;
     const top = `pick-${tag}`;

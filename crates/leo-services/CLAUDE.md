@@ -247,3 +247,13 @@ An optional provider `effort` (letters and digits only) is passed as
 `spend::answered` names the provider and prices tokens from `choice.rs`'s
 price strings (`rates`); agents are "on your plan" and local models free.
 `ai::chat_streaming` returns the text and that `Answered`.
+
+### Context windows (`ai/budget.rs`)
+
+`window_of` knows each provider's context window (Claude Code 200k, Codex
+256k, Claude 200k, GPT-5/6 400k, Gemini 1M, Grok-4 256k, free OpenRouter 32k,
+Ollama/local 8k; a provider's `context` setting overrides it). `note_tokens`
+is 45% of it, capped at 50k tokens for paid APIs (cost) and 120k for plans.
+`felix_room` turns that into Felix's note budget; `budget_of` (recording and
+upload part sizes) is the same reading budget in words, capped by what the
+notes can fill in the provider's output limit (`max_tokens`, 32k for agents).

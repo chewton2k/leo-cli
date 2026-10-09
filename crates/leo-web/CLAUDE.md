@@ -320,7 +320,7 @@
   APIs, local models): the system prompt gets `TOOLS`; a reply that is
   `<tool>{"name": ..., ...}</tool>` (also fenced, bare JSON naming a tool,
   `tool`/`args`/`arguments`/`input` spellings) is run by `Desk::run` and fed
-  back with `continued` (`<tool_result>`), at most `MOST_STEPS` (6) times, then
+  back with `continued` (`<tool_result>`), at most `MOST_STEPS` (12) times, then
   `NO_MORE_TOOLS`. A broken call is explained to the model, not failed. `Gate`
   streams answers at once but holds back anything that could be `<tool>`; text
   shown before a call is taken back with `restart`. Tools: search_notes
@@ -332,9 +332,12 @@
   Events: `{step, tool, found}`, `{proposal}`. The page draws steps with an
   icon, an expandable list of what was found and a spinner, and Felix holds a
   prop per tool (`POSES`: magnifier, scroll, map, paper and pen, hammer).
-- How much note text Felix gets follows the writing AI: `Powers.room` (from
-  `writing_budget().chars()`, read per message) clamped to 12k-96k chars;
-  `gather` scales every per-note share from the 64k defaults.
+- How much note text Felix gets follows the model's context window:
+  `Powers.room` = `leo_services::ai::felix_room()` (read per message),
+  clamped to 12k-480k chars. `chat::scaled` grows every per-note share,
+  documents and an opened note from the 64k defaults, and `widened` grows how
+  many matches and graph neighbours come along. Replies may run to
+  `REPLY_TOKENS` (16k); `MOST_STEPS` 12 tool calls, `MOST_PROPOSALS` 8 changes.
 - Felix tool reliability (measured with Codex): the system prompt says the
   tools are text lines, always available even when the model's own tools are
   off; every non-final step ends with `tools::REMINDER` (models weigh the end
@@ -466,3 +469,11 @@
   offsets with `rawOffset`), so Delete, Backspace or typing apply to all of it;
   a key pressed over a rendered selection does that in one step. Selections
   that neither start nor end inside the note are ignored.
+- Graph builds follow the model too: `Graphs::with_room` (the same `Room`)
+  gives `Scale::for_room` (bigger batches, more of each note, bigger link
+  groups and output budgets for big models; smaller batches for small local
+  ones) and `at_once` (3 / 2 / 1) requests run side by side per round
+  (`build_at`, `in_parallel` on scoped threads; results merged in order, so
+  the cache and progress stay deterministic).
+- `api()` in the page treats an empty reply body as `null` (POST `/api/dirs`
+  answers 201 with no body; parsing it used to fail after the folder was made).

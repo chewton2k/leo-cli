@@ -7,8 +7,8 @@ use crate::chat::{attribute, clip, connected, studied, SourceRef};
 use crate::graph::Cache;
 use crate::routes::notes::excerpt;
 
-pub const MOST_STEPS: usize = 6;
-pub const MOST_PROPOSALS: usize = 3;
+pub const MOST_STEPS: usize = 12;
+pub const MOST_PROPOSALS: usize = 8;
 const FOUND: usize = 8;
 const OPEN_CHARS: usize = 20_000;
 const CONNECTED: usize = 10;
@@ -922,7 +922,10 @@ impl Desk {
                         "<note id=\"{tag}\" title=\"{}\" class=\"{}\">\n{}\n</note>",
                         attribute(&note.title),
                         attribute(folder),
-                        clip(&note.body, OPEN_CHARS.min(self.room / 3))
+                        clip(
+                            &note.body,
+                            crate::chat::scaled(OPEN_CHARS, self.room).min(self.room / 3)
+                        )
                     ),
                     proposal: None,
                     found: vec![note.title.clone()],
@@ -1185,7 +1188,7 @@ mod tests {
             "That did not work:",
             "One tool per reply",
             "always available",
-            "at most 6 calls",
+            &format!("at most {MOST_STEPS} calls"),
             "web search",
         ] {
             assert!(
@@ -1563,17 +1566,22 @@ mod tests {
         );
         let outside = desk.run(&store, &cache, &call(serde_json::json!({"name": "create_note", "title": "x", "body": "", "folder": "../escape"})));
         assert!(outside.proposal.is_none());
-        desk.run(
+        while desk.proposals < MOST_PROPOSALS {
+            desk.run(
+                &store,
+                &cache,
+                &call(serde_json::json!({"name": "create_note", "title": "More", "body": ""})),
+            );
+        }
+        let beyond = desk.run(
             &store,
             &cache,
-            &call(serde_json::json!({"name": "create_note", "title": "Third", "body": ""})),
+            &call(serde_json::json!({"name": "create_note", "title": "Beyond", "body": ""})),
         );
-        let fourth = desk.run(
-            &store,
-            &cache,
-            &call(serde_json::json!({"name": "create_note", "title": "Fourth", "body": ""})),
+        assert!(
+            beyond.proposal.is_none()
+                && beyond.result.contains(&format!("at most {MOST_PROPOSALS}"))
         );
-        assert!(fourth.proposal.is_none() && fourth.result.contains("at most 3"));
         assert_eq!(
             serde_json::to_value(Proposal::Create {
                 title: "t".into(),

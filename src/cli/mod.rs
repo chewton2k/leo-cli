@@ -417,9 +417,7 @@ pub fn run(cli: Cli) -> Result<()> {
                     )),
                     listener: Some(web_record::listener()),
                     housekeeper: Some(std::sync::Arc::new(web_storage::Housekeeping)),
-                    room: Some(std::sync::Arc::new(|| {
-                        leo_services::ai::writing_budget().chars()
-                    })),
+                    room: Some(std::sync::Arc::new(leo_services::ai::felix_room)),
                     web: Some(leo_web::Web {
                         search: std::sync::Arc::new(|query: &str| {
                             Ok(leo_services::web::search(query)?

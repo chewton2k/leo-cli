@@ -523,7 +523,7 @@ pub(crate) async fn chat_reply(
         Some(chat) if !body.files.is_empty() => chat_files::texts(&state.chats, chat, &body.files),
         _ => Vec::new(),
     };
-    let (system, user) = chat::prompt(mode, &notes, &documents, &body.messages);
+    let (system, user) = chat::prompt_within(mode, &notes, &documents, &body.messages, room);
     let wanted = body
         .messages
         .last()

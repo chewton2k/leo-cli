@@ -69,7 +69,7 @@ pub const MOST_ATTACHED: usize = 8;
 const NOTE_CHARS: usize = 4_000;
 pub const ROOM: usize = 64_000;
 pub const LEAST_ROOM: usize = 12_000;
-pub const MOST_ROOM: usize = 96_000;
+pub const MOST_ROOM: usize = 480_000;
 const NEIGHBOURS: usize = 5;
 const MATCHES: usize = 8;
 const EXPANDED_MATCHES: usize = 3;
@@ -77,7 +77,7 @@ const NEIGHBOURS_PER_MATCH: usize = 2;
 const TURNS: usize = 14;
 const DOCS_CHARS: usize = 60_000;
 const TURN_CHARS: usize = 4_000;
-pub const REPLY_TOKENS: u32 = 4_000;
+pub const REPLY_TOKENS: u32 = 16_000;
 
 pub const MODES: [&str; 2] = ["chat", "study"];
 
@@ -236,9 +236,17 @@ pub fn gather(
     room: usize,
 ) -> (Vec<SourceRef>, String) {
     let room = room.clamp(LEAST_ROOM, MOST_ROOM);
-    let share = |at_default: usize| at_default * room / ROOM;
-    let (open_chars, attached_chars, note_chars) =
-        (share(OPEN_CHARS), share(ATTACHED_CHARS), share(NOTE_CHARS));
+    let (open_chars, attached_chars, note_chars) = (
+        scaled(OPEN_CHARS, room),
+        scaled(ATTACHED_CHARS, room),
+        scaled(NOTE_CHARS, room),
+    );
+    let (neighbours, matches_wanted, expanded, per_match) = (
+        widened(NEIGHBOURS, room, 15),
+        widened(MATCHES, room, 32),
+        widened(EXPANDED_MATCHES, room, 8),
+        widened(NEIGHBOURS_PER_MATCH, room, 4),
+    );
     let mut picked: Vec<Picked> = Vec::new();
     let mut have = BTreeSet::new();
     for id in attached.iter().take(MOST_ATTACHED) {
@@ -263,7 +271,7 @@ pub fn gather(
         }
         for (other, kind, why) in connected(store, cache, &note.id)
             .into_iter()
-            .take(NEIGHBOURS)
+            .take(neighbours)
         {
             if studied(other) && have.insert(other.id.clone()) {
                 let reason = if why.is_empty() {
@@ -280,8 +288,8 @@ pub fn gather(
         }
     }
     let mut found: Vec<&Note> = Vec::new();
-    for note in matches(store, cache, question, MATCHES * 2) {
-        if found.len() >= MATCHES {
+    for note in matches(store, cache, question, matches_wanted * 2) {
+        if found.len() >= matches_wanted {
             break;
         }
         if have.insert(note.id.clone()) {
@@ -293,11 +301,11 @@ pub fn gather(
             });
         }
     }
-    for note in found.iter().take(EXPANDED_MATCHES) {
+    for note in found.iter().take(expanded) {
         for (other, kind, why) in connected(store, cache, &note.id)
             .into_iter()
             .filter(|(other, _, _)| studied(other))
-            .take(NEIGHBOURS_PER_MATCH)
+            .take(per_match)
         {
             if have.insert(other.id.clone()) {
                 let reason = if why.is_empty() {
@@ -384,10 +392,22 @@ Mode: chat. Talk with the user the way a helpful assistant would: answer any que
 }
 
 pub fn documents_block(docs: &[(String, String)]) -> String {
+    documents_within(docs, DOCS_CHARS)
+}
+
+pub fn scaled(at_default: usize, room: usize) -> usize {
+    at_default * room.clamp(LEAST_ROOM, MOST_ROOM) / ROOM
+}
+
+fn widened(count: usize, room: usize, most: usize) -> usize {
+    scaled(count, room).clamp(count, most)
+}
+
+fn documents_within(docs: &[(String, String)], budget: usize) -> String {
     if docs.is_empty() {
         return String::new();
     }
-    let share = DOCS_CHARS / docs.len();
+    let share = budget / docs.len();
     let mut out = String::from("<documents>\n");
     for (i, (name, text)) in docs.iter().enumerate() {
         out.push_str(&format!(
@@ -407,8 +427,18 @@ pub fn prompt(
     documents: &[(String, String)],
     messages: &[Turn],
 ) -> (String, String) {
+    prompt_within(mode, notes, documents, messages, ROOM)
+}
+
+pub fn prompt_within(
+    mode: &str,
+    notes: &str,
+    documents: &[(String, String)],
+    messages: &[Turn],
+    room: usize,
+) -> (String, String) {
     let system = format!("{BASE}\n\n{}", style(mode));
-    let mut user = documents_block(documents);
+    let mut user = documents_within(documents, scaled(DOCS_CHARS, room));
     if notes.trim().is_empty() {
         user.push_str("<notes>\nNo notes matched this conversation.\n</notes>\n\n");
     } else {

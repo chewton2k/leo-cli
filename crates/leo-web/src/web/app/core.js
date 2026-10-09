@@ -106,8 +106,10 @@ async function api(path, { method = 'GET', body, total = false } = {}) {
     error.status = response.status;
     throw error;
   }
-  if (total) return { items: await response.json(), total: Number(response.headers.get('x-total')) || 0 };
-  return response.json();
+  const text = await response.text();
+  const data = text.trim() ? JSON.parse(text) : null;
+  if (total) return { items: data || [], total: Number(response.headers.get('x-total')) || 0 };
+  return data;
 }
 
 function fail(error) {

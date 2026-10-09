@@ -329,18 +329,24 @@ fn felix_searches_opens_and_suggests_a_change_with_tools_then_answers() {
 }
 
 #[test]
-fn felix_stops_using_tools_after_six_and_answers() {
+fn felix_stops_using_tools_after_the_most_steps_and_answers() {
     let (mut state, _d, _ids) = state_with(&[("Heaps", "")]);
-    let (streamer, prompts) =
-        scripted(vec!["<tool>{\"name\": \"search_notes\", \"query\": \"heap\"}</tool>"; 6]);
+    let (streamer, prompts) = scripted(vec![
+        "<tool>{\"name\": \"search_notes\", \"query\": \"heap\"}</tool>";
+        tools::MOST_STEPS
+    ]);
     state.chat = Some(streamer);
     let lines = chat_lines(&state, "loop forever");
-    assert_eq!(lines.iter().filter(|l| l.get("step").is_some()).count(), 6);
+    assert_eq!(
+        lines.iter().filter(|l| l.get("step").is_some()).count(),
+        tools::MOST_STEPS
+    );
     let prompts = prompts.lock().unwrap();
-    assert_eq!(prompts.len(), 7);
-    assert!(prompts[6].contains("You have used all the tools"));
-    assert!(!prompts[6].contains(tools::REMINDER));
-    assert!(!prompts[6].contains("### search_notes"));
+    assert_eq!(prompts.len(), tools::MOST_STEPS + 1);
+    let last = &prompts[tools::MOST_STEPS];
+    assert!(last.contains("You have used all the tools"));
+    assert!(!last.contains(tools::REMINDER));
+    assert!(!last.contains("### search_notes"));
     let shown: String = lines.iter().filter_map(|l| l["t"].as_str()).collect();
     assert!(shown.ends_with("Out of script."));
 }

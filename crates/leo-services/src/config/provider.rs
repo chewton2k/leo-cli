@@ -47,6 +47,8 @@ pub struct ProviderConfig {
     pub reasoning: Option<bool>,
     #[serde(default)]
     pub effort: Option<String>,
+    #[serde(default)]
+    pub context: Option<u32>,
 }
 
 impl ProviderConfig {
@@ -69,6 +71,7 @@ impl ProviderConfig {
         self.path = self.path.take().or(built_in.path);
         self.reasoning = self.reasoning.or(built_in.reasoning);
         self.effort = self.effort.take().or(built_in.effort);
+        self.context = self.context.or(built_in.context);
     }
 }
 
