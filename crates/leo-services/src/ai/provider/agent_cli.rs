@@ -65,13 +65,23 @@ pub fn locate(bin: &str) -> Option<PathBuf> {
         .find_map(|dir| names.iter().map(|n| dir.join(n)).find(|p| p.is_file()))
 }
 
-const CODEX_OFF: [&str; 6] = [
+const CODEX_OFF: [&str; 16] = [
     "shell_tool",
     "browser_use",
     "browser_use_external",
+    "browser_use_full_cdp_access",
     "computer_use",
     "in_app_browser",
+    "in_app_local_automation",
     "apps",
+    "image_generation",
+    "goals",
+    "multi_agent",
+    "plugins",
+    "remote_plugin",
+    "skill_search",
+    "skill_mcp_dependency_install",
+    "tool_suggest",
 ];
 
 pub fn known_features(listing: &str) -> Vec<String> {
@@ -146,7 +156,9 @@ impl AgentCli {
                         "-p",
                         "--safe-mode",
                         "--tools",
-                        "",
+                        "WebSearch",
+                        "--allowedTools",
+                        "WebSearch",
                         "--no-session-persistence",
                         "--output-format",
                         "stream-json",
@@ -476,7 +488,7 @@ mod tests {
     }
 
     #[test]
-    fn claude_code_writes_with_no_tools_and_reads_the_material_from_stdin() {
+    fn claude_code_writes_with_only_web_search_and_reads_the_material_from_stdin() {
         let cfg = config(
             ProviderKind::ClaudeCode,
             "claude",
@@ -485,12 +497,14 @@ mod tests {
         let agent = AgentCli::new("claude_code".into(), Agent::of(&cfg).unwrap(), &cfg);
         let (args, input) = agent.arguments(&request(), &[], &[], &[]);
         assert_eq!(
-            &args[..5],
+            &args[..7],
             [
                 "-p",
                 "--safe-mode",
                 "--tools",
-                "",
+                "WebSearch",
+                "--allowedTools",
+                "WebSearch",
                 "--no-session-persistence"
             ]
         );
@@ -526,7 +540,7 @@ mod tests {
             bytes: vec![1, 2, 3],
         };
         let (args, input) = agent.arguments(&request(), &[image], &[], &[]);
-        assert!(args.windows(2).any(|w| w == ["--tools", ""]));
+        assert!(args.windows(2).any(|w| w == ["--tools", "WebSearch"]));
         assert!(args
             .windows(2)
             .any(|w| w == ["--input-format", "stream-json"]));

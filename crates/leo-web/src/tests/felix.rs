@@ -302,7 +302,7 @@ fn felix_searches_opens_and_suggests_a_change_with_tools_then_answers() {
     assert_eq!(lines.last().unwrap()["done"], true);
     let prompts = prompts.lock().unwrap();
     assert_eq!(prompts.len(), 3);
-    assert!(prompts[0].contains("search_notes {\"query\"}"));
+    assert!(prompts[0].contains(&tools::manual()));
     assert!(
         prompts[0].trim_end().ends_with(tools::REMINDER),
         "the reminder comes last"
@@ -328,7 +328,7 @@ fn felix_stops_using_tools_after_six_and_answers() {
     assert_eq!(prompts.len(), 7);
     assert!(prompts[6].contains("You have used all the tools"));
     assert!(!prompts[6].contains(tools::REMINDER));
-    assert!(!prompts[6].contains("search_notes {\"query\"}"));
+    assert!(!prompts[6].contains("### search_notes"));
     let shown: String = lines.iter().filter_map(|l| l["t"].as_str()).collect();
     assert!(shown.ends_with("Out of script."));
 }

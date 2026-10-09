@@ -343,3 +343,8 @@
   each with the notes that show it via `attachments::resolve`; delete selected
   or "no note uses"; names checked, files only inside that folder). The Notes
   area no longer counts that folder.
+- Felix's tool manual is generated from `tools::SPECS` (purpose, parameters
+  with required/optional, what it returns, an example call) by `manual()`, and
+  every call is checked against the same table (`check`) before it runs; a
+  mistake comes back as "That did not work:" plus that tool's spec. The manual
+  also says the model may use its own web search for outside facts.

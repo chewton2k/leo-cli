@@ -152,7 +152,7 @@ after, so a cut-off status line still shows the fix.
 
 `claude_code` and `codex` (kinds `ClaudeCode`/`Codex`, `ai/provider/agent_cli.rs`)
 write through the user's own signed-in CLI and plan: `claude -p --safe-mode
---tools "" --no-session-persistence --system-prompt …` and `codex exec
+--tools WebSearch --allowedTools WebSearch --no-session-persistence --system-prompt …` and `codex exec
 --ephemeral --ignore-user-config --sandbox read-only -`, material on stdin, run
 in a fresh private `leo-writing-*` temp dir (0700, deleted after; a shared fixed folder let other users plant files or links). Claude Code streams (`--output-format stream-json
 --include-partial-messages --verbose`; `read_stream` sinks `text_delta`s and
@@ -195,8 +195,8 @@ material, otherwise ~24k-char text parts and 6-page image batches, then
 `build_summary_prompt` for title and summary. Vision: `ChatProvider::
 complete_with_images` (default: a clear "cannot read images" error);
 `OpenAiChat` sends `image_url` data URLs, Claude Code gets the image inside a
-stream-json user message with `--tools ""` (its Read tool is not confined, so
-it is never enabled), Codex gets `-i` files written into that private dir and
+stream-json user message with only `WebSearch` allowed (its Read tool is not confined, so
+it is never enabled, and WebFetch is left off so a document cannot make it send notes to a URL), Codex gets `-i` files written into that private dir and
 removed after. Codex always runs with `--disable` for shell, browser, computer
 and app tools that `codex features list` reports (unknown names make Codex
 fail, so only listed ones are passed; cached per program).
@@ -214,3 +214,15 @@ recordings (`long::structure_recording(.., budget)`) and uploads
 Transcription is unchanged: Parakeet's 20-25 s cuts are for memory, cloud
 speech is only split past a provider's `max_bytes`, and 5-minute segments are
 transcribed while recording.
+
+### What the agent CLIs may use
+
+Web search is allowed (the user wants it): Claude Code gets `--tools WebSearch
+--allowedTools WebSearch` and nothing else; Codex keeps its default web search.
+Codex is given `--disable` for every feature in `CODEX_OFF` that `codex
+features list` reports (shell, browser and computer use, apps, plugins, skills,
+goals, multi-agent, image generation, tool suggestions), so its own tools do
+not pull it away from leo's text tools. Never disable `code_mode_host`,
+`unified_exec` or `shell_snapshot`: Codex answers through code mode, and with
+it off every reply came back empty (measured). Commands still cannot run in
+the read-only sandbox.

@@ -14,21 +14,202 @@ const OPEN_CHARS: usize = 20_000;
 const CONNECTED: usize = 10;
 const DECIDE_AFTER: usize = 48;
 
-pub const TOOLS: &str = "\
-Tools: you can look through and work on the user's notes yourself. To use a tool, reply with only one line, nothing before or after it:
-<tool>{\"name\": \"search_notes\", \"query\": \"breadth-first search\"}</tool>
-leo runs it and gives you the result in <tool_result>; then use another tool or answer the user. These are not functions in your own tool system: you use one by writing that line as your reply, and they are always available here, even when your own tools are switched off. The tools:
-- search_notes {\"query\"}: notes that match words, abbreviations or ideas on the map, with an excerpt of each.
-- open_note {\"note\"}: the whole text of one note. \"note\" is an id like n3, or a title.
-- connected_notes {\"note\"}: the notes linked to it on the user's map, with how and why.
-- edit_note {\"note\", \"find\", \"replace\", \"why\"}: suggest changing a note: \"find\" is text copied exactly from the note (open it first), \"replace\" is what goes there instead. Leave \"find\" empty to add \"replace\" at the end. The user sees the change and decides.
-- create_note {\"title\", \"body\", \"folder\"}: suggest a new note in Markdown; \"folder\" is optional. The user sees it and decides.
+pub struct Param {
+    pub name: &'static str,
+    pub required: bool,
+    pub about: &'static str,
+}
+
+pub struct Spec {
+    pub name: &'static str,
+    pub purpose: &'static str,
+    pub params: &'static [Param],
+    pub returns: &'static str,
+    pub example: &'static str,
+}
+
+const NOTE: Param = Param {
+    name: "note",
+    required: true,
+    about: "which note: an id like n3 from a <note> tag or an earlier result, or the note's exact title",
+};
+
+pub const SPECS: [Spec; 5] = [
+    Spec {
+        name: "search_notes",
+        purpose: "Find the user's notes that match words, abbreviations (BFS finds breadth-first search) or ideas on their map.",
+        params: &[Param {
+            name: "query",
+            required: true,
+            about: "the words to look for, like \"dijkstra priority queue\"",
+        }],
+        returns: "Up to 8 lines, best first, each: [n7] \"Title\" in folder (through the idea \"...\" when the map found it): an excerpt. Then \"...and N more\" when there are more. Or \"No note matches ...\".",
+        example: r#"<tool>{"name": "search_notes", "query": "breadth-first search"}</tool>"#,
+    },
+    Spec {
+        name: "open_note",
+        purpose: "Read the whole text of one note.",
+        params: &[NOTE],
+        returns: "<note id=\"n3\" title=\"...\" class=\"folder\">the full Markdown text</note>",
+        example: r#"<tool>{"name": "open_note", "note": "n3"}</tool>"#,
+    },
+    Spec {
+        name: "connected_notes",
+        purpose: "List the notes linked to a note on the user's map of ideas, with how and why they connect.",
+        params: &[NOTE],
+        returns: "Up to 10 lines, each: [n5] \"Title\" (kind of link): why they connect. Or a line saying it has no connections yet.",
+        example: r#"<tool>{"name": "connected_notes", "note": "Heaps"}</tool>"#,
+    },
+    Spec {
+        name: "edit_note",
+        purpose: "Suggest a change to a note. Nothing changes until the user presses Apply.",
+        params: &[
+            NOTE,
+            Param {
+                name: "find",
+                required: false,
+                about: "text copied exactly from the note, which must appear in it exactly once; leave it out or empty to add at the end",
+            },
+            Param {
+                name: "replace",
+                required: true,
+                about: "the Markdown that goes in place of \"find\", or that is added at the end",
+            },
+            Param {
+                name: "why",
+                required: false,
+                about: "one sentence for the user on why the change helps",
+            },
+        ],
+        returns: "\"Suggested.\" when the user can now see the change, or \"That did not work: ...\" when \"find\" is not in the note exactly once.",
+        example: r#"<tool>{"name": "edit_note", "note": "n1", "find": "uses a stack", "replace": "uses a queue", "why": "BFS takes the oldest vertex first"}</tool>"#,
+    },
+    Spec {
+        name: "create_note",
+        purpose: "Suggest a new note. Nothing is made until the user presses Create.",
+        params: &[
+            Param {
+                name: "title",
+                required: true,
+                about: "the new note's title",
+            },
+            Param {
+                name: "body",
+                required: true,
+                about: "the note in Markdown, using \\n for new lines",
+            },
+            Param {
+                name: "folder",
+                required: false,
+                about: "an existing or new folder like cs130; leave it out for the top level",
+            },
+        ],
+        returns: "\"Suggested.\" when the user can now see the new note.",
+        example: r###"<tool>{"name": "create_note", "title": "BFS and DFS", "body": "## BFS\n- uses a queue", "folder": "cs130"}</tool>"###,
+    },
+];
+
+pub fn spec_of(name: &str) -> Option<&'static Spec> {
+    SPECS.iter().find(|s| s.name == name)
+}
+
+pub fn describe(spec: &Spec) -> String {
+    let params: Vec<String> = spec
+        .params
+        .iter()
+        .map(|p| {
+            format!(
+                "  - {} (text, {}): {}",
+                p.name,
+                if p.required { "required" } else { "optional" },
+                p.about
+            )
+        })
+        .collect();
+    format!(
+        "### {}\n{}\nParameters:\n{}\nReturns: {}\nExample: {}",
+        spec.name,
+        spec.purpose,
+        params.join("\n"),
+        spec.returns,
+        spec.example
+    )
+}
+
+pub fn manual() -> String {
+    let tools: Vec<String> = SPECS.iter().map(describe).collect();
+    format!(
+        "## Your tools
+You have a tool layer for the user's notes. It belongs to leo, not to your own tool system, and it is always available, even when your own tools are switched off.
+Your own web search, if you have it, is fine for outside or current facts: use it, and say which parts came from the web. For anything in the user's notes, use the tools below.
+
+How to call a tool:
+- Reply with exactly one line and nothing before or after it: <tool>{{\"name\": \"<tool>\", \"<parameter>\": \"<value>\"}}</tool>
+- The part inside the tags is one JSON object: \"name\" is the tool, every other key is a parameter, and every value is a string in double quotes. Write new lines inside values as \\n.
+- One tool per reply. leo runs it and sends back <tool_result name=\"<tool>\">the result</tool_result>, then you continue: call another tool or answer the user.
+- A result that starts with \"That did not work:\" says what was wrong; correct the call and try again.
+- At most {MOST_STEPS} calls per answer, and at most {MOST_PROPOSALS} suggestions (edit_note or create_note). Notes that tools find get ids like n7; cite them like [n7].
+
+The tools:
+
+{}
+
 When to use them:
 - The user asks you to fix, correct, update, add to or rewrite a note, or you find a mistake they asked you to fix: use edit_note, once per change, with \"find\" copied exactly from the note text you were given or opened. This is how you change notes here, so never say you cannot edit or change notes.
 - The user asks for a new note: use create_note.
 - The question is about notes you were not given, or you need a note's full text or its connections: use search_notes, open_note or connected_notes.
 - Otherwise answer straight away without tools.
-Use at most 6 per answer. Cite notes you used with their ids, like [n4]. After suggesting a change or a note, tell the user what you suggested and that they can apply it; never claim it is already done.";
+After suggesting a change or a note, tell the user what you suggested and that they can apply it; never claim it is already done.",
+        tools.join("\n\n")
+    )
+}
+
+pub fn check(call: &Call) -> Result<(), String> {
+    let Some(spec) = spec_of(&call.name) else {
+        let names: Vec<&str> = SPECS.iter().map(|s| s.name).collect();
+        return Err(format!(
+            "there is no tool called \"{}\"; the tools are {}",
+            call.name,
+            names.join(", ")
+        ));
+    };
+    let Some(args) = call.args.as_object() else {
+        return Err(format!(
+            "the parameters must be a JSON object. How to call it:\n{}",
+            describe(spec)
+        ));
+    };
+    for param in spec.params {
+        match args.get(param.name) {
+            Some(serde_json::Value::String(text))
+                if param.required && param.name != "body" && text.trim().is_empty() =>
+            {
+                return Err(format!(
+                    "\"{}\" is empty. How to call it:\n{}",
+                    param.name,
+                    describe(spec)
+                ));
+            }
+            Some(serde_json::Value::String(_)) => {}
+            None | Some(serde_json::Value::Null) if !param.required => {}
+            None | Some(serde_json::Value::Null) => {
+                return Err(format!(
+                    "\"{}\" is missing. How to call it:\n{}",
+                    param.name,
+                    describe(spec)
+                ));
+            }
+            Some(_) => {
+                return Err(format!(
+                    "\"{}\" must be text in double quotes. How to call it:\n{}",
+                    param.name,
+                    describe(spec)
+                ));
+            }
+        }
+    }
+    Ok(())
+}
 
 pub const REMINDER: &str = "Remember your tools: if the user wants a note fixed, corrected, changed, added to or made, or you need a note you were not given, your whole reply is a single <tool>{...}</tool> line instead of an answer. When they asked you to fix something and you found what is wrong, suggest the fix with edit_note before you answer; do not only explain it. You can open and change notes this way, so do not ask the user to do it. Otherwise reply to the user.";
 
@@ -48,14 +229,6 @@ pub fn wants_change(message: &str) -> bool {
 
 pub const NO_MORE_TOOLS: &str =
     "You have used all the tools you can for this answer. Do not ask for another; answer the user now with what you have.";
-
-const NAMES: [&str; 5] = [
-    "search_notes",
-    "open_note",
-    "connected_notes",
-    "edit_note",
-    "create_note",
-];
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Call {
@@ -115,7 +288,7 @@ pub fn find_call(reply: &str) -> Option<Result<Call, String>> {
     let bare = strip_fence(reply);
     if bare.starts_with('{') && bare.ends_with('}') {
         if let Ok(call) = call_from(bare) {
-            if NAMES.contains(&call.name.as_str()) {
+            if spec_of(&call.name).is_some() {
                 return Some(Ok(call));
             }
         }
@@ -311,13 +484,22 @@ impl Desk {
             proposal: None,
             found: Vec::new(),
         };
+        if let Err(problem) = check(call) {
+            let step = match spec_of(&call.name) {
+                Some(spec) => format!("Tried {} with a mistake", spec.name),
+                None => format!("Tried a tool called “{}”", clip(&call.name, 40)),
+            };
+            return Done {
+                step,
+                result: format!("That did not work: {problem}"),
+                proposal: None,
+                found: Vec::new(),
+            };
+        }
         match call.name.as_str() {
             "search_notes" => {
                 let query = call.text("query");
                 let step = format!("Searched your notes for “{}”", clip(query.trim(), 60));
-                if query.trim().is_empty() {
-                    return fail(&step, "the search needs a \"query\"".into());
-                }
                 let words: Vec<String> =
                     query.split_whitespace().map(|w| w.to_lowercase()).collect();
                 let hits = crate::search::search(store, cache, &query);
@@ -490,9 +672,6 @@ impl Desk {
                         format!("at most {MOST_PROPOSALS} suggestions fit in one answer"),
                     );
                 }
-                if title.is_empty() {
-                    return fail(&step, "a new note needs a \"title\"".into());
-                }
                 if store.validate_directory(&folder).is_err() {
                     return fail(
                         &step,
@@ -509,10 +688,7 @@ impl Desk {
             }
             other => fail(
                 &format!("Tried a tool called “{}”", clip(other, 40)),
-                format!(
-                    "there is no tool called \"{other}\"; the tools are {}",
-                    NAMES.join(", ")
-                ),
+                format!("there is no tool called \"{other}\""),
             ),
         }
     }
@@ -575,6 +751,108 @@ mod tests {
             without_calls("Before <tool>{}</tool> after"),
             "Before  after"
         );
+    }
+
+    #[test]
+    fn the_manual_explains_every_tool_its_parameters_results_and_errors() {
+        let text = manual();
+        for spec in &SPECS {
+            assert!(
+                text.contains(&format!("### {}", spec.name)),
+                "{}",
+                spec.name
+            );
+            assert!(text.contains(spec.example), "{}", spec.name);
+            for param in spec.params {
+                let kind = if param.required {
+                    "required"
+                } else {
+                    "optional"
+                };
+                assert!(
+                    text.contains(&format!("  - {} (text, {kind}): ", param.name)),
+                    "{}.{}",
+                    spec.name,
+                    param.name
+                );
+            }
+            let example = find_call(spec.example).unwrap().unwrap();
+            assert_eq!(example.name, spec.name);
+            assert_eq!(
+                check(&example),
+                Ok(()),
+                "the example for {} is itself a valid call",
+                spec.name
+            );
+        }
+        for promise in [
+            "<tool_result name=",
+            "That did not work:",
+            "One tool per reply",
+            "always available",
+            "at most 6 calls",
+            "web search",
+        ] {
+            assert!(
+                text.to_lowercase().contains(&promise.to_lowercase()),
+                "{promise}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_call_that_breaks_the_spec_is_answered_with_how_to_call_it() {
+        let wrong = |json: serde_json::Value| {
+            check(&Call {
+                name: json["name"].as_str().unwrap().to_string(),
+                args: json,
+            })
+            .unwrap_err()
+        };
+        let missing = wrong(serde_json::json!({"name": "open_note"}));
+        assert!(
+            missing.starts_with("\"note\" is missing. How to call it:\n### open_note"),
+            "{missing}"
+        );
+        let empty = wrong(serde_json::json!({"name": "search_notes", "query": "  "}));
+        assert!(empty.starts_with("\"query\" is empty"));
+        let number = wrong(serde_json::json!({"name": "open_note", "note": 3}));
+        assert!(number.contains("must be text in double quotes"));
+        let unknown = wrong(serde_json::json!({"name": "delete_note", "note": "n1"}));
+        assert!(unknown.contains(
+            "the tools are search_notes, open_note, connected_notes, edit_note, create_note"
+        ));
+        assert_eq!(
+            check(&Call {
+                name: "edit_note".into(),
+                args: serde_json::json!({"name": "edit_note", "note": "n1", "replace": "x"})
+            }),
+            Ok(()),
+            "optional parameters may be left out"
+        );
+        assert_eq!(
+            check(&Call {
+                name: "create_note".into(),
+                args: serde_json::json!({"name": "create_note", "title": "t", "body": ""})
+            }),
+            Ok(()),
+            "an empty body is allowed"
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::load_from(&dir.path().join("notes")).unwrap();
+        let done = Desk::new(vec![], crate::chat::ROOM).run(
+            &store,
+            &Cache::default(),
+            &Call {
+                name: "open_note".into(),
+                args: serde_json::json!({"name": "open_note"}),
+            },
+        );
+        assert_eq!(done.step, "Tried open_note with a mistake");
+        assert!(done
+            .result
+            .starts_with("That did not work: \"note\" is missing. How to call it:"));
     }
 
     #[test]

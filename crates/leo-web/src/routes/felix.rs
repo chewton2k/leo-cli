@@ -208,7 +208,7 @@ fn answer(
     let send = |value: serde_json::Value| {
         let _ = tx.send(ndjson(value));
     };
-    let with_tools = format!("{system}\n\n{}", tools::TOOLS);
+    let with_tools = format!("{system}\n\n{}", tools::manual());
     let last_word = format!("{system}\n\n{}", tools::NO_MORE_TOOLS);
     let mut desk = tools::Desk::new(sources, room);
     let mut nudged = !tools::wants_change(&wanted);
