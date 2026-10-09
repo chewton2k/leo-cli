@@ -1013,6 +1013,12 @@ body.files-over main::after {
   display: grid; place-items: center; border: 2px dashed var(--accent); border-radius: 16px;
   background: color-mix(in srgb, var(--accent-soft) 80%, transparent); color: var(--accent); font-weight: 650; font-size: 16px;
 }
+.diagram { margin: 14px 0; padding: 0; }
+.diagram-art { overflow-x: auto; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); text-align: center; }
+.diagram-art svg { max-width: 100%; max-height: 440px; height: auto; }
+.diagram[data-drawn="yes"] .diagram-src { display: none; }
+.diagram:not([data-drawn="yes"]) .diagram-src { opacity: .75; }
+.diagram-error { margin-top: 4px; font-size: 12.5px; color: var(--danger); }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 </style>
 </head>

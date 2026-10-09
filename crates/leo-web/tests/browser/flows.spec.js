@@ -190,6 +190,53 @@ test('on a wide screen the sidebar reaches every place and can be narrowed', asy
   expect((await side.boundingBox()).width).toBe(full);
 });
 
+test.describe('diagrams', () => {
+  test('a mermaid block in a note is drawn, a broken one says why, and labels cannot run code', async ({ page }) => {
+    const body = [
+      'Breadth-first search:',
+      '',
+      '```mermaid',
+      'flowchart LR',
+      '  A["Start (source)"] --> B[Visit neighbours]',
+      '  B --> C{Queue empty?}',
+      '  C -- no --> B',
+      '```',
+      '',
+      '```mermaid',
+      'flowchart LR',
+      '  X["<img src=x onerror=window.__pwned=1>"] --> Y',
+      '```',
+      '',
+      '```mermaid',
+      'this is not a diagram',
+      '```',
+    ].join('\n');
+    const note = await (await page.request.post('/api/notes', { data: { title: `Diagram ${test.info().project.name}`, body } })).json();
+    await page.goto(`/#/n/${note.id}`);
+    const drawn = page.locator('#doc figure.diagram[data-drawn="yes"]');
+    await expect(drawn).toHaveCount(2, { timeout: 15000 });
+    await expect(drawn.first().locator('svg')).toBeVisible();
+    await expect(drawn.first()).toContainText('Visit neighbours');
+    await expect(drawn.first().locator('.diagram-src')).toBeHidden();
+    await expect(page.locator('#doc .diagram-error')).toContainText('This diagram could not be drawn');
+    expect(await page.evaluate(() => window.__pwned)).toBeUndefined();
+    await expect(page.locator('#doc figure.diagram img[onerror]')).toHaveCount(0);
+  });
+
+  test('Felix can answer with a diagram, drawn once the answer is complete', async ({ page }) => {
+    const answer = 'Here is how it flows:\n\n```mermaid\nflowchart TD\n  Q[Queue] --> V[Visit]\n```\n';
+    const lines = [{ sources: [] }, ...answer.match(/[\s\S]{1,9}/g).map((t) => ({ t })), { done: true }];
+    await page.route('**/api/chat', (route) => route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: lines.map((l) => JSON.stringify(l)).join('\n') + '\n' }));
+    await page.goto('/');
+    await page.locator('#chat-toggle').click();
+    await page.locator('#chat-input').fill('draw bfs');
+    await page.locator('#chat-input').press('Enter');
+    const figure = page.locator('#chat .msg.leo figure.diagram[data-drawn="yes"]');
+    await expect(figure.locator('svg')).toBeVisible({ timeout: 15000 });
+    await expect(figure).toContainText('Visit');
+  });
+});
+
 test.describe('drag and drop', () => {
   test('a note and a folder drag into other folders, and Undo puts them back', async ({ page }) => {
     test.skip(test.info().project.name !== 'desktop', 'dragging is for a mouse');

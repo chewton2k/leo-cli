@@ -10,7 +10,7 @@
   `src/tests/<area>.rs`, helpers (`state_with`, `run`, `json_of`, `host`) in
   `src/tests/mod.rs`.
 - `/app.js` is `web/app/*.js` joined in one closure by `routes/assets.rs`
-  (`concat!`, order: core, trash, map, settings, storage, uploads, sheets, side, drag,
+  (`concat!`, order: core, trash, map, settings, storage, uploads, sheets, side, drag, diagrams,
   actions, events). The parts share scope on purpose: pages reassign `state`.
   Add a part to the `concat!` list; `every_part_of_the_page_script_is_served`
   fails otherwise and `the_page_script_parses` runs `node --check` on the whole.
@@ -427,3 +427,14 @@
   a miniature page of the document's first lines (`chat_files` `excerpt`,
   320 chars) over a colored type badge (PDF, DOCX, PPTX, CSV, PNG, …; tones in
   `--tone-*`). Sent messages keep `cards` (name plus thumb or excerpt).
+- Diagrams: ```mermaid blocks are drawn on the page (notes, Felix, anywhere
+  `markdown.js` renders): `render` emits `<figure class="diagram">` holding
+  the escaped source; `app/diagrams.js` watches the page (MutationObserver),
+  loads `/vendor/mermaid-11.4.1.js` the first time one appears (Mermaid 11.4.1,
+  vendored in `web/vendor/` with its MIT license, checked against npm's
+  sha512; served `immutable`), and draws with `securityLevel: 'strict'` and the
+  `base` theme fed from leo's color tokens. Drawings are cached by theme and
+  source (`DIAGRAMS_KEPT`), so redraws do not flicker; answers still streaming
+  (`.msg.pending`) wait; a broken diagram keeps its source and says why. Felix's
+  `BASE` prompt says when and how to draw them (also into notes through
+  edit_note / create_note). Obsidian and GitHub draw the same blocks.

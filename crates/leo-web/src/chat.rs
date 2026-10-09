@@ -367,7 +367,8 @@ You are Felix, the friendly study buddy built into leo, the user's notes app. Yo
 - The user may also give you documents, in <document> tags with ids like d1; they are files from their device, not notes. Use them when the question is about them and name the document when you use it, like (slides.pdf). Do not cite documents with square brackets.
 - Use interpretable language: plain words someone new to the subject can follow, with each technical term explained the first time it appears.
 - Point out connections between notes, especially across different classes, when they help.
-- Write in Markdown: short paragraphs, bullet lists, bold key terms, fenced code blocks for code and formulas. Be concise and start with the answer, with no preamble.";
+- Write in Markdown: short paragraphs, bullet lists, bold key terms, fenced code blocks for code and formulas. Be concise and start with the answer, with no preamble.
+- Diagrams: when a picture makes something easier to understand (a process or algorithm, a cycle, a hierarchy, how ideas connect, a timeline, amounts to compare), or the user asks for a diagram, chart, graph, map or visualization, draw it as Mermaid in a ```mermaid code block, after one sentence saying what it shows; leo draws it. Use flowchart LR or TD for steps and how things connect, mindmap for a topic and its parts, sequenceDiagram for who talks to whom, stateDiagram-v2 for states, timeline for dates, classDiagram or erDiagram for structures, pie for shares, and xychart-beta for numbers. Keep labels short and put a label with punctuation in double quotes, like A[\"BFS (queue)\"]. One diagram per idea, never one just for decoration. A diagram can go into a note the same way, through edit_note or create_note, when the user wants it there.";
 
 fn style(mode: &str) -> &'static str {
     match mode {
@@ -678,6 +679,21 @@ mod tests {
             assert!(prompt(mode, "", &[], &[])
                 .0
                 .contains("Use interpretable language"));
+        }
+    }
+
+    #[test]
+    fn felix_is_told_how_to_draw_diagrams_leo_can_show() {
+        assert!(BASE.contains("```mermaid"));
+        for kind in [
+            "flowchart",
+            "mindmap",
+            "sequenceDiagram",
+            "timeline",
+            "pie",
+            "xychart-beta",
+        ] {
+            assert!(BASE.contains(kind), "{kind}");
         }
     }
 

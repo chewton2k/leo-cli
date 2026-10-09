@@ -134,6 +134,13 @@ test('pictures in a note are shown from leo, and outside ones stay links', () =>
 
 
 let failed = 0;
+test('a mermaid block becomes a diagram slot that keeps its source, escaped', () => {
+  const html = render('```mermaid\nflowchart LR\n  A["<b>x</b>"] --> B\n```\n- [ ] after');
+  assert.match(html, /<figure class="diagram"><pre class="diagram-src"><code>flowchart LR\n  A\[&quot;&lt;b&gt;x&lt;\/b&gt;&quot;\] --&gt; B<\/code><\/pre><\/figure>/);
+  assert.deepEqual(boxes(html), [[1, false]]);
+  assert.doesNotMatch(render('```js\nx\n```'), /diagram/);
+});
+
 for (const [name, fn] of cases) {
   try {
     fn();

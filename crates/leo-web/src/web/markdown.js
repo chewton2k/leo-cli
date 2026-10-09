@@ -145,6 +145,10 @@
           i++;
         }
         i++;
+        if (fence[2].toLowerCase() === 'mermaid') {
+          html += `<figure class="diagram"><pre class="diagram-src"><code>${escape(code.join('\n'))}</code></pre></figure>`;
+          continue;
+        }
         const lang = fence[2] ? ` class="language-${escape(fence[2])}"` : '';
         html += `<pre><code${lang}>${escape(code.join('\n'))}</code></pre>`;
         continue;

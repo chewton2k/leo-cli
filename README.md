@@ -704,6 +704,11 @@ audio, or remove the speech model (`leo update` downloads it again). leo asks
 before deleting anything. Notes are only deleted from their own page, and
 backup history and settings are shown but never deleted from here.
 
+**Diagrams.** Ask Felix to draw something ("draw how BFS works", "chart my
+study time") and he answers with a diagram: flowcharts, mind maps, timelines,
+sequence diagrams and charts. They are Mermaid blocks in Markdown, so they can go
+into a note too, and Obsidian and GitHub draw them the same way.
+
 **The knowledge graph** (Knowledge graph in the sidebar, More → Knowledge graph on a phone, or **Graph** on any note) is a
 knowledge graph of your notes: every note is a dot coloured by its class (its
 top folder), sized by how connected it is. **Connect notes** asks the AI you

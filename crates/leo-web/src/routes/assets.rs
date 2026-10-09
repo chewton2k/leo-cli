@@ -13,11 +13,14 @@ const APP_JS: &str = concat!(
     include_str!("../web/app/sheets.js"),
     include_str!("../web/app/side.js"),
     include_str!("../web/app/drag.js"),
+    include_str!("../web/app/diagrams.js"),
     include_str!("../web/app/actions.js"),
     include_str!("../web/app/events.js"),
     "})();\n",
 );
 const MARKDOWN_JS: &str = include_str!("../web/markdown.js");
+const MERMAID_JS: &str = include_str!("../web/vendor/mermaid.min.js");
+pub(crate) const MERMAID_PATH: &str = "/vendor/mermaid-11.4.1.js";
 const EDITING_JS: &str = include_str!("../web/editing.js");
 const SAVING_JS: &str = include_str!("../web/saving.js");
 const DOC_JS: &str = include_str!("../web/doc.js");
@@ -40,6 +43,20 @@ fn javascript(source: &'static str) -> Response {
 
 pub(crate) async fn app_js() -> Response {
     javascript(APP_JS)
+}
+
+pub(crate) async fn mermaid_js() -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
+            (
+                header::CACHE_CONTROL,
+                "private, max-age=31536000, immutable",
+            ),
+        ],
+        MERMAID_JS,
+    )
+        .into_response()
 }
 
 pub(crate) async fn markdown_js() -> Response {
@@ -112,7 +129,7 @@ mod tests {
                 parts += 1;
             }
         }
-        assert_eq!(parts, 11);
+        assert_eq!(parts, 12);
     }
 
     #[test]

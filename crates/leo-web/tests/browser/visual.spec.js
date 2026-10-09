@@ -128,3 +128,13 @@ test('Felix with files and what an answer cost looks the same', async ({ page })
   await settle(page);
   await expect(page).toHaveScreenshot('felix-answer.png', { mask: [page.locator('.felix')] });
 });
+
+test('a note with a diagram looks the same', async ({ page }) => {
+  const body = 'How breadth-first search works:\n\n```mermaid\nflowchart LR\n  S["Start at the source"] --> Q[Put it in a queue]\n  Q --> T{Queue empty?}\n  T -- no --> V[Take the oldest, visit its neighbours]\n  V --> Q\n  T -- yes --> D[Done]\n```\n\n```mermaid\npie title Time spent studying\n  "Graphs" : 45\n  "Heaps" : 30\n  "Sorting" : 25\n```';
+  const note = await (await page.request.post('/api/notes', { data: { title: 'Diagrams', body } })).json();
+  await page.goto(`/#/n/${note.id}`);
+  await expect(page.locator('#doc figure.diagram[data-drawn="yes"]')).toHaveCount(2, { timeout: 15000 });
+  await settle(page);
+  await expect(page).toHaveScreenshot('diagram.png', { fullPage: true });
+  await page.request.delete(`/api/notes/${note.id}`);
+});

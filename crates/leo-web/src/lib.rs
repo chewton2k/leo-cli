@@ -377,6 +377,10 @@ fn router(state: AppState) -> Router {
         .route("/api/trash/restore", post(restore_many))
         .route("/app.js", get(app_js))
         .route("/markdown.js", get(markdown_js))
+        .route(
+            routes::assets::MERMAID_PATH,
+            get(routes::assets::mermaid_js),
+        )
         .route("/editing.js", get(editing_js))
         .route("/doc.js", get(doc_js))
         .route("/saving.js", get(saving_js))
