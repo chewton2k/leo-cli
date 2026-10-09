@@ -1,6 +1,9 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use crate::ai::error::{ProviderError, ProviderResult};
 use crate::ai::provider::{ChatProvider, ChatRequest, Image, Sink};
@@ -120,11 +123,45 @@ fn codex_disables(program: &Path) -> Vec<String> {
     found
 }
 
+fn stop_all(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    {
+        let _ = Command::new("kill")
+            .args(["-KILL", &format!("-{}", child.id())])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    let _ = child.kill();
+}
+
+pub const QUIET_LIMIT: Duration = Duration::from_secs(180);
+pub const TOTAL_LIMIT: Duration = Duration::from_secs(15 * 60);
+
+struct Watched<R> {
+    inner: R,
+    last: Arc<Mutex<Instant>>,
+}
+
+impl<R: Read> Read for Watched<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        if n > 0 {
+            if let Ok(mut last) = self.last.lock() {
+                *last = Instant::now();
+            }
+        }
+        Ok(n)
+    }
+}
+
 pub struct AgentCli {
     name: String,
     agent: Agent,
     bin: String,
     model: Option<String>,
+    quiet_limit: Duration,
+    total_limit: Duration,
 }
 
 impl AgentCli {
@@ -138,7 +175,15 @@ impl AgentCli {
                 .filter(|b| !b.trim().is_empty())
                 .unwrap_or_else(|| agent.program().to_string()),
             model: cfg.model.clone().filter(|m| !m.trim().is_empty()),
+            quiet_limit: QUIET_LIMIT,
+            total_limit: TOTAL_LIMIT,
         }
+    }
+
+    pub fn with_limits(mut self, quiet: Duration, total: Duration) -> Self {
+        self.quiet_limit = quiet;
+        self.total_limit = total;
+        self
     }
 
     pub fn arguments(
@@ -339,11 +384,20 @@ impl AgentCli {
         let files = self.image_files(room.path(), images)?;
         let (args, input) = self.arguments(req, images, &disables, &files);
         match self.spawn(&program, room.path(), &args, input.clone(), sink) {
-            Err(ProviderError::Retryable(message)) if message == self.no_answer() => {
+            Err(ProviderError::Retryable(message))
+                if message == self.no_answer() || message == self.stalled() =>
+            {
                 self.spawn(&program, room.path(), &args, input, sink)
             }
             other => other,
         }
+    }
+
+    fn stalled(&self) -> String {
+        format!(
+            "{}: {} stopped answering and was stopped",
+            self.name, self.bin
+        )
     }
 
     fn no_answer(&self) -> String {
@@ -358,23 +412,30 @@ impl AgentCli {
         input: String,
         sink: Sink<'_>,
     ) -> ProviderResult<String> {
-        let mut child = Command::new(program)
+        let mut command = Command::new(program);
+        command
             .args(args)
             .current_dir(room)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| {
-                ProviderError::Retryable(format!("{}: could not run {}: {e}", self.name, self.bin))
-            })?;
+            .stderr(Stdio::piped());
+        #[cfg(unix)]
+        std::os::unix::process::CommandExt::process_group(&mut command, 0);
+        let mut child = command.spawn().map_err(|e| {
+            ProviderError::Retryable(format!("{}: could not run {}: {e}", self.name, self.bin))
+        })?;
+        let started = Instant::now();
+        let last = Arc::new(Mutex::new(started));
         let stdin = child.stdin.take();
         let writer = std::thread::spawn(move || {
             if let Some(mut stdin) = stdin {
                 let _ = stdin.write_all(input.as_bytes());
             }
         });
-        let stderr = child.stderr.take();
+        let stderr = child.stderr.take().map(|inner| Watched {
+            inner,
+            last: Arc::clone(&last),
+        });
         let errors = std::thread::spawn(move || {
             let mut text = String::new();
             if let Some(mut stderr) = stderr {
@@ -382,7 +443,37 @@ impl AgentCli {
             }
             text
         });
-        let heard = match (self.agent, child.stdout.take()) {
+        let stdout = child.stdout.take().map(|inner| Watched {
+            inner,
+            last: Arc::clone(&last),
+        });
+        let child = Arc::new(Mutex::new(child));
+        let finished = Arc::new(AtomicBool::new(false));
+        let stalled = Arc::new(AtomicBool::new(false));
+        let watchdog = {
+            let (child, finished, stalled, last) = (
+                Arc::clone(&child),
+                Arc::clone(&finished),
+                Arc::clone(&stalled),
+                Arc::clone(&last),
+            );
+            let quiet = (self.agent == Agent::ClaudeCode).then_some(self.quiet_limit);
+            let total = self.total_limit;
+            std::thread::spawn(move || {
+                while !finished.load(Ordering::Relaxed) {
+                    std::thread::sleep(Duration::from_millis(100));
+                    let silent = last.lock().map(|l| l.elapsed()).unwrap_or_default();
+                    if started.elapsed() > total || quiet.is_some_and(|q| silent > q) {
+                        stalled.store(true, Ordering::Relaxed);
+                        if let Ok(mut child) = child.lock() {
+                            stop_all(&mut child);
+                        }
+                        return;
+                    }
+                }
+            })
+        };
+        let heard = match (self.agent, stdout) {
             (Agent::ClaudeCode, Some(stdout)) => read_stream(BufReader::new(stdout), sink),
             (Agent::Codex, Some(mut stdout)) => {
                 let mut answer = String::new();
@@ -395,9 +486,22 @@ impl AgentCli {
             }
             (_, None) => Heard::default(),
         };
-        let status = child.wait().map_err(|e| {
-            ProviderError::Retryable(format!("{}: {} did not finish: {e}", self.name, self.bin))
-        })?;
+        finished.store(true, Ordering::Relaxed);
+        let _ = watchdog.join();
+        let status = child
+            .lock()
+            .map_err(|_| {
+                ProviderError::Retryable(format!("{}: {} did not finish", self.name, self.bin))
+            })?
+            .wait()
+            .map_err(|e| {
+                ProviderError::Retryable(format!("{}: {} did not finish: {e}", self.name, self.bin))
+            })?;
+        if stalled.load(Ordering::Relaxed) {
+            let _ = writer.join();
+            let _ = errors.join();
+            return Err(ProviderError::Retryable(self.stalled()));
+        }
         let _ = writer.join();
         let stderr = errors.join().unwrap_or_default();
         if let Some(usage) = heard.usage.clone() {
@@ -717,6 +821,62 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":true,"result":"No
             .unwrap();
         assert_eq!(answer, "# Notes\nhello");
         assert_eq!(pieces, ["# Notes\nhello"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_cli_that_stops_answering_is_stopped_and_tried_once_more() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let quiet = script(
+            dir.path(),
+            "[ \"$1\" = features ] && exit 0\ncat >/dev/null\nsleep 30",
+        );
+        let cfg = config(ProviderKind::ClaudeCode, &quiet, None);
+        let agent = AgentCli::new("claude_code".into(), Agent::ClaudeCode, &cfg)
+            .with_limits(Duration::from_millis(300), Duration::from_secs(20));
+        let started = Instant::now();
+        match agent.complete(&request()) {
+            Err(ProviderError::Retryable(message)) => assert!(
+                message.ends_with("stopped answering and was stopped"),
+                "{message}"
+            ),
+            other => panic!("expected a stop, got {other:?}"),
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            started.elapsed()
+        );
+
+        let slow = script(
+            dir.path(),
+            "[ \"$1\" = features ] && exit 0\ncat >/dev/null\nsleep 30\necho late",
+        );
+        let cfg = config(ProviderKind::Codex, &slow, None);
+        let agent = AgentCli::new("codex".into(), Agent::Codex, &cfg)
+            .with_limits(Duration::from_millis(100), Duration::from_millis(400));
+        let started = Instant::now();
+        assert!(agent.complete(&request()).is_err());
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            started.elapsed()
+        );
+
+        let talkative = script(
+            dir.path(),
+            r##"cat >/dev/null
+for i in 1 2 3 4; do printf '%s\n' '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"x"}}}'; sleep 0.15; done
+printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"xxxx"}'"##,
+        );
+        let cfg = config(ProviderKind::ClaudeCode, &talkative, None);
+        let agent = AgentCli::new("claude_code".into(), Agent::ClaudeCode, &cfg)
+            .with_limits(Duration::from_millis(400), Duration::from_secs(20));
+        assert_eq!(
+            agent.complete(&request()).unwrap(),
+            "xxxx",
+            "steady output is never cut off"
+        );
     }
 
     #[cfg(unix)]

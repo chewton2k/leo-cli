@@ -348,3 +348,13 @@
   every call is checked against the same table (`check`) before it runs; a
   mistake comes back as "That did not work:" plus that tool's spec. The manual
   also says the model may use its own web search for outside facts.
+- Web for AIs without their own: `Powers.web` (`Web { search, page, needed }`
+  from `leo_services::web`): `needed` is `!has_own_web(cfg)`, decided by the
+  provider that will answer (first in the chain that is installed / running;
+  Codex and Claude Code search themselves, so they never get leo's web tools).
+  Then the manual adds `WEB_SPECS`: web_search (DuckDuckGo HTML results, ads
+  dropped, links unwrapped; Wikipedia if that fails) and open_page, which only
+  opens addresses web_search returned in this answer (`w2` or the exact URL),
+  never local or private hosts (`web::allowed`, also on every redirect). Web
+  tools run outside the store lock (`Desk::run_web`). A reply that claims the
+  tools are missing (`claims_no_tools`) is answered once with `UNSTUCK`.

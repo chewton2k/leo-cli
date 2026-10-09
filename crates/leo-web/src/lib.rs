@@ -76,6 +76,23 @@ pub struct UploadFile {
 
 pub type Room = Arc<dyn Fn() -> usize + Send + Sync>;
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct WebHit {
+    pub title: String,
+    pub url: String,
+    pub snippet: String,
+}
+
+pub type WebSearch = Arc<dyn Fn(&str) -> Result<Vec<WebHit>> + Send + Sync>;
+pub type WebPage = Arc<dyn Fn(&str) -> Result<String> + Send + Sync>;
+
+#[derive(Clone)]
+pub struct Web {
+    pub search: WebSearch,
+    pub page: WebPage,
+    pub needed: Arc<dyn Fn() -> bool + Send + Sync>,
+}
+
 pub type Reader = Arc<dyn Fn(UploadFile, &mut dyn FnMut(&str)) -> Result<String> + Send + Sync>;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -105,6 +122,7 @@ pub struct Powers {
     pub housekeeper: Option<Arc<dyn storage::Housekeeper>>,
     pub reader: Option<Reader>,
     pub room: Option<Room>,
+    pub web: Option<Web>,
 }
 
 #[derive(Clone)]
@@ -122,6 +140,7 @@ struct AppState {
     housekeeper: Option<Arc<dyn storage::Housekeeper>>,
     reader: Option<Reader>,
     room: Option<Room>,
+    web: Option<Web>,
 }
 
 struct Storage {
@@ -198,6 +217,7 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
     let housekeeper = powers.housekeeper;
     let reader = powers.reader;
     let room = powers.room;
+    let web = powers.web;
     let count = store.notes.len();
     let token_path = leo_core::paths::config_dir()?.join("serve-token");
     let sessions_path = leo_core::paths::config_dir()?.join("serve-sessions.json");
@@ -234,6 +254,7 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
         housekeeper,
         reader,
         room,
+        web,
     });
 
     let tunnel = if !options.local {

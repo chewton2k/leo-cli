@@ -208,10 +208,12 @@ fn answer(
     let send = |value: serde_json::Value| {
         let _ = tx.send(ndjson(value));
     };
-    let with_tools = format!("{system}\n\n{}", tools::manual());
+    let web = state.web.clone().filter(|w| (w.needed)());
+    let with_tools = format!("{system}\n\n{}", tools::manual_with(web.is_some()));
     let last_word = format!("{system}\n\n{}", tools::NO_MORE_TOOLS);
-    let mut desk = tools::Desk::new(sources, room);
+    let mut desk = tools::Desk::new(sources, room).with_web(web);
     let mut nudged = !tools::wants_change(&wanted);
+    let mut unstuck = false;
     for step in 0..=tools::MOST_STEPS {
         let last = step == tools::MOST_STEPS;
         let gate = std::cell::RefCell::new(tools::Gate::default());
@@ -236,6 +238,18 @@ fn answer(
         let mut gate = gate.into_inner();
         let call = if last { None } else { tools::find_call(&reply) };
         let call = match call {
+            None if !last && !unstuck && tools::claims_no_tools(&reply) => {
+                unstuck = true;
+                if gate.shown {
+                    send(serde_json::json!({ "restart": true }));
+                }
+                conversation = format!(
+                    "{conversation}\n\nFelix replied: {}\n\n{}",
+                    tools::without_calls(&reply),
+                    tools::UNSTUCK
+                );
+                continue;
+            }
             None if !last && !nudged && desk.proposals == 0 => {
                 nudged = true;
                 if gate.shown {
@@ -272,6 +286,8 @@ fn answer(
                 proposal: None,
                 found: Vec::new(),
             }
+        } else if tools::is_web(&call.name) {
+            desk.run_web(&call)
         } else {
             let graphs = Arc::clone(&state.graphs);
             store_now(state, |store| {

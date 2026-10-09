@@ -412,6 +412,22 @@ pub fn run(cli: Cli) -> Result<()> {
                     room: Some(std::sync::Arc::new(|| {
                         leo_services::ai::writing_budget().chars()
                     })),
+                    web: Some(leo_web::Web {
+                        search: std::sync::Arc::new(|query: &str| {
+                            Ok(leo_services::web::search(query)?
+                                .into_iter()
+                                .map(|h| leo_web::WebHit {
+                                    title: h.title,
+                                    url: h.url,
+                                    snippet: h.snippet,
+                                })
+                                .collect())
+                        }),
+                        page: std::sync::Arc::new(|address: &str| leo_services::web::page(address)),
+                        needed: std::sync::Arc::new(|| {
+                            !leo_services::web::has_own_web(&leo_services::config::Config::load())
+                        }),
+                    }),
                     reader: Some(std::sync::Arc::new(
                         |file: leo_web::UploadFile, progress: &mut dyn FnMut(&str)| {
                             leo_services::import::read_for_chat(

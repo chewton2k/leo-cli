@@ -42,7 +42,7 @@ fn extension(name: &str) -> String {
         .unwrap_or_default()
 }
 
-fn entities(text: &str) -> String {
+pub(crate) fn entities(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(start) = rest.find('&') {

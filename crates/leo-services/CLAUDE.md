@@ -226,3 +226,9 @@ not pull it away from leo's text tools. Never disable `code_mode_host`,
 `unified_exec` or `shell_snapshot`: Codex answers through code mode, and with
 it off every reply came back empty (measured). Commands still cannot run in
 the read-only sandbox.
+
+Agent CLI runs have a watchdog: Claude Code is stopped after `QUIET_LIMIT`
+(180 s) without any output, either CLI after `TOTAL_LIMIT` (15 min); the whole
+process group is killed (Unix), since a child holding the pipe kept leo
+waiting, and the run is tried once more. A Claude Code turn really did hang for
+21 minutes before this.

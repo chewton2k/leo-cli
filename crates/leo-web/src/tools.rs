@@ -109,8 +109,40 @@ pub const SPECS: [Spec; 5] = [
     },
 ];
 
+pub const WEB_SPECS: [Spec; 2] = [
+    Spec {
+        name: "web_search",
+        purpose: "Search the web for outside or current facts that the user's notes do not have.",
+        params: &[Param {
+            name: "query",
+            required: true,
+            about: "what to search for, like \"Dijkstra Turing Award year\"",
+        }],
+        returns: "Up to 6 results, each: [w2] Title, its address, then a short snippet. Or \"No results\".",
+        example: r#"<tool>{"name": "web_search", "query": "Dijkstra Turing Award year"}</tool>"#,
+    },
+    Spec {
+        name: "open_page",
+        purpose: "Read the text of a page that web_search returned in this answer.",
+        params: &[Param {
+            name: "page",
+            required: true,
+            about: "a result id like w2, or that result's exact address; other addresses are refused",
+        }],
+        returns: "<page address=\"...\">the page's text, shortened when long</page>",
+        example: r#"<tool>{"name": "open_page", "page": "w2"}</tool>"#,
+    },
+];
+
 pub fn spec_of(name: &str) -> Option<&'static Spec> {
-    SPECS.iter().find(|s| s.name == name)
+    SPECS
+        .iter()
+        .chain(WEB_SPECS.iter())
+        .find(|s| s.name == name)
+}
+
+pub fn is_web(name: &str) -> bool {
+    WEB_SPECS.iter().any(|s| s.name == name)
 }
 
 pub fn describe(spec: &Spec) -> String {
@@ -137,11 +169,24 @@ pub fn describe(spec: &Spec) -> String {
 }
 
 pub fn manual() -> String {
-    let tools: Vec<String> = SPECS.iter().map(describe).collect();
+    manual_with(false)
+}
+
+pub fn manual_with(web: bool) -> String {
+    let tools: Vec<String> = SPECS
+        .iter()
+        .chain(WEB_SPECS.iter().filter(|_| web))
+        .map(describe)
+        .collect();
+    let outside = if web {
+        "For outside or current facts, use web_search and open_page below, and say which parts came from the web and from where. For anything in the user's notes, use the note tools."
+    } else {
+        "Your own web search, if you have it, is fine for outside or current facts: use it, and say which parts came from the web. For anything in the user's notes, use the tools below."
+    };
     format!(
         "## Your tools
 You have a tool layer for the user's notes. It belongs to leo, not to your own tool system, and it is always available, even when your own tools are switched off.
-Your own web search, if you have it, is fine for outside or current facts: use it, and say which parts came from the web. For anything in the user's notes, use the tools below.
+{outside}
 
 How to call a tool:
 - Reply with exactly one line and nothing before or after it: <tool>{{\"name\": \"<tool>\", \"<parameter>\": \"<value>\"}}</tool>
@@ -160,7 +205,8 @@ When to use them:
 - The question is about notes you were not given, or you need a note's full text or its connections: use search_notes, open_note or connected_notes.
 - Otherwise answer straight away without tools.
 After suggesting a change or a note, tell the user what you suggested and that they can apply it; never claim it is already done.",
-        tools.join("\n\n")
+        tools.join("\n\n"),
+        outside = outside
     )
 }
 
@@ -219,6 +265,51 @@ const CHANGE_WORDS: [&str; 15] = [
     "fix", "correct", "change", "update", "edit", "rewrite", "add", "append", "insert", "remove",
     "create", "make", "write", "improve", "expand",
 ];
+
+pub const UNSTUCK: &str = "Your tools are available in this chat: you use one by replying with only its <tool>{...}</tool> line, as the manual shows. If a tool would help, reply now with that line; otherwise answer the user without saying the tools are unavailable.";
+
+pub fn claims_no_tools(reply: &str) -> bool {
+    let lower = reply.to_lowercase().replace('’', "'");
+    let refusal = [
+        "can't",
+        "cannot",
+        "can not",
+        "unable to",
+        "don't have",
+        "do not have",
+        "no access",
+        "isn't available",
+        "is not available",
+        "aren't available",
+        "are not available",
+        "not available",
+    ]
+    .iter()
+    .any(|w| lower.contains(w));
+    let about_tools = [
+        "tool",
+        "web_search",
+        "open_page",
+        "search_notes",
+        "open_note",
+        "edit_note",
+        "create_note",
+        "connected_notes",
+        "search the web",
+        "browse",
+        "edit your note",
+        "change your note",
+        "access your notes",
+        "look up",
+        "look it up",
+        "the web",
+        "internet",
+        "online",
+    ]
+    .iter()
+    .any(|w| lower.contains(w));
+    refusal && about_tools
+}
 
 pub fn wants_change(message: &str) -> bool {
     message
@@ -408,7 +499,12 @@ pub struct Desk {
     pub sources: Vec<SourceRef>,
     pub proposals: usize,
     room: usize,
+    web: Option<crate::Web>,
+    pages: Vec<String>,
 }
+
+const WEB_RESULTS: usize = 6;
+const PAGE_CHARS: usize = 12_000;
 
 impl Desk {
     pub fn new(sources: Vec<SourceRef>, room: usize) -> Desk {
@@ -416,6 +512,110 @@ impl Desk {
             sources,
             proposals: 0,
             room,
+            web: None,
+            pages: Vec::new(),
+        }
+    }
+
+    pub fn with_web(mut self, web: Option<crate::Web>) -> Desk {
+        self.web = web;
+        self
+    }
+
+    pub fn run_web(&mut self, call: &Call) -> Done {
+        let fail = |step: String, why: String| Done {
+            step,
+            result: format!("That did not work: {why}."),
+            proposal: None,
+            found: Vec::new(),
+        };
+        if let Err(problem) = check(call) {
+            return fail(format!("Tried {} with a mistake", call.name), problem);
+        }
+        let Some(web) = self.web.clone() else {
+            return fail(
+                format!("Tried {}", call.name),
+                format!(
+                    "{} is not available here; use your own web search if you have one",
+                    call.name
+                ),
+            );
+        };
+        if call.name == "web_search" {
+            let query = call.text("query");
+            let step = format!("Searched the web for “{}”", clip(query.trim(), 60));
+            let hits = match (web.search)(query.trim()) {
+                Ok(hits) => hits,
+                Err(e) => return fail(step, format!("the search did not work ({e})")),
+            };
+            if hits.is_empty() {
+                return Done {
+                    step,
+                    result: format!("No results for \"{query}\"."),
+                    proposal: None,
+                    found: Vec::new(),
+                };
+            }
+            let mut lines = Vec::new();
+            let mut found = Vec::new();
+            for hit in hits.into_iter().take(WEB_RESULTS) {
+                let n = match self.pages.iter().position(|p| *p == hit.url) {
+                    Some(i) => i + 1,
+                    None => {
+                        self.pages.push(hit.url.clone());
+                        self.pages.len()
+                    }
+                };
+                found.push(hit.title.clone());
+                lines.push(format!(
+                    "[w{n}] {}\n{}\n{}",
+                    hit.title,
+                    hit.url,
+                    clip(&hit.snippet, 300)
+                ));
+            }
+            return Done {
+                step,
+                result: lines.join("\n\n"),
+                proposal: None,
+                found,
+            };
+        }
+        let wanted = call.text("page");
+        let wanted = wanted.trim().trim_start_matches('[').trim_end_matches(']');
+        let url = wanted
+            .strip_prefix('w')
+            .and_then(|n| n.parse::<usize>().ok())
+            .and_then(|n| n.checked_sub(1))
+            .and_then(|i| self.pages.get(i).cloned())
+            .or_else(|| self.pages.iter().find(|p| p.as_str() == wanted).cloned());
+        let Some(url) = url else {
+            return fail(
+                "Tried to open a page".into(),
+                "only pages that web_search returned in this answer can be opened; search first and use a result id like w2".into(),
+            );
+        };
+        let site = url
+            .split("//")
+            .nth(1)
+            .unwrap_or(&url)
+            .split('/')
+            .next()
+            .unwrap_or("")
+            .to_string();
+        let step = format!("Read a page on {site}");
+        match (web.page)(&url) {
+            Ok(text) => Done {
+                step,
+                result: format!(
+                    "<page address=\"{}\">\n{}\n</page>",
+                    attribute(&url),
+                    clip(&text, PAGE_CHARS)
+                ),
+                proposal: None,
+                found: vec![url],
+            },
+            Err(e) => fail(step, format!("the page could not be read ({e})")),
         }
     }
 
@@ -484,6 +684,9 @@ impl Desk {
             proposal: None,
             found: Vec::new(),
         };
+        if is_web(&call.name) {
+            return self.run_web(call);
+        }
         if let Err(problem) = check(call) {
             let step = match spec_of(&call.name) {
                 Some(spec) => format!("Tried {} with a mistake", spec.name),
@@ -853,6 +1056,128 @@ mod tests {
         assert!(done
             .result
             .starts_with("That did not work: \"note\" is missing. How to call it:"));
+    }
+
+    fn fake_web(fail_search: bool) -> crate::Web {
+        crate::Web {
+            search: std::sync::Arc::new(move |query: &str| {
+                if fail_search {
+                    anyhow::bail!("offline")
+                }
+                Ok(vec![
+                    crate::WebHit {
+                        title: format!("About {query}"),
+                        url: "https://example.org/a".into(),
+                        snippet: "First.".into(),
+                    },
+                    crate::WebHit {
+                        title: "Second".into(),
+                        url: "https://example.org/b".into(),
+                        snippet: "Second.".into(),
+                    },
+                ])
+            }),
+            page: std::sync::Arc::new(|address: &str| Ok(format!("Text of {address}"))),
+            needed: std::sync::Arc::new(|| true),
+        }
+    }
+
+    #[test]
+    fn web_tools_are_described_only_when_leo_provides_them() {
+        let with = manual_with(true);
+        let without = manual();
+        for spec in &WEB_SPECS {
+            assert!(with.contains(&format!("### {}", spec.name)));
+            assert!(!without.contains(&format!("### {}", spec.name)));
+            assert_eq!(check(&find_call(spec.example).unwrap().unwrap()), Ok(()));
+        }
+        assert!(with.contains("use web_search and open_page"));
+        assert!(without.contains("Your own web search"));
+    }
+
+    #[test]
+    fn web_pages_can_only_be_opened_from_this_answers_results() {
+        let call = |json: serde_json::Value| Call {
+            name: json["name"].as_str().unwrap().to_string(),
+            args: json,
+        };
+        let mut desk = Desk::new(vec![], crate::chat::ROOM).with_web(Some(fake_web(false)));
+        let found = desk.run_web(&call(
+            serde_json::json!({"name": "web_search", "query": "heaps"}),
+        ));
+        assert_eq!(found.step, "Searched the web for “heaps”");
+        assert_eq!(found.found, ["About heaps", "Second"]);
+        assert!(
+            found
+                .result
+                .starts_with("[w1] About heaps\nhttps://example.org/a\nFirst."),
+            "{}",
+            found.result
+        );
+        let read = desk.run_web(&call(
+            serde_json::json!({"name": "open_page", "page": "w2"}),
+        ));
+        assert_eq!(read.step, "Read a page on example.org");
+        assert!(read
+            .result
+            .contains("<page address=\"https://example.org/b\">\nText of https://example.org/b"));
+        let by_address = desk.run_web(&call(
+            serde_json::json!({"name": "open_page", "page": "https://example.org/a"}),
+        ));
+        assert!(by_address.result.contains("Text of https://example.org/a"));
+        for wanted in [
+            "https://evil.example/steal?notes=1",
+            "w9",
+            "http://127.0.0.1/",
+        ] {
+            let refused = desk.run_web(&call(
+                serde_json::json!({"name": "open_page", "page": wanted}),
+            ));
+            assert!(
+                refused
+                    .result
+                    .starts_with("That did not work: only pages that web_search returned"),
+                "{wanted}"
+            );
+        }
+        let through_run = desk.run(
+            &Store::load_from(&tempfile::tempdir().unwrap().path().join("n")).unwrap(),
+            &Cache::default(),
+            &call(serde_json::json!({"name": "web_search", "query": "x"})),
+        );
+        assert_eq!(through_run.step, "Searched the web for “x”");
+
+        let mut offline = Desk::new(vec![], crate::chat::ROOM).with_web(Some(fake_web(true)));
+        let failed = offline.run_web(&call(
+            serde_json::json!({"name": "web_search", "query": "x"}),
+        ));
+        assert!(failed
+            .result
+            .starts_with("That did not work: the search did not work (offline)"));
+        let mut none = Desk::new(vec![], crate::chat::ROOM);
+        let missing = none.run_web(&call(
+            serde_json::json!({"name": "web_search", "query": "x"}),
+        ));
+        assert!(missing.result.contains("is not available here"));
+    }
+
+    #[test]
+    fn a_reply_that_claims_the_tools_are_missing_is_recognised() {
+        assert!(claims_no_tools(
+            "I can’t access the Leo `web_search` or `open_page` tools in this chat."
+        ));
+        assert!(claims_no_tools(
+            "I don't have a way to edit your note here."
+        ));
+        assert!(claims_no_tools(
+            "The note editing tool isn't available in this chat."
+        ));
+        assert!(claims_no_tools("I can’t look up a current figure here."));
+        assert!(claims_no_tools(
+            "I don't have internet access, so from memory: about 670,000."
+        ));
+        assert!(!claims_no_tools("BFS uses a queue, not a stack."));
+        assert!(!claims_no_tools("I can't be sure, but the heap is a tree."));
     }
 
     #[test]

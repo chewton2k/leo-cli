@@ -439,3 +439,42 @@ fn a_change_the_user_asked_for_is_asked_for_once_more_when_the_model_only_talks(
     assert_eq!(shown, "Still nothing to fix.");
     assert_eq!(prompts.lock().unwrap().len(), 2, "the nudge is given once");
 }
+
+#[test]
+fn felix_is_given_web_tools_only_when_his_ai_cannot_search() {
+    for needed in [true, false] {
+        let (mut state, _d, _ids) = state_with(&[]);
+        let (streamer, prompts) = scripted(vec!["Plain answer."]);
+        state.chat = Some(streamer);
+        state.web = Some(crate::Web {
+            search: Arc::new(|_: &str| Ok(vec![])),
+            page: Arc::new(|_: &str| Ok(String::new())),
+            needed: Arc::new(move || needed),
+        });
+        chat_lines(&state, "hello");
+        let prompt = prompts.lock().unwrap()[0].clone();
+        assert_eq!(
+            prompt.contains("### web_search"),
+            needed,
+            "needed = {needed}"
+        );
+    }
+}
+
+#[test]
+fn a_model_that_says_its_tools_are_missing_is_told_once_that_they_are_not() {
+    let (mut state, _d, _ids) = state_with(&[("Heaps", "")]);
+    let (streamer, prompts) = scripted(vec![
+        "I can't access the search_notes tool in this chat.",
+        "<tool>{\"name\": \"search_notes\", \"query\": \"heaps\"}</tool>",
+        "Found it [n1].",
+        "unused",
+    ]);
+    state.chat = Some(streamer);
+    let lines = chat_lines(&state, "what do my notes say about heaps?");
+    let steps: Vec<&str> = lines.iter().filter_map(|l| l["step"].as_str()).collect();
+    assert_eq!(steps, ["Searched your notes for “heaps”"]);
+    let prompts = prompts.lock().unwrap();
+    assert!(prompts[1].contains(tools::UNSTUCK));
+    assert_eq!(prompts.len(), 3);
+}
