@@ -355,6 +355,6 @@
   Then the manual adds `WEB_SPECS`: web_search (DuckDuckGo HTML results, ads
   dropped, links unwrapped; Wikipedia if that fails) and open_page, which only
   opens addresses web_search returned in this answer (`w2` or the exact URL),
-  never local or private hosts (`web::allowed`, also on every redirect). Web
+  never local or private hosts: `web::allowed` checks the address, and the client's DNS resolver (`PublicOnly`) refuses a name unless every address it resolves to is public, so a name pointing at 127.0.0.1 (localtest.me) and redirects are covered and the vetted addresses are the ones connected to. Web
   tools run outside the store lock (`Desk::run_web`). A reply that claims the
   tools are missing (`claims_no_tools`) is answered once with `UNSTUCK`.

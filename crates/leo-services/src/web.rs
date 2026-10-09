@@ -1,4 +1,5 @@
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
@@ -92,26 +93,69 @@ pub fn allowed(url: &reqwest::Url) -> bool {
     }
 }
 
+fn public_v4(v4: Ipv4Addr) -> bool {
+    let [a, b, _, _] = v4.octets();
+    !(a == 0
+        || v4.is_loopback()
+        || v4.is_private()
+        || v4.is_link_local()
+        || v4.is_broadcast()
+        || v4.is_multicast()
+        || a == 100 && (64..128).contains(&b)
+        || a == 192 && b == 0 && v4.octets()[2] == 0
+        || a == 198 && (18..20).contains(&b)
+        || a >= 240)
+}
+
 fn public(ip: IpAddr) -> bool {
     match ip {
-        IpAddr::V4(v4) => {
-            !(v4.is_loopback()
-                || v4.is_private()
-                || v4.is_link_local()
-                || v4.is_unspecified()
-                || v4.is_broadcast()
-                || v4.octets()[0] == 100 && (64..128).contains(&v4.octets()[1]))
-        }
+        IpAddr::V4(v4) => public_v4(v4),
         IpAddr::V6(v6) => {
-            let first = v6.segments()[0];
-            !(v6.is_loopback()
-                || v6.is_unspecified()
-                || (first & 0xfe00) == 0xfc00
-                || (first & 0xffc0) == 0xfe80
-                || v6
-                    .to_ipv4_mapped()
-                    .is_some_and(|v4| !public(IpAddr::V4(v4))))
+            let s = v6.segments();
+            let wrapped = |hi: u16, lo: u16| {
+                Ipv4Addr::new((hi >> 8) as u8, hi as u8, (lo >> 8) as u8, lo as u8)
+            };
+            if v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() {
+                return false;
+            }
+            if (s[0] & 0xfe00) == 0xfc00 || (s[0] & 0xffc0) == 0xfe80 {
+                return false;
+            }
+            if let Some(v4) = v6.to_ipv4() {
+                return public_v4(v4);
+            }
+            if s[0] == 0x0064 && s[1] == 0xff9b {
+                return public_v4(wrapped(s[6], s[7]));
+            }
+            if s[0] == 0x2002 {
+                return public_v4(wrapped(s[1], s[2]));
+            }
+            true
         }
+    }
+}
+
+pub fn public_addresses(host: &str) -> Result<Vec<SocketAddr>> {
+    let all: Vec<SocketAddr> = (host, 0)
+        .to_socket_addrs()
+        .with_context(|| format!("could not find {host}"))?
+        .collect();
+    if all.is_empty() || !all.iter().all(|a| public(a.ip())) {
+        bail!("{host} is not a public web address");
+    }
+    Ok(all)
+}
+
+struct PublicOnly;
+
+impl reqwest::dns::Resolve for PublicOnly {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let host = name.as_str().to_string();
+        Box::pin(async move {
+            public_addresses(&host)
+                .map(|found| Box::new(found.into_iter()) as reqwest::dns::Addrs)
+                .map_err(|e| e.into())
+        })
     }
 }
 
@@ -119,6 +163,7 @@ fn client() -> Result<reqwest::blocking::Client> {
     Ok(reqwest::blocking::Client::builder()
         .timeout(TIMEOUT)
         .user_agent(AGENT)
+        .dns_resolver(Arc::new(PublicOnly))
         .redirect(reqwest::redirect::Policy::custom(|attempt| {
             if attempt.previous().len() >= 5 || !allowed(attempt.url()) {
                 attempt.stop()
@@ -284,7 +329,13 @@ pub fn readable(html: &str) -> String {
     ] {
         loop {
             let lower = text.to_ascii_lowercase();
-            let Some(start) = lower.find(&format!("<{tag}")) else {
+            let open = format!("<{tag}");
+            let Some(start) = lower.match_indices(&open).map(|(i, _)| i).find(|&i| {
+                lower[i + open.len()..]
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c == '>' || c.is_whitespace() || c == '/')
+            }) else {
                 break;
             };
             let end = lower[start..]
@@ -423,6 +474,11 @@ mod tests {
             "http://169.254.169.254/latest/meta-data",
             "http://[::1]/",
             "http://[::ffff:127.0.0.1]/",
+            "http://0.1.2.3/",
+            "http://[64:ff9b::7f00:1]/",
+            "http://[2002:c0a8:101::]/",
+            "http://[::127.0.0.1]/",
+            "http://224.0.0.1/",
             "http://printer.local/",
             "http://intranet/",
             "file:///etc/passwd",
@@ -431,12 +487,23 @@ mod tests {
             assert!(!ok(bad), "{bad}");
         }
         assert!(page("http://127.0.0.1:9/").is_err());
+        assert!(
+            public_addresses("localhost").is_err(),
+            "a name that leads to this computer is refused"
+        );
+        assert!(public(IpAddr::V6("2606:4700::1111".parse().unwrap())));
+        assert!(
+            public(IpAddr::V6("2002:0808:0808::".parse().unwrap())),
+            "6to4 of a public address is fine"
+        );
     }
 
     #[test]
     fn a_page_is_read_as_its_text() {
         let html = "<html><head><title>T</title><style>p{}</style></head><body><nav>Menu</nav><h1>Heaps</h1><p>A heap &amp; a <b>tree</b>.</p><script>alert(1)</script><ul><li>one</li><li>two</li></ul></body></html>";
         assert_eq!(readable(html), "Heaps\nA heap & a tree.\none\ntwo");
+        let page = "<html><head><title>T</title></head><body><header class=\"top\">Site</header><main><p>Kept text.</p></main><navigation>also kept</navigation></body></html>";
+        assert_eq!(readable(page), "Site\nKept text.\nalso kept");
     }
 
     #[test]
@@ -478,8 +545,17 @@ mod tests {
         let hits = search("Edsger Dijkstra Turing Award year").unwrap();
         assert!(!hits.is_empty());
         println!("{hits:#?}");
-        let text = page(&hits[0].url).unwrap();
+        let local = page("http://localtest.me/").unwrap_err();
+        assert!(
+            format!("{local:#}").contains("not a public web address"),
+            "{local:#}"
+        );
+        let readable_hit = hits
+            .iter()
+            .find(|h| h.url.contains("wikipedia.org"))
+            .unwrap_or(&hits[0]);
+        let text = page(&readable_hit.url).unwrap();
         assert!(text.len() > 200);
-        println!("{}", &text[..text.len().min(600)]);
+        println!("{}", text.chars().take(600).collect::<String>());
     }
 }
