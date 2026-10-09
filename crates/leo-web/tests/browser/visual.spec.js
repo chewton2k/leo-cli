@@ -58,6 +58,7 @@ for (const [name, hash, mask] of [
   ['record', '#/record', []],
 ]) {
   test(`${name} looks the same`, async ({ page }) => {
+    await page.request.post('/api/sessions/end', { data: { others: true } });
     await page.goto(`/${hash}`);
     await page.waitForLoadState('networkidle');
     await settle(page);
