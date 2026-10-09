@@ -60,6 +60,12 @@ pub(crate) struct CreateDirBody {
 }
 
 #[derive(Deserialize)]
+pub(crate) struct MoveDirBody {
+    pub(crate) from: String,
+    pub(crate) into: String,
+}
+
+#[derive(Deserialize)]
 pub(crate) struct MoveBody {
     pub(crate) directory: String,
 }
@@ -440,6 +446,45 @@ pub(crate) async fn list_folders(
             ))
         })
         .await
+}
+
+pub(crate) async fn move_dir(
+    State(state): State<AppState>,
+    Json(body): Json<MoveDirBody>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    state
+        .with_store(move |store| {
+            directory(store, &body.from)?;
+            directory(store, &body.into)?;
+            if !store.dir_exists(&body.from) || !store.dir_exists(&body.into) {
+                return Err(StatusCode::NOT_FOUND);
+            }
+            let to = store
+                .move_dir(&body.from, &body.into)
+                .ok_or(StatusCode::CONFLICT)?;
+            save(store)?;
+            remove_emptied(&store.notes_dir.join(body.from.trim_matches('/')));
+            Ok(Json(serde_json::json!({ "path": to })))
+        })
+        .await
+}
+
+fn remove_emptied(top: &std::path::Path) {
+    let mut found = vec![top.to_path_buf()];
+    let mut i = 0;
+    while i < found.len() {
+        if let Ok(entries) = std::fs::read_dir(&found[i]) {
+            for entry in entries.flatten() {
+                if entry.file_type().is_ok_and(|t| t.is_dir()) {
+                    found.push(entry.path());
+                }
+            }
+        }
+        i += 1;
+    }
+    for dir in found.iter().rev() {
+        let _ = std::fs::remove_dir(dir);
+    }
 }
 
 pub(crate) async fn create_dir(

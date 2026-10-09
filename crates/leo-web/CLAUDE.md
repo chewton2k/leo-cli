@@ -10,7 +10,7 @@
   `src/tests/<area>.rs`, helpers (`state_with`, `run`, `json_of`, `host`) in
   `src/tests/mod.rs`.
 - `/app.js` is `web/app/*.js` joined in one closure by `routes/assets.rs`
-  (`concat!`, order: core, trash, map, settings, storage, uploads, sheets,
+  (`concat!`, order: core, trash, map, settings, storage, uploads, sheets, side, drag,
   actions, events). The parts share scope on purpose: pages reassign `state`.
   Add a part to the `concat!` list; `every_part_of_the_page_script_is_served`
   fails otherwise and `the_page_script_parses` runs `node --check` on the whole.
@@ -35,7 +35,7 @@
   'self'`); `app.js` uses `data-action` delegation and a hash router
   (`#/f/dir`, `#/n/id`, `#/new/dir`, `#/search/q`, `#/tags`, `#/trash`).
   `markdown.js` escapes everything first and numbers checkboxes
-  exactly like `Note::toggle_checkbox` (`notes::checkbox_line`: `-`/`*`/`+`/`1.`/`1)` then ` [ ]`/`[x]`, text optional; counted inside code fences, not inside `>` quotes); tested by
+  exactly like `Note::toggle_checkbox` (`notes::checkbox_line`: `-`/`*`/`+`/`1.`/`1)`, 1-4 spaces, then `[ ]`/`[x]`, text optional; counted inside code fences, not inside `>` quotes); tested by
   `tests/markdown.test.js` via node. API extras: `/api/folders`,
   `/api/trash`, `/api/trash/{id}/restore`, PATCH `pinned`.
 - Live-preview editing: there is no editor view. `editing.js` (pure, node-tested
@@ -382,3 +382,28 @@
   download. The main CSP allows `frame-src 'self'` for it.
 - With Felix open beside the page (>=1200 px), sheets, the scrim and the note
   toolbar (`.actions`) are centred in the space left of the chat too.
+- Layout variables live on `body`: `--side` (sidebar width, 0 under 1000 px),
+  `--right` (the chat's width while it is open beside the page, from 1200 px)
+  and `--mid` (the centre between them). Fixed things (toolbar, select bar,
+  toasts, record pill, FABs, activity, scrim padding, the map) use them, so the
+  sidebar, Felix and the page never cover each other. The map gets
+  `container: map`, so its panel (`min(380px, 52cqw)`) and tools shrink with it
+  and the graph redraws through a ResizeObserver.
+- Sidebar (`app/side.js`, >=1000 px): New note, Search (⌘K / Ctrl K anywhere),
+  All notes, Ask Felix, Map of ideas, Record, Note from a file, top-level
+  folders with counts (+ makes one), and Drafts / Trash / Storage / Settings at
+  the foot. `loadSideFolders` runs after every route; `aria-current` marks the
+  place. Narrowed to icons with the fold button (`leo-side` in localStorage).
+  The header keeps back, crumbs (or the page name) and Felix; the ⋯ menu,
+  search button and FABs are phone-only.
+- Felix's width: drag `.chat-resize` on the panel's left edge (or arrow keys
+  on it; double-click or Home resets). Kept in `leo-chat-width`, applied as
+  `--chat-w` on `<html>`, clamped to 420 px .. leaving 380 px of page.
+- Drag and drop (`app/drag.js`): note cards (`data-from`), folder cards and
+  sidebar folders are draggable; folder cards, sidebar folders, crumbs and
+  All notes / the brand (`data-action="home"`) take drops. A note moves with
+  `/api/notes/{id}/move`, a folder with POST `/api/dirs/move {from, into}`
+  (`Store::move_dir`: refuses itself, its own subfolder, a name already there;
+  emptied folders on disk are removed); both toast Undo. Files dropped on the
+  page open the upload sheet (into the folder dropped on, if any); on Felix
+  they are read for him, and a note card dropped on him is attached.

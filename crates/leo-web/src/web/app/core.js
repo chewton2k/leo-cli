@@ -37,6 +37,10 @@ const ICON = {
   map: svg('<circle cx="6" cy="7" r="2.2"/><circle cx="18" cy="6" r="2.2"/><circle cx="12" cy="17.5" r="2.2"/><path d="M7.4 8.9l3.5 6.7M16.9 7.9l-3.8 7.8M8.2 6.8l7.6-.6"/>'),
   mic: svg('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>'),
   screen: svg('<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>'),
+  sidebar: svg('<rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M9 4v16"/>'),
+  chat: svg('<path d="M5 18.5V7a2.5 2.5 0 0 1 2.5-2.5h9A2.5 2.5 0 0 1 19 7v6.5a2.5 2.5 0 0 1-2.5 2.5H9z"/><path d="M9 9.5h6M9 12.5h4"/>'),
+  pencil: svg('<path d="M4 20l1-4.5L15.5 5a2.1 2.1 0 0 1 3 3L8 18.5z"/><path d="M13.5 7l3 3"/>'),
+  storage: svg('<ellipse cx="12" cy="6" rx="7.5" ry="2.8"/><path d="M4.5 6v6c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8V6"/><path d="M4.5 12v6c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8v-6"/>'),
   cloud: svg('<path d="M7 18a4.5 4.5 0 0 1-.5-9 6 6 0 0 1 11.3 1.5A3.8 3.8 0 0 1 17.5 18z"/><path d="M4 4l16 16"/>'),
 };
 
@@ -62,6 +66,7 @@ const chat = felix.create({
     if (open && !saving.unsaved()) showNote(note.id);
     toast(open && saving.unsaved() ? 'Felix changed this note while you were typing; reopen it to see the change.' : `Changed “${note.title}”`, { action: 'Open', run: () => go(noteHash(note.id)) });
   },
+  onToggle: () => drawSide(),
   onSaved: (note) => {
     showLatest().catch(() => {});
     toast(`Saved as a note${note.directory ? ` in ${note.directory}` : ''}`, { action: 'Open', run: () => go(noteHash(note.id)) });
@@ -188,7 +193,7 @@ function card(note, { words = [], showFolder = false, pick = null, why = null } 
   const text = snippet(note.body, words);
   const open = pick
     ? `class="card pick-card${pick.on ? ' picked' : ''}" role="checkbox" tabindex="0" aria-checked="${pick.on}" data-action="folder-pick" data-key="${esc(pick.key)}"`
-    : `class="card" role="link" tabindex="0" data-action="open-note" data-id="${esc(note.id)}"`;
+    : `class="card" role="link" tabindex="0" draggable="true" data-action="open-note" data-id="${esc(note.id)}" data-title="${esc(note.title)}" data-from="${esc(note.directory || '')}"`;
   const corner = pick ? `<span class="pick-box${pick.on ? ' on' : ''}" aria-hidden="true">${ICON.check}</span>` : pinButton(note);
   return `<div ${open}>
     <div class="card-title"><span>${words.length ? highlight(note.title, words) : esc(note.title)}</span>${corner}</div>
@@ -228,6 +233,14 @@ function back() {
   go('#/');
 }
 
+const PAGE_NAMES = { '': 'All notes', f: 'All notes', search: 'Search', trash: 'Trash', map: 'Map of ideas', settings: 'Settings', record: 'Record', drafts: 'Drafts', draft: 'Drafts', new: 'New note' };
+
+function pageName() {
+  const [, kind = '', rest = ''] = location.hash.match(/^#\/([a-z]*)\/?(.*)$/) || [];
+  if (kind === 'settings' && rest === 'storage') return 'Storage';
+  return PAGE_NAMES[kind] || '';
+}
+
 function chrome({ dir = '', showBack = false, fab = null, actions = null }) {
   $('#back').hidden = !showBack;
   const crumbs = $('#crumbs');
@@ -240,7 +253,8 @@ function chrome({ dir = '', showBack = false, fab = null, actions = null }) {
       })
       .join('');
   } else {
-    crumbs.innerHTML = '';
+    const name = pageName();
+    crumbs.innerHTML = name ? `<span class="page-name">${esc(name)}</span>` : '';
   }
   floating.innerHTML = (fab || '') + (actions || '');
   document.title = dir ? `${folderLabel(dir)} · leo` : 'leo';
@@ -341,7 +355,7 @@ function drawFolder() {
       .map((d) => {
         const full = dir ? `${dir}/${d.name}` : d.name;
         const key = `d:${full}`;
-        return `<button class="folder${sel ? ' picking' : ''}${picked.has(key) ? ' picked' : ''}" data-action="${sel ? 'folder-pick' : 'open-folder'}" data-key="${esc(key)}" data-dir="${esc(full)}" aria-pressed="${sel ? picked.has(key) : ''}">${ICON.folder}<span><span class="name">${esc(d.name)}</span><span class="count">${d.notes} note${d.notes === 1 ? '' : 's'}</span></span>${tick(key)}</button>`;
+        return `<button class="folder${sel ? ' picking' : ''}${picked.has(key) ? ' picked' : ''}" data-action="${sel ? 'folder-pick' : 'open-folder'}" data-key="${esc(key)}" data-dir="${esc(full)}"${sel ? '' : ' draggable="true"'} aria-pressed="${sel ? picked.has(key) : ''}">${ICON.folder}<span><span class="name">${esc(d.name)}</span><span class="count">${d.notes} note${d.notes === 1 ? '' : 's'}</span></span>${tick(key)}</button>`;
       })
       .join('')}</div>`;
   }

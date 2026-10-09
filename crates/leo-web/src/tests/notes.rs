@@ -314,3 +314,37 @@ fn an_excerpt_starts_near_the_first_match_and_counts_only_real_tasks() {
         [2, 3]
     );
 }
+
+#[test]
+fn a_folder_moves_into_another_with_its_notes_and_leaves_no_empty_folder_behind() {
+    let (state, dir, ids) = state_with(&[("Lecture", "cs130/week1"), ("Other", "cs162")]);
+    let moved = |from: &str, into: &str| {
+        run(move_dir(
+            State(state.clone()),
+            Json(MoveDirBody {
+                from: from.into(),
+                into: into.into(),
+            }),
+        ))
+    };
+    let out = moved("cs130/week1", "cs162").unwrap();
+    assert_eq!(out.0["path"], "cs162/week1");
+    let store = state.fresh();
+    assert_eq!(store.find_note(&ids[0]).unwrap().directory, "cs162/week1");
+    assert!(!store.dir_exists("cs130/week1"));
+    assert!(dir.path().join("notes/cs162/week1/Lecture.md").exists());
+    assert!(!dir.path().join("notes/cs130/week1").exists());
+    drop(store);
+
+    assert_eq!(
+        moved("cs162", "cs162/week1").err(),
+        Some(StatusCode::CONFLICT)
+    );
+    assert_eq!(moved("nowhere", "cs162").err(), Some(StatusCode::NOT_FOUND));
+    assert_eq!(moved("../outside", "").err(), Some(StatusCode::BAD_REQUEST));
+    assert_eq!(
+        moved("cs162", "../outside").err(),
+        Some(StatusCode::BAD_REQUEST)
+    );
+    assert_eq!(moved("cs162/week1", "").unwrap().0["path"], "week1");
+}

@@ -11,6 +11,8 @@ const APP_JS: &str = concat!(
     include_str!("../web/app/storage.js"),
     include_str!("../web/app/uploads.js"),
     include_str!("../web/app/sheets.js"),
+    include_str!("../web/app/side.js"),
+    include_str!("../web/app/drag.js"),
     include_str!("../web/app/actions.js"),
     include_str!("../web/app/events.js"),
     "})();\n",
@@ -110,7 +112,7 @@ mod tests {
                 parts += 1;
             }
         }
-        assert_eq!(parts, 9);
+        assert_eq!(parts, 11);
     }
 
     #[test]

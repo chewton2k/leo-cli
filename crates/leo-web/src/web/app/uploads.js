@@ -84,8 +84,8 @@ function drawPicked() {
   $('#upload-pick-label').textContent = picked.length ? 'Add more files' : 'Choose files, or take photos';
 }
 
-async function uploadSheet(files) {
-  const here = state.view === 'folder' ? state.dir : state.view === 'note' ? state.dir || '' : '';
+async function uploadSheet(files, into) {
+  const here = into !== undefined ? into : state.view === 'folder' ? state.dir : state.view === 'note' ? state.dir || '' : '';
   picked = files ? [...files] : [];
   let folders = [];
   try {

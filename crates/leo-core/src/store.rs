@@ -1332,6 +1332,51 @@ impl Store {
         titles
     }
 
+    pub fn move_dir(&mut self, from: &str, into: &str) -> Option<String> {
+        let from = from.trim_matches('/');
+        let into = into.trim_matches('/');
+        if from.is_empty() || !self.dir_exists(from) || !self.dir_exists(into) {
+            return None;
+        }
+        let inside = format!("{from}/");
+        if into == from || into.starts_with(&inside) {
+            return None;
+        }
+        let name = from.rsplit('/').next()?;
+        let to = if into.is_empty() {
+            name.to_string()
+        } else {
+            format!("{into}/{name}")
+        };
+        if to == from || self.dir_exists(&to) || self.validate_directory(&to).is_err() {
+            return None;
+        }
+        let renamed = |path: &str| -> Option<String> {
+            if path == from {
+                Some(to.clone())
+            } else {
+                path.strip_prefix(&inside)
+                    .map(|rest| format!("{to}/{rest}"))
+            }
+        };
+        let now = Utc::now();
+        for note in &mut self.notes {
+            if let Some(dir) = renamed(&note.directory) {
+                note.directory = dir;
+                note.updated_at = now;
+            }
+        }
+        let mut directories: Vec<String> = self
+            .directories
+            .iter()
+            .map(|d| renamed(d).unwrap_or_else(|| d.clone()))
+            .collect();
+        add_with_parents(&mut directories, &to);
+        directories.dedup();
+        self.directories = directories;
+        Some(to)
+    }
+
     pub fn move_note(&mut self, id_prefix: &str, new_dir: &str) -> Option<String> {
         self.validate_directory(new_dir).ok()?;
         let note = self.find_note_mut(id_prefix)?;
@@ -1434,6 +1479,45 @@ mod tests {
         store.create_note("In cs162", "b", vec![], "cs162").unwrap();
         store.save().unwrap();
         (store, dir)
+    }
+
+    #[test]
+    fn a_folder_moves_with_everything_in_it_and_survives_a_reload() {
+        let (mut store, dir) = store_with_tree();
+        assert_eq!(
+            store.move_dir("cs130/lec", "cs162").as_deref(),
+            Some("cs162/lec")
+        );
+        assert!(!store.dir_exists("cs130/lec"));
+        assert!(store.dir_exists("cs162/lec"));
+        store.save().unwrap();
+        let again = Store::load_from(&dir.path().join("notes")).unwrap();
+        let moved: Vec<&str> = again
+            .notes
+            .iter()
+            .filter(|n| n.title.starts_with("In lec"))
+            .map(|n| n.directory.as_str())
+            .collect();
+        assert_eq!(moved, vec!["cs162/lec", "cs162/lec"]);
+        assert_eq!(again.subdirs("cs162"), vec!["lec".to_string()]);
+        assert!(again.subdirs("cs130").is_empty());
+        assert_eq!(store.move_dir("cs162/lec", "").as_deref(), Some("lec"));
+        assert_eq!(store.subdirs(""), vec!["cs130", "cs162", "lec"]);
+    }
+
+    #[test]
+    fn a_folder_never_moves_into_itself_onto_another_or_nowhere() {
+        let (mut store, _d) = store_with_tree();
+        store.create_dir("cs162/lec");
+        assert_eq!(store.move_dir("cs130", "cs130"), None);
+        assert_eq!(store.move_dir("cs130", "cs130/lec"), None);
+        assert_eq!(store.move_dir("cs130/lec", "cs162"), None);
+        assert_eq!(store.move_dir("cs130/lec", "cs130"), None);
+        assert_eq!(store.move_dir("", "cs162"), None);
+        assert_eq!(store.move_dir("nope", "cs162"), None);
+        assert_eq!(store.move_dir("cs162", "nope"), None);
+        assert!(store.dir_exists("cs130/lec"));
+        assert_eq!(store.dir_contents("cs130"), (3, 2));
     }
 
     #[test]

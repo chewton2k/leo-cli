@@ -9,6 +9,11 @@ document.addEventListener('click', (e) => {
 
 document.addEventListener('keydown', (e) => {
   const typing = e.target.closest('input, textarea, select, [contenteditable]');
+  if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    searchEverywhere();
+    return;
+  }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's' && state.view === 'note') {
     e.preventDefault();
     flush().catch(fail);
@@ -159,6 +164,7 @@ async function render() {
     else if (kind === 'drafts') showDrafts();
     else if (kind === 'draft') await showDraft(arg);
     else await showFolder('');
+    loadSideFolders();
   } catch (e) {
     if (e.status === 404 && hash.startsWith('#/n/')) {
       toast('That note is not there any more.', { bad: true });
@@ -170,15 +176,6 @@ async function render() {
     }
   }
 }
-
-window.addEventListener('dragover', (e) => {
-  if (state.view === 'folder' && !$('.scrim') && e.dataTransfer && [...e.dataTransfer.types].includes('Files')) e.preventDefault();
-});
-window.addEventListener('drop', (e) => {
-  if (state.view !== 'folder' || $('.scrim') || !e.dataTransfer || !e.dataTransfer.files.length) return;
-  e.preventDefault();
-  uploadSheet(e.dataTransfer.files).catch(fail);
-});
 
 window.addEventListener('online', () => saving.retry());
 route();

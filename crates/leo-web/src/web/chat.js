@@ -190,8 +190,9 @@
     return { sent, waiting };
   }
   const FILE_TYPES = '.pdf,.docx,.pptx,.txt,.md,image/*';
+  const NOTE_DRAG = 'application/x-leo-note';
 
-  function create({ render, escape, onOpen = () => {}, storage = root.localStorage, prepare = null, notify = () => {}, onSaved = () => {}, onChanged = () => {}, onUndone = () => {} }) {
+  function create({ render, escape, onOpen = () => {}, storage = root.localStorage, prepare = null, notify = () => {}, onSaved = () => {}, onChanged = () => {}, onUndone = () => {}, onToggle = () => {} }) {
     const saved = load(storage);
     const state = { open: false, id: saved.id || newId(), mode: modeOf(saved.mode), messages: saved.messages, refs: saved.refs, context: null, dropped: null, busy: null, streak: 0, pick: null, chats: null, sidebar: null, doomed: null, asking: null, files: [], sent: [], filesFor: null, review: [] };
     const panel = document.createElement('aside');
@@ -311,6 +312,99 @@
 
     const SIDEBAR = 'leo-chat-sidebar';
     const wide = () => Boolean(root.matchMedia && root.matchMedia('(min-width: 900px)').matches);
+
+    const WIDTH = 'leo-chat-width';
+    const LEAST_WIDTH = 420;
+    const grip = document.createElement('div');
+    grip.className = 'chat-resize';
+    grip.tabIndex = 0;
+    grip.title = 'Drag to make Felix wider or narrower; double-click to reset';
+    grip.setAttribute('role', 'separator');
+    grip.setAttribute('aria-orientation', 'vertical');
+    grip.setAttribute('aria-label', 'Felix width');
+    panel.prepend(grip);
+
+    function keptWidth() {
+      try {
+        const kept = Number(storage.getItem(WIDTH));
+        return kept > 0 ? kept : null;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function widest() {
+      const beside = parseFloat(root.getComputedStyle(document.body).paddingLeft) || 0;
+      const room = root.innerWidth >= 1200 ? 380 : 120;
+      return Math.max(LEAST_WIDTH, root.innerWidth - beside - room);
+    }
+
+    function setWidth(px, keep) {
+      const style = document.documentElement.style;
+      if (px === null) {
+        style.removeProperty('--chat-w');
+        grip.removeAttribute('aria-valuenow');
+        if (keep) {
+          try {
+            storage.removeItem(WIDTH);
+          } catch (e) {}
+        }
+        return;
+      }
+      const width = Math.round(Math.min(widest(), Math.max(LEAST_WIDTH, px)));
+      style.setProperty('--chat-w', `${width}px`);
+      grip.setAttribute('aria-valuenow', String(width));
+      grip.setAttribute('aria-valuemin', String(LEAST_WIDTH));
+      grip.setAttribute('aria-valuemax', String(widest()));
+      if (keep) {
+        try {
+          storage.setItem(WIDTH, String(width));
+        } catch (e) {}
+      }
+    }
+
+    const fitWidth = () => setWidth(keptWidth(), false);
+    fitWidth();
+    root.addEventListener('resize', fitWidth);
+
+    let dragFrom = null;
+    let gripTap = null;
+    grip.addEventListener('pointerdown', (e) => {
+      if (!wide() || e.button !== 0) return;
+      e.preventDefault();
+      if (gripTap && e.timeStamp - gripTap.at < 400 && Math.abs(e.clientX - gripTap.x) < 6) {
+        gripTap = null;
+        setWidth(null, true);
+        return;
+      }
+      dragFrom = { x: e.clientX, width: panel.getBoundingClientRect().width };
+      grip.setPointerCapture(e.pointerId);
+      document.body.classList.add('chat-resizing');
+    });
+    grip.addEventListener('pointermove', (e) => {
+      if (!dragFrom || !grip.hasPointerCapture(e.pointerId)) return;
+      setWidth(dragFrom.width + dragFrom.x - e.clientX, false);
+    });
+    const letGo = (e) => {
+      if (!dragFrom || !grip.hasPointerCapture(e.pointerId)) return;
+      const tapped = Math.abs(e.clientX - dragFrom.x) < 4;
+      dragFrom = null;
+      grip.releasePointerCapture(e.pointerId);
+      document.body.classList.remove('chat-resizing');
+      gripTap = tapped ? { at: e.timeStamp, x: e.clientX } : null;
+      if (!tapped) setWidth(panel.getBoundingClientRect().width, true);
+    };
+    grip.addEventListener('pointerup', letGo);
+    grip.addEventListener('pointercancel', letGo);
+    grip.addEventListener('keydown', (e) => {
+      const step = e.shiftKey ? 96 : 32;
+      const now = panel.getBoundingClientRect().width;
+      if (e.key === 'ArrowLeft') setWidth(now + step, true);
+      else if (e.key === 'ArrowRight') setWidth(now - step, true);
+      else if (e.key === 'Home') setWidth(null, true);
+      else return;
+      e.preventDefault();
+    });
 
     function sidebarOpen() {
       if (state.sidebar !== null) return state.sidebar;
@@ -1096,6 +1190,7 @@
       state.open = force === undefined ? !state.open : force;
       panel.hidden = !state.open;
       document.body.classList.toggle('chat-open', state.open);
+      onToggle(state.open);
       if (state.open) {
         panel.classList.toggle('with-history', sidebarOpen());
         if (sidebarOpen()) loadChats();
@@ -1193,6 +1288,41 @@
       if (state.busy) state.busy.abort();
       else send(input.value);
     });
+    const carries = (e, type) => Boolean(e.dataTransfer && [...e.dataTransfer.types].includes(type));
+    panel.addEventListener('dragover', (e) => {
+      if (!carries(e, NOTE_DRAG) && !(prepare && carries(e, 'Files'))) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      panel.classList.add('drop-here');
+    });
+    panel.addEventListener('dragleave', (e) => {
+      if (!panel.contains(e.relatedTarget)) panel.classList.remove('drop-here');
+    });
+    panel.addEventListener('drop', (e) => {
+      panel.classList.remove('drop-here');
+      let note = null;
+      try {
+        note = carries(e, NOTE_DRAG) ? JSON.parse(e.dataTransfer.getData(NOTE_DRAG)) : null;
+      } catch (err) {
+        note = null;
+      }
+      const found = prepare ? [...e.dataTransfer.files] : [];
+      if (!note && !found.length) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (note) {
+        if (state.refs.length >= MOST_REFS && !state.refs.some((r) => r.id === note.id)) notify(`A message can bring up to ${MOST_REFS} notes; remove one first.`);
+        state.refs = addRef(state.refs, note);
+        drawRefs();
+        remember();
+      }
+      if (found.length) {
+        if (state.files.length + state.sent.length >= MOST_FILES) notify(`A chat holds up to ${MOST_FILES} documents; remove one first.`);
+        else addFiles(pastedNames(found));
+      }
+      input.focus();
+    });
+
     input.addEventListener('paste', (e) => {
       const found = [...((e.clipboardData && e.clipboardData.files) || [])];
       if (!found.length) return;
@@ -1274,5 +1404,5 @@
     };
   }
 
-  root.leoChat = { create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS };
+  root.leoChat = { NOTE_DRAG, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS };
 })(typeof window !== 'undefined' ? window : globalThis);

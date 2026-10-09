@@ -899,6 +899,8 @@
     canvas.addEventListener('wheel', wheel, { passive: false });
     canvas.addEventListener('dblclick', dbl);
     root.addEventListener('resize', resize);
+    const watcher = typeof root.ResizeObserver === 'function' ? new root.ResizeObserver(resize) : null;
+    if (watcher) watcher.observe(canvas);
     if (media && media.addEventListener) media.addEventListener('change', scheme);
 
     readColors();
@@ -934,6 +936,7 @@
         canvas.removeEventListener('wheel', wheel);
         canvas.removeEventListener('dblclick', dbl);
         root.removeEventListener('resize', resize);
+        if (watcher) watcher.disconnect();
         if (media && media.removeEventListener) media.removeEventListener('change', scheme);
       },
     };

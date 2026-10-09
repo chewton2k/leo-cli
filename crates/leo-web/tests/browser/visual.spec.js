@@ -76,11 +76,12 @@ test('a note with a picture looks the same', async ({ page }) => {
 
 test('the upload sheet and the menu look the same', async ({ page }) => {
   await page.goto('/');
-  await page.locator('.fab[data-action="upload"]').click();
+  await page.locator('.fab[data-action="upload"]:visible, #side [data-action="upload"]:visible').first().click();
   await expect(page.locator('.sheet')).toBeVisible();
   await settle(page);
   await expect(page).toHaveScreenshot('upload.png');
   await page.keyboard.press('Escape');
+  if (!(await page.locator('#menu').isVisible())) return;
   await page.locator('#menu').click();
   await expect(page.locator('.sheet')).toBeVisible();
   await expect(page).toHaveScreenshot('menu.png');

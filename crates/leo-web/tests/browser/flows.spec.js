@@ -8,6 +8,33 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator('#app')).not.toBeEmpty();
 });
 
+async function goPlace(page, action) {
+  if (await page.locator('#side').isHidden()) {
+    await page.locator('#menu').click();
+    return page.locator(`.sheet [data-action="${action}"]`).click();
+  }
+  await page.locator(`#side [data-action="${action}"]`).click();
+}
+
+function control(page, action) {
+  return page.locator(`.fab[data-action="${action}"]:visible, #side [data-action="${action}"]:visible`).first();
+}
+
+async function openSearchBox(page) {
+  if (await page.locator('#side').isHidden()) return page.locator('#search-toggle').click();
+  await page.locator('#side [data-action="side-search"]').click();
+}
+
+async function dropFiles(page, selector, files) {
+  const data = await page.evaluateHandle((list) => {
+    const transfer = new DataTransfer();
+    for (const f of list) transfer.items.add(new File([f.text], f.name, { type: f.type }));
+    return transfer;
+  }, files);
+  await page.dispatchEvent(selector, 'dragover', { dataTransfer: data });
+  await page.dispatchEvent(selector, 'drop', { dataTransfer: data });
+}
+
 async function openNote(page, title) {
   const response = await page.request.post('/api/notes', { data: { title, body: 'Original sentence' } });
   expect(response.status()).toBe(201);
@@ -28,8 +55,7 @@ test('a failed save survives navigation and reload, then saves on reconnection',
   await page.locator('#back').click();
   await refused;
   await page.reload();
-  await page.locator('#menu').click();
-  await page.locator('[data-action="drafts"]').click();
+  await goPlace(page, 'drafts');
   await page.getByRole('button', { name: /Draft recovery/ }).click();
   await expect(page.locator('#doc')).toContainText('Keep this phone draft');
   const original = await (await page.request.get(`/api/notes/${note.id}`)).json();
@@ -102,9 +128,126 @@ test('the title placeholder sits behind the cursor and comes back when the title
   expect(await title.evaluate((el) => el.innerHTML)).toBe('');
 });
 
+test('a tap on any checkbox ticks it and saves, without opening the line', async ({ page }) => {
+  const body = ['- [ ] dash', '* [ ] star', '+ [ ] plus', '1. [ ] numbered', '- [ ] parent', '  - [ ] nested', '- [x] done', '- [ ]', '-   [ ] wide', '', 'Plain line'].join('\n');
+  const note = await (await page.request.post('/api/notes', { data: { title: `Ticks ${test.info().project.name}`, body } })).json();
+  await page.goto(`/#/n/${note.id}`);
+  const boxes = page.locator('.doc input[data-box]');
+  await expect(boxes).toHaveCount(9);
+  for (let i = 0; i < 9; i++) {
+    const box = boxes.nth(i);
+    const was = await box.isChecked();
+    await box.click();
+    await expect(boxes.nth(i), `box ${i + 1} toggles`).toBeChecked({ checked: !was });
+    await expect(page.locator('.doc textarea')).toHaveCount(0);
+  }
+  await expect.poll(async () => (await (await page.request.get(`/api/notes/${note.id}`)).json()).body, { timeout: 5000 })
+    .toBe(['- [x] dash', '* [x] star', '+ [x] plus', '1. [x] numbered', '- [x] parent', '  - [x] nested', '- [ ] done', '- [x]', '-   [x] wide', '', 'Plain line'].join('\n'));
+  await page.locator('.doc .task-item', { hasText: 'dash' }).locator('span').click();
+  await expect(page.locator('.doc textarea')).toHaveCount(1);
+});
+
+test('on a wide screen the sidebar reaches every place and can be narrowed', async ({ page }) => {
+  const wide = test.info().project.name === 'desktop';
+  await page.request.post('/api/dirs', { data: { path: 'side-course' } });
+  await page.goto('/');
+  const side = page.locator('#side');
+  if (!wide) {
+    await expect(side).toBeHidden();
+    await expect(page.locator('#menu')).toBeVisible();
+    return;
+  }
+  await expect(side).toBeVisible();
+  await expect(page.locator('#menu')).toBeHidden();
+  await expect(side.locator('[data-action="home"].side-row')).toHaveAttribute('aria-current', 'page');
+  for (const [action, url] of [['map', /#\/map$/], ['trash', /#\/trash$/], ['storage', /#\/settings\/storage$/], ['settings', /#\/settings$/], ['drafts', /#\/drafts$/]]) {
+    await side.locator(`[data-action="${action}"]`).click();
+    await expect(page).toHaveURL(url);
+    await expect(side.locator(`[data-action="${action}"]`)).toHaveAttribute('aria-current', 'page');
+  }
+  await side.locator('[data-action="open-folder"][data-dir="side-course"]').click();
+  await expect(page).toHaveURL(/#\/f\/side-course$/);
+  await expect(side.locator('[data-action="open-folder"][data-dir="side-course"]')).toHaveAttribute('aria-current', 'page');
+  await side.locator('[data-action="chat"]').click();
+  await expect(page.locator('#chat')).toBeVisible();
+  await expect(side.locator('[data-action="chat"]')).toHaveClass(/\bon\b/);
+  await page.locator('[data-chat="close"]').click();
+
+  await page.keyboard.press('ControlOrMeta+k');
+  await expect(page.locator('#search-input')).toBeFocused();
+  await page.keyboard.press('Escape');
+
+  const full = (await side.boundingBox()).width;
+  await side.locator('[data-action="side-fold"]').click();
+  await expect(page.locator('body')).toHaveClass(/side-mini/);
+  const narrow = (await side.boundingBox()).width;
+  expect(narrow).toBeLessThan(80);
+  expect((await page.locator('main').boundingBox()).x).toBeGreaterThanOrEqual(narrow);
+  await expect(side.locator('.side-row .side-label').first()).toBeHidden();
+  await page.reload();
+  await expect(page.locator('body')).toHaveClass(/side-mini/);
+  await side.locator('[data-action="side-fold"]').click();
+  expect((await side.boundingBox()).width).toBe(full);
+});
+
+test.describe('drag and drop', () => {
+  test('a note and a folder drag into other folders, and Undo puts them back', async ({ page }) => {
+    test.skip(test.info().project.name !== 'desktop', 'dragging is for a mouse');
+    const tag = Date.now().toString(36);
+    const [a, b] = [`dd-a-${tag}`, `dd-b-${tag}`];
+    for (const dir of [a, b]) await page.request.post('/api/dirs', { data: { path: dir } });
+    const note = await (await page.request.post('/api/notes', { data: { title: `Drag me ${tag}`, body: 'x' } })).json();
+    const where = async () => (await (await page.request.get(`/api/notes/${note.id}`)).json()).directory;
+    await page.goto('/');
+    const card = page.locator(`.card[data-id="${note.id}"]`);
+    await card.dragTo(page.locator(`main .folder[data-dir="${a}"]`));
+    await expect(page.locator('.toast')).toContainText(`Moved “Drag me ${tag}” to ${a}`);
+    expect(await where()).toBe(a);
+    await expect(card).toHaveCount(0);
+    await page.locator('.toast button').click();
+    await expect(card).toBeVisible();
+    expect(await where()).toBe('');
+
+    await card.dragTo(page.locator(`#side [data-action="open-folder"][data-dir="${b}"]`));
+    await expect.poll(where).toBe(b);
+
+    await page.locator(`main .folder[data-dir="${b}"]`).dragTo(page.locator(`main .folder[data-dir="${a}"]`));
+    await expect(page.locator('.toast')).toContainText(`Moved ${b} into ${a}`);
+    expect(await where()).toBe(`${a}/${b}`);
+    await expect(page.locator(`main .folder[data-dir="${b}"]`)).toHaveCount(0);
+    const inside = await (await page.request.get(`/api/dirs?parent=${a}`)).json();
+    expect(inside.map((d) => d.name)).toEqual([b]);
+    await page.locator('.toast button').click();
+    await expect(page.locator(`main .folder[data-dir="${b}"]`)).toBeVisible();
+    expect(await where()).toBe(b);
+
+    await page.goto(`/#/f/${b}`);
+    await page.locator(`.card[data-id="${note.id}"]`).dragTo(page.locator('#side .side-row[data-action="home"]'));
+    await expect.poll(where).toBe('');
+  });
+
+  test('files dropped on the page make a note, and on Felix go to him', async ({ page }) => {
+    test.skip(test.info().project.name !== 'desktop', 'dragging is for a mouse');
+    await page.goto('/');
+    await dropFiles(page, 'main', [{ name: 'dropped.txt', type: 'text/plain', text: 'Heaps keep the minimum at the root.' }]);
+    await expect(page.locator('#upload-list')).toContainText('dropped.txt');
+    await page.keyboard.press('Escape');
+
+    const note = await (await page.request.post('/api/notes', { data: { title: 'Dragged to Felix', body: 'x' } })).json();
+    await page.reload();
+    await page.locator('#chat-toggle').click();
+    const chat = page.locator('#chat');
+    await dropFiles(page, '#chat', [{ name: 'for-felix.txt', type: 'text/plain', text: 'Heaps keep the minimum at the root.' }]);
+    await expect(chat.locator('.chat-ref.doc', { hasText: 'for-felix.txt' })).toBeVisible();
+    await expect(page.locator('.scrim')).toHaveCount(0);
+    await page.locator(`.card[data-id="${note.id}"]`).dragTo(chat.locator('#chat-input'));
+    await expect(chat.locator('.chat-ref', { hasText: 'Dragged to Felix' })).toBeVisible();
+  });
+});
+
 test('search finds a note named after a command', async ({ page }) => {
   await page.request.post('/api/notes', { data: { title: 'backup checklist', body: 'Check my backups' } });
-  await page.locator('#search-toggle').click();
+  await openSearchBox(page);
   await page.locator('#search-input').fill('backup');
   await expect(page.locator('.card').filter({ hasText: 'backup checklist' })).toBeVisible();
 });
@@ -116,7 +259,7 @@ test.describe('plain HTTP access', () => {
     await page.goto(`http://leo-http.test:31831/?token=${token}`);
     expect(await page.evaluate(() => window.isSecureContext)).toBe(false);
     expect(await page.evaluate(() => typeof crypto.randomUUID)).toBe('undefined');
-    await page.locator('.fab[data-action="new"]').click();
+    await control(page, 'new').click();
     await expect(page.locator('#title')).toBeVisible();
     await page.locator('#title').fill('Created over plain HTTP');
     await expect(page.locator('#save-state')).toHaveText('Saved');
@@ -197,6 +340,30 @@ test.describe('map of ideas', () => {
     await expect(panel.locator('.map-row', { hasText: 'Graph traversals' })).toContainText('Built on by');
     await panel.locator('[data-action="open-note"]').click();
     await expect(page.locator('#title')).toHaveText('Heaps');
+  });
+
+  test('with Felix open, the map and its details stay beside him', async ({ page }) => {
+    test.skip(test.info().project.name !== 'desktop', 'Felix covers the page on phones');
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const made = await seed(page);
+    await page.goto(`/#/map/${made.Scheduling.id}`);
+    const panel = page.locator('#map-panel');
+    await expect(panel.locator('h3')).toHaveText('Scheduling');
+    await page.locator('#chat-toggle').click();
+    await expect(page.locator('#chat')).toBeVisible();
+    const chat = await page.locator('#chat').boundingBox();
+    const side = await page.locator('#side').boundingBox();
+    const map = await page.locator('#map').boundingBox();
+    const details = await panel.boundingBox();
+    const tools = await page.locator('.map-tools').boundingBox();
+    expect(map.x).toBeGreaterThanOrEqual(side.x + side.width - 1);
+    expect(map.x + map.width).toBeLessThanOrEqual(chat.x + 1);
+    expect(details.x + details.width).toBeLessThanOrEqual(chat.x);
+    expect(details.width).toBeGreaterThan(220);
+    expect(tools.x + tools.width).toBeLessThanOrEqual(details.x);
+    await expect(panel.locator('h3')).toBeInViewport();
+    await page.locator('[data-chat="close"]').click();
+    expect((await page.locator('#map').boundingBox()).width).toBeGreaterThan(map.width + 300);
   });
 
   test('the toggles show connections across classes and shared ideas', async ({ page }) => {
@@ -666,7 +833,7 @@ test.describe('Felix', () => {
     await page.goto('/');
     await page.locator('#chat-toggle').click();
     const chat = page.locator('#chat');
-    for (const [width, expected] of [[390, 390], [768, 476], [1024, 560], [1440, 691], [2200, 820]]) {
+    for (const [width, expected] of [[390, 390], [768, 476], [1024, 560], [1440, 547], [2200, 760]]) {
       await page.setViewportSize({ width, height: 800 });
       await expect.poll(async () => Math.round((await chat.boundingBox()).width)).toBe(expected);
       const fits = await chat.evaluate((el) => el.scrollWidth <= el.clientWidth + 1);
@@ -675,9 +842,7 @@ test.describe('Felix', () => {
       await expect(page.locator('#chat-send')).toBeInViewport();
       if (width >= 1200) {
         const panel = await chat.boundingBox();
-        const button = await page.locator('.fab[data-action="new"]').boundingBox();
         const list = await page.locator('main').boundingBox();
-        expect(button.x + button.width, `the New note button stays beside the chat at ${width}px`).toBeLessThanOrEqual(panel.x);
         expect(list.x + list.width, `the page moves over at ${width}px`).toBeLessThanOrEqual(panel.x + 1);
       }
     }
@@ -696,8 +861,49 @@ test.describe('Felix', () => {
     expect(bar.x + bar.width).toBeLessThanOrEqual(chat.x);
     await page.locator('[data-action="move"]').click();
     const sheet = await page.locator('.sheet').boundingBox();
+    const side = await page.locator('#side').boundingBox();
     expect(sheet.x + sheet.width).toBeLessThanOrEqual(chat.x);
-    expect(Math.abs(sheet.x + sheet.width / 2 - chat.x / 2)).toBeLessThan(30);
+    expect(Math.abs(sheet.x + sheet.width / 2 - (side.x + side.width + chat.x) / 2)).toBeLessThan(30);
+  });
+
+  test('Felix can be dragged wider or narrower and keeps that width', async ({ page }) => {
+    test.skip(test.info().project.name !== 'desktop', 'the panel takes the whole screen on phones');
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/');
+    await page.locator('#chat-toggle').click();
+    const chat = page.locator('#chat');
+    const settled = () => page.waitForFunction(() => document.getAnimations().every((a) => a.playState !== 'running' || a.effect.getTiming().iterations === Infinity));
+    await settled();
+    const before = await chat.boundingBox();
+    const grip = page.locator('.chat-resize');
+    const handle = await grip.boundingBox();
+    await page.mouse.move(handle.x + handle.width / 2, 300);
+    await page.mouse.down();
+    await page.mouse.move(handle.x + handle.width / 2 - 120, 300, { steps: 6 });
+    await page.mouse.up();
+    const wider = await chat.boundingBox();
+    expect(Math.abs(wider.width - (before.width + 120))).toBeLessThan(4);
+    const main = await page.locator('main').boundingBox();
+    expect(main.x + main.width).toBeLessThanOrEqual(wider.x + 1);
+
+    await page.reload();
+    await page.locator('#chat-toggle').click();
+    await settled();
+    expect(Math.abs((await chat.boundingBox()).width - wider.width)).toBeLessThan(2);
+
+    await grip.focus();
+    await page.keyboard.press('ArrowRight');
+    expect(Math.abs((await chat.boundingBox()).width - (wider.width - 32))).toBeLessThan(2);
+
+    const moved = await grip.boundingBox();
+    await page.mouse.move(moved.x + moved.width / 2, 300);
+    await page.mouse.down();
+    await page.mouse.move(1400, 300, { steps: 4 });
+    await page.mouse.up();
+    expect((await chat.boundingBox()).width).toBe(420);
+
+    await grip.dblclick();
+    expect(Math.abs((await chat.boundingBox()).width - before.width)).toBeLessThan(2);
   });
 
   test('says plainly when no AI is set up', async ({ page }) => {
@@ -715,8 +921,7 @@ test.describe('Felix', () => {
 test.describe('settings', () => {
   test('changes the writing AI and stores a key without ever showing it again', async ({ page }) => {
     await page.goto('/');
-    await page.locator('#menu').click();
-    await page.locator('[data-action="settings"]').click();
+    await goPlace(page, 'settings');
     await expect(page).toHaveURL(/#\/settings$/);
     const writing = page.locator('[data-task-card="writing"]');
     await writing.locator('select[data-set="provider"]').selectOption('gemini');
@@ -790,7 +995,7 @@ test.describe('folders', () => {
     await expect(page.locator('.select-bar')).toContainText('1 selected');
     await page.keyboard.press('Escape');
     await expect(page.locator('.select-bar')).toHaveCount(0);
-    await expect(page.locator('.fab[data-action="new"]')).toBeVisible();
+    await expect(page.locator('.fabs')).toHaveCount(1);
   });
 
   test('undo in the toast brings back what was just moved to the trash', async ({ page }) => {
@@ -994,10 +1199,12 @@ test.describe('readability', () => {
         await look(name);
       }
       await page.goto('/');
-      await page.locator('#menu').click();
-      await look('menu');
-      await page.keyboard.press('Escape');
-      await page.locator('.fab[data-action="upload"]').click();
+      if (await page.locator('#menu').isVisible()) {
+        await page.locator('#menu').click();
+        await look('menu');
+        await page.keyboard.press('Escape');
+      }
+      await control(page, 'upload').click();
       await look('upload');
       await page.keyboard.press('Escape');
       await page.locator('#chat-toggle').click();
@@ -1102,7 +1309,7 @@ test.describe('storage', () => {
     expect((await page.request.delete(`/api/notes/${note.id}`)).ok()).toBe(true);
 
     await page.goto('/#/settings');
-    await page.locator('[data-action="storage"]').click();
+    await page.locator('main [data-action="storage"]').click();
     await expect(page).toHaveURL(/#\/settings\/storage$/);
     await expect(page.locator('.store-big')).toContainText(/KB|MB|bytes/);
     const chats = page.locator('details.store-area[data-area="chats"]');
@@ -1368,7 +1575,7 @@ test.describe('uploads', () => {
       route.fulfill({ json: polls < 2 ? { state: 'working', step: 'Writing the note', done: 0, total: 1 } : { state: 'done', step: '', done: 1, total: 1, note: made.id } });
     });
     await page.goto('/');
-    await page.locator('.fab[data-action="upload"]').click();
+    await control(page, 'upload').click();
     await page.locator('#upload-input').setInputFiles({ name: 'sorting.txt', mimeType: 'text/plain', buffer: Buffer.from('Merge sort splits the list in half.') });
     await expect(page.locator('.upload-file')).toContainText('sorting.txt');
     await page.locator('#upload-title').fill('Sorting');
@@ -1391,7 +1598,7 @@ test.describe('uploads', () => {
       return route.fulfill({ json: { state: 'done', step: '', done: 1, total: 1, note: made.id } });
     });
     await page.goto('/');
-    await page.locator('.fab[data-action="upload"]').click();
+    await control(page, 'upload').click();
     await page.locator('#upload-input').setInputFiles({ name: 'later.txt', mimeType: 'text/plain', buffer: Buffer.from('From the upload.') });
     await page.locator('#upload-go').click();
     await expect(page.locator('.upload-working')).toBeVisible();
@@ -1406,8 +1613,7 @@ test.describe('uploads', () => {
     await page.route('**/api/import', (route) => route.fulfill({ status: 202, json: { id: 'job-2' } }));
     await page.route('**/api/import/job-2', (route) => route.fulfill({ json: { state: 'failed', step: '', done: 0, total: 1, error: 'qwen3:8b cannot read images' } }));
     await page.goto('/');
-    await page.locator('#menu').click();
-    await page.locator('.sheet [data-action="upload"]').click();
+    await goPlace(page, 'upload');
     await page.locator('#upload-input').setInputFiles({ name: 'board.png', mimeType: 'image/png', buffer: Buffer.from('89504e470d0a1a0a', 'hex') });
     await page.locator('#upload-go').click();
     await expect(page.locator('.upload-error')).toContainText('cannot read images');
@@ -1455,7 +1661,7 @@ test.describe('recording', () => {
     const made = await (await page.request.post('/api/notes', { data: { title: 'BFS lecture', body: '## BFS\n- queue' } })).json();
     const seen = stubRecorder(page, { noteId: made.id });
     await page.goto('/');
-    await page.locator('.fab[data-action="record"]').click();
+    await control(page, 'record').click();
     await expect(page).toHaveURL(/#\/record$/);
     await expect(page.locator('.rec-kind')).toHaveCount(2);
     await expect(page.locator('.rec-kind b')).toHaveText(['Microphone', 'Screen']);

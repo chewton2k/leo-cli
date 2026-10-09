@@ -1,6 +1,8 @@
 const actions = {
   back,
   home: () => go('#/'),
+  'side-fold': foldSide,
+  'side-search': searchEverywhere,
   'toggle-search': () => {
     if ($('#search').hidden) {
       openSearch('');
