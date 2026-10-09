@@ -53,7 +53,6 @@ function drawSide() {
       ${folders || '<p class="side-none side-label">Folders you make show up here.</p>'}
     </nav>
     <div class="side-foot">
-      ${sideRow('drafts', ICON.pencil, 'Drafts', { on: here === 'drafts' || here === 'draft' })}
       ${sideRow('trash', ICON.trash, 'Trash', { on: here === 'trash' })}
       ${sideRow('storage', ICON.storage, 'Storage', { on: here === 'storage' })}
       ${sideRow('settings', ICON.gear, 'Settings', { on: here === 'settings' })}

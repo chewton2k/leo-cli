@@ -55,8 +55,8 @@ test('a failed save survives navigation and reload, then saves on reconnection',
   await page.locator('#back').click();
   await refused;
   await page.reload();
-  await goPlace(page, 'drafts');
-  await page.getByRole('button', { name: /Draft recovery/ }).click();
+  await expect(page.locator('.toast')).toContainText('Saving 1 edit that had not reached leo yet');
+  await page.goto(`/#/n/${note.id}`);
   await expect(page.locator('#doc')).toContainText('Keep this phone draft');
   const original = await (await page.request.get(`/api/notes/${note.id}`)).json();
   expect(original.body).toBe('Original sentence');
@@ -160,7 +160,7 @@ test('on a wide screen the sidebar reaches every place and can be narrowed', asy
   await expect(side).toBeVisible();
   await expect(page.locator('#menu')).toBeHidden();
   await expect(side.locator('[data-action="home"].side-row')).toHaveAttribute('aria-current', 'page');
-  for (const [action, url] of [['map', /#\/map$/], ['trash', /#\/trash$/], ['storage', /#\/settings\/storage$/], ['settings', /#\/settings$/], ['drafts', /#\/drafts$/]]) {
+  for (const [action, url] of [['map', /#\/map$/], ['trash', /#\/trash$/], ['storage', /#\/settings\/storage$/], ['settings', /#\/settings$/]]) {
     await side.locator(`[data-action="${action}"]`).click();
     await expect(page).toHaveURL(url);
     await expect(side.locator(`[data-action="${action}"]`)).toHaveAttribute('aria-current', 'page');
@@ -1747,7 +1747,7 @@ test.describe('storage of pictures', () => {
 });
 
 test.describe('export and this browser', () => {
-  test('exports a zip with the parts chosen and clears drafts kept in this browser', async ({ page }) => {
+  test('exports a zip with the parts chosen', async ({ page }) => {
     await page.goto('/#/settings/storage');
     const link = page.locator('#export-link');
     await expect(link).toHaveAttribute('href', '/api/export?uploads=true&chats=true&trash=false');
@@ -1762,21 +1762,7 @@ test.describe('export and this browser', () => {
     expect(bytes.includes(Buffer.from('leo/README.txt'))).toBe(true);
     expect(bytes.includes(Buffer.from('serve-token'))).toBe(false);
 
-    const note = await (await page.request.post('/api/notes', { data: { title: `Draft to clear ${test.info().project.name}`, body: 'saved text' } })).json();
-    await page.route('**/api/notes/*', (route) => (route.request().method() === 'PATCH' ? route.fulfill({ status: 500 }) : route.continue()));
-    await page.goto(`/#/n/${note.id}`);
-    await page.locator('.blk').first().click();
-    await page.locator('.line-edit').fill('unsaved text');
-    await expect(page.locator('#save-state')).toContainText('draft kept');
-    await page.goto('/#/settings/storage');
-    const browser = page.locator('.store-browser');
-    await expect(browser).toContainText('1 unsaved draft');
-    await browser.locator('[data-action="drafts-clear"]').click();
-    await page.locator('[data-action="drafts-clear-now"]').click();
-    await expect(page.locator('.toast')).toContainText('Cleared 1 draft');
-    await expect(browser).toContainText('No unsaved drafts are kept here.');
-    expect(await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith('leo-draft-v1:')))).toEqual([]);
-    expect((await (await page.request.get(`/api/notes/${note.id}`)).json()).body).toBe('saved text');
+    await expect(page.locator('.store-browser')).toHaveCount(0);
   });
 
   test('Felix is the tab icon, even before signing in', async ({ page, playwright }) => {

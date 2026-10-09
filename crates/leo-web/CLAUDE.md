@@ -172,7 +172,7 @@
 - Export: GET `/api/export?uploads&chats&trash` streams a zip built by
   `export::write_zip` into a temp file (notes without dot-dirs, optional
   `.trash`, attachments, chats; never config/keys). Storage page has the export
-  card and "This browser" (`saving.discardAll` clears drafts).
+  card.
 - Folder Select: `#/f/...` Select → pick folders (`d:path`) and notes
   (`n:id`), select bar → POST `/api/trash/move {notes, dirs}`
   (`delete_dir_recursive` + `delete_notes`, root and outside paths refused).
@@ -397,7 +397,7 @@
   and the graph redraws through a ResizeObserver.
 - Sidebar (`app/side.js`, >=1000 px): New note, Search (⌘K / Ctrl K anywhere),
   All notes, Ask Felix, Knowledge graph, Record, Note from a file, top-level
-  folders with counts (+ makes one), and Drafts / Trash / Storage / Settings at
+  folders with counts (+ makes one), and Trash / Storage / Settings at
   the foot. `loadSideFolders` runs after every route; `aria-current` marks the
   place. Narrowed to icons with the fold button (`leo-side` in localStorage).
   The header keeps back, crumbs (or the page name) and Felix; the ⋯ menu,
@@ -501,3 +501,7 @@
 - Screenshot baselines: `pnpm visual:update` rewrites every image
   (`--update-snapshots=all`); plain `--update-snapshots` keeps old images that
   differ by less than the 1% tolerance, which let stale baselines linger.
+- No Drafts page (removed 2026-10-09, the user's call). `saving.js` still
+  keeps an edit that could not reach leo in localStorage; on the next load the
+  page says "Saving N edits that had not reached leo yet" and `retry()`s them,
+  and opening that note shows the kept text.

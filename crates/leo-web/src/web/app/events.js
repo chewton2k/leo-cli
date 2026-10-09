@@ -161,8 +161,6 @@ async function render() {
     else if (kind === 'map') await showMap(arg);
     else if (kind === 'settings') await (arg === 'storage' ? showStorage() : showSettings());
     else if (kind === 'record') await showRecord(arg);
-    else if (kind === 'drafts') showDrafts();
-    else if (kind === 'draft') await showDraft(arg);
     else await showFolder('');
     loadSideFolders();
   } catch (e) {
@@ -197,7 +195,7 @@ document.addEventListener('paste', (e) => {
     addPictures(state.session, files);
     return;
   }
-  if (!['folder', 'search', 'drafts'].includes(state.view)) return;
+  if (!['folder', 'search'].includes(state.view)) return;
   e.preventDefault();
   uploadSheet(pastedFiles(files));
 });

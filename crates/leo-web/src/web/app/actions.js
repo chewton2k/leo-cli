@@ -52,18 +52,6 @@ const actions = {
     if (next) saveKeep(next).catch(fail);
   },
   'keep-cancel': () => closeSheet(),
-  'drafts-clear': () => {
-    const n = saving.drafts().length;
-    sheet(`<h3>Clear ${plural(n, 'unsaved draft')}?</h3>
-      <p>The edits in ${n === 1 ? 'it are' : 'them are'} thrown away. Each note keeps its last saved version.</p>
-      <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn danger" data-action="drafts-clear-now">Clear drafts</button></div>`);
-  },
-  'drafts-clear-now': () => {
-    closeSheet();
-    const n = saving.discardAll();
-    toast(`Cleared ${plural(n, 'draft')}`);
-    if (state.view === 'storage' && state.storage) drawStorage(state.storage);
-  },
   'set-key': (el) => saveKey(el.dataset.account),
   'remove-key': confirmRemoveKey,
   'remove-key-now': (el) => {
@@ -129,8 +117,6 @@ const actions = {
     mapView.setOptions({ hidden });
   },
   'map-sheet': () => mapSheetTo(mapSheet === 'open' ? 'peek' : 'open'),
-  drafts: () => { closeSheet(); go('#/drafts'); },
-  'open-draft': (el) => go(`#/draft/${enc(el.dataset.key)}`),
   trash: () => {
     closeSheet();
     go('#/trash');

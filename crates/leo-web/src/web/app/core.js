@@ -39,7 +39,6 @@ const ICON = {
   screen: svg('<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>'),
   sidebar: svg('<rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M9 4v16"/>'),
   chat: svg('<path d="M5 18.5V7a2.5 2.5 0 0 1 2.5-2.5h9A2.5 2.5 0 0 1 19 7v6.5a2.5 2.5 0 0 1-2.5 2.5H9z"/><path d="M9 9.5h6M9 12.5h4"/>'),
-  pencil: svg('<path d="M4 20l1-4.5L15.5 5a2.1 2.1 0 0 1 3 3L8 18.5z"/><path d="M13.5 7l3 3"/>'),
   storage: svg('<ellipse cx="12" cy="6" rx="7.5" ry="2.8"/><path d="M4.5 6v6c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8V6"/><path d="M4.5 12v6c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8v-6"/>'),
   cloud: svg('<path d="M7 18a4.5 4.5 0 0 1-.5-9 6 6 0 0 1 11.3 1.5A3.8 3.8 0 0 1 17.5 18z"/><path d="M4 4l16 16"/>'),
 };
@@ -235,7 +234,7 @@ function back() {
   go('#/');
 }
 
-const PAGE_NAMES = { '': 'All notes', f: 'All notes', search: 'Search', trash: 'Trash', map: 'Knowledge graph', settings: 'Settings', record: 'Record', drafts: 'Drafts', draft: 'Drafts', new: 'New note' };
+const PAGE_NAMES = { '': 'All notes', f: 'All notes', search: 'Search', trash: 'Trash', map: 'Knowledge graph', settings: 'Settings', record: 'Record', new: 'New note' };
 
 function pageName() {
   const [, kind = '', rest = ''] = location.hash.match(/^#\/([a-z]*)\/?(.*)$/) || [];
@@ -445,7 +444,10 @@ const saving = window.leoSaving.create({
   api, storage: local,
   mark,
   storageError: () => toast('This browser cannot keep a draft. Keep the page open until your note says Saved.', { bad: true }),
-  recovered: (count) => toast(`${count} unsaved draft${count === 1 ? '' : 's'} recovered. Open Drafts in the menu.`, { action: 'Drafts', run: () => go('#/drafts') }),
+  recovered: (count) => {
+    toast(`Saving ${count} edit${count === 1 ? '' : 's'} that had not reached leo yet.`);
+    setTimeout(() => saving.retry(), 0);
+  },
   created: (s, note) => {
     if (state.session === s) history.replaceState(null, '', noteHash(note.id));
   },
@@ -530,21 +532,6 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
   }
 }
 
-function showDrafts() {
-  ++seq;
-  state = { view: 'drafts', dir: '' };
-  chrome({ showBack: true });
-  const drafts = saving.drafts();
-  app.innerHTML = drafts.length
-    ? '<div class="section-title">Unsaved drafts on this browser</div><div class="cards">' + drafts.map((d) => `<button class="card" data-action="open-draft" data-key="${esc(d.key)}"><div class="card-title">${esc(d.edit.title || 'Untitled')}</div><div class="card-snippet">${esc(md.plain(d.edit.body).slice(0, 180))}</div></button>`).join('') + '</div>'
-    : empty(ICON.check, 'Everything is saved', 'There are no unsaved drafts on this browser.');
-}
-
-function showDraft(key) {
-  const s = saving.get(key);
-  if (!s) return go('#/drafts', { replace: true });
-  return showNote(s.note.id, { fresh: s.note, draft: s });
-}
 
 function newNote(dir) {
   return showNote(null, { fresh: { id: null, title: '', body: '', tags: [], directory: dir || '', pinned: false, version: null } });

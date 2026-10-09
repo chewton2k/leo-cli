@@ -129,7 +129,6 @@ function drawStorage(page) {
   const shown = page.areas.filter((a) => a.bytes > 0);
   const bar = shown.map((a, i) => `<i style="width:${Math.max(0.6, (a.bytes / total) * 100)}%;background:${STORE_COLORS[page.areas.indexOf(a) % STORE_COLORS.length]}" title="${esc(a.title)}: ${esc(a.size)}"></i>`).join('');
   const legend = page.areas.map((a, i) => `<span class="store-key"><b style="background:${STORE_COLORS[i % STORE_COLORS.length]}"></b>${esc(a.title)} <span class="store-key-size">${esc(a.size)}</span></span>`).join('');
-  const drafts = saving.drafts().length;
   const areas = page.areas.map((a, i) => {
     const pickable = a.actions.some((x) => x.selected);
     const items = a.items.length
@@ -170,11 +169,6 @@ function drawStorage(page) {
         <label><input type="checkbox" data-export="trash"> Trash</label>
       </div>
       <a class="btn primary sm" id="export-link" download href="${exportHref()}">Download zip</a>
-    </section>
-    <section class="set-card store-browser">
-      <header><h3>This browser</h3></header>
-      <p class="hint">${drafts ? `${plural(drafts, 'unsaved draft')} kept here until they reach leo. Clearing them throws those edits away; the notes keep their last saved version.` : 'No unsaved drafts are kept here.'}</p>
-      ${drafts ? '<div class="store-actions"><button class="btn sm plain" data-action="drafts">Open drafts</button><button class="btn sm plain danger-text" data-action="drafts-clear">Clear drafts</button></div>' : ''}
     </section>
   </div>`;
 }

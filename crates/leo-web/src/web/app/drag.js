@@ -1,6 +1,6 @@
 const NOTE_DRAG = felix.NOTE_DRAG;
 const FOLDER_DRAG = 'application/x-leo-folder';
-const FILE_VIEWS = ['folder', 'search', 'drafts', 'note'];
+const FILE_VIEWS = ['folder', 'search', 'note'];
 const dragging = { note: null, folder: null, filesTimer: 0 };
 
 const carries = (e, type) => Boolean(e.dataTransfer && [...e.dataTransfer.types].includes(type));
