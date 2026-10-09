@@ -1102,6 +1102,37 @@ test.describe('storage', () => {
   });
 });
 
+test.describe('storage of pictures', () => {
+  test('pictures are listed with the notes that use them, and unused ones can be deleted', async ({ page }) => {
+    const tag = test.info().project.name;
+    const data = await page.evaluate(() => {
+      const c = document.createElement('canvas');
+      c.width = 64;
+      c.height = 48;
+      c.getContext('2d').fillRect(0, 0, 30, 20);
+      return c.toDataURL('image/png').split(',')[1];
+    });
+    const used = (await (await page.request.post('/api/images', { data: { name: `used-${tag}.png`, data } })).json()).path;
+    const spare = (await (await page.request.post('/api/images', { data: { name: `spare-${tag}.png`, data } })).json()).path;
+    await page.request.post('/api/notes', { data: { title: `Pictured ${tag} for storage`, body: `![board](${used})` } });
+    await page.goto('/#/settings/storage');
+    const pictures = page.locator('details.store-area[data-area="pictures"]');
+    await expect(pictures).toContainText('Pictures in notes');
+    await pictures.locator('summary').click();
+    const name = (p) => p.split('/').pop();
+    await expect(pictures.locator('.store-item', { hasText: name(used) })).toContainText(`In “Pictured ${tag} for storage”`);
+    await expect(pictures.locator('.store-item', { hasText: name(spare) })).toContainText('Not in any note');
+    await pictures.locator('[data-act="unused"]').click();
+    await expect(page.locator('.sheet')).toContainText('no note shows');
+    await page.locator('[data-action="storage-go"]').click();
+    await expect(page.locator('.toast')).toContainText(/Deleted \d+ pictures?\./);
+    await expect(pictures.locator('.store-item', { hasText: name(spare) })).toHaveCount(0);
+    await expect(pictures.locator('.store-item', { hasText: name(used) })).toBeVisible();
+    expect((await page.request.get(`/api/image?path=${encodeURIComponent(used)}`)).ok()).toBe(true);
+    expect((await page.request.get(`/api/image?path=${encodeURIComponent(spare)}`)).status()).toBe(404);
+  });
+});
+
 test.describe('export and this browser', () => {
   test('exports a zip with the parts chosen and clears drafts kept in this browser', async ({ page }) => {
     await page.goto('/#/settings/storage');

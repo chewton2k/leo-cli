@@ -332,3 +332,14 @@
 - How much note text Felix gets follows the writing AI: `Powers.room` (from
   `writing_budget().chars()`, read per message) clamped to 12k-96k chars;
   `gather` scales every per-note share from the 64k defaults.
+- Felix tool reliability (measured with Codex): the system prompt says the
+  tools are text lines, always available even when the model's own tools are
+  off; every non-final step ends with `tools::REMINDER` (models weigh the end
+  most); and when the user's last message asks for a change (`wants_change`)
+  but the reply proposed nothing, leo takes the reply back and asks once more
+  with `NUDGE`. Agent CLIs that print nothing are run once more before failing
+  (`AgentCli::no_answer`).
+- Storage has "Pictures in notes" (`pictures` area: `<notes>/attachments`,
+  each with the notes that show it via `attachments::resolve`; delete selected
+  or "no note uses"; names checked, files only inside that folder). The Notes
+  area no longer counts that folder.

@@ -133,7 +133,14 @@ pub(crate) fn settle_figures(
             .iter()
             .enumerate()
             .filter(|(i, f)| which(f) && saved[*i].is_none())
-            .filter_map(|(_, f)| save(f).map(|path| format!("![{}]({path})", f.place)))
+            .filter_map(|(_, f)| {
+                let caption = if f.photo {
+                    f.place.clone()
+                } else {
+                    format!("Figure from {}", f.place)
+                };
+                save(f).map(|path| format!("![{caption}]({path})"))
+            })
             .collect();
         if !shown.is_empty() {
             body.push_str(&format!("\n\n## {heading}\n\n{}", shown.join("\n\n")));
@@ -197,11 +204,16 @@ fn run_import(
         }
         let notes_dir = store.notes_dir.clone();
         let body = settle_figures(&body, &figures, &mut |figure| {
-            let name = format!(
-                "{stem} {}.{}",
-                figure.place,
-                attachments::kind_of(&figure.bytes)?
-            );
+            let kind = attachments::kind_of(&figure.bytes)?;
+            let name = if figure.photo {
+                let named = figure
+                    .place
+                    .rsplit_once('.')
+                    .map_or(figure.place.as_str(), |(s, _)| s);
+                format!("{named}.{kind}")
+            } else {
+                format!("{stem} {}.{kind}", figure.place)
+            };
             attachments::save(&notes_dir, &name, &figure.bytes).ok()
         });
         let note = store

@@ -326,7 +326,16 @@ impl AgentCli {
         let room = self.room()?;
         let files = self.image_files(room.path(), images)?;
         let (args, input) = self.arguments(req, images, &disables, &files);
-        self.spawn(&program, room.path(), &args, input, sink)
+        match self.spawn(&program, room.path(), &args, input.clone(), sink) {
+            Err(ProviderError::Retryable(message)) if message == self.no_answer() => {
+                self.spawn(&program, room.path(), &args, input, sink)
+            }
+            other => other,
+        }
+    }
+
+    fn no_answer(&self) -> String {
+        format!("{}: {} gave no answer", self.name, self.bin)
     }
 
     fn spawn(
@@ -404,10 +413,7 @@ impl AgentCli {
             }
         }
         if answer.is_empty() {
-            return Err(ProviderError::Retryable(format!(
-                "{}: {} gave no answer",
-                self.name, self.bin
-            )));
+            return Err(ProviderError::Retryable(self.no_answer()));
         }
         if self.agent == Agent::Codex {
             sink(&answer);
@@ -697,6 +703,36 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":true,"result":"No
             .unwrap();
         assert_eq!(answer, "# Notes\nhello");
         assert_eq!(pieces, ["# Notes\nhello"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_empty_answer_is_asked_for_once_more_before_giving_up() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mark = dir.path().join("tried");
+        let bin = script(
+            dir.path(),
+            &format!(
+                "[ \"$1\" = features ] && exit 0\ncat >/dev/null\nif [ -f '{0}' ]; then echo hello; else touch '{0}'; fi",
+                mark.display()
+            ),
+        );
+        let cfg = config(ProviderKind::Codex, &bin, None);
+        let agent = AgentCli::new("codex".into(), Agent::Codex, &cfg);
+        assert_eq!(agent.complete(&request()).unwrap(), "hello");
+
+        let silent = script(
+            dir.path(),
+            "[ \"$1\" = features ] && exit 0\ncat >/dev/null",
+        );
+        let cfg = config(ProviderKind::Codex, &silent, None);
+        let agent = AgentCli::new("codex".into(), Agent::Codex, &cfg);
+        match agent.complete(&request()) {
+            Err(ProviderError::Retryable(message)) => {
+                assert!(message.ends_with("gave no answer"), "{message}")
+            }
+            other => panic!("expected no answer, got {other:?}"),
+        }
     }
 
     #[cfg(unix)]

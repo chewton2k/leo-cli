@@ -303,6 +303,10 @@ fn felix_searches_opens_and_suggests_a_change_with_tools_then_answers() {
     let prompts = prompts.lock().unwrap();
     assert_eq!(prompts.len(), 3);
     assert!(prompts[0].contains("search_notes {\"query\"}"));
+    assert!(
+        prompts[0].trim_end().ends_with(tools::REMINDER),
+        "the reminder comes last"
+    );
     assert!(prompts[1].contains("<tool_result name=\"search_notes\">\n[n1] \"Graph traversals\" in cs130: BFS takes the newest"), "{}", prompts[1]);
     assert!(prompts[2].contains("Suggested. The user sees the change"));
     assert_eq!(
@@ -323,6 +327,7 @@ fn felix_stops_using_tools_after_six_and_answers() {
     let prompts = prompts.lock().unwrap();
     assert_eq!(prompts.len(), 7);
     assert!(prompts[6].contains("You have used all the tools"));
+    assert!(!prompts[6].contains(tools::REMINDER));
     assert!(!prompts[6].contains("search_notes {\"query\"}"));
     let shown: String = lines.iter().filter_map(|l| l["t"].as_str()).collect();
     assert!(shown.ends_with("Out of script."));
@@ -384,4 +389,53 @@ fn a_suggested_change_is_applied_only_while_the_text_is_still_there() {
         }),
     ));
     assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+}
+
+#[test]
+fn a_change_the_user_asked_for_is_asked_for_once_more_when_the_model_only_talks() {
+    let (mut state, _d, ids) = state_with(&[("Graph traversals", "")]);
+    {
+        let mut store = state.fresh();
+        store.find_note_mut(&ids[0]).unwrap().body = "BFS uses a stack.".into();
+        store.save().unwrap();
+    }
+    let (streamer, prompts) = scripted(vec![
+        "I can't edit notes here, but BFS uses a queue.",
+        "<tool>{\"name\": \"edit_note\", \"note\": \"Graph traversals\", \"find\": \"stack\", \"replace\": \"queue\"}</tool>",
+        "I suggested the fix; you can apply it.",
+    ]);
+    state.chat = Some(streamer);
+    let lines = chat_lines(&state, "Please fix my graph traversals note");
+    assert!(lines.iter().any(|l| l.get("proposal").is_some()));
+    let last_restart = lines
+        .iter()
+        .rposition(|l| l.get("restart").is_some())
+        .unwrap();
+    let after: String = lines[last_restart..]
+        .iter()
+        .filter_map(|l| l["t"].as_str())
+        .collect();
+    assert_eq!(after, "I suggested the fix; you can apply it.");
+    let prompts = prompts.lock().unwrap();
+    assert!(
+        prompts[1].contains("Felix replied: I can't edit notes here")
+            && prompts[1].contains(tools::NUDGE)
+    );
+
+    let (mut state, _d, _ids) = state_with(&[("Heaps", "")]);
+    let (streamer, prompts) = scripted(vec!["Nothing needs fixing.", "Still nothing to fix."]);
+    state.chat = Some(streamer);
+    let lines = chat_lines(&state, "fix anything wrong in my heaps note");
+    let shown: String = lines
+        .iter()
+        .skip(
+            lines
+                .iter()
+                .rposition(|l| l.get("restart").is_some())
+                .unwrap_or(0),
+        )
+        .filter_map(|l| l["t"].as_str())
+        .collect();
+    assert_eq!(shown, "Still nothing to fix.");
+    assert_eq!(prompts.lock().unwrap().len(), 2, "the nudge is given once");
 }

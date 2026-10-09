@@ -17,13 +17,34 @@ const DECIDE_AFTER: usize = 48;
 pub const TOOLS: &str = "\
 Tools: you can look through and work on the user's notes yourself. To use a tool, reply with only one line, nothing before or after it:
 <tool>{\"name\": \"search_notes\", \"query\": \"breadth-first search\"}</tool>
-leo runs it and gives you the result in <tool_result>; then use another tool or answer the user. The tools:
+leo runs it and gives you the result in <tool_result>; then use another tool or answer the user. These are not functions in your own tool system: you use one by writing that line as your reply, and they are always available here, even when your own tools are switched off. The tools:
 - search_notes {\"query\"}: notes that match words, abbreviations or ideas on the map, with an excerpt of each.
 - open_note {\"note\"}: the whole text of one note. \"note\" is an id like n3, or a title.
 - connected_notes {\"note\"}: the notes linked to it on the user's map, with how and why.
 - edit_note {\"note\", \"find\", \"replace\", \"why\"}: suggest changing a note: \"find\" is text copied exactly from the note (open it first), \"replace\" is what goes there instead. Leave \"find\" empty to add \"replace\" at the end. The user sees the change and decides.
 - create_note {\"title\", \"body\", \"folder\"}: suggest a new note in Markdown; \"folder\" is optional. The user sees it and decides.
-Use a tool only when the notes you were given do not answer the question, or when the user asks you to change or make notes. Use at most 6 per answer. Cite notes you used with their ids, like [n4]. Never claim a change was made: say what you suggested.";
+When to use them:
+- The user asks you to fix, correct, update, add to or rewrite a note, or you find a mistake they asked you to fix: use edit_note, once per change, with \"find\" copied exactly from the note text you were given or opened. This is how you change notes here, so never say you cannot edit or change notes.
+- The user asks for a new note: use create_note.
+- The question is about notes you were not given, or you need a note's full text or its connections: use search_notes, open_note or connected_notes.
+- Otherwise answer straight away without tools.
+Use at most 6 per answer. Cite notes you used with their ids, like [n4]. After suggesting a change or a note, tell the user what you suggested and that they can apply it; never claim it is already done.";
+
+pub const REMINDER: &str = "Remember your tools: if the user wants a note fixed, corrected, changed, added to or made, or you need a note you were not given, your whole reply is a single <tool>{...}</tool> line instead of an answer. When they asked you to fix something and you found what is wrong, suggest the fix with edit_note before you answer; do not only explain it. You can open and change notes this way, so do not ask the user to do it. Otherwise reply to the user.";
+
+pub const NUDGE: &str = "The user asked for a change to their notes, but your reply suggested none. If a note should be fixed, changed, added to or made, reply now with only the edit_note or create_note line; the tools are available. If nothing needs changing, reply to the user again.";
+
+const CHANGE_WORDS: [&str; 15] = [
+    "fix", "correct", "change", "update", "edit", "rewrite", "add", "append", "insert", "remove",
+    "create", "make", "write", "improve", "expand",
+];
+
+pub fn wants_change(message: &str) -> bool {
+    message
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .any(|word| CHANGE_WORDS.contains(&word))
+}
 
 pub const NO_MORE_TOOLS: &str =
     "You have used all the tools you can for this answer. Do not ask for another; answer the user now with what you have.";
@@ -554,6 +575,15 @@ mod tests {
             without_calls("Before <tool>{}</tool> after"),
             "Before  after"
         );
+    }
+
+    #[test]
+    fn a_request_to_change_notes_is_recognised() {
+        assert!(wants_change("Can you fix my BFS note?"));
+        assert!(wants_change("Make me a note comparing BFS and DFS"));
+        assert!(wants_change("add an example to my induction note"));
+        assert!(!wants_change("What does a min-heap keep at its root?"));
+        assert!(!wants_change("prefix sums and suffixes"));
     }
 
     #[test]

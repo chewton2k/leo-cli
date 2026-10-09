@@ -116,7 +116,7 @@ fn notes_bytes(notes_dir: &Path) -> u64 {
                 .flatten()
                 .filter(|e| {
                     let name = e.file_name();
-                    name != ".trash" && name != ".git"
+                    name != ".trash" && name != ".git" && name != leo_core::attachments::DIR
                 })
                 .map(|e| size_of(&e.path()))
                 .sum()
@@ -290,6 +290,8 @@ pub fn areas(store: &Store, graphs: &Graphs, chats_dir: &Path, now: DateTime<Utc
         actions: original_actions,
     });
 
+    out.push(pictures_area(store));
+
     let held = crate::chat_files::held(chats_dir);
     let titles: std::collections::HashMap<String, String> = summaries
         .iter()
@@ -446,6 +448,21 @@ pub fn act_on(
                 .unwrap_or_default();
             remove_originals(notes_dir, orphans.into_iter())
         }
+        ("pictures", "delete") => remove_pictures(notes_dir, request.items.iter().cloned()),
+        ("pictures", "unused") => {
+            let users = picture_users(store);
+            let unused = std::fs::read_dir(pictures_dir(notes_dir))
+                .map(|entries| {
+                    entries
+                        .flatten()
+                        .filter(|e| e.path().is_file())
+                        .map(|e| e.file_name().to_string_lossy().to_string())
+                        .filter(|name| users.get(name).is_none_or(Vec::is_empty))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            remove_pictures(notes_dir, unused.into_iter())
+        }
         ("map", "clear") => match graphs.clear() {
             Ok(true) => Ok("Cleared the map of ideas.".to_string()),
             Ok(false) => Err(anyhow::anyhow!(
@@ -456,6 +473,117 @@ pub fn act_on(
         _ => return None,
     };
     Some(done)
+}
+
+fn pictures_dir(notes_dir: &Path) -> PathBuf {
+    notes_dir.join(leo_core::attachments::DIR)
+}
+
+fn picture_users(store: &Store) -> std::collections::HashMap<String, Vec<String>> {
+    let dir = pictures_dir(&store.notes_dir);
+    let mut users: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    for note in &store.notes {
+        for line in note.body.lines() {
+            for (_, shown) in leo_core::attachments::pictures_in(line) {
+                let Some(path) = leo_core::attachments::resolve(
+                    &store.notes_dir,
+                    &note.directory,
+                    &shown.target,
+                ) else {
+                    continue;
+                };
+                if path.parent() != Some(dir.as_path()) {
+                    continue;
+                }
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                let titles = users.entry(name).or_default();
+                if !titles.contains(&note.title) {
+                    titles.push(note.title.clone());
+                }
+            }
+        }
+    }
+    users
+}
+
+fn pictures_area(store: &Store) -> Area {
+    let dir = pictures_dir(&store.notes_dir);
+    let users = picture_users(store);
+    let mut items: Vec<Item> = std::fs::read_dir(&dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter(|e| e.path().is_file())
+                .map(|e| {
+                    let name = e.file_name().to_string_lossy().to_string();
+                    let detail = match users.get(&name).map(Vec::as_slice) {
+                        None | Some([]) => "Not in any note".to_string(),
+                        Some([one]) => format!("In “{one}”"),
+                        Some(many) => format!("In {} notes", many.len()),
+                    };
+                    Item {
+                        label: name.clone(),
+                        detail,
+                        bytes: size_of(&e.path()),
+                        when: modified(&e.path()),
+                        locked: false,
+                        id: name,
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    items.sort_by(|a, b| b.bytes.cmp(&a.bytes).then(a.label.cmp(&b.label)));
+    let mut actions = Vec::new();
+    if !items.is_empty() {
+        actions.push(act(
+            "delete",
+            "Delete selected",
+            Some("These pictures are deleted for good. A note that shows one will show a missing picture instead."),
+            true,
+        ));
+        if items.iter().any(|i| i.detail == "Not in any note") {
+            actions.push(act(
+                "unused",
+                "Delete pictures no note uses",
+                Some("Pictures that no note shows any more are deleted for good."),
+                false,
+            ));
+        }
+    }
+    Area {
+        id: "pictures".into(),
+        title: "Pictures in notes".into(),
+        about: "Pictures you pasted into notes, and figures kept from uploaded slides, PDFs and photos. They sit beside your notes, so backups include them.".into(),
+        path: dir.display().to_string(),
+        bytes: size_of(&dir),
+        items,
+        actions,
+    }
+}
+
+fn remove_pictures(notes_dir: &Path, names: impl Iterator<Item = String>) -> Result<String> {
+    let dir = pictures_dir(notes_dir);
+    let mut gone = 0;
+    for name in names {
+        let plain = !name.is_empty()
+            && !name.starts_with('.')
+            && name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+        if !plain {
+            bail!("That is not a picture leo knows.");
+        }
+        let path = leo_core::paths::contained_path(&dir, Path::new(&name))?;
+        if path.is_file() && std::fs::remove_file(&path).is_ok() {
+            gone += 1;
+        }
+    }
+    Ok(plural_deleted(gone, "picture"))
 }
 
 fn plural_deleted(n: usize, what: &str) -> String {
@@ -568,7 +696,15 @@ mod tests {
         let ids: Vec<&str> = list.iter().map(|a| a.id.as_str()).collect();
         assert_eq!(
             ids,
-            ["notes", "trash", "chats", "originals", "chat-docs", "map"]
+            [
+                "notes",
+                "trash",
+                "chats",
+                "originals",
+                "pictures",
+                "chat-docs",
+                "map"
+            ]
         );
         assert!(area(&list, "chat-docs").items.is_empty());
         assert!(area(&list, "notes").bytes > 0);
@@ -680,5 +816,65 @@ mod tests {
         assert_eq!(sized(1536), "1.5 KB");
         assert_eq!(sized(670 * 1024 * 1024), "670 MB");
         assert_eq!(sized(3 * 1024 * 1024 * 1024), "3.0 GB");
+    }
+
+    #[test]
+    fn pictures_show_which_notes_use_them_and_unused_ones_can_go() {
+        let (_tmp, mut store, graphs, chats_dir) = setup();
+        let png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x10\0\0\0\x10\x08\x02\0\0\0";
+        let used = leo_core::attachments::save(&store.notes_dir, "board.png", png).unwrap();
+        let spare = leo_core::attachments::save(&store.notes_dir, "spare.png", png).unwrap();
+        let id = store.notes[0].id.clone();
+        store.find_note_mut(&id).unwrap().body = format!("Look:\n![Board]({used})");
+        store.save().unwrap();
+        let list = areas(&store, &graphs, &chats_dir, at(31));
+        let pictures = area(&list, "pictures");
+        let detail = |path: &str| {
+            let name = path.rsplit('/').next().unwrap();
+            pictures
+                .items
+                .iter()
+                .find(|i| i.id == name)
+                .unwrap()
+                .detail
+                .clone()
+        };
+        assert_eq!(detail(&used), "In “Kept”");
+        assert_eq!(detail(&spare), "Not in any note");
+        assert_eq!(pictures.bytes, 2 * png.len() as u64);
+        assert!(pictures.actions.iter().any(|a| a.id == "unused"));
+        let notes_before = area(&list, "notes").bytes;
+        let extra = leo_core::attachments::save(&store.notes_dir, "extra.png", png).unwrap();
+        let after = areas(&store, &graphs, &chats_dir, at(31));
+        assert_eq!(
+            area(&after, "notes").bytes,
+            notes_before,
+            "pictures are not counted as notes"
+        );
+        std::fs::remove_file(store.notes_dir.join(extra)).unwrap();
+
+        let run = |action: &str, items: Vec<String>| {
+            act_on(
+                &store,
+                &graphs,
+                &chats_dir,
+                &Request {
+                    area: "pictures".into(),
+                    action: action.into(),
+                    items,
+                },
+                at(31),
+            )
+            .unwrap()
+        };
+        assert_eq!(run("unused", vec![]).unwrap(), "Deleted 1 picture.");
+        assert!(store.notes_dir.join(&used).is_file());
+        assert!(!store.notes_dir.join(&spare).exists());
+        for bad in ["../notes/x.md", ".hidden", "a/b.png", ""] {
+            assert!(run("delete", vec![bad.into()]).is_err(), "{bad}");
+        }
+        let name = used.rsplit('/').next().unwrap().to_string();
+        assert_eq!(run("delete", vec![name]).unwrap(), "Deleted 1 picture.");
+        assert!(!store.notes_dir.join(&used).exists());
     }
 }

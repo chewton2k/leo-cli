@@ -289,7 +289,7 @@ fn figures_the_ai_did_not_place_are_kept_under_their_own_heading() {
     };
     assert_eq!(
         settle_figures("## Heaps\n- tree", &figures, &mut save),
-        "## Heaps\n- tree\n\n## Figures\n\n![page 3](attachments/1.png)"
+        "## Heaps\n- tree\n\n## Figures\n\n![Figure from page 3](attachments/1.png)"
     );
     let kept = settle_figures(
         "Intro ![a heap](figure:2) and ![x](attachments/old.png)\n![the tree](figure:1)",

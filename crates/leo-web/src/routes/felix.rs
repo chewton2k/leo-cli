@@ -184,27 +184,45 @@ pub(crate) async fn delete_chat(
     }
 }
 
+struct Ask {
+    system: String,
+    conversation: String,
+    sources: Vec<chat::SourceRef>,
+    room: usize,
+    wanted: String,
+}
+
 fn answer(
     state: &AppState,
     streamer: &chat::Streamer,
-    system: &str,
-    mut conversation: String,
-    sources: Vec<chat::SourceRef>,
-    room: usize,
+    ask: Ask,
     tx: &tokio::sync::mpsc::UnboundedSender<String>,
 ) -> Result<()> {
+    let Ask {
+        system,
+        mut conversation,
+        sources,
+        room,
+        wanted,
+    } = ask;
     let send = |value: serde_json::Value| {
         let _ = tx.send(ndjson(value));
     };
     let with_tools = format!("{system}\n\n{}", tools::TOOLS);
     let last_word = format!("{system}\n\n{}", tools::NO_MORE_TOOLS);
     let mut desk = tools::Desk::new(sources, room);
+    let mut nudged = !tools::wants_change(&wanted);
     for step in 0..=tools::MOST_STEPS {
         let last = step == tools::MOST_STEPS;
         let gate = std::cell::RefCell::new(tools::Gate::default());
+        let asked = if last {
+            conversation.clone()
+        } else {
+            format!("{conversation}\n\n{}", tools::REMINDER)
+        };
         let reply = streamer(
             if last { &last_word } else { &with_tools },
-            &conversation,
+            &asked,
             chat::REPLY_TOKENS,
             &mut |piece| {
                 gate.borrow_mut()
@@ -218,6 +236,18 @@ fn answer(
         let mut gate = gate.into_inner();
         let call = if last { None } else { tools::find_call(&reply) };
         let call = match call {
+            None if !last && !nudged && desk.proposals == 0 => {
+                nudged = true;
+                if gate.shown {
+                    send(serde_json::json!({ "restart": true }));
+                }
+                conversation = format!(
+                    "{conversation}\n\nFelix replied: {}\n\n{}",
+                    tools::without_calls(&reply),
+                    tools::NUDGE
+                );
+                continue;
+            }
             None => {
                 gate.finish(&mut |t| send(serde_json::json!({ "t": t })));
                 return Ok(());
@@ -357,11 +387,23 @@ pub(crate) async fn chat_reply(
         _ => Vec::new(),
     };
     let (system, user) = chat::prompt(mode, &notes, &documents, &body.messages);
+    let wanted = body
+        .messages
+        .last()
+        .map(|t| t.text.clone())
+        .unwrap_or_default();
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     let _ = tx.send(ndjson(serde_json::json!({ "sources": sources })));
     let worker = state.clone();
     tokio::task::spawn_blocking(move || {
-        let end = match answer(&worker, &streamer, &system, user, sources, room, &tx) {
+        let ask = Ask {
+            system,
+            conversation: user,
+            sources,
+            room,
+            wanted,
+        };
+        let end = match answer(&worker, &streamer, ask, &tx) {
             Ok(()) => serde_json::json!({ "done": true }),
             Err(e) => serde_json::json!({ "error": e.to_string() }),
         };
