@@ -292,9 +292,9 @@ way.
   MT). CI tests on windows-latest (`--no-fail-fast`) and smoke-tests
   install.ps1; e2e is `cfg(unix)`. Folder names are always `/`-joined, even
   when read from disk; TOML paths in tests use literal `'...'` strings.
-- Map of ideas: `leo serve` only (web), see crates/leo-web/CLAUDE.md.
+- Knowledge graph (code and routes still say `map`): `leo serve` only (web), see crates/leo-web/CLAUDE.md.
 - Tags are hidden everywhere a person looks (decided 2026-10-08: folders,
-  search and the map cover it): no `#tag` in `new` (split_new returns (dir,
+  search and the knowledge graph cover it): no `#tag` in `new` (split_new returns (dir,
   title)), no tag column, completion, `--tags`/`--tag` flags, Tags page or chips
   on the web. Tags already in files are kept and still searchable with `#word`
   (Obsidian), and leo's own markers (`manual`, `listen`) stay.

@@ -14,7 +14,7 @@ fn a_document_given_to_felix_is_kept_as_text_and_read_with_the_question() {
         move |_: &str, user: &str, _: u32, piece: &mut dyn FnMut(&str), _: &mut dyn FnMut()| {
             *saw.lock().unwrap() = user.to_string();
             piece("It says Dijkstra uses a heap (slides.pdf).");
-            Ok("done".to_string())
+            Ok("done".into())
         },
     ));
     let upload = |name: &str, data: &[u8]| {
@@ -117,7 +117,7 @@ fn a_chat_reply_streams_its_sources_then_the_answer() {
             *saw.lock().unwrap() = format!("{system}\n{user}");
             piece("Heaps keep the minimum on top ");
             piece("[n1].");
-            Ok("done".to_string())
+            Ok("done".into())
         },
     ));
     let body = chat::ChatBody {
@@ -241,7 +241,7 @@ fn scripted(replies: Vec<&'static str>) -> (chat::Streamer, Arc<Mutex<Vec<String
             for chunk in reply.as_bytes().chunks(7) {
                 piece(std::str::from_utf8(chunk).unwrap());
             }
-            Ok(reply.to_string())
+            Ok(reply.into())
         },
     );
     (streamer, prompts)
@@ -505,4 +505,89 @@ fn a_model_that_says_its_tools_are_missing_is_told_once_that_they_are_not() {
     let prompts = prompts.lock().unwrap();
     assert!(prompts[1].contains(tools::UNSTUCK));
     assert_eq!(prompts.len(), 3);
+}
+
+#[test]
+fn what_every_step_of_an_answer_spent_is_added_up_and_sent_before_done() {
+    let (mut state, _d, _) = state_with(&[("Graph traversals", "cs130")]);
+    let replies = Arc::new(Mutex::new(
+        vec![
+            "<tool>{\"name\": \"search_notes\", \"query\": \"queue\"}</tool>",
+            "A queue is first in, first out.",
+        ]
+        .into_iter(),
+    ));
+    state.chat = Some(Arc::new(
+        move |_: &str, _: &str, _: u32, piece: &mut dyn FnMut(&str), _: &mut dyn FnMut()| {
+            let text = replies.lock().unwrap().next().unwrap_or("Out of script.");
+            piece(text);
+            Ok(chat::Reply {
+                text: text.into(),
+                spent: Some(chat::Spent {
+                    by: "Anthropic".into(),
+                    model: Some("claude-sonnet-5-5".into()),
+                    input: 1000,
+                    output: 100,
+                    cost: Some(0.003),
+                    ..chat::Spent::default()
+                }),
+            })
+        },
+    ));
+    let lines = chat_lines(&state, "what is a queue?");
+    let at = lines.iter().position(|l| l.get("spent").is_some()).unwrap();
+    assert_eq!(lines[at + 1]["done"], true);
+    let spent = &lines[at]["spent"];
+    assert_eq!(
+        (spent["input"].as_u64(), spent["output"].as_u64()),
+        (Some(2000), Some(200))
+    );
+    assert_eq!(spent["steps"], 2);
+    assert!((spent["cost"].as_f64().unwrap() - 0.006).abs() < 1e-9);
+    assert_eq!(spent["model"], "claude-sonnet-5-5");
+}
+
+#[test]
+fn once_felix_has_answered_the_writing_ai_names_the_chat_in_the_background() {
+    let (mut state, dir, _) = state_with(&[]);
+    let asked = Arc::new(Mutex::new(0));
+    let count = Arc::clone(&asked);
+    let writer: crate::graph::Writer = Arc::new(move |system: &str, _: &str, _: u32| {
+        assert!(system.contains("You name a conversation"));
+        *count.lock().unwrap() += 1;
+        Ok("\"Queues in breadth-first search\"".to_string())
+    });
+    state.graphs = Arc::new(crate::graph::Graphs::for_notes(
+        &dir.path().join("notes"),
+        Some(writer),
+    ));
+    let put = |messages: serde_json::Value| {
+        let body: crate::chats::Saving =
+            serde_json::from_value(serde_json::json!({ "mode": "chat", "messages": messages }))
+                .unwrap();
+        json_of(run(crate::routes::felix::put_chat(
+            State(state.clone()),
+            Path("chat-name-0001".into()),
+            Json(body),
+        )))
+    };
+    let first = put(serde_json::json!([{ "role": "user", "text": "help with bfs" }]));
+    assert_eq!(first["title"], "help with bfs");
+    put(
+        serde_json::json!([{ "role": "user", "text": "help with bfs" }, { "role": "assistant", "text": "BFS uses a queue." }]),
+    );
+    let started = std::time::Instant::now();
+    while crate::chats::load(&state.chats, "chat-name-0001").is_none_or(|c| !c.named) {
+        assert!(started.elapsed().as_secs() < 5, "the chat was never named");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let later = put(
+        serde_json::json!([{ "role": "user", "text": "help with bfs" }, { "role": "assistant", "text": "BFS uses a queue." }, { "role": "user", "text": "and dfs?" }]),
+    );
+    assert_eq!(later["title"], "Queues in breadth-first search");
+    assert!(later["about"]
+        .as_str()
+        .unwrap()
+        .starts_with("BFS uses a queue."));
+    assert_eq!(*asked.lock().unwrap(), 1);
 }

@@ -58,7 +58,7 @@ use crate::routes::uploads::{
 };
 use crate::terminal::{bind, clickable, keep_awake, open_on_enter, print_qr, should_open};
 
-pub use chat::Streamer;
+pub use chat::{Reply, Spent, Streamer};
 pub use graph::Writer;
 
 pub trait SettingsApi: Send + Sync {

@@ -232,3 +232,18 @@ Agent CLI runs have a watchdog: Claude Code is stopped after `QUIET_LIMIT`
 process group is killed (Unix), since a child holding the pipe kept leo
 waiting, and the run is tried once more. A Claude Code turn really did hang for
 21 minutes before this.
+
+### What an answer used (`ai/spend.rs`)
+
+Every `ChatProvider` may report `spent()` for its last answer (`Spent { model,
+effort, input, output, estimated }`); the chain copies it into
+`ChainOutcome.spent`. OpenAI-compatible providers read `usage` (and ask for it
+while streaming only from api.openai.com, openrouter.ai and api.x.ai, which are
+known to accept `stream_options`), else estimate 4 characters a token. Claude
+Code gives its model in the `init` event and tokens in `result.usage`; Codex
+prints model, reasoning effort and "tokens used" on stderr (`codex_banner`).
+An optional provider `effort` (letters and digits only) is passed as
+`--effort` to Claude Code and `-c model_reasoning_effort="…"` to Codex.
+`spend::answered` names the provider and prices tokens from `choice.rs`'s
+price strings (`rates`); agents are "on your plan" and local models free.
+`ai::chat_streaming` returns the text and that `Answered`.

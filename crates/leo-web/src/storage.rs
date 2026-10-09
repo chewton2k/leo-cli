@@ -344,16 +344,16 @@ pub fn areas(store: &Store, graphs: &Graphs, chats_dir: &Path, now: DateTime<Utc
     let map_bytes = size_of(graphs.path());
     out.push(Area {
         id: "map".into(),
-        title: "Map of ideas".into(),
-        about: "What the AI found in each note and how notes connect. Clearing it means the next map asks the AI to read every note again.".into(),
+        title: "Knowledge graph".into(),
+        about: "What the AI found in each note and how notes connect. Clearing it means the next build asks the AI to read every note again.".into(),
         path: graphs.path().display().to_string(),
         bytes: map_bytes,
         items: Vec::new(),
         actions: if map_bytes > 0 {
             vec![act(
                 "clear",
-                "Clear the map",
-                Some("The map is emptied. Building it again sends your notes to the AI again."),
+                "Clear the knowledge graph",
+                Some("The knowledge graph is emptied. Building it again sends your notes to the AI again."),
                 false,
             )]
         } else {
@@ -464,9 +464,9 @@ pub fn act_on(
             remove_pictures(notes_dir, unused.into_iter())
         }
         ("map", "clear") => match graphs.clear() {
-            Ok(true) => Ok("Cleared the map of ideas.".to_string()),
+            Ok(true) => Ok("Cleared the knowledge graph.".to_string()),
             Ok(false) => Err(anyhow::anyhow!(
-                "The map is being built right now; clear it when that finishes."
+                "The knowledge graph is being built right now; clear it when that finishes."
             )),
             Err(e) => Err(e),
         },
@@ -776,7 +776,7 @@ mod tests {
         assert_eq!(size_of(&attachments_dir(&store.notes_dir)), 10);
         assert_eq!(run("trash", "empty", &[]), "Emptied the trash (1 note).");
         assert!(store.trashed().is_empty());
-        assert_eq!(run("map", "clear", &[]), "Cleared the map of ideas.");
+        assert_eq!(run("map", "clear", &[]), "Cleared the knowledge graph.");
         assert!(!graphs.path().exists());
         assert_eq!(
             run("chats", "delete", &["chat-new-0002", "../../notes"]),

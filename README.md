@@ -584,7 +584,7 @@ there you can:
   which opens your phone's print sheet;
 - restore notes from the trash, or delete them for good: one at a time,
   several with **Select**, or all with **Empty trash**;
-- see a **map of ideas**: how your notes connect, across subjects;
+- see a **knowledge graph**: how your notes connect, across subjects;
 - study with **Felix**, the chat button at the top;
 - change settings under **More → Settings**: the AI for writing and speech,
   models (with prices), API keys, and when backups push;
@@ -612,7 +612,7 @@ while it records; the screen stays on. A pill at the top shows the time while
 you browse other notes.
 
 **Background work:** while a recording is being written up, an upload is being
-turned into a note, or the map is connecting notes, a small panel in the corner
+turned into a note, or the knowledge graph is connecting notes, a small panel in the corner
 shows each one with a progress bar, on whatever page you are on. Tap one to go
 to it, or **Hide** to fold the panel; it goes away when the work is done, and it
 comes back after a reload.
@@ -625,7 +625,7 @@ whiteboard, handwritten notes, or a scanned PDF are read by an AI that can see
 images (OpenAI, Anthropic, Gemini, xAI, Claude Code or Codex; most Ollama
 models cannot). Several photos of pages become one note, in order. Long
 documents are written in parts and then named. The note lands in the folder
-you pick and joins the map; the original file is kept on your computer, next
+you pick and joins the knowledge graph; the original file is kept on your computer, next
 to your notes folder (not backed up), and a chip on the note downloads it
 (**Download all** zips them when there are several).
 
@@ -634,9 +634,9 @@ him like any AI chat; he uses your own notes when they help and links each
 answer to the notes it came from. Type **@** (or tap the paperclip) to add any
 note to the conversation: added notes show as chips above the message box, go
 with every message until you remove them, and are what he reads first. He also
-reads the note you have open and the notes connected to it on the map, and
+reads the note you have open and the notes connected to it on the knowledge graph, and
 looks up notes that match your question, by their words and by the summaries
-and key ideas the map of ideas found in them (so "breadth first search" finds a
+and key ideas the knowledge graph found in them (so "breadth first search" finds a
 note that only says "BFS"). The best matches bring their own connections on the
 map along, each with the reason they are connected, so answers can tie ideas
 across classes. There are two styles, the same Felix
@@ -695,16 +695,16 @@ unsaved drafts kept in this browser.
 
 **Storage and data** (Settings → Advanced) shows everything leo keeps on your
 computer and how much space each part takes, with a bar to compare them: notes,
-trash, chats with Felix, uploaded files, the map of ideas, recording audio
+trash, chats with Felix, uploaded files, the knowledge graph, recording audio
 leo still holds, the built-in speech model, backup history, and settings. Open
 a part to see what is in it and delete what you no longer need: pick chats or
 uploads one by one or all at once, delete chats older than 30 days or uploads
-whose note is gone, empty the trash, clear the map, delete leftover recording
+whose note is gone, empty the trash, clear the knowledge graph, delete leftover recording
 audio, or remove the speech model (`leo update` downloads it again). leo asks
 before deleting anything. Notes are only deleted from their own page, and
 backup history and settings are shown but never deleted from here.
 
-**The map of ideas** (More → Map of ideas, or **Map** on any note) is a
+**The knowledge graph** (Knowledge graph in the sidebar, More → Knowledge graph on a phone, or **Graph** on any note) is a
 knowledge graph of your notes: every note is a dot coloured by its class (its
 top folder), sized by how connected it is. **Connect notes** asks the AI you
 chose for writing to read each note (what it teaches, its key ideas and
@@ -733,7 +733,7 @@ leo asks before the first run and says roughly how many requests it will make
 connects just those to the rest; the connections already found stay.
 **Rebuild** (next to Update) starts over from scratch, after asking. What it found is
 kept in `graph.json` next to your notes folder, on this computer only, and is
-never backed up to GitHub. The map is only in the browser, not in the terminal.
+never backed up to GitHub. The knowledge graph is only in the browser, not in the terminal.
 
 If a note changes on your computer while you are editing it on the phone,
 nothing is overwritten: the computer's version stays, and yours is kept next to

@@ -86,11 +86,70 @@
   }
 
   const THUMB = /^data:image\/(?:jpeg|png);base64,[A-Za-z0-9+/=]+$/;
+  const glyph = (paths) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+  const PAGE = '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/>';
+  const FILE_GLYPHS = {
+    pdf: glyph(`${PAGE}<path d="M9 13h6M9 17h4"/>`),
+    doc: glyph(`${PAGE}<path d="M9 11h6M9 14h6M9 17h4"/>`),
+    slides: glyph('<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M12 16v4M8 20h8M7 9h6"/>'),
+    sheet: glyph('<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 10h16M4 15h16M10 4v16"/>'),
+    image: glyph('<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/>'),
+    text: glyph(`${PAGE}<path d="M9 12h6M9 16h6"/>`),
+    other: glyph(PAGE),
+  };
+
+  function fileKind(name) {
+    const found = String(name || '').match(/\.([a-z0-9]{1,8})$/i);
+    const ext = found ? found[1].toLowerCase() : '';
+    const tone = ext === 'pdf' ? 'pdf'
+      : /^(docx?|rtf|odt|pages)$/.test(ext) ? 'doc'
+        : /^(pptx?|key|odp)$/.test(ext) ? 'slides'
+          : /^(xlsx?|csv|numbers|ods)$/.test(ext) ? 'sheet'
+            : /^(png|jpe?g|gif|webp|heic|heif|bmp|tiff?|avif)$/.test(ext) ? 'image'
+              : /^(md|markdown|txt|text)$/.test(ext) ? 'text' : 'other';
+    return { label: ext ? (ext === 'jpeg' ? 'JPG' : ext.toUpperCase()) : 'FILE', tone };
+  }
+
+  function fileCard(f, escape, { remove = '', reading = false } = {}) {
+    const kind = fileKind(f.name);
+    const thumb = f.thumb && THUMB.test(f.thumb) ? f.thumb : '';
+    const excerpt = typeof f.excerpt === 'string' ? f.excerpt.trim() : '';
+    const peek = thumb
+      ? `<img src="${escape(thumb)}" alt="">`
+      : excerpt
+        ? `<span class="file-page">${escape(excerpt)}</span>`
+        : `<span class="file-glyph">${FILE_GLYPHS[kind.tone]}</span>`;
+    const busy = reading ? '<span class="file-reading">Reading…</span>' : '';
+    const x = remove ? `<button class="file-x" data-chat="unfile" data-id="${escape(remove)}" aria-label="Remove ${escape(f.name)}">×</button>` : '';
+    return `<span class="file-card tone-${kind.tone}${reading ? ' reading' : ''}" title="${escape(f.name)}"><span class="file-peek">${peek}${busy}</span><span class="file-foot"><span class="file-badge">${FILE_GLYPHS[kind.tone]}${escape(kind.label)}</span><span class="file-name">${escape(f.name)}</span></span>${x}</span>`;
+  }
 
   function pastedNames(files) {
     return [...files].map((f, i) => (f.name && !/^image\.\w+$/i.test(f.name)
       ? f
       : new File([f], `pasted-${i + 1}.${(f.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`, { type: f.type })));
+  }
+
+  function money(cost) {
+    if (cost >= 0.995) return `$${cost.toFixed(2)}`;
+    if (cost >= 0.01) return `$${cost.toFixed(3)}`;
+    if (cost >= 0.0001) return `$${cost.toFixed(4)}`;
+    return 'under $0.0001';
+  }
+
+  function spentLabel(spent) {
+    if (!spent || typeof spent !== 'object' || typeof spent.by !== 'string') return null;
+    const model = typeof spent.model === 'string' && spent.model ? spent.model : '';
+    const effort = typeof spent.effort === 'string' && spent.effort ? `${spent.effort} effort` : '';
+    const about = spent.estimated ? 'about ' : '';
+    const steps = spent.steps > 1 ? ` over ${spent.steps} steps` : '';
+    const title = `${about}${Number(spent.input || 0).toLocaleString('en-US')} tokens in, ${Number(spent.output || 0).toLocaleString('en-US')} out${steps}`;
+    let parts;
+    if (spent.plan) parts = [spent.by, model, effort || 'default effort', 'on your plan'];
+    else if (spent.local) parts = [spent.by, model, 'free on this computer'];
+    else if (typeof spent.cost === 'number') parts = [`${spent.estimated ? '≈ ' : ''}${money(spent.cost)}`, spent.by, model];
+    else parts = [spent.by, model, 'price unknown'];
+    return { text: parts.filter(Boolean).join(' · '), title };
   }
 
   function asNote(question, text, sources) {
@@ -463,12 +522,19 @@
             state.chats = [summary, ...state.chats.filter((c) => c.id !== summary.id)];
             drawChats();
           }
+          if (!summary.named && summary.count >= 2 && !naming.has(summary.id)) {
+            naming.add(summary.id);
+            for (const wait of NAME_CHECKS) setTimeout(() => state.chats && loadChats(), wait);
+          }
         } catch (e) {
           return;
         }
       });
       return upload;
     }
+
+    const naming = new Set();
+    const NAME_CHECKS = [8000, 25000, 60000];
 
     async function loadChats() {
       try {
@@ -493,7 +559,7 @@
       }
       box.innerHTML = groups(state.chats)
         .map((g) => `<div class="chat-history-group">${escape(g.name)}</div>${g.chats
-          .map((c) => `<div class="chat-history-row${c.id === state.id ? ' on' : ''}"><button class="chat-history-item" data-chat="resume" data-id="${escape(c.id)}" title="${escape(c.title)}">${escape(c.title)}</button><button class="chat-history-x${state.doomed === c.id ? ' sure' : ''}" data-chat="forget" data-id="${escape(c.id)}" aria-label="${state.doomed === c.id ? 'Confirm delete' : 'Delete'} ${escape(c.title)}">${state.doomed === c.id ? 'Delete' : '×'}</button></div>`)
+          .map((c) => `<div class="chat-history-row${c.id === state.id ? ' on' : ''}"><button class="chat-history-item" data-chat="resume" data-id="${escape(c.id)}" title="${escape(c.about ? `${c.title}\n${c.about}` : c.title)}"><span class="chat-history-title">${escape(c.title)}</span>${c.about ? `<span class="chat-history-about">${escape(c.about)}</span>` : ''}</button><button class="chat-history-x${state.doomed === c.id ? ' sure' : ''}" data-chat="forget" data-id="${escape(c.id)}" aria-label="${state.doomed === c.id ? 'Confirm delete' : 'Delete'} ${escape(c.title)}">${state.doomed === c.id ? 'Delete' : '×'}</button></div>`)
           .join('')}`)
         .join('');
     }
@@ -571,13 +637,10 @@
       const notes = state.refs
         .map((r) => `<span class="chat-ref"><button class="chat-ref-open" data-chat="open" data-id="${escape(r.id)}" title="${escape(r.title)}">${escape(r.title)}</button><button class="chat-ref-x" data-chat="unref" data-id="${escape(r.id)}" aria-label="Remove ${escape(r.title)}">×</button></span>`)
         .join('');
-      const pic = (f) => (f.thumb && THUMB.test(f.thumb) ? `<img class="chat-thumb" src="${escape(f.thumb)}" alt="">` : '');
       const files = state.files
-        .map((f) => f.status === 'reading'
-          ? `<span class="chat-ref doc reading" title="Felix is reading ${escape(f.name)}">${pic(f)}<span class="chat-ref-open">${escape(f.name)} · reading…</span></span>`
-          : `<span class="chat-ref doc">${pic(f)}<span class="chat-ref-open" title="${escape(f.name)}">${escape(f.name)}</span><button class="chat-ref-x" data-chat="unfile" data-id="${escape(f.id)}" aria-label="Remove ${escape(f.name)}">×</button></span>`)
+        .map((f) => (f.status === 'reading' ? fileCard(f, escape, { reading: true }) : fileCard(f, escape, { remove: f.id })))
         .join('');
-      $('#chat-refs').innerHTML = notes + files;
+      $('#chat-refs').innerHTML = (notes ? `<div class="chat-notes">${notes}</div>` : '') + (files ? `<div class="file-cards">${files}</div>` : '');
     }
 
     async function loadFiles() {
@@ -785,11 +848,12 @@
     function bubble(m, i) {
       if (m.role === 'user') {
         const notes = (m.refs || []).map((r) => `<button class="cite" data-chat="open" data-id="${escape(r.id)}">${escape(r.title)}</button>`);
-        const docs = (m.docs || []).map((name) => `<span class="cite doc">${escape(name)}</span>`);
-        const refs = notes.length || docs.length ? `<div class="msg-refs">${[...notes, ...docs].join('')}</div>` : '';
-        const shown = (m.pics || []).filter((p) => p && THUMB.test(p.thumb || ''));
-        const pics = shown.length ? `<div class="msg-pics">${shown.map((p) => `<img src="${escape(p.thumb)}" alt="${escape(p.name || 'picture')}" title="${escape(p.name || '')}">`).join('')}</div>` : '';
-        return `<div class="msg user">${refs}${pics}<div class="bubble">${escape(m.text).replace(/\n/g, '<br>')}</div></div>`;
+        const cards = Array.isArray(m.cards)
+          ? m.cards.filter((c) => c && typeof c.name === 'string')
+          : [...(m.docs || []).map((name) => ({ name })), ...(m.pics || []).filter((p) => p && typeof p.name === 'string')];
+        const refs = notes.length ? `<div class="msg-refs">${notes.join('')}</div>` : '';
+        const files = cards.length ? `<div class="file-cards sent">${cards.map((c) => fileCard(c, escape)).join('')}</div>` : '';
+        return `<div class="msg user">${refs}${files}<div class="bubble">${escape(m.text).replace(/\n/g, '<br>')}</div></div>`;
       }
       const shown = grade(m.text).text;
       let html = shown ? cite(render(shown), m.sources, escape).replace(/<input /g, '<input disabled ') : '';
@@ -801,11 +865,14 @@
       const error = m.error ? `<div class="msg-error">${escape(m.error)}</div>` : '';
       const verdict = grade(m.text).verdict;
       const badge = verdict ? `<span class="verdict ${verdict}">${verdict === 'correct' ? 'Correct' : 'Not quite'}</span>` : '';
-      const keep = !m.pending && !m.error && shown
-        ? `<div class="msg-acts">${m.saved
+      const label = m.pending ? null : spentLabel(m.spent);
+      const meta = label ? `<span class="msg-meta" title="${escape(label.title)}">${escape(label.text)}</span>` : '';
+      const save = !m.pending && !m.error && shown
+        ? (m.saved
           ? `<button class="msg-act" data-chat="open" data-id="${escape(m.saved)}">Open the saved note</button>`
-          : `<button class="msg-act" data-chat="save" data-i="${i}">Save as note</button>`}</div>`
+          : `<button class="msg-act" data-chat="save" data-i="${i}">Save as note</button>`)
         : '';
+      const keep = save || meta ? `<div class="msg-acts">${save}${meta}</div>` : '';
       const steps = (m.steps || []).length ? `<div class="msg-steps">${m.steps.map((t, k) => stepLine(t, m.pending && !shown && k === m.steps.length - 1)).join('')}</div>` : '';
       const offers = (m.proposals || []).map((p, j) => proposalCard(p, i, j)).join('');
       return `<div class="msg leo${m.pending ? ' pending' : ''}" data-i="${i}">${badge}${steps}<div class="prose">${html}</div>${offers}${error}${from}${keep}</div>`;
@@ -835,7 +902,7 @@
       return `<div class="chat-hello">
         ${felix(96, 'idle big')}
         <h3>Hi, I'm Felix!</h3>
-        <p>${escape(info.hint)}. I also read ${where}, and the notes connected to it on your map.</p>
+        <p>${escape(info.hint)}. I also read ${where}, and the notes connected to it in your knowledge graph.</p>
         ${reviewCard()}
         <div class="chat-starters">${info.starters.map((s, i) => `<button class="starter${state.asking && state.asking.starter === s ? ' on' : ''}" data-chat="starter" data-i="${i}">${escape(s.text)}</button>`).join('')}</div>
         ${asking()}
@@ -1113,7 +1180,8 @@
       closePick();
       const ready = state.files.filter((f) => f.status === 'ready');
       const pics = ready.filter((f) => f.thumb).map((f) => ({ name: f.name, thumb: f.thumb }));
-      state.messages.push({ role: 'user', text: question, refs: state.refs.slice(), docs: ready.filter((f) => !f.thumb).map((f) => f.name), files: ready.map((f) => f.id), ...(pics.length ? { pics } : {}) });
+      const cards = ready.map((f) => ({ name: f.name, ...(f.thumb ? { thumb: f.thumb } : { excerpt: (f.excerpt || '').slice(0, 320) }) }));
+      state.messages.push({ role: 'user', text: question, refs: state.refs.slice(), docs: ready.filter((f) => !f.thumb).map((f) => f.name), files: ready.map((f) => f.id), ...(pics.length ? { pics } : {}), ...(cards.length ? { cards } : {}) });
       state.sent = [...state.sent, ...ready.map((f) => ({ id: f.id, name: f.name }))];
       state.files = state.files.filter((f) => f.status !== 'ready');
       drawRefs();
@@ -1163,6 +1231,7 @@
             if (e.restart) answer.text = '';
             if (typeof e.step === 'string') pose(e.tool);
             if (typeof e.step === 'string') answer.steps = [...(answer.steps || []), { text: e.step, tool: typeof e.tool === 'string' ? e.tool : '', found: Array.isArray(e.found) ? e.found.filter((f) => typeof f === 'string').slice(0, 12) : [] }];
+            if (e.spent && typeof e.spent === 'object') answer.spent = e.spent;
             if (e.proposal && typeof e.proposal === 'object') answer.proposals = [...(answer.proposals || []), { ...e.proposal, state: 'new' }];
             if (typeof e.t === 'string') {
               if (!answer.text) talking();
@@ -1404,5 +1473,5 @@
     };
   }
 
-  root.leoChat = { NOTE_DRAG, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS };
+  root.leoChat = { NOTE_DRAG, spentLabel, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS };
 })(typeof window !== 'undefined' ? window : globalThis);

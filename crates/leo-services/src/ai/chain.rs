@@ -22,6 +22,7 @@ pub struct ChainOutcome<T> {
     #[allow(dead_code)]
     pub provider: String,
     pub fallbacks: Vec<Fallback>,
+    pub spent: Option<crate::ai::provider::Spent>,
 }
 
 /// Walk providers in order:
@@ -117,6 +118,7 @@ fn run_chat_chain_with(
                     value,
                     provider: p.name().to_string(),
                     fallbacks,
+                    spent: p.spent(),
                 })
             }
             Err(ProviderError::Fatal(msg)) => bail!("{msg}"),
@@ -175,6 +177,7 @@ pub fn run_transcribe_chain(
                     value,
                     provider: p.name().to_string(),
                     fallbacks,
+                    spent: None,
                 })
             }
             Err(ProviderError::Fatal(msg)) => bail!("{msg}"),

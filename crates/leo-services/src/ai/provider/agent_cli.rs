@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::ai::error::{ProviderError, ProviderResult};
-use crate::ai::provider::{ChatProvider, ChatRequest, Image, Sink};
+use crate::ai::provider::{ChatProvider, ChatRequest, Image, Sink, Spent};
 use crate::config::provider::{ProviderConfig, ProviderKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -158,8 +158,10 @@ pub struct AgentCli {
     agent: Agent,
     bin: String,
     model: Option<String>,
+    effort: Option<String>,
     quiet_limit: Duration,
     total_limit: Duration,
+    spent: Mutex<Option<Spent>>,
 }
 
 impl AgentCli {
@@ -173,8 +175,14 @@ impl AgentCli {
                 .filter(|b| !b.trim().is_empty())
                 .unwrap_or_else(|| agent.program().to_string()),
             model: cfg.model.clone().filter(|m| !m.trim().is_empty()),
+            effort: cfg
+                .effort
+                .clone()
+                .map(|e| e.trim().to_lowercase())
+                .filter(|e| !e.is_empty() && e.chars().all(|c| c.is_ascii_alphanumeric())),
             quiet_limit: QUIET_LIMIT,
             total_limit: TOTAL_LIMIT,
+            spent: Mutex::new(None),
         }
     }
 
@@ -212,6 +220,9 @@ impl AgentCli {
                 );
                 if let Some(model) = &self.model {
                     args.extend(["--model".to_string(), model.clone()]);
+                }
+                if let Some(effort) = &self.effort {
+                    args.extend(["--effort".to_string(), effort.clone()]);
                 }
                 if let Some(system) = &req.system {
                     args.extend(["--system-prompt".to_string(), system.clone()]);
@@ -258,6 +269,12 @@ impl AgentCli {
                 );
                 if let Some(model) = &self.model {
                     args.extend(["--model".to_string(), model.clone()]);
+                }
+                if let Some(effort) = &self.effort {
+                    args.extend([
+                        "-c".to_string(),
+                        format!("model_reasoning_effort=\"{effort}\""),
+                    ]);
                 }
                 for feature in disables {
                     args.extend(["--disable".to_string(), feature.clone()]);
@@ -331,6 +348,30 @@ pub struct Heard {
     pub answer: String,
     pub result: Option<(bool, String)>,
     pub usage: Option<crate::usage::Usage>,
+    pub model: Option<String>,
+    pub tokens: Option<(u64, u64)>,
+}
+
+pub fn codex_banner(stderr: &str) -> (Option<String>, Option<String>, Option<u64>) {
+    let mut model = None;
+    let mut effort = None;
+    let mut tokens = None;
+    let mut lines = stderr.lines().map(str::trim).peekable();
+    while let Some(line) = lines.next() {
+        if let Some(rest) = line.strip_prefix("model:") {
+            model = Some(rest.trim().to_string()).filter(|m| !m.is_empty());
+        } else if let Some(rest) = line.strip_prefix("reasoning effort:") {
+            effort = Some(rest.trim().to_string()).filter(|e| !e.is_empty() && e != "none");
+        } else if let Some(rest) = line.strip_prefix("tokens used") {
+            let digits = |s: &str| s.chars().filter(char::is_ascii_digit).collect::<String>();
+            let mut found = digits(rest);
+            if found.is_empty() {
+                found = lines.peek().map(|next| digits(next)).unwrap_or_default();
+            }
+            tokens = found.parse().ok().or(tokens);
+        }
+    }
+    (model, effort, tokens)
 }
 
 pub fn read_stream(lines: impl BufRead, sink: Sink<'_>) -> Heard {
@@ -351,6 +392,9 @@ pub fn read_stream(lines: impl BufRead, sink: Sink<'_>) -> Heard {
                     }
                 }
             }
+            Some("system") if event["subtype"] == "init" => {
+                heard.model = event["model"].as_str().map(str::to_string);
+            }
             Some("rate_limit_event") => {
                 if let Some(usage) =
                     crate::usage::from_claude(&event["rate_limit_info"], chrono::Utc::now())
@@ -363,6 +407,18 @@ pub fn read_stream(lines: impl BufRead, sink: Sink<'_>) -> Heard {
                     || event["subtype"].as_str().is_some_and(|s| s != "success");
                 let said = event["result"].as_str().unwrap_or_default().to_string();
                 heard.result = Some((failed, said));
+                let usage = &event["usage"];
+                let input = [
+                    "input_tokens",
+                    "cache_read_input_tokens",
+                    "cache_creation_input_tokens",
+                ]
+                .iter()
+                .filter_map(|k| usage[*k].as_u64())
+                .sum::<u64>();
+                if let Some(output) = usage["output_tokens"].as_u64() {
+                    heard.tokens = Some((input, output));
+                }
             }
             _ => {}
         }
@@ -388,6 +444,34 @@ impl AgentCli {
                 self.spawn(&program, room.path(), &args, input, sink)
             }
             other => other,
+        }
+    }
+
+    fn note_spent(&self, heard: &Heard, stderr: &str, asked: usize, answer: &str) {
+        let (banner_model, banner_effort, banner_tokens) = match self.agent {
+            Agent::Codex => codex_banner(stderr),
+            Agent::ClaudeCode => (None, None, None),
+        };
+        let mut spent = Spent {
+            model: heard
+                .model
+                .clone()
+                .or(banner_model)
+                .or_else(|| self.model.clone()),
+            effort: self.effort.clone().or(banner_effort),
+            input: asked.div_ceil(4) as u64,
+            output: answer.chars().count().div_ceil(4) as u64,
+            estimated: true,
+        };
+        if let Some((input, output)) = heard.tokens {
+            (spent.input, spent.output, spent.estimated) = (input, output, false);
+        } else if let Some(total) = banner_tokens {
+            spent.output = spent.output.min(total);
+            spent.input = total - spent.output;
+            spent.estimated = false;
+        }
+        if let Ok(mut slot) = self.spent.lock() {
+            *slot = Some(spent);
         }
     }
 
@@ -419,6 +503,7 @@ impl AgentCli {
             .stderr(Stdio::piped());
         #[cfg(unix)]
         std::os::unix::process::CommandExt::process_group(&mut command, 0);
+        let input_len = input.chars().count();
         let mut child = command.spawn().map_err(|e| {
             ProviderError::Retryable(format!("{}: could not run {}: {e}", self.name, self.bin))
         })?;
@@ -478,8 +563,7 @@ impl AgentCli {
                 let _ = stdout.read_to_string(&mut answer);
                 Heard {
                     answer,
-                    result: None,
-                    usage: None,
+                    ..Heard::default()
                 }
             }
             (_, None) => Heard::default(),
@@ -532,6 +616,7 @@ impl AgentCli {
         if self.agent == Agent::Codex {
             sink(&answer);
         }
+        self.note_spent(&heard, &stderr, input_len, &answer);
         Ok(answer)
     }
 }
@@ -555,6 +640,10 @@ impl ChatProvider for AgentCli {
 
     fn name(&self) -> &str {
         &self.name
+    }
+
+    fn spent(&self) -> Option<Spent> {
+        self.spent.lock().ok().and_then(|slot| slot.clone())
     }
 
     fn unavailable_reason(&self) -> String {
@@ -924,5 +1013,65 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"x
             }
             other => panic!("expected a retryable failure, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn claude_code_says_which_model_answered_and_how_many_tokens_it_took() {
+        let stream = [
+            r##"{"type":"system","subtype":"init","model":"claude-sonnet-5-5"}"##,
+            r##"{"type":"result","subtype":"success","is_error":false,"result":"hi","usage":{"input_tokens":12,"cache_read_input_tokens":3000,"cache_creation_input_tokens":40,"output_tokens":7}}"##,
+        ]
+        .join("\n");
+        let heard = read_stream(stream.as_bytes(), &mut |_| {});
+        assert_eq!(heard.model.as_deref(), Some("claude-sonnet-5-5"));
+        assert_eq!(heard.tokens, Some((3052, 7)));
+    }
+
+    #[test]
+    fn codex_says_its_model_and_effort_on_stderr() {
+        let banner = "OpenAI Codex v0.130\n--------\nworkdir: /tmp/x\nmodel: gpt-6.1-sol\nprovider: openai\napproval: never\nsandbox: read-only\nreasoning effort: high\nreasoning summaries: auto\n--------\nuser\nhi\ntokens used\n12,345\n";
+        assert_eq!(
+            codex_banner(banner),
+            (
+                Some("gpt-6.1-sol".into()),
+                Some("high".into()),
+                Some(12_345)
+            )
+        );
+        assert_eq!(
+            codex_banner("tokens used: 99\nreasoning effort: none"),
+            (None, None, Some(99))
+        );
+        assert_eq!(codex_banner(""), (None, None, None));
+    }
+
+    #[test]
+    fn an_effort_setting_reaches_both_programs_and_odd_values_are_dropped() {
+        let req = ChatRequest {
+            system: None,
+            prompt: "p".into(),
+            temperature: 0.2,
+            max_tokens: 10,
+        };
+        let mut cfg = config(ProviderKind::ClaudeCode, "claude", None);
+        cfg.effort = Some(" High ".into());
+        let (args, _) = AgentCli::new("claude_code".into(), Agent::ClaudeCode, &cfg).arguments(
+            &req,
+            &[],
+            &[],
+            &[],
+        );
+        assert!(args.windows(2).any(|w| w == ["--effort", "high"]));
+        let mut cfg = config(ProviderKind::Codex, "codex", None);
+        cfg.effort = Some("medium".into());
+        let (args, _) =
+            AgentCli::new("codex".into(), Agent::Codex, &cfg).arguments(&req, &[], &[], &[]);
+        assert!(args
+            .windows(2)
+            .any(|w| w == ["-c", "model_reasoning_effort=\"medium\""]));
+        cfg.effort = Some("high\"; rm".into());
+        let (args, _) =
+            AgentCli::new("codex".into(), Agent::Codex, &cfg).arguments(&req, &[], &[], &[]);
+        assert!(!args.iter().any(|a| a.contains("model_reasoning_effort")));
     }
 }

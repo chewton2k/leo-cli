@@ -37,7 +37,7 @@ function menu() {
     <button class="list-row" data-action="record" data-dir="${esc(here)}">${ICON.mic}<span class="grow">Record a lecture or meeting</span></button>
     <button class="list-row" data-action="upload">${ICON.upload}<span class="grow">Make a note from a file</span></button>
     <button class="list-row" data-action="new-folder">${ICON.folderPlus}<span class="grow">New folder${here ? ` in ${esc(folderLabel(here))}` : ''}</span></button>
-    <button class="list-row" data-action="map">${ICON.map}<span class="grow">Map of ideas</span></button>
+    <button class="list-row" data-action="map">${ICON.map}<span class="grow">Knowledge graph</span></button>
     <button class="list-row" data-action="settings">${ICON.gear}<span class="grow">Settings</span></button>
     <button class="list-row" data-action="drafts">${ICON.note}<span class="grow">Drafts (${saving.drafts().length})</span></button>
     <button class="list-row" data-action="trash">${ICON.trash}<span class="grow">Trash</span></button>

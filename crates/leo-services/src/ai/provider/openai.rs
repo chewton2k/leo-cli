@@ -2,7 +2,7 @@ use crate::ai::error::{
     classify_reqwest, classify_status, classify_status_with_key, scrub_secret, ProviderError,
     ProviderResult,
 };
-use crate::ai::provider::{ChatProvider, ChatRequest, Sink};
+use crate::ai::provider::{ChatProvider, ChatRequest, Sink, Spent};
 use crate::config::provider::ProviderConfig;
 use crate::config::secret::Secret;
 
@@ -19,6 +19,7 @@ pub struct OpenAiChat {
     needs_key: bool,
     max_tokens: u32,
     reasoning: bool,
+    spent: std::sync::Mutex<Option<Spent>>,
 }
 
 impl OpenAiChat {
@@ -38,8 +39,38 @@ impl OpenAiChat {
             needs_key: cfg.key_env.is_some(),
             max_tokens: cfg.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
             reasoning: cfg.reasoning.unwrap_or(false),
+            spent: std::sync::Mutex::new(None),
         }
     }
+
+    fn reports_streamed_usage(&self) -> bool {
+        ["api.openai.com", "openrouter.ai", "api.x.ai"]
+            .iter()
+            .any(|host| self.base_url.contains(host))
+    }
+
+    fn note_spent(&self, req: &ChatRequest, answer: &str, usage: Option<(u64, u64)>) {
+        let mut spent = Spent::guessed(Some(self.model.clone()), req, answer);
+        if let Some((input, output)) = usage {
+            spent.input = input;
+            spent.output = output;
+            spent.estimated = false;
+        }
+        if let Ok(mut slot) = self.spent.lock() {
+            *slot = Some(spent);
+        }
+    }
+}
+
+fn usage_of(json: &serde_json::Value) -> Option<(u64, u64)> {
+    let usage = &json["usage"];
+    let input = usage["prompt_tokens"]
+        .as_u64()
+        .or_else(|| usage["input_tokens"].as_u64())?;
+    let output = usage["completion_tokens"]
+        .as_u64()
+        .or_else(|| usage["output_tokens"].as_u64())?;
+    Some((input, output))
 }
 
 impl OpenAiChat {
@@ -51,21 +82,26 @@ impl OpenAiChat {
             messages.push(serde_json::json!({"role": "system", "content": system}));
         }
         messages.push(serde_json::json!({"role": "user", "content": req.prompt}));
-        if self.reasoning {
-            return serde_json::json!({
+        let mut body = if self.reasoning {
+            serde_json::json!({
                 "model": self.model,
                 "messages": messages,
                 "max_completion_tokens": req.max_tokens,
                 "stream": stream,
-            });
+            })
+        } else {
+            serde_json::json!({
+                "model": self.model,
+                "messages": messages,
+                "temperature": req.temperature,
+                "max_tokens": req.max_tokens,
+                "stream": stream,
+            })
+        };
+        if stream && self.reports_streamed_usage() {
+            body["stream_options"] = serde_json::json!({ "include_usage": true });
         }
-        serde_json::json!({
-            "model": self.model,
-            "messages": messages,
-            "temperature": req.temperature,
-            "max_tokens": req.max_tokens,
-            "stream": stream,
-        })
+        body
     }
 
     fn endpoint(&self) -> String {
@@ -199,6 +235,7 @@ impl OpenAiChat {
                 if let Some(note) = cut_off_warning(&self.name, finish, req.max_tokens) {
                     leo_core::diag::warn(note);
                 }
+                self.note_spent(req, t, usage_of(&json));
                 Ok(t.to_string())
             }
             // Retryable, not fatal: an empty completion is this provider
@@ -247,6 +284,7 @@ impl ChatProvider for OpenAiChat {
         // which is how a reasoning model on a free tier sometimes replies.
         let mut reasoning = String::new();
         let mut finish = String::new();
+        let mut usage = None;
 
         let reader = BufReader::new(resp);
         for line in reader.lines() {
@@ -260,6 +298,11 @@ impl ChatProvider for OpenAiChat {
             };
             if let Some(reason) = finish_reason(payload) {
                 finish = reason;
+            }
+            if payload.contains("\"usage\"") {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(payload.trim()) {
+                    usage = usage_of(&json).or(usage);
+                }
             }
             match delta_text(payload) {
                 Some(Delta::Content(fragment)) => {
@@ -275,12 +318,14 @@ impl ChatProvider for OpenAiChat {
             if let Some(note) = cut_off_warning(&self.name, &finish, req.max_tokens) {
                 leo_core::diag::warn(note);
             }
+            self.note_spent(req, &answer, usage);
             return Ok(answer);
         }
         // No answer, but the model said something: better than nothing, and the
         // non-streaming path makes the same choice.
         if !reasoning.trim().is_empty() {
             sink(&reasoning);
+            self.note_spent(req, &reasoning, usage);
             return Ok(reasoning);
         }
         Err(ProviderError::Retryable(format!(
@@ -319,6 +364,10 @@ impl ChatProvider for OpenAiChat {
         &self.name
     }
 
+    fn spent(&self) -> Option<Spent> {
+        self.spent.lock().ok().and_then(|slot| slot.clone())
+    }
+
     fn unavailable_reason(&self) -> String {
         format!(
             "{}: no API key (run `leo doctor`, or type :settings in leo)",
@@ -336,6 +385,40 @@ mod tests {
     use super::*;
     use crate::ai::provider::ChatProvider;
     use crate::config::secret::{resolve, MemoryStore, SecretStore};
+
+    #[test]
+    fn usage_is_read_in_either_spelling_and_asked_for_only_where_it_is_known_to_work() {
+        let json = serde_json::json!({"usage": {"prompt_tokens": 120, "completion_tokens": 30}});
+        assert_eq!(usage_of(&json), Some((120, 30)));
+        let json = serde_json::json!({"usage": {"input_tokens": 5, "output_tokens": 6}});
+        assert_eq!(usage_of(&json), Some((5, 6)));
+        assert_eq!(usage_of(&serde_json::json!({"usage": null})), None);
+        let at = |url: &str| {
+            let cfg = ProviderConfig {
+                base_url: Some(url.into()),
+                ..ProviderConfig::default()
+            };
+            OpenAiChat::new("p".into(), &cfg, None)
+        };
+        let req = ChatRequest {
+            system: None,
+            prompt: "p".into(),
+            temperature: 0.2,
+            max_tokens: 10,
+        };
+        assert_eq!(
+            at("https://api.openai.com/v1").body(&req, true)["stream_options"]["include_usage"],
+            true
+        );
+        assert!(at("http://localhost:11434/v1")
+            .body(&req, true)
+            .get("stream_options")
+            .is_none());
+        assert!(at("https://api.openai.com/v1")
+            .body(&req, false)
+            .get("stream_options")
+            .is_none());
+    }
 
     #[test]
     fn max_bytes_is_not_applicable_but_max_tokens_reflects_config() {

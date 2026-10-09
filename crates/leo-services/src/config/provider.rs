@@ -45,6 +45,8 @@ pub struct ProviderConfig {
     pub path: Option<String>,
     #[serde(default)]
     pub reasoning: Option<bool>,
+    #[serde(default)]
+    pub effort: Option<String>,
 }
 
 impl ProviderConfig {
@@ -66,6 +68,7 @@ impl ProviderConfig {
         self.key_from = self.key_from.take().or(built_in.key_from);
         self.path = self.path.take().or(built_in.path);
         self.reasoning = self.reasoning.or(built_in.reasoning);
+        self.effort = self.effort.take().or(built_in.effort);
     }
 }
 

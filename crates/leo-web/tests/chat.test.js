@@ -167,3 +167,38 @@ test('each tool gives Felix its own prop, and anything else none', () => {
   assert.equal(C.poseOf('delete_everything'), null);
   for (const prop of ['search', 'open', 'map', 'edit', 'create']) assert.ok(C.felix(40).includes(`felix-tool-${prop}`), prop);
 });
+
+test('what an answer cost reads as money for keys, model and effort for plans, free for this computer', () => {
+  const paid = C.spentLabel({ by: 'Anthropic', model: 'claude-sonnet-5-5', input: 12000, output: 800, cost: 0.032, steps: 2 });
+  assert.equal(paid.text, '$0.032 · Anthropic · claude-sonnet-5-5');
+  assert.equal(paid.title, '12,000 tokens in, 800 out over 2 steps');
+  assert.equal(C.spentLabel({ by: 'OpenAI', model: 'gpt-5-nano', cost: 0.00042, estimated: true }).text, '≈ $0.0004 · OpenAI · gpt-5-nano');
+  assert.equal(C.spentLabel({ by: 'OpenAI', model: 'gpt-5.5', cost: 1.234 }).text, '$1.23 · OpenAI · gpt-5.5');
+  assert.equal(C.spentLabel({ by: 'Codex', model: 'gpt-6.1-sol', effort: 'high', plan: true }).text, 'Codex · gpt-6.1-sol · high effort · on your plan');
+  assert.equal(C.spentLabel({ by: 'Claude Code', model: 'claude-opus-5-5', plan: true }).text, 'Claude Code · claude-opus-5-5 · default effort · on your plan');
+  assert.equal(C.spentLabel({ by: 'Ollama', model: 'qwen3:8b', local: true, cost: 0 }).text, 'Ollama · qwen3:8b · free on this computer');
+  assert.equal(C.spentLabel({ by: 'OpenRouter', model: 'x/y' }).text, 'OpenRouter · x/y · price unknown');
+  assert.equal(C.spentLabel(null), null);
+  assert.equal(C.spentLabel({ cost: 1 }), null);
+});
+
+test('a file card names its type and shows a small example of what is inside', () => {
+  assert.deepEqual(C.fileKind('Week 3.pdf'), { label: 'PDF', tone: 'pdf' });
+  assert.deepEqual(C.fileKind('essay.DOCX'), { label: 'DOCX', tone: 'doc' });
+  assert.deepEqual(C.fileKind('slides.pptx'), { label: 'PPTX', tone: 'slides' });
+  assert.deepEqual(C.fileKind('grades.csv'), { label: 'CSV', tone: 'sheet' });
+  assert.deepEqual(C.fileKind('board.jpeg'), { label: 'JPG', tone: 'image' });
+  assert.deepEqual(C.fileKind('notes.md'), { label: 'MD', tone: 'text' });
+  assert.deepEqual(C.fileKind('README'), { label: 'FILE', tone: 'other' });
+  const doc = C.fileCard({ name: 'a<b>.pdf', excerpt: 'Week 3\nHeaps' }, esc, { remove: 'd1' });
+  assert.match(doc, /class="file-card tone-pdf"/);
+  assert.match(doc, /<span class="file-page">Week 3\nHeaps<\/span>/);
+  assert.match(doc, /a&lt;b&gt;\.pdf/);
+  assert.match(doc, /data-chat="unfile" data-id="d1"/);
+  const pic = C.fileCard({ name: 'p.png', thumb: 'data:image/png;base64,AAAA' }, esc);
+  assert.match(pic, /<img src="data:image\/png;base64,AAAA"/);
+  assert.doesNotMatch(pic, /file-x/);
+  const odd = C.fileCard({ name: 'p.png', thumb: 'javascript:alert(1)' }, esc, { reading: true });
+  assert.doesNotMatch(odd, /<img/);
+  assert.match(odd, /Reading…/);
+});

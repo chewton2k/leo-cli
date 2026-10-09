@@ -37,13 +37,13 @@ const NOTE: Param = Param {
 pub const SPECS: [Spec; 5] = [
     Spec {
         name: "search_notes",
-        purpose: "Find the user's notes that match words, abbreviations (BFS finds breadth-first search) or ideas on their map.",
+        purpose: "Find the user's notes that match words, abbreviations (BFS finds breadth-first search) or ideas in their knowledge graph.",
         params: &[Param {
             name: "query",
             required: true,
             about: "the words to look for, like \"dijkstra priority queue\"",
         }],
-        returns: "Up to 8 lines, best first, each: [n7] \"Title\" in folder (through the idea \"...\" when the map found it): an excerpt. Then \"...and N more\" when there are more. Or \"No note matches ...\".",
+        returns: "Up to 8 lines, best first, each: [n7] \"Title\" in folder (through the idea \"...\" when the knowledge graph found it): an excerpt. Then \"...and N more\" when there are more. Or \"No note matches ...\".",
         example: r#"<tool>{"name": "search_notes", "query": "breadth-first search"}</tool>"#,
     },
     Spec {
@@ -55,7 +55,7 @@ pub const SPECS: [Spec; 5] = [
     },
     Spec {
         name: "connected_notes",
-        purpose: "List the notes linked to a note on the user's map of ideas, with how and why they connect.",
+        purpose: "List the notes linked to a note in the user's knowledge graph, with how and why they connect.",
         params: &[NOTE],
         returns: "Up to 10 lines, each: [n5] \"Title\" (kind of link): why they connect. Or a line saying it has no connections yet.",
         example: r#"<tool>{"name": "connected_notes", "note": "Heaps"}</tool>"#,
@@ -724,7 +724,7 @@ impl Desk {
                             format!(" (through the idea \"{idea}\")")
                         }
                         Some(crate::search::Why::Summary) => {
-                            " (through its summary on the map)".into()
+                            " (through its summary in the knowledge graph)".into()
                         }
                         None => String::new(),
                     };
@@ -783,7 +783,7 @@ impl Desk {
                     Ok(note) => note,
                     Err(why) => return fail(&format!("Looked for “{}”", clip(&wanted, 60)), why),
                 };
-                let step = format!("Followed the map from “{}”", note.title);
+                let step = format!("Followed the knowledge graph from “{}”", note.title);
                 let links: Vec<(&Note, String, String)> = connected(store, cache, &note.id)
                     .into_iter()
                     .filter(|(other, _, _)| studied(other))
@@ -792,7 +792,10 @@ impl Desk {
                 if links.is_empty() {
                     return Done {
                         step,
-                        result: format!("\"{}\" has no connections on the map yet.", note.title),
+                        result: format!(
+                            "\"{}\" has no connections in the knowledge graph yet.",
+                            note.title
+                        ),
                         proposal: None,
                         found: Vec::new(),
                     };

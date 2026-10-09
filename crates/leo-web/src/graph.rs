@@ -770,6 +770,10 @@ pub struct Graphs {
 }
 
 impl Graphs {
+    pub fn writer(&self) -> Option<Writer> {
+        self.writer.clone()
+    }
+
     pub fn new(path: PathBuf, writer: Option<Writer>) -> Graphs {
         Graphs {
             path,
@@ -910,7 +914,7 @@ impl Graphs {
             match (&saved, problems.first()) {
                 (Err(e), _) => {
                     job.state = "failed";
-                    job.message = Some(format!("Could not save the map: {e}"));
+                    job.message = Some(format!("Could not save the knowledge graph: {e}"));
                 }
                 (Ok(()), Some(first)) if cache.built_at.is_none() || problems.len() >= total => {
                     job.state = "failed";

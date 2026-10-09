@@ -20,6 +20,29 @@ pub struct ChatRequest {
 /// prints, and tests collect into a string.
 pub type Sink<'a> = &'a mut dyn FnMut(&str);
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Spent {
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    pub input: u64,
+    pub output: u64,
+    pub estimated: bool,
+}
+
+impl Spent {
+    pub fn guessed(model: Option<String>, req: &ChatRequest, answer: &str) -> Spent {
+        let asked =
+            req.system.as_deref().map_or(0, |s| s.chars().count()) + req.prompt.chars().count();
+        Spent {
+            model,
+            effort: None,
+            input: asked.div_ceil(4) as u64,
+            output: answer.chars().count().div_ceil(4) as u64,
+            estimated: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Image {
     pub mime: String,
@@ -63,6 +86,9 @@ pub trait ChatProvider {
     /// open. Performs no inference and makes no billable call.
     fn available(&self) -> bool;
     fn name(&self) -> &str;
+    fn spent(&self) -> Option<Spent> {
+        None
+    }
     /// Why this provider is unavailable, for the error shown when a whole
     /// chain is exhausted.
     fn unavailable_reason(&self) -> String {

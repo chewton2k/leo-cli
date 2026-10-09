@@ -198,7 +198,7 @@ function card(note, { words = [], showFolder = false, pick = null, why = null } 
   return `<div ${open}>
     <div class="card-title"><span>${words.length ? highlight(note.title, words) : esc(note.title)}</span>${corner}</div>
     ${text ? `<div class="card-snippet">${text}</div>` : ''}
-    ${why ? `<div class="card-why">${ICON.map}${why.kind === 'idea' ? `Through the idea “${esc(why.name)}” on the map` : 'Through its summary on the map'}</div>` : ''}
+    ${why ? `<div class="card-why">${ICON.map}${why.kind === 'idea' ? `Through the idea “${esc(why.name)}” in the knowledge graph` : 'Through its summary in the knowledge graph'}</div>` : ''}
     <div class="card-meta">${where}<span>${rel(note.updated_at)}</span>${progress(note)}</div>
   </div>`;
 }
@@ -233,7 +233,7 @@ function back() {
   go('#/');
 }
 
-const PAGE_NAMES = { '': 'All notes', f: 'All notes', search: 'Search', trash: 'Trash', map: 'Map of ideas', settings: 'Settings', record: 'Record', drafts: 'Drafts', draft: 'Drafts', new: 'New note' };
+const PAGE_NAMES = { '': 'All notes', f: 'All notes', search: 'Search', trash: 'Trash', map: 'Knowledge graph', settings: 'Settings', record: 'Record', drafts: 'Drafts', draft: 'Drafts', new: 'New note' };
 
 function pageName() {
   const [, kind = '', rest = ''] = location.hash.match(/^#\/([a-z]*)\/?(.*)$/) || [];
@@ -468,7 +468,7 @@ function flush(s = state.session) { return saving.flush(s); }
 
 function noteActions(id) {
   return `<nav class="actions" aria-label="Note">
-      ${id ? `<button data-action="note-map" data-id="${esc(id)}">${ICON.map}<span>Map</span></button>` : ''}
+      ${id ? `<button data-action="note-map" data-id="${esc(id)}">${ICON.map}<span>Graph</span></button>` : ''}
       <button data-action="note-picture">${ICON.image}<span>Picture</span></button>
       <button data-action="move">${ICON.move}<span>Move</span></button>
       <button data-action="share">${ICON.share}<span>PDF</span></button>
@@ -562,7 +562,7 @@ async function showSearch(query) {
   chrome({});
   openSearch(query);
   if (!query.trim()) {
-    app.innerHTML = empty(ICON.search, 'Search every note', 'Titles, text and the ideas on the map. Abbreviations like BFS work too.');
+    app.innerHTML = empty(ICON.search, 'Search every note', 'Titles, text and the ideas in the knowledge graph. Abbreviations like BFS work too.');
     return;
   }
   const results = await api(`/api/search?q=${enc(query)}&brief=true`);

@@ -94,3 +94,37 @@ test('Felix looks the same', async ({ page }) => {
   await settle(page);
   await expect(page).toHaveScreenshot('felix.png', { mask: [page.locator('.felix')] });
 });
+
+test('Felix with files and what an answer cost looks the same', async ({ page }) => {
+  await page.route('**/api/chats/*/files', (route) => {
+    if (route.request().method() !== 'POST') return route.fulfill({ json: [] });
+    const name = route.request().postDataJSON().name;
+    return route.fulfill({ status: 201, json: { id: `doc-${name.length}`, name, chars: 400, excerpt: 'Week 3: Heaps\nA binary heap keeps the smallest key at the root.\nInsert: add at the end, then sift up.' } });
+  });
+  await page.route('**/api/chat', (route) => route.fulfill({
+    status: 200,
+    headers: { 'content-type': 'application/x-ndjson' },
+    body: '{"sources":[]}\n{"t":"A heap keeps the smallest key at the root, so the minimum is always one step away."}\n{"spent":{"by":"Anthropic","model":"claude-sonnet-5-5","input":5200,"output":240,"cost":0.0128,"steps":1}}\n{"done":true}\n',
+  }));
+  await page.route('**/api/chats/*', (route) => (route.request().method() === 'PUT'
+    ? route.fulfill({ json: { id: 'x', title: 'What does my file say', named: false, about: '', mode: 'chat', count: 2, updated_at: '2026-10-08T00:00:00Z' } })
+    : route.fallback()));
+  await page.goto('/');
+  await page.locator('#chat-toggle').click();
+  const chooser = async (file) => {
+    await page.locator('#chat [data-chat="attach"]').click();
+    const picking = page.waitForEvent('filechooser');
+    await page.locator('#chat [data-chat="attach-file"]').click();
+    await (await picking).setFiles(file);
+  };
+  await chooser({ name: 'week3-heaps.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4') });
+  await chooser({ name: 'lecture-slides.pptx', mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', buffer: Buffer.from('PK') });
+  await expect(page.locator('#chat-refs .file-card:not(.reading)')).toHaveCount(2);
+  await settle(page);
+  await expect(page).toHaveScreenshot('felix-files.png', { mask: [page.locator('.felix')] });
+  await page.locator('#chat-input').fill('What does my file say?');
+  await page.locator('#chat-input').press('Enter');
+  await expect(page.locator('.msg-meta')).toContainText('$0.013 · Anthropic');
+  await settle(page);
+  await expect(page).toHaveScreenshot('felix-answer.png', { mask: [page.locator('.felix')] });
+});

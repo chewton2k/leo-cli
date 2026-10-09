@@ -10,8 +10,58 @@ use leo_core::store::Store;
 use crate::graph::Cache;
 
 pub type Streamer = Arc<
-    dyn Fn(&str, &str, u32, &mut dyn FnMut(&str), &mut dyn FnMut()) -> Result<String> + Send + Sync,
+    dyn Fn(&str, &str, u32, &mut dyn FnMut(&str), &mut dyn FnMut()) -> Result<Reply> + Send + Sync,
 >;
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Reply {
+    pub text: String,
+    pub spent: Option<Spent>,
+}
+
+impl From<String> for Reply {
+    fn from(text: String) -> Reply {
+        Reply { text, spent: None }
+    }
+}
+
+impl From<&str> for Reply {
+    fn from(text: &str) -> Reply {
+        Reply::from(text.to_string())
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Spent {
+    pub by: String,
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    pub input: u64,
+    pub output: u64,
+    pub estimated: bool,
+    pub cost: Option<f64>,
+    pub plan: bool,
+    pub local: bool,
+    pub steps: u32,
+}
+
+impl Spent {
+    pub fn plus(self, more: Spent) -> Spent {
+        let cost = match (self.cost, more.cost) {
+            (Some(a), Some(b)) => Some(a + b),
+            _ if self.by != more.by || self.model != more.model => None,
+            (a, b) => a.or(b),
+        };
+        Spent {
+            input: self.input + more.input,
+            output: self.output + more.output,
+            estimated: self.estimated || more.estimated,
+            cost,
+            steps: self.steps + more.steps.max(1),
+            ..more
+        }
+    }
+}
 
 const OPEN_CHARS: usize = 14_000;
 const ATTACHED_CHARS: usize = 12_000;

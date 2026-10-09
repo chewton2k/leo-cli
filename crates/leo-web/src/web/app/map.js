@@ -19,8 +19,8 @@ async function showMap(focus) {
   leaveMap();
   state = { view: 'map', dir: '', focus, status: null };
   chrome({ showBack: true });
-  $('#crumbs').innerHTML = '<span class="sep">/</span><button data-action="map-clear">Map of ideas</button>';
-  document.title = 'Map of ideas · leo';
+  $('#crumbs').innerHTML = '<span class="sep">/</span><button data-action="map-clear">Knowledge graph</button>';
+  document.title = 'Knowledge graph · leo';
   app.innerHTML = skeleton(3);
   const data = await api('/api/graph');
   if (mine !== seq) return;
@@ -30,12 +30,12 @@ async function showMap(focus) {
 function drawMap(data, select, keep) {
   state.status = data.status;
   if (!data.graph.nodes.some((n) => n.kind === 'note')) {
-    app.innerHTML = empty(ICON.map, 'Nothing to map yet', 'Write a few notes, and the map shows how they connect.');
+    app.innerHTML = empty(ICON.map, 'Nothing to graph yet', 'Write a few notes, and the knowledge graph shows how they connect.');
     return;
   }
   document.body.classList.add('on-map');
   app.innerHTML = `<section class="map" id="map">
-    <canvas id="map-canvas" role="img" aria-label="Map of how your notes connect. The panel lists the same connections."></canvas>
+    <canvas id="map-canvas" role="img" aria-label="Knowledge graph of how your notes connect. The panel lists the same connections."></canvas>
     <div class="map-tools">
       <label class="map-search">${ICON.search}<input id="map-find" type="search" placeholder="Find a note or idea" autocomplete="off" enterkeyhint="go"></label>
       <div class="map-found" id="map-found"></div>
@@ -90,7 +90,7 @@ function mapInsets() {
 function limitNote() {
   const limited = mapView && mapView.limited();
   if (!limited) return '';
-  return `<span class="map-chip note" title="Search the map to find any note">The ${limited.shown.toLocaleString()} most connected of ${limited.of.toLocaleString()} notes</span>`;
+  return `<span class="map-chip note" title="Search the graph to find any note">The ${limited.shown.toLocaleString()} most connected of ${limited.of.toLocaleString()} notes</span>`;
 }
 
 function mapChips(opts) {
@@ -237,7 +237,7 @@ function mapPanel(node) {
 
 function mapRebuildAsk() {
   const status = state.status || {};
-  sheet(`<h3>Rebuild the map from scratch?</h3>
+  sheet(`<h3>Rebuild the knowledge graph from scratch?</h3>
     <p>leo forgets what it found and reads and connects every note again with the AI you chose for writing. That is about ${plural(status.rebuild_requests || 1, 'request')}. Usually Update is enough: it only reads notes that are new or changed.</p>
     <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn primary" data-action="map-rebuild-now">Rebuild</button></div>`);
 }
@@ -277,7 +277,7 @@ function pollMap() {
     if (status.state === 'failed') {
       mapStatus(status);
       mapPanel(mapView && mapView.selected() ? mapView.graph.byId.get(mapView.selected()) : null);
-      toast(status.message || 'The map could not be built.', { bad: true });
+      toast(status.message || 'The knowledge graph could not be built.', { bad: true });
       return;
     }
     const chosen = mapView ? mapView.selected() : null;

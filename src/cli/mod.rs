@@ -352,7 +352,7 @@ pub fn run(cli: Cli) -> Result<()> {
                  most: u32,
                  piece: &mut dyn FnMut(&str),
                  restart: &mut dyn FnMut()| {
-                    leo_services::ai::chat_streaming(
+                    let (text, answered) = leo_services::ai::chat_streaming(
                         leo_services::ai::chat::Prompt {
                             system: system.to_string(),
                             user: user.to_string(),
@@ -360,7 +360,22 @@ pub fn run(cli: Cli) -> Result<()> {
                         most,
                         piece,
                         restart,
-                    )
+                    )?;
+                    Ok(leo_web::Reply {
+                        text,
+                        spent: answered.map(|a| leo_web::Spent {
+                            by: a.by,
+                            model: a.model,
+                            effort: a.effort,
+                            input: a.input,
+                            output: a.output,
+                            estimated: a.estimated,
+                            cost: a.cost,
+                            plan: a.plan,
+                            local: a.local,
+                            steps: 1,
+                        }),
+                    })
                 },
             );
             tokio::runtime::Runtime::new()?.block_on(leo_web::serve(

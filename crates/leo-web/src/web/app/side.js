@@ -43,7 +43,7 @@ function drawSide() {
     <nav class="side-nav" aria-label="Places">
       ${sideRow('home', ICON.note, 'All notes', { on: here === 'home' })}
       ${sideRow('chat', chat.button(22), 'Ask Felix', { on: chatOpen })}
-      ${sideRow('map', ICON.map, 'Map of ideas', { on: here === 'map' })}
+      ${sideRow('map', ICON.map, 'Knowledge graph', { on: here === 'map' })}
       ${sideRow('record', ICON.mic, 'Record', { on: here === 'record', attrs: ` data-dir="${esc(dir)}"` })}
       ${sideRow('upload', ICON.upload, 'Note from a file')}
       <div class="side-group"><span class="side-label">Folders</span><button class="side-add side-label" data-action="new-folder" aria-label="New folder" title="New folder${dir ? ` in ${esc(folderLabel(dir))}` : ''}">${ICON.plus}</button></div>

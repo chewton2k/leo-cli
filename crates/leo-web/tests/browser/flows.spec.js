@@ -238,7 +238,7 @@ test.describe('drag and drop', () => {
     await page.locator('#chat-toggle').click();
     const chat = page.locator('#chat');
     await dropFiles(page, '#chat', [{ name: 'for-felix.txt', type: 'text/plain', text: 'Heaps keep the minimum at the root.' }]);
-    await expect(chat.locator('.chat-ref.doc', { hasText: 'for-felix.txt' })).toBeVisible();
+    await expect(chat.locator('#chat-refs .file-card', { hasText: 'for-felix.txt' })).toBeVisible();
     await expect(page.locator('.scrim')).toHaveCount(0);
     await page.locator(`.card[data-id="${note.id}"]`).dragTo(chat.locator('#chat-input'));
     await expect(chat.locator('.chat-ref', { hasText: 'Dragged to Felix' })).toBeVisible();
@@ -268,7 +268,7 @@ test.describe('plain HTTP access', () => {
   });
 });
 
-test.describe('map of ideas', () => {
+test.describe('knowledge graph', () => {
   async function seed(page) {
     const made = {};
     for (const [title, body, directory] of [
@@ -306,7 +306,7 @@ test.describe('map of ideas', () => {
     await page.goto('/#/search/breadth');
     const card = page.locator(`.card[data-id="${made['Graph traversals'].id}"]`);
     await expect(card).toBeVisible();
-    await expect(card.locator('.card-why')).toHaveText('Through the idea “breadth-first search” on the map');
+    await expect(card.locator('.card-why')).toHaveText('Through the idea “breadth-first search” in the knowledge graph');
     await page.goto('/#/search/binary%20heaps%20priority');
     await expect(page.locator(`.card[data-id="${made.Heaps.id}"]`)).toBeVisible();
   });
@@ -391,7 +391,7 @@ test.describe('map of ideas', () => {
     });
     await page.goto('/#/map');
     await page.locator('[data-action="map-rebuild"]').click();
-    await expect(page.locator('.sheet')).toContainText('Rebuild the map from scratch?');
+    await expect(page.locator('.sheet')).toContainText('Rebuild the knowledge graph from scratch?');
     await page.locator('[data-action="close"]').click();
     expect(builds).toEqual([]);
     await page.locator('[data-action="map-rebuild"]').click();
@@ -790,8 +790,13 @@ test.describe('Felix', () => {
       await expect(chat.locator('#chat-attach-menu')).toBeHidden();
     };
     await attach({ name: 'week3.txt', mimeType: 'text/plain', buffer: Buffer.from('Heaps keep the minimum at the root.') });
-    const chip = chat.locator('.chat-ref.doc', { hasText: 'week3.txt' });
+    const chip = chat.locator('#chat-refs .file-card', { hasText: 'week3.txt' });
     await expect(chip).toBeVisible();
+    await expect(chip.locator('.file-badge')).toHaveText('TXT');
+    await expect(chip.locator('.file-page')).toContainText('Heaps keep the minimum at the root.');
+    const card = await chip.boundingBox();
+    expect(card.width).toBeGreaterThan(card.height);
+    expect(card.height).toBeGreaterThan(90);
     await expect(chip).not.toHaveClass(/reading/);
     await chat.locator('#chat-input').fill('what does my file say?');
     await chat.locator('#chat-input').press('Enter');
@@ -800,19 +805,19 @@ test.describe('Felix', () => {
     const files = await (await page.request.get(`/api/chats/${asked[0].chat}/files`)).json();
     expect(files.map((f) => f.name)).toEqual(['week3.txt']);
     expect(files[0].chars).toBe(35);
-    await expect(chat.locator('.msg.user .cite.doc')).toHaveText('week3.txt');
-    await expect(chat.locator('.chat-ref.doc')).toHaveCount(0);
+    await expect(chat.locator('.msg.user .file-card .file-name')).toHaveText('week3.txt');
+    await expect(chat.locator('#chat-refs .file-card')).toHaveCount(0);
 
     await chat.locator('#chat-input').fill('and where is the minimum?');
     await chat.locator('#chat-input').press('Enter');
     await expect(chat.locator('.msg.leo')).toHaveCount(2);
-    await expect(chat.locator('.msg.user').last().locator('.cite.doc')).toHaveCount(0);
+    await expect(chat.locator('.msg.user').last().locator('.file-card')).toHaveCount(0);
     expect(asked[1].files, 'Felix still has the file for questions after it').toEqual(asked[0].files);
 
     await attach({ name: 'draft.txt', mimeType: 'text/plain', buffer: Buffer.from('A draft not meant to go.') });
-    const draft = chat.locator('.chat-ref.doc', { hasText: 'draft.txt' });
+    const draft = chat.locator('#chat-refs .file-card', { hasText: 'draft.txt' });
     await expect(draft).not.toHaveClass(/reading/);
-    await draft.locator('.chat-ref-x').click();
+    await draft.locator('.file-x').click();
     await expect(draft).toHaveCount(0);
     await expect.poll(async () => (await (await page.request.get(`/api/chats/${asked[0].chat}/files`)).json()).map((f) => f.name)).toEqual(['week3.txt']);
 
@@ -820,12 +825,12 @@ test.describe('Felix', () => {
     const listed = page.waitForResponse((r) => r.url().endsWith(`/api/chats/${asked[0].chat}/files`));
     await page.locator('#chat-toggle').click();
     await listed;
-    await expect(chat.locator('.msg.user .cite.doc')).toHaveText('week3.txt');
-    await expect(chat.locator('.chat-ref.doc')).toHaveCount(0);
+    await expect(chat.locator('.msg.user .file-card .file-name')).toHaveText('week3.txt');
+    await expect(chat.locator('#chat-refs .file-card')).toHaveCount(0);
 
     await attach({ name: 'song.mp3', mimeType: 'audio/mpeg', buffer: Buffer.from('ID3') });
     await expect(page.locator('.toast.bad')).toContainText('Felix could not read song.mp3');
-    await expect(chat.locator('.chat-ref.doc')).toHaveCount(0);
+    await expect(chat.locator('#chat-refs .file-card')).toHaveCount(0);
   });
 
   test('the chat panel follows the size of the window', async ({ page }) => {
@@ -1084,13 +1089,13 @@ test.describe('pictures', () => {
     await page.goto('/');
     await page.locator('#chat-toggle').click();
     await pastePicture(page, '#chat-input');
-    const chip = page.locator('#chat .chat-ref.doc');
+    const chip = page.locator('#chat #chat-refs .file-card');
     await expect(chip).toContainText('pasted-1.png');
-    await expect(chip.locator('img.chat-thumb')).toBeVisible();
+    await expect(chip.locator('.file-peek img')).toBeVisible();
     await page.locator('#chat-input').fill('what is this?');
     await page.locator('#chat-input').press('Enter');
     await expect(page.locator('#chat .msg.leo').last()).toContainText('That diagram shows a heap.');
-    await expect(page.locator('#chat .msg.user .msg-pics img')).toHaveAttribute('src', /^data:image\/jpeg;base64,/);
+    await expect(page.locator('#chat .msg.user .file-card img')).toHaveAttribute('src', /^data:image\/jpeg;base64,/);
     expect(asked[0].files).toEqual(['doc-pic-1']);
     await expect(chip).toHaveCount(0);
   });

@@ -158,19 +158,47 @@ pub(crate) async fn put_chat(
         return StatusCode::BAD_REQUEST.into_response();
     }
     let dir = state.chats.clone();
+    let writer = state.graphs.writer();
     match tokio::task::spawn_blocking(move || chats::save(&dir, &id, body, chrono::Utc::now()))
         .await
     {
-        Ok(Ok(chat)) => Json(chats::Summary {
-            id: chat.id,
-            title: chat.title,
-            mode: chat.mode,
-            count: chat.messages.len(),
-            updated_at: chat.updated_at,
-        })
-        .into_response(),
+        Ok(Ok(chat)) => {
+            if let Some(writer) = writer.filter(|_| chat.wants_name()) {
+                name_in_background(state.chats.clone(), &chat, writer);
+            }
+            Json(chat.summary()).into_response()
+        }
         _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
+}
+
+static NAMING: std::sync::LazyLock<std::sync::Mutex<std::collections::BTreeSet<String>>> =
+    std::sync::LazyLock::new(Default::default);
+
+pub(crate) fn name_in_background(
+    dir: std::path::PathBuf,
+    chat: &chats::Chat,
+    writer: crate::graph::Writer,
+) {
+    let id = chat.id.clone();
+    if !NAMING
+        .lock()
+        .is_ok_and(|mut naming| naming.insert(id.clone()))
+    {
+        return;
+    }
+    let (system, user) = chats::name_prompt(chat);
+    std::thread::spawn(move || {
+        if let Some(name) = writer(&system, &user, 40)
+            .ok()
+            .and_then(|reply| chats::clean_name(&reply))
+        {
+            chats::rename(&dir, &id, &name);
+        }
+        if let Ok(mut naming) = NAMING.lock() {
+            naming.remove(&id);
+        }
+    });
 }
 
 pub(crate) async fn delete_chat(
@@ -197,7 +225,7 @@ fn answer(
     streamer: &chat::Streamer,
     ask: Ask,
     tx: &tokio::sync::mpsc::UnboundedSender<String>,
-) -> Result<()> {
+) -> Result<Option<chat::Spent>> {
     let Ask {
         system,
         mut conversation,
@@ -214,6 +242,7 @@ fn answer(
     let mut desk = tools::Desk::new(sources, room).with_web(web);
     let mut nudged = !tools::wants_change(&wanted);
     let mut unstuck = false;
+    let mut spent: Option<chat::Spent> = None;
     for step in 0..=tools::MOST_STEPS {
         let last = step == tools::MOST_STEPS;
         let gate = std::cell::RefCell::new(tools::Gate::default());
@@ -235,6 +264,14 @@ fn answer(
                 send(serde_json::json!({ "restart": true }));
             },
         )?;
+        if let Some(more) = reply.spent {
+            let more = chat::Spent { steps: 1, ..more };
+            spent = Some(match spent {
+                Some(so_far) => so_far.plus(more),
+                None => more,
+            });
+        }
+        let reply = reply.text;
         let mut gate = gate.into_inner();
         let call = if last { None } else { tools::find_call(&reply) };
         let call = match call {
@@ -264,7 +301,7 @@ fn answer(
             }
             None => {
                 gate.finish(&mut |t| send(serde_json::json!({ "t": t })));
-                return Ok(());
+                return Ok(spent);
             }
             Some(Ok(call)) => call,
             Some(Err(problem)) => tools::Call {
@@ -305,7 +342,7 @@ fn answer(
         }
         conversation = tools::continued(&conversation, &call, &done);
     }
-    Ok(())
+    Ok(spent)
 }
 
 #[derive(serde::Deserialize)]
@@ -430,7 +467,12 @@ pub(crate) async fn chat_reply(
             wanted,
         };
         let end = match answer(&worker, &streamer, ask, &tx) {
-            Ok(()) => serde_json::json!({ "done": true }),
+            Ok(spent) => {
+                if let Some(spent) = spent {
+                    let _ = tx.send(ndjson(serde_json::json!({ "spent": spent })));
+                }
+                serde_json::json!({ "done": true })
+            }
             Err(e) => serde_json::json!({ "error": e.to_string() }),
         };
         let _ = tx.send(ndjson(end));

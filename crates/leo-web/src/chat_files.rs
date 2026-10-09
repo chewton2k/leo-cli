@@ -9,6 +9,7 @@ use crate::chats::valid_id;
 pub const MOST_FILES: usize = 10;
 pub const UPLOAD_BYTES: usize = 40 * 1024 * 1024;
 pub const ORPHAN_HOURS: i64 = 24;
+pub const EXCERPT_CHARS: usize = 320;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 struct Stored {
@@ -25,6 +26,7 @@ pub struct Doc {
     pub chars: usize,
     pub bytes: u64,
     pub added_at: DateTime<Utc>,
+    pub excerpt: String,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -68,7 +70,28 @@ fn info((doc, bytes): &(Stored, u64)) -> Doc {
         chars: doc.text.chars().count(),
         bytes: *bytes,
         added_at: doc.added_at,
+        excerpt: excerpt_of(&doc.text),
     }
+}
+
+fn excerpt_of(text: &str) -> String {
+    let mut out = String::new();
+    for line in text
+        .lines()
+        .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
+    {
+        if line.is_empty() || line.starts_with("```") {
+            continue;
+        }
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&line);
+        if out.chars().count() >= EXCERPT_CHARS {
+            break;
+        }
+    }
+    out.chars().take(EXCERPT_CHARS).collect()
 }
 
 pub fn add(dir: &Path, chat: &str, name: &str, text: &str, now: DateTime<Utc>) -> Result<Doc> {
@@ -153,6 +176,28 @@ mod tests {
 
     fn at(hour: u32) -> DateTime<Utc> {
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2026, 10, 8, hour, 0, 0).unwrap()
+    }
+
+    #[test]
+    fn a_document_shows_its_first_lines_as_a_small_example() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("chats");
+        let doc = add(
+            &dir,
+            "chat-xxxx-1",
+            "w.pdf",
+            "  Week 3\n\n```\nHeaps   keep\tthe minimum\n",
+            at(1),
+        )
+        .unwrap();
+        assert_eq!(doc.excerpt, "Week 3\nHeaps keep the minimum");
+        let long = "word ".repeat(400);
+        let doc = add(&dir, "chat-xxxx-1", "l.txt", &long, at(2)).unwrap();
+        assert_eq!(doc.excerpt.chars().count(), EXCERPT_CHARS);
+        assert_eq!(
+            list(&dir, "chat-xxxx-1")[0].excerpt,
+            "Week 3\nHeaps keep the minimum"
+        );
     }
 
     #[test]

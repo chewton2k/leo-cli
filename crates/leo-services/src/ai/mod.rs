@@ -5,6 +5,7 @@ pub mod error;
 pub mod live;
 pub mod long;
 pub mod provider;
+pub mod spend;
 pub mod transcribe;
 
 use std::path::Path;
@@ -127,9 +128,14 @@ pub fn chat_streaming(
     max_tokens: u32,
     on_fragment: &mut dyn FnMut(&str),
     on_restart: &mut dyn FnMut(),
-) -> Result<String> {
+) -> Result<(String, Option<spend::Answered>)> {
     let (cfg, store) = context();
-    Ok(chat::complete_streaming(&cfg, &store, prompt, max_tokens, on_fragment, on_restart)?.value)
+    let outcome =
+        chat::complete_streaming(&cfg, &store, prompt, max_tokens, on_fragment, on_restart)?;
+    let answered = outcome
+        .spent
+        .map(|spent| spend::answered(&cfg, &outcome.provider, spent));
+    Ok((outcome.value, answered))
 }
 
 /// Expand every `@leo` line, reporting text as it arrives.

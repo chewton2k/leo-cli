@@ -50,7 +50,7 @@ pub(crate) fn activity_tasks(
     if let Some((done, total)) = map {
         out.push(Task {
             kind: "map",
-            label: "Connecting your notes on the map".to_string(),
+            label: "Connecting your notes in the knowledge graph".to_string(),
             step: if total > 0 {
                 format!("{done} of {total} steps")
             } else {

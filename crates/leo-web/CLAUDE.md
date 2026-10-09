@@ -53,8 +53,9 @@
 
 - Checkbox taps: `doc.js` `boxFor` treats a tap left of a task's text (the box, or the gap) as a tick, so a near miss on a phone never opens the line for editing.
 
-- Map of ideas (`#/map`, `#/map/<noteId>`; menu "Map of ideas", note action
-  "Map"): web only, a note-to-note knowledge graph. `graph.rs`: reads notes in
+- Knowledge graph, called "map" in code (`#/map`, `#/map/<noteId>`; sidebar
+  and menu "Knowledge graph", note action "Graph"; renamed from "Map of ideas"
+  2026-10-09, the user's call): web only, a note-to-note knowledge graph. `graph.rs`: reads notes in
   batches (8 notes / 18k chars) for `{summary, concepts}` (ideas and methods,
   vocabulary reused so names match), then links notes: notes are hashed into
   `group_count` groups of ~90 and every group pair is one request (all pairs
@@ -390,7 +391,7 @@
   `container: map`, so its panel (`min(380px, 52cqw)`) and tools shrink with it
   and the graph redraws through a ResizeObserver.
 - Sidebar (`app/side.js`, >=1000 px): New note, Search (⌘K / Ctrl K anywhere),
-  All notes, Ask Felix, Map of ideas, Record, Note from a file, top-level
+  All notes, Ask Felix, Knowledge graph, Record, Note from a file, top-level
   folders with counts (+ makes one), and Drafts / Trash / Storage / Settings at
   the foot. `loadSideFolders` runs after every route; `aria-current` marks the
   place. Narrowed to icons with the fold button (`leo-side` in localStorage).
@@ -407,3 +408,22 @@
   emptied folders on disk are removed); both toast Undo. Files dropped on the
   page open the upload sheet (into the folder dropped on, if any); on Felix
   they are read for him, and a note card dropped on him is attached.
+- What an answer cost: the `Streamer` returns `Reply { text, spent }`;
+  `routes/felix.rs` `answer` adds up every step (`Spent::plus`) and sends
+  `{"spent": {by, model, effort, input, output, estimated, cost, plan, local,
+  steps}}` just before `done`. The page keeps it on the message and
+  `spentLabel` draws one line under the answer: money for keys
+  (`≈` when the tokens were guessed), model · effort · "on your plan" for Claude
+  Code and Codex, "free on this computer" for local models; the tooltip has
+  the token counts.
+- Chat titles: `chats::title_of` adds the note to a short question
+  ("Explain this simply: Graph traversals"), `about` is the start of Felix's
+  first answer in plain words (shown under the title in Your chats). After the
+  first answer, `put_chat` asks the writing AI for a 3-7 word name in the
+  background (`name_in_background`, once per chat via `NAMING`), saved with
+  `named: true` so later saves keep it; the page re-lists chats at 8/25/60 s
+  until it is named.
+- Files in Felix are cards (`fileCard`, `fileKind`): a picture's thumbnail or
+  a miniature page of the document's first lines (`chat_files` `excerpt`,
+  320 chars) over a colored type badge (PDF, DOCX, PPTX, CSV, PNG, …; tones in
+  `--tone-*`). Sent messages keep `cards` (name plus thumb or excerpt).

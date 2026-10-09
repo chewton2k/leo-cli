@@ -158,7 +158,7 @@ pub const RETIRED: &[(&str, &str, &str)] = &[
     (
         "tags",
         "/",
-        "tags are gone: folders, search at / and the map of ideas on leo serve find notes",
+        "tags are gone: folders, search at / and the knowledge graph on leo serve find notes",
     ),
     (
         "rmdir",
