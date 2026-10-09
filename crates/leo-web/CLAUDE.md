@@ -525,3 +525,11 @@
   `/vendor/katex-0.16.11/`, immutable) the first time a formula appears, renders
   with `trust: false`, and caches the HTML per formula. The CSP allows
   `font-src 'self'`. Felix and every note prompt write math this way.
+- Felix sees pictures: `captions.rs` keeps a one-time description per
+  picture in `<data>/captions.json` (beside notes, never synced), keyed by path
+  + size + mtime so nothing is reread. `keep_graph_current` captions up to
+  `PICTURES_PER_TICK` (4) uncaptioned pictures per idle check through the
+  `seer` power (`ai::see`, the writing AI's vision; the lock is only held to
+  list them). `gather_seeing` and `open_note` show `[Picture: …]` after each
+  picture link, and `look_at_picture {note, question?}` looks at up to 4 of a
+  note's pictures on demand (a plain look also stores the caption).

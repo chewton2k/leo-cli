@@ -8,7 +8,7 @@ use axum::Json;
 
 use crate::routes::notes::{save, NoteResponse};
 use crate::routes::uploads::{safe_file_name, ImportFileBody};
-use crate::{chat, chat_files, chats, review, store_now, tools, AppState, UploadFile};
+use crate::{captions, chat, chat_files, chats, review, store_now, tools, AppState, UploadFile};
 
 fn ndjson(value: serde_json::Value) -> String {
     format!("{value}\n")
@@ -249,6 +249,8 @@ fn run_tool(
         }
     } else if tools::is_web(&call.name) {
         desk.run_web(call)
+    } else if call.name == "look_at_picture" {
+        look_at_picture(state, desk, call)?
     } else {
         let graphs = Arc::clone(&state.graphs);
         store_now(state, |store| {
@@ -290,6 +292,77 @@ fn run_tool(
     Ok(done)
 }
 
+const MOST_PICTURES_LOOKED_AT: usize = 4;
+
+fn look_at_picture(
+    state: &AppState,
+    desk: &mut tools::Desk,
+    call: &tools::Call,
+) -> Result<tools::Done> {
+    let wanted = call.text("note");
+    let fail = |step: String, why: String| tools::Done {
+        step,
+        result: format!("That did not work: {why}."),
+        proposal: None,
+        found: Vec::new(),
+    };
+    let found = store_now(state, |store| Ok(desk.pictures_for(store, &wanted)))
+        .map_err(|_| anyhow::anyhow!("leo could not read the notes"))?;
+    let (title, pictures) = match found {
+        Ok(found) => found,
+        Err(why) => return Ok(fail(format!("Looked for “{wanted}”"), why)),
+    };
+    let step = format!("Looked at the pictures in “{title}”");
+    if pictures.is_empty() {
+        return Ok(fail(step, format!("\"{title}\" has no pictures")));
+    }
+    let Some(seer) = state.seer.clone() else {
+        return Ok(fail(
+            step,
+            "no AI that can see pictures is set up for writing".into(),
+        ));
+    };
+    let question = call.text("question");
+    let mut lines = Vec::new();
+    for (i, (alt, path)) in pictures.iter().take(MOST_PICTURES_LOOKED_AT).enumerate() {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let label = if alt.is_empty() {
+            name.clone()
+        } else {
+            format!("{alt} ({name})")
+        };
+        match captions::describe(path, &seer, &question) {
+            Ok(said) => {
+                if question.trim().is_empty() {
+                    if let Some(key) = captions::key_of(path) {
+                        state.captions.put(key, said.clone());
+                    }
+                }
+                lines.push(format!("Picture {}: {label}: {said}", i + 1));
+            }
+            Err(e) => lines.push(format!(
+                "Picture {}: {label}: could not be looked at ({e})",
+                i + 1
+            )),
+        }
+    }
+    if pictures.len() > MOST_PICTURES_LOOKED_AT {
+        lines.push(format!(
+            "…and {} more pictures not looked at.",
+            pictures.len() - MOST_PICTURES_LOOKED_AT
+        ));
+    }
+    Ok(tools::Done {
+        step,
+        result: lines.join("\n"),
+        proposal: None,
+        found: vec![title],
+    })
+}
+
 fn counted(spent: &mut Option<chat::Spent>, more: Option<chat::Spent>) {
     if let Some(more) = more {
         let more = chat::Spent {
@@ -329,7 +402,8 @@ fn answer(
     let mut desk = tools::Desk::new(sources, room)
         .with_web(web)
         .with_access(access)
-        .with_documents(documents);
+        .with_documents(documents)
+        .with_captions(Arc::clone(&state.captions));
     let chosen = state.converse.as_ref().and_then(|converse| {
         converse(
             &chat::Instructions {
@@ -668,6 +742,7 @@ pub(crate) async fn chat_reply(
     let note = body.note.clone();
     let attached = body.refs.clone();
     let recent = body.recent.clone();
+    let seen = Arc::clone(&state.captions);
     let room = state
         .room
         .as_ref()
@@ -676,7 +751,7 @@ pub(crate) async fn chat_reply(
     let gathered = state
         .with_store(move |store| {
             let cache = graphs.load();
-            Ok(chat::gather_with(
+            Ok(chat::gather_seeing(
                 store,
                 &cache,
                 note.as_deref(),
@@ -684,6 +759,7 @@ pub(crate) async fn chat_reply(
                 &recent,
                 &question,
                 room,
+                Some(&seen),
             ))
         })
         .await;

@@ -1,3 +1,4 @@
+pub mod captions;
 pub mod chat;
 pub mod chat_files;
 pub mod chats;
@@ -124,6 +125,7 @@ pub struct Powers {
     pub room: Option<Room>,
     pub web: Option<Web>,
     pub converse: Option<chat::Converser>,
+    pub seer: Option<captions::Seer>,
 }
 
 #[derive(Clone)]
@@ -143,6 +145,8 @@ struct AppState {
     room: Option<Room>,
     web: Option<Web>,
     converse: Option<chat::Converser>,
+    seer: Option<captions::Seer>,
+    captions: Arc<captions::Captions>,
     activity: Arc<Activity>,
 }
 
@@ -197,6 +201,7 @@ async fn note_activity(
 }
 
 const GRAPH_CHECK: std::time::Duration = std::time::Duration::from_secs(30);
+const PICTURES_PER_TICK: usize = 4;
 
 async fn keep_graph_current(state: AppState) {
     let mut tick = tokio::time::interval(GRAPH_CHECK);
@@ -214,6 +219,24 @@ async fn keep_graph_current(state: AppState) {
         };
         let graphs = Arc::clone(&state.graphs);
         let _ = tokio::task::spawn_blocking(move || graphs.update_if_due(sources, idle)).await;
+        if let Some(seer) = state.seer.clone() {
+            let captions = Arc::clone(&state.captions);
+            let listed = Arc::clone(&captions);
+            let Ok(paths) = state
+                .with_store(move |store| {
+                    Ok(captions::uncaptioned(store, &listed, PICTURES_PER_TICK))
+                })
+                .await
+            else {
+                continue;
+            };
+            if !paths.is_empty() {
+                let _ = tokio::task::spawn_blocking(move || {
+                    captions::caption_paths(&paths, &captions, &seer)
+                })
+                .await;
+            }
+        }
     }
 }
 
@@ -295,6 +318,8 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
     let room = powers.room;
     let web = powers.web;
     let converse = powers.converse;
+    let seer = powers.seer;
+    let captions = Arc::new(captions::Captions::for_notes(&store.notes_dir));
     let count = store.notes.len();
     let token_path = leo_core::paths::config_dir()?.join("serve-token");
     let sessions_path = leo_core::paths::config_dir()?.join("serve-sessions.json");
@@ -334,6 +359,8 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
         room,
         web,
         converse,
+        seer,
+        captions,
         activity: Default::default(),
     };
     tokio::spawn(keep_graph_current(state.clone()));

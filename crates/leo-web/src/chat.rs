@@ -333,6 +333,20 @@ pub fn gather_with(
     question: &str,
     room: usize,
 ) -> (Vec<SourceRef>, String) {
+    gather_seeing(store, cache, open, attached, recent, question, room, None)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn gather_seeing(
+    store: &Store,
+    cache: &Cache,
+    open: Option<&str>,
+    attached: &[String],
+    recent: &[String],
+    question: &str,
+    room: usize,
+    captions: Option<&crate::captions::Captions>,
+) -> (Vec<SourceRef>, String) {
     let room = room.clamp(LEAST_ROOM, MOST_ROOM);
     let (open_chars, attached_chars, note_chars) = (
         scaled(OPEN_CHARS, room),
@@ -465,7 +479,16 @@ pub fn gather_with(
         if !links.is_empty() {
             text.push_str(&format!("Connections: {}\n", links.join("; ")));
         }
-        text.push_str(&clip(&p.note.body, p.most));
+        let body = match captions {
+            Some(captions) => crate::captions::captioned(
+                &store.notes_dir,
+                &p.note.directory,
+                &p.note.body,
+                captions,
+            ),
+            None => p.note.body.clone(),
+        };
+        text.push_str(&clip(&body, p.most));
         text.push_str("\n</note>\n\n");
         sources.push(SourceRef {
             n,

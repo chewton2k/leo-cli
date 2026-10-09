@@ -115,7 +115,7 @@ const NOTE: Param = Param {
     about: "which note: an id like n3 from a <note> tag or an earlier result, or the note's exact title",
 };
 
-pub const SPECS: [Spec; 6] = [
+pub const SPECS: [Spec; 7] = [
     Spec {
         name: "search_notes",
         purpose: "Find the user's notes that match words, abbreviations (BFS finds breadth-first search) or ideas in their knowledge graph.",
@@ -140,6 +140,20 @@ pub const SPECS: [Spec; 6] = [
         params: &[NOTE],
         returns: "Up to 10 lines, each: [n5] \"Title\" (kind of link): why they connect. Or a line saying it has no connections yet.",
         example: r#"<tool>{"name": "connected_notes", "note": "Heaps"}</tool>"#,
+    },
+    Spec {
+        name: "look_at_picture",
+        purpose: "Look at the pictures in a note (diagrams, photos of slides or boards, charts) when the question needs what they show. Notes already carry a short [Picture: ...] description where one was made.",
+        params: &[
+            NOTE,
+            Param {
+                name: "question",
+                required: false,
+                about: "what to look for in the pictures",
+            },
+        ],
+        returns: "Each picture's description, or \"That did not work: ...\" when the note has no pictures or no AI that can see is set up.",
+        example: r#"<tool>{"name": "look_at_picture", "note": "n2", "question": "what does the graph on the slide show?"}</tool>"#,
     },
     Spec {
         name: "read_document",
@@ -296,6 +310,7 @@ const WHEN_ASK: &str = "When to use them:
 - The user asks for a new note: use create_note.
 - The question is about notes you were not given, or you need a note's full text or its connections: use search_notes, open_note or connected_notes.
 - The question is about a document the user gave and needs a part you were not shown: use read_document.
+- The question is about a picture in a note and its description is not enough: use look_at_picture.
 - Otherwise answer straight away without tools.
 After suggesting a change or a note, tell the user what you suggested and that they can apply it; never claim it is already done.";
 
@@ -304,12 +319,14 @@ const WHEN_AUTO: &str = "When to use them:
 - The user asks for a new note: use create_note.
 - The question is about notes you were not given, or you need a note's full text or its connections: use search_notes, open_note or connected_notes.
 - The question is about a document the user gave and needs a part you were not shown: use read_document.
+- The question is about a picture in a note and its description is not enough: use look_at_picture.
 - Otherwise answer straight away without tools.
 After a change or a new note, tell the user plainly what you changed or made.";
 
 const WHEN_READ: &str = "When to use them:
 - The question is about notes you were not given, or you need a note's full text or its connections: use search_notes, open_note or connected_notes.
 - The question is about a document the user gave and needs a part you were not shown: use read_document.
+- The question is about a picture in a note and its description is not enough: use look_at_picture.
 - Otherwise answer straight away without tools.
 The user chose Read only for this chat, so you cannot change or make notes. When they ask for a change, say exactly what you would change and where, and tell them they can switch Felix to Ask or Auto, beside the message box, to let you make it.";
 
@@ -726,6 +743,7 @@ pub struct Desk {
     pages: Vec<String>,
     access: Access,
     documents: Vec<(String, String)>,
+    captions: Option<std::sync::Arc<crate::captions::Captions>>,
 }
 
 const WEB_RESULTS: usize = 6;
@@ -741,7 +759,35 @@ impl Desk {
             pages: Vec::new(),
             access: Access::Ask,
             documents: Vec::new(),
+            captions: None,
         }
+    }
+
+    pub fn with_captions(mut self, captions: std::sync::Arc<crate::captions::Captions>) -> Desk {
+        self.captions = Some(captions);
+        self
+    }
+
+    fn shown(&self, store: &Store, note: &Note) -> String {
+        match &self.captions {
+            Some(captions) => {
+                crate::captions::captioned(&store.notes_dir, &note.directory, &note.body, captions)
+            }
+            None => note.body.clone(),
+        }
+    }
+
+    pub fn pictures_for(
+        &mut self,
+        store: &Store,
+        wanted: &str,
+    ) -> Result<(String, Vec<(String, std::path::PathBuf)>), String> {
+        let note = self.resolve(store, wanted)?;
+        self.tag(note, "its pictures looked at by Felix");
+        Ok((
+            note.title.clone(),
+            crate::captions::pictures_of(&store.notes_dir, &note.directory, &note.body),
+        ))
     }
 
     pub fn with_documents(mut self, documents: Vec<(String, String)>) -> Desk {
@@ -1085,7 +1131,7 @@ impl Desk {
                         attribute(&note.title),
                         attribute(folder),
                         clip(
-                            &note.body,
+                            &self.shown(store, note),
                             crate::chat::scaled(OPEN_CHARS, self.room).min(self.room / 3)
                         )
                     ),
@@ -1417,7 +1463,7 @@ mod tests {
         assert!(number.contains("must be text in double quotes"));
         let unknown = wrong(serde_json::json!({"name": "delete_note", "note": "n1"}));
         assert!(unknown.contains(
-            "the tools are search_notes, open_note, connected_notes, read_document, edit_note, create_note"
+            "the tools are search_notes, open_note, connected_notes, look_at_picture, read_document, edit_note, create_note"
         ));
         assert_eq!(
             check(&Call {

@@ -72,6 +72,8 @@ fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<Strin
         room: None,
         web: None,
         converse: None,
+        seer: None,
+        captions: Arc::new(captions::Captions::at(dir.path().join("captions.json"))),
         activity: Default::default(),
     };
     (state, dir, ids)

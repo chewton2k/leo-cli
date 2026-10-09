@@ -48,6 +48,28 @@ impl leo_web::Conversation for Talk {
     }
 }
 
+pub fn seer() -> leo_web::captions::Seer {
+    Arc::new(
+        |system: &str, user: &str, pictures: Vec<leo_web::captions::Picture>| {
+            let images: Vec<leo_services::ai::provider::Image> = pictures
+                .into_iter()
+                .map(|p| leo_services::ai::provider::Image {
+                    mime: p.mime,
+                    bytes: p.bytes,
+                })
+                .collect();
+            leo_services::ai::see(
+                leo_services::ai::chat::Prompt {
+                    system: system.to_string(),
+                    user: user.to_string(),
+                },
+                &images,
+                1_500,
+            )
+        },
+    )
+}
+
 pub fn converser() -> leo_web::Converser {
     Arc::new(
         |given: &leo_web::Instructions, specs: &[leo_web::ToolSpec]| {

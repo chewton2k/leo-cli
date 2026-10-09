@@ -815,3 +815,43 @@ fn a_session_hears_only_what_is_new_and_a_failed_native_start_falls_back() {
     assert_eq!(prompts.lock().unwrap().len(), 1);
     assert_eq!(lines.last().unwrap()["done"], true);
 }
+
+#[test]
+fn felix_looks_at_a_notes_pictures_and_their_captions_come_along_next_time() {
+    let (mut state, dir, ids) = state_with(&[("Heaps", "")]);
+    let notes = dir.path().join("notes");
+    std::fs::create_dir_all(notes.join("attachments")).unwrap();
+    let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+    png.extend_from_slice(&[0; 80]);
+    std::fs::write(notes.join("attachments/heap.png"), &png).unwrap();
+    {
+        let mut store = state.fresh();
+        store.find_note_mut(&ids[0]).unwrap().body = "![a heap](attachments/heap.png)".into();
+        store.save().unwrap();
+    }
+    state.seer = Some(Arc::new(
+        |_: &str, user: &str, pictures: Vec<crate::captions::Picture>| {
+            assert_eq!(pictures.len(), 1);
+            assert_eq!(user, "Describe this picture.");
+            Ok("A binary min heap with 2 at the root.".into())
+        },
+    ));
+    let (streamer, prompts) = scripted(vec![
+        "<tool>{\"name\": \"look_at_picture\", \"note\": \"Heaps\"}</tool>",
+        "It shows a min heap.",
+        "Still a min heap.",
+    ]);
+    state.chat = Some(streamer);
+    let lines = chat_lines(&state, "what is in my heaps picture?");
+    let steps: Vec<&str> = lines.iter().filter_map(|l| l["step"].as_str()).collect();
+    assert_eq!(steps, ["Looked at the pictures in “Heaps”"]);
+    assert!(prompts.lock().unwrap()[1]
+        .contains("Picture 1: a heap (heap.png): A binary min heap with 2 at the root."));
+    chat_lines(&state, "and the heaps picture again?");
+    assert!(
+        prompts.lock().unwrap()[2].contains(
+            "![a heap](attachments/heap.png) [Picture: A binary min heap with 2 at the root.]"
+        ),
+        "the caption is now part of the note Felix reads"
+    );
+}
