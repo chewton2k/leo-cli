@@ -32,6 +32,10 @@
     const keep = (html) => `\u0000${slots.push(html) - 1}\u0000`;
     let s = text;
     s = s.replace(/`([^`]+)`/g, (_, code) => keep(`<code>${escape(code)}</code>`));
+    const shown = (tex, block) => keep(`<span class="math${block ? ' math-block' : ''}" data-tex="${escape(tex.trim())}">${escape(tex.trim())}</span>`);
+    s = s.replace(/\\\[([\s\S]+?)\\\]/g, (_, tex) => shown(tex, true));
+    s = s.replace(/\\\(([\s\S]+?)\\\)/g, (_, tex) => shown(tex, false));
+    s = s.replace(/(^|[^\\])\$\$([^$\n]+?)\$\$/g, (_, lead, tex) => lead + shown(tex, true));
     s = s.replace(/(^|[^\\$])\$(?!\s)([^$\n]+?)(?<!\s)\$(?!\d)/g, (_, lead, tex) => lead + keep(`<span class="math" data-tex="${escape(tex)}">${escape(tex)}</span>`));
     s = s.replace(/!\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/g, (whole, name) => {
       const img = picture(name.trim(), name.trim());
@@ -78,6 +82,7 @@
       RULE.test(line) ||
       ITEM.test(line) ||
       /^\s*>/.test(line) ||
+      /^\s*(\$\$|\\\[\s*$|\\begin\{(?:equation|align|aligned|gather|gathered|multline|alignat|flalign|split|cases|matrix|pmatrix|bmatrix|vmatrix|array)\*?\})/.test(line) ||
       (line.includes('|') && next !== undefined && TABLE_RULE.test(next) && next.includes('-'))
     );
   }
@@ -141,6 +146,24 @@
       }
 
       const math = line.trim();
+      const env = math.match(/^\\begin\{((?:equation|align|aligned|gather|gathered|multline|alignat|flalign|split|cases|matrix|pmatrix|bmatrix|vmatrix|array)\*?)\}/);
+      if (env || (math.startsWith('\\[') && !math.slice(2).includes('\\]') && !math.slice(2).trim())) {
+        const end = env ? `\\end{${env[1]}}` : '\\]';
+        const body = [env ? math : math.slice(2)];
+        let closed = body[0].includes(end) && env;
+        i++;
+        while (!closed && i < lines.length) {
+          const next = lines[i];
+          i++;
+          if (next.trim().endsWith(end) || next.includes(end)) {
+            body.push(env ? next : next.slice(0, next.lastIndexOf(end)));
+            closed = true;
+          } else body.push(next);
+        }
+        const tex = body.join('\n').trim();
+        html += `<div class="math math-block" data-tex="${escape(tex)}">${escape(tex)}</div>`;
+        continue;
+      }
       if (math.startsWith('$$')) {
         let tex;
         if (math.length > 4 && math.endsWith('$$')) {

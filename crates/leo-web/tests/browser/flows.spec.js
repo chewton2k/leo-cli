@@ -333,11 +333,19 @@ test.describe('math', () => {
     await expect.poll(() => fonts.length).toBeGreaterThan(0);
     expect(fonts.every((status) => status === 200)).toBe(true);
 
-    await page.route('**/api/chat', (route) => route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: '{"sources":[]}\n{"t":"The area is $\\\\pi r^2$."}\n{"done":true}\n' }));
+    const said = 'The area is $\\pi r^2$, or \\(\\pi r^2\\), and in full:\n\\[\nA = \\int_0^r 2\\pi t\\,dt\n\\]\n\\begin{aligned}\na &= b\n\\end{aligned}';
+    await page.route('**/api/chat', (route) => route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: [{ sources: [] }, { t: said }, { done: true }].map((l) => JSON.stringify(l)).join('\n') + '\n' }));
     await page.locator('#chat-toggle').click();
     await page.locator('#chat-input').fill('area of a circle?');
     await page.locator('#chat-input').press('Enter');
-    await expect(page.locator('#chat .msg.leo .math[data-drawn="yes"] .katex')).toBeVisible();
+    await expect(page.locator('#chat .msg.leo .math[data-drawn="yes"]:not(.math-block) .katex')).toHaveCount(2);
+    await expect(page.locator('#chat .msg.leo .math-block[data-drawn="yes"] .katex-display')).toHaveCount(2);
+    const outside = await page.locator('#chat .msg.leo .prose').evaluate((el) => {
+      const copy = el.cloneNode(true);
+      copy.querySelectorAll('.katex, .katex-display').forEach((k) => k.remove());
+      return copy.textContent;
+    });
+    expect(outside).not.toMatch(/\\\(|\\\[|\\begin|\$/);
   });
 });
 
@@ -673,10 +681,15 @@ test.describe('Felix', () => {
     await expect(page).toHaveURL(new RegExp(`#/n/${note.id}$`));
     if (!(await chat.isVisible())) await page.locator('#chat-toggle').click();
     await chat.locator('[data-mode="chat"]').click();
-    await expect(chat.locator('.msg')).toHaveCount(0);
-    await expect(chat.locator('.chat-hello')).toBeVisible();
-    const kept = await (await page.request.get('/api/chats')).json();
-    expect(kept.some((c) => c.mode === 'study' && c.count === 4)).toBe(true);
+    await expect(chat.locator('.msg'), 'switching style keeps the conversation').toHaveCount(4);
+    await expect(chat.locator('.chat-switch')).toHaveText('Switched to Chat; the conversation carries on');
+    await chat.locator('#chat-input').fill('now explain why');
+    await chat.locator('#chat-input').press('Enter');
+    await expect.poll(() => asked.length).toBe(3);
+    expect(asked[2].mode).toBe('chat');
+    expect(asked[2].messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant', 'user']);
+    await expect(chat.locator('.chat-switch')).toHaveText('Now in Chat');
+    await expect.poll(async () => (await (await page.request.get('/api/chats')).json()).some((c) => c.mode === 'chat' && c.count === 6)).toBe(true);
   });
 
   test('notes are added with @ or the paperclip and go with every message', async ({ page }) => {
@@ -2692,7 +2705,8 @@ test.describe('Felix asks, quizzes and listens while he works', () => {
     const texts = await chat.locator('.msg').evaluateAll((all) => all.map((m) => (m.classList.contains('user') ? 'U: ' : 'F: ') + m.querySelector('.bubble, .prose').textContent.trim()));
     expect(texts).toEqual(['U: explain heaps', 'U: only the min-heap part', 'F: A min-heap keeps the smallest on top.', 'U: and in Python?', 'F: And in Python, heapq.']);
     await expect(chat.locator('.msg-note', { hasText: 'Sent while Felix worked' })).toHaveCount(1);
-    expect(asked[1].messages.map((m) => m.text)).toEqual(['explain heaps', 'only the min-heap part', 'A min-heap keeps the smallest on top.', 'and in Python?']);
+    expect(asked[1].messages.map((m) => m.text.split('\n').pop())).toEqual(['explain heaps', 'only the min-heap part', 'A min-heap keeps the smallest on top.', 'and in Python?']);
+    expect(asked[1].messages[2].text).toContain('[What Felix did for this answer: Searched your notes for “heap”]');
   });
 
   test('stopping Felix puts messages he never read back in the box', async ({ page }) => {
@@ -2709,5 +2723,34 @@ test.describe('Felix asks, quizzes and listens while he works', () => {
     await expect(chat.locator('.msg.user.queued')).toHaveCount(0);
     await expect(input).toHaveValue('shorter please');
     await expect(chat.locator('.msg-error')).toHaveText('Stopped.');
+  });
+});
+
+test.describe('switching models and styles mid-chat', () => {
+  test('the next model is told what the last one looked up, and the switch is shown', async ({ page }) => {
+    const asked = [];
+    await page.route('**/api/chat', async (route) => {
+      asked.push(route.request().postDataJSON());
+      const first = asked.length === 1;
+      const lines = first
+        ? [{ sources: [{ n: 1, id: 'x1', title: 'Graph traversals', folder: '', why: 'opened by Felix' }] }, { step: 'Searched your notes for “queue”', tool: 'search_notes', found: ['Graph traversals'] }, { t: 'BFS uses a queue.' }, { spent: { by: 'Codex', model: 'gpt-6.1-sol', plan: true, steps: 2 } }, { done: true }]
+        : [{ sources: [] }, { t: 'Building on that: oldest first.' }, { spent: { by: 'Claude Code', model: 'claude-opus-5-5', plan: true, steps: 1 } }, { done: true }];
+      await route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: lines.map((l) => JSON.stringify(l)).join('\n') + '\n' });
+    });
+    await page.goto('/');
+    await page.locator('#chat-toggle').click();
+    const chat = page.locator('#chat');
+    await chat.locator('#chat-input').fill('what does bfs use?');
+    await chat.locator('#chat-input').press('Enter');
+    await expect(chat.locator('.msg.leo').last()).toContainText('BFS uses a queue.');
+    await chat.locator('#chat-input').fill('why?');
+    await chat.locator('#chat-input').press('Enter');
+    await expect(chat.locator('.msg.leo').last()).toContainText('Building on that');
+    const before = asked[1].messages[1].text;
+    expect(before).toContain('[Written by Codex · gpt-6.1-sol, in chat style]');
+    expect(before).toContain('[What Felix did for this answer: Searched your notes for “queue” (found: Graph traversals)]');
+    expect(before.endsWith('BFS uses a queue.')).toBe(true);
+    expect(asked[1].recent).toEqual(['x1']);
+    await expect(chat.locator('.chat-switch')).toHaveText('Now answered by Claude Code · claude-opus-5-5, with everything said so far');
   });
 });

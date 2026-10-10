@@ -23,6 +23,16 @@
         continue;
       }
       const math = line.trim();
+      const env = math.match(/^\\begin\{([a-z]+\*?)\}/);
+      const closer = env ? `\\end{${env[1]}}` : math.startsWith('\\[') && !math.slice(2).includes('\\]') ? '\\]' : null;
+      if (closer && !(env && math.includes(closer))) {
+        let end = i + 1;
+        while (end < lines.length && !lines[end].includes(closer)) end++;
+        end = Math.min(end + 1, lines.length);
+        blocks.push({ start: i, end, kind: 'math' });
+        i = end;
+        continue;
+      }
       if (math.startsWith('$$') && !(math.length > 4 && math.endsWith('$$'))) {
         let end = i + 1;
         while (end < lines.length && !lines[end].trim().endsWith('$$')) end++;

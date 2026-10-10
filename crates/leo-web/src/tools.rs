@@ -115,7 +115,7 @@ const NOTE: Param = Param {
     about: "which note: an id like n3 from a <note> tag or an earlier result, or the note's exact title",
 };
 
-pub const SPECS: [Spec; 9] = [
+pub const SPECS: [Spec; 10] = [
     Spec {
         name: "search_notes",
         purpose: "Find the user's notes that match words, abbreviations (BFS finds breadth-first search) or ideas in their knowledge graph.",
@@ -140,6 +140,17 @@ pub const SPECS: [Spec; 9] = [
         params: &[NOTE],
         returns: "Up to 10 lines, each: [n5] \"Title\" (kind of link): why they connect. Or a line saying it has no connections yet.",
         example: r#"<tool>{"name": "connected_notes", "note": "Heaps"}</tool>"#,
+    },
+    Spec {
+        name: "calculate",
+        purpose: "Work out numbers exactly instead of estimating them: function values, iterations of a method, tables, statistics, unit conversions. Never write a number you did not calculate here or read in the notes.",
+        params: &[Param {
+            name: "steps",
+            required: true,
+            about: "one line per step: define functions like f(x) = x^2 + 4*cos(x), set values like a = 1 + 0.381966*(2 - 1), or write an expression to evaluate like f(a). Values carry over between lines. Has + - * / ^, comparisons, if(condition, then, otherwise), sin cos tan asin acos atan exp ln log log10 sqrt abs min max floor ceil round sum mean, pi and e. Angles in radians",
+        }],
+        returns: "Each line with its result to 10 decimal places, or why that line did not work.",
+        example: r#"<tool>{"name": "calculate", "steps": "f(x) = x^2 + 4*cos(x)\na = 1.381966\nb = 1.618034\nf(a)\nf(b)\nL = if(f(a) > f(b), a, 1)"}</tool>"#,
     },
     Spec {
         name: "ask_user",
@@ -383,6 +394,7 @@ const WHEN_ASK: &str = "When to use them:
 - The question is about a picture in a note and its description is not enough: use look_at_picture.
 - You cannot tell what the user means and a wrong guess would waste their time: use ask_user, once.
 - You want to check what the user understands, or they ask to be quizzed: use quiz, one question at a time.
+- The answer needs numbers (evaluating a function, iterating a method, a table, any arithmetic beyond the trivial): use calculate, as often as needed, and report only numbers it gave you.
 - Otherwise answer straight away without tools.
 After suggesting a change or a note, tell the user what you suggested and that they can apply it; never claim it is already done.";
 
@@ -394,6 +406,7 @@ const WHEN_AUTO: &str = "When to use them:
 - The question is about a picture in a note and its description is not enough: use look_at_picture.
 - You cannot tell what the user means and a wrong guess would waste their time: use ask_user, once.
 - You want to check what the user understands, or they ask to be quizzed: use quiz, one question at a time.
+- The answer needs numbers (evaluating a function, iterating a method, a table, any arithmetic beyond the trivial): use calculate, as often as needed, and report only numbers it gave you.
 - Otherwise answer straight away without tools.
 After a change or a new note, tell the user plainly what you changed or made.";
 
@@ -403,6 +416,7 @@ const WHEN_READ: &str = "When to use them:
 - The question is about a picture in a note and its description is not enough: use look_at_picture.
 - You cannot tell what the user means and a wrong guess would waste their time: use ask_user, once.
 - You want to check what the user understands, or they ask to be quizzed: use quiz, one question at a time.
+- The answer needs numbers (evaluating a function, iterating a method, a table, any arithmetic beyond the trivial): use calculate, as often as needed, and report only numbers it gave you.
 - Otherwise answer straight away without tools.
 The user chose Read only for this chat, so you cannot change or make notes. When they ask for a change, say exactly what you would change and where, and tell them they can switch Felix to Ask or Auto, beside the message box, to let you make it.";
 
@@ -1697,7 +1711,7 @@ mod tests {
         assert!(number.contains("must be text in double quotes"));
         let unknown = wrong(serde_json::json!({"name": "delete_note", "note": "n1"}));
         assert!(unknown.contains(
-            "the tools are search_notes, open_note, connected_notes, ask_user, quiz, look_at_picture, read_document, edit_note, create_note"
+            "the tools are search_notes, open_note, connected_notes, calculate, ask_user, quiz, look_at_picture, read_document, edit_note, create_note"
         ));
         assert_eq!(
             check(&Call {

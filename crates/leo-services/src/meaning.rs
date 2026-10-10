@@ -116,20 +116,38 @@ impl Model {
     }
 }
 
-static LOADED: OnceLock<Mutex<Option<Arc<Model>>>> = OnceLock::new();
+static LOADED: OnceLock<Mutex<Loaded>> = OnceLock::new();
+const LOOK_AGAIN: std::time::Duration = std::time::Duration::from_secs(60);
+
+#[derive(Default)]
+struct Loaded {
+    model: Option<Arc<Model>>,
+    missed: Option<std::time::Instant>,
+}
 
 pub fn model() -> Option<Arc<Model>> {
-    let slot = LOADED.get_or_init(|| Mutex::new(None));
+    let slot = LOADED.get_or_init(|| Mutex::new(Loaded::default()));
     let mut held = slot.lock().ok()?;
-    if let Some(model) = held.as_ref() {
+    if let Some(model) = held.model.as_ref() {
         return Some(Arc::clone(model));
     }
-    if state() != ModelState::Ready {
+    if held.missed.is_some_and(|at| at.elapsed() < LOOK_AGAIN) {
         return None;
     }
-    let model = Arc::new(Model::load(&dir()).ok()?);
-    *held = Some(Arc::clone(&model));
-    Some(model)
+    let loaded = (state() == ModelState::Ready)
+        .then(|| Model::load(&dir()).ok())
+        .flatten()
+        .map(Arc::new);
+    match loaded {
+        Some(model) => {
+            held.model = Some(Arc::clone(&model));
+            Some(model)
+        }
+        None => {
+            held.missed = Some(std::time::Instant::now());
+            None
+        }
+    }
 }
 
 pub fn embed(texts: &[String], query: bool) -> Result<Vec<Vec<f32>>> {

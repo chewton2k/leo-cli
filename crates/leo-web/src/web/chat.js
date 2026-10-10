@@ -56,7 +56,7 @@
   }
 
   const TAPS = ['boop', 'hop', 'spin', 'giggle'];
-  const POSES = { search_notes: 'tool-search', open_note: 'tool-open', connected_notes: 'tool-map', edit_note: 'tool-edit', create_note: 'tool-create', web_search: 'tool-search', open_page: 'tool-open', read_document: 'tool-open', look_at_picture: 'tool-search' };
+  const POSES = { search_notes: 'tool-search', open_note: 'tool-open', connected_notes: 'tool-map', edit_note: 'tool-edit', create_note: 'tool-create', web_search: 'tool-search', open_page: 'tool-open', read_document: 'tool-open', look_at_picture: 'tool-search', calculate: 'tool-edit' };
   const poseOf = (tool) => POSES[tool] || null;
 
   function splitLines(buffer) {
@@ -227,11 +227,44 @@
   function recentNotes(messages, most = 6) {
     const out = [];
     for (const m of [...messages].reverse().filter((x) => x.role === 'assistant').slice(0, 3)) {
-      for (const s of cited(m.text || '', m.sources || [])) {
+      const opened = (m.sources || []).filter((s) => s && /^(opened|changed) by Felix|its pictures looked at/.test(String(s.why || '')));
+      for (const s of [...cited(m.text || '', m.sources || []), ...opened]) {
         if (s && s.id && !out.includes(s.id) && out.length < most) out.push(s.id);
       }
     }
     return out;
+  }
+
+  const clipped = (text, most) => {
+    const flat = String(text || '').replace(/\s+/g, ' ').trim();
+    return flat.length > most ? `${flat.slice(0, most - 1)}…` : flat;
+  };
+
+  function historyText(m) {
+    if (m.role === 'user') return m.say || m.text;
+    const lines = [];
+    const by = m.spent && typeof m.spent.by === 'string' ? [m.spent.by, m.spent.model].filter(Boolean).join(' · ') : '';
+    if (by) lines.push(`[Written by ${by}${m.mode ? `, in ${m.mode} style` : ''}]`);
+    const steps = (m.steps || []).map((s) => (typeof s === 'string' ? { text: s, found: [] } : s)).filter((s) => s && s.text);
+    if (steps.length) {
+      lines.push(`[What Felix did for this answer: ${steps.slice(0, 12).map((s) => {
+        const found = (s.found || []).filter((f) => typeof f === 'string' && f !== s.text).slice(0, 5);
+        return clipped(s.text, 120) + (found.length ? ` (found: ${found.map((f) => clipped(f, 60)).join(', ')})` : '');
+      }).join('; ')}]`);
+    }
+    for (const a of m.asks || []) {
+      lines.push(`[Felix asked: ${clipped(a.question, 300)}${(a.options || []).length ? ` (choices: ${a.options.join(' | ')})` : ''}${typeof a.answered === 'string' ? `; the user answered: ${clipped(a.answered, 200)}` : ''}]`);
+    }
+    for (const q of m.quizzes || []) {
+      const how = typeof q.given !== 'string' ? 'not answered yet' : q.correct === true ? `answered “${clipped(q.given, 120)}”, right` : q.correct === false ? `answered “${clipped(q.given, 120)}”, wrong` : `answered “${clipped(q.given, 200)}”`;
+      lines.push(`[Practice question (${(QUIZ_KINDS[q.kind] || 'question').toLowerCase()}): ${clipped(q.question, 300)}${(q.options || []).length ? `; choices: ${q.options.join(' | ')}` : ''}; answer: ${clipped(q.answer, 200)}; ${how}]`);
+    }
+    for (const p of m.proposals || []) {
+      const state = p.state === 'applied' ? 'applied' : p.state === 'dismissed' ? 'dismissed by the user' : 'waiting for the user';
+      lines.push(`[${p.kind === 'create' ? `Suggested a new note “${clipped(p.title, 80)}”` : `Suggested a change to “${clipped(p.title, 80)}”: “${clipped(p.find, 80)}” → “${clipped(p.replace, 120)}”`}; ${state}]`);
+    }
+    lines.push(grade(m.text || '').text || m.text || '');
+    return lines.filter(Boolean).join('\n');
   }
 
   function threadRefs(messages) {
@@ -963,6 +996,28 @@
         : '<span class="chat-using">Looks through your notes when they help</span>';
     }
 
+    const modeName = (id) => (MODES.find((x) => x.id === id) || MODES[0]).label;
+    const writer = (m) => (m && m.spent && typeof m.spent.by === 'string' ? [m.spent.by, m.spent.model].filter(Boolean).join(' · ') : '');
+
+    function switches(list, i) {
+      const m = list[i];
+      const out = [];
+      if (m.role === 'user' && m.mode) {
+        const before = list.slice(0, i).reverse().find((x) => x.role === 'user' && x.mode);
+        if (before && before.mode !== m.mode) out.push(`Now in ${modeName(m.mode)}`);
+      }
+      if (m.role === 'assistant' && writer(m)) {
+        const before = list.slice(0, i).reverse().find((x) => x.role === 'assistant' && writer(x));
+        if (before && writer(before) !== writer(m)) out.push(`Now answered by ${writer(m)}, with everything said so far`);
+      }
+      return out.map((t) => `<div class="chat-switch">${escape(t)}</div>`).join('');
+    }
+
+    function lastSwitch() {
+      const last = [...state.messages].reverse().find((x) => x.role === 'user' && x.mode);
+      return last && last.mode !== state.mode ? `<div class="chat-switch">Switched to ${escape(modeName(state.mode))}; the conversation carries on</div>` : '';
+    }
+
     function bubble(m, i) {
       if (m.role === 'user') {
         const notes = (m.refs || []).map((r) => `<button class="cite" data-chat="open" data-id="${escape(r.id)}">${escape(r.title)}</button>`);
@@ -1094,6 +1149,7 @@
       open_page: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M7 13h10M7 16h6"/>',
       read_document: '<path d="M6 3h8l4 4v14H6z"/><path d="M9 12h6M9 16h6"/>',
       look_at_picture: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="M21 17l-5-5-8 7"/>',
+      calculate: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 7h8M8 11h2M12 11h2M16 11v6M8 15h2M12 15h2M8 18h2M12 18h2"/>',
       ask_user: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17.2v.1"/>',
       quiz: '<path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/>',
     };
@@ -1386,7 +1442,7 @@
         ? { i: document.activeElement.dataset.i, k: document.activeElement.dataset.k, from: document.activeElement.selectionStart, to: document.activeElement.selectionEnd }
         : null;
       const kept = body.scrollTop;
-      body.innerHTML = state.messages.length ? state.messages.map(bubble).join('') : welcome();
+      body.innerHTML = state.messages.length ? `${state.messages.map((m, i) => switches(state.messages, i) + bubble(m, i)).join('')}${lastSwitch()}` : welcome();
       if (typing) {
         const again = body.querySelector(`.quiz-input[data-i="${typing.i}"][data-k="${typing.k}"]`);
         if (again && !again.disabled) {
@@ -1455,7 +1511,8 @@
         if (f.status === 'ready') settle(i, f);
       });
       state.messages.push(asked);
-      const answer = { role: 'assistant', text: '', sources: [], pending: true, folder: (state.context && state.context.directory) || '' };
+      asked.mode = state.mode;
+      const answer = { role: 'assistant', text: '', sources: [], pending: true, folder: (state.context && state.context.directory) || '', mode: state.mode };
       state.messages.push(answer);
       input.value = '';
       fit();
@@ -1476,7 +1533,7 @@
       asked.cards = asked.cards.filter(Boolean);
       if (!asked.cards.length) delete asked.cards;
       const files = state.sent.map((f) => f.id);
-      const history = state.messages.filter((m) => m !== answer && !m.error && m.steer !== 'waiting').map((m) => ({ role: m.role, text: m.say || grade(m.text).text || m.text }));
+      const history = state.messages.filter((m) => m !== answer && !m.error && m.steer !== 'waiting').map((m) => ({ role: m.role, text: historyText(m) }));
       try {
         const response = await fetch('/api/chat', {
           method: 'POST',
@@ -1625,12 +1682,10 @@
       else if (what === 'forget') forget(el.dataset.id);
       else if (what === 'mode') {
         if (el.dataset.mode === state.mode) return;
-        const refs = state.refs;
-        if (state.messages.length) begin();
         state.asking = null;
         closePick();
         state.mode = el.dataset.mode;
-        state.refs = refs;
+        if (state.messages.length) remember();
         drawModes();
         drawRefs();
         draw();
@@ -1820,5 +1875,5 @@
     };
   }
 
-  root.leoChat = { checkQuiz, quizSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS };
+  root.leoChat = { historyText, checkQuiz, quizSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS };
 })(typeof window !== 'undefined' ? window : globalThis);

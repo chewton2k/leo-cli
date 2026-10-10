@@ -172,14 +172,30 @@ test('Obsidian callouts become boxes, and a - or + makes them fold', () => {
   assert.match(render('> plain quote'), /^<blockquote>/);
 });
 
-for (const [name, fn] of cases) {
-  try {
-    fn();
-    console.log(`ok   ${name}`);
-  } catch (e) {
-    failed++;
-    console.log(`FAIL ${name}\n     ${e.message.split('\n').join('\n     ')}`);
+test('the other ways models write math are drawn too', () => {
+  assert.equal(render('Energy \\(E = mc^2\\) here.'), '<p>Energy <span class="math" data-tex="E = mc^2">E = mc^2</span> here.</p>');
+  assert.equal(render('So \\[a^2 + b^2 = c^2\\] holds.'), '<p>So <span class="math math-block" data-tex="a^2 + b^2 = c^2">a^2 + b^2 = c^2</span> holds.</p>');
+  assert.equal(render('Then $$x_1 + x_2$$ follows.'), '<p>Then <span class="math math-block" data-tex="x_1 + x_2">x_1 + x_2</span> follows.</p>');
+  assert.equal(render('\\[\n\\sum_{i=1}^n i = \\frac{n(n+1)}{2}\n\\]'), '<div class="math math-block" data-tex="\\sum_{i=1}^n i = \\frac{n(n+1)}{2}">\\sum_{i=1}^n i = \\frac{n(n+1)}{2}</div>');
+  assert.equal(render('\\begin{aligned}\na &= b \\\\\nc &= d\n\\end{aligned}\nAfter.'), '<div class="math math-block" data-tex="\\begin{aligned}\na &amp;= b \\\\\nc &amp;= d\n\\end{aligned}">\\begin{aligned}\na &amp;= b \\\\\nc &amp;= d\n\\end{aligned}</div><p>After.</p>');
+  assert.doesNotMatch(render('A price of $5 and $10.'), /class="math"/);
+  assert.doesNotMatch(render('`\\(x\\)` stays code'), /class="math"/);
+  assert.match(render('Subscripts like \\(x_i\\) and \\(y_j\\) stay math, not italics'), /data-tex="x_i".*data-tex="y_j"/);
+  const told = render('In full:\n\\[\nA = \\pi r^2\n\\]\nand also\n$$\nx\n$$\n\\begin{aligned}\na &= b\n\\end{aligned}');
+  assert.equal((told.match(/class="math math-block"/g) || []).length, 3, told);
+  assert.ok(told.startsWith('<p>In full:</p>'), 'a block of math right after a sentence still starts its own block');
+});
+
+setImmediate(() => {
+  for (const [name, fn] of cases) {
+    try {
+      fn();
+      console.log(`ok   ${name}`);
+    } catch (e) {
+      failed++;
+      console.log(`FAIL ${name}\n     ${e.message.split('\n').join('\n     ')}`);
+    }
   }
-}
-console.log(`${cases.length - failed} passed, ${failed} failed`);
-process.exit(failed ? 1 : 0);
+  console.log(`${cases.length - failed} passed, ${failed} failed`);
+  process.exit(failed ? 1 : 0);
+});

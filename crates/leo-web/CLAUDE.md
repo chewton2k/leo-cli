@@ -167,8 +167,16 @@
   Restore / Delete), a per-row delete, and Empty trash; every permanent delete
   confirms in a sheet. POST `/api/trash/delete {ids}|{all:true}`
   (`Store::delete_from_trash`, `empty_trash`), POST `/api/trash/restore {ids}`.
-- Switching Felix's style starts a new chat (keeps attached notes) when the
-  current one has messages.
+- Switching Felix's style keeps the chat (a `.chat-switch` line says so;
+  each message records its `mode`). Switching AI models mid-chat shares
+  everything too: every earlier answer reaches the next model through
+  `historyText`, which puts `[Written by …]`, `[What Felix did for this
+  answer: …]` (steps and what they found), `[Felix asked: …]`, `[Practice
+  question …]` and suggested changes before the reply text (first, so the
+  server's per-turn clip keeps them); `recentNotes` also brings notes Felix
+  opened or changed, not only cited ones; and `BASE` tells the model earlier
+  replies may be another model's. A change of model shows "Now answered by
+  …" in the chat.
 - Export: GET `/api/export?uploads&chats&trash` streams a zip built by
   `export::write_zip` into a temp file (notes without dot-dirs, optional
   `.trash`, attachments, chats; never config/keys). Storage page has the export
@@ -527,8 +535,10 @@
   Documents given to Felix are kept whole (`CHAT_DOC_CHARS` 2M); the prompt
   shows each one's share with a "[The document goes on…]" marker, and the
   `read_document` tool reads any part (`Desk::part_chars` = room/3, 12k..120k).
-- Math: `$...$` and `$$...$$` (also a `$$` block over several lines, one
-  block to edit in `editing.js`) become `.math` slots in `markdown.js`; the
+- Math: `$...$`, `\(...\)`, `$$...$$` and `\[...\]` inside a sentence (display),
+  and blocks of `$$`, `\[` / `\]` or `\begin{aligned|align|equation|cases|…}`
+  (each one block to edit in `editing.js`; `startsBlock` ends a paragraph at
+  them, since models put them right under a sentence) become `.math` slots in `markdown.js`; the
   inline rule skips prices (`$5 and $10`), `\$` and code. `app/math.js`
   loads KaTeX 0.16.11 (vendored in `web/vendor/katex/`, MIT, checked against
   npm's sha512; script, CSS and woff2 fonts served by `katex_file` under
@@ -599,3 +609,17 @@
   `Vectors::neighbours` (24 nearest per note, by mean vector, cached in
   `Graphs::near` until the vectors change) and `link_work_near` skip a group
   pair with no neighbour across it, unless a note in it has no vectors yet.
+- `calculate` (`calc.rs`): Felix works numbers out instead of guessing them.
+  A small safe evaluator (no code runs): lines that define functions
+  (`f(x) = x^2 + 4*cos(x)`), set values, or evaluate; `if(c, a, b)`,
+  comparisons, trig/exp/log/sqrt/min/max/sum/mean, `pi`, `e`, implicit
+  multiplication (`2x`, `4 sin(x)`); 10 decimals; per-line errors; capped at
+  `MOST_LINES`, call depth and total work. Handled in `run_tool` (no store).
+  Measured on a 5-question optimization homework with Codex gpt-6-sol: the
+  golden-section and Newton tables then matched ChatGPT's exactly; without it
+  the values were guessed and Newton's divergence was invented away.
+- Felix's `BASE` matches length to the task (quick answers stay short;
+  problems and homework get full working, computed numbers, a boxed result
+  and a check), follows the order asked ("start with question 1"), says
+  which parts remain, and only says "Beyond your notes" when the question
+  was about the notes.

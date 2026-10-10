@@ -1150,3 +1150,22 @@ fn felix_and_search_find_a_note_that_means_the_same_without_sharing_a_word() {
     assert_eq!(found[0]["title"], "Graph search");
     assert_eq!(found[0]["why"]["kind"], "meaning");
 }
+
+#[test]
+fn felix_works_numbers_out_with_the_calculator_instead_of_guessing() {
+    let (mut state, _d, _) = state_with(&[]);
+    let (streamer, prompts) = scripted(vec![
+        "<tool>{\"name\": \"calculate\", \"steps\": \"f(x) = x^2 + 4*cos(x)\\nx = 1\\nx = x - (2x - 4 sin(x))/(2 - 4 cos(x))\\nf(1.381966)\"}</tool>",
+        "Newton jumps to x = -7.472741.",
+    ]);
+    state.chat = Some(streamer);
+    let lines = chat_lines_with(&state, "do question 1 of my homework", Some("read"));
+    let steps: Vec<&str> = lines.iter().filter_map(|l| l["step"].as_str()).collect();
+    assert_eq!(steps, ["Calculated 4 steps"]);
+    let prompts = prompts.lock().unwrap();
+    assert!(prompts[0].contains("### calculate"));
+    assert!(prompts[0].contains("never estimate a value in your head"));
+    assert!(prompts[0].contains("\"start with question 1\" means do question 1"));
+    assert!(prompts[1].contains("x = -7.4727"), "{}", prompts[1]);
+    assert!(prompts[1].contains("f(1.381966) = 2.66067"));
+}

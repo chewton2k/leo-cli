@@ -365,6 +365,18 @@ fn run_tool(
             proposal: None,
             found: Vec::new(),
         }
+    } else if call.name == "calculate" {
+        let steps = call.text("steps");
+        let lines = steps.lines().filter(|l| !l.trim().is_empty()).count();
+        tools::Done {
+            step: format!(
+                "Calculated {lines} step{}",
+                if lines == 1 { "" } else { "s" }
+            ),
+            result: crate::calc::run(&steps),
+            proposal: None,
+            found: Vec::new(),
+        }
     } else if tools::is_web(&call.name) {
         desk.run_web(call)
     } else if call.name == "look_at_picture" {

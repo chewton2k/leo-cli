@@ -101,19 +101,26 @@ test('a tap lands on the same spot in the raw text', () => {
 });
 
 let failed = 0;
-for (const [name, fn] of cases) {
-  try {
-    fn();
-    console.log(`ok   ${name}`);
-  } catch (e) {
-    failed++;
-    console.log(`FAIL ${name}\n     ${e.message.split('\n').join('\n     ')}`);
-  }
-}
-console.log(`${cases.length - failed} passed, ${failed} failed`);
-process.exit(failed ? 1 : 0);
+test('a \\[ block and a \\begin{aligned} block are each one block to edit', () => {
+  const lines = ['Intro', '\\[', 'x^2', '\\]', '\\begin{aligned}', 'a &= b', '\\end{aligned}', 'After'];
+  assert.deepEqual(ed.splitBlocks(lines).map((b) => [b.start, b.end, b.kind]), [[0, 1, 'line'], [1, 4, 'math'], [4, 7, 'math'], [7, 8, 'line']]);
+});
 
 test('a $$ math block is one block to edit, and a one-line $$x$$ is a line', () => {
   const lines = ['intro', '$$', 'a^2 + b^2', '= c^2$$', 'after', '$$x$$'];
   assert.deepEqual(ed.splitBlocks(lines).map((b) => [b.start, b.end, b.kind]), [[0, 1, 'line'], [1, 4, 'math'], [4, 5, 'line'], [5, 6, 'line']]);
+});
+
+setImmediate(() => {
+  for (const [name, fn] of cases) {
+    try {
+      fn();
+      console.log(`ok   ${name}`);
+    } catch (e) {
+      failed++;
+      console.log(`FAIL ${name}\n     ${e.message.split('\n').join('\n     ')}`);
+    }
+  }
+  console.log(`${cases.length - failed} passed, ${failed} failed`);
+  process.exit(failed ? 1 : 0);
 });

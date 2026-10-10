@@ -270,3 +270,30 @@ test('tokens read from the cache are named in the cost line tooltip', () => {
   assert.equal(label.title, '12,000 tokens in (9,000 from the cache), 800 out over 3 steps');
   assert.ok(!C.spentLabel({ by: 'Anthropic', model: 'm', input: 5, output: 1, cost: 0 }).title.includes('cache'));
 });
+
+test('what any model is told about an earlier answer includes what Felix did, asked and suggested, and who wrote it', () => {
+  const answer = {
+    role: 'assistant',
+    text: '[[incorrect]] It uses a queue [n1].',
+    mode: 'study',
+    spent: { by: 'Codex', model: 'gpt-6.1-sol' },
+    steps: [{ text: 'Searched your notes for “queue”', found: ['Graph traversals', 'Heaps'] }, 'Opened “Graph traversals”'],
+    asks: [{ question: 'Which week?', options: ['1', '2'], answered: '2' }],
+    quizzes: [{ kind: 'multiple_choice', question: 'What does BFS use?', options: ['a stack', 'a queue'], answer: 'a queue', given: 'a stack', correct: false }],
+    proposals: [{ kind: 'edit', title: 'Graph traversals', find: 'stack', replace: 'queue', state: 'applied' }],
+  };
+  const text = C.historyText(answer);
+  assert.ok(text.startsWith('[Written by Codex · gpt-6.1-sol, in study style]\n[What Felix did'), 'notes come first, so clipping a long answer keeps them');
+  assert.ok(text.endsWith('\nIt uses a queue [n1].'), 'the verdict marker is not repeated');
+  assert.ok(text.includes('[What Felix did for this answer: Searched your notes for “queue” (found: Graph traversals, Heaps); Opened “Graph traversals”]'));
+  assert.ok(text.includes('[Felix asked: Which week? (choices: 1 | 2); the user answered: 2]'));
+  assert.ok(text.includes('[Practice question (multiple choice): What does BFS use?; choices: a stack | a queue; answer: a queue; answered “a stack”, wrong]'));
+  assert.ok(text.includes('Suggested a change to “Graph traversals”: “stack” → “queue”; applied]'));
+  assert.equal(C.historyText({ role: 'assistant', text: 'Plain.' }), 'Plain.');
+  assert.equal(C.historyText({ role: 'user', text: 'a stack', say: 'Quiz answer. …' }), 'Quiz answer. …');
+});
+
+test('notes Felix opened, not only the ones he cited, come along after a switch', () => {
+  const messages = [{ role: 'assistant', text: 'No citation here.', sources: [{ n: 1, id: 'opened-1', title: 'A', why: 'opened by Felix' }, { n: 2, id: 'found-1', title: 'B', why: 'found by searching for "x"' }] }];
+  assert.deepEqual(C.recentNotes(messages), ['opened-1']);
+});

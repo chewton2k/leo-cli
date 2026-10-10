@@ -1,3 +1,4 @@
+pub mod calc;
 pub mod captions;
 pub mod chat;
 pub mod chat_files;
@@ -215,7 +216,7 @@ async fn keep_graph_current(state: AppState) {
     let mut tick = tokio::time::interval(GRAPH_CHECK);
     loop {
         tick.tick().await;
-        if let Some(meaning) = state.meaning.clone() {
+        if let Some(meaning) = state.meaning.clone().filter(|m| m(&[], false).is_ok()) {
             let vectors = Arc::clone(&state.vectors);
             let listed = Arc::clone(&vectors);
             if let Ok(work) = state
