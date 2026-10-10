@@ -118,15 +118,6 @@ fn transcribe_with_progress(
     audio_path: &Path,
     progress: ProgressSink<'_>,
 ) -> Result<String, ProviderError> {
-    transcribe_with_vocabulary(provider, audio_path, progress, &[])
-}
-
-fn transcribe_with_vocabulary(
-    provider: &dyn TranscribeProvider,
-    audio_path: &Path,
-    progress: ProgressSink<'_>,
-    vocabulary: &[String],
-) -> Result<String, ProviderError> {
     let file_size = std::fs::metadata(audio_path)
         .map_err(|e| ProviderError::Fatal(format!("cannot stat audio: {e}")))?
         .len();
@@ -147,7 +138,7 @@ fn transcribe_with_vocabulary(
     let chunks = plan_chunks(file_size, duration, provider.max_bytes());
 
     if chunks.len() == 1 {
-        return provider.transcribe_with_vocabulary(audio_path, vocabulary);
+        return provider.transcribe(audio_path);
     }
 
     leo_core::diag::warn(format!(
@@ -172,7 +163,7 @@ fn transcribe_with_vocabulary(
             Some(report) => report(i + 1, chunks.len()),
             None => leo_core::diag::warn(format!("transcribing chunk {}/{}", i + 1, chunks.len())),
         }
-        let result = provider.transcribe_with_vocabulary(&path, vocabulary);
+        let result = provider.transcribe(&path);
         let _ = std::fs::remove_file(&path);
 
         // A failed chunk discards everything transcribed so far and surfaces
@@ -207,17 +198,6 @@ pub fn run(
     let providers = build_transcribe_chain(cfg, store);
     run_transcribe_chain(providers, audio_path, |p, path| {
         transcribe_with_progress(p, path, None)
-    })
-}
-
-pub fn run_with_vocabulary(
-    cfg: &Config,
-    store: &dyn SecretStore,
-    audio_path: &Path,
-    vocabulary: &[String],
-) -> Result<ChainOutcome<String>> {
-    run_transcribe_chain(build_transcribe_chain(cfg, store), audio_path, |p, path| {
-        transcribe_with_vocabulary(p, path, None, vocabulary)
     })
 }
 
