@@ -589,12 +589,14 @@ pub fn reminder(access: Access) -> &'static str {
     }
 }
 
-pub const NUDGE: &str = "The user asked for a change to their notes, but your reply suggested none. If a note should be fixed, changed, added to or made, reply now with only the edit_note or create_note line; the tools are available. If nothing needs changing, reply to the user again.";
+pub const NUDGE: &str = "The user may have asked for a change to their notes, but your reply suggested none. Your reply has already been shown to the user and stays as it is; this message is a check the user does not see. If a note should be fixed, changed, added to or made, reply now with only the edit_note or create_note line; the tools are available. If no note should change, reply with only: No change.";
 
 const CHANGE_WORDS: [&str; 15] = [
     "fix", "correct", "change", "update", "edit", "rewrite", "add", "append", "insert", "remove",
     "create", "make", "write", "improve", "expand",
 ];
+
+const NOTE_WORDS: [&str; 4] = ["note", "notes", "page", "pages"];
 
 pub const UNSTUCK: &str = "Your tools are available in this chat: you use one by replying with only its <tool>{...}</tool> line, as the manual shows. If a tool would help, reply now with that line; otherwise answer the user without saying the tools are unavailable.";
 
@@ -642,10 +644,10 @@ pub fn claims_no_tools(reply: &str) -> bool {
 }
 
 pub fn wants_change(message: &str) -> bool {
-    message
-        .to_lowercase()
-        .split(|c: char| !c.is_alphanumeric())
-        .any(|word| CHANGE_WORDS.contains(&word))
+    let lower = message.to_lowercase();
+    let words: Vec<&str> = lower.split(|c: char| !c.is_alphanumeric()).collect();
+    words.iter().any(|word| CHANGE_WORDS.contains(word))
+        && words.iter().any(|word| NOTE_WORDS.contains(word))
 }
 
 const WIDE_WORDS: [&str; 9] = [
@@ -2047,6 +2049,16 @@ mod tests {
         assert!(wants_change("add an example to my induction note"));
         assert!(!wants_change("What does a min-heap keep at its root?"));
         assert!(!wants_change("prefix sums and suffixes"));
+        assert!(!wants_change(
+            "Help me write answers to these interview questions"
+        ));
+        assert!(!wants_change("make this simpler please"));
+        assert!(!wants_change("is this proof correct?"));
+        assert!(!wants_change(
+            "based on this transcription, can you answer these questions: \
+             6. Can you describe a time you took initiative to make a positive difference?\n\
+             8. If you were given the opportunity to improve one aspect of Clubhouse's platform, what would you focus on and why?"
+        ));
     }
 
     #[test]

@@ -702,9 +702,13 @@ fn native_answer(
     let mut message = conversation.to_string();
     let mut nudged = !access.changes() || !tools::wants_change(wanted);
     let gap = std::cell::Cell::new(false);
+    let quiet = std::cell::Cell::new(false);
     loop {
         let reply = {
             let mut piece = |t: &str| {
+                if quiet.get() {
+                    return;
+                }
                 if gap.replace(false) && shown.get() {
                     send(serde_json::json!({ "t": "\n\n" }));
                 }
@@ -754,7 +758,7 @@ fn native_answer(
             return Ok(spent);
         }
         nudged = true;
-        send(serde_json::json!({ "restart": true }));
+        quiet.set(true);
         message = tools::NUDGE.to_string();
     }
 }
@@ -775,7 +779,11 @@ fn text_answer(
     let mut spent: Option<chat::Spent> = None;
     let mut message = conversation.to_string();
     let gap = std::cell::Cell::new(false);
+    let quiet = std::cell::Cell::new(false);
     let shown_once = |t: &str| {
+        if quiet.get() {
+            return;
+        }
         if gap.replace(false) && shown.get() {
             send(serde_json::json!({ "t": "\n\n" }));
         }
@@ -819,9 +827,8 @@ fn text_answer(
             }
             None if !last && !nudged && desk.proposals == 0 => {
                 nudged = true;
-                if gate.shown {
-                    send(serde_json::json!({ "restart": true }));
-                }
+                gate.finish(&mut |t| shown_once(t));
+                quiet.set(true);
                 message = tools::NUDGE.to_string();
                 continue;
             }

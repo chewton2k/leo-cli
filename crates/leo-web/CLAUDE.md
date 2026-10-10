@@ -349,9 +349,13 @@
 - Felix tool reliability (measured with Codex): the system prompt says the
   tools are text lines, always available even when the model's own tools are
   off; every non-final step ends with `tools::REMINDER` (models weigh the end
-  most); and when the user's last message asks for a change (`wants_change`)
-  but the reply proposed nothing, leo takes the reply back and asks once more
-  with `NUDGE`. Agent CLIs that print nothing are run once more before failing
+  most); and when the user's last message asks for a change to a note
+  (`wants_change`: a change word and "note"/"notes"/"page"; "write my
+  interview answers" is not one) but the reply proposed nothing, leo asks once
+  more with `NUDGE`, quietly: the shown reply stays, the check's text is never
+  shown, and only an edit_note / create_note it makes appears (as a card).
+  Taking the reply back made answers vanish and come back as "No note change
+  is needed. Here are … again". Agent CLIs that print nothing are run once more before failing
   (`AgentCli::no_answer`).
 - Storage has "Pictures in notes" (`pictures` area: `<notes>/attachments`,
   each with the notes that show it via `attachments::resolve`; delete selected
@@ -674,7 +678,7 @@
   a short lead-in (`VERDICT_WITHIN` 240 chars) and drop the lead-in.
 - Text written before a tool call is kept: native sessions and the text
   protocol now treat a tool call as a paragraph break (`gap`), not a
-  `restart`. Restarts remain only for leo's own retries (NUDGE, UNSTUCK) and a
+  `restart`. Restarts remain only for leo's own retry (UNSTUCK) and a
   provider failing over mid-answer. This is what made a marking flash and
   vanish when the model wrote it and then called `quiz` for the next card.
 - Measured with real agents (Codex gpt-6-sol and Claude Code opus-5-5) on the

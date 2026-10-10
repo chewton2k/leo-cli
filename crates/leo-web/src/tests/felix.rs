@@ -450,7 +450,10 @@ fn a_suggested_change_is_applied_only_while_the_text_is_still_there() {
 }
 
 #[test]
-fn a_change_the_user_asked_for_is_asked_for_once_more_when_the_model_only_talks() {
+fn a_change_the_user_asked_for_is_checked_once_quietly_and_the_answer_shown_never_vanishes() {
+    let shown = |lines: &[serde_json::Value]| -> String {
+        lines.iter().filter_map(|l| l["t"].as_str()).collect()
+    };
     let (mut state, _d, ids) = state_with(&[("Graph traversals", "")]);
     {
         let mut store = state.fresh();
@@ -458,44 +461,44 @@ fn a_change_the_user_asked_for_is_asked_for_once_more_when_the_model_only_talks(
         store.save().unwrap();
     }
     let (streamer, prompts) = scripted(vec![
-        "I can't edit notes here, but BFS uses a queue.",
+        "BFS uses a queue, not a stack.",
         "<tool>{\"name\": \"edit_note\", \"note\": \"Graph traversals\", \"find\": \"stack\", \"replace\": \"queue\"}</tool>",
-        "I suggested the fix; you can apply it.",
+        "Here is everything again: BFS uses a queue.",
     ]);
     state.chat = Some(streamer);
     let lines = chat_lines(&state, "Please fix my graph traversals note");
     assert!(lines.iter().any(|l| l.get("proposal").is_some()));
-    let last_restart = lines
-        .iter()
-        .rposition(|l| l.get("restart").is_some())
-        .unwrap();
-    let after: String = lines[last_restart..]
-        .iter()
-        .filter_map(|l| l["t"].as_str())
-        .collect();
-    assert_eq!(after, "I suggested the fix; you can apply it.");
-    let prompts = prompts.lock().unwrap();
-    assert!(
-        prompts[1].contains("Felix replied: I can't edit notes here")
-            && prompts[1].contains(tools::NUDGE)
-    );
+    assert!(lines.iter().all(|l| l.get("restart").is_none()));
+    assert_eq!(shown(&lines), "BFS uses a queue, not a stack.");
+    {
+        let prompts = prompts.lock().unwrap();
+        assert!(
+            prompts[1].contains("Felix replied: BFS uses a queue")
+                && prompts[1].contains(tools::NUDGE)
+        );
+    }
 
     let (mut state, _d, _ids) = state_with(&[("Heaps", "")]);
-    let (streamer, prompts) = scripted(vec!["Nothing needs fixing.", "Still nothing to fix."]);
+    let (streamer, prompts) = scripted(vec![
+        "Your heaps note looks right.",
+        "No note change is needed. Here is the answer again: it looks right.",
+    ]);
     state.chat = Some(streamer);
     let lines = chat_lines(&state, "fix anything wrong in my heaps note");
-    let shown: String = lines
-        .iter()
-        .skip(
-            lines
-                .iter()
-                .rposition(|l| l.get("restart").is_some())
-                .unwrap_or(0),
-        )
-        .filter_map(|l| l["t"].as_str())
-        .collect();
-    assert_eq!(shown, "Still nothing to fix.");
-    assert_eq!(prompts.lock().unwrap().len(), 2, "the nudge is given once");
+    assert!(lines.iter().all(|l| l.get("restart").is_none()));
+    assert_eq!(shown(&lines), "Your heaps note looks right.");
+    assert_eq!(prompts.lock().unwrap().len(), 2, "the check is made once");
+
+    let (mut state, _d, _ids) = state_with(&[("Interviews", "")]);
+    let (streamer, prompts) = scripted(vec!["1. Tell me about yourself: ..."]);
+    state.chat = Some(streamer);
+    let lines = chat_lines(&state, "Help me write answers to these interview questions");
+    assert_eq!(shown(&lines), "1. Tell me about yourself: ...");
+    assert_eq!(
+        prompts.lock().unwrap().len(),
+        1,
+        "writing an answer is not a note change"
+    );
 }
 
 #[test]
@@ -715,6 +718,43 @@ impl chat::Conversation for Native {
             spent: None,
         })
     }
+}
+
+#[test]
+fn a_native_session_keeps_its_answer_when_the_quiet_change_check_finds_nothing() {
+    struct Twice(Arc<Mutex<Vec<String>>>, Vec<&'static str>);
+    impl chat::Conversation for Twice {
+        fn native(&self) -> bool {
+            true
+        }
+        fn say(&mut self, text: &str, exchange: chat::Exchange<'_>) -> anyhow::Result<chat::Reply> {
+            self.0.lock().unwrap().push(text.to_string());
+            let reply = self.1.remove(0);
+            (exchange.piece)(reply);
+            Ok(chat::Reply::from(reply))
+        }
+    }
+    let (mut state, _d, _) = state_with(&[("Interview prep", "")]);
+    let heard = Arc::new(Mutex::new(Vec::new()));
+    let ears = Arc::clone(&heard);
+    state.converse = Some(Arc::new(
+        move |_: &chat::Instructions, _: &[chat::ToolSpec]| {
+            Some(Box::new(Twice(
+                Arc::clone(&ears),
+                vec![
+                    "Here are your interview answers.",
+                    "No note change is needed. Here are the interview responses again: ...",
+                ],
+            )) as Box<dyn chat::Conversation>)
+        },
+    ));
+    state.chat = Some(scripted(vec!["never used"]).0);
+    let lines = chat_lines(&state, "write my interview answers into my prep note");
+    assert_eq!(heard.lock().unwrap().len(), 2);
+    assert!(heard.lock().unwrap()[1].contains(tools::NUDGE));
+    assert!(lines.iter().all(|l| l.get("restart").is_none()));
+    let shown: String = lines.iter().filter_map(|l| l["t"].as_str()).collect();
+    assert_eq!(shown, "Here are your interview answers.");
 }
 
 #[test]
