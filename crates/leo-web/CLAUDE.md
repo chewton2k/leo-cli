@@ -60,7 +60,7 @@
   vocabulary reused so names match), then links notes: notes are hashed into
   `group_count` groups of ~90 and every group pair is one request (all pairs
   covered once; cross-group requests keep only cross-group links), returning
-  `{a, b, kind ∈ KINDS, strength 1-3, why}`. Cache `<data>/graph.json` (beside
+  `{a, b, kind ∈ KINDS, strength 1-3, why}`. Cache in `leo.db` (tables `graph_notes`, `graph_links`, `graph_meta`; beside
   `notes/`, never synced): per note `{hash, summary, concepts}`, `links` (global list); each note's `linked` is `link_key` (hash of its note
   line) when its links were made. `link_work`: notes read but not linked
   (new/changed) are linked against each other and against the settled notes
@@ -80,7 +80,7 @@
   Obsidian's graph: Barnes-Hut many-body + link + collide + class cohesion,
   lone notes pulled in, hover fades, zoom-faded labels, edge and node tooltips,
   eased camera, `insets` keep fit and centring clear of the tools and panel
-  (phone sheet `peek`/`open`). Browser tests seed `graph.json` and stub the
+  (phone sheet `peek`/`open`). Browser tests seed `graph.json` (brought into `leo.db` on the next load) and stub the
   build, since the default writer is Ollama.
 - Links: `styled_link` wraps the URL in OSC 8 for terminals that support it,
   but not for `TERM_PROGRAM=Apple_Terminal` (no OSC 8; its own ⌘-double-click
@@ -143,7 +143,7 @@
   `mode_of` and `modeOf` (saved conversations and old pages). Felix's body is 34x28 (a box a bit wider than
   tall); the test checks the ratio, not exact numbers.
 - Chat history: `chats.rs` keeps one JSON file per conversation in
-  `<data>/chats/<id>.json` (`AppState.chats`, beside `notes/`, never synced):
+  the `chats` table of `leo.db` (`AppState.chats` still names `<data>/chats`, which locates the database; never synced):
   GET `/api/chats` (summaries, newest first), GET/PUT/DELETE `/api/chats/{id}`
   (`valid_id`: 8-64 of [A-Za-z0-9-]; last `MOST_MESSAGES` kept; title = the
   first user message unless given). The page makes the id (`newId`, randomUUID
@@ -203,7 +203,7 @@
   `/api/chats/{chat}/files {name,type,data}` → `Reader` power
   (`import::read_for_chat`: text extraction; images copied out by `ai::see`;
   clipped to `CHAT_DOC_CHARS`) → `chat_files` keeps only the text in
-  `<chats>/<chat>.files/<id>.json` (`MOST_FILES` 10). `ChatBody {chat, files}`
+  the `chat_docs` table (`MOST_FILES` 10). `ChatBody {chat, files}`
   puts them in `<document>` tags before the notes (`DOCS_CHARS` shared).
   Deleted with the chat (`chats::remove`), files of chats never saved go after a
   day (`tidy_orphans`), and Storage has "Documents given to Felix".
@@ -278,10 +278,10 @@
   saved chats (assistant replies starting `[[incorrect]]`; question = the last
   paragraph with "?" of the reply before the answer, answer = the user's text,
   notes = sources cited), `at` from the reply (the page stamps it) or the chat.
-  Only reviewed keys are stored, in `<chats>/review.json` (`chat:fnv64(reply)`,
+  Only reviewed keys are stored, in the `reviewed` table (`chat:fnv64(reply)`,
   pruned when the chat is gone), so a page re-saving its chat cannot undo it.
   Due after `DUE_AFTER_HOURS` (20). Welcome shows `.chat-review` in Study when
-  any, in Chat when due; Review now starts a Study chat with `reviewPrompt` (≤5)
+  any, in Chat when due; Review now switches the current chat to Study and sends `reviewPrompt` (≤5)
   and their notes attached, then POSTs `{done: keys}`.
 - Pictures in notes (`leo_core::attachments`): files live in
   `<notes>/attachments/` (synced and seen by Obsidian; not a leo folder because
@@ -546,7 +546,7 @@
   with `trust: false`, and caches the HTML per formula. The CSP allows
   `font-src 'self'`. Felix and every note prompt write math this way.
 - Felix sees pictures: `captions.rs` keeps a one-time description per
-  picture in `<data>/captions.json` (beside notes, never synced), keyed by path
+  picture in the `captions` table (never synced), keyed by path
   + size + mtime so nothing is reread. `keep_graph_current` captions up to
   `PICTURES_PER_TICK` (4) uncaptioned pictures per idle check through the
   `seer` power (`ai::see`, the writing AI's vision; the lock is only held to
@@ -599,7 +599,7 @@
 - Meaning (`vectors.rs`, `Powers.meaning`): each note is cut into pieces of
   ~`PIECE_CHARS` at paragraphs (title first, at most `MOST_PIECES`), read by
   the meaning model in the background loop (`PIECES_PER_TICK` per 30 s, store
-  lock only to list them) and kept in `<data>/meaning.json` (base64 f32 per
+  lock only to list them) and kept in the `vectors` table (one f32 BLOB per
   piece, by note hash; deleted notes dropped). `close_to` embeds a question and
   returns notes whose best piece is at least `CLOSE_ENOUGH` (0.62). Felix's
   `gather_seeing(.., close)` adds them as "close in meaning to the question"
@@ -635,3 +635,34 @@
   (on macOS the config and data folders are the same, and it used to count
   every note). The speech-model area covers only Parakeet's folder, and the
   meaning model has its own area (`meaning-model`).
+- Database (`db.rs`): everything leo-web computes or keeps besides notes and
+  uploads lives in one SQLite file, `<data>/leo.db` (rusqlite, bundled, WAL,
+  0600, never synced): chats (+ `chats_text`, FTS5, for GET
+  `/api/chats?q=` and the "Search your chats" box), chat documents, review
+  progress, picture descriptions, meaning vectors and the knowledge graph.
+  Writes touch only what changed (a chat row, one note's vectors, changed
+  graph rows). `db::at` keeps one connection per file; `beside(file)` and
+  `for_chats(dir)` find it from the old file locations, so modules keep their
+  path-based APIs. The first open brings in the old files (`chats/`, its
+  `.files` folders and `review.json`, `captions.json`, `meaning.json`,
+  `graph.json`) and renames them `*.before-database`; Storage lists those as
+  old backups that can be deleted. A chat's time (and its place in the list)
+  changes only when a message is added, not on a style switch or rename.
+- Practice answers stay in their card: submitting sends a hidden turn
+  (`send(.., {card})`: the `quizSay` text goes to Felix but no user bubble is
+  added) and Felix's reply streams into `q.reply` inside the card; the card
+  greys while marking, then gets a green or red outline (`q.correct`, from the
+  page for choices and blanks, from `[[correct]]`/`[[incorrect]]` for free
+  answers). A quiz or question Felix adds in that reply becomes a new message.
+  `review.rs` reads wrong answers from the cards (`missed_cards`). Questions,
+  choices, answers and explanations render Markdown and math (`inline`), and
+  tool calls keep LaTeX backslashes (`tools::latex_kept`: JSON escapes like
+  `\f`, `\t`, `\b` would otherwise eat `\frac`, `\theta`, `\boxed`).
+- Esc in Felix stops an answer that is running; with nothing running it closes
+  the panel.
+- Sidebar folders stay open until their arrow closes them (`side.open`, kept);
+  opening a folder adds the way to it, and a closed arrow stays closed while
+  you are inside it (`side.shut`, cleared when you move to another folder).
+- Effort has no "Default": `choice::effort_for` gives the chosen level if the
+  AI offers it, else medium, and every provider uses it; the levels are low,
+  medium, high and xhigh where the AI supports them.

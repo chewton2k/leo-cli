@@ -132,7 +132,7 @@ fn task_view(
     json!({
         "task": task_name(task),
         "provider": provider,
-        "effort": pc.and_then(|p| p.effort.clone()).filter(|e| efforts.contains(&e.as_str())),
+        "effort": choice::effort_for(&provider, model.as_deref().unwrap_or(""), pc.and_then(|p| p.effort.as_deref())),
         "efforts": efforts,
         "ready": selection.as_ref().is_some_and(|s| s.ready),
         "custom": chosen.is_none() && !provider.is_empty(),
@@ -281,20 +281,14 @@ pub fn apply(
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .trim();
-            let effort = if value.is_empty() || value == "default" {
-                None
-            } else if levels.contains(&value) {
-                Some(value)
-            } else {
+            if !levels.contains(&value) {
                 bail!("{value} is not an effort {} offers", selection.provider);
-            };
+            }
+            let effort = Some(value);
             let mut doc = open(config_path)?;
             choice::write_effort(&mut doc, &selection.provider, effort);
             edit::save_document(config_path, &doc)?;
-            Ok(match effort {
-                Some(effort) => format!("Effort set to {effort}."),
-                None => "Effort set to the model's default.".to_string(),
-            })
+            Ok(format!("Effort set to {value}."))
         }
         "auto_push" => {
             let value = text(change, "value")?;
@@ -392,7 +386,7 @@ mod tests {
     }
 
     #[test]
-    fn effort_is_chosen_from_what_the_program_offers_and_can_go_back_to_default() {
+    fn effort_is_chosen_from_what_the_program_offers_and_unset_reads_as_medium() {
         let (_d, path) = setup("[chat]\nchain = [\"codex\"]\n[transcribe]\nchain = []\n");
         let store = MemoryStore::default();
         let local = Local::default();
@@ -410,7 +404,7 @@ mod tests {
             writing["efforts"],
             json!(["low", "medium", "high", "xhigh"])
         );
-        assert_eq!(writing["effort"], Value::Null);
+        assert_eq!(writing["effort"], "medium");
         assert_eq!(set("high").unwrap(), "Effort set to high.");
         assert_eq!(view(&path, &store)["tasks"][0]["effort"], "high");
         assert!(std::fs::read_to_string(&path)
@@ -420,8 +414,9 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("not an effort"));
-        assert_eq!(set("").unwrap(), "Effort set to the model's default.");
-        assert_eq!(view(&path, &store)["tasks"][0]["effort"], Value::Null);
+        assert!(set("").is_err(), "there is no default to go back to");
+        assert!(set("default").is_err());
+        assert_eq!(view(&path, &store)["tasks"][0]["effort"], "high");
         let (_d2, other) = setup("[chat]\nchain = [\"ollama\"]\n[transcribe]\nchain = []\n");
         assert!(apply(
             &json!({"set": "effort", "value": "high"}),

@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+#[cfg(test)]
+use std::sync::Mutex;
 
 use anyhow::Result;
 
@@ -18,8 +20,7 @@ pub const DESCRIBE: &str = "You describe pictures from someone's study notes for
 const MOST_PICTURE_BYTES: u64 = 20 * 1024 * 1024;
 
 pub struct Captions {
-    path: PathBuf,
-    known: Mutex<BTreeMap<String, String>>,
+    db: Arc<crate::db::Db>,
 }
 
 impl Captions {
@@ -29,46 +30,76 @@ impl Captions {
     }
 
     pub fn at(path: PathBuf) -> Captions {
-        let known = std::fs::read_to_string(&path)
+        let db = crate::db::beside(&path);
+        let old: Option<BTreeMap<String, String>> = std::fs::read_to_string(&path)
             .ok()
-            .and_then(|text| serde_json::from_str(&text).ok())
-            .unwrap_or_default();
-        Captions {
-            path,
-            known: Mutex::new(known),
+            .and_then(|text| serde_json::from_str(&text).ok());
+        if let Some(old) = old {
+            let saved = db.with(|c| {
+                let tx = c.transaction()?;
+                for (key, caption) in &old {
+                    tx.execute(
+                        "INSERT OR IGNORE INTO captions (key, caption) VALUES (?1, ?2)",
+                        [key, caption],
+                    )?;
+                }
+                tx.commit()
+            });
+            if saved.is_ok() {
+                crate::db::put_aside(&path);
+            }
         }
+        Captions { db }
     }
 
     pub fn get(&self, key: &str) -> Option<String> {
-        self.known.lock().ok()?.get(key).cloned()
+        use rusqlite::OptionalExtension;
+        self.db
+            .with(|c| {
+                c.query_row("SELECT caption FROM captions WHERE key = ?1", [key], |r| {
+                    r.get(0)
+                })
+                .optional()
+            })
+            .ok()
+            .flatten()
     }
 
     pub fn put(&self, key: String, caption: String) {
-        let Ok(mut known) = self.known.lock() else {
-            return;
-        };
-        known.insert(key, caption);
-        if let Ok(text) = serde_json::to_string_pretty(&*known) {
-            let tmp = self.path.with_extension("json.tmp");
-            if std::fs::write(&tmp, text).is_ok() {
-                let _ = std::fs::rename(&tmp, &self.path);
-            }
-        }
+        let _ = self.db.with(|c| {
+            c.execute(
+                "INSERT OR REPLACE INTO captions (key, caption) VALUES (?1, ?2)",
+                [&key, &caption],
+            )
+        });
     }
 
     pub fn path(&self) -> &Path {
-        &self.path
+        self.db.path()
+    }
+
+    pub fn bytes(&self) -> u64 {
+        self.db
+            .with(|c| {
+                c.query_row(
+                    "SELECT coalesce(SUM(length(key) + length(caption)), 0) FROM captions",
+                    [],
+                    |r| r.get::<_, i64>(0),
+                )
+            })
+            .map_or(0, |n| n.max(0) as u64)
     }
 
     pub fn clear(&self) -> bool {
-        if let Ok(mut known) = self.known.lock() {
-            known.clear();
-        }
-        std::fs::remove_file(&self.path).is_ok()
+        self.db
+            .with(|c| c.execute("DELETE FROM captions", []))
+            .is_ok_and(|n| n > 0)
     }
 
     pub fn len(&self) -> usize {
-        self.known.lock().map(|k| k.len()).unwrap_or(0)
+        self.db
+            .with(|c| c.query_row("SELECT COUNT(*) FROM captions", [], |r| r.get::<_, i64>(0)))
+            .map_or(0, |n| n.max(0) as usize)
     }
 
     pub fn is_empty(&self) -> bool {

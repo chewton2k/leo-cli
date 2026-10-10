@@ -121,8 +121,23 @@ pub(crate) async fn mark_reviewed(
     }
 }
 
-pub(crate) async fn list_chats(State(state): State<AppState>) -> Response {
+#[derive(serde::Deserialize, Default)]
+pub(crate) struct ChatQuery {
+    #[serde(default)]
+    pub(crate) q: Option<String>,
+}
+
+pub(crate) async fn list_chats(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<ChatQuery>,
+) -> Response {
     let dir = state.chats.clone();
+    if let Some(q) = query.q.filter(|q| !q.trim().is_empty()) {
+        return match tokio::task::spawn_blocking(move || chats::search(&dir, &q)).await {
+            Ok(found) => Json(found).into_response(),
+            Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        };
+    }
     let days = state
         .with_store(|store| Ok(leo_core::keep::load(&store.notes_dir).chat_days))
         .await

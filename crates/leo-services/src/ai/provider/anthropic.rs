@@ -58,6 +58,11 @@ pub struct Round {
 
 impl Anthropic {
     pub fn new(name: String, cfg: &ProviderConfig, key: Option<Secret>) -> Anthropic {
+        let effort = crate::config::choice::effort_for(
+            &name,
+            cfg.model.as_deref().unwrap_or(""),
+            cfg.effort.as_deref(),
+        );
         Anthropic {
             name,
             base_url: cfg
@@ -67,11 +72,7 @@ impl Anthropic {
             model: cfg.model.clone().unwrap_or_default(),
             key,
             max_tokens: cfg.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
-            effort: cfg
-                .effort
-                .clone()
-                .map(|e| e.trim().to_lowercase())
-                .filter(|e| EFFORTS.contains(&e.as_str())),
+            effort,
             spent: std::sync::Mutex::new(None),
         }
     }

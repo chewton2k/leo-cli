@@ -20,14 +20,14 @@ function settingsOption(value, label, current) {
   return `<option value="${esc(value)}"${value === current ? ' selected' : ''}>${esc(label)}</option>`;
 }
 
-const effortName = (e) => (e === 'default' ? 'Default' : e === 'xhigh' ? 'Extra high' : e[0].toUpperCase() + e.slice(1));
+const effortName = (e) => (e === 'xhigh' ? 'Extra high' : e[0].toUpperCase() + e.slice(1));
 
 function modelPicker(t) {
   const known = t.models.some((m) => m.id === t.model);
   const list = (known || !t.model ? [] : [{ id: t.model, price: 'not in the list' }]).concat(t.models);
   const efforts = Array.isArray(t.efforts) ? t.efforts : [];
-  const effort = t.effort || 'default';
-  const shown = `${esc(t.model || 'Default model')}${efforts.length ? `<span class="picker-effort"> · ${esc(effort === 'default' ? 'default effort' : `${effortName(effort).toLowerCase()} effort`)}</span>` : ''}`;
+  const effort = efforts.includes(t.effort) ? t.effort : 'medium';
+  const shown = `${esc(t.model || 'Default model')}${efforts.length ? `<span class="picker-effort"> · ${esc(`${effortName(effort).toLowerCase()} effort`)}</span>` : ''}`;
   const rows = list
     .map((m) => {
       const on = m.id === t.model;
@@ -35,7 +35,7 @@ function modelPicker(t) {
     })
     .join('');
   const chips = efforts.length
-    ? `<div class="pick-effort"><div class="pick-head">Effort</div><div class="pick-chips">${['default', ...efforts].map((e) => `<button type="button" class="pick-chip${effort === e ? ' on' : ''}" aria-pressed="${effort === e}" data-action="set-effort" data-effort="${e}">${effortName(e)}</button>`).join('')}</div><p class="pick-hint">More effort means the model thinks longer: better answers, but slower and more of your plan or credit.</p></div>`
+    ? `<div class="pick-effort"><div class="pick-head">Effort</div><div class="pick-chips">${efforts.map((e) => `<button type="button" class="pick-chip${effort === e ? ' on' : ''}" aria-pressed="${effort === e}" data-action="set-effort" data-effort="${e}">${effortName(e)}</button>`).join('')}</div><p class="pick-hint">More effort means the model thinks longer: better answers, but slower and more of your plan or credit.</p></div>`
     : '';
   return `<div class="set-row"><span class="set-label">Model</span><div class="picker"><button type="button" class="picker-button" data-action="toggle-picker" aria-haspopup="menu" aria-expanded="false" data-task="${t.task}"><span class="picker-text">${shown}</span>${ICON.chevron}</button><div class="picker-menu" role="menu" hidden><div class="pick-head">Model</div><div class="pick-models">${rows}</div>${chips}</div></div></div>`;
 }

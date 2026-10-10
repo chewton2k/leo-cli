@@ -122,7 +122,12 @@ fn ai_rows(
     {
         rows.push(Row::Setting {
             label: format!("{what} effort"),
-            value: pc.effort.clone().unwrap_or_else(|| "default".to_string()),
+            value: choice::effort_for(
+                &sel.provider,
+                sel.model.as_deref().unwrap_or(""),
+                pc.effort.as_deref(),
+            )
+            .unwrap_or_default(),
             action: SettingAction::ChooseEffort,
         });
     }
@@ -541,7 +546,7 @@ mod tests {
             &store,
             &Local::default(),
         );
-        assert_eq!(row(&rows, "writing effort").unwrap().1, "default");
+        assert_eq!(row(&rows, "writing effort").unwrap().1, "medium");
         let rows = simple_page(
             "[chat]\nchain = [\"ollama\"]\n[transcribe]\nchain = []\n",
             &store,

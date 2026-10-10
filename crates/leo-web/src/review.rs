@@ -12,12 +12,34 @@ pub const MOST_MISSED: usize = 20;
 const MOST_REMEMBERED: usize = 2000;
 const FILE: &str = "review.json";
 
-pub fn file(dir: &Path) -> std::path::PathBuf {
-    dir.join(FILE)
+pub fn count(dir: &Path) -> usize {
+    chats::db_of(dir)
+        .with(|c| c.query_row("SELECT COUNT(*) FROM reviewed", [], |r| r.get::<_, i64>(0)))
+        .map_or(0, |n| n.max(0) as usize)
 }
 
 pub fn reset(dir: &Path) -> bool {
-    std::fs::remove_file(file(dir)).is_ok()
+    chats::db_of(dir)
+        .with(|c| c.execute("DELETE FROM reviewed", []))
+        .is_ok_and(|n| n > 0)
+}
+
+pub(crate) fn from_file(dir: &Path) -> Vec<String> {
+    std::fs::read_to_string(dir.join(FILE))
+        .ok()
+        .and_then(|text| serde_json::from_str::<Reviewed>(&text).ok())
+        .map(|r| r.reviewed.into_iter().collect())
+        .unwrap_or_default()
+}
+
+pub(crate) fn insert_all(c: &rusqlite::Connection, keys: &[String]) -> rusqlite::Result<()> {
+    for key in keys.iter().filter(|k| valid_key(k)) {
+        c.execute(
+            "INSERT OR IGNORE INTO reviewed (key, n) VALUES (?1, (SELECT coalesce(MAX(n), 0) + 1 FROM reviewed))",
+            [key],
+        )?;
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -158,12 +180,54 @@ fn cited_in(message: &serde_json::Value) -> Vec<Ref> {
     out
 }
 
+fn missed_cards(chat: &Chat, message: &serde_json::Value, now: DateTime<Utc>) -> Vec<Missed> {
+    let text = |v: &serde_json::Value, key: &str| {
+        v.get(key)
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    let at = message
+        .get("at")
+        .and_then(|a| a.as_str())
+        .and_then(|a| DateTime::parse_from_rfc3339(a).ok())
+        .map_or(chat.updated_at, |a| a.with_timezone(&Utc));
+    message
+        .get("quizzes")
+        .and_then(|q| q.as_array())
+        .into_iter()
+        .flatten()
+        .filter(|q| q.get("given").is_some_and(|g| g.is_string()))
+        .filter(|q| match q.get("correct") {
+            Some(serde_json::Value::Bool(right)) => !right,
+            _ => q
+                .get("reply")
+                .map(|r| text(r, "text"))
+                .is_some_and(|t| matches!(verdict_off(&t), Some(("incorrect", _)))),
+        })
+        .map(|q| {
+            let question = clip(&plain(&text(q, "question")), 200);
+            let given = text(q, "given");
+            Missed {
+                key: key_of(&chat.id, &format!("{question}\n{given}")),
+                chat: chat.id.clone(),
+                question,
+                answer: clip(&plain(&given), 200),
+                notes: cited_in(message),
+                due: at <= now - Duration::hours(DUE_AFTER_HOURS),
+                at,
+            }
+        })
+        .collect()
+}
+
 fn missed_in(chat: &Chat, now: DateTime<Utc>) -> Vec<Missed> {
     let mut out = Vec::new();
     for (i, reply) in chat.messages.iter().enumerate() {
         if role_of(reply) != "assistant" {
             continue;
         }
+        out.extend(missed_cards(chat, reply, now));
         let text = text_of(reply);
         if !matches!(verdict_off(text), Some(("incorrect", _))) {
             continue;
@@ -210,15 +274,18 @@ fn missed_in(chat: &Chat, now: DateTime<Utc>) -> Vec<Missed> {
     out
 }
 
-fn reviewed(dir: &Path) -> Reviewed {
-    std::fs::read_to_string(dir.join(FILE))
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
+fn reviewed(dir: &Path) -> BTreeSet<String> {
+    chats::db_of(dir)
+        .with(|c| {
+            let mut found = c.prepare("SELECT key FROM reviewed")?;
+            let rows = found.query_map([], |r| r.get::<_, String>(0))?;
+            rows.collect()
+        })
         .unwrap_or_default()
 }
 
 pub fn missed(dir: &Path, now: DateTime<Utc>) -> Vec<Missed> {
-    let done = reviewed(dir).reviewed;
+    let done = reviewed(dir);
     let mut out: Vec<Missed> = chats::list(dir)
         .iter()
         .filter_map(|summary| chats::load(dir, &summary.id))
@@ -233,27 +300,32 @@ pub fn missed(dir: &Path, now: DateTime<Utc>) -> Vec<Missed> {
 }
 
 pub fn mark_reviewed(dir: &Path, keys: &[String]) -> Result<usize> {
-    let mut held = reviewed(dir);
-    let before = held.reviewed.len();
-    held.reviewed
-        .extend(keys.iter().filter(|k| valid_key(k)).cloned());
-    let added = held.reviewed.len() - before;
-    held.reviewed.retain(|key| {
-        key.rsplit_once(':')
-            .is_some_and(|(chat, _)| dir.join(format!("{chat}.json")).exists())
-    });
-    while held.reviewed.len() > MOST_REMEMBERED {
-        let first = held.reviewed.iter().next().cloned();
-        if let Some(first) = first {
-            held.reviewed.remove(&first);
+    let live: BTreeSet<String> = chats::list(dir).into_iter().map(|c| c.id).collect();
+    chats::db_of(dir).with(|c| {
+        let tx = c.transaction()?;
+        let before: i64 = tx.query_row("SELECT COUNT(*) FROM reviewed", [], |r| r.get(0))?;
+        insert_all(&tx, keys)?;
+        let after: i64 = tx.query_row("SELECT COUNT(*) FROM reviewed", [], |r| r.get(0))?;
+        let held: Vec<String> = {
+            let mut found = tx.prepare("SELECT key FROM reviewed")?;
+            let rows = found.query_map([], |r| r.get::<_, String>(0))?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
+        for key in held {
+            let alive = key
+                .rsplit_once(':')
+                .is_some_and(|(chat, _)| live.contains(chat));
+            if !alive {
+                tx.execute("DELETE FROM reviewed WHERE key = ?1", [&key])?;
+            }
         }
-    }
-    std::fs::create_dir_all(dir)?;
-    let path = dir.join(FILE);
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_vec(&held)?)?;
-    std::fs::rename(&tmp, &path)?;
-    Ok(added)
+        tx.execute(
+            "DELETE FROM reviewed WHERE n <= (SELECT MAX(n) FROM reviewed) - ?1",
+            [MOST_REMEMBERED as i64],
+        )?;
+        tx.commit()?;
+        Ok((after - before).max(0) as usize)
+    })
 }
 
 #[cfg(test)]
@@ -360,6 +432,32 @@ mod tests {
     }
 
     #[test]
+    fn a_wrong_answer_given_in_a_quiz_card_is_offered_for_review() {
+        let dir = tempfile::tempdir().unwrap();
+        study(
+            dir.path(),
+            "chat-card-0001",
+            vec![
+                said("user", "quiz me"),
+                serde_json::json!({
+                    "role": "assistant",
+                    "text": "Try this.",
+                    "quizzes": [
+                        { "kind": "multiple_choice", "question": "What does BFS use?", "answer": "a queue", "given": "a stack", "correct": false },
+                        { "kind": "free_response", "question": "Why a queue?", "answer": "oldest first", "given": "dunno", "correct": null, "reply": { "text": "[[incorrect]] It takes the oldest first." } },
+                        { "kind": "multiple_choice", "question": "Right one?", "answer": "a", "given": "a", "correct": true }
+                    ]
+                }),
+            ],
+            at(1, 9),
+        );
+        let found = missed(dir.path(), at(3, 9));
+        let questions: Vec<&str> = found.iter().map(|m| m.question.as_str()).collect();
+        assert_eq!(questions, ["What does BFS use?", "Why a queue?"]);
+        assert_eq!(found[0].answer, "a stack");
+    }
+
+    #[test]
     fn a_reviewed_question_is_not_suggested_again_and_deleted_chats_are_forgotten() {
         let dir = tempfile::tempdir().unwrap();
         study(dir.path(), "chat-00000001", quiz(), at(5, 9));
@@ -372,7 +470,7 @@ mod tests {
         assert!(chats::list(dir.path()).iter().all(|c| c.id != "review"));
         chats::remove(dir.path(), "chat-00000001");
         mark_reviewed(dir.path(), &[]).unwrap();
-        assert!(reviewed(dir.path()).reviewed.is_empty());
+        assert!(reviewed(dir.path()).is_empty());
     }
 
     #[test]

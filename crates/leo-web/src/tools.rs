@@ -167,7 +167,7 @@ pub const SPECS: [Spec; 10] = [
                 about: "up to 5 short answers to tap, separated by | ; leave it out for a free answer",
             },
         ],
-        returns: "\"Asked.\" Then end your reply in one short sentence; the user's answer comes as their next message.",
+        returns: "\"Asked.\" Then end your reply in one short sentence; the user's answer comes as their next message. Write math in the question and choices as $...$.",
         example: r#"<tool>{"name": "ask_user", "question": "Should I cover BFS or DFS first?", "options": "BFS | DFS | Both"}</tool>"#,
     },
     Spec {
@@ -200,7 +200,7 @@ pub const SPECS: [Spec; 10] = [
                 about: "one or two sentences shown after they answer, saying why",
             },
         ],
-        returns: "\"Asked.\" Then end your reply in one short sentence; how the user did comes as their next message.",
+        returns: "\"Asked.\" Then end your reply in one short sentence; how the user did comes as their next message. Write math in the question, choices and answer as $...$, like $f(x)=x^2+4\\cos x$.",
         example: r#"<tool>{"name": "quiz", "kind": "multiple_choice", "question": "What does BFS use to pick the next node?", "options": "a stack | a queue | a heap", "answer": "a queue", "explain": "BFS explores the oldest node found first."}</tool>"#,
     },
     Spec {
@@ -711,7 +711,144 @@ fn strip_fence(text: &str) -> &str {
     rest.trim_end().strip_suffix("```").unwrap_or(rest).trim()
 }
 
+const LATEX_WORDS: [&str; 74] = [
+    "frac",
+    "dfrac",
+    "tfrac",
+    "sqrt",
+    "sum",
+    "prod",
+    "int",
+    "iint",
+    "oint",
+    "lim",
+    "infty",
+    "partial",
+    "nabla",
+    "cdot",
+    "cdots",
+    "ldots",
+    "dots",
+    "times",
+    "div",
+    "pm",
+    "mp",
+    "le",
+    "leq",
+    "ge",
+    "geq",
+    "ne",
+    "neq",
+    "approx",
+    "equiv",
+    "sim",
+    "to",
+    "rightarrow",
+    "Rightarrow",
+    "leftarrow",
+    "iff",
+    "implies",
+    "in",
+    "notin",
+    "subset",
+    "cup",
+    "cap",
+    "forall",
+    "exists",
+    "neg",
+    "alpha",
+    "beta",
+    "gamma",
+    "delta",
+    "epsilon",
+    "varepsilon",
+    "theta",
+    "lambda",
+    "mu",
+    "nu",
+    "pi",
+    "rho",
+    "sigma",
+    "tau",
+    "phi",
+    "varphi",
+    "omega",
+    "Delta",
+    "Sigma",
+    "Omega",
+    "sin",
+    "cos",
+    "tan",
+    "log",
+    "ln",
+    "exp",
+    "boxed",
+    "text",
+    "mathbb",
+    "mathrm",
+];
+
+const LATEX_MORE: [&str; 14] = [
+    "left",
+    "right",
+    "begin",
+    "end",
+    "quad",
+    "qquad",
+    "hat",
+    "bar",
+    "vec",
+    "overline",
+    "operatorname",
+    "max",
+    "min",
+    "arg",
+];
+
+fn latex_kept(json: &str) -> String {
+    let chars: Vec<char> = json.chars().collect();
+    let mut out = String::with_capacity(json.len() + 16);
+    let mut in_string = false;
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if !in_string || c != '\\' {
+            if c == '"' {
+                in_string = !in_string;
+            }
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        let next = chars.get(i + 1).copied().unwrap_or(' ');
+        let word: String = chars[i + 1..]
+            .iter()
+            .take_while(|c| c.is_ascii_alphabetic())
+            .collect();
+        let hex = chars
+            .get(i + 2..i + 6)
+            .is_some_and(|h| h.iter().all(char::is_ascii_hexdigit));
+        let command = LATEX_WORDS
+            .iter()
+            .chain(LATEX_MORE.iter())
+            .any(|w| *w == word);
+        let escape = matches!(next, '"' | '\\' | '/')
+            || (next == 'u' && hex && !command)
+            || (matches!(next, 'b' | 'f' | 'n' | 'r' | 't') && !command);
+        if escape {
+            out.push(c);
+            out.push(next);
+            i += 2;
+        } else {
+            out.push_str("\\\\");
+            i += 1;
+        }
+    }
+    out
+}
+
 fn call_from(json: &str) -> Result<Call, String> {
+    let json = latex_kept(json);
     let value: serde_json::Value = serde_json::from_str(json.trim())
         .map_err(|e| format!("that tool call is not valid JSON ({e})"))?;
     let object = value.as_object().ok_or(
@@ -1509,6 +1646,26 @@ pub fn continued(conversation: &str, call: &Call, done: &Done) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn latex_in_a_tool_call_keeps_its_backslashes() {
+        let call = find_call(r#"<tool>{"name": "quiz", "kind": "fill_blank", "question": "Solve \(f'(x)=0\) where $f(x)=x^2+4\cos x$ and $\frac{1}{2}\theta \neq \nabla g$: ___", "answer": "x \approx 1.8955"}</tool>"#)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            call.text("question"),
+            r"Solve \(f'(x)=0\) where $f(x)=x^2+4\cos x$ and $\frac{1}{2}\theta \neq \nabla g$: ___"
+        );
+        assert_eq!(call.text("answer"), r"x \approx 1.8955");
+        let plain = find_call(r#"<tool>{"name": "search_notes", "query": "line one\nline two\ttab \"quoted\" é a\\b"}</tool>"#)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            plain.text("query"),
+            "line one\nline two\ttab \"quoted\" é a\\b",
+            "real escapes still mean what they say"
+        );
+    }
 
     #[test]
     fn a_big_request_is_planned_first_and_a_small_one_is_not() {

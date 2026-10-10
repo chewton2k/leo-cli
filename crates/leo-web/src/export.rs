@@ -93,7 +93,35 @@ pub fn write_zip<W: Write + Seek>(
         add_dir(&mut zip, &uploads, "leo/uploads", true, &mut packed)?;
     }
     if parts.chats {
-        add_dir(&mut zip, chats_dir, "leo/chats", true, &mut packed)?;
+        for summary in crate::chats::list(chats_dir) {
+            let Some(chat) = crate::chats::load(chats_dir, &summary.id) else {
+                continue;
+            };
+            let text = serde_json::to_string_pretty(&chat)?;
+            zip.start_file(
+                format!("leo/chats/{}.json", chat.id),
+                SimpleFileOptions::default(),
+            )?;
+            zip.write_all(text.as_bytes())?;
+            packed.files += 1;
+            packed.bytes += text.len() as u64;
+            for doc in crate::chat_files::list(chats_dir, &chat.id) {
+                let Some((_, body)) =
+                    crate::chat_files::texts(chats_dir, &chat.id, std::slice::from_ref(&doc.id))
+                        .into_iter()
+                        .next()
+                else {
+                    continue;
+                };
+                zip.start_file(
+                    format!("leo/chats/{}.files/{}.txt", chat.id, doc.id),
+                    SimpleFileOptions::default(),
+                )?;
+                zip.write_all(body.as_bytes())?;
+                packed.files += 1;
+                packed.bytes += body.len() as u64;
+            }
+        }
     }
     zip.finish()?;
     Ok(packed)
@@ -132,8 +160,14 @@ mod tests {
         std::fs::create_dir_all(tmp.path().join("attachments/abc")).unwrap();
         std::fs::write(tmp.path().join("attachments/abc/slides.pdf"), "pdf").unwrap();
         let chats = tmp.path().join("chats");
-        std::fs::create_dir_all(&chats).unwrap();
-        std::fs::write(chats.join("chat-1234.json"), "{}").unwrap();
+        crate::chats::save(
+            &chats,
+            "chat-1234",
+            serde_json::from_value(serde_json::json!({ "mode": "chat", "messages": [{ "role": "user", "text": "hi" }] })).unwrap(),
+            chrono::Utc::now(),
+        )
+        .unwrap();
+        crate::chat_files::add(&chats, "chat-1234", "w.pdf", "week 3", chrono::Utc::now()).unwrap();
 
         let mut only_notes = std::io::Cursor::new(Vec::new());
         let packed = write_zip(&mut only_notes, &notes, &chats, Parts::default()).unwrap();
@@ -163,6 +197,12 @@ mod tests {
             assert!(listed.iter().any(|n| n == want), "{want} in {listed:?}");
         }
         assert!(!listed.iter().any(|n| n.contains(".git")), "{listed:?}");
+        assert!(
+            listed
+                .iter()
+                .any(|n| n.starts_with("leo/chats/chat-1234.files/") && n.ends_with(".txt")),
+            "{listed:?}"
+        );
     }
 
     #[test]

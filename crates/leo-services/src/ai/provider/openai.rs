@@ -25,6 +25,11 @@ pub struct OpenAiChat {
 
 impl OpenAiChat {
     pub fn new(name: String, cfg: &ProviderConfig, key: Option<Secret>) -> Self {
+        let effort = crate::config::choice::effort_for(
+            &name,
+            cfg.model.as_deref().unwrap_or(""),
+            cfg.effort.as_deref(),
+        );
         OpenAiChat {
             name,
             base_url: cfg
@@ -40,11 +45,7 @@ impl OpenAiChat {
             needs_key: cfg.key_env.is_some(),
             max_tokens: cfg.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
             reasoning: cfg.reasoning.unwrap_or(false),
-            effort: cfg
-                .effort
-                .clone()
-                .map(|e| e.trim().to_lowercase())
-                .filter(|e| !e.is_empty() && e.chars().all(|c| c.is_ascii_alphanumeric())),
+            effort,
             spent: std::sync::Mutex::new(None),
         }
     }

@@ -1324,7 +1324,8 @@ test.describe('settings', () => {
     await writing.locator('select[data-set="provider"]').selectOption('codex');
     await expect(page.locator('.toast')).toContainText('Writing now uses Codex');
     await writing.locator('.picker-button').click();
-    await expect(writing.locator('.pick-chip')).toHaveText(['Default', 'Low', 'Medium', 'High', 'Extra high']);
+    await expect(writing.locator('.pick-chip')).toHaveText(['Low', 'Medium', 'High', 'Extra high']);
+    await expect(writing.locator('.pick-chip.on')).toHaveText('Medium');
     await writing.locator('.pick-chip[data-effort="high"]').click();
     await expect(page.locator('.toast')).toContainText('Effort set to high.');
     await expect(writing.locator('.picker-button')).toContainText('high effort');
@@ -1333,8 +1334,8 @@ test.describe('settings', () => {
     await expect(writing.locator('.picker-menu')).toBeHidden();
     await expect(page).toHaveURL(/#\/settings$/);
     await writing.locator('.picker-button').click();
-    await writing.locator('.pick-chip[data-effort="default"]').click();
-    await expect(page.locator('.toast')).toContainText("Effort set to the model's default.");
+    await writing.locator('.pick-chip[data-effort="medium"]').click();
+    await expect(page.locator('.toast')).toContainText('Effort set to medium.');
     await writing.locator('select[data-set="provider"]').selectOption('gemini');
   });
 });
@@ -1365,6 +1366,20 @@ test.describe('folders', () => {
     await expect(row(`${top}/week1`)).toHaveCount(0);
     await page.goto(`/#/f/${top}/week1/lab`);
     await expect(row(`${top}/week1/lab`), 'the way to the open folder unfolds').toBeVisible();
+    await side.locator(`.side-twist[data-dir="${top}"]`).click();
+    await expect(row(`${top}/week1`), 'an arrow closes even on the way to the open folder').toHaveCount(0);
+    await side.locator(`.side-twist[data-dir="${top}"]`).click();
+    await expect(row(`${top}/week1`), 'and opens again').toBeVisible();
+    await page.goto(`/#/f/${top}`);
+    await expect(row(`${top}/week1`)).toBeVisible();
+    await side.locator(`.side-twist[data-dir="${top}"]`).click();
+    await expect(row(`${top}/week1`), 'the folder you are in can fold its subfolders').toHaveCount(0);
+    await side.locator(`.side-twist[data-dir="${top}"]`).click();
+    await expect(row(`${top}/week1`)).toBeVisible();
+    await page.request.post('/api/dirs', { data: { path: `${top}-other` } });
+    await page.goto(`/#/f/${top}-other`);
+    await expect(row(`${top}-other`)).toHaveAttribute('aria-current', 'page');
+    await expect(row(`${top}/week1`), 'opened folders stay open when another folder is opened').toBeVisible();
   });
 
   test('a new folder is made on the first try and opens', async ({ page }) => {
@@ -2600,13 +2615,12 @@ test.describe('Felix asks, quizzes and listens while he works', () => {
     await expect(card.locator('.quiz-option.wrong')).toContainText('a stack');
     await expect(card.locator('.quiz-option.right')).toContainText('a queue');
     await expect(card.locator('.quiz-result')).toContainText('Not quite. The answer: a queue');
-    await expect(card.locator('.quiz-explain')).toContainText('oldest vertex first');
-    await expect(card.locator('.quiz-explain .cite')).toHaveText('Graph traversals');
-    await expect(card.locator('.quiz-explain')).not.toContainText('[n1]');
+    await expect(card).toHaveClass(/wrong/);
     await expect(card.locator('.quiz-option').first()).toBeDisabled();
-    await expect(chat.locator('.msg.user').last()).toContainText('a stack');
-    await expect(chat.locator('.msg.user').last().locator('.msg-note')).toHaveText('Practice answer · not quite');
-    await expect(chat.locator('.msg.leo').last()).toContainText('BFS needs the oldest');
+    await expect(card.locator('.quiz-reply')).toContainText('BFS needs the oldest');
+    await expect(card.locator('.quiz-reply')).not.toContainText('[[incorrect]]');
+    await expect(chat.locator('.msg.user'), 'no message pretends to be the user').toHaveCount(1);
+    await expect(chat.locator('.msg.leo')).toHaveCount(1);
     const told = asked[1].messages.at(-1).text;
     expect(told).toContain('Question: What does BFS use?');
     expect(told).toContain('My answer: a stack');
@@ -2615,6 +2629,7 @@ test.describe('Felix asks, quizzes and listens while he works', () => {
     await page.locator('#chat-toggle').click();
     await expect(page.locator('#chat .quiz-result')).toContainText('Not quite', { timeout: 5000 });
     await expect(page.locator('#chat .quiz-option').first()).toBeDisabled();
+    await expect(page.locator('#chat .quiz-reply')).toContainText('BFS needs the oldest');
   });
 
   test('a fill in the blank takes typed words, and a free answer goes to Felix to mark', async ({ page }) => {
@@ -2622,7 +2637,7 @@ test.describe('Felix asks, quizzes and listens while he works', () => {
     await page.route('**/api/chat', async (route) => {
       asked.push(route.request().postDataJSON());
       const n = asked.length;
-      if (n === 1) return route.fulfill(answerWith([{ sources: [] }, { quiz: { kind: 'fill_blank', question: 'BFS takes the ___ vertex first.', options: [], answer: 'oldest | earliest', explain: '' } }, { t: 'Fill it in.' }, { done: true }]));
+      if (n === 1) return route.fulfill(answerWith([{ sources: [] }, { quiz: { kind: 'fill_blank', question: 'BFS takes the ___ vertex first, in $O(V+E)$ time.', options: [], answer: 'oldest | earliest', explain: '' } }, { t: 'Fill it in.' }, { done: true }]));
       if (n === 2) return route.fulfill(answerWith([{ sources: [] }, { t: '[[correct]] Yes.' }, { quiz: { kind: 'free_response', question: 'Why does BFS find shortest paths?', options: [], answer: 'It explores level by level.', explain: '' } }, { done: true }]));
       return route.fulfill(answerWith([{ sources: [] }, { t: '[[correct]] Right: level by level.' }, { done: true }]));
     });
@@ -2631,17 +2646,22 @@ test.describe('Felix asks, quizzes and listens while he works', () => {
     await chat.locator('#chat-input').press('Enter');
     const blank = chat.locator('.quiz-card').first();
     await expect(blank.locator('.quiz-blank')).toHaveCount(1);
+    await expect(blank.locator('.quiz-q .math[data-drawn="yes"] .katex'), 'math in a question is drawn').toBeVisible();
     const box = blank.locator('.quiz-input');
     await box.pressSequentially('  Earliest ', { delay: 20 });
     await box.press('Enter');
     await expect(blank.locator('.quiz-result')).toHaveText('Correct');
+    await expect(blank).toHaveClass(/right/);
+    await expect(blank.locator('.quiz-reply')).toContainText('Yes.');
     await expect(chat.locator('.quiz-card')).toHaveCount(2);
     const free = chat.locator('.quiz-card').nth(1);
     await expect(free.locator('textarea.quiz-input')).toBeEnabled();
     await free.locator('textarea.quiz-input').fill('Because it goes out one level at a time.');
     await free.locator('[data-chat="quiz-check"]').click();
-    await expect(free.locator('.quiz-result')).toHaveText('Sent to Felix to mark.');
-    await expect(chat.locator('.msg.leo').last().locator('.verdict')).toHaveText('Correct');
+    await expect(free.locator('textarea.quiz-input')).toBeDisabled();
+    await expect(free).toHaveClass(/right/);
+    await expect(free.locator('.quiz-reply')).toContainText('Right: level by level.');
+    await expect(chat.locator('.msg.user'), 'answers stay in their cards').toHaveCount(1);
     const told = asked[2].messages.at(-1).text;
     expect(told).toContain('[[correct]] or [[incorrect]]');
     expect(told).toContain('It explores level by level.');
@@ -2709,6 +2729,20 @@ test.describe('Felix asks, quizzes and listens while he works', () => {
     expect(asked[1].messages[2].text).toContain('[What Felix did for this answer: Searched your notes for “heap”]');
   });
 
+  test('Esc stops Felix while he answers, and closes the chat only when he is idle', async ({ page }) => {
+    await page.route('**/api/chat', async () => {});
+    const chat = await openFelix(page);
+    const input = chat.locator('#chat-input');
+    await input.fill('explain heaps');
+    await input.press('Enter');
+    await expect(chat.locator('.msg.leo.pending')).toBeVisible();
+    await input.press('Escape');
+    await expect(chat.locator('.msg-error')).toHaveText('Stopped.');
+    await expect(chat, 'the chat stays open').toBeVisible();
+    await input.press('Escape');
+    await expect(chat).toBeHidden();
+  });
+
   test('stopping Felix puts messages he never read back in the box', async ({ page }) => {
     await page.route('**/api/chat', async () => {});
     await page.route('**/api/chat/*/steer', (route) => route.fulfill({ status: 410, json: { error: 'That answer has finished.' } }));
@@ -2752,5 +2786,31 @@ test.describe('switching models and styles mid-chat', () => {
     expect(before.endsWith('BFS uses a queue.')).toBe(true);
     expect(asked[1].recent).toEqual(['x1']);
     await expect(chat.locator('.chat-switch')).toHaveText('Now answered by Claude Code · claude-opus-5-5, with everything said so far');
+  });
+});
+
+test.describe('past chats', () => {
+  test('chats are found by what was said in them, and switching style does not reorder them', async ({ page }) => {
+    const tag = `${test.info().project.name}${Date.now().toString(36)}`;
+    const put = (id, text, title) => page.request.put(`/api/chats/${id}`, { data: { title, mode: 'chat', messages: [{ role: 'user', text }, { role: 'assistant', text: 'ok' }] } });
+    await put(`chat-dij-${tag}`, `how does dijkstra${tag} relax edges`, `Shortest paths ${tag}`);
+    await put(`chat-heap-${tag}`, `what is a heap${tag}`, `Heaps ${tag}`);
+    await page.goto('/');
+    await page.locator('#chat-toggle').click();
+    const chat = page.locator('#chat');
+    const history = chat.locator('#chat-history');
+    if (!(await history.isVisible())) await chat.locator('.chat-head [data-chat="history"]').click();
+    const search = chat.locator('#chat-history-search');
+    await search.pressSequentially(`dijkstra${tag}`, { delay: 15 });
+    await expect(chat.locator('.chat-history-item')).toHaveCount(1);
+    await expect(chat.locator('.chat-history-title')).toHaveText(`Shortest paths ${tag}`);
+    await expect(search).toBeFocused();
+    await search.fill(`nothing${tag}`);
+    await expect(chat.locator('.chat-history-none')).toHaveText('No chat mentions that.');
+    await search.fill('');
+    await expect(chat.locator('.chat-history-title').first()).toHaveText(`Heaps ${tag}`);
+    await chat.locator('.chat-history-item', { hasText: `Shortest paths ${tag}` }).click();
+    await chat.locator('[data-mode="study"]').click();
+    await expect.poll(async () => (await (await page.request.get('/api/chats')).json()).filter((c) => c.id.endsWith(tag)).map((c) => c.id)).toEqual([`chat-heap-${tag}`, `chat-dij-${tag}`]);
   });
 });

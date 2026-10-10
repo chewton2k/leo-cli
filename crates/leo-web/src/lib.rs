@@ -3,6 +3,7 @@ pub mod captions;
 pub mod chat;
 pub mod chat_files;
 pub mod chats;
+pub mod db;
 pub mod export;
 pub mod graph;
 pub mod record;
@@ -222,9 +223,7 @@ async fn keep_graph_current(state: AppState) {
             if let Ok(work) = state
                 .with_store(move |store| {
                     let work = listed.stale(store, vectors::PIECES_PER_TICK);
-                    if listed.forget_gone(store) > 0 && work.is_empty() {
-                        listed.save();
-                    }
+                    listed.forget_gone(store);
                     Ok(work)
                 })
                 .await

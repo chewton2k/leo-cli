@@ -1,6 +1,6 @@
 const SIDE_KEY = 'leo-side';
 const sideWide = () => Boolean(window.matchMedia && window.matchMedia('(min-width: 1000px)').matches);
-const side = { folders: [], loaded: false, mini: false, open: new Set() };
+const side = { folders: [], loaded: false, mini: false, open: new Set(), shut: new Set(), here: null };
 const SIDE_OPEN_KEY = 'leo-side-open';
 
 try {
@@ -34,7 +34,14 @@ function drawSide() {
   if (box.hidden) return;
   const here = sidePlace();
   const chatOpen = document.body.classList.contains('chat-open');
-  const dir = state.view === 'folder' || state.view === 'note' ? state.dir || '' : '';
+  const dir = sideHere();
+  if (dir !== side.here) {
+    side.here = dir;
+    side.shut.clear();
+    const parts = dir.split('/').filter(Boolean);
+    for (let i = 1; i < parts.length; i++) side.open.add(parts.slice(0, i).join('/'));
+    keepOpenFolders();
+  }
   const folders = folderTree(dir);
   box.innerHTML = `
     <div class="side-head">
@@ -59,18 +66,31 @@ function drawSide() {
     </div>`;
 }
 
+function sideHere() {
+  return state.view === 'folder' || state.view === 'note' ? state.dir || '' : '';
+}
+
+function folderShown(path) {
+  return !side.shut.has(path) && side.open.has(path);
+}
+
+function keepOpenFolders() {
+  try {
+    localStorage.setItem(SIDE_OPEN_KEY, JSON.stringify([...side.open]));
+  } catch (e) {}
+}
+
 function folderTree(here) {
   const paths = new Set(side.folders.map((d) => d.name));
   const children = (parent) => side.folders.filter((d) => {
     const cut = d.name.lastIndexOf('/');
     return (cut < 0 ? '' : d.name.slice(0, cut)) === parent;
   });
-  const shown = (path) => side.open.has(path) || here === path || here.startsWith(`${path}/`);
   const rows = [];
   const walk = (parent, depth) => {
     for (const d of children(parent)) {
       const kids = side.folders.some((k) => k.name.startsWith(`${d.name}/`) && paths.has(k.name));
-      const open = kids && shown(d.name);
+      const open = kids && folderShown(d.name);
       const name = d.name.split('/').pop();
       const on = here === d.name;
       const toggle = kids
@@ -85,11 +105,14 @@ function folderTree(here) {
 }
 
 function twistFolder(path) {
-  if (side.open.has(path)) side.open.delete(path);
-  else side.open.add(path);
-  try {
-    localStorage.setItem(SIDE_OPEN_KEY, JSON.stringify([...side.open]));
-  } catch (e) {}
+  if (folderShown(path)) {
+    side.open.delete(path);
+    side.shut.add(path);
+  } else {
+    side.open.add(path);
+    side.shut.delete(path);
+  }
+  keepOpenFolders();
   drawSide();
 }
 

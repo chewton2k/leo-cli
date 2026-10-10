@@ -38,21 +38,17 @@ struct Stored {
 }
 
 pub struct Vectors {
-    path: PathBuf,
+    db: Arc<crate::db::Db>,
     known: Mutex<BTreeMap<String, Entry>>,
     version: std::sync::atomic::AtomicU64,
 }
 
-fn encode(vector: &[f32]) -> String {
-    let bytes: Vec<u8> = vector.iter().flat_map(|v| v.to_le_bytes()).collect();
-    base64::engine::general_purpose::STANDARD.encode(bytes)
+fn to_blob(vector: &[f32]) -> Vec<u8> {
+    vector.iter().flat_map(|v| v.to_le_bytes()).collect()
 }
 
-fn decode(text: &str) -> Option<Vec<f32>> {
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(text)
-        .ok()?;
-    (bytes.len() % 4 == 0).then(|| {
+fn from_blob(bytes: &[u8]) -> Option<Vec<f32>> {
+    bytes.len().is_multiple_of(4).then(|| {
         bytes
             .as_chunks::<4>()
             .0
@@ -60,6 +56,14 @@ fn decode(text: &str) -> Option<Vec<f32>> {
             .map(|c| f32::from_le_bytes(*c))
             .collect()
     })
+}
+
+fn decode(text: &str) -> Option<Vec<f32>> {
+    from_blob(
+        &base64::engine::general_purpose::STANDARD
+            .decode(text)
+            .ok()?,
+    )
 }
 
 pub fn hash_of(note: &Note) -> String {
@@ -126,37 +130,71 @@ impl Vectors {
     }
 
     pub fn at(path: PathBuf) -> Vectors {
-        let disk: OnDisk = std::fs::read_to_string(&path)
+        let db = crate::db::beside(&path);
+        let old: Option<OnDisk> = std::fs::read_to_string(&path)
             .ok()
-            .and_then(|text| serde_json::from_str(&text).ok())
-            .unwrap_or_default();
-        let known = disk
-            .notes
-            .into_iter()
-            .filter_map(|(id, stored)| {
-                let pieces: Option<Vec<(usize, Vec<f32>)>> = stored
-                    .pieces
-                    .iter()
-                    .map(|(at, v)| decode(v).map(|v| (*at, v)))
-                    .collect();
-                Some((
-                    id,
-                    Entry {
-                        hash: stored.hash,
-                        pieces: pieces?,
-                    },
-                ))
+            .and_then(|text| serde_json::from_str(&text).ok());
+        if let Some(old) = old {
+            let saved = db.with(|c| {
+                let tx = c.transaction()?;
+                for (id, stored) in &old.notes {
+                    for (at, v) in &stored.pieces {
+                        if let Some(v) = decode(v) {
+                            tx.execute(
+                                "INSERT OR REPLACE INTO vectors (note, at, hash, v) VALUES (?1, ?2, ?3, ?4)",
+                                rusqlite::params![id, *at as i64, stored.hash, to_blob(&v)],
+                            )?;
+                        }
+                    }
+                }
+                tx.commit()
+            });
+            if saved.is_ok() {
+                crate::db::put_aside(&path);
+            }
+        }
+        let rows: Vec<(String, i64, String, Vec<u8>)> = db
+            .with(|c| {
+                let mut found =
+                    c.prepare("SELECT note, at, hash, v FROM vectors ORDER BY note, at")?;
+                let rows =
+                    found.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
+                rows.collect()
             })
-            .collect();
+            .unwrap_or_default();
+        let mut known: BTreeMap<String, Entry> = BTreeMap::new();
+        for (note, at, hash, v) in rows {
+            let Some(v) = from_blob(&v) else { continue };
+            known
+                .entry(note)
+                .or_insert_with(|| Entry {
+                    hash: hash.clone(),
+                    pieces: Vec::new(),
+                })
+                .pieces
+                .push((at.max(0) as usize, v));
+        }
         Vectors {
-            path,
+            db,
             known: Mutex::new(known),
             version: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
     pub fn path(&self) -> &Path {
-        &self.path
+        self.db.path()
+    }
+
+    pub fn bytes(&self) -> u64 {
+        self.db
+            .with(|c| {
+                c.query_row(
+                    "SELECT coalesce(SUM(length(v) + length(note) + length(hash)), 0) FROM vectors",
+                    [],
+                    |r| r.get::<_, i64>(0),
+                )
+            })
+            .map_or(0, |n| n.max(0) as u64)
     }
 
     pub fn clear(&self) -> bool {
@@ -164,7 +202,9 @@ impl Vectors {
             known.clear();
         }
         self.changed();
-        std::fs::remove_file(&self.path).is_ok()
+        self.db
+            .with(|c| c.execute("DELETE FROM vectors", []))
+            .is_ok_and(|n| n > 0)
     }
 
     pub fn version(&self) -> u64 {
@@ -252,13 +292,29 @@ impl Vectors {
         let Ok(mut known) = self.known.lock() else {
             return 0;
         };
-        let before = known.len();
-        known.retain(|id, _| store.notes.iter().any(|n| &n.id == id));
-        let gone = before - known.len();
-        if gone > 0 {
-            self.changed();
+        let live: std::collections::HashSet<&str> =
+            store.notes.iter().map(|n| n.id.as_str()).collect();
+        let gone: Vec<String> = known
+            .keys()
+            .filter(|id| !live.contains(id.as_str()))
+            .cloned()
+            .collect();
+        if gone.is_empty() {
+            return 0;
         }
-        gone
+        for id in &gone {
+            known.remove(id);
+        }
+        drop(known);
+        let _ = self.db.with(|c| {
+            let tx = c.transaction()?;
+            for id in &gone {
+                tx.execute("DELETE FROM vectors WHERE note = ?1", [id])?;
+            }
+            tx.commit()
+        });
+        self.changed();
+        gone.len()
     }
 
     pub fn put(&self, work: &[Work], vectors: Vec<Vec<f32>>) {
@@ -272,44 +328,30 @@ impl Vectors {
                 .iter()
                 .filter_map(|(at, _)| given.next().map(|v| (*at, v)))
                 .collect();
-            if pieces.len() == item.pieces.len() {
-                known.insert(
-                    item.id.clone(),
-                    Entry {
-                        hash: item.hash.clone(),
-                        pieces,
-                    },
-                );
+            if pieces.len() != item.pieces.len() {
+                continue;
             }
+            let _ = self.db.with(|c| {
+                let tx = c.transaction()?;
+                tx.execute("DELETE FROM vectors WHERE note = ?1", [&item.id])?;
+                for (at, v) in &pieces {
+                    tx.execute(
+                        "INSERT INTO vectors (note, at, hash, v) VALUES (?1, ?2, ?3, ?4)",
+                        rusqlite::params![item.id, *at as i64, item.hash, to_blob(v)],
+                    )?;
+                }
+                tx.commit()
+            });
+            known.insert(
+                item.id.clone(),
+                Entry {
+                    hash: item.hash.clone(),
+                    pieces,
+                },
+            );
         }
         drop(known);
         self.changed();
-    }
-
-    pub fn save(&self) {
-        let Ok(known) = self.known.lock() else {
-            return;
-        };
-        let disk = OnDisk {
-            notes: known
-                .iter()
-                .map(|(id, e)| {
-                    (
-                        id.clone(),
-                        Stored {
-                            hash: e.hash.clone(),
-                            pieces: e.pieces.iter().map(|(at, v)| (*at, encode(v))).collect(),
-                        },
-                    )
-                })
-                .collect(),
-        };
-        if let Ok(text) = serde_json::to_string(&disk) {
-            let tmp = self.path.with_extension("json.tmp");
-            if std::fs::write(&tmp, text).is_ok() {
-                let _ = std::fs::rename(&tmp, &self.path);
-            }
-        }
     }
 
     pub fn nearest(&self, query: &[f32], most: usize, least: f32) -> Vec<(String, f32)> {
@@ -357,10 +399,7 @@ pub fn close_to(
 
 pub fn catch_up(store: &Store, vectors: &Vectors, meaning: &Meaning, most_pieces: usize) -> usize {
     let work = vectors.stale(store, most_pieces);
-    let gone = vectors.forget_gone(store);
-    if work.is_empty() && gone > 0 {
-        vectors.save();
-    }
+    vectors.forget_gone(store);
     read_in(vectors, meaning, &work)
 }
 
@@ -375,7 +414,6 @@ pub fn read_in(vectors: &Vectors, meaning: &Meaning, work: &[Work]) -> usize {
     match meaning(&texts, false) {
         Ok(found) if found.len() == texts.len() => {
             vectors.put(work, found);
-            vectors.save();
             work.len()
         }
         _ => 0,

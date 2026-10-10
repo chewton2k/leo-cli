@@ -209,18 +209,16 @@ pub fn areas(store: &Store, graphs: &Graphs, chats_dir: &Path, now: DateTime<Utc
     out.push(Area {
         id: "chats".into(),
         title: "Chats with Felix".into(),
-        about: "Every conversation, so you can go back to it. Never backed up.".into(),
-        path: chats_dir.display().to_string(),
-        bytes: size_of(chats_dir),
+        about: "Every conversation, so you can go back to it. Kept in leo's database beside your notes; never backed up.".into(),
+        path: chats::db_of(chats_dir).path().display().to_string(),
+        bytes: summaries.iter().map(|c| chats::bytes_of(chats_dir, &c.id)).sum(),
         items: summaries
             .iter()
             .map(|c| Item {
                 id: c.id.clone(),
                 label: c.title.clone(),
                 detail: format!("{} message{}", c.count, if c.count == 1 { "" } else { "s" }),
-                bytes: std::fs::metadata(chats_dir.join(format!("{}.json", c.id)))
-                    .map(|m| m.len())
-                    .unwrap_or(0),
+                bytes: chats::bytes_of(chats_dir, &c.id),
                 when: Some(c.updated_at),
                 locked: false,
             })
@@ -301,7 +299,7 @@ pub fn areas(store: &Store, graphs: &Graphs, chats_dir: &Path, now: DateTime<Utc
         id: "chat-docs".into(),
         title: "Documents given to Felix".into(),
         about: "The text read from files you gave Felix in a chat. The files themselves are never kept, and the text goes when its chat is deleted.".into(),
-        path: chats_dir.display().to_string(),
+        path: chats::db_of(chats_dir).path().display().to_string(),
         bytes: held.iter().map(|h| h.bytes).sum(),
         items: held
             .iter()
@@ -341,12 +339,12 @@ pub fn areas(store: &Store, graphs: &Graphs, chats_dir: &Path, now: DateTime<Utc
         },
     });
 
-    let map_bytes = size_of(graphs.path());
+    let map_bytes = graphs.bytes();
     out.push(Area {
         id: "map".into(),
         title: "Knowledge graph".into(),
         about: "What the AI found in each note and how notes connect. Clearing it means the next build asks the AI to read every note again.".into(),
-        path: graphs.path().display().to_string(),
+        path: graphs.stored_in().display().to_string(),
         bytes: map_bytes,
         items: Vec::new(),
         actions: if map_bytes > 0 {
@@ -513,7 +511,7 @@ const SMALL_FILES: [(&str, &str); 4] = [
     (".tour-completed", "That the terminal tour was finished"),
 ];
 
-const LISTED_ELSEWHERE: [&str; 7] = [
+const LISTED_ELSEWHERE: [&str; 10] = [
     "notes",
     "chats",
     "attachments",
@@ -521,17 +519,20 @@ const LISTED_ELSEWHERE: [&str; 7] = [
     "captions.json",
     "meaning.json",
     "recordings",
+    "leo.db",
+    "leo.db-wal",
+    "leo.db-shm",
 ];
 
 pub fn leftover(name: &str) -> bool {
-    name.ends_with(".bak")
+    name.ends_with(crate::db::BEFORE)
+        || name.ends_with(".bak")
         || name.contains(".before-")
         || name == "history.txt"
         || name.ends_with(".tmp")
 }
 
-fn file_area(id: &str, title: &str, about: &str, path: &Path, action: Act) -> Area {
-    let bytes = size_of(path);
+fn row_area(id: &str, title: &str, about: &str, path: &Path, bytes: u64, action: Act) -> Area {
     Area {
         id: id.into(),
         title: title.into(),
@@ -575,11 +576,13 @@ pub fn more_areas(store: &Store, chats_dir: &Path, kept: &Kept) -> Vec<Area> {
             ],
         });
     }
-    out.push(file_area(
+    let reviewed = crate::review::count(chats_dir);
+    out.push(row_area(
         "review",
         "Study review progress",
         "Which missed questions you have already reviewed, so Study does not offer them again.",
-        &crate::review::file(chats_dir),
+        chats::db_of(chats_dir).path(),
+        reviewed as u64 * 48,
         act(
             "reset",
             "Start review over",
@@ -587,11 +590,12 @@ pub fn more_areas(store: &Store, chats_dir: &Path, kept: &Kept) -> Vec<Area> {
             false,
         ),
     ));
-    out.push(file_area(
+    out.push(row_area(
         "captions",
         "Picture descriptions",
         "What the AI saw in the pictures in your notes, so Felix can use them without looking again. Cleared descriptions are made again when leo is idle, which sends the pictures to the AI again.",
         kept.captions.path(),
+        kept.captions.bytes(),
         act(
             "clear",
             "Clear picture descriptions",
@@ -599,11 +603,12 @@ pub fn more_areas(store: &Store, chats_dir: &Path, kept: &Kept) -> Vec<Area> {
             false,
         ),
     ));
-    out.push(file_area(
+    out.push(row_area(
         "meaning",
         "Index for finding notes by meaning",
         "How each note reads to the meaning model, so search and Felix find notes that mean the same thing in other words. It is made on this computer; nothing is sent anywhere.",
         kept.vectors.path(),
+        kept.vectors.bytes(),
         act(
             "clear",
             "Clear the meaning index",
@@ -720,7 +725,12 @@ pub fn act_on_more(
                     )));
                 }
                 let path = data.join(name);
-                if path.is_file() && std::fs::remove_file(&path).is_ok() {
+                let removed = if path.is_dir() {
+                    std::fs::remove_dir_all(&path).is_ok()
+                } else {
+                    path.is_file() && std::fs::remove_file(&path).is_ok()
+                };
+                if removed {
                     gone += 1;
                 }
             }
@@ -1079,7 +1089,8 @@ mod tests {
                 text: "The student studies graphs.".into(),
             },
         );
-        std::fs::write(crate::review::file(&chats_dir), "{}").unwrap();
+        let started = chats::list(&chats_dir)[0].id.clone();
+        crate::review::mark_reviewed(&chats_dir, &[format!("{started}:0000000000000001")]).unwrap();
         let captions = crate::captions::Captions::for_notes(&store.notes_dir);
         captions.put("k".into(), "a heap".into());
         let vectors = crate::vectors::Vectors::for_notes(&store.notes_dir);
@@ -1151,11 +1162,11 @@ mod tests {
             "the chat stays"
         );
         ask("review", "reset", &[]).unwrap();
-        assert!(!crate::review::file(&chats_dir).exists());
+        assert_eq!(crate::review::count(&chats_dir), 0);
         ask("captions", "clear", &[]).unwrap();
-        assert!(captions.is_empty() && !captions.path().exists());
+        assert!(captions.is_empty() && captions.bytes() == 0);
         ask("meaning", "clear", &[]).unwrap();
-        assert!(vectors.is_empty() && !vectors.path().exists());
+        assert!(vectors.is_empty() && vectors.bytes() == 0);
         assert!(
             ask("other", "delete", &["keep.json"]).is_err(),
             "only old backups go"

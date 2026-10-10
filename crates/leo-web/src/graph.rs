@@ -945,6 +945,7 @@ struct Job {
 
 pub struct Graphs {
     path: PathBuf,
+    db: Arc<crate::db::Db>,
     writer: Option<Writer>,
     room: Option<crate::Room>,
     vectors: Option<Arc<crate::vectors::Vectors>>,
@@ -992,6 +993,7 @@ impl Graphs {
 
     pub fn new(path: PathBuf, writer: Option<Writer>) -> Graphs {
         Graphs {
+            db: crate::db::beside(&path),
             path,
             writer,
             room: None,
@@ -1016,16 +1018,37 @@ impl Graphs {
         &self.path
     }
 
+    pub fn stored_in(&self) -> &Path {
+        self.db.path()
+    }
+
+    pub fn bytes(&self) -> u64 {
+        self.db
+            .with(|c| {
+                c.query_row(
+                    "SELECT (SELECT coalesce(SUM(length(id) + length(data)), 0) FROM graph_notes)
+                          + (SELECT coalesce(SUM(length(data)), 0) FROM graph_links)
+                          + (SELECT coalesce(SUM(length(data)), 0) FROM graph_meta)",
+                    [],
+                    |r| r.get::<_, i64>(0),
+                )
+            })
+            .map_or(0, |n| n.max(0) as u64)
+    }
+
     pub fn clear(&self) -> Result<bool> {
         let mut job = self.job.lock().unwrap_or_else(|e| e.into_inner());
         if job.state == "building" {
             return Ok(false);
         }
-        match std::fs::remove_file(&self.path) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e.into()),
-        }
+        self.bring_in_file();
+        self.db.with(|c| {
+            let tx = c.transaction()?;
+            tx.execute("DELETE FROM graph_notes", [])?;
+            tx.execute("DELETE FROM graph_links", [])?;
+            tx.execute("DELETE FROM graph_meta", [])?;
+            tx.commit()
+        })?;
         *job = Job {
             state: "idle",
             done: 0,
@@ -1035,21 +1058,107 @@ impl Graphs {
         Ok(true)
     }
 
-    pub fn load(&self) -> Cache {
-        std::fs::read_to_string(&self.path)
+    fn bring_in_file(&self) {
+        let Some(old) = std::fs::read_to_string(&self.path)
             .ok()
-            .and_then(|text| serde_json::from_str(&text).ok())
+            .and_then(|text| serde_json::from_str::<Cache>(&text).ok())
+        else {
+            return;
+        };
+        if self.write_all(&old, true).is_ok() {
+            crate::db::put_aside(&self.path);
+        }
+    }
+
+    pub fn load(&self) -> Cache {
+        self.bring_in_file();
+        self.db
+            .with(|c| {
+                let mut cache = Cache::default();
+                {
+                    let mut found = c.prepare("SELECT id, data FROM graph_notes")?;
+                    let rows = found
+                        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+                    for row in rows {
+                        let (id, data) = row?;
+                        if let Ok(read) = serde_json::from_str(&data) {
+                            cache.notes.insert(id, read);
+                        }
+                    }
+                }
+                {
+                    let mut found = c.prepare("SELECT data FROM graph_links ORDER BY n")?;
+                    let rows = found.query_map([], |r| r.get::<_, String>(0))?;
+                    for row in rows {
+                        if let Ok(link) = serde_json::from_str(&row?) {
+                            cache.links.push(link);
+                        }
+                    }
+                }
+                {
+                    let mut found = c.prepare("SELECT key, data FROM graph_meta")?;
+                    let rows = found
+                        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+                    for row in rows {
+                        let (key, data) = row?;
+                        match key.as_str() {
+                            "built_at" => {
+                                cache.built_at = serde_json::from_str(&data).ok().flatten()
+                            }
+                            "pairs" => {
+                                cache.pairs = serde_json::from_str(&data).unwrap_or_default()
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                Ok(cache)
+            })
             .unwrap_or_default()
     }
 
     fn save(&self, cache: &Cache) -> Result<()> {
-        if let Some(dir) = self.path.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        let temp = self.path.with_extension("json.new");
-        std::fs::write(&temp, serde_json::to_string(cache)?)?;
-        std::fs::rename(&temp, &self.path)?;
-        Ok(())
+        self.write_all(cache, false)
+    }
+
+    fn write_all(&self, cache: &Cache, replace: bool) -> Result<()> {
+        self.db.with(|c| {
+            let tx = c.transaction()?;
+            let held: HashMap<String, String> = {
+                let mut found = tx.prepare("SELECT id, data FROM graph_notes")?;
+                let rows = found
+                    .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+                rows.collect::<rusqlite::Result<_>>()?
+            };
+            for (id, read) in &cache.notes {
+                let data = serde_json::to_string(read).unwrap_or_default();
+                if replace || held.get(id) != Some(&data) {
+                    tx.execute(
+                        "INSERT OR REPLACE INTO graph_notes (id, data) VALUES (?1, ?2)",
+                        [id, &data],
+                    )?;
+                }
+            }
+            for id in held.keys().filter(|id| !cache.notes.contains_key(*id)) {
+                tx.execute("DELETE FROM graph_notes WHERE id = ?1", [id])?;
+            }
+            tx.execute("DELETE FROM graph_links", [])?;
+            for (n, link) in cache.links.iter().enumerate() {
+                tx.execute(
+                    "INSERT INTO graph_links (n, data) VALUES (?1, ?2)",
+                    rusqlite::params![n as i64, serde_json::to_string(link).unwrap_or_default()],
+                )?;
+            }
+            tx.execute(
+                "INSERT OR REPLACE INTO graph_meta (key, data) VALUES ('built_at', ?1)",
+                [serde_json::to_string(&cache.built_at).unwrap_or_default()],
+            )?;
+            tx.execute(
+                "INSERT OR REPLACE INTO graph_meta (key, data) VALUES ('pairs', ?1)",
+                [serde_json::to_string(&cache.pairs).unwrap_or_default()],
+            )?;
+            tx.commit()
+        })
     }
 
     fn job(&self) -> Job {
@@ -1940,7 +2049,10 @@ mod tests {
         let status = graphs.status(&sources);
         assert_eq!(status.state, "done", "{status:?}");
         assert_eq!((status.read, status.stale, status.requests), (3, 0, 0));
-        assert!(dir.path().join("graph.json").is_file());
+        assert!(
+            !graphs.load().notes.is_empty(),
+            "the build is kept in leo's database"
+        );
         let graph = assemble(&sources, &graphs.load());
         assert!(graph.edges.iter().any(|e| e.kind == "related"
             && e.relation.as_deref() == Some("contrasts")

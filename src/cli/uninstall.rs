@@ -22,6 +22,9 @@ const KNOWN: &[&str] = &[
     "notes.json.bak",
     "recordings",
     "models",
+    "leo.db",
+    "leo.db-wal",
+    "leo.db-shm",
 ];
 
 const TEMP_PREFIXES: &[&str] = &["leo-recording", "leo-live-", "leo-mic-probe-"];

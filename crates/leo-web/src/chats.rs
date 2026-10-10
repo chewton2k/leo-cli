@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -41,48 +41,6 @@ pub struct Memory {
     pub upto: usize,
     pub hash: String,
     pub text: String,
-}
-
-static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-pub fn set_memory(dir: &Path, id: &str, memory: Memory) -> bool {
-    let _held = WRITING.lock();
-    let Some(mut chat) = load(dir, id) else {
-        return false;
-    };
-    if chat
-        .memory
-        .as_ref()
-        .is_some_and(|old| old.upto > memory.upto)
-    {
-        return false;
-    }
-    chat.memory = Some(memory);
-    write(dir, &chat).is_ok()
-}
-
-pub fn remembered(dir: &Path) -> Vec<(String, String, usize, u64)> {
-    list(dir)
-        .into_iter()
-        .filter_map(|summary| {
-            let memory = load(dir, &summary.id)?.memory?;
-            Some((
-                summary.id,
-                summary.title,
-                memory.upto,
-                memory.text.len() as u64,
-            ))
-        })
-        .collect()
-}
-
-pub fn forget_memory(dir: &Path, id: &str) -> bool {
-    let _held = WRITING.lock();
-    let Some(mut chat) = load(dir, id).filter(|c| c.memory.is_some()) else {
-        return false;
-    };
-    chat.memory = None;
-    write(dir, &chat).is_ok()
 }
 
 impl Chat {
@@ -132,10 +90,6 @@ pub fn dir_for(notes_dir: &Path) -> PathBuf {
 
 pub fn valid_id(id: &str) -> bool {
     (8..=64).contains(&id.len()) && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
-}
-
-fn path_of(dir: &Path, id: &str) -> Option<PathBuf> {
-    valid_id(id).then(|| dir.join(format!("{id}.json")))
 }
 
 fn first_of<'a>(messages: &'a [serde_json::Value], role: &str) -> Option<&'a serde_json::Value> {
@@ -243,14 +197,23 @@ fn about_of(messages: &[serde_json::Value]) -> String {
 }
 
 pub fn rename(dir: &Path, id: &str, title: &str) -> bool {
-    let _held = WRITING.lock();
     let title = clipped(title, MOST_TITLE);
-    let Some(mut chat) = load(dir, id).filter(|_| !title.is_empty()) else {
+    if title.is_empty() || !valid_id(id) {
         return false;
-    };
-    chat.title = title;
-    chat.named = true;
-    write(dir, &chat).is_ok()
+    }
+    db_of(dir)
+        .with(|c| {
+            let changed = c.execute(
+                "UPDATE chats SET title = ?1, named = 1 WHERE id = ?2",
+                rusqlite::params![title, id],
+            )?;
+            c.execute(
+                "UPDATE chats_text SET title = ?1 WHERE id = ?2",
+                rusqlite::params![title, id],
+            )?;
+            Ok(changed > 0)
+        })
+        .unwrap_or(false)
 }
 
 pub fn name_prompt(chat: &Chat) -> (String, String) {
@@ -276,69 +239,314 @@ pub fn clean_name(reply: &str) -> Option<String> {
     (1..=12).contains(&words).then(|| clipped(line, MOST_TITLE))
 }
 
+fn stamp(at: DateTime<Utc>) -> String {
+    at.to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
+}
+
+fn when(text: &str) -> DateTime<Utc> {
+    DateTime::parse_from_rfc3339(text).map_or_else(|_| Utc::now(), |t| t.with_timezone(&Utc))
+}
+
+static MIGRATED: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+
+pub(crate) fn db_of(dir: &Path) -> std::sync::Arc<crate::db::Db> {
+    let db = crate::db::for_chats(dir);
+    let mut done = MIGRATED.lock().unwrap_or_else(|e| e.into_inner());
+    if !done.iter().any(|d| d == dir) {
+        done.push(dir.to_path_buf());
+        drop(done);
+        bring_in_files(dir, &db);
+    }
+    db
+}
+
+fn bring_in_files(dir: &Path, db: &crate::db::Db) {
+    if dir.file_name().is_none_or(|n| n != "chats") || !dir.is_dir() {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut chats = Vec::new();
+    let mut docs = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if let Some(id) = name.strip_suffix(".json").filter(|id| valid_id(id)) {
+            if let Some(chat) = std::fs::read_to_string(&path)
+                .ok()
+                .and_then(|t| serde_json::from_str::<Chat>(&t).ok())
+                .filter(|c| c.id == id)
+            {
+                chats.push(chat);
+            }
+        } else if name.ends_with(".files") && path.is_dir() {
+            docs.extend(crate::chat_files::from_folder(
+                &path,
+                name.trim_end_matches(".files"),
+            ));
+        }
+    }
+    let reviewed = crate::review::from_file(dir);
+    let saved = db.with(|c| {
+        let tx = c.transaction()?;
+        for chat in &chats {
+            if tx.query_row(
+                "SELECT COUNT(*) FROM chats WHERE id = ?1",
+                [&chat.id],
+                |r| r.get::<_, i64>(0),
+            )? == 0
+            {
+                write_in(&tx, chat)?;
+            }
+        }
+        crate::chat_files::insert_all(&tx, &docs)?;
+        crate::review::insert_all(&tx, &reviewed)?;
+        tx.commit()
+    });
+    if saved.is_ok() {
+        crate::db::put_aside(dir);
+    }
+}
+
+fn body_of(chat: &Chat) -> String {
+    chat.messages
+        .iter()
+        .filter_map(|m| m.get("text").and_then(|t| t.as_str()))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn json<T: Serialize + ?Sized>(value: &T) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| "null".into())
+}
+
+fn write_in(c: &rusqlite::Connection, chat: &Chat) -> rusqlite::Result<()> {
+    c.execute(
+        "INSERT OR REPLACE INTO chats (id, title, mode, refs, messages, named, about, memory, count, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        rusqlite::params![
+            chat.id,
+            chat.title,
+            chat.mode,
+            json(&chat.refs),
+            json(&chat.messages),
+            chat.named,
+            chat.about,
+            chat.memory.as_ref().map(json),
+            chat.messages.len() as i64,
+            stamp(chat.created_at),
+            stamp(chat.updated_at),
+        ],
+    )?;
+    c.execute("DELETE FROM chats_text WHERE id = ?1", [&chat.id])?;
+    c.execute(
+        "INSERT INTO chats_text (id, title, body) VALUES (?1, ?2, ?3)",
+        rusqlite::params![chat.id, chat.title, body_of(chat)],
+    )?;
+    Ok(())
+}
+
+fn chat_of(row: &rusqlite::Row) -> rusqlite::Result<Chat> {
+    let text = |i: usize| -> rusqlite::Result<String> { row.get(i) };
+    Ok(Chat {
+        id: text(0)?,
+        title: text(1)?,
+        mode: text(2)?,
+        refs: serde_json::from_str(&text(3)?).unwrap_or_default(),
+        messages: serde_json::from_str(&text(4)?).unwrap_or_default(),
+        named: row.get(5)?,
+        about: text(6)?,
+        memory: row
+            .get::<_, Option<String>>(7)?
+            .and_then(|m| serde_json::from_str(&m).ok()),
+        created_at: when(&text(8)?),
+        updated_at: when(&text(9)?),
+    })
+}
+
+const CHAT_COLUMNS: &str =
+    "id, title, mode, refs, messages, named, about, memory, created_at, updated_at";
+
+fn load_in(c: &rusqlite::Connection, id: &str) -> rusqlite::Result<Option<Chat>> {
+    use rusqlite::OptionalExtension;
+    c.query_row(
+        &format!("SELECT {CHAT_COLUMNS} FROM chats WHERE id = ?1"),
+        [id],
+        chat_of,
+    )
+    .optional()
+}
+
 pub fn load(dir: &Path, id: &str) -> Option<Chat> {
-    let path = path_of(dir, id)?;
-    let text = std::fs::read_to_string(path).ok()?;
-    serde_json::from_str(&text).ok()
+    if !valid_id(id) {
+        return None;
+    }
+    db_of(dir).with(|c| load_in(c, id)).ok().flatten()
+}
+
+fn summary_of(row: &rusqlite::Row) -> rusqlite::Result<Summary> {
+    Ok(Summary {
+        id: row.get(0)?,
+        title: row.get(1)?,
+        named: row.get(2)?,
+        about: row.get(3)?,
+        mode: row.get(4)?,
+        count: row.get::<_, i64>(5)? as usize,
+        updated_at: when(&row.get::<_, String>(6)?),
+    })
 }
 
 pub fn list(dir: &Path) -> Vec<Summary> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let mut out: Vec<Summary> = entries
-        .flatten()
-        .filter_map(|e| {
-            let name = e.file_name().to_string_lossy().to_string();
-            let id = name.strip_suffix(".json")?;
-            load(dir, id).map(|chat| chat.summary())
+    db_of(dir)
+        .with(|c| {
+            let mut found = c.prepare(
+                "SELECT id, title, named, about, mode, count, updated_at FROM chats ORDER BY updated_at DESC, id",
+            )?;
+            let rows = found.query_map([], summary_of)?;
+            rows.collect()
         })
+        .unwrap_or_default()
+}
+
+pub fn search(dir: &Path, query: &str) -> Vec<Summary> {
+    let words: Vec<String> = query
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .take(12)
+        .map(|w| format!("\"{w}\"*"))
         .collect();
-    out.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then(a.id.cmp(&b.id)));
-    out
+    if words.is_empty() {
+        return list(dir);
+    }
+    let matching = words.join(" ");
+    db_of(dir)
+        .with(|c| {
+            let mut found = c.prepare(
+                "SELECT c.id, c.title, c.named, c.about, c.mode, c.count, c.updated_at
+                 FROM chats_text t JOIN chats c ON c.id = t.id
+                 WHERE chats_text MATCH ?1 ORDER BY bm25(chats_text, 0.0, 4.0, 1.0), c.updated_at DESC LIMIT 100",
+            )?;
+            let rows = found.query_map([&matching], summary_of)?;
+            rows.collect()
+        })
+        .unwrap_or_default()
 }
 
 pub fn save(dir: &Path, id: &str, saving: Saving, now: DateTime<Utc>) -> Result<Chat> {
-    path_of(dir, id).context("that is not a chat id")?;
-    let _held = WRITING.lock();
-    let old = load(dir, id);
-    let created_at = old.as_ref().map_or(now, |old| old.created_at);
-    let memory = old.as_ref().and_then(|old| old.memory.clone());
-    let kept_name = old
-        .filter(|old| old.named && saving.title.trim().is_empty())
-        .map(|old| old.title);
-    let mut messages = saving.messages;
-    if messages.len() > MOST_MESSAGES {
-        messages.drain(..messages.len() - MOST_MESSAGES);
-    }
-    let refs: Vec<Ref> = saving
-        .refs
-        .into_iter()
-        .take(crate::chat::MOST_ATTACHED)
-        .collect();
-    let chat = Chat {
-        id: id.to_string(),
-        named: kept_name.is_some(),
-        title: kept_name.unwrap_or_else(|| title_of(&saving.title, &refs, &messages)),
-        about: about_of(&messages),
-        memory,
-        mode: saving.mode,
-        refs,
-        messages,
-        created_at,
-        updated_at: now,
-    };
-    write(dir, &chat)?;
-    Ok(chat)
+    anyhow::ensure!(valid_id(id), "that is not a chat id");
+    let db = db_of(dir);
+    db.with(|c| {
+        let tx = c.transaction()?;
+        let old = load_in(&tx, id)?;
+        let created_at = old.as_ref().map_or(now, |old| old.created_at);
+        let memory = old.as_ref().and_then(|old| old.memory.clone());
+        let engaged = old.as_ref().is_none_or(|old| {
+            saving.messages.len() > old.messages.len()
+                || (saving.messages.len() >= MOST_MESSAGES
+                    && saving.messages.last() != old.messages.last())
+        });
+        let updated_at = match &old {
+            Some(old) if !engaged => old.updated_at,
+            _ => now,
+        };
+        let kept_name = old
+            .filter(|old| old.named && saving.title.trim().is_empty())
+            .map(|old| old.title);
+        let mut messages = saving.messages;
+        if messages.len() > MOST_MESSAGES {
+            messages.drain(..messages.len() - MOST_MESSAGES);
+        }
+        let refs: Vec<Ref> = saving
+            .refs
+            .into_iter()
+            .take(crate::chat::MOST_ATTACHED)
+            .collect();
+        let chat = Chat {
+            id: id.to_string(),
+            named: kept_name.is_some(),
+            title: kept_name.unwrap_or_else(|| title_of(&saving.title, &refs, &messages)),
+            about: about_of(&messages),
+            memory,
+            mode: saving.mode,
+            refs,
+            messages,
+            created_at,
+            updated_at,
+        };
+        write_in(&tx, &chat)?;
+        tx.commit()?;
+        Ok(chat)
+    })
 }
 
-fn write(dir: &Path, chat: &Chat) -> Result<()> {
-    let path = path_of(dir, &chat.id).context("that is not a chat id")?;
-    std::fs::create_dir_all(dir).with_context(|| format!("could not make {}", dir.display()))?;
-    let tmp = path.with_extension(format!("json.{}.tmp", std::process::id()));
-    std::fs::write(&tmp, serde_json::to_vec_pretty(chat)?)?;
-    std::fs::rename(&tmp, &path)?;
-    Ok(())
+pub fn set_memory(dir: &Path, id: &str, memory: Memory) -> bool {
+    let json = serde_json::to_string(&memory).unwrap_or_default();
+    db_of(dir)
+        .with(|c| {
+            let tx = c.transaction()?;
+            let Some(chat) = load_in(&tx, id)? else {
+                return Ok(false);
+            };
+            if chat
+                .memory
+                .as_ref()
+                .is_some_and(|old| old.upto > memory.upto)
+            {
+                return Ok(false);
+            }
+            tx.execute(
+                "UPDATE chats SET memory = ?1 WHERE id = ?2",
+                rusqlite::params![json, id],
+            )?;
+            tx.commit()?;
+            Ok(true)
+        })
+        .unwrap_or(false)
+}
+
+pub fn remembered(dir: &Path) -> Vec<(String, String, usize, u64)> {
+    db_of(dir)
+        .with(|c| {
+            let mut found = c.prepare(
+                "SELECT id, title, memory FROM chats WHERE memory IS NOT NULL ORDER BY updated_at DESC, id",
+            )?;
+            let rows = found.query_map([], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+            })?;
+            let rows: Vec<(String, String, String)> = rows.collect::<rusqlite::Result<_>>()?;
+            Ok(rows
+                .into_iter()
+                .filter_map(|(id, title, memory)| {
+                    let memory: Memory = serde_json::from_str(&memory).ok()?;
+                    Some((id, title, memory.upto, memory.text.len() as u64))
+                })
+                .collect())
+        })
+        .unwrap_or_default()
+}
+
+pub fn forget_memory(dir: &Path, id: &str) -> bool {
+    db_of(dir)
+        .with(|c| {
+            c.execute(
+                "UPDATE chats SET memory = NULL WHERE id = ?1 AND memory IS NOT NULL",
+                [id],
+            )
+        })
+        .is_ok_and(|n| n > 0)
+}
+
+pub fn bytes_of(dir: &Path, id: &str) -> u64 {
+    db_of(dir)
+        .with(|c| {
+            c.query_row(
+                "SELECT length(messages) + length(refs) + length(title) + coalesce(length(memory), 0) FROM chats WHERE id = ?1",
+                [id],
+                |r| r.get::<_, i64>(0),
+            )
+        })
+        .map_or(0, |n| n.max(0) as u64)
 }
 
 pub fn tidy(dir: &Path, days: Option<u32>, now: DateTime<Utc>) -> usize {
@@ -353,14 +561,74 @@ pub fn tidy(dir: &Path, days: Option<u32>, now: DateTime<Utc>) -> usize {
 }
 
 pub fn remove(dir: &Path, id: &str) -> bool {
-    let gone = path_of(dir, id).is_some_and(|p| std::fs::remove_file(p).is_ok());
-    crate::chat_files::remove_all(dir, id);
-    gone
+    db_of(dir)
+        .with(|c| {
+            let tx = c.transaction()?;
+            let gone = tx.execute("DELETE FROM chats WHERE id = ?1", [id])?;
+            tx.execute("DELETE FROM chats_text WHERE id = ?1", [id])?;
+            tx.execute("DELETE FROM chat_docs WHERE chat = ?1", [id])?;
+            tx.commit()?;
+            Ok(gone > 0)
+        })
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_chat_moves_up_only_when_a_message_is_added() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("chats");
+        let early = chrono::TimeZone::with_ymd_and_hms(&Utc, 2026, 10, 7, 9, 0, 0).unwrap();
+        let later = early + chrono::Duration::hours(3);
+        let one = vec![serde_json::json!({ "role": "user", "text": "hi" })];
+        save(
+            &dir,
+            "chat-order-0001",
+            Saving {
+                title: String::new(),
+                mode: "chat".into(),
+                refs: vec![],
+                messages: one.clone(),
+            },
+            early,
+        )
+        .unwrap();
+        let switched = save(
+            &dir,
+            "chat-order-0001",
+            Saving {
+                title: String::new(),
+                mode: "study".into(),
+                refs: vec![],
+                messages: one.clone(),
+            },
+            later,
+        )
+        .unwrap();
+        assert_eq!(switched.mode, "study");
+        assert_eq!(
+            switched.updated_at, early,
+            "switching style is not activity"
+        );
+        let mut two = one;
+        two.push(serde_json::json!({ "role": "assistant", "text": "hello" }));
+        let answered = save(
+            &dir,
+            "chat-order-0001",
+            Saving {
+                title: String::new(),
+                mode: "study".into(),
+                refs: vec![],
+                messages: two,
+            },
+            later,
+        )
+        .unwrap();
+        assert_eq!(answered.updated_at, later);
+    }
 
     fn said(role: &str, text: &str) -> serde_json::Value {
         serde_json::json!({ "role": role, "text": text })
@@ -656,7 +924,7 @@ mod tests {
         assert_eq!(chat.messages[0]["text"], "m10");
         assert_eq!(chat.title.chars().count(), MOST_TITLE + 1);
         assert!(chat.title.ends_with('…'));
-        std::fs::write(dir.join("broken-chat-1.json"), "{not json").unwrap();
+        assert!(save(&dir, "../outside", saving(vec![]), at(0)).is_err());
         assert_eq!(list(&dir).len(), 1);
     }
 }

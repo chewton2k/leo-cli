@@ -257,7 +257,8 @@
     }
     for (const q of m.quizzes || []) {
       const how = typeof q.given !== 'string' ? 'not answered yet' : q.correct === true ? `answered “${clipped(q.given, 120)}”, right` : q.correct === false ? `answered “${clipped(q.given, 120)}”, wrong` : `answered “${clipped(q.given, 200)}”`;
-      lines.push(`[Practice question (${(QUIZ_KINDS[q.kind] || 'question').toLowerCase()}): ${clipped(q.question, 300)}${(q.options || []).length ? `; choices: ${q.options.join(' | ')}` : ''}; answer: ${clipped(q.answer, 200)}; ${how}]`);
+      const replied = q.reply && q.reply.text ? `; Felix replied: ${clipped(grade(q.reply.text).text, 400)}` : '';
+      lines.push(`[Practice question (${(QUIZ_KINDS[q.kind] || 'question').toLowerCase()}): ${clipped(q.question, 300)}${(q.options || []).length ? `; choices: ${q.options.join(' | ')}` : ''}; answer: ${clipped(q.answer, 200)}; ${how}${replied}]`);
     }
     for (const p of m.proposals || []) {
       const state = p.state === 'applied' ? 'applied' : p.state === 'dismissed' ? 'dismissed by the user' : 'waiting for the user';
@@ -346,7 +347,7 @@
 
   function create({ render, escape, onOpen = () => {}, storage = root.localStorage, prepare = null, notify = () => {}, onSaved = () => {}, onChanged = () => {}, onUndone = () => {}, onToggle = () => {} }) {
     const saved = load(storage);
-    const state = { open: false, id: saved.id || newId(), mode: modeOf(saved.mode), messages: saved.messages, refs: saved.refs, context: null, dropped: null, busy: null, streak: 0, pick: null, chats: null, sidebar: null, doomed: null, asking: null, files: [], sent: [], filesFor: null, review: [], drafts: {} };
+    const state = { open: false, id: saved.id || newId(), mode: modeOf(saved.mode), messages: saved.messages, refs: saved.refs, context: null, dropped: null, busy: null, streak: 0, pick: null, chats: null, sidebar: null, doomed: null, asking: null, files: [], sent: [], filesFor: null, review: [], drafts: {}, found: null };
     const panel = document.createElement('aside');
     panel.className = 'chat';
     panel.id = 'chat';
@@ -355,6 +356,7 @@
     panel.innerHTML = `
       <nav class="chat-history" id="chat-history" aria-label="Your chats">
         <div class="chat-history-head"><button class="icon-btn chat-history-back" data-chat="history" aria-label="Back to the chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button><b>Chats</b><button class="chat-history-new" data-chat="new"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>New chat</button></div>
+        <div class="chat-history-find"><input id="chat-history-search" type="search" placeholder="Search your chats" autocomplete="off" aria-label="Search your chats"></div>
         <div class="chat-history-list" id="chat-history-list"></div>
       </nav>
       <section class="chat-main">
@@ -643,7 +645,7 @@
           if (!response.ok) return;
           const summary = await response.json();
           if (state.chats) {
-            state.chats = [summary, ...state.chats.filter((c) => c.id !== summary.id)];
+            state.chats = [summary, ...state.chats.filter((c) => c.id !== summary.id)].sort((a, b) => (Date.parse(b.updated_at) || 0) - (Date.parse(a.updated_at) || 0));
             drawChats();
           }
           if (!summary.named && summary.count >= 2 && !naming.has(summary.id)) {
@@ -670,11 +672,36 @@
       drawChats();
     }
 
+    let findTimer = 0;
+    let findTurn = 0;
+    async function findChats(query) {
+      const turn = ++findTurn;
+      if (!query.trim()) {
+        state.found = null;
+        drawChats();
+        return;
+      }
+      try {
+        const response = await fetch(`/api/chats?q=${encodeURIComponent(query.trim())}`, { credentials: 'same-origin' });
+        if (!response.ok || turn !== findTurn) return;
+        state.found = await response.json();
+      } catch (e) {
+        state.found = [];
+      }
+      if (turn === findTurn) drawChats();
+    }
+
     function drawChats() {
       const box = $('#chat-history-list');
       if (!box) return;
       if (!state.chats) {
         box.innerHTML = '<div class="chat-history-none">Loading…</div>';
+        return;
+      }
+      if (state.found) {
+        box.innerHTML = state.found.length
+          ? state.found.map((c) => chatRow(c)).join('')
+          : '<div class="chat-history-none">No chat mentions that.</div>';
         return;
       }
       if (!state.chats.length) {
@@ -683,9 +710,13 @@
       }
       box.innerHTML = groups(state.chats)
         .map((g) => `<div class="chat-history-group">${escape(g.name)}</div>${g.chats
-          .map((c) => `<div class="chat-history-row${c.id === state.id ? ' on' : ''}"><button class="chat-history-item" data-chat="resume" data-id="${escape(c.id)}" title="${escape(c.about ? `${c.title}\n${c.about}` : c.title)}"><span class="chat-history-title">${escape(c.title)}</span>${c.about ? `<span class="chat-history-about">${escape(c.about)}</span>` : ''}</button><button class="chat-history-x${state.doomed === c.id ? ' sure' : ''}" data-chat="forget" data-id="${escape(c.id)}" aria-label="${state.doomed === c.id ? 'Confirm delete' : 'Delete'} ${escape(c.title)}">${state.doomed === c.id ? 'Delete' : '×'}</button></div>`)
+          .map((c) => chatRow(c))
           .join('')}`)
         .join('');
+    }
+
+    function chatRow(c) {
+      return `<div class="chat-history-row${c.id === state.id ? ' on' : ''}"><button class="chat-history-item" data-chat="resume" data-id="${escape(c.id)}" title="${escape(c.about ? `${c.title}\n${c.about}` : c.title)}"><span class="chat-history-title">${escape(c.title)}</span>${c.about ? `<span class="chat-history-about">${escape(c.about)}</span>` : ''}</button><button class="chat-history-x${state.doomed === c.id ? ' sure' : ''}" data-chat="forget" data-id="${escape(c.id)}" aria-label="${state.doomed === c.id ? 'Confirm delete' : 'Delete'} ${escape(c.title)}">${state.doomed === c.id ? 'Delete' : '×'}</button></div>`;
     }
 
     function begin() {
@@ -1117,7 +1148,6 @@
       const due = all.filter((m) => m.due);
       const items = (due.length ? due : all).slice(0, 5);
       if (!items.length || state.busy) return;
-      if (state.messages.length || state.mode !== 'study') begin();
       state.mode = 'study';
       const refs = [];
       for (const m of items) for (const r of m.notes || []) if (!refs.some((x) => x.id === r.id) && refs.length < MOST_REFS) refs.push(r);
@@ -1180,13 +1210,15 @@
         ${old}<div class="proposal-new">${escape(p.replace || '')}</div>${done}</div>`;
     }
 
+    const inline = (text) => render(String(text || '')).replace(/^<p>/, '').replace(/<\/p>$/, '');
+
     function askCard(a, i, k, pending) {
       const where = `data-i="${i}" data-k="${k}"`;
       const answered = typeof a.answered === 'string';
       const off = answered || pending ? ' disabled' : '';
-      const options = (a.options || []).map((o, n) => `<button type="button" class="ask-option${answered && a.answered === o ? ' chosen' : ''}" data-chat="ask-pick" ${where} data-o="${n}"${off}>${escape(o)}</button>`).join('');
+      const options = (a.options || []).map((o, n) => `<button type="button" class="ask-option${answered && a.answered === o ? ' chosen' : ''}" data-chat="ask-pick" ${where} data-o="${n}"${off}>${inline(o)}</button>`).join('');
       const hint = answered ? `You answered: ${escape(a.answered)}` : options ? 'Tap one, or type your own answer below.' : 'Type your answer below.';
-      return `<div class="ask-card"><div class="ask-q">${escape(a.question)}</div>${options ? `<div class="ask-options">${options}</div>` : ''}<div class="ask-hint">${hint}</div></div>`;
+      return `<div class="ask-card"><div class="ask-q prose">${inline(a.question)}</div>${options ? `<div class="ask-options">${options}</div>` : ''}<div class="ask-hint">${hint}</div></div>`;
     }
 
     const BLANK = 'QUIZBLANKMARK';
@@ -1194,6 +1226,8 @@
     function quizCard(q, i, k, pending, sources) {
       const where = `data-i="${i}" data-k="${k}"`;
       const done = typeof q.given === 'string';
+      const reply = q.reply && typeof q.reply === 'object' ? q.reply : null;
+      const marking = Boolean(reply && reply.pending);
       const off = done || pending ? ' disabled' : '';
       const asked = cite(q.kind === 'fill_blank'
         ? render(String(q.question || '').replace(/_{3,}/g, BLANK)).split(BLANK).join('<span class="quiz-blank" aria-label="blank"></span>')
@@ -1203,20 +1237,26 @@
       if (q.kind === 'multiple_choice') {
         answer = `<div class="quiz-options">${(q.options || []).map((o, n) => {
           const mark = !done ? '' : plainAnswer(o) === plainAnswer(q.answer) ? ' right' : o === q.given ? ' wrong' : '';
-          return `<button type="button" class="quiz-option${mark}" data-chat="quiz-pick" ${where} data-o="${n}"${off}><span class="quiz-letter">${String.fromCharCode(65 + n)}</span><span>${escape(o)}</span></button>`;
+          return `<button type="button" class="quiz-option${mark}" data-chat="quiz-pick" ${where} data-o="${n}"${off}><span class="quiz-letter">${String.fromCharCode(65 + n)}</span><span>${inline(o)}</span></button>`;
         }).join('')}</div>`;
       } else if (q.kind === 'fill_blank') {
-        answer = `<div class="quiz-row"><input class="quiz-input" ${where} placeholder="The missing words" autocomplete="off" value="${draft}"${off}><button type="button" class="btn primary sm" data-chat="quiz-check" ${where}${off}>Check</button></div>`;
+        answer = `<div class="quiz-row"><input class="quiz-input" ${where} placeholder="The missing words" autocomplete="off" value="${draft}"${off}><button type="button" class="btn primary sm" data-chat="quiz-check" ${where}${off}>Submit</button></div>`;
       } else {
-        answer = `<div class="quiz-row column"><textarea class="quiz-input" ${where} rows="3" placeholder="Your answer, in your own words"${off}>${draft}</textarea><button type="button" class="btn primary sm" data-chat="quiz-check" ${where}${off}>Send to Felix</button></div>`;
+        answer = `<div class="quiz-row column"><textarea class="quiz-input" ${where} rows="3" placeholder="Your answer, in your own words"${off}>${draft}</textarea><button type="button" class="btn primary sm" data-chat="quiz-check" ${where}${off}>Submit</button></div>`;
       }
       const shown = q.kind === 'fill_blank' ? String(q.answer || '').split('|')[0].trim() : q.answer;
       const result = !done ? ''
-        : q.correct === true ? `<div class="quiz-result right">Correct</div>`
-          : q.correct === false ? `<div class="quiz-result wrong">Not quite. The answer: ${escape(shown)}</div>`
-            : '<div class="quiz-result">Sent to Felix to mark.</div>';
-      const why = done && q.correct !== null && q.explain ? `<div class="quiz-explain">${cite(escape(q.explain), sources, escape)}</div>` : '';
-      return `<div class="quiz-card${done ? ' done' : ''}"><div class="quiz-kind">${escape(QUIZ_KINDS[q.kind] || 'Question')}</div><div class="quiz-q prose">${asked}</div>${answer}${result}${why}</div>`;
+        : q.correct === true ? '<div class="quiz-result right">Correct</div>'
+          : q.correct === false ? `<div class="quiz-result wrong">Not quite.${q.kind === 'free_response' ? '' : ` The answer: ${inline(shown)}`}</div>`
+            : marking ? '<div class="quiz-result">Felix is marking your answer…</div>' : '';
+      const why = done && q.correct !== null && q.correct !== undefined && q.explain && !reply ? `<div class="quiz-explain">${cite(inline(q.explain), sources, escape)}</div>` : '';
+      const said = reply
+        ? (grade(reply.text || '').text
+          ? `<div class="quiz-reply prose">${cite(render(grade(reply.text).text), reply.sources || sources, escape)}</div>`
+          : reply.pending ? '<div class="quiz-reply"><span class="typing"><i></i><i></i><i></i></span></div>' : '')
+        : '';
+      const tone = q.correct === true ? ' right' : q.correct === false ? ' wrong' : '';
+      return `<div class="quiz-card${done ? ' done' : ''}${marking ? ' marking' : ''}${tone}"><div class="quiz-kind">${escape(QUIZ_KINDS[q.kind] || 'Question')}</div><div class="quiz-q prose">${asked}</div>${answer}${result}${why}${said}</div>`;
     }
 
     function answerAsk(i, k, given) {
@@ -1243,7 +1283,7 @@
         mood('droop', 1600);
         setTimeout(() => mood('perk', 700), 1650);
       }
-      send(text, { say: quizSay(q, text, correct), quiz: { question: q.question, given: text, correct, kind: q.kind } });
+      send(text, { say: quizSay(q, text, correct), quiz: { question: q.question, given: text, correct, kind: q.kind }, card: q });
     }
 
     async function postSteer(work, m) {
@@ -1282,7 +1322,8 @@
         m.steer = 'read';
         const list = work.thread.messages;
         list.splice(list.indexOf(m), 1);
-        list.splice(list.indexOf(work.answer), 0, m);
+        const at = list.indexOf(work.answer);
+        list.splice(at < 0 ? list.length : at, 0, m);
       }
     }
 
@@ -1484,6 +1525,7 @@
     async function send(text, extra = {}) {
       const question = text.trim();
       if (!question || state.busy) return;
+      const card = extra.card || null;
       if (!extra.quiz) {
         const last = [...state.messages].reverse().find((m) => m.role === 'assistant');
         for (const a of (last && last.asks) || []) if (typeof a.answered !== 'string') a.answered = question;
@@ -1491,11 +1533,13 @@
       closePick();
       const ctx = state.context && state.dropped !== state.context.id ? state.context.id : null;
       const access = state.access;
-      const going = state.files.filter((f) => f.status === 'ready' || f.status === 'reading');
-      const attached = state.refs.slice();
-      state.files = state.files.filter((f) => !going.includes(f));
-      state.refs = [];
-      drawRefs();
+      const going = card ? [] : state.files.filter((f) => f.status === 'ready' || f.status === 'reading');
+      const attached = card ? [] : state.refs.slice();
+      if (!card) {
+        state.files = state.files.filter((f) => !going.includes(f));
+        state.refs = [];
+        drawRefs();
+      }
       const asked = { role: 'user', text: question, refs: attached, docs: [], files: [], cards: going.map(cardOf), ...(extra.say ? { say: extra.say } : {}), ...(extra.quiz ? { quiz: extra.quiz } : {}) };
       const settle = (i, doc) => {
         if (!doc) {
@@ -1510,12 +1554,15 @@
       going.forEach((f, i) => {
         if (f.status === 'ready') settle(i, f);
       });
-      state.messages.push(asked);
       asked.mode = state.mode;
       const answer = { role: 'assistant', text: '', sources: [], pending: true, folder: (state.context && state.context.directory) || '', mode: state.mode };
-      state.messages.push(answer);
-      input.value = '';
-      fit();
+      if (card) card.reply = answer;
+      else {
+        state.messages.push(asked);
+        state.messages.push(answer);
+        input.value = '';
+        fit();
+      }
       const controller = new AbortController();
       const thread = { id: state.id, mode: state.mode, refs: state.refs.slice(), messages: state.messages };
       const work = { abort: () => controller.abort(), thread, answer, waiting: [], answerId: null };
@@ -1534,6 +1581,7 @@
       if (!asked.cards.length) delete asked.cards;
       const files = state.sent.map((f) => f.id);
       const history = state.messages.filter((m) => m !== answer && !m.error && m.steer !== 'waiting').map((m) => ({ role: m.role, text: historyText(m) }));
+      if (card) history.push({ role: 'user', text: historyText(asked) });
       try {
         const response = await fetch('/api/chat', {
           method: 'POST',
@@ -1601,6 +1649,21 @@
       const asking = (answer.asks || []).length || (answer.quizzes || []).length;
       if (!answer.text && !answer.error && !asking) answer.error = 'Stopped.';
       const stopped = answer.error === 'Stopped.';
+      if (card) {
+        const extras = ['quizzes', 'asks', 'proposals'].filter((key) => (answer[key] || []).length);
+        if (extras.length) {
+          const next = { role: 'assistant', text: '', sources: answer.sources, mode: answer.mode, at: answer.at };
+          for (const key of extras) {
+            next[key] = answer[key];
+            delete answer[key];
+          }
+          thread.messages.push(next);
+        }
+        if (card.correct === null || card.correct === undefined) {
+          const verdict = grade(answer.text).verdict;
+          card.correct = verdict === 'correct' ? true : verdict === 'incorrect' ? false : null;
+        }
+      }
       const left = work.waiting.filter((m) => m.steer === 'waiting');
       for (const m of left) thread.messages.splice(thread.messages.indexOf(m), 1);
       for (const m of work.waiting) {
@@ -1615,7 +1678,7 @@
       }
       draw(false);
       remember({ ...thread, messages: thread.messages.slice() });
-      if (thread.id === state.id && !(asked.quiz && asked.quiz.correct !== null)) react(answer);
+      if (thread.id === state.id && !(asked.quiz && asked.quiz.correct !== null && asked.quiz.correct !== undefined)) react(answer);
       awake();
       if (!stopped && left.length && thread.id === state.id) send(left.map((m) => m.text).join('\n\n'));
     }
@@ -1827,6 +1890,11 @@
     }
     panel.addEventListener('input', (e) => {
       if (e.target.id === 'chat-pick-search') openPick('button', e.target.value, 0);
+      if (e.target.id === 'chat-history-search') {
+        clearTimeout(findTimer);
+        const query = e.target.value;
+        findTimer = setTimeout(() => findChats(query), 180);
+      }
     });
     panel.addEventListener('keydown', (e) => {
       if (e.target.id !== 'chat-pick-search') return;
@@ -1855,8 +1923,14 @@
       }
       if (e.key === 'Escape') {
         e.stopPropagation();
-        toggle(false);
+        if (state.busy) state.busy.abort();
+        else toggle(false);
       }
+    });
+    panel.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || !state.busy || e.target === input || e.target.id === 'chat-pick-search') return;
+      e.stopPropagation();
+      state.busy.abort();
     });
 
     return {

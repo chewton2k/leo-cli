@@ -32,11 +32,14 @@ fn a_document_given_to_felix_is_kept_as_text_and_read_with_the_question() {
     assert_eq!(added.status(), StatusCode::CREATED);
     let doc = json_of(added);
     assert_eq!(doc["name"], "slides.pdf");
-    let on_disk: Vec<_> = std::fs::read_dir(state.chats.join("chat-docs-0001.files"))
-        .unwrap()
-        .flatten()
-        .map(|e| std::fs::read_to_string(e.path()).unwrap())
-        .collect();
+    let on_disk: Vec<String> = crate::chat_files::texts(
+        &state.chats,
+        "chat-docs-0001",
+        &[doc["id"].as_str().unwrap().to_string()],
+    )
+    .into_iter()
+    .map(|(_, text)| text)
+    .collect();
     assert_eq!(on_disk.len(), 1);
     assert!(
         !on_disk[0].contains("%PDF"),

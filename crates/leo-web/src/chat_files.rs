@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{bail, Result};
 use chrono::{DateTime, Utc};
@@ -37,30 +37,78 @@ pub struct Held {
     pub last: Option<DateTime<Utc>>,
 }
 
-fn folder(dir: &Path, chat: &str) -> Option<PathBuf> {
-    valid_id(chat).then(|| dir.join(format!("{chat}.files")))
-}
-
 fn valid_doc(id: &str) -> bool {
     id.len() == 32 && id.chars().all(|c| c.is_ascii_hexdigit())
 }
 
-fn read(path: &Path) -> Option<(Stored, u64)> {
-    let text = std::fs::read_to_string(path).ok()?;
-    let bytes = text.len() as u64;
-    Some((serde_json::from_str(&text).ok()?, bytes))
+pub(crate) struct Imported {
+    chat: String,
+    doc: Stored,
 }
 
-fn stored(dir: &Path, chat: &str) -> Vec<(Stored, u64)> {
-    let Some(folder) = folder(dir, chat) else {
-        return Vec::new();
-    };
+pub(crate) fn from_folder(folder: &Path, chat: &str) -> Vec<Imported> {
     let Ok(entries) = std::fs::read_dir(folder) else {
         return Vec::new();
     };
-    let mut out: Vec<(Stored, u64)> = entries.flatten().filter_map(|e| read(&e.path())).collect();
-    out.sort_by(|a, b| a.0.added_at.cmp(&b.0.added_at).then(a.0.id.cmp(&b.0.id)));
-    out
+    entries
+        .flatten()
+        .filter_map(|e| std::fs::read_to_string(e.path()).ok())
+        .filter_map(|text| serde_json::from_str::<Stored>(&text).ok())
+        .filter(|doc| valid_doc(&doc.id) && valid_id(chat))
+        .map(|doc| Imported {
+            chat: chat.to_string(),
+            doc,
+        })
+        .collect()
+}
+
+fn insert(c: &rusqlite::Connection, chat: &str, doc: &Stored) -> rusqlite::Result<usize> {
+    c.execute(
+        "INSERT OR IGNORE INTO chat_docs (id, chat, name, added_at, text) VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![
+            doc.id,
+            chat,
+            doc.name,
+            doc.added_at.to_rfc3339_opts(chrono::SecondsFormat::Micros, true),
+            doc.text
+        ],
+    )
+}
+
+pub(crate) fn insert_all(c: &rusqlite::Connection, docs: &[Imported]) -> rusqlite::Result<()> {
+    for item in docs {
+        insert(c, &item.chat, &item.doc)?;
+    }
+    Ok(())
+}
+
+fn stored(dir: &Path, chat: &str) -> Vec<(Stored, u64)> {
+    if !valid_id(chat) {
+        return Vec::new();
+    }
+    crate::chats::db_of(dir)
+        .with(|c| {
+            let mut found = c.prepare(
+                "SELECT id, name, added_at, text FROM chat_docs WHERE chat = ?1 ORDER BY added_at, id",
+            )?;
+            let rows = found.query_map([chat], |r| {
+                let text: String = r.get(3)?;
+                let name: String = r.get(1)?;
+                let bytes = (text.len() + name.len()) as u64;
+                Ok((
+                    Stored {
+                        id: r.get(0)?,
+                        name,
+                        added_at: DateTime::parse_from_rfc3339(&r.get::<_, String>(2)?)
+                            .map_or_else(|_| Utc::now(), |t| t.with_timezone(&Utc)),
+                        text,
+                    },
+                    bytes,
+                ))
+            })?;
+            rows.collect()
+        })
+        .unwrap_or_default()
 }
 
 fn info((doc, bytes): &(Stored, u64)) -> Doc {
@@ -95,23 +143,21 @@ fn excerpt_of(text: &str) -> String {
 }
 
 pub fn add(dir: &Path, chat: &str, name: &str, text: &str, now: DateTime<Utc>) -> Result<Doc> {
-    let Some(folder) = folder(dir, chat) else {
+    if !valid_id(chat) {
         bail!("that is not a chat");
-    };
+    }
     if stored(dir, chat).len() >= MOST_FILES {
         bail!("a chat holds up to {MOST_FILES} documents; remove one first");
     }
-    std::fs::create_dir_all(&folder)?;
     let doc = Stored {
         id: uuid::Uuid::new_v4().simple().to_string(),
         name: name.chars().take(120).collect(),
         added_at: now,
         text: text.to_string(),
     };
-    let json = serde_json::to_string(&doc)?;
-    let path = folder.join(format!("{}.json", doc.id));
-    std::fs::write(&path, &json)?;
-    Ok(info(&(doc, json.len() as u64)))
+    crate::chats::db_of(dir).with(|c| insert(c, chat, &doc))?;
+    let bytes = (doc.text.len() + doc.name.len()) as u64;
+    Ok(info(&(doc, bytes)))
 }
 
 pub fn list(dir: &Path, chat: &str) -> Vec<Doc> {
@@ -128,34 +174,43 @@ pub fn texts(dir: &Path, chat: &str, ids: &[String]) -> Vec<(String, String)> {
 
 pub fn remove(dir: &Path, chat: &str, doc: &str) -> bool {
     valid_doc(doc)
-        && folder(dir, chat)
-            .is_some_and(|f| std::fs::remove_file(f.join(format!("{doc}.json"))).is_ok())
+        && crate::chats::db_of(dir)
+            .with(|c| {
+                c.execute(
+                    "DELETE FROM chat_docs WHERE id = ?1 AND chat = ?2",
+                    [doc, chat],
+                )
+            })
+            .is_ok_and(|n| n > 0)
 }
 
 pub fn remove_all(dir: &Path, chat: &str) -> bool {
-    folder(dir, chat).is_some_and(|f| f.is_dir() && std::fs::remove_dir_all(f).is_ok())
+    crate::chats::db_of(dir)
+        .with(|c| c.execute("DELETE FROM chat_docs WHERE chat = ?1", [chat]))
+        .is_ok_and(|n| n > 0)
 }
 
 pub fn held(dir: &Path) -> Vec<Held> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let mut out: Vec<Held> = entries
-        .flatten()
-        .filter_map(|e| {
-            let name = e.file_name().to_string_lossy().to_string();
-            let chat = name.strip_suffix(".files")?.to_string();
-            let docs = stored(dir, &chat);
-            Some(Held {
-                docs: docs.len(),
-                bytes: docs.iter().map(|(_, b)| b).sum(),
-                last: docs.iter().map(|(d, _)| d.added_at).max(),
-                chat,
-            })
+    crate::chats::db_of(dir)
+        .with(|c| {
+            let mut found = c.prepare(
+                "SELECT chat, COUNT(*), SUM(length(text) + length(name)), MAX(added_at)
+                 FROM chat_docs GROUP BY chat ORDER BY SUM(length(text) + length(name)) DESC, chat",
+            )?;
+            let rows = found.query_map([], |r| {
+                Ok(Held {
+                    chat: r.get(0)?,
+                    docs: r.get::<_, i64>(1)? as usize,
+                    bytes: r.get::<_, i64>(2)?.max(0) as u64,
+                    last: r
+                        .get::<_, Option<String>>(3)?
+                        .and_then(|t| DateTime::parse_from_rfc3339(&t).ok())
+                        .map(|t| t.with_timezone(&Utc)),
+                })
+            })?;
+            rows.collect()
         })
-        .collect();
-    out.sort_by(|a, b| b.bytes.cmp(&a.bytes).then(a.chat.cmp(&b.chat)));
-    out
+        .unwrap_or_default()
 }
 
 pub fn tidy_orphans(dir: &Path, now: DateTime<Utc>) -> usize {
@@ -163,7 +218,7 @@ pub fn tidy_orphans(dir: &Path, now: DateTime<Utc>) -> usize {
     held(dir)
         .iter()
         .filter(|h| {
-            !dir.join(format!("{}.json", h.chat)).exists()
+            crate::chats::load(dir, &h.chat).is_none()
                 && h.last.is_none_or(|last| last < cutoff)
                 && remove_all(dir, &h.chat)
         })
@@ -266,7 +321,13 @@ mod tests {
         let dir = tmp.path();
         add(dir, "chat-lost-0001", "a.txt", "x", at(1)).unwrap();
         add(dir, "chat-kept-0002", "b.txt", "x", at(1)).unwrap();
-        std::fs::write(dir.join("chat-kept-0002.json"), "{}").unwrap();
+        crate::chats::save(
+            dir,
+            "chat-kept-0002",
+            serde_json::from_value(serde_json::json!({ "mode": "chat", "messages": [] })).unwrap(),
+            at(1),
+        )
+        .unwrap();
         assert_eq!(tidy_orphans(dir, at(12)), 0, "not a day old yet");
         let tomorrow = at(1) + chrono::Duration::hours(25);
         assert_eq!(tidy_orphans(dir, tomorrow), 1);

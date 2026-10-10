@@ -367,26 +367,40 @@ pub fn write_choice(doc: &mut DocumentMut, task: Task, provider: &str) {
     edit::write_chain(doc, task, &[provider.to_string()]);
 }
 
+pub const DEFAULT_EFFORT: &str = "medium";
+
 pub fn efforts(provider: &str, model: &str) -> &'static [&'static str] {
     let model = model.to_ascii_lowercase();
     match provider {
-        "claude_code" => &["low", "medium", "high", "xhigh", "max"],
-        "codex" => &["low", "medium", "high", "xhigh"],
+        "claude_code" | "codex" => &["low", "medium", "high", "xhigh"],
+        "anthropic"
+            if model.starts_with("claude-") && !model.contains("-4-5") && !model.contains("-3") =>
+        {
+            &["low", "medium", "high", "xhigh"]
+        }
         "openai"
             if model.starts_with("gpt-5")
                 || model.starts_with("gpt-6")
                 || model.starts_with('o') =>
         {
-            &["minimal", "low", "medium", "high"]
+            &["low", "medium", "high"]
         }
         "gemini" => &["low", "medium", "high"],
-        "anthropic"
-            if model.starts_with("claude-") && !model.contains("-4-5") && !model.contains("-3") =>
-        {
-            &["low", "medium", "high", "xhigh", "max"]
-        }
         _ => &[],
     }
+}
+
+pub fn effort_for(provider: &str, model: &str, configured: Option<&str>) -> Option<String> {
+    let levels = efforts(provider, model);
+    if levels.is_empty() {
+        return None;
+    }
+    let chosen = configured.map(|e| e.trim().to_lowercase());
+    Some(
+        chosen
+            .filter(|e| levels.contains(&e.as_str()))
+            .unwrap_or_else(|| DEFAULT_EFFORT.to_string()),
+    )
 }
 
 pub fn step_effort(
@@ -399,10 +413,11 @@ pub fn step_effort(
     if levels.is_empty() {
         return None;
     }
-    let ring: Vec<Option<&'static str>> = std::iter::once(None)
-        .chain(levels.iter().map(|l| Some(*l)))
-        .collect();
-    let at = ring.iter().position(|l| *l == current).unwrap_or(0) as isize;
+    let ring: Vec<Option<&'static str>> = levels.iter().map(|l| Some(*l)).collect();
+    let current = current
+        .filter(|c| levels.contains(c))
+        .unwrap_or(DEFAULT_EFFORT);
+    let at = ring.iter().position(|l| *l == Some(current)).unwrap_or(0) as isize;
     let next = (at + delta).rem_euclid(ring.len() as isize) as usize;
     Some(ring[next])
 }
@@ -462,24 +477,39 @@ mod tests {
     use crate::config::secret::MemoryStore;
 
     #[test]
-    fn effort_levels_follow_the_program_and_model_and_default_is_one_of_them() {
+    fn effort_levels_follow_the_program_and_model_and_unset_means_medium() {
         assert_eq!(
             efforts("claude_code", "claude-sonnet-5-5"),
-            ["low", "medium", "high", "xhigh", "max"]
+            ["low", "medium", "high", "xhigh"]
         );
-        assert_eq!(
-            efforts("openai", "gpt-6-luna"),
-            ["minimal", "low", "medium", "high"]
-        );
+        assert_eq!(efforts("openai", "gpt-6-luna"), ["low", "medium", "high"]);
         assert!(efforts("openai", "gpt-4.1").is_empty());
         assert!(efforts("ollama", "qwen3:8b").is_empty());
-        assert_eq!(step_effort("codex", "", None, 1), Some(Some("low")));
+        assert_eq!(effort_for("codex", "", None).as_deref(), Some("medium"));
+        assert_eq!(
+            effort_for("codex", "", Some(" XHigh ")).as_deref(),
+            Some("xhigh")
+        );
+        assert_eq!(
+            effort_for("codex", "", Some("max")).as_deref(),
+            Some("medium"),
+            "a level it does not offer means medium"
+        );
+        assert_eq!(effort_for("ollama", "qwen3:8b", Some("high")), None);
+        assert_eq!(
+            step_effort("codex", "", None, 1),
+            Some(Some("high")),
+            "unset counts as medium"
+        );
         assert_eq!(
             step_effort("codex", "", Some("xhigh"), 1),
-            Some(None),
-            "past the last comes back to default"
+            Some(Some("low")),
+            "past the last comes back to low"
         );
-        assert_eq!(step_effort("codex", "", None, -1), Some(Some("xhigh")));
+        assert_eq!(
+            step_effort("codex", "", Some("low"), -1),
+            Some(Some("xhigh"))
+        );
         assert_eq!(step_effort("ollama", "", None, 1), None);
         let mut doc: DocumentMut = "".parse().unwrap();
         write_effort(&mut doc, "codex", Some("high"));

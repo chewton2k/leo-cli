@@ -175,11 +175,14 @@ impl AgentCli {
                 .filter(|b| !b.trim().is_empty())
                 .unwrap_or_else(|| agent.program().to_string()),
             model: cfg.model.clone().filter(|m| !m.trim().is_empty()),
-            effort: cfg
-                .effort
-                .clone()
-                .map(|e| e.trim().to_lowercase())
-                .filter(|e| !e.is_empty() && e.chars().all(|c| c.is_ascii_alphanumeric())),
+            effort: crate::config::choice::effort_for(
+                match agent {
+                    Agent::Codex => "codex",
+                    Agent::ClaudeCode => "claude_code",
+                },
+                cfg.model.as_deref().unwrap_or(""),
+                cfg.effort.as_deref(),
+            ),
             quiet_limit: QUIET_LIMIT,
             total_limit: TOTAL_LIMIT,
             spent: Mutex::new(None),
@@ -1322,7 +1325,7 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"x
     }
 
     #[test]
-    fn an_effort_setting_reaches_both_programs_and_odd_values_are_dropped() {
+    fn an_effort_setting_reaches_both_programs_and_odd_values_mean_medium() {
         let req = ChatRequest {
             system: None,
             prompt: "p".into(),
@@ -1348,6 +1351,9 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"x
         cfg.effort = Some("high\"; rm".into());
         let (args, _) =
             AgentCli::new("codex".into(), Agent::Codex, &cfg).arguments(&req, &[], &[], &[]);
-        assert!(!args.iter().any(|a| a.contains("model_reasoning_effort")));
+        assert!(args
+            .windows(2)
+            .any(|w| w == ["-c", "model_reasoning_effort=\"medium\""]));
+        assert!(!args.iter().any(|a| a.contains("rm")));
     }
 }
