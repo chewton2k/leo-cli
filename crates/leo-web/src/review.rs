@@ -83,20 +83,21 @@ fn role_of(message: &serde_json::Value) -> &str {
     message.get("role").and_then(|r| r.as_str()).unwrap_or("")
 }
 
+pub const VERDICT_WITHIN: usize = 240;
+
 fn verdict_off(text: &str) -> Option<(&str, &str)> {
-    let rest = text.trim_start();
-    for verdict in ["[[correct]]", "[[incorrect]]"] {
-        if rest
-            .get(..verdict.len())
-            .is_some_and(|head| head.eq_ignore_ascii_case(verdict))
-        {
-            return Some((
+    let lower = text.to_ascii_lowercase();
+    ["[[correct]]", "[[incorrect]]"]
+        .iter()
+        .filter_map(|verdict| lower.find(verdict).map(|at| (at, *verdict)))
+        .filter(|(at, _)| *at <= VERDICT_WITHIN)
+        .min_by_key(|(at, _)| *at)
+        .map(|(at, verdict)| {
+            (
                 &verdict[2..verdict.len() - 2],
-                rest[verdict.len()..].trim_start(),
-            ));
-        }
-    }
-    None
+                text[at + verdict.len()..].trim_start(),
+            )
+        })
 }
 
 fn plain(text: &str) -> String {
@@ -455,6 +456,18 @@ mod tests {
         let questions: Vec<&str> = found.iter().map(|m| m.question.as_str()).collect();
         assert_eq!(questions, ["What does BFS use?", "Why a queue?"]);
         assert_eq!(found[0].answer, "a stack");
+    }
+
+    #[test]
+    fn a_verdict_after_a_short_lead_in_counts() {
+        assert_eq!(
+            verdict_off("I'll mark this. [[incorrect]] It uses a queue."),
+            Some(("incorrect", "It uses a queue."))
+        );
+        assert_eq!(
+            verdict_off(&format!("{}[[correct]]", "x".repeat(500))),
+            None
+        );
     }
 
     #[test]

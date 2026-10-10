@@ -633,13 +633,17 @@ fn native_answer(
     let mut failure: Option<anyhow::Error> = None;
     let mut message = conversation.to_string();
     let mut nudged = !access.changes() || !tools::wants_change(wanted);
+    let gap = std::cell::Cell::new(false);
     loop {
         let reply = {
             let mut piece = |t: &str| {
+                if gap.replace(false) && shown.get() {
+                    send(serde_json::json!({ "t": "\n\n" }));
+                }
                 shown.set(true);
                 send(serde_json::json!({ "t": t }));
             };
-            let mut restart = || send(serde_json::json!({ "restart": true }));
+            let mut restart = || gap.set(true);
             let mut call = |name: &str, args: &serde_json::Value| -> String {
                 calls += 1;
                 if calls > tools::MOST_STEPS {
@@ -702,6 +706,14 @@ fn text_answer(
     let mut unstuck = false;
     let mut spent: Option<chat::Spent> = None;
     let mut message = conversation.to_string();
+    let gap = std::cell::Cell::new(false);
+    let shown_once = |t: &str| {
+        if gap.replace(false) && shown.get() {
+            send(serde_json::json!({ "t": "\n\n" }));
+        }
+        shown.set(true);
+        send(serde_json::json!({ "t": t }))
+    };
     for step in 0..=tools::MOST_STEPS {
         let last = step == tools::MOST_STEPS || desk.asked > 0;
         let gate = std::cell::RefCell::new(tools::Gate::default());
@@ -716,12 +728,7 @@ fn text_answer(
                 last,
                 max_tokens: chat::REPLY_TOKENS,
                 most_calls: 0,
-                piece: &mut |piece| {
-                    gate.borrow_mut().push(piece, &mut |t| {
-                        shown.set(true);
-                        send(serde_json::json!({ "t": t }))
-                    })
-                },
+                piece: &mut |piece| gate.borrow_mut().push(piece, &mut |t| shown_once(t)),
                 restart: &mut || {
                     gate.borrow_mut().reset();
                     send(serde_json::json!({ "restart": true }));
@@ -751,10 +758,7 @@ fn text_answer(
                 continue;
             }
             None => {
-                gate.finish(&mut |t| {
-                    shown.set(true);
-                    send(serde_json::json!({ "t": t }))
-                });
+                gate.finish(&mut |t| shown_once(t));
                 return Ok(spent);
             }
             Some(Ok(call)) => call,
@@ -764,7 +768,7 @@ fn text_answer(
             },
         };
         if gate.shown {
-            send(serde_json::json!({ "restart": true }));
+            gap.set(true);
         }
         let done = run_tool(state, desk, access, &call, send)?;
         message = tools::result_message(&call.name, &done.result);
@@ -894,7 +898,11 @@ pub(crate) async fn chat_reply(
         return StatusCode::BAD_REQUEST.into_response();
     }
     let mode = chat::mode_of(body.mode.as_deref());
-    let access = tools::Access::named(body.access.as_deref().unwrap_or(""));
+    let access = if body.practice {
+        tools::Access::Read
+    } else {
+        tools::Access::named(body.access.as_deref().unwrap_or(""))
+    };
     let question = chat::question_of(&body.messages);
     let graphs = Arc::clone(&state.graphs);
     let note = body.note.clone();
@@ -970,11 +978,14 @@ pub(crate) async fn chat_reply(
             );
         }
     }
-    let wanted = body
-        .messages
-        .last()
-        .map(|t| t.text.clone())
-        .unwrap_or_default();
+    let wanted = if body.practice {
+        String::new()
+    } else {
+        body.messages
+            .last()
+            .map(|t| t.text.clone())
+            .unwrap_or_default()
+    };
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     let steer = state.steering.open();
     let _ = tx.send(ndjson(serde_json::json!({ "answer": steer.id() })));

@@ -74,11 +74,15 @@
     return { events, rest };
   }
 
+  const VERDICT_WITHIN = 240;
+
   function grade(text) {
-    const match = /^\s*\[\[(correct|incorrect)\]\]\s*/i.exec(text);
-    if (match) return { verdict: match[1].toLowerCase(), text: text.slice(match[0].length) };
-    if (/^\s*\[\[?[a-z]*\]?$/i.test(text) && text.trim()) return { verdict: null, text: '' };
-    return { verdict: null, text };
+    const value = String(text || '');
+    const match = /\[\[(correct|incorrect)\]\]\s*/i.exec(value);
+    if (match && match.index <= VERDICT_WITHIN) return { verdict: match[1].toLowerCase(), text: value.slice(match.index + match[0].length) };
+    const head = value.slice(0, VERDICT_WITHIN + 16);
+    if (/\[\[?[a-z]*\]?$/i.test(head.trimEnd()) && head.length < VERDICT_WITHIN + 16) return { verdict: null, text: value.slice(0, value.search(/\[\[?[a-z]*\]?$/i)) };
+    return { verdict: null, text: value };
   }
 
   const QUIZ_KINDS = { multiple_choice: 'Multiple choice', fill_blank: 'Fill in the blank', free_response: 'Free response' };
@@ -98,10 +102,11 @@
   }
 
   function quizSay(quiz, given, correct) {
+    const next = 'If we are practising, ask the next question with the quiz tool so it appears as a card; never ask a practice question in plain text.';
     const lines = [`Quiz answer. Question: ${quiz.question}`, `My answer: ${given}`];
-    if (correct === null) lines.push(`Mark it: start your reply with [[correct]] or [[incorrect]], then say in a few sentences what was right and what was missing. A model answer to compare with: ${quiz.answer}`);
-    else if (correct) lines.push('leo checked it: right. Start your reply with [[correct]], add one line on why it is right, then give the next question if we are practising.');
-    else lines.push(`leo checked it: wrong; the right answer is ${accepted(quiz)[0] || quiz.answer}. Start your reply with [[incorrect]], explain briefly why mine is wrong and the right one is right, then go on.`);
+    if (correct === null) lines.push(`Mark it: start your reply with [[correct]] or [[incorrect]], then say in a few sentences what was right and what was missing. A model answer to compare with: ${quiz.answer}. ${next}`);
+    else if (correct) lines.push(`leo checked it: right. Start your reply with [[correct]] and add one line on why it is right. ${next}`);
+    else lines.push(`leo checked it: wrong; the right answer is ${accepted(quiz)[0] || quiz.answer}. Start your reply with [[incorrect]] and explain briefly why mine is wrong and the right one is right. ${next}`);
     return lines.join('\n');
   }
 
@@ -1587,7 +1592,7 @@
           method: 'POST',
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: history, mode: thread.mode, note: ctx, refs: threadRefs(thread.messages).map((r) => r.id), recent: recentNotes(thread.messages.filter((m) => m !== answer)), chat: thread.id, files, access }),
+          body: JSON.stringify({ messages: history, mode: thread.mode, note: ctx, refs: threadRefs(thread.messages).map((r) => r.id), recent: recentNotes(thread.messages.filter((m) => m !== answer)), chat: thread.id, files, access, practice: Boolean(card) }),
           signal: controller.signal,
         });
         if (response.status === 401) throw new Error('This page needs its link again. Open the link leo serve printed.');

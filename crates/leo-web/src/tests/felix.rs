@@ -58,6 +58,7 @@ fn a_document_given_to_felix_is_kept_as_text_and_read_with_the_question() {
         files: vec![doc["id"].as_str().unwrap().to_string()],
         access: None,
         recent: vec![],
+        practice: false,
     };
     run(async {
         let response = chat_reply(State(state.clone()), Json(body)).await;
@@ -137,6 +138,7 @@ fn a_chat_reply_streams_its_sources_then_the_answer() {
         files: vec![],
         access: None,
         recent: vec![],
+        practice: false,
     };
     let text = run(async {
         let response = chat_reply(State(state.clone()), Json(body)).await;
@@ -180,6 +182,7 @@ fn a_chat_without_ai_or_a_question_is_refused() {
         files: vec![],
         access: None,
         recent: vec![],
+        practice: false,
     };
     let status = run(async {
         chat_reply(State(state.clone()), Json(ask("hi")))
@@ -236,6 +239,7 @@ fn chat_lines_with(
         files: vec![],
         access: access.map(str::to_string),
         recent: vec![],
+        practice: false,
     };
     let text = run(async {
         let response = chat_reply(State(state.clone()), Json(body)).await;
@@ -305,23 +309,12 @@ fn felix_searches_opens_and_suggests_a_change_with_tools_then_answers() {
         !shown.contains("<tool"),
         "a tool call never reaches the page: {shown}"
     );
-    let last_restart = lines
-        .iter()
-        .rposition(|l| l.get("restart").is_some())
-        .unwrap();
-    let before: String = lines[..last_restart]
-        .iter()
-        .filter_map(|l| l["t"].as_str())
-        .collect();
-    assert_eq!(
-        before, "Let me check it.\n",
-        "words before a tool call are shown, then taken back"
+    assert!(
+        lines.iter().all(|l| l.get("restart").is_none()),
+        "words before a tool call are kept, not taken back"
     );
-    let after: String = lines[last_restart..]
-        .iter()
-        .filter_map(|l| l["t"].as_str())
-        .collect();
-    assert_eq!(after, "Your note says BFS takes the newest vertex [n1], but a queue gives the oldest; I suggested a fix.");
+    let shown: String = lines.iter().filter_map(|l| l["t"].as_str()).collect();
+    assert_eq!(shown, "Let me check it.\n\n\nYour note says BFS takes the newest vertex [n1], but a queue gives the oldest; I suggested a fix.");
     assert_eq!(lines.last().unwrap()["done"], true);
     let prompts = prompts.lock().unwrap();
     assert_eq!(prompts.len(), 3);
@@ -1046,6 +1039,7 @@ fn a_long_chat_is_remembered_in_a_summary_instead_of_forgotten() {
             files: vec![],
             access: None,
             recent: vec![],
+            practice: false,
         };
         run(async {
             let response = chat_reply(State(state.clone()), Json(body)).await;
@@ -1171,4 +1165,49 @@ fn felix_works_numbers_out_with_the_calculator_instead_of_guessing() {
     assert!(prompts[0].contains("\"start with question 1\" means do question 1"));
     assert!(prompts[1].contains("x = -7.4727"), "{}", prompts[1]);
     assert!(prompts[1].contains("f(1.381966) = 2.66067"));
+}
+
+#[test]
+fn a_practice_answer_is_marked_once_and_never_nudged_into_changing_a_note() {
+    let (mut state, _d, _) = state_with(&[]);
+    let (streamer, prompts) = scripted(vec![
+        "[[incorrect]] Not quite: compare both ends.",
+        "unused",
+    ]);
+    state.chat = Some(streamer);
+    let body = chat::ChatBody {
+        messages: vec![chat::Turn {
+            role: "user".into(),
+            text: "Quiz answer. Question: why f'(x)=0?\nMy answer: dunno\nMark it: start your reply with [[correct]] or [[incorrect]]".into(),
+        }],
+        mode: Some("study".into()),
+        note: None,
+        refs: vec![],
+        chat: None,
+        files: vec![],
+        access: None,
+        recent: vec![],
+        practice: true,
+    };
+    let text = run(async {
+        let response = chat_reply(State(state.clone()), Json(body)).await;
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        String::from_utf8(bytes.to_vec()).unwrap()
+    });
+    assert!(
+        !text.contains("restart"),
+        "the marking is never taken back: {text}"
+    );
+    assert_eq!(
+        prompts.lock().unwrap().len(),
+        1,
+        "no second try asking for a note change"
+    );
+    assert!(!prompts.lock().unwrap()[0].contains(tools::PLAN));
+    assert!(
+        !prompts.lock().unwrap()[0].contains("### edit_note"),
+        "marking an answer is read only, so the note-fixing reminder never comes up"
+    );
 }

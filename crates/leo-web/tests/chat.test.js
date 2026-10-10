@@ -297,3 +297,10 @@ test('notes Felix opened, not only the ones he cited, come along after a switch'
   const messages = [{ role: 'assistant', text: 'No citation here.', sources: [{ n: 1, id: 'opened-1', title: 'A', why: 'opened by Felix' }, { n: 2, id: 'found-1', title: 'B', why: 'found by searching for "x"' }] }];
   assert.deepEqual(C.recentNotes(messages), ['opened-1']);
 });
+
+test('a verdict after a short lead-in still counts, and the lead-in is dropped', () => {
+  assert.deepEqual(C.grade("I'll mark this answer and give you the next card. [[incorrect]] It uses a queue."), { verdict: 'incorrect', text: 'It uses a queue.' });
+  assert.deepEqual(C.grade("I'll mark this [[inc"), { verdict: null, text: "I'll mark this " }, 'a marker still arriving after a lead-in stays hidden');
+  const late = `${'word '.repeat(80)}[[correct]] later`;
+  assert.equal(C.grade(late).verdict, null, 'a marker deep inside an answer is not a verdict');
+});

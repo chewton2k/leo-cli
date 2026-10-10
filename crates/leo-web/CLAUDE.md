@@ -666,3 +666,19 @@
 - Effort has no "Default": `choice::effort_for` gives the chosen level if the
   AI offers it, else medium, and every provider uses it; the levels are low,
   medium, high and xhigh where the AI supports them.
+- Marking a practice answer: the page sends `practice: true`; the server then
+  runs that turn read only, with no edit NUDGE or PLAN, so Felix never
+  replaces his marking with "No note needs changing". Study and `quizSay`
+  ask for the next practice question as a quiz card, never plain text, and the
+  verdict marker must come first; `grade` / `verdict_off` still accept it after
+  a short lead-in (`VERDICT_WITHIN` 240 chars) and drop the lead-in.
+- Text written before a tool call is kept: native sessions and the text
+  protocol now treat a tool call as a paragraph break (`gap`), not a
+  `restart`. Restarts remain only for leo's own retries (NUDGE, UNSTUCK) and a
+  provider failing over mid-answer. This is what made a marking flash and
+  vanish when the model wrote it and then called `quiz` for the next card.
+- Measured with real agents (Codex gpt-6-sol and Claude Code opus-5-5) on the
+  practice tree (start, then wrong/right/right/wrong and right/wrong/wrong/right):
+  every round kept its reply, carried the right verdict and gave the next
+  card. Claude Code sometimes fails to parse its own tool call
+  ("could not be parsed (retry also failed)"); leo falls back and recovers.

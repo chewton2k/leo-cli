@@ -2621,8 +2621,11 @@ test.describe('Felix asks, quizzes and listens while he works', () => {
     await expect(card.locator('.quiz-reply')).not.toContainText('[[incorrect]]');
     await expect(chat.locator('.msg.user'), 'no message pretends to be the user').toHaveCount(1);
     await expect(chat.locator('.msg.leo')).toHaveCount(1);
+    expect(asked[0].practice).toBe(false);
+    expect(asked[1].practice, 'a card answer is marked as practice, so it is never nudged into a note change').toBe(true);
     const told = asked[1].messages.at(-1).text;
     expect(told).toContain('Question: What does BFS use?');
+    expect(told).toContain('with the quiz tool');
     expect(told).toContain('My answer: a stack');
     expect(told).toContain('the right answer is a queue');
     await page.reload();

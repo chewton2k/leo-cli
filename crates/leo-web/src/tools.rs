@@ -320,7 +320,7 @@ pub fn is_interaction(name: &str) -> bool {
     matches!(name, "ask_user" | "quiz")
 }
 
-pub const ASKED: &str = "Asked. The user sees it now and answers in their next message. End your reply here with one short sentence; do not answer it for them and do not call more tools.";
+pub const ASKED: &str = "Asked. It appears as a card just below your reply, and the user answers in it. End your reply here with one short sentence; do not answer it for them and do not call more tools.";
 
 pub const ALREADY_ASKED: &str = "That did not work: you already asked the user something in this reply. End your reply now with one short sentence and wait for their answer.";
 
