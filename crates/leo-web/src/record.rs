@@ -70,18 +70,8 @@ pub enum Heard {
     Warning(String),
 }
 
-pub type Commit = Arc<dyn Fn(&std::path::Path, &str) -> Result<()> + Send + Sync>;
-
-#[derive(Default)]
-pub struct Recorded {
-    pub title: String,
-    pub body: String,
-    pub source: Option<leo_core::recording::Archive>,
-    pub commit: Option<Commit>,
-}
-
 pub type Listener =
-    Arc<dyn Fn(Listening, &mut dyn FnMut(Heard)) -> Result<Recorded> + Send + Sync>;
+    Arc<dyn Fn(Listening, &mut dyn FnMut(Heard)) -> Result<(String, String)> + Send + Sync>;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RecordView {
@@ -363,7 +353,7 @@ fn run(
             }
         })
     });
-    let recorded = match written {
+    let (made_title, body) = match written {
         Ok(found) => found,
         Err(e) => {
             change(&recordings, &id, |job| {
@@ -379,38 +369,21 @@ fn run(
         job.view.state = "writing";
         job.view.step = "Saving the note".into();
     });
-    let title = title.unwrap_or(recorded.title);
-    let body = recorded.body;
-    let source = recorded.source;
-    let commit = recorded.commit;
+    let title = title.unwrap_or(made_title);
     let made = store_now(&state, move |store| {
         if !directory.is_empty() && !store.dir_exists(&directory) {
             store.create_dir(&directory);
         }
-        let stable_id = source.as_ref().map(|s| s.id.clone());
-        if let Some(id) = &stable_id {
-            if store.find_note(id).is_some() { return Ok((id.clone(), store.notes_dir.clone())); }
-        }
-        let mut note = store
+        let note = store
             .create_note(title, body.trim().to_string(), vec![], &directory)
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
             .id
             .clone();
-        if let Some(id) = stable_id {
-            store.find_note_mut(&note).expect("created note").id = id.clone();
-            note = id;
-        }
-        if let Some(source) = &source {
-            leo_core::recording::save(&store.notes_dir, &note, source).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        }
         save(store)?;
         Ok((note, store.notes_dir.clone()))
     });
     change(&recordings, &id, |job| match made {
-        Ok((note, notes)) => {
-            if let Some(commit) = &commit {
-                if let Err(e) = commit(&notes, &note) { job.view.warnings.push(format!("The note is saved; recovery cleanup will retry: {e}")); }
-            }
+        Ok((note, _)) => {
             job.view.state = "done";
             job.view.note = Some(note);
         }

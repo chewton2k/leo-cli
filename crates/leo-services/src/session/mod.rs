@@ -30,10 +30,6 @@ pub struct Point {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Manifest {
-    #[serde(default)]
-    pub id: String,
-    #[serde(default)]
-    pub profile: leo_core::workflows::Profile,
     pub started: DateTime<Utc>,
     #[serde(default)]
     pub title: Option<String>,
@@ -60,8 +56,6 @@ impl Manifest {
         screen: bool,
     ) -> Manifest {
         Manifest {
-            id: uuid::Uuid::new_v4().to_string(),
-            profile: Default::default(),
             started: Utc::now(),
             title,
             append_to,
@@ -261,12 +255,8 @@ impl Session {
     pub fn open(dir: &Path) -> Result<Session> {
         let text = std::fs::read_to_string(dir.join("session.json"))
             .with_context(|| format!("no recording in {}", dir.display()))?;
-        let mut manifest: Manifest = serde_json::from_str(&text)
+        let manifest = serde_json::from_str(&text)
             .with_context(|| format!("unreadable recording in {}", dir.display()))?;
-        if manifest.id.is_empty() {
-            manifest.id = uuid::Uuid::new_v4().to_string();
-            write_atomic(&dir.join("session.json"), &serde_json::to_string_pretty(&manifest)?)?;
-        }
         Ok(Session {
             dir: dir.to_path_buf(),
             manifest,
@@ -396,41 +386,6 @@ impl Session {
             std::fs::remove_dir_all(&self.dir)
                 .with_context(|| format!("could not remove {}", self.dir.display()))
         }
-    }
-
-    pub fn archive(&self) -> leo_core::recording::Archive {
-        let assembled = self.assemble();
-        leo_core::recording::Archive {
-            id: self.manifest.id.clone(),
-            started: self.manifest.started,
-            passages: assembled.parts.iter().map(|p| leo_core::recording::Passage {
-                start_secs: p.start_secs, end_secs: p.end_secs, text: p.text.clone(),
-                speaker: if self.manifest.screen { "Computer audio" } else { "Microphone" }.into(),
-            }).collect(),
-            points: self.manifest.points.iter().map(|p| leo_core::recording::Point { at_secs: p.at_secs, text: p.text.clone() }).collect(),
-            template: self.manifest.profile.template.clone(),
-            context: self.manifest.profile.context.clone(),
-            warnings: assembled.failed.iter().map(|(a,b)| format!("{}–{} could not be transcribed; audio is kept for retry", clock(*a), clock(*b))).collect(),
-            trace: self.traces(),
-        }
-    }
-
-    pub fn trace(&self, stage: &str, detail: &str) {
-        use std::io::Write;
-        let row = leo_core::recording::Trace { at: Utc::now(), stage: stage.into(), detail: detail.into() };
-        if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(self.dir.join("trace.jsonl")) {
-            if let Ok(text) = serde_json::to_string(&row) { let _ = writeln!(file, "{text}"); }
-        }
-    }
-
-    pub fn traces(&self) -> Vec<leo_core::recording::Trace> {
-        std::fs::read_to_string(self.dir.join("trace.jsonl")).unwrap_or_default().lines().filter_map(|l| serde_json::from_str(l).ok()).collect()
-    }
-
-    pub fn commit(self, notes: &Path, note: &str) -> Result<()> {
-        self.trace("saved", &format!("Note {note} saved"));
-        leo_core::recording::save(notes, note, &self.archive())?;
-        self.finish()
     }
 }
 

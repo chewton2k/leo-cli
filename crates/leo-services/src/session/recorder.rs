@@ -371,12 +371,7 @@ pub fn record(request: Request, controls: &Controls, emit: &dyn Fn(Event)) {
     } = request;
     let fed = matches!(input, Input::Fed(_));
     let started = session::root().and_then(|root| {
-        let mut manifest = Manifest::new(title, append_to, &dir, screen);
-        if let Ok(notes) = leo_core::paths::data_dir().map(|p| p.join("notes")) {
-            if let Ok(workflows) = leo_core::workflows::Workflows::load(&notes) { manifest.profile = workflows.profile(&dir); }
-        }
-        let session = Session::create(&root, manifest)?;
-        session.trace("capture", "Recording started");
+        let session = Session::create(&root, Manifest::new(title, append_to, &dir, screen))?;
         let lock = session.lock()?;
         let opened = match input {
             Input::Device(source) => {
@@ -492,7 +487,6 @@ pub fn record(request: Request, controls: &Controls, emit: &dyn Fn(Event)) {
     finish(session, transcriber, &updates, &mut state, emit, silent);
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Written {
     pub title: String,
     pub body: String,
@@ -505,12 +499,6 @@ pub fn write_up(
     progress: &(dyn Fn(usize, usize) + Sync),
 ) -> anyhow::Result<Written> {
     let session = Session::open(dir)?;
-    let cached = dir.join("prepared.json");
-    if existing.is_none() && cached.exists() {
-        return Ok(serde_json::from_slice(&std::fs::read(cached)?)?);
-    }
-    session.trace("generation", "Writing notes from transcript and typed points");
-    let workflows = leo_core::paths::data_dir().map(|p| p.join("notes")).ok().and_then(|notes| leo_core::workflows::Workflows::load(&notes).ok()).unwrap_or_default();
     let assembled = session.assemble();
     let points = session.manifest.jotted();
     let fallback = session
@@ -524,7 +512,7 @@ pub fn write_up(
         &points,
         existing,
         &fallback,
-        &|prompt, max| crate::ai::chat_outcome(crate::ai::long::with_profile(prompt, &session.manifest.profile, &workflows), max).map(|o| o.value),
+        &|prompt, max| crate::ai::chat_outcome(prompt, max).map(|o| o.value),
         progress,
         crate::ai::writing_budget(),
     );
@@ -534,12 +522,10 @@ pub fn write_up(
     } else {
         format!("{notice}\n\n{}", structured.body)
     };
-    let written = Written {
+    session.finish()?;
+    Ok(Written {
         title: structured.title,
         body,
         problems: structured.problems,
-    };
-    leo_core::recording::write_json(&dir.join("prepared.json"), &written)?;
-    session.trace("prepared", "Generated result saved; waiting for note persistence");
-    Ok(written)
+    })
 }

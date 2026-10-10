@@ -6,13 +6,13 @@ use anyhow::{anyhow, Result};
 use leo_services::ai::chat::Jotted;
 use leo_services::session::capture::Source;
 use leo_services::session::recorder::{self, Controls, Event, Input, Request};
-use leo_web::record::{Heard, Listener, Listening, Recorded};
+use leo_web::record::{Heard, Listener, Listening};
 
 pub fn listener() -> Listener {
     Arc::new(|listening, heard| listen(listening, heard))
 }
 
-fn listen(listening: Listening, heard: &mut dyn FnMut(Heard)) -> Result<Recorded> {
+fn listen(listening: Listening, heard: &mut dyn FnMut(Heard)) -> Result<(String, String)> {
     let Listening {
         audio,
         screen,
@@ -92,10 +92,9 @@ fn listen(listening: Listening, heard: &mut dyn FnMut(Heard)) -> Result<Recorded
         steps: None,
     });
     let (tx, rx) = std::sync::mpsc::channel::<(usize, usize)>();
-    let work_dir = dir.clone();
     let written = std::thread::scope(|scope| {
         let work = scope.spawn(move || {
-            recorder::write_up(&work_dir, None, &move |done, total| {
+            recorder::write_up(&dir, None, &move |done, total| {
                 let _ = tx.send((done, total));
             })
         });
@@ -111,6 +110,5 @@ fn listen(listening: Listening, heard: &mut dyn FnMut(Heard)) -> Result<Recorded
     for problem in written.problems {
         heard(Heard::Warning(problem));
     }
-    let source = leo_services::session::Session::open(&dir)?.archive();
-    Ok(Recorded { title: written.title, body: written.body, source: Some(source), commit: Some(Arc::new(move |notes, note| leo_services::session::Session::open(&dir)?.commit(notes, note))) })
+    Ok((written.title, written.body))
 }
