@@ -475,6 +475,262 @@ pub fn act_on(
     Some(done)
 }
 
+pub struct Kept<'a> {
+    pub captions: &'a crate::captions::Captions,
+    pub vectors: &'a crate::vectors::Vectors,
+}
+
+pub const CONFIG_FILES: [(&str, &str); 8] = [
+    ("config.toml", "Your settings"),
+    ("serve-token", "The code in the leo serve link"),
+    ("serve-sessions.json", "Browsers signed in to leo serve"),
+    (
+        "usage.json",
+        "Plan usage last seen for Claude Code and Codex",
+    ),
+    (
+        "update-check.json",
+        "When leo last looked for a new version",
+    ),
+    (
+        "credentials.json",
+        "API keys kept in a file where there is no keychain",
+    ),
+    (
+        ".credentials-migrated",
+        "Marks that old keys were moved to the keychain",
+    ),
+    (".env", "Settings for how leo itself starts"),
+];
+
+const SMALL_FILES: [(&str, &str); 4] = [
+    ("keep.json", "How long the trash and chats are kept"),
+    ("recent.json", "Notes opened lately in the terminal app"),
+    (
+        ".manual-installed",
+        "Which version of the manual note was installed",
+    ),
+    (".tour-completed", "That the terminal tour was finished"),
+];
+
+const LISTED_ELSEWHERE: [&str; 7] = [
+    "notes",
+    "chats",
+    "attachments",
+    "graph.json",
+    "captions.json",
+    "meaning.json",
+    "recordings",
+];
+
+pub fn leftover(name: &str) -> bool {
+    name.ends_with(".bak")
+        || name.contains(".before-")
+        || name == "history.txt"
+        || name.ends_with(".tmp")
+}
+
+fn file_area(id: &str, title: &str, about: &str, path: &Path, action: Act) -> Area {
+    let bytes = size_of(path);
+    Area {
+        id: id.into(),
+        title: title.into(),
+        about: about.into(),
+        path: path.display().to_string(),
+        bytes,
+        items: Vec::new(),
+        actions: if bytes > 0 { vec![action] } else { Vec::new() },
+    }
+}
+
+pub fn more_areas(store: &Store, chats_dir: &Path, kept: &Kept) -> Vec<Area> {
+    let mut out = Vec::new();
+    let remembered = chats::remembered(chats_dir);
+    if !remembered.is_empty() {
+        out.push(Area {
+            id: "memory".into(),
+            title: "What Felix remembers of long chats".into(),
+            about: "Summaries of the older part of long chats, so Felix keeps up once the first messages are out of view. Forgetting one means Felix sees only the recent messages of that chat until it is summarized again.".into(),
+            path: chats_dir.display().to_string(),
+            bytes: remembered.iter().map(|r| r.3).sum(),
+            items: remembered
+                .iter()
+                .map(|(id, title, upto, bytes)| Item {
+                    id: id.clone(),
+                    label: title.clone(),
+                    detail: format!("a summary of the first {upto} messages"),
+                    bytes: *bytes,
+                    when: None,
+                    locked: false,
+                })
+                .collect(),
+            actions: vec![
+                act("forget", "Forget the selected summaries", None, true),
+                act(
+                    "forget-all",
+                    "Forget every summary",
+                    Some("Felix forgets what long chats covered before their recent messages. The chats themselves stay."),
+                    false,
+                ),
+            ],
+        });
+    }
+    out.push(file_area(
+        "review",
+        "Study review progress",
+        "Which missed questions you have already reviewed, so Study does not offer them again.",
+        &crate::review::file(chats_dir),
+        act(
+            "reset",
+            "Start review over",
+            Some("Questions you already reviewed may be offered again."),
+            false,
+        ),
+    ));
+    out.push(file_area(
+        "captions",
+        "Picture descriptions",
+        "What the AI saw in the pictures in your notes, so Felix can use them without looking again. Cleared descriptions are made again when leo is idle, which sends the pictures to the AI again.",
+        kept.captions.path(),
+        act(
+            "clear",
+            "Clear picture descriptions",
+            Some("The descriptions are deleted. leo describes the pictures again when it is idle, sending them to the AI again."),
+            false,
+        ),
+    ));
+    out.push(file_area(
+        "meaning",
+        "Index for finding notes by meaning",
+        "How each note reads to the meaning model, so search and Felix find notes that mean the same thing in other words. It is made on this computer; nothing is sent anywhere.",
+        kept.vectors.path(),
+        act(
+            "clear",
+            "Clear the meaning index",
+            Some("Finding by meaning stops until leo reads your notes again on this computer, a few minutes later."),
+            false,
+        ),
+    ));
+    let data = data_dir(&store.notes_dir);
+    let mut items: Vec<Item> = std::fs::read_dir(&data)
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter_map(|e| {
+                    let name = e.file_name().to_string_lossy().to_string();
+                    if LISTED_ELSEWHERE.contains(&name.as_str())
+                        || CONFIG_FILES.iter().any(|(f, _)| *f == name)
+                        || e.file_type().is_ok_and(|t| t.is_symlink())
+                    {
+                        return None;
+                    }
+                    let known = SMALL_FILES
+                        .iter()
+                        .find(|(f, _)| *f == name)
+                        .map(|(_, what)| *what);
+                    let old = leftover(&name);
+                    Some(Item {
+                        label: name.clone(),
+                        detail: known.map(str::to_string).unwrap_or_else(|| {
+                            if old {
+                                "An old backup from an earlier version of leo".into()
+                            } else {
+                                "Not made by this version of leo".into()
+                            }
+                        }),
+                        bytes: size_of(&e.path()),
+                        when: modified(&e.path()),
+                        locked: !old,
+                        id: name,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    items.sort_by(|a, b| a.locked.cmp(&b.locked).then(a.label.cmp(&b.label)));
+    if !items.is_empty() {
+        let any_old = items.iter().any(|i| !i.locked);
+        out.push(Area {
+            id: "other".into(),
+            title: "Other files beside your notes".into(),
+            about: "Small files leo keeps, and old backups left by earlier versions. Only the old backups can be deleted here.".into(),
+            path: data.display().to_string(),
+            bytes: items.iter().map(|i| i.bytes).sum(),
+            items,
+            actions: if any_old {
+                vec![act("delete", "Delete the selected old backups", None, true)]
+            } else {
+                Vec::new()
+            },
+        });
+    }
+    out
+}
+
+pub fn act_on_more(
+    store: &Store,
+    chats_dir: &Path,
+    kept: &Kept,
+    request: &Request,
+) -> Option<Result<String>> {
+    let done = match (request.area.as_str(), request.action.as_str()) {
+        ("memory", "forget") => {
+            let gone = request
+                .items
+                .iter()
+                .filter(|id| chats::forget_memory(chats_dir, id))
+                .count();
+            Ok(format!(
+                "Felix forgot the summaries of {gone} chat{}.",
+                if gone == 1 { "" } else { "s" }
+            ))
+        }
+        ("memory", "forget-all") => {
+            let gone = chats::remembered(chats_dir)
+                .iter()
+                .filter(|(id, ..)| chats::forget_memory(chats_dir, id))
+                .count();
+            Ok(format!(
+                "Felix forgot the summaries of {gone} chat{}.",
+                if gone == 1 { "" } else { "s" }
+            ))
+        }
+        ("review", "reset") => {
+            crate::review::reset(chats_dir);
+            Ok("Study review starts over.".to_string())
+        }
+        ("captions", "clear") => {
+            kept.captions.clear();
+            Ok("Cleared the picture descriptions.".to_string())
+        }
+        ("meaning", "clear") => {
+            kept.vectors.clear();
+            Ok(
+                "Cleared the meaning index; leo reads your notes again on this computer."
+                    .to_string(),
+            )
+        }
+        ("other", "delete") => {
+            let data = data_dir(&store.notes_dir);
+            let mut gone = 0;
+            for name in &request.items {
+                if name.contains(['/', '\\']) || name.starts_with("..") || !leftover(name) {
+                    return Some(Err(anyhow::anyhow!(
+                        "Only old backups can be deleted here."
+                    )));
+                }
+                let path = data.join(name);
+                if path.is_file() && std::fs::remove_file(&path).is_ok() {
+                    gone += 1;
+                }
+            }
+            Ok(plural_deleted(gone, "old backup"))
+        }
+        _ => return None,
+    };
+    Some(done)
+}
+
 fn pictures_dir(notes_dir: &Path) -> PathBuf {
     notes_dir.join(leo_core::attachments::DIR)
 }
@@ -808,6 +1064,120 @@ mod tests {
             at(31),
         )
         .is_none());
+    }
+
+    #[test]
+    fn everything_else_leo_keeps_is_listed_and_can_be_cleared_or_is_said_to_stay() {
+        let (tmp, store, _graphs, chats_dir) = setup();
+        let data = tmp.path();
+        chats::set_memory(
+            &chats_dir,
+            "chat-new-0002",
+            chats::Memory {
+                upto: 20,
+                hash: "h".into(),
+                text: "The student studies graphs.".into(),
+            },
+        );
+        std::fs::write(crate::review::file(&chats_dir), "{}").unwrap();
+        let captions = crate::captions::Captions::for_notes(&store.notes_dir);
+        captions.put("k".into(), "a heap".into());
+        let vectors = crate::vectors::Vectors::for_notes(&store.notes_dir);
+        crate::vectors::catch_up(&store, &vectors, &crate::vectors::fake_meaning(), 50);
+        for name in [
+            "keep.json",
+            "config.toml",
+            "notes.json.bak",
+            "config.toml.before-8192",
+            "mystery.dat",
+        ] {
+            std::fs::write(data.join(name), "x").unwrap();
+        }
+        let kept = Kept {
+            captions: &captions,
+            vectors: &vectors,
+        };
+        let list = more_areas(&store, &chats_dir, &kept);
+        let ids: Vec<&str> = list.iter().map(|a| a.id.as_str()).collect();
+        assert_eq!(ids, ["memory", "review", "captions", "meaning", "other"]);
+        let memory = area(&list, "memory");
+        assert_eq!(memory.items[0].id, "chat-new-0002");
+        assert_eq!(memory.items[0].detail, "a summary of the first 20 messages");
+        let other = area(&list, "other");
+        let rows: Vec<(&str, bool)> = other
+            .items
+            .iter()
+            .map(|i| (i.label.as_str(), i.locked))
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                ("config.toml.before-8192", false),
+                ("notes.json.bak", false),
+                ("keep.json", true),
+                ("mystery.dat", true)
+            ],
+            "settings files are listed under settings, not here"
+        );
+        assert!(area(&list, "captions").bytes > 0 && area(&list, "meaning").bytes > 0);
+
+        let ask = |area: &str, action: &str, items: &[&str]| {
+            act_on_more(
+                &store,
+                &chats_dir,
+                &kept,
+                &Request {
+                    area: area.into(),
+                    action: action.into(),
+                    items: items.iter().map(|s| s.to_string()).collect(),
+                },
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            ask("memory", "forget", &["chat-new-0002"]).unwrap(),
+            "Felix forgot the summaries of 1 chat."
+        );
+        assert!(chats::load(&chats_dir, "chat-new-0002")
+            .unwrap()
+            .memory
+            .is_none());
+        assert_eq!(
+            chats::load(&chats_dir, "chat-new-0002")
+                .unwrap()
+                .messages
+                .len(),
+            1,
+            "the chat stays"
+        );
+        ask("review", "reset", &[]).unwrap();
+        assert!(!crate::review::file(&chats_dir).exists());
+        ask("captions", "clear", &[]).unwrap();
+        assert!(captions.is_empty() && !captions.path().exists());
+        ask("meaning", "clear", &[]).unwrap();
+        assert!(vectors.is_empty() && !vectors.path().exists());
+        assert!(
+            ask("other", "delete", &["keep.json"]).is_err(),
+            "only old backups go"
+        );
+        assert!(ask("other", "delete", &["../notes"]).is_err());
+        assert_eq!(
+            ask(
+                "other",
+                "delete",
+                &["notes.json.bak", "config.toml.before-8192"]
+            )
+            .unwrap(),
+            plural_deleted(2, "old backup")
+        );
+        assert!(data.join("keep.json").exists() && !data.join("notes.json.bak").exists());
+        let after = more_areas(&store, &chats_dir, &kept);
+        let ids: Vec<&str> = after.iter().map(|a| a.id.as_str()).collect();
+        assert_eq!(ids, ["review", "captions", "meaning", "other"]);
+        assert!(
+            area(&after, "other").actions.is_empty(),
+            "nothing left that can go"
+        );
     }
 
     #[test]

@@ -61,6 +61,30 @@ pub fn set_memory(dir: &Path, id: &str, memory: Memory) -> bool {
     write(dir, &chat).is_ok()
 }
 
+pub fn remembered(dir: &Path) -> Vec<(String, String, usize, u64)> {
+    list(dir)
+        .into_iter()
+        .filter_map(|summary| {
+            let memory = load(dir, &summary.id)?.memory?;
+            Some((
+                summary.id,
+                summary.title,
+                memory.upto,
+                memory.text.len() as u64,
+            ))
+        })
+        .collect()
+}
+
+pub fn forget_memory(dir: &Path, id: &str) -> bool {
+    let _held = WRITING.lock();
+    let Some(mut chat) = load(dir, id).filter(|c| c.memory.is_some()) else {
+        return false;
+    };
+    chat.memory = None;
+    write(dir, &chat).is_ok()
+}
+
 impl Chat {
     pub fn summary(&self) -> Summary {
         Summary {

@@ -12,6 +12,14 @@ pub const MOST_MISSED: usize = 20;
 const MOST_REMEMBERED: usize = 2000;
 const FILE: &str = "review.json";
 
+pub fn file(dir: &Path) -> std::path::PathBuf {
+    dir.join(FILE)
+}
+
+pub fn reset(dir: &Path) -> bool {
+    std::fs::remove_file(file(dir)).is_ok()
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Missed {
     pub key: String,

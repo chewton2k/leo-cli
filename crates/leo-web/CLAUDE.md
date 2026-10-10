@@ -623,3 +623,15 @@
   and a check), follows the order asked ("start with question 1"), says
   which parts remain, and only says "Beyond your notes" when the question
   was about the notes.
+- Storage lists everything leo keeps (`storage::more_areas` / `act_on_more`
+  with `Kept { captions, vectors }`): Felix's chat summaries (`memory`:
+  forget selected or all; the chats stay), Study review progress (`review`:
+  start over), picture descriptions (`captions`: clear, made again when idle),
+  the meaning index (`meaning`: clear, rebuilt locally), and "Other files
+  beside your notes": every other entry in the data folder, labelled
+  (`SMALL_FILES`), with only old backups (`leftover`: `.bak`, `.before-`,
+  `history.txt`) deletable. Settings files (`CONFIG_FILES`) are listed only
+  under the housekeeper's settings area, which now counts just those files
+  (on macOS the config and data folders are the same, and it used to count
+  every note). The speech-model area covers only Parakeet's folder, and the
+  meaning model has its own area (`meaning-model`).

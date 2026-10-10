@@ -56,6 +56,17 @@ impl Captions {
         }
     }
 
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn clear(&self) -> bool {
+        if let Ok(mut known) = self.known.lock() {
+            known.clear();
+        }
+        std::fs::remove_file(&self.path).is_ok()
+    }
+
     pub fn len(&self) -> usize {
         self.known.lock().map(|k| k.len()).unwrap_or(0)
     }

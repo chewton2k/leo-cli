@@ -68,7 +68,7 @@ fn recordings() -> Option<Area> {
 }
 
 fn speech_model() -> Area {
-    let dir = leo_services::ai::provider::audio::models_dir();
+    let dir = leo_services::providers::speech_model_dir();
     let bytes = size_of(&dir);
     Area {
         id: "speech".into(),
@@ -90,15 +90,52 @@ fn speech_model() -> Area {
     }
 }
 
+fn meaning_model() -> Area {
+    let dir = leo_services::meaning::dir();
+    let bytes = size_of(&dir);
+    Area {
+        id: "meaning-model".into(),
+        title: "Model for finding notes by meaning".into(),
+        about: "bge-small, which reads your notes on this computer so search and Felix find notes that mean the same thing in other words.".into(),
+        path: dir.display().to_string(),
+        bytes,
+        items: Vec::new(),
+        actions: if bytes > 0 {
+            vec![act(
+                "remove",
+                "Remove the meaning model",
+                Some("Search and Felix find notes by their words only until leo downloads the model again (about 134 MB) with `leo update` or the next `leo serve`."),
+                false,
+            )]
+        } else {
+            Vec::new()
+        },
+    }
+}
+
 fn settings() -> Option<Area> {
     let dir = leo_core::paths::config_dir().ok()?;
+    let items: Vec<Item> = leo_web::storage::CONFIG_FILES
+        .iter()
+        .filter_map(|(name, what)| {
+            let path = dir.join(name);
+            path.is_file().then(|| Item {
+                id: (*name).to_string(),
+                label: (*name).to_string(),
+                detail: (*what).to_string(),
+                bytes: size_of(&path),
+                when: None,
+                locked: true,
+            })
+        })
+        .collect();
     Some(Area {
         id: "settings".into(),
         title: "Settings and small caches".into(),
-        about: "Your settings, the code in the leo serve link, and small caches such as plan usage. leo needs these; they are not deleted from here.".into(),
+        about: "Your settings, the code in the leo serve link, signed-in browsers and small caches such as plan usage. leo needs these; they are not deleted from here.".into(),
         path: dir.display().to_string(),
-        bytes: size_of(&dir),
-        items: Vec::new(),
+        bytes: items.iter().map(|i| i.bytes).sum(),
+        items,
         actions: Vec::new(),
     })
 }
@@ -130,6 +167,7 @@ impl Housekeeper for Housekeeping {
         let mut out = Vec::new();
         out.extend(recordings());
         out.push(speech_model());
+        out.push(meaning_model());
         out.extend(settings());
         out
     }
@@ -141,8 +179,18 @@ impl Housekeeper for Housekeeping {
                     .map_err(|e| anyhow!(e))
                     .and_then(|root| delete_recordings(&root, items)),
             ),
+            ("meaning-model", "remove") => {
+                let dir = leo_services::meaning::dir();
+                Some(
+                    std::fs::remove_dir_all(&dir)
+                        .map(|()| {
+                            "Removed the meaning model. `leo update` or the next `leo serve` downloads it again.".to_string()
+                        })
+                        .map_err(|e| anyhow!("Could not remove {}: {e}", dir.display())),
+                )
+            }
             ("speech", "remove") => {
-                let dir = leo_services::ai::provider::audio::models_dir();
+                let dir = leo_services::providers::speech_model_dir();
                 Some(
                     std::fs::remove_dir_all(&dir)
                         .map(|()| {
