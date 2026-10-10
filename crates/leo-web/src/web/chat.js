@@ -1592,7 +1592,7 @@
           method: 'POST',
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: history, mode: thread.mode, note: ctx, refs: threadRefs(thread.messages).map((r) => r.id), recent: recentNotes(thread.messages.filter((m) => m !== answer)), chat: thread.id, files, access, practice: Boolean(card) }),
+          body: JSON.stringify({ messages: history, mode: thread.mode, note: ctx, refs: threadRefs(thread.messages).map((r) => r.id), recent: recentNotes(thread.messages.filter((m) => m !== answer)), chat: thread.id, files, access, practice: Boolean(card), mark: Boolean(card && card.correct === null) }),
           signal: controller.signal,
         });
         if (response.status === 401) throw new Error('This page needs its link again. Open the link leo serve printed.');
@@ -1627,6 +1627,14 @@
             if (e.quiz && typeof e.quiz === 'object' && typeof e.quiz.question === 'string') {
               answer.quizzes = [...(answer.quizzes || []), { kind: String(e.quiz.kind || ''), question: e.quiz.question, options: Array.isArray(e.quiz.options) ? e.quiz.options.filter((o) => typeof o === 'string') : [], answer: String(e.quiz.answer || ''), explain: String(e.quiz.explain || '') }];
             }
+            if (e.reset) {
+              answer.text = '';
+              answer.steps = [];
+              delete answer.quizzes;
+              delete answer.asks;
+              answer.proposals = (answer.proposals || []).filter((p) => p.state === 'applied');
+            }
+            if (e.verdict === 'correct' || e.verdict === 'incorrect') answer.verdict = e.verdict;
             if (e.sources) answer.sources = e.sources;
             if (e.restart) answer.text = '';
             if (typeof e.step === 'string') pose(e.tool);
@@ -1665,7 +1673,7 @@
           thread.messages.push(next);
         }
         if (card.correct === null || card.correct === undefined) {
-          const verdict = grade(answer.text).verdict;
+          const verdict = grade(answer.text).verdict || answer.verdict;
           card.correct = verdict === 'correct' ? true : verdict === 'incorrect' ? false : null;
         }
       }

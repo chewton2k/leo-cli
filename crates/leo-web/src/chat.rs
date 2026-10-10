@@ -191,6 +191,8 @@ pub struct ChatBody {
     pub access: Option<String>,
     #[serde(default)]
     pub practice: bool,
+    #[serde(default)]
+    pub mark: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]

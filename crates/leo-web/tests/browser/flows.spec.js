@@ -2732,6 +2732,29 @@ test.describe('Felix asks, quizzes and listens while he works', () => {
     expect(asked[1].messages[2].text).toContain('[What Felix did for this answer: Searched your notes for “heap”]');
   });
 
+  test('a broken first try leaves no trace, and a verdict from leo colours a free answer', async ({ page }) => {
+    const asked = [];
+    await page.route('**/api/chat', async (route) => {
+      asked.push(route.request().postDataJSON());
+      if (asked.length === 1) {
+        return route.fulfill(answerWith([{ sources: [] }, { t: 'Half an answer' }, { quiz: { kind: 'free_response', question: 'Broken card?', options: [], answer: 'x', explain: '' } }, { reset: true }, { quiz: { kind: 'free_response', question: 'Why compare the endpoints?', options: [], answer: 'A minimum can sit at an end.', explain: '' } }, { t: 'Try the card below.' }, { done: true }]));
+      }
+      return route.fulfill(answerWith([{ sources: [] }, { t: 'Close, but you left out the ends.' }, { verdict: 'incorrect' }, { done: true }]));
+    });
+    const chat = await openFelix(page);
+    await chat.locator('#chat-input').fill('quiz me');
+    await chat.locator('#chat-input').press('Enter');
+    await expect(chat.locator('.msg.leo').last()).toContainText('Try the card below.');
+    await expect(chat.locator('.msg.leo').last()).not.toContainText('Half an answer');
+    await expect(chat.locator('.quiz-card')).toHaveCount(1);
+    await expect(chat.locator('.quiz-q')).toHaveText('Why compare the endpoints?');
+    await chat.locator('textarea.quiz-input').fill('no idea');
+    await chat.locator('[data-chat="quiz-check"]').click();
+    await expect(chat.locator('.quiz-card')).toHaveClass(/wrong/);
+    await expect(chat.locator('.quiz-reply')).toContainText('left out the ends');
+    expect(asked[1].mark).toBe(true);
+  });
+
   test('Esc stops Felix while he answers, and closes the chat only when he is idle', async ({ page }) => {
     await page.route('**/api/chat', async () => {});
     const chat = await openFelix(page);

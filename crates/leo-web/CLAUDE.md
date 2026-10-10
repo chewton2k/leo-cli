@@ -682,3 +682,14 @@
   every round kept its reply, carried the right verdict and gave the next
   card. Claude Code sometimes fails to parse its own tool call
   ("could not be parsed (retry also failed)"); leo falls back and recovers.
+- Felix never shows a model hiccup as a failure: if an agent session breaks
+  (even after showing text), the route sends `{"reset": true}` (the page
+  clears the text, steps, cards and unapplied suggestions of that answer),
+  resets `desk.asked`, and redoes the turn through the text protocol, up to
+  `FALLBACK_TRIES` (2). A marking request with `mark: true` (a free answer)
+  whose reply carries no `[[correct]]`/`[[incorrect]]` gets one short `JUDGE`
+  call and a `{"verdict"}` event the card uses. The tool manual tells models
+  never to call leo's tools through their own tool calling (Claude Code
+  sometimes did and failed to parse it). Stress-tested: 10 runs of the
+  practice tree on Codex and Claude Code, 50 turns, every verdict and next card
+  right; two Claude Code hiccups were redone cleanly.

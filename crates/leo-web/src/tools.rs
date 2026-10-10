@@ -444,7 +444,7 @@ pub fn manual_for(web: bool, access: Access) -> String {
     };
     format!(
         "## Your tools
-You have a tool layer for the user's notes. It belongs to leo, not to your own tool system, and it is always available, even when your own tools are switched off.
+You have a tool layer for the user's notes. It belongs to leo, not to your own tool system, and it is always available, even when your own tools are switched off. Never call these tools through your own tool or function calling: they are not in it, and such a call fails. Write the <tool> line as plain text.
 {outside}
 
 How to call a tool:

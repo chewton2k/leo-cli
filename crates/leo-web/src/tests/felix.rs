@@ -59,6 +59,7 @@ fn a_document_given_to_felix_is_kept_as_text_and_read_with_the_question() {
         access: None,
         recent: vec![],
         practice: false,
+        mark: false,
     };
     run(async {
         let response = chat_reply(State(state.clone()), Json(body)).await;
@@ -139,6 +140,7 @@ fn a_chat_reply_streams_its_sources_then_the_answer() {
         access: None,
         recent: vec![],
         practice: false,
+        mark: false,
     };
     let text = run(async {
         let response = chat_reply(State(state.clone()), Json(body)).await;
@@ -183,6 +185,7 @@ fn a_chat_without_ai_or_a_question_is_refused() {
         access: None,
         recent: vec![],
         practice: false,
+        mark: false,
     };
     let status = run(async {
         chat_reply(State(state.clone()), Json(ask("hi")))
@@ -240,6 +243,7 @@ fn chat_lines_with(
         access: access.map(str::to_string),
         recent: vec![],
         practice: false,
+        mark: false,
     };
     let text = run(async {
         let response = chat_reply(State(state.clone()), Json(body)).await;
@@ -1040,6 +1044,7 @@ fn a_long_chat_is_remembered_in_a_summary_instead_of_forgotten() {
             access: None,
             recent: vec![],
             practice: false,
+            mark: false,
         };
         run(async {
             let response = chat_reply(State(state.clone()), Json(body)).await;
@@ -1188,6 +1193,7 @@ fn a_practice_answer_is_marked_once_and_never_nudged_into_changing_a_note() {
         access: None,
         recent: vec![],
         practice: true,
+        mark: false,
     };
     let text = run(async {
         let response = chat_reply(State(state.clone()), Json(body)).await;
@@ -1210,4 +1216,111 @@ fn a_practice_answer_is_marked_once_and_never_nudged_into_changing_a_note() {
         !prompts.lock().unwrap()[0].contains("### edit_note"),
         "marking an answer is read only, so the note-fixing reminder never comes up"
     );
+}
+
+#[test]
+fn an_agent_that_breaks_mid_answer_is_replaced_cleanly_by_the_text_protocol() {
+    struct Breaks;
+    impl chat::Conversation for Breaks {
+        fn native(&self) -> bool {
+            true
+        }
+        fn say(&mut self, _: &str, exchange: chat::Exchange<'_>) -> anyhow::Result<chat::Reply> {
+            (exchange.piece)("Half an answer");
+            let _ = (exchange.call)(
+                "quiz",
+                &serde_json::json!({ "kind": "free_response", "question": "Why?", "answer": "Because." }),
+            );
+            anyhow::bail!("claude stopped: the model's tool call could not be parsed")
+        }
+    }
+    let (mut state, _d, _) = state_with(&[]);
+    state.converse = Some(Arc::new(|_: &chat::Instructions, _: &[chat::ToolSpec]| {
+        Some(Box::new(Breaks) as Box<dyn chat::Conversation>)
+    }));
+    let (streamer, _) = scripted(vec![
+        "<tool>{\"name\": \"quiz\", \"kind\": \"free_response\", \"question\": \"Why a queue?\", \"answer\": \"Oldest first.\"}</tool>",
+        "Try the card below.",
+    ]);
+    state.chat = Some(streamer);
+    let lines = chat_lines(&state, "quiz me");
+    let reset = lines
+        .iter()
+        .position(|l| l.get("reset").is_some())
+        .expect("what was shown is cleared");
+    let after: Vec<&serde_json::Value> = lines[reset..]
+        .iter()
+        .filter_map(|l| l.get("quiz"))
+        .collect();
+    assert_eq!(after.len(), 1, "the redo can ask its own card: {lines:?}");
+    assert_eq!(after[0]["question"], "Why a queue?");
+    let shown: String = lines[reset..]
+        .iter()
+        .filter_map(|l| l["t"].as_str())
+        .collect();
+    assert_eq!(shown, "Try the card below.");
+    assert_eq!(
+        lines.last().unwrap()["done"],
+        true,
+        "no error reaches the user"
+    );
+}
+
+#[test]
+fn a_failed_answer_is_tried_once_more_before_the_user_sees_an_error() {
+    let (mut state, _d, _) = state_with(&[]);
+    let calls = Arc::new(Mutex::new(0));
+    let count = Arc::clone(&calls);
+    state.chat = Some(Arc::new(
+        move |_: &str, _: &str, _: u32, piece: &mut dyn FnMut(&str), _: &mut dyn FnMut()| {
+            let mut n = count.lock().unwrap();
+            *n += 1;
+            if *n == 1 {
+                piece("Broken start");
+                anyhow::bail!("the model's tool call could not be parsed");
+            }
+            piece("A min-heap keeps the smallest on top.");
+            Ok(chat::Reply {
+                text: "A min-heap keeps the smallest on top.".into(),
+                spent: None,
+            })
+        },
+    ));
+    let lines = chat_lines(&state, "what is a heap?");
+    assert!(lines.iter().any(|l| l.get("reset").is_some()));
+    assert!(lines.iter().all(|l| l.get("error").is_none()), "{lines:?}");
+    assert_eq!(*calls.lock().unwrap(), 2);
+}
+
+#[test]
+fn a_marking_without_a_verdict_gets_one_from_a_short_check() {
+    let (mut state, _d, _) = state_with(&[]);
+    let (streamer, prompts) = scripted(vec!["Close, but you left out the endpoints.", "incorrect"]);
+    state.chat = Some(streamer);
+    let body = chat::ChatBody {
+        messages: vec![chat::Turn {
+            role: "user".into(),
+            text: "Quiz answer. Question: what do you compare?\nMy answer: the middle\nA model answer to compare with: f(a), f(b) and critical points".into(),
+        }],
+        mode: Some("study".into()),
+        note: None,
+        refs: vec![],
+        chat: None,
+        files: vec![],
+        access: None,
+        recent: vec![],
+        practice: true,
+        mark: true,
+    };
+    let text = run(async {
+        let response = chat_reply(State(state.clone()), Json(body)).await;
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        String::from_utf8(bytes.to_vec()).unwrap()
+    });
+    assert!(text.contains("{\"verdict\":\"incorrect\"}"), "{text}");
+    let prompts = prompts.lock().unwrap();
+    assert_eq!(prompts.len(), 2);
+    assert!(prompts[1].starts_with(crate::routes::felix::JUDGE));
 }

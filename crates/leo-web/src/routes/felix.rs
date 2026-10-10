@@ -276,6 +276,38 @@ struct Ask {
     access: tools::Access,
     documents: Vec<(String, String)>,
     steer: crate::steer::Steer,
+    marking: Option<String>,
+}
+
+pub(crate) const JUDGE: &str = "You check a student's answer to a practice question against the model answer given. Reply with exactly one word: correct if the answer gets the main idea right, incorrect if it is wrong or misses the main idea. Use interpretable language.";
+
+pub(crate) fn verdict_in(text: &str) -> Option<&'static str> {
+    let lower = text.to_lowercase();
+    let near = |mark: &str| {
+        lower
+            .find(mark)
+            .is_some_and(|at| at <= crate::review::VERDICT_WITHIN)
+    };
+    if near("[[incorrect]]") {
+        Some("incorrect")
+    } else if near("[[correct]]") {
+        Some("correct")
+    } else {
+        None
+    }
+}
+
+fn judged(streamer: &chat::Streamer, asked: &str) -> Option<&'static str> {
+    let user = format!("{asked}\n\nReply with one word: correct or incorrect.");
+    let reply = streamer(JUDGE, &user, 20, &mut |_| {}, &mut || {}).ok()?;
+    let word = reply.text.trim().to_lowercase();
+    if word.starts_with("incorrect") || word.contains("incorrect") {
+        Some("incorrect")
+    } else if word.starts_with("correct") || word.contains("correct") {
+        Some("correct")
+    } else {
+        None
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -541,9 +573,27 @@ fn answer(
         access,
         documents,
         steer,
+        marking,
     } = ask;
+    let said = std::cell::RefCell::new(String::new());
     let send = |value: serde_json::Value| {
+        if value.get("restart").is_some() || value.get("reset").is_some() {
+            said.borrow_mut().clear();
+        }
+        if let Some(t) = value["t"].as_str() {
+            said.borrow_mut().push_str(t);
+        }
         let _ = tx.send(ndjson(value));
+    };
+    let finished = |spent: Option<chat::Spent>| {
+        if let Some(asked) = &marking {
+            if verdict_in(&said.borrow()).is_none() {
+                if let Some(verdict) = judged(streamer, asked) {
+                    let _ = tx.send(ndjson(serde_json::json!({ "verdict": verdict })));
+                }
+            }
+        }
+        spent
     };
     let web = state.web.clone().filter(|w| (w.needed)());
     let web_on = web.is_some();
@@ -598,24 +648,39 @@ fn answer(
             )
         };
         match tried {
-            Ok(spent) => return Ok(spent),
-            Err(e) if shown.get() => return Err(e),
-            Err(_) => send(serde_json::json!({ "restart": true })),
+            Ok(spent) => return Ok(finished(spent)),
+            Err(_) => {
+                send(serde_json::json!({ "reset": true }));
+                desk.asked = 0;
+            }
         }
     }
-    let mut restated = chat::Restated::new(Arc::clone(streamer), text, last);
-    let shown = std::cell::Cell::new(false);
-    text_answer(
-        state,
-        &mut restated,
-        &mut desk,
-        access,
-        &wanted,
-        &conversation,
-        &send,
-        &shown,
-    )
+    let mut failure = None;
+    for attempt in 0..FALLBACK_TRIES {
+        if attempt > 0 {
+            send(serde_json::json!({ "reset": true }));
+            desk.asked = 0;
+        }
+        let mut restated = chat::Restated::new(Arc::clone(streamer), text.clone(), last.clone());
+        let shown = std::cell::Cell::new(false);
+        match text_answer(
+            state,
+            &mut restated,
+            &mut desk,
+            access,
+            &wanted,
+            &conversation,
+            &send,
+            &shown,
+        ) {
+            Ok(spent) => return Ok(finished(spent)),
+            Err(e) => failure = Some(e),
+        }
+    }
+    Err(failure.unwrap_or_else(|| anyhow::anyhow!("Felix could not answer")))
 }
+
+const FALLBACK_TRIES: usize = 2;
 
 #[allow(clippy::too_many_arguments)]
 fn native_answer(
@@ -986,6 +1051,10 @@ pub(crate) async fn chat_reply(
             .map(|t| t.text.clone())
             .unwrap_or_default()
     };
+    let marking = body
+        .mark
+        .then(|| body.messages.last().map(|t| t.text.clone()))
+        .flatten();
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     let steer = state.steering.open();
     let _ = tx.send(ndjson(serde_json::json!({ "answer": steer.id() })));
@@ -1001,6 +1070,7 @@ pub(crate) async fn chat_reply(
             access,
             documents,
             steer,
+            marking,
         };
         let end = match answer(&worker, &streamer, ask, &tx) {
             Ok(spent) => {
