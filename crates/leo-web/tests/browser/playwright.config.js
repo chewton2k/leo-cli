@@ -9,6 +9,8 @@ module.exports = defineConfig({
   testMatch: 'flows.spec.js',
   globalTeardown: './teardown.js',
   workers: 1,
+  retries: process.env.CI ? 1 : 0,
+  reporter: process.env.CI ? [['github'], ['list']] : 'list',
   timeout: 30000,
   use: {
     baseURL: 'http://127.0.0.1:31831',

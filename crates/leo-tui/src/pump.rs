@@ -364,7 +364,7 @@ impl App {
                 };
                 match action::apply_transcript(&mut self.store, &rec.req, "ready", &ready) {
                     Ok(outcome) => {
-                        finish_recording(rec.session.as_deref());
+                        finish_recording(rec.session.as_deref(), &self.store.notes_dir, outcome.select.as_deref());
                         self.absorb(outcome, terminal)?
                     }
                     Err(e) => self.say(Kind::Bad, e.to_string()),
@@ -400,7 +400,7 @@ impl App {
             let ready = ReadyNote { title, body };
             match action::apply_transcript(&mut self.store, &rec.req, "ready", &ready) {
                 Ok(outcome) => {
-                    finish_recording(rec.session.as_deref());
+                    finish_recording(rec.session.as_deref(), &self.store.notes_dir, outcome.select.as_deref());
                     self.absorb(outcome, terminal)?;
                     self.resume_interrupted();
                 }
@@ -429,10 +429,10 @@ impl App {
     }
 }
 
-fn finish_recording(session: Option<&std::path::Path>) {
+fn finish_recording(session: Option<&std::path::Path>, notes: &std::path::Path, note: Option<&str>) {
     if let Some(dir) = session {
         if let Ok(s) = leo_services::session::Session::open(dir) {
-            let _ = s.finish();
+            if let Some(note) = note { let _ = s.commit(notes, note); }
         }
     }
 }

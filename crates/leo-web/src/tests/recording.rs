@@ -34,10 +34,7 @@ fn hearing() -> record::Listener {
                 .iter()
                 .map(|(_, text)| text.clone())
                 .collect();
-            Ok((
-                "Lecture".to_string(),
-                format!("heard {samples} samples; points: {}", points.join(", ")),
-            ))
+            Ok(record::Recorded { title: "Lecture".into(), body: format!("heard {samples} samples; points: {}", points.join(", ")), ..Default::default() })
         },
     )
 }
@@ -191,7 +188,7 @@ fn a_tabs_sound_is_recorded_from_any_browser_as_screen_audio() {
     state.listener = Some(Arc::new(
         move |listening: record::Listening, _: &mut dyn FnMut(record::Heard)| {
             *saw.lock().unwrap() = Some((listening.screen, listening.audio.is_some()));
-            Ok(("Lecture video".to_string(), "notes".to_string()))
+            Ok(record::Recorded { title: "Lecture video".into(), body: "notes".into(), ..Default::default() })
         },
     ));
     let started = start_recording(&state, record::Source::Tab, "my-laptop.trycloudflare.com");

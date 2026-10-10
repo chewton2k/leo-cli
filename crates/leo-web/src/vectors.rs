@@ -106,7 +106,7 @@ pub fn pieces_of(note: &Note) -> Vec<(usize, String)> {
     if out.len() > 1 {
         out.retain(|(_, text)| !text.trim().is_empty());
     }
-    out.truncate(MOST_PIECES);
+    // Index every passage; background batches bound the work, not coverage.
     if let Some(first) = out.first_mut() {
         first.1 = format!("{}\n\n{}", note.title, first.1).trim().to_string();
     }
@@ -510,7 +510,7 @@ mod tests {
         let long: String = (0..40)
             .map(|i| format!("{} {i}\n\n", "x".repeat(900)))
             .collect();
-        assert_eq!(pieces_of(&note("Long", &long)).len(), MOST_PIECES);
+        assert!(pieces_of(&note("Long", &long)).len() > MOST_PIECES);
         let wide = "é".repeat(2500);
         assert_eq!(
             pieces_of(&note("Accents", &wide)).len(),

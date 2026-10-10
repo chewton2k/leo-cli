@@ -693,3 +693,7 @@
   sometimes did and failed to parse it). Stress-tested: 10 runs of the
   practice tree on Codex and Claude Code, 50 turns, every verdict and next card
   right; two Claude Code hiccups were redone cleanly.
+- CI runs the browser suite with one retry and Playwright's `github`
+  reporter, so a flaky test is reported as flaky with its name and a real
+  failure shows up as an annotation readable through the public check-runs
+  API (the job logs need sign-in).

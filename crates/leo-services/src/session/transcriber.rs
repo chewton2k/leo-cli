@@ -37,6 +37,7 @@ pub struct Policy {
     pub attempts_after_stop: u32,
     pub idle: Duration,
     pub workers: usize,
+    pub finish_limit: Duration,
 }
 
 impl Default for Policy {
@@ -47,6 +48,7 @@ impl Default for Policy {
             attempts_after_stop: 6,
             idle: Duration::from_millis(500),
             workers: 3,
+            finish_limit: Duration::from_secs(120),
         }
     }
 }
@@ -170,6 +172,7 @@ struct Work {
     attempts: Mutex<HashMap<u32, (u32, Instant)>>,
     busy: Mutex<HashSet<u32>>,
     stop_seen: AtomicBool,
+    stopped_at: Mutex<Option<Instant>>,
 }
 
 impl Work {
@@ -226,6 +229,7 @@ fn worker(
         }
         let still_recording = recording.load(Ordering::Relaxed);
         if !still_recording && !work.stop_seen.swap(true, Ordering::Relaxed) {
+            if let Ok(mut when) = work.stopped_at.lock() { *when = Some(Instant::now()); }
             if let Ok(mut attempts) = work.attempts.lock() {
                 attempts.clear();
             }
@@ -285,12 +289,16 @@ fn settle(
         Err(error) => {
             let attempt = attempts.get(&index).map_or(1, |(n, _)| n + 1);
             let finishing = !recording.load(Ordering::Relaxed);
-            if finishing && attempt >= policy.attempts_after_stop && !rate_limited(&error) {
+            let expired = work.stopped_at.lock().ok().and_then(|v| *v).is_some_and(|at| at.elapsed() >= policy.finish_limit);
+            if finishing && (expired || (attempt >= policy.attempts_after_stop && !rate_limited(&error))) {
                 let _ = write_atomic(&dir.join(format!("seg-{index:05}.err")), &error);
                 attempts.remove(&index);
                 let _ = events.send(Update::Failed { index, error });
             } else {
-                let wait = policy.wait(attempt);
+                let mut wait = policy.wait(attempt);
+                if finishing {
+                    if let Some(at) = work.stopped_at.lock().ok().and_then(|v| *v) { wait = wait.min(policy.finish_limit.saturating_sub(at.elapsed())); }
+                }
                 attempts.insert(index, (attempt, Instant::now() + wait));
                 let _ = events.send(Update::Retrying {
                     index,
@@ -316,6 +324,7 @@ mod tests {
             attempts_after_stop: 3,
             idle: Duration::from_millis(5),
             workers: 3,
+            finish_limit: Duration::from_secs(120),
         }
     }
 
