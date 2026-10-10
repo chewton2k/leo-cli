@@ -1,6 +1,7 @@
 pub(crate) mod activity;
 pub(crate) mod assets;
 pub(crate) mod auth;
+pub(crate) mod combine;
 pub(crate) mod downloads;
 pub(crate) mod felix;
 pub(crate) mod housekeeping;
@@ -8,6 +9,6 @@ pub(crate) mod map;
 pub(crate) mod notes;
 pub(crate) mod pictures;
 pub(crate) mod settings;
+pub(crate) mod sources;
 pub(crate) mod trash;
 pub(crate) mod uploads;
-pub(crate) mod workflows;

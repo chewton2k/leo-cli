@@ -16,7 +16,7 @@ pub(crate) struct Journal {
     pub directory: String,
     pub title: Option<String>,
     pub source: Source,
-    pub profile: leo_core::workflows::Profile,
+    pub profile: leo_core::recording::Profile,
     #[serde(default)]
     pub points: Vec<(u64, String)>,
 }

@@ -433,12 +433,8 @@ pub fn start_structuring(
                     .and_then(|p| Session::open(p).ok())
                     .map(|s| s.manifest.profile)
                     .unwrap_or_default();
-                let workflows = leo_core::paths::data_dir()
-                    .ok()
-                    .and_then(|p| leo_core::workflows::Workflows::load(&p.join("notes")).ok())
-                    .unwrap_or_default();
                 leo_services::ai::chat_outcome(
-                    leo_services::ai::long::with_profile(prompt, &profile, &workflows),
+                    leo_services::ai::long::with_profile(prompt, &profile),
                     max,
                 )
                 .map(|o| o.value)

@@ -502,23 +502,15 @@ pub const CONFIG_FILES: [(&str, &str); 8] = [
     (".env", "Settings for how leo itself starts"),
 ];
 
-const SMALL_FILES: [(&str, &str); 8] = [
+const SMALL_FILES: [(&str, &str); 7] = [
     ("keep.json", "How long the trash and chats are kept"),
     (
-        "workflows.json",
-        "Note formats, folder defaults and saved actions",
+        "calendars.json",
+        "Which calendars leo reads (their private links are kept with your keys)",
     ),
     (
-        "calendar-google.json",
-        "Which Google Calendar is connected (its sign-in is kept with your keys)",
-    ),
-    (
-        "calendar-events.json",
-        "Upcoming events read from Google Calendar",
-    ),
-    (
-        "calendar-status.json",
-        "How the last Google Calendar sign-in went",
+        "calendar-cache.json",
+        "Upcoming events last read from your calendars",
     ),
     ("recent.json", "Notes opened lately in the terminal app"),
     (
@@ -526,6 +518,10 @@ const SMALL_FILES: [(&str, &str); 8] = [
         "Which version of the manual note was installed",
     ),
     (".tour-completed", "That the terminal tour was finished"),
+    (
+        "workflows.json",
+        "Note formats from an earlier version of leo; no longer used",
+    ),
 ];
 
 const LISTED_ELSEWHERE: [&str; 12] = [
@@ -548,6 +544,7 @@ pub fn leftover(name: &str) -> bool {
         || name.ends_with(".bak")
         || name.contains(".before-")
         || name == "history.txt"
+        || name == "workflows.json"
         || name.ends_with(".tmp")
 }
 

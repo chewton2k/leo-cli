@@ -1010,7 +1010,6 @@ pub struct Done {
 }
 
 pub struct Desk {
-    scope: crate::chat::Scope,
     pub sources: Vec<SourceRef>,
     pub proposals: usize,
     room: usize,
@@ -1033,7 +1032,6 @@ const PAGE_CHARS: usize = 12_000;
 impl Desk {
     pub fn new(sources: Vec<SourceRef>, room: usize) -> Desk {
         Desk {
-            scope: Default::default(),
             sources,
             proposals: 0,
             room,
@@ -1046,11 +1044,6 @@ impl Desk {
             steer: None,
             meaning: None,
         }
-    }
-
-    pub fn with_scope(mut self, scope: crate::chat::Scope) -> Self {
-        self.scope = scope;
-        self
     }
 
     pub fn with_meaning(
@@ -1340,14 +1333,6 @@ impl Desk {
     }
 
     pub fn run(&mut self, store: &Store, cache: &Cache, call: &Call) -> Done {
-        if self.scope.is_all() {
-            return self.run_in(store, cache, call);
-        }
-        let view = store.read_view(|n| self.scope.includes(n));
-        self.run_in(&view, cache, call)
-    }
-
-    fn run_in(&mut self, store: &Store, cache: &Cache, call: &Call) -> Done {
         if !self.access.changes() && changes_notes(&call.name) {
             return Done {
                 step: "Wanted to change a note (read only)".into(),

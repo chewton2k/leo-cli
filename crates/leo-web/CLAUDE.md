@@ -709,33 +709,66 @@
   failure shows up as an annotation readable through the public check-runs
   API (the job logs need sign-in).
 
-### Recording workflows
+### Recordings kept, calendars, combining and tidying
 
-`workflows.rs` routes expose core folder profiles, custom formats and recipes,
-retained recording sources (with version checks), and regeneration previews.
-`web/app/workflows.js` owns their UI. `record_journal.rs` persists sequenced browser
-PCM before acknowledging; the page spools unacknowledged chunks in IndexedDB via
-`audio-queue.js`. A disconnected browser is left recoverable, not auto-finalized.
-Call PCM is interleaved microphone/system audio and split before transcription.
-`calendar.rs` uses Google Desktop OAuth, PKCE, a one-use loopback callback, private
-server credentials via the injected `CalendarSecrets` adapter to Leo’s SecretStore,
-and a read-only event cache. The settings file contains no client secret or refresh
-token; migration secures the legacy file before moving credentials into SecretStore. Tests must never require real OAuth.
-Chat scopes filter both initial retrieval and subsequent note tools.
+`routes/sources.rs` serves a note's retained recording sources (with version checks),
+corrections, and regeneration previews (`{wants}`), drawn by `web/app/sources.js`
+(the note's Transcript action). `record_journal.rs` persists sequenced browser PCM
+before acknowledging; the page spools unacknowledged chunks in IndexedDB via
+`audio-queue.js` (in memory where there is no IndexedDB). A disconnected browser is
+left recoverable, not auto-finalized. Call PCM is interleaved microphone/system
+audio and split before transcription.
 
-Calendar credentials go through the root adapter to `default_store()`, the same
-store as API keys (a 0600 file unless `LEO_USE_KEYCHAIN`), so they never cost a
-keychain dialog; tests inject a fake backend. A legacy account is secured to 0600 and atomically rewritten with
-only settings after the backend accepts its credentials. Google response sizes,
-page counts and request times are capped; calendar operations are serialized by
-an atomic flag. Recording journal writes and commit callbacks run outside the
-recording mutex; an atomic reservation prevents Stop/recovery from overtaking a
-chunk or point write. Transcript edits serialize outside the store mutex and reject
-stale versions. A failed worker still accepts queued recovery audio.
+What the user wants: the Record page's "What do you want from the notes?" box goes
+in `StartBody.profile.wants`; while recording, the live box saves after a pause
+(POST `/api/record/{id}/wants`, live only) into `Controls.wants`, which the
+recorder copies into the manifest; `long::with_profile` puts it in
+`<what_the_user_wants>` and restates it last. It is kept in the `Archive` and
+prefilled when regenerating.
 
-Workflows and saved actions have desktop sidebar entries as well as the phone’s
-More menu. Browser flow tests must use those visible controls, not programmatic
-clicks on a hidden menu. The cargo Node gate includes audio-queue failure tests.
+Calendars (`calendar.rs`, `ics.rs`; Settings → Calendar): the user pastes a
+calendar's secret iCal address (Google: Settings → the calendar → Integrate
+calendar → Secret address in iCal format; webcal:// becomes https://). Google
+sign-in (OAuth) was removed 2026-10-10 because setting up a Cloud client was too
+hard; its old files and stored secret are deleted on the next GET. The link is
+a secret: only accepted on a `secure_request`, kept through the root's
+`CalendarAccess` adapter (`default_store()`, account `calendar-link-<id>`), never
+written to a file or sent to the page. Fetches go through
+`leo_services::web::fetch_public` (https, public addresses only, `MOST_BYTES`).
+`ics::read` unfolds lines, reads events with their time zone (`chrono-tz`;
+unknown zones = this computer's), skips all-day and cancelled events and declined
+guests, and expands DAILY/WEEKLY(BYDAY)/MONTHLY/YEARLY repeats with
+INTERVAL/COUNT/UNTIL, EXDATE and moved instances (RECURRENCE-ID); other rules
+show the first time only. Bounded: 20k events, 5k steps, 200 shown. Up to five
+calendars (`calendars.json`); events for the next 14 days in
+`calendar-cache.json`, refreshed in the background when older than 15 minutes.
+The Record page preselects the event happening now (or starting within 15
+minutes), names the recording after it unless a title was typed, suggests
+meeting-style notes in the wants box, and sends the event's place, organiser,
+guests and description as `profile.context`.
+
+Combining notes: dropping a note card on another (`drag.js`) opens a sheet; POST
+`/api/notes/{into}/combine {with}` asks the writer (`combine::SYSTEM`: keep every
+fact, say repeats once) for a preview, puts back any picture, link, code block,
+math block or checkbox the reply dropped (`combine::missing`, under "Also in the
+original notes"), rewrites relative picture links from the other folder, and
+reports how much wording survived (`kept`, warn under `KEPT_ENOUGH`). Saving
+(POST `/combined`) checks both versions, replaces the target body and trashes the
+other note; the toast's Undo restores both.
+
+Knowledge graph "Tidy up" (`graph.js` `tidyLayout`): reseeds by class with a
+breadth-first spiral, runs `TIDY_TICKS` of the same forces, swaps nearby nodes
+while it reduces edge crossings (`crossings`, within `TIDY_BUDGET_MS`), polishes,
+then glides there.
+
+Sidebar: the places nav and the foot stay put; only the folder tree
+(`.side-tree`) scrolls, and its scroll position survives redraws.
+
+Recording journal writes and commit callbacks run outside the recording mutex; an
+atomic reservation prevents Stop/recovery from overtaking a chunk or point write
+(points, wants and Stop wait for it rather than failing). Transcript edits
+serialize outside the store mutex and reject stale versions. A failed worker still
+accepts queued recovery audio.
 
 Recovery replays through bounded channels with four chunks per track. Its job stays
 in writing state, rejects fresh microphone uploads, and exposes JSON acknowledgments

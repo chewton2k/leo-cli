@@ -153,5 +153,4 @@ aliases. `parse` strips a typed leading `/`.
 
 Recording saves call `apply_recording` with the session ID before committing the
 source archive and cleaning audio. An append retry must not duplicate either the
-body or its retained source. Folder workflow defaults are read from the same core
-configuration as the website.
+body or its retained source.

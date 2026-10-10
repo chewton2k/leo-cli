@@ -18,16 +18,9 @@ const actions = {
     }
   },
   menu,
-  workflows: () => { closeSheet(); go('#/workflows'); },
-  'workflow-save': () => saveWorkflows().catch(fail),
-  'workflow-inherit': () => inheritedWorkflows().catch(fail),
-  'workflow-add': (el) => addWorkflow(el.dataset.kind),
-  'workflow-remove': removeWorkflow,
-  'calendar-reconnect': () => {workflowPage.calendar.connected=false;drawWorkflows(workflowDir);},
-  'calendar-connect': () => connectCalendar().catch(fail),
-  'calendar-sync': () => api('/api/calendar/sync',{method:'POST'}).then(() => showWorkflows()).catch(fail),
-  'calendar-disconnect': () => api('/api/calendar',{method:'DELETE'}).then(() => showWorkflows()).catch(fail),
-  'saved-actions': () => savedActions().catch(fail),
+  'calendar-add': () => addCalendar().catch(fail),
+  'calendar-remove': (el) => removeCalendar(el).catch(fail),
+  'calendar-refresh': () => refreshCalendar().catch(fail),
   'note-sources': () => showRecordingSources(window.getSelection().toString().trim().slice(0,200)).catch(fail),
   'source-save': (el) => saveSource(Number(el.dataset.i)).catch(fail),
   'source-regenerate': () => regenerateSource().catch(fail),
@@ -114,6 +107,11 @@ const actions = {
   'map-pick': (el) => mapView && mapPick(el.dataset.id),
   'map-clear': () => mapView && mapView.select(null),
   'map-fit': () => mapView && mapView.fit(),
+  'map-tidy': () => {
+    if (!mapView) return;
+    const { before, after } = mapView.tidy();
+    toast(after < before ? `Tidied up: ${before - after} fewer crossing ${before - after === 1 ? 'line' : 'lines'}.` : 'Tidied up.');
+  },
   'map-zoom-in': () => mapView && mapView.zoomBy(1.35),
   'map-zoom-out': () => mapView && mapView.zoomBy(1 / 1.35),
   'map-across': () => mapView && mapView.setOptions({ crossOnly: !mapView.options().crossOnly }),

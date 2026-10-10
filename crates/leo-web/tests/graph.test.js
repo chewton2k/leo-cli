@@ -140,3 +140,38 @@ test('a large map shows the most connected notes, and a focus still reaches any 
   assert.equal(G.visible(g).limited, null, 'small maps are whole');
   assert.equal(G.MAP_MOST, 400);
 });
+
+test('tidying lays a tangled graph out again with fewer crossing lines, the same way every time', () => {
+  const nodes = [];
+  const edges = [];
+  for (let i = 0; i < 24; i++) nodes.push({ id: `n:${i}`, kind: 'note', label: `Note ${i}`, folder: i < 12 ? 'cs130' : 'math61', summary: '', concepts: [] });
+  for (let i = 0; i < 24; i++) {
+    edges.push({ a: `n:${i}`, b: `n:${(i + 1) % 24}`, kind: 'related', relation: 'builds on', strength: 2, why: '' });
+    if (i % 3 === 0) edges.push({ a: `n:${i}`, b: `n:${(i + 2) % 24}`, kind: 'related', relation: 'same idea', strength: 1, why: '' });
+  }
+  const g = G.prepare({ nodes, edges });
+  const vis = G.visible(g);
+  let seed = 7;
+  const random = () => ((seed = (seed * 16807) % 2147483647) / 2147483647) * 600 - 300;
+  const tangled = new Map([...vis.nodes].map((id) => [id, { x: random(), y: random() }]));
+  const before = G.crossings(vis.edges, tangled);
+  const first = G.tidyLayout(g, vis, { budget: 2000 });
+  const after = G.crossings(vis.edges, first);
+  assert.ok(before > 10, `the test layout is tangled (${before})`);
+  assert.ok(after < before / 4, `tidy left ${after} of ${before} crossings`);
+  for (const p of first.values()) assert.ok(Number.isFinite(p.x) && Number.isFinite(p.y));
+  const again = G.tidyLayout(g, vis, { budget: 2000 });
+  assert.deepEqual([...again.entries()].map(([id, p]) => [id, Math.round(p.x), Math.round(p.y)]), [...first.entries()].map(([id, p]) => [id, Math.round(p.x), Math.round(p.y)]));
+});
+
+test('tidying a large graph stays within its time budget', () => {
+  const nodes = [];
+  const edges = [];
+  for (let i = 0; i < 400; i++) nodes.push({ id: `n:${i}`, kind: 'note', label: `N${i}`, folder: `c${i % 6}`, summary: '', concepts: [] });
+  for (let i = 0; i < 1200; i++) edges.push({ a: `n:${i % 400}`, b: `n:${(i * 37 + 11) % 400}`, kind: 'related', relation: 'same idea', strength: 1 + (i % 3), why: '' });
+  const g = G.prepare({ nodes, edges });
+  const vis = G.visible(g);
+  const started = Date.now();
+  G.tidyLayout(g, vis);
+  assert.ok(Date.now() - started < 6000, `took ${Date.now() - started} ms`);
+});

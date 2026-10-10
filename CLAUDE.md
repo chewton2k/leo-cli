@@ -310,8 +310,11 @@ way.
   `chat_days` (30/90/365/None, default forever) drives `chats::tidy` in leo-web.
   Trash messages use `keep::kept_for`.
 
-Recording sources and folder workflows live in `leo-core::recording` and
-`leo-core::workflows`, shared by both front ends. Saved recording session IDs make
-new notes and appends idempotent; retain sources before saving the note, then commit
-the session after the note is durable. Default AI gap-filling and merging of typed
-points are intentional and must remain in every selected format.
+Recording sources live in `leo-core::recording` (`Archive`, and `Profile {context,
+wants}`: calendar-event details and what the user wants from the notes), shared by
+both front ends. Saved recording session IDs make new notes and appends idempotent;
+retain sources before saving the note, then commit the session after the note is
+durable. Default AI gap-filling and merging of typed points always stay, whatever
+the user asks for. Note workflows (folder defaults, note formats, vocabulary, saved
+actions, chat scope) were removed on 2026-10-10, the user's call: the "What do you
+want from the notes?" box replaces formats.

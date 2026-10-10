@@ -1,12 +1,14 @@
 mod auth;
+mod calendar;
+mod combine;
 mod felix;
 mod housekeeping;
 mod notes;
 mod pictures;
 mod recording;
+mod sources;
 mod trash;
 mod uploads;
-mod workflows;
 
 use std::sync::{Arc, Mutex};
 
@@ -68,7 +70,7 @@ fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<Strin
         imports: Default::default(),
         listener: None,
         regenerator: None,
-        calendar_secrets: None,
+        calendar_access: None,
         recording: Default::default(),
         calendar: Default::default(),
         source_writing: Default::default(),

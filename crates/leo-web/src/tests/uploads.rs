@@ -272,6 +272,7 @@ fn background_work_is_listed_until_it_is_done() {
         transcript: String::new(),
         warnings: vec![],
         points: vec![],
+        wants: String::new(),
         levels: vec![],
         levels_start: 0,
         note: None,

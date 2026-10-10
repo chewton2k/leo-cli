@@ -186,10 +186,8 @@ fn save_session(store: &mut Store, dir: &std::path::Path) -> Result<Outcome> {
         existing.as_deref(),
         &fallback,
         &|prompt, max| {
-            let workflows =
-                leo_core::workflows::Workflows::load(&store.notes_dir).unwrap_or_default();
             leo_services::ai::chat_outcome(
-                leo_services::ai::long::with_profile(prompt, &session.manifest.profile, &workflows),
+                leo_services::ai::long::with_profile(prompt, &session.manifest.profile),
                 max,
             )
             .map(|o| o.value)

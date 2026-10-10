@@ -31,7 +31,7 @@ uploads/  the files you uploaded, in a folder per note (named by the note's id,
 chats/    your conversations with Felix, one JSON file each.
 trash/    notes in the trash, as Markdown.
 recording-sources/ retained transcripts, original points and diagnostics,
-          included with uploads. Audio recovery and calendar credentials
+          included with uploads. Audio recovery and calendar links
           stay on your computer.
 
 Settings and API keys are never included.

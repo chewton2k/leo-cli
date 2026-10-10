@@ -46,6 +46,7 @@ function drawMap(data, select, keep) {
       <button data-action="map-zoom-in" aria-label="Zoom in">${ICON.plus}</button>
       <button data-action="map-zoom-out" aria-label="Zoom out">${ICON.minus}</button>
       <button data-action="map-fit" aria-label="Fit the whole map">${ICON.fit}</button>
+      <button data-action="map-tidy" aria-label="Tidy up the layout" title="Tidy up: lay the notes out again with as few crossing lines as possible">${ICON.tidy}</button>
     </div>
     <aside class="map-panel ${mapSheet}" id="map-panel" aria-live="polite"></aside>
   </section>`;

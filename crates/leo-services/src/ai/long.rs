@@ -10,30 +10,26 @@ type Written = (String, Option<String>);
 pub type Chat<'a> = &'a (dyn Fn(Prompt, u32) -> Result<String> + Sync);
 pub type Progress<'a> = &'a (dyn Fn(usize, usize) + Sync);
 
-pub fn with_profile(
-    mut prompt: Prompt,
-    profile: &leo_core::workflows::Profile,
-    workflows: &leo_core::workflows::Workflows,
-) -> Prompt {
-    if let Some(format) = workflows.format(&profile.template) {
-        if format.id != "lecture" {
-            prompt.system = prompt.system.replace(chat::LEARNING, "");
-        }
-        prompt.system.push_str(&format!(
-            "\n\nUser-selected note format. Use interpretable language.\n{}",
-            format.prompt
-        ));
-    }
-    if !profile.context.is_empty() || !profile.vocabulary.is_empty() {
+pub fn with_profile(mut prompt: Prompt, profile: &leo_core::recording::Profile) -> Prompt {
+    let context = profile.context.trim();
+    if !context.is_empty() {
         prompt.user = format!(
-            "<recording_context>\n{}\nTerminology: {}\n</recording_context>\n\n{}",
-            profile.context,
-            profile.vocabulary.join(", "),
+            "<recording_context>\n{context}\n</recording_context>\n\n{}",
+            prompt.user
+        );
+    }
+    let wants = profile.wants.trim();
+    if !wants.is_empty() {
+        prompt.system.push_str(&format!("\n\n{WANTS}"));
+        prompt.user = format!(
+            "<what_the_user_wants>\n{wants}\n</what_the_user_wants>\n\n{}\n\nFollow what the user wants from these notes.",
             prompt.user
         );
     }
     prompt
 }
+
+const WANTS: &str = "The user said what they want from these notes in <what_the_user_wants>. Shape the notes around it wherever it fits (what to focus on, how to lay them out, how deep to go, what to emphasise), while still keeping everything important from the recording, filling gaps where the speaker was unclear and weaving in the user's typed points. Use interpretable language.";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Structured {
@@ -300,27 +296,39 @@ mod tests {
     }
 
     #[test]
-    fn selected_formats_keep_gap_filling_and_point_merging() {
+    fn what_the_user_wants_shapes_the_notes_and_keeps_gap_filling_and_points() {
         let points = vec![Jotted {
             at_secs: 5,
             text: "Explain the queue".into(),
         }];
-        for template in ["lecture", "meeting", "interview", "design-review"] {
-            let p = with_profile(
-                chat::build_structure_prompt_with("partial words", &points),
-                &leo_core::workflows::Profile {
-                    template: template.into(),
-                    vocabulary: vec!["Dijkstra".into()],
-                    ..Default::default()
-                },
-                &Default::default(),
-            );
-            assert!(p
-                .system
-                .contains("fill the gap with accurate explanation from your own knowledge"));
-            assert!(p.user.contains("Explain the queue"));
-            assert!(p.user.contains("Dijkstra"));
-        }
+        let plain = with_profile(
+            chat::build_structure_prompt_with("partial words", &points),
+            &Default::default(),
+        );
+        assert!(!plain.user.contains("<what_the_user_wants>"));
+        assert!(!plain.user.contains("<recording_context>"));
+        let p = with_profile(
+            chat::build_structure_prompt_with("partial words", &points),
+            &leo_core::recording::Profile {
+                context: "Design review with Sam".into(),
+                wants: "Focus on what will be on the exam".into(),
+            },
+        );
+        assert!(p.system.contains("<what_the_user_wants>"));
+        assert!(p.system.contains(chat::LEARNING));
+        assert!(p
+            .system
+            .contains("fill the gap with accurate explanation from your own knowledge"));
+        assert!(p.user.starts_with(
+            "<what_the_user_wants>\nFocus on what will be on the exam\n</what_the_user_wants>"
+        ));
+        assert!(p
+            .user
+            .contains("<recording_context>\nDesign review with Sam\n</recording_context>"));
+        assert!(p.user.contains("Explain the queue"));
+        assert!(p
+            .user
+            .ends_with("Follow what the user wants from these notes."));
     }
 
     #[test]

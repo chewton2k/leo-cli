@@ -1,12 +1,15 @@
 pub mod calc;
 mod calendar;
+pub const CALENDAR_BYTES: u64 = calendar::MOST_BYTES;
 pub mod captions;
 pub mod chat;
 pub mod chat_files;
 pub mod chats;
+mod combine;
 pub mod db;
 pub mod export;
 pub mod graph;
+mod ics;
 pub mod record;
 mod record_journal;
 pub mod review;
@@ -101,7 +104,8 @@ pub struct Web {
     pub needed: Arc<dyn Fn() -> bool + Send + Sync>,
 }
 
-pub trait CalendarSecrets: Send + Sync {
+pub trait CalendarAccess: Send + Sync {
+    fn fetch(&self, url: &str) -> Result<Vec<u8>>;
     fn get(&self, account: &str) -> Result<Option<String>>;
     fn set(&self, account: &str, value: &str) -> Result<()>;
     fn delete(&self, account: &str) -> Result<()>;
@@ -135,7 +139,7 @@ pub struct Powers {
     pub importer: Option<Importer>,
     pub listener: Option<record::Listener>,
     pub regenerator: Option<record::Regenerator>,
-    pub calendar_secrets: Option<Arc<dyn CalendarSecrets>>,
+    pub calendar_access: Option<Arc<dyn CalendarAccess>>,
     pub housekeeper: Option<Arc<dyn storage::Housekeeper>>,
     pub reader: Option<Reader>,
     pub room: Option<Room>,
@@ -156,7 +160,7 @@ struct AppState {
     imports: Arc<Mutex<std::collections::HashMap<String, ImportJob>>>,
     listener: Option<record::Listener>,
     regenerator: Option<record::Regenerator>,
-    calendar_secrets: Option<Arc<dyn CalendarSecrets>>,
+    calendar_access: Option<Arc<dyn CalendarAccess>>,
     recording: record::Recordings,
     calendar: Arc<calendar::Calendar>,
     source_writing: Arc<std::sync::atomic::AtomicBool>,
@@ -398,7 +402,7 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
         imports: Default::default(),
         listener: recorder,
         regenerator: powers.regenerator,
-        calendar_secrets: powers.calendar_secrets,
+        calendar_access: powers.calendar_access,
         recording: Default::default(),
         calendar: Default::default(),
         source_writing: Default::default(),
@@ -524,25 +528,23 @@ fn router(state: AppState) -> Router {
             get(get_note).patch(update_note).delete(delete_note),
         )
         .route("/api/notes/{id}/toggle", post(toggle_checkbox))
+        .route("/api/calendar", get(calendar::get).post(calendar::add))
+        .route("/api/calendar/refresh", post(calendar::refresh_now))
         .route(
-            "/api/calendar",
-            get(calendar::status).delete(calendar::disconnect),
-        )
-        .route("/api/calendar/connect", post(calendar::connect))
-        .route("/api/calendar/sync", post(calendar::sync))
-        .route(
-            "/api/workflows",
-            get(routes::workflows::get).put(routes::workflows::put),
+            "/api/calendar/{id}",
+            axum::routing::delete(calendar::remove),
         )
         .route(
             "/api/notes/{id}/recording",
-            get(routes::workflows::sources).put(routes::workflows::edit_sources),
+            get(routes::sources::sources).put(routes::sources::edit_sources),
         )
         .route(
             "/api/notes/{id}/regenerate",
-            post(routes::workflows::regenerate),
+            post(routes::sources::regenerate),
         )
         .route("/api/notes/{id}/move", post(move_note))
+        .route("/api/notes/{id}/combine", post(routes::combine::preview))
+        .route("/api/notes/{id}/combined", post(routes::combine::keep))
         .route("/api/notes/{id}/suggestion", post(apply_suggestion))
         .route("/api/search", get(search_notes))
         .route("/api/dirs", get(list_dirs).post(create_dir))
@@ -618,6 +620,7 @@ fn router(state: AppState) -> Router {
         )
         .route("/api/record/{id}/pause", post(record::pause))
         .route("/api/record/{id}/point", post(record::point))
+        .route("/api/record/{id}/wants", post(record::wants))
         .route(
             "/api/record/{id}/snapshot",
             post(record::snapshot).layer(axum::extract::DefaultBodyLimit::max(

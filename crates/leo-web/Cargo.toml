@@ -22,8 +22,6 @@ uuid.workspace = true
 rusqlite.workspace = true
 tempfile.workspace = true
 zip.workspace = true
-reqwest.workspace = true
-url.workspace = true
-sha2.workspace = true
+chrono-tz.workspace = true
 
 [dev-dependencies]

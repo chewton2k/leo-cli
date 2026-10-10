@@ -47,7 +47,6 @@ fn a_document_given_to_felix_is_kept_as_text_and_read_with_the_question() {
     );
 
     let body = chat::ChatBody {
-        scope: Default::default(),
         messages: vec![chat::Turn {
             role: "user".into(),
             text: "what do my slides say?".into(),
@@ -129,7 +128,6 @@ fn a_chat_reply_streams_its_sources_then_the_answer() {
         },
     ));
     let body = chat::ChatBody {
-        scope: Default::default(),
         messages: vec![chat::Turn {
             role: "user".into(),
             text: "how do heaps work?".into(),
@@ -175,7 +173,6 @@ fn a_chat_reply_streams_its_sources_then_the_answer() {
 fn a_chat_without_ai_or_a_question_is_refused() {
     let (state, _d, _ids) = state_with(&[]);
     let ask = |text: &str| chat::ChatBody {
-        scope: Default::default(),
         messages: vec![chat::Turn {
             role: "user".into(),
             text: text.into(),
@@ -234,7 +231,6 @@ fn chat_lines_with(
     access: Option<&str>,
 ) -> Vec<serde_json::Value> {
     let body = chat::ChatBody {
-        scope: Default::default(),
         messages: vec![chat::Turn {
             role: "user".into(),
             text: question.into(),
@@ -1072,7 +1068,6 @@ fn a_long_chat_is_remembered_in_a_summary_instead_of_forgotten() {
     .unwrap();
     let ask = |messages: &[chat::Turn]| {
         let body = chat::ChatBody {
-            scope: Default::default(),
             messages: messages.to_vec(),
             mode: None,
             note: None,
@@ -1226,7 +1221,6 @@ fn a_practice_answer_is_marked_once_and_never_nudged_into_changing_a_note() {
     ]);
     state.chat = Some(streamer);
     let body = chat::ChatBody {
-        scope: Default::default(),
         messages: vec![chat::Turn {
             role: "user".into(),
             text: "Quiz answer. Question: why f'(x)=0?\nMy answer: dunno\nMark it: start your reply with [[correct]] or [[incorrect]]".into(),
@@ -1344,7 +1338,6 @@ fn a_marking_without_a_verdict_gets_one_from_a_short_check() {
     let (streamer, prompts) = scripted(vec!["Close, but you left out the endpoints.", "incorrect"]);
     state.chat = Some(streamer);
     let body = chat::ChatBody {
-        scope: Default::default(),
         messages: vec![chat::Turn {
             role: "user".into(),
             text: "Quiz answer. Question: what do you compare?\nMy answer: the middle\nA model answer to compare with: f(a), f(b) and critical points".into(),

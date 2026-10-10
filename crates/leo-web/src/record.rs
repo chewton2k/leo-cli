@@ -50,7 +50,7 @@ impl Source {
 
 pub struct Listening {
     pub id: String,
-    pub profile: leo_core::workflows::Profile,
+    pub profile: leo_core::recording::Profile,
     pub audio: Option<Receiver<Vec<i16>>>,
     pub other_audio: Option<Receiver<Vec<i16>>>,
     pub call: bool,
@@ -61,6 +61,7 @@ pub struct Listening {
     pub finish_now: Arc<AtomicBool>,
     pub pause: Arc<AtomicBool>,
     pub points: Arc<Mutex<Vec<(u64, String)>>>,
+    pub wants: Arc<Mutex<Option<String>>>,
 }
 
 pub enum Heard {
@@ -81,8 +82,7 @@ pub type Commit = Arc<dyn Fn(&std::path::Path, &str) -> Result<()> + Send + Sync
 pub type Regenerator = Arc<
     dyn Fn(
             Vec<leo_core::recording::Archive>,
-            leo_core::workflows::Profile,
-            leo_core::workflows::Workflows,
+            leo_core::recording::Profile,
         ) -> Result<(String, String)>
         + Send
         + Sync,
@@ -110,6 +110,7 @@ pub struct RecordView {
     pub transcript: String,
     pub warnings: Vec<String>,
     pub points: Vec<(u64, String)>,
+    pub wants: String,
     pub levels: Vec<f32>,
     pub levels_start: u64,
     pub note: Option<String>,
@@ -137,6 +138,7 @@ pub(crate) struct RecordJob {
     finish_now: Arc<AtomicBool>,
     pause: Arc<AtomicBool>,
     points: Arc<Mutex<Vec<(u64, String)>>>,
+    wants: Arc<Mutex<Option<String>>>,
     seen: Instant,
 }
 
@@ -271,7 +273,7 @@ pub(crate) struct StartBody {
     title: Option<String>,
     source: Source,
     #[serde(default)]
-    profile: Option<leo_core::workflows::Profile>,
+    profile: Option<leo_core::recording::Profile>,
 }
 
 pub(crate) async fn start(
@@ -306,28 +308,9 @@ pub(crate) async fn start(
         Ok(notes) => notes,
         Err(code) => return error(code, "Check the folder before recording."),
     };
-    let checked = tokio::task::spawn_blocking({
-        let notes = notes.clone();
-        let directory = directory.clone();
-        let profile = body.profile.clone();
-        move || -> anyhow::Result<_> {
-            let mut workflows = leo_core::workflows::Workflows::load(&notes)?;
-            if let Some(profile) = profile {
-                workflows.profiles.insert(directory.clone(), profile);
-                workflows.validate()?;
-            }
-            Ok(workflows.profile(&directory))
-        }
-    })
-    .await;
-    let profile = match checked {
-        Ok(Ok(profile)) => profile,
-        _ => {
-            return error(
-                StatusCode::BAD_REQUEST,
-                "Check the recording format, vocabulary and context.",
-            )
-        }
+    let profile = match body.profile.clone().unwrap_or_default().checked() {
+        Ok(profile) => profile,
+        Err(e) => return error(StatusCode::BAD_REQUEST, &e.to_string()),
     };
     let title = body
         .title
@@ -338,6 +321,7 @@ pub(crate) async fn start(
     let pause = Arc::new(AtomicBool::new(false));
     let finish_now = Arc::new(AtomicBool::new(false));
     let points: Arc<Mutex<Vec<(u64, String)>>> = Default::default();
+    let wants: Arc<Mutex<Option<String>>> = Default::default();
     let (sender, audio) = if body.source.fed_by_browser() {
         let (tx, rx) = std::sync::mpsc::channel();
         (Some(tx), Some(rx))
@@ -403,6 +387,7 @@ pub(crate) async fn start(
                 transcript: String::new(),
                 warnings: Vec::new(),
                 points: Vec::new(),
+                wants: profile.wants.clone(),
                 levels: Vec::new(),
                 levels_start: 0,
                 note: None,
@@ -414,6 +399,7 @@ pub(crate) async fn start(
             finish_now: finish_now.clone(),
             pause: Arc::clone(&pause),
             points: Arc::clone(&points),
+            wants: Arc::clone(&wants),
             seen: Instant::now(),
         });
     }
@@ -430,6 +416,7 @@ pub(crate) async fn start(
         finish_now,
         pause,
         points,
+        wants,
     };
     let worker = state.clone();
     let job = id.clone();
@@ -794,6 +781,7 @@ pub(crate) async fn recover(State(state): State<AppState>, Path(id): Path<String
     let pause = Arc::new(AtomicBool::new(false));
     let finish_now = Arc::new(AtomicBool::new(false));
     let points = Arc::new(Mutex::new(meta.points.clone()));
+    let wants: Arc<Mutex<Option<String>>> = Default::default();
     {
         let Ok(mut held) = state.recording.lock() else {
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
@@ -816,6 +804,7 @@ pub(crate) async fn recover(State(state): State<AppState>, Path(id): Path<String
                 transcript: String::new(),
                 warnings: vec!["Recovered audio from the last interrupted recording.".into()],
                 points: meta.points.clone(),
+                wants: meta.profile.wants.clone(),
                 levels: Vec::new(),
                 levels_start: 0,
                 note: None,
@@ -830,6 +819,7 @@ pub(crate) async fn recover(State(state): State<AppState>, Path(id): Path<String
             finish_now: finish_now.clone(),
             pause: pause.clone(),
             points: points.clone(),
+            wants: wants.clone(),
             seen: Instant::now(),
         });
     }
@@ -846,6 +836,7 @@ pub(crate) async fn recover(State(state): State<AppState>, Path(id): Path<String
         finish_now,
         pause,
         points,
+        wants,
     };
     let worker = state.clone();
     let job = id.clone();
@@ -984,6 +975,72 @@ async fn append_point(
     }
 }
 
+#[derive(Deserialize)]
+pub(crate) struct WantsBody {
+    text: String,
+}
+
+pub(crate) async fn wants(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<WantsBody>,
+) -> Response {
+    let text = body.text.trim().to_string();
+    if text.chars().count() > leo_core::recording::MOST_WANTS_CHARS {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "Keep what you want from the notes under 4,000 characters.",
+        );
+    }
+    writes_done(&state, &id).await;
+    let input = match with_job(&state, &id, |job| -> anyhow::Result<_> {
+        if !job.live() {
+            anyhow::bail!(
+                "The notes are already being written; change this before you stop next time."
+            );
+        }
+        let lease = Writing::take(job)?;
+        let mut journal = job.journal.clone();
+        if let Some((_, meta)) = &mut journal {
+            meta.profile.wants = text.clone();
+        }
+        Ok((lease, journal))
+    }) {
+        Ok(Ok(input)) => input,
+        Ok(Err(e)) => return error(StatusCode::CONFLICT, &e.to_string()),
+        Err((code, message)) => return error(code, message),
+    };
+    let (lease, journal) = input;
+    let saved = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+        if let Some((notes, meta)) = &journal {
+            crate::record_journal::save(notes, meta)?;
+        }
+        Ok(journal)
+    })
+    .await;
+    let journal =
+        match saved {
+            Ok(Ok(journal)) => journal,
+            _ => return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "What you want from the notes could not be saved. Check free disk space and retry.",
+            ),
+        };
+    let result = with_job(&state, &id, |job| {
+        job.journal = journal;
+        if let Ok(mut wants) = job.wants.lock() {
+            *wants = Some(text.clone());
+        }
+        job.view.wants = text;
+        job.view.clone()
+    });
+    drop(lease);
+    match result {
+        Ok(view) => Json(view).into_response(),
+        Err((code, message)) => error(code, message),
+    }
+}
+
 pub(crate) async fn stop(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     writes_done(&state, &id).await;
     match with_job(&state, &id, |job| {
@@ -1018,6 +1075,7 @@ mod tests {
             transcript: String::new(),
             warnings: Vec::new(),
             points: Vec::new(),
+            wants: String::new(),
             levels: Vec::new(),
             levels_start: 0,
             note: None,

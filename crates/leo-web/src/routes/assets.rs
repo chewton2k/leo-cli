@@ -15,7 +15,7 @@ const APP_JS: &str = concat!(
     include_str!("../web/app/drag.js"),
     include_str!("../web/app/diagrams.js"),
     include_str!("../web/app/math.js"),
-    include_str!("../web/app/workflows.js"),
+    include_str!("../web/app/sources.js"),
     include_str!("../web/app/actions.js"),
     include_str!("../web/app/events.js"),
     "})();\n",

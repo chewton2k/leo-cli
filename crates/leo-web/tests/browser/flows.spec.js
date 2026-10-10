@@ -546,6 +546,15 @@ test.describe('knowledge graph', () => {
     await expect(page.locator(`.card[data-id="${made.Heaps.id}"]`)).toBeVisible();
   });
 
+  test('Tidy up lays the graph out again and says so', async ({ page }) => {
+    await seed(page);
+    await page.goto('/#/map');
+    await expect(page.locator('#map-canvas')).toBeVisible();
+    await page.locator('[data-action="map-tidy"]').click();
+    await expect(page.locator('.toast')).toContainText('Tidied up');
+    await expect(page.locator('#map-canvas')).toBeVisible();
+  });
+
   test('a note opens on the map with its connections and why', async ({ page }) => {
     const made = await seed(page);
     await page.goto(`/#/n/${made.Scheduling.id}`);
@@ -2063,7 +2072,7 @@ test.describe('recording', () => {
   function stubRecorder(page, { noteId, local = true }) {
     const seen = { audioBytes: 0, posts: 0, started: null, points: [], stopped: false, paused: false, levels: [], source: 'browser' };
     let polls = 0;
-    const view = (over = {}) => ({ id: 'rec-1', source: seen.source, state: seen.paused ? 'paused' : 'recording', secs: 3, step: '', steps: null, transcript: 'Today we cover breadth first search.', warnings: [], points: seen.points.map((t) => [3, t]), levels: seen.levels, note: null, error: null, ...over });
+    const view = (over = {}) => ({ wants: seen.wants ?? (seen.started && seen.started.profile ? seen.started.profile.wants || '' : ''), id: 'rec-1', source: seen.source, state: seen.paused ? 'paused' : 'recording', secs: 3, step: '', steps: null, transcript: 'Today we cover breadth first search.', warnings: [], points: seen.points.map((t) => [3, t]), levels: seen.levels, note: null, error: null, ...over });
     page.route('**/api/record', async (route) => {
       if (route.request().method() === 'GET') return route.fulfill({ json: { available: true, local, job: null } });
       seen.started = route.request().postDataJSON();
@@ -2078,6 +2087,10 @@ test.describe('recording', () => {
       seen.audioBytes += route.request().postDataBuffer().length;
       seen.posts += 1;
       return route.fulfill({ json:{next_seq:Number(new URL(route.request().url()).searchParams.get('seq'))+1} });
+    });
+    page.route('**/api/record/rec-1/wants', (route) => {
+      seen.wants = route.request().postDataJSON().text;
+      return route.fulfill({ json: view({ wants: seen.wants }) });
     });
     page.route('**/api/record/rec-1/point', (route) => {
       seen.points.push(route.request().postDataJSON().text);
@@ -2095,7 +2108,6 @@ test.describe('recording', () => {
   }
 
   test('the microphone streams to leo, takes points, and the note opens when written', async ({ page, context }) => {
-    await page.request.put('/api/workflows',{data:{profiles:{},templates:[],recipes:[]}});
     await context.grantPermissions(['microphone']);
     const made = await (await page.request.post('/api/notes', { data: { title: 'BFS lecture', body: '## BFS\n- queue' } })).json();
     const seen = stubRecorder(page, { noteId: made.id });
@@ -2105,6 +2117,7 @@ test.describe('recording', () => {
     await expect(page.locator('.rec-kind')).toHaveCount(3);
     await expect(page.locator('.rec-kind b')).toHaveText(['Microphone', 'Screen', 'Call']);
     await page.locator('#rec-title').fill('Graphs');
+    await page.locator('#rec-wants').fill('Focus on BFS');
     await page.locator('[data-action="rec-start"]').click();
     await expect(page.locator('#rec-transcript')).toContainText('breadth first search');
     await expect.poll(() => seen.audioBytes, { timeout: 8000 }).toBeGreaterThan(16000);
@@ -2125,7 +2138,15 @@ test.describe('recording', () => {
       return painted;
     });
     expect(leftEdge, 'the wave reaches the left edge of its box').toBeGreaterThan(0);
-    expect(seen.started).toEqual({ source: 'browser', directory: '', title: 'Graphs', profile: {template:'lecture',context:'',vocabulary:[]} });
+    expect(seen.started).toEqual({ source: 'browser', directory: '', title: 'Graphs', profile: { context: '', wants: 'Focus on BFS' } });
+    const live = page.locator('#rec-wants-live');
+    await expect(live).toHaveValue('Focus on BFS');
+    await live.click();
+    await live.press('End');
+    await live.pressSequentially(' and the exam');
+    await expect.poll(() => seen.wants).toBe('Focus on BFS and the exam');
+    await expect(live).toBeFocused();
+    await expect(page.locator('#rec-wants-state')).toContainText('Saved');
 
     await page.locator('#rec-point-text').fill('exam question on BFS');
     await page.locator('#rec-point-text').press('Enter');
@@ -2237,24 +2258,48 @@ test.describe('recording', () => {
     await expect(page.locator('.rec-kind', { hasText: 'Screen' })).toContainText('Share tab audio');
   });
 
-  test('a title typed while formats and the calendar load stays, and a broken calendar is not fatal', async ({ page }) => {
-    await page.route('**/api/record', (route) => route.fulfill({ json: { available: true, local: false, job: null, pending: [] } }));
+  test('the class or meeting happening now names the recording and tells the AI who and what, without overwriting a typed title', async ({ page, context }) => {
+    await context.grantPermissions(['microphone']);
+    const seen = stubRecorder(page, { noteId: 'x', local: true });
     let release;
     const late = new Promise((resolve) => { release = resolve; });
-    await page.route('**/api/workflows', async (route) => {
+    const now = Date.now();
+    await page.route('**/api/calendar', async (route) => {
       await late;
-      return route.fulfill({ json: { workflows: { profiles: {}, templates: [], recipes: [] }, templates: [{ id: 'lecture', name: 'Lecture', prompt: 'x' }, { id: 'meeting', name: 'Meeting', prompt: 'x' }], recipes: [] } });
+      return route.fulfill({ json: { connected: true, calendars: [{ id: 'c1', name: 'Work' }], events: [
+        { id: 'e1', title: 'Design review', start: new Date(now - 5 * 60000).toISOString(), end: new Date(now + 55 * 60000).toISOString(), location: 'Room 4', context: 'Calendar event: Design review\nInvited: Sam, Priya' },
+        { id: 'e2', title: 'Algorithms lecture', start: new Date(now + 3 * 3600000).toISOString(), end: new Date(now + 4 * 3600000).toISOString(), location: '', context: 'Calendar event: Algorithms lecture' },
+      ] } });
     });
-    await page.route('**/api/calendar', (route) => route.fulfill({ status: 500, json: { error: 'The calendar cache could not be read.' } }));
     await page.goto('/#/record');
     const title = page.locator('#rec-title');
     await title.click();
-    await title.pressSequentially('Algorithms week 3');
+    await title.pressSequentially('Weekly sync');
     release();
-    await expect(page.locator('#rec-template option')).toHaveCount(2);
-    await expect(title).toHaveValue('Algorithms week 3');
+    await expect(page.locator('#rec-event')).toHaveValue('0');
+    await expect(title).toHaveValue('Weekly sync');
     await expect(title).toBeFocused();
+    await expect(page.locator('#rec-wants')).toHaveValue(/Meeting notes/);
+    await page.locator('#rec-event').selectOption('1');
+    await expect(page.locator('#rec-event')).toHaveValue('1');
+    await page.locator('#rec-event').selectOption('0');
+    await page.locator('[data-action="rec-start"]').click();
+    await expect.poll(() => seen.started && seen.started.profile.context).toContain('Invited: Sam, Priya');
+    expect(seen.started.title).toBe('Weekly sync');
+  });
+
+  test('without a calendar the Record page points to Settings, and a broken calendar is not fatal', async ({ page }) => {
+    await page.route('**/api/record', (route) => route.fulfill({ json: { available: true, local: false, job: null, pending: [] } }));
+    await page.route('**/api/calendar', (route) => route.fulfill({ json: { connected: false, calendars: [], events: [] } }));
+    await page.goto('/#/record');
+    await expect(page.locator('.rec-idle a[href="#/settings"]')).toContainText('Connect a calendar');
+    await expect(page.locator('#rec-event')).toHaveCount(0);
+    await page.unroute('**/api/calendar');
+    await page.route('**/api/calendar', (route) => route.fulfill({ status: 500, json: { error: 'The calendars could not be read.' } }));
+    await page.goto('/#/');
+    await page.goto('/#/record');
     await expect(page.locator('[data-action="rec-start"]')).toBeEnabled();
+    await expect(page.locator('#rec-wants')).toBeVisible();
   });
 
   test('a refused microphone says how to allow it and starts nothing', async ({ page }) => {
@@ -2862,40 +2907,93 @@ test.describe('past chats', () => {
   });
 });
 
-test('folder workflows save vocabulary and custom formats, and saved actions set a bounded scope',async ({page}) => {
-  await page.request.put('/api/workflows',{data:{profiles:{},templates:[],recipes:[]}});
-  await goPlace(page,'workflows');
-  await expect(page.locator('#workflow-template')).toBeVisible();
-  await page.locator('#workflow-template').selectOption('meeting');
-  await page.locator('#workflow-vocabulary').fill('Dijkstra\nParakeet');
-  await page.locator('#workflow-context').fill('Design review for Leo');
-  await page.locator('[data-action="workflow-add"][data-kind="templates"]').click();
-  await page.locator('.workflow-custom summary').first().click();
-  await page.locator('[data-wf="templates"][data-key="name"]').fill('Project review');
-  await page.locator('[data-wf="templates"][data-key="prompt"]').fill('Use headings: Problem, Decisions, Next steps.');
-  for (const selector of ['#workflow-context','#workflow-vocabulary','[data-wf="templates"][data-key="name"]','[data-wf="templates"][data-key="prompt"]']) {
-    const field=page.locator(selector);
-    const value=await field.inputValue();
-    await field.focus();
-    await field.evaluate((el) => el.setSelectionRange(1,3));
-    await page.evaluate(() => document.querySelector('[data-action="workflow-add"][data-kind="recipes"]').click());
-    await expect(field).toBeFocused();
-    await expect(field).toHaveValue(value);
-    expect(await field.evaluate((el) => [el.selectionStart,el.selectionEnd])).toEqual([1,3]);
-  }
-  await page.locator('[data-action="workflow-save"]').first().click();
-  await expect(page.locator('.toast')).toContainText('Workflows saved');
+test('a calendar is connected in Settings by pasting one link, and can be removed', async ({ page }) => {
+  let linked = [];
+  let posted = null;
+  await page.route('**/api/calendar', async (route) => {
+    if (route.request().method() === 'POST') {
+      posted = route.request().postDataJSON();
+      if (!posted.link.includes('calendar.google.com')) return route.fulfill({ status: 400, json: { error: 'That link does not lead to a calendar. In Google Calendar, copy “Secret address in iCal format”.' } });
+      linked = [{ id: 'c1', name: 'Classes', added_at: new Date().toISOString(), problem: null }];
+    }
+    return route.fulfill({ json: { connected: linked.length > 0, calendars: linked, events: linked.length ? [{ id: 'e', title: 'Algorithms lecture', start: new Date(Date.now() + 3600000).toISOString(), end: new Date(Date.now() + 7200000).toISOString(), context: '' }] : [], refreshing: false } });
+  });
+  await page.route('**/api/calendar/c1', (route) => {
+    linked = [];
+    return route.fulfill({ json: { connected: false, calendars: [], events: [] } });
+  });
+  await goPlace(page, 'settings');
+  const card = page.locator('.cal-card');
+  await expect(card.locator('h3')).toHaveText('Calendar');
+  await expect(card).toContainText('Not connected');
+  await expect(card.locator('.cal-how')).toHaveAttribute('open', '');
+  await expect(card.locator('a[href="https://calendar.google.com/calendar/r/settings"]')).toBeVisible();
+  await card.locator('#calendar-link').fill('https://example.com/nope');
+  await card.locator('[data-action="calendar-add"]').click();
+  await expect(page.locator('.toast.bad')).toContainText('Secret address in iCal format');
+  await expect(card.locator('#calendar-link')).toHaveValue('https://example.com/nope');
+  await card.locator('#calendar-link').fill('https://calendar.google.com/calendar/ical/me/private-abc/basic.ics');
+  await card.locator('[data-action="calendar-add"]').click();
+  await expect(page.locator('.cal-card')).toContainText('Classes');
+  await expect(page.locator('.cal-card')).toContainText('Next: Algorithms lecture');
+  expect(posted.link).toContain('private-abc');
+  await page.locator('.cal-card [data-action="calendar-remove"]').click();
+  await expect(page.locator('.cal-card')).toContainText('Not connected');
+});
+
+test('dropping one note on another offers to combine them, shows the result first, and Undo brings both back', async ({ page }) => {
+  const tag = Date.now().toString(36);
+  const folder = `combine-${tag}`;
+  await page.request.post('/api/dirs', { data: { path: folder } });
+  const a = await (await page.request.post('/api/notes', { data: { title: `BFS ${tag}`, body: 'BFS uses a queue.', directory: folder } })).json();
+  const b = await (await page.request.post('/api/notes', { data: { title: `Graphs ${tag}`, body: 'A graph has nodes and edges.', directory: folder } })).json();
+  let release;
+  const late = new Promise((resolve) => { release = resolve; });
+  await page.route(`**/api/notes/${b.id}/combine`, async (route) => {
+    await late;
+    const versions = async (id) => (await (await page.request.get(`/api/notes/${id}`)).json()).version;
+    return route.fulfill({ json: { title: b.title, with_title: a.title, body: '## Graphs\nA graph has nodes and edges.\n\n## BFS\nBFS uses a queue.', added: ['![Tree](tree.png)'], kept: 0.7, kept_enough: false, base: await versions(b.id), with_base: await versions(a.id) } });
+  });
+  await page.goto(`/#/f/${folder}`);
+  const from = page.locator(`.card[data-id="${a.id}"]`);
+  const onto = page.locator(`.card[data-id="${b.id}"]`);
+  await from.dragTo(onto);
+  const sheet = page.locator('.sheet');
+  await expect(sheet.locator('h3')).toHaveText('Combine these notes?');
+  await sheet.locator('#combine-go').click();
+  await expect(sheet).toContainText('Combining your notes');
+  release();
+  await expect(sheet.locator('.combine-preview')).toContainText('BFS uses a queue.');
+  await expect(sheet).toContainText('put back one thing');
+  await expect(sheet.locator('.rec-warn')).toContainText('about 70%');
+  await sheet.locator('#combine-save').click();
+  await expect(page.locator('.toast')).toContainText(`Combined into “${b.title}”`);
+  await expect(page.locator(`.card[data-id="${a.id}"]`)).toHaveCount(0);
+  expect((await (await page.request.get(`/api/notes/${b.id}`)).json()).body).toContain('BFS uses a queue.');
+  await page.locator('.toast button', { hasText: 'Undo' }).click();
+  await expect(page.locator(`.card[data-id="${a.id}"]`)).toBeVisible();
+  expect((await (await page.request.get(`/api/notes/${b.id}`)).json()).body).toBe('A graph has nodes and edges.');
+});
+
+test('only the folders scroll in the sidebar; the places above and below stay put', async ({ page }) => {
+  test.skip(test.info().project.name === 'phone', 'the sidebar is for wide windows');
+  const tag = Date.now().toString(36);
+  for (let i = 0; i < 40; i++) await page.request.post('/api/dirs', { data: { path: `scroll-${tag}-${String(i).padStart(2, '0')}` } });
+  await page.setViewportSize({ width: 1280, height: 640 });
   await page.reload();
-  await expect(page.locator('#workflow-template')).toHaveValue('meeting');
-  await expect(page.locator('#workflow-vocabulary')).toHaveValue('Dijkstra\nParakeet');
-  await expect(page.locator('#workflow-context')).toHaveValue('Design review for Leo');
-  await page.screenshot({path:require('node:path').join(test.info().outputDir,'workflow-config.png'),fullPage:true,animations:'disabled'});
-  await goPlace(page,'saved-actions');
-  await page.locator('#scope-from').fill('2026-01-01');
-  await page.locator('#scope-to').fill('2026-12-31');
-  await page.locator('#scope-apply').click();
-  await expect(page.locator('#chat-scope')).toContainText('from 2026-01-01');
-  await page.screenshot({path:require('node:path').join(test.info().outputDir,'workflows-chat-scope.png'),animations:'disabled'});
-  await page.locator('.chat-scope-clear').click();
-  await expect(page.locator('#chat-scope')).toHaveCount(0);
+  const tree = page.locator('#side .side-tree');
+  await expect(tree).toBeVisible();
+  const settings = page.locator('#side .side-foot [data-action="settings"]');
+  const record = page.locator('#side [data-action="record"]');
+  const before = [await settings.boundingBox(), await record.boundingBox()];
+  expect(await tree.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
+  await tree.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  await page.mouse.wheel(0, 2000);
+  const after = [await settings.boundingBox(), await record.boundingBox()];
+  expect(after.map((b) => Math.round(b.y))).toEqual(before.map((b) => Math.round(b.y)));
+  expect(before[0].y + before[0].height).toBeLessThanOrEqual(640);
+  const scrolled = await tree.evaluate((el) => el.scrollTop);
+  expect(scrolled).toBeGreaterThan(0);
+  await page.locator('#side [data-action="home"]').first().click();
+  await expect.poll(() => tree.evaluate((el) => el.scrollTop)).toBe(scrolled);
 });

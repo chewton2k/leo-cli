@@ -172,61 +172,8 @@ pub struct Turn {
     pub text: String,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, serde::Serialize)]
-#[serde(default)]
-pub struct Scope {
-    pub folder: Option<String>,
-    pub ids: Vec<String>,
-    pub from: Option<String>,
-    pub to: Option<String>,
-}
-
-impl Scope {
-    pub fn is_all(&self) -> bool {
-        self.folder.as_deref().is_none_or(str::is_empty)
-            && self.ids.is_empty()
-            && self.from.is_none()
-            && self.to.is_none()
-    }
-
-    pub fn includes(&self, note: &Note) -> bool {
-        if let Some(folder) = &self.folder {
-            if note.directory != *folder
-                && !folder.is_empty()
-                && !note.directory.starts_with(&format!("{folder}/"))
-            {
-                return false;
-            }
-        }
-        if !self.ids.is_empty() && !self.ids.contains(&note.id) {
-            return false;
-        }
-        let date = note.created_at.format("%Y-%m-%d").to_string();
-        self.from.as_ref().is_none_or(|from| date >= *from)
-            && self.to.as_ref().is_none_or(|to| date <= *to)
-    }
-    pub fn valid(&self) -> bool {
-        self.ids.len() <= 200
-            && self
-                .folder
-                .as_ref()
-                .is_none_or(|f| leo_core::paths::validate_directory(f).is_ok())
-            && [&self.from, &self.to].iter().all(|d| {
-                d.as_ref()
-                    .is_none_or(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").is_ok())
-            })
-            && self
-                .from
-                .as_ref()
-                .zip(self.to.as_ref())
-                .is_none_or(|(a, b)| a <= b)
-    }
-}
-
 #[derive(Debug, Clone, Deserialize)]
 pub struct ChatBody {
-    #[serde(default)]
-    pub scope: Scope,
     pub messages: Vec<Turn>,
     #[serde(default)]
     pub mode: Option<String>,

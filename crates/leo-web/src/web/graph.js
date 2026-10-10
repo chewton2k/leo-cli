@@ -350,6 +350,153 @@
     }
   }
 
+  const TIDY_TICKS = 300;
+  const TIDY_POLISH = 90;
+  const TIDY_BUDGET_MS = 350;
+  const TIDY_NEAR = 8;
+
+  function cross(p1, p2, p3, p4) {
+    const d = (a, b, c) => (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+    const d1 = d(p3, p4, p1);
+    const d2 = d(p3, p4, p2);
+    const d3 = d(p1, p2, p3);
+    const d4 = d(p1, p2, p4);
+    return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+  }
+
+  function crossings(edges, pos, only) {
+    let n = 0;
+    const list = edges.filter((e) => pos.has(e.a) && pos.has(e.b));
+    for (let i = 0; i < list.length; i++) {
+      const a = list[i];
+      if (only && !only.has(a.a) && !only.has(a.b)) continue;
+      for (let j = only ? 0 : i + 1; j < list.length; j++) {
+        if (only && j <= i && (only.has(list[j].a) || only.has(list[j].b))) continue;
+        const b = list[j];
+        if (a === b || a.a === b.a || a.a === b.b || a.b === b.a || a.b === b.b) continue;
+        if (cross(pos.get(a.a), pos.get(a.b), pos.get(b.a), pos.get(b.b))) n += 1;
+      }
+    }
+    return n;
+  }
+
+  function seeded(g, vis) {
+    const ids = [...vis.nodes];
+    const around = new Map(ids.map((id) => [id, []]));
+    for (const e of vis.edges) {
+      if (around.has(e.a) && around.has(e.b)) {
+        around.get(e.a).push(e.b);
+        around.get(e.b).push(e.a);
+      }
+    }
+    const groupOf = (id) => {
+      const n = g.byId.get(id);
+      return n.kind === 'note' ? n.top : null;
+    };
+    const groups = new Map();
+    for (const id of ids) {
+      let key = groupOf(id);
+      if (key === null) {
+        const near = around.get(id).map(groupOf).find((k) => k !== null);
+        key = near === undefined ? '' : near;
+      }
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(id);
+    }
+    const order = [...groups.entries()].sort((a, b) => b[1].length - a[1].length || String(a[0]).localeCompare(String(b[0])));
+    const pos = new Map();
+    const total = Math.max(1, ids.length);
+    const ring = order.length > 1 ? 60 + 34 * Math.sqrt(total) : 0;
+    let angle = 0;
+    for (const [, members] of order) {
+      const share = (members.length / total) * Math.PI * 2;
+      const mid = angle + share / 2;
+      angle += share;
+      const cx = Math.cos(mid) * ring;
+      const cy = Math.sin(mid) * ring;
+      const degree = (id) => around.get(id).length;
+      const left = new Set(members);
+      const walk = [];
+      while (left.size) {
+        const start = [...left].sort((a, b) => degree(b) - degree(a) || a.localeCompare(b))[0];
+        const queue = [start];
+        left.delete(start);
+        while (queue.length) {
+          const at = queue.shift();
+          walk.push(at);
+          for (const next of around.get(at).filter((x) => left.has(x)).sort((a, b) => degree(b) - degree(a) || a.localeCompare(b))) {
+            left.delete(next);
+            queue.push(next);
+          }
+        }
+      }
+      walk.forEach((id, i) => {
+        const r = 16 * Math.sqrt(i + 0.5);
+        const a = i * Math.PI * (3 - Math.sqrt(5)) + mid;
+        pos.set(id, { x: cx + r * Math.cos(a), y: cy + r * Math.sin(a), vx: 0, vy: 0, fx: null, fy: null });
+      });
+    }
+    return pos;
+  }
+
+  function untangle(vis, pos, budget, now) {
+    const ids = [...vis.nodes];
+    if (ids.length < 4 || !vis.edges.length) return 0;
+    const started = now();
+    const touching = new Map(ids.map((id) => [id, 0]));
+    for (const e of vis.edges) {
+      if (touching.has(e.a)) touching.set(e.a, touching.get(e.a) + 1);
+      if (touching.has(e.b)) touching.set(e.b, touching.get(e.b) + 1);
+    }
+    const ranked = ids.filter((id) => touching.get(id) > 0).sort((a, b) => touching.get(b) - touching.get(a) || a.localeCompare(b));
+    let saved = 0;
+    for (let round = 0; round < 3; round++) {
+      let better = false;
+      for (const u of ranked) {
+        if (now() - started > budget) return saved;
+        const pu = pos.get(u);
+        const near = ids
+          .filter((v) => v !== u)
+          .map((v) => [v, (pos.get(v).x - pu.x) ** 2 + (pos.get(v).y - pu.y) ** 2])
+          .sort((a, b) => a[1] - b[1])
+          .slice(0, TIDY_NEAR)
+          .map(([v]) => v);
+        for (const v of near) {
+          const pair = new Set([u, v]);
+          const before = crossings(vis.edges, pos, pair);
+          const pv = pos.get(v);
+          [pu.x, pv.x] = [pv.x, pu.x];
+          [pu.y, pv.y] = [pv.y, pu.y];
+          const after = crossings(vis.edges, pos, pair);
+          if (after < before) {
+            saved += before - after;
+            better = true;
+            break;
+          }
+          [pu.x, pv.x] = [pv.x, pu.x];
+          [pu.y, pv.y] = [pv.y, pu.y];
+        }
+      }
+      if (!better) break;
+    }
+    return saved;
+  }
+
+  function tidyLayout(g, vis, { now = () => Date.now(), budget = TIDY_BUDGET_MS } = {}) {
+    const pos = seeded(g, vis);
+    const sim = { g, pos, alpha: 1, alphaTarget: 0, alphaMin: 0, alphaDecay: 1 - Math.pow(0.002, 1 / TIDY_TICKS), velocityDecay: 0.4 };
+    for (let i = 0; i < TIDY_TICKS; i++) tick(sim, vis);
+    untangle(vis, pos, budget, now);
+    sim.alpha = 0.12;
+    sim.alphaDecay = 0.05;
+    for (let i = 0; i < TIDY_POLISH; i++) tick(sim, vis);
+    for (const p of pos.values()) {
+      p.vx = 0;
+      p.vy = 0;
+    }
+    return pos;
+  }
+
   function bounds(sim, ids) {
     let minX = Infinity;
     let minY = Infinity;
@@ -403,6 +550,7 @@
     let width = 0;
     let height = 0;
     let touched = false;
+    let moving = null;
     const cam = { x: 0, y: 0, k: 1 };
     const goal = { x: 0, y: 0, k: 1 };
     const fade = new Map(g.nodes.map((n) => [n.id, 1]));
@@ -641,16 +789,37 @@
       lines.forEach((l, i) => ctx.fillText(l, x + 12, y + 12 + (heads.length + i) * 17));
     }
 
-    function loop() {
+    function glide(now) {
+      if (!moving) return false;
+      const t = Math.min(1, (now - moving.start) / TIDY_GLIDE_MS);
+      const k = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+      for (const [id, a] of moving.from) {
+        const b = moving.to.get(id);
+        const p = sim.pos.get(id);
+        if (!b || !p) continue;
+        p.x = a.x + (b.x - a.x) * k;
+        p.y = a.y + (b.y - a.y) * k;
+        p.vx = 0;
+        p.vy = 0;
+        p.fx = null;
+        p.fy = null;
+      }
+      fit(false);
+      if (t >= 1) moving = null;
+      return true;
+    }
+
+    function loop(now) {
       frame = 0;
-      const moving = sim.alpha > sim.alphaMin || sim.alphaTarget > 0;
-      if (moving) {
+      const gliding = glide(typeof now === 'number' ? now : root.performance ? root.performance.now() : Date.now());
+      const settling = !gliding && (sim.alpha > sim.alphaMin || sim.alphaTarget > 0);
+      if (settling) {
         tick(sim, vis);
         if (!touched && sim.alpha > 0.3) fit(true);
       }
       const busy = animate();
       draw();
-      if (moving || busy) frame = root.requestAnimationFrame(loop);
+      if (settling || busy || gliding) frame = root.requestAnimationFrame(loop);
     }
 
     function wake(alpha) {
@@ -922,6 +1091,18 @@
         fit(false);
         wake();
       },
+      tidy() {
+        const before = crossings(vis.edges, sim.pos);
+        const next = tidyLayout(g, vis);
+        const after = crossings(vis.edges, next);
+        const from = new Map([...vis.nodes].map((id) => [id, { ...sim.pos.get(id) }]));
+        moving = { from, to: next, start: root.performance ? root.performance.now() : Date.now() };
+        sim.alpha = 0;
+        sim.alphaTarget = 0;
+        touched = false;
+        wake();
+        return { before, after };
+      },
       zoomBy,
       visible: () => vis,
       positions: () => sim.pos,
@@ -942,5 +1123,7 @@
     };
   }
 
-  root.leoGraph = { MAP_MOST, prepare, colorOf, isCross, counts, connections, conceptNotes, strongest, visible, find, createSim, tick, bounds, radiusOf, relationFrom, create, topFolder };
+  const TIDY_GLIDE_MS = 650;
+
+  root.leoGraph = { tidyLayout, crossings, MAP_MOST, prepare, colorOf, isCross, counts, connections, conceptNotes, strongest, visible, find, createSim, tick, bounds, radiusOf, relationFrom, create, topFolder };
 })(typeof window !== 'undefined' ? window : globalThis);

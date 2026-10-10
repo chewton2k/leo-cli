@@ -57,11 +57,12 @@ pub struct Controls {
     pub stop: Arc<AtomicBool>,
     pub pause: Arc<AtomicBool>,
     pub points: Arc<Mutex<Vec<Jotted>>>,
+    pub wants: Arc<Mutex<Option<String>>>,
 }
 
 pub struct Request {
     pub id: Option<String>,
-    pub profile: Option<leo_core::workflows::Profile>,
+    pub profile: Option<leo_core::recording::Profile>,
     pub title: Option<String>,
     pub append_to: Option<String>,
     pub dir: String,
@@ -72,13 +73,8 @@ pub struct Request {
 pub fn transcribe_segment() -> TranscribeFn {
     Arc::new(|path: &Path| {
         let session = Session::open(path.parent().unwrap_or(Path::new("."))).ok();
-        let vocabulary = session
-            .as_ref()
-            .map(|s| s.manifest.profile.vocabulary.clone())
-            .unwrap_or_default();
         let start = Instant::now();
-        let outcome =
-            crate::ai::transcribe_with_vocabulary(path, &vocabulary).map_err(|e| e.to_string());
+        let outcome = crate::ai::transcribe_outcome(path).map_err(|e| e.to_string());
         if let Some(session) = session {
             let detail = match &outcome {
                 Ok(o) => format!(
@@ -221,10 +217,7 @@ fn live_pace() -> Duration {
 fn hear(dir: &Path, samples: &[i16], emit: &dyn Fn(Event)) -> Option<String> {
     let path = dir.join("live.wav");
     wav::write(&path, samples).ok()?;
-    let vocabulary = Session::open(dir)
-        .map(|s| s.manifest.profile.vocabulary)
-        .unwrap_or_default();
-    let result = crate::ai::transcribe_with_vocabulary(&path, &vocabulary);
+    let result = crate::ai::transcribe_outcome(&path);
     let _ = std::fs::remove_file(&path);
     let outcome = result.ok()?;
     for f in &outcome.fallbacks {
@@ -412,6 +405,17 @@ pub fn resume(dir: &Path, emit: &dyn Fn(Event)) {
     );
 }
 
+fn take_wants(session: &mut Session, controls: &Controls) -> bool {
+    let Some(wants) = controls.wants.lock().ok().and_then(|w| w.clone()) else {
+        return false;
+    };
+    if session.manifest.profile.wants == wants {
+        return false;
+    }
+    session.manifest.profile.wants = wants;
+    true
+}
+
 pub fn record(request: Request, controls: &Controls, emit: &dyn Fn(Event)) {
     let Request {
         id,
@@ -426,11 +430,6 @@ pub fn record(request: Request, controls: &Controls, emit: &dyn Fn(Event)) {
     let started = session::root().and_then(|root| {
         let mut manifest = Manifest::new(title, append_to, &dir, screen);
         manifest.browser = fed;
-        if let Ok(notes) = leo_core::store::Store::notes_dir() {
-            if let Ok(workflows) = leo_core::workflows::Workflows::load(&notes) {
-                manifest.profile = workflows.profile(&dir);
-            }
-        }
         if let Some(id) = id {
             manifest.id = id;
         }
@@ -489,6 +488,9 @@ pub fn record(request: Request, controls: &Controls, emit: &dyn Fn(Event)) {
                 session.manifest.points = points_of(&points);
                 let _ = session.save();
             }
+        }
+        if take_wants(&mut session, controls) {
+            let _ = session.save();
         }
         for update in updates.try_iter() {
             state.apply(update, emit, segment_samples);
@@ -560,6 +562,7 @@ pub fn record(request: Request, controls: &Controls, emit: &dyn Fn(Event)) {
     if let Ok(points) = controls.points.lock() {
         session.manifest.points = points_of(&points);
     }
+    take_wants(&mut session, controls);
     emit(Event::Progress {
         label: "Transcribing the recording".to_string(),
         steps: None,
@@ -609,10 +612,6 @@ pub fn write_up(
         "generation",
         "Writing notes from transcript and typed points",
     );
-    let workflows = leo_core::store::Store::notes_dir()
-        .ok()
-        .and_then(|notes| leo_core::workflows::Workflows::load(&notes).ok())
-        .unwrap_or_default();
     let assembled = session.assemble();
     let points = session.manifest.jotted();
     use sha2::{Digest, Sha256};
@@ -623,7 +622,6 @@ pub fn write_up(
             &assembled.failed,
             &session.manifest.points,
             &session.manifest.profile,
-            workflows.format(&session.manifest.profile.template),
             existing,
         ))?),
     );
@@ -649,7 +647,7 @@ pub fn write_up(
         &fallback,
         &|prompt, max| {
             crate::ai::chat_outcome(
-                crate::ai::long::with_profile(prompt, &session.manifest.profile, &workflows),
+                crate::ai::long::with_profile(prompt, &session.manifest.profile),
                 max,
             )
             .map(|o| {

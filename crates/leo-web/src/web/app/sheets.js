@@ -87,8 +87,6 @@ function menu() {
     <button class="list-row" data-action="upload">${ICON.upload}<span class="grow">Make a note from a file</span></button>
     <button class="list-row" data-action="new-folder">${ICON.folderPlus}<span class="grow">New folder${here ? ` in ${esc(folderLabel(here))}` : ''}</span></button>
     <button class="list-row" data-action="map">${ICON.map}<span class="grow">Knowledge graph</span></button>
-    <button class="list-row" data-action="workflows">${ICON.note}<span class="grow">Note workflows and calendar</span></button>
-    <button class="list-row" data-action="saved-actions">${ICON.chat}<span class="grow">Saved actions and chat scope</span></button>
     <button class="list-row" data-action="settings">${ICON.gear}<span class="grow">Settings</span></button>
     <button class="list-row" data-action="trash">${ICON.trash}<span class="grow">Trash</span></button>
     <button class="list-row" data-action="refresh">${ICON.refresh}<span class="grow">Refresh</span></button>`);

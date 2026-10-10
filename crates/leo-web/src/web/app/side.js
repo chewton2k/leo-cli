@@ -43,6 +43,8 @@ function drawSide() {
     keepOpenFolders();
   }
   const folders = folderTree(dir);
+  const scrolled = box.querySelector('.side-tree');
+  const kept = scrolled ? scrolled.scrollTop : 0;
   box.innerHTML = `
     <div class="side-head">
       <button class="brand side-label" data-action="home">leo</button>
@@ -56,16 +58,18 @@ function drawSide() {
       ${sideRow('map', ICON.map, 'Knowledge graph', { on: here === 'map' })}
       ${sideRow('record', ICON.mic, 'Record', { on: here === 'record', attrs: ` data-dir="${esc(dir)}"` })}
       ${sideRow('upload', ICON.upload, 'Note from a file')}
-      <div class="side-group"><span class="side-label">Folders</span><button class="side-add side-label" data-action="new-folder" data-parent="" aria-label="New folder" title="New folder at the top level">${ICON.plus}</button></div>
+    </nav>
+    <div class="side-group"><span class="side-label">Folders</span><button class="side-add side-label" data-action="new-folder" data-parent="" aria-label="New folder" title="New folder at the top level">${ICON.plus}</button></div>
+    <nav class="side-nav side-tree" aria-label="Folders">
       ${folders || '<p class="side-none side-label">Folders you make show up here.</p>'}
     </nav>
     <div class="side-foot">
-      ${sideRow('workflows', ICON.note, 'Note workflows', { on: here === 'workflows' })}
-      ${sideRow('saved-actions', ICON.chat, 'Saved actions')}
       ${sideRow('trash', ICON.trash, 'Trash', { on: here === 'trash' })}
       ${sideRow('storage', ICON.storage, 'Storage', { on: here === 'storage' })}
       ${sideRow('settings', ICON.gear, 'Settings', { on: here === 'settings' })}
     </div>`;
+  const tree = box.querySelector('.side-tree');
+  if (tree) tree.scrollTop = kept;
 }
 
 function sideHere() {

@@ -2,6 +2,7 @@
   'use strict';
 
   const SEND_EVERY = 1000;
+  const WANTS_SAVE_AFTER = 900;
   const POLL_EVERY = 1000;
   const RATE = 16000;
 
@@ -137,10 +138,19 @@
 
   const live = (view) => Boolean(view) && ['starting', 'recording', 'paused'].includes(view.state);
 
-  function profileFor(workflows,dir) {
-    const profiles=workflows.profiles || {};
-    let here=dir;
-    for (;;) { if (profiles[here]) return profiles[here]; if (!here) return {template:'lecture',context:'',vocabulary:[]}; const at=here.lastIndexOf('/'); here=at<0?'':here.slice(0,at); }
+  const MEETING_WANTS = 'Meeting notes: what was discussed, the decisions made, open questions, and action items with owners and due dates when they were said.';
+  const SOON_MS = 15 * 60 * 1000;
+
+  function eventNow(events, now = Date.now()) {
+    return (events || []).findIndex((e) => Date.parse(e.start) - SOON_MS <= now && now <= Date.parse(e.end));
+  }
+
+  function whenOf(e) {
+    const start = new Date(e.start);
+    const end = new Date(e.end);
+    const day = start.toDateString() === new Date().toDateString() ? 'Today' : start.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+    const time = (d) => d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    return `${day} ${time(start)}–${time(end)}`;
   }
 
   function create(deps) {
@@ -155,6 +165,8 @@
       pending: 0,
       config: null,
       calendar: null,
+      event: null,
+      eventChosen: false,
       context: null,
       node: null,
       held: [],
@@ -171,6 +183,9 @@
       sending: false,
       lost: 0,
       deviceLost:false,
+      wantsDraft: null,
+      wantsState: '',
+      wantsTimer: 0,
       poll: 0,
       send: 0,
       wake: null,
@@ -370,7 +385,7 @@
         throw e;
       }
       s.view = { id: made.id, source, state: 'starting', secs: 0, step: 'Starting', steps: null, transcript: '', warnings: [], points: [], note: null, error: null };
-      s.lost = 0; s.seq=0; s.pending=0;
+      s.lost = 0; s.seq=0; s.pending=0; s.wantsDraft = null; s.wantsState = '';
       s.follow = true;
       Object.assign(s, { wave: [], queue: [], smooth: 0, lastStep: 0, lastFed: 0, fedUpTo: 0 });
       if (fedByBrowser(source)) attach();
@@ -541,10 +556,8 @@
     function drawIdle(folders, here) {
       const ov = s.overview || {};
       const options = ['', ...folders].map((f) => `<option value="${esc(f)}"${f === here ? ' selected' : ''}>${esc(f || 'All notes (top level)')}</option>`).join('');
-      const config=s.config || {templates:[],workflows:workflowsOf()};
-      const formats=[...config.templates,...config.workflows.templates];
-      const profile=profileFor(config.workflows,here);
-      const upcoming=s.calendar && s.calendar.events || [];
+      const upcoming = (s.calendar && s.calendar.events) || [];
+      const picked = s.event !== null ? upcoming[s.event] : null;
       const pending=ov.pending || [];
       const ready = micReady(env());
       const insecure = ready !== 'ok' && !ov.local ? `<p class="rec-warn">${esc(micProblem(ready))}</p>` : '';
@@ -555,9 +568,10 @@
           ${kindChoices(ov.local)}
           <label class="set-row"><span class="set-label">Folder</span><select id="rec-dir">${options}</select></label>
           <label class="set-row"><span class="set-label">Title</span><input id="rec-title" class="rec-title-input" placeholder="Optional; the AI names it otherwise" autocomplete="off"></label>
-          <label class="set-row"><span class="set-label">Note format</span><select id="rec-template">${formats.map((t) => `<option value="${esc(t.id)}"${t.id===(profile.template || 'lecture')?' selected':''}>${esc(t.name)}</option>`).join('')}</select></label>
-          <label class="workflow-field">Context<textarea id="rec-context" rows="3" maxlength="8000" placeholder="Course, meeting agenda, people, or prior decisions">${esc(profile.context || '')}</textarea></label>
-          ${upcoming.length ? `<label class="set-row"><span class="set-label">Coming up</span><select id="rec-event"><option value="">Choose a calendar event</option>${upcoming.slice(0,30).map((e,i) => `<option value="${i}">${esc(new Date(e.start).toLocaleString())} · ${esc(e.title)}</option>`).join('')}</select></label>`:''}
+          ${upcoming.length ? `<label class="set-row"><span class="set-label">Calendar event</span><select id="rec-event"><option value="">None</option>${upcoming.map((e, i) => `<option value="${i}"${i === s.event ? ' selected' : ''}>${esc(whenOf(e))} · ${esc(e.title)}</option>`).join('')}</select></label>
+          ${picked ? `<p class="hint rec-event-note">The AI gets this event’s description, place and who was invited, so names and topics come out right.</p>` : ''}` : ''}
+          <label class="source-field">What do you want from the notes?<textarea id="rec-wants" rows="2" maxlength="4000" placeholder="For example: focus on what will be on the exam, keep it short, explain every formula"></textarea></label>
+          ${s.calendar && !s.calendar.connected ? `<p class="hint">Want recordings named after your meetings and lectures? <a href="#/settings">Connect a calendar in Settings.</a></p>` : ''}
           ${pending.map((p) => `<button class="list-row" data-action="rec-recover" data-id="${esc(p.id)}">Recover: ${esc(p.title || 'Interrupted recording')}</button>`).join('')}
           ${insecure}
           <div class="rec-start">
@@ -599,6 +613,12 @@
           <div class="rec-transcript" id="rec-transcript" aria-live="polite">${transcript}</div>
         </section>
         <section class="set-card">
+          <header><h3>What you want from the notes</h3></header>
+          <p class="hint">The AI follows this when it writes the note after you stop. You can change it until then.</p>
+          <textarea id="rec-wants-live" class="rec-wants" rows="2" maxlength="4000" placeholder="For example: focus on what will be on the exam, keep it short">${esc(s.wantsDraft !== null ? s.wantsDraft : v.wants || '')}</textarea>
+          <p class="hint rec-wants-state" id="rec-wants-state">${esc(s.wantsState)}</p>
+        </section>
+        <section class="set-card">
           <header><h3>Your points</h3></header>
           <p class="hint">Jot what matters; it is woven into the notes.</p>
           <div class="rec-point"><textarea id="rec-point-text" rows="2" placeholder="Jot a point"></textarea><button class="btn plain" data-action="rec-point">Add</button></div>
@@ -637,10 +657,18 @@
     let folders = [];
     let here = '';
 
-    const IDLE_FIELDS = ['#rec-dir', '#rec-title', '#rec-template', '#rec-context'];
+    const IDLE_FIELDS = ['#rec-dir', '#rec-title', '#rec-wants'];
 
-    function workflowsOf() {
-      return (s.config && s.config.workflows) || { templates: [], profiles: {} };
+    function chooseEvent(box, index) {
+      const events = (s.calendar && s.calendar.events) || [];
+      const before = s.event !== null ? events[s.event] : null;
+      const e = index !== null ? events[index] : null;
+      s.event = e ? index : null;
+      const title = box.querySelector('#rec-title');
+      const wants = box.querySelector('#rec-wants');
+      if (title && (!title.value.trim() || (before && title.value === before.title))) title.value = e ? e.title : '';
+      if (wants && e && !wants.value.trim()) wants.value = MEETING_WANTS;
+      else if (wants && !e && wants.value === MEETING_WANTS) wants.value = '';
     }
 
     function idleForm(box) {
@@ -678,6 +706,8 @@
       const v = s.view;
       const typed = box.querySelector('#rec-point-text');
       const keep = typed ? { value: typed.value, focused: root.document.activeElement === typed, start: typed.selectionStart, end: typed.selectionEnd } : null;
+      const wantsBox = box.querySelector('#rec-wants-live');
+      const wantsKeep = wantsBox && root.document.activeElement === wantsBox ? { start: wantsBox.selectionStart, end: wantsBox.selectionEnd } : null;
       const old = box.querySelector('#rec-transcript');
       if (old) s.follow = old.scrollTop + old.clientHeight >= old.scrollHeight - 24;
       const form = idleForm(box);
@@ -689,6 +719,24 @@
       }
       else if (v.state === 'writing') box.innerHTML = drawWriting();
       else box.innerHTML = drawFailed();
+      const wantsArea = box.querySelector('#rec-wants-live');
+      if (wantsArea) {
+        if (wantsKeep) {
+          wantsArea.focus();
+          wantsArea.setSelectionRange(wantsKeep.start, wantsKeep.end);
+        }
+        wantsArea.addEventListener('input', () => {
+          s.wantsDraft = wantsArea.value;
+          s.wantsState = '';
+          clearTimeout(s.wantsTimer);
+          s.wantsTimer = setTimeout(saveWants, WANTS_SAVE_AFTER);
+        });
+        wantsArea.addEventListener('blur', () => {
+          if (s.wantsDraft === null) return;
+          clearTimeout(s.wantsTimer);
+          saveWants();
+        });
+      }
       const area = box.querySelector('#rec-point-text');
       if (area && keep) {
         area.value = keep.value;
@@ -707,11 +755,32 @@
       }
       if (form) restoreIdleForm(box, form);
       const event=box.querySelector('#rec-event');
-      if (event) event.addEventListener('change',() => { const e=s.calendar.events[Number(event.value)]; if (event.value==='' || !e) return; box.querySelector('#rec-title').value=e.title; box.querySelector('#rec-context').value=e.context; box.querySelector('#rec-template').value='meeting'; });
+      if (event) {
+        event.addEventListener('change', () => {
+          s.eventChosen = true;
+          chooseEvent(box, event.value === '' ? null : Number(event.value));
+          draw();
+        });
+      }
       const dir=box.querySelector('#rec-dir');
-      if (dir) dir.addEventListener('change',() => { const p=profileFor(workflowsOf(),dir.value); box.querySelector('#rec-template').value=p.template || 'lecture'; box.querySelector('#rec-context').value=p.context || ''; });
       const text = box.querySelector('#rec-transcript');
       if (text && s.follow) text.scrollTop = text.scrollHeight;
+    }
+
+    async function saveWants() {
+      if (s.wantsDraft === null || !s.view || !live(s.view)) return;
+      const text = s.wantsDraft;
+      const id = s.view.id;
+      try {
+        const view = await api(`/api/record/${id}/wants`, { method: 'POST', body: { text } });
+        if (!s.view || s.view.id !== id) return;
+        if (s.wantsDraft === text) s.wantsDraft = null;
+        s.wantsState = 'Saved. The note will follow this.';
+        accept(view);
+      } catch (e) {
+        s.wantsState = '';
+        toast(e.message, { bad: true });
+      }
     }
 
     function submitPoint() {
@@ -775,19 +844,13 @@
         draw();
         pill();
         await refresh();
-        const [config, calendar] = await Promise.all([api('/api/workflows').catch(() => null), api('/api/calendar').catch(() => null)]);
-        s.config = config;
-        s.calendar = calendar;
+        s.calendar = await api('/api/calendar').catch(() => null);
+        if (!s.eventChosen && s.container && s.container.querySelector('.rec-idle')) {
+          const now = eventNow(s.calendar && s.calendar.events);
+          if (now >= 0) chooseEvent(s.container, now);
+        }
         draw();
         pill();
-        if (calendar && calendar.connected && !calendar.busy && (!calendar.synced || Date.now() - Date.parse(calendar.synced) > 300000)) {
-          try {
-            s.calendar = await api('/api/calendar/sync', { method: 'POST' });
-            draw();
-          } catch (e) {
-            toast(e.message, { bad: true });
-          }
-        }
       },
       leave() {
         s.container = null;
@@ -803,8 +866,9 @@
         if (button) button.disabled = true;
         try {
           const dir=box.querySelector('#rec-dir').value;
-          const profile=profileFor(workflowsOf(),dir);
-          await start(source,dir,box.querySelector('#rec-title').value.trim(),{...profile,template:box.querySelector('#rec-template').value,context:box.querySelector('#rec-context').value});
+          const events = (s.calendar && s.calendar.events) || [];
+          const picked = s.event !== null ? events[s.event] : null;
+          await start(source, dir, box.querySelector('#rec-title').value.trim(), { context: picked ? picked.context : '', wants: box.querySelector('#rec-wants').value.trim() });
         } finally {
           if (button && button.isConnected) button.disabled = false;
         }
@@ -841,5 +905,5 @@
     };
   }
 
-  root.leoRecording = { ease, spread, freshLevels, sourceFor, create, clock, join, bytesOf, trimHeld, micReady, micProblem, stateWord, canShareSound, sharingProblem, fedByBrowser, loudness, hearing, hearingWords, QUIET };
+  root.leoRecording = { eventNow, whenOf, MEETING_WANTS, ease, spread, freshLevels, sourceFor, create, clock, join, bytesOf, trimHeld, micReady, micProblem, stateWord, canShareSound, sharingProblem, fedByBrowser, loudness, hearing, hearingWords, QUIET };
 })(typeof window !== 'undefined' ? window : globalThis);

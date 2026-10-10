@@ -35,7 +35,7 @@ pub struct Manifest {
     #[serde(default)]
     pub id: String,
     #[serde(default)]
-    pub profile: leo_core::workflows::Profile,
+    pub profile: leo_core::recording::Profile,
     pub started: DateTime<Utc>,
     #[serde(default)]
     pub title: Option<String>,
@@ -473,8 +473,8 @@ impl Session {
                     text: p.text.clone(),
                 })
                 .collect(),
-            template: self.manifest.profile.template.clone(),
             context: self.manifest.profile.context.clone(),
+            wants: self.manifest.profile.wants.clone(),
             warnings: assembled
                 .failed
                 .iter()

@@ -11,9 +11,84 @@ async function showSettings() {
   $('#crumbs').innerHTML = '<span class="sep">/</span><button>Settings</button>';
   document.title = 'Settings · leo';
   app.innerHTML = skeleton(3);
-  const page = await api('/api/settings');
+  const [page, calendar] = await Promise.all([api('/api/settings'), api('/api/calendar').catch(() => null)]);
   if (mine !== seq) return;
+  state.calendar = calendar;
   drawSettings(page);
+}
+
+const GOOGLE_CALENDAR_SETTINGS = 'https://calendar.google.com/calendar/r/settings';
+
+function calendarCard(cal, secure) {
+  if (!cal) return '';
+  const linked = cal.calendars || [];
+  const count = linked.length;
+  const chip = count ? `<span class="set-status ok">${count === 1 ? 'On' : `${count} calendars`}</span>` : '<span class="set-status missing">Not connected</span>';
+  const rows = linked
+    .map((c) => `<div class="cal-row"><span class="grow"><b>${esc(c.name)}</b>${c.problem ? `<span class="sub rec-warn">${esc(c.problem)}</span>` : `<span class="sub">Added ${esc(rel(c.added_at))}</span>`}</span><button class="btn plain" data-action="calendar-remove" data-id="${esc(c.id)}" data-name="${esc(c.name)}">Remove</button></div>`)
+    .join('');
+  const next = (cal.events || [])[0];
+  const coming = next ? `<p class="hint">Next: ${esc(next.title)}, ${esc(new Date(next.start).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' }))}.</p>` : count ? '<p class="hint">Nothing in the next week.</p>' : '';
+  const steps = `<ol class="cal-steps">
+      <li>Open <a href="${GOOGLE_CALENDAR_SETTINGS}" target="_blank" rel="noopener noreferrer">Google Calendar settings</a> on a computer.</li>
+      <li>On the left, under <b>Settings for my calendars</b>, click the calendar you want.</li>
+      <li>Scroll to <b>Integrate calendar</b> and copy <b>Secret address in iCal format</b>.</li>
+      <li>Paste it below.</li>
+    </ol>
+    <p class="hint">Outlook: Settings → Calendar → Shared calendars → Publish a calendar, then copy the ICS link. Apple Calendar: share the calendar publicly and copy its link.</p>`;
+  const form = secure
+    ? `<div class="cal-add"><input id="calendar-link" class="cal-link" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://calendar.google.com/calendar/ical/…/basic.ics"><button class="btn primary" data-action="calendar-add">Add calendar</button></div>`
+    : '<p class="rec-warn">Calendar links are private, so add one on the computer running leo, or through the https link.</p>';
+  return `<section class="set-card cal-card">
+    <header><h3>Calendar</h3>${chip}</header>
+    <p class="hint">When you record, leo names the recording after the class or meeting you are in, and the AI gets the event’s description and who was invited. leo only reads your calendar; it never changes it.</p>
+    ${rows}
+    ${coming}
+    ${count ? `<div class="buttons"><button class="btn plain" data-action="calendar-refresh"${cal.refreshing ? ' disabled' : ''}>${cal.refreshing ? 'Reading…' : 'Check now'}</button></div>` : ''}
+    <details class="cal-how"${count ? '' : ' open'}><summary>${count ? 'Add another calendar' : 'Connect your Google Calendar'}</summary>${steps}${form}</details>
+  </section>`;
+}
+
+async function addCalendar() {
+  const box = $('#calendar-link');
+  if (!box || !box.value.trim()) throw Object.assign(new Error('Paste your calendar’s secret address first.'), { shown: true });
+  const button = $('[data-action="calendar-add"]');
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'Checking the link…';
+  }
+  const mine = seq;
+  try {
+    const calendar = await api('/api/calendar', { method: 'POST', body: { link: box.value.trim() } });
+    if (mine !== seq || state.view !== 'settings') return;
+    state.calendar = calendar;
+    drawSettings(state.settings);
+    const added = calendar.calendars[calendar.calendars.length - 1];
+    toast(`Connected “${added ? added.name : 'your calendar'}”.`);
+  } catch (e) {
+    if (button && button.isConnected) {
+      button.disabled = false;
+      button.textContent = 'Add calendar';
+    }
+    throw e;
+  }
+}
+
+async function removeCalendar(el) {
+  const mine = seq;
+  const calendar = await api(`/api/calendar/${enc(el.dataset.id)}`, { method: 'DELETE' });
+  if (mine !== seq || state.view !== 'settings') return;
+  state.calendar = calendar;
+  drawSettings(state.settings);
+  toast(`Removed “${el.dataset.name}”.`);
+}
+
+async function refreshCalendar() {
+  const mine = seq;
+  const calendar = await api('/api/calendar/refresh', { method: 'POST' });
+  if (mine !== seq || state.view !== 'settings') return;
+  state.calendar = calendar;
+  drawSettings(state.settings);
 }
 
 function settingsOption(value, label, current) {
@@ -101,6 +176,7 @@ function drawSettings(page) {
   app.innerHTML = `<div class="settings">
     <div class="section-title">Settings</div>
     ${page.tasks.map((t) => taskCard(t, page.secure)).join('')}
+    ${calendarCard(state.calendar, page.secure)}
     <section class="set-card">
       <header><h3>Backup</h3>${backup.remote ? '<span class="set-status ok">On</span>' : '<span class="set-status missing">Not set up</span>'}</header>
       <p class="hint">${backup.remote ? `Your notes are copied to ${esc(backup.remote)}.` : 'Backup is not set up yet. Run :backup in leo on your computer to keep a copy on GitHub.'}</p>

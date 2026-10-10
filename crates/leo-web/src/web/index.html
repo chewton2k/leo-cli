@@ -669,7 +669,9 @@ body.on-map main { padding: 0; max-width: none; }
 .side-search svg { width: 17px; height: 17px; flex: none; }
 .side-search span.side-label { flex: 1; }
 .side-search kbd { flex: none; font: 600 11.5px/1 inherit; color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; }
-.side-nav { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; margin: 0 -4px; padding: 0 4px; scrollbar-width: thin; }
+.side-nav { flex: none; display: flex; flex-direction: column; gap: 2px; margin: 0 -4px; padding: 0 4px; }
+.side-group { flex: none; }
+.side-tree { flex: 1 1 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
 .side-foot { display: flex; flex-direction: column; gap: 2px; padding-top: 8px; border-top: 1px solid var(--line); }
 .side-row {
   display: flex; align-items: center; gap: 11px; width: 100%; min-height: 36px; padding: 0 10px; flex: none;
@@ -1148,16 +1150,20 @@ body.files-over main::after {
 .upload-wants textarea { flex: 1; min-width: 0; border: 0; outline: 0; resize: vertical; background: none; font: inherit; font-size: 15px; line-height: 1.45; min-height: 44px; }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 
-.workflow-field { display:flex; flex-direction:column; gap:8px; margin:16px 0; font-size:14px; }
-.workflow-field input,.workflow-field textarea,.workflow-field select,.source-passage textarea { width:100%; box-sizing:border-box; background:var(--surface); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:10px; font:inherit; }
-.workflow-custom,.source-passage { border-bottom:1px solid var(--line); padding:12px 0; }
-.workflow-custom summary,.source-passage summary { cursor:pointer; font-size:14px; line-height:1.5; }
+.source-field { display:flex; flex-direction:column; gap:8px; margin:16px 0; font-size:14px; }
+.source-field input,.source-field textarea,.source-field select,.source-passage textarea { width:100%; box-sizing:border-box; background:var(--surface); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:10px; font:inherit; }
+.source-passage { border-bottom:1px solid var(--line); padding:12px 0; }
+.source-passage summary { cursor:pointer; font-size:14px; line-height:1.5; }
 .source-sheet { max-width:760px; }
 .source-trace { padding-left:20px; color:var(--muted); font-size:12px; }
-.scope-dates { display:flex; gap:16px; }.scope-dates label { flex:1; min-width:0; }
-.scope-notes { max-height:220px; overflow:auto; }.scope-notes label { display:flex; gap:10px; padding:8px 0; }
-.chat-scope { font-size:12px; padding:8px 16px; color:var(--muted); border-bottom:1px solid var(--line); }
-.chat-scope-clear { border:0; background:none; padding:0; font:inherit; color:var(--accent); text-decoration:underline; cursor:pointer; }
+.cal-row { display:flex; align-items:center; gap:12px; padding:10px 0; border-bottom:1px solid var(--line); }
+.cal-row .sub { display:block; }
+.cal-how summary { cursor:pointer; padding:10px 0; font-weight:600; }
+.cal-steps { padding-left:20px; line-height:1.6; margin:4px 0 12px; }
+.cal-add { display:flex; gap:8px; flex-wrap:wrap; margin:8px 0; }
+.cal-link { flex:1 1 260px; min-width:0; box-sizing:border-box; background:var(--surface); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:10px; font:inherit; }
+.combine-preview { max-height:min(60vh, 560px); overflow:auto; border:1px solid var(--line); border-radius:8px; padding:12px 16px; margin:12px 0; }
+.rec-wants { width:100%; box-sizing:border-box; background:var(--surface); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:10px; font:inherit; resize:vertical; }
 .regenerate-preview { margin:24px 0; }.recording-source { margin:20px 0; }
 </style>
 </head>

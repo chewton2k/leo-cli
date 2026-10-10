@@ -5,7 +5,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use leo_core::{recording, workflows::Workflows};
+use leo_core::recording;
 use serde::Deserialize;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -48,37 +48,6 @@ fn error(code: StatusCode, message: impl ToString) -> Response {
         .into_response()
 }
 
-pub(crate) async fn get(State(state): State<AppState>) -> Response {
-    match outside(&state, None, |notes, _| {
-        let workflows = Workflows::load(&notes).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        Ok(serde_json::json!({"workflows": workflows, "templates": leo_core::workflows::templates(), "recipes": leo_core::workflows::recipes()}))
-    }).await {
-        Ok(value) => Json(value).into_response(), Err(code) => error(code, "Could not read workflows"),
-    }
-}
-
-pub(crate) async fn put(
-    State(state): State<AppState>,
-    Json(workflows): Json<Workflows>,
-) -> Response {
-    if let Err(e) = workflows.validate() {
-        return error(StatusCode::BAD_REQUEST, e);
-    }
-    match outside(&state, None, move |notes, _| {
-        for dir in workflows.profiles.keys() {
-            leo_core::paths::validate_directory(dir).map_err(|_| StatusCode::BAD_REQUEST)?;
-        }
-        workflows
-            .save(&notes)
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
-    })
-    .await
-    {
-        Ok(()) => Json(serde_json::json!({"saved": true})).into_response(),
-        Err(code) => error(code, "Could not save workflows"),
-    }
-}
-
 #[derive(Default, Deserialize)]
 pub(crate) struct SourceQuery {
     #[serde(default)]
@@ -112,7 +81,8 @@ pub(crate) async fn sources(
 
 #[derive(Deserialize)]
 pub(crate) struct Regenerate {
-    template: String,
+    #[serde(default)]
+    wants: Option<String>,
 }
 
 pub(crate) async fn regenerate(
@@ -128,32 +98,39 @@ pub(crate) async fn regenerate(
     };
     let input = outside(&state, Some(id.clone()), move |notes, note| {
         let note = note.as_ref().ok_or(StatusCode::NOT_FOUND)?;
-        let workflows = Workflows::load(&notes).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        if workflows.format(&body.template).is_none() {
-            return Err(StatusCode::BAD_REQUEST);
-        }
         let sources =
             recording::load(&notes, &id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         if sources.is_empty() {
             return Err(StatusCode::NOT_FOUND);
         }
-        let mut profile = workflows.profile(&note.directory);
-        profile.template = body.template;
-        if profile.context.is_empty() {
-            profile.context = sources
+        let joined = |part: fn(&recording::Archive) -> &str| {
+            sources
                 .iter()
-                .map(|s| s.context.as_str())
+                .map(part)
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
                 .collect::<Vec<_>>()
-                .join("\n");
+                .join("\n")
+        };
+        let profile = recording::Profile {
+            context: joined(|s| s.context.as_str()),
+            wants: body.wants.unwrap_or_else(|| joined(|s| s.wants.as_str())),
         }
-        Ok((sources, profile, workflows, super::notes::version_of(note)))
+        .checked()
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+        Ok((sources, profile, super::notes::version_of(note)))
     })
     .await;
-    let (sources, profile, workflows, base) = match input {
+    let (sources, profile, base) = match input {
         Ok(v) => v,
-        Err(code) => return error(code, "A saved transcript and a valid template are required"),
+        Err(code) => {
+            return error(
+                code,
+                "This note needs a kept recording transcript, and what you want must be under 4,000 characters",
+            )
+        }
     };
-    match tokio::task::spawn_blocking(move || regenerate(sources, profile, workflows)).await {
+    match tokio::task::spawn_blocking(move || regenerate(sources, profile)).await {
         Ok(Ok((title, body))) => {
             Json(serde_json::json!({"title": title, "body": body, "base": base})).into_response()
         }

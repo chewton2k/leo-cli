@@ -318,14 +318,16 @@ Doctor's notes section says whether it is ready. The real-model test is
 
 ### Durable recording workflows
 
-`Session::archive` retains timestamped passages, original points, format/context,
-warnings and metadata-only diagnostics. `recorder::write_up` caches its prepared
+`Session::archive` retains timestamped passages, original points, the event
+context and what the user wants, warnings and metadata-only diagnostics. `recorder::write_up` caches its prepared
 result by input hash; only a successful caller save permits `Session::commit` and
 audio cleanup. Finish retries, including persistent rate limits, have a bounded
 window; Finish available cancels queued work while allowing the current request to
-complete. Failed audio stays recoverable. `long::with_profile` changes organization
-while preserving transcript repair, knowledge gap-filling and point merging.
-Vocabulary hints reach supporting speech providers; Parakeet decoding is unchanged.
+complete. Failed audio stays recoverable. `long::with_profile` adds the calendar event's
+details (`<recording_context>`) and what the user wants (`<what_the_user_wants>`,
+restated last) while keeping transcript repair, knowledge gap-filling and point
+merging. `web::fetch_public` is the one https fetch for addresses the user gives
+(calendar links): public hosts only, capped size.
 
 Browser-fed manifests are recovered through their browser journal, never by the
 terminal startup scan. Simultaneous tracks allocate session folders with exclusive

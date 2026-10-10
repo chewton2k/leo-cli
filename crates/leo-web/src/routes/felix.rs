@@ -268,7 +268,6 @@ pub(crate) async fn delete_chat(
 }
 
 struct Ask {
-    scope: chat::Scope,
     system: String,
     conversation: String,
     sources: Vec<chat::SourceRef>,
@@ -565,7 +564,6 @@ fn answer(
     tx: &tokio::sync::mpsc::UnboundedSender<String>,
 ) -> Result<Option<chat::Spent>> {
     let Ask {
-        scope,
         system,
         conversation,
         sources,
@@ -601,7 +599,6 @@ fn answer(
     let last = format!("{system}\n\n{}", tools::NO_MORE_TOOLS);
     let native = format!("{system}\n\n{}", tools::guidance_for(web_on, access));
     let mut desk = tools::Desk::new(sources, room)
-        .with_scope(scope)
         .with_web(web)
         .with_access(access)
         .with_documents(documents)
@@ -935,10 +932,6 @@ pub(crate) async fn chat_reply(
     {
         return StatusCode::BAD_REQUEST.into_response();
     }
-    if !body.scope.valid() {
-        return StatusCode::BAD_REQUEST.into_response();
-    }
-    let scope = body.scope.clone();
     let mode = chat::mode_of(body.mode.as_deref());
     let access = if body.practice {
         tools::Access::Read
@@ -969,9 +962,8 @@ pub(crate) async fn chat_reply(
     let gathered = state
         .with_store(move |store| {
             let cache = graphs.load();
-            let scoped = (!scope.is_all()).then(|| store.read_view(|n| scope.includes(n)));
             Ok(chat::gather_seeing(
-                scoped.as_ref().unwrap_or(store),
+                store,
                 &cache,
                 note.as_deref(),
                 &attached,
@@ -1032,7 +1024,6 @@ pub(crate) async fn chat_reply(
     let worker = state.clone();
     tokio::task::spawn_blocking(move || {
         let ask = Ask {
-            scope: body.scope,
             system,
             conversation: user,
             sources,

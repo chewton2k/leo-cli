@@ -5,6 +5,32 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 const MOST_SOURCES: usize = 1000;
+pub const MOST_WANTS_CHARS: usize = 4000;
+pub const MOST_CONTEXT_CHARS: usize = 8000;
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct Profile {
+    pub context: String,
+    pub wants: String,
+}
+
+impl Profile {
+    pub fn checked(self) -> Result<Profile> {
+        anyhow::ensure!(
+            self.wants.chars().count() <= MOST_WANTS_CHARS,
+            "Keep what you want from the notes under 4,000 characters"
+        );
+        anyhow::ensure!(
+            self.context.chars().count() <= MOST_CONTEXT_CHARS,
+            "Keep the meeting details under 8,000 characters"
+        );
+        Ok(Profile {
+            context: self.context.trim().to_string(),
+            wants: self.wants.trim().to_string(),
+        })
+    }
+}
 const MOST_SOURCE_BYTES: u64 = 64_000_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -36,9 +62,9 @@ pub struct Archive {
     pub passages: Vec<Passage>,
     pub points: Vec<Point>,
     #[serde(default)]
-    pub template: String,
-    #[serde(default)]
     pub context: String,
+    #[serde(default)]
+    pub wants: String,
     #[serde(default)]
     pub warnings: Vec<String>,
     #[serde(default)]
@@ -136,6 +162,34 @@ mod tests {
     use super::*;
 
     #[test]
+    fn what_the_user_wants_is_bounded_and_trimmed() {
+        let p = Profile {
+            context: " Design review ".into(),
+            wants: " Just the decisions ".into(),
+        }
+        .checked()
+        .unwrap();
+        assert_eq!(
+            (p.context.as_str(), p.wants.as_str()),
+            ("Design review", "Just the decisions")
+        );
+        assert!(Profile {
+            wants: "x".repeat(MOST_WANTS_CHARS + 1),
+            ..Default::default()
+        }
+        .checked()
+        .is_err());
+        let old: Profile = serde_json::from_str(
+            r#"{"template":"meeting","vocabulary":["Dijkstra"],"context":"c"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            old.context, "c",
+            "manifests written before formats were removed still load"
+        );
+    }
+
+    #[test]
     fn sources_are_private_durable_and_repeatable() {
         let temp = tempfile::tempdir().unwrap();
         let notes = temp.path().join("notes");
@@ -144,8 +198,8 @@ mod tests {
             started: Utc::now(),
             passages: vec![],
             points: vec![],
-            template: "lecture".into(),
             context: String::new(),
+            wants: String::new(),
             warnings: vec![],
             trace: vec![],
         };

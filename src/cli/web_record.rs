@@ -29,12 +29,14 @@ fn listen(listening: Listening, heard: &mut dyn FnMut(Heard)) -> Result<Recorded
         stop,
         pause,
         points,
+        wants,
     } = listening;
     let controls = Controls {
         finish_now,
         stop,
         pause,
         points: Default::default(),
+        wants,
     };
     let input = match audio {
         Some(rx) => Input::Fed(rx),
@@ -134,8 +136,8 @@ fn listen(listening: Listening, heard: &mut dyn FnMut(Heard)) -> Result<Recorded
 }
 
 pub fn regenerator() -> leo_web::record::Regenerator {
-    Arc::new(|sources, profile, workflows| {
-        let written = write_sources(sources, &profile, &workflows);
+    Arc::new(|sources, profile| {
+        let written = write_sources(sources, &profile);
         if !written.problems.is_empty() {
             anyhow::bail!(written.problems.join("; "));
         }
@@ -145,8 +147,7 @@ pub fn regenerator() -> leo_web::record::Regenerator {
 
 fn write_sources(
     sources: Vec<leo_core::recording::Archive>,
-    profile: &leo_core::workflows::Profile,
-    workflows: &leo_core::workflows::Workflows,
+    profile: &leo_core::recording::Profile,
 ) -> leo_services::ai::long::Structured {
     let speakers: std::collections::HashSet<&str> = sources
         .iter()
@@ -190,7 +191,7 @@ fn write_sources(
         "Recording",
         &|prompt, max| {
             leo_services::ai::chat_outcome(
-                leo_services::ai::long::with_profile(prompt, profile, workflows),
+                leo_services::ai::long::with_profile(prompt, profile),
                 max,
             )
             .map(|o| o.value)
@@ -212,8 +213,10 @@ fn listen_call(listening: Listening, heard: &mut dyn FnMut(Heard)) -> Result<Rec
         pause,
         finish_now,
         points,
+        wants,
         ..
     } = listening;
+    let mut profile = profile;
     let tracks = [("You", audio), ("Others", other_audio)];
     let (tx, rx) = std::sync::mpsc::channel();
     let mut dirs = Vec::new();
@@ -233,6 +236,7 @@ fn listen_call(listening: Listening, heard: &mut dyn FnMut(Heard)) -> Result<Rec
                 stop: stop.clone(),
                 pause: pause.clone(),
                 points: Default::default(),
+                wants: wants.clone(),
             };
             let points = points.clone();
             scope.spawn(move || {
@@ -318,8 +322,11 @@ fn listen_call(listening: Listening, heard: &mut dyn FnMut(Heard)) -> Result<Rec
         label: "Writing the call notes".into(),
         steps: None,
     });
-    let workflows = leo_core::workflows::Workflows::load(&leo_core::store::Store::notes_dir()?)?;
-    let written = write_sources(vec![source.clone()], &profile, &workflows);
+    if let Some(latest) = wants.lock().ok().and_then(|w| w.clone()) {
+        profile.wants = latest;
+    }
+    source.wants = profile.wants.clone();
+    let written = write_sources(vec![source.clone()], &profile);
     for problem in &written.problems {
         heard(Heard::Warning(problem.clone()));
     }

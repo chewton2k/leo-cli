@@ -393,6 +393,20 @@ pub fn readable(html: &str) -> String {
         .join("\n")
 }
 
+pub fn fetch_public(address: &str, most: u64) -> Result<Vec<u8>> {
+    let url = reqwest::Url::parse(address).context("that is not a web address")?;
+    if url.scheme() != "https" || !allowed(&url) {
+        bail!("leo only opens public https addresses");
+    }
+    let response = client()?.get(url).send()?.error_for_status()?;
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(&mut std::io::Read::take(response, most + 1), &mut bytes)?;
+    if bytes.len() as u64 > most {
+        bail!("that address sent back more than leo will read");
+    }
+    Ok(bytes)
+}
+
 pub fn page(address: &str) -> Result<String> {
     let url = reqwest::Url::parse(address).context("that is not a web address")?;
     if !allowed(&url) {
