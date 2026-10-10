@@ -450,54 +450,48 @@ fn a_suggested_change_is_applied_only_while_the_text_is_still_there() {
 }
 
 #[test]
-fn a_change_the_user_asked_for_is_checked_once_quietly_and_the_answer_shown_never_vanishes() {
+fn an_answer_is_one_request_and_is_never_taken_back_or_asked_again() {
     let shown = |lines: &[serde_json::Value]| -> String {
         lines.iter().filter_map(|l| l["t"].as_str()).collect()
     };
+    for (question, reply) in [
+        (
+            "based on this transcription, can you answer these questions: 6. Can you describe a time you took initiative to make a positive difference? 8. If you were given the opportunity to improve one aspect of Clubhouse's platform, what would you focus on and why?",
+            "6. When our club lost its venue, I organised a new one.",
+        ),
+        (
+            "fix anything wrong in my heaps note",
+            "Your heaps note looks right to me.",
+        ),
+        ("how would you improve this note?", "I would add an example."),
+    ] {
+        let (mut state, _d, _ids) = state_with(&[("Heaps", "")]);
+        let (streamer, prompts) = scripted(vec![reply, "A second answer nobody asked for."]);
+        state.chat = Some(streamer);
+        let lines = chat_lines(&state, question);
+        assert_eq!(shown(&lines), reply, "{question}");
+        assert!(lines
+            .iter()
+            .all(|l| l.get("restart").is_none() && l.get("reset").is_none()));
+        assert_eq!(prompts.lock().unwrap().len(), 1, "{question}");
+    }
+
     let (mut state, _d, ids) = state_with(&[("Graph traversals", "")]);
     {
         let mut store = state.fresh();
         store.find_note_mut(&ids[0]).unwrap().body = "BFS uses a stack.".into();
         store.save().unwrap();
     }
-    let (streamer, prompts) = scripted(vec![
-        "BFS uses a queue, not a stack.",
+    let (streamer, _prompts) = scripted(vec![
         "<tool>{\"name\": \"edit_note\", \"note\": \"Graph traversals\", \"find\": \"stack\", \"replace\": \"queue\"}</tool>",
-        "Here is everything again: BFS uses a queue.",
+        "I suggested changing stack to queue; apply it if it looks right.",
     ]);
     state.chat = Some(streamer);
     let lines = chat_lines(&state, "Please fix my graph traversals note");
     assert!(lines.iter().any(|l| l.get("proposal").is_some()));
-    assert!(lines.iter().all(|l| l.get("restart").is_none()));
-    assert_eq!(shown(&lines), "BFS uses a queue, not a stack.");
-    {
-        let prompts = prompts.lock().unwrap();
-        assert!(
-            prompts[1].contains("Felix replied: BFS uses a queue")
-                && prompts[1].contains(tools::NUDGE)
-        );
-    }
-
-    let (mut state, _d, _ids) = state_with(&[("Heaps", "")]);
-    let (streamer, prompts) = scripted(vec![
-        "Your heaps note looks right.",
-        "No note change is needed. Here is the answer again: it looks right.",
-    ]);
-    state.chat = Some(streamer);
-    let lines = chat_lines(&state, "fix anything wrong in my heaps note");
-    assert!(lines.iter().all(|l| l.get("restart").is_none()));
-    assert_eq!(shown(&lines), "Your heaps note looks right.");
-    assert_eq!(prompts.lock().unwrap().len(), 2, "the check is made once");
-
-    let (mut state, _d, _ids) = state_with(&[("Interviews", "")]);
-    let (streamer, prompts) = scripted(vec!["1. Tell me about yourself: ..."]);
-    state.chat = Some(streamer);
-    let lines = chat_lines(&state, "Help me write answers to these interview questions");
-    assert_eq!(shown(&lines), "1. Tell me about yourself: ...");
     assert_eq!(
-        prompts.lock().unwrap().len(),
-        1,
-        "writing an answer is not a note change"
+        shown(&lines),
+        "I suggested changing stack to queue; apply it if it looks right."
     );
 }
 
@@ -721,7 +715,7 @@ impl chat::Conversation for Native {
 }
 
 #[test]
-fn a_native_session_keeps_its_answer_when_the_quiet_change_check_finds_nothing() {
+fn a_native_session_answers_once_even_when_no_change_was_proposed() {
     struct Twice(Arc<Mutex<Vec<String>>>, Vec<&'static str>);
     impl chat::Conversation for Twice {
         fn native(&self) -> bool {
@@ -750,8 +744,7 @@ fn a_native_session_keeps_its_answer_when_the_quiet_change_check_finds_nothing()
     ));
     state.chat = Some(scripted(vec!["never used"]).0);
     let lines = chat_lines(&state, "write my interview answers into my prep note");
-    assert_eq!(heard.lock().unwrap().len(), 2);
-    assert!(heard.lock().unwrap()[1].contains(tools::NUDGE));
+    assert_eq!(heard.lock().unwrap().len(), 1);
     assert!(lines.iter().all(|l| l.get("restart").is_none()));
     let shown: String = lines.iter().filter_map(|l| l["t"].as_str()).collect();
     assert_eq!(shown, "Here are your interview answers.");
@@ -1152,15 +1145,22 @@ fn a_long_chat_is_remembered_in_a_summary_instead_of_forgotten() {
 }
 
 #[test]
-fn a_big_request_asks_felix_to_plan_before_he_starts() {
+fn planning_is_in_the_standing_rules_and_never_added_because_of_a_numbered_list() {
     let (mut state, _d, _) = state_with(&[]);
     let (streamer, prompts) = scripted(vec!["Done.", "Done."]);
     state.chat = Some(streamer);
     chat_lines_with(&state, "fix every typo in all my notes", Some("read"));
-    chat_lines_with(&state, "what is a heap?", Some("read"));
+    chat_lines_with(
+        &state,
+        "answer these:\n1. Tell us about yourself.\n2. Why Clubhouse?\n3. Describe a team.",
+        Some("read"),
+    );
     let prompts = prompts.lock().unwrap();
-    assert!(prompts[0].contains(tools::PLAN));
-    assert!(!prompts[1].contains(tools::PLAN));
+    for prompt in prompts.iter() {
+        assert!(!prompt.contains("## This is a big request"));
+        assert!(prompt
+            .contains("A long message or a numbered list of questions alone is not such a task"));
+    }
 }
 
 #[test]
@@ -1257,7 +1257,7 @@ fn a_practice_answer_is_marked_once_and_never_nudged_into_changing_a_note() {
         1,
         "no second try asking for a note change"
     );
-    assert!(!prompts.lock().unwrap()[0].contains(tools::PLAN));
+    assert!(!prompts.lock().unwrap()[0].contains("## This is a big request"));
     assert!(
         !prompts.lock().unwrap()[0].contains("### edit_note"),
         "marking an answer is read only, so the note-fixing reminder never comes up"

@@ -273,7 +273,6 @@ struct Ask {
     conversation: String,
     sources: Vec<chat::SourceRef>,
     room: usize,
-    wanted: String,
     access: tools::Access,
     documents: Vec<(String, String)>,
     steer: crate::steer::Steer,
@@ -571,7 +570,6 @@ fn answer(
         conversation,
         sources,
         room,
-        wanted,
         access,
         documents,
         steer,
@@ -599,11 +597,6 @@ fn answer(
     };
     let web = state.web.clone().filter(|w| (w.needed)());
     let web_on = web.is_some();
-    let system = if tools::wants_plan(&wanted) {
-        format!("{system}\n\n{}", tools::PLAN)
-    } else {
-        system
-    };
     let text = format!("{system}\n\n{}", tools::manual_for(web_on, access));
     let last = format!("{system}\n\n{}", tools::NO_MORE_TOOLS);
     let native = format!("{system}\n\n{}", tools::guidance_for(web_on, access));
@@ -633,7 +626,6 @@ fn answer(
                 talk.as_mut(),
                 &mut desk,
                 access,
-                &wanted,
                 &conversation,
                 &send,
                 &shown,
@@ -644,7 +636,6 @@ fn answer(
                 talk.as_mut(),
                 &mut desk,
                 access,
-                &wanted,
                 &conversation,
                 &send,
                 &shown,
@@ -671,7 +662,6 @@ fn answer(
             &mut restated,
             &mut desk,
             access,
-            &wanted,
             &conversation,
             &send,
             &shown,
@@ -691,7 +681,6 @@ fn native_answer(
     talk: &mut dyn chat::Conversation,
     desk: &mut tools::Desk,
     access: tools::Access,
-    wanted: &str,
     conversation: &str,
     send: &dyn Fn(serde_json::Value),
     shown: &std::cell::Cell<bool>,
@@ -699,68 +688,55 @@ fn native_answer(
     let mut spent = None;
     let mut calls = 0usize;
     let mut failure: Option<anyhow::Error> = None;
-    let mut message = conversation.to_string();
-    let mut nudged = !access.changes() || !tools::wants_change(wanted);
     let gap = std::cell::Cell::new(false);
-    let quiet = std::cell::Cell::new(false);
-    loop {
-        let reply = {
-            let mut piece = |t: &str| {
-                if quiet.get() {
-                    return;
-                }
-                if gap.replace(false) && shown.get() {
-                    send(serde_json::json!({ "t": "\n\n" }));
-                }
-                shown.set(true);
-                send(serde_json::json!({ "t": t }));
-            };
-            let mut restart = || gap.set(true);
-            let mut call = |name: &str, args: &serde_json::Value| -> String {
-                calls += 1;
-                if calls > tools::MOST_STEPS {
-                    return format!("That did not work: {}", tools::NO_MORE_TOOLS);
-                }
-                let mut call = tools::Call {
-                    name: name.to_string(),
-                    args: args.clone(),
-                };
-                if !call.args.is_object() {
-                    call.args = serde_json::json!({});
-                }
-                match run_tool(state, desk, access, &call, send) {
-                    Ok(done) => done.result,
-                    Err(e) => {
-                        let said = e.to_string();
-                        failure = Some(e);
-                        format!("That did not work: {said}")
-                    }
-                }
-            };
-            talk.say(
-                &message,
-                chat::Exchange {
-                    tail: "",
-                    last: false,
-                    max_tokens: chat::REPLY_TOKENS,
-                    most_calls: tools::MOST_STEPS,
-                    piece: &mut piece,
-                    restart: &mut restart,
-                    call: &mut call,
-                },
-            )?
+    let reply = {
+        let mut piece = |t: &str| {
+            if gap.replace(false) && shown.get() {
+                send(serde_json::json!({ "t": "\n\n" }));
+            }
+            shown.set(true);
+            send(serde_json::json!({ "t": t }));
         };
-        if let Some(e) = failure.take() {
-            return Err(e);
-        }
-        counted(&mut spent, reply.spent);
-        if nudged || desk.proposals > 0 {
-            return Ok(spent);
-        }
-        nudged = true;
-        quiet.set(true);
-        message = tools::NUDGE.to_string();
+        let mut restart = || gap.set(true);
+        let mut call = |name: &str, args: &serde_json::Value| -> String {
+            calls += 1;
+            if calls > tools::MOST_STEPS {
+                return format!("That did not work: {}", tools::NO_MORE_TOOLS);
+            }
+            let mut call = tools::Call {
+                name: name.to_string(),
+                args: args.clone(),
+            };
+            if !call.args.is_object() {
+                call.args = serde_json::json!({});
+            }
+            match run_tool(state, desk, access, &call, send) {
+                Ok(done) => done.result,
+                Err(e) => {
+                    let said = e.to_string();
+                    failure = Some(e);
+                    format!("That did not work: {said}")
+                }
+            }
+        };
+        talk.say(
+            conversation,
+            chat::Exchange {
+                tail: "",
+                last: false,
+                max_tokens: chat::REPLY_TOKENS,
+                most_calls: tools::MOST_STEPS,
+                piece: &mut piece,
+                restart: &mut restart,
+                call: &mut call,
+            },
+        )?
+    };
+    if let Some(e) = failure.take() {
+        return Err(e);
     }
+    counted(&mut spent, reply.spent);
+    Ok(spent)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -769,21 +745,15 @@ fn text_answer(
     talk: &mut dyn chat::Conversation,
     desk: &mut tools::Desk,
     access: tools::Access,
-    wanted: &str,
     conversation: &str,
     send: &dyn Fn(serde_json::Value),
     shown: &std::cell::Cell<bool>,
 ) -> Result<Option<chat::Spent>> {
-    let mut nudged = !access.changes() || !tools::wants_change(wanted);
     let mut unstuck = false;
     let mut spent: Option<chat::Spent> = None;
     let mut message = conversation.to_string();
     let gap = std::cell::Cell::new(false);
-    let quiet = std::cell::Cell::new(false);
     let shown_once = |t: &str| {
-        if quiet.get() {
-            return;
-        }
         if gap.replace(false) && shown.get() {
             send(serde_json::json!({ "t": "\n\n" }));
         }
@@ -823,13 +793,6 @@ fn text_answer(
                     send(serde_json::json!({ "restart": true }));
                 }
                 message = tools::UNSTUCK.to_string();
-                continue;
-            }
-            None if !last && !nudged && desk.proposals == 0 => {
-                nudged = true;
-                gate.finish(&mut |t| shown_once(t));
-                quiet.set(true);
-                message = tools::NUDGE.to_string();
                 continue;
             }
             None => {
@@ -1058,14 +1021,6 @@ pub(crate) async fn chat_reply(
             );
         }
     }
-    let wanted = if body.practice {
-        String::new()
-    } else {
-        body.messages
-            .last()
-            .map(|t| t.text.clone())
-            .unwrap_or_default()
-    };
     let marking = body
         .mark
         .then(|| body.messages.last().map(|t| t.text.clone()))
@@ -1082,7 +1037,6 @@ pub(crate) async fn chat_reply(
             conversation: user,
             sources,
             room,
-            wanted,
             access,
             documents,
             steer,

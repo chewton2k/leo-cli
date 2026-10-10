@@ -349,13 +349,23 @@
 - Felix tool reliability (measured with Codex): the system prompt says the
   tools are text lines, always available even when the model's own tools are
   off; every non-final step ends with `tools::REMINDER` (models weigh the end
-  most); and when the user's last message asks for a change to a note
-  (`wants_change`: a change word and "note"/"notes"/"page"; "write my
-  interview answers" is not one) but the reply proposed nothing, leo asks once
-  more with `NUDGE`, quietly: the shown reply stays, the check's text is never
-  shown, and only an edit_note / create_note it makes appears (as a card).
-  Taking the reply back made answers vanish and come back as "No note change
-  is needed. Here are … again". Agent CLIs that print nothing are run once more before failing
+  most). There is no second "did you mean to change a note?" request (the
+  old `NUDGE`, removed 2026-10-10): an answer is one request and is never
+  taken back or asked again. Keyword guesses at intent (`wants_change`,
+  `wants_plan`/`PLAN`) are gone too; pasted interview questions containing
+  "make" and "improve" erased the answer and brought back "No note change is
+  needed. Here are … again". Intent comes from the conversation: `BASE` says
+  pasted material, transcripts and documents are material, not requests, an
+  open note is context and not permission, and planning is for tasks with
+  dependent steps; `WHEN_ASK`/`WHEN_AUTO`/`REMINDER` say writing or improving
+  something in the chat is not a note change, follow-ups like "yes, do that"
+  are, and a change is claimed only after its tool result. Measured without
+  the check (Codex gpt-6-sol and Claude Code opus-5-5, 3 runs of 10 cases
+  each, 60/60): "fix my note", "put a summary into my note", "make a new
+  note", "yes, do that" and "fix the mistake in this note" always proposed
+  the edit; the interview questions, "how would you improve…", "don't change
+  my notes…", a cover letter and an explanation with a note open never did.
+  Agent CLIs that print nothing are run once more before failing
   (`AgentCli::no_answer`).
 - Storage has "Pictures in notes" (`pictures` area: `<notes>/attachments`,
   each with the notes that show it via `attachments::resolve`; delete selected
@@ -461,7 +471,7 @@
   applies each change on the server at once through `change_note` /
   `notes::make_note`, tells the model "Changed."/"Made.", and sends the card
   already `applied` with `before`/`after`/`made` so Undo works), **Read only**
-  (`manual_for` leaves the change tools out, `READ_REMINDER`, no NUDGE, and
+  (`manual_for` leaves the change tools out, `READ_REMINDER`, and
   the Desk refuses them).
 - Citations never go into notes: `tools::linked` turns `[n2]` in edit_note's
   `replace` and create_note's `body` into `[[Title]]` (a citation of the note
@@ -596,9 +606,6 @@
   while `hash_of` the turns it covers still matches. After every
   `MEMORY_EVERY` (6) new turns beyond the kept ones, `remember_in_background`
   asks the writing AI to fold them into the summary (`MEMORY_RULES`).
-- Big requests (`tools::wants_plan`: a change across all/every notes, three or
-  more changes or listed steps, or a long message) get `tools::PLAN` added:
-  plan first, work through it, list what was done.
 - The cost line's tooltip names tokens read from the cache (`Spent.cached`).
 - Meaning (`vectors.rs`, `Powers.meaning`): each note is cut into pieces of
   ~`PIECE_CHARS` at paragraphs (title first, at most `MOST_PIECES`), read by
@@ -671,7 +678,7 @@
   AI offers it, else medium, and every provider uses it; the levels are low,
   medium, high and xhigh where the AI supports them.
 - Marking a practice answer: the page sends `practice: true`; the server then
-  runs that turn read only, with no edit NUDGE or PLAN, so Felix never
+  runs that turn read only, so Felix never
   replaces his marking with "No note needs changing". Study and `quizSay`
   ask for the next practice question as a quiz card, never plain text, and the
   verdict marker must come first; `grade` / `verdict_off` still accept it after

@@ -387,8 +387,8 @@ fn as_access(spec: &Spec, access: Access) -> Spec {
 }
 
 const WHEN_ASK: &str = "When to use them:
-- The user asks you to fix, correct, update, add to or rewrite a note, or you find a mistake they asked you to fix: use edit_note, once per change, with \"find\" copied exactly from the note text you were given or opened. This is how you change notes here, so never say you cannot edit or change notes.
-- The user asks for a new note: use create_note.
+- The user asks you to change a note (fix, correct, update, add to, rewrite or reorganize it, or put something into it), including a follow-up such as \"yes, do that\" about a change you offered: use edit_note, once per change, with \"find\" copied exactly from the note text you were given or opened. Work out which note from the conversation; if that is unclear, ask. Being asked to write, improve, draft or answer something is not a request to change a note unless the user wants it saved or put into a note; answer that in the chat. This is how you change notes here, so never say you cannot edit or change notes.
+- The user asks for a new note, or to save something as a note: use create_note.
 - The question is about notes you were not given, or you need a note's full text or its connections: use search_notes, open_note or connected_notes.
 - The question is about a document the user gave and needs a part you were not shown: use read_document.
 - The question is about a picture in a note and its description is not enough: use look_at_picture.
@@ -399,8 +399,8 @@ const WHEN_ASK: &str = "When to use them:
 After suggesting a change or a note, tell the user what you suggested and that they can apply it; never claim it is already done.";
 
 const WHEN_AUTO: &str = "When to use them:
-- The user asks you to fix, correct, update, add to or rewrite a note, or you find a mistake they asked you to fix: use edit_note, once per change, with \"find\" copied exactly from the note text you were given or opened. The user chose Auto, so leo applies your changes at once and they can undo them; make only the changes they asked for.
-- The user asks for a new note: use create_note.
+- The user asks you to change a note (fix, correct, update, add to, rewrite or reorganize it, or put something into it), including a follow-up such as \"yes, do that\" about a change you offered: use edit_note, once per change, with \"find\" copied exactly from the note text you were given or opened. Work out which note from the conversation; if that is unclear, ask. Being asked to write, improve, draft or answer something is not a request to change a note unless the user wants it saved or put into a note; answer that in the chat. The user chose Auto, so leo applies your changes at once and they can undo them; make only the changes they asked for.
+- The user asks for a new note, or to save something as a note: use create_note.
 - The question is about notes you were not given, or you need a note's full text or its connections: use search_notes, open_note or connected_notes.
 - The question is about a document the user gave and needs a part you were not shown: use read_document.
 - The question is about a picture in a note and its description is not enough: use look_at_picture.
@@ -577,7 +577,7 @@ pub fn check(call: &Call) -> Result<(), String> {
     Ok(())
 }
 
-pub const REMINDER: &str = "Remember your tools: if the user wants a note fixed, corrected, changed, added to or made, or you need a note you were not given, your whole reply is a single <tool>{...}</tool> line instead of an answer. When they asked you to fix something and you found what is wrong, suggest the fix with edit_note before you answer; do not only explain it. You can open and change notes this way, so do not ask the user to do it. Otherwise reply to the user.";
+pub const REMINDER: &str = "Remember your tools: if the user asked you to change a note or save something into one, or you need a note you were not given, your whole reply is a single <tool>{...}</tool> line instead of an answer. When they asked you to fix a note and you found what is wrong, suggest the fix with edit_note before you answer; do not only explain it. You can open and change notes this way, so do not ask the user to do it. Writing, improving or answering something in the chat is not a note change. Say a change was suggested or made only after its tool result confirms it. Otherwise reply to the user.";
 
 pub const READ_REMINDER: &str = "Remember your tools: if you need a note you were not given, your whole reply is a single <tool>{...}</tool> line instead of an answer. This chat is read only, so do not try to change notes. Otherwise reply to the user.";
 
@@ -588,15 +588,6 @@ pub fn reminder(access: Access) -> &'static str {
         READ_REMINDER
     }
 }
-
-pub const NUDGE: &str = "The user may have asked for a change to their notes, but your reply suggested none. Your reply has already been shown to the user and stays as it is; this message is a check the user does not see. If a note should be fixed, changed, added to or made, reply now with only the edit_note or create_note line; the tools are available. If no note should change, reply with only: No change.";
-
-const CHANGE_WORDS: [&str; 15] = [
-    "fix", "correct", "change", "update", "edit", "rewrite", "add", "append", "insert", "remove",
-    "create", "make", "write", "improve", "expand",
-];
-
-const NOTE_WORDS: [&str; 4] = ["note", "notes", "page", "pages"];
 
 pub const UNSTUCK: &str = "Your tools are available in this chat: you use one by replying with only its <tool>{...}</tool> line, as the manual shows. If a tool would help, reply now with that line; otherwise answer the user without saying the tools are unavailable.";
 
@@ -642,48 +633,6 @@ pub fn claims_no_tools(reply: &str) -> bool {
     .any(|w| lower.contains(w));
     refusal && about_tools
 }
-
-pub fn wants_change(message: &str) -> bool {
-    let lower = message.to_lowercase();
-    let words: Vec<&str> = lower.split(|c: char| !c.is_alphanumeric()).collect();
-    words.iter().any(|word| CHANGE_WORDS.contains(word))
-        && words.iter().any(|word| NOTE_WORDS.contains(word))
-}
-
-const WIDE_WORDS: [&str; 9] = [
-    "all",
-    "every",
-    "each",
-    "whole",
-    "entire",
-    "across",
-    "throughout",
-    "everything",
-    "reorganize",
-];
-
-pub fn wants_plan(message: &str) -> bool {
-    let lower = message.to_lowercase();
-    let words: Vec<&str> = lower
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|w| !w.is_empty())
-        .collect();
-    let changes = words.iter().filter(|w| CHANGE_WORDS.contains(w)).count();
-    let wide = words.iter().any(|w| WIDE_WORDS.contains(w));
-    let steps = message
-        .lines()
-        .filter(|l| {
-            let l = l.trim_start();
-            l.starts_with("- ")
-                || l.starts_with("* ")
-                || l.chars().next().is_some_and(|c| c.is_ascii_digit()) && l.contains(". ")
-        })
-        .count();
-    (changes > 0 && wide) || changes >= 3 || steps >= 3 || words.len() > 120
-}
-
-pub const PLAN: &str = "## This is a big request
-Before you start, make a short plan for yourself: what you need to read or find, what you will change or write, and in what order. Then work through it step by step with your tools, checking each part against the notes. Finish with a short list of what you did and anything you left for the user to decide.";
 
 pub const NO_MORE_TOOLS: &str =
     "You have used all the tools you can for this answer. Do not ask for another; answer the user now with what you have.";
@@ -1685,23 +1634,6 @@ mod tests {
     }
 
     #[test]
-    fn a_big_request_is_planned_first_and_a_small_one_is_not() {
-        assert!(wants_plan("fix every typo in all my cs130 notes"));
-        assert!(wants_plan(
-            "rewrite the intro, add an example and fix the formula"
-        ));
-        assert!(wants_plan(
-            "Please:\n1. read the paper\n2. list its claims\n3. compare with my notes"
-        ));
-        assert!(!wants_plan("what is a heap?"));
-        assert!(!wants_plan("fix the typo in this note"));
-        assert!(
-            !wants_plan("explain all of it"),
-            "wide but nothing to change"
-        );
-    }
-
-    #[test]
     fn a_long_document_is_read_part_by_part_by_id_or_name() {
         let text = format!("{}{}", "a".repeat(12_000), "b".repeat(5_000));
         let desk = Desk::new(Vec::new(), 36_000).with_documents(vec![("paper.pdf".into(), text)]);
@@ -2040,25 +1972,6 @@ mod tests {
         ));
         assert!(!claims_no_tools("BFS uses a queue, not a stack."));
         assert!(!claims_no_tools("I can't be sure, but the heap is a tree."));
-    }
-
-    #[test]
-    fn a_request_to_change_notes_is_recognised() {
-        assert!(wants_change("Can you fix my BFS note?"));
-        assert!(wants_change("Make me a note comparing BFS and DFS"));
-        assert!(wants_change("add an example to my induction note"));
-        assert!(!wants_change("What does a min-heap keep at its root?"));
-        assert!(!wants_change("prefix sums and suffixes"));
-        assert!(!wants_change(
-            "Help me write answers to these interview questions"
-        ));
-        assert!(!wants_change("make this simpler please"));
-        assert!(!wants_change("is this proof correct?"));
-        assert!(!wants_change(
-            "based on this transcription, can you answer these questions: \
-             6. Can you describe a time you took initiative to make a positive difference?\n\
-             8. If you were given the opportunity to improve one aspect of Clubhouse's platform, what would you focus on and why?"
-        ));
     }
 
     #[test]
