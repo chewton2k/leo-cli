@@ -15,6 +15,7 @@ const APP_JS: &str = concat!(
     include_str!("../web/app/drag.js"),
     include_str!("../web/app/diagrams.js"),
     include_str!("../web/app/math.js"),
+    include_str!("../web/app/workflows.js"),
     include_str!("../web/app/actions.js"),
     include_str!("../web/app/events.js"),
     "})();\n",
@@ -27,6 +28,11 @@ const SAVING_JS: &str = include_str!("../web/saving.js");
 const DOC_JS: &str = include_str!("../web/doc.js");
 const GRAPH_JS: &str = include_str!("../web/graph.js");
 const CHAT_JS: &str = include_str!("../web/chat.js");
+const AUDIO_QUEUE_JS: &str = include_str!("../web/audio-queue.js");
+pub(crate) async fn audio_queue_js() -> Response {
+    javascript(AUDIO_QUEUE_JS)
+}
+
 const RECORDER_JS: &str = include_str!("../web/recorder.js");
 const RECORDING_JS: &str = include_str!("../web/recording.js");
 
@@ -260,7 +266,7 @@ mod tests {
                 parts += 1;
             }
         }
-        assert_eq!(parts, 13);
+        assert_eq!(parts, 14);
     }
 
     #[test]

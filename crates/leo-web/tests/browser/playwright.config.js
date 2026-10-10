@@ -10,11 +10,12 @@ module.exports = defineConfig({
   globalTeardown: './teardown.js',
   workers: 1,
   retries: process.env.CI ? 1 : 0,
-  reporter: process.env.CI ? [['github'], ['list']] : 'list',
+  reporter: process.env.CI ? [['github'], ['list'], ['html',{open:'never'}]] : 'list',
   timeout: 30000,
   use: {
     baseURL: 'http://127.0.0.1:31831',
     trace: 'retain-on-failure',
+    screenshot: 'only-on-failure',
     launchOptions: { args: ['--host-resolver-rules=MAP leo-http.test 127.0.0.1', '--no-proxy-server', '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] },
   },
   projects: [

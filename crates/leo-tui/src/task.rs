@@ -427,7 +427,22 @@ pub fn start_structuring(
             &points,
             existing.as_deref(),
             &fallback_title,
-            &|prompt, max| leo_services::ai::chat_outcome(prompt, max).map(|o| o.value),
+            &|prompt, max| {
+                let profile = session
+                    .as_deref()
+                    .and_then(|p| Session::open(p).ok())
+                    .map(|s| s.manifest.profile)
+                    .unwrap_or_default();
+                let workflows = leo_core::paths::data_dir()
+                    .ok()
+                    .and_then(|p| leo_core::workflows::Workflows::load(&p.join("notes")).ok())
+                    .unwrap_or_default();
+                leo_services::ai::chat_outcome(
+                    leo_services::ai::long::with_profile(prompt, &profile, &workflows),
+                    max,
+                )
+                .map(|o| o.value)
+            },
             &move |done, total| {
                 let _ = report.send(TaskEvent::Progress {
                     label: "Writing the notes".to_string(),
@@ -491,6 +506,8 @@ pub fn start_listen(
     spawn_guarded(tx.clone(), move || {
         recorder::record(
             recorder::Request {
+                id: None,
+                profile: None,
                 title,
                 append_to,
                 dir,

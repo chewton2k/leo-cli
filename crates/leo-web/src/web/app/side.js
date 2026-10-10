@@ -60,6 +60,8 @@ function drawSide() {
       ${folders || '<p class="side-none side-label">Folders you make show up here.</p>'}
     </nav>
     <div class="side-foot">
+      ${sideRow('workflows', ICON.note, 'Note workflows', { on: here === 'workflows' })}
+      ${sideRow('saved-actions', ICON.chat, 'Saved actions')}
       ${sideRow('trash', ICON.trash, 'Trash', { on: here === 'trash' })}
       ${sideRow('storage', ICON.storage, 'Storage', { on: here === 'storage' })}
       ${sideRow('settings', ICON.gear, 'Settings', { on: here === 'settings' })}

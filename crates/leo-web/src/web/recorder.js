@@ -46,18 +46,29 @@
 
   if (typeof root.registerProcessor === 'function') {
     class LeoRecorder extends root.AudioWorkletProcessor {
-      constructor() {
+      constructor(options) {
         super();
+        this.dual = Boolean(options.processorOptions && options.processorOptions.dual);
+        this.other = new Downsampler(root.sampleRate);
         this.down = new Downsampler(root.sampleRate);
         this.held = [];
+        this.port.onmessage=(event) => {
+          if (!event.data.flush) return;
+          if (this.held.length) { const chunk=Int16Array.from(this.held); this.held=[]; this.port.postMessage({samples:chunk.buffer,peak:peak(chunk)},[chunk.buffer]); }
+          this.port.postMessage({flushed:true});
+        };
       }
 
       process(inputs) {
         const input = inputs[0];
         if (input && input.length) {
-          for (const s of this.down.push(input)) this.held.push(s);
-          while (this.held.length >= CHUNK) {
-            const chunk = Int16Array.from(this.held.splice(0, CHUNK));
+          if (this.dual) {
+            const left = this.down.push([input[0]]);
+            const right = this.other.push([input[1] || new Float32Array(input[0].length)]);
+            for (let i=0; i<left.length; i++) this.held.push(left[i],right[i]);
+          } else for (const s of this.down.push(input)) this.held.push(s);
+          while (this.held.length >= CHUNK * (this.dual ? 2 : 1)) {
+            const chunk = Int16Array.from(this.held.splice(0, CHUNK * (this.dual ? 2 : 1)));
             this.port.postMessage({ samples: chunk.buffer, peak: peak(chunk) }, [chunk.buffer]);
           }
         }

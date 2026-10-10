@@ -10,6 +10,31 @@ type Written = (String, Option<String>);
 pub type Chat<'a> = &'a (dyn Fn(Prompt, u32) -> Result<String> + Sync);
 pub type Progress<'a> = &'a (dyn Fn(usize, usize) + Sync);
 
+pub fn with_profile(
+    mut prompt: Prompt,
+    profile: &leo_core::workflows::Profile,
+    workflows: &leo_core::workflows::Workflows,
+) -> Prompt {
+    if let Some(format) = workflows.format(&profile.template) {
+        if format.id != "lecture" {
+            prompt.system = prompt.system.replace(chat::LEARNING, "");
+        }
+        prompt.system.push_str(&format!(
+            "\n\nUser-selected note format. Use interpretable language.\n{}",
+            format.prompt
+        ));
+    }
+    if !profile.context.is_empty() || !profile.vocabulary.is_empty() {
+        prompt.user = format!(
+            "<recording_context>\n{}\nTerminology: {}\n</recording_context>\n\n{}",
+            profile.context,
+            profile.vocabulary.join(", "),
+            prompt.user
+        );
+    }
+    prompt
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Structured {
     pub title: String,
@@ -202,7 +227,23 @@ pub fn structure_recording(
     }
 
     progress(groups.len(), total);
-    let digest: String = joined.chars().take(SUMMARY_INPUT_CHARS).collect();
+    let per_section = SUMMARY_INPUT_CHARS / sections.len().max(1);
+    let digest = sections
+        .iter()
+        .map(|s| {
+            let chars: Vec<char> = s.chars().collect();
+            if chars.len() <= per_section {
+                return s.clone();
+            }
+            let half = per_section / 2;
+            format!(
+                "{}\n…\n{}",
+                chars[..half].iter().collect::<String>(),
+                chars[chars.len() - half..].iter().collect::<String>()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
     let (title, summary) = match chat_fn(chat::build_summary_prompt(&digest), 600) {
         Ok(reply) => {
             let (t, s) = chat::split_title_body(&reply);
@@ -255,6 +296,30 @@ mod tests {
                 .map(|i| format!("{tag}{i}"))
                 .collect::<Vec<_>>()
                 .join(" "),
+        }
+    }
+
+    #[test]
+    fn selected_formats_keep_gap_filling_and_point_merging() {
+        let points = vec![Jotted {
+            at_secs: 5,
+            text: "Explain the queue".into(),
+        }];
+        for template in ["lecture", "meeting", "interview", "design-review"] {
+            let p = with_profile(
+                chat::build_structure_prompt_with("partial words", &points),
+                &leo_core::workflows::Profile {
+                    template: template.into(),
+                    vocabulary: vec!["Dijkstra".into()],
+                    ..Default::default()
+                },
+                &Default::default(),
+            );
+            assert!(p
+                .system
+                .contains("fill the gap with accurate explanation from your own knowledge"));
+            assert!(p.user.contains("Explain the queue"));
+            assert!(p.user.contains("Dijkstra"));
         }
     }
 

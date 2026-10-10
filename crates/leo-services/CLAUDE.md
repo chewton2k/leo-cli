@@ -315,3 +315,19 @@ or `LEO_NO_MEANING_MODEL` turns that off (e2e and Playwright set them);
 `LEO_MEANING_URL` / `LEO_MEANING_MANIFEST` point tests at file:// stand-ins.
 Doctor's notes section says whether it is ready. The real-model test is
 `#[ignore]`d.
+
+### Durable recording workflows
+
+`Session::archive` retains timestamped passages, original points, format/context,
+warnings and metadata-only diagnostics. `recorder::write_up` caches its prepared
+result by input hash; only a successful caller save permits `Session::commit` and
+audio cleanup. Finish retries, including persistent rate limits, have a bounded
+window; Finish available cancels queued work while allowing the current request to
+complete. Failed audio stays recoverable. `long::with_profile` changes organization
+while preserving transcript repair, knowledge gap-filling and point merging.
+Vocabulary hints reach supporting speech providers; Parakeet decoding is unchanged.
+
+Browser-fed manifests are recovered through their browser journal, never by the
+terminal startup scan. Simultaneous tracks allocate session folders with exclusive
+`create_dir`; metadata uses unique synced temporary files so track startup cannot
+share a directory or race on a fixed temporary name.

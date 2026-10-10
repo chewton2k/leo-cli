@@ -309,3 +309,9 @@ way.
   `trash_days` (7/30/90/365/None=forever, default 30) drives `tidy_trash`;
   `chat_days` (30/90/365/None, default forever) drives `chats::tidy` in leo-web.
   Trash messages use `keep::kept_for`.
+
+Recording sources and folder workflows live in `leo-core::recording` and
+`leo-core::workflows`, shared by both front ends. Saved recording session IDs make
+new notes and appends idempotent; retain sources before saving the note, then commit
+the session after the note is durable. Default AI gap-filling and merging of typed
+points are intentional and must remain in every selected format.

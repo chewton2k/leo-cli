@@ -10,3 +10,4 @@ pub(crate) mod pictures;
 pub(crate) mod settings;
 pub(crate) mod trash;
 pub(crate) mod uploads;
+pub(crate) mod workflows;

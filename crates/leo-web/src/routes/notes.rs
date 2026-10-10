@@ -85,7 +85,7 @@ pub(crate) struct NoteResponse {
     pub(crate) tasks: Option<[usize; 2]>,
 }
 
-fn version_of(note: &leo_core::notes::Note) -> String {
+pub(crate) fn version_of(note: &leo_core::notes::Note) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     let parts = [
         note.title.as_str(),

@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -230,6 +230,7 @@ fn build(
     device: &cpal::Device,
     raw: SyncSender<Vec<f32>>,
     problem: Arc<Mutex<Option<String>>>,
+    dropped: Arc<AtomicU64>,
 ) -> Result<(cpal::Stream, u32)> {
     let config = if device.supports_input() {
         device.default_input_config()
@@ -250,7 +251,13 @@ fn build(
         }
     };
     let send = move |samples: Vec<f32>| match raw.try_send(samples) {
-        Ok(()) | Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => {}
+        Ok(()) | Err(TrySendError::Disconnected(_)) => {}
+        Err(TrySendError::Full(samples)) => {
+            dropped.fetch_add(
+                samples.len() as u64 * RATE as u64 / rate as u64,
+                Ordering::Relaxed,
+            );
+        }
     };
     let stream = match format {
         cpal::SampleFormat::F32 => device.build_input_stream(
@@ -296,6 +303,7 @@ pub struct Mic {
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
     pub problem: Arc<Mutex<Option<String>>>,
+    pub dropped: Arc<AtomicU64>,
 }
 
 impl Mic {
@@ -307,14 +315,20 @@ impl Mic {
         let (ready_tx, ready_rx) = mpsc::sync_channel::<Result<()>>(1);
         let stop = Arc::new(AtomicBool::new(false));
         let problem = Arc::new(Mutex::new(None));
+        let dropped = Arc::new(AtomicU64::new(0));
         let thread = {
-            let (stop, problem) = (Arc::clone(&stop), Arc::clone(&problem));
+            let (stop, problem, dropped) = (
+                Arc::clone(&stop),
+                Arc::clone(&problem),
+                Arc::clone(&dropped),
+            );
             std::thread::Builder::new()
                 .name("leo-mic".into())
                 .spawn(move || {
                     let (raw_tx, raw_rx) = mpsc::sync_channel::<Vec<f32>>(4096);
-                    let opened = find_device(screen)
-                        .and_then(|device| build(&device, raw_tx, Arc::clone(&problem)));
+                    let opened = find_device(screen).and_then(|device| {
+                        build(&device, raw_tx, Arc::clone(&problem), Arc::clone(&dropped))
+                    });
                     let (stream, rate) = match opened {
                         Ok(opened) => {
                             let _ = ready_tx.send(Ok(()));
@@ -327,10 +341,19 @@ impl Mic {
                     };
                     let mut resampler = Resampler::new(rate, RATE);
                     let mut converted = Vec::new();
+                    let mut seen_dropped = 0;
                     while !stop.load(Ordering::Relaxed) {
                         match raw_rx.recv_timeout(Duration::from_millis(100)) {
                             Ok(chunk) => {
                                 converted.clear();
+                                let lost = dropped.load(Ordering::Relaxed);
+                                if lost > seen_dropped {
+                                    converted.resize(
+                                        (lost - seen_dropped).min(RATE as u64 * 60) as usize,
+                                        0,
+                                    );
+                                    seen_dropped = lost;
+                                }
                                 resampler.push(&chunk, &mut converted);
                                 if !converted.is_empty() && out_tx.send(converted.clone()).is_err()
                                 {
@@ -350,6 +373,7 @@ impl Mic {
                     stop,
                     thread: Some(thread),
                     problem,
+                    dropped,
                 },
                 out_rx,
             )),

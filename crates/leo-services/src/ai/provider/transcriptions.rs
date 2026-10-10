@@ -52,6 +52,14 @@ impl Transcriptions {
 
 impl TranscribeProvider for Transcriptions {
     fn transcribe(&self, audio_path: &Path) -> ProviderResult<String> {
+        self.transcribe_with_vocabulary(audio_path, &[])
+    }
+
+    fn transcribe_with_vocabulary(
+        &self,
+        audio_path: &Path,
+        vocabulary: &[String],
+    ) -> ProviderResult<String> {
         let client = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(300))
             .build()
@@ -70,9 +78,12 @@ impl TranscribeProvider for Transcriptions {
             .mime_str("audio/wav")
             .map_err(|e| ProviderError::Fatal(format!("{}: {e}", self.name)))?;
 
-        let form = reqwest::blocking::multipart::Form::new()
+        let mut form = reqwest::blocking::multipart::Form::new()
             .text("model", self.model.clone())
             .part("file", part);
+        if !vocabulary.is_empty() {
+            form = form.text("prompt", vocabulary.join(", "));
+        }
 
         let mut request = client.post(self.url()).multipart(form);
         if let Some(key) = &self.key {

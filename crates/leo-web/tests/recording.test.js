@@ -127,3 +127,16 @@ test('two choices: the microphone here, or the screen, wherever that can work', 
   assert.equal(L.sourceFor('screen', { local: false, canShare: true }), 'tab', 'elsewhere: share a tab or screen');
   assert.equal(L.sourceFor('screen', { local: false, canShare: false }), null, 'a phone cannot record its screen');
 });
+
+test('call worklet keeps microphone and system tracks separate and flushes a short tail', () => {
+  const vm=require('node:vm'); const fs=require('node:fs'); let Recorder;
+  const sent=[];
+  class Processor { constructor() { this.port={postMessage:(message) => sent.push(message)}; } }
+  const sandbox={sampleRate:16000,AudioWorkletProcessor:Processor,registerProcessor:(_,cls) => { Recorder=cls; }};
+  vm.runInNewContext(fs.readFileSync(require.resolve('../src/web/recorder.js'),'utf8'),sandbox);
+  const recorder=new Recorder({processorOptions:{dual:true}});
+  recorder.process([[Float32Array.from([0.5,0]),Float32Array.from([0,-0.5])]]);
+  assert.equal(sent.length,0);
+  recorder.port.onmessage({data:{flush:true}});
+  assert.deepEqual([...new Int16Array(sent[0].samples)],[16384,0,0,-16384]); assert.equal(sent[1].flushed,true);
+});

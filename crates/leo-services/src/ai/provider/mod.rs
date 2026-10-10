@@ -120,6 +120,13 @@ pub trait ChatProvider {
 
 pub trait TranscribeProvider {
     fn transcribe(&self, audio_path: &Path) -> ProviderResult<String>;
+    fn transcribe_with_vocabulary(
+        &self,
+        audio_path: &Path,
+        _vocabulary: &[String],
+    ) -> ProviderResult<String> {
+        self.transcribe(audio_path)
+    }
     /// Largest file this provider accepts in one request. `None` means no
     /// limit, which skips chunking entirely — the local-binary case.
     fn max_bytes(&self) -> Option<u64>;

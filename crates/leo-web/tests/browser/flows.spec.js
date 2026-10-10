@@ -2074,10 +2074,10 @@ test.describe('recording', () => {
       polls += 1;
       return route.fulfill({ json: polls < 2 ? view({ state: 'writing', step: 'Writing the notes', steps: [1, 2] }) : view({ state: 'done', note: noteId }) });
     });
-    page.route('**/api/record/rec-1/audio', (route) => {
+    page.route('**/api/record/rec-1/audio*', (route) => {
       seen.audioBytes += route.request().postDataBuffer().length;
       seen.posts += 1;
-      return route.fulfill({ status: 204 });
+      return route.fulfill({ json:{next_seq:Number(new URL(route.request().url()).searchParams.get('seq'))+1} });
     });
     page.route('**/api/record/rec-1/point', (route) => {
       seen.points.push(route.request().postDataJSON().text);
@@ -2095,14 +2095,15 @@ test.describe('recording', () => {
   }
 
   test('the microphone streams to leo, takes points, and the note opens when written', async ({ page, context }) => {
+    await page.request.put('/api/workflows',{data:{profiles:{},templates:[],recipes:[]}});
     await context.grantPermissions(['microphone']);
     const made = await (await page.request.post('/api/notes', { data: { title: 'BFS lecture', body: '## BFS\n- queue' } })).json();
     const seen = stubRecorder(page, { noteId: made.id });
     await page.goto('/');
     await control(page, 'record').click();
     await expect(page).toHaveURL(/#\/record$/);
-    await expect(page.locator('.rec-kind')).toHaveCount(2);
-    await expect(page.locator('.rec-kind b')).toHaveText(['Microphone', 'Screen']);
+    await expect(page.locator('.rec-kind')).toHaveCount(3);
+    await expect(page.locator('.rec-kind b')).toHaveText(['Microphone', 'Screen', 'Call']);
     await page.locator('#rec-title').fill('Graphs');
     await page.locator('[data-action="rec-start"]').click();
     await expect(page.locator('#rec-transcript')).toContainText('breadth first search');
@@ -2124,7 +2125,7 @@ test.describe('recording', () => {
       return painted;
     });
     expect(leftEdge, 'the wave reaches the left edge of its box').toBeGreaterThan(0);
-    expect(seen.started).toEqual({ source: 'browser', directory: '', title: 'Graphs' });
+    expect(seen.started).toEqual({ source: 'browser', directory: '', title: 'Graphs', profile: {template:'lecture',context:'',vocabulary:[]} });
 
     await page.locator('#rec-point-text').fill('exam question on BFS');
     await page.locator('#rec-point-text').press('Enter');
@@ -2232,8 +2233,28 @@ test.describe('recording', () => {
     stubRecorder(page, { noteId: 'x', local: false });
     await page.goto('/#/record');
     await expect(page.locator('[data-action="rec-start"]')).toBeVisible();
-    await expect(page.locator('.rec-kind b')).toHaveText(['Microphone', 'Screen']);
+    await expect(page.locator('.rec-kind b')).toHaveText(['Microphone', 'Screen', 'Call']);
     await expect(page.locator('.rec-kind', { hasText: 'Screen' })).toContainText('Share tab audio');
+  });
+
+  test('a title typed while formats and the calendar load stays, and a broken calendar is not fatal', async ({ page }) => {
+    await page.route('**/api/record', (route) => route.fulfill({ json: { available: true, local: false, job: null, pending: [] } }));
+    let release;
+    const late = new Promise((resolve) => { release = resolve; });
+    await page.route('**/api/workflows', async (route) => {
+      await late;
+      return route.fulfill({ json: { workflows: { profiles: {}, templates: [], recipes: [] }, templates: [{ id: 'lecture', name: 'Lecture', prompt: 'x' }, { id: 'meeting', name: 'Meeting', prompt: 'x' }], recipes: [] } });
+    });
+    await page.route('**/api/calendar', (route) => route.fulfill({ status: 500, json: { error: 'The calendar cache could not be read.' } }));
+    await page.goto('/#/record');
+    const title = page.locator('#rec-title');
+    await title.click();
+    await title.pressSequentially('Algorithms week 3');
+    release();
+    await expect(page.locator('#rec-template option')).toHaveCount(2);
+    await expect(title).toHaveValue('Algorithms week 3');
+    await expect(title).toBeFocused();
+    await expect(page.locator('[data-action="rec-start"]')).toBeEnabled();
   });
 
   test('a refused microphone says how to allow it and starts nothing', async ({ page }) => {
@@ -2839,4 +2860,42 @@ test.describe('past chats', () => {
     await chat.locator('[data-mode="study"]').click();
     await expect.poll(async () => (await (await page.request.get('/api/chats')).json()).filter((c) => c.id.endsWith(tag)).map((c) => c.id)).toEqual([`chat-heap-${tag}`, `chat-dij-${tag}`]);
   });
+});
+
+test('folder workflows save vocabulary and custom formats, and saved actions set a bounded scope',async ({page}) => {
+  await page.request.put('/api/workflows',{data:{profiles:{},templates:[],recipes:[]}});
+  await goPlace(page,'workflows');
+  await expect(page.locator('#workflow-template')).toBeVisible();
+  await page.locator('#workflow-template').selectOption('meeting');
+  await page.locator('#workflow-vocabulary').fill('Dijkstra\nParakeet');
+  await page.locator('#workflow-context').fill('Design review for Leo');
+  await page.locator('[data-action="workflow-add"][data-kind="templates"]').click();
+  await page.locator('.workflow-custom summary').first().click();
+  await page.locator('[data-wf="templates"][data-key="name"]').fill('Project review');
+  await page.locator('[data-wf="templates"][data-key="prompt"]').fill('Use headings: Problem, Decisions, Next steps.');
+  for (const selector of ['#workflow-context','#workflow-vocabulary','[data-wf="templates"][data-key="name"]','[data-wf="templates"][data-key="prompt"]']) {
+    const field=page.locator(selector);
+    const value=await field.inputValue();
+    await field.focus();
+    await field.evaluate((el) => el.setSelectionRange(1,3));
+    await page.evaluate(() => document.querySelector('[data-action="workflow-add"][data-kind="recipes"]').click());
+    await expect(field).toBeFocused();
+    await expect(field).toHaveValue(value);
+    expect(await field.evaluate((el) => [el.selectionStart,el.selectionEnd])).toEqual([1,3]);
+  }
+  await page.locator('[data-action="workflow-save"]').first().click();
+  await expect(page.locator('.toast')).toContainText('Workflows saved');
+  await page.reload();
+  await expect(page.locator('#workflow-template')).toHaveValue('meeting');
+  await expect(page.locator('#workflow-vocabulary')).toHaveValue('Dijkstra\nParakeet');
+  await expect(page.locator('#workflow-context')).toHaveValue('Design review for Leo');
+  await page.screenshot({path:require('node:path').join(test.info().outputDir,'workflow-config.png'),fullPage:true,animations:'disabled'});
+  await goPlace(page,'saved-actions');
+  await page.locator('#scope-from').fill('2026-01-01');
+  await page.locator('#scope-to').fill('2026-12-31');
+  await page.locator('#scope-apply').click();
+  await expect(page.locator('#chat-scope')).toContainText('from 2026-01-01');
+  await page.screenshot({path:require('node:path').join(test.info().outputDir,'workflows-chat-scope.png'),animations:'disabled'});
+  await page.locator('.chat-scope-clear').click();
+  await expect(page.locator('#chat-scope')).toHaveCount(0);
 });

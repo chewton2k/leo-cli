@@ -6,6 +6,7 @@ mod stress;
 pub mod transcriber;
 pub mod wav;
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -21,6 +22,7 @@ pub const SEGMENT_SECS: u64 = 300;
 pub const OVERLAP_SECS: u64 = 1;
 const LOCK_FRESH: Duration = Duration::from_secs(30);
 const HEARTBEAT: Duration = Duration::from_secs(5);
+const MOST_SESSIONS: usize = 1000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Point {
@@ -30,6 +32,10 @@ pub struct Point {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Manifest {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub profile: leo_core::workflows::Profile,
     pub started: DateTime<Utc>,
     #[serde(default)]
     pub title: Option<String>,
@@ -39,7 +45,11 @@ pub struct Manifest {
     pub dir: String,
     #[serde(default)]
     pub screen: bool,
+    #[serde(default)]
+    pub browser: bool,
     pub segment_secs: u64,
+    #[serde(default)]
+    pub duration_secs: Option<u64>,
     #[serde(default)]
     pub points: Vec<Point>,
     #[serde(default)]
@@ -56,12 +66,16 @@ impl Manifest {
         screen: bool,
     ) -> Manifest {
         Manifest {
+            id: uuid::Uuid::new_v4().to_string(),
+            profile: Default::default(),
             started: Utc::now(),
             title,
             append_to,
             dir: dir.to_string(),
             screen,
+            browser: false,
             segment_secs: SEGMENT_SECS,
+            duration_secs: None,
             points: Vec::new(),
             stopped: false,
             saved: false,
@@ -181,13 +195,17 @@ fn index_of(name: &str) -> Option<(u32, &str)> {
 }
 
 pub fn root() -> Result<PathBuf> {
-    Ok(leo_core::paths::data_dir()?.join("recordings"))
+    leo_core::paths::contained_path(&leo_core::paths::data_dir()?, Path::new("recordings"))
 }
 
 fn write_atomic(path: &Path, text: &str) -> Result<()> {
-    let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, text)?;
-    std::fs::rename(&tmp, path)?;
+    let parent = path.parent().context("Missing recording folder")?;
+    let mut file = tempfile::NamedTempFile::new_in(parent)?;
+    file.write_all(text.as_bytes())?;
+    file.as_file().sync_all()?;
+    file.persist(path).map_err(|e| e.error)?;
+    #[cfg(unix)]
+    std::fs::File::open(parent)?.sync_all()?;
     Ok(())
 }
 
@@ -237,26 +255,56 @@ pub fn locked(dir: &Path) -> bool {
 
 impl Session {
     pub fn create(root: &Path, manifest: Manifest) -> Result<Session> {
+        if let Ok(meta) = std::fs::symlink_metadata(root) {
+            anyhow::ensure!(
+                !meta.file_type().is_symlink(),
+                "Recording folders cannot use symbolic links"
+            );
+        }
         std::fs::create_dir_all(root)?;
         let stamp = manifest.started.format("%Y%m%d-%H%M%S").to_string();
-        let mut dir = root.join(&stamp);
-        let mut n = 1;
-        while dir.exists() {
-            n += 1;
-            dir = root.join(format!("{stamp}-{n}"));
+        for n in 1..=MOST_SESSIONS {
+            let dir = root.join(if n == 1 {
+                stamp.clone()
+            } else {
+                format!("{stamp}-{n}")
+            });
+            match std::fs::create_dir(&dir) {
+                Ok(()) => {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
+                    }
+                    let session = Session { dir, manifest };
+                    session.save()?;
+                    return Ok(session);
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(e) => {
+                    return Err(e).context(
+                        "Could not create a recording folder; check disk space and permissions",
+                    )
+                }
+            }
         }
-        std::fs::create_dir_all(&dir)
-            .with_context(|| format!("could not create {}", dir.display()))?;
-        let session = Session { dir, manifest };
-        session.save()?;
-        Ok(session)
+        anyhow::bail!(
+            "Too many recording sessions started together; recover an earlier recording first"
+        )
     }
 
     pub fn open(dir: &Path) -> Result<Session> {
         let text = std::fs::read_to_string(dir.join("session.json"))
             .with_context(|| format!("no recording in {}", dir.display()))?;
-        let manifest = serde_json::from_str(&text)
+        let mut manifest: Manifest = serde_json::from_str(&text)
             .with_context(|| format!("unreadable recording in {}", dir.display()))?;
+        if manifest.id.is_empty() {
+            manifest.id = uuid::Uuid::new_v4().to_string();
+            write_atomic(
+                &dir.join("session.json"),
+                &serde_json::to_string_pretty(&manifest)?,
+            )?;
+        }
         Ok(Session {
             dir: dir.to_path_buf(),
             manifest,
@@ -297,10 +345,14 @@ impl Session {
             return Vec::new();
         };
         let mut out: Vec<PathBuf> = entries
+            .take(MOST_SESSIONS)
             .flatten()
+            .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
             .map(|e| e.path())
             .filter(|dir| !locked(dir))
-            .filter(|dir| Session::open(dir).is_ok_and(|s| !s.manifest.saved))
+            .filter(|dir| {
+                Session::open(dir).is_ok_and(|s| !s.manifest.saved && !s.manifest.browser)
+            })
             .collect();
         out.sort();
         out
@@ -378,7 +430,8 @@ impl Session {
     }
 
     pub fn finish(mut self) -> Result<()> {
-        let keep_audio = !self.assemble().failed.is_empty();
+        let assembled = self.assemble();
+        let keep_audio = !assembled.failed.is_empty() || assembled.pending > 0;
         if keep_audio {
             self.manifest.saved = true;
             self.save()
@@ -386,6 +439,87 @@ impl Session {
             std::fs::remove_dir_all(&self.dir)
                 .with_context(|| format!("could not remove {}", self.dir.display()))
         }
+    }
+
+    pub fn archive(&self) -> leo_core::recording::Archive {
+        let assembled = self.assemble();
+        leo_core::recording::Archive {
+            id: self.manifest.id.clone(),
+            started: self.manifest.started,
+            passages: assembled
+                .parts
+                .iter()
+                .map(|p| leo_core::recording::Passage {
+                    start_secs: p.start_secs,
+                    end_secs: self
+                        .manifest
+                        .duration_secs
+                        .map_or(p.end_secs, |end| p.end_secs.min(end).max(p.start_secs)),
+                    text: p.text.clone(),
+                    speaker: if self.manifest.screen {
+                        "Computer audio"
+                    } else {
+                        "Microphone"
+                    }
+                    .into(),
+                })
+                .collect(),
+            points: self
+                .manifest
+                .points
+                .iter()
+                .map(|p| leo_core::recording::Point {
+                    at_secs: p.at_secs,
+                    text: p.text.clone(),
+                })
+                .collect(),
+            template: self.manifest.profile.template.clone(),
+            context: self.manifest.profile.context.clone(),
+            warnings: assembled
+                .failed
+                .iter()
+                .map(|(a, b)| {
+                    format!(
+                        "{}–{} could not be transcribed; audio is kept for retry",
+                        clock(*a),
+                        clock(*b)
+                    )
+                })
+                .collect(),
+            trace: self.traces(),
+        }
+    }
+
+    pub fn trace(&self, stage: &str, detail: &str) {
+        use std::io::Write;
+        let row = leo_core::recording::Trace {
+            at: Utc::now(),
+            stage: stage.into(),
+            detail: detail.into(),
+        };
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.dir.join("trace.jsonl"))
+        {
+            if let Ok(text) = serde_json::to_string(&row) {
+                let _ = writeln!(file, "{text}");
+            }
+        }
+    }
+
+    pub fn traces(&self) -> Vec<leo_core::recording::Trace> {
+        std::fs::read_to_string(self.dir.join("trace.jsonl"))
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| serde_json::from_str(l).ok())
+            .collect()
+    }
+
+    pub fn commit(self, notes: &Path, note: &str) -> Result<()> {
+        self.trace("saved", &format!("Note {note} saved"));
+        leo_core::recording::save(notes, note, &self.archive())?;
+        self.finish()
     }
 }
 
@@ -498,7 +632,40 @@ mod tests {
         b.save().unwrap();
         let c = Session::create(tmp.path(), Manifest::new(None, None, "", false)).unwrap();
         let _held = c.lock().unwrap();
+        let browser = Session::create(tmp.path(), Manifest::new(None, None, "", false)).unwrap();
+        let mut metadata = serde_json::to_value(&browser.manifest).unwrap();
+        metadata["browser"] = serde_json::json!(true);
+        std::fs::write(
+            browser.dir.join("session.json"),
+            serde_json::to_vec(&metadata).unwrap(),
+        )
+        .unwrap();
         assert_eq!(Session::unfinished(tmp.path()), vec![a.dir.clone()]);
+    }
+
+    #[test]
+    fn simultaneous_tracks_get_independent_session_directories() {
+        let temp = tempfile::tempdir().unwrap();
+        let barrier = std::sync::Barrier::new(32);
+        let manifest = Manifest::new(None, None, "", false);
+        let dirs = std::thread::scope(|scope| {
+            let threads: Vec<_> = (0..32)
+                .map(|_| {
+                    let barrier = &barrier;
+                    let root = temp.path();
+                    let manifest = manifest.clone();
+                    scope.spawn(move || {
+                        barrier.wait();
+                        Session::create(root, manifest).unwrap().dir
+                    })
+                })
+                .collect();
+            threads
+                .into_iter()
+                .map(|t| t.join().unwrap())
+                .collect::<std::collections::HashSet<_>>()
+        });
+        assert_eq!(dirs.len(), 32);
     }
 
     #[test]

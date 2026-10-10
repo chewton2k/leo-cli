@@ -1538,6 +1538,7 @@
       closePick();
       const ctx = state.context && state.dropped !== state.context.id ? state.context.id : null;
       const access = state.access;
+      const scope = {...(state.scope || {}),ids:[...((state.scope && state.scope.ids) || [])]};
       const going = card ? [] : state.files.filter((f) => f.status === 'ready' || f.status === 'reading');
       const attached = card ? [] : state.refs.slice();
       if (!card) {
@@ -1592,7 +1593,7 @@
           method: 'POST',
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: history, mode: thread.mode, note: ctx, refs: threadRefs(thread.messages).map((r) => r.id), recent: recentNotes(thread.messages.filter((m) => m !== answer)), chat: thread.id, files, access, practice: Boolean(card), mark: Boolean(card && card.correct === null) }),
+          body: JSON.stringify({ messages: history, mode: thread.mode, note: ctx, refs: threadRefs(thread.messages).map((r) => r.id), recent: recentNotes(thread.messages.filter((m) => m !== answer)), chat: thread.id, files, access, scope, practice: Boolean(card), mark: Boolean(card && card.correct === null) }),
           signal: controller.signal,
         });
         if (response.status === 401) throw new Error('This page needs its link again. Open the link leo serve printed.');
@@ -1948,6 +1949,39 @@
 
     return {
       toggle,
+      ask(text) { toggle(true); send(text); },
+      setScope(scope) {
+        scope = scope || {};
+        const narrowed = Boolean(scope.folder || (scope.ids && scope.ids.length) || scope.from || scope.to);
+        state.scope = narrowed ? scope : {};
+        begin();
+        state.context = null;
+        let label = document.getElementById('chat-scope');
+        if (!narrowed) {
+          if (label) label.remove();
+          drawContext();
+          return;
+        }
+        if (!label) {
+          label = document.createElement('div');
+          label.id = 'chat-scope';
+          label.className = 'chat-scope';
+          panel.querySelector('.chat-main').prepend(label);
+        }
+        const parts = [scope.ids && scope.ids.length ? `${scope.ids.length} selected notes` : scope.folder, scope.from ? `from ${scope.from}` : '', scope.to ? `through ${scope.to}` : ''];
+        label.textContent = 'Felix only reads: ' + parts.filter(Boolean).join(' · ') + ' ';
+        const clear = document.createElement('button');
+        clear.type = 'button';
+        clear.className = 'chat-scope-clear';
+        clear.textContent = 'Read every note';
+        clear.addEventListener('click', () => {
+          state.scope = {};
+          label.remove();
+          drawContext();
+        });
+        label.append(clear);
+        drawContext();
+      },
       isOpen: () => state.open,
       setContext(ctx) {
         const next = ctx && ctx.id ? { id: ctx.id, title: ctx.title, directory: ctx.directory || '' } : null;

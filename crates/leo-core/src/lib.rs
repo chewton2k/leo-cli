@@ -12,5 +12,7 @@ pub mod manual;
 pub mod notes;
 pub mod open;
 pub mod paths;
+pub mod recording;
 pub mod store;
 pub mod sync;
+pub mod workflows;

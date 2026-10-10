@@ -6,6 +6,7 @@ mod pictures;
 mod recording;
 mod trash;
 mod uploads;
+mod workflows;
 
 use std::sync::{Arc, Mutex};
 
@@ -66,7 +67,11 @@ fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<Strin
         importer: None,
         imports: Default::default(),
         listener: None,
+        regenerator: None,
+        calendar_secrets: None,
         recording: Default::default(),
+        calendar: Default::default(),
+        source_writing: Default::default(),
         chats: dir.path().join("chats"),
         housekeeper: None,
         reader: None,

@@ -476,6 +476,7 @@ pub fn act_on(
 pub struct Kept<'a> {
     pub captions: &'a crate::captions::Captions,
     pub vectors: &'a crate::vectors::Vectors,
+    pub recording: Option<String>,
 }
 
 pub const CONFIG_FILES: [(&str, &str); 8] = [
@@ -501,8 +502,24 @@ pub const CONFIG_FILES: [(&str, &str); 8] = [
     (".env", "Settings for how leo itself starts"),
 ];
 
-const SMALL_FILES: [(&str, &str); 4] = [
+const SMALL_FILES: [(&str, &str); 8] = [
     ("keep.json", "How long the trash and chats are kept"),
+    (
+        "workflows.json",
+        "Note formats, folder defaults and saved actions",
+    ),
+    (
+        "calendar-google.json",
+        "Which Google Calendar is connected (its sign-in is kept with your keys)",
+    ),
+    (
+        "calendar-events.json",
+        "Upcoming events read from Google Calendar",
+    ),
+    (
+        "calendar-status.json",
+        "How the last Google Calendar sign-in went",
+    ),
     ("recent.json", "Notes opened lately in the terminal app"),
     (
         ".manual-installed",
@@ -511,7 +528,9 @@ const SMALL_FILES: [(&str, &str); 4] = [
     (".tour-completed", "That the terminal tour was finished"),
 ];
 
-const LISTED_ELSEWHERE: [&str; 10] = [
+const LISTED_ELSEWHERE: [&str; 12] = [
+    "recording-sources",
+    "browser-audio",
     "notes",
     "chats",
     "attachments",
@@ -616,6 +635,8 @@ pub fn more_areas(store: &Store, chats_dir: &Path, kept: &Kept) -> Vec<Area> {
             false,
         ),
     ));
+    out.extend(recording_sources_area(store));
+    out.extend(browser_audio_area(store, kept.recording.as_deref()));
     let data = data_dir(&store.notes_dir);
     let mut items: Vec<Item> = std::fs::read_dir(&data)
         .map(|entries| {
@@ -715,6 +736,26 @@ pub fn act_on_more(
                     .to_string(),
             )
         }
+        ("recording-sources", "delete") => remove_kept_folders(
+            &leo_core::recording::root(&store.notes_dir),
+            &request.items,
+            None,
+        )
+        .map(|n| plural_deleted(n, "recording transcript")),
+        ("recording-sources", "orphans") => {
+            let gone: Vec<String> = folder_names(&leo_core::recording::root(&store.notes_dir))
+                .into_iter()
+                .filter(|id| store.find_note(id).is_none())
+                .collect();
+            remove_kept_folders(&leo_core::recording::root(&store.notes_dir), &gone, None)
+                .map(|n| plural_deleted(n, "recording transcript"))
+        }
+        ("browser-audio", "delete") => remove_kept_folders(
+            &crate::record_journal::root(&store.notes_dir),
+            &request.items,
+            kept.recording.as_deref(),
+        )
+        .map(|n| plural_deleted(n, "unsaved recording")),
         ("other", "delete") => {
             let data = data_dir(&store.notes_dir);
             let mut gone = 0;
@@ -739,6 +780,137 @@ pub fn act_on_more(
         _ => return None,
     };
     Some(done)
+}
+
+fn folder_names(root: &Path) -> Vec<String> {
+    std::fs::read_dir(root)
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+                .map(|e| e.file_name().to_string_lossy().to_string())
+                .filter(|name| leo_core::recording::valid_id(name))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn remove_kept_folders(root: &Path, ids: &[String], live: Option<&str>) -> Result<usize> {
+    let mut gone = 0;
+    for id in ids {
+        if !leo_core::recording::valid_id(id) {
+            bail!("That is not a recording leo knows.");
+        }
+        if live == Some(id.as_str()) {
+            bail!("That recording is still going. Stop it first.");
+        }
+        let dir = root.join(id);
+        if std::fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir()) {
+            std::fs::remove_dir_all(&dir)?;
+            gone += 1;
+        }
+    }
+    Ok(gone)
+}
+
+fn recording_sources_area(store: &Store) -> Option<Area> {
+    let root = leo_core::recording::root(&store.notes_dir);
+    let mut items: Vec<Item> = folder_names(&root)
+        .into_iter()
+        .map(|id| {
+            let path = root.join(&id);
+            let note = store.find_note(&id);
+            let count = std::fs::read_dir(&path)
+                .map(|e| {
+                    e.flatten()
+                        .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+                        .count()
+                })
+                .unwrap_or(0);
+            Item {
+                label: note.map_or_else(|| "A note that is gone".to_string(), |n| n.title.clone()),
+                detail: format!(
+                    "{count} recording{}: what was said, with times, and your points",
+                    if count == 1 { "" } else { "s" }
+                ),
+                bytes: size_of(&path),
+                when: modified(&path),
+                locked: false,
+                id,
+            }
+        })
+        .collect();
+    if items.is_empty() {
+        return None;
+    }
+    items.sort_by_key(|i| std::cmp::Reverse(i.when));
+    Some(Area {
+        id: "recording-sources".into(),
+        title: "Transcripts kept from recordings".into(),
+        about: "What was said in each recording, with times, and the points you typed, so a note can be checked against the recording, corrected and written again in another format. Deleting one keeps the note.".into(),
+        path: root.display().to_string(),
+        bytes: items.iter().map(|i| i.bytes).sum(),
+        items,
+        actions: vec![
+            act(
+                "delete",
+                "Delete the selected transcripts",
+                Some("The notes stay, but they can no longer be checked against the recording or written again."),
+                true,
+            ),
+            act("orphans", "Delete transcripts whose note is gone", None, false),
+        ],
+    })
+}
+
+fn browser_audio_area(store: &Store, live: Option<&str>) -> Option<Area> {
+    let root = crate::record_journal::root(&store.notes_dir);
+    let titles: std::collections::HashMap<String, Option<String>> =
+        crate::record_journal::pending(&store.notes_dir)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|j| (j.id, j.title))
+            .collect();
+    let items: Vec<Item> = folder_names(&root)
+        .into_iter()
+        .map(|id| {
+            let path = root.join(&id);
+            let going = live == Some(id.as_str());
+            Item {
+                label: titles
+                    .get(&id)
+                    .cloned()
+                    .flatten()
+                    .unwrap_or_else(|| "A recording without a title".into()),
+                detail: if going {
+                    "Recording now".into()
+                } else {
+                    "Audio that has not become a note yet; Record can recover it".into()
+                },
+                bytes: size_of(&path),
+                when: modified(&path),
+                locked: going,
+                id,
+            }
+        })
+        .collect();
+    if items.is_empty() {
+        return None;
+    }
+    Some(Area {
+        id: "browser-audio".into(),
+        title: "Recordings not saved yet".into(),
+        about: "Audio a browser sent while recording, kept until its note is saved so nothing is lost if the page or leo stops. It is deleted once the note is saved.".into(),
+        path: root.display().to_string(),
+        bytes: items.iter().map(|i| i.bytes).sum(),
+        items,
+        actions: vec![act(
+            "delete",
+            "Delete the selected recordings",
+            Some("This audio is deleted for good and cannot become a note."),
+            true,
+        )],
+    })
 }
 
 fn pictures_dir(notes_dir: &Path) -> PathBuf {
@@ -1107,6 +1279,7 @@ mod tests {
         let kept = Kept {
             captions: &captions,
             vectors: &vectors,
+            recording: None,
         };
         let list = more_areas(&store, &chats_dir, &kept);
         let ids: Vec<&str> = list.iter().map(|a| a.id.as_str()).collect();
@@ -1189,6 +1362,77 @@ mod tests {
             area(&after, "other").actions.is_empty(),
             "nothing left that can go"
         );
+    }
+
+    #[test]
+    fn recording_transcripts_and_unsaved_browser_audio_are_listed_and_can_go() {
+        let (tmp, store, _graphs, chats_dir) = setup();
+        let data = tmp.path();
+        let note = store.notes[0].id.clone();
+        for owner in [note.as_str(), "note-that-is-gone"] {
+            let dir = data.join("recording-sources").join(owner);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("session-1234.json"), "{}").unwrap();
+        }
+        for (id, title) in [("journal-live-01", "Live"), ("journal-left-01", "Left")] {
+            let dir = data.join("browser-audio").join(id);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join("session.json"),
+                serde_json::json!({"id": id, "directory": "", "title": title, "source": "browser", "profile": {}})
+                    .to_string(),
+            )
+            .unwrap();
+            std::fs::write(dir.join("00000000000000000000.pcm"), [0u8; 64]).unwrap();
+        }
+        let captions = crate::captions::Captions::for_notes(&store.notes_dir);
+        let vectors = crate::vectors::Vectors::for_notes(&store.notes_dir);
+        let kept = Kept {
+            captions: &captions,
+            vectors: &vectors,
+            recording: Some("journal-live-01".into()),
+        };
+        let list = more_areas(&store, &chats_dir, &kept);
+        let sources = area(&list, "recording-sources");
+        let labels: Vec<&str> = sources.items.iter().map(|i| i.label.as_str()).collect();
+        assert!(labels.contains(&store.notes[0].title.as_str()));
+        assert!(labels.contains(&"A note that is gone"));
+        let audio = area(&list, "browser-audio");
+        let rows: Vec<(&str, bool)> = audio
+            .items
+            .iter()
+            .map(|i| (i.label.as_str(), i.locked))
+            .collect();
+        assert!(rows.contains(&("Live", true)) && rows.contains(&("Left", false)));
+        assert!(
+            list.iter()
+                .filter(|a| a.id == "other")
+                .flat_map(|a| a.items.iter())
+                .all(|i| i.id != "recording-sources" && i.id != "browser-audio"),
+            "listed once, in their own areas"
+        );
+
+        let ask = |area: &str, action: &str, items: &[&str]| {
+            act_on_more(
+                &store,
+                &chats_dir,
+                &kept,
+                &Request {
+                    area: area.into(),
+                    action: action.into(),
+                    items: items.iter().map(|s| s.to_string()).collect(),
+                },
+            )
+            .unwrap()
+        };
+        assert!(ask("browser-audio", "delete", &["journal-live-01"]).is_err());
+        assert!(ask("browser-audio", "delete", &["../notes"]).is_err());
+        ask("browser-audio", "delete", &["journal-left-01"]).unwrap();
+        assert!(data.join("browser-audio/journal-live-01").is_dir());
+        assert!(!data.join("browser-audio/journal-left-01").exists());
+        ask("recording-sources", "orphans", &[]).unwrap();
+        assert!(data.join("recording-sources").join(&note).is_dir());
+        assert!(!data.join("recording-sources/note-that-is-gone").exists());
     }
 
     #[test]

@@ -70,6 +70,17 @@ jobs:
           pnpm --dir crates/leo-web/tests/browser exec playwright install --with-deps chromium
           pnpm --dir crates/leo-web/tests/browser test
 
+      - name: Browser previews and failure traces
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-previews
+          path: |
+            crates/leo-web/tests/browser/test-results/
+            crates/leo-web/tests/browser/playwright-report/
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Install and run on Windows
         if: runner.os == 'Windows'
         shell: pwsh

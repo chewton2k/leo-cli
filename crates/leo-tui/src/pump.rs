@@ -362,9 +362,28 @@ impl App {
                     title: Some(rec.req.title.clone().unwrap_or_else(|| "Notes".to_string())),
                     body: leo_services::ai::chat::points_as_markdown(&rec.jotted),
                 };
-                match action::apply_transcript(&mut self.store, &rec.req, "ready", &ready) {
+                match action::apply_recording(
+                    &mut self.store,
+                    &rec.req,
+                    "ready",
+                    &ready,
+                    rec.session
+                        .as_deref()
+                        .and_then(|p| leo_services::session::Session::open(p).ok())
+                        .map(|s| s.manifest.id)
+                        .as_deref(),
+                ) {
                     Ok(outcome) => {
-                        finish_recording(rec.session.as_deref());
+                        if let Err(e) = finish_recording(
+                            rec.session.as_deref(),
+                            &self.store.notes_dir,
+                            outcome.select.as_deref(),
+                        ) {
+                            self.say(
+                                Kind::Warn,
+                                format!("Note saved; source retention will retry: {e}"),
+                            );
+                        }
                         self.absorb(outcome, terminal)?
                     }
                     Err(e) => self.say(Kind::Bad, e.to_string()),
@@ -398,9 +417,28 @@ impl App {
         if let Some((title, body)) = structured {
             let rec = self.jobs.recording.take().expect("checked above");
             let ready = ReadyNote { title, body };
-            match action::apply_transcript(&mut self.store, &rec.req, "ready", &ready) {
+            match action::apply_recording(
+                &mut self.store,
+                &rec.req,
+                "ready",
+                &ready,
+                rec.session
+                    .as_deref()
+                    .and_then(|p| leo_services::session::Session::open(p).ok())
+                    .map(|s| s.manifest.id)
+                    .as_deref(),
+            ) {
                 Ok(outcome) => {
-                    finish_recording(rec.session.as_deref());
+                    if let Err(e) = finish_recording(
+                        rec.session.as_deref(),
+                        &self.store.notes_dir,
+                        outcome.select.as_deref(),
+                    ) {
+                        self.say(
+                            Kind::Warn,
+                            format!("Note saved; source retention will retry: {e}"),
+                        );
+                    }
                     self.absorb(outcome, terminal)?;
                     self.resume_interrupted();
                 }
@@ -429,12 +467,15 @@ impl App {
     }
 }
 
-fn finish_recording(session: Option<&std::path::Path>) {
-    if let Some(dir) = session {
-        if let Ok(s) = leo_services::session::Session::open(dir) {
-            let _ = s.finish();
-        }
+fn finish_recording(
+    session: Option<&std::path::Path>,
+    notes: &std::path::Path,
+    note: Option<&str>,
+) -> Result<()> {
+    if let (Some(dir), Some(note)) = (session, note) {
+        leo_services::session::Session::open(dir)?.commit(notes, note)?;
     }
+    Ok(())
 }
 
 pub(super) fn fallback_title(session: Option<&std::path::Path>) -> String {

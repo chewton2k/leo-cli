@@ -876,6 +876,31 @@ pub fn apply_transcript(
     transcript: &str,
     ai: &dyn Ai,
 ) -> Result<Outcome> {
+    apply_recording(store, req, transcript, ai, None)
+}
+
+pub fn apply_recording(
+    store: &mut Store,
+    req: &ListenRequest,
+    transcript: &str,
+    ai: &dyn Ai,
+    session: Option<&str>,
+) -> Result<Outcome> {
+    if let Some(session) = session {
+        if let Some(note) = store.notes.iter().find(|n| {
+            n.extra
+                .get("recording_sessions")
+                .and_then(|v| v.as_sequence())
+                .is_some_and(|ids| ids.iter().any(|v| v.as_str() == Some(session)))
+        }) {
+            let id = note.id.clone();
+            store.save()?;
+            return Ok(Outcome {
+                select: Some(id),
+                ..Outcome::line(Line::good("Recording already saved"))
+            });
+        }
+    }
     if transcript.trim().is_empty() {
         return Ok(Outcome::line(Line::dim("No speech detected.")));
     }
@@ -894,6 +919,7 @@ pub fn apply_transcript(
         let title = note.title.clone();
         let id = note.id.clone();
         let short = id[..std::cmp::min(8, id.len())].to_string();
+        mark_recording(store, &id, session);
         store.save()?;
         return Ok(Outcome {
             dirty: true,
@@ -907,12 +933,26 @@ pub fn apply_transcript(
     let note = store.create_note(&title, &body, vec!["listen".to_string()], &req.dir)?;
     let id = note.id.clone();
     let short = id[..std::cmp::min(8, id.len())].to_string();
+    mark_recording(store, &id, session);
     store.save()?;
     Ok(Outcome {
         dirty: true,
         select: Some(id),
         ..Outcome::line(Line::good(format!("Created \"{title}\" {short}")))
     })
+}
+
+fn mark_recording(store: &mut Store, id: &str, session: Option<&str>) {
+    if let Some(session) = session {
+        let note = store.find_note_mut(id).expect("recorded note");
+        let value = note
+            .extra
+            .entry(serde_yaml::Value::String("recording_sessions".into()))
+            .or_insert_with(|| serde_yaml::Value::Sequence(Vec::new()));
+        if let Some(ids) = value.as_sequence_mut() {
+            ids.push(serde_yaml::Value::String(session.into()));
+        }
+    }
 }
 
 /// Recompute the note numbering after the store changed.
@@ -2173,6 +2213,29 @@ mod handler_tests {
         assert_eq!(store.notes[0].title, "AI Title");
         assert_eq!(store.notes[0].directory, "cs130");
         assert_eq!(store.notes[0].tags, vec!["listen"]);
+    }
+
+    #[test]
+    fn resaving_the_same_recording_never_creates_or_appends_twice() {
+        let (mut store, _d) = temp_store();
+        let mut req = ListenRequest {
+            screen: false,
+            title: Some("Lecture".into()),
+            append_to: None,
+            dir: "cs130".into(),
+        };
+        let ai = FakeAi::default();
+        let id = apply_recording(&mut store, &req, "speech", &ai, Some("session-1234"))
+            .unwrap()
+            .select
+            .unwrap();
+        apply_recording(&mut store, &req, "speech", &ai, Some("session-1234")).unwrap();
+        assert_eq!(store.notes.len(), 1);
+        req.append_to = Some(id.clone());
+        apply_recording(&mut store, &req, "next speech", &ai, Some("session-5678")).unwrap();
+        let body = store.find_note(&id).unwrap().body.clone();
+        apply_recording(&mut store, &req, "next speech", &ai, Some("session-5678")).unwrap();
+        assert_eq!(store.find_note(&id).unwrap().body, body);
     }
 
     #[test]

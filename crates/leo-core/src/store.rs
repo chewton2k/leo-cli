@@ -529,6 +529,18 @@ pub struct Store {
 }
 
 impl Store {
+    pub fn read_view(&self, includes: impl Fn(&Note) -> bool) -> Self {
+        Self {
+            notes: self.notes.iter().filter(|n| includes(n)).cloned().collect(),
+            directories: self.directories.clone(),
+            notes_dir: self.notes_dir.clone(),
+            unreadable: Vec::new(),
+            undo: Vec::new(),
+            seen: Default::default(),
+            fingerprint: Default::default(),
+        }
+    }
+
     /// Load notes from the platform data directory.
     /// Automatically migrates from legacy notes.json on first run.
     pub fn load() -> Result<Self> {

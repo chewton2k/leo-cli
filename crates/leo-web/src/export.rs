@@ -30,6 +30,9 @@ uploads/  the files you uploaded, in a folder per note (named by the note's id,
           which is the id: line at the top of the note).
 chats/    your conversations with Felix, one JSON file each.
 trash/    notes in the trash, as Markdown.
+recording-sources/ retained transcripts, original points and diagnostics,
+          included with uploads. Audio recovery and calendar credentials
+          stay on your computer.
 
 Settings and API keys are never included.
 ";
@@ -91,6 +94,13 @@ pub fn write_zip<W: Write + Seek>(
     if parts.uploads {
         let uploads = crate::storage::data_dir(notes_dir).join("attachments");
         add_dir(&mut zip, &uploads, "leo/uploads", true, &mut packed)?;
+        add_dir(
+            &mut zip,
+            &leo_core::recording::root(notes_dir),
+            "leo/recording-sources",
+            true,
+            &mut packed,
+        )?;
     }
     if parts.chats {
         for summary in crate::chats::list(chats_dir) {

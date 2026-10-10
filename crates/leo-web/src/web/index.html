@@ -1147,6 +1147,18 @@ body.files-over main::after {
 .upload-wants { align-items: flex-start; padding-top: 8px; padding-bottom: 8px; }
 .upload-wants textarea { flex: 1; min-width: 0; border: 0; outline: 0; resize: vertical; background: none; font: inherit; font-size: 15px; line-height: 1.45; min-height: 44px; }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+.workflow-field { display:flex; flex-direction:column; gap:8px; margin:16px 0; font-size:14px; }
+.workflow-field input,.workflow-field textarea,.workflow-field select,.source-passage textarea { width:100%; box-sizing:border-box; background:var(--surface); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:10px; font:inherit; }
+.workflow-custom,.source-passage { border-bottom:1px solid var(--line); padding:12px 0; }
+.workflow-custom summary,.source-passage summary { cursor:pointer; font-size:14px; line-height:1.5; }
+.source-sheet { max-width:760px; }
+.source-trace { padding-left:20px; color:var(--muted); font-size:12px; }
+.scope-dates { display:flex; gap:16px; }.scope-dates label { flex:1; min-width:0; }
+.scope-notes { max-height:220px; overflow:auto; }.scope-notes label { display:flex; gap:10px; padding:8px 0; }
+.chat-scope { font-size:12px; padding:8px 16px; color:var(--muted); border-bottom:1px solid var(--line); }
+.chat-scope-clear { border:0; background:none; padding:0; font:inherit; color:var(--accent); text-decoration:underline; cursor:pointer; }
+.regenerate-preview { margin:24px 0; }.recording-source { margin:20px 0; }
 </style>
 </head>
 <body>
@@ -1173,6 +1185,7 @@ body.files-over main::after {
 <script src="/saving.js"></script>
 <script src="/graph.js"></script>
 <script src="/chat.js"></script>
+<script src="/audio-queue.js"></script>
 <script src="/recording.js"></script>
 <script src="/app.js"></script>
 </body>

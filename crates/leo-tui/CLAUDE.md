@@ -150,3 +150,8 @@ from the text unless `action::is_command` (first word is a live verb or
 alias), in which case the filter returns to `search_base`; Enter on a
 non-command keeps the search. Verb completion is prefix-only and shows no
 aliases. `parse` strips a typed leading `/`.
+
+Recording saves call `apply_recording` with the session ID before committing the
+source archive and cleaning audio. An append retry must not duplicate either the
+body or its retained source. Folder workflow defaults are read from the same core
+configuration as the website.

@@ -37,6 +37,7 @@ pub struct Policy {
     pub attempts_after_stop: u32,
     pub idle: Duration,
     pub workers: usize,
+    pub finish_limit: Duration,
 }
 
 impl Default for Policy {
@@ -47,6 +48,7 @@ impl Default for Policy {
             attempts_after_stop: 6,
             idle: Duration::from_millis(500),
             workers: 3,
+            finish_limit: Duration::from_secs(120),
         }
     }
 }
@@ -103,9 +105,17 @@ fn recording_now(dir: &Path) -> bool {
 }
 
 fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
-    let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, text)?;
-    std::fs::rename(&tmp, path)
+    use std::io::Write;
+    let parent = path
+        .parent()
+        .ok_or_else(|| std::io::Error::other("Missing transcript directory"))?;
+    let mut file = tempfile::NamedTempFile::new_in(parent)?;
+    file.write_all(text.as_bytes())?;
+    file.as_file().sync_all()?;
+    file.persist(path).map_err(|e| e.error)?;
+    #[cfg(unix)]
+    std::fs::File::open(parent)?.sync_all()?;
+    Ok(())
 }
 
 fn text_path(dir: &Path, index: u32) -> PathBuf {
@@ -169,15 +179,25 @@ impl Drop for Transcriber {
 struct Work {
     attempts: Mutex<HashMap<u32, (u32, Instant)>>,
     busy: Mutex<HashSet<u32>>,
+    terminal: Mutex<HashSet<u32>>,
     stop_seen: AtomicBool,
+    stopped_at: Mutex<Option<Instant>>,
 }
 
 impl Work {
+    fn pending(&self, dir: &Path) -> Vec<u32> {
+        let terminal = self.terminal.lock().unwrap_or_else(|e| e.into_inner());
+        waiting(dir)
+            .into_iter()
+            .filter(|i| !terminal.contains(i))
+            .collect()
+    }
     fn claim(&self, dir: &Path) -> Option<u32> {
         let mut busy = self.busy.lock().ok()?;
         let attempts = self.attempts.lock().ok()?;
         let now = Instant::now();
-        let index = waiting(dir)
+        let index = self
+            .pending(dir)
             .into_iter()
             .find(|i| !busy.contains(i) && attempts.get(i).is_none_or(|(_, next)| now >= *next))?;
         busy.insert(index);
@@ -226,12 +246,19 @@ fn worker(
         }
         let still_recording = recording.load(Ordering::Relaxed);
         if !still_recording && !work.stop_seen.swap(true, Ordering::Relaxed) {
+            if let Ok(mut when) = work.stopped_at.lock() {
+                *when = Some(Instant::now());
+            }
             if let Ok(mut attempts) = work.attempts.lock() {
                 attempts.clear();
             }
         }
         let Some(index) = work.claim(dir) else {
-            if waiting(dir).is_empty() && !still_recording && !recording_now(dir) && work.idle() {
+            if work.pending(dir).is_empty()
+                && !still_recording
+                && !recording_now(dir)
+                && work.idle()
+            {
                 return;
             }
             std::thread::sleep(policy.idle);
@@ -269,6 +296,22 @@ fn settle(
     match result {
         Ok(text) => {
             if let Err(e) = write_atomic(&text_path(dir, index), &text) {
+                if work
+                    .stopped_at
+                    .lock()
+                    .ok()
+                    .and_then(|v| *v)
+                    .is_some_and(|at| at.elapsed() >= policy.finish_limit)
+                {
+                    if let Ok(mut terminal) = work.terminal.lock() {
+                        terminal.insert(index);
+                    }
+                    let _ = events.send(Update::Failed {
+                        index,
+                        error: format!("Could not save transcript: {e}; audio retained"),
+                    });
+                    return;
+                }
                 attempts.insert(index, (0, Instant::now() + policy.idle));
                 let _ = events.send(Update::Retrying {
                     index,
@@ -285,12 +328,29 @@ fn settle(
         Err(error) => {
             let attempt = attempts.get(&index).map_or(1, |(n, _)| n + 1);
             let finishing = !recording.load(Ordering::Relaxed);
-            if finishing && attempt >= policy.attempts_after_stop && !rate_limited(&error) {
-                let _ = write_atomic(&dir.join(format!("seg-{index:05}.err")), &error);
+            let expired = work
+                .stopped_at
+                .lock()
+                .ok()
+                .and_then(|v| *v)
+                .is_some_and(|at| at.elapsed() >= policy.finish_limit);
+            if finishing
+                && (expired || (attempt >= policy.attempts_after_stop && !rate_limited(&error)))
+            {
+                if write_atomic(&dir.join(format!("seg-{index:05}.err")), &error).is_err() {
+                    if let Ok(mut terminal) = work.terminal.lock() {
+                        terminal.insert(index);
+                    }
+                }
                 attempts.remove(&index);
                 let _ = events.send(Update::Failed { index, error });
             } else {
-                let wait = policy.wait(attempt);
+                let mut wait = policy.wait(attempt);
+                if finishing {
+                    if let Some(at) = work.stopped_at.lock().ok().and_then(|v| *v) {
+                        wait = wait.min(policy.finish_limit.saturating_sub(at.elapsed()));
+                    }
+                }
                 attempts.insert(index, (attempt, Instant::now() + wait));
                 let _ = events.send(Update::Retrying {
                     index,
@@ -309,6 +369,34 @@ mod tests {
     use std::sync::atomic::AtomicU32;
     use std::sync::mpsc;
 
+    #[test]
+    fn persistent_rate_limits_end_after_the_finish_window_and_keep_audio() {
+        let dir = tempfile::tempdir().unwrap();
+        wav::write(
+            &dir.path().join(wav::done_name(0)),
+            &vec![1000; wav::RATE as usize],
+        )
+        .unwrap();
+        let (tx, rx) = mpsc::channel();
+        let policy = Policy {
+            finish_limit: Duration::from_millis(40),
+            ..quick()
+        };
+        let worker = Transcriber::start(
+            dir.path(),
+            Arc::new(|_| Err("429 too many requests".into())),
+            policy,
+            false,
+            tx,
+        );
+        let start = Instant::now();
+        worker.wait();
+        assert!(start.elapsed() < Duration::from_secs(2));
+        assert!(rx.try_iter().any(|e| matches!(e, Update::Failed { .. })));
+        assert!(dir.path().join(wav::done_name(0)).exists());
+        assert!(dir.path().join("seg-00000.err").exists());
+    }
+
     fn quick() -> Policy {
         Policy {
             first_wait: Duration::from_millis(5),
@@ -316,6 +404,7 @@ mod tests {
             attempts_after_stop: 3,
             idle: Duration::from_millis(5),
             workers: 3,
+            finish_limit: Duration::from_secs(120),
         }
     }
 

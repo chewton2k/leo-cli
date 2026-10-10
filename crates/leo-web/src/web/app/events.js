@@ -160,6 +160,7 @@ async function render() {
     else if (kind === 'trash') await showTrash();
     else if (kind === 'map') await showMap(arg);
     else if (kind === 'settings') await (arg === 'storage' ? showStorage() : showSettings());
+    else if (kind === 'workflows') await showWorkflows();
     else if (kind === 'record') await showRecord(arg);
     else await showFolder('');
     loadSideFolders();

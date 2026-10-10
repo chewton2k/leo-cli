@@ -28,6 +28,7 @@ fn saving_and_draft_recovery_pass_their_tests() {
 #[test]
 fn recording_in_the_browser_passes_its_tests() {
     run_node_tests("recording.test.js");
+    run_node_tests("audio-queue.test.js");
 }
 
 fn run_node_tests(file: &str) {

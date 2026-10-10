@@ -1,4 +1,5 @@
 pub mod calc;
+mod calendar;
 pub mod captions;
 pub mod chat;
 pub mod chat_files;
@@ -7,6 +8,7 @@ pub mod db;
 pub mod export;
 pub mod graph;
 pub mod record;
+mod record_journal;
 pub mod review;
 mod routes;
 pub mod search;
@@ -99,6 +101,12 @@ pub struct Web {
     pub needed: Arc<dyn Fn() -> bool + Send + Sync>,
 }
 
+pub trait CalendarSecrets: Send + Sync {
+    fn get(&self, account: &str) -> Result<Option<String>>;
+    fn set(&self, account: &str, value: &str) -> Result<()>;
+    fn delete(&self, account: &str) -> Result<()>;
+}
+
 pub type Reader = Arc<dyn Fn(UploadFile, &mut dyn FnMut(&str)) -> Result<String> + Send + Sync>;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -126,6 +134,8 @@ pub struct Powers {
     pub settings: Option<Arc<dyn SettingsApi>>,
     pub importer: Option<Importer>,
     pub listener: Option<record::Listener>,
+    pub regenerator: Option<record::Regenerator>,
+    pub calendar_secrets: Option<Arc<dyn CalendarSecrets>>,
     pub housekeeper: Option<Arc<dyn storage::Housekeeper>>,
     pub reader: Option<Reader>,
     pub room: Option<Room>,
@@ -145,7 +155,11 @@ struct AppState {
     importer: Option<Importer>,
     imports: Arc<Mutex<std::collections::HashMap<String, ImportJob>>>,
     listener: Option<record::Listener>,
+    regenerator: Option<record::Regenerator>,
+    calendar_secrets: Option<Arc<dyn CalendarSecrets>>,
     recording: record::Recordings,
+    calendar: Arc<calendar::Calendar>,
+    source_writing: Arc<std::sync::atomic::AtomicBool>,
     chats: std::path::PathBuf,
     housekeeper: Option<Arc<dyn storage::Housekeeper>>,
     reader: Option<Reader>,
@@ -383,7 +397,11 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
         importer,
         imports: Default::default(),
         listener: recorder,
+        regenerator: powers.regenerator,
+        calendar_secrets: powers.calendar_secrets,
         recording: Default::default(),
+        calendar: Default::default(),
+        source_writing: Default::default(),
         chats,
         housekeeper,
         reader,
@@ -506,6 +524,24 @@ fn router(state: AppState) -> Router {
             get(get_note).patch(update_note).delete(delete_note),
         )
         .route("/api/notes/{id}/toggle", post(toggle_checkbox))
+        .route(
+            "/api/calendar",
+            get(calendar::status).delete(calendar::disconnect),
+        )
+        .route("/api/calendar/connect", post(calendar::connect))
+        .route("/api/calendar/sync", post(calendar::sync))
+        .route(
+            "/api/workflows",
+            get(routes::workflows::get).put(routes::workflows::put),
+        )
+        .route(
+            "/api/notes/{id}/recording",
+            get(routes::workflows::sources).put(routes::workflows::edit_sources),
+        )
+        .route(
+            "/api/notes/{id}/regenerate",
+            post(routes::workflows::regenerate),
+        )
         .route("/api/notes/{id}/move", post(move_note))
         .route("/api/notes/{id}/suggestion", post(apply_suggestion))
         .route("/api/search", get(search_notes))
@@ -582,8 +618,17 @@ fn router(state: AppState) -> Router {
         )
         .route("/api/record/{id}/pause", post(record::pause))
         .route("/api/record/{id}/point", post(record::point))
+        .route(
+            "/api/record/{id}/snapshot",
+            post(record::snapshot).layer(axum::extract::DefaultBodyLimit::max(
+                routes::pictures::PICTURE_BYTES,
+            )),
+        )
         .route("/api/record/{id}/stop", post(record::stop))
+        .route("/api/record/{id}/finish", post(record::finish_available))
+        .route("/api/record/{id}/recover", post(record::recover))
         .route("/recorder.js", get(recorder_js))
+        .route("/audio-queue.js", get(routes::assets::audio_queue_js))
         .route("/recording.js", get(recording_js))
         .route("/api/notes/{id}/originals", get(list_originals))
         .route("/api/notes/{id}/originals.zip", get(originals_zip))

@@ -53,12 +53,15 @@ pub enum Input {
 
 #[derive(Clone, Default)]
 pub struct Controls {
+    pub finish_now: Arc<AtomicBool>,
     pub stop: Arc<AtomicBool>,
     pub pause: Arc<AtomicBool>,
     pub points: Arc<Mutex<Vec<Jotted>>>,
 }
 
 pub struct Request {
+    pub id: Option<String>,
+    pub profile: Option<leo_core::workflows::Profile>,
     pub title: Option<String>,
     pub append_to: Option<String>,
     pub dir: String,
@@ -68,9 +71,32 @@ pub struct Request {
 
 pub fn transcribe_segment() -> TranscribeFn {
     Arc::new(|path: &Path| {
-        crate::ai::transcribe_outcome(path)
-            .map(|o| o.value)
-            .map_err(|e| e.to_string())
+        let session = Session::open(path.parent().unwrap_or(Path::new("."))).ok();
+        let vocabulary = session
+            .as_ref()
+            .map(|s| s.manifest.profile.vocabulary.clone())
+            .unwrap_or_default();
+        let start = Instant::now();
+        let outcome =
+            crate::ai::transcribe_with_vocabulary(path, &vocabulary).map_err(|e| e.to_string());
+        if let Some(session) = session {
+            let detail = match &outcome {
+                Ok(o) => format!(
+                    "{} via {}; {:.1}s; {} fallback(s)",
+                    path.file_name().unwrap_or_default().to_string_lossy(),
+                    o.provider,
+                    start.elapsed().as_secs_f64(),
+                    o.fallbacks.len()
+                ),
+                Err(_) => format!(
+                    "{} failed after {:.1}s",
+                    path.file_name().unwrap_or_default().to_string_lossy(),
+                    start.elapsed().as_secs_f64()
+                ),
+            };
+            session.trace("transcription", &detail);
+        }
+        outcome.map(|o| o.value)
     })
 }
 
@@ -195,7 +221,10 @@ fn live_pace() -> Duration {
 fn hear(dir: &Path, samples: &[i16], emit: &dyn Fn(Event)) -> Option<String> {
     let path = dir.join("live.wav");
     wav::write(&path, samples).ok()?;
-    let result = crate::ai::transcribe_outcome(&path);
+    let vocabulary = Session::open(dir)
+        .map(|s| s.manifest.profile.vocabulary)
+        .unwrap_or_default();
+    let result = crate::ai::transcribe_with_vocabulary(&path, &vocabulary);
     let _ = std::fs::remove_file(&path);
     let outcome = result.ok()?;
     for f in &outcome.fallbacks {
@@ -278,12 +307,16 @@ pub fn finish(
     state: &mut Live,
     emit: &dyn Fn(Event),
     silent: &str,
+    finish_now: &AtomicBool,
 ) {
     session.manifest.stopped = true;
     let _ = session.save();
     transcriber.recording_ended();
     let segment_samples = session.manifest.segment_secs * wav::RATE as u64;
     while !transcriber.is_finished() {
+        if finish_now.load(Ordering::Relaxed) {
+            transcriber.cancel();
+        }
         for update in updates.try_iter() {
             state.apply(update, emit, segment_samples);
         }
@@ -306,10 +339,27 @@ pub fn finish(
         std::thread::sleep(POLL);
     }
     transcriber.wait();
+    if finish_now.load(Ordering::Relaxed) {
+        for index in session::transcriber::waiting(&session.dir) {
+            let path = session.dir.join(format!("seg-{index:05}.err"));
+            let _ = std::fs::write(
+                path,
+                "Finished with available transcript; audio kept for retry",
+            );
+        }
+        session.trace(
+            "finish-available",
+            "Queued transcription skipped by the user; audio kept for retry",
+        );
+    }
     for update in updates.try_iter() {
         state.apply(update, emit, segment_samples);
     }
     let assembled = session.assemble();
+    if assembled.pending > 0 {
+        emit(Event::Failed("Some transcript files could not be saved. Audio is kept; free disk space and recover the session.".into()));
+        return;
+    }
     if assembled.is_silent() && session.manifest.points.is_empty() {
         let _ = std::fs::remove_dir_all(&session.dir);
         emit(Event::Failed(silent.to_string()));
@@ -358,11 +408,14 @@ pub fn resume(dir: &Path, emit: &dyn Fn(Event)) {
         &mut state,
         emit,
         SILENT_RECORDING,
+        &AtomicBool::new(false),
     );
 }
 
 pub fn record(request: Request, controls: &Controls, emit: &dyn Fn(Event)) {
     let Request {
+        id,
+        profile,
         title,
         append_to,
         dir,
@@ -371,7 +424,21 @@ pub fn record(request: Request, controls: &Controls, emit: &dyn Fn(Event)) {
     } = request;
     let fed = matches!(input, Input::Fed(_));
     let started = session::root().and_then(|root| {
-        let session = Session::create(&root, Manifest::new(title, append_to, &dir, screen))?;
+        let mut manifest = Manifest::new(title, append_to, &dir, screen);
+        manifest.browser = fed;
+        if let Ok(notes) = leo_core::store::Store::notes_dir() {
+            if let Ok(workflows) = leo_core::workflows::Workflows::load(&notes) {
+                manifest.profile = workflows.profile(&dir);
+            }
+        }
+        if let Some(id) = id {
+            manifest.id = id;
+        }
+        if let Some(profile) = profile {
+            manifest.profile = profile;
+        }
+        let session = Session::create(&root, manifest)?;
+        session.trace("capture", "Recording started");
         let lock = session.lock()?;
         let opened = match input {
             Input::Device(source) => {
@@ -410,6 +477,7 @@ pub fn record(request: Request, controls: &Controls, emit: &dyn Fn(Event)) {
     let mut last_roll = Instant::now() - live::ROLL_INTERVAL;
     let mut saved_points = 0;
     let mut heard_up_to = 0;
+    let mut lost_up_to = 0;
 
     while !controls.stop.load(Ordering::Relaxed) && !capture.ended() {
         std::thread::sleep(POLL);
@@ -426,6 +494,17 @@ pub fn record(request: Request, controls: &Controls, emit: &dyn Fn(Event)) {
             state.apply(update, emit, segment_samples);
         }
 
+        let lost = capture.dropped_samples();
+        if lost > lost_up_to {
+            let warning = format!(
+                "An audio gap of {:.2}s occurred near {}",
+                (lost - lost_up_to) as f64 / wav::RATE as f64,
+                crate::ai::chat::clock(capture.recorded_secs() as u64)
+            );
+            session.trace("audio-gap", &warning);
+            emit(Event::Warning(warning));
+            lost_up_to = lost;
+        }
         let secs = capture.recorded_secs() as u64;
         let backlog = session::transcriber::waiting(&session.dir).len();
         let word = if capture.paused() {
@@ -464,6 +543,15 @@ pub fn record(request: Request, controls: &Controls, emit: &dyn Fn(Event)) {
         state.show(emit);
     }
 
+    let lost = capture.dropped_samples();
+    if lost > lost_up_to {
+        let warning = format!(
+            "An audio gap of {:.2}s occurred at the end of capture",
+            (lost - lost_up_to) as f64 / wav::RATE as f64
+        );
+        session.trace("audio-gap", &warning);
+        emit(Event::Warning(warning));
+    }
     if let Some(problem) = capture.problem() {
         emit(Event::Warning(format!(
             "{problem} What was recorded is being saved."
@@ -476,21 +564,39 @@ pub fn record(request: Request, controls: &Controls, emit: &dyn Fn(Event)) {
         label: "Transcribing the recording".to_string(),
         steps: None,
     });
-    if let Err(e) = capture.stop() {
-        emit(Event::Warning(e.to_string()));
+    match capture.stop_with_stats() {
+        Ok((samples, _)) => {
+            session.manifest.duration_secs = Some(samples.div_ceil(wav::RATE as u64))
+        }
+        Err(e) => emit(Event::Warning(e.to_string())),
     }
     let silent = if fed {
         SILENT_BROWSER
     } else {
         SILENT_RECORDING
     };
-    finish(session, transcriber, &updates, &mut state, emit, silent);
+    finish(
+        session,
+        transcriber,
+        &updates,
+        &mut state,
+        emit,
+        silent,
+        &controls.finish_now,
+    );
 }
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Written {
     pub title: String,
     pub body: String,
     pub problems: Vec<String>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Prepared {
+    key: String,
+    written: Written,
 }
 
 pub fn write_up(
@@ -499,8 +605,37 @@ pub fn write_up(
     progress: &(dyn Fn(usize, usize) + Sync),
 ) -> anyhow::Result<Written> {
     let session = Session::open(dir)?;
+    session.trace(
+        "generation",
+        "Writing notes from transcript and typed points",
+    );
+    let workflows = leo_core::store::Store::notes_dir()
+        .ok()
+        .and_then(|notes| leo_core::workflows::Workflows::load(&notes).ok())
+        .unwrap_or_default();
     let assembled = session.assemble();
     let points = session.manifest.jotted();
+    use sha2::{Digest, Sha256};
+    let key = base64::Engine::encode(
+        &base64::engine::general_purpose::STANDARD,
+        Sha256::digest(serde_json::to_vec(&(
+            assembled.text(),
+            &assembled.failed,
+            &session.manifest.points,
+            &session.manifest.profile,
+            workflows.format(&session.manifest.profile.template),
+            existing,
+        ))?),
+    );
+    let cached = dir.join("prepared.json");
+    if let Ok(bytes) = std::fs::read(&cached) {
+        if let Ok(prepared) = serde_json::from_slice::<Prepared>(&bytes) {
+            if prepared.key == key {
+                return Ok(prepared.written);
+            }
+        }
+    }
+
     let fallback = session
         .manifest
         .started
@@ -512,7 +647,19 @@ pub fn write_up(
         &points,
         existing,
         &fallback,
-        &|prompt, max| crate::ai::chat_outcome(prompt, max).map(|o| o.value),
+        &|prompt, max| {
+            crate::ai::chat_outcome(
+                crate::ai::long::with_profile(prompt, &session.manifest.profile, &workflows),
+                max,
+            )
+            .map(|o| {
+                session.trace(
+                    "generation-provider",
+                    &format!("{}; {} fallback(s)", o.provider, o.fallbacks.len()),
+                );
+                o.value
+            })
+        },
         progress,
         crate::ai::writing_budget(),
     );
@@ -522,10 +669,21 @@ pub fn write_up(
     } else {
         format!("{notice}\n\n{}", structured.body)
     };
-    session.finish()?;
-    Ok(Written {
+    let written = Written {
         title: structured.title,
         body,
         problems: structured.problems,
-    })
+    };
+    leo_core::recording::write_json(
+        &cached,
+        &Prepared {
+            key,
+            written: written.clone(),
+        },
+    )?;
+    session.trace(
+        "prepared",
+        "Generated result saved; waiting for note persistence",
+    );
+    Ok(written)
 }

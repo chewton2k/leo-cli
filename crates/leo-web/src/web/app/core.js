@@ -473,6 +473,7 @@ function flush(s = state.session) { return saving.flush(s); }
 function noteActions(id) {
   return `<nav class="actions" aria-label="Note">
       ${id ? `<button data-action="note-map" data-id="${esc(id)}">${ICON.map}<span>Graph</span></button>` : ''}
+      ${id ? `<button data-action="note-sources">${ICON.note}<span>Transcript</span></button><button data-action="saved-actions">${ICON.chat}<span>Actions</span></button>` : ''}
       <button data-action="note-picture">${ICON.image}<span>Picture</span></button>
       <button data-action="move">${ICON.move}<span>Move</span></button>
       <button data-action="share">${ICON.share}<span>PDF</span></button>

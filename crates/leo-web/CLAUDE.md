@@ -697,3 +697,40 @@
   reporter, so a flaky test is reported as flaky with its name and a real
   failure shows up as an annotation readable through the public check-runs
   API (the job logs need sign-in).
+
+### Recording workflows
+
+`workflows.rs` routes expose core folder profiles, custom formats and recipes,
+retained recording sources (with version checks), and regeneration previews.
+`web/app/workflows.js` owns their UI. `record_journal.rs` persists sequenced browser
+PCM before acknowledging; the page spools unacknowledged chunks in IndexedDB via
+`audio-queue.js`. A disconnected browser is left recoverable, not auto-finalized.
+Call PCM is interleaved microphone/system audio and split before transcription.
+`calendar.rs` uses Google Desktop OAuth, PKCE, a one-use loopback callback, private
+server credentials via the injected `CalendarSecrets` adapter to Leo’s SecretStore,
+and a read-only event cache. The settings file contains no client secret or refresh
+token; migration secures the legacy file before moving credentials into SecretStore. Tests must never require real OAuth.
+Chat scopes filter both initial retrieval and subsequent note tools.
+
+Calendar credentials go through the root adapter to `default_store()`, the same
+store as API keys (a 0600 file unless `LEO_USE_KEYCHAIN`), so they never cost a
+keychain dialog; tests inject a fake backend. A legacy account is secured to 0600 and atomically rewritten with
+only settings after the backend accepts its credentials. Google response sizes,
+page counts and request times are capped; calendar operations are serialized by
+an atomic flag. Recording journal writes and commit callbacks run outside the
+recording mutex; an atomic reservation prevents Stop/recovery from overtaking a
+chunk or point write. Transcript edits serialize outside the store mutex and reject
+stale versions. A failed worker still accepts queued recovery audio.
+
+Workflows and saved actions have desktop sidebar entries as well as the phone’s
+More menu. Browser flow tests must use those visible controls, not programmatic
+clicks on a hidden menu. The cargo Node gate includes audio-queue failure tests.
+
+Recovery replays through bounded channels with four chunks per track. Its job stays
+in writing state, rejects fresh microphone uploads, and exposes JSON acknowledgments
+for recovery and Finish available. Replaying a long archive must not queue all its
+PCM in memory or reopen the microphone.
+
+Offline browser backlogs persist individual worklet chunks, never one oversized
+concatenation. A partial storage failure advances only durable sequences and keeps
+only unwritten chunks in memory for retry; it must not duplicate stored audio.

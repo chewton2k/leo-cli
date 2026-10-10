@@ -262,6 +262,7 @@ fn background_work_is_listed_until_it_is_done() {
     imports.insert("b".to_string(), job("done", ""));
     imports.insert("c".to_string(), job("failed", ""));
     let writing = record::RecordView {
+        next_seq: 0,
         id: "r".into(),
         source: record::Source::Browser,
         state: "writing",
@@ -291,6 +292,7 @@ fn background_work_is_listed_until_it_is_done() {
     );
     assert_eq!(tasks[2].step, "3 of 9 steps");
     let still_recording = record::RecordView {
+        next_seq: 0,
         state: "recording",
         ..writing
     };

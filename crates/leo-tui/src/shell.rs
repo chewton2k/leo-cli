@@ -185,7 +185,15 @@ fn save_session(store: &mut Store, dir: &std::path::Path) -> Result<Outcome> {
         &points,
         existing.as_deref(),
         &fallback,
-        &|prompt, max| leo_services::ai::chat_outcome(prompt, max).map(|o| o.value),
+        &|prompt, max| {
+            let workflows =
+                leo_core::workflows::Workflows::load(&store.notes_dir).unwrap_or_default();
+            leo_services::ai::chat_outcome(
+                leo_services::ai::long::with_profile(prompt, &session.manifest.profile, &workflows),
+                max,
+            )
+            .map(|o| o.value)
+        },
         &|done, total| say(&format!("{} {done}/{total}", "Writing the notes".cyan())),
         leo_services::ai::writing_budget(),
     );
@@ -203,8 +211,11 @@ fn save_session(store: &mut Store, dir: &std::path::Path) -> Result<Outcome> {
         title: existing.is_none().then_some(structured.title),
         body,
     };
-    let outcome = action::apply_transcript(store, &req, "ready", &prepared)?;
-    session.finish()?;
+    let outcome =
+        action::apply_recording(store, &req, "ready", &prepared, Some(&session.manifest.id))?;
+    if let Some(note) = outcome.select.as_deref() {
+        session.commit(&store.notes_dir, note)?;
+    }
     Ok(outcome)
 }
 

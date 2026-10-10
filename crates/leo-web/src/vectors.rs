@@ -106,7 +106,6 @@ pub fn pieces_of(note: &Note) -> Vec<(usize, String)> {
     if out.len() > 1 {
         out.retain(|(_, text)| !text.trim().is_empty());
     }
-    out.truncate(MOST_PIECES);
     if let Some(first) = out.first_mut() {
         first.1 = format!("{}\n\n{}", note.title, first.1).trim().to_string();
     }
@@ -271,12 +270,14 @@ impl Vectors {
         let mut pieces = 0;
         for note in &store.notes {
             let hash = hash_of(note);
-            if known.get(&note.id).is_some_and(|e| e.hash == hash) {
-                continue;
+            let entry = known.get(&note.id).filter(|e| e.hash == hash);
+            let mut found = pieces_of(note);
+            if let Some(entry) = entry {
+                found.retain(|(at, _)| !entry.pieces.iter().any(|(indexed, _)| indexed == at));
             }
-            let found = pieces_of(note);
-            if pieces > 0 && pieces + found.len() > most_pieces {
-                break;
+            found.truncate(most_pieces.saturating_sub(pieces));
+            if found.is_empty() {
+                continue;
             }
             pieces += found.len();
             out.push(Work {
@@ -331,17 +332,26 @@ impl Vectors {
             if pieces.len() != item.pieces.len() {
                 continue;
             }
-            let _ = self.db.with(|c| {
+            let merge = known.get(&item.id).is_some_and(|e| e.hash == item.hash);
+            let saved = self.db.with(|c| {
                 let tx = c.transaction()?;
-                tx.execute("DELETE FROM vectors WHERE note = ?1", [&item.id])?;
+                if !merge { tx.execute("DELETE FROM vectors WHERE note = ?1", [&item.id])?; }
                 for (at, v) in &pieces {
                     tx.execute(
-                        "INSERT INTO vectors (note, at, hash, v) VALUES (?1, ?2, ?3, ?4)",
+                        "INSERT OR REPLACE INTO vectors (note, at, hash, v) VALUES (?1, ?2, ?3, ?4)",
                         rusqlite::params![item.id, *at as i64, item.hash, to_blob(v)],
                     )?;
                 }
                 tx.commit()
             });
+            if saved.is_err() {
+                continue;
+            }
+            let mut pieces = pieces;
+            if merge {
+                pieces.extend(known[&item.id].pieces.clone());
+            }
+            pieces.sort_by_key(|(at, _)| *at);
             known.insert(
                 item.id.clone(),
                 Entry {
@@ -457,6 +467,33 @@ mod tests {
     }
 
     #[test]
+    fn long_notes_are_indexed_to_the_end_in_bounded_batches_across_restarts() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::load_from(&dir.path().join("notes")).unwrap();
+        let body = format!(
+            "{}\n\nPlants turn light into sugar.",
+            "x".repeat(PIECE_CHARS * 30)
+        );
+        let id = store
+            .create_note("Long", body, vec![], "")
+            .unwrap()
+            .id
+            .clone();
+        let vectors = Vectors::for_notes(&store.notes_dir);
+        for _ in 0..4 {
+            let work = vectors.stale(&store, 8);
+            assert!(work.iter().map(|w| w.pieces.len()).sum::<usize>() <= 8);
+            read_in(&vectors, &fake(), &work);
+        }
+        let again = Vectors::for_notes(&store.notes_dir);
+        assert!(again.stale(&store, 8).is_empty());
+        assert_eq!(
+            close_to(Some(&fake()), &again, "plants and light", 5)[0].0,
+            id
+        );
+    }
+
+    #[test]
     fn every_note_knows_its_nearest_notes_and_the_list_is_rebuilt_only_after_changes() {
         let dir = tempfile::tempdir().unwrap();
         let mut store = Store::load_from(&dir.path().join("notes")).unwrap();
@@ -510,7 +547,7 @@ mod tests {
         let long: String = (0..40)
             .map(|i| format!("{} {i}\n\n", "x".repeat(900)))
             .collect();
-        assert_eq!(pieces_of(&note("Long", &long)).len(), MOST_PIECES);
+        assert!(pieces_of(&note("Long", &long)).len() > MOST_PIECES);
         let wide = "é".repeat(2500);
         assert_eq!(
             pieces_of(&note("Accents", &wide)).len(),

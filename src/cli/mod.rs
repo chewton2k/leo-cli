@@ -407,6 +407,8 @@ pub fn run(cli: Cli) -> Result<()> {
                         },
                     )),
                     listener: Some(web_record::listener()),
+                    regenerator: Some(web_record::regenerator()),
+                    calendar_secrets: Some(std::sync::Arc::new(web_settings::WebSettings)),
                     housekeeper: Some(std::sync::Arc::new(web_storage::Housekeeping)),
                     room: Some(std::sync::Arc::new(leo_services::ai::felix_room)),
                     web: Some(leo_web::Web {

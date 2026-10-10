@@ -592,7 +592,7 @@ there you can:
 - **record** a lecture or meeting and get notes, without the terminal.
 
 **Recording** (the **Record** button beside New note, or More → Record a
-lecture or meeting) has two choices:
+lecture or meeting) has three choices:
 
 - **Microphone**: the microphone of the phone or computer the page is open on.
 - **Screen**: what the computer plays, such as a lecture video or a call. On the
@@ -600,6 +600,51 @@ lecture or meeting) has two choices:
   `:record screen`); from another computer's browser (Chrome or Edge) you pick a
   tab or the screen and turn on "Share tab audio", and stopping the share
   stops the recording and saves it. Phones cannot record their screen.
+
+- **Call**: in a desktop browser that supports sharing audio, captures your
+  microphone and the shared tab on separate tracks, labeled **You** and
+  **Others**. Use headphones to reduce echo; these are track labels rather than
+  identification of individual people.
+
+**Note workflows** in the sidebar (**More → Note workflows and calendar** on phones) sets a note format (Lecture, Meeting,
+Technical interview, Design review, or your own), background context and vocabulary
+for each folder. Subfolders inherit the nearest folder’s defaults. The usual AI
+explanations, filling gaps and merging your points stay in place. Vocabulary guides
+note writing; speech providers with prompt support also receive it, while Parakeet
+keeps its current decoder.
+
+**Transcript** on a saved recording opens retained words, timestamps and your
+original points. Correct the sources, then preview a regenerated note and apply it
+when ready. Applying checks for concurrent changes and offers Undo. **Capture a
+slide** during recording saves a screenshot and reads its text into a timestamped
+point. Screenshots require selecting a shared screen or tab.
+
+**Saved actions and chat scope** reuses prompts for revision sheets, decisions,
+open questions and action items. Limit retrieval to selected notes, a folder, or
+creation dates; setting a scope begins a new conversation.
+
+Google Calendar uses a read-only OAuth connection. Enable the Calendar API in
+Google Cloud, create a **Desktop app** OAuth client, and paste the client ID and
+secret on Leo’s local page. If the OAuth consent screen is in testing, add your
+Google account as a test user. Sign in in the popup; Leo stores credentials through
+its SecretStore in the OS keychain and refreshes access automatically.
+Calendar settings contain only the client ID, calendar ID and secret-store reference. Upcoming events populate recording
+titles and context. **Sync now** refreshes them; **Disconnect** revokes access.
+
+Browser uploads are queued in IndexedDB and acknowledged after saving to disk.
+Retries use sequence numbers to avoid duplicate audio. An offline browser stays
+recoverable; reopen the same site on the same device to send its queued audio.
+Interrupted server recordings appear under **Recover** on Record. **Stop and save**
+waits for queued audio; **Finish with available transcript** skips queued transcription
+and keeps unfinished audio for retry. Rate-limit retries after stopping have a
+bounded finish window, with any active transcription allowed to complete.
+
+Retained transcripts and points live in `recording-sources/` beside `notes/` and
+are included when exporting uploads. Successful raw-audio journals are cleaned up
+after note persistence; unfinished audio stays in `recordings/` or `browser-audio/`.
+Recording diagnostics contain stage, provider, duration and failure metadata.
+Calendar credentials and raw recovery audio are excluded from exports and Git note
+backups; keep the data folder if you want to preserve these locally.
 
 The words appear as it listens, and a smooth live wave like Voice Memos shows
 the sound being picked up, with "Hearing sound" beside it (after a few silent

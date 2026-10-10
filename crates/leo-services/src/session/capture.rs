@@ -243,6 +243,12 @@ impl Capture {
         Self::begin(dir, first_index, segment_secs, feed, None)
     }
 
+    pub fn dropped_samples(&self) -> u64 {
+        self.mic
+            .as_ref()
+            .map_or(0, |m| m.dropped.load(Ordering::Relaxed))
+    }
+
     pub fn recorded_samples(&self) -> u64 {
         self.shared.recorded.load(Ordering::Relaxed)
     }
@@ -288,6 +294,10 @@ impl Capture {
         super::wav::rms(&samples) as f32
     }
 
+    pub fn stop_with_stats(mut self) -> Result<(u64, u64)> {
+        self.finish()?;
+        Ok((self.recorded_samples(), self.dropped_samples()))
+    }
     pub fn stop(mut self) -> Result<()> {
         self.finish()
     }

@@ -11,6 +11,7 @@ rust-version.workspace = true
 test-support = []
 
 [dependencies]
+uuid.workspace = true
 leo-core.workspace = true
 anyhow.workspace = true
 base64.workspace = true

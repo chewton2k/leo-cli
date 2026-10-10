@@ -3,7 +3,6 @@
 
   const SEND_EVERY = 1000;
   const POLL_EVERY = 1000;
-  const MOST_HELD_SECS = 120;
   const RATE = 16000;
 
   function clock(secs) {
@@ -59,7 +58,7 @@
     return 'The microphone could not be opened' + (reason && reason.message ? ` (${reason.message})` : '') + '.';
   }
 
-  const fedByBrowser = (source) => source === 'browser' || source === 'tab';
+  const fedByBrowser = (source) => source === 'browser' || source === 'tab' || source === 'call';
 
   const QUIET = 0.2;
   const WAVE_STEP_MS = 60;
@@ -138,6 +137,12 @@
 
   const live = (view) => Boolean(view) && ['starting', 'recording', 'paused'].includes(view.state);
 
+  function profileFor(workflows,dir) {
+    const profiles=workflows.profiles || {};
+    let here=dir;
+    for (;;) { if (profiles[here]) return profiles[here]; if (!here) return {template:'lecture',context:'',vocabulary:[]}; const at=here.lastIndexOf('/'); here=at<0?'':here.slice(0,at); }
+  }
+
   function create(deps) {
     const { api, esc, toast, go, noteHash, felix, icons, noteReady } = deps;
     const s = {
@@ -145,6 +150,11 @@
       overview: null,
       mine: false,
       stream: null,
+      micStream: null,
+      seq: 0,
+      pending: 0,
+      config: null,
+      calendar: null,
       context: null,
       node: null,
       held: [],
@@ -160,6 +170,7 @@
       heard: '',
       sending: false,
       lost: 0,
+      deviceLost:false,
       poll: 0,
       send: 0,
       wake: null,
@@ -167,6 +178,7 @@
       follow: true,
     };
 
+    const audioQueue = root.leoAudioQueue && root.leoAudioQueue.pick();
     const env = () => ({ isSecureContext: root.isSecureContext, mediaDevices: root.navigator && root.navigator.mediaDevices, AudioWorkletNode: root.AudioWorkletNode });
     const shown = (message) => Object.assign(new Error(message), { shown: true });
 
@@ -201,11 +213,12 @@
     }
 
     async function openMic(kind = 'browser') {
-      s.stream = kind === 'tab' ? await shareSound() : await microphone();
+      s.stream = kind === 'tab' || kind === 'call' ? await shareSound() : await microphone();
+      if (kind === 'call') { try { s.micStream = await microphone(); } catch(e) { closeMic(); throw e; } }
       s.context = new root.AudioContext({ sinkId: { type: 'none' } });
       await s.context.audioWorklet.addModule('/recorder.js');
       const source = s.context.createMediaStreamSource(s.stream);
-      s.node = new root.AudioWorkletNode(s.context, 'leo-recorder');
+      s.node = new root.AudioWorkletNode(s.context, 'leo-recorder', { channelCount: kind === 'call' ? 2 : 1, channelCountMode:'explicit', processorOptions:{dual:kind === 'call'} });
       s.analyser = s.context.createAnalyser();
       s.analyser.fftSize = 2048;
       s.samples = new Float32Array(s.analyser.fftSize);
@@ -213,18 +226,24 @@
       s.node.port.onmessage = (event) => {
         if (s.view && s.view.state === 'paused') return;
         s.held.push(new Int16Array(event.data.samples));
-        s.lost += trimHeld(s.held, MOST_HELD_SECS * RATE);
+
       };
-      source.connect(s.node);
+      if (kind === 'call') {
+        const merger = s.context.createChannelMerger(2);
+        const mic = s.context.createMediaStreamSource(s.micStream);
+        mic.connect(merger,0,0); source.connect(merger,0,1); merger.connect(s.node);
+      } else source.connect(s.node);
       if (s.context.state === 'suspended') await s.context.resume();
+      s.deviceLost=false;
+      if (s.micStream) s.micStream.getAudioTracks().forEach((track) => { track.onended=() => { s.deviceLost=true; note('The microphone disconnected. Reconnect it to keep capturing your side of the call.'); }; });
       s.stream.getTracks().forEach((track) => {
         track.onended = () => {
           if (!live(s.view) || !s.mine) return;
-          if (kind === 'tab') {
+          if (kind === 'tab' || kind === 'call') {
             note('Sharing stopped, so the recording stopped and is being saved.');
             stop().catch(() => {});
           } else if (track.kind === 'audio') {
-            note('The microphone was disconnected. What was recorded is kept; stop to save it.');
+            s.deviceLost=true; note('The microphone was disconnected. What was recorded is kept; stop to save it.');
           }
         };
       });
@@ -232,7 +251,9 @@
 
     function closeMic() {
       if (s.node) s.node.port.onmessage = null;
-      if (s.stream) s.stream.getTracks().forEach((t) => t.stop());
+      if (s.stream) s.stream.getTracks().forEach((t) => { t.onended=null; t.stop(); });
+      if (s.micStream) s.micStream.getTracks().forEach((t) => { t.onended=null; t.stop(); });
+      s.micStream=null;
       if (s.context) s.context.close().catch(() => {});
       s.stream = null;
       s.context = null;
@@ -253,28 +274,30 @@
       s.wake = null;
     }
 
-    async function flush() {
-      if (s.sending || !s.view || !s.held.length) return;
-      s.sending = true;
-      const chunks = s.held.splice(0);
+    async function sendChunk(item) {
+      const controller=new AbortController(); const timer=setTimeout(() => controller.abort(),15000);
       try {
-        const response = await root.fetch(`/api/record/${s.view.id}/audio`, {
-          method: 'POST',
-          credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/octet-stream' },
-          body: bytesOf(join(chunks)),
-        });
-        if (response.status === 404 || response.status === 409) {
-          detach();
-        } else if (!response.ok) {
-          s.held.unshift(...chunks);
+        const response=await root.fetch(`/api/record/${item.id}/audio?seq=${item.seq}`,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/octet-stream'},body:item.bytes,signal:controller.signal});
+        if (!response.ok) throw new Error('Audio is kept on this device until Leo reconnects.');
+        return (await response.json()).next_seq;
+      } finally { clearTimeout(timer); }
+    }
+    async function flush(all=false) {
+      if (s.sending || !s.view) return false;
+      s.sending=true;
+      try {
+        if (!audioQueue) throw new Error('Recovery audio storage is unavailable.');
+        if (s.held.length) {
+          const chunks=s.held.splice(0);
+          const saved=await root.leoAudioQueue.spool(audioQueue,s.view.id,s.seq,chunks,bytesOf);
+          s.seq=saved.next;
+          if (saved.error) { s.held=saved.remaining.concat(s.held); closeMic(); note('Recovery storage could not be written. Capture is stopped; the audio already kept is available. Free space, then reconnect.'); throw saved.error; }
         }
-      } catch (e) {
-        s.held.unshift(...chunks);
-        s.lost += trimHeld(s.held, MOST_HELD_SECS * RATE);
-      } finally {
-        s.sending = false;
-      }
+        s.pending=await audioQueue.count(s.view.id);
+        await root.leoAudioQueue.drain(audioQueue,s.view.id,sendChunk,all?Infinity:3);
+        s.pending=await audioQueue.count(s.view.id); return s.pending===0;
+      } catch(e) { note(e.message || 'Audio is kept on this device until Leo reconnects.'); return false; }
+      finally { s.sending=false; }
     }
 
     function detach() {
@@ -283,7 +306,6 @@
       closeMic();
       letSleep();
       s.mine = false;
-      s.held = [];
     }
 
     function attach() {
@@ -338,17 +360,17 @@
       pill();
     }
 
-    async function start(source, directory, title) {
+    async function start(source, directory, title, profile) {
       if (fedByBrowser(source)) await openMic(source);
       let made;
       try {
-        made = await api('/api/record', { method: 'POST', body: { source, directory, title } });
+        made = await api('/api/record', { method: 'POST', body: { source, directory, title, profile } });
       } catch (e) {
         closeMic();
         throw e;
       }
       s.view = { id: made.id, source, state: 'starting', secs: 0, step: 'Starting', steps: null, transcript: '', warnings: [], points: [], note: null, error: null };
-      s.lost = 0;
+      s.lost = 0; s.seq=0; s.pending=0;
       s.follow = true;
       Object.assign(s, { wave: [], queue: [], smooth: 0, lastStep: 0, lastFed: 0, fedUpTo: 0 });
       if (fedByBrowser(source)) attach();
@@ -359,7 +381,10 @@
 
     async function rejoin() {
       if (!s.view || !fedByBrowser(s.view.source)) return;
-      await openMic(s.view.source);
+      const queued=audioQueue ? await audioQueue.list(s.view.id) : [];
+      s.seq=Math.max(s.view.next_seq || 0,...queued.map((c) => c.seq+1));
+      await flush();
+      closeMic(); await openMic(s.view.source);
       attach();
       draw();
     }
@@ -373,9 +398,20 @@
     async function stop() {
       if (!s.view) return;
       if (s.mine) {
-        if (s.node) s.node.port.onmessage = null;
+        if (s.context) await s.context.suspend();
+        if (s.node) {
+          const original=s.node.port.onmessage;
+          await new Promise((resolve) => {
+            const timer=setTimeout(resolve,1500);
+            s.node.port.onmessage=(event) => { if (event.data.flushed) { clearTimeout(timer); resolve(); } else if (original) original(event); };
+            s.node.port.postMessage({flush:true});
+          });
+          s.node.port.onmessage=null;
+        }
         while (s.sending) await new Promise((resolve) => setTimeout(resolve, 50));
-        await flush();
+        if (!await flush(true)) throw new Error('Audio is still waiting on this device. Reconnect to Leo, then stop again.');
+      } else if (audioQueue && (await audioQueue.list(s.view.id)).length && !await flush()) {
+        throw new Error('Recovery audio is waiting on this device. Reconnect before saving.');
       }
       const view = await api(`/api/record/${s.view.id}/stop`, { method: 'POST' });
       closeMic();
@@ -473,8 +509,16 @@
       if (!s.raf && root.requestAnimationFrame) s.raf = root.requestAnimationFrame(drawWave);
     }
 
+    function paintWaveNow() {
+      if (!root.requestAnimationFrame) return;
+      if (s.raf && root.cancelAnimationFrame) root.cancelAnimationFrame(s.raf);
+      s.raf = 0;
+      drawWave(root.performance ? root.performance.now() : Date.now());
+    }
+
     const KINDS = {
       microphone: { title: 'Microphone', about: 'A lecture, a meeting, or your own voice' },
+      call: { title: 'Call', about: 'Your microphone and the shared tab, on separate tracks' },
       screen: { title: 'Screen', about: 'A video, a call, or anything playing' },
     };
 
@@ -485,9 +529,9 @@
 
     function kindChoices(local) {
       const canShare = canShareSound(env());
-      return `<div class="rec-kinds" role="radiogroup" aria-label="What to record">${['microphone', 'screen']
+      return `<div class="rec-kinds" role="radiogroup" aria-label="What to record">${['microphone', 'screen', 'call']
         .map((kind, i) => {
-          const off = !sourceFor(kind, { local, canShare });
+          const off = kind === 'call' ? !canShare : !sourceFor(kind, { local, canShare });
           return `<label class="rec-kind${off ? ' off' : ''}"><input type="radio" name="rec-kind" value="${kind}"${i === 0 ? ' checked' : ''}${off ? ' disabled' : ''}>
             <span class="rec-kind-body"><span class="rec-kind-icon">${kind === 'microphone' ? icons.mic : icons.screen}</span><b>${KINDS[kind].title}</b><span class="sub">${esc(kind === 'screen' ? screenNote(local) : KINDS[kind].about)}</span></span></label>`;
         })
@@ -497,6 +541,11 @@
     function drawIdle(folders, here) {
       const ov = s.overview || {};
       const options = ['', ...folders].map((f) => `<option value="${esc(f)}"${f === here ? ' selected' : ''}>${esc(f || 'All notes (top level)')}</option>`).join('');
+      const config=s.config || {templates:[],workflows:workflowsOf()};
+      const formats=[...config.templates,...config.workflows.templates];
+      const profile=profileFor(config.workflows,here);
+      const upcoming=s.calendar && s.calendar.events || [];
+      const pending=ov.pending || [];
       const ready = micReady(env());
       const insecure = ready !== 'ok' && !ov.local ? `<p class="rec-warn">${esc(micProblem(ready))}</p>` : '';
       return `<div class="rec rec-idle">
@@ -506,6 +555,10 @@
           ${kindChoices(ov.local)}
           <label class="set-row"><span class="set-label">Folder</span><select id="rec-dir">${options}</select></label>
           <label class="set-row"><span class="set-label">Title</span><input id="rec-title" class="rec-title-input" placeholder="Optional; the AI names it otherwise" autocomplete="off"></label>
+          <label class="set-row"><span class="set-label">Note format</span><select id="rec-template">${formats.map((t) => `<option value="${esc(t.id)}"${t.id===(profile.template || 'lecture')?' selected':''}>${esc(t.name)}</option>`).join('')}</select></label>
+          <label class="workflow-field">Context<textarea id="rec-context" rows="3" maxlength="8000" placeholder="Course, meeting agenda, people, or prior decisions">${esc(profile.context || '')}</textarea></label>
+          ${upcoming.length ? `<label class="set-row"><span class="set-label">Coming up</span><select id="rec-event"><option value="">Choose a calendar event</option>${upcoming.slice(0,30).map((e,i) => `<option value="${i}">${esc(new Date(e.start).toLocaleString())} · ${esc(e.title)}</option>`).join('')}</select></label>`:''}
+          ${pending.map((p) => `<button class="list-row" data-action="rec-recover" data-id="${esc(p.id)}">Recover: ${esc(p.title || 'Interrupted recording')}</button>`).join('')}
           ${insecure}
           <div class="rec-start">
             <button class="rec-go" data-action="rec-start" aria-label="Start recording" ${ov.available === false ? 'disabled' : ''}><span class="rec-go-dot"></span></button>
@@ -523,7 +576,7 @@
       const transcript = v.transcript ? esc(v.transcript) : `<span class="hint">${paused ? 'Paused.' : 'Listening… words appear here after a few seconds.'}</span>`;
       const points = v.points.length ? `<ul class="rec-points">${v.points.map(([at, text]) => `<li><span class="rec-at">${clock(at)}</span><span>${esc(text)}</span></li>`).join('')}</ul>` : '';
       const warnings = v.warnings.map((w) => `<p class="rec-warn">${esc(w)}</p>`).join('') + (s.lost ? `<p class="rec-warn">${clock(s.lost / RATE)} of audio could not reach leo and was dropped.</p>` : '');
-      const kind = v.source === 'browser' || v.source === 'microphone' ? 'Microphone' : 'Screen';
+      const kind = v.source === 'call' ? 'Call · You + Others' : v.source === 'browser' || v.source === 'microphone' ? 'Microphone' : 'Screen';
       const controls = orphan
         ? `<p class="rec-warn">This recording lost its microphone when the page reloaded.</p><div class="rec-controls"><button class="btn plain" data-action="rec-rejoin">Keep recording here</button><button class="btn primary" data-action="rec-stop">Stop and save</button></div>`
         : `<div class="rec-buttons">
@@ -537,7 +590,9 @@
           <div class="rec-clock"><span id="rec-time">${clock(v.secs)}</span></div>
           ${orphan ? '' : `<div class="rec-wave-box"><canvas class="rec-wave" id="rec-wave" aria-hidden="true"></canvas></div><p class="rec-hear" id="rec-hear" role="status">${esc(hearingWords(hearing(s.wave, WAVE_STEP_MS), v.source, paused))}</p>`}
           ${controls}
+          ${s.deviceLost?'<button class="btn plain" data-action="rec-rejoin">Reconnect audio</button>':''}
           ${warnings}
+          ${s.pending ? `<p class="hint">${s.pending} audio chunks kept on this device, waiting to reach Leo.</p>` : ''}
         </section>
         <section class="set-card">
           <header><h3>Live transcript</h3></header>
@@ -547,6 +602,7 @@
           <header><h3>Your points</h3></header>
           <p class="hint">Jot what matters; it is woven into the notes.</p>
           <div class="rec-point"><textarea id="rec-point-text" rows="2" placeholder="Jot a point"></textarea><button class="btn plain" data-action="rec-point">Add</button></div>
+          <button class="btn plain" data-action="rec-snapshot">Capture a slide</button>
           ${points}
         </section>
       </div>`;
@@ -560,6 +616,7 @@
         <section class="set-card rec-done-card">${felix.felix(72, 'idle think')}<h3>${esc(stateWord(v) || 'Writing the notes')}</h3>
           <div class="upload-bar"><i style="width:${Math.max(6, bar)}%"></i></div>
           ${v.warnings.map((w) => `<p class="rec-warn">${esc(w)}</p>`).join('')}
+          <button class="btn plain" data-action="rec-finish">Finish with available transcript</button>
           <p class="hint">${clock(v.secs)} recorded. You can leave this page; the note appears in its folder when it is ready.</p>
         </section>
       </div>`;
@@ -580,6 +637,41 @@
     let folders = [];
     let here = '';
 
+    const IDLE_FIELDS = ['#rec-dir', '#rec-title', '#rec-template', '#rec-context'];
+
+    function workflowsOf() {
+      return (s.config && s.config.workflows) || { templates: [], profiles: {} };
+    }
+
+    function idleForm(box) {
+      if (!box.querySelector('.rec-idle')) return null;
+      const picked = box.querySelector('input[name="rec-kind"]:checked');
+      const active = root.document.activeElement;
+      return {
+        kind: picked ? picked.value : null,
+        values: IDLE_FIELDS.map((at) => { const field = box.querySelector(at); return field ? field.value : null; }),
+        focused: active && box.contains(active) && active.id ? { id: active.id, start: active.selectionStart, end: active.selectionEnd } : null,
+      };
+    }
+
+    function restoreIdleForm(box, form) {
+      if (!box.querySelector('.rec-idle')) return;
+      const kind = form.kind && box.querySelector(`input[name="rec-kind"][value="${form.kind}"]`);
+      if (kind && !kind.disabled) kind.checked = true;
+      IDLE_FIELDS.forEach((at, i) => {
+        const field = box.querySelector(at);
+        const value = form.values[i];
+        if (!field || value === null) return;
+        if (field.tagName === 'SELECT' && ![...field.options].some((o) => o.value === value)) return;
+        field.value = value;
+      });
+      const field = form.focused && root.document.getElementById(form.focused.id);
+      if (field && box.contains(field)) {
+        field.focus({ preventScroll: true });
+        if (typeof form.focused.start === 'number' && typeof field.setSelectionRange === 'function') field.setSelectionRange(form.focused.start, form.focused.end);
+      }
+    }
+
     function draw() {
       const box = s.container;
       if (!box || !box.isConnected) return;
@@ -588,11 +680,12 @@
       const keep = typed ? { value: typed.value, focused: root.document.activeElement === typed, start: typed.selectionStart, end: typed.selectionEnd } : null;
       const old = box.querySelector('#rec-transcript');
       if (old) s.follow = old.scrollTop + old.clientHeight >= old.scrollHeight - 24;
+      const form = idleForm(box);
       if (!v || v.state === 'done') box.innerHTML = drawIdle(folders, here);
       else if (live(v)) {
         box.innerHTML = drawLive();
         s.heard = '';
-        startWave();
+        paintWaveNow();
       }
       else if (v.state === 'writing') box.innerHTML = drawWriting();
       else box.innerHTML = drawFailed();
@@ -612,6 +705,11 @@
           }
         });
       }
+      if (form) restoreIdleForm(box, form);
+      const event=box.querySelector('#rec-event');
+      if (event) event.addEventListener('change',() => { const e=s.calendar.events[Number(event.value)]; if (event.value==='' || !e) return; box.querySelector('#rec-title').value=e.title; box.querySelector('#rec-context').value=e.context; box.querySelector('#rec-template').value='meeting'; });
+      const dir=box.querySelector('#rec-dir');
+      if (dir) dir.addEventListener('change',() => { const p=profileFor(workflowsOf(),dir.value); box.querySelector('#rec-template').value=p.template || 'lecture'; box.querySelector('#rec-context').value=p.context || ''; });
       const text = box.querySelector('#rec-transcript');
       if (text && s.follow) text.scrollTop = text.scrollHeight;
     }
@@ -677,8 +775,19 @@
         draw();
         pill();
         await refresh();
+        const [config, calendar] = await Promise.all([api('/api/workflows').catch(() => null), api('/api/calendar').catch(() => null)]);
+        s.config = config;
+        s.calendar = calendar;
         draw();
         pill();
+        if (calendar && calendar.connected && !calendar.busy && (!calendar.synced || Date.now() - Date.parse(calendar.synced) > 300000)) {
+          try {
+            s.calendar = await api('/api/calendar/sync', { method: 'POST' });
+            draw();
+          } catch (e) {
+            toast(e.message, { bad: true });
+          }
+        }
       },
       leave() {
         s.container = null;
@@ -688,19 +797,41 @@
         const box = s.container;
         const picked = box.querySelector('input[name="rec-kind"]:checked');
         const kind = picked ? picked.value : 'microphone';
-        const source = sourceFor(kind, { local: Boolean(s.overview && s.overview.local), canShare: canShareSound(env()) });
+        const source = kind === 'call' ? 'call' : sourceFor(kind, { local: Boolean(s.overview && s.overview.local), canShare: canShareSound(env()) });
         if (!source) throw Object.assign(new Error(sharingProblem('unsupported')), { shown: true });
         const button = box.querySelector('[data-action="rec-start"]');
         if (button) button.disabled = true;
         try {
-          await start(source, box.querySelector('#rec-dir').value, box.querySelector('#rec-title').value.trim());
+          const dir=box.querySelector('#rec-dir').value;
+          const profile=profileFor(workflowsOf(),dir);
+          await start(source,dir,box.querySelector('#rec-title').value.trim(),{...profile,template:box.querySelector('#rec-template').value,context:box.querySelector('#rec-context').value});
         } finally {
           if (button && button.isConnected) button.disabled = false;
         }
       },
       pause: () => setPaused(!(s.view && s.view.state === 'paused')),
       stop,
+      async finishAvailable() { if (s.view) { await api(`/api/record/${s.view.id}/finish`,{method:'POST'}); note('Queued transcription is skipped; any unfinished audio is kept for retry.'); } },
       rejoin,
+      async recover(id) {
+        if (audioQueue) await root.leoAudioQueue.drain(audioQueue,id,sendChunk);
+        await api(`/api/record/${id}/recover`,{method:'POST'}); await refresh();
+      },
+      async snapshot() {
+        if (!s.view || !live(s.view)) return;
+        let stream=s.stream && s.stream.getVideoTracks().length ? s.stream : null;
+        const temporary=!stream;
+        if (!stream) stream=await root.navigator.mediaDevices.getDisplayMedia({video:true,audio:false});
+        const at=s.view.secs;
+        try {
+          const video=root.document.createElement('video'); video.srcObject=stream; video.muted=true; await video.play();
+          const canvas=root.document.createElement('canvas');
+          const scale=Math.min(1,1600/video.videoWidth); canvas.width=video.videoWidth*scale; canvas.height=video.videoHeight*scale;
+          canvas.getContext('2d').drawImage(video,0,0,canvas.width,canvas.height);
+          const data=canvas.toDataURL('image/png').split(',')[1];
+          accept(await api(`/api/record/${s.view.id}/snapshot`,{method:'POST',body:{data,at}}));
+        } finally { if (temporary) stream.getTracks().forEach((t) => t.stop()); }
+      },
       point: submitPoint,
       again() {
         s.view = null;

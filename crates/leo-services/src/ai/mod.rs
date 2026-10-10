@@ -109,6 +109,14 @@ pub fn transcribe_outcome(audio_path: &Path) -> Result<chain::ChainOutcome<Strin
     transcribe::run(&cfg, &store, audio_path)
 }
 
+pub fn transcribe_with_vocabulary(
+    audio_path: &Path,
+    vocabulary: &[String],
+) -> Result<chain::ChainOutcome<String>> {
+    let (cfg, store) = context();
+    transcribe::run_with_vocabulary(&cfg, store.as_ref(), audio_path, vocabulary)
+}
+
 /// Transcribe, reporting chunk progress so a caller can draw a bar.
 pub fn transcribe_outcome_with_progress(
     audio_path: &Path,
