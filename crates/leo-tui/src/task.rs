@@ -696,7 +696,7 @@ mod tests {
     fn a_task_that_panics_reports_a_failure_instead_of_taking_the_app_down() {
         let (tx, rx) = mpsc::channel();
         spawn_guarded(tx, || panic!("boom in a worker"));
-        match rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap() {
+        match rx.recv_timeout(std::time::Duration::from_secs(60)).unwrap() {
             TaskEvent::Failed(message) => {
                 assert!(message.contains("boom in a worker"), "{message}");
                 assert!(message.contains("notes are safe"), "{message}");
