@@ -761,6 +761,17 @@ breadth-first spiral, runs `TIDY_TICKS` of the same forces, swaps nearby nodes
 while it reduces edge crossings (`crossings`, within `TIDY_BUDGET_MS`), polishes,
 then glides there.
 
+Live recording page is notepad first (from Granola): "Your notes" (points list
+and a big box; Enter adds a point) comes right after the clock and controls, then
+what you want from the notes; the live transcript is folded in `#rec-heard`
+("Show what's being heard", open state kept in `leo-rec-heard`).
+
+Felix reads a recorded note's transcript with `read_transcript {note, find?,
+part?}` (read only, any access): lines `[m:ss] (speaker when more than one)
+text` and the user's typed points, searched by `find` or paged by
+`part_chars`; notes with a kept recording say "Made from a recording" in their
+`<note>` block (`tools::has_transcript`).
+
 Sidebar: the places nav and the foot stay put; only the folder tree
 (`.side-tree`) scrolls, and its scroll position survives redraws.
 

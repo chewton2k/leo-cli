@@ -1558,7 +1558,7 @@ test.describe('pictures', () => {
 test.describe('large libraries', () => {
   test('a big folder loads in pages as you scroll, and Select all takes every note', async ({ page }) => {
     test.setTimeout(90000);
-    const dir = `big-${test.info().project.name}`;
+    const dir = `big-${test.info().project.name}-${test.info().retry}-${Date.now().toString(36)}`;
     await page.request.post('/api/dirs', { data: { path: dir } });
     for (let i = 0; i < 230; i += 10) {
       await Promise.all(Array.from({ length: 10 }, (_, j) => page.request.post('/api/notes', { data: { title: `Big note ${String(i + j).padStart(3, '0')}`, body: '- [x] done\n- [ ] not yet', directory: dir } })));
@@ -1574,6 +1574,7 @@ test.describe('large libraries', () => {
     await expect(cards).toHaveCount(230);
     await expect(page.locator('#more-notes')).toHaveCount(0);
 
+    await page.evaluate(() => window.scrollTo(0, 0));
     await page.reload();
     await expect(cards).toHaveCount(200);
     await page.locator('[data-action="folder-select"]').click();
@@ -2120,6 +2121,17 @@ test.describe('recording', () => {
     await page.locator('#rec-wants').fill('Focus on BFS');
     await page.locator('[data-action="rec-start"]').click();
     await expect(page.locator('#rec-transcript')).toContainText('breadth first search');
+    await expect(page.locator('.rec-notepad #rec-point-text')).toBeVisible();
+    expect(await page.evaluate(() => {
+      const pad = document.querySelector('.rec-notepad');
+      const heard = document.querySelector('#rec-heard');
+      return Boolean(pad.compareDocumentPosition(heard) & Node.DOCUMENT_POSITION_FOLLOWING) && !heard.open;
+    })).toBe(true);
+    await expect(page.locator('#rec-transcript')).toBeHidden();
+    await page.locator('#rec-heard > summary').click();
+    await expect(page.locator('#rec-transcript')).toBeVisible();
+    await page.waitForTimeout(1500);
+    await expect(page.locator('#rec-heard')).toHaveAttribute('open', '');
     await expect.poll(() => seen.audioBytes, { timeout: 8000 }).toBeGreaterThan(16000);
     expect(seen.audioBytes % 2).toBe(0);
     await expect(page.locator('#rec-wave')).toBeVisible();

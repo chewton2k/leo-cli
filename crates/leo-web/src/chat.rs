@@ -513,6 +513,11 @@ pub fn gather_seeing(
         if !links.is_empty() {
             text.push_str(&format!("Connections: {}\n", links.join("; ")));
         }
+        if crate::tools::has_transcript(&store.notes_dir, &p.note.id) {
+            text.push_str(
+                "Made from a recording: what was said is kept; read_transcript reads it.\n",
+            );
+        }
         let body = match captions {
             Some(captions) => crate::captions::captioned(
                 &store.notes_dir,

@@ -75,7 +75,7 @@ How to shape the notes so they are understood and remembered:
 
 /// What to do with points the listener typed while recording.
 const POINTS_RULE: &str = "\
-The listener typed points while recording; they show what mattered most to them. Weave each one into the notes where its topic belongs, as part of that section, in your own words or theirs. Do not give them a section of their own, do not mark them out, and do not add times. Keep every typed point: if the transcript never mentions one, put it with the closest topic and explain it from your own knowledge.";
+The listener typed points while recording; they show what mattered most to them. Put each one in the section where its topic belongs, in the listener's exact words: copy it as written, as a bullet or a sentence of that section, and build your explanation from the recording around it. Never reword, shorten, merge or drop a typed point. Do not give them a section of their own, do not mark them out, and do not add times. If the transcript never mentions one, put it with the closest topic and explain it from your own knowledge.";
 
 /// The typed points as the user message lists them.
 fn points_block(points: &[Jotted]) -> String {
@@ -654,7 +654,7 @@ mod tests {
         let transcript = vec!["word"; 900].join(" ");
         let p = build_structure_prompt_with(&transcript, &points());
         assert!(
-            p.system.contains("Weave each one into the notes"),
+            p.system.contains("in the listener's exact words"),
             "{}",
             p.system
         );
@@ -679,7 +679,9 @@ mod tests {
             "{}",
             p.user
         );
-        assert!(p.system.contains("Weave each one"));
+        assert!(p
+            .system
+            .contains("Never reword, shorten, merge or drop a typed point"));
     }
 
     #[test]

@@ -115,7 +115,7 @@ const NOTE: Param = Param {
     about: "which note: an id like n3 from a <note> tag or an earlier result, or the note's exact title",
 };
 
-pub const SPECS: [Spec; 10] = [
+pub const SPECS: [Spec; 11] = [
     Spec {
         name: "search_notes",
         purpose: "Find the user's notes that match words, abbreviations (BFS finds breadth-first search) or ideas in their knowledge graph.",
@@ -218,6 +218,25 @@ pub const SPECS: [Spec; 10] = [
         example: r#"<tool>{"name": "look_at_picture", "note": "n2", "question": "what does the graph on the slide show?"}</tool>"#,
     },
     Spec {
+        name: "read_transcript",
+        purpose: "Read what was said in the recording a note was made from (its kept transcript, with times), to check exact wording, who said what, or details the note left out. Only notes made from a recording have one; they say \"Made from a recording\".",
+        params: &[
+            NOTE,
+            Param {
+                name: "find",
+                required: false,
+                about: "words to look for, like \"deadline\"; leave it out to read from the start",
+            },
+            Param {
+                name: "part",
+                required: false,
+                about: "which part to read when not searching, starting at 1",
+            },
+        ],
+        returns: "<transcript note=\"...\" part=\"1\" of=\"3\">one line per passage: [12:05] what was said</transcript>, the passages that match when find is given, or \"That did not work: ...\" when the note has no kept recording.",
+        example: r#"<tool>{"name": "read_transcript", "note": "n1", "find": "exam"}</tool>"#,
+    },
+    Spec {
         name: "read_document",
         purpose: "Read a document the user gave in this chat, part by part. Use it when the question needs a part of the document you were not shown.",
         params: &[
@@ -308,6 +327,18 @@ pub const WEB_SPECS: [Spec; 2] = [
         example: r#"<tool>{"name": "open_page", "page": "w2"}</tool>"#,
     },
 ];
+
+pub fn has_transcript(notes_dir: &std::path::Path, note: &str) -> bool {
+    leo_core::recording::valid_id(note) && leo_core::recording::root(notes_dir).join(note).is_dir()
+}
+
+fn clock(secs: u64) -> String {
+    if secs >= 3600 {
+        format!("{}:{:02}:{:02}", secs / 3600, secs / 60 % 60, secs % 60)
+    } else {
+        format!("{}:{:02}", secs / 60, secs % 60)
+    }
+}
 
 pub fn spec_of(name: &str) -> Option<&'static Spec> {
     SPECS
@@ -1103,6 +1134,145 @@ impl Desk {
         (self.room / 3).clamp(12_000, 120_000)
     }
 
+    fn read_transcript(&self, notes_dir: &std::path::Path, note: &Note, call: &Call) -> Done {
+        let step = format!("Read the recording of “{}”", note.title);
+        let fail = |why: String| Done {
+            step: step.clone(),
+            result: format!("That did not work: {why}."),
+            proposal: None,
+            found: Vec::new(),
+        };
+        let sources = leo_core::recording::load(notes_dir, &note.id).unwrap_or_default();
+        let speakers: std::collections::HashSet<&str> = sources
+            .iter()
+            .flat_map(|s| s.passages.iter().map(|p| p.speaker.as_str()))
+            .collect();
+        let mut lines: Vec<String> = Vec::new();
+        for (n, source) in sources.iter().enumerate() {
+            if sources.len() > 1 {
+                lines.push(format!("Recording {} of {}:", n + 1, sources.len()));
+            }
+            for p in &source.passages {
+                let who = if speakers.len() > 1 && !p.speaker.is_empty() {
+                    format!("{}: ", p.speaker)
+                } else {
+                    String::new()
+                };
+                lines.push(format!("[{}] {who}{}", clock(p.start_secs), p.text.trim()));
+            }
+            for p in &source.points {
+                lines.push(format!(
+                    "[{}] (the user typed) {}",
+                    clock(p.at_secs),
+                    p.text.trim()
+                ));
+            }
+        }
+        if lines.iter().all(|l| l.starts_with("Recording ")) {
+            return fail(format!(
+                "\"{}\" was not made from a recording leo kept, so it has no transcript",
+                note.title
+            ));
+        }
+        let size = self.part_chars();
+        let find = call.text("find");
+        let words: Vec<String> = find
+            .to_lowercase()
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|w| w.chars().count() >= 3)
+            .map(str::to_string)
+            .collect();
+        if !words.is_empty() {
+            let mut hits: Vec<(usize, usize)> = lines
+                .iter()
+                .enumerate()
+                .map(|(i, l)| {
+                    let lower = l.to_lowercase();
+                    (
+                        i,
+                        words.iter().filter(|w| lower.contains(w.as_str())).count(),
+                    )
+                })
+                .filter(|(_, score)| *score > 0)
+                .collect();
+            if hits.is_empty() {
+                return Done {
+                    step,
+                    result: format!(
+                        "Nothing in the recording of \"{}\" mentions \"{}\".",
+                        note.title,
+                        clip(&find, 80)
+                    ),
+                    proposal: None,
+                    found: Vec::new(),
+                };
+            }
+            hits.sort_by_key(|(i, score)| (std::cmp::Reverse(*score), *i));
+            let mut keep: Vec<usize> = Vec::new();
+            let mut used = 0;
+            for (i, _) in hits {
+                if used >= size {
+                    break;
+                }
+                used += lines[i].chars().count();
+                keep.push(i);
+            }
+            keep.sort_unstable();
+            let found: Vec<String> = keep.iter().map(|&i| clip(&lines[i], size)).collect();
+            return Done {
+                step: format!(
+                    "Looked for “{}” in the recording of “{}”",
+                    clip(&find, 40),
+                    note.title
+                ),
+                result: format!(
+                    "<transcript note=\"{}\" find=\"{}\">\n{}\n</transcript>",
+                    attribute(&note.title),
+                    attribute(&find),
+                    found.join("\n")
+                ),
+                proposal: None,
+                found: Vec::new(),
+            };
+        }
+        let mut parts: Vec<String> = vec![String::new()];
+        for line in lines {
+            let last = parts.last_mut().expect("one part");
+            if !last.is_empty() && last.chars().count() + line.chars().count() > size {
+                parts.push(String::new());
+            }
+            let last = parts.last_mut().expect("one part");
+            if !last.is_empty() {
+                last.push('\n');
+            }
+            last.push_str(&clip(&line, size));
+        }
+        let total = parts.len();
+        let part = call
+            .text("part")
+            .trim()
+            .parse::<usize>()
+            .unwrap_or(1)
+            .max(1);
+        if part > total {
+            return fail(format!(
+                "the recording of \"{}\" has {total} part{}",
+                note.title,
+                if total == 1 { "" } else { "s" }
+            ));
+        }
+        Done {
+            step,
+            result: format!(
+                "<transcript note=\"{}\" part=\"{part}\" of=\"{total}\">\n{}\n</transcript>",
+                attribute(&note.title),
+                parts[part - 1]
+            ),
+            proposal: None,
+            found: Vec::new(),
+        }
+    }
+
     fn read_document(&self, call: &Call) -> Done {
         let wanted = call.text("document").trim().to_string();
         let fail = |why: String| Done {
@@ -1459,6 +1629,14 @@ impl Desk {
                 }
             }
             "read_document" => self.read_document(call),
+            "read_transcript" => {
+                let wanted = call.text("note");
+                let note = match self.resolve(store, &wanted) {
+                    Ok(note) => note,
+                    Err(why) => return fail(&format!("Looked for “{}”", clip(&wanted, 60)), why),
+                };
+                self.read_transcript(&store.notes_dir, note, call)
+            }
             "connected_notes" => {
                 let wanted = call.text("note");
                 let note = match self.resolve(store, &wanted) {
@@ -1802,7 +1980,7 @@ mod tests {
         assert!(number.contains("must be text in double quotes"));
         let unknown = wrong(serde_json::json!({"name": "delete_note", "note": "n1"}));
         assert!(unknown.contains(
-            "the tools are search_notes, open_note, connected_notes, calculate, ask_user, quiz, look_at_picture, read_document, edit_note, create_note"
+            "the tools are search_notes, open_note, connected_notes, calculate, ask_user, quiz, look_at_picture, read_transcript, read_document, edit_note, create_note"
         ));
         assert_eq!(
             check(&Call {

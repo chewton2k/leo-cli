@@ -79,3 +79,43 @@ fn retained_sources_are_editable_with_conflict_protection_and_regeneration_is_a_
     })
     .unwrap();
 }
+
+#[test]
+fn felix_reads_and_searches_the_recording_a_note_was_made_from() {
+    let (state, _d, ids) = state_with(&[("Graphs", "cs130"), ("Plain", "")]);
+    store_now(&state, |store| {
+        leo_core::recording::save(&store.notes_dir, &ids[0], &source("session-1234")).unwrap();
+        let call = |args: serde_json::Value| crate::tools::Call {
+            name: "read_transcript".into(),
+            args,
+        };
+        let cache = crate::graph::Cache::default();
+        let mut desk = crate::tools::Desk::new(vec![], crate::chat::ROOM)
+            .with_access(crate::tools::Access::Read);
+        let all = desk.run(store, &cache, &call(serde_json::json!({"note": "Graphs"})));
+        assert_eq!(all.step, "Read the recording of “Graphs”");
+        assert!(all.result.contains("part=\"1\" of=\"1\""), "{}", all.result);
+        assert!(all.result.contains("[0:00] Dijkstra finds shortest paths"));
+        assert!(all
+            .result
+            .contains("[0:05] (the user typed) explain a priority queue"));
+        let found = desk.run(
+            store,
+            &cache,
+            &call(serde_json::json!({"note": "Graphs", "find": "priority"})),
+        );
+        assert!(found.result.contains("priority queue") && !found.result.contains("Dijkstra"));
+        let none = desk.run(
+            store,
+            &cache,
+            &call(serde_json::json!({"note": "Graphs", "find": "homework"})),
+        );
+        assert!(none.result.starts_with("Nothing in the recording"));
+        let plain = desk.run(store, &cache, &call(serde_json::json!({"note": "Plain"})));
+        assert!(plain.result.contains("was not made from a recording"));
+        assert!(crate::tools::has_transcript(&store.notes_dir, &ids[0]));
+        assert!(!crate::tools::has_transcript(&store.notes_dir, &ids[1]));
+        Ok(())
+    })
+    .unwrap();
+}

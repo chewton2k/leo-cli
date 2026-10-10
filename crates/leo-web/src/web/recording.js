@@ -183,6 +183,13 @@
       sending: false,
       lost: 0,
       deviceLost:false,
+      showHeard: (() => {
+        try {
+          return root.localStorage.getItem('leo-rec-heard') === 'open';
+        } catch (e) {
+          return false;
+        }
+      })(),
       wantsDraft: null,
       wantsState: '',
       wantsTimer: 0,
@@ -608,9 +615,12 @@
           ${warnings}
           ${s.pending ? `<p class="hint">${s.pending} audio chunks kept on this device, waiting to reach Leo.</p>` : ''}
         </section>
-        <section class="set-card">
-          <header><h3>Live transcript</h3></header>
-          <div class="rec-transcript" id="rec-transcript" aria-live="polite">${transcript}</div>
+        <section class="set-card rec-notepad">
+          <header><h3>Your notes</h3></header>
+          <p class="hint">Type what matters, a line at a time. Your words go into the note exactly as you write them, and leo fills in the rest from the recording.</p>
+          ${points}
+          <div class="rec-point"><textarea id="rec-point-text" rows="4" placeholder="Type a point and press Enter"></textarea><button class="btn plain" data-action="rec-point">Add</button></div>
+          <button class="btn plain rec-slide" data-action="rec-snapshot">Capture a slide</button>
         </section>
         <section class="set-card">
           <header><h3>What you want from the notes</h3></header>
@@ -618,13 +628,10 @@
           <textarea id="rec-wants-live" class="rec-wants" rows="2" maxlength="4000" placeholder="For example: focus on what will be on the exam, keep it short">${esc(s.wantsDraft !== null ? s.wantsDraft : v.wants || '')}</textarea>
           <p class="hint rec-wants-state" id="rec-wants-state">${esc(s.wantsState)}</p>
         </section>
-        <section class="set-card">
-          <header><h3>Your points</h3></header>
-          <p class="hint">Jot what matters; it is woven into the notes.</p>
-          <div class="rec-point"><textarea id="rec-point-text" rows="2" placeholder="Jot a point"></textarea><button class="btn plain" data-action="rec-point">Add</button></div>
-          <button class="btn plain" data-action="rec-snapshot">Capture a slide</button>
-          ${points}
-        </section>
+        <details class="set-card rec-heard" id="rec-heard"${s.showHeard ? ' open' : ''}>
+          <summary>Show what’s being heard</summary>
+          <div class="rec-transcript" id="rec-transcript" aria-live="polite">${transcript}</div>
+        </details>
       </div>`;
     }
 
@@ -719,6 +726,17 @@
       }
       else if (v.state === 'writing') box.innerHTML = drawWriting();
       else box.innerHTML = drawFailed();
+      const heard = box.querySelector('#rec-heard');
+      if (heard) {
+        heard.addEventListener('toggle', () => {
+          s.showHeard = heard.open;
+          try {
+            root.localStorage.setItem('leo-rec-heard', heard.open ? 'open' : 'shut');
+          } catch (e) {}
+          const text = heard.querySelector('#rec-transcript');
+          if (heard.open && text) text.scrollTop = text.scrollHeight;
+        });
+      }
       const wantsArea = box.querySelector('#rec-wants-live');
       if (wantsArea) {
         if (wantsKeep) {

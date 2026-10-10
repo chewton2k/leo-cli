@@ -44,8 +44,14 @@ the system message, material in the user message inside `<transcript>`,
 restated after the transcript. The note prompts ask the model to fix clearly
 misheard terms, and to fill gaps from its own knowledge where the recording or
 speaker was unclear (the user wants this kept). Typed points (`POINTS_RULE`)
-are woven into the sections they belong to: no section of their own, no times
-(the user asked for this). Long recordings send each part the points typed
+go into the sections they belong to in the user's exact words (copied as
+written, the explanation built around them; 2026-10-10, from Granola): no section
+of their own, no times (the user asked for this). Measured on Codex and Claude
+Code: the old "your own words or theirs" rule reworded all three test points,
+the new one kept all three (`the_real_writing_ai_keeps_typed_points_word_for_word`,
+ignored; run with a LEO_HOME that has a writing AI). `long::points_kept` puts back
+any point the reply lost (85% of its words, or the whole point, must be there)
+under `## Your points, as you wrote them`. Long recordings send each part the points typed
 during it (`long::points_for`: every point to exactly one part); only a
 fallback with no AI answer lists them, as a plain `## Key points`. Replies go through `clean_reply` (outer code fence, "Here are your
 notes:", "Let me know…") and `split_title_body` (strips "Title:", `#`, bold,

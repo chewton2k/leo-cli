@@ -134,7 +134,7 @@ pub fn structure_recording(
                 } else {
                     title
                 },
-                body,
+                body: points_kept(body, points),
                 problems,
             },
             Ok(_) => Structured {
@@ -217,7 +217,7 @@ pub fn structure_recording(
         body.push_str(&joined);
         return Structured {
             title: fallback_title.to_string(),
-            body,
+            body: points_kept(body, points),
             problems,
         };
     }
@@ -267,9 +267,49 @@ pub fn structure_recording(
     body.push_str(&joined);
     Structured {
         title,
-        body,
+        body: points_kept(body, points),
         problems,
     }
+}
+
+const KEPT_WORDS: f32 = 0.85;
+pub const OWN_WORDS: &str = "## Your points, as you wrote them";
+
+fn plain_words(text: &str) -> Vec<String> {
+    text.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn point_kept(
+    point: &str,
+    body_words: &std::collections::HashSet<String>,
+    body_flat: &str,
+) -> bool {
+    let words = plain_words(point);
+    if words.is_empty() || body_flat.contains(&words.join(" ")) {
+        return true;
+    }
+    let found = words.iter().filter(|w| body_words.contains(*w)).count();
+    found as f32 / words.len() as f32 >= KEPT_WORDS
+}
+
+pub fn points_kept(body: String, points: &[Jotted]) -> String {
+    let body_list = plain_words(&body);
+    let body_flat = body_list.join(" ");
+    let body_words: std::collections::HashSet<String> = body_list.into_iter().collect();
+    let lost: Vec<&str> = points
+        .iter()
+        .map(|p| p.text.trim())
+        .filter(|t| !t.is_empty() && !point_kept(t, &body_words, &body_flat))
+        .collect();
+    if lost.is_empty() {
+        return body;
+    }
+    let list: String = lost.iter().map(|t| format!("- {t}\n")).collect();
+    format!("{}\n\n{OWN_WORDS}\n\n{list}", body.trim_end())
 }
 
 #[cfg(test)]
@@ -329,6 +369,77 @@ mod tests {
         assert!(p
             .user
             .ends_with("Follow what the user wants from these notes."));
+    }
+
+    #[test]
+    fn typed_points_survive_word_for_word_and_a_lost_one_is_put_back() {
+        let points = vec![
+            Jotted {
+                at_secs: 5,
+                text: "exam: Dijkstra fails with negative edges!".into(),
+            },
+            Jotted {
+                at_secs: 9,
+                text: "ask about office hours".into(),
+            },
+            Jotted {
+                at_secs: 12,
+                text: "heap gives O(log n) extract min".into(),
+            },
+        ];
+        let body = "## Shortest paths\n- Exam: Dijkstra fails with negative edges!\n\nWhy: it never revisits a settled node.\n\n## Heaps\n- heap gives O(log n) extract-min, which makes Dijkstra fast.".to_string();
+        let kept = points_kept(body.clone(), &points);
+        assert!(kept.starts_with(&body));
+        assert!(kept.ends_with(&format!("{OWN_WORDS}\n\n- ask about office hours\n")));
+        assert!(
+            !kept.contains("- exam: Dijkstra"),
+            "a point kept with different capitals is not repeated"
+        );
+        assert_eq!(
+            points_kept(kept.clone(), &points),
+            kept,
+            "nothing is added twice"
+        );
+        assert_eq!(points_kept(body.clone(), &[]), body);
+        assert!(chat::build_structure_prompt_with("words", &points)
+            .system
+            .contains("in the listener's exact words"));
+    }
+
+    #[test]
+    #[ignore = "asks the real writing AI set up in LEO_HOME"]
+    fn the_real_writing_ai_keeps_typed_points_word_for_word() {
+        let transcript = "Okay so today we're doing shortest paths. Dijkstra's algorithm keeps a priority queue of vertices keyed by their tentative distance, and each time it pulls out the closest one and relaxes its edges. Now this only works when edges are non negative, because once a vertex is settled we never look at it again. With a negative edge you could find a cheaper path later and Dijkstra would miss it, so you'd use Bellman-Ford instead, which relaxes every edge V minus one times. For the midterm, it's closed book. Running time with a binary heap is O of E log V. There's a fancier heap, the Fibonacci heap, that gets it down to E plus V log V.";
+        let points = vec![
+            Jotted {
+                at_secs: 40,
+                text: "dijkstra != neg edges (settled = final)".into(),
+            },
+            Jotted {
+                at_secs: 80,
+                text: "prof: NO calculators on midterm 2!!".into(),
+            },
+            Jotted {
+                at_secs: 95,
+                text: "look up fib heap later".into(),
+            },
+        ];
+        let reply = crate::ai::chat_outcome(
+            chat::build_structure_prompt_with(transcript, &points),
+            crate::ai::STRUCTURE_MAX_TOKENS,
+        )
+        .expect("the writing AI answered")
+        .value;
+        println!("{reply}");
+        let flat = |t: &str| t.split_whitespace().collect::<Vec<_>>().join(" ");
+        let body = flat(&reply);
+        let missing: Vec<&str> = points
+            .iter()
+            .map(|p| p.text.as_str())
+            .filter(|t| !body.contains(&flat(t)))
+            .collect();
+        println!("MISSING {missing:?}");
+        assert!(missing.is_empty(), "reworded or dropped: {missing:?}");
     }
 
     #[test]
