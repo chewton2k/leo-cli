@@ -20,6 +20,13 @@ Verify with `cargo test` at the root (runs every crate) and
 `cargo clippy --workspace --all-targets`. Do not run `cargo build` or
 `cargo install` unless asked.
 
+Test once per batch, not per feature: build out every feature asked for,
+using only quick targeted checks along the way (`cargo check`, one crate's
+or one test's run, a single Playwright `-g` test). Then run the full gate
+once (fmt, clippy, `cargo test`, the Playwright suite in
+`crates/leo-web/tests/browser`), commit, push, and check CI once. Never push
+without the gate passing.
+
 Two entry modes share one command vocabulary and one `Store`:
 
 1. **TUI** (`leo-tui`) — `leo` with no arguments in a TTY. Three panes over a
