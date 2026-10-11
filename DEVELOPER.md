@@ -12,9 +12,17 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all --check
 ```
 
-CI (`.github/workflows/ci.yml`) runs the same checks on Linux and macOS with SoX
-installed, plus `cargo check` on Rust 1.88. Check a run from the terminal, since
-`gh` is not installed here:
+CI (`.github/workflows/ci.yml`) runs the same checks on Linux, macOS and
+Windows, plus `cargo check` on Rust 1.88, and the browser suite as two parallel
+jobs (desktop and phone), each building leo and starting its own server. It
+tests only what a push can affect: `scripts/ci-scope.sh` compares with the last
+release tag (a pull request with its base), so changes to the page alone run
+`cargo test -p leo-web` on Linux and the browser jobs, Rust that the web server
+never runs (the TUI, root `tests/`, install scripts) skips the browser jobs, and
+docs alone run only lint. Comparing with the last release rather than the
+previous push means a cancelled or failed run's changes are still tested. A
+newer push cancels the older run's jobs, but never a release in progress.
+Check a run from the terminal, since `gh` is not installed here:
 
 ```sh
 curl -s "https://api.github.com/repos/chewton2k/leo-cli/actions/runs?per_page=3" \

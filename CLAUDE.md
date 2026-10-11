@@ -26,7 +26,8 @@ workspace-wide `cargo test`, no full Playwright run; the user's call,
 checks (`cargo check`, `cargo fmt`, `cargo clippy`, one crate's or one
 test's run, a single Playwright `-g` test, one node test file), then commit,
 push, and let CI run the full suite. Check CI once; fix a red run with a
-follow-up push.
+follow-up push. CI tests only what changed since the last release tag
+(`scripts/ci-scope.sh`; DEVELOPER.md says what each kind of change runs).
 
 Two entry modes share one command vocabulary and one `Store`:
 

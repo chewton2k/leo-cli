@@ -123,8 +123,9 @@ Before opening a pull request:
       screen (`crates/leo-tui/src/view/help.rs`) and the manual note
       (`crates/leo-core/src/manual.rs`) say so
 
-CI runs the tests on Linux and macOS, formatting, clippy, and a build on the
-minimum supported Rust version (1.88).
+CI runs the tests on Linux, macOS and Windows, the browser tests, formatting,
+clippy, and a build on the minimum supported Rust version (1.88), skipping what
+a change cannot affect.
 
 ## Releases
 

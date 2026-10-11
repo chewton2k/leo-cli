@@ -6,10 +6,6 @@ on:
   pull_request:
   workflow_dispatch:
 
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 permissions:
   contents: read
 
@@ -24,12 +20,41 @@ env:
   GIT_COMMITTER_EMAIL: ci@example.com
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.scope.outputs.rust }}
+      browser: ${{ steps.scope.outputs.browser }}
+      systems: ${{ steps.scope.outputs.systems }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: scope
+        name: What this push can affect
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          case "$EVENT" in
+            push) base=$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD 2>/dev/null || true) ;;
+            pull_request) base=$PR_BASE ;;
+            *) base= ;;
+          esac
+          echo "Compared with ${base:-nothing (testing everything)}"
+          sh scripts/ci-scope.sh "$base" | tee -a "$GITHUB_OUTPUT"
+
   test:
     name: test (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.systems != '[]'
+    concurrency:
+      group: ci-test-${{ matrix.os }}-${{ github.ref }}
+      cancel-in-progress: true
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: ${{ fromJSON(needs.changes.outputs.systems) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -47,39 +72,16 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
       - name: Unit, integration and end-to-end tests
         shell: bash
+        env:
+          RUST_CHANGED: ${{ needs.changes.outputs.rust }}
         run: |
           set -o pipefail
-          if ! cargo test --workspace --locked --no-fail-fast 2>&1 | tee test.log; then
+          scope=--workspace
+          [ "$RUST_CHANGED" = true ] || scope="-p leo-web"
+          if ! cargo test $scope --locked --no-fail-fast 2>&1 | tee test.log; then
             grep -E "panicked|FAILED|^error|^failures:|assertion|left:|right:|undefined reference|could not" test.log | head -40 | while IFS= read -r line; do echo "::error::$line"; done
             exit 1
           fi
-
-      - uses: actions/setup-node@v4
-        if: runner.os == 'Linux'
-        with:
-          node-version: '24'
-      - uses: pnpm/action-setup@v4
-        if: runner.os == 'Linux'
-        with:
-          version: '12.9.1'
-      - name: Browser integration tests
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          pnpm --dir crates/leo-web/tests/browser install --frozen-lockfile
-          pnpm --dir crates/leo-web/tests/browser exec playwright install --with-deps chromium
-          pnpm --dir crates/leo-web/tests/browser test
-
-      - name: Browser previews and failure traces
-        if: always() && runner.os == 'Linux'
-        uses: actions/upload-artifact@v4
-        with:
-          name: browser-previews
-          path: |
-            crates/leo-web/tests/browser/test-results/
-            crates/leo-web/tests/browser/playwright-report/
-          if-no-files-found: ignore
-          retention-days: 14
 
       - name: Install and run on Windows
         if: runner.os == 'Windows'
@@ -122,8 +124,60 @@ jobs:
           if ($report -notmatch 'recording') { Write-Host "::error::leo doctor printed no report: $report"; exit 1 }
           exit 0
 
+  browser:
+    name: browser (${{ matrix.project }})
+    needs: changes
+    if: needs.changes.outputs.browser == 'true'
+    concurrency:
+      group: ci-browser-${{ matrix.project }}-${{ github.ref }}
+      cancel-in-progress: true
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [desktop, phone]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Drop a partly restored speech library
+        shell: bash
+        run: |
+          for lib in target/sherpa-onnx-prebuilt/*/lib target/*/sherpa-onnx-prebuilt/*/lib; do
+            [ -d "$lib" ] || continue
+            ls "$lib" | grep -q 'sherpa-onnx-c-api' || rm -rf "$(dirname "$lib")"
+          done
+      - name: ALSA headers
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+      - name: Build leo
+        run: cargo build --locked --bin leo
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '12.9.1'
+      - name: Browser integration tests (${{ matrix.project }})
+        run: |
+          pnpm --dir crates/leo-web/tests/browser install --frozen-lockfile
+          pnpm --dir crates/leo-web/tests/browser exec playwright install --with-deps chromium
+          pnpm --dir crates/leo-web/tests/browser exec playwright test --project=${{ matrix.project }}
+      - name: Browser previews and failure traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-previews-${{ matrix.project }}
+          path: |
+            crates/leo-web/tests/browser/test-results/
+            crates/leo-web/tests/browser/playwright-report/
+          if-no-files-found: ignore
+          retention-days: 14
+
   lint:
     runs-on: ubuntu-latest
+    concurrency:
+      group: ci-lint-${{ github.ref }}
+      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -147,6 +201,11 @@ jobs:
 
   msrv:
     name: minimum Rust version (1.88)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    concurrency:
+      group: ci-msrv-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -166,6 +225,11 @@ jobs:
 
   targets:
     name: build (${{ matrix.target }})
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    concurrency:
+      group: ci-build-${{ matrix.target }}-${{ github.ref }}
+      cancel-in-progress: true
     strategy:
       fail-fast: false
       matrix:
@@ -196,8 +260,16 @@ jobs:
       - run: cargo build --release --locked --target ${{ matrix.target }}
 
   release:
-    needs: [test, lint, msrv, targets]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [changes, test, browser, lint, msrv, targets]
+    if: >-
+      always()
+      && github.event_name == 'push' && github.ref == 'refs/heads/main'
+      && needs.changes.result == 'success'
+      && !contains(needs.*.result, 'failure')
+      && !contains(needs.*.result, 'cancelled')
+    concurrency:
+      group: release
+      cancel-in-progress: false
     permissions:
       contents: write
     uses: ./.github/workflows/release.yml
