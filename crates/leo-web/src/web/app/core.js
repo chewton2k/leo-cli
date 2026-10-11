@@ -141,8 +141,13 @@ function toast(message, { action, run, bad } = {}) {
     });
   }
   document.body.appendChild(el);
-  toastTimer = setTimeout(() => el.remove(), action ? 6000 : 3500);
+  toastTimer = setTimeout(() => {
+    el.classList.replace('toast', 'toast-gone');
+    setTimeout(() => el.remove(), LEAVE_MS);
+  }, action ? 6000 : 3500);
 }
+
+const LEAVE_MS = 150;
 
 function rel(iso) {
   const then = new Date(iso);

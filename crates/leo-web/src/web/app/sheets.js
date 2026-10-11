@@ -10,7 +10,7 @@ function showLocked() {
 }
 
 function sheet(html) {
-  closeSheet();
+  closeSheet(true);
   const scrim = document.createElement('div');
   scrim.className = 'scrim';
   scrim.innerHTML = `<div class="sheet" role="dialog" aria-modal="true"><div class="grip"></div>${html}</div>`;
@@ -70,9 +70,16 @@ function swipeToClose(panel) {
   panel.addEventListener('touchcancel', reset);
 }
 
-function closeSheet() {
+function closeSheet(now = false) {
   const open = $('.scrim');
-  if (open) open.remove();
+  if (open && now) open.remove();
+  else if (open) {
+    open.classList.replace('scrim', 'scrim-gone');
+    const inner = open.querySelector('.sheet');
+    if (inner) inner.classList.replace('sheet', 'sheet-gone');
+    open.querySelectorAll('[id]').forEach((el) => el.removeAttribute('id'));
+    setTimeout(() => open.remove(), LEAVE_MS);
+  }
   if (state.keepPending) {
     state.keepPending = null;
     if (state.view === 'storage' && state.storage) drawStorage(state.storage);

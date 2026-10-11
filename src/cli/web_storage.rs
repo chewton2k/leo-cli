@@ -95,7 +95,7 @@ fn meaning_model() -> Area {
     let bytes = size_of(&dir);
     Area {
         id: "meaning-model".into(),
-        title: "Model for finding notes by meaning".into(),
+        title: "Embedding model".into(),
         about: "bge-small, which reads your notes on this computer so search and Felix find notes that mean the same thing in other words.".into(),
         path: dir.display().to_string(),
         bytes,

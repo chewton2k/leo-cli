@@ -800,6 +800,16 @@ so the next goes one step further. Study asks mostly free
 response and fill in the blank, multiple choice only when its wrong options
 teach something, and never more than two of one kind in a row.
 
+Motion (subtle, once): a route change marks `entering`; when #app's real
+content first lands (no `.skeleton`), `page-in` fades it and staggers the first
+eight cards (`PAGE_IN_MS`), and the Storage bar wipes in. Redraws never replay
+it. Sheets and toasts ease out (`LEAVE_MS`): a closing sheet becomes
+`.scrim-gone`/`.sheet-gone` and loses its ids, so queries only ever find the live
+one; `sheet()` replaces an open sheet at once. Clicked <details> slide open
+(`just-opened`); cards lift on hover, buttons press in. The chat and Record
+pages get no entrance motion: they redraw too often. Reduced motion turns all
+of it off.
+
 Storage bar: hovering a segment shows a label by the cursor (`#store-tip`: name
 and size), fades the other segments and legend keys, and a click opens that
 area's card; a tap on a phone shows the label for `TIP_FOR` (2.5 s).

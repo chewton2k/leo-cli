@@ -142,7 +142,34 @@ async function checkActivity() {
   if (activity.tasks.length) activity.timer = setTimeout(checkActivity, 1500);
 }
 
+let entering = false;
+let enteredTimer = 0;
+const PAGE_IN_MS = 420;
+const OPEN_MS = 260;
+
+new MutationObserver(() => {
+  if (!entering || app.querySelector('.skeleton')) return;
+  entering = false;
+  app.classList.remove('page-in');
+  void app.offsetWidth;
+  app.classList.add('page-in');
+  clearTimeout(enteredTimer);
+  enteredTimer = setTimeout(() => app.classList.remove('page-in'), PAGE_IN_MS);
+}).observe(app, { childList: true });
+
+document.addEventListener('click', (e) => {
+  const summary = e.target.closest ? e.target.closest('summary') : null;
+  const box = summary && summary.parentElement;
+  if (!box || box.tagName !== 'DETAILS' || box.open) return;
+  requestAnimationFrame(() => {
+    if (!box.open) return;
+    box.classList.add('just-opened');
+    setTimeout(() => box.classList.remove('just-opened'), OPEN_MS);
+  });
+});
+
 async function render() {
+  entering = true;
   const hash = decodeURI(location.hash || '#/');
   const [, kind, rest = ''] = location.hash.match(/^#\/([a-z]*)\/?(.*)$/) || [null, '', ''];
   const arg = decodeURIComponent(rest);
