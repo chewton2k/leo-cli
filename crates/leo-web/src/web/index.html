@@ -976,6 +976,7 @@ body.chat-resizing iframe, body.chat-resizing canvas { pointer-events: none; }
 .set-key-form { display: flex; gap: 8px; }
 .set-key-form input { flex: 1; min-width: 0; font-size: 15px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); }
 .set-key-form input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.set-key-form input.has-key::placeholder { color: var(--text); opacity: 1; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .02em; }
 .set-note { margin: 8px 0 0; font-size: 13.5px; color: var(--muted); }
 .set-note.warn { color: var(--danger); }
 .set-test { display: flex; align-items: center; gap: 10px; margin-top: 12px; }

@@ -1319,7 +1319,12 @@ test.describe('settings', () => {
     await writing.locator('[data-key-input="gemini"]').fill('gm-fake-key-123');
     await writing.locator('[data-action="set-key"]').click();
     await expect(page.locator('.toast')).toContainText('The Gemini key is stored on this computer');
-    await expect(writing).toContainText('Stored on your computer');
+    const stored = writing.locator('[data-key-input="gemini"]');
+    await expect(stored).toHaveValue('');
+    await expect(stored).toHaveAttribute('placeholder', 'gm-…••••••••');
+    await stored.fill('gm-typed-but-never-saved');
+    await page.reload();
+    await expect(writing.locator('[data-key-input="gemini"]'), 'an unsaved key changes nothing').toHaveAttribute('placeholder', 'gm-…••••••••');
     await expect(writing.locator('[data-key-input="gemini"]')).toHaveValue('');
     expect(await (await page.request.get('/api/settings')).text()).not.toContain('gm-fake-key-123');
     expect(await page.content()).not.toContain('gm-fake-key-123');

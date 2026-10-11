@@ -107,7 +107,10 @@
   `{set: provider|model|key|auto_push, ...}` returns `{message, settings}` or
   400 `{error}`, POST `/api/settings/test {task}`. Keys are write-only and only
   accepted when `secure_request` (X-Forwarded-Proto https, or a localhost /
-  127.0.0.1 / [::1] Host).
+  127.0.0.1 / [::1] Host). A stored key shows in its box as the placeholder
+  `key.hint` (`secret::masked`: only the kind prefix such as `sk-proj-`, and
+  only when it is at most a quarter of the key, then dots); typing hides it,
+  and nothing changes until Save or Enter.
 - Uploads: POST `/api/import {directory, title?, files:[{name,type,data base64}]}`
   (body limit `IMPORT_BYTES`) starts a thread running the `Importer` from
   `src/cli/mod.rs` (`leo_services::import::import`) and returns `{id}`; GET

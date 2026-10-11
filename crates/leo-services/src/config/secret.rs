@@ -111,6 +111,19 @@ pub fn redact(secret: &str) -> String {
     format!("…{tail}")
 }
 
+pub fn masked(secret: &str) -> String {
+    let secret = secret.trim();
+    let quarter = secret.chars().count() / 4;
+    let head: String = secret.chars().take(8).collect();
+    let shown = [head.rfind('-'), head.find('-')]
+        .into_iter()
+        .flatten()
+        .map(|i| &head[..=i])
+        .find(|prefix| prefix.chars().count() <= quarter)
+        .unwrap_or("");
+    format!("{shown}…••••••••")
+}
+
 /// The key leo stored for this provider, and nothing else: an environment
 /// variable with the same name is never read, so a key left over in a shell
 /// profile or another project's `.env` cannot quietly replace the one the user
@@ -372,6 +385,27 @@ mod tests {
         // Shorter than the 8-char floor: full redaction, no partial disclosure.
         assert_eq!(redact("abc"), "…");
         assert_eq!(redact(""), "…");
+    }
+
+    #[test]
+    fn masked_shows_only_the_kind_of_key() {
+        assert_eq!(
+            masked("sk-proj-abcdefghijklmnopqrstuvwxyz0123456789"),
+            "sk-proj-…••••••••"
+        );
+        assert_eq!(
+            masked("sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123"),
+            "sk-ant-…••••••••"
+        );
+        assert_eq!(
+            masked("xai-abcdefghijklmnopqrstuvwxyz0123456789"),
+            "xai-…••••••••"
+        );
+        assert_eq!(masked("AIzaSyAbcdefghijklmnopqrstuvwxyz01234"), "…••••••••");
+        assert_eq!(masked("gm-fake-key-123"), "gm-…••••••••");
+        assert_eq!(masked("ab-c"), "…••••••••");
+        assert_eq!(masked(""), "…••••••••");
+        assert!(!masked("sk-proj-abcdefghijklmnopqrstuvwxyz0123456789").contains("abcd"));
     }
 
     #[test]

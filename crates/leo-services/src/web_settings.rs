@@ -7,7 +7,7 @@ use toml_edit::{DocumentMut, Item, Table};
 use crate::ai::provider::agent_cli::{self, Agent};
 use crate::config::choice::{self, Local};
 use crate::config::edit::{self, Task};
-use crate::config::secret::SecretStore;
+use crate::config::secret::{self, SecretStore};
 use crate::config::sync::AutoPush;
 use crate::config::Config;
 
@@ -83,7 +83,12 @@ fn task_view(
     let key = match (pc, agent) {
         (Some(pc), None) if pc.key_env.is_some() => {
             let account = pc.account(&provider).to_string();
-            let stored = store.has(&account);
+            let hint = store
+                .get(&account)
+                .ok()
+                .flatten()
+                .map(|key| secret::masked(key.as_str()));
+            let stored = hint.is_some();
             let ignored = pc
                 .key_env
                 .as_deref()
@@ -92,6 +97,7 @@ fn task_view(
                 "account": account,
                 "name": chosen.map(|c| c.name).unwrap_or(provider.as_str()),
                 "stored": stored,
+                "hint": hint,
                 "ignored": ignored,
             })
         }
@@ -360,6 +366,7 @@ mod tests {
             .any(|m| m["id"] == "gpt-6-luna" && m["price"].as_str().unwrap().contains('$')));
         assert_eq!(writing["key"]["account"], "openai");
         assert_eq!(writing["key"]["stored"], true);
+        assert_eq!(writing["key"]["hint"], "sk-…••••••••");
         assert_eq!(
             page["tasks"][1]["key"]["account"], "openai",
             "speech shares the OpenAI key"
