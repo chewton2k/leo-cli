@@ -143,6 +143,8 @@ function toast(message, { action, run, bad } = {}) {
   document.body.appendChild(el);
   toastTimer = setTimeout(() => {
     el.classList.replace('toast', 'toast-gone');
+    el.setAttribute('aria-hidden', 'true');
+    el.inert = true;
     setTimeout(() => el.remove(), LEAVE_MS);
   }, action ? 6000 : 3500);
 }
