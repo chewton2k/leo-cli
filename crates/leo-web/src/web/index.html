@@ -795,7 +795,7 @@ body.side-mini .side-nav .side-folder { display: none; }
   .chat-resize::after { content: ""; position: absolute; left: 4px; top: 0; bottom: 0; width: 2px; background: var(--accent); opacity: 0; transition: opacity .15s; }
   .chat-resize:hover::after, .chat-resize:focus-visible::after, body.chat-resizing .chat-resize::after { opacity: 1; }
 }
-body.chat-resizing { cursor: col-resize; user-select: none; -webkit-user-select: none; }
+body.chat-resizing { cursor: col-resize; user-select: none; -webkit-user-select: none; transition: none; }
 body.chat-resizing iframe, body.chat-resizing canvas { pointer-events: none; }
 .chat-history-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 14px 10px 10px 16px; }
 .chat-history-head b { font-size: 16px; flex: 1; }

@@ -688,6 +688,7 @@ test.describe('Felix', () => {
     expect(asked[1].messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user']);
     await chat.locator('.msg.leo .cite').first().click();
     await expect(page).toHaveURL(new RegExp(`#/n/${note.id}$`));
+    await expect(chat).not.toHaveClass(/chat-leaving/);
     if (!(await chat.isVisible())) await page.locator('#chat-toggle').click();
     await chat.locator('[data-mode="chat"]').click();
     await expect(chat.locator('.msg'), 'switching style keeps the conversation').toHaveCount(4);
@@ -1099,8 +1100,10 @@ test.describe('Felix', () => {
       await expect(page.locator('#chat-send')).toBeInViewport();
       if (width >= 1200) {
         const panel = await chat.boundingBox();
-        const list = await page.locator('main').boundingBox();
-        expect(list.x + list.width, `the page moves over at ${width}px`).toBeLessThanOrEqual(panel.x + 1);
+        await expect.poll(async () => {
+          const list = await page.locator('main').boundingBox();
+          return list.x + list.width;
+        }, { message: `the page moves over at ${width}px` }).toBeLessThanOrEqual(panel.x + 1);
       }
     }
     await page.locator('#chat [data-chat="close"]').click();
@@ -1674,6 +1677,7 @@ test.describe('readability', () => {
       const problems = {};
       const look = async (name) => {
         await page.waitForTimeout(300);
+        await page.waitForFunction(() => document.getAnimations().every((a) => a.playState !== 'running' || a.effect.getTiming().iterations === Infinity));
         const low = await lowContrast(page);
         if (low.length) problems[name] = low;
       };

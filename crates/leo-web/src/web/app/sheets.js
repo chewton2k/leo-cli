@@ -74,15 +74,23 @@ function closeSheet(now = false) {
   const open = $('.scrim');
   if (open && now) open.remove();
   else if (open) {
-    open.classList.replace('scrim', 'scrim-gone');
-    const inner = open.querySelector('.sheet');
+    const ghost = open.cloneNode(true);
+    const typed = open.querySelectorAll('input, textarea, select');
+    ghost.querySelectorAll('input, textarea, select').forEach((el, i) => {
+      if (typed[i]) el.value = typed[i].value;
+    });
+    ghost.classList.replace('scrim', 'scrim-gone');
+    const inner = ghost.querySelector('.sheet');
     if (inner) inner.classList.replace('sheet', 'sheet-gone');
-    open.setAttribute('aria-hidden', 'true');
-    open.inert = true;
-    for (const el of open.querySelectorAll('*')) {
+    ghost.setAttribute('aria-hidden', 'true');
+    ghost.inert = true;
+    for (const el of [ghost, ...ghost.querySelectorAll('*')]) {
       for (const { name } of [...el.attributes]) if (name === 'id' || name.startsWith('data-')) el.removeAttribute(name);
     }
-    setTimeout(() => open.remove(), LEAVE_MS);
+    const scrolled = open.querySelector('.sheet');
+    open.replaceWith(ghost);
+    if (inner && scrolled) inner.scrollTop = scrolled.scrollTop;
+    setTimeout(() => ghost.remove(), LEAVE_MS);
   }
   if (state.keepPending) {
     state.keepPending = null;
