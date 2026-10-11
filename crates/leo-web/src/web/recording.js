@@ -781,15 +781,6 @@
         });
       }
       if (form) restoreIdleForm(box, form);
-      const kinds = box.querySelector('.rec-kinds');
-      if (kinds && root.leoChat) {
-        const place = () => {
-          const picked = kinds.querySelector('input:checked');
-          root.leoChat.glideTo(kinds, picked ? picked.closest('.rec-kind') : null);
-        };
-        place();
-        kinds.addEventListener('change', place);
-      }
       const event=box.querySelector('#rec-event');
       if (event) {
         event.addEventListener('change', () => {

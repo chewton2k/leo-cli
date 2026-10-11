@@ -1800,8 +1800,8 @@ test.describe('storage', () => {
     const note = await (await page.request.post('/api/notes', { data: { title: `Throwaway ${tag}`, body: 'x' } })).json();
     expect((await page.request.delete(`/api/notes/${note.id}`)).ok()).toBe(true);
 
-    await page.goto('/#/settings');
-    await page.locator('main [data-action="storage"]').click();
+    await page.goto('/');
+    await goPlace(page, 'storage');
     await expect(page).toHaveURL(/#\/settings\/storage$/);
     await expect(page.locator('.store-big')).toContainText(/KB|MB|bytes/);
     const chats = page.locator('details.store-area[data-area="chats"]');

@@ -155,7 +155,7 @@
   `.chat-history` (a column at ≥900 px, remembered in `leo-chat-sidebar`; an
   overlay on phones), grouped by `groups`. Delete asks by turning × into
   Delete.
-- Storage page (`#/settings/storage`, Settings → Advanced): `storage.rs`
+- Storage page (`#/settings/storage`, the sidebar's Storage or the phone menu; Settings has no Advanced section since 2026-10-10): `storage.rs`
   builds `Area`s (id, title, about, path, bytes, items, actions) for notes
   (read-only), trash (empty), chats (selected / older than 30 days / all),
   uploaded originals (selected / whose note is gone), the map cache
@@ -197,7 +197,7 @@
   stops and saves) are fed by the page from any origin; `microphone` and
   `screen` run on the server's devices and need `local_request`. `Source::
   is_sound` (tab, screen) sets the session's screen flag.
-- Advanced page also has: signed-in browsers (GET `/api/sessions`, POST
+- The Storage page also has: signed-in browsers (GET `/api/sessions`, POST
   `/api/sessions/end {handle}|{others:true}`, new link), how long things are
   kept (GET/POST `/api/keep`; a shorter choice confirms first), and a note's
   originals as one zip (GET `/api/notes/{id}/originals.zip`, `zip_download`
@@ -820,23 +820,21 @@ cannot draw (circuits, free-body diagrams, geometry, layouts), and to reuse a
 note's own pictures (uploaded homework figures) by copying their link; quiz
 questions may carry either.
 
-Motion (subtle, once): a route change marks `entering`; when #app's real
-content first lands (no `.skeleton`), `page-in` fades it and staggers the first
-eight cards (`PAGE_IN_MS`), and the Storage bar wipes in. Redraws never replay
-it. Sheets and toasts ease out (`LEAVE_MS`): a closing sheet becomes
-`.scrim-gone`/`.sheet-gone`, inert and aria-hidden, and loses every id and
-`data-*` attribute, so queries and role lookups only ever find the live one (CI
-caught two `[data-action="close"]` buttons when only the ids were dropped); `sheet()` replaces an open sheet at once. Clicked <details> slide open
-(`just-opened`); cards lift on hover, buttons press in. The chat and Record
-pages get no entrance motion: they redraw too often. leo's own menus (model
-picker, Felix's + and access menus, the @ picker) pop from where they open; the
-chat panel slides out on close (`chat-leaving`, `CHAT_LEAVE_MS`) and the page
-beside it widens smoothly; a twisted sidebar folder turns its arrow and slides
-its subfolders in (`side.twisted`). Segmented choices (Record's Microphone /
-Screen / Call, Felix's Chat / Study) slide a `.glider` to the new choice
-(`leoChat.glideTo`); the choices go transparent only while `gliding`, so the
-contrast check always sees their real colours. Native <select> lists are drawn
-by the system and are not animated. Reduced motion turns all of it off.
+Motion (reworked 2026-10-10 after the user found the first pass tacky and slow):
+only what follows a click, quick (`MOTION_MS` 180) and transform, clip or height
+only. No page or card entrance, no storage-bar wipe, no hover lift, no sliding
+glider on segmented choices (Record's kinds and Felix's styles switch at once),
+and the page never animates its padding. `<details>` open and close by sliding
+their height (`events.js` click handler, `slideHeight`/`stopSlide` in `core.js`;
+`.closing` turns the arrow back while it closes, so arrow selectors use
+`[open]:not(.closing)`); sidebar subfolders sit in a `.side-kids` group that
+slides the same way. The model picker unfolds from its button and folds back
+(`unfold`/`fold`). Felix slides fully in from the right and fully out
+(`chat-leaving`, `CHAT_LEAVE_MS` 160), and the page widens only after he is
+gone, so nothing overlaps. Sheets and toasts still ease out (`LEAVE_MS`): a
+closing sheet is replaced by a stripped, inert copy that fades (the real one
+leaves at once, so handlers still read its `data-*`). Reduced motion turns all
+of it off.
 
 Storage bar: hovering a segment shows a label by the cursor (`#store-tip`: name
 and size), fades the other segments and legend keys, and a click opens that

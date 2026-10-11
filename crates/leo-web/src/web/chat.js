@@ -404,32 +404,7 @@
   const FILE_TYPES = '.pdf,.docx,.pptx,.txt,.md,image/*';
   const NOTE_DRAG = 'application/x-leo-note';
 
-  const CHAT_LEAVE_MS = 180;
-  const GLIDE_MS = 260;
-  const gliding = new WeakMap();
-
-  function glideTo(group, item) {
-    if (!group || !item || !item.offsetWidth) return;
-    let glider = group.querySelector(':scope > .glider');
-    const fresh = !glider;
-    if (fresh) {
-      glider = root.document.createElement('span');
-      glider.className = 'glider instant';
-      glider.setAttribute('aria-hidden', 'true');
-      group.prepend(glider);
-      group.classList.add('glides');
-    }
-    glider.style.width = `${item.offsetWidth}px`;
-    glider.style.height = `${item.offsetHeight}px`;
-    const to = `translate(${item.offsetLeft}px, ${item.offsetTop}px)`;
-    if (!fresh && glider.style.transform !== to) {
-      group.classList.add('gliding');
-      clearTimeout(gliding.get(group));
-      gliding.set(group, setTimeout(() => group.classList.remove('gliding'), GLIDE_MS));
-    }
-    glider.style.transform = to;
-    if (fresh) requestAnimationFrame(() => glider.classList.remove('instant'));
-  }
+  const CHAT_LEAVE_MS = 160;
 
   function create({ render, escape, onOpen = () => {}, onOriginal = () => {}, storage = root.localStorage, prepare = null, notify = () => {}, onSaved = () => {}, onChanged = () => {}, onUndone = () => {}, onToggle = () => {} }) {
     const saved = load(storage);
@@ -1102,7 +1077,6 @@
         b.classList.toggle('on', on);
         b.setAttribute('aria-selected', String(on));
       }
-      requestAnimationFrame(() => glideTo(panel.querySelector('.chat-modes'), panel.querySelector('.chat-mode.on')));
       input.placeholder = state.mode === 'study' ? 'Answer, or ask for a question…' : 'Message Felix, or type @ to add a note…';
     }
 
@@ -1796,20 +1770,25 @@
       const was = state.open;
       state.open = force === undefined ? !state.open : force;
       clearTimeout(leaving);
+      const still = root.matchMedia && root.matchMedia('(prefers-reduced-motion: reduce)').matches;
       if (state.open) {
         panel.classList.remove('chat-leaving');
         panel.hidden = false;
-      } else if (was && !panel.hidden) {
+        document.body.classList.add('chat-open');
+        onToggle(true);
+      } else if (was && !panel.hidden && !still) {
         panel.classList.add('chat-leaving');
         leaving = setTimeout(() => {
           panel.hidden = true;
           panel.classList.remove('chat-leaving');
+          document.body.classList.remove('chat-open');
+          onToggle(false);
         }, CHAT_LEAVE_MS);
       } else {
         panel.hidden = true;
+        document.body.classList.remove('chat-open');
+        onToggle(false);
       }
-      document.body.classList.toggle('chat-open', state.open);
-      onToggle(state.open);
       if (state.open) {
         panel.classList.toggle('with-history', sidebarOpen());
         if (sidebarOpen()) loadChats();
@@ -2077,5 +2056,5 @@
     };
   }
 
-  root.leoChat = { glideTo, historyText, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS };
+  root.leoChat = { historyText, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS };
 })(typeof window !== 'undefined' ? window : globalThis);

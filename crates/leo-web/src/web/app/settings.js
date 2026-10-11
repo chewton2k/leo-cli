@@ -128,7 +128,7 @@ function modelPicker(t) {
 function closePickers(except) {
   for (const menu of app.querySelectorAll('.picker-menu')) {
     if (menu === except) continue;
-    menu.hidden = true;
+    fold(menu);
     const button = menu.parentElement.querySelector('.picker-button');
     if (button) button.setAttribute('aria-expanded', 'false');
   }
@@ -137,8 +137,10 @@ function closePickers(except) {
 function togglePicker(el) {
   const menu = el.parentElement.querySelector('.picker-menu');
   closePickers(menu);
-  menu.hidden = !menu.hidden;
-  el.setAttribute('aria-expanded', String(!menu.hidden));
+  const opening = menu.hidden || Boolean(menu.dataset.folding);
+  if (opening) unfold(menu);
+  else fold(menu);
+  el.setAttribute('aria-expanded', String(opening));
 }
 
 document.addEventListener('click', (e) => {
@@ -197,10 +199,6 @@ function drawSettings(page) {
       <div class="set-row column"><span class="set-label">Notes</span><code class="set-path">${esc(page.paths.notes || '')}</code></div>
       <div class="set-row column"><span class="set-label">Settings file</span><code class="set-path">${esc(page.paths.config || '')}</code></div>
       <p class="hint">Changes here save straight away and are the same settings as :settings in leo. Keys are kept in a file only your account can read, and are never shown again.</p>
-    </section>
-    <section class="set-card">
-      <header><h3>Advanced</h3></header>
-      <button class="list-row set-advanced" data-action="storage">${ICON.folder}<span class="grow">Storage and data<span class="sub">See what leo keeps on this computer, how much space it takes, and delete what you no longer need</span></span>${ICON.chevron}</button>
     </section>
   </div>`;
 }

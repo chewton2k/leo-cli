@@ -150,6 +150,65 @@ function toast(message, { action, run, bad } = {}) {
 }
 
 const LEAVE_MS = 150;
+const MOTION_MS = 180;
+const EASE_OUT = 'cubic-bezier(.2, .8, .2, 1)';
+const moving = new WeakMap();
+
+function stillMotion() {
+  return matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+function stopSlide(el) {
+  const run = moving.get(el);
+  if (!run) return;
+  moving.delete(el);
+  run.onfinish = null;
+  run.cancel();
+  el.style.overflow = '';
+}
+
+function slideHeight(el, from, to, then) {
+  stopSlide(el);
+  if (stillMotion() || Math.abs(from - to) < 1) {
+    if (then) then();
+    return;
+  }
+  el.style.overflow = 'hidden';
+  const run = el.animate([{ height: `${from}px` }, { height: `${to}px` }], { duration: MOTION_MS, easing: EASE_OUT });
+  moving.set(el, run);
+  run.onfinish = () => {
+    moving.delete(el);
+    el.style.overflow = '';
+    if (then) then();
+  };
+}
+
+function unfold(menu) {
+  stopSlide(menu);
+  menu.hidden = false;
+  if (stillMotion()) return;
+  const run = menu.animate([{ clipPath: 'inset(0 0 100% 0)', transform: 'translateY(-4px)' }, { clipPath: 'inset(0 0 0 0)', transform: 'none' }], { duration: MOTION_MS, easing: EASE_OUT });
+  moving.set(menu, run);
+  run.onfinish = () => moving.delete(menu);
+}
+
+function fold(menu) {
+  if (menu.hidden || menu.dataset.folding) return;
+  stopSlide(menu);
+  if (stillMotion()) {
+    menu.hidden = true;
+    return;
+  }
+  menu.dataset.folding = '1';
+  const run = menu.animate([{ clipPath: 'inset(0 0 0 0)', opacity: 1 }, { clipPath: 'inset(0 0 100% 0)', opacity: 0 }], { duration: 140, easing: 'cubic-bezier(.4, 0, 1, 1)' });
+  moving.set(menu, run);
+  run.onfinish = () => {
+    moving.delete(menu);
+    delete menu.dataset.folding;
+    menu.hidden = true;
+  };
+  run.oncancel = () => delete menu.dataset.folding;
+}
 
 function rel(iso) {
   const then = new Date(iso);

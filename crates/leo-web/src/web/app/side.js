@@ -94,7 +94,7 @@ function folderTree(here) {
   });
   const rows = [];
   const twisted = side.twisted;
-  const walk = (parent, depth, fresh) => {
+  const walk = (parent, depth) => {
     for (const d of children(parent)) {
       const kids = side.folders.some((k) => k.name.startsWith(`${d.name}/`) && paths.has(k.name));
       const open = kids && folderShown(d.name);
@@ -104,17 +104,29 @@ function folderTree(here) {
       const toggle = kids
         ? `<button class="side-twist${shown ? ' open' : ''}" data-action="side-twist" data-dir="${esc(d.name)}" aria-expanded="${open}" aria-label="${open ? 'Close' : 'Open'} ${esc(name)}">${ICON.chevron}</button>`
         : '<span class="side-twist none"></span>';
-      rows.push(`<div class="side-folder${on ? ' on' : ''}${fresh ? ' side-in' : ''}" style="--depth:${depth}">${toggle}<button class="side-row" data-action="open-folder" data-dir="${esc(d.name)}" draggable="true" title="${esc(d.name)}"${on ? ' aria-current="page"' : ''}>${ICON.folder}<span class="side-label">${esc(name)}</span>${d.notes ? `<span class="side-count side-label">${d.notes}</span>` : ''}</button><button class="side-add side-sub" data-action="new-folder" data-parent="${esc(d.name)}" aria-label="New folder in ${esc(name)}" title="New folder in ${esc(name)}">${ICON.plus}</button></div>`);
-      if (open) walk(d.name, depth + 1, fresh || (twisted && twisted.path === d.name));
+      rows.push(`<div class="side-folder${on ? ' on' : ''}" style="--depth:${depth}">${toggle}<button class="side-row" data-action="open-folder" data-dir="${esc(d.name)}" draggable="true" title="${esc(d.name)}"${on ? ' aria-current="page"' : ''}>${ICON.folder}<span class="side-label">${esc(name)}</span>${d.notes ? `<span class="side-count side-label">${d.notes}</span>` : ''}</button><button class="side-add side-sub" data-action="new-folder" data-parent="${esc(d.name)}" aria-label="New folder in ${esc(name)}" title="New folder in ${esc(name)}">${ICON.plus}</button></div>`);
+      if (open) {
+        rows.push(`<div class="side-kids" data-kids="${esc(d.name)}">`);
+        walk(d.name, depth + 1);
+        rows.push('</div>');
+      }
     }
   };
-  walk('', 0, false);
+  walk('', 0);
   return rows.join('');
 }
 
+function sideKids(path) {
+  return [...document.querySelectorAll('#side .side-kids')].find((k) => k.dataset.kids === path) || null;
+}
+
+function sideArrow(path) {
+  return [...document.querySelectorAll('#side .side-twist')].find((b) => b.dataset.dir === path) || null;
+}
+
 function twistFolder(path) {
-  side.twisted = { path, was: folderShown(path) };
-  if (folderShown(path)) {
+  const was = folderShown(path);
+  if (was) {
     side.open.delete(path);
     side.shut.add(path);
   } else {
@@ -122,12 +134,21 @@ function twistFolder(path) {
     side.shut.delete(path);
   }
   keepOpenFolders();
+  const kids = sideKids(path);
+  if (was && kids) {
+    const arrow = sideArrow(path);
+    if (arrow) arrow.classList.remove('open');
+    slideHeight(kids, kids.getBoundingClientRect().height, 0, drawSide);
+    return;
+  }
+  side.twisted = { path, was };
   drawSide();
-  const twisted = side.twisted;
   side.twisted = null;
+  const grown = sideKids(path);
+  if (grown) slideHeight(grown, 0, grown.getBoundingClientRect().height);
   requestAnimationFrame(() => {
-    const arrow = [...document.querySelectorAll('#side .side-twist')].find((b) => b.dataset.dir === twisted.path);
-    if (arrow) arrow.classList.toggle('open', !twisted.was);
+    const arrow = sideArrow(path);
+    if (arrow) arrow.classList.toggle('open', !was);
   });
 }
 

@@ -142,34 +142,39 @@ async function checkActivity() {
   if (activity.tasks.length) activity.timer = setTimeout(checkActivity, 1500);
 }
 
-let entering = false;
-let enteredTimer = 0;
-const PAGE_IN_MS = 420;
-const OPEN_MS = 260;
-
-new MutationObserver(() => {
-  if (!entering || app.querySelector('.skeleton')) return;
-  entering = false;
-  app.classList.remove('page-in');
-  void app.offsetWidth;
-  app.classList.add('page-in');
-  clearTimeout(enteredTimer);
-  enteredTimer = setTimeout(() => app.classList.remove('page-in'), PAGE_IN_MS);
-}).observe(app, { childList: true });
+function closedHeight(box, summary) {
+  const outer = getComputedStyle(box);
+  const inner = getComputedStyle(summary);
+  return summary.getBoundingClientRect().height
+    + parseFloat(inner.marginTop) + parseFloat(inner.marginBottom)
+    + parseFloat(outer.paddingTop) + parseFloat(outer.paddingBottom)
+    + parseFloat(outer.borderTopWidth) + parseFloat(outer.borderBottomWidth);
+}
 
 document.addEventListener('click', (e) => {
+  if (e.defaultPrevented || e.button !== 0 || stillMotion()) return;
   const summary = e.target.closest ? e.target.closest('summary') : null;
   const box = summary && summary.parentElement;
-  if (!box || box.tagName !== 'DETAILS' || box.open) return;
-  requestAnimationFrame(() => {
-    if (!box.open) return;
-    box.classList.add('just-opened');
-    setTimeout(() => box.classList.remove('just-opened'), OPEN_MS);
-  });
+  if (!box || box.tagName !== 'DETAILS' || box.querySelector(':scope > summary') !== summary) return;
+  const control = e.target.closest('a, button, input, select, textarea, label');
+  if (control && control !== summary && summary.contains(control)) return;
+  e.preventDefault();
+  const from = box.getBoundingClientRect().height;
+  stopSlide(box);
+  if (box.open && !box.classList.contains('closing')) {
+    box.classList.add('closing');
+    slideHeight(box, from, closedHeight(box, summary), () => {
+      box.classList.remove('closing');
+      box.open = false;
+    });
+  } else {
+    box.classList.remove('closing');
+    box.open = true;
+    slideHeight(box, from, box.getBoundingClientRect().height);
+  }
 });
 
 async function render() {
-  entering = true;
   const hash = decodeURI(location.hash || '#/');
   const [, kind, rest = ''] = location.hash.match(/^#\/([a-z]*)\/?(.*)$/) || [null, '', ''];
   const arg = decodeURIComponent(rest);
