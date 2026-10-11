@@ -278,7 +278,7 @@ struct Ask {
     marking: Option<String>,
 }
 
-pub(crate) const JUDGE: &str = "You check a student's answer to a practice question against the model answer given. Reply with exactly one word: correct if the answer gets the main idea right and its reasoning holds, incorrect if it is wrong, misses the main idea, skips a step the question asked for, or reaches the result by wrong reasoning. Use interpretable language.";
+pub(crate) const JUDGE: &str = "You check a student's answer to a practice question against the model answer given. Reply with exactly one word: correct if the answer gets the main idea right and its reasoning holds, incorrect if it is wrong, misses the main idea, skips a step the question asked for, or reaches the result by wrong reasoning. When the question has more than one good answer, a different answer that makes a defensible case with the relevant principles is correct. Use interpretable language.";
 
 pub(crate) fn verdict_in(text: &str) -> Option<&'static str> {
     let lower = text.to_lowercase();

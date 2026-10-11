@@ -22,9 +22,23 @@
 
   function picture(target, alt) {
     const src = String(target || '').trim().replace(/^<(.*)>$/, '$1');
+    if (/^data:image\/svg\+xml[;,][^\s"'<>]*$/i.test(src)) return `<img class="note-img drawing-img" src="${escape(src)}" alt="${escape(alt || '')}">`;
     if (!src || /^[a-z][a-z0-9+.-]*:/i.test(src) || src.startsWith('//')) return null;
     const url = `/api/image?path=${encodeURIComponent(src)}&from=${encodeURIComponent(pictureDir)}`;
     return `<img class="note-img" src="${escape(url)}" alt="${escape(alt || '')}" loading="lazy">`;
+  }
+
+  const MOST_DRAWING = 200000;
+
+  function drawing(source) {
+    const svg = source.trim();
+    if (!/^(<\?xml[^>]*>\s*)?<svg[\s>]/i.test(svg) || svg.length > MOST_DRAWING) return null;
+    if (!/<\/svg>$/i.test(svg)) return '<figure class="drawing pending"><span>Drawing…</span></figure>';
+    const named = svg.match(/<title[^>]*>([^<]{1,200})<\/title>/i);
+    const alt = named ? named[1].trim() : 'Drawing';
+    const open = svg.match(/<svg[^>]*>/i);
+    const ready = open && /\sxmlns=/.test(open[0]) ? svg : svg.replace(/<svg/i, '<svg xmlns="http://www.w3.org/2000/svg"');
+    return `<figure class="drawing"><img src="data:image/svg+xml;charset=utf-8,${encodeURIComponent(ready)}" alt="${escape(alt)}"></figure>`;
   }
 
   function inline(text) {
@@ -196,6 +210,13 @@
         if (fence[2].toLowerCase() === 'mermaid') {
           html += `<figure class="diagram"><pre class="diagram-src"><code>${escape(code.join('\n'))}</code></pre></figure>`;
           continue;
+        }
+        if (fence[2].toLowerCase() === 'svg') {
+          const drawn = drawing(code.join('\n'));
+          if (drawn) {
+            html += drawn;
+            continue;
+          }
         }
         const lang = fence[2] ? ` class="language-${escape(fence[2])}"` : '';
         html += `<pre><code${lang}>${escape(code.join('\n'))}</code></pre>`;

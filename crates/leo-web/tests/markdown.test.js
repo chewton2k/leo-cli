@@ -141,6 +141,21 @@ test('a mermaid block becomes a diagram slot that keeps its source, escaped', ()
   assert.doesNotMatch(render('```js\nx\n```'), /diagram/);
 });
 
+test('an svg block becomes a picture that can never run or load anything', () => {
+  const svg = '<svg viewBox="0 0 100 40"><title>RC circuit</title><line x1="0" y1="20" x2="100" y2="20" stroke="#000"/><script>alert(1)</script></svg>';
+  const html = render('```svg\n' + svg + '\n```\n- [ ] after');
+  const src = html.match(/<figure class="drawing"><img src="data:image\/svg\+xml;charset=utf-8,([^"]*)" alt="RC circuit"><\/figure>/);
+  assert.ok(src, html);
+  assert.doesNotMatch(html, /<svg|<script/);
+  assert.match(decodeURIComponent(src[1]), /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" viewBox/);
+  assert.deepEqual(boxes(html), [[1, false]]);
+  assert.match(render('```svg\n<svg xmlns="http://www.w3.org/2000/svg"><title>"x"</title></svg>\n```'), /alt="&quot;x&quot;"/);
+  assert.match(render('```svg\n<svg viewBox="0 0 1 1"><line'), /drawing pending/);
+  assert.match(render('```svg\nnot a drawing\n```'), /<pre><code class="language-svg">not a drawing<\/code><\/pre>/);
+  assert.match(render('![RC](data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=)'), /<img class="note-img drawing-img" src="data:image\/svg\+xml;base64,PHN2Zz48L3N2Zz4=" alt="RC">/);
+  assert.doesNotMatch(render('![x](data:text/html;base64,PHNjcmlwdD4=)'), /<img/);
+});
+
 test('a [[Title]] link to another note opens it, with an optional label, and stays escaped', () => {
   assert.equal(
     render('See [[Graph traversals]] and [[Heaps|heaps]].'),

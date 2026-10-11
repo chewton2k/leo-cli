@@ -806,7 +806,19 @@ the reasoning (set-up, which step comes next and why, what breaks if a step is
 skipped or reordered, which method a problem calls for), takes worked problems
 one step at a time, and marks critically: a right result by wrong or missing
 reasoning, or a vague answer, is [[incorrect]], and gaps in a right answer are
-named (the user asked, 2026-10-10). `quizSay` and `JUDGE` say the same.
+named (the user asked, 2026-10-10). `quizSay` and `JUDGE` say the same. Subjective
+material (design, writing, interpretation) is asked as principles, criteria and
+trade-offs, and a defensible case that differs from the model answer is right.
+
+Drawings: ```svg blocks (`markdown.js` `drawing`) are shown as
+`<img src="data:image/svg+xml,…">` in a white `.drawing` figure, so a drawing
+can never run a script or load anything (the main CSP already allows `data:`
+images); an unfinished block shows "Drawing…", anything not starting with
+`<svg` stays code, ≤`MOST_DRAWING` chars. `BASE` tells Felix to use Mermaid for
+flows and charts (xychart-beta bars for distributions) and SVG for what Mermaid
+cannot draw (circuits, free-body diagrams, geometry, layouts), and to reuse a
+note's own pictures (uploaded homework figures) by copying their link; quiz
+questions may carry either.
 
 Motion (subtle, once): a route change marks `entering`; when #app's real
 content first lands (no `.skeleton`), `page-in` fades it and staggers the first
