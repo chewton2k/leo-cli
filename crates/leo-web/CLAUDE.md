@@ -794,9 +794,15 @@ response are marked by Felix reading what was meant (notation does not decide).
 No result wording is built into the page: every mark comes from Felix, praised
 and explained when right, fully explained (never a hint) when wrong, the score
 once at the end. "Get a hint" on an unanswered card sends `hintSay` (no answer,
-no mark) and shows the reply in the card (`q.hint`). Study asks mostly free
+no mark) and shows the reply in the card (`q.hints`); it stays as "Another
+hint" until the card is answered, and each request lists the hints already given
+so the next goes one step further. Study asks mostly free
 response and fill in the blank, multiple choice only when its wrong options
 teach something, and never more than two of one kind in a row.
+
+Storage bar: hovering a segment shows a label by the cursor (`#store-tip`: name
+and size), fades the other segments and legend keys, and a click opens that
+area's card; a tap on a phone shows the label for `TIP_FOR` (2.5 s).
 
 Browser audio upload pace: the worklet posts 0.1 s pieces; each send (every
 second) groups them with `leoAudioQueue.batches` into uploads of at most

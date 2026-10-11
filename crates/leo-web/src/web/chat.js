@@ -116,9 +116,16 @@
     return lines.join('\n');
   }
 
+  function hintsOf(quiz) {
+    const list = Array.isArray(quiz.hints) ? quiz.hints : [];
+    return quiz.hint && typeof quiz.hint === 'object' ? [quiz.hint, ...list] : list;
+  }
+
   function hintSay(quiz) {
     const choices = quiz.kind === 'multiple_choice' && (quiz.options || []).length ? `\nChoices: ${quiz.options.join(' | ')}` : '';
-    return `Hint, please. Question: ${quiz.question}${choices}\nGive me one short hint that helps me work it out myself: point me at the idea or first step. Do not give the answer, do not say which choice is right or wrong, do not mark anything and do not ask a new question.`;
+    const given = hintsOf(quiz).map((h) => grade(String(h.text || '')).text.trim()).filter(Boolean);
+    const before = given.length ? `\nHints you already gave me:\n${given.map((h, n) => `${n + 1}. ${h}`).join('\n')}\nI still need help, so give the next hint: one step further than those, without repeating them.` : '\nGive me one short hint that helps me work it out myself: point me at the idea or first step.';
+    return `Hint, please. Question: ${quiz.question}${choices}${before}\nDo not give the answer, do not say which choice is right or wrong, do not mark anything and do not ask a new question.`;
   }
 
   const CITED = /\s?\[((?:[nf]\d+(?:\s+[LlPpSs]\d+(?:\s*[-–]\s*\d+)?)?)(?:\s*[,;]\s*[nf]\d+(?:\s+[LlPpSs]\d+(?:\s*[-–]\s*\d+)?)?)*)\]/g;
@@ -1298,11 +1305,12 @@
         answer = `<div class="quiz-row column"><textarea class="quiz-input" ${where} rows="3" placeholder="Your answer, in your own words"${off}>${draft}</textarea><button type="button" class="btn primary sm" data-chat="quiz-check" ${where}${off}>Submit</button></div>`;
       }
       const result = marking && !(reply && reply.text) ? '<div class="quiz-result">Felix is reading your answer…</div>' : '';
-      const hint = q.hint && typeof q.hint === 'object' ? q.hint : null;
-      const hinted = hint
-        ? `<div class="quiz-hint prose">${grade(hint.text || '').text ? cite(render(grade(hint.text).text), hint.sources || sources, escape, hint.files) : hint.pending ? '<span class="typing"><i></i><i></i><i></i></span>' : ''}</div>`
-        : '';
-      const askHint = !done && !hint && !pending ? `<button type="button" class="quiz-hint-ask" data-chat="quiz-hint" ${where}>Get a hint</button>` : '';
+      const hints = hintsOf(q);
+      const hinted = hints
+        .map((hint, n) => `<div class="quiz-hint prose">${hints.length > 1 ? `<span class="quiz-hint-n">Hint ${n + 1}</span>` : ''}${grade(hint.text || '').text ? cite(render(grade(hint.text).text), hint.sources || sources, escape, hint.files) : hint.pending ? '<span class="typing"><i></i><i></i><i></i></span>' : ''}</div>`)
+        .join('');
+      const waiting = hints.some((h) => h.pending);
+      const askHint = !done && !pending && !waiting ? `<button type="button" class="quiz-hint-ask" data-chat="quiz-hint" ${where}>${hints.length ? 'Another hint' : 'Get a hint'}</button>` : '';
       const why = done && q.correct !== null && q.correct !== undefined && q.explain && !reply ? `<div class="quiz-explain">${cite(inline(q.explain), sources, escape)}</div>` : '';
       const said = reply
         ? (grade(reply.text || '').text
@@ -1316,7 +1324,7 @@
     function askHint(i, k) {
       const m = state.messages[i];
       const q = m && m.quizzes && m.quizzes[k];
-      if (!q || typeof q.given === 'string' || q.hint || state.busy || m.pending) return;
+      if (!q || typeof q.given === 'string' || state.busy || m.pending || hintsOf(q).some((h) => h.pending)) return;
       send('Hint, please.', { say: hintSay(q), card: q, hint: true });
     }
 
@@ -1617,7 +1625,7 @@
       });
       asked.mode = state.mode;
       const answer = { role: 'assistant', text: '', sources: [], pending: true, folder: (state.context && state.context.directory) || '', mode: state.mode };
-      if (card && extra.hint) card.hint = answer;
+      if (card && extra.hint) card.hints = [...(Array.isArray(card.hints) ? card.hints : []), answer];
       else if (card) card.reply = answer;
       else {
         state.messages.push(asked);

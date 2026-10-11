@@ -318,3 +318,12 @@ test('a hint asks for a nudge without the answer, and every mark explains itself
   assert.ok(free.includes('intuitive shortcut or tip') && free.includes('praise me briefly'));
   for (const said of [wrong, right, free]) assert.ok(said.includes('give it once, at the very end'));
 });
+
+test('each further hint knows the hints already given and goes one step further', () => {
+  const q = { kind: 'free_response', question: 'Why does BFS find shortest paths?', hints: [{ text: 'Think about the order it visits vertices.' }] };
+  const said = C.hintSay(q);
+  assert.ok(said.includes('Hints you already gave me:\n1. Think about the order it visits vertices.'));
+  assert.ok(said.includes('one step further'));
+  assert.ok(said.includes('Do not give the answer'));
+  assert.ok(C.hintSay({ kind: 'free_response', question: 'Why?' }).includes('Give me one short hint'));
+});

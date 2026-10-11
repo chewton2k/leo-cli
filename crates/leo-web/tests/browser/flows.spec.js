@@ -1555,6 +1555,29 @@ test.describe('pictures', () => {
   });
 });
 
+test('hovering the storage bar names the part and its size, and highlights it', async ({ page }) => {
+  test.skip(test.info().project.name === 'phone', 'hovering needs a mouse');
+  await page.request.post('/api/notes', { data: { title: 'Storage hover', body: 'x' } });
+  await page.goto('/#/settings/storage');
+  const seg = page.locator('.store-bar i').first();
+  await expect(seg).toBeVisible();
+  const name = await seg.getAttribute('data-name');
+  const size = await seg.getAttribute('data-size');
+  await seg.hover();
+  const tip = page.locator('#store-tip');
+  await expect(tip).toBeVisible();
+  await expect(tip).toContainText(name);
+  await expect(tip).toContainText(size);
+  await expect(seg).toHaveClass(/on/);
+  await expect(page.locator('.store-bar')).toHaveClass(/hovering/);
+  await expect(page.locator(`.store-key.on`)).toContainText(name);
+  await page.mouse.move(5, 5);
+  await expect(tip).toBeHidden();
+  await expect(page.locator('.store-bar')).not.toHaveClass(/hovering/);
+  await seg.click();
+  await expect(page.locator(`.store-area[data-area="${await seg.getAttribute('data-area')}"]`)).toHaveAttribute('open', '');
+});
+
 test.describe('large libraries', () => {
   test('a big folder loads in pages as you scroll, and Select all takes every note', async ({ page }) => {
     test.setTimeout(90000);
@@ -2755,6 +2778,7 @@ test.describe('Felix asks, quizzes and listens while he works', () => {
       asked.push(route.request().postDataJSON());
       if (asked.length === 1) return route.fulfill(answerWith([{ sources: [] }, { quiz: { kind: 'multiple_choice', question: 'An interior stationary point of $f(x)=x^2+4\\cos x$ satisfies?', options: ['$x = 2\\sin x$', '$x = 0$'], answer: '$x = 2\\sin x$', explain: '' } }, { t: 'Try it.' }, { done: true }]));
       if (asked.length === 2) return route.fulfill(answerWith([{ sources: [] }, { t: 'Set the derivative $f\'(x)$ to zero first.' }, { done: true }]));
+      if (asked.length === 3) return route.fulfill(answerWith([{ sources: [] }, { t: 'The derivative is $2x - 4\\sin x$.' }, { done: true }]));
       return route.fulfill(answerWith([{ sources: [] }, { t: '[[correct]] Well done! Setting $2x - 4\\sin x = 0$ gives it.' }, { done: true }]));
     });
     const chat = await openFelix(page);
@@ -2763,16 +2787,21 @@ test.describe('Felix asks, quizzes and listens while he works', () => {
     const card = chat.locator('.quiz-card');
     await card.locator('[data-chat="quiz-hint"]').click();
     await expect(card.locator('.quiz-hint')).toContainText('Set the derivative');
-    await expect(card.locator('[data-chat="quiz-hint"]')).toHaveCount(0);
+    await expect(card.locator('[data-chat="quiz-hint"]')).toHaveText('Another hint');
     expect(asked[1].practice).toBe(true);
     expect(asked[1].mark, 'a hint is not a marking').toBe(false);
     expect(asked[1].messages.at(-1).text).toContain('Do not give the answer');
+    await card.locator('[data-chat="quiz-hint"]').click();
+    await expect(card.locator('.quiz-hint')).toHaveCount(2);
+    await expect(card.locator('.quiz-hint').last()).toContainText('The derivative is');
+    expect(asked[2].messages.at(-1).text).toContain('Hints you already gave me');
     await expect(card.locator('.quiz-option').first()).toBeEnabled();
     await card.locator('.quiz-option').first().click();
     await expect(card).toHaveClass(/right/);
     await expect(card.locator('.quiz-reply')).toContainText('Well done!');
-    await expect(card.locator('.quiz-hint')).toContainText('Set the derivative');
-    expect(asked[2].messages.at(-1).text).toContain('praise me briefly');
+    await expect(card.locator('.quiz-hint').first()).toContainText('Set the derivative');
+    await expect(card.locator('[data-chat="quiz-hint"]'), 'no more hints once answered').toHaveCount(0);
+    expect(asked[3].messages.at(-1).text).toContain('praise me briefly');
   });
 
   test('a fill in the blank and a free answer are both marked by Felix reading what was meant', async ({ page }) => {

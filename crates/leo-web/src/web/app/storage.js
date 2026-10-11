@@ -127,8 +127,8 @@ function drawStorage(page) {
   const open = state.storageOpen || new Set();
   const total = Math.max(1, page.total);
   const shown = page.areas.filter((a) => a.bytes > 0);
-  const bar = shown.map((a, i) => `<i style="width:${Math.max(0.6, (a.bytes / total) * 100)}%;background:${STORE_COLORS[page.areas.indexOf(a) % STORE_COLORS.length]}" title="${esc(a.title)}: ${esc(a.size)}"></i>`).join('');
-  const legend = page.areas.map((a, i) => `<span class="store-key"><b style="background:${STORE_COLORS[i % STORE_COLORS.length]}"></b>${esc(a.title)} <span class="store-key-size">${esc(a.size)}</span></span>`).join('');
+  const bar = shown.map((a) => `<i data-area="${esc(a.id)}" data-name="${esc(a.title)}" data-size="${esc(a.size)}" style="width:${Math.max(0.6, (a.bytes / total) * 100)}%;background:${STORE_COLORS[page.areas.indexOf(a) % STORE_COLORS.length]}"></i>`).join('');
+  const legend = page.areas.map((a, i) => `<span class="store-key" data-area="${esc(a.id)}"><b style="background:${STORE_COLORS[i % STORE_COLORS.length]}"></b>${esc(a.title)} <span class="store-key-size">${esc(a.size)}</span></span>`).join('');
   const areas = page.areas.map((a, i) => {
     const pickable = a.actions.some((x) => x.selected);
     const items = a.items.length
@@ -154,6 +154,7 @@ function drawStorage(page) {
       <div class="store-big">${esc(page.total_label)}</div>
       <p class="hint">What leo keeps on this computer. Notes are only deleted from their own page, and backups are left alone.</p>
       <div class="store-bar" aria-hidden="true">${bar}</div>
+      <div class="store-tip" id="store-tip" role="tooltip" hidden></div>
       <div class="store-legend">${legend}</div>
     </section>
     ${areas}
@@ -171,6 +172,52 @@ function drawStorage(page) {
       <a class="btn primary sm" id="export-link" download href="${exportHref()}">Download zip</a>
     </section>
   </div>`;
+  storageBarHover();
+}
+
+const TIP_FOR = 2500;
+
+function storageBarHover() {
+  const bar = $('.store-bar');
+  const tip = $('#store-tip');
+  if (!bar || !tip) return;
+  const card = bar.closest('.store-total');
+  const show = (seg, x, y) => {
+    for (const el of card.querySelectorAll('.store-bar i.on, .store-key.on')) el.classList.remove('on');
+    if (!seg) {
+      bar.classList.remove('hovering');
+      tip.hidden = true;
+      return;
+    }
+    bar.classList.add('hovering');
+    seg.classList.add('on');
+    const key = card.querySelector(`.store-key[data-area="${CSS.escape(seg.dataset.area)}"]`);
+    if (key) key.classList.add('on');
+    tip.innerHTML = `<b>${esc(seg.dataset.name)}</b><span>${esc(seg.dataset.size)}</span>`;
+    tip.hidden = false;
+    const box = card.getBoundingClientRect();
+    const width = tip.offsetWidth;
+    const left = Math.min(Math.max(x - box.left + 14, 8), box.width - width - 8);
+    tip.style.left = `${left}px`;
+    tip.style.top = `${y - box.top + 16}px`;
+  };
+  bar.addEventListener('pointermove', (e) => show(e.target.closest('.store-bar i'), e.clientX, e.clientY));
+  let fade = 0;
+  bar.addEventListener('pointerdown', (e) => {
+    show(e.target.closest('.store-bar i'), e.clientX, e.clientY);
+    clearTimeout(fade);
+    if (e.pointerType !== 'mouse') fade = setTimeout(() => show(null), TIP_FOR);
+  });
+  bar.addEventListener('pointerleave', (e) => {
+    if (e.pointerType === 'mouse') show(null);
+  });
+  bar.addEventListener('click', (e) => {
+    const seg = e.target.closest('.store-bar i');
+    const area = seg && document.querySelector(`.store-area[data-area="${CSS.escape(seg.dataset.area)}"]`);
+    if (!area || e.pointerType === 'touch') return;
+    area.open = true;
+    area.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  });
 }
 
 function exportHref() {
