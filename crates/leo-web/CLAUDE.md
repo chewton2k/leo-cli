@@ -804,8 +804,9 @@ Motion (subtle, once): a route change marks `entering`; when #app's real
 content first lands (no `.skeleton`), `page-in` fades it and staggers the first
 eight cards (`PAGE_IN_MS`), and the Storage bar wipes in. Redraws never replay
 it. Sheets and toasts ease out (`LEAVE_MS`): a closing sheet becomes
-`.scrim-gone`/`.sheet-gone` and loses its ids, so queries only ever find the live
-one; `sheet()` replaces an open sheet at once. Clicked <details> slide open
+`.scrim-gone`/`.sheet-gone`, inert and aria-hidden, and loses every id and
+`data-*` attribute, so queries and role lookups only ever find the live one (CI
+caught two `[data-action="close"]` buttons when only the ids were dropped); `sheet()` replaces an open sheet at once. Clicked <details> slide open
 (`just-opened`); cards lift on hover, buttons press in. The chat and Record
 pages get no entrance motion: they redraw too often. leo's own menus (model
 picker, Felix's + and access menus, the @ picker) pop from where they open; the

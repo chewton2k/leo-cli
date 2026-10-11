@@ -77,7 +77,11 @@ function closeSheet(now = false) {
     open.classList.replace('scrim', 'scrim-gone');
     const inner = open.querySelector('.sheet');
     if (inner) inner.classList.replace('sheet', 'sheet-gone');
-    open.querySelectorAll('[id]').forEach((el) => el.removeAttribute('id'));
+    open.setAttribute('aria-hidden', 'true');
+    open.inert = true;
+    for (const el of open.querySelectorAll('*')) {
+      for (const { name } of [...el.attributes]) if (name === 'id' || name.startsWith('data-')) el.removeAttribute(name);
+    }
     setTimeout(() => open.remove(), LEAVE_MS);
   }
   if (state.keepPending) {
