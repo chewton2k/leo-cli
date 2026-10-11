@@ -108,6 +108,7 @@ function menu() {
     <button class="list-row" data-action="map">${ICON.map}<span class="grow">Knowledge graph</span></button>
     <button class="list-row" data-action="settings">${ICON.gear}<span class="grow">Settings</span></button>
     <button class="list-row" data-action="trash">${ICON.trash}<span class="grow">Trash</span></button>
+    <button class="list-row" data-action="storage">${ICON.storage}<span class="grow">Storage</span></button>
     <button class="list-row" data-action="refresh">${ICON.refresh}<span class="grow">Refresh</span></button>`);
 }
 

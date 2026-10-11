@@ -595,6 +595,7 @@ test.describe('knowledge graph', () => {
     await expect(panel.locator('h3')).toHaveText('Scheduling');
     await page.locator('#chat-toggle').click();
     await expect(page.locator('#chat')).toBeVisible();
+    await page.waitForFunction(() => document.getAnimations().every((a) => a.playState !== 'running' || a.effect.getTiming().iterations === Infinity));
     const chat = await page.locator('#chat').boundingBox();
     const side = await page.locator('#side').boundingBox();
     const map = await page.locator('#map').boundingBox();
@@ -607,7 +608,7 @@ test.describe('knowledge graph', () => {
     expect(tools.x + tools.width).toBeLessThanOrEqual(details.x);
     await expect(panel.locator('h3')).toBeInViewport();
     await page.locator('[data-chat="close"]').click();
-    expect((await page.locator('#map').boundingBox()).width).toBeGreaterThan(map.width + 300);
+    await expect.poll(async () => (await page.locator('#map').boundingBox()).width).toBeGreaterThan(map.width + 300);
   });
 
   test('the toggles show connections across classes and shared ideas', async ({ page }) => {
@@ -1116,6 +1117,7 @@ test.describe('Felix', () => {
     const note = await (await page.request.post('/api/notes', { data: { title: 'Beside Felix', body: 'x' } })).json();
     await page.goto(`/#/n/${note.id}`);
     await page.locator('#chat-toggle').click();
+    await page.waitForFunction(() => document.getAnimations().every((a) => a.playState !== 'running' || a.effect.getTiming().iterations === Infinity));
     const chat = await page.locator('#chat').boundingBox();
     const bar = await page.locator('nav.actions').boundingBox();
     expect(bar.x + bar.width).toBeLessThanOrEqual(chat.x);
