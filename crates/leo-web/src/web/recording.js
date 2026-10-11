@@ -3,6 +3,8 @@
 
   const SEND_EVERY = 1000;
   const WANTS_SAVE_AFTER = 900;
+  const UPLOAD_SAMPLES = 32000;
+  const UPLOADS_PER_SEND = 60;
   const POLL_EVERY = 1000;
   const RATE = 16000;
 
@@ -300,7 +302,7 @@
       const controller=new AbortController(); const timer=setTimeout(() => controller.abort(),15000);
       try {
         const response=await root.fetch(`/api/record/${item.id}/audio?seq=${item.seq}`,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/octet-stream'},body:item.bytes,signal:controller.signal});
-        if (!response.ok) throw new Error('Audio is kept on this device until Leo reconnects.');
+        if (!response.ok) throw new Error('Audio is kept on this device until leo reconnects.');
         return (await response.json()).next_seq;
       } finally { clearTimeout(timer); }
     }
@@ -310,15 +312,15 @@
       try {
         if (!audioQueue) throw new Error('Recovery audio storage is unavailable.');
         if (s.held.length) {
-          const chunks=s.held.splice(0);
+          const chunks=root.leoAudioQueue.batches(s.held.splice(0), UPLOAD_SAMPLES);
           const saved=await root.leoAudioQueue.spool(audioQueue,s.view.id,s.seq,chunks,bytesOf);
           s.seq=saved.next;
           if (saved.error) { s.held=saved.remaining.concat(s.held); closeMic(); note('Recovery storage could not be written. Capture is stopped; the audio already kept is available. Free space, then reconnect.'); throw saved.error; }
         }
         s.pending=await audioQueue.count(s.view.id);
-        await root.leoAudioQueue.drain(audioQueue,s.view.id,sendChunk,all?Infinity:3);
+        await root.leoAudioQueue.drain(audioQueue,s.view.id,sendChunk,all?Infinity:UPLOADS_PER_SEND);
         s.pending=await audioQueue.count(s.view.id); return s.pending===0;
-      } catch(e) { note(e.message || 'Audio is kept on this device until Leo reconnects.'); return false; }
+      } catch(e) { note(e.message || 'Audio is kept on this device until leo reconnects.'); return false; }
       finally { s.sending=false; }
     }
 
@@ -431,7 +433,7 @@
           s.node.port.onmessage=null;
         }
         while (s.sending) await new Promise((resolve) => setTimeout(resolve, 50));
-        if (!await flush(true)) throw new Error('Audio is still waiting on this device. Reconnect to Leo, then stop again.');
+        if (!await flush(true)) throw new Error('Audio is still waiting on this device. Reconnect to leo, then stop again.');
       } else if (audioQueue && (await audioQueue.list(s.view.id)).length && !await flush()) {
         throw new Error('Recovery audio is waiting on this device. Reconnect before saving.');
       }
@@ -551,11 +553,12 @@
 
     function kindChoices(local) {
       const canShare = canShareSound(env());
+      const icon = { microphone: icons.mic, screen: icons.screen, call: icons.call || icons.mic };
       return `<div class="rec-kinds" role="radiogroup" aria-label="What to record">${['microphone', 'screen', 'call']
         .map((kind, i) => {
           const off = kind === 'call' ? !canShare : !sourceFor(kind, { local, canShare });
           return `<label class="rec-kind${off ? ' off' : ''}"><input type="radio" name="rec-kind" value="${kind}"${i === 0 ? ' checked' : ''}${off ? ' disabled' : ''}>
-            <span class="rec-kind-body"><span class="rec-kind-icon">${kind === 'microphone' ? icons.mic : icons.screen}</span><b>${KINDS[kind].title}</b><span class="sub">${esc(kind === 'screen' ? screenNote(local) : KINDS[kind].about)}</span></span></label>`;
+            <span class="rec-kind-body"><span class="rec-kind-icon">${icon[kind]}</span><b>${KINDS[kind].title}</b><span class="sub">${esc(kind === 'screen' ? screenNote(local) : KINDS[kind].about)}</span></span></label>`;
         })
         .join('')}</div>`;
     }
@@ -565,28 +568,36 @@
       const options = ['', ...folders].map((f) => `<option value="${esc(f)}"${f === here ? ' selected' : ''}>${esc(f || 'All notes (top level)')}</option>`).join('');
       const upcoming = (s.calendar && s.calendar.events) || [];
       const picked = s.event !== null ? upcoming[s.event] : null;
-      const pending=ov.pending || [];
+      const pending = ov.pending || [];
       const ready = micReady(env());
-      const insecure = ready !== 'ok' && !ov.local ? `<p class="rec-warn">${esc(micProblem(ready))}</p>` : '';
+      const insecure = ready !== 'ok' && !ov.local ? `<p class="set-note warn">${esc(micProblem(ready))}</p>` : '';
+      const event = upcoming.length
+        ? `<label class="set-row"><span class="set-label">Calendar event</span><select id="rec-event"><option value="">None</option>${upcoming.map((e, i) => `<option value="${i}"${i === s.event ? ' selected' : ''}>${esc(whenOf(e))} · ${esc(e.title)}</option>`).join('')}</select></label>
+          ${picked ? '<p class="set-note rec-event-note">The AI gets this event’s description, place and who was invited.</p>' : ''}`
+        : '';
+      const connect = s.calendar && !s.calendar.connected ? '<p class="set-note">Name recordings after your classes and meetings: <a href="#/settings">connect a calendar in Settings</a>.</p>' : '';
+      const recover = pending.length
+        ? `<div class="rec-recover">${pending.map((p) => `<button class="set-advanced rec-recover-row" data-action="rec-recover" data-id="${esc(p.id)}">${icons.restore}<span class="grow">${esc(p.title || 'Interrupted recording')}<span class="sub">Stopped before it became a note. Recover it.</span></span>${icons.chevron}</button>`).join('')}</div>`
+        : '';
       return `<div class="rec rec-idle">
         <div class="section-title">Record</div>
+        ${recover ? `<section class="set-card"><header><h3>Not saved yet</h3></header>${recover}</section>` : ''}
         <section class="set-card rec-card">
-          <div class="rec-intro">${felix.felix(46, 'idle')}<p>Lectures and meetings become notes. leo writes down what is said as you go, then turns it into notes when you stop.</p></div>
+          <header><h3>New recording</h3></header>
+          <p class="hint">leo writes down what is said as you go and turns it into a note when you stop.</p>
           ${kindChoices(ov.local)}
           <label class="set-row"><span class="set-label">Folder</span><select id="rec-dir">${options}</select></label>
-          <label class="set-row"><span class="set-label">Title</span><input id="rec-title" class="rec-title-input" placeholder="Optional; the AI names it otherwise" autocomplete="off"></label>
-          ${upcoming.length ? `<label class="set-row"><span class="set-label">Calendar event</span><select id="rec-event"><option value="">None</option>${upcoming.map((e, i) => `<option value="${i}"${i === s.event ? ' selected' : ''}>${esc(whenOf(e))} · ${esc(e.title)}</option>`).join('')}</select></label>
-          ${picked ? `<p class="hint rec-event-note">The AI gets this event’s description, place and who was invited, so names and topics come out right.</p>` : ''}` : ''}
-          <label class="source-field">What do you want from the notes?<textarea id="rec-wants" rows="2" maxlength="4000" placeholder="For example: focus on what will be on the exam, keep it short, explain every formula"></textarea></label>
-          ${s.calendar && !s.calendar.connected ? `<p class="hint">Want recordings named after your meetings and lectures? <a href="#/settings">Connect a calendar in Settings.</a></p>` : ''}
-          ${pending.map((p) => `<button class="list-row" data-action="rec-recover" data-id="${esc(p.id)}">Recover: ${esc(p.title || 'Interrupted recording')}</button>`).join('')}
+          <label class="set-row"><span class="set-label">Title</span><input id="rec-title" class="set-input rec-title-input" placeholder="Optional; the AI names it otherwise" autocomplete="off"></label>
+          ${event}
+          <label class="set-row column"><span class="set-label">What you want from the notes</span><textarea id="rec-wants" class="set-input" rows="2" maxlength="4000" placeholder="Optional. For example: focus on what will be on the exam, keep it short"></textarea></label>
+          ${connect}
           ${insecure}
           <div class="rec-start">
             <button class="rec-go" data-action="rec-start" aria-label="Start recording" ${ov.available === false ? 'disabled' : ''}><span class="rec-go-dot"></span></button>
             <span class="rec-start-label">Start recording</span>
           </div>
         </section>
-        <p class="hint rec-tip">On a phone, keep this page open while it records; the screen stays on. Points you jot while recording are woven into the notes.</p>
+        <p class="hint rec-tip">On a phone, keep this page open while it records; the screen stays on.</p>
       </div>`;
     }
 
@@ -595,11 +606,11 @@
       const paused = v.state === 'paused';
       const orphan = fedByBrowser(v.source) && !s.mine && live(v);
       const transcript = v.transcript ? esc(v.transcript) : `<span class="hint">${paused ? 'Paused.' : 'Listening… words appear here after a few seconds.'}</span>`;
-      const points = v.points.length ? `<ul class="rec-points">${v.points.map(([at, text]) => `<li><span class="rec-at">${clock(at)}</span><span>${esc(text)}</span></li>`).join('')}</ul>` : '';
-      const warnings = v.warnings.map((w) => `<p class="rec-warn">${esc(w)}</p>`).join('') + (s.lost ? `<p class="rec-warn">${clock(s.lost / RATE)} of audio could not reach leo and was dropped.</p>` : '');
+      const points = v.points.length ? `<ul class="rec-points">${v.points.map(([at, text]) => `<li><span class="rec-at">${clock(at)}</span><span class="rec-point-said">${esc(text)}</span></li>`).join('')}</ul>` : '';
+      const warnings = v.warnings.map((w) => `<p class="set-note warn">${esc(w)}</p>`).join('') + (s.lost ? `<p class="set-note warn">${clock(s.lost / RATE)} of audio could not reach leo and was dropped.</p>` : '');
       const kind = v.source === 'call' ? 'Call · You + Others' : v.source === 'browser' || v.source === 'microphone' ? 'Microphone' : 'Screen';
       const controls = orphan
-        ? `<p class="rec-warn">This recording lost its microphone when the page reloaded.</p><div class="rec-controls"><button class="btn plain" data-action="rec-rejoin">Keep recording here</button><button class="btn primary" data-action="rec-stop">Stop and save</button></div>`
+        ? `<p class="set-note warn">This recording lost its microphone when the page reloaded.</p><div class="rec-controls"><button class="btn plain" data-action="rec-rejoin">Keep recording here</button><button class="btn primary" data-action="rec-stop">Stop and save</button></div>`
         : `<div class="rec-buttons">
             <button class="rec-round plain" data-action="rec-pause" aria-label="${paused ? 'Resume' : 'Pause'}">${paused ? '<svg viewBox="0 0 24 24"><path d="M8 5l12 7-12 7z" fill="currentColor"/></svg>' : '<svg viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1" fill="currentColor"/><rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor"/></svg>'}<span>${paused ? 'Resume' : 'Pause'}</span></button>
             <button class="rec-round stop rec-stop" data-action="rec-stop" aria-label="Stop and save"><span class="rec-square"></span><span>Stop and save</span></button>
@@ -613,23 +624,21 @@
           ${controls}
           ${s.deviceLost?'<button class="btn plain" data-action="rec-rejoin">Reconnect audio</button>':''}
           ${warnings}
-          ${s.pending ? `<p class="hint">${s.pending} audio chunks kept on this device, waiting to reach Leo.</p>` : ''}
+          ${s.pending ? `<p class="hint">${s.pending === 1 ? 'A second' : `${s.pending} seconds`} of audio kept on this device, waiting to reach leo.</p>` : ''}
         </section>
         <section class="set-card rec-notepad">
-          <header><h3>Your notes</h3></header>
-          <p class="hint">Type what matters, a line at a time. Your words go into the note exactly as you write them, and leo fills in the rest from the recording.</p>
+          <header><h3>Your notes</h3><button class="btn plain sm" data-action="rec-snapshot">Capture a slide</button></header>
+          <p class="hint">Your words go into the note exactly as you type them; leo fills in the rest from the recording.</p>
           ${points}
-          <div class="rec-point"><textarea id="rec-point-text" rows="4" placeholder="Type a point and press Enter"></textarea><button class="btn plain" data-action="rec-point">Add</button></div>
-          <button class="btn plain rec-slide" data-action="rec-snapshot">Capture a slide</button>
+          <div class="rec-point rec-compose"><textarea id="rec-point-text" class="set-input" rows="3" placeholder="Type a point and press Enter"></textarea><div class="rec-compose-foot"><span class="cal-sub">Shift + Enter starts a new line</span><button class="btn primary sm" data-action="rec-point">Add</button></div></div>
         </section>
-        <section class="set-card">
-          <header><h3>What you want from the notes</h3></header>
-          <p class="hint">The AI follows this when it writes the note after you stop. You can change it until then.</p>
-          <textarea id="rec-wants-live" class="rec-wants" rows="2" maxlength="4000" placeholder="For example: focus on what will be on the exam, keep it short">${esc(s.wantsDraft !== null ? s.wantsDraft : v.wants || '')}</textarea>
-          <p class="hint rec-wants-state" id="rec-wants-state">${esc(s.wantsState)}</p>
+        <section class="set-card rec-wants-card">
+          <header><h3>What you want from the notes</h3><span class="rec-wants-state" id="rec-wants-state">${esc(s.wantsState)}</span></header>
+          <p class="hint">The AI follows this when it writes the note. You can change it until you stop.</p>
+          <textarea id="rec-wants-live" class="set-input rec-wants" rows="2" maxlength="4000" placeholder="For example: focus on what will be on the exam, keep it short">${esc(s.wantsDraft !== null ? s.wantsDraft : v.wants || '')}</textarea>
         </section>
         <details class="set-card rec-heard" id="rec-heard"${s.showHeard ? ' open' : ''}>
-          <summary>Show what’s being heard</summary>
+          <summary><span class="grow"><b>What’s being heard</b><span class="cal-sub">The live transcript</span></span>${icons.chevron}</summary>
           <div class="rec-transcript" id="rec-transcript" aria-live="polite">${transcript}</div>
         </details>
       </div>`;
@@ -642,9 +651,9 @@
         <div class="section-title">Recording</div>
         <section class="set-card rec-done-card">${felix.felix(72, 'idle think')}<h3>${esc(stateWord(v) || 'Writing the notes')}</h3>
           <div class="upload-bar"><i style="width:${Math.max(6, bar)}%"></i></div>
-          ${v.warnings.map((w) => `<p class="rec-warn">${esc(w)}</p>`).join('')}
-          <button class="btn plain" data-action="rec-finish">Finish with available transcript</button>
           <p class="hint">${clock(v.secs)} recorded. You can leave this page; the note appears in its folder when it is ready.</p>
+          ${v.warnings.map((w) => `<p class="set-note warn">${esc(w)}</p>`).join('')}
+          <button class="btn plain sm" data-action="rec-finish">Finish with what is transcribed so far</button>
         </section>
       </div>`;
     }
@@ -654,9 +663,9 @@
       return `<div class="rec rec-writing">
         <div class="section-title">Recording</div>
         <section class="set-card rec-done-card">${felix.felix(72, 'droop')}<h3>The recording could not become a note</h3>
-          <p class="upload-error">${esc(v.error || 'Something went wrong.')}</p>
-          ${v.warnings.map((w) => `<p class="rec-warn">${esc(w)}</p>`).join('')}
-          <div class="buttons"><button class="btn plain" data-action="settings">Settings</button><button class="btn primary" data-action="rec-again">Record again</button></div>
+          <p class="set-note warn">${esc(v.error || 'Something went wrong.')}</p>
+          ${v.warnings.map((w) => `<p class="set-note warn">${esc(w)}</p>`).join('')}
+          <div class="buttons"><button class="btn plain sm" data-action="settings">Settings</button><button class="btn primary sm" data-action="rec-again">Record again</button></div>
         </section>
       </div>`;
     }
@@ -793,7 +802,7 @@
         const view = await api(`/api/record/${id}/wants`, { method: 'POST', body: { text } });
         if (!s.view || s.view.id !== id) return;
         if (s.wantsDraft === text) s.wantsDraft = null;
-        s.wantsState = 'Saved. The note will follow this.';
+        s.wantsState = 'Saved';
         accept(view);
       } catch (e) {
         s.wantsState = '';

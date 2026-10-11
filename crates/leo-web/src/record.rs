@@ -682,7 +682,7 @@ pub(crate) async fn audio(
     let upload = match with_job(&state, &id, |job| {
         let lease = Writing::take(job)?;
         if !job.view.source.fed_by_browser() {
-            anyhow::bail!("This recording uses audio from Leo’s computer.");
+            anyhow::bail!("This recording uses audio from leo’s computer.");
         }
         if job.view.source == Source::Call && !bytes.len().is_multiple_of(4) {
             anyhow::bail!("Call audio must contain whole stereo frames.");

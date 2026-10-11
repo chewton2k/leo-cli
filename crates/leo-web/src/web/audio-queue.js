@@ -47,6 +47,31 @@
   function pick() {
     return root.indexedDB ? indexed() : memory();
   }
+  function batches(chunks, most) {
+    const out = [];
+    let group = [];
+    let size = 0;
+    for (const chunk of chunks) {
+      if (group.length && size + chunk.length > most) {
+        out.push(group);
+        group = [];
+        size = 0;
+      }
+      group.push(chunk);
+      size += chunk.length;
+    }
+    if (group.length) out.push(group);
+    return out.map((g) => {
+      if (g.length === 1) return g[0];
+      const joined = new Int16Array(g.reduce((n, c) => n + c.length, 0));
+      let at = 0;
+      for (const c of g) {
+        joined.set(c, at);
+        at += c.length;
+      }
+      return joined;
+    });
+  }
   async function spool(storage,id,seq,chunks,encode) {
     let at=0;
     try {
@@ -61,10 +86,10 @@
       const items=await storage.list(id,1); const item=items[0];
       if (!item) return count;
       const next=await send(item);
-      if (next <= item.seq) throw new Error('Leo did not acknowledge the audio.');
+      if (next <= item.seq) throw new Error('leo did not confirm it received the audio.');
       await storage.remove(item); count++;
     }
     return count;
   }
-  root.leoAudioQueue={indexed,memory,pick,spool,drain};
+  root.leoAudioQueue={indexed,memory,pick,batches,spool,drain};
 })(typeof window !== 'undefined' ? window : globalThis);

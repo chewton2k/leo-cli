@@ -2304,7 +2304,7 @@ test.describe('recording', () => {
     await page.route('**/api/record', (route) => route.fulfill({ json: { available: true, local: false, job: null, pending: [] } }));
     await page.route('**/api/calendar', (route) => route.fulfill({ json: { connected: false, calendars: [], events: [] } }));
     await page.goto('/#/record');
-    await expect(page.locator('.rec-idle a[href="#/settings"]')).toContainText('Connect a calendar');
+    await expect(page.locator('.rec-idle a[href="#/settings"]')).toContainText('connect a calendar in Settings');
     await expect(page.locator('#rec-event')).toHaveCount(0);
     await page.unroute('**/api/calendar');
     await page.route('**/api/calendar', (route) => route.fulfill({ status: 500, json: { error: 'The calendars could not be read.' } }));
@@ -2938,7 +2938,7 @@ test('a calendar is connected in Settings by pasting one link, and can be remove
   const card = page.locator('.cal-card');
   await expect(card.locator('h3')).toHaveText('Calendar');
   await expect(card).toContainText('Not connected');
-  await expect(card.locator('.cal-how')).toHaveAttribute('open', '');
+  await expect(card.locator('#calendar-link')).toBeVisible();
   await expect(card.locator('a[href="https://calendar.google.com/calendar/r/settings"]')).toBeVisible();
   await card.locator('#calendar-link').fill('https://example.com/nope');
   await card.locator('[data-action="calendar-add"]').click();
@@ -2947,7 +2947,12 @@ test('a calendar is connected in Settings by pasting one link, and can be remove
   await card.locator('#calendar-link').fill('https://calendar.google.com/calendar/ical/me/private-abc/basic.ics');
   await card.locator('[data-action="calendar-add"]').click();
   await expect(page.locator('.cal-card')).toContainText('Classes');
-  await expect(page.locator('.cal-card')).toContainText('Next: Algorithms lecture');
+  await expect(page.locator('.cal-card .cal-next')).toContainText('Algorithms lecture');
+  await expect(page.locator('#calendar-link')).toHaveCount(0);
+  await page.locator('.cal-card [data-action="calendar-more"]').click();
+  await expect(page.locator('#calendar-link')).toBeFocused();
+  await page.locator('.cal-card [data-action="calendar-cancel"]').click();
+  await expect(page.locator('#calendar-link')).toHaveCount(0);
   expect(posted.link).toContain('private-abc');
   await page.locator('.cal-card [data-action="calendar-remove"]').click();
   await expect(page.locator('.cal-card')).toContainText('Not connected');
@@ -2977,7 +2982,7 @@ test('dropping one note on another offers to combine them, shows the result firs
   release();
   await expect(sheet.locator('.combine-preview')).toContainText('BFS uses a queue.');
   await expect(sheet).toContainText('put back one thing');
-  await expect(sheet.locator('.rec-warn')).toContainText('about 70%');
+  await expect(sheet.locator('.set-note.warn')).toContainText('about 70%');
   await sheet.locator('#combine-save').click();
   await expect(page.locator('.toast')).toContainText(`Combined into “${b.title}”`);
   await expect(page.locator(`.card[data-id="${a.id}"]`)).toHaveCount(0);

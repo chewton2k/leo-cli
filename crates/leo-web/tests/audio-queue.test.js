@@ -39,13 +39,13 @@ test('a browser without IndexedDB still queues, sends in order and forgets what 
 
 require('../src/web/recorder.js');
 require('../src/web/recording.js');
-function recordingFlush(storage) {
+function recordingFlush(storage, { held, send } = {}) {
   const source=require('node:fs').readFileSync(require.resolve('../src/web/recording.js'),'utf8');
   const start=source.indexOf('    async function flush(');
   const end=source.indexOf('    function detach()',start);
-  const state={view:{id:'session-1'},seq:0,sending:false,held:Array.from({length:20},(_,i) => new Int16Array(32000).fill(i))};
+  const state={view:{id:'session-1'},seq:0,sending:false,held:held || Array.from({length:20},(_,i) => new Int16Array(32000).fill(i))};
   let closed=0;
-  const flush=require('node:vm').runInNewContext(`(function(){${source.slice(start,end)} return flush;})()`,{s:state,audioQueue:storage,root:{leoAudioQueue:{...globalThis.leoAudioQueue,drain:async () => 0}},bytesOf:globalThis.leoRecording.bytesOf,join:globalThis.leoRecording.join,closeMic:() => closed++,note:() => {},sendChunk:async () => 0});
+  const flush=require('node:vm').runInNewContext(`(function(){${source.slice(start,end)} return flush;})()`,{s:state,audioQueue:storage,root:{leoAudioQueue:send ? globalThis.leoAudioQueue : {...globalThis.leoAudioQueue,drain:async () => 0}},bytesOf:globalThis.leoRecording.bytesOf,join:globalThis.leoRecording.join,closeMic:() => closed++,note:() => {},sendChunk:send || (async () => 0),UPLOAD_SAMPLES:32000,UPLOADS_PER_SEND:60});
   return {state,flush,closed:() => closed};
 }
 test('offline call backlogs are saved as bounded chunks instead of one oversized upload',async () => {
@@ -66,4 +66,21 @@ test('a partial storage failure keeps only unwritten chunks and retries without 
   fail=false; await flush();
   assert.equal(state.seq,20); assert.equal(state.held.length,0);
   assert.deepEqual(storage.items.map((i) => i.seq),Array.from({length:20},(_,i) => i));
+});
+
+test('a second of microphone audio reaches leo within that second, as one upload, and a backlog catches up', async () => {
+  const storage = globalThis.leoAudioQueue.memory();
+  const uploads = [];
+  const send = async (item) => { uploads.push(item.bytes.byteLength); return item.seq + 1; };
+  const second = () => Array.from({ length: 10 }, () => new Int16Array(1600).fill(1));
+  const { state, flush } = recordingFlush(storage, { held: second(), send });
+  await flush();
+  assert.deepEqual(uploads, [32000], 'ten worklet pieces go up together');
+  assert.equal(await storage.count('session-1'), 0);
+  uploads.length = 0;
+  for (let i = 0; i < 40; i++) state.held.push(...second());
+  await flush();
+  assert.equal(uploads.reduce((a, b) => a + b, 0), 40 * 32000, 'forty seconds that waited all go up at once');
+  assert.ok(uploads.every((b) => b <= 64000), 'each upload stays small');
+  assert.equal(await storage.count('session-1'), 0);
 });

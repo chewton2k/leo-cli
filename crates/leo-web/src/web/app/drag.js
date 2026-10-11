@@ -145,11 +145,11 @@ async function combineNow(from, into, mine) {
   const shown = $('.scrim .combine');
   if (mine !== seq || !shown) return;
   const putBack = made.added.length
-    ? `<p class="hint">leo put back ${made.added.length === 1 ? 'one thing' : `${made.added.length} things`} the AI left out (pictures, links, code, math or checkboxes), at the end under “Also in the original notes”.</p>`
+    ? `<p>leo put back ${made.added.length === 1 ? 'one thing' : `${made.added.length} things`} the AI left out (pictures, links, code, math or checkboxes), at the end under “Also in the original notes”.</p>`
     : '';
   const thin = made.kept_enough
     ? ''
-    : `<p class="rec-warn">Some wording from the originals may be missing (about ${Math.round(made.kept * 100)}% of their words are here). Read it through before you save.</p>`;
+    : `<p class="set-note warn">Some wording from the originals may be missing (about ${Math.round(made.kept * 100)}% of their words are here). Read it through before you save.</p>`;
   shown.innerHTML = `<h3>${esc(made.title)}</h3>
     <p class="hint">Everything from “${esc(made.with_title)}” and “${esc(made.title)}”, combined. Nothing changes until you save.</p>
     ${putBack}${thin}

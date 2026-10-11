@@ -23,29 +23,38 @@ function calendarCard(cal, secure) {
   if (!cal) return '';
   const linked = cal.calendars || [];
   const count = linked.length;
-  const chip = count ? `<span class="set-status ok">${count === 1 ? 'On' : `${count} calendars`}</span>` : '<span class="set-status missing">Not connected</span>';
+  const chip = count ? `<span class="set-status ok">${count === 1 ? 'Connected' : `${count} calendars`}</span>` : '<span class="set-status missing">Not connected</span>';
   const rows = linked
-    .map((c) => `<div class="cal-row"><span class="grow"><b>${esc(c.name)}</b>${c.problem ? `<span class="sub rec-warn">${esc(c.problem)}</span>` : `<span class="sub">Added ${esc(rel(c.added_at))}</span>`}</span><button class="btn plain" data-action="calendar-remove" data-id="${esc(c.id)}" data-name="${esc(c.name)}">Remove</button></div>`)
+    .map((c) => `<div class="set-row cal-row">
+      <span class="cal-icon">${ICON.calendar}</span>
+      <span class="grow"><span class="cal-name">${esc(c.name)}</span>${c.problem ? `<span class="set-note warn">${esc(c.problem)}</span>` : `<span class="cal-sub">Added ${esc(rel(c.added_at))}</span>`}</span>
+      <button class="btn plain sm" data-action="calendar-remove" data-id="${esc(c.id)}" data-name="${esc(c.name)}">Remove</button>
+    </div>`)
     .join('');
   const next = (cal.events || [])[0];
-  const coming = next ? `<p class="hint">Next: ${esc(next.title)}, ${esc(new Date(next.start).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' }))}.</p>` : count ? '<p class="hint">Nothing in the next week.</p>' : '';
-  const steps = `<ol class="cal-steps">
-      <li>Open <a href="${GOOGLE_CALENDAR_SETTINGS}" target="_blank" rel="noopener noreferrer">Google Calendar settings</a> on a computer.</li>
-      <li>On the left, under <b>Settings for my calendars</b>, click the calendar you want.</li>
-      <li>Scroll to <b>Integrate calendar</b> and copy <b>Secret address in iCal format</b>.</li>
-      <li>Paste it below.</li>
-    </ol>
-    <p class="hint">Outlook: Settings → Calendar → Shared calendars → Publish a calendar, then copy the ICS link. Apple Calendar: share the calendar publicly and copy its link.</p>`;
-  const form = secure
-    ? `<div class="cal-add"><input id="calendar-link" class="cal-link" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://calendar.google.com/calendar/ical/…/basic.ics"><button class="btn primary" data-action="calendar-add">Add calendar</button></div>`
-    : '<p class="rec-warn">Calendar links are private, so add one on the computer running leo, or through the https link.</p>';
+  const when = (e) => new Date(e.start).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+  const upcoming = count
+    ? `<div class="set-row"><span class="set-label">Next up</span><span class="grow cal-next">${next ? `${esc(next.title)} <span class="cal-sub">· ${esc(when(next))}</span>` : '<span class="cal-sub">Nothing in the next week</span>'}</span><button class="btn plain sm" data-action="calendar-refresh"${cal.refreshing ? ' disabled' : ''}>${cal.refreshing ? 'Checking…' : 'Check now'}</button></div>`
+    : '';
+  const open = !count || state.calendarAdding;
+  const form = !secure
+    ? '<p class="set-note warn">Calendar links are private, so add one on the computer running leo, or through its https link.</p>'
+    : `<ol class="cal-steps">
+        <li>Open <a href="${GOOGLE_CALENDAR_SETTINGS}" target="_blank" rel="noopener noreferrer">Google Calendar settings</a>.</li>
+        <li>Under <b>Settings for my calendars</b>, pick the calendar.</li>
+        <li>In <b>Integrate calendar</b>, copy <b>Secret address in iCal format</b>.</li>
+      </ol>
+      <div class="cal-add"><input id="calendar-link" class="set-input" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="Paste the address here"><button class="btn primary sm" data-action="calendar-add">Connect</button></div>
+      <p class="set-note">Outlook or Apple Calendar work too: paste the calendar’s published ICS link.</p>`;
+  const adder = open
+    ? `<div class="cal-form">${count ? '<div class="cal-form-head"><span>Add another calendar</span><button class="btn plain sm" data-action="calendar-cancel">Cancel</button></div>' : ''}${form}</div>`
+    : `<button class="set-advanced cal-more" data-action="calendar-more">${ICON.plus}<span class="grow">Add another calendar</span>${ICON.chevron}</button>`;
   return `<section class="set-card cal-card">
     <header><h3>Calendar</h3>${chip}</header>
-    <p class="hint">When you record, leo names the recording after the class or meeting you are in, and the AI gets the event’s description and who was invited. leo only reads your calendar; it never changes it.</p>
+    <p class="hint">Recordings are named after the class or meeting you are in, and the AI gets its description and who was invited. leo only reads your calendar.</p>
     ${rows}
-    ${coming}
-    ${count ? `<div class="buttons"><button class="btn plain" data-action="calendar-refresh"${cal.refreshing ? ' disabled' : ''}>${cal.refreshing ? 'Reading…' : 'Check now'}</button></div>` : ''}
-    <details class="cal-how"${count ? '' : ' open'}><summary>${count ? 'Add another calendar' : 'Connect your Google Calendar'}</summary>${steps}${form}</details>
+    ${upcoming}
+    ${adder}
   </section>`;
 }
 
@@ -55,20 +64,21 @@ async function addCalendar() {
   const button = $('[data-action="calendar-add"]');
   if (button) {
     button.disabled = true;
-    button.textContent = 'Checking the link…';
+    button.textContent = 'Checking…';
   }
   const mine = seq;
   try {
     const calendar = await api('/api/calendar', { method: 'POST', body: { link: box.value.trim() } });
     if (mine !== seq || state.view !== 'settings') return;
     state.calendar = calendar;
+    state.calendarAdding = false;
     drawSettings(state.settings);
     const added = calendar.calendars[calendar.calendars.length - 1];
     toast(`Connected “${added ? added.name : 'your calendar'}”.`);
   } catch (e) {
     if (button && button.isConnected) {
       button.disabled = false;
-      button.textContent = 'Add calendar';
+      button.textContent = 'Connect';
     }
     throw e;
   }

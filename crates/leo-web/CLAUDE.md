@@ -772,6 +772,15 @@ text` and the user's typed points, searched by `find` or paged by
 `part_chars`; notes with a kept recording say "Made from a recording" in their
 `<note>` block (`tools::has_transcript`).
 
+Browser audio upload pace: the worklet posts 0.1 s pieces; each send (every
+second) groups them with `leoAudioQueue.batches` into uploads of at most
+`UPLOAD_SAMPLES` (32000) and drains up to `UPLOADS_PER_SEND` (60). Sending only
+three 0.1 s pieces a second (as briefly shipped) starved the live transcript.
+The note toolbar shows Transcript only when GET `/api/notes/{id}` says
+`recorded`. Record, the Transcript sheet and Settings → Calendar use the
+Settings vocabulary (`set-card`, `set-row`, `set-input`, `btn sm`, `set-note
+warn`), not one-off styles.
+
 Sidebar: the places nav and the foot stay put; only the folder tree
 (`.side-tree`) scrolls, and its scroll position survives redraws.
 

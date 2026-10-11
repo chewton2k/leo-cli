@@ -21,8 +21,18 @@ const actions = {
   'calendar-add': () => addCalendar().catch(fail),
   'calendar-remove': (el) => removeCalendar(el).catch(fail),
   'calendar-refresh': () => refreshCalendar().catch(fail),
+  'calendar-more': () => {
+    state.calendarAdding = true;
+    drawSettings(state.settings);
+    const box = $('#calendar-link');
+    if (box) box.focus();
+  },
+  'calendar-cancel': () => {
+    state.calendarAdding = false;
+    drawSettings(state.settings);
+  },
   'note-sources': () => showRecordingSources(window.getSelection().toString().trim().slice(0,200)).catch(fail),
-  'source-save': (el) => saveSource(Number(el.dataset.i)).catch(fail),
+  'source-save': () => saveSource().catch(fail),
   'source-regenerate': () => regenerateSource().catch(fail),
   'source-back': () => drawRecordingSources(),
   'source-apply': () => applyGenerated().catch(fail),

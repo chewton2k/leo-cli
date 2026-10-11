@@ -83,6 +83,8 @@ pub(crate) struct NoteResponse {
     pub(crate) version: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) tasks: Option<[usize; 2]>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) recorded: bool,
 }
 
 pub(crate) fn version_of(note: &leo_core::notes::Note) -> String {
@@ -114,6 +116,7 @@ impl NoteResponse {
             pinned: n.pinned,
             version: version_of(n),
             tasks: None,
+            recorded: false,
         }
     }
 
@@ -225,7 +228,10 @@ pub(crate) async fn get_note(
     state
         .with_store(move |store| {
             let note = store.find_note(&id).ok_or(StatusCode::NOT_FOUND)?;
-            Ok(Json(NoteResponse::from_note(note)))
+            Ok(Json(NoteResponse {
+                recorded: crate::tools::has_transcript(&store.notes_dir, &note.id),
+                ..NoteResponse::from_note(note)
+            }))
         })
         .await
 }
@@ -282,6 +288,7 @@ pub(crate) async fn update_note(
 ) -> Result<Json<NoteResponse>, StatusCode> {
     state
         .with_store(move |store| {
+            let recorded = crate::tools::has_transcript(&store.notes_dir, &id);
             let note = store.find_note_mut(&id).ok_or(StatusCode::NOT_FOUND)?;
             let edited = body.title.is_some() || body.body.is_some() || body.tags.is_some();
             if edited
@@ -307,7 +314,10 @@ pub(crate) async fn update_note(
             if edited {
                 note.updated_at = chrono::Utc::now();
             }
-            let resp = NoteResponse::from_note(note);
+            let resp = NoteResponse {
+                recorded,
+                ..NoteResponse::from_note(note)
+            };
             save(store)?;
             Ok(Json(resp))
         })
