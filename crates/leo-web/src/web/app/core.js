@@ -50,7 +50,12 @@ const recorder = window.leoRecording.create({ api, esc, toast, go: (hash, opts) 
 const chat = felix.create({
   render: (text) => md.render(text),
   escape: md.escape,
-  onOpen: (id) => go(noteHash(id)),
+  onOpen: (id, lines) => {
+    citedLines = lines ? { id, ...lines } : null;
+    if (state.view === 'note' && state.session && state.session.note.id === id && lines) showCitedLines();
+    else go(noteHash(id));
+  },
+  onOriginal: (note, name, at) => showPassage(note, name, at).catch(fail),
   prepare: async (file) => {
     const ready = await shrink(file);
     return { name: ready.name, type: ready.type, data: await base64(ready.blob) };
@@ -473,6 +478,28 @@ function snapshot(s) {
 function changed(s) { saving.changed(s, snapshot(s)); }
 function flush(s = state.session) { return saving.flush(s); }
 
+let citedLines = null;
+
+function showCitedLines() {
+  const want = citedLines;
+  citedLines = null;
+  if (!want || !state.session || !state.session.doc) return;
+  if (!state.session.doc.highlight(want.from, want.to)) toast('Those lines have changed since Felix read the note.');
+}
+
+async function showPassage(note, name, at) {
+  const mine = seq;
+  const found = await api(`/api/notes/${enc(note)}/originals/${enc(name)}/passage?at=${enc(at || 'p1')}`);
+  if (mine !== seq) return;
+  const lines = found.lines.map((l) => `<div class="source-row"><span class="rec-at">${l.n}</span><span class="passage-text">${esc(l.text)}</span></div>`).join('');
+  const box = sheet(`<h3>${esc(name)}</h3>
+    <p>${esc(found.label[0].toUpperCase() + found.label.slice(1))}, word for word from the file you uploaded.</p>
+    <div class="source-list passage-list">${lines || '<p class="hint">That part of the file is empty.</p>'}</div>
+    <div class="buttons"><button class="btn plain" data-action="close">Close</button>${viewKind(name) ? '<button class="btn primary" id="passage-open">Open the file</button>' : ''}</div>`);
+  const open = $('#passage-open', box);
+  if (open) open.addEventListener('click', () => viewOriginal(note, name, found.page).catch(fail));
+}
+
 function noteActions(id, recorded = false) {
   return `<nav class="actions" aria-label="Note">
       ${id ? `<button data-action="note-map" data-id="${esc(id)}">${ICON.map}<span>Graph</span></button>` : ''}
@@ -505,6 +532,7 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
   s.title = $('#title');
   drawOriginals(note);
   s.doc = leoDoc.mount($('#doc'), { source: s.edit.body, onChange: () => changed(s), placeholder: 'Tap here to write', dir: note.directory || '', onPictures: (files) => addPictures(s, files) });
+  if (citedLines && citedLines.id === note.id) showCitedLines();
   if (s.dirty) {
     mark(s, 'Recovered draft · saving…');
     flush(s).catch(fail);

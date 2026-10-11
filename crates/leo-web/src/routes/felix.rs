@@ -385,6 +385,7 @@ fn run_tool(
     send: &dyn Fn(serde_json::Value),
 ) -> Result<tools::Done> {
     let before = desk.sources.len();
+    let files_before = desk.files.len();
     let mut done = if call.name == "invalid" {
         tools::Done {
             step: "Tried to use a tool".into(),
@@ -427,6 +428,8 @@ fn run_tool(
         desk.run_web(call)
     } else if call.name == "look_at_picture" {
         look_at_picture(state, desk, call)?
+    } else if call.name == "read_original" {
+        read_original(state, desk, call)?
     } else {
         let graphs = Arc::clone(&state.graphs);
         store_now(state, |store| {
@@ -443,6 +446,9 @@ fn run_tool(
     }
     if desk.sources.len() != before {
         send(serde_json::json!({ "sources": desk.sources }));
+    }
+    if desk.files.len() != files_before {
+        send(serde_json::json!({ "files": desk.files }));
     }
     if let Some(proposal) = &done.proposal {
         let shown = match access {
@@ -474,6 +480,236 @@ fn run_tool(
 }
 
 const MOST_PICTURES_LOOKED_AT: usize = 4;
+
+fn read_original(
+    state: &AppState,
+    desk: &mut tools::Desk,
+    call: &tools::Call,
+) -> Result<tools::Done> {
+    let wanted = call.text("note");
+    let fail = |step: String, why: String| tools::Done {
+        step,
+        result: format!("That did not work: {why}."),
+        proposal: None,
+        found: Vec::new(),
+    };
+    let chosen = call.text("file");
+    let named = desk.file_named(&chosen).cloned();
+    let looked = store_now(state, |store| {
+        let note = match &named {
+            Some(f) => desk.note_for(store, &f.note),
+            None => desk.note_for(store, &wanted),
+        };
+        Ok(note.map(|n| (n, store.notes_dir.clone())))
+    })
+    .map_err(|_| anyhow::anyhow!("leo could not read the notes"))?;
+    let (note, notes_dir) = match looked {
+        Ok(found) => found,
+        Err(why) => return Ok(fail(format!("Looked for “{wanted}”"), why)),
+    };
+    let files = crate::originals::files(&notes_dir, &note.id);
+    let step = format!("Looked at the file behind “{}”", note.title);
+    if files.is_empty() {
+        return Ok(fail(
+            step,
+            format!(
+                "\"{}\" was not made from an uploaded file, so there is nothing behind it to read",
+                note.title
+            ),
+        ));
+    }
+    let name = match &named {
+        Some(f) => Some(f.name.clone()),
+        None if chosen.trim().is_empty() && files.len() == 1 => Some(files[0].0.clone()),
+        None => files
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(chosen.trim()))
+            .map(|(n, _)| n.clone()),
+    };
+    let Some(name) = name else {
+        let names: Vec<String> = files.iter().map(|(n, _)| format!("\"{n}\"")).collect();
+        return Ok(fail(
+            step,
+            format!(
+                "say which file: \"{}\" has {}",
+                note.title,
+                names.join(", ")
+            ),
+        ));
+    };
+    let Some(reader) = state.reader.clone() else {
+        return Ok(fail(step, "this copy of leo cannot read files".into()));
+    };
+    let Some(path) = crate::originals::path_of(&notes_dir, &note.id, &name) else {
+        return Ok(fail(step, format!("{name} is not there any more")));
+    };
+    let text = match state.originals.text(&reader, &path, &name) {
+        Ok(text) => text,
+        Err(e) => return Ok(fail(step, format!("{name} could not be read ({e})"))),
+    };
+    let tag = desk.file_tag(&note, &name);
+    let step = format!("Read {name}");
+    let size = desk.part_chars();
+    let lines: Vec<String> = text
+        .lines()
+        .enumerate()
+        .map(|(i, l)| format!("{}| {l}", i + 1))
+        .collect();
+    let find = call.text("find");
+    let words: Vec<String> = find
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.chars().count() >= 3)
+        .map(str::to_string)
+        .collect();
+    let cite = format!("Quote it word for word. Cite a page or slide like [{tag} p4], or lines like [{tag} L120-124].");
+    if !words.is_empty() {
+        let mut place = String::new();
+        let mut hits: Vec<(usize, usize, String)> = Vec::new();
+        for (i, l) in text.lines().enumerate() {
+            if let Some(p) = crate::originals::place_of(l) {
+                place = p;
+            }
+            let lower = l.to_lowercase();
+            let score = words.iter().filter(|w| lower.contains(w.as_str())).count();
+            if score > 0 {
+                hits.push((i, score, place.clone()));
+            }
+        }
+        if hits.is_empty() {
+            return Ok(tools::Done {
+                step: format!("Looked for “{}” in {name}", chat::clip(&find, 40)),
+                result: format!("Nothing in {name} mentions \"{}\".", chat::clip(&find, 80)),
+                proposal: None,
+                found: Vec::new(),
+            });
+        }
+        hits.sort_by_key(|(i, score, _)| (std::cmp::Reverse(*score), *i));
+        let mut keep = Vec::new();
+        let mut used = 0;
+        for (i, _, place) in hits {
+            if used >= size {
+                break;
+            }
+            let from = i.saturating_sub(1);
+            let to = (i + 2).min(lines.len());
+            let piece = lines[from..to].join("\n");
+            used += piece.chars().count();
+            keep.push((i, place, piece));
+        }
+        keep.sort_by_key(|(i, _, _)| *i);
+        let shown: Vec<String> = keep
+            .into_iter()
+            .map(|(_, place, piece)| {
+                if place.is_empty() {
+                    piece
+                } else {
+                    format!("({place})\n{piece}")
+                }
+            })
+            .collect();
+        return Ok(tools::Done {
+            step: format!("Looked for “{}” in {name}", chat::clip(&find, 40)),
+            result: format!(
+                "<file id=\"{tag}\" name=\"{}\" find=\"{}\">\n{}\n</file>\n{cite}",
+                chat::attribute(&name),
+                chat::attribute(&find),
+                shown.join("\n…\n")
+            ),
+            proposal: None,
+            found: vec![name],
+        });
+    }
+    let mut parts: Vec<String> = vec![String::new()];
+    for line in lines {
+        let last = parts.last_mut().expect("one part");
+        if !last.is_empty() && last.chars().count() + line.chars().count() > size {
+            parts.push(String::new());
+        }
+        let last = parts.last_mut().expect("one part");
+        if !last.is_empty() {
+            last.push('\n');
+        }
+        last.push_str(&chat::clip(&line, size));
+    }
+    let total = parts.len();
+    let part = call
+        .text("part")
+        .trim()
+        .parse::<usize>()
+        .unwrap_or(1)
+        .max(1);
+    if part > total {
+        return Ok(fail(
+            step,
+            format!(
+                "{name} has {total} part{}",
+                if total == 1 { "" } else { "s" }
+            ),
+        ));
+    }
+    Ok(tools::Done {
+        step: if total > 1 {
+            format!("Read part {part} of {total} of {name}")
+        } else {
+            step
+        },
+        result: format!(
+            "<file id=\"{tag}\" name=\"{}\" part=\"{part}\" of=\"{total}\">\n{}\n</file>\n{cite}",
+            chat::attribute(&name),
+            parts[part - 1]
+        ),
+        proposal: None,
+        found: vec![name],
+    })
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct PassageQuery {
+    at: String,
+}
+
+pub(crate) async fn original_passage(
+    State(state): State<AppState>,
+    Path((id, name)): Path<(String, String)>,
+    axum::extract::Query(query): axum::extract::Query<PassageQuery>,
+) -> Response {
+    let Some(reader) = state.reader.clone() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    let notes_dir = match state.with_store(|store| Ok(store.notes_dir.clone())).await {
+        Ok(dir) => dir,
+        Err(code) => return code.into_response(),
+    };
+    let originals = Arc::clone(&state.originals);
+    let found = tokio::task::spawn_blocking(move || -> Result<serde_json::Value, StatusCode> {
+        let path =
+            crate::originals::path_of(&notes_dir, &id, &name).ok_or(StatusCode::NOT_FOUND)?;
+        let text = originals
+            .text(&reader, &path, &name)
+            .map_err(|_| StatusCode::UNPROCESSABLE_ENTITY)?;
+        let lines: Vec<&str> = text.lines().collect();
+        let (from, to, label) =
+            crate::originals::passage(&text, &query.at).ok_or(StatusCode::NOT_FOUND)?;
+        let shown: Vec<serde_json::Value> = (from..=to.min(lines.len()))
+            .filter_map(|n| {
+                lines
+                    .get(n - 1)
+                    .map(|l| serde_json::json!({ "n": n, "text": l }))
+            })
+            .collect();
+        let page = label
+            .strip_prefix("page ")
+            .and_then(|n| n.parse::<u32>().ok());
+        Ok(serde_json::json!({ "name": name, "label": label, "lines": shown, "page": page }))
+    })
+    .await
+    .unwrap_or(Err(StatusCode::INTERNAL_SERVER_ERROR));
+    match found {
+        Ok(value) => Json(value).into_response(),
+        Err(code) => code.into_response(),
+    }
+}
 
 fn look_at_picture(
     state: &AppState,

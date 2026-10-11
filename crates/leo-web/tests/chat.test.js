@@ -242,12 +242,12 @@ test('a practice answer is checked kindly: case, accents, spaces and punctuation
   const mc = { kind: 'multiple_choice', question: 'What does BFS use?', options: ['a stack', 'a queue'], answer: 'a queue' };
   assert.equal(C.checkQuiz(mc, 'A Queue'), true);
   assert.equal(C.checkQuiz(mc, 'a stack'), false);
-  const blank = { kind: 'fill_blank', question: 'BFS takes the ___ vertex first.', answer: 'oldest | earliest' };
-  assert.equal(C.checkQuiz(blank, '  Oldest. '), true);
-  assert.equal(C.checkQuiz(blank, 'earliest'), true);
-  assert.equal(C.checkQuiz(blank, 'newest'), false);
-  assert.equal(C.checkQuiz(blank, '   '), false);
-  assert.equal(C.checkQuiz({ kind: 'fill_blank', answer: 'Schrödinger' }, 'schrodinger'), true);
+  const blank = { kind: 'fill_blank', question: "f'(x) = 2x - 4 ___", answer: '\\sin(x)' };
+  assert.equal(C.checkQuiz(blank, 'sin x'), null, 'a blank is marked by Felix, who reads what it means');
+  assert.equal(C.checkQuiz(blank, 'newest'), null);
+  const asked = C.quizSay({ kind: 'fill_blank', question: 'q', answer: 'oldest | earliest' }, 'the earliest one', null);
+  assert.ok(asked.includes('Accepted answers: oldest or earliest.'));
+  assert.ok(asked.includes('sin x and sin(x)'), 'notation does not decide the mark');
   assert.equal(C.checkQuiz({ kind: 'free_response', answer: 'Because…' }, 'anything'), null, 'free answers are marked by Felix');
 });
 
@@ -303,4 +303,18 @@ test('a verdict after a short lead-in still counts, and the lead-in is dropped',
   assert.deepEqual(C.grade("I'll mark this [[inc"), { verdict: null, text: "I'll mark this " }, 'a marker still arriving after a lead-in stays hidden');
   const late = `${'word '.repeat(80)}[[correct]] later`;
   assert.equal(C.grade(late).verdict, null, 'a marker deep inside an answer is not a verdict');
+});
+
+test('a hint asks for a nudge without the answer, and every mark explains itself', () => {
+  const mc = { kind: 'multiple_choice', question: 'Which equation?', options: ['x = 2 sin x', 'x = 0'], answer: 'x = 2 sin x' };
+  const hint = C.hintSay(mc);
+  assert.ok(hint.includes('Choices: x = 2 sin x | x = 0'));
+  assert.ok(hint.includes('Do not give the answer'));
+  const wrong = C.quizSay(mc, 'x = 0', false);
+  assert.ok(wrong.includes('do not give a hint') && wrong.includes('why each of the other choices is wrong'));
+  const right = C.quizSay(mc, 'x = 2 sin x', true);
+  assert.ok(right.includes('praise me briefly in your own words') && right.includes('explain why it is right'));
+  const free = C.quizSay({ kind: 'free_response', question: 'Why?', answer: 'Because.' }, 'dunno', null);
+  assert.ok(free.includes('intuitive shortcut or tip') && free.includes('praise me briefly'));
+  for (const said of [wrong, right, free]) assert.ok(said.includes('give it once, at the very end'));
 });

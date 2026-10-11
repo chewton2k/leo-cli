@@ -1364,3 +1364,88 @@ fn a_marking_without_a_verdict_gets_one_from_a_short_check() {
     assert_eq!(prompts.len(), 2);
     assert!(prompts[1].starts_with(crate::routes::felix::JUDGE));
 }
+
+#[test]
+fn felix_quotes_the_uploaded_file_behind_a_note_and_says_where_it_is() {
+    let (mut state, dir, ids) = state_with(&[("Lecture 4 slides", "cs130")]);
+    {
+        let mut store = state.fresh();
+        store.find_note_mut(&ids[0]).unwrap().body =
+            "## Shortest paths\nDijkstra fails with negative edges.".into();
+        store.save().unwrap();
+    }
+    let folder = dir.path().join("attachments").join(&ids[0]);
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("week4.pptx"), b"slides").unwrap();
+    state.reader = Some(Arc::new(|file: UploadFile, _: &mut dyn FnMut(&str)| {
+        assert_eq!(file.name, "week4.pptx");
+        Ok("## Slide 1\nWeek 4\n\n## Slide 2\n\"Dijkstra's algorithm assumes all edge weights are non-negative.\"\nUse Bellman-Ford otherwise.".into())
+    }));
+    let (streamer, prompts) = scripted(vec![
+        "<tool>{\"name\": \"read_original\", \"note\": \"n1\", \"find\": \"non-negative\"}</tool>",
+        "The slide says \"Dijkstra's algorithm assumes all edge weights are non-negative.\" [f1 p2] Your note says it more briefly [n1 L2].",
+    ]);
+    state.chat = Some(streamer);
+    let lines = chat_lines(
+        &state,
+        "what exactly did the slides say about negative edges?",
+    );
+    let files: Vec<&serde_json::Value> =
+        lines.iter().filter(|l| l.get("files").is_some()).collect();
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0]["files"][0]["name"], "week4.pptx");
+    assert_eq!(files[0]["files"][0]["note"], ids[0].as_str());
+    let prompts = prompts.lock().unwrap();
+    assert!(prompts[0].contains("Made from an uploaded file (week4.pptx)"));
+    assert!(
+        prompts[0].contains("2| Dijkstra fails with negative edges."),
+        "note lines are numbered"
+    );
+    assert!(
+        prompts[1].contains("<file id=\"f1\" name=\"week4.pptx\""),
+        "{}",
+        prompts[1]
+    );
+    assert!(prompts[1].contains("(slide 2)\n4| ## Slide 2\n5| \"Dijkstra's algorithm assumes all edge weights are non-negative.\""), "{}", prompts[1]);
+    assert!(prompts[1].contains("[f1 p4]"));
+    drop(prompts);
+
+    let shown = json_of(run(crate::routes::felix::original_passage(
+        State(state.clone()),
+        Path((ids[0].clone(), "week4.pptx".into())),
+        axum::extract::Query(serde_json::from_value(serde_json::json!({"at": "p2"})).unwrap()),
+    )));
+    assert_eq!(shown["label"], "slide 2");
+    assert_eq!(
+        shown["lines"][1]["text"],
+        "\"Dijkstra's algorithm assumes all edge weights are non-negative.\""
+    );
+    let outside = run(crate::routes::felix::original_passage(
+        State(state.clone()),
+        Path((ids[0].clone(), "../notes".into())),
+        axum::extract::Query(serde_json::from_value(serde_json::json!({"at": "p2"})).unwrap()),
+    ));
+    assert_eq!(outside.status(), StatusCode::NOT_FOUND);
+}
+
+#[test]
+fn an_edit_copied_with_line_numbers_still_finds_its_text() {
+    let (mut state, _d, ids) = state_with(&[("Graph traversals", "")]);
+    {
+        let mut store = state.fresh();
+        store.find_note_mut(&ids[0]).unwrap().body = "## BFS\nBFS uses a stack.".into();
+        store.save().unwrap();
+    }
+    let (streamer, _) = scripted(vec![
+        "<tool>{\"name\": \"edit_note\", \"note\": \"n1\", \"find\": \"2| BFS uses a stack.\", \"replace\": \"2| BFS uses a queue.\"}</tool>",
+        "Suggested.",
+    ]);
+    state.chat = Some(streamer);
+    let lines = chat_lines(&state, "please fix my graph traversals note");
+    let proposal = lines
+        .iter()
+        .find_map(|l| l.get("proposal"))
+        .expect("a suggestion");
+    assert_eq!(proposal["find"], "BFS uses a stack.");
+    assert_eq!(proposal["replace"], "BFS uses a queue.");
+}

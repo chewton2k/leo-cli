@@ -2692,8 +2692,9 @@ test.describe('Felix asks, quizzes and listens while he works', () => {
     await card.locator('.quiz-option', { hasText: 'a stack' }).click();
     await expect(card.locator('.quiz-option.wrong')).toContainText('a stack');
     await expect(card.locator('.quiz-option.right')).toContainText('a queue');
-    await expect(card.locator('.quiz-result')).toContainText('Not quite. The answer: a queue');
+    await expect(card.locator('.quiz-result'), 'what is said about the answer comes from Felix, not the page').toHaveCount(0);
     await expect(card).toHaveClass(/wrong/);
+    await expect(card.locator('[data-chat="quiz-hint"]'), 'no hint once it is answered').toHaveCount(0);
     await expect(card.locator('.quiz-option').first()).toBeDisabled();
     await expect(card.locator('.quiz-reply')).toContainText('BFS needs the oldest');
     await expect(card.locator('.quiz-reply')).not.toContainText('[[incorrect]]');
@@ -2706,14 +2707,75 @@ test.describe('Felix asks, quizzes and listens while he works', () => {
     expect(told).toContain('with the quiz tool');
     expect(told).toContain('My answer: a stack');
     expect(told).toContain('the right answer is a queue');
+    expect(told).toContain('why each of the other choices is wrong');
     await page.reload();
     await page.locator('#chat-toggle').click();
-    await expect(page.locator('#chat .quiz-result')).toContainText('Not quite', { timeout: 5000 });
+    await expect(page.locator('#chat .quiz-card')).toHaveClass(/wrong/, { timeout: 5000 });
     await expect(page.locator('#chat .quiz-option').first()).toBeDisabled();
     await expect(page.locator('#chat .quiz-reply')).toContainText('BFS needs the oldest');
   });
 
-  test('a fill in the blank takes typed words, and a free answer goes to Felix to mark', async ({ page }) => {
+  test('a citation with lines opens the note at those lines, and one into an uploaded file shows that passage', async ({ page }) => {
+    const tag = Date.now().toString(36);
+    const note = await (await page.request.post('/api/notes', { data: { title: `Cited ${tag}`, body: '# Graphs\n\n## BFS\nUses a queue.\n\n## DFS\nGoes deep first.\nUses a stack.' } })).json();
+    const folder = path.join(process.env.LEO_BROWSER_HOME, 'attachments', note.id);
+    fs.mkdirSync(folder, { recursive: true });
+    fs.writeFileSync(path.join(folder, 'lecture.txt'), 'Week 2\nBFS explores level by level.\nDFS goes as deep as it can before it backtracks.\n');
+    await page.route('**/api/chat', (route) => route.fulfill(answerWith([
+      { sources: [{ n: 1, id: note.id, title: note.title, folder: '', why: 'open' }] },
+      { files: [{ n: 1, note: note.id, title: note.title, name: 'lecture.txt' }] },
+      { t: 'DFS goes deep first [n1 L7-8]. The lecture says "DFS goes as deep as it can before it backtracks." [f1 L3]' },
+      { done: true },
+    ])));
+    const chat = await openFelix(page);
+    await chat.locator('#chat-input').fill('where does it talk about DFS?');
+    await chat.locator('#chat-input').press('Enter');
+    const lineChip = chat.locator('.cite[data-line="7-8"]');
+    await expect(lineChip).toContainText('lines 7–8');
+    const fileChip = chat.locator('.cite-file');
+    await expect(fileChip).toContainText('lecture.txt');
+    await expect(fileChip).toContainText('line 3');
+    await fileChip.click();
+    const sheet = page.locator('.sheet');
+    await expect(sheet.locator('h3')).toHaveText('lecture.txt');
+    await expect(sheet.locator('.passage-text')).toHaveText('DFS goes as deep as it can before it backtracks.');
+    await sheet.locator('[data-action="close"]').click();
+    if (!(await lineChip.isVisible())) await page.locator('#chat-toggle').click();
+    await lineChip.click();
+    await expect(page).toHaveURL(new RegExp(`#/n/${note.id}$`));
+    const marked = page.locator('#doc .blk-cited');
+    await expect(marked).toHaveCount(2);
+    await expect(marked.first()).toContainText('Goes deep first.');
+    await expect(marked.last()).toContainText('Uses a stack.');
+  });
+
+  test('a hint helps without giving the answer away, and the card can still be answered', async ({ page }) => {
+    const asked = [];
+    await page.route('**/api/chat', async (route) => {
+      asked.push(route.request().postDataJSON());
+      if (asked.length === 1) return route.fulfill(answerWith([{ sources: [] }, { quiz: { kind: 'multiple_choice', question: 'An interior stationary point of $f(x)=x^2+4\\cos x$ satisfies?', options: ['$x = 2\\sin x$', '$x = 0$'], answer: '$x = 2\\sin x$', explain: '' } }, { t: 'Try it.' }, { done: true }]));
+      if (asked.length === 2) return route.fulfill(answerWith([{ sources: [] }, { t: 'Set the derivative $f\'(x)$ to zero first.' }, { done: true }]));
+      return route.fulfill(answerWith([{ sources: [] }, { t: '[[correct]] Well done! Setting $2x - 4\\sin x = 0$ gives it.' }, { done: true }]));
+    });
+    const chat = await openFelix(page);
+    await chat.locator('#chat-input').fill('quiz me');
+    await chat.locator('#chat-input').press('Enter');
+    const card = chat.locator('.quiz-card');
+    await card.locator('[data-chat="quiz-hint"]').click();
+    await expect(card.locator('.quiz-hint')).toContainText('Set the derivative');
+    await expect(card.locator('[data-chat="quiz-hint"]')).toHaveCount(0);
+    expect(asked[1].practice).toBe(true);
+    expect(asked[1].mark, 'a hint is not a marking').toBe(false);
+    expect(asked[1].messages.at(-1).text).toContain('Do not give the answer');
+    await expect(card.locator('.quiz-option').first()).toBeEnabled();
+    await card.locator('.quiz-option').first().click();
+    await expect(card).toHaveClass(/right/);
+    await expect(card.locator('.quiz-reply')).toContainText('Well done!');
+    await expect(card.locator('.quiz-hint')).toContainText('Set the derivative');
+    expect(asked[2].messages.at(-1).text).toContain('praise me briefly');
+  });
+
+  test('a fill in the blank and a free answer are both marked by Felix reading what was meant', async ({ page }) => {
     const asked = [];
     await page.route('**/api/chat', async (route) => {
       asked.push(route.request().postDataJSON());
@@ -2729,11 +2791,12 @@ test.describe('Felix asks, quizzes and listens while he works', () => {
     await expect(blank.locator('.quiz-blank')).toHaveCount(1);
     await expect(blank.locator('.quiz-q .math[data-drawn="yes"] .katex'), 'math in a question is drawn').toBeVisible();
     const box = blank.locator('.quiz-input');
-    await box.pressSequentially('  Earliest ', { delay: 20 });
+    await box.pressSequentially('the earliest one', { delay: 20 });
     await box.press('Enter');
-    await expect(blank.locator('.quiz-result')).toHaveText('Correct');
     await expect(blank).toHaveClass(/right/);
     await expect(blank.locator('.quiz-reply')).toContainText('Yes.');
+    expect(asked[1].mark, 'a blank is marked by Felix reading the answer, not by matching text').toBe(true);
+    expect(asked[1].messages.at(-1).text).toContain('Accepted answers: oldest or earliest.');
     await expect(chat.locator('.quiz-card')).toHaveCount(2);
     const free = chat.locator('.quiz-card').nth(1);
     await expect(free.locator('textarea.quiz-input')).toBeEnabled();

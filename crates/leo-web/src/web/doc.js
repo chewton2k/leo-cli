@@ -560,10 +560,24 @@
       source: () => lines.join('\n'),
       stop,
       isEditing: () => editing !== null,
+      highlight(from, to) {
+        const hits = [...container.querySelectorAll('.blk')].filter((el) => {
+          const block = blocks[Number(el.dataset.i)];
+          return block && block.start < to && block.end >= from;
+        });
+        if (!hits.length) return false;
+        for (const el of container.querySelectorAll('.blk-cited')) el.classList.remove('blk-cited');
+        for (const el of hits) el.classList.add('blk-cited');
+        hits[0].scrollIntoView({ block: 'center', behavior: 'smooth' });
+        setTimeout(() => hits.forEach((el) => el.classList.remove('blk-cited')), CITED_FOR);
+        return true;
+      },
       editStart: () => editLine(0, 'start'),
       editEnd: () => editLine(lines.length - 1, 'end'),
     };
   }
+
+  const CITED_FOR = 4000;
 
   root.leoDoc = { mount };
 })(window);

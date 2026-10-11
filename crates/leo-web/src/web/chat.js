@@ -96,35 +96,82 @@
   }
 
   function checkQuiz(quiz, given) {
-    if (!quiz || quiz.kind === 'free_response') return null;
+    if (!quiz || quiz.kind !== 'multiple_choice') return null;
     const said = plainAnswer(given);
     return Boolean(said) && accepted(quiz).some((a) => plainAnswer(a) === said);
   }
 
   function quizSay(quiz, given, correct) {
-    const next = 'If we are practising, ask the next question with the quiz tool so it appears as a card; never ask a practice question in plain text.';
+    const next = 'If we are practising, ask the next question with the quiz tool so it appears as a card; never ask a practice question in plain text. If you keep a score, give it once, at the very end of your reply.';
+    const right = 'praise me briefly in your own words, then explain why it is right: the idea behind it, and a quick way to see it or remember it next time';
     const lines = [`Quiz answer. Question: ${quiz.question}`, `My answer: ${given}`];
-    if (correct === null) lines.push(`Mark it: start your reply with [[correct]] or [[incorrect]], then say in a few sentences what was right and what was missing. A model answer to compare with: ${quiz.answer}. ${next}`);
-    else if (correct) lines.push(`leo checked it: right. Start your reply with [[correct]] and add one line on why it is right. ${next}`);
-    else lines.push(`leo checked it: wrong; the right answer is ${accepted(quiz)[0] || quiz.answer}. Start your reply with [[incorrect]] and explain briefly why mine is wrong and the right one is right. ${next}`);
+    if (correct === null) {
+      const key = quiz.kind === 'fill_blank' ? `Accepted answers: ${accepted(quiz).join(' or ')}.` : `A model answer to compare with: ${quiz.answer}.`;
+      lines.push(`Mark it: start your reply with [[correct]] or [[incorrect]]. Judge what my answer means, not how it is written: the same value or idea in other words or notation counts as right (sin x and sin(x), 1/2 and 0.5, f'(x) and df/dx). ${key} If I am right, ${right}. If I am wrong, I have already tried, so do not give a hint: give the right answer and explain it fully, say where my answer went wrong, and end with an intuitive shortcut or tip for keeping it in mind. ${next}`);
+    } else if (correct) {
+      lines.push(`leo checked it: right. Start your reply with [[correct]], then ${right}. ${next}`);
+    } else {
+      lines.push(`leo checked it: wrong; the right answer is ${accepted(quiz)[0] || quiz.answer}. Start your reply with [[incorrect]]. I have already tried, so do not give a hint: explain why the right answer is right, then why each of the other choices is wrong, and end with a quick way to tell them apart next time. ${next}`);
+    }
     return lines.join('\n');
   }
 
-  function cite(html, sources, escape) {
+  function hintSay(quiz) {
+    const choices = quiz.kind === 'multiple_choice' && (quiz.options || []).length ? `\nChoices: ${quiz.options.join(' | ')}` : '';
+    return `Hint, please. Question: ${quiz.question}${choices}\nGive me one short hint that helps me work it out myself: point me at the idea or first step. Do not give the answer, do not say which choice is right or wrong, do not mark anything and do not ask a new question.`;
+  }
+
+  const CITED = /\s?\[((?:[nf]\d+(?:\s+[LlPpSs]\d+(?:\s*[-–]\s*\d+)?)?)(?:\s*[,;]\s*[nf]\d+(?:\s+[LlPpSs]\d+(?:\s*[-–]\s*\d+)?)?)*)\]/g;
+
+  function citations(list) {
+    return list
+      .split(/\s*[,;]\s*/)
+      .map((item) => {
+        const m = /^([nf])(\d+)(?:\s+([LlPpSs])(\d+)(?:\s*[-–]\s*(\d+))?)?$/.exec(item.trim());
+        if (!m) return null;
+        const kind = m[3] ? m[3].toUpperCase() : '';
+        const from = m[4] ? Number(m[4]) : null;
+        const to = m[5] ? Number(m[5]) : from;
+        return { id: `${m[1]}${m[2]}`, file: m[1] === 'f', kind, from, to };
+      })
+      .filter(Boolean);
+  }
+
+  function placeWord(c, name) {
+    if (c.from === null) return '';
+    if (c.kind === 'L') return c.to !== c.from ? `lines ${c.from}–${c.to}` : `line ${c.from}`;
+    const slide = /\.pptx?$/i.test(name || '') || c.kind === 'S';
+    return `${slide ? 'slide' : 'p.'} ${c.from}`.replace('p. ', 'p.');
+  }
+
+  function cite(html, sources, escape, files) {
     const byN = new Map((sources || []).map((s) => [`n${s.n}`, s]));
-    return html.replace(/\s?\[(n\d+(?:\s*,\s*n\d+)*)\]/g, (whole, list) => {
-      const chips = list
-        .split(/\s*,\s*/)
-        .map((n) => byN.get(n))
-        .filter(Boolean)
-        .map((s) => `<button class="cite" data-chat="open" data-id="${escape(s.id)}" title="${escape(s.title)}">${escape(s.title.length > 28 ? s.title.slice(0, 27) + '…' : s.title)}</button>`);
+    const byF = new Map((files || []).map((f) => [`f${f.n}`, f]));
+    const short = (t) => (t.length > 28 ? t.slice(0, 27) + '…' : t);
+    return html.replace(CITED, (whole, list) => {
+      const chips = citations(list)
+        .map((c) => {
+          if (c.file) {
+            const f = byF.get(c.id);
+            if (!f) return '';
+            const at = c.from === null ? '' : `${c.kind === 'L' ? 'L' : 'p'}${c.from}${c.to !== c.from ? `-${c.to}` : ''}`;
+            const where = placeWord(c, f.name);
+            return `<button class="cite cite-file" data-chat="original" data-note="${escape(f.note)}" data-name="${escape(f.name)}" data-at="${escape(at)}" title="${escape(`${f.name}${where ? `, ${where}` : ''} (from “${f.title}”)`)}">${escape(short(f.name))}${where ? `<span class="cite-at">${escape(where)}</span>` : ''}</button>`;
+          }
+          const s = byN.get(c.id);
+          if (!s) return '';
+          const lines = c.kind === 'L' && c.from !== null ? `${c.from}-${c.to}` : '';
+          const where = lines ? placeWord(c) : '';
+          return `<button class="cite" data-chat="open" data-id="${escape(s.id)}"${lines ? ` data-line="${lines}"` : ''} title="${escape(`${s.title}${where ? `, ${where}` : ''}`)}">${escape(short(s.title))}${where ? `<span class="cite-at">${escape(where)}</span>` : ''}</button>`;
+        })
+        .filter(Boolean);
       return chips.length ? `${whole.startsWith(' ') ? ' ' : ''}${chips.join('')}` : '';
     });
   }
 
   function cited(text, sources) {
     const used = new Set();
-    for (const m of String(text).matchAll(/\[(n\d+(?:\s*,\s*n\d+)*)\]/g)) for (const n of m[1].split(/\s*,\s*/)) used.add(n);
+    for (const m of String(text).matchAll(CITED)) for (const c of citations(m[1])) if (!c.file) used.add(c.id);
     return (sources || []).filter((s) => used.has(`n${s.n}`));
   }
 
@@ -350,7 +397,7 @@
   const FILE_TYPES = '.pdf,.docx,.pptx,.txt,.md,image/*';
   const NOTE_DRAG = 'application/x-leo-note';
 
-  function create({ render, escape, onOpen = () => {}, storage = root.localStorage, prepare = null, notify = () => {}, onSaved = () => {}, onChanged = () => {}, onUndone = () => {}, onToggle = () => {} }) {
+  function create({ render, escape, onOpen = () => {}, onOriginal = () => {}, storage = root.localStorage, prepare = null, notify = () => {}, onSaved = () => {}, onChanged = () => {}, onUndone = () => {}, onToggle = () => {} }) {
     const saved = load(storage);
     const state = { open: false, id: saved.id || newId(), mode: modeOf(saved.mode), messages: saved.messages, refs: saved.refs, context: null, dropped: null, busy: null, streak: 0, pick: null, chats: null, sidebar: null, doomed: null, asking: null, files: [], sent: [], filesFor: null, review: [], drafts: {}, found: null };
     const panel = document.createElement('aside');
@@ -1069,7 +1116,7 @@
         return `<div class="msg user${m.steer === 'waiting' ? ' queued' : ''}">${refs}${files}<div class="bubble">${escape(m.text).replace(/\n/g, '<br>')}</div>${quiz}${steer}</div>`;
       }
       const shown = grade(m.text).text;
-      let html = shown ? cite(render(shown), m.sources, escape).replace(/<input /g, '<input disabled ') : '';
+      let html = shown ? cite(render(shown), m.sources, escape, m.files).replace(/<input /g, '<input disabled ') : '';
       if (!html && m.pending) html = '<span class="typing"><i></i><i></i><i></i></span>';
       const used = cited(m.text, m.sources);
       const from = !m.pending && used.length > 1
@@ -1250,19 +1297,27 @@
       } else {
         answer = `<div class="quiz-row column"><textarea class="quiz-input" ${where} rows="3" placeholder="Your answer, in your own words"${off}>${draft}</textarea><button type="button" class="btn primary sm" data-chat="quiz-check" ${where}${off}>Submit</button></div>`;
       }
-      const shown = q.kind === 'fill_blank' ? String(q.answer || '').split('|')[0].trim() : q.answer;
-      const result = !done ? ''
-        : q.correct === true ? '<div class="quiz-result right">Correct</div>'
-          : q.correct === false ? `<div class="quiz-result wrong">Not quite.${q.kind === 'free_response' ? '' : ` The answer: ${inline(shown)}`}</div>`
-            : marking ? '<div class="quiz-result">Felix is marking your answer…</div>' : '';
+      const result = marking && !(reply && reply.text) ? '<div class="quiz-result">Felix is reading your answer…</div>' : '';
+      const hint = q.hint && typeof q.hint === 'object' ? q.hint : null;
+      const hinted = hint
+        ? `<div class="quiz-hint prose">${grade(hint.text || '').text ? cite(render(grade(hint.text).text), hint.sources || sources, escape, hint.files) : hint.pending ? '<span class="typing"><i></i><i></i><i></i></span>' : ''}</div>`
+        : '';
+      const askHint = !done && !hint && !pending ? `<button type="button" class="quiz-hint-ask" data-chat="quiz-hint" ${where}>Get a hint</button>` : '';
       const why = done && q.correct !== null && q.correct !== undefined && q.explain && !reply ? `<div class="quiz-explain">${cite(inline(q.explain), sources, escape)}</div>` : '';
       const said = reply
         ? (grade(reply.text || '').text
-          ? `<div class="quiz-reply prose">${cite(render(grade(reply.text).text), reply.sources || sources, escape)}</div>`
+          ? `<div class="quiz-reply prose">${cite(render(grade(reply.text).text), reply.sources || sources, escape, reply.files)}</div>`
           : reply.pending ? '<div class="quiz-reply"><span class="typing"><i></i><i></i><i></i></span></div>' : '')
         : '';
       const tone = q.correct === true ? ' right' : q.correct === false ? ' wrong' : '';
-      return `<div class="quiz-card${done ? ' done' : ''}${marking ? ' marking' : ''}${tone}"><div class="quiz-kind">${escape(QUIZ_KINDS[q.kind] || 'Question')}</div><div class="quiz-q prose">${asked}</div>${answer}${result}${why}${said}</div>`;
+      return `<div class="quiz-card${done ? ' done' : ''}${marking ? ' marking' : ''}${tone}"><div class="quiz-kind">${escape(QUIZ_KINDS[q.kind] || 'Question')}</div><div class="quiz-q prose">${asked}</div>${hinted}${answer}${askHint}${result}${why}${said}</div>`;
+    }
+
+    function askHint(i, k) {
+      const m = state.messages[i];
+      const q = m && m.quizzes && m.quizzes[k];
+      if (!q || typeof q.given === 'string' || q.hint || state.busy || m.pending) return;
+      send('Hint, please.', { say: hintSay(q), card: q, hint: true });
     }
 
     function answerAsk(i, k, given) {
@@ -1562,7 +1617,8 @@
       });
       asked.mode = state.mode;
       const answer = { role: 'assistant', text: '', sources: [], pending: true, folder: (state.context && state.context.directory) || '', mode: state.mode };
-      if (card) card.reply = answer;
+      if (card && extra.hint) card.hint = answer;
+      else if (card) card.reply = answer;
       else {
         state.messages.push(asked);
         state.messages.push(answer);
@@ -1593,7 +1649,7 @@
           method: 'POST',
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: history, mode: thread.mode, note: ctx, refs: threadRefs(thread.messages).map((r) => r.id), recent: recentNotes(thread.messages.filter((m) => m !== answer)), chat: thread.id, files, access, practice: Boolean(card), mark: Boolean(card && card.correct === null) }),
+          body: JSON.stringify({ messages: history, mode: thread.mode, note: ctx, refs: threadRefs(thread.messages).map((r) => r.id), recent: recentNotes(thread.messages.filter((m) => m !== answer)), chat: thread.id, files, access, practice: Boolean(card), mark: Boolean(card && !extra.hint && card.correct === null) }),
           signal: controller.signal,
         });
         if (response.status === 401) throw new Error('This page needs its link again. Open the link leo serve printed.');
@@ -1637,6 +1693,7 @@
             }
             if (e.verdict === 'correct' || e.verdict === 'incorrect') answer.verdict = e.verdict;
             if (e.sources) answer.sources = e.sources;
+            if (Array.isArray(e.files)) answer.files = e.files;
             if (e.restart) answer.text = '';
             if (typeof e.step === 'string') pose(e.tool);
             if (typeof e.step === 'string') answer.steps = [...(answer.steps || []), { text: e.step, tool: typeof e.tool === 'string' ? e.tool : '', found: Array.isArray(e.found) ? e.found.filter((f) => typeof f === 'string').slice(0, 12) : [] }];
@@ -1666,7 +1723,7 @@
       if (card) {
         const extras = ['quizzes', 'asks', 'proposals'].filter((key) => (answer[key] || []).length);
         if (extras.length) {
-          const next = { role: 'assistant', text: '', sources: answer.sources, mode: answer.mode, at: answer.at };
+          const next = { role: 'assistant', text: '', sources: answer.sources, files: answer.files, mode: answer.mode, at: answer.at };
           for (const key of extras) {
             next[key] = answer[key];
             delete answer[key];
@@ -1751,6 +1808,8 @@
         const m = state.messages[Number(el.dataset.i)];
         const q = m && m.quizzes && m.quizzes[Number(el.dataset.k)];
         if (q) answerQuiz(Number(el.dataset.i), Number(el.dataset.k), q.options[Number(el.dataset.o)]);
+      } else if (what === 'quiz-hint') {
+        askHint(Number(el.dataset.i), Number(el.dataset.k));
       } else if (what === 'quiz-check') {
         const box = body.querySelector(`.quiz-input[data-i="${el.dataset.i}"][data-k="${el.dataset.k}"]`);
         if (box) answerQuiz(Number(el.dataset.i), Number(el.dataset.k), box.value);
@@ -1812,7 +1871,11 @@
         if (!state.messages.length) draw();
       } else if (what === 'open') {
         if (!root.matchMedia || !root.matchMedia('(min-width: 900px)').matches) toggle(false);
-        onOpen(el.dataset.id);
+        const [from, to] = (el.dataset.line || '').split('-').map(Number);
+        onOpen(el.dataset.id, from ? { from, to: to || from } : null);
+      } else if (what === 'original') {
+        if (!root.matchMedia || !root.matchMedia('(min-width: 900px)').matches) toggle(false);
+        onOriginal(el.dataset.note, el.dataset.name, el.dataset.at || '');
       }
     });
     $('#chat-form').addEventListener('submit', (e) => {
@@ -1963,5 +2026,5 @@
     };
   }
 
-  root.leoChat = { historyText, checkQuiz, quizSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS };
+  root.leoChat = { historyText, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS };
 })(typeof window !== 'undefined' ? window : globalThis);

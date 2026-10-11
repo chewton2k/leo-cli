@@ -224,7 +224,7 @@ function viewKind(name) {
   return null;
 }
 
-async function viewOriginal(id, name) {
+async function viewOriginal(id, name, page = null) {
   const kind = viewKind(name);
   if (!kind) return;
   const url = `/api/notes/${enc(id)}/originals/${enc(name)}`;
@@ -233,7 +233,7 @@ async function viewOriginal(id, name) {
     : '';
   const tab = kind === 'text' ? '' : `<a class="btn sm plain" href="${url}?view=1" target="_blank" rel="noopener">Open in a new tab</a>`;
   const body = kind === 'pdf'
-    ? `<iframe class="viewer-frame" src="${url}?view=1" title="${esc(name)}"></iframe>`
+    ? `<iframe class="viewer-frame" src="${url}?view=1${page ? `#page=${Number(page)}` : ''}" title="${esc(name)}"></iframe>`
     : kind === 'image'
       ? `<div class="viewer-pan"><img class="viewer-img" src="${url}?view=1" alt="${esc(name)}"></div>`
       : '<div class="viewer-text prose">Loading…</div>';

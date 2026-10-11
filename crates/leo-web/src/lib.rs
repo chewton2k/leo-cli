@@ -10,6 +10,7 @@ pub mod db;
 pub mod export;
 pub mod graph;
 mod ics;
+mod originals;
 pub mod record;
 mod record_journal;
 pub mod review;
@@ -172,6 +173,7 @@ struct AppState {
     converse: Option<chat::Converser>,
     seer: Option<captions::Seer>,
     captions: Arc<captions::Captions>,
+    originals: Arc<originals::Originals>,
     activity: Arc<Activity>,
     steering: steer::Steering,
     meaning: Option<vectors::Meaning>,
@@ -414,6 +416,7 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
         converse,
         seer,
         captions,
+        originals: Default::default(),
         activity: Default::default(),
         steering: Default::default(),
         meaning,
@@ -634,6 +637,10 @@ fn router(state: AppState) -> Router {
         .route("/audio-queue.js", get(routes::assets::audio_queue_js))
         .route("/recording.js", get(recording_js))
         .route("/api/notes/{id}/originals", get(list_originals))
+        .route(
+            "/api/notes/{id}/originals/{name}/passage",
+            get(routes::felix::original_passage),
+        )
         .route("/api/notes/{id}/originals.zip", get(originals_zip))
         .route("/api/notes/{id}/originals/{name}", get(get_original))
         .route("/api/graph", get(get_graph))

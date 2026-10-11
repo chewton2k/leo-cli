@@ -115,7 +115,7 @@ const NOTE: Param = Param {
     about: "which note: an id like n3 from a <note> tag or an earlier result, or the note's exact title",
 };
 
-pub const SPECS: [Spec; 11] = [
+pub const SPECS: [Spec; 12] = [
     Spec {
         name: "search_notes",
         purpose: "Find the user's notes that match words, abbreviations (BFS finds breadth-first search) or ideas in their knowledge graph.",
@@ -172,7 +172,7 @@ pub const SPECS: [Spec; 11] = [
     },
     Spec {
         name: "quiz",
-        purpose: "Give the user a practice question they answer in the chat: multiple choice, fill in the blank, or free response. Use it to check understanding, especially in study.",
+        purpose: "Give the user a practice question they answer in the chat: multiple choice, fill in the blank, or free response. Use it to check understanding, especially in study. Free response and fill in the blank make the user recall, so use them most; use multiple choice when its wrong options are common mistakes worth telling apart.",
         params: &[
             Param {
                 name: "kind",
@@ -216,6 +216,30 @@ pub const SPECS: [Spec; 11] = [
         ],
         returns: "Each picture's description, or \"That did not work: ...\" when the note has no pictures or no AI that can see is set up.",
         example: r#"<tool>{"name": "look_at_picture", "note": "n2", "question": "what does the graph on the slide show?"}</tool>"#,
+    },
+    Spec {
+        name: "read_original",
+        purpose: "Read the file a note was made from (the PDF, slides, Word document, text or picture the user uploaded), word for word, to quote it exactly or find what the note left out. The note is a summary; this is the source.",
+        params: &[
+            NOTE,
+            Param {
+                name: "file",
+                required: false,
+                about: "the file's name or its id like f1; leave it out when the note has one file",
+            },
+            Param {
+                name: "find",
+                required: false,
+                about: "words to look for, like \"Bellman-Ford\"; leave it out to read from the start",
+            },
+            Param {
+                name: "part",
+                required: false,
+                about: "which part to read when not searching, starting at 1",
+            },
+        ],
+        returns: "<file id=\"f1\" name=\"...\" part=\"1\" of=\"3\">numbered lines of the file's text, with [page N] or ## Slide N where pages and slides start</file>, the matching lines when find is given, or \"That did not work: ...\" when the note has no uploaded file. Cite what you quote like [f1 p4] (page or slide 4) or [f1 L120-124] (its lines).",
+        example: r#"<tool>{"name": "read_original", "note": "n1", "find": "negative edges"}</tool>"#,
     },
     Spec {
         name: "read_transcript",
@@ -1040,8 +1064,17 @@ pub struct Done {
     pub found: Vec<String>,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct FileRef {
+    pub n: usize,
+    pub note: String,
+    pub title: String,
+    pub name: String,
+}
+
 pub struct Desk {
     pub sources: Vec<SourceRef>,
+    pub files: Vec<FileRef>,
     pub proposals: usize,
     room: usize,
     web: Option<crate::Web>,
@@ -1064,6 +1097,7 @@ impl Desk {
     pub fn new(sources: Vec<SourceRef>, room: usize) -> Desk {
         Desk {
             sources,
+            files: Vec::new(),
             proposals: 0,
             room,
             web: None,
@@ -1444,6 +1478,37 @@ impl Desk {
         }
     }
 
+    pub fn file_tag(&mut self, note: &Note, name: &str) -> String {
+        if let Some(f) = self
+            .files
+            .iter()
+            .find(|f| f.note == note.id && f.name == name)
+        {
+            return format!("f{}", f.n);
+        }
+        let n = self.files.len() + 1;
+        self.files.push(FileRef {
+            n,
+            note: note.id.clone(),
+            title: note.title.clone(),
+            name: name.to_string(),
+        });
+        self.tag(note, "its uploaded file read by Felix");
+        format!("f{n}")
+    }
+
+    pub fn note_for(&self, store: &Store, wanted: &str) -> Result<Note, String> {
+        self.resolve(store, wanted).cloned()
+    }
+
+    pub fn file_named(&self, wanted: &str) -> Option<&FileRef> {
+        let wanted = wanted.trim().trim_start_matches('[').trim_end_matches(']');
+        wanted
+            .strip_prefix('f')
+            .and_then(|n| n.parse::<usize>().ok())
+            .and_then(|n| self.files.iter().find(|f| f.n == n))
+    }
+
     fn tag(&mut self, note: &Note, why: &str) -> String {
         if let Some(s) = self.sources.iter().find(|s| s.id == note.id) {
             return format!("n{}", s.n);
@@ -1620,7 +1685,7 @@ impl Desk {
                         attribute(&note.title),
                         attribute(folder),
                         clip(
-                            &self.shown(store, note),
+                            &crate::chat::numbered(&self.shown(store, note)),
                             crate::chat::scaled(OPEN_CHARS, self.room).min(self.room / 3)
                         )
                     ),
@@ -1697,8 +1762,14 @@ impl Desk {
                         format!("at most {MOST_PROPOSALS} suggestions fit in one answer"),
                     );
                 }
-                let find = call.text("find");
-                let replace = linked(&call.text("replace"), &self.sources, Some(&note.id));
+                let mut find = call.text("find");
+                let mut replace = linked(&call.text("replace"), &self.sources, Some(&note.id));
+                if !find.is_empty() && !note.body.contains(find.as_str()) {
+                    if let Some(bare) = crate::chat::unnumbered(&find) {
+                        find = bare;
+                        replace = crate::chat::unnumbered(&replace).unwrap_or(replace);
+                    }
+                }
                 if find.is_empty() && replace.trim().is_empty() {
                     return fail(&step, "the change is empty".into());
                 }
@@ -1980,7 +2051,7 @@ mod tests {
         assert!(number.contains("must be text in double quotes"));
         let unknown = wrong(serde_json::json!({"name": "delete_note", "note": "n1"}));
         assert!(unknown.contains(
-            "the tools are search_notes, open_note, connected_notes, calculate, ask_user, quiz, look_at_picture, read_transcript, read_document, edit_note, create_note"
+            "the tools are search_notes, open_note, connected_notes, calculate, ask_user, quiz, look_at_picture, read_original, read_transcript, read_document, edit_note, create_note"
         ));
         assert_eq!(
             check(&Call {

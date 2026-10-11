@@ -772,6 +772,32 @@ text` and the user's typed points, searched by `find` or paged by
 `part_chars`; notes with a kept recording say "Made from a recording" in their
 `<note>` block (`tools::has_transcript`).
 
+Line citations: every note body Felix is given (gather, open_note) is numbered
+`chat::numbered` ("14| text"); BASE says the numbers are not part of the note and
+to cite lines like [n2 L14] or [n2 L14-18]. edit_note strips copied numbers when
+the find text is not in the note (`chat::unnumbered`). The page's `cite` turns
+[n2 L14-18] into a chip with "lines 14–18"; clicking opens the note and
+`leoDoc.highlight(from, to)` marks and scrolls to those blocks (`citedLines`).
+
+Original files: `read_original {note, file?, find?, part?}` reads the upload
+behind a note (`attachments/<note-id>/`, `originals.rs`) through the `Reader`
+power, cached by path, size and mtime (`Originals`, 12 kept); lines are
+numbered, PDFs keep [page N] and slides ## Slide N. Notes with uploads say "Made
+from an uploaded file (...)" in their block. Desk gives each file an id (f1…,
+`FileRef`) sent as `{"files"}` and kept on the answer; [f1 p4] / [f1 L120-124]
+render as chips that open a passage sheet (GET
+`/api/notes/{id}/originals/{name}/passage?at=p4|L120-124`) with "Open the file"
+(PDFs at that page).
+
+Quizzes: only multiple choice is checked on the page; fill in the blank and free
+response are marked by Felix reading what was meant (notation does not decide).
+No result wording is built into the page: every mark comes from Felix, praised
+and explained when right, fully explained (never a hint) when wrong, the score
+once at the end. "Get a hint" on an unanswered card sends `hintSay` (no answer,
+no mark) and shows the reply in the card (`q.hint`). Study asks mostly free
+response and fill in the blank, multiple choice only when its wrong options
+teach something, and never more than two of one kind in a row.
+
 Browser audio upload pace: the worklet posts 0.1 s pieces; each send (every
 second) groups them with `leoAudioQueue.batches` into uploads of at most
 `UPLOAD_SAMPLES` (32000) and drains up to `UPLOADS_PER_SEND` (60). Sending only

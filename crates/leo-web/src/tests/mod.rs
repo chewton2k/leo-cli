@@ -82,6 +82,7 @@ fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<Strin
         converse: None,
         seer: None,
         captions: Arc::new(captions::Captions::at(dir.path().join("captions.json"))),
+        originals: Default::default(),
         activity: Default::default(),
         steering: Default::default(),
         meaning: None,
