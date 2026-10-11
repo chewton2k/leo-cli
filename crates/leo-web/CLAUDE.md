@@ -807,8 +807,15 @@ it. Sheets and toasts ease out (`LEAVE_MS`): a closing sheet becomes
 `.scrim-gone`/`.sheet-gone` and loses its ids, so queries only ever find the live
 one; `sheet()` replaces an open sheet at once. Clicked <details> slide open
 (`just-opened`); cards lift on hover, buttons press in. The chat and Record
-pages get no entrance motion: they redraw too often. Reduced motion turns all
-of it off.
+pages get no entrance motion: they redraw too often. leo's own menus (model
+picker, Felix's + and access menus, the @ picker) pop from where they open; the
+chat panel slides out on close (`chat-leaving`, `CHAT_LEAVE_MS`) and the page
+beside it widens smoothly; a twisted sidebar folder turns its arrow and slides
+its subfolders in (`side.twisted`). Segmented choices (Record's Microphone /
+Screen / Call, Felix's Chat / Study) slide a `.glider` to the new choice
+(`leoChat.glideTo`); the choices go transparent only while `gliding`, so the
+contrast check always sees their real colours. Native <select> lists are drawn
+by the system and are not animated. Reduced motion turns all of it off.
 
 Storage bar: hovering a segment shows a label by the cursor (`#store-tip`: name
 and size), fades the other segments and legend keys, and a click opens that

@@ -436,6 +436,26 @@ label.trash-row { cursor: pointer; }
 #app.page-in .cards > .card:nth-child(8) { --n: 7; }
 #app.page-in .store-bar { animation: reveal .6s cubic-bezier(.2, .8, .2, 1) both; }
 details.just-opened > :not(summary) { animation: drop .2s cubic-bezier(.2, .8, .2, 1) both; }
+@keyframes pop-down { from { opacity: 0; transform: translateY(-4px) scale(.98); } }
+@keyframes pop-up { from { opacity: 0; transform: translateY(4px) scale(.98); } }
+@keyframes chat-out { to { transform: translateX(24px); opacity: 0; } }
+.picker-menu:not([hidden]) { animation: pop-down .15s cubic-bezier(.2, .8, .2, 1); transform-origin: top right; }
+.chat-access-menu:not([hidden]), .chat-attach-menu:not([hidden]), .chat-pick:not([hidden]) { animation: pop-up .15s cubic-bezier(.2, .8, .2, 1); transform-origin: bottom left; }
+.picker-button svg { transition: transform .15s; }
+.picker-button[aria-expanded="true"] svg { transform: rotate(-90deg); }
+.chat.chat-leaving { animation: chat-out .18s ease-in forwards; pointer-events: none; }
+@media (min-width: 1200px) { body { transition: padding-right .22s cubic-bezier(.2, .8, .2, 1); } }
+.side-folder.side-in { animation: drop .18s cubic-bezier(.2, .8, .2, 1) both; }
+.glides { position: relative; }
+.glides > .glider { position: absolute; left: 0; top: 0; z-index: 0; pointer-events: none; transition: transform .24s cubic-bezier(.2, .8, .2, 1), width .24s cubic-bezier(.2, .8, .2, 1), height .24s cubic-bezier(.2, .8, .2, 1); }
+.glides > .glider.instant { transition: none; }
+.rec-kinds > .glider { border: 1px solid var(--accent); border-radius: 12px; background: var(--accent-soft); box-sizing: border-box; }
+.rec-kinds.glides .rec-kind { z-index: 1; }
+.rec-kinds.gliding .rec-kind-body, .rec-kinds.gliding .rec-kind input:checked + .rec-kind-body { background: transparent; border-color: var(--line); }
+.rec-kind-icon { transition: background-color .2s, color .2s; }
+.chat-modes > .glider { border-radius: 999px; background: var(--accent); }
+.chat-modes.glides .chat-mode { position: relative; z-index: 1; transition: color .2s, border-color .2s; }
+.chat-modes.gliding .chat-mode, .chat-modes.gliding .chat-mode.on { background: transparent; border-color: var(--line); }
 .btn { transition: transform .08s, filter .12s, background-color .12s, opacity .12s; }
 .btn:active:not(:disabled) { transform: scale(.97); }
 .list-row, .side-row, .set-advanced { transition: background-color .12s, color .12s; }

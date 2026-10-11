@@ -1,6 +1,6 @@
 const SIDE_KEY = 'leo-side';
 const sideWide = () => Boolean(window.matchMedia && window.matchMedia('(min-width: 1000px)').matches);
-const side = { folders: [], loaded: false, mini: false, open: new Set(), shut: new Set(), here: null };
+const side = { folders: [], loaded: false, mini: false, open: new Set(), shut: new Set(), here: null, twisted: null };
 const SIDE_OPEN_KEY = 'leo-side-open';
 
 try {
@@ -93,24 +93,27 @@ function folderTree(here) {
     return (cut < 0 ? '' : d.name.slice(0, cut)) === parent;
   });
   const rows = [];
-  const walk = (parent, depth) => {
+  const twisted = side.twisted;
+  const walk = (parent, depth, fresh) => {
     for (const d of children(parent)) {
       const kids = side.folders.some((k) => k.name.startsWith(`${d.name}/`) && paths.has(k.name));
       const open = kids && folderShown(d.name);
       const name = d.name.split('/').pop();
       const on = here === d.name;
+      const shown = twisted && twisted.path === d.name ? twisted.was : open;
       const toggle = kids
-        ? `<button class="side-twist${open ? ' open' : ''}" data-action="side-twist" data-dir="${esc(d.name)}" aria-expanded="${open}" aria-label="${open ? 'Close' : 'Open'} ${esc(name)}">${ICON.chevron}</button>`
+        ? `<button class="side-twist${shown ? ' open' : ''}" data-action="side-twist" data-dir="${esc(d.name)}" aria-expanded="${open}" aria-label="${open ? 'Close' : 'Open'} ${esc(name)}">${ICON.chevron}</button>`
         : '<span class="side-twist none"></span>';
-      rows.push(`<div class="side-folder${on ? ' on' : ''}" style="--depth:${depth}">${toggle}<button class="side-row" data-action="open-folder" data-dir="${esc(d.name)}" draggable="true" title="${esc(d.name)}"${on ? ' aria-current="page"' : ''}>${ICON.folder}<span class="side-label">${esc(name)}</span>${d.notes ? `<span class="side-count side-label">${d.notes}</span>` : ''}</button><button class="side-add side-sub" data-action="new-folder" data-parent="${esc(d.name)}" aria-label="New folder in ${esc(name)}" title="New folder in ${esc(name)}">${ICON.plus}</button></div>`);
-      if (open) walk(d.name, depth + 1);
+      rows.push(`<div class="side-folder${on ? ' on' : ''}${fresh ? ' side-in' : ''}" style="--depth:${depth}">${toggle}<button class="side-row" data-action="open-folder" data-dir="${esc(d.name)}" draggable="true" title="${esc(d.name)}"${on ? ' aria-current="page"' : ''}>${ICON.folder}<span class="side-label">${esc(name)}</span>${d.notes ? `<span class="side-count side-label">${d.notes}</span>` : ''}</button><button class="side-add side-sub" data-action="new-folder" data-parent="${esc(d.name)}" aria-label="New folder in ${esc(name)}" title="New folder in ${esc(name)}">${ICON.plus}</button></div>`);
+      if (open) walk(d.name, depth + 1, fresh || (twisted && twisted.path === d.name));
     }
   };
-  walk('', 0);
+  walk('', 0, false);
   return rows.join('');
 }
 
 function twistFolder(path) {
+  side.twisted = { path, was: folderShown(path) };
   if (folderShown(path)) {
     side.open.delete(path);
     side.shut.add(path);
@@ -120,6 +123,12 @@ function twistFolder(path) {
   }
   keepOpenFolders();
   drawSide();
+  const twisted = side.twisted;
+  side.twisted = null;
+  requestAnimationFrame(() => {
+    const arrow = [...document.querySelectorAll('#side .side-twist')].find((b) => b.dataset.dir === twisted.path);
+    if (arrow) arrow.classList.toggle('open', !twisted.was);
+  });
 }
 
 async function loadSideFolders() {
