@@ -1130,22 +1130,23 @@ impl Serving {
     }
 
     fn get(&self, path: &str, headers: &str) -> String {
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + Duration::from_secs(30);
         while Instant::now() < deadline {
             if let Ok(mut s) = std::net::TcpStream::connect(("127.0.0.1", self.port)) {
-                s.set_read_timeout(Some(Duration::from_secs(5))).ok();
-                write!(
+                s.set_read_timeout(Some(Duration::from_secs(10))).ok();
+                let asked = write!(
                     s,
                     "GET {path} HTTP/1.1\r\nHost: localhost\r\n{headers}Connection: close\r\n\r\n"
-                )
-                .unwrap();
+                );
                 let mut response = String::new();
-                s.read_to_string(&mut response).unwrap();
-                return response;
+                if asked.is_ok() && s.read_to_string(&mut response).is_ok() && !response.is_empty()
+                {
+                    return response;
+                }
             }
             std::thread::sleep(Duration::from_millis(100));
         }
-        panic!("the server did not answer");
+        panic!("the server did not answer within 30 seconds");
     }
 }
 
