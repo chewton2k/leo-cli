@@ -107,7 +107,7 @@
     const lines = [`Quiz answer. Question: ${quiz.question}`, `My answer: ${given}`];
     if (correct === null) {
       const key = quiz.kind === 'fill_blank' ? `Accepted answers: ${accepted(quiz).join(' or ')}.` : `A model answer to compare with: ${quiz.answer}.`;
-      lines.push(`Mark it: start your reply with [[correct]] or [[incorrect]]. Judge what my answer means, not how it is written: the same value or idea in other words or notation counts as right (sin x and sin(x), 1/2 and 0.5, f'(x) and df/dx). ${key} If I am right, ${right}. If I am wrong, I have already tried, so do not give a hint: give the right answer and explain it fully, say where my answer went wrong, and end with an intuitive shortcut or tip for keeping it in mind. ${next}`);
+      lines.push(`Mark it: start your reply with [[correct]] or [[incorrect]]. Judge what my answer means, not how it is written: the same value or idea in other words or notation counts as right (sin x and sin(x), 1/2 and 0.5, f'(x) and df/dx). Be critical of the reasoning: a right result reached by a wrong or missing step, or an answer too vague to show I understand, is [[incorrect]]. Even if I am right, point out any gap, jump or loose term and what a complete answer would add. ${key} If I am right, ${right}. If I am wrong, I have already tried, so do not give a hint: give the right answer and explain it fully, say where my answer went wrong, and end with an intuitive shortcut or tip for keeping it in mind. ${next}`);
     } else if (correct) {
       lines.push(`leo checked it: right. Start your reply with [[correct]], then ${right}. ${next}`);
     } else {

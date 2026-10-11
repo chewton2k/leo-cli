@@ -801,7 +801,12 @@ no mark) and shows the reply in the card (`q.hints`); it stays as "Another
 hint" until the card is answered, and each request lists the hints already given
 so the next goes one step further. Study asks mostly free
 response and fill in the blank, multiple choice only when its wrong options
-teach something, and never more than two of one kind in a row.
+teach something, and never more than two of one kind in a row. It asks about
+the reasoning (set-up, which step comes next and why, what breaks if a step is
+skipped or reordered, which method a problem calls for), takes worked problems
+one step at a time, and marks critically: a right result by wrong or missing
+reasoning, or a vague answer, is [[incorrect]], and gaps in a right answer are
+named (the user asked, 2026-10-10). `quizSay` and `JUDGE` say the same.
 
 Motion (subtle, once): a route change marks `entering`; when #app's real
 content first lands (no `.skeleton`), `page-in` fades it and staggers the first
