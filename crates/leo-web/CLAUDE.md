@@ -903,6 +903,9 @@ and tool loop, sidebar/menu, Settings cards, sheets, segmented controls, Markdow
 and diagrams. Tracks are presets over one customizable framework: coding,
 system design, product/design, marketing, business/economics, quant and custom.
 Coach withholds solutions until requested; Mock saves coaching for a debrief.
+Buttons send natural user messages; tool instructions and attempt IDs use the
+existing hidden `say` context. Unreadable snapshots fall back to written work
+and labels with an explicit assessment limit, rather than blocking review.
 Company research uses existing web capabilities and distinguishes generated
 exercises, official preparation and unverified candidate reports with source URLs.
 
@@ -927,7 +930,8 @@ AI/network under a mutex.
 `web/interview.js` has pure preset/progress/agenda/board/draft helpers;
 `app/interviews.js` uses serialized saves, page identity checks and bounded browser
 backups. Async updates do not redraw focused editors. The board stores geometry,
-not arbitrary SVG; only escaped labels reach its renderer. Submitted drawings are
+not arbitrary SVG; only escaped labels reach its renderer. Rasterization uses
+Leo’s existing base64 helper and an allowed data URI under the strict CSP. Submitted drawings are
 rasterized and read through Felix's existing file reader; the next snapshot
 replaces the previous generated document so long practice does not fill the file
 limit. Frozen vectors preserve every submitted drawing. Draft conflicts require
@@ -940,3 +944,8 @@ across six tracks, Coach/Mock and reversed order; later runs were stopped by mod
 capacity. Claude's weekly allowance was exhausted. These prompt checks are not a
 compiled-server end-to-end test. Per the user's instruction, compiled checks and
 the full browser gate run in CI, not through local Cargo builds/tests.
+
+The All notes view keeps a moved note visible and updates its folder metadata;
+drag tests check that state and Undo. Thumbnail tests scroll cards into view
+before expecting lazy previews. Completed task text uses the muted theme token
+so grid thumbnails remain legible in dark mode.

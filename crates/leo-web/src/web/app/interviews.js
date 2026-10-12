@@ -251,24 +251,22 @@ function addInterviewLabel(session, point = [50, 50 + Math.min(session.draft.boa
 
 async function interviewPicture(board) {
   if (!board.length) return null;
-  const url = URL.createObjectURL(new Blob([interviews.boardSvg(board)], { type: 'image/svg+xml' }));
-  try {
-    const image = new Image();
-    await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('The board snapshot could not be made. Try again.')), 3000);
-      image.onload = () => { clearTimeout(timeout); resolve(); };
-      image.onerror = () => { clearTimeout(timeout); reject(new Error('The board snapshot could not be made. Try again.')); };
-      image.src = url;
-    });
-    const canvas = document.createElement('canvas');
-    canvas.width = 1000; canvas.height = 700;
-    canvas.getContext('2d').drawImage(image, 0, 0, 1000, 700);
-    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
-    return blob ? new File([blob], `interview-whiteboard-${felix.newId()}.png`, { type: 'image/png' }) : null;
-  } finally { URL.revokeObjectURL(url); }
+  const source = await base64(new Blob([interviews.boardSvg(board)], { type: 'image/svg+xml' }));
+  const image = new Image();
+  await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('The board snapshot could not be made. Try again.')), 3000);
+    image.onload = () => { clearTimeout(timeout); resolve(); };
+    image.onerror = () => { clearTimeout(timeout); reject(new Error('The board snapshot could not be made. Try again.')); };
+    image.src = `data:image/svg+xml;base64,${source}`;
+  });
+  const canvas = document.createElement('canvas');
+  canvas.width = 1000; canvas.height = 700;
+  canvas.getContext('2d').drawImage(image, 0, 0, 1000, 700);
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+  return blob ? new File([blob], `interview-whiteboard-${felix.newId()}.png`, { type: 'image/png' }) : null;
 }
 
-async function talkInterview(session, text, board = []) {
+async function talkInterview(session, text, board = [], instruction = text) {
   if (session.talking) return;
   session.talking = true;
   try {
@@ -279,10 +277,16 @@ async function talkInterview(session, text, board = []) {
       if (chat.isBusy()) toast('Felix is finishing another answer. Try again when it finishes.', { bad: true });
       return;
     }
-    const picture = await interviewPicture(board);
-    if (!interviewHere(session)) return;
-    if (picture && !(await chat.attachBoard(picture))) throw new Error('Felix could not read your board snapshot. Your attempt is saved; try its review button again.');
-    if (interviewHere(session)) chat.send(text);
+    let read = !board.length;
+    if (board.length) {
+      try {
+        const picture = await interviewPicture(board);
+        if (!interviewHere(session)) return;
+        read = Boolean(picture && await chat.attachBoard(picture));
+      } catch (e) { toast('Your work is saved. Felix can review the written answer and board labels, but could not read the drawing.', { bad: true }); }
+    }
+    if (!read) instruction += '\nThe board snapshot could not be read. Review only the submitted written answer, labels and geometry; explicitly say that freehand drawing details could not be assessed. Do not invent visual observations.';
+    if (interviewHere(session)) chat.send(text, { say: instruction });
   } finally { session.talking = false; }
 }
 
@@ -310,7 +314,7 @@ async function submitInterview(session) {
       interviews.keepDraft(localStorage, session.item.id, challenge, session.draft);
     }
     drawInterviewProgress(session);
-    await talkInterview(session, `Review my submitted attempt ${attempt}. Read interview_progress, assess the submitted answer and board against the challenge criteria with interview_feedback, explain my strengths and gaps, and suggest the next practice step. Do not reveal a complete solution unless I ask for it.`, workspace.board);
+    await talkInterview(session, `Review my submitted answer${workspace.board.length ? ' and whiteboard' : ''}. Explain my strengths, gaps and what to practise next. Keep the full solution for when I ask.`, workspace.board, `Review my submitted attempt ${attempt}. Read interview_progress, assess the submitted answer and board against the challenge criteria with interview_feedback, explain my strengths and gaps, and suggest the next practice step. Do not reveal a complete solution unless I ask for it.`);
   } finally { session.submitting = false; drawInterviewStatus(session); }
 }
 
@@ -379,14 +383,14 @@ async function interviewAction(el) {
   if (!session || !interviewHere(session)) return;
   if (action === 'configure') { await saveInterviewWorkspace(session); return interviewForm(session.item.framework.track, session.item.id, session.item); }
   if (action === 'chat') return chat.openInterview(session.item.id, () => interviewHere(session));
-  if (action === 'next') return talkInterview(session, 'Prepare one new interview challenge in my workspace using interview_challenge, suited to my framework and recent practice. Do not give its solution.');
+  if (action === 'next') return talkInterview(session, 'Prepare a challenge for my next practice, based on my goals and recent attempts. Keep the solution for later.', [], 'Prepare one new interview challenge in my workspace using interview_challenge, suited to my framework and recent practice. Do not give its solution.');
   if (action === 'research') return talkInterview(session, 'Research common interview topics and publicly reported past questions for my target company and role. Ask my target if it is missing. Search the web, link sources, distinguish official guidance from candidate reports, and suggest an original practice exercise.');
-  if (action === 'plan') return talkInterview(session, `Help me plan interview practice with interview_schedule. Read my progress, respect my weekly budget and interview date, and ask about availability if needed. Today on my device is ${new Date().toLocaleDateString('en-CA')}; timezone ${Intl.DateTimeFormat().resolvedOptions().timeZone}.`);
-  if (action === 'hint') return talkInterview(session, 'Give me one small hint for the current interview challenge, without revealing the solution or assessing my draft.');
+  if (action === 'plan') return talkInterview(session, 'Help me make a realistic practice schedule from my goals and progress.', [], `Help me plan interview practice with interview_schedule. Read my progress, respect my weekly budget and interview date, and ask about availability if needed. Today on my device is ${new Date().toLocaleDateString('en-CA')}; timezone ${Intl.DateTimeFormat().resolvedOptions().timeZone}.`);
+  if (action === 'hint') return talkInterview(session, 'Give me a small hint without the solution.', [], 'Give me one small hint for the current interview challenge, without revealing the solution or assessing my draft.');
   if (action === 'submit') return submitInterview(session);
   if (action === 'review-attempt') {
     const attempt = session.item.attempts.find((a) => a.id === el.dataset.id);
-    if (attempt) return talkInterview(session, `Review submitted attempt ${attempt.id} using interview_progress and interview_feedback. Explain strengths, gaps and the next practice step without giving a full solution.`, attempt.workspace.board);
+    if (attempt) return talkInterview(session, `Review my “${attempt.challenge.title}” attempt from ${new Date(attempt.at).toLocaleDateString()}. What did I do well, and what should I practise next?`, attempt.workspace.board, `Review submitted attempt ${attempt.id} using interview_progress and interview_feedback. Explain strengths, gaps and the next practice step without giving a full solution.`);
   }
   if (action === 'retry') return retryInterviewSave(session);
   if (action === 'tab') {

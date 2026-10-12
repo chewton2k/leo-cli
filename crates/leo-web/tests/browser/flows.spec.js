@@ -409,9 +409,10 @@ test.describe('drag and drop', () => {
     await card.dragTo(page.locator(`main .folder[data-dir="${a}"]`));
     await expect(page.locator('.toast')).toContainText(`Moved “Drag me ${tag}” to ${a}`);
     expect(await where()).toBe(a);
-    await expect(card).toHaveCount(0);
+    await expect(card.locator('.card-meta')).toContainText(a);
     await page.locator('.toast button').click();
     await expect(card).toBeVisible();
+    await expect(card.locator('.card-meta')).not.toContainText(a);
     expect(await where()).toBe('');
 
     await card.dragTo(page.locator(`#side [data-action="open-folder"][data-dir="${b}"]`));
@@ -3127,6 +3128,7 @@ test('note cards can be previewed without losing the library and layout choices 
   await expect(card).toBeVisible();
   await expect(card.locator('.card-snippet')).toContainText('Breadth first search');
   await expect(card.locator('.card-meta')).toContainText('library-grid-fixture');
+  await card.scrollIntoViewIfNeeded();
   await expect(card.locator('.note-thumb img')).toBeVisible();
   const preview = card.locator('[data-action="note-preview"]');
   await preview.click();
@@ -3251,15 +3253,44 @@ test('interview answers keep their focus and draft through saves, a conflict and
   let holdSave = false;
   let releaseSave;
   let saveStarted;
+  const files = new Map();
+  let uploads = 0;
+  let refuseImage = false;
   await page.route(`**/api/interviews/${id}`, async (route) => {
     if (route.request().method() === 'PUT') {
       const change = route.request().postDataJSON();
       if (conflict) { conflict = false; return route.fulfill({ status: 409, json: { error: 'This practice changed in another window. Reload before saving; your draft is kept.' } }); }
       if (holdSave) { saveStarted(); await new Promise((resolve) => { releaseSave = resolve; }); holdSave = false; }
       await new Promise((resolve) => setTimeout(resolve, 100));
-      item = { ...item, workspace: change.workspace, revision: item.revision + 1 };
+      if (change.action === 'submit') {
+        item.attempts.push({ id: change.attempt, at: new Date().toISOString(), challenge: structuredClone(item.challenge), workspace: change.workspace, feedback: null });
+        item.workspace = { answer: '', board: [] };
+      } else item.workspace = change.workspace;
+      item.revision++;
     }
     await route.fulfill({ json: item });
+  });
+  await page.route(`**/api/chats/${id}`, (route) => route.request().method() === 'GET' ? route.fulfill({ status: 404, json: { error: 'No conversation yet' } }) : route.fulfill({ json: { id } }));
+  await page.route(`**/api/chats/${id}/files**`, async (route) => {
+    const request = route.request();
+    if (request.method() === 'DELETE') { files.delete(request.url().split('/').at(-1)); return route.fulfill({ status: 204 }); }
+    if (request.method() === 'POST') {
+      if (refuseImage) return route.fulfill({ status: 422, json: { error: 'This model cannot read images.' } });
+      const body = request.postDataJSON();
+      expect(body.type).toMatch(/^image\//);
+      expect(body.data.length).toBeGreaterThan(100);
+      const doc = { id: String(++uploads).padStart(32, '0'), name: body.name, excerpt: 'Client and server whiteboard.' };
+      files.set(doc.id, doc);
+      return route.fulfill({ json: doc });
+    }
+    return route.fulfill({ json: [...files.values()] });
+  });
+  await page.route('**/api/chat', (route) => {
+    if (refuseImage) expect(route.request().postDataJSON().messages.at(-1).text).toContain('freehand drawing details could not be assessed');
+    const attempt = item.attempts.at(-1);
+    attempt.feedback = { attempt: attempt.id, summary: 'Good approach; review edge cases.', scores: [{ skill: 'Approach', value: 3, evidence: 'You described a hash map.', next: 'Trace duplicates.' }] };
+    item.revision++;
+    return route.fulfill({ contentType: 'application/x-ndjson', body: `${JSON.stringify({ interview: { id, revision: item.revision } })}\n${JSON.stringify({ t: 'A good start.' })}\n${JSON.stringify({ done: true })}\n` });
   });
   await page.goto(`/#/interviews/${id}`);
   const answer = page.locator('#interview-answer');
@@ -3282,6 +3313,29 @@ test('interview answers keep their focus and draft through saves, a conflict and
   await expect(answer).toHaveValue('Use a hash map. Check duplicates and negatives.');
   await expect(page.locator('#interview-board text')).toHaveText('Client → Server');
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+  await page.locator('[data-interview="submit"]').click();
+  await expect(page.locator('#interview-progress')).toContainText('1 reviewed attempt');
+  await page.locator('[data-chat="close"]').click();
+  expect(item.attempts[0].workspace.answer).toBe('Use a hash map. Check duplicates and negatives.');
+  expect(item.attempts[0].workspace.board[0].text).toBe('Client → Server');
+  await expect(answer).toHaveValue('');
+  await page.locator('[data-interview="tab"][data-tab="board"]').click();
+  await page.locator('#interview-board-label').fill('Another drawing');
+  await page.locator('[data-interview="label-board"]').click();
+  await page.locator('[data-interview="submit"]').click();
+  await expect(page.locator('#interview-progress')).toContainText('2 reviewed attempts');
+  await page.locator('[data-chat="close"]').click();
+  expect(files.size).toBe(1);
+  expect(uploads).toBe(2);
+  refuseImage = true;
+  await page.locator('#interview-board-label').fill('A readable label');
+  await page.locator('[data-interview="label-board"]').click();
+  await page.locator('[data-interview="submit"]').click();
+  await expect(page.locator('#interview-progress')).toContainText('3 reviewed attempts');
+  await expect(page.locator('#chat .msg.user').last()).not.toContainText('interview_feedback');
+  await page.locator('[data-chat="close"]').click();
+  await page.locator('[data-interview="tab"][data-tab="write"]').click();
+
   holdSave = true;
   const started = new Promise((resolve) => { saveStarted = resolve; });
   await answer.fill('A hint request can be cancelled by navigation.');
@@ -3294,5 +3348,4 @@ test('interview answers keep their focus and draft through saves, a conflict and
   await (await response).finished();
   await page.waitForTimeout(500);
   await expect(page.locator('body')).not.toHaveClass(/chat-open/);
-
 });
