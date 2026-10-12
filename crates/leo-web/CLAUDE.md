@@ -1099,7 +1099,7 @@ widens the page). Classes are `sched-*` because Settings already owns `cal-*`.
 
 Tasks panel and original pane (release 4, reworked 2026-10-12 at the user's request):
 the Tasks panel is not a sidebar or menu row. It sits in `#dock`, the bottom-left
-stack it shares with the background activity panel (`dock()`, tasks above activity),
+stack it shares with the background activity panel (`dock()`, activity on top, tasks below it),
 appears by itself whenever there are open tasks (Overdue / Today / Coming up within
 7 days / No date, from `/api/tasks` every 2.5 min while visible), folds with
 Hide/Show like the activity panel (`leo-tasks-folded`), hides on the Calendar page
