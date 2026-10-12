@@ -348,7 +348,7 @@ fn trash_list(state: &AppState) -> Done {
         Err(_) => return fail(step, "leo could not read the trash"),
     };
     let mut trashed = trashed;
-    trashed.sort_by(|a, b| b.deleted_at.cmp(&a.deleted_at));
+    trashed.sort_by_key(|t| std::cmp::Reverse(t.deleted_at));
     let lines: Vec<String> = trashed
         .iter()
         .take(100)
