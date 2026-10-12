@@ -681,7 +681,11 @@ mod tests {
         let file = dir.path().join("notes/.leo/tasks/task-0001.json");
         let text = std::fs::read_to_string(&file).unwrap();
         assert_eq!(text.lines().count(), 1);
-        let newer = plain("task-0001", "Write the essay", now + chrono::Duration::seconds(5));
+        let newer = plain(
+            "task-0001",
+            "Write the essay",
+            now + chrono::Duration::seconds(5),
+        );
         let older = plain("task-0001", "Old title", now - chrono::Duration::seconds(5));
         std::fs::write(
             &file,

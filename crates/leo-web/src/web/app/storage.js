@@ -268,7 +268,7 @@ async function tasksRestoreAsk(file) {
     tasks = Array.isArray(data) ? data : data && data.tasks;
     if (!Array.isArray(tasks)) throw new Error('no tasks');
   } catch (e) {
-    return toast('That file is not a tasks.json from a leo export.', { bad: true });
+    return toast('Choose tasks.json from a backup downloaded through Storage → Export.', { bad: true });
   }
   if (!tasks.length) return toast('That file has no tasks in it.');
   state.tasksRestore = tasks;
