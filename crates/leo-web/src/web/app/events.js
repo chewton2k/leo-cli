@@ -179,6 +179,7 @@ async function render() {
   clearTimeout(cal.timer);
   if (!/^#\/n\//.test(location.hash)) closeSource();
   document.body.classList.toggle('on-calendar', /^#\/calendar/.test(location.hash));
+  document.body.classList.toggle('on-interviews', /^#\/interviews(?:\/|$)/.test(location.hash));
   const hash = decodeURI(location.hash || '#/');
   const [, kind, rest = ''] = location.hash.match(/^#\/([a-z]*)\/?(.*)$/) || [null, '', ''];
   const arg = decodeURIComponent(rest);

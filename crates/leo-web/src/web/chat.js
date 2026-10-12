@@ -520,7 +520,7 @@
 
   const CHAT_LEAVE_MS = 160;
 
-  function create({ render, escape, onOpen = () => {}, onOriginal = () => {}, storage = root.localStorage, prepare = null, notify = () => {}, onSaved = () => {}, onChanged = () => {}, onUndone = () => {}, onToggle = () => {}, onInterview = () => {}, onInterviewChanged = () => {}, onAdd = () => {} }) {
+  function create({ render, escape, onOpen = () => {}, onOriginal = () => {}, storage = root.localStorage, prepare = null, notify = () => {}, onSaved = () => {}, onChanged = () => {}, onUndone = () => {}, onToggle = () => {}, onInterview = () => {}, onInterviewChanged = () => {}, onInterviewReply = () => {}, onAdd = () => {} }) {
     const saved = load(storage);
     const state = { open: false, id: saved.id || newId(), mode: modeOf(saved.mode), messages: saved.messages, refs: saved.refs, context: null, dropped: null, busy: null, streak: 0, pick: null, chats: null, sidebar: null, doomed: null, asking: null, files: [], sent: [], filesFor: null, review: [], drafts: {}, found: null, selection: null };
     const panel = document.createElement('aside');
@@ -2009,6 +2009,7 @@
         delete m.late;
       }
       state.busy = null;
+      onInterviewReply(thread.id);
       thinking(false);
       if (stopped && left.length && thread.id === state.id) {
         input.value = [input.value, ...left.map((m) => m.text)].filter((t) => t.trim()).join('\n\n');

@@ -3346,14 +3346,19 @@ test('a failed call has calm details and can be dismissed or deleted directly', 
 });
 
 test('interview practice starts without a note and schedules are editable dated tasks', async ({ page }) => {
+  await page.route('**/api/chat', (route) => route.fulfill({ contentType: 'application/x-ndjson', body: '{"t":"Ready to practise."}\n{"done":true}\n' }));
   await page.goto('/#/interviews');
   await page.locator('[data-interview="create"][data-track="systems"]').click();
+  await page.getByText('Schedule & assessment preferences', { exact: true }).click();
   await page.locator('#interview-title').fill('System design interview');
   await page.locator('#interview-company').fill('Example company');
   await page.locator('[data-interview="form-style"][data-style="mock"]').click();
   await page.locator('#interview-form-save').click();
   await expect(page.locator('.interview-heading h1')).toHaveText('System design interview');
+  await expect(page.locator('[data-chat="close"]')).toBeVisible();
+  await page.locator('[data-chat="close"]').click();
   const id = decodeURIComponent(new URL(page.url()).hash.split('/').pop());
+  await page.getByText('Practice schedule', { exact: true }).first().click();
   await page.locator('[data-interview="add-session"]').click();
   await page.locator('#interview-slot-title').fill('Requirements and scale');
   await page.locator('#interview-slot-date').fill('2026-10-20');
@@ -3460,7 +3465,7 @@ test('interview answers keep their focus and draft through saves, a conflict and
   await expect(page.locator('#interview-progress')).toContainText('3 reviewed attempts');
   await expect(page.locator('#chat .msg.user').last()).not.toContainText('interview_feedback');
   await page.locator('[data-chat="close"]').click();
-  await page.locator('[data-interview="tab"][data-tab="write"]').click();
+  await page.locator('[data-interview="tab"][data-tab="code"]').click();
 
   holdSave = true;
   const started = new Promise((resolve) => { saveStarted = resolve; });
@@ -3744,3 +3749,67 @@ test.describe('beside the note', () => {
     await expect(box).toBeHidden();
   });
 });
+
+for (const company of ['Pinterest', '']) {
+  test(`interview start prepares a coding problem in one action for ${company || 'general practice'}`, async ({ page }) => {
+    const requests = [];
+    let item;
+    let ready;
+    let release;
+    const starter = 'def pair_sum(nums, target):\n    pass';
+    await page.route('**/api/interviews', (route) => route.fulfill({ json: [] }));
+    await page.route('**/api/interviews/*', (route) => {
+      const req = route.request();
+      if (req.method() === 'PUT') {
+        const change = req.postDataJSON();
+        if (change.action === 'framework') item = { id: req.url().split('/').at(-1), revision: 1, framework: change.framework, workspace: { answer: '', reasoning: '', board: [] }, challenge: null, attempts: [], schedule: [] };
+        else { item.workspace = change.workspace; item.revision++; }
+      }
+      return route.fulfill({ json: item });
+    });
+    await page.route('**/api/chats/*', (route) => route.request().method() === 'GET' ? route.fulfill({ status: 404, json: { error: 'No conversation yet' } }) : route.fulfill({ json: { id: item.id, title: 'Interview practice', updated_at: new Date().toISOString(), count: 2, named: true } }));
+    await page.route('**/api/chat', async (route) => {
+      requests.push(route.request().postDataJSON());
+      ready();
+      await new Promise((resolve) => { release = resolve; });
+      item.challenge = { id: 'challenge-start-01', title: 'Matching pair', question: 'Find two distinct indices whose values sum to the target.', minutes: 25, skills: item.framework.skills, origin: 'generated', sources: [], coding: { language: 'Python', starter, difficulty: 'easy', examples: [{ input: 'nums=[2,3], target=5', output: '[0,1]' }], constraints: ['Exactly one pair exists.'] } };
+      item.workspace = { answer: starter, reasoning: '', board: [] };
+      item.revision++;
+      await route.fulfill({ contentType: 'application/x-ndjson', body: [{ interview: { id: item.id, revision: item.revision } }, { t: 'Your challenge is ready.' }, { done: true }].map((v) => JSON.stringify(v)).join('\n') + '\n' });
+    });
+    await page.goto('/#/interviews');
+    await page.locator('[data-interview="create"][data-track="coding"]').click();
+    await page.locator('#interview-company').fill(company);
+    await page.locator('#interview-role').fill('Software engineer intern');
+    const started = new Promise((resolve) => { ready = resolve; });
+    await page.locator('#interview-form-save').click();
+    await started;
+    await expect(page.locator('#interview-answer')).toHaveCount(0);
+    await expect(page.locator('#interview-challenge')).toContainText('Preparing your first challenge');
+    expect(requests).toHaveLength(1);
+    const instruction = requests[0].messages.at(-1).text;
+    if (company) expect(instruction).toContain('Search the web before');
+    else expect(instruction).toContain('Do not ask for a company');
+    expect(instruction).toContain('interview_challenge');
+    release();
+    await expect(page.locator('#interview-answer')).toHaveValue(starter);
+    await page.locator('[data-chat="close"]').click();
+    await expect(page.locator('[data-interview="research"]')).toHaveCount(0);
+    await expect(page.locator('.interview-example')).toContainText('[0,1]');
+    await page.locator('[data-interview="submit"]').click();
+    expect(requests).toHaveLength(1);
+    await page.locator('[data-interview="tab"][data-tab="write"]').click();
+    const approach = page.locator('#interview-reasoning');
+    await approach.fill('Use a hash map and check duplicates.');
+    await approach.evaluate((el) => el.setSelectionRange(4, 8));
+    await expect.poll(() => item.workspace.reasoning).toContain('check duplicates');
+    await expect(approach).toBeFocused();
+    expect(await approach.evaluate((el) => [el.selectionStart, el.selectionEnd])).toEqual([4, 8]);
+    await page.locator('[data-interview="tab"][data-tab="code"]').click();
+    await expect(page.locator('#interview-answer')).toHaveValue(starter);
+    await page.reload();
+    await expect(page.locator('#interview-answer')).toHaveValue(starter);
+    expect(requests).toHaveLength(1);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+  });
+}

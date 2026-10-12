@@ -1606,3 +1606,110 @@ fn a_selected_passage_reaches_felix_as_quoted_material() {
         prompt.find("<selected_passage").unwrap() < prompt.rfind("what does this mean?").unwrap()
     );
 }
+
+#[test]
+fn company_preparation_searches_and_creates_a_seeded_coding_workspace_on_both_protocols() {
+    const CHALLENGE: &str = r#"{"id":"challenge-prep-01","title":"Pair sum","question":"Return the two matching indices.","minutes":25,"skills":["Approach"],"origin":"generated","sources":[{"title":"Public candidate report","url":"https://example.com/interview","kind":"reported"}],"coding":{"language":"Python","starter":"def pair_sum(nums, target):\n    pass","difficulty":"easy","examples":[{"input":"nums=[2,3], target=5","output":"[0,1]"}],"constraints":["Exactly one pair exists."]}}"#;
+    struct PrepareNative {
+        company: bool,
+    }
+    impl chat::Conversation for PrepareNative {
+        fn native(&self) -> bool {
+            true
+        }
+        fn say(&mut self, _: &str, exchange: chat::Exchange<'_>) -> anyhow::Result<chat::Reply> {
+            let _ = (exchange.call)("interview_progress", &serde_json::json!({}));
+            if self.company {
+                let found = (exchange.call)(
+                    "web_search",
+                    &serde_json::json!({"query":"Pinterest software engineer past interview questions"}),
+                );
+                assert!(found.contains("Public candidate report"));
+            }
+            let mut incomplete: serde_json::Value = serde_json::from_str(CHALLENGE).unwrap();
+            incomplete.as_object_mut().unwrap().remove("coding");
+            let correction = (exchange.call)(
+                "interview_challenge",
+                &serde_json::json!({"data":incomplete.to_string()}),
+            );
+            assert!(correction.contains("unsolved function starter"));
+            let saved = (exchange.call)(
+                "interview_challenge",
+                &serde_json::json!({"data":CHALLENGE}),
+            );
+            assert!(!saved.starts_with("That did not work:"), "{saved}");
+            (exchange.piece)("Your problem is ready in the workspace.");
+            Ok("Your problem is ready in the workspace.".into())
+        }
+    }
+    for native in [false, true] {
+        for company in if native { [true, false] } else { [false, true] } {
+            let (mut state, _dir, _) = state_with(&[]);
+            let queries = Arc::new(Mutex::new(Vec::new()));
+            let seen = Arc::clone(&queries);
+            state.web = Some(crate::Web {
+                search: Arc::new(move |query| {
+                    seen.lock().unwrap().push(query.to_owned());
+                    Ok(vec![crate::WebHit {
+                        title: "Public candidate report".into(),
+                        url: "https://example.com/interview".into(),
+                        snippet: "Unverified interview topics.".into(),
+                    }])
+                }),
+                page: Arc::new(|_| Ok(String::new())),
+                needed: Arc::new(|| true),
+            });
+            let framework = serde_json::from_value(serde_json::json!({"title":"Coding practice","track":"coding","company":if company {"Pinterest"} else {""},"role":"Software engineer","language":"Python","style":"coach","date":"","weekly_minutes":120,"skills":["Approach"],"wants":""})).unwrap();
+            crate::interview::configure(&state.chats, "interview-prep-01", 0, framework).unwrap();
+            let mut replies = vec![r#"<tool>{"name":"interview_progress"}</tool>"#.to_string()];
+            if company {
+                replies.push(r#"<tool>{"name":"web_search","query":"Pinterest software engineer past interview questions"}</tool>"#.to_string());
+            }
+            replies.push(format!(
+                "<tool>{}</tool>",
+                serde_json::json!({"name":"interview_challenge","data":CHALLENGE})
+            ));
+            replies.push("Your problem is ready in the workspace.".into());
+            let replies = Arc::new(Mutex::new(replies.into_iter()));
+            state.chat = Some(Arc::new(move |system, _, _, piece, _| {
+                assert!(system.contains("automatically research before creating the challenge"));
+                let reply = replies.lock().unwrap().next().unwrap();
+                piece(&reply);
+                Ok(reply)
+            }));
+            if native {
+                state.converse = Some(Arc::new(move |given, specs| {
+                    assert!(given.native.contains("unsolved function/class signature"));
+                    assert!(specs.iter().any(|s| s.name == "web_search"));
+                    Some(Box::new(PrepareNative { company }) as Box<dyn chat::Conversation>)
+                }));
+            }
+            let body = serde_json::from_value(serde_json::json!({"chat":"interview-prep-01","mode":"interview","messages":[{"role":"user","text":"Start my practice and prepare a challenge."}]})).unwrap();
+            let bytes = run(async {
+                let reply = chat_reply(State(state.clone()), Json(body)).await;
+                axum::body::to_bytes(reply.into_body(), 1_000_000)
+                    .await
+                    .unwrap()
+            });
+            let lines: Vec<serde_json::Value> = std::str::from_utf8(&bytes)
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+            assert!(lines
+                .iter()
+                .all(|line| line.get("error").is_none() && line.get("restart").is_none()));
+            assert_eq!(queries.lock().unwrap().len(), usize::from(company));
+            let item = crate::interview::load(&state.chats, "interview-prep-01").unwrap();
+            assert_eq!(
+                item.workspace.answer,
+                "def pair_sum(nums, target):\n    pass"
+            );
+            assert_eq!(
+                item.challenge.unwrap().coding.unwrap().examples[0].output,
+                "[0,1]"
+            );
+            assert!(state.store.lock().unwrap().store.notes.is_empty());
+        }
+    }
+}

@@ -932,6 +932,25 @@ and labels with an explicit assessment limit, rather than blocking review.
 Company research uses existing web capabilities and distinguishes generated
 exercises, official preparation and unverified candidate reports with source URLs.
 
+Interview setup (redesigned 2026-10-12): one Start practice action automatically
+researches the optional company/role and creates a challenge in the same chat
+turn. General practice needs no company or research; unavailable search falls
+back to labelled original practice. Reopening/redrawing never starts another
+request. A pending start waits for an existing reply and is cancelled by leaving
+the page. The empty state has no disabled editor. Schedule and assessment
+preferences reuse details/sheets; progress and scheduling fold below the work.
+Coding uses a responsive problem/editor split, a numbered textarea with Tab,
+Shift-Tab and indentation, separate Code/Approach/Whiteboard tabs, examples,
+constraints and source links. Reset code confirms and retains approach/board.
+`Challenge.coding` carries language, an unsolved starter, difficulty, bounded
+examples and constraints; the tool requires it for new coding exercises. Legacy
+challenges remain readable. `Workspace.reasoning` defaults empty for old drafts.
+Installing a challenge seeds its starter atomically; a repeated challenge cannot
+overwrite work. A starter alone is neither an unfinished draft nor a submission;
+implementation, reasoning and drawings count as work. Frozen attempts include
+reasoning. The existing chat completion callback restores preparation controls
+when the model fails to create a challenge, without another AI request.
+
 `interview.rs` keeps bounded plans in the `interviews` table of leo.db, independent
 of notes and chat retention. Each transaction updates one revision-checked row.
 Drafts and frozen submitted attempts are separate; only actual submissions can be

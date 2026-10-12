@@ -86,6 +86,7 @@ const chat = felix.create({
   },
   onInterview: (id) => { if (!sideWide()) chat.toggle(false); go(`#/interviews/${enc(id)}`); },
   onInterviewChanged: (id) => refreshInterview(id).catch(fail),
+  onInterviewReply: (id) => interviewReplyFinished(id),
   onSaved: (note) => {
     showLatest().catch(() => {});
     toast(`Saved as a note${note.directory ? ` in ${note.directory}` : ''}`, { action: 'Open', run: () => go(noteHash(note.id)) });

@@ -63,6 +63,27 @@ pub struct Challenge {
     pub skills: Vec<String>,
     pub origin: String,
     pub sources: Vec<Reference>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coding: Option<Coding>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Coding {
+    pub language: String,
+    pub starter: String,
+    pub difficulty: String,
+    pub examples: Vec<Example>,
+    pub constraints: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Example {
+    pub input: String,
+    pub output: String,
+    #[serde(default)]
+    pub explanation: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -77,6 +98,8 @@ pub struct Shape {
 #[serde(deny_unknown_fields)]
 pub struct Workspace {
     pub answer: String,
+    #[serde(default)]
+    pub reasoning: String,
     pub board: Vec<Shape>,
 }
 
@@ -218,8 +241,10 @@ impl Framework {
 impl Workspace {
     pub fn validate(&self) -> Result<(), Error> {
         require(
-            text(&self.answer, MOST_ANSWER, false) && self.board.len() <= 100,
-            "Keep your answer under 32,000 characters and your board under 100 shapes.",
+            text(&self.answer, MOST_ANSWER, false)
+                && text(&self.reasoning, 8_000, false)
+                && self.board.len() <= 100,
+            "Keep your answer under 32,000 characters, reasoning under 8,000, and your board under 100 shapes.",
         )?;
         let mut points = 0;
         let mut labels = 0;
@@ -246,7 +271,16 @@ impl Workspace {
     }
 
     fn empty(&self) -> bool {
-        self.answer.trim().is_empty() && self.board.is_empty()
+        self.answer.trim().is_empty() && self.reasoning.trim().is_empty() && self.board.is_empty()
+    }
+
+    fn untouched(&self, challenge: Option<&Challenge>) -> bool {
+        self.empty()
+            || (self.reasoning.trim().is_empty()
+                && self.board.is_empty()
+                && challenge
+                    .and_then(|c| c.coding.as_ref())
+                    .is_some_and(|c| self.answer.trim() == c.starter.trim()))
     }
 }
 
@@ -266,6 +300,16 @@ impl Challenge {
                     && ["official", "reported"].contains(&source.kind.as_str()),
                 "Use HTTPS source links and label each official or reported.",
             )?;
+        }
+        if let Some(coding) = &self.coding {
+            require(framework.track == "coding"
+                && text(&coding.language, 80, true) && text(&coding.starter, 8_000, true)
+                && ["easy", "medium", "hard"].contains(&coding.difficulty.as_str())
+                && !coding.examples.is_empty() && coding.examples.len() <= 8
+                && coding.examples.iter().all(|e| text(&e.input, 2_000, true) && text(&e.output, 2_000, true) && text(&e.explanation, 1_000, false))
+                && !coding.constraints.is_empty() && coding.constraints.len() <= 12
+                && coding.constraints.iter().all(|c| text(c, 400, true)),
+                "For coding, include a language, an unsolved starter under 8,000 characters, easy/medium/hard difficulty, 1–8 input/output examples and 1–12 constraints.")?;
         }
         require(
             self.origin != "official" || self.sources.iter().any(|s| s.kind == "official"),
@@ -489,6 +533,7 @@ pub fn change(path: &Path, id: &str, change: Change) -> Result<Interview, Error>
             }
             mutate(path, id, Some(revision), |item| {
                 require(item.attempts.len() < MOST_ATTEMPTS && !item.attempts.iter().any(|a| a.id == attempt), "This practice is full, or the attempt was already submitted. Start another practice or reload.")?;
+                require(!workspace.untouched(item.challenge.as_ref()), "Add your implementation, reasoning or a drawing before submitting; the starter alone is not an answer.")?;
                 let current = item
                     .challenge
                     .as_ref()
@@ -528,7 +573,15 @@ pub fn set_challenge(path: &Path, id: &str, challenge: Challenge) -> Result<Inte
                 && item.challenge.as_ref().is_none_or(|c| c.id != challenge.id),
             "Use a new ID for a new challenge.",
         )?;
-        require(item.workspace.empty(), "There is an unfinished answer. Ask the user to submit or clear their workspace before replacing the challenge.")?;
+        require(item.workspace.untouched(item.challenge.as_ref()), "There is an unfinished answer. Ask the user to submit or clear their workspace before replacing the challenge.")?;
+        item.workspace = Workspace {
+            answer: challenge
+                .coding
+                .as_ref()
+                .map(|c| c.starter.clone())
+                .unwrap_or_default(),
+            ..Workspace::default()
+        };
         item.challenge = Some(challenge);
         Ok(())
     })
@@ -584,7 +637,7 @@ fn board_material(workspace: &Workspace) -> Vec<serde_json::Value> {
 }
 
 pub fn attempt_material(attempt: &Attempt) -> String {
-    serde_json::json!({"id":attempt.id,"challenge":attempt.challenge,"answer":attempt.workspace.answer,"board":board_material(&attempt.workspace),"feedback":attempt.feedback}).to_string()
+    serde_json::json!({"id":attempt.id,"challenge":attempt.challenge,"answer":attempt.workspace.answer,"reasoning":attempt.workspace.reasoning,"board":board_material(&attempt.workspace),"feedback":attempt.feedback}).to_string()
 }
 
 pub fn context(item: &Interview) -> String {
@@ -596,7 +649,7 @@ pub fn context(item: &Interview) -> String {
         let values: Vec<_> = item.attempts.iter().filter_map(|a| a.feedback.as_ref()).flat_map(|f| &f.scores).filter(|s| &s.skill == skill).map(|s| s.value).collect();
         serde_json::json!({"skill":skill,"observations":values.len(),"latest_scores":values.iter().rev().take(5).collect::<Vec<_>>()})
     }).collect();
-    let data = serde_json::json!({"id":item.id,"revision":item.revision,"framework":item.framework,"challenge":item.challenge,"draft_answer":crate::chat::clip(&item.workspace.answer, 8000),"board":board_material(&item.workspace),"latest_attempts":attempts,"assessed_scores":scores,"schedule":item.schedule});
+    let data = serde_json::json!({"id":item.id,"revision":item.revision,"framework":item.framework,"challenge":item.challenge,"draft_answer":crate::chat::clip(&item.workspace.answer, 8000),"draft_reasoning":item.workspace.reasoning,"board":board_material(&item.workspace),"latest_attempts":attempts,"assessed_scores":scores,"schedule":item.schedule});
     format!("<interview_material>\n{}\n</interview_material>\nFor full submitted work use interview_attempt with its ID before assessing it.\n", data)
 }
 
@@ -628,12 +681,14 @@ mod tests {
             skills: vec!["Approach".into(), "Testing".into()],
             origin: "generated".into(),
             sources: vec![],
+            coding: None,
         }
     }
 
     fn workspace() -> Workspace {
         Workspace {
             answer: "答え: use a hash map".into(),
+            reasoning: String::new(),
             board: vec![Shape {
                 kind: "text".into(),
                 text: "Client".into(),
@@ -807,6 +862,7 @@ mod tests {
         c.question = "界".repeat(12_000);
         let work = Workspace {
             answer: "答".repeat(MOST_ANSWER),
+            reasoning: String::new(),
             board: vec![],
         };
         let feedback = Feedback {
@@ -909,5 +965,118 @@ mod tests {
         let mut w = workspace();
         w.board = vec![w.board[0].clone(); 101];
         assert!(w.validate().is_err());
+    }
+
+    fn coding_challenge(id: &str) -> Challenge {
+        let mut c = challenge(id);
+        c.coding = Some(Coding {
+            language: "Python".into(),
+            starter: "def pair_sum(nums, target):\n    pass".into(),
+            difficulty: "easy".into(),
+            examples: vec![Example {
+                input: "nums=[2,3], target=5".into(),
+                output: "[0,1]".into(),
+                explanation: String::new(),
+            }],
+            constraints: vec!["Two or more values; exactly one pair.".into()],
+        });
+        c
+    }
+
+    #[test]
+    fn coding_starters_are_seeded_once_and_never_count_as_submitted_work() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = "interview-starter-01";
+        configure(dir.path(), id, 0, framework()).unwrap();
+        let c = coding_challenge("challenge-starter-01");
+        let seeded = set_challenge(dir.path(), id, c.clone()).unwrap();
+        assert_eq!(seeded.workspace.answer, c.coding.as_ref().unwrap().starter);
+        assert!(change(
+            dir.path(),
+            id,
+            Change::Submit {
+                revision: seeded.revision,
+                challenge: c.id.clone(),
+                attempt: "attempt-starter-01".into(),
+                workspace: seeded.workspace.clone()
+            }
+        )
+        .is_err());
+        let next = set_challenge(dir.path(), id, coding_challenge("challenge-starter-02")).unwrap();
+        let mut work = next.workspace.clone();
+        work.reasoning = "A hash map handles duplicates.".into();
+        let saved = change(
+            dir.path(),
+            id,
+            Change::Workspace {
+                revision: next.revision,
+                challenge: "challenge-starter-02".into(),
+                workspace: work.clone(),
+            },
+        )
+        .unwrap();
+        let repeat =
+            set_challenge(dir.path(), id, coding_challenge("challenge-starter-02")).unwrap();
+        assert_eq!(repeat.workspace, work);
+        assert!(set_challenge(dir.path(), id, coding_challenge("challenge-starter-03")).is_err());
+        let submitted = change(
+            dir.path(),
+            id,
+            Change::Submit {
+                revision: saved.revision,
+                challenge: "challenge-starter-02".into(),
+                attempt: "attempt-starter-02".into(),
+                workspace: work,
+            },
+        )
+        .unwrap();
+        assert!(attempt_material(&submitted.attempts[0]).contains("A hash map handles duplicates."));
+        assert_eq!(
+            load(dir.path(), id).unwrap().attempts[0].challenge.coding,
+            next.challenge.unwrap().coding
+        );
+    }
+
+    #[test]
+    fn legacy_challenges_and_workspaces_remain_readable() {
+        let mut data = serde_json::to_value(challenge("challenge-legacy-01")).unwrap();
+        data.as_object_mut().unwrap().remove("coding");
+        assert!(serde_json::from_value::<Challenge>(data)
+            .unwrap()
+            .coding
+            .is_none());
+        let legacy: Workspace =
+            serde_json::from_value(serde_json::json!({"answer":"old draft","board":[]})).unwrap();
+        assert_eq!(legacy.reasoning, "");
+        assert_eq!(legacy.answer, "old draft");
+    }
+
+    #[test]
+    fn coding_payloads_bound_every_field_and_reject_wrong_tracks() {
+        let c = coding_challenge("challenge-bounds-01");
+        assert!(c.validate(&framework()).is_ok());
+        for n in 0..8 {
+            let mut bad = c.clone();
+            let code = bad.coding.as_mut().unwrap();
+            match n {
+                0 => code.starter = "x".repeat(8001),
+                1 => code.language.clear(),
+                2 => code.difficulty = "unknown".into(),
+                3 => code.examples.clear(),
+                4 => code.examples = vec![code.examples[0].clone(); 9],
+                5 => code.examples[0].input = "x".repeat(2001),
+                6 => code.constraints = vec!["x".into(); 13],
+                _ => code.constraints[0] = "x".repeat(401),
+            }
+            assert!(bad.validate(&framework()).is_err());
+        }
+        let mut other = framework();
+        other.track = "systems".into();
+        assert!(c.validate(&other).is_err());
+        let work = Workspace {
+            reasoning: "答".repeat(8001),
+            ..Workspace::default()
+        };
+        assert!(work.validate().is_err());
     }
 }

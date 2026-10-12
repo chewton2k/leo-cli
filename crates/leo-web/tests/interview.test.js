@@ -46,3 +46,34 @@ test('drafts survive failed saves, remain isolated by plan and challenge, and st
   assert.equal(I.readDraft(storage, 'plan9', 'challenge'), null);
   assert.equal(I.keepDraft({ getItem: () => { throw Error('offline'); } }, 'x', 'y', { answer: '', board: [] }), false);
 });
+
+test('starting practice combines company research and challenge creation, while general practice skips research', () => {
+  for (const track of ['coding', 'systems', 'design', 'marketing', 'business', 'quant']) {
+    const f = { ...I.framework(track), company: 'Pinterest', role: 'Intern' };
+    const company = I.preparation(f);
+    assert.match(company.say, /Search the web before/);
+    assert.match(company.say, /interview_challenge/);
+    assert.match(company.say, /unverified candidate reports/);
+    assert.ok(company.text.includes('Pinterest'));
+    const general = I.preparation({ ...f, company: '' });
+    assert.match(general.say, /Do not ask for a company/);
+    assert.doesNotMatch(general.say, /Search the web before/);
+    if (track === 'coding') assert.match(company.say, /function signature/);
+  }
+});
+
+test('coding stubs are not answers and separate reasoning and drawings count as work', () => {
+  const c = { coding: { starter: 'def solve(nums):\n    pass' } };
+  assert.equal(I.hasWork({ answer: c.coding.starter, board: [] }, c), false);
+  for (const w of [{ answer: 'return nums', board: [] }, { answer: c.coding.starter, reasoning: 'Use a map', board: [] }, { answer: c.coding.starter, board: [{ kind: 'text' }] }]) assert.equal(I.hasWork(w, c), true);
+  assert.deepEqual(I.workspace({ answer: 'legacy', board: [] }), { answer: 'legacy', reasoning: '', board: [] });
+});
+
+test('coding indentation handles typing, selections, outdent and Unicode without losing the caret', () => {
+  assert.deepEqual(I.codeEdit('def solve():', 12, 12, 'Enter'), { value: 'def solve():\n    ', from: 17, to: 17 });
+  assert.deepEqual(I.codeEdit('答え', 2, 2, 'Tab'), { value: '答え    ', from: 6, to: 6 });
+  const indented = I.codeEdit('a\nb', 0, 3, 'Tab');
+  assert.equal(indented.value, '    a\n    b');
+  assert.equal(I.codeEdit(indented.value, indented.from, indented.to, 'Tab', true).value, 'a\nb');
+  assert.equal(I.codeEdit('x'.repeat(32000), 32000, 32000, 'Tab'), null);
+});
