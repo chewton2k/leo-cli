@@ -1566,9 +1566,15 @@ test.describe('pictures', () => {
 
   test('a picture pasted into Felix shows as a thumbnail and goes with the message', async ({ page }) => {
     const asked = [];
-    await page.route('**/api/chats/*/files', (route) => {
+    const uploaded = [];
+    let finishReading;
+    const reading = new Promise(resolve => { finishReading = resolve; });
+    await page.route('**/api/chats/*/files', async (route) => {
       if (route.request().method() !== 'POST') return route.fulfill({ json: [] });
-      return route.fulfill({ status: 201, json: { id: 'doc-pic-1', name: route.request().postDataJSON().name, chars: 40 } });
+      const body = route.request().postDataJSON();
+      uploaded.push(body);
+      await reading;
+      return route.fulfill({ status: 201, json: { id: 'doc-pic-1', name: body.name, chars: 40 } });
     });
     await page.route('**/api/chat', async (route) => {
       asked.push(route.request().postDataJSON());
@@ -1578,8 +1584,19 @@ test.describe('pictures', () => {
     await page.locator('#chat-toggle').click();
     await pastePicture(page, '#chat-input');
     const chip = page.locator('#chat #chat-refs .file-card');
-    await expect(chip).toContainText('pasted-1.png');
+    try {
+      await expect(chip).toContainText('pasted-1.png');
+      await expect(chip).toHaveClass(/reading/);
+      await expect(chip.locator('.file-peek img')).toBeVisible();
+    } finally {
+      finishReading();
+    }
+    await expect(chip).not.toHaveClass(/reading/);
+    await expect(chip).toContainText('pasted-1.jpg');
     await expect(chip.locator('.file-peek img')).toBeVisible();
+    expect(uploaded).toHaveLength(1);
+    expect(uploaded[0]).toMatchObject({ name: 'pasted-1.jpg', type: 'image/jpeg' });
+    expect(Buffer.from(uploaded[0].data, 'base64').subarray(0, 3)).toEqual(Buffer.from([0xff, 0xd8, 0xff]));
     await page.locator('#chat-input').fill('what is this?');
     await page.locator('#chat-input').press('Enter');
     await expect(page.locator('#chat .msg.leo').last()).toContainText('That diagram shows a heap.');

@@ -465,6 +465,9 @@
   a miniature page of the document's first lines (`chat_files` `excerpt`,
   320 chars) over a colored type badge (PDF, DOCX, PPTX, CSV, PNG, …; tones in
   `--tone-*`). Sent messages keep `cards` (name plus thumb or excerpt).
+  Picture uploads keep their original name while reading, then use the server's
+  JPEG name after conversion. Browser checks hold the upload to verify both
+  states, the encoded image type and the sent attachment, without a timing race.
 - Diagrams: ```mermaid blocks are drawn on the page (notes, Felix, anywhere
   `markdown.js` renders): `render` emits `<figure class="diagram">` holding
   the escaped source; `app/diagrams.js` watches the page (MutationObserver),
