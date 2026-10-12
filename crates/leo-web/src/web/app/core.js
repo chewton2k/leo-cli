@@ -231,7 +231,7 @@ function rel(iso) {
   return then.toLocaleDateString(undefined, sameYear ? { month: 'short', day: 'numeric' } : { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-const folderLabel = (dir) => (dir ? dir.split('/').pop() : 'All notes');
+const folderLabel = (dir) => (dir ? dir.split('/').pop() : 'Top level');
 
 function progress(note) {
   let done;
@@ -285,7 +285,6 @@ function card(note, { words = [], showFolder = false, pick = null, why = null, b
     ${text ? `<div class="card-snippet">${text}</div>` : ''}
     ${why ? `<div class="card-why">${ICON.map}${why.kind === 'idea' ? `Through the idea “${esc(why.name)}” in the knowledge graph` : why.kind === 'meaning' ? 'Close in meaning, though the words differ' : 'Through its summary in the knowledge graph'}</div>` : ''}
     <div class="card-meta">${where}<span title="${esc(`Edited ${rel(note.updated_at)}`)}">${browse ? esc(new Date(note.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })) : rel(note.updated_at)}</span>${progress(note)}</div>
-    ${browse && !pick ? `<button class="btn sm plain card-peek" data-action="note-preview" data-id="${esc(note.id)}" aria-label="Preview ${esc(note.title)}">Preview</button>` : ''}
   </div>`;
 }
 
@@ -319,7 +318,7 @@ function back() {
   go('#/');
 }
 
-const PAGE_NAMES = { '': 'All notes', f: 'All notes', search: 'Search', trash: 'Trash', map: 'Knowledge graph', settings: 'Settings', record: 'Record', interviews: 'Interview practice', new: 'New note' };
+const PAGE_NAMES = { '': 'Top level', f: 'Top level', search: 'Search', trash: 'Trash', map: 'Knowledge graph', settings: 'Settings', record: 'Record', interviews: 'Interview practice', new: 'New note' };
 
 function pageName() {
   const [, kind = '', rest = ''] = location.hash.match(/^#\/([a-z]*)\/?(.*)$/) || [];
@@ -330,9 +329,10 @@ function pageName() {
 function chrome({ dir = '', showBack = false, fab = null, actions = null }) {
   $('#back').hidden = !showBack;
   const crumbs = $('#crumbs');
+  let trail;
   if (dir) {
     const parts = dir.split('/');
-    crumbs.innerHTML = `<button data-action="home" title="All notes · Drop a folder here to move it to the top level">All notes</button>` + parts
+    trail = `<button data-action="home" title="Top level · Drop a folder here to move it to the top level">Top level</button>` + parts
       .map((part, i) => {
         const path = parts.slice(0, i + 1).join('/');
         return `<span class="sep">/</span><button data-action="open-folder" data-dir="${esc(path)}" draggable="true">${esc(part)}</button>`;
@@ -340,8 +340,9 @@ function chrome({ dir = '', showBack = false, fab = null, actions = null }) {
       .join('');
   } else {
     const name = pageName();
-    crumbs.innerHTML = name ? `<span class="page-name">${esc(name)}</span>` : '';
+    trail = name ? `<span class="page-name">${esc(name)}</span>` : '';
   }
+  if (crumbs.innerHTML !== trail) crumbs.innerHTML = trail;
   floating.innerHTML = (fab || '') + (actions || '');
   document.title = dir ? `${folderLabel(dir)} · leo` : 'leo';
 }
@@ -350,14 +351,18 @@ const newButton = (dir) => `<div class="fabs"><button class="fab ghost" data-act
 
 async function showFolder(dir) {
   const mine = ++seq;
+  const arrived = state.view === 'folder' && state.dir !== dir;
+  stopLibraryArrival();
   const before = state.view === 'folder' && state.dir === dir ? state : null;
   state = { view: 'folder', dir, selecting: before ? before.selecting : false, picked: before ? new Set(before.picked) : new Set() };
+  libraryClasses();
   chrome({ dir, showBack: Boolean(dir), fab: newButton(dir) });
   if (!app.innerHTML.trim()) app.innerHTML = skeleton(4);
   const [dirs, page] = await Promise.all([api(`/api/dirs?parent=${enc(dir)}`), api(libraryQuery(dir), { total: true })]);
   if (mine !== seq) return;
   state.listing = { dirs, notes: page.items, total: page.total };
   drawFolder();
+  if (arrived) arriveInFolder();
 }
 
 const PAGE = 200;
@@ -393,12 +398,11 @@ function loadMoreNotes() {
       if (state.listing !== listing) return;
       const known = new Set(listing.notes.map((n) => n.id));
       const fresh = page.items.filter((n) => !known.has(n.id));
-      const previous = listing.notes[listing.notes.length - 1];
       listing.notes.push(...fresh);
       listing.total = Math.max(page.total, listing.notes.length);
       if (!fresh.length) listing.total = listing.notes.length;
       const cards = $('.cards');
-      if (cards) cards.insertAdjacentHTML('beforeend', libraryRows(fresh, previous));
+      if (cards) cards.insertAdjacentHTML('beforeend', libraryRows(fresh));
       watchPreviews();
       const sentinel = $('#more-notes');
       if (sentinel && listing.notes.length >= listing.total) sentinel.remove();
@@ -599,7 +603,6 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
   const mine = ++seq;
   const note = fresh || (await api(`/api/notes/${enc(id)}`));
   if (mine !== seq) return;
-  openedNote(note.id);
   if (state.session && state.session.doc) state.session.doc.destroy();
   const s = draft || saving.open(note);
   s.tags = [...s.edit.tags];

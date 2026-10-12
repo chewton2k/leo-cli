@@ -49,10 +49,6 @@ const actions = {
   'open-note': (el) => go(noteHash(el.dataset.id)),
   'pin-card': pinCard,
   'library-view': changeLibraryView,
-  'library-sort': librarySortSheet,
-  'library-order': changeLibrarySort,
-  'note-preview': quickPreview,
-  'preview-open': (el) => { closeSheet(); go(noteHash(el.dataset.id)); },
   new: (el) => {
     closeSheet();
     go(el.dataset.dir ? `#/new/${enc(el.dataset.dir)}` : '#/new');

@@ -225,7 +225,7 @@ async function moveSheet() {
     `<button class="list-row" data-action="move-to" data-dir="${esc(name)}">${ICON.folder}<span class="grow">${esc(label)}</span>${
       name === note.directory ? ICON.check : ''
     }</button>`;
-  sheet(`<h3>Move “${esc(note.title)}”</h3>${row('', 'All notes (top level)')}${folders.map((f) => row(f.name, f.name)).join('')}`);
+  sheet(`<h3>Move “${esc(note.title)}”</h3>${row('', 'Top level')}${folders.map((f) => row(f.name, f.name)).join('')}`);
 }
 
 async function moveTo(dir) {

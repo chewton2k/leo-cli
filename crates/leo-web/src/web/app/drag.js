@@ -5,8 +5,8 @@ const dragging = { note: null, folder: null, filesTimer: 0 };
 
 const carries = (e, type) => Boolean(e.dataTransfer && [...e.dataTransfer.types].includes(type));
 const parentOf = (path) => path.split('/').slice(0, -1).join('/');
-const dropTargetOf = (el) => (el && el.closest ? el.closest('[data-action="open-folder"][data-dir], [data-action="home"]') : null);
-const dirOf = (target) => (target.dataset.action === 'home' ? '' : target.dataset.dir);
+const dropTargetOf = (el) => (el && el.closest ? el.closest('[data-action="open-folder"][data-dir], [data-action="home"], [data-drop-dir]') : null);
+const dirOf = (target) => (Object.hasOwn(target.dataset, 'dropDir') ? target.dataset.dropDir : target.dataset.action === 'home' ? '' : target.dataset.dir);
 const noteCardOf = (el) => (el && el.closest ? el.closest('.card[data-id][data-action="open-note"]') : null);
 const combinesWith = (e) => {
   const card = dragging.note && carries(e, NOTE_DRAG) ? noteCardOf(e.target) : null;
@@ -91,6 +91,7 @@ document.addEventListener('dragover', (e) => {
 document.addEventListener('drop', (e) => {
   const onto = combinesWith(e);
   const target = dropTargetOf(e.target);
+  const ok = target && accepts(e, target);
   const note = dragging.note;
   const folder = dragging.folder;
   endDrag();
@@ -101,7 +102,7 @@ document.addEventListener('drop', (e) => {
     return;
   }
   if (note || folder) {
-    if (!target) return;
+    if (!ok) return;
     e.preventDefault();
     const into = dirOf(target);
     if (note && note.dir !== into) dropNote(note, into).catch(fail);

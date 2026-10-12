@@ -53,7 +53,7 @@ function drawSide() {
     <button class="side-new" data-action="new" data-dir="${esc(dir)}" title="New note${dir ? ` in ${esc(folderLabel(dir))}` : ''}">${ICON.plus}<span class="side-label">New note</span></button>
     <button class="side-search" data-action="side-search" title="Search every note (${shortcutLabel})">${ICON.search}<span class="side-label">Search</span><kbd class="side-label">${shortcutLabel}</kbd></button>
     <nav class="side-nav" aria-label="Places">
-      ${sideRow('home', ICON.note, 'All notes', { on: here === 'home' })}
+      ${sideRow('home', ICON.note, 'Notes', { on: here === 'home' })}
       ${sideRow('chat', chat.button(22), 'Ask Felix', { on: chatOpen })}
       ${sideRow('interviews', ICON.chat, 'Interview practice', { on: here === 'interviews' })}
       ${sideRow('map', ICON.map, 'Knowledge graph', { on: here === 'map' })}
@@ -61,7 +61,8 @@ function drawSide() {
       ${sideRow('upload', ICON.upload, 'Note from a file')}
     </nav>
     <div class="side-group"><span class="side-label">Folders</span><button class="side-add side-label" data-action="new-folder" data-parent="" aria-label="New folder" title="New folder at the top level">${ICON.plus}</button></div>
-    <nav class="side-nav side-tree" aria-label="Folders">
+    <nav class="side-nav side-tree" aria-label="Folders" data-drop-dir="">
+      ${sideRow('open-folder', ICON.folder, 'Top level', { attrs: ' data-dir=""' })}
       ${folders || '<p class="side-none side-label">Folders you make show up here.</p>'}
     </nav>
     <div class="side-foot">

@@ -409,7 +409,7 @@ test.describe('drag and drop', () => {
     await card.dragTo(page.locator(`main .folder[data-dir="${a}"]`));
     await expect(page.locator('.toast')).toContainText(`Moved “Drag me ${tag}” to ${a}`);
     expect(await where()).toBe(a);
-    await expect(card.locator('.card-meta')).toContainText(a);
+    await expect(card).toHaveCount(0);
     await page.locator('.toast button').click();
     await expect(card).toBeVisible();
     await expect(card.locator('.card-meta')).not.toContainText(a);
@@ -3119,34 +3119,160 @@ test('only the folders scroll in the sidebar; the places above and below stay pu
   await expect.poll(() => tree.evaluate((el) => el.scrollTop)).toBe(scrolled);
 });
 
-test('note cards can be previewed without losing the library and layout choices persist', async ({ page }) => {
-  const made = await page.request.post('/api/notes', { data: { title: 'Library preview fixture', directory: 'library-grid-fixture', body: '# Traversals\nBreadth first search visits each layer.\n- [ ] Homework due Friday\n```svg\n<svg xmlns="http://www.w3.org/2000/svg" width="160" height="80"><rect width="160" height="80" fill="#b4cfe7"/></svg>\n```' } });
+test('note thumbnails are read only, cards open directly and layout choices persist', async ({ page }) => {
+  const made = await page.request.post('/api/notes', { data: { title: 'Library thumbnail fixture', body: '# Traversals\nBreadth first search visits each layer.\n- [ ] Homework due Friday\n```svg\n<svg xmlns="http://www.w3.org/2000/svg" width="160" height="80"><rect width="160" height="80" fill="#b4cfe7"/></svg>\n```' } });
   expect(made.status()).toBe(201);
   const note = await made.json();
   await page.goto('/#/');
   const card = page.locator(`.library-cards.grid .card[data-id="${note.id}"]`);
   await expect(card).toBeVisible();
   await expect(card.locator('.card-snippet')).toContainText('Breadth first search');
-  await expect(card.locator('.card-meta')).toContainText('library-grid-fixture');
   await card.scrollIntoViewIfNeeded();
   await expect(card.locator('.note-thumb img')).toBeVisible();
-  const preview = card.locator('[data-action="note-preview"]');
-  await preview.click();
-  await expect(page.locator('.sheet.note-preview .preview-body')).toContainText('Homework due Friday');
-  await expect(page.locator('.sheet.note-preview input:enabled')).toHaveCount(0);
-  await page.keyboard.press('Escape');
-  await expect(preview).toBeFocused();
-  await expect(card).toBeVisible();
+  await expect(card.locator('.note-thumb input:enabled')).toHaveCount(0);
+  await expect(page.locator('[data-action="note-preview"]')).toHaveCount(0);
   await page.locator('[data-action="library-view"][data-view="list"]').click();
   await expect(page.locator('.library-cards.list')).toBeVisible();
   await page.reload();
   await expect(page.locator('.library-cards.list')).toBeVisible();
-  await page.locator('[data-action="library-sort"]').click();
-  await page.locator('[data-action="library-order"][data-sort="title"]').click();
-  await expect(page.locator('[data-action="library-sort"]')).toHaveText('Name');
-  await expect(page.locator('[data-action="library-sort"]')).toBeFocused();
+  await expect(page.locator('[data-action="library-sort"]')).toHaveCount(0);
   await page.locator('[data-action="library-view"][data-view="grid"]').click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+  await card.click();
+  await expect(page).toHaveURL(new RegExp(`#/n/${note.id}$`));
+  await expect(page.locator('#doc')).toContainText('Homework due Friday');
+});
+
+test('grid and list keep the library and header width in every layout', async ({ page }) => {
+  const dir = `library-width-${Date.now()}`;
+  await page.request.post('/api/notes', { data: { title: 'Stable library width', directory: dir, body: 'Keep the layout steady.' } });
+  const bounds = () => page.locator('main, .bar-row, .search').evaluateAll((els) => els.map((el) => {
+    const rect = el.getBoundingClientRect();
+    return { left: rect.left, width: rect.width };
+  }));
+  for (const folder of ['', dir]) {
+    await page.goto(folder ? `/#/f/${encodeURIComponent(folder)}` : '/#/');
+    const layouts = test.info().project.name === 'desktop' ? ['wide', 'mini', 'chat'] : ['phone'];
+    for (const layout of layouts) {
+      if (layout === 'mini') await page.locator('[data-action="side-fold"]').click();
+      if (layout === 'chat') {
+        await page.locator('[data-action="side-fold"]').click();
+        await page.locator('#chat-toggle').click();
+        await expect(page.locator('.chat')).toBeVisible();
+      }
+      for (const views of [['grid', 'list'], ['list', 'grid']]) {
+        await page.locator(`[data-action="library-view"][data-view="${views[0]}"]`).click();
+        const before = await bounds();
+        await page.locator(`[data-action="library-view"][data-view="${views[1]}"]`).click();
+        expect(await bounds()).toEqual(before);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+      }
+      if (layout === 'chat') {
+        await page.locator('.chat [data-chat="close"]').click();
+        await expect(page.locator('body')).not.toHaveClass(/chat-open|chat-leaving/);
+      }
+    }
+  }
+});
+
+test('sidebar folders can move to the top level with their contents and Undo', async ({ page }) => {
+  test.skip(test.info().project.name !== 'desktop', 'sidebar dragging needs a mouse');
+  const tag = Date.now().toString(36);
+  const from = `sidebar-root-${tag}/Nested-${tag}`;
+  const root = from.split('/').pop();
+  const note = await (await page.request.post('/api/notes', { data: { title: 'Nested folder move', directory: `${from}/Child`, body: 'Keep descendants.' } })).json();
+  const where = async () => (await (await page.request.get(`/api/notes/${note.id}`)).json()).directory;
+  await page.goto(`/#/f/${encodeURIComponent(from)}`);
+  const target = page.locator('#side [data-action="open-folder"][data-dir=""]');
+  await expect(target).toHaveText('Top level');
+  await page.locator(`#side [data-action="open-folder"][data-dir="${from}"]`).dragTo(target);
+  await expect.poll(where).toBe(`${root}/Child`);
+  await expect(page).toHaveURL(new RegExp(`#/f/${encodeURIComponent(root)}$`));
+  await expect(page.locator(`#side [data-action="open-folder"][data-dir="${root}"]`)).toBeVisible();
+  await page.locator('.toast button', { hasText: 'Undo' }).last().click();
+  await expect.poll(where).toBe(`${from}/Child`);
+  await expect(page).toHaveURL(new RegExp(`#/f/${encodeURIComponent(from)}$`));
+  const moves = [];
+  page.on('request', request => { if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/dirs/move') moves.push(request.postDataJSON()); });
+  const transfer = await page.evaluateHandle(() => new DataTransfer());
+  const parent = from.split('/')[0];
+  for (const [source, into] of [[parent, from], [from, parent], [parent, '']]) {
+    const dragged = `#side [data-action="open-folder"][data-dir="${source}"]`;
+    const dropped = `#side [data-action="open-folder"][data-dir="${into}"]`;
+    await page.dispatchEvent(dragged, 'dragstart', { dataTransfer: transfer });
+    await page.dispatchEvent(dropped, 'dragover', { dataTransfer: transfer });
+    await expect(page.locator(dropped)).not.toHaveClass(/drop-ok/);
+    await page.dispatchEvent(dropped, 'drop', { dataTransfer: transfer });
+  }
+  expect(moves).toEqual([]);
+  await page.dispatchEvent(`#side [data-action="open-folder"][data-dir="${from}"]`, 'dragstart', { dataTransfer: transfer });
+  await page.dispatchEvent('#side .side-tree', 'drop', { dataTransfer: transfer });
+  await expect.poll(where).toBe(`${root}/Child`);
+  expect(moves).toEqual([{ from, into: '' }]);
+});
+
+test('folder navigation keeps the header steady while loading and animates only content', async ({ page }) => {
+  const dir = `folder-arrival-${Date.now()}`;
+  await page.request.post('/api/notes', { data: { title: 'Folder arrival fixture', directory: dir, body: 'A smooth arrival.' } });
+  await page.addInitScript(() => {
+    const animate = Element.prototype.animate;
+    window.folderAnimations = [];
+    Element.prototype.animate = function (frames, options) {
+      if (this.id === 'app') window.folderAnimations.push({ frames, options });
+      return animate.call(this, frames, options);
+    };
+  });
+  await page.reload();
+  await page.goto('/#/');
+  await expect(page.locator(`main .folder[data-dir="${dir}"]`)).toBeVisible();
+  const header = page.locator('.bar-row');
+  const before = await header.boundingBox();
+  let release;
+  const hold = new Promise(resolve => { release = resolve; });
+  let waiting = false;
+  await page.route('**/api/notes?*', async route => {
+    if (new URL(route.request().url()).searchParams.get('dir') === dir) { waiting = true; await hold; }
+    await route.continue();
+  });
+  await page.locator(`main .folder[data-dir="${dir}"]`).click();
+  try {
+    await expect.poll(() => waiting).toBe(true);
+    const loading = await header.boundingBox();
+    expect(loading.width).toBe(before.width);
+    expect(loading.x).toBe(before.x);
+  } finally { release(); }
+  await expect(page.locator('.library-cards')).toContainText('Folder arrival fixture');
+  await expect.poll(() => page.evaluate(() => window.folderAnimations.length)).toBe(1);
+  await page.evaluate(() => { window.keptCrumb = document.querySelector('#crumbs button:last-child'); });
+  for (const view of ['list', 'grid']) await page.locator(`[data-action="library-view"][data-view="${view}"]`).click();
+  expect(await page.evaluate(() => window.keptCrumb === document.querySelector('#crumbs button:last-child'))).toBe(true);
+  expect(await page.evaluate(() => window.folderAnimations.length)).toBe(1);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.locator('#crumbs [data-action="home"]').click();
+  await expect(page.locator(`main .folder[data-dir="${dir}"]`)).toBeVisible();
+  expect(await page.evaluate(() => window.folderAnimations.length)).toBe(1);
+});
+
+test('top level and folders show only their own notes and ignore old recency preferences', async ({ page }) => {
+  const dir = `folder-scope-${Date.now()}`;
+  const notes = [];
+  for (const [title, directory] of [['Zebra scope fixture', ''], ['Alpha scope fixture', ''], ['Nested scope fixture', dir], ['Child scope fixture', `${dir}/Child`]]) {
+    notes.push(await (await page.request.post('/api/notes', { data: { title, directory, body: 'Only in its own folder.' } })).json());
+  }
+  await page.addInitScript(() => localStorage.setItem('leo-library', JSON.stringify({ view: 'grid', sort: 'opened' })));
+  await page.reload();
+  await page.goto('/#/');
+  await expect(page.locator(`.card[data-id="${notes[1].id}"]`)).toBeVisible();
+  for (const view of ['grid', 'list']) {
+    await page.locator(`[data-action="library-view"][data-view="${view}"]`).click();
+    await expect(page.locator(`.card[data-id="${notes[2].id}"], .card[data-id="${notes[3].id}"]`)).toHaveCount(0);
+    const ids = await page.locator('.card[data-id]').evaluateAll(els => els.map(el => el.dataset.id));
+    expect(ids.indexOf(notes[1].id)).toBeLessThan(ids.indexOf(notes[0].id));
+    await expect(page.locator('[data-action="library-sort"]')).toHaveCount(0);
+  }
+  await page.goto(`/#/f/${encodeURIComponent(dir)}`);
+  await expect(page.locator('.card[data-id]')).toHaveCount(1);
+  await expect(page.locator(`.card[data-id="${notes[2].id}"]`)).toBeVisible();
 });
 
 test('folder controls rename, move to root and delete from inside the folder with Undo', async ({ page }) => {

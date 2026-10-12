@@ -869,20 +869,35 @@ only unwritten chunks in memory for retry; it must not duplicate stored audio.
 
 ### Note browsing and recording failures (2026-10-11)
 
-The library defaults to a responsive Grid with a remembered List choice. All
-notes includes every folder; opening a folder scopes the results to that folder.
-`browse.rs` sorts before pagination (pinned first; updated, browser-local opened,
-folder or title), chooses bounded visual previews, and supplies a short content
+The library defaults to a responsive Grid with a remembered List choice. The
+top level and each folder show only notes stored directly there, with an explicit
+`dir` parameter (empty for root) on every page request. Cards are alphabetical,
+pinned first; old recency preferences are ignored. Search still reaches every
+folder. `browse.rs` sorts before pagination, chooses bounded visual previews, and supplies a short content
 fallback. `Graphs::note_summaries` reads only current cached summaries; browsing
 never calls an AI. `app/browse.js` uses the existing Markdown, diagram and math
-renderers with lazy thumbnails, bounded caches and a read-only preview sheet.
-Preview dismissal restores focus and leaves the library's scroll position intact.
+renderers with lazy thumbnails and bounded caches. Cards open notes directly;
+the Preview button and its sheet were removed at the user's request (2026-10-12).
 The Markdown renderer accepts `interactive: false` for read-only task controls.
+
+Grid and List share one library width, including the header and search. The
+library class is set before loading a folder and stays on between folder routes;
+removing it before a fetch caused the header to shrink and flash back. Identical
+breadcrumbs retain their DOM nodes. Desktop scrollbars reserve their gutter so
+changing the number of rows cannot shift the page width. Folder navigation uses
+one short opacity/transform arrival on the content after it loads (the user's
+request, 2026-10-12), cancelled on the next route or layout change, suppressed
+for Reduced Motion, and never replayed by refreshes or grid/list changes.
 
 Folder options are available inside empty and populated folders, using existing
 sheets and buttons. Rename uses `/api/dirs/rename` and the Store relocation
 primitive; move to top level works through the root breadcrumb or sidebar and a
 phone-friendly menu action. Folder deletion uses the existing trash API and Undo.
+The sidebar's folder tree has an explicit Top level row and accepts root drops
+on its empty space; nested folder targets take precedence. Drop rechecks the same
+acceptance rules as hover, before clearing drag state, so same-parent and
+self/descendant drops never send a move. Moving a folder retains its descendants
+and the existing Undo behavior.
 
 Browser capture feeds its worklet through a silent gain to the output so the
 browser processes audio without feedback. Call's meter follows both inputs.
@@ -945,8 +960,8 @@ capacity. Claude's weekly allowance was exhausted. These prompt checks are not a
 compiled-server end-to-end test. Per the user's instruction, compiled checks and
 the full browser gate run in CI, not through local Cargo builds/tests.
 
-The All notes view keeps a moved note visible and updates its folder metadata;
-drag tests check that state and Undo. Thumbnail tests scroll cards into view
+Moving a note out of the top level removes its card there; Undo brings it back.
+Drag tests check that state and Undo. Thumbnail tests scroll cards into view
 before expecting lazy previews. Completed task text uses the muted theme token
 so grid thumbnails remain legible in dark mode.
 

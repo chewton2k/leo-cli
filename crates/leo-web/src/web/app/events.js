@@ -179,7 +179,8 @@ async function render() {
   const hash = decodeURI(location.hash || '#/');
   const [, kind, rest = ''] = location.hash.match(/^#\/([a-z]*)\/?(.*)$/) || [null, '', ''];
   const arg = decodeURIComponent(rest);
-  document.body.classList.remove('on-library-grid');
+  stopLibraryArrival();
+  document.body.classList.toggle('on-library', !kind || kind === 'f');
   if (library.observer) library.observer.disconnect();
   if (kind !== 'search') closeSearch();
   if (kind !== 'map') leaveMap();
