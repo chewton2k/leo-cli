@@ -711,6 +711,12 @@ pub(crate) async fn act(
             let wanted = path.clone();
             state
                 .with_store(move |store| {
+                    if wanted.is_empty()
+                        || store.validate_directory(&wanted).is_err()
+                        || !store.dir_exists(&wanted)
+                    {
+                        return Err(StatusCode::BAD_REQUEST);
+                    }
                     let inside = format!("{wanted}/");
                     if store
                         .notes

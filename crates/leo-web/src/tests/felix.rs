@@ -1781,6 +1781,20 @@ fn felix_organizes_tasks_folders_and_notes_through_cards_that_undo() {
     assert!(state.fresh().dir_exists("archive/labs"));
     act(&folder["undo"]);
     assert!(!state.fresh().dir_exists("archive/labs"));
+    for bad in ["", "..", "../outside", "/", "missing"] {
+        let refused = run(crate::routes::organize::act_route(
+            State(state.clone()),
+            Json(
+                serde_json::from_value(
+                    serde_json::json!({"kind": "remove_folder", "summary": "x", "path": bad}),
+                )
+                .unwrap(),
+            ),
+        ));
+        assert_eq!(refused.status(), 409, "{bad:?} is refused");
+    }
+    assert!(state.fresh().dir_exists("archive"));
+    assert!(state.fresh().find_note(&ids[0]).is_some());
 }
 
 #[test]
