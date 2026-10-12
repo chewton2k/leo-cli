@@ -61,6 +61,7 @@ fn a_document_given_to_felix_is_kept_as_text_and_read_with_the_question() {
         practice: false,
         mark: false,
         selection: None,
+        session: None,
     };
     run(async {
         let response = chat_reply(State(state.clone()), Json(body)).await;
@@ -143,6 +144,7 @@ fn a_chat_reply_streams_its_sources_then_the_answer() {
         practice: false,
         mark: false,
         selection: None,
+        session: None,
     };
     let text = run(async {
         let response = chat_reply(State(state.clone()), Json(body)).await;
@@ -189,6 +191,7 @@ fn a_chat_without_ai_or_a_question_is_refused() {
         practice: false,
         mark: false,
         selection: None,
+        session: None,
     };
     let status = run(async {
         chat_reply(State(state.clone()), Json(ask("hi")))
@@ -233,6 +236,16 @@ fn chat_lines_with(
     question: &str,
     access: Option<&str>,
 ) -> Vec<serde_json::Value> {
+    chat_lines_in(state, question, access, None, None)
+}
+
+fn chat_lines_in(
+    state: &AppState,
+    question: &str,
+    access: Option<&str>,
+    session: Option<tools::Session>,
+    selection: Option<chat::Selection>,
+) -> Vec<serde_json::Value> {
     let body = chat::ChatBody {
         messages: vec![chat::Turn {
             role: "user".into(),
@@ -247,7 +260,8 @@ fn chat_lines_with(
         recent: vec![],
         practice: false,
         mark: false,
-        selection: None,
+        selection,
+        session,
     };
     let text = run(async {
         let response = chat_reply(State(state.clone()), Json(body)).await;
@@ -1083,6 +1097,7 @@ fn a_long_chat_is_remembered_in_a_summary_instead_of_forgotten() {
             practice: false,
             mark: false,
             selection: None,
+            session: None,
         };
         run(async {
             let response = chat_reply(State(state.clone()), Json(body)).await;
@@ -1240,6 +1255,7 @@ fn a_practice_answer_is_marked_once_and_never_nudged_into_changing_a_note() {
         practice: true,
         mark: false,
         selection: None,
+        session: None,
     };
     let text = run(async {
         let response = chat_reply(State(state.clone()), Json(body)).await;
@@ -1358,6 +1374,7 @@ fn a_marking_without_a_verdict_gets_one_from_a_short_check() {
         practice: true,
         mark: true,
         selection: None,
+        session: None,
     };
     let text = run(async {
         let response = chat_reply(State(state.clone()), Json(body)).await;
@@ -1515,4 +1532,77 @@ fn interview_tools_share_the_native_and_text_paths_without_changing_notes_or_res
             .is_empty());
         assert!(state.store.lock().unwrap().store.notes.is_empty());
     }
+}
+
+#[test]
+fn a_study_session_plans_names_ideas_and_refuses_questions_once_covered() {
+    let (mut state, _d, _) = state_with(&[("Heaps", "cs130")]);
+    let (streamer, prompts) = scripted(vec![
+        "<tool>{\"name\": \"study_plan\", \"ideas\": \"Root | Sift down\"}</tool>",
+        "<tool>{\"name\": \"quiz\", \"kind\": \"free_response\", \"question\": \"What is at the root?\", \"answer\": \"the minimum\"}</tool>",
+        "<tool>{\"name\": \"quiz\", \"kind\": \"free_response\", \"question\": \"What is at the root?\", \"answer\": \"the minimum\", \"idea\": \"1\"}</tool>",
+        "Try it.",
+    ]);
+    state.chat = Some(streamer);
+    let lines = chat_lines(&state, "quiz me on heaps");
+    let plan: Vec<&serde_json::Value> = lines.iter().filter_map(|l| l.get("plan")).collect();
+    assert_eq!(plan, [&serde_json::json!({"ideas": ["Root", "Sift down"]})]);
+    let quizzes: Vec<&serde_json::Value> = lines.iter().filter_map(|l| l.get("quiz")).collect();
+    assert_eq!(quizzes.len(), 1, "{lines:?}");
+    assert_eq!(quizzes[0]["idea"], 1);
+    assert!(prompts.lock().unwrap()[2]
+        .contains("give \"idea\": the number of an idea still open: 1 (Root), 2 (Sift down)"));
+
+    let (streamer, prompts) = scripted(vec![
+        "<tool>{\"name\": \"quiz\", \"kind\": \"free_response\", \"question\": \"More?\", \"answer\": \"x\", \"idea\": \"2\"}</tool>",
+        "You covered both ideas well.",
+    ]);
+    state.chat = Some(streamer);
+    let covered = tools::Session {
+        ideas: vec!["Root".into(), "Sift down".into()],
+        closed: vec![true, true],
+        asked: 2,
+    };
+    let lines = chat_lines_in(&state, "[[correct]] yes", None, Some(covered), None);
+    assert!(lines.iter().all(|l| l.get("quiz").is_none()), "{lines:?}");
+    assert!(prompts.lock().unwrap()[1].contains(tools::SESSION_DONE));
+
+    let (streamer, _) = scripted(vec![
+        "<tool>{\"name\": \"end_session\"}</tool>",
+        "Good work today.",
+    ]);
+    state.chat = Some(streamer);
+    let open = tools::Session {
+        ideas: vec!["Root".into()],
+        closed: vec![false],
+        asked: 1,
+    };
+    let lines = chat_lines_in(&state, "that's enough for today", None, Some(open), None);
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.get("session_end") == Some(&serde_json::json!(true))),
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn a_selected_passage_reaches_felix_as_quoted_material() {
+    let (mut state, _d, _) = state_with(&[("Heaps", "cs130")]);
+    let (streamer, prompts) = scripted(vec!["It means the root is smallest."]);
+    state.chat = Some(streamer);
+    let selection = chat::Selection {
+        title: "Heaps".into(),
+        from: 3,
+        to: 3,
+        text: "keeps the minimum".into(),
+    };
+    chat_lines_in(&state, "what does this mean?", None, None, Some(selection));
+    let prompt = prompts.lock().unwrap()[0].clone();
+    assert!(prompt.contains(
+        "<selected_passage note=\"Heaps\" lines=\"3\">\nkeeps the minimum\n</selected_passage>"
+    ));
+    assert!(
+        prompt.find("<selected_passage").unwrap() < prompt.rfind("what does this mean?").unwrap()
+    );
 }

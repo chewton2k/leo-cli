@@ -409,7 +409,7 @@ test.describe('drag and drop', () => {
     await card.dragTo(page.locator(`main .folder[data-dir="${a}"]`));
     await expect(page.locator('.toast')).toContainText(`Moved “Drag me ${tag}” to ${a}`);
     expect(await where()).toBe(a);
-    await expect(card.locator('.card-meta')).toContainText(a);
+    await expect(card).toHaveCount(0);
     await page.locator('.toast button').click();
     await expect(card).toBeVisible();
     await expect(card.locator('.card-meta')).not.toContainText(a);
@@ -3119,34 +3119,28 @@ test('only the folders scroll in the sidebar; the places above and below stay pu
   await expect.poll(() => tree.evaluate((el) => el.scrollTop)).toBe(scrolled);
 });
 
-test('note cards can be previewed without losing the library and layout choices persist', async ({ page }) => {
-  const made = await page.request.post('/api/notes', { data: { title: 'Library preview fixture', directory: 'library-grid-fixture', body: '# Traversals\nBreadth first search visits each layer.\n- [ ] Homework due Friday\n```svg\n<svg xmlns="http://www.w3.org/2000/svg" width="160" height="80"><rect width="160" height="80" fill="#b4cfe7"/></svg>\n```' } });
+test('note thumbnails are read only, cards open directly and layout choices persist', async ({ page }) => {
+  const made = await page.request.post('/api/notes', { data: { title: 'Library thumbnail fixture', body: '# Traversals\nBreadth first search visits each layer.\n- [ ] Homework due Friday\n```svg\n<svg xmlns="http://www.w3.org/2000/svg" width="160" height="80"><rect width="160" height="80" fill="#b4cfe7"/></svg>\n```' } });
   expect(made.status()).toBe(201);
   const note = await made.json();
   await page.goto('/#/');
   const card = page.locator(`.library-cards.grid .card[data-id="${note.id}"]`);
   await expect(card).toBeVisible();
   await expect(card.locator('.card-snippet')).toContainText('Breadth first search');
-  await expect(card.locator('.card-meta')).toContainText('library-grid-fixture');
   await card.scrollIntoViewIfNeeded();
   await expect(card.locator('.note-thumb img')).toBeVisible();
-  const preview = card.locator('[data-action="note-preview"]');
-  await preview.click();
-  await expect(page.locator('.sheet.note-preview .preview-body')).toContainText('Homework due Friday');
-  await expect(page.locator('.sheet.note-preview input:enabled')).toHaveCount(0);
-  await page.keyboard.press('Escape');
-  await expect(preview).toBeFocused();
-  await expect(card).toBeVisible();
+  await expect(card.locator('.note-thumb input:enabled')).toHaveCount(0);
+  await expect(page.locator('[data-action="note-preview"]')).toHaveCount(0);
   await page.locator('[data-action="library-view"][data-view="list"]').click();
   await expect(page.locator('.library-cards.list')).toBeVisible();
   await page.reload();
   await expect(page.locator('.library-cards.list')).toBeVisible();
-  await page.locator('[data-action="library-sort"]').click();
-  await page.locator('[data-action="library-order"][data-sort="title"]').click();
-  await expect(page.locator('[data-action="library-sort"]')).toHaveText('Name');
-  await expect(page.locator('[data-action="library-sort"]')).toBeFocused();
+  await expect(page.locator('[data-action="library-sort"]')).toHaveCount(0);
   await page.locator('[data-action="library-view"][data-view="grid"]').click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+  await card.click();
+  await expect(page).toHaveURL(new RegExp(`#/n/${note.id}$`));
+  await expect(page.locator('#doc')).toContainText('Homework due Friday');
 });
 
 test('grid and list keep the library and header width in every layout', async ({ page }) => {
@@ -3163,7 +3157,7 @@ test('grid and list keep the library and header width in every layout', async ({
       if (layout === 'mini') await page.locator('[data-action="side-fold"]').click();
       if (layout === 'chat') {
         await page.locator('[data-action="side-fold"]').click();
-        await page.locator('#felix-toggle').click();
+        await page.locator('#chat-toggle').click();
         await expect(page.locator('.chat')).toBeVisible();
       }
       for (const views of [['grid', 'list'], ['list', 'grid']]) {
@@ -3195,6 +3189,70 @@ test('sidebar folders can move to the top level with their contents and Undo', a
   await page.locator('.toast button', { hasText: 'Undo' }).last().click();
   await expect.poll(where).toBe(`${from}/Child`);
   await expect(page).toHaveURL(new RegExp(`#/f/${encodeURIComponent(from)}$`));
+});
+
+test('folder navigation keeps the header steady while loading and animates only content', async ({ page }) => {
+  const dir = `folder-arrival-${Date.now()}`;
+  await page.request.post('/api/notes', { data: { title: 'Folder arrival fixture', directory: dir, body: 'A smooth arrival.' } });
+  await page.addInitScript(() => {
+    const animate = Element.prototype.animate;
+    window.folderAnimations = [];
+    Element.prototype.animate = function (frames, options) {
+      if (this.id === 'app') window.folderAnimations.push({ frames, options });
+      return animate.call(this, frames, options);
+    };
+  });
+  await page.reload();
+  await page.goto('/#/');
+  await expect(page.locator(`main .folder[data-dir="${dir}"]`)).toBeVisible();
+  const header = page.locator('.bar-row');
+  const before = await header.boundingBox();
+  let release;
+  const hold = new Promise(resolve => { release = resolve; });
+  let waiting = false;
+  await page.route('**/api/notes?*', async route => {
+    if (new URL(route.request().url()).searchParams.get('dir') === dir) { waiting = true; await hold; }
+    await route.continue();
+  });
+  await page.locator(`main .folder[data-dir="${dir}"]`).click();
+  try {
+    await expect.poll(() => waiting).toBe(true);
+    const loading = await header.boundingBox();
+    expect(loading.width).toBe(before.width);
+    expect(loading.x).toBe(before.x);
+  } finally { release(); }
+  await expect(page.locator('.library-cards')).toContainText('Folder arrival fixture');
+  await expect.poll(() => page.evaluate(() => window.folderAnimations.length)).toBe(1);
+  await page.evaluate(() => { window.keptCrumb = document.querySelector('#crumbs button:last-child'); });
+  for (const view of ['list', 'grid']) await page.locator(`[data-action="library-view"][data-view="${view}"]`).click();
+  expect(await page.evaluate(() => window.keptCrumb === document.querySelector('#crumbs button:last-child'))).toBe(true);
+  expect(await page.evaluate(() => window.folderAnimations.length)).toBe(1);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.locator('#crumbs [data-action="home"]').click();
+  await expect(page.locator(`main .folder[data-dir="${dir}"]`)).toBeVisible();
+  expect(await page.evaluate(() => window.folderAnimations.length)).toBe(1);
+});
+
+test('top level and folders show only their own notes and ignore old recency preferences', async ({ page }) => {
+  const dir = `folder-scope-${Date.now()}`;
+  const notes = [];
+  for (const [title, directory] of [['Zebra scope fixture', ''], ['Alpha scope fixture', ''], ['Nested scope fixture', dir], ['Child scope fixture', `${dir}/Child`]]) {
+    notes.push(await (await page.request.post('/api/notes', { data: { title, directory, body: 'Only in its own folder.' } })).json());
+  }
+  await page.addInitScript(() => localStorage.setItem('leo-library', JSON.stringify({ view: 'grid', sort: 'opened' })));
+  await page.reload();
+  await page.goto('/#/');
+  await expect(page.locator(`.card[data-id="${notes[1].id}"]`)).toBeVisible();
+  for (const view of ['grid', 'list']) {
+    await page.locator(`[data-action="library-view"][data-view="${view}"]`).click();
+    await expect(page.locator(`.card[data-id="${notes[2].id}"], .card[data-id="${notes[3].id}"]`)).toHaveCount(0);
+    const ids = await page.locator('.card[data-id]').evaluateAll(els => els.map(el => el.dataset.id));
+    expect(ids.indexOf(notes[1].id)).toBeLessThan(ids.indexOf(notes[0].id));
+    await expect(page.locator('[data-action="library-sort"]')).toHaveCount(0);
+  }
+  await page.goto(`/#/f/${encodeURIComponent(dir)}`);
+  await expect(page.locator('.card[data-id]')).toHaveCount(1);
+  await expect(page.locator(`.card[data-id="${notes[2].id}"]`)).toBeVisible();
 });
 
 test('folder controls rename, move to root and delete from inside the folder with Undo', async ({ page }) => {
@@ -3474,5 +3532,74 @@ test.describe('passages', () => {
     await expect.poll(body).toBe('Mine already\n\nThe **key** point is here [[Collect]].\n');
     await page.locator('.toast button').click();
     await expect.poll(body).toBe('Mine already');
+  });
+});
+
+test.describe('study sessions', () => {
+  test('a session shows its ideas, ticks one off, and ends with a recap', async ({ page }) => {
+    const note = await (await page.request.post('/api/notes', { data: { title: 'Heaps', body: 'A heap keeps the minimum at the root.' } })).json();
+    const asked = [];
+    await page.route('**/api/chat', async (route) => {
+      asked.push(route.request().postDataJSON());
+      const source = { n: 1, id: note.id, title: 'Heaps', folder: '', why: 'open' };
+      const lines = asked.length === 1
+        ? [{ sources: [source] }, { step: 'Planned a study session', tool: 'study_plan', found: [] }, { plan: { ideas: ['Root', 'Sift down'] } }, { quiz: { kind: 'multiple_choice', question: 'What sits at the root?', options: ['the minimum', 'the maximum'], answer: 'the minimum', idea: 1 } }, { t: 'First one.' }, { done: true }]
+        : [{ sources: [source] }, { t: '[[correct]] Yes, the minimum.' }, { done: true }];
+      await route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: lines.map((l) => JSON.stringify(l)).join('\n') + '\n' });
+    });
+    await page.goto(`/#/n/${note.id}`);
+    await page.locator('#chat-toggle').click();
+    const chat = page.locator('#chat');
+    await chat.locator('[data-mode="study"]').click();
+    await chat.locator('#chat-input').fill('quiz me on heaps');
+    await chat.locator('#chat-input').press('Enter');
+    const progress = chat.locator('#study-progress');
+    await expect(progress).toBeVisible();
+    await expect(progress).toContainText('Root');
+    await expect(progress).toContainText('0 of 2');
+    await chat.locator('.quiz-card button', { hasText: 'the minimum' }).first().click();
+    await expect.poll(() => asked.length).toBe(2);
+    expect(asked[1].session).toEqual({ ideas: ['Root', 'Sift down'], closed: [true, false], asked: 1 });
+    await expect(progress).toContainText('1 of 2');
+    await expect(progress.locator('.study-idea.first')).toContainText('Root');
+    await progress.locator('[data-chat="session-finish"]').click();
+    await expect(progress).toBeHidden();
+    const recap = chat.locator('.session-recap');
+    await expect(recap).toContainText('1 of 2 ideas covered');
+    await expect(recap).toContainText('Not reached: Sift down');
+    await recap.locator('[data-chat="session-done"]').click();
+    await expect(recap).toHaveCount(0);
+  });
+});
+
+test.describe('reading', () => {
+  test('related notes sit under a note and open with a tap', async ({ page }) => {
+    const other = await (await page.request.post('/api/notes', { data: { title: 'Graph basics', body: 'Vertices and edges.' } })).json();
+    const note = await (await page.request.post('/api/notes', { data: { title: 'Dijkstra', body: 'Builds on [[Graph basics]].' } })).json();
+    await page.goto(`/#/n/${note.id}`);
+    const related = page.locator('#related');
+    await expect(related).toBeVisible();
+    await expect(related.locator('.related-row')).toHaveCount(1);
+    await expect(related).toContainText('Graph basics');
+    await expect(related).toContainText('Linked from this note');
+    await related.locator('.related-row').click();
+    await expect(page).toHaveURL(new RegExp(`#/n/${other.id}$`));
+    await expect(page.locator('#related')).toBeHidden();
+  });
+
+  test('a long note opens again where it was being read', async ({ page }) => {
+    test.skip(test.info().project.name !== 'desktop', 'scrolled with a mouse wheel');
+    const body = Array.from({ length: 160 }, (_, i) => `Paragraph number ${i + 1} about reading.`).join('\n\n');
+    const note = await (await page.request.post('/api/notes', { data: { title: 'Long read', body } })).json();
+    await page.goto(`/#/n/${note.id}`);
+    await expect(page.locator('#doc .blk').first()).toBeVisible();
+    await page.mouse.move(200, 300);
+    await page.mouse.wheel(0, 2400);
+    await expect.poll(async () => (await (await page.request.get(`/api/notes/${note.id}/reading`)).json()).anchor, { timeout: 8000 }).not.toBeNull();
+    const saved = (await (await page.request.get(`/api/notes/${note.id}/reading`)).json()).anchor;
+    expect(saved.text).toMatch(/^Paragraph number \d+/);
+    await page.goto('/#/');
+    await page.goto(`/#/n/${note.id}`);
+    await expect.poll(() => page.evaluate(() => window.scrollY), { timeout: 5000 }).toBeGreaterThan(1500);
   });
 });

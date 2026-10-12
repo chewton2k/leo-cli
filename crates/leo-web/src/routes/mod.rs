@@ -10,6 +10,7 @@ pub(crate) mod interviews;
 pub(crate) mod map;
 pub(crate) mod notes;
 pub(crate) mod pictures;
+pub(crate) mod related;
 pub(crate) mod settings;
 pub(crate) mod sources;
 pub(crate) mod trash;

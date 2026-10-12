@@ -4,6 +4,7 @@ mod combine;
 mod felix;
 mod housekeeping;
 mod notes;
+mod passages;
 mod pictures;
 mod recording;
 mod sources;

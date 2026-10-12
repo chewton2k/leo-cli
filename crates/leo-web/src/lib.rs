@@ -558,6 +558,14 @@ fn router(state: AppState) -> Router {
             "/api/notes/{id}/insert",
             post(routes::insert::insert_into_note),
         )
+        .route(
+            "/api/notes/{id}/related",
+            get(routes::related::related_notes),
+        )
+        .route(
+            "/api/notes/{id}/reading",
+            get(routes::related::get_reading).put(routes::related::put_reading),
+        )
         .route("/api/search", get(search_notes))
         .route("/api/dirs", get(list_dirs).post(create_dir))
         .route("/api/dirs/move", post(move_dir))

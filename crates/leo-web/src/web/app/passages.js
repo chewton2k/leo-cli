@@ -164,3 +164,83 @@ function addSheet({ text }) {
   drawTarget();
   drawWhere();
 }
+
+async function drawRelated(id, mine, limit = 4) {
+  const box = $('#related');
+  if (!box || !id) return;
+  let found;
+  try {
+    found = await api(`/api/notes/${enc(id)}/related?limit=${limit}`);
+  } catch (e) {
+    return;
+  }
+  if (mine !== seq || !box.isConnected) return;
+  const notes = (found && found.notes) || [];
+  if (!notes.length) {
+    box.hidden = true;
+    box.innerHTML = '';
+    return;
+  }
+  box.hidden = false;
+  const rows = notes.map((n) => `<a class="list-row related-row" href="${noteHash(n.id)}">${ICON.note}<span class="grow"><span class="related-title">${esc(n.title || 'Untitled')}</span>${n.why ? `<span class="sub">${esc(n.why)}</span>` : ''}</span></a>`).join('');
+  box.innerHTML = `<h2 class="related-head">Related notes</h2><div class="related-list">${rows}</div>${found.more ? '<button type="button" class="btn plain sm related-more">More</button>' : ''}`;
+  const more = box.querySelector('.related-more');
+  if (more) more.addEventListener('click', () => drawRelated(id, mine, 20));
+}
+
+const reading = { id: null, timer: 0, user: false, quietUntil: 0 };
+const READ_SAVE_MS = 2000;
+
+function readingTop() {
+  const bar = $('#bar');
+  return (bar ? bar.getBoundingClientRect().bottom : 0) + 8;
+}
+
+function blockText(block) {
+  return (block.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 40);
+}
+
+function readingAnchor() {
+  const top = readingTop();
+  const first = [...document.querySelectorAll('#doc .blk')].find((b) => b.getBoundingClientRect().bottom > top);
+  if (!first) return null;
+  return { line: Number(first.dataset.start) || 0, text: blockText(first), dy: Math.round(top - first.getBoundingClientRect().top) };
+}
+
+window.addEventListener('scroll', () => {
+  if (state.view !== 'note' || !reading.id || !reading.user || Date.now() < reading.quietUntil) return;
+  clearTimeout(reading.timer);
+  const id = reading.id;
+  reading.timer = setTimeout(() => {
+    if (state.view !== 'note' || reading.id !== id) return;
+    const anchor = window.scrollY < 40 ? { line: 0, text: '', dy: 0 } : readingAnchor();
+    if (anchor) api(`/api/notes/${enc(id)}/reading`, { method: 'PUT', body: { anchor } }).catch(() => {});
+  }, READ_SAVE_MS);
+}, { passive: true });
+
+for (const kind of ['wheel', 'touchmove', 'keydown', 'pointerdown']) {
+  window.addEventListener(kind, () => {
+    reading.user = true;
+  }, { passive: true, capture: true });
+}
+
+async function restoreReading(id, mine) {
+  clearTimeout(reading.timer);
+  reading.id = id;
+  reading.user = false;
+  if (!id || (citedLines && citedLines.id === id)) return;
+  let got;
+  try {
+    got = await api(`/api/notes/${enc(id)}/reading`);
+  } catch (e) {
+    return;
+  }
+  const anchor = got && got.anchor;
+  if (mine !== seq || reading.id !== id || reading.user || !anchor || (!anchor.line && !anchor.text)) return;
+  if (window.scrollY > 4 || (state.session && state.session.doc && state.session.doc.isEditing())) return;
+  const blocks = [...document.querySelectorAll('#doc .blk')];
+  const block = (anchor.text && blocks.find((b) => blockText(b) === anchor.text)) || blocks.find((b) => Number(b.dataset.start) >= Number(anchor.line));
+  if (!block) return;
+  reading.quietUntil = Date.now() + 1500;
+  window.scrollTo(0, Math.max(0, window.scrollY + block.getBoundingClientRect().top - readingTop() + (Number(anchor.dy) || 0)));
+}

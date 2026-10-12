@@ -25,7 +25,7 @@
       { text: 'Summarize this meeting and list the action items', needs: 'note', ask: 'Which meeting notes should I summarize?' },
     ] },
     { id: 'study', label: 'Study', hint: 'Quizzes you one question at a time, with hints, a score and review plans', starters: [
-      { text: 'Quiz me on this note', needs: 'note', ask: 'Which note should I quiz you on?' },
+      { text: 'Start a study session on this note', needs: 'note', ask: 'Which note should the session cover?' },
       { text: 'Quiz me across my classes', needs: 'classes', ask: 'Which classes should the quiz cover?' },
       { text: 'Make me a 3-day review plan', needs: 'classes', ask: 'Which classes should the plan cover?' },
     ] },
@@ -364,6 +364,41 @@
     return flat.length > most ? `${flat.slice(0, most - 1)}…` : flat;
   };
 
+  const MOST_IDEAS = 12;
+  const MOST_SESSION_QUESTIONS = 20;
+
+  function startSession(ideas) {
+    const list = (Array.isArray(ideas) ? ideas : []).filter((i) => typeof i === 'string' && i.trim()).slice(0, MOST_IDEAS).map((i) => i.trim().slice(0, 80));
+    return { ideas: list, outcomes: list.map(() => ({ state: 'open', misses: 0 })), asked: 0, state: 'active' };
+  }
+
+  function scoreSession(session, idea, correct, more) {
+    if (!session || session.state !== 'active' || !idea || correct === null || correct === undefined) return session;
+    const outcome = session.outcomes[idea - 1];
+    if (!outcome || outcome.state !== 'open') return session;
+    if (correct === false) outcome.misses += 1;
+    if (outcome.misses >= 2) outcome.state = 'review';
+    else if (!more && correct === true) outcome.state = outcome.misses ? 'done' : 'first';
+    if (session.outcomes.every((o) => o.state !== 'open') || session.asked >= MOST_SESSION_QUESTIONS) session.state = 'finishing';
+    return session;
+  }
+
+  function sessionBody(session) {
+    if (!session || (session.state !== 'active' && session.state !== 'finishing')) return null;
+    return { ideas: session.ideas, closed: session.outcomes.map((o) => o.state !== 'open'), asked: session.asked };
+  }
+
+  function sessionSummary(session) {
+    const pick = (test) => session.ideas.filter((_, i) => test(session.outcomes[i]));
+    return {
+      total: session.ideas.length,
+      covered: session.outcomes.filter((o) => o.state !== 'open').length,
+      first: pick((o) => o.state === 'first').length,
+      review: pick((o) => o.state === 'review'),
+      skipped: pick((o) => o.state === 'open'),
+    };
+  }
+
   function passageLine(p) {
     if (!p || typeof p.text !== 'string') return '';
     const lines = p.from ? ` lines ${p.from}${p.to > p.from ? `–${p.to}` : ''}` : '';
@@ -503,6 +538,7 @@
       </header>
       <button class="chat-workspace" data-chat="interview-workspace" hidden>Open interview workspace ↗</button>
       <div class="chat-modes" role="tablist" aria-label="How Felix helps">${MODES.map((m) => `<button role="tab" class="chat-mode" data-chat="mode" data-mode="${m.id}" title="${escape(m.hint)}">${m.label}</button>`).join('')}</div>
+      <div class="study-progress" id="study-progress" hidden></div>
       <div class="chat-body" id="chat-body" aria-live="polite"></div>
       <footer class="chat-foot">
         <div class="chat-context" id="chat-context"></div>
@@ -1161,6 +1197,43 @@
       return MODES.find((m) => m.id === state.mode) || MODES[0];
     }
 
+    function currentSession() {
+      for (let k = state.messages.length - 1; k >= 0; k--) {
+        const s = state.messages[k].session;
+        if (s && typeof s === 'object' && Array.isArray(s.ideas) && Array.isArray(s.outcomes)) return s.dismissed ? null : s;
+      }
+      return null;
+    }
+
+    function drawProgress() {
+      const box = $('#study-progress');
+      const s = currentSession();
+      if (!s || (s.state !== 'active' && s.state !== 'finishing')) {
+        box.hidden = true;
+        box.innerHTML = '';
+        return;
+      }
+      const c = sessionSummary(s);
+      const ideas = s.ideas.map((t, i) => {
+        const o = s.outcomes[i];
+        const mark = o.state === 'first' || o.state === 'done' ? '✓ ' : '';
+        return `<span class="study-idea ${o.state}" title="${escape(t)}">${mark}${escape(t)}</span>`;
+      }).join('<span class="study-sep" aria-hidden="true">·</span>');
+      box.hidden = false;
+      box.innerHTML = `<div class="study-ideas" aria-label="Ideas in this session">${ideas}</div><span class="study-count">${c.covered} of ${c.total}</span><button type="button" class="msg-act" data-chat="session-finish">Finish</button>`;
+    }
+
+    function recapCard(s) {
+      const c = sessionSummary(s);
+      const parts = [`${c.covered} of ${c.total} ${c.total === 1 ? 'idea' : 'ideas'} covered`];
+      if (c.first) parts.push(`${c.first} right the first time`);
+      const lines = [];
+      if (c.review.length) lines.push(`<p><b>Look at again:</b> ${c.review.map(escape).join(', ')}</p>`);
+      if (c.skipped.length) lines.push(`<p><b>Not reached:</b> ${c.skipped.map(escape).join(', ')}</p>`);
+      const again = [...c.review, ...c.skipped].length;
+      return `<div class="session-recap" role="status"><h4>Study session done</h4><p>${parts.join(' · ')}</p>${lines.join('')}<div class="session-acts">${again ? '<button type="button" class="btn primary sm" data-chat="session-again">Study those again</button>' : ''}<button type="button" class="btn plain sm" data-chat="session-done">Done</button></div></div>`;
+    }
+
     function drawModes() {
       $('.chat-workspace').hidden = state.mode !== 'interview';
       for (const b of panel.querySelectorAll('.chat-mode')) {
@@ -1440,6 +1513,7 @@
       const correct = checkQuiz(q, text);
       q.given = text;
       q.correct = correct;
+      scoreSession(currentSession(), q.idea, correct, q.more);
       delete state.drafts[`${i}:${k}`];
       if (correct === true) {
         state.streak += 1;
@@ -1705,7 +1779,10 @@
         ? { i: document.activeElement.dataset.i, k: document.activeElement.dataset.k, from: document.activeElement.selectionStart, to: document.activeElement.selectionEnd }
         : null;
       const kept = body.scrollTop;
-      body.innerHTML = state.messages.length ? `${state.messages.map((m, i) => switches(state.messages, i) + bubble(m, i)).join('')}${lastSwitch()}` : welcome();
+      const session = currentSession();
+      const recap = session && session.state === 'finished' ? recapCard(session) : '';
+      body.innerHTML = state.messages.length ? `${state.messages.map((m, i) => switches(state.messages, i) + bubble(m, i)).join('')}${recap}${lastSwitch()}` : welcome();
+      drawProgress();
       if (typing) {
         const again = body.querySelector(`.quiz-input[data-i="${typing.i}"][data-k="${typing.k}"]`);
         if (again && !again.disabled) {
@@ -1815,7 +1892,7 @@
           method: 'POST',
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: history, mode: thread.mode, note: ctx, refs: sentRefs.slice(0, MOST_REFS), recent: recentNotes(thread.messages.filter((m) => m !== answer)), chat: thread.id, files, access, practice: Boolean(card), mark: Boolean(card && !extra.hint && card.correct === null), selection: passage ? { title: passage.title, from: passage.from, to: passage.to, text: passage.text } : null }),
+          body: JSON.stringify({ messages: history, mode: thread.mode, note: ctx, refs: sentRefs.slice(0, MOST_REFS), recent: recentNotes(thread.messages.filter((m) => m !== answer)), chat: thread.id, files, access, practice: Boolean(card), mark: Boolean(card && !extra.hint && card.correct === null), selection: passage ? { title: passage.title, from: passage.from, to: passage.to, text: passage.text } : null, session: sessionBody(currentSession()) }),
           signal: controller.signal,
         });
         if (response.status === 401) throw new Error('This page needs its link again. Open the link leo serve printed.');
@@ -1848,8 +1925,20 @@
               answer.asks = [...(answer.asks || []), { question: e.ask.question, options: Array.isArray(e.ask.options) ? e.ask.options.filter((o) => typeof o === 'string') : [] }];
               pose('');
             }
+            if (e.plan && typeof e.plan === 'object' && Array.isArray(e.plan.ideas)) {
+              const before = currentSession();
+              if (before && before.state !== 'finished') before.dismissed = true;
+              answer.session = startSession(e.plan.ideas);
+            }
+            if (e.session_end === true) {
+              const s = currentSession();
+              if (s && s.state !== 'finished') s.state = 'finished';
+            }
             if (e.quiz && typeof e.quiz === 'object' && typeof e.quiz.question === 'string') {
-              answer.quizzes = [...(answer.quizzes || []), { kind: String(e.quiz.kind || ''), question: e.quiz.question, options: Array.isArray(e.quiz.options) ? e.quiz.options.filter((o) => typeof o === 'string') : [], answer: String(e.quiz.answer || ''), explain: String(e.quiz.explain || '') }];
+              const idea = Number(e.quiz.idea) || 0;
+              const s = currentSession();
+              if (s && s.state === 'active' && idea) s.asked += 1;
+              answer.quizzes = [...(answer.quizzes || []), { kind: String(e.quiz.kind || ''), question: e.quiz.question, options: Array.isArray(e.quiz.options) ? e.quiz.options.filter((o) => typeof o === 'string') : [], answer: String(e.quiz.answer || ''), explain: String(e.quiz.explain || ''), ...(idea ? { idea } : {}), ...(e.quiz.more ? { more: true } : {}) }];
             }
             if (e.reset) {
               answer.text = '';
@@ -1900,8 +1989,11 @@
         if (card.correct === null || card.correct === undefined) {
           const verdict = grade(answer.text).verdict || answer.verdict;
           card.correct = verdict === 'correct' ? true : verdict === 'incorrect' ? false : null;
+          scoreSession(currentSession(), card.idea, card.correct, card.more);
         }
       }
+      const ending = currentSession();
+      if (ending && ending.state === 'finishing') ending.state = 'finished';
       const left = work.waiting.filter((m) => m.steer === 'waiting');
       for (const m of left) thread.messages.splice(thread.messages.indexOf(m), 1);
       for (const m of work.waiting) {
@@ -1991,6 +2083,28 @@
         const picked = state.picked;
         hideAddFloat();
         if (picked) addAnswer(picked.i, picked.text);
+      }
+      else if (what === 'session-finish') {
+        const s = currentSession();
+        if (s) s.state = 'finished';
+        draw();
+        remember();
+      } else if (what === 'session-done') {
+        const s = currentSession();
+        if (s) s.dismissed = true;
+        draw();
+        remember();
+      } else if (what === 'session-again') {
+        const s = currentSession();
+        if (!s) return;
+        const c = sessionSummary(s);
+        s.dismissed = true;
+        const ideas = [...c.review, ...c.skipped];
+        if (state.mode !== 'study') {
+          state.mode = 'study';
+          drawModes();
+        }
+        send(`Let's do a study session on just these ideas: ${ideas.join('; ')}.`);
       }
       else if (what === 'unselect') {
         state.selection = null;
@@ -2268,5 +2382,5 @@
     };
   }
 
-  root.leoChat = { linkCitations, answerLines, passageLine, historyText, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS };
+  root.leoChat = { startSession, scoreSession, sessionBody, sessionSummary, linkCitations, answerLines, passageLine, historyText, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS };
 })(typeof window !== 'undefined' ? window : globalThis);
