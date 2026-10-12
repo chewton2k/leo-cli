@@ -10,6 +10,7 @@ const LEAST_AREA: u64 = 40_000;
 const LEAST_BYTES: usize = 3_000;
 const MOST_STRETCH: u32 = 6;
 const REPEATED_FROM: usize = 3;
+const MOST_PDF_PIXELS: u64 = 16_000_000;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Figure {
@@ -147,21 +148,22 @@ pub fn from_pptx(bytes: &[u8]) -> Vec<Figure> {
     let Ok(mut archive) = zip::ZipArchive::new(std::io::Cursor::new(bytes)) else {
         return Vec::new();
     };
-    let mut slides: Vec<(u32, String)> = archive
-        .file_names()
-        .filter_map(|n| {
-            let number = n
-                .strip_prefix("ppt/slides/slide")?
-                .strip_suffix(".xml")?
-                .parse()
-                .ok()?;
-            Some((number, n.to_string()))
-        })
-        .collect();
-    slides.sort();
+    let Ok(slides) = crate::import::office::slide_order(bytes) else {
+        return Vec::new();
+    };
+    let legacy = !archive.file_names().any(|n| n == "ppt/presentation.xml");
     let mut out = Vec::new();
-    for (n, name) in slides {
-        let rels_name = format!("ppt/slides/_rels/slide{n}.xml.rels");
+    for (index, name) in slides.into_iter().enumerate() {
+        let n = if legacy {
+            name.strip_prefix("ppt/slides/slide")
+                .and_then(|s| s.strip_suffix(".xml"))
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(index + 1)
+        } else {
+            index + 1
+        };
+        let file = name.rsplit('/').next().unwrap_or_default();
+        let rels_name = format!("ppt/slides/_rels/{file}.rels");
         let (Some(xml), Some(rels)) = (
             zip_text(&mut archive, &name),
             zip_text(&mut archive, &rels_name),
@@ -277,12 +279,22 @@ fn number(dict: &lopdf::Dictionary, key: &[u8]) -> Option<i64> {
     dict.get(key).ok()?.as_i64().ok()
 }
 
-fn pdf_figure(doc: &lopdf::Document, image: &lopdf::xobject::PdfImage) -> Option<Vec<u8>> {
+pub(crate) fn pdf_figure(
+    doc: &lopdf::Document,
+    image: &lopdf::xobject::PdfImage,
+) -> Option<Vec<u8>> {
     let filters = image.filters.as_deref().unwrap_or(&[]);
     let (width, height) = (
         u32::try_from(image.width).ok()?,
         u32::try_from(image.height).ok()?,
     );
+    if width == 0
+        || height == 0
+        || u64::from(width) * u64::from(height) > MOST_PDF_PIXELS
+        || image.content.len() > attachments::MOST_BYTES
+    {
+        return None;
+    }
     if filters == ["DCTDecode"] {
         let shown = matches!(
             image.color_space.as_deref(),
@@ -497,6 +509,38 @@ mod tests {
             Some((width, height))
         );
         assert_eq!(found[0].mime, "image/png");
+    }
+
+    #[test]
+    fn reordered_slides_keep_pictures_on_their_visible_slide_numbers() {
+        let first = picture(400, 300, 1);
+        let second = picture(400, 300, 2);
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let opts = zip::write::SimpleFileOptions::default();
+        let mut add = |name: &str, bytes: &[u8]| {
+            writer.start_file(name, opts).unwrap();
+            writer.write_all(bytes).unwrap();
+        };
+        add("ppt/presentation.xml", br#"<p:presentation xmlns:p="p" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:sldIdLst><p:sldId id="256" r:id="r2"/><p:sldId id="257" r:id="r1"/></p:sldIdLst></p:presentation>"#);
+        add("ppt/_rels/presentation.xml.rels", br#"<Relationships><Relationship Id="r1" Type="http://x/slide" Target="slides/slide1.xml"/><Relationship Id="r2" Type="http://x/slide" Target="slides/slide2.xml"/></Relationships>"#);
+        for number in [1, 2] {
+            add(
+                &format!("ppt/slides/slide{number}.xml"),
+                br#"<p:sld><a:blip r:embed="image"/></p:sld>"#,
+            );
+            add(&format!("ppt/slides/_rels/slide{number}.xml.rels"), format!(r#"<Relationships><Relationship Id="image" Type="http://x/image" Target="../media/image{number}.png"/></Relationships>"#).as_bytes());
+        }
+        add("ppt/media/image1.png", &first);
+        add("ppt/media/image2.png", &second);
+        let bytes = writer.finish().unwrap().into_inner();
+        let figures = from_pptx(&bytes);
+        assert_eq!(figures.len(), 2);
+        assert_eq!(
+            (figures[0].place.as_str(), figures[1].place.as_str()),
+            ("slide 1", "slide 2")
+        );
+        assert_eq!(figures[0].bytes, second);
+        assert_eq!(figures[1].bytes, first);
     }
 
     #[test]
