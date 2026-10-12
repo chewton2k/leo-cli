@@ -1011,9 +1011,12 @@ prints, or scan its QR code again.
 
 **`leo serve` does not start**
 It needs `cloudflared` (`brew install cloudflared`), or use `leo serve --local`
-on the same Wi-Fi. The link changes every
-time the server starts, so scan the new code; and the computer has to be
-awake, with `leo serve` still running in its terminal.
+on the same Wi-Fi. Cloudflare connection setup can take up to 90 seconds;
+Leo prints the phone link only after the tunnel connects. It automatically
+falls back to HTTP/2 if QUIC is blocked by the network. If it times out,
+check your internet connection or VPN/firewall and try again, or use `--local`.
+The link changes every time the server starts, so scan the new code; and the
+computer has to be awake, with `leo serve` still running in its terminal.
 
 **A new version is out but `leo update` fails**
 It needs `curl` and a connection to GitHub. Running the install command again

@@ -1280,7 +1280,13 @@ fn serve_prints_the_link_that_works_from_anywhere() {
     let fake = leo.bin.join("cloudflared");
     std::fs::write(
         &fake,
-        "#!/bin/sh\necho 'INF |  https://quiet-fox-123.trycloudflare.com  |' >&2\nexec sleep 30\n",
+        r#"#!/bin/sh
+case " $* " in *" --protocol auto "*) ;; *) exit 2 ;; esac
+case " $* " in *" --loglevel info "*) ;; *) exit 2 ;; esac
+echo 'INF | https://quiet-fox-123.trycloudflare.com |' >&2
+echo 'INF Registered tunnel connection connIndex=0 protocol=http2' >&2
+exec sleep 30
+"#,
     )
     .unwrap();
     make_executable(&fake);
@@ -1290,6 +1296,29 @@ fn serve_prints_the_link_that_works_from_anywhere() {
         link.starts_with("https://quiet-fox-123.trycloudflare.com/?token="),
         "{link}"
     );
+}
+
+#[test]
+fn serve_does_not_advertise_an_unconnected_phone_link() {
+    let leo = Leo::new();
+    let fake = leo.bin.join("cloudflared");
+    std::fs::write(&fake, "#!/bin/sh\necho 'INF | https://allocated-only.trycloudflare.com |' >&2\necho 'ERR dial timeout token=private-fixture' >&2\nexit 1\n").unwrap();
+    make_executable(&fake);
+    let out = leo.cmd(&["serve", "--port", "38998"]).output_retrying();
+    assert!(!out.status.success(), "{}", describe(&out));
+    let shown = String::from_utf8_lossy(&out.stdout);
+    assert!(!shown.contains("Your link, from any network"), "{shown}");
+    assert!(
+        !shown.contains("allocated-only.trycloudflare.com"),
+        "{shown}"
+    );
+    let error = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        error.contains("stopped before the link connected"),
+        "{error}"
+    );
+    assert!(error.contains("--local"), "{error}");
+    assert!(!error.contains("private-fixture"), "{error}");
 }
 
 #[test]

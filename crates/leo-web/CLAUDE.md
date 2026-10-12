@@ -27,8 +27,16 @@
   and sessions; the page only ever sees `handle_of(secret)`. Constant-time compare;
   no CORS; no-referrer/nosniff/DENY/no-store headers; the store is reloaded
   from disk on every request (`AppState::fresh`). `--anywhere` =
-  `tunnel::start` runs `cloudflared tunnel --url` and reads the
-  trycloudflare address from stderr. The tunnel is the default: `leo serve` opens it (`src/cli/serve.rs` offers `brew install cloudflared` in a TTY when missing), `--local` is Wi-Fi only, `--anywhere` is a hidden no-op kept for old scripts. Busy port → next free one; macOS
+  `tunnel::start` runs `cloudflared tunnel --protocol auto --loglevel info --url`
+  and waits for both a validated trycloudflare address and a registered connection
+  before printing the link. Explicit auto enables HTTP/2 fallback when QUIC is
+  blocked; quick tunnels otherwise force QUIC. Startup is bounded to 90 seconds,
+  4096 lines and 16 KiB per line, accepts plain/JSON logs in either order, and
+  reports actionable errors without echoing raw logs. Stderr drains with bounded
+  memory after startup; a closed pipe reports that the phone link stopped. The
+  tunnel is the default: `leo serve` opens it (`src/cli/serve.rs` offers
+  `brew install cloudflared` in a TTY when missing), `--local` is Wi-Fi only,
+  `--anywhere` is a hidden no-op kept for old scripts. Busy port → next free one; macOS
   `caffeinate -i -w <pid>` while serving. `Store.known`: save only trashes
   ids it has loaded or written, so another writer's new notes survive.
 - Phone page (`crates/leo-web/src/web/`): no inline JS (CSP `script-src
