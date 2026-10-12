@@ -537,7 +537,7 @@ pub(crate) struct Window {
     from: String,
     to: String,
     #[serde(default)]
-    live: bool,
+    live: Option<String>,
 }
 
 fn window_of(w: &Window, now: DateTime<Utc>) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
@@ -579,7 +579,8 @@ pub(crate) async fn schedule(
         Ok(n) => n,
         Err(code) => return code.into_response(),
     };
-    let wait = if window.live {
+    let live = matches!(window.live.as_deref(), Some("1" | "true"));
+    let wait = if live {
         LIVE_MINUTES
     } else {
         STALE_AFTER_MINUTES

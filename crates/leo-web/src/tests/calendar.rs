@@ -92,7 +92,10 @@ fn the_schedule_shows_a_month_of_events_with_all_day_items_and_tasks_linked_by_m
     let window = |from: &str, to: &str| {
         run(crate::calendar::schedule(
             State(state.clone()),
-            Query(serde_json::from_value(serde_json::json!({"from": from, "to": to})).unwrap()),
+            Query(
+                serde_json::from_value(serde_json::json!({"from": from, "to": to, "live": "1"}))
+                    .unwrap(),
+            ),
         ))
     };
     let month = json_of(window(
