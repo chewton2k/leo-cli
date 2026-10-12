@@ -2083,11 +2083,12 @@
         const doc = await addFile(file, true);
         return Boolean(doc && state.id === id);
       },
-      async openInterview(id) {
+      async openInterview(id, available = () => true) {
+        if (!available()) return false;
         if (state.busy && state.id !== id) return false;
         if (state.id !== id) {
           const opened = await resume(id);
-          if (opened === null) return false;
+          if (opened === null || !available()) return false;
           if (!opened) begin(id);
         }
         if (state.busy) { toggle(true); return false; }

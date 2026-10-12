@@ -314,7 +314,7 @@ pub fn load(path: &Path, id: &str) -> Result<Interview, Error> {
 pub fn list(path: &Path) -> Result<Vec<serde_json::Value>, Error> {
     db::for_chats(path).with(|c| {
         let mut query = c.prepare("SELECT id, json_extract(data, '$.framework'), updated, json_array_length(data, '$.attempts'), length(CAST(data AS BLOB)) FROM interviews ORDER BY updated DESC LIMIT ?1")?;
-        let rows = query.query_map([MOST_PLANS as i64], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, u32>(3)?, r.get::<_, u64>(4)?)))?;
+        let rows = query.query_map([MOST_PLANS as i64], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, u32>(3)?, r.get::<_, i64>(4)?)))?;
         let mut found = Vec::new();
         for row in rows {
             let (id, framework, updated, attempts, bytes) = row?;

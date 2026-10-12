@@ -3248,10 +3248,14 @@ test('interview answers keep their focus and draft through saves, a conflict and
   const id = 'interview-browser-01';
   let item = { id, revision: 1, updated: new Date().toISOString(), framework: { title: 'Coding practice', track: 'coding', company: '', role: '', language: 'Python', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach', 'Testing'], wants: '' }, challenge: { id: 'challenge-browser-01', title: 'Pair sum', question: 'Find two distinct indices whose values sum to a target. Explain duplicates.', minutes: 25, skills: ['Approach', 'Testing'], origin: 'generated', sources: [] }, workspace: { answer: '', board: [] }, attempts: [], schedule: [] };
   let conflict = false;
+  let holdSave = false;
+  let releaseSave;
+  let saveStarted;
   await page.route(`**/api/interviews/${id}`, async (route) => {
     if (route.request().method() === 'PUT') {
       const change = route.request().postDataJSON();
       if (conflict) { conflict = false; return route.fulfill({ status: 409, json: { error: 'This practice changed in another window. Reload before saving; your draft is kept.' } }); }
+      if (holdSave) { saveStarted(); await new Promise((resolve) => { releaseSave = resolve; }); holdSave = false; }
       await new Promise((resolve) => setTimeout(resolve, 100));
       item = { ...item, workspace: change.workspace, revision: item.revision + 1 };
     }
@@ -3278,4 +3282,17 @@ test('interview answers keep their focus and draft through saves, a conflict and
   await expect(answer).toHaveValue('Use a hash map. Check duplicates and negatives.');
   await expect(page.locator('#interview-board text')).toHaveText('Client → Server');
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+  holdSave = true;
+  const started = new Promise((resolve) => { saveStarted = resolve; });
+  await answer.fill('A hint request can be cancelled by navigation.');
+  await page.locator('[data-interview="hint"]').click();
+  await started;
+  await page.evaluate(() => { location.hash = '#/interviews'; });
+  await expect(page.locator('h1')).toHaveText('Interview practice');
+  const response = page.waitForResponse((r) => r.url().endsWith(`/api/interviews/${id}`) && r.request().method() === 'PUT');
+  releaseSave();
+  await (await response).finished();
+  await page.waitForTimeout(500);
+  await expect(page.locator('body')).not.toHaveClass(/chat-open/);
+
 });

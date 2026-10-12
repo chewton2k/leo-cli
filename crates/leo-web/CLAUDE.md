@@ -931,7 +931,8 @@ not arbitrary SVG; only escaped labels reach its renderer. Submitted drawings ar
 rasterized and read through Felix's existing file reader; the next snapshot
 replaces the previous generated document so long practice does not fill the file
 limit. Frozen vectors preserve every submitted drawing. Draft conflicts require
-an explicit reload-and-save action. Typed input during submission is retained.
+an explicit reload-and-save action. Typed input during submission is retained. Navigating away cancels pending chat
+activation; a failed conversation fetch never starts a replacement conversation.
 
 Validation: pure Node checks, scripted/native Rust fakes and browser regression
 coverage. Live prompt/tool checks with the installed Codex plan passed 16 cases

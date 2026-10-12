@@ -269,12 +269,21 @@ async function interviewPicture(board) {
 }
 
 async function talkInterview(session, text, board = []) {
-  await saveInterviewWorkspace(session);
-  const ready = await chat.openInterview(session.item.id);
-  if (!ready) { toast('Felix is finishing another answer. Try again when it finishes.', { bad: true }); return; }
-  const picture = await interviewPicture(board);
-  if (picture && !(await chat.attachBoard(picture))) throw new Error('Felix could not read your board snapshot. Your attempt is saved; try its review button again.');
-  chat.send(text);
+  if (session.talking) return;
+  session.talking = true;
+  try {
+    await saveInterviewWorkspace(session);
+    if (!interviewHere(session)) return;
+    const ready = await chat.openInterview(session.item.id, () => interviewHere(session));
+    if (!ready) {
+      if (chat.isBusy()) toast('Felix is finishing another answer. Try again when it finishes.', { bad: true });
+      return;
+    }
+    const picture = await interviewPicture(board);
+    if (!interviewHere(session)) return;
+    if (picture && !(await chat.attachBoard(picture))) throw new Error('Felix could not read your board snapshot. Your attempt is saved; try its review button again.');
+    if (interviewHere(session)) chat.send(text);
+  } finally { session.talking = false; }
 }
 
 async function submitInterview(session) {
@@ -369,7 +378,7 @@ async function interviewAction(el) {
   }
   if (!session || !interviewHere(session)) return;
   if (action === 'configure') { await saveInterviewWorkspace(session); return interviewForm(session.item.framework.track, session.item.id, session.item); }
-  if (action === 'chat') return chat.openInterview(session.item.id);
+  if (action === 'chat') return chat.openInterview(session.item.id, () => interviewHere(session));
   if (action === 'next') return talkInterview(session, 'Prepare one new interview challenge in my workspace using interview_challenge, suited to my framework and recent practice. Do not give its solution.');
   if (action === 'research') return talkInterview(session, 'Research common interview topics and publicly reported past questions for my target company and role. Ask my target if it is missing. Search the web, link sources, distinguish official guidance from candidate reports, and suggest an original practice exercise.');
   if (action === 'plan') return talkInterview(session, `Help me plan interview practice with interview_schedule. Read my progress, respect my weekly budget and interview date, and ask about availability if needed. Today on my device is ${new Date().toLocaleDateString('en-CA')}; timezone ${Intl.DateTimeFormat().resolvedOptions().timeZone}.`);
