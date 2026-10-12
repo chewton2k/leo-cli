@@ -13,6 +13,9 @@ const FOLDER = '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 
 const ICON = {
   back: svg('<path d="M15 18l-6-6 6-6"/>'),
   search: svg('<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>'),
+  grid: svg('<rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/>'),
+  list: svg('<path d="M9 6h11M9 12h11M9 18h11M4 6h.1M4 12h.1M4 18h.1"/>'),
+  sort: svg('<path d="M4 6h16M4 12h11M4 18h6"/>'),
   close: svg('<path d="M6 6l12 12M18 6L6 18"/>'),
   more: svg('<circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/>'),
   folder: svg(FOLDER),
@@ -263,18 +266,20 @@ function pinButton(note) {
   return `<button class="pin-toggle${note.pinned ? ' on' : ''}" data-action="pin-card" data-id="${esc(note.id)}" aria-pressed="${note.pinned}" aria-label="${label}" title="${label}">${ICON.pin}</button>`;
 }
 
-function card(note, { words = [], showFolder = false, pick = null, why = null } = {}) {
+function card(note, { words = [], showFolder = false, pick = null, why = null, browse = false } = {}) {
   const where = showFolder && note.directory ? `<span class="chip accent">${esc(note.directory)}</span>` : '';
-  const text = snippet(note.body, words);
+  const text = browse && note.summary ? esc(md.plain(note.summary)) : snippet(note.body, words);
   const open = pick
     ? `class="card pick-card${pick.on ? ' picked' : ''}" role="checkbox" tabindex="0" aria-checked="${pick.on}" data-action="folder-pick" data-key="${esc(pick.key)}"`
     : `class="card" role="link" tabindex="0" draggable="true" data-action="open-note" data-id="${esc(note.id)}" data-title="${esc(note.title)}" data-from="${esc(note.directory || '')}"`;
   const corner = pick ? `<span class="pick-box${pick.on ? ' on' : ''}" aria-hidden="true">${ICON.check}</span>` : pinButton(note);
-  return `<div ${open}>
+  return `<div ${open}${browse ? ' data-library-card="true"' : ''}>
+    ${browse ? `<div class="note-thumb" data-id="${esc(note.id)}" data-pending="true" inert aria-hidden="true"></div>` : ''}
     <div class="card-title"><span>${words.length ? highlight(note.title, words) : esc(note.title)}</span>${corner}</div>
     ${text ? `<div class="card-snippet">${text}</div>` : ''}
     ${why ? `<div class="card-why">${ICON.map}${why.kind === 'idea' ? `Through the idea “${esc(why.name)}” in the knowledge graph` : why.kind === 'meaning' ? 'Close in meaning, though the words differ' : 'Through its summary in the knowledge graph'}</div>` : ''}
-    <div class="card-meta">${where}<span>${rel(note.updated_at)}</span>${progress(note)}</div>
+    <div class="card-meta">${where}<span title="${esc(`Edited ${rel(note.updated_at)}`)}">${browse ? esc(new Date(note.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })) : rel(note.updated_at)}</span>${progress(note)}</div>
+    ${browse && !pick ? `<button class="btn sm plain card-peek" data-action="note-preview" data-id="${esc(note.id)}" aria-label="Preview ${esc(note.title)}">Preview</button>` : ''}
   </div>`;
 }
 
@@ -321,10 +326,10 @@ function chrome({ dir = '', showBack = false, fab = null, actions = null }) {
   const crumbs = $('#crumbs');
   if (dir) {
     const parts = dir.split('/');
-    crumbs.innerHTML = parts
+    crumbs.innerHTML = `<button data-action="home" title="All notes · Drop a folder here to move it to the top level">All notes</button>` + parts
       .map((part, i) => {
         const path = parts.slice(0, i + 1).join('/');
-        return `<span class="sep">/</span><button data-action="open-folder" data-dir="${esc(path)}">${esc(part)}</button>`;
+        return `<span class="sep">/</span><button data-action="open-folder" data-dir="${esc(path)}" draggable="true">${esc(part)}</button>`;
       })
       .join('');
   } else {
@@ -340,10 +345,10 @@ const newButton = (dir) => `<div class="fabs"><button class="fab ghost" data-act
 async function showFolder(dir) {
   const mine = ++seq;
   const before = state.view === 'folder' && state.dir === dir ? state : null;
-  state = { view: 'folder', dir, selecting: before ? before.selecting : false, picked: new Set() };
+  state = { view: 'folder', dir, selecting: before ? before.selecting : false, picked: before ? new Set(before.picked) : new Set() };
   chrome({ dir, showBack: Boolean(dir), fab: newButton(dir) });
   if (!app.innerHTML.trim()) app.innerHTML = skeleton(4);
-  const [dirs, page] = await Promise.all([api(`/api/dirs?parent=${enc(dir)}`), api(`/api/notes?dir=${enc(dir)}&limit=${PAGE}&brief=true`, { total: true })]);
+  const [dirs, page] = await Promise.all([api(`/api/dirs?parent=${enc(dir)}`), api(libraryQuery(dir), { total: true })]);
   if (mine !== seq) return;
   state.listing = { dirs, notes: page.items, total: page.total };
   drawFolder();
@@ -354,7 +359,7 @@ let moreWatch = null;
 
 function noteCard(n) {
   const key = `n:${n.id}`;
-  return card(n, state.selecting ? { pick: { key, on: state.picked.has(key) } } : {});
+  return card(n, { browse: true, showFolder: !state.dir, ...(state.selecting ? { pick: { key, on: state.picked.has(key) } } : {}) });
 }
 
 function watchMore() {
@@ -370,30 +375,34 @@ function watchMore() {
 
 let loadingMore = null;
 function loadMoreNotes() {
-  if (loadingMore) return loadingMore;
   const listing = state.listing;
+  if (loadingMore && loadingMore.listing === listing) return loadingMore.promise;
   if (state.view !== 'folder' || !listing || listing.notes.length >= listing.total) return Promise.resolve();
   const dir = state.dir;
-  loadingMore = (async () => {
+  const pending = { listing };
+  loadingMore = pending;
+  pending.promise = (async () => {
     try {
-      const page = await api(`/api/notes?dir=${enc(dir)}&limit=${PAGE}&offset=${listing.notes.length}&brief=true`, { total: true });
+      const page = await api(libraryQuery(dir, listing.notes.length), { total: true });
       if (state.listing !== listing) return;
       const known = new Set(listing.notes.map((n) => n.id));
       const fresh = page.items.filter((n) => !known.has(n.id));
+      const previous = listing.notes[listing.notes.length - 1];
       listing.notes.push(...fresh);
       listing.total = Math.max(page.total, listing.notes.length);
       if (!fresh.length) listing.total = listing.notes.length;
       const cards = $('.cards');
-      if (cards) cards.insertAdjacentHTML('beforeend', fresh.map(noteCard).join(''));
+      if (cards) cards.insertAdjacentHTML('beforeend', libraryRows(fresh, previous));
+      watchPreviews();
       const sentinel = $('#more-notes');
       if (sentinel && listing.notes.length >= listing.total) sentinel.remove();
     } catch (e) {
       fail(e);
     } finally {
-      loadingMore = null;
+      if (loadingMore === pending) loadingMore = null;
     }
   })();
-  return loadingMore;
+  return pending.promise;
 }
 
 async function loadAllNotes() {
@@ -415,16 +424,17 @@ function drawFolder() {
   const dir = state.dir;
   const sel = state.selecting;
   const picked = state.picked;
+  libraryClasses();
   if (!dirs.length && !notes.length) {
     state.selecting = false;
     chrome({ dir, showBack: Boolean(dir), fab: newButton(dir) });
-    app.innerHTML = dir
+    app.innerHTML = libraryTools() + (dir
       ? empty(ICON.folder, 'This folder is empty', 'Tap “New note” to write the first one here.')
-      : empty(ICON.note, 'No notes yet', 'Tap “New note” to write one. Notes you make in leo on your computer show up here too.');
+      : empty(ICON.note, 'No notes yet', 'Tap “New note” to write one. Notes you make in leo on your computer show up here too.'));
     return;
   }
   const tick = (key) => (sel ? `<span class="pick-box${picked.has(key) ? ' on' : ''}" aria-hidden="true">${ICON.check}</span>` : '');
-  let html = `<div class="folder-tools">${sel ? '<button class="btn sm plain" data-action="folder-select">Done</button>' : '<button class="btn sm plain" data-action="folder-select">Select</button>'}</div>`;
+  let html = libraryTools();
   if (dirs.length) {
     html += `<div class="section-title">Folders</div><div class="folders">${dirs
       .map((d) => {
@@ -436,11 +446,12 @@ function drawFolder() {
   }
   if (notes.length) {
     const total = Math.max(state.listing.total || 0, notes.length);
-    html += `<div class="section-title">${total > notes.length ? `Notes · ${total}` : 'Notes'}</div><div class="cards${sel ? ' picking' : ''}">${notes.map(noteCard).join('')}</div>`;
+    html += `<div class="section-title">${total > notes.length ? `Notes · ${total}` : 'Notes'}</div><div class="cards library-cards ${library.view}${sel ? ' picking' : ''}">${libraryRows(notes)}</div>`;
     if (total > notes.length) html += '<div class="more-notes" id="more-notes" aria-hidden="true">Loading more notes…</div>';
   }
   app.innerHTML = html;
   watchMore();
+  watchPreviews();
   if (sel) {
     const all = picked.size === folderKeys().length;
     floating.innerHTML = `<div class="select-bar" role="toolbar" aria-label="Selected notes and folders">
@@ -581,6 +592,7 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
   const mine = ++seq;
   const note = fresh || (await api(`/api/notes/${enc(id)}`));
   if (mine !== seq) return;
+  openedNote(note.id);
   if (state.session && state.session.doc) state.session.doc.destroy();
   const s = draft || saving.open(note);
   s.tags = [...s.edit.tags];

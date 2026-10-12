@@ -7,6 +7,33 @@ require('../src/web/recording.js');
 const R = globalThis.leoRecorder;
 const L = globalThis.leoRecording;
 
+test('every browser capture is pulled through a silent output and call metering hears both tracks', () => {
+  for (const call of [false, true]) {
+    const edges = [];
+    const make = (name) => ({ name, connect(to, ...ports) { edges.push([name, to.name, ...ports]); } });
+    const analyser = make('analyser');
+    const output = make('silent');
+    output.gain = { value: 1 };
+    const context = {
+      destination: make('destination'),
+      createMediaStreamSource: (stream) => make(stream),
+      createAnalyser: () => analyser,
+      createChannelMerger: (count) => { assert.equal(count, 2); return make('merger'); },
+      createGain: () => output,
+    };
+    assert.equal(L.connectCapture(context, 'shared', call ? 'mic' : null, make('worklet')), analyser);
+    assert.equal(output.gain.value, 0, 'captured sound must never play back into the call');
+    assert.ok(edges.some(([from, to]) => from === 'worklet' && to === 'silent'));
+    assert.ok(edges.some(([from, to]) => from === 'silent' && to === 'destination'));
+    if (call) {
+      assert.ok(edges.some(([from, to, out, input]) => from === 'mic' && to === 'merger' && out === 0 && input === 0));
+      assert.ok(edges.some(([from, to, out, input]) => from === 'shared' && to === 'merger' && out === 0 && input === 1));
+      assert.ok(edges.some(([from, to]) => from === 'merger' && to === 'analyser'));
+      assert.ok(edges.some(([from, to]) => from === 'merger' && to === 'worklet'));
+    }
+  }
+});
+
 test('48 kHz audio becomes 16 kHz: three samples in, one out, averaged', () => {
   const down = new R.Downsampler(48000);
   const out = down.push([Float32Array.from([0.3, 0.3, 0.3, -0.6, -0.6, -0.6])]);
@@ -139,4 +166,30 @@ test('call worklet keeps microphone and system tracks separate and flushes a sho
   assert.equal(sent.length,0);
   recorder.port.onmessage({data:{flush:true}});
   assert.deepEqual([...new Int16Array(sent[0].samples)],[16384,0,0,-16384]); assert.equal(sent[1].flushed,true);
+});
+
+test('empty-call failures have a calm explanation and keep technical details separate', () => {
+  const silent = 'No sound was recorded. Check that the browser may use the microphone.';
+  const failure = L.failureOf({ error: `Others: ${silent}; You: ${silent}`, warnings: ['Recovered audio from the last interrupted recording.'] });
+  assert.equal(failure.title, 'No audio was captured');
+  assert.match(failure.message, /stopped before any sound/);
+  assert.doesNotMatch(failure.message, /Others:|You:|Recovered/);
+  assert.equal(failure.details.length, 2);
+  assert.equal(L.failureOf({ error: 'Provider failed', warnings: [] }).title, 'Your note could not be saved');
+});
+
+test('failed recordings offer deletion and dismissal on their own page', () => {
+  const source = require('node:fs').readFileSync(require.resolve('../src/web/recording.js'), 'utf8');
+  const start = source.indexOf('    function drawFailed()');
+  const end = source.indexOf('    let folders', start);
+  const draw = require('node:vm').runInNewContext(`(function(){${source.slice(start, end)} return drawFailed;})()`, {
+    s: { view: { id: 'failed-01', source: 'call', secs: 0, error: '<unsafe>', warnings: [] } },
+    failureOf: L.failureOf, clock: L.clock, esc: (s) => String(s).replaceAll('<', '&lt;'),
+    felix: { felix: () => '' }, icons: { mic: '', trash: '' },
+  });
+  const html = draw();
+  assert.match(html, /data-action="rec-discard" data-id="failed-01"/);
+  assert.match(html, /data-action="rec-dismiss"/);
+  assert.match(html, /<details[^>]*.*Error details/);
+  assert.ok(!html.includes('<unsafe>'));
 });

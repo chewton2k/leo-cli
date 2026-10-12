@@ -1,3 +1,4 @@
+mod browse;
 pub mod calc;
 mod calendar;
 pub const CALENDAR_BYTES: u64 = calendar::MOST_BYTES;
@@ -57,7 +58,7 @@ use crate::routes::housekeeping::{change_storage, get_keep, get_storage, set_kee
 use crate::routes::map::{build_graph, get_graph, graph_status};
 use crate::routes::notes::{
     create_dir, create_note, delete_note, get_note, list_dirs, list_folders, list_notes, move_dir,
-    move_note, search_notes, toggle_checkbox, update_note,
+    move_note, rename_dir, search_notes, toggle_checkbox, update_note,
 };
 use crate::routes::pictures::{add_picture, get_picture, PICTURE_BYTES};
 use crate::routes::settings::{change_setting, get_settings, test_setting};
@@ -163,6 +164,7 @@ struct AppState {
     regenerator: Option<record::Regenerator>,
     calendar_access: Option<Arc<dyn CalendarAccess>>,
     recording: record::Recordings,
+    discarded_recordings: Arc<Mutex<std::collections::VecDeque<String>>>,
     calendar: Arc<calendar::Calendar>,
     source_writing: Arc<std::sync::atomic::AtomicBool>,
     chats: std::path::PathBuf,
@@ -406,6 +408,7 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
         regenerator: powers.regenerator,
         calendar_access: powers.calendar_access,
         recording: Default::default(),
+        discarded_recordings: Default::default(),
         calendar: Default::default(),
         source_writing: Default::default(),
         chats,
@@ -552,6 +555,7 @@ fn router(state: AppState) -> Router {
         .route("/api/search", get(search_notes))
         .route("/api/dirs", get(list_dirs).post(create_dir))
         .route("/api/dirs/move", post(move_dir))
+        .route("/api/dirs/rename", post(rename_dir))
         .route("/api/folders", get(list_folders))
         .route("/api/trash", get(list_trash))
         .route("/api/trash/{id}/restore", post(restore_note))
@@ -616,7 +620,10 @@ fn router(state: AppState) -> Router {
             post(add_picture).layer(axum::extract::DefaultBodyLimit::max(PICTURE_BYTES)),
         )
         .route("/api/record", get(record::overview).post(record::start))
-        .route("/api/record/{id}", get(record::status))
+        .route(
+            "/api/record/{id}",
+            get(record::status).delete(record::discard),
+        )
         .route(
             "/api/record/{id}/audio",
             post(record::audio).layer(axum::extract::DefaultBodyLimit::max(record::AUDIO_BYTES)),

@@ -27,6 +27,7 @@
       put: (item) => !Number.isSafeInteger(item.seq) || item.seq<0 || item.seq>=MOST_CHUNKS || !item.bytes || item.bytes.byteLength>640000 ? Promise.reject(new Error('Recovery audio reached its limit. Stop and save this recording.')) : transaction('readwrite',(store) => store.put({...item,key:`${item.id}:${String(item.seq).padStart(20,'0')}`})),
       remove: (item) => transaction('readwrite',(store) => store.delete(item.key || `${item.id}:${String(item.seq).padStart(20,'0')}`)),
       list: (id,limit=MOST_CHUNKS) => transaction('readonly',(store,done) => { const out=[]; const range=id ? root.IDBKeyRange.bound(`${id}:`,`${id}:~`) : undefined; const request=store.openCursor(range); request.onsuccess=() => { const cursor=request.result; if (!cursor || out.length>=limit) return done(out); out.push(cursor.value); cursor.continue(); }; }),
+      clear: (id) => transaction('readwrite', (store) => { const request = store.openKeyCursor(root.IDBKeyRange.bound(`${id}:`, `${id}:~`)); let count = 0; request.onsuccess = () => { const cursor = request.result; if (!cursor || count++ >= MOST_CHUNKS) return; store.delete(cursor.primaryKey); cursor.continue(); }; }),
       count: (id) => transaction('readonly',(store,done) => { const request=store.count(root.IDBKeyRange.bound(`${id}:`,`${id}:~`)); request.onsuccess=() => done(request.result); }),
     };
   }
@@ -41,6 +42,7 @@
       },
       remove: async (item) => { items.delete(key(item)); },
       list: async (id, limit = MOST_CHUNKS) => mine(id).slice(0, limit),
+      clear: async (id) => { for (const item of mine(id).slice(0, MOST_CHUNKS)) items.delete(item.key); },
       count: async (id) => mine(id).length,
     };
   }

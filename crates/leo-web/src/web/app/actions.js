@@ -46,11 +46,22 @@ const actions = {
   },
   'open-note': (el) => go(noteHash(el.dataset.id)),
   'pin-card': pinCard,
+  'library-view': changeLibraryView,
+  'library-sort': librarySortSheet,
+  'library-order': changeLibrarySort,
+  'note-preview': quickPreview,
+  'preview-open': (el) => { closeSheet(); go(noteHash(el.dataset.id)); },
   new: (el) => {
     closeSheet();
     go(el.dataset.dir ? `#/new/${enc(el.dataset.dir)}` : '#/new');
   },
   'new-folder': newFolder,
+  'folder-options': folderOptions,
+  'folder-rename': renameFolderSheet,
+  'folder-rename-save': renameFolder,
+  'folder-delete': deleteFolderAsk,
+  'folder-delete-now': deleteFolderNow,
+  'folder-root': () => { const from = state.dir; closeSheet(); return dropFolder(from, ''); },
   'create-folder': createFolder,
   map: () => {
     closeSheet();
@@ -101,6 +112,9 @@ const actions = {
   },
   'rec-rejoin': () => recorder.rejoin().catch(fail),
   'rec-point': () => recorder.point(),
+  'rec-dismiss': () => recorder.dismiss(),
+  'rec-discard': (el) => discardRecordingAsk(el),
+  'rec-discard-now': (el) => discardRecordingNow(el),
   'rec-again': () => recorder.again(),
   upload: () => uploadSheet().catch(fail),
   'upload-go': () => uploadGo().catch(fail),

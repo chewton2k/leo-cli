@@ -513,6 +513,9 @@ impl Undoable {
 /// that the deleted notes it holds are not a memory leak in disguise.
 const UNDO_DEPTH: usize = 32;
 
+pub const MOST_FOLDER_NAME_CHARS: usize = 120;
+pub const MOST_FOLDER_NAME_BYTES: usize = 240;
+
 /// Persistent store backed by per-note .md files in a directory.
 pub struct Store {
     pub notes: Vec<Note>,
@@ -1348,12 +1351,50 @@ impl Store {
         } else {
             format!("{into}/{name}")
         };
-        if to == from || self.dir_exists(&to) || self.validate_directory(&to).is_err() {
+        self.relocate_dir(from, &to)
+    }
+
+    pub fn rename_dir(&mut self, from: &str, name: &str) -> Option<String> {
+        if from.is_empty()
+            || name.is_empty()
+            || name.chars().count() > MOST_FOLDER_NAME_CHARS
+            || name.len() > MOST_FOLDER_NAME_BYTES
+            || name.contains(['/', '\\'])
+            || self.validate_directory(from).is_err()
+        {
             return None;
         }
+        let parent = from.rsplit_once('/').map_or("", |(parent, _)| parent);
+        let to = if parent.is_empty() {
+            name.to_string()
+        } else {
+            format!("{parent}/{name}")
+        };
+        self.relocate_dir(from, &to)
+    }
+
+    fn relocate_dir(&mut self, from: &str, to: &str) -> Option<String> {
+        if from.is_empty() || !self.dir_exists(from) {
+            return None;
+        }
+        if to == from
+            || self.dir_exists(to)
+            || self.validate_directory(to).is_err()
+            || self.notes_dir.join(to).exists()
+        {
+            return None;
+        }
+        if self
+            .directories
+            .iter()
+            .any(|dir| dir.eq_ignore_ascii_case(to))
+        {
+            return None;
+        }
+        let inside = format!("{from}/");
         let renamed = |path: &str| -> Option<String> {
             if path == from {
-                Some(to.clone())
+                Some(to.to_string())
             } else {
                 path.strip_prefix(&inside)
                     .map(|rest| format!("{to}/{rest}"))
@@ -1371,10 +1412,10 @@ impl Store {
             .iter()
             .map(|d| renamed(d).unwrap_or_else(|| d.clone()))
             .collect();
-        add_with_parents(&mut directories, &to);
+        add_with_parents(&mut directories, to);
         directories.dedup();
         self.directories = directories;
-        Some(to)
+        Some(to.to_string())
     }
 
     pub fn move_note(&mut self, id_prefix: &str, new_dir: &str) -> Option<String> {
@@ -3003,7 +3044,9 @@ mod tests {
     }
 
     fn leo_text(title: &str) -> String {
-        format!("---\nid: abc\ntitle: {title}\ntags: []\ncreated_at: 2026-01-01T00:00:00Z\nupdated_at: 2026-01-01T00:00:00Z\n---\n\nbody\n")
+        format!(
+            "---\nid: abc\ntitle: {title}\ntags: []\ncreated_at: 2026-01-01T00:00:00Z\nupdated_at: 2026-01-01T00:00:00Z\n---\n\nbody\n"
+        )
     }
 
     #[test]

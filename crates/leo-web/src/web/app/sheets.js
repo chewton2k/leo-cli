@@ -72,6 +72,7 @@ function swipeToClose(panel) {
 
 function closeSheet(now = false) {
   const open = $('.scrim');
+  const returnFocus = open && open.returnFocus;
   if (open && now) open.remove();
   else if (open) {
     const ghost = open.cloneNode(true);
@@ -96,6 +97,7 @@ function closeSheet(now = false) {
     state.keepPending = null;
     if (state.view === 'storage' && state.storage) drawStorage(state.storage);
   }
+  if (returnFocus && returnFocus.isConnected) returnFocus.focus({ preventScroll: true });
 }
 
 function menu() {
@@ -123,6 +125,78 @@ function newFolder(el) {
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') createFolder();
   });
+}
+
+function folderOptions() {
+  if (state.view !== 'folder' || !state.dir) return;
+  sheet(`<h3>${esc(folderLabel(state.dir))}</h3>
+    <button class="list-row" data-action="folder-rename">${ICON.note}<span class="grow">Rename folder</span></button>
+    ${parentOf(state.dir) ? `<button class="list-row" data-action="folder-root">${ICON.move}<span class="grow">Move to top level</span></button>` : ''}
+    <button class="list-row danger" data-action="folder-delete">${ICON.trash}<span class="grow">Delete folder</span></button>`);
+}
+
+function renameFolderSheet() {
+  if (state.view !== 'folder' || !state.dir) return;
+  const from = state.dir;
+  const box = sheet(`<h3>Rename folder</h3>
+    <label class="field">${ICON.folder}<input id="folder-rename" data-from="${esc(from)}" value="${esc(folderLabel(from))}" maxlength="120" autocomplete="off" aria-label="Folder name" enterkeyhint="done"></label>
+    <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn primary" data-action="folder-rename-save">Rename</button></div>`);
+  const input = $('#folder-rename', box);
+  input.focus();
+  input.select();
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); renameFolder().catch(fail); }
+  });
+}
+
+async function renameFolder() {
+  const input = $('#folder-rename');
+  const button = $('[data-action="folder-rename-save"]');
+  if (!input || !button || button.disabled) return;
+  const from = input.dataset.from;
+  const name = input.value.trim();
+  if (!name || name === folderLabel(from)) return;
+  if (new TextEncoder().encode(name).length > 240) return toast('That folder name is too long. Use a shorter name.', { bad: true });
+  if (name.includes('/') || name.includes('\\') || name === '.' || name === '..') return toast('Use a single folder name, without / or ..', { bad: true });
+  const box = input.closest('.scrim');
+  button.disabled = true;
+  try {
+    const moved = await api('/api/dirs/rename', { method: 'POST', body: { from, name } });
+    if (box.isConnected) closeSheet();
+    await afterMove(from, moved.path);
+    toast(`Renamed folder to “${name}”`, {
+      action: 'Undo',
+      run: () => api('/api/dirs/rename', { method: 'POST', body: { from: moved.path, name: folderLabel(from) } }).then(() => afterMove(moved.path, from)).catch(fail),
+    });
+  } catch (error) {
+    if (error.status === 409) toast('That folder name is already in use. Choose another name.', { bad: true });
+    else fail(error);
+  } finally { if (button.isConnected) button.disabled = false; }
+}
+
+function deleteFolderAsk() {
+  if (state.view !== 'folder' || !state.dir) return;
+  const from = state.dir;
+  sheet(`<h3>Delete “${esc(folderLabel(from))}”?</h3>
+    <p>This folder, its subfolders and all their notes move to the trash. Undo brings them back.</p>
+    <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn danger" data-action="folder-delete-now" data-from="${esc(from)}">Move to trash</button></div>`);
+}
+
+async function deleteFolderNow(el) {
+  if (el.disabled) return;
+  const from = el.dataset.from;
+  if (!from) return;
+  const box = el.closest('.scrim');
+  el.disabled = true;
+  try {
+    const done = await api('/api/trash/move', { method: 'POST', body: { notes: [], dirs: [from] } });
+    if (box.isConnected) closeSheet();
+    if (state.view === 'folder' && (state.dir === from || state.dir.startsWith(`${from}/`))) go(folderHash(parentOf(from)), { replace: true });
+    else await showLatest();
+    loadSideFolders();
+    toast(`Moved “${folderLabel(from)}” to the trash`, { action: 'Undo', run: () => undoTrashMove(done) });
+  } catch (error) { fail(error); }
+  finally { if (el.isConnected) el.disabled = false; }
 }
 
 async function createFolder() {
@@ -257,3 +331,21 @@ $('#search-input').addEventListener('input', (e) => {
     showSearch(query).catch(fail);
   }, 160);
 });
+
+function discardRecordingAsk(el) {
+  const box = sheet(`<h3>Delete this recording?</h3><p class="hint">Its saved audio will be permanently deleted from this device and your computer. Notes already written stay.</p><div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn danger" data-action="rec-discard-now" data-id="${esc(el.dataset.id)}">Delete recording</button></div>`);
+  box.returnFocus = el;
+  box.querySelector('[data-action="close"]').focus();
+}
+
+async function discardRecordingNow(el) {
+  if (el.disabled) return;
+  el.disabled = true;
+  const box = el.closest('.scrim');
+  try {
+    await recorder.discard(el.dataset.id);
+    if (box && box.isConnected) closeSheet();
+  } finally {
+    if (el.isConnected) el.disabled = false;
+  }
+}

@@ -22,6 +22,7 @@ pub const MOST_POINTS: usize = 200;
 pub const MOST_TRANSCRIPT_CHARS: usize = 200_000;
 pub const AUDIO_BYTES: usize = 4 * 1024 * 1024;
 pub const LEVELS_KEPT: usize = 48;
+const DISCARDS_KEPT: usize = 1000;
 const WAIT_FOR_WRITES: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -441,7 +442,7 @@ fn watch(recordings: Recordings, id: String) {
         }
         if job.seen.elapsed() >= FORGOTTEN_AFTER {
             if job.view.source.fed_by_browser() {
-                let warning="The recording page is offline. Its unsent audio is kept on that device; reopen it to reconnect and save.";
+                let warning = "The recording page is offline. Its unsent audio is kept on that device; reopen it to reconnect and save.";
                 if !job.view.warnings.iter().any(|w| w == warning) {
                     job.view.warnings.push(warning.into());
                 }
@@ -644,6 +645,13 @@ pub(crate) async fn audio(
     Query(query): Query<AudioQuery>,
     bytes: Bytes,
 ) -> Response {
+    if state
+        .discarded_recordings
+        .lock()
+        .is_ok_and(|gone| gone.contains(&id))
+    {
+        return error(StatusCode::NOT_FOUND, "That recording was deleted.");
+    }
     if !bytes.len().is_multiple_of(2) {
         return error(
             StatusCode::BAD_REQUEST,
@@ -791,6 +799,13 @@ pub(crate) async fn recover(State(state): State<AppState>, Path(id): Path<String
             .is_some_and(|j| j.busy() || j.writing.load(Ordering::Acquire))
         {
             return error(StatusCode::CONFLICT, "Stop the current recording first.");
+        }
+        if state
+            .discarded_recordings
+            .lock()
+            .is_ok_and(|gone| gone.contains(&id))
+        {
+            return error(StatusCode::NOT_FOUND, "That recording was deleted.");
         }
         *held = Some(RecordJob {
             view: RecordView {
@@ -954,7 +969,7 @@ async fn append_point(
             return error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "The point could not be saved. Check free disk space and retry.",
-            )
+            );
         }
     };
     let result = with_job(state, id, |job| {
@@ -1018,14 +1033,15 @@ pub(crate) async fn wants(
         Ok(journal)
     })
     .await;
-    let journal =
-        match saved {
-            Ok(Ok(journal)) => journal,
-            _ => return error(
+    let journal = match saved {
+        Ok(Ok(journal)) => journal,
+        _ => {
+            return error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "What you want from the notes could not be saved. Check free disk space and retry.",
-            ),
-        };
+            );
+        }
+    };
     let result = with_job(&state, &id, |job| {
         job.journal = journal;
         if let Ok(mut wants) = job.wants.lock() {
@@ -1122,7 +1138,7 @@ pub(crate) async fn snapshot(
             return error(
                 StatusCode::CONFLICT,
                 "Start a recording before capturing a slide.",
-            )
+            );
         }
     };
     let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(&body.data) else {
@@ -1187,6 +1203,68 @@ pub(crate) async fn finish_available(
         _ => error(
             StatusCode::CONFLICT,
             "Stop recording before finishing with the available transcript.",
+        ),
+    }
+}
+
+pub(crate) async fn discard(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    if state
+        .discarded_recordings
+        .lock()
+        .is_ok_and(|gone| gone.contains(&id))
+    {
+        return Json(serde_json::json!({ "deleted": true })).into_response();
+    }
+    let lease = match with_job(&state, &id, |job| {
+        anyhow::ensure!(
+            job.view.state == "failed",
+            "Stop the recording and wait for it to finish first."
+        );
+        Writing::take(job)
+    }) {
+        Ok(Ok(lease)) => lease,
+        Ok(Err(e)) => return error(StatusCode::CONFLICT, &e.to_string()),
+        Err((code, message)) => return error(code, message),
+    };
+    let notes = match state.with_store(|store| Ok(store.notes_dir.clone())).await {
+        Ok(notes) => notes,
+        Err(code) => return error(code, "The recovery folder could not be opened. Try again."),
+    };
+    let housekeeper = state.housekeeper.clone();
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+        let _lease = lease;
+        if let Some(housekeeper) = housekeeper {
+            housekeeper.discard_recording(&id)?;
+        }
+        let folder = crate::record_journal::folder(&notes, &id)?;
+        match std::fs::remove_dir_all(folder) {
+            Ok(()) => (),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+            Err(e) => return Err(e.into()),
+        }
+        let mut held = state
+            .recording
+            .lock()
+            .map_err(|_| anyhow::anyhow!("The recording state could not be updated."))?;
+        if held.as_ref().is_some_and(|job| job.view.id == id) {
+            let mut gone = state
+                .discarded_recordings
+                .lock()
+                .map_err(|_| anyhow::anyhow!("The recording state could not be updated."))?;
+            gone.push_back(id);
+            if gone.len() > DISCARDS_KEPT {
+                gone.pop_front();
+            }
+            *held = None;
+        }
+        Ok(())
+    })
+    .await;
+    match result {
+        Ok(Ok(())) => Json(serde_json::json!({ "deleted": true })).into_response(),
+        _ => error(
+            StatusCode::CONFLICT,
+            "The recording could not be deleted. Try again, or remove its audio in Storage.",
         ),
     }
 }

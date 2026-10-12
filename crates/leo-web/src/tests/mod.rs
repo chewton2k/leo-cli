@@ -72,6 +72,7 @@ fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<Strin
         regenerator: None,
         calendar_access: None,
         recording: Default::default(),
+        discarded_recordings: Default::default(),
         calendar: Default::default(),
         source_writing: Default::default(),
         chats: dir.path().join("chats"),

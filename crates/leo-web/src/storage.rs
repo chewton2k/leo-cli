@@ -38,6 +38,9 @@ pub struct Area {
 }
 
 pub trait Housekeeper: Send + Sync {
+    fn discard_recording(&self, _id: &str) -> Result<()> {
+        Ok(())
+    }
     fn areas(&self) -> Vec<Area>;
     fn act(&self, area: &str, action: &str, items: &[String]) -> Option<Result<String>>;
 }

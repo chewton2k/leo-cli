@@ -18,6 +18,8 @@ const GROUP_NOTES: usize = 90;
 const LINKS_PER_NOTE: usize = 4;
 const CONCEPT_CHARS: usize = 48;
 const SUMMARY_CHARS: usize = 200;
+const SUMMARY_ROWS: usize = 1000;
+const SUMMARY_BYTES: usize = 100_000;
 const WHY_CHARS: usize = 140;
 const READ_TOKENS: u32 = 6_000;
 const LINK_TOKENS: u32 = 12_000;
@@ -1117,6 +1119,35 @@ impl Graphs {
             .unwrap_or_default()
     }
 
+    pub(crate) fn note_summaries(&self, notes: &[Note]) -> BTreeMap<String, String> {
+        self.db
+            .with(|c| {
+                let mut out = BTreeMap::new();
+                let mut found =
+                    c.prepare("SELECT data FROM graph_notes WHERE id = ?1 AND length(data) <= ?2")?;
+                for note in notes.iter().take(SUMMARY_ROWS) {
+                    let data = found.query_row(rusqlite::params![&note.id, SUMMARY_BYTES], |r| {
+                        r.get::<_, String>(0)
+                    });
+                    let Some(read) = data
+                        .ok()
+                        .and_then(|data| serde_json::from_str::<Read>(&data).ok())
+                    else {
+                        continue;
+                    };
+                    let hash = fnv(&format!("{}\u{0}{}", note.title, note.body));
+                    if read.hash == hash && !read.summary.trim().is_empty() {
+                        out.insert(
+                            note.id.clone(),
+                            read.summary.chars().take(SUMMARY_CHARS).collect(),
+                        );
+                    }
+                }
+                Ok(out)
+            })
+            .unwrap_or_default()
+    }
+
     fn save(&self, cache: &Cache) -> Result<()> {
         self.write_all(cache, false)
     }
@@ -1383,6 +1414,38 @@ mod tests {
                 ))
             }
         }
+    }
+
+    #[test]
+    fn library_summaries_use_only_current_cache_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let graphs = Graphs::for_notes(&dir.path().join("notes"), None);
+        let mut note = Note::new(
+            "Queues",
+            "FIFO queues process the earliest item first.",
+            vec![],
+            "CS130",
+        );
+        let mut cache = Cache::default();
+        cache.notes.insert(
+            note.id.clone(),
+            Read {
+                hash: hash_of(&sources(&[note.clone()])[0]),
+                summary: "FIFO queue ordering".into(),
+                concepts: vec![],
+                linked: None,
+            },
+        );
+        graphs.save(&cache).unwrap();
+        assert_eq!(
+            graphs
+                .note_summaries(&[note.clone()])
+                .get(&note.id)
+                .unwrap(),
+            "FIFO queue ordering"
+        );
+        note.body = "Updated wording".into();
+        assert!(graphs.note_summaries(&[note]).is_empty());
     }
 
     #[test]

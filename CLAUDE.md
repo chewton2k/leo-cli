@@ -29,6 +29,12 @@ push, and let CI run the full suite. Check CI once; fix a red run with a
 follow-up push. CI tests only what changed since the last release tag
 (`scripts/ci-scope.sh`; DEVELOPER.md says what each kind of change runs).
 
+For website changes, do not build leo or run local Cargo checks/tests; rely on
+CI for compiled and browser validation (the user's call, 2026-10-11). Lightweight
+JavaScript checks and manual checks with fakes are allowed. Reuse the website's
+existing components, controls, spacing and themes; new features should look like
+the rest of leo, including folder controls and note browsing.
+
 Two entry modes share one command vocabulary and one `Store`:
 
 1. **TUI** (`leo-tui`) — `leo` with no arguments in a TTY. Three panes over a

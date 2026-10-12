@@ -84,3 +84,14 @@ test('a second of microphone audio reaches leo within that second, as one upload
   assert.ok(uploads.every((b) => b <= 64000), 'each upload stays small');
   assert.equal(await storage.count('session-1'), 0);
 });
+
+test('deleting recovery audio clears only the chosen recording and is repeatable', async () => {
+  const storage = globalThis.leoAudioQueue.memory();
+  for (const id of ['failed-01', 'keep-01']) {
+    for (let seq = 0; seq < 3; seq++) await storage.put({ id, seq, bytes: new ArrayBuffer(2) });
+  }
+  await storage.clear('failed-01');
+  await storage.clear('failed-01');
+  assert.equal(await storage.count('failed-01'), 0);
+  assert.equal(await storage.count('keep-01'), 3);
+});

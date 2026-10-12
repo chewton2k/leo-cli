@@ -201,6 +201,14 @@ test('the other ways models write math are drawn too', () => {
   assert.ok(told.startsWith('<p>In full:</p>'), 'a block of math right after a sentence still starts its own block');
 });
 
+test('read-only previews retain task appearance without editable note controls', () => {
+  const html = render('- [ ] Due Friday\n- [x] Submitted', { interactive: false });
+  assert.ok(!html.includes('data-box='));
+  assert.equal((html.match(/type="checkbox" disabled/g) || []).length, 2);
+  assert.ok(html.includes('disabled checked'));
+  assert.deepEqual(boxes(render('- [ ] Still editable')), [[1, false]]);
+});
+
 setImmediate(() => {
   for (const [name, fn] of cases) {
     try {

@@ -5,6 +5,7 @@ const HTML: &str = include_str!("../web/index.html");
 const APP_JS: &str = concat!(
     "(function () {\n'use strict';\n",
     include_str!("../web/app/core.js"),
+    include_str!("../web/app/browse.js"),
     include_str!("../web/app/trash.js"),
     include_str!("../web/app/map.js"),
     include_str!("../web/app/settings.js"),
@@ -266,7 +267,7 @@ mod tests {
                 parts += 1;
             }
         }
-        assert_eq!(parts, 14);
+        assert_eq!(parts, 15);
     }
 
     #[test]

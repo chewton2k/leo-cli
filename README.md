@@ -567,8 +567,14 @@ or mobile data, and opens the page in your browser on this computer (press
 the browser, laid out for a phone and following its light or dark mode. From
 there you can:
 
+- browse notes in a **Grid** with a title, short description, visual preview,
+  folder and date, or switch to **List**. Sort by recently updated, recently
+  opened, class/folder or name; pinned notes stay first. **Preview** opens a
+  read-only sheet without leaving your place;
 - browse folders and read notes with their formatting: headings, lists, code,
-  tables, quotes and links;
+  tables, quotes and links. Inside a folder, **Folder options** lets you rename
+  it, move it to the top level or move it and its contents to the trash. On a
+  computer you can also drag a nested folder onto **All notes**;
 - edit in place, the way Obsidian does: tap any line and type. The line shows
   its Markdown while you edit it and goes back to formatted when you move on.
   Enter continues a list or checklist, and the title is edited in place
@@ -590,6 +596,11 @@ there you can:
   models (with prices), API keys, and when backups push;
 - **upload** slides, handouts, papers or photos and get study notes;
 - **record** a lecture or meeting and get notes, without the terminal.
+
+If a recording fails, its page shows a short explanation and expandable
+**Error details**. **Dismiss warning** keeps the audio for recovery; **Delete
+recording** permanently removes its recovery audio after a confirmation, while
+keeping any notes already written.
 
 **Recording** (the **Record** button beside New note, or More → Record a
 lecture or meeting) has three choices:

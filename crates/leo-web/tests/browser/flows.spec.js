@@ -3117,3 +3117,102 @@ test('only the folders scroll in the sidebar; the places above and below stay pu
   await page.locator('#side [data-action="home"]').first().click();
   await expect.poll(() => tree.evaluate((el) => el.scrollTop)).toBe(scrolled);
 });
+
+test('note cards can be previewed without losing the library and layout choices persist', async ({ page }) => {
+  const made = await page.request.post('/api/notes', { data: { title: 'Library preview fixture', directory: 'library-grid-fixture', body: '# Traversals\nBreadth first search visits each layer.\n- [ ] Homework due Friday\n```svg\n<svg xmlns="http://www.w3.org/2000/svg" width="160" height="80"><rect width="160" height="80" fill="#b4cfe7"/></svg>\n```' } });
+  expect(made.status()).toBe(201);
+  const note = await made.json();
+  await page.goto('/#/');
+  const card = page.locator(`.library-cards.grid .card[data-id="${note.id}"]`);
+  await expect(card).toBeVisible();
+  await expect(card.locator('.card-snippet')).toContainText('Breadth first search');
+  await expect(card.locator('.card-meta')).toContainText('library-grid-fixture');
+  await expect(card.locator('.note-thumb img')).toBeVisible();
+  const preview = card.locator('[data-action="note-preview"]');
+  await preview.click();
+  await expect(page.locator('.sheet.note-preview .preview-body')).toContainText('Homework due Friday');
+  await expect(page.locator('.sheet.note-preview input:enabled')).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(preview).toBeFocused();
+  await expect(card).toBeVisible();
+  await page.locator('[data-action="library-view"][data-view="list"]').click();
+  await expect(page.locator('.library-cards.list')).toBeVisible();
+  await page.reload();
+  await expect(page.locator('.library-cards.list')).toBeVisible();
+  await page.locator('[data-action="library-sort"]').click();
+  await page.locator('[data-action="library-order"][data-sort="title"]').click();
+  await expect(page.locator('[data-action="library-sort"]')).toHaveText('Name');
+  await expect(page.locator('[data-action="library-sort"]')).toBeFocused();
+  await page.locator('[data-action="library-view"][data-view="grid"]').click();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+});
+
+test('folder controls rename, move to root and delete from inside the folder with Undo', async ({ page }) => {
+  const original = `folder-controls-${Date.now()}/nested`;
+  const made = await page.request.post('/api/notes', { data: { title: 'Folder controls fixture', directory: original, body: 'Keep this note through renaming and moving.' } });
+  expect(made.status()).toBe(201);
+  const note = await made.json();
+  const renamed = `Renamed-${note.id}`;
+  const full = original.split('/')[0] + '/' + renamed;
+  await page.goto(`/#/f/${encodeURIComponent(original)}`);
+  await page.locator('[data-action="folder-options"]').click();
+  await page.locator('[data-action="folder-rename"]').click();
+  await expect(page.locator('#folder-rename')).toBeFocused();
+  await page.locator('#folder-rename').fill(renamed);
+  await page.locator('#folder-rename').press('Enter');
+  await expect(page).toHaveURL(new RegExp(`#/f/${encodeURIComponent(full)}$`));
+  await expect(page.locator(`.card[data-id="${note.id}"]`)).toBeVisible();
+  if (test.info().project.name === 'desktop') {
+    await page.locator(`#crumbs [data-dir="${full}"]`).dragTo(page.locator('#crumbs [data-action="home"]'));
+  } else {
+    await page.locator('[data-action="folder-options"]').click();
+    await page.locator('[data-action="folder-root"]').click();
+  }
+  await expect(page).toHaveURL(new RegExp(`#/f/${encodeURIComponent(renamed)}$`));
+  await page.locator('[data-action="folder-options"]').click();
+  await page.locator('[data-action="folder-delete"]').click();
+  await page.locator('[data-action="folder-delete-now"]').click();
+  await expect(page).toHaveURL(/#\/$/);
+  expect((await page.request.get(`/api/notes/${note.id}`)).status()).toBe(404);
+  await page.locator('.toast button', { hasText: 'Undo' }).last().click();
+  await expect(async () => expect((await page.request.get(`/api/notes/${note.id}`)).status()).toBe(200)).toPass();
+});
+
+test('a failed call has calm details and can be dismissed or deleted directly', async ({ page }) => {
+  let job = { id: 'failed-call-fixture', source: 'call', state: 'failed', secs: 0, step: '', steps: null, transcript: '', warnings: ['Recovered audio from the last interrupted recording.'], points: [], wants: '', levels: [], levels_start: 0, next_seq: 0, note: null, error: 'Others: No sound was recorded. Check your microphone.; You: No sound was recorded. Check your microphone.' };
+  let deletions = 0;
+  await page.route('**/api/record', route => route.fulfill({ json: { available: true, local: true, job, pending: [] } }));
+  await page.route('**/api/record/failed-call-fixture', route => {
+    if (route.request().method() === 'DELETE') { deletions++; job = null; return route.fulfill({ json: { deleted: true } }); }
+    return route.fulfill({ json: job });
+  });
+  await page.goto('/#/record');
+  await expect(page.locator('.rec-failed-card h3')).toHaveText('No audio was captured');
+  await expect(page.locator('.rec-error-details')).not.toHaveAttribute('open', '');
+  await expect(page.locator('.rec-failed-card .hint')).not.toContainText('Others:');
+  await page.locator('[data-action="rec-dismiss"]').click();
+  await expect(page.locator('.rec-idle')).toBeVisible();
+  await page.reload();
+  await expect(page.locator('.rec-idle')).toBeVisible();
+  expect(deletions).toBe(0);
+  await page.evaluate(() => sessionStorage.removeItem('leo-record-dismissed'));
+  await page.reload();
+  await expect(page.locator('.rec-failed-card')).toBeVisible();
+  await page.evaluate(async () => {
+    const queue = window.leoAudioQueue.indexed();
+    await queue.put({ id: 'failed-call-fixture', seq: 0, bytes: new ArrayBuffer(4) });
+    await queue.put({ id: 'keep-fixture', seq: 0, bytes: new ArrayBuffer(4) });
+  });
+  await page.locator('[data-action="rec-discard"]').click();
+  await page.locator('.scrim [data-action="close"]').click();
+  expect(deletions).toBe(0);
+  await page.locator('[data-action="rec-discard"]').click();
+  await page.locator('[data-action="rec-discard-now"]').click();
+  await expect(page.locator('.rec-idle')).toBeVisible();
+  expect(deletions).toBe(1);
+  expect(await page.evaluate(() => window.leoAudioQueue.indexed().count('failed-call-fixture'))).toBe(0);
+  expect(await page.evaluate(() => window.leoAudioQueue.indexed().count('keep-fixture'))).toBe(1);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+  await page.reload();
+  await expect(page.locator('.rec-idle')).toBeVisible();
+});

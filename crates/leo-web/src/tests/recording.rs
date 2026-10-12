@@ -513,3 +513,67 @@ fn recovery_stays_in_saving_state_and_delivers_every_persisted_chunk() {
     })
     .unwrap();
 }
+
+#[test]
+fn a_failed_recording_can_be_deleted_without_deleting_notes_or_other_audio() {
+    let (mut state, _d, ids) = state_with(&[("Keep this note", "")]);
+    state.listener = Some(Arc::new(|_, _| anyhow::bail!("No sound was recorded.")));
+    let id = json_of(start_recording(&state, record::Source::Call, "127.0.0.1"))["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    recording_until(&state, |s| s == "failed");
+    let notes = state.store.lock().unwrap().notes_dir.clone();
+    let folder = crate::record_journal::folder(&notes, &id).unwrap();
+    assert!(folder.exists());
+    let saving = state.recording.lock().unwrap().as_ref().unwrap().writing();
+    saving.store(true, std::sync::atomic::Ordering::Release);
+    assert_eq!(
+        run(record::discard(State(state.clone()), Path(id.clone()))).status(),
+        StatusCode::CONFLICT
+    );
+    assert!(folder.exists());
+    saving.store(false, std::sync::atomic::Ordering::Release);
+    let response = run(record::discard(State(state.clone()), Path(id.clone())));
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(json_of(response)["deleted"], true);
+    assert!(!folder.exists());
+    assert!(state.recording.lock().unwrap().is_none());
+    assert!(state.discarded_recordings.lock().unwrap().contains(&id));
+    assert_eq!(
+        run(record::audio(
+            State(state.clone()),
+            Path(id.clone()),
+            Query(Default::default()),
+            axum::body::Bytes::from_static(&[1, 0])
+        ))
+        .status(),
+        StatusCode::NOT_FOUND
+    );
+    assert!(state.store.lock().unwrap().find_note(&ids[0]).is_some());
+    assert_eq!(
+        run(record::discard(State(state), Path(id))).status(),
+        StatusCode::OK
+    );
+}
+
+#[test]
+fn an_active_recording_cannot_be_deleted_from_its_error_panel() {
+    let (mut state, _d, _) = state_with(&[]);
+    state.listener = Some(hearing());
+    let id = json_of(start_recording(
+        &state,
+        record::Source::Browser,
+        "127.0.0.1",
+    ))["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    recording_until(&state, |s| s == "recording");
+    assert_eq!(
+        run(record::discard(State(state.clone()), Path(id.clone()))).status(),
+        StatusCode::CONFLICT
+    );
+    run(record::stop(State(state.clone()), Path(id)));
+    recording_until(&state, |s| s == "done");
+}

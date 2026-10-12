@@ -10,7 +10,7 @@
   `src/tests/<area>.rs`, helpers (`state_with`, `run`, `json_of`, `host`) in
   `src/tests/mod.rs`.
 - `/app.js` is `web/app/*.js` joined in one closure by `routes/assets.rs`
-  (`concat!`, order: core, trash, map, settings, storage, uploads, sheets, side, drag, diagrams, math,
+  (`concat!`, order: core, browse, trash, map, settings, storage, uploads, sheets, side, drag, diagrams, math,
   actions, events). The parts share scope on purpose: pages reassign `state`.
   Add a part to the `concat!` list; `every_part_of_the_page_script_is_served`
   fails otherwise and `the_page_script_parses` runs `node --check` on the whole.
@@ -866,3 +866,32 @@ PCM in memory or reopen the microphone.
 Offline browser backlogs persist individual worklet chunks, never one oversized
 concatenation. A partial storage failure advances only durable sequences and keeps
 only unwritten chunks in memory for retry; it must not duplicate stored audio.
+
+### Note browsing and recording failures (2026-10-11)
+
+The library defaults to a responsive Grid with a remembered List choice. All
+notes includes every folder; opening a folder scopes the results to that folder.
+`browse.rs` sorts before pagination (pinned first; updated, browser-local opened,
+folder or title), chooses bounded visual previews, and supplies a short content
+fallback. `Graphs::note_summaries` reads only current cached summaries; browsing
+never calls an AI. `app/browse.js` uses the existing Markdown, diagram and math
+renderers with lazy thumbnails, bounded caches and a read-only preview sheet.
+Preview dismissal restores focus and leaves the library's scroll position intact.
+The Markdown renderer accepts `interactive: false` for read-only task controls.
+
+Folder options are available inside empty and populated folders, using existing
+sheets and buttons. Rename uses `/api/dirs/rename` and the Store relocation
+primitive; move to top level works through the root breadcrumb or sidebar and a
+phone-friendly menu action. Folder deletion uses the existing trash API and Undo.
+
+Browser capture feeds its worklet through a silent gain to the output so the
+browser processes audio without feedback. Call's meter follows both inputs.
+Failed recording panels show a short explanation with expandable error details.
+Dismiss retains recovery audio and remembers the dismissed job in sessionStorage.
+Delete confirms on that page and clears that job's local queue, server journal,
+and retained computer sessions (both Call tracks). `/api/record/{id}` DELETE
+accepts only failed jobs and reserves the existing writing lease outside I/O.
+The blocking worker owns that lease, so disconnecting the request cannot release
+it early. A bounded set of discarded ids prevents an in-flight recovery or late
+upload from resurrecting the deleted job. Storage remains available for older
+interrupted recordings. Notes already written are kept.

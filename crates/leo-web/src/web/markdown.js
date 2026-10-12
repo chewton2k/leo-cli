@@ -297,7 +297,7 @@
     try {
       return blocks(String(markdown || '').replace(/\r\n?/g, '\n').split('\n'), {
         boxes: options.boxOffset || 0,
-        interactive: true,
+        interactive: options.interactive !== false,
       });
     } finally {
       pictureDir = '';

@@ -16,6 +16,8 @@ pub(crate) struct ListParams {
     pub(crate) offset: usize,
     #[serde(default)]
     pub(crate) brief: bool,
+    pub(crate) sort: Option<String>,
+    pub(crate) recent: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -66,6 +68,12 @@ pub(crate) struct MoveDirBody {
 }
 
 #[derive(Deserialize)]
+pub(crate) struct RenameDirBody {
+    pub(crate) from: String,
+    pub(crate) name: String,
+}
+
+#[derive(Deserialize)]
 pub(crate) struct MoveBody {
     pub(crate) directory: String,
 }
@@ -85,6 +93,10 @@ pub(crate) struct NoteResponse {
     pub(crate) tasks: Option<[usize; 2]>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub(crate) recorded: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) summary: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) preview: Option<String>,
 }
 
 pub(crate) fn version_of(note: &leo_core::notes::Note) -> String {
@@ -117,6 +129,8 @@ impl NoteResponse {
             version: version_of(n),
             tasks: None,
             recorded: false,
+            summary: None,
+            preview: None,
         }
     }
 
@@ -194,31 +208,57 @@ pub(crate) async fn list_notes(
     State(state): State<AppState>,
     Query(params): Query<ListParams>,
 ) -> Result<Response, StatusCode> {
-    state
+    let brief = params.brief;
+    let (total, notes) = state
         .with_store(move |store| {
             let limit = params.limit.unwrap_or(100).min(1000);
-            let notes = if let Some(ref dir) = params.dir {
+            let mut notes = if let Some(ref dir) = params.dir {
                 directory(store, dir)?;
                 store.list_notes_in_dir(dir, params.tag.as_deref(), usize::MAX)
             } else {
                 store.list_notes(params.tag.as_deref(), usize::MAX)
             };
+            crate::browse::order(&mut notes, params.sort.as_deref(), params.recent.as_deref())?;
             let total = notes.len();
-            let page: Vec<NoteResponse> = notes
-                .iter()
+            let page: Vec<leo_core::notes::Note> = notes
+                .into_iter()
                 .skip(params.offset)
                 .take(limit)
-                .map(|n| {
-                    if params.brief {
-                        NoteResponse::brief(n, &[])
-                    } else {
-                        NoteResponse::from_note(n)
-                    }
-                })
+                .cloned()
                 .collect();
-            Ok(([("x-total", total.to_string())], Json(page)).into_response())
+            Ok((total, page))
         })
-        .await
+        .await?;
+    let graphs = std::sync::Arc::clone(&state.graphs);
+    let page = tokio::task::spawn_blocking(move || {
+        let summaries = if brief {
+            graphs.note_summaries(&notes)
+        } else {
+            std::collections::BTreeMap::new()
+        };
+        notes
+            .iter()
+            .map(|note| {
+                if brief {
+                    NoteResponse {
+                        summary: Some(
+                            summaries
+                                .get(&note.id)
+                                .cloned()
+                                .unwrap_or_else(|| crate::browse::summary(&note.body)),
+                        ),
+                        preview: Some(crate::browse::preview(&note.body)),
+                        ..NoteResponse::brief(note, &[])
+                    }
+                } else {
+                    NoteResponse::from_note(note)
+                }
+            })
+            .collect::<Vec<_>>()
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(([("x-total", total.to_string())], Json(page)).into_response())
 }
 
 pub(crate) async fn get_note(
@@ -513,12 +553,46 @@ pub(crate) async fn move_dir(
         .await
 }
 
+pub(crate) async fn rename_dir(
+    State(state): State<AppState>,
+    Json(body): Json<RenameDirBody>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    state
+        .with_store(move |store| {
+            directory(store, &body.from)?;
+            directory(store, &body.name)?;
+            if body.from.is_empty()
+                || body.name.is_empty()
+                || body.name.chars().count() > leo_core::store::MOST_FOLDER_NAME_CHARS
+                || body.name.len() > leo_core::store::MOST_FOLDER_NAME_BYTES
+                || body.name.contains(['/', '\\'])
+            {
+                return Err(StatusCode::BAD_REQUEST);
+            }
+            if !store.dir_exists(&body.from) {
+                return Err(StatusCode::NOT_FOUND);
+            }
+            let to = store
+                .rename_dir(&body.from, &body.name)
+                .ok_or(StatusCode::CONFLICT)?;
+            save(store)?;
+            remove_emptied(&store.notes_dir.join(&body.from));
+            Ok(Json(serde_json::json!({ "path": to })))
+        })
+        .await
+}
+
+const MOST_EMPTY_FOLDERS: usize = 10_000;
+
 fn remove_emptied(top: &std::path::Path) {
     let mut found = vec![top.to_path_buf()];
     let mut i = 0;
-    while i < found.len() {
+    while i < found.len() && i < MOST_EMPTY_FOLDERS {
         if let Ok(entries) = std::fs::read_dir(&found[i]) {
-            for entry in entries.flatten() {
+            for entry in entries.take(MOST_EMPTY_FOLDERS).flatten() {
+                if found.len() >= MOST_EMPTY_FOLDERS {
+                    break;
+                }
                 if entry.file_type().is_ok_and(|t| t.is_dir()) {
                     found.push(entry.path());
                 }

@@ -127,6 +127,27 @@
     return 'The tab’s sound could not be shared' + (reason && reason.message ? ` (${reason.message})` : '') + '.';
   }
 
+  function connectCapture(context, stream, micStream, node) {
+    const source = context.createMediaStreamSource(stream);
+    const analyser = context.createAnalyser();
+    analyser.fftSize = 2048;
+    let feed = source;
+    if (micStream) {
+      const merger = context.createChannelMerger(2);
+      const mic = context.createMediaStreamSource(micStream);
+      mic.connect(merger, 0, 0);
+      source.connect(merger, 0, 1);
+      feed = merger;
+    }
+    feed.connect(analyser);
+    feed.connect(node);
+    const silent = context.createGain();
+    silent.gain.value = 0;
+    node.connect(silent);
+    silent.connect(context.destination);
+    return analyser;
+  }
+
   function stateWord(view) {
     if (!view) return '';
     if (view.state === 'paused') return 'Paused';
@@ -155,10 +176,22 @@
     return `${day} ${time(start)}–${time(end)}`;
   }
 
+  function failureOf(view) {
+    const error = typeof view.error === 'string' ? view.error.slice(0, 12000) : '';
+    const silent = Boolean(error) && error.split('; ').every((part) => /^(?:You: |Others: )?No sound was recorded\./.test(part));
+    const details = [...new Set([error, ...(view.warnings || []).slice(0, 20)].filter(Boolean))];
+    return {
+      title: silent ? 'No audio was captured' : 'Your note could not be saved',
+      message: silent ? 'The recording may have stopped before any sound reached Leo. Check your microphone and shared audio, then try again.' : 'Your recording is kept so you can try recovering it. You can also delete it and start again.',
+      details,
+    };
+  }
+
   function create(deps) {
     const { api, esc, toast, go, noteHash, felix, icons, noteReady } = deps;
     const s = {
       view: null,
+      dismissed: (() => { try { return root.sessionStorage.getItem('leo-record-dismissed'); } catch (e) { return null; } })(),
       overview: null,
       mine: false,
       stream: null,
@@ -237,40 +270,36 @@
     }
 
     async function openMic(kind = 'browser') {
-      s.stream = kind === 'tab' || kind === 'call' ? await shareSound() : await microphone();
-      if (kind === 'call') { try { s.micStream = await microphone(); } catch(e) { closeMic(); throw e; } }
-      s.context = new root.AudioContext({ sinkId: { type: 'none' } });
-      await s.context.audioWorklet.addModule('/recorder.js');
-      const source = s.context.createMediaStreamSource(s.stream);
-      s.node = new root.AudioWorkletNode(s.context, 'leo-recorder', { channelCount: kind === 'call' ? 2 : 1, channelCountMode:'explicit', processorOptions:{dual:kind === 'call'} });
-      s.analyser = s.context.createAnalyser();
-      s.analyser.fftSize = 2048;
-      s.samples = new Float32Array(s.analyser.fftSize);
-      source.connect(s.analyser);
-      s.node.port.onmessage = (event) => {
-        if (s.view && s.view.state === 'paused') return;
-        s.held.push(new Int16Array(event.data.samples));
-
-      };
-      if (kind === 'call') {
-        const merger = s.context.createChannelMerger(2);
-        const mic = s.context.createMediaStreamSource(s.micStream);
-        mic.connect(merger,0,0); source.connect(merger,0,1); merger.connect(s.node);
-      } else source.connect(s.node);
-      if (s.context.state === 'suspended') await s.context.resume();
-      s.deviceLost=false;
-      if (s.micStream) s.micStream.getAudioTracks().forEach((track) => { track.onended=() => { s.deviceLost=true; note('The microphone disconnected. Reconnect it to keep capturing your side of the call.'); }; });
-      s.stream.getTracks().forEach((track) => {
-        track.onended = () => {
-          if (!live(s.view) || !s.mine) return;
-          if (kind === 'tab' || kind === 'call') {
-            note('Sharing stopped, so the recording stopped and is being saved.');
-            stop().catch(() => {});
-          } else if (track.kind === 'audio') {
-            s.deviceLost=true; note('The microphone was disconnected. What was recorded is kept; stop to save it.');
-          }
+      try {
+        s.stream = kind === 'tab' || kind === 'call' ? await shareSound() : await microphone();
+        if (kind === 'call') s.micStream = await microphone();
+        s.context = new root.AudioContext({ sinkId: { type: 'none' } });
+        await s.context.audioWorklet.addModule('/recorder.js');
+        s.node = new root.AudioWorkletNode(s.context, 'leo-recorder', { channelCount: kind === 'call' ? 2 : 1, channelCountMode:'explicit', processorOptions:{dual:kind === 'call'} });
+        s.analyser = connectCapture(s.context, s.stream, s.micStream, s.node);
+        s.samples = new Float32Array(s.analyser.fftSize);
+        s.node.port.onmessage = (event) => {
+          if (s.view && s.view.state === 'paused') return;
+          if (event.data.samples instanceof ArrayBuffer) s.held.push(new Int16Array(event.data.samples));
         };
-      });
+        if (s.context.state === 'suspended') await s.context.resume();
+        s.deviceLost=false;
+        if (s.micStream) s.micStream.getAudioTracks().forEach((track) => { track.onended=() => { s.deviceLost=true; note('The microphone disconnected. Reconnect it to keep capturing your side of the call.'); }; });
+        s.stream.getTracks().forEach((track) => {
+          track.onended = () => {
+            if (!live(s.view) || !s.mine) return;
+            if (kind === 'tab' || kind === 'call') {
+              note('Sharing stopped, so the recording stopped and is being saved.');
+              stop().catch(() => {});
+            } else if (track.kind === 'audio') {
+              s.deviceLost=true; note('The microphone was disconnected. What was recorded is kept; stop to save it.');
+            }
+          };
+        });
+      } catch (error) {
+        closeMic();
+        throw error.shown ? error : shown('Audio capture could not start. Close other recording tabs, then try again.');
+      }
     }
 
     function closeMic() {
@@ -347,10 +376,13 @@
 
     async function pollNow() {
       if (!s.view) return;
+      const id = s.view.id;
       try {
-        const view = await api(`/api/record/${s.view.id}`);
+        const view = await api(`/api/record/${id}`);
+        if (!s.view || s.view.id !== id || s.dismissed === id) return;
         accept(view);
       } catch (e) {
+        if (!s.view || s.view.id !== id) return;
         if (e.status === 404) {
           detach();
           s.view = null;
@@ -660,12 +692,15 @@
 
     function drawFailed() {
       const v = s.view;
+      const failure = failureOf(v);
       return `<div class="rec rec-writing">
         <div class="section-title">Recording</div>
-        <section class="set-card rec-done-card">${felix.felix(72, 'droop')}<h3>The recording could not become a note</h3>
-          <p class="set-note warn">${esc(v.error || 'Something went wrong.')}</p>
-          ${v.warnings.map((w) => `<p class="set-note warn">${esc(w)}</p>`).join('')}
-          <div class="buttons"><button class="btn plain sm" data-action="settings">Settings</button><button class="btn primary sm" data-action="rec-again">Record again</button></div>
+        <section class="set-card rec-done-card rec-failed-card">${felix.felix(64, 'droop')}<h3>${esc(failure.title)}</h3>
+          <p class="hint">${esc(failure.message)}</p>
+          <div class="rec-failed-context">${icons.mic}<span>${esc(clock(v.secs))} recorded · ${v.source === 'call' ? 'Call' : 'Recording'}</span></div>
+          ${failure.details.length ? `<details class="rec-error-details"><summary>Error details</summary>${failure.details.map((w) => `<p>${esc(w)}</p>`).join('')}</details>` : ''}
+          <div class="buttons"><button class="btn primary sm" data-action="rec-again">Record again</button><button class="btn sm plain danger" data-action="rec-discard" data-id="${esc(v.id)}">Delete recording</button></div>
+          <button class="btn plain sm" data-action="rec-dismiss">Dismiss warning</button>
         </section>
       </div>`;
     }
@@ -843,7 +878,7 @@
     async function refresh() {
       s.overview = await api('/api/record');
       const job = s.overview.job;
-      if (job && (live(job) || job.state === 'writing')) {
+      if (job && job.id !== s.dismissed && job.state !== 'done') {
         if (!s.view || s.view.id !== job.id) s.mine = false;
         accept(job);
         schedule();
@@ -924,6 +959,35 @@
         } finally { if (temporary) stream.getTracks().forEach((t) => t.stop()); }
       },
       point: submitPoint,
+      dismiss() {
+        if (!s.view || s.view.state !== 'failed') return;
+        s.dismissed = s.view.id;
+        try { root.sessionStorage.setItem('leo-record-dismissed', s.dismissed); } catch (e) {}
+        detach();
+        clearTimeout(s.poll);
+        s.view = null;
+        draw();
+        pill();
+      },
+      async discard(id) {
+        if (!s.view || s.view.id !== id || s.view.state !== 'failed') throw shown('This recording is no longer on the error page. Refresh and try again.');
+        if (s.sending) throw shown('Audio is still reaching Leo. Wait a moment, then try again.');
+        detach();
+        clearTimeout(s.poll);
+        if (audioQueue) await audioQueue.clear(id);
+        await api(`/api/record/${id}`, { method: 'DELETE' });
+        s.dismissed = id;
+        try { root.sessionStorage.setItem('leo-record-dismissed', id); } catch (e) {}
+        if (s.view && s.view.id === id) {
+          s.view = null;
+          s.held = [];
+          s.pending = 0;
+        }
+        await refresh();
+        draw();
+        pill();
+        toast('Recording deleted');
+      },
       again() {
         s.view = null;
         draw();
@@ -932,5 +996,5 @@
     };
   }
 
-  root.leoRecording = { eventNow, whenOf, MEETING_WANTS, ease, spread, freshLevels, sourceFor, create, clock, join, bytesOf, trimHeld, micReady, micProblem, stateWord, canShareSound, sharingProblem, fedByBrowser, loudness, hearing, hearingWords, QUIET };
+  root.leoRecording = { eventNow, whenOf, MEETING_WANTS, ease, spread, freshLevels, sourceFor, create, clock, join, bytesOf, trimHeld, micReady, micProblem, stateWord, canShareSound, sharingProblem, connectCapture, failureOf, fedByBrowser, loudness, hearing, hearingWords, QUIET };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -220,6 +220,8 @@ fn a_reload_failure_is_reported_instead_of_serving_a_stale_store() {
             dir: None,
             offset: 0,
             brief: false,
+            sort: None,
+            recent: None,
         }),
     ));
     assert_eq!(result.err(), Some(StatusCode::INTERNAL_SERVER_ERROR));
@@ -267,6 +269,8 @@ fn a_large_folder_comes_in_pages_with_its_total_and_short_cards() {
                 dir: Some("big".into()),
                 offset,
                 brief: true,
+                sort: None,
+                recent: None,
             }),
         ))
         .unwrap();
@@ -372,4 +376,78 @@ fn a_folder_moves_into_another_with_its_notes_and_leaves_no_empty_folder_behind(
         Some(StatusCode::BAD_REQUEST)
     );
     assert_eq!(moved("cs162/week1", "").unwrap().0["path"], "week1");
+}
+
+#[test]
+fn folders_can_be_renamed_in_place_without_changing_note_identity() {
+    let (state, dir, ids) = state_with(&[("Lecture", "cs130/week1"), ("Other", "cs130/week10")]);
+    let rename = |from: &str, name: &str| {
+        run(crate::routes::notes::rename_dir(
+            State(state.clone()),
+            Json(crate::routes::notes::RenameDirBody {
+                from: from.into(),
+                name: name.into(),
+            }),
+        ))
+    };
+    let out = rename("cs130/week1", "Week one").unwrap();
+    assert_eq!(out.0["path"], "cs130/Week one");
+    let store = state.fresh();
+    assert_eq!(
+        store.find_note(&ids[0]).unwrap().directory,
+        "cs130/Week one"
+    );
+    assert_eq!(store.find_note(&ids[1]).unwrap().directory, "cs130/week10");
+    assert!(dir.path().join("notes/cs130/Week one/Lecture.md").exists());
+    assert!(!dir.path().join("notes/cs130/week1").exists());
+    drop(store);
+    assert_eq!(
+        rename("cs130/Week one", "week10").err(),
+        Some(StatusCode::CONFLICT)
+    );
+    for bad in ["../outside", "a/b", "a\\b", "", ".."] {
+        assert_eq!(
+            rename("cs130/Week one", bad).err(),
+            Some(StatusCode::BAD_REQUEST)
+        );
+    }
+    assert_eq!(rename("", "root").err(), Some(StatusCode::BAD_REQUEST));
+    assert_eq!(rename("missing", "New").err(), Some(StatusCode::NOT_FOUND));
+}
+
+#[test]
+fn library_sorting_happens_before_pagination_and_brief_results_include_visuals() {
+    let (state, _dir, ids) = state_with(&[("Zebra", "B"), ("Alpha", "A"), ("Pinned", "")]);
+    {
+        let mut store = state.store.lock().unwrap();
+        store.find_note_mut(&ids[2]).unwrap().pinned = true;
+        store.find_note_mut(&ids[1]).unwrap().body =
+            "# Lecture\nA useful description of this lecture.\n```mermaid\ngraph LR\n A --> B\n```"
+                .into();
+        store.save().unwrap();
+    }
+    let page = |sort: &str, offset: usize, recent: Option<String>| {
+        run(list_notes(State(state.clone()), Query(serde_json::from_value(serde_json::json!({ "sort": sort, "offset": offset, "limit": 1, "brief": true, "recent": recent })).unwrap())))
+    };
+    for sort in ["title", "folder", "opened", "updated"] {
+        let out = page(sort, 0, Some(ids[0].clone())).unwrap();
+        assert_eq!(out.headers()["x-total"], "3");
+        assert_eq!(json_of(out)[0]["id"], ids[2]);
+    }
+    let alpha = json_of(page("title", 1, None).unwrap());
+    assert_eq!(alpha[0]["id"], ids[1]);
+    assert_eq!(alpha[0]["summary"], "A useful description of this lecture.");
+    assert_eq!(alpha[0]["preview"], "```mermaid\ngraph LR\n A --> B\n```");
+    assert_eq!(
+        json_of(page("opened", 1, Some(ids[0].clone())).unwrap())[0]["id"],
+        ids[0]
+    );
+    assert_eq!(
+        page("unknown", 0, None).err(),
+        Some(StatusCode::BAD_REQUEST)
+    );
+    assert_eq!(
+        page("opened", 0, Some("../escape".into())).err(),
+        Some(StatusCode::BAD_REQUEST)
+    );
 }
