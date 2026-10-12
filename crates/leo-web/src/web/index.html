@@ -726,9 +726,9 @@ body.on-map main { padding: 0; max-width: none; }
 .side-row.on { background: var(--accent-soft); color: var(--text); font-weight: 600; }
 .side-row.on svg { color: var(--accent); }
 .side-group { display: flex; align-items: center; justify-content: space-between; font-size: 11.5px; font-weight: 650; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); padding: 18px 4px 4px 10px; min-height: 22px; }
-.side-group .side-row { min-height: 26px; gap: 8px; padding: 0; font-size: 12px; font-weight: 600; text-transform: none; letter-spacing: normal; }
+.side-group .side-row { flex: 1; min-width: 0; min-height: 26px; gap: 8px; padding: 0; font-size: 12px; font-weight: 600; text-transform: none; letter-spacing: normal; }
 .side-group .side-row svg { width: 16px; height: 16px; }
-.side-add { display: grid; place-items: center; width: 26px; height: 26px; border: 0; border-radius: 7px; background: none; color: var(--muted); }
+.side-add { display: grid; place-items: center; flex: none; width: 26px; height: 26px; border: 0; border-radius: 7px; background: none; color: var(--muted); }
 .side-add:hover { background: var(--surface-2); color: var(--text); }
 .side-add svg { width: 16px; height: 16px; }
 .side-count { margin-left: auto; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -1477,6 +1477,25 @@ body.on-interviews main, body.on-interviews .bar-row, body.on-interviews .search
 .interview-code-shell.numbered { display: grid; grid-template-columns: 42px minmax(0, 1fr); border: 1px solid var(--line); border-radius: 10px; background: var(--bg); overflow: hidden; }
 #interview-lines { margin: 0; padding: 16px 8px; text-align: right; color: var(--muted); background: var(--surface-2); overflow: hidden; max-height: 480px; font: 14px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; user-select: none; }
 .numbered #interview-answer { border: 0; border-radius: 0; background: transparent; min-height: 400px; height: 480px; max-height: 480px; resize: none; padding: 16px 12px; }
+.interview-code-pane { position: relative; min-width: 0; }
+.interview-code-pane #interview-answer { width: 100%; display: block; }
+#interview-colors { display: none; position: absolute; inset: 0; margin: 0; border: 0; padding: 16px 12px; overflow: auto; scrollbar-width: none; white-space: pre; overflow-wrap: normal; pointer-events: none; font: 14px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; tab-size: 4; font-variant-ligatures: none; }
+#interview-colors::-webkit-scrollbar { display: none; }
+.syntax-on #interview-colors { display: block; }
+.syntax-on #interview-answer { color: transparent; caret-color: var(--text); font-variant-ligatures: none; }
+.syntax-on #interview-answer::selection { color: transparent; background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.code-keyword { color: var(--accent); }
+.code-string { color: var(--good); }
+.code-comment { color: var(--muted); }
+.code-number { color: var(--tone-slides); }
+.code-type { color: var(--tone-doc); }
+.code-function { color: var(--tone-image); }
+.code-operator { color: var(--text); }
+@media (forced-colors: active) {
+  .syntax-on #interview-colors { display: none; }
+  .syntax-on #interview-answer { color: CanvasText; caret-color: CanvasText; }
+  .syntax-on #interview-answer::selection { color: HighlightText; background: Highlight; }
+}
 #interview-reasoning { min-height: 320px; padding: 16px; line-height: 1.65; resize: vertical; }
 .interview-submit { margin: 16px 0 0; }
 @media (max-width: 1050px) { .interview-coding .interview-solve:has(.interview-workspace) { grid-template-columns: 1fr; } }
@@ -1503,7 +1522,7 @@ body.on-interviews main, body.on-interviews .bar-row, body.on-interviews .search
 .interview-label { display: block; color: var(--text); font-size: 13.5px; font-weight: 600; margin: 14px 0 6px; }
 .interview-label .hint { font-weight: 400; margin-left: 8px; }
 #interview-answer { min-height: 300px; resize: vertical; padding: 16px; line-height: 1.65; }
-#interview-answer.interview-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; line-height: 1.6; tab-size: 2; white-space: pre; overflow-wrap: normal; }
+#interview-answer.interview-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; line-height: 1.6; tab-size: 4; white-space: pre; overflow-wrap: normal; }
 #interview-board { margin-top: 12px; border: 1px solid var(--line); border-radius: 12px; background: #fff; touch-action: none; overflow: hidden; aspect-ratio: 10 / 7; cursor: crosshair; }
 #interview-board svg { display: block; width: 100%; height: 100%; pointer-events: none; }
 .interview-board-snapshot { background: #fff; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }

@@ -1,6 +1,26 @@
 const interviews = window.leoInterview;
 let interviewPage = null;
 let interviewStart = null;
+let interviewCodeLoad = null;
+
+function loadInterviewCode() {
+  if (window.leoCode) return Promise.resolve(window.leoCode);
+  if (!interviewCodeLoad) interviewCodeLoad = new Promise((resolve) => {
+    const script = document.createElement('script');
+    const finish = (code = null) => {
+      clearTimeout(timer);
+      script.onload = script.onerror = null;
+      script.remove();
+      resolve(code);
+    };
+    const timer = setTimeout(finish, 10000);
+    script.src = '/code-tools.js';
+    script.onload = () => finish(window.leoCode || null);
+    script.onerror = () => finish();
+    document.head.append(script);
+  });
+  return interviewCodeLoad;
+}
 
 async function showInterviews(id = '') {
   const mine = ++seq;
@@ -60,7 +80,7 @@ function drawInterview(session) {
   app.innerHTML = `<div class="interview-home${coding ? ' interview-coding' : ''}"><div class="interview-heading"><div><p class="eyebrow">${esc(interviews.preset(item.framework.track).label)} · ${item.framework.style === 'mock' ? 'Mock interview' : 'Coach'}</p><h1>${esc(item.framework.title)}</h1><p class="hint">${esc([item.framework.company || 'General practice', item.framework.role].filter(Boolean).join(' · '))}</p></div><div class="buttons"><button class="btn sm" data-interview="configure">Preferences</button><button class="btn sm" data-interview="chat">Talk with Felix</button></div></div>
     <div class="interview-solve"><section id="interview-challenge" class="set-card"></section>
     ${item.challenge ? `<section class="set-card interview-workspace"><div class="interview-toolbar"><div class="library-views" role="tablist" aria-label="Your answer workspace">${tabs.map(([id, label]) => `<button class="btn sm plain${session.tab === id ? ' on' : ''}" role="tab" aria-selected="${session.tab === id}" data-interview="tab" data-tab="${id}">${label}</button>`).join('')}</div><span id="interview-save" class="hint" role="status"></span></div>
-    <div id="interview-editor"${session.tab !== (coding ? 'code' : 'write') ? ' hidden' : ''}><label class="interview-label" for="interview-answer">${coding ? esc(item.challenge.coding?.language || item.framework.language || 'Code') : 'Your answer'}</label><div class="interview-code-shell${coding ? ' numbered' : ''}">${coding ? '<pre id="interview-lines" aria-hidden="true"></pre>' : ''}<textarea id="interview-answer" class="set-input${coding ? ' interview-code' : ''}" maxlength="32000" spellcheck="${!coding}" autocapitalize="off" autocomplete="off" aria-label="${coding ? 'Code editor' : 'Your answer'}" placeholder="${coding ? 'Write your implementation here…' : 'Clarify the problem, outline an approach, and work through it…'}">${esc(session.draft.answer)}</textarea></div></div>
+    <div id="interview-editor"${session.tab !== (coding ? 'code' : 'write') ? ' hidden' : ''}><div class="interview-toolbar"><label class="interview-label" for="interview-answer">${coding ? esc(item.challenge.coding?.language || item.framework.language || 'Code') : 'Your answer'}</label>${coding ? '<button class="btn sm plain" data-interview="indent-code" title="Format indentation without changing your code" disabled>Indent code</button>' : ''}</div><div class="interview-code-shell${coding ? ' numbered' : ''}">${coding ? '<pre id="interview-lines" aria-hidden="true"></pre>' : ''}<div class="interview-code-pane">${coding ? '<pre id="interview-colors" aria-hidden="true"></pre>' : ''}<textarea id="interview-answer" class="set-input${coding ? ' interview-code' : ''}" maxlength="32000" spellcheck="${!coding}" autocapitalize="off" autocomplete="off" aria-label="${coding ? 'Code editor' : 'Your answer'}" placeholder="${coding ? 'Write your implementation here…' : 'Clarify the problem, outline an approach, and work through it…'}">${esc(session.draft.answer)}</textarea></div></div></div>
     ${coding ? `<div id="interview-reasoning-editor"${session.tab !== 'write' ? ' hidden' : ''}><label class="interview-label" for="interview-reasoning">Your approach</label><p class="hint">Explain your idea, complexity, and edge cases. Your code stays in the Code tab.</p><textarea id="interview-reasoning" class="set-input" maxlength="8000" placeholder="What’s your approach?">${esc(session.draft.reasoning)}</textarea></div>` : ''}
     <div id="interview-whiteboard"${session.tab !== 'board' ? ' hidden' : ''}><div class="interview-toolbar"><div class="pick-chips" aria-label="Drawing tools">${[['pen', 'Pen'], ['box', 'Box'], ['arrow', 'Arrow'], ['text', 'Text']].map(([id, label]) => `<button class="pick-chip${session.tool === id ? ' on' : ''}" aria-pressed="${session.tool === id}" data-interview="tool" data-tool="${id}">${label}</button>`).join('')}</div><div class="buttons"><button class="btn sm" data-interview="undo-board">Undo</button><button class="btn sm" data-interview="clear-board">Clear</button></div></div><label class="interview-label" for="interview-board-label">Board label</label><input class="set-input" id="interview-board-label" value="${esc(session.label || '')}" maxlength="300" placeholder="Type a label, then tap the board to place it"><button class="btn sm" data-interview="label-board">Add label to board</button><div id="interview-board" tabindex="0" role="group" aria-label="Whiteboard. Draw with a pointer; add text with the Add label button."></div><p class="hint">Draw to explain your thinking. Felix can review a snapshot when you submit.</p></div>
     <div id="interview-save-error" class="set-note warn" hidden></div><div class="interview-toolbar interview-submit"><p class="hint">${coding ? 'Felix reviews your code and reasoning; examples are not executed.' : 'Work at your pace. Submit when you’re ready for feedback.'}</p><div class="buttons"><button class="icon-btn" data-interview="clear-workspace" aria-label="Clear your draft" title="Clear your draft">${ICON.trash}</button>${coding && item.challenge.coding ? '<button class="btn sm" data-interview="reset-code">Reset code</button>' : ''}<button class="btn sm" data-interview="hint">Hint</button><button class="btn sm primary" data-interview="submit">Submit for review</button></div></div></section>` : ''}</div>
@@ -73,7 +93,7 @@ function drawInterview(session) {
   const answer = $('#interview-answer');
   if (answer) {
     answer.addEventListener('input', (e) => { session.draft.answer = e.target.value; interviewChanged(session); drawInterviewLines(session); });
-    answer.addEventListener('scroll', () => { const lines = $('#interview-lines'); if (lines) lines.scrollTop = answer.scrollTop; });
+    answer.addEventListener('scroll', syncInterviewCodeScroll);
     answer.addEventListener('keydown', (e) => {
       if (!coding || e.isComposing || !['Tab', 'Enter'].includes(e.key) || e.ctrlKey || e.metaKey || e.altKey) return;
       const edit = interviews.codeEdit(answer.value, answer.selectionStart, answer.selectionEnd, e.key, e.shiftKey);
@@ -84,13 +104,19 @@ function drawInterview(session) {
       answer.dispatchEvent(new Event('input', { bubbles: true }));
     });
     drawInterviewLines(session);
+    if (coding) loadInterviewCode().then((code) => {
+      if (!code || !interviewHere(session)) return;
+      const button = $('[data-interview="indent-code"]');
+      if (button) button.disabled = !code.language(session.item.challenge?.coding?.language || session.item.framework.language);
+      drawInterviewLines(session);
+    });
     $('#interview-reasoning')?.addEventListener('input', (e) => { session.draft.reasoning = e.target.value; interviewChanged(session); });
     $('#interview-board-label').addEventListener('input', (e) => { session.label = e.target.value; });
     wireInterviewBoard(session);
   }
   if (focus) {
     const again = document.getElementById(focus.id);
-    if (again && !again.disabled) { again.focus({ preventScroll: true }); again.setSelectionRange(focus.from, focus.to); again.scrollTop = focus.scroll; }
+    if (again && !again.disabled) { again.focus({ preventScroll: true }); again.setSelectionRange(focus.from, focus.to); again.scrollTop = focus.scroll; syncInterviewCodeScroll(); }
   }
 }
 
@@ -98,6 +124,55 @@ function drawInterviewLines(session) {
   if (!interviewHere(session)) return;
   const lines = $('#interview-lines');
   if (lines) lines.textContent = Array.from({ length: Math.min(32001, session.draft.answer.split('\n').length) }, (_, i) => i + 1).join('\n');
+  if (!lines || !window.leoCode) return;
+  if (session.codeFrame) cancelAnimationFrame(session.codeFrame);
+  session.codeFrame = requestAnimationFrame(() => {
+    session.codeFrame = 0;
+    if (!interviewHere(session)) return;
+    const colors = $('#interview-colors');
+    const answer = $('#interview-answer');
+    if (!colors || !answer) return;
+    const language = session.item.challenge?.coding?.language || session.item.framework.language;
+    const value = session.draft.answer;
+    if (session.colorsNode === colors && session.colorsLanguage === language && session.colorsValue === value) { syncInterviewCodeScroll(); return; }
+    let html = null;
+    try { html = window.leoCode.highlight(value, language); } catch {}
+    colors.parentElement.classList.toggle('syntax-on', html !== null);
+    colors.innerHTML = html === null ? '' : html + (value.endsWith('\n') || !value ? ' ' : '');
+    session.colorsNode = colors;
+    session.colorsLanguage = language;
+    session.colorsValue = value;
+    syncInterviewCodeScroll();
+  });
+}
+
+function syncInterviewCodeScroll() {
+  const answer = $('#interview-answer');
+  if (!answer) return;
+  const lines = $('#interview-lines');
+  if (lines) lines.scrollTop = answer.scrollTop;
+  const colors = $('#interview-colors');
+  if (colors) { colors.scrollTop = answer.scrollTop; colors.scrollLeft = answer.scrollLeft; }
+}
+
+function indentInterviewCode(session) {
+  const answer = $('#interview-answer');
+  if (!answer || !window.leoCode) return;
+  const language = session.item.challenge?.coding?.language || session.item.framework.language;
+  let edit = null;
+  try { edit = window.leoCode.indent(answer.value, answer.selectionStart, answer.selectionEnd, language); } catch {}
+  if (!edit) { toast('This code could not be indented. You can keep editing it.'); return; }
+  const scroll = [answer.scrollTop, answer.scrollLeft];
+  if (edit.value !== answer.value) {
+    answer.focus({ preventScroll: true });
+    answer.setSelectionRange(0, answer.value.length);
+    if (!document.execCommand('insertText', false, edit.value)) answer.setRangeText(edit.value, 0, answer.value.length, 'preserve');
+    if (session.draft.answer !== answer.value) answer.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  answer.focus({ preventScroll: true });
+  answer.setSelectionRange(edit.from, edit.to);
+  [answer.scrollTop, answer.scrollLeft] = scroll;
+  syncInterviewCodeScroll();
 }
 
 function drawInterviewChallenge(session) {
@@ -379,7 +454,7 @@ function interviewForm(track, id = felix.newId(), item = null) {
     <label class="interview-label" for="interview-company">Company <span class="hint">Optional · leave blank if you’re just practising</span></label><div class="field"><input id="interview-company" maxlength="120" value="${esc(f.company)}" placeholder="e.g. Pinterest"></div>
     <label class="interview-label" for="interview-role">Role & level <span class="hint">Optional</span></label><div class="field"><input id="interview-role" maxlength="120" value="${esc(f.role)}" placeholder="e.g. Software engineer intern"></div>
     <label class="interview-label" for="interview-language">${coding ? 'Coding language' : 'Specialism'} <span class="hint">${coding ? 'The starting function will use this language' : 'Optional'}</span></label><div class="field"><input id="interview-language" maxlength="80" value="${esc(f.language)}" placeholder="${coding ? 'Python' : 'Your area of focus'}"></div>
-    ${coding ? `<div class="pick-chips" aria-label="Coding language">${['Python', 'JavaScript', 'TypeScript', 'Java', 'C++', 'Go', 'Rust'].map((language) => `<button class="pick-chip${f.language === language ? ' on' : ''}" data-interview="form-language" data-language="${language}" aria-pressed="${f.language === language}">${language}</button>`).join('')}</div>` : ''}
+    ${coding ? `<div class="pick-chips" aria-label="Coding language">${['Python', 'JavaScript', 'TypeScript', 'Java', 'C++', 'Go', 'Rust', 'SQL'].map((language) => `<button class="pick-chip${f.language === language ? ' on' : ''}" data-interview="form-language" data-language="${language}" aria-pressed="${f.language === language}">${language}</button>`).join('')}</div>` : ''}
     <p class="interview-label">How would you like to practise?</p><div class="pick-chips" role="group" aria-label="Interview style"><button class="pick-chip${f.style === 'coach' ? ' on' : ''}" data-interview="form-style" data-style="coach" aria-pressed="${f.style === 'coach'}">Coach</button><button class="pick-chip${f.style === 'mock' ? ' on' : ''}" data-interview="form-style" data-style="mock" aria-pressed="${f.style === 'mock'}">Mock interview</button></div><p class="hint">Coach helps when you ask. Mock saves feedback for your debrief.</p>
     <label class="interview-label" for="interview-wants">What would you like to practise? <span class="hint">Optional</span></label><textarea class="set-input" id="interview-wants" maxlength="2000" rows="2" placeholder="e.g. I’m just practising, start with easy array problems…">${esc(f.wants)}</textarea>
     <details class="interview-details"><summary>Schedule & assessment preferences</summary><label class="interview-label" for="interview-title">Practice title</label><div class="field"><input id="interview-title" maxlength="120" value="${esc(f.title)}"></div><label class="interview-label" for="interview-date">Interview date (optional)</label><div class="field"><input id="interview-date" type="date" value="${esc(f.date)}"></div><label class="interview-label" for="interview-budget">Practice minutes per week</label><div class="field"><input id="interview-budget" type="number" min="15" max="2400" value="${f.weekly_minutes}"></div><label class="interview-label" for="interview-skills">Skills to assess · one per line, up to 12</label><textarea class="set-input" id="interview-skills" rows="4" maxlength="1000">${esc(f.skills.join('\n'))}</textarea></details>
@@ -473,6 +548,7 @@ async function interviewAction(el) {
     if (session.tab !== 'board') $(coding && session.tab === 'write' ? '#interview-reasoning' : '#interview-answer').focus();
     return;
   }
+  if (action === 'indent-code') return indentInterviewCode(session);
   if (action === 'reset-code') {
     sheet('<h2>Reset your code?</h2><p>Your implementation will be replaced by the starting function. Your approach and whiteboard stay here.</p><div class="buttons"><button class="btn" data-action="close">Cancel</button><button class="btn danger" data-interview="confirm-reset-code">Reset code</button></div>');
     return;

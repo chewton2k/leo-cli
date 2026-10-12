@@ -36,6 +36,9 @@ const CHAT_JS: &str = include_str!("../web/chat.js");
 pub(crate) async fn interview_js() -> Response {
     javascript(include_str!("../web/interview.js"))
 }
+pub(crate) async fn code_tools_js() -> Response {
+    javascript(include_str!("../web/vendor/code-tools.min.js"))
+}
 const AUDIO_QUEUE_JS: &str = include_str!("../web/audio-queue.js");
 pub(crate) async fn audio_queue_js() -> Response {
     javascript(AUDIO_QUEUE_JS)

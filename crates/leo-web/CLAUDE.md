@@ -863,6 +863,7 @@ Short desktop windows use compact navigation spacing to leave room for folders.
 Top level stays above the scrolling tree so it is always a reachable drop target.
 Browser drags start on the source before scrolling the destination into view;
 otherwise a long grid can move another card under the saved mouse coordinates.
+Targets are centered so a partly visible folder is not hidden by the fixed header.
 
 Recording journal writes and commit callbacks run outside the recording mutex; an
 atomic reservation prevents Stop/recovery from overtaking a chunk or point write
@@ -954,6 +955,19 @@ overwrite work. A starter alone is neither an unfinished draft nor a submission;
 implementation, reasoning and drawings count as work. Frozen attempts include
 reasoning. The existing chat completion callback restores preparation controls
 when the model fails to create a challenge, without another AI request.
+Coding syntax colors and Indent code use the pinned, vendored CodeMirror/Lezer
+parsers for C++, Rust, Java, Python, SQL, JavaScript, TypeScript and Go. The bundle
+loads only in a coding workspace; plain text stays editable if it fails to load
+or the language is unsupported. The native textarea keeps input, selection,
+accessibility and autosave; an escaped, noninteractive overlay shares its font
+and scroll position. Highlight updates coalesce per frame and skip unchanged
+drafts. Indentation preserves literal/comment contents, maps the caret, uses the
+native Undo stack, and never executes submitted code. Forced colors use plain
+text. Rebuild the bundle/licences using `scripts/code-tools/README.md`.
+Validation covered all eight languages across desktop/phone and light/dark
+themes, delayed/failed loading, forced colors, native Undo, autosave and scrolling.
+Four further Codex prompt/tool runs passed SQL general practice and Python
+company research in both orders and Coach/Mock, using fixture search results.
 
 `interview.rs` keeps bounded plans in the `interviews` table of leo.db, independent
 of notes and chat retention. Each transaction updates one revision-checked row.

@@ -2,6 +2,8 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 require('../src/web/interview.js');
 const I = globalThis.leoInterview;
+require('../src/web/vendor/code-tools.min.js');
+const C = globalThis.leoCode;
 
 test('every interview track has distinct editable criteria and one shared framework', () => {
   assert.equal(I.PRESETS.length, 7);
@@ -76,4 +78,38 @@ test('coding indentation handles typing, selections, outdent and Unicode without
   assert.equal(indented.value, '    a\n    b');
   assert.equal(I.codeEdit(indented.value, indented.from, indented.to, 'Tab', true).value, 'a\nb');
   assert.equal(I.codeEdit('x'.repeat(32000), 32000, 32000, 'Tab'), null);
+});
+
+test('coding colors cover common languages, aliases, incomplete code and untrusted text', () => {
+  for (const [language, value] of [['C++', 'int solve() { return 2; }'], ['Rust', 'fn solve() -> i32 { 2 }'], ['Java', 'class Solution { int solve() { return 2; } }'], ['Python', 'def solve():\n    return 2'], ['SQL', 'SELECT name FROM users WHERE id = 2'], ['TypeScript', 'function solve(x: number): number { return x + 2; }'], ['JavaScript', 'function solve(x) { return x + 2; }'], ['Go', 'package main\nfunc solve() int { return 2 }']]) {
+    const html = C.highlight(value, language);
+    assert.match(html, /class="code-keyword"/, language);
+    assert.match(html, /class="code-number"/, language);
+    assert.ok(C.highlight(value.slice(0, -4), language), language);
+  }
+  for (const [alias, name] of [['cpp', 'cpp'], ['rs', 'rust'], ['python3', 'python'], ['ts', 'typescript'], ['jsx', 'javascript'], ['golang', 'go'], ['PostgreSQL', 'sql']]) assert.equal(C.language(alias), name);
+  for (const name of ['custom language', '__proto__', 'constructor']) assert.equal(C.highlight('plain text', name), null);
+  const value = 'const text = "<img src=x onerror=alert(1)>答え"; // <script>bad</script>';
+  const html = C.highlight(value, 'JavaScript');
+  assert.match(html, /&lt;img/);
+  assert.match(html, /code-string/);
+  assert.match(html, /code-comment/);
+  assert.ok(!html.includes('<img') && !html.includes('<script>'));
+  assert.equal(C.highlight('x'.repeat(32001), 'JavaScript'), null);
+  assert.ok(C.highlight('('.repeat(16000) + ')'.repeat(16000), 'JavaScript'));
+});
+
+test('code indentation preserves literal contents and maps the selection without executing code', () => {
+  const value = 'function solve() {\nreturn "答え";\n}';
+  const from = value.indexOf('答え');
+  const edit = C.indent(value, from, from + 2, 'JavaScript');
+  assert.equal(edit.value, 'function solve() {\n    return "答え";\n}');
+  assert.equal(edit.value.slice(edit.from, edit.to), '答え');
+  assert.deepEqual(C.indent(edit.value, edit.from, edit.to, 'JavaScript'), edit);
+  for (const [language, code, literal] of [['JavaScript', 'function solve() {\nconst x = `first\n  last`;\nreturn x;\n}', '`first\n  last`'], ['Python', 'def solve():\n  x = """first\n  last"""\n  return x', '"""first\n  last"""'], ['Rust', 'fn solve() {\nlet x = r#"first\n  last"#;\n}', 'r#"first\n  last"#'], ['SQL', "SELECT 'first\n  last' FROM users", "'first\n  last'"]]) {
+    const changed = C.indent(code, 0, code.length, language);
+    assert.ok(changed, language);
+    assert.ok(changed.value.includes(literal), language);
+  }
+  for (const [text, from, to, language] of [['x'.repeat(32001), 0, 0, 'Java'], ['x', -1, 0, 'Go'], ['x', 1, 2, 'SQL'], ['x', 0, 0, 'unknown']]) assert.equal(C.indent(text, from, to, language), null);
 });

@@ -624,6 +624,7 @@ fn router(state: AppState) -> Router {
         .route("/schedule.js", get(routes::assets::schedule_js))
         .route("/chat.js", get(chat_js))
         .route("/interview.js", get(routes::assets::interview_js))
+        .route("/code-tools.js", get(routes::assets::code_tools_js))
         .route("/api/interviews", get(routes::interviews::list))
         .route(
             "/api/interviews/{id}",

@@ -47,6 +47,7 @@ function control(page, action) {
 
 async function dragBetween(page, source, target) {
   await source.scrollIntoViewIfNeeded();
+  await source.evaluate(el => el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' }));
   const from = await source.boundingBox();
   expect(from).not.toBeNull();
   const x = from.x + Math.min(16, from.width / 2);
@@ -55,10 +56,11 @@ async function dragBetween(page, source, target) {
   await page.mouse.down();
   try {
     await page.mouse.move(x + 8, y + 8, { steps: 3 });
-    await target.scrollIntoViewIfNeeded();
+    await target.evaluate(el => el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' }));
     const into = await target.boundingBox();
     expect(into).not.toBeNull();
     const end = { x: into.x + into.width / 2, y: into.y + into.height / 2 };
+    expect(await target.evaluate((el, point) => el.contains(document.elementFromPoint(point.x, point.y)), end), 'the drop target is visible above fixed controls').toBe(true);
     await page.mouse.move(end.x, end.y, { steps: 3 });
     await page.mouse.move(end.x, end.y);
   } finally {
@@ -3836,3 +3838,91 @@ for (const company of ['Pinterest', '']) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
   });
 }
+
+test('coding colors and indentation preserve input, Undo, saves and scroll in every common language', async ({ page }) => {
+  const samples = [['C++', 'int solve() {\nreturn 2;\n}'], ['Rust', 'fn solve() -> i32 {\n2\n}'], ['Java', 'class Solution {\nint solve() {\nreturn 2;\n}\n}'], ['Python', 'def solve():\n  return 2'], ['SQL', 'SELECT name\nFROM users\nWHERE id = 2;'], ['TypeScript', 'function solve(value: number): number {\nreturn value + 2;\n}'], ['JavaScript', 'function solve(value) {\nreturn value + 2;\n}'], ['Go', 'package main\nfunc solve() int {\nreturn 2\n}']];
+  const id = 'coding-colors-01';
+  let item;
+  let requests = 0;
+  await page.route(`**/api/interviews/${id}`, async (route) => {
+    if (route.request().method() === 'PUT') {
+      const body = route.request().postDataJSON();
+      if (body.action === 'workspace') item.workspace = body.workspace;
+      item.revision++;
+    }
+    await route.fulfill({ json: item });
+  });
+  await page.route('**/api/chat', async (route) => { requests++; await route.fulfill({ status: 500, json: { error: 'No model is needed here.' } }); });
+  for (const [index, [language, code]] of samples.entries()) {
+    item = { id, revision: 1, framework: { title: 'Coding colors', track: 'coding', company: '', role: '', language, style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge: { id: `challenge-colors-${index}`, title: 'Solve the problem', question: 'Solve it.', minutes: 25, skills: ['Approach'], origin: 'generated', sources: [], coding: { language, starter: code, difficulty: 'easy', examples: [{ input: '2', output: '2' }], constraints: ['Be clear.'] } }, workspace: { answer: code, reasoning: '', board: [] }, attempts: [], schedule: [] };
+    await page.goto(`/#/interviews/${id}`);
+    if (index) await page.reload();
+    const area = page.locator('#interview-answer');
+    const colors = page.locator('#interview-colors');
+    await expect(area).toHaveValue(code);
+    await expect(colors.locator('.code-keyword').first()).toBeVisible();
+    expect(await colors.textContent()).toBe(code);
+    const originalColor = await colors.locator('.code-keyword').first().evaluate(el => getComputedStyle(el).color);
+    await page.emulateMedia({ colorScheme: 'dark' });
+    expect(await colors.locator('.code-keyword').first().evaluate(el => getComputedStyle(el).color)).not.toBe(originalColor);
+    await page.emulateMedia({ colorScheme: 'light' });
+    await area.focus();
+    await area.evaluate(el => el.setSelectionRange(el.value.length, el.value.length));
+    const expected = await page.evaluate(({ code, language }) => leoCode.indent(code, code.length, code.length, language), { code, language });
+    await page.locator('[data-interview="indent-code"]').click();
+    await expect(area).toHaveValue(expected.value);
+    await expect(area).toBeFocused();
+    expect(await area.evaluate(el => [el.selectionStart, el.selectionEnd])).toEqual([expected.from, expected.to]);
+    await expect.poll(() => item.workspace.answer).toBe(expected.value);
+    if (expected.value !== code) {
+      await area.press('ControlOrMeta+z');
+      await expect(area).toHaveValue(code);
+      await expect.poll(() => item.workspace.answer).toBe(code);
+    }
+    const long = Array.from({ length: 25 }, (_, i) => `${code}\n${' '.repeat(130)}${i}`).join('\n');
+    await area.fill(long);
+    await expect.poll(() => colors.textContent()).toBe(long);
+    await area.evaluate(el => { el.scrollTop = el.scrollHeight; el.scrollLeft = el.scrollWidth; el.dispatchEvent(new Event('scroll')); });
+    await expect.poll(() => colors.evaluate(el => [el.scrollTop, el.scrollLeft])).toEqual(await area.evaluate(el => [el.scrollTop, el.scrollLeft]));
+    await expect(area).toBeFocused();
+    await expect.poll(() => item.workspace.answer).toBe(long);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+  }
+  expect(requests).toBe(0);
+  await page.emulateMedia({ forcedColors: 'active' });
+  await expect(page.locator('#interview-colors')).toBeHidden();
+  expect(await page.locator('#interview-answer').evaluate(el => getComputedStyle(el).color)).not.toBe('rgba(0, 0, 0, 0)');
+});
+
+test('typing before syntax tools load and a failed load keep the code editable', async ({ page }) => {
+  const id = 'coding-lazy-01';
+  let workspace = { answer: 'def solve():\n    pass', reasoning: '', board: [] };
+  await page.route(`**/api/interviews/${id}`, route => {
+    if (route.request().method() === 'PUT') workspace = route.request().postDataJSON().workspace || workspace;
+    return route.fulfill({ json: { id, revision: 1, framework: { title: 'Lazy tools', track: 'coding', company: '', role: '', language: 'Python', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge: { id: 'challenge-lazy-01', title: 'A problem', question: 'Solve it.', minutes: 25, skills: ['Approach'], origin: 'generated', sources: [] }, workspace, attempts: [], schedule: [] } });
+  });
+  let release;
+  const held = new Promise(resolve => { release = resolve; });
+  await page.route('**/code-tools.js', async route => { await held; await route.continue(); });
+  await page.goto(`/#/interviews/${id}`, { waitUntil: 'domcontentloaded' });
+  const area = page.locator('#interview-answer');
+  const value = 'def solve():\n    return "<img src=x onerror=alert(1)>答え"';
+  await area.fill(value);
+  await area.evaluate(el => el.setSelectionRange(4, 9));
+  release();
+  await expect(page.locator('#interview-colors .code-keyword').first()).toBeVisible();
+  await expect(area).toHaveValue(value);
+  await expect(area).toBeFocused();
+  expect(await area.evaluate(el => [el.selectionStart, el.selectionEnd])).toEqual([4, 9]);
+  await expect(page.locator('#interview-colors img')).toHaveCount(0);
+  await expect.poll(() => workspace.answer).toBe(value);
+  await page.unroute('**/code-tools.js');
+  await page.route('**/code-tools.js', route => route.abort());
+  await page.reload();
+  await expect(area).toHaveValue(value);
+  await expect(page.locator('[data-interview="indent-code"]')).toBeDisabled();
+  await expect(page.locator('#interview-colors')).toBeHidden();
+  await area.fill('def solve():\n    return 3');
+  await expect.poll(() => workspace.answer).toContain('return 3');
+  await expect(area).toBeFocused();
+});
