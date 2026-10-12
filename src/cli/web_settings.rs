@@ -39,6 +39,20 @@ impl leo_web::CalendarAccess for WebSettings {
     fn fetch(&self, url: &str) -> Result<Vec<u8>> {
         leo_services::web::fetch_public(url, leo_web::CALENDAR_BYTES)
     }
+    fn fetch_since(
+        &self,
+        url: &str,
+        etag: Option<&str>,
+        modified: Option<&str>,
+    ) -> Result<leo_web::Fetched> {
+        let got =
+            leo_services::web::fetch_public_since(url, leo_web::CALENDAR_BYTES, etag, modified)?;
+        Ok(leo_web::Fetched {
+            body: got.body,
+            etag: got.etag,
+            modified: got.modified,
+        })
+    }
     fn get(&self, account: &str) -> Result<Option<String>> {
         Ok(default_store()
             .get(account)?

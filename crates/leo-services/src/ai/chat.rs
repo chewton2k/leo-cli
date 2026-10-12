@@ -58,7 +58,8 @@ const FORMATTING: &str = "\
 - Use interpretable language: plain words someone new to the subject can follow, with each technical term explained the first time it appears.
 - Bold a term where it is defined. Write math in LaTeX: $...$ inside a sentence and $$...$$ on lines of their own. Put code in fenced code blocks.
 - Use a table only to compare two or more things across the same attributes.
-- Put tasks in a final \"## Action items\" section as checkboxes (- [ ] ), and only if the speaker assigned or mentioned some; otherwise leave the section out.";
+- Put real commitments in a final \"## Action items\" section as checkboxes (- [ ] ): assignments and submissions, exam and quiz dates, meetings, and follow-ups the speaker or the material actually stated, and only if there are some; otherwise leave the section out. Practice questions belong in Check yourself, never here.
+- In Action items, write each date in full with its weekday and year, like \"— due Friday, October 16, 2026 at 11:59 pm\", working out words like \"Friday\" or \"next week\" from the date in <recorded_on>. If no date is given there, or a date cannot be worked out, keep the words as they were said. Never invent a task, date, time or owner; a job someone else was given stays theirs (\"Maya sends the slides\").";
 
 pub const LEARNING: &str = "\
 How to shape the notes so they are understood and remembered:

@@ -407,6 +407,60 @@ pub fn fetch_public(address: &str, most: u64) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+pub struct Since {
+    pub body: Option<Vec<u8>>,
+    pub etag: Option<String>,
+    pub modified: Option<String>,
+}
+
+pub fn fetch_public_since(
+    address: &str,
+    most: u64,
+    etag: Option<&str>,
+    modified: Option<&str>,
+) -> Result<Since> {
+    let url = reqwest::Url::parse(address).context("that is not a web address")?;
+    if url.scheme() != "https" || !allowed(&url) {
+        bail!("leo only opens public https addresses");
+    }
+    let mut request = client()?.get(url);
+    if let Some(tag) = etag.filter(|t| t.len() < 512) {
+        request = request.header(reqwest::header::IF_NONE_MATCH, tag);
+    }
+    if let Some(when) = modified.filter(|t| t.len() < 128) {
+        request = request.header(reqwest::header::IF_MODIFIED_SINCE, when);
+    }
+    let response = request.send()?;
+    if response.status() == reqwest::StatusCode::NOT_MODIFIED {
+        return Ok(Since {
+            body: None,
+            etag: etag.map(str::to_string),
+            modified: modified.map(str::to_string),
+        });
+    }
+    let response = response.error_for_status()?;
+    let header = |name: reqwest::header::HeaderName| {
+        response
+            .headers()
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .filter(|v| v.len() < 512)
+            .map(str::to_string)
+    };
+    let tag = header(reqwest::header::ETAG);
+    let when = header(reqwest::header::LAST_MODIFIED);
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(&mut std::io::Read::take(response, most + 1), &mut bytes)?;
+    if bytes.len() as u64 > most {
+        bail!("that address sent back more than leo will read");
+    }
+    Ok(Since {
+        body: Some(bytes),
+        etag: tag,
+        modified: when,
+    })
+}
+
 pub fn page(address: &str) -> Result<String> {
     let url = reqwest::Url::parse(address).context("that is not a web address")?;
     if !allowed(&url) {

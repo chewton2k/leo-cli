@@ -8,6 +8,7 @@ mod passages;
 mod pictures;
 mod recording;
 mod sources;
+mod tasks;
 mod trash;
 mod uploads;
 

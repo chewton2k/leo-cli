@@ -13,5 +13,6 @@ pub(crate) mod pictures;
 pub(crate) mod related;
 pub(crate) mod settings;
 pub(crate) mod sources;
+pub(crate) mod tasks;
 pub(crate) mod trash;
 pub(crate) mod uploads;

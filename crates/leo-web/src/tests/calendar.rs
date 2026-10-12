@@ -54,8 +54,9 @@ fn a_pasted_calendar_link_shows_upcoming_events_and_is_never_sent_back() {
     let everything = format!(
         "{page}{}{}",
         std::fs::read_to_string(dir.path().join("calendars.json")).unwrap(),
-        std::fs::read_to_string(dir.path().join("calendar-cache.json")).unwrap()
+        String::from_utf8_lossy(&std::fs::read(dir.path().join("leo.db")).unwrap_or_default())
     );
+    assert!(!dir.path().join("calendar-cache.json").exists());
     assert!(
         !everything.contains("private-abc"),
         "the secret link stays in the secret store"
@@ -73,4 +74,57 @@ fn a_pasted_calendar_link_shows_upcoming_events_and_is_never_sent_back() {
     let gone = json_of(run(crate::calendar::remove(State(state.clone()), Path(id))));
     assert_eq!(gone["connected"], false);
     assert!(fake.secrets.lock().unwrap().is_empty());
+}
+
+#[test]
+fn the_schedule_shows_a_month_of_events_with_all_day_items_and_tasks_linked_by_marker() {
+    let (mut state, _dir, _ids) = state_with(&[]);
+    let fake = Arc::new(Fake::default());
+    let task = json_of(run(crate::routes::tasks::create_task(
+        State(state.clone()),
+        Json(serde_json::from_value(serde_json::json!({"title": "Submit lab", "date": "2026-12-03", "time": "23:59", "kind": "assignment"})).unwrap()),
+    )));
+    let marker: String = task["id"].as_str().unwrap().chars().take(12).collect();
+    let feed = format!("BEGIN:VCALENDAR\nX-WR-CALNAME:Classes\nBEGIN:VEVENT\nUID:final\nSUMMARY:Biology final\nDTSTART;VALUE=DATE:20261216\nEND:VEVENT\nBEGIN:VEVENT\nUID:lab\nSUMMARY:Due: Submit lab\nDTSTART:20261204T073000Z\nDURATION:PT30M\nDESCRIPTION:From leo · leo-task:{marker}\nEND:VEVENT\nEND:VCALENDAR\n");
+    fake.pages.lock().unwrap().insert(LINK.into(), feed);
+    state.calendar_access = Some(fake.clone());
+    assert_eq!(add(&state, LINK, "127.0.0.1").status(), StatusCode::OK);
+    let window = |from: &str, to: &str| {
+        run(crate::calendar::schedule(
+            State(state.clone()),
+            Query(serde_json::from_value(serde_json::json!({"from": from, "to": to})).unwrap()),
+        ))
+    };
+    let month = json_of(window(
+        "2026-12-01T00:00:00-08:00",
+        "2027-01-01T00:00:00-08:00",
+    ));
+    let events = month["events"].as_array().unwrap();
+    let final_exam = events
+        .iter()
+        .find(|e| e["title"] == "Biology final")
+        .unwrap();
+    assert_eq!(final_exam["all_day"], true);
+    assert_eq!(final_exam["date"], "2026-12-16");
+    let lab = events
+        .iter()
+        .find(|e| e["title"] == "Due: Submit lab")
+        .unwrap();
+    assert_eq!(
+        lab["task"], task["id"],
+        "the event Leo opened in Google links back to its task"
+    );
+    assert!(
+        lab["id"].as_str().unwrap().contains(':'),
+        "event ids are scoped by calendar"
+    );
+    assert_eq!(month["tasks"][0]["title"], "Submit lab");
+    assert_eq!(
+        window("2026-12-01T00:00:00Z", "2027-03-01T00:00:00Z").status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        window("nonsense", "2027-01-01T00:00:00Z").status(),
+        StatusCode::BAD_REQUEST
+    );
 }

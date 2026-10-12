@@ -821,13 +821,13 @@ test.describe('Felix', () => {
     await page.locator('#chat-toggle').click();
     const chat = page.locator('#chat');
     await chat.locator('[data-mode="study"]').click();
-    await chat.locator('.starter', { hasText: 'Quiz me on this note' }).click();
-    await expect(chat.locator('.chat-ask')).toContainText('Which note should I quiz you on?');
+    await chat.locator('.starter', { hasText: 'Start a study session on this note' }).click();
+    await expect(chat.locator('.chat-ask')).toContainText('Which note should the session cover?');
     expect(asked.length).toBe(0);
     await chat.locator('#chat-pick-search').fill(`Sorting lecture ${tag}`);
     await chat.locator('.chat-pick-row', { hasText: `Sorting lecture ${tag}` }).click();
     await expect(chat.locator('.msg.leo').last()).toContainText('Here we go.');
-    expect(asked[0].messages[0].text).toBe('Quiz me on this note');
+    expect(asked[0].messages[0].text).toBe('Start a study session on this note');
     expect(asked[0].refs).toEqual([note.id]);
 
     await chat.locator('.chat-head [data-chat="new"]').click();
@@ -1689,7 +1689,7 @@ test.describe('readability', () => {
         const low = await lowContrast(page);
         if (low.length) problems[name] = low;
       };
-      for (const [name, hash] of [['folders', '#/'], ['folder', '#/f/readable'], ['note', `#/n/${note.id}`], ['search', '#/search/readable'], ['trash', '#/trash'], ['settings', '#/settings'], ['storage', '#/settings/storage'], ['record', '#/record'], ['map', '#/map']]) {
+      for (const [name, hash] of [['folders', '#/'], ['folder', '#/f/readable'], ['note', `#/n/${note.id}`], ['search', '#/search/readable'], ['trash', '#/trash'], ['settings', '#/settings'], ['storage', '#/settings/storage'], ['record', '#/record'], ['calendar', '#/calendar'], ['map', '#/map']]) {
         await page.goto(`/${hash}`);
         await look(name);
       }
@@ -3621,5 +3621,80 @@ test.describe('reading', () => {
     await page.goto('/#/');
     await page.goto(`/#/n/${note.id}`);
     await expect.poll(() => page.evaluate(() => window.scrollY), { timeout: 5000 }).toBeGreaterThan(1500);
+  });
+});
+
+test.describe('calendar', () => {
+  test('tasks are added, dated, ticked off and sent to Google Calendar from the Calendar page', async ({ page }) => {
+    const tag = `${test.info().project.name}-${Date.now().toString(36)}`;
+    await page.addInitScript(() => {
+      window.__opened = [];
+      window.open = (url) => {
+        window.__opened.push(String(url));
+        return null;
+      };
+    });
+    const undated = await (await page.request.post('/api/tasks', { data: { title: `Ask tutor ${tag}` } })).json();
+    const note = await (await page.request.post('/api/notes', { data: { title: `Lecture ${tag}`, body: '## Action items\n- [ ] Submit HW 4 — due October 16, 2026 at 11:59 pm.\n## Check yourself\n- [ ] What is a heap?' } })).json();
+    await page.goto('/');
+    await goPlace(page, 'calendar');
+    await expect(page).toHaveURL(/#\/calendar$/);
+    const box = page.locator('#sched-page');
+    await expect(box.locator('.sched-head h1')).toHaveText('Calendar');
+    const noDate = box.locator('.sched-list:visible', { hasText: 'No date' });
+    await expect(noDate).toContainText(`Ask tutor ${tag}`);
+
+    await noDate.locator(`.sched-row[data-task="${undated.id}"] [data-action="task-date"]`).click();
+    await page.locator('.sheet [data-pick-day]').filter({ hasText: 'Tomorrow' }).click();
+    await page.locator('.sheet [data-pick-time="09:00"]').click();
+    await page.locator('#pick-save').click();
+    await expect(page.locator('.toast')).toContainText('Date saved');
+    const row = box.locator(`.sched-agenda .sched-row[data-task="${undated.id}"]`);
+    await expect(row).toContainText(`Ask tutor ${tag}`);
+    const saved = (await (await page.request.get('/api/tasks')).json()).tasks.find((t) => t.id === undated.id);
+    expect(saved.time).toBe('09:00:00');
+
+    await row.locator('.sched-main').click();
+    await page.locator('.sheet [data-action="task-google"]').click();
+    const opened = await page.evaluate(() => window.__opened);
+    expect(opened.length).toBe(1);
+    const link = new URL(opened[0]);
+    expect(link.host).toBe('calendar.google.com');
+    expect(link.searchParams.get('action')).toBe('TEMPLATE');
+    expect(link.searchParams.get('details')).toContain(`leo-task:${undated.id.slice(0, 12)}`);
+    await expect(page.locator('.toast')).toContainText('Opened in Google Calendar');
+
+    await row.locator('.sched-check').click();
+    await expect(page.locator('.toast')).toContainText('Done');
+    await expect.poll(async () => (await (await page.request.get('/api/tasks')).json()).tasks.find((t) => t.id === undated.id).done).toBe(true);
+    await page.locator('.toast button', { hasText: 'Undo' }).click();
+    await expect.poll(async () => (await (await page.request.get('/api/tasks')).json()).tasks.find((t) => t.id === undated.id).done).toBe(false);
+
+    const hw = (await (await page.request.get('/api/tasks')).json()).tasks.find((t) => t.note && t.note.id === note.id);
+    expect(hw.title).toContain('Submit HW 4');
+    expect(hw.date).toBe('2026-10-16');
+    const all = (await (await page.request.get('/api/tasks')).json()).tasks;
+    expect(all.some((t) => t.title === 'What is a heap?')).toBe(false);
+  });
+
+  test('a new task can be typed in, and a note checkbox can be added to tasks', async ({ page }) => {
+    const tag = `${test.info().project.name}-${Date.now().toString(36)}`;
+    const note = await (await page.request.post('/api/notes', { data: { title: `Plans ${tag}`, body: 'Ideas\n- [ ] Book the room\nEnd' } })).json();
+    await page.goto('/#/calendar');
+    await page.locator('.sched-head [data-action="task-new"]').click();
+    await page.locator('#task-title').fill(`Send slides ${tag}`);
+    await page.locator('#task-title').press('Enter');
+    await expect(page.locator('.toast')).toContainText(`Added “Send slides ${tag}”`);
+    await expect(page.locator('#sched-page .sched-list:visible').getByText(`Send slides ${tag}`)).toBeVisible();
+
+    await page.goto(`/#/n/${note.id}`);
+    await page.locator('[data-action="note-tasks"]').click();
+    const sheet = page.locator('.sheet');
+    await expect(sheet).toContainText('Book the room');
+    await sheet.locator('[data-action="task-promote"]').click();
+    await expect(page.locator('.toast')).toContainText('Added to your tasks');
+    await expect(page.locator('.sheet [data-action="task-open-here"]')).toHaveText('In your tasks');
+    const tasks = (await (await page.request.get('/api/tasks')).json()).tasks;
+    expect(tasks.some((t) => t.title === 'Book the room' && t.note.id === note.id)).toBe(true);
   });
 });

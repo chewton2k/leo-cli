@@ -113,13 +113,16 @@ async function api(path, { method = 'GET', body, total = false } = {}) {
   if (response.status === 204) return null;
   if (!response.ok) {
     let said = '';
+    let data = null;
     try {
-      said = (await response.json()).error || '';
+      data = await response.json();
+      said = (data && data.error) || '';
     } catch (e) {
       said = '';
     }
     const error = new Error(said || (response.status === 404 ? 'That is not there any more.' : response.status === 400 ? 'Use a folder name inside your notes, without . or ..' : `leo answered ${response.status}.`));
     error.status = response.status;
+    error.data = data;
     throw error;
   }
   const text = await response.text();
@@ -318,7 +321,7 @@ function back() {
   go('#/');
 }
 
-const PAGE_NAMES = { '': 'Top level', f: 'Top level', search: 'Search', trash: 'Trash', map: 'Knowledge graph', settings: 'Settings', record: 'Record', interviews: 'Interview practice', new: 'New note' };
+const PAGE_NAMES = { '': 'Top level', f: 'Top level', search: 'Search', trash: 'Trash', map: 'Knowledge graph', calendar: 'Calendar', settings: 'Settings', record: 'Record', interviews: 'Interview practice', new: 'New note' };
 
 function pageName() {
   const [, kind = '', rest = ''] = location.hash.match(/^#\/([a-z]*)\/?(.*)$/) || [];
@@ -592,6 +595,7 @@ function noteActions(id, recorded = false) {
       ${id ? `<button data-action="note-map" data-id="${esc(id)}">${ICON.map}<span>Graph</span></button>` : ''}
       ${id && recorded ? `<button data-action="note-sources">${ICON.mic}<span>Transcript</span></button>` : ''}
       ${id ? `<button data-action="ask-selection" data-keep-selection title="Ask Felix about the selected text (${navigator.platform && /Mac/.test(navigator.platform) ? '⌘⇧E' : 'Ctrl+Shift+E'})">${ICON.chat}<span>Ask</span></button>` : ''}
+      ${id ? `<button data-action="note-tasks">${ICON.calendar}<span>Tasks</span></button>` : ''}
       <button data-action="note-picture">${ICON.image}<span>Picture</span></button>
       <button data-action="move">${ICON.move}<span>Move</span></button>
       <button data-action="share">${ICON.share}<span>PDF</span></button>

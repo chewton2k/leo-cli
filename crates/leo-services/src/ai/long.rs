@@ -10,7 +10,17 @@ type Written = (String, Option<String>);
 pub type Chat<'a> = &'a (dyn Fn(Prompt, u32) -> Result<String> + Sync);
 pub type Progress<'a> = &'a (dyn Fn(usize, usize) + Sync);
 
-pub fn with_profile(mut prompt: Prompt, profile: &leo_core::recording::Profile) -> Prompt {
+pub fn recorded_on(mut prompt: Prompt, day: chrono::NaiveDate) -> Prompt {
+    prompt.user = format!(
+        "<recorded_on>{}</recorded_on>\n\n{}",
+        day.format("%A, %B %-d, %Y"),
+        prompt.user
+    );
+    prompt
+}
+
+pub fn with_profile(prompt: Prompt, profile: &leo_core::recording::Profile) -> Prompt {
+    let mut prompt = recorded_on(prompt, chrono::Local::now().date_naive());
     let context = profile.context.trim();
     if !context.is_empty() {
         prompt.user = format!(
@@ -315,6 +325,23 @@ pub fn points_kept(body: String, points: &[Jotted]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recordings_carry_their_date_so_relative_deadlines_become_real_dates() {
+        let prompt = recorded_on(
+            Prompt {
+                system: "rules".into(),
+                user: "transcript".into(),
+            },
+            chrono::NaiveDate::from_ymd_opt(2026, 10, 13).unwrap(),
+        );
+        assert!(prompt
+            .user
+            .starts_with("<recorded_on>Tuesday, October 13, 2026</recorded_on>"));
+        let rules = crate::ai::chat::build_structure_prompt("x").system;
+        assert!(rules.contains("<recorded_on>") && rules.contains("Never invent a task"));
+        assert!(rules.contains("Practice questions belong in Check yourself"));
+    }
     use crate::ai::budget::Budget;
 
     const TEST: Budget = Budget {

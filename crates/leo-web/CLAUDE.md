@@ -1022,3 +1022,37 @@ Reading position (`GET/PUT /api/notes/{id}/reading`, `reading` table in leo.db, 
 block 2 s after the user scrolls (wheel, touch, keys or pointer mark it as the user's
 scroll; restores and citation jumps are not), and restores once on open when nothing
 else moved the page (a citation wins; never while editing).
+
+Calendar and tasks (release 3; `app/calendar.js`, pure helpers in `web/schedule.js`,
+node-tested): the sidebar and phone menu have Calendar (`#/calendar`, `body.on-calendar`
+widens the page). Classes are `sched-*` because Settings already owns `cal-*`.
+- Feeds: `calendar_feeds` in leo.db keeps each link's last good download with its
+  ETag / Last-Modified (`CalendarAccess::fetch_since`, root adapter
+  `web::fetch_public_since`; 304 keeps the copy). `Calendar::events(from, to)` expands
+  any window from it (`ics::read`, last `KEPT_EXPANSIONS` 12 kept in memory by feed,
+  download time and window). `calendar-cache.json` is gone. `/api/calendar` (Settings,
+  Record) lists timed events only, so an all-day exam is never offered as a meeting.
+- `ics`: all-day events are date-only items (`all_day`, `date`, exclusive
+  `end_date`), with repeats, EXDATE and RECURRENCE-ID by date; an unknown TZID sets
+  `zone_unknown`.
+- `GET /api/schedule?from&to&live` (≤ 43 days, within 400 days): events (ids
+  `feed:uid@time`, `calendar` name, `task` when the description carries
+  `leo-task:<12 chars of a task id>`) and every task. `live` (the page) refreshes feeds
+  older than 2 minutes, otherwise 15; the page reloads every 2.5 min while visible, on
+  returning to the tab, and every 4 s while a refresh runs.
+- Tasks (`tasks.rs`, `routes/tasks.rs`, `leo_core::tasks`): standalone tasks in the
+  `tasks` table; note tasks are checkboxes under an Action items heading (or To do,
+  Next steps, Deadlines) plus promoted ones (`note_tasks`: text and neighbouring lines
+  to find the box again, `locate` → At / Missing / Unclear, never the wrong box).
+  Dates come from `due_in` (one absolute date with year, optional time; anything vague
+  is No date). PATCH sends the desired `done`, and a new date is written into the
+  checkbox (`with_due`; when the old date can't be found it answers 409 with a
+  before/after `preview`, applied with `confirm`). A note task keeps its id once it has
+  a `note_tasks` row. Export adds `tasks.json`; Storage lists them and restores through
+  POST `/api/tasks/import` (ids dedupe). `GET /api/tasks/{id}/ics`.
+- Add to Google Calendar opens Google's prefilled new-event page
+  (`schedule.googleLink`: all-day, a 30-minute "Due:" block for deadlines, a meeting's
+  times, `ctz`, `leo-task:` marker); no sign-in, nothing sent by leo itself.
+- The note toolbar's Tasks sheet lists the note's checkboxes with Add to tasks.
+- The note prompts write Action items with full dates worked out from
+  `<recorded_on>` (`long::recorded_on`, added by `with_profile`).

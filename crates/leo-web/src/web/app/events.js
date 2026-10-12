@@ -176,6 +176,8 @@ document.addEventListener('click', (e) => {
 
 async function render() {
   hideAskFloat();
+  clearTimeout(cal.timer);
+  document.body.classList.toggle('on-calendar', /^#\/calendar/.test(location.hash));
   const hash = decodeURI(location.hash || '#/');
   const [, kind, rest = ''] = location.hash.match(/^#\/([a-z]*)\/?(.*)$/) || [null, '', ''];
   const arg = decodeURIComponent(rest);
@@ -195,6 +197,7 @@ async function render() {
     else if (kind === 'search') await showSearch(arg);
     else if (kind === 'trash') await showTrash();
     else if (kind === 'map') await showMap(arg);
+    else if (kind === 'calendar') await showCalendar();
     else if (kind === 'interviews') await showInterviews(arg);
     else if (kind === 'settings') await (arg === 'storage' ? showStorage() : showSettings());
     else if (kind === 'record') await showRecord(arg);

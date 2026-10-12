@@ -22,6 +22,7 @@ pub mod search;
 pub mod sessions;
 pub mod steer;
 pub mod storage;
+mod tasks;
 mod terminal;
 #[cfg(test)]
 mod tests;
@@ -108,8 +109,26 @@ pub struct Web {
     pub needed: Arc<dyn Fn() -> bool + Send + Sync>,
 }
 
+pub struct Fetched {
+    pub body: Option<Vec<u8>>,
+    pub etag: Option<String>,
+    pub modified: Option<String>,
+}
+
 pub trait CalendarAccess: Send + Sync {
     fn fetch(&self, url: &str) -> Result<Vec<u8>>;
+    fn fetch_since(
+        &self,
+        url: &str,
+        _etag: Option<&str>,
+        _modified: Option<&str>,
+    ) -> Result<Fetched> {
+        Ok(Fetched {
+            body: Some(self.fetch(url)?),
+            etag: None,
+            modified: None,
+        })
+    }
     fn get(&self, account: &str) -> Result<Option<String>>;
     fn set(&self, account: &str, value: &str) -> Result<()>;
     fn delete(&self, account: &str) -> Result<()>;
@@ -566,6 +585,18 @@ fn router(state: AppState) -> Router {
             "/api/notes/{id}/reading",
             get(routes::related::get_reading).put(routes::related::put_reading),
         )
+        .route(
+            "/api/tasks",
+            get(routes::tasks::list_tasks).post(routes::tasks::create_task),
+        )
+        .route("/api/tasks/promote", post(routes::tasks::promote_task))
+        .route("/api/tasks/import", post(routes::tasks::import_tasks))
+        .route(
+            "/api/tasks/{id}",
+            axum::routing::patch(routes::tasks::change_task).delete(routes::tasks::delete_task),
+        )
+        .route("/api/tasks/{id}/ics", get(routes::tasks::task_ics))
+        .route("/api/schedule", get(calendar::schedule))
         .route("/api/search", get(search_notes))
         .route("/api/dirs", get(list_dirs).post(create_dir))
         .route("/api/dirs/move", post(move_dir))
@@ -590,6 +621,7 @@ fn router(state: AppState) -> Router {
         .route("/doc.js", get(doc_js))
         .route("/saving.js", get(saving_js))
         .route("/graph.js", get(graph_js))
+        .route("/schedule.js", get(routes::assets::schedule_js))
         .route("/chat.js", get(chat_js))
         .route("/interview.js", get(routes::assets::interview_js))
         .route("/api/interviews", get(routes::interviews::list))

@@ -19,6 +19,14 @@ pub struct Event {
     pub end: DateTime<Utc>,
     pub location: String,
     pub context: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub all_day: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date: Option<NaiveDate>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_date: Option<NaiveDate>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub zone_unknown: bool,
 }
 
 #[derive(Debug, Default)]
@@ -40,14 +48,17 @@ struct Raw {
     duration: Option<Duration>,
     rule: Option<String>,
     except: Vec<DateTime<Utc>>,
+    except_days: Vec<NaiveDate>,
     instead_of: Option<DateTime<Utc>>,
+    instead_of_day: Option<NaiveDate>,
     cancelled: bool,
+    zone_unknown: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
 enum When {
     At(DateTime<Utc>, Option<chrono_tz::Tz>),
-    Day,
+    Day(NaiveDate),
 }
 
 pub fn read(text: &str, from: DateTime<Utc>, to: DateTime<Utc>) -> Calendar {
@@ -98,21 +109,28 @@ pub fn read(text: &str, from: DateTime<Utc>, to: DateTime<Utc>) -> Calendar {
             "DESCRIPTION" => raw.description = unescaped(value),
             "LOCATION" => raw.location = unescaped(value),
             "STATUS" => raw.cancelled = value.trim().eq_ignore_ascii_case("CANCELLED"),
-            "DTSTART" => raw.start = when(params, value),
+            "DTSTART" => {
+                raw.start = when(params, value);
+                raw.zone_unknown =
+                    param(params, "TZID").is_some_and(|z| z.parse::<chrono_tz::Tz>().is_err());
+            }
             "DTEND" => raw.end = when(params, value),
             "DURATION" => raw.duration = duration(value),
             "RRULE" => raw.rule = Some(value.trim().to_string()),
-            "EXDATE" => raw
-                .except
-                .extend(value.split(',').filter_map(|v| match when(params, v) {
-                    Some(When::At(t, _)) => Some(t),
-                    _ => None,
-                })),
-            "RECURRENCE-ID" => {
-                if let Some(When::At(t, _)) = when(params, value) {
-                    raw.instead_of = Some(t);
+            "EXDATE" => {
+                for v in value.split(',').take(MOST_STEPS) {
+                    match when(params, v) {
+                        Some(When::At(t, _)) => raw.except.push(t),
+                        Some(When::Day(d)) => raw.except_days.push(d),
+                        None => {}
+                    }
                 }
             }
+            "RECURRENCE-ID" => match when(params, value) {
+                Some(When::At(t, _)) => raw.instead_of = Some(t),
+                Some(When::Day(d)) => raw.instead_of_day = Some(d),
+                None => {}
+            },
             "ATTENDEE" => {
                 if raw.attendees.len() < 100 {
                     if let Some(who) = person(params, value) {
@@ -192,7 +210,7 @@ fn when(params: &str, value: &str) -> Option<When> {
     if param(params, "VALUE").is_some_and(|v| v.eq_ignore_ascii_case("DATE")) || value.len() == 8 {
         return NaiveDate::parse_from_str(value, "%Y%m%d")
             .ok()
-            .map(|_| When::Day);
+            .map(When::Day);
     }
     if let Some(utc) = value.strip_suffix('Z') {
         let t = NaiveDateTime::parse_from_str(utc, "%Y%m%dT%H%M%S").ok()?;
@@ -281,10 +299,9 @@ fn rule_of(text: &str) -> Option<Rule> {
             "UNTIL" => {
                 rule.until = match when("", v) {
                     Some(When::At(t, _)) => Some(t),
-                    Some(When::Day) => NaiveDate::parse_from_str(v, "%Y%m%d")
-                        .ok()
-                        .and_then(|d| d.and_hms_opt(23, 59, 59))
-                        .map(|d| Utc.from_utc_datetime(&d)),
+                    Some(When::Day(d)) => {
+                        d.and_hms_opt(23, 59, 59).map(|d| Utc.from_utc_datetime(&d))
+                    }
                     None => None,
                 }
             }
@@ -388,6 +405,11 @@ fn expand(raws: &[Raw], from: DateTime<Utc>, to: DateTime<Utc>) -> Vec<Event> {
     for raw in raws.iter().filter(|r| r.instead_of.is_some()) {
         moved.insert((raw.uid.clone(), raw.instead_of.unwrap_or(from)), raw);
     }
+    let moved_days: HashSet<(String, NaiveDate)> = raws
+        .iter()
+        .filter_map(|r| r.instead_of_day.map(|d| (r.uid.clone(), d)))
+        .collect();
+    let mut seen_days: HashSet<(String, NaiveDate)> = HashSet::new();
     let mut out = Vec::new();
     let mut seen = HashSet::new();
     let mut emit = |raw: &Raw, start: DateTime<Utc>, length: Duration, out: &mut Vec<Event>| {
@@ -398,6 +420,59 @@ fn expand(raws: &[Raw], from: DateTime<Utc>, to: DateTime<Utc>) -> Vec<Event> {
         out.push(event_of(raw, start, end));
     };
     for raw in raws {
+        if let Some(When::Day(first)) = raw.start {
+            if raw.cancelled {
+                continue;
+            }
+            let days = match (raw.end, raw.duration) {
+                (Some(When::Day(last)), _) if last > first => (last - first).num_days(),
+                (_, Some(d)) if d.num_days() > 0 => d.num_days(),
+                _ => 1,
+            }
+            .min(366);
+            let dates: Vec<NaiveDate> = if raw.instead_of_day.is_some() {
+                vec![first]
+            } else {
+                match raw.rule.as_deref().and_then(rule_of) {
+                    Some(rule) => match first.and_hms_opt(12, 0, 0) {
+                        Some(noon) => occurrences(
+                            Utc.from_utc_datetime(&noon),
+                            Some(chrono_tz::UTC),
+                            &rule,
+                            to + Duration::days(1),
+                        )
+                        .into_iter()
+                        .map(|t| t.date_naive())
+                        .collect(),
+                        None => vec![first],
+                    },
+                    None => vec![first],
+                }
+            };
+            for day in dates {
+                if raw.instead_of_day.is_none()
+                    && (raw.except_days.contains(&day)
+                        || moved_days.contains(&(raw.uid.clone(), day)))
+                {
+                    continue;
+                }
+                let Some(start) = day.and_hms_opt(0, 0, 0).and_then(|t| local_to_utc(t, None))
+                else {
+                    continue;
+                };
+                let end = start + Duration::days(days);
+                if end < from || start > to || !seen_days.insert((raw.uid.clone(), day)) {
+                    continue;
+                }
+                let mut event = event_of(raw, start, end);
+                event.id = format!("{}@{}", raw.uid, day.format("%Y%m%d"));
+                event.all_day = true;
+                event.date = Some(day);
+                event.end_date = Some(day + Duration::days(days));
+                out.push(event);
+            }
+            continue;
+        }
         let Some(When::At(start, zone)) = raw.start else {
             continue;
         };
@@ -455,6 +530,10 @@ fn event_of(raw: &Raw, start: DateTime<Utc>, end: DateTime<Utc>) -> Event {
         end,
         location: raw.location.trim().chars().take(200).collect(),
         context: context.chars().take(CONTEXT_CHARS).collect(),
+        all_day: false,
+        date: None,
+        end_date: None,
+        zone_unknown: raw.zone_unknown,
     }
 }
 
@@ -557,6 +636,44 @@ END:VCALENDAR\r
             cal.events[1].end - cal.events[1].start,
             Duration::minutes(30)
         );
+    }
+
+    #[test]
+    fn all_day_items_keep_their_dates_with_repeats_exclusions_and_moves() {
+        let text = "BEGIN:VEVENT\nUID:final\nSUMMARY:Biology final\nDTSTART;VALUE=DATE:20261216\nDTEND;VALUE=DATE:20261217\nEND:VEVENT\nBEGIN:VEVENT\nUID:trip\nSUMMARY:Field trip\nDTSTART;VALUE=DATE:20261203\nDTEND;VALUE=DATE:20261205\nEND:VEVENT\nBEGIN:VEVENT\nUID:hw\nSUMMARY:Homework due\nDTSTART;VALUE=DATE:20261202\nRRULE:FREQ=WEEKLY;COUNT=3\nEXDATE;VALUE=DATE:20261209\nEND:VEVENT\nBEGIN:VEVENT\nUID:hw\nRECURRENCE-ID;VALUE=DATE:20261216\nSUMMARY:Homework due (moved)\nDTSTART;VALUE=DATE:20261217\nEND:VEVENT\nBEGIN:VEVENT\nUID:zone\nSUMMARY:Somewhere\nDTSTART;TZID=Not/AZone:20261210T090000\nEND:VEVENT\n";
+        let cal = read(text, at("2026-12-01T00:00:00Z"), at("2026-12-31T00:00:00Z"));
+        let days: Vec<(String, String, String)> = cal
+            .events
+            .iter()
+            .filter(|e| e.all_day)
+            .map(|e| {
+                (
+                    e.title.clone(),
+                    e.date.unwrap().to_string(),
+                    e.end_date.unwrap().to_string(),
+                )
+            })
+            .collect();
+        let want = [
+            ("Homework due", "2026-12-02", "2026-12-03"),
+            ("Field trip", "2026-12-03", "2026-12-05"),
+            ("Biology final", "2026-12-16", "2026-12-17"),
+            ("Homework due (moved)", "2026-12-17", "2026-12-18"),
+        ];
+        let mut got = days.clone();
+        got.sort_by(|a, b| a.1.cmp(&b.1));
+        assert_eq!(
+            got,
+            want.map(|(a, b, c)| (a.to_string(), b.to_string(), c.to_string())),
+            "the 9th is excepted and the 16th moved to the 17th"
+        );
+        let zone = cal.events.iter().find(|e| e.title == "Somewhere").unwrap();
+        assert!(zone.zone_unknown && !zone.all_day);
+        assert!(cal
+            .events
+            .iter()
+            .filter(|e| !e.all_day)
+            .all(|e| e.date.is_none()));
     }
 
     #[test]

@@ -5,6 +5,63 @@ const actions = {
   'side-fold': foldSide,
   'toggle-picker': togglePicker,
   'ask-selection': () => askAboutSelection(),
+  calendar: () => {
+    closeSheet();
+    go('#/calendar');
+  },
+  'cal-pick': (el) => {
+    cal.selected = el.dataset.day;
+    if (cal.gridOpen && !window.matchMedia('(min-width: 600px)').matches) cal.gridOpen = false;
+    const month = monthOf(cal.selected);
+    if (month.getTime() !== cal.month.getTime()) {
+      cal.month = month;
+      drawCalendar();
+      return loadSchedule(seq);
+    }
+    drawCalendar();
+  },
+  'cal-prev': () => calShiftMonth(-1),
+  'cal-next': () => calShiftMonth(1),
+  'cal-today': () => {
+    cal.selected = S.dayKey(new Date());
+    const month = monthOf(cal.selected);
+    const moved = month.getTime() !== cal.month.getTime();
+    cal.month = month;
+    drawCalendar();
+    if (moved) return loadSchedule(seq);
+  },
+  'cal-month': () => {
+    if (window.matchMedia('(min-width: 600px)').matches) return;
+    cal.gridOpen = !cal.gridOpen;
+    drawCalendar();
+  },
+  'cal-retry': () => {
+    cal.polls = 0;
+    return api('/api/calendar/refresh', { method: 'POST' }).catch(() => null).then(() => loadSchedule(seq));
+  },
+  'cal-done': () => {
+    cal.showDone = !cal.showDone;
+    drawCalendar();
+  },
+  'task-new': (el) => newTaskSheet(el.dataset.day || (state.view === 'calendar' ? cal.selected : null)),
+  'task-open': (el) => taskSheet(el.dataset.id),
+  'task-open-here': (el) => openTaskAnywhere(el.dataset.id),
+  'task-done': (el) => {
+    const id = el.dataset.id;
+    const task = calFind(id);
+    const done = el.dataset.set ? el.dataset.set === '1' : !(task && task.done);
+    if (el.dataset.set) closeSheet();
+    return setTaskDone(id, done).then(() => {
+      const box = app.querySelector(`.sched-check[data-id="${CSS.escape(id)}"]`);
+      if (box) box.checked = done;
+    });
+  },
+  'task-date': (el) => dateSheet(el.dataset.id),
+  'task-google': (el) => addToGoogle(el.dataset.id),
+  'task-delete': (el) => deleteTask(el.dataset.id),
+  'task-promote': (el) => promoteTask(el.dataset.line),
+  'event-open': (el) => eventSheet(el.dataset.id),
+  'note-tasks': () => noteTasksSheet(),
   'set-model': (el) => changeSetting({ set: 'model', task: el.dataset.task, value: el.dataset.model }),
   'set-effort': (el) => changeSetting({ set: 'effort', value: el.dataset.effort === 'default' ? '' : el.dataset.effort }),
   'side-twist': (el) => twistFolder(el.dataset.dir),
