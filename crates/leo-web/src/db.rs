@@ -62,6 +62,36 @@ CREATE TABLE IF NOT EXISTS graph_links (
     n INTEGER PRIMARY KEY,
     data TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS tasks (
+    id TEXT PRIMARY KEY,
+    updated TEXT NOT NULL,
+    data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS note_tasks (
+    id TEXT PRIMARY KEY,
+    note TEXT NOT NULL,
+    text TEXT NOT NULL,
+    before TEXT NOT NULL,
+    after TEXT NOT NULL,
+    kind TEXT,
+    promoted INTEGER NOT NULL,
+    sent_at TEXT
+);
+CREATE TABLE IF NOT EXISTS calendar_feeds (
+    feed TEXT PRIMARY KEY,
+    fetched_at TEXT,
+    tried_at TEXT NOT NULL,
+    etag TEXT,
+    modified TEXT,
+    problem TEXT,
+    body BLOB
+);
+CREATE TABLE IF NOT EXISTS reading (
+    note TEXT PRIMARY KEY,
+    anchor TEXT NOT NULL,
+    at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS reading_by_time ON reading(at);
 CREATE TABLE IF NOT EXISTS graph_meta (
     key TEXT PRIMARY KEY,
     data TEXT NOT NULL

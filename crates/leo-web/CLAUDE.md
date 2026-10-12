@@ -27,8 +27,16 @@
   and sessions; the page only ever sees `handle_of(secret)`. Constant-time compare;
   no CORS; no-referrer/nosniff/DENY/no-store headers; the store is reloaded
   from disk on every request (`AppState::fresh`). `--anywhere` =
-  `tunnel::start` runs `cloudflared tunnel --url` and reads the
-  trycloudflare address from stderr. The tunnel is the default: `leo serve` opens it (`src/cli/serve.rs` offers `brew install cloudflared` in a TTY when missing), `--local` is Wi-Fi only, `--anywhere` is a hidden no-op kept for old scripts. Busy port → next free one; macOS
+  `tunnel::start` runs `cloudflared tunnel --protocol auto --loglevel info --url`
+  and waits for both a validated trycloudflare address and a registered connection
+  before printing the link. Explicit auto enables HTTP/2 fallback when QUIC is
+  blocked; quick tunnels otherwise force QUIC. Startup is bounded to 90 seconds,
+  4096 lines and 16 KiB per line, accepts plain/JSON logs in either order, and
+  reports actionable errors without echoing raw logs. Stderr drains with bounded
+  memory after startup; a closed pipe reports that the phone link stopped. The
+  tunnel is the default: `leo serve` opens it (`src/cli/serve.rs` offers
+  `brew install cloudflared` in a TTY when missing), `--local` is Wi-Fi only,
+  `--anywhere` is a hidden no-op kept for old scripts. Busy port → next free one; macOS
   `caffeinate -i -w <pid>` while serving. `Store.known`: save only trashes
   ids it has loaded or written, so another writer's new notes survive.
 - Phone page (`crates/leo-web/src/web/`): no inline JS (CSP `script-src
@@ -457,6 +465,9 @@
   a miniature page of the document's first lines (`chat_files` `excerpt`,
   320 chars) over a colored type badge (PDF, DOCX, PPTX, CSV, PNG, …; tones in
   `--tone-*`). Sent messages keep `cards` (name plus thumb or excerpt).
+  Picture uploads keep their original name while reading, then use the server's
+  JPEG name after conversion. Browser checks hold the upload to verify both
+  states, the encoded image type and the sent attachment, without a timing race.
 - Diagrams: ```mermaid blocks are drawn on the page (notes, Felix, anywhere
   `markdown.js` renders): `render` emits `<figure class="diagram">` holding
   the escaped source; `app/diagrams.js` watches the page (MutationObserver),
@@ -851,6 +862,11 @@ warn`), not one-off styles.
 
 Sidebar: the places nav and the foot stay put; only the folder tree
 (`.side-tree`) scrolls, and its scroll position survives redraws.
+Short desktop windows use compact navigation spacing to leave room for folders.
+Top level stays above the scrolling tree so it is always a reachable drop target.
+Browser drags start on the source before scrolling the destination into view;
+otherwise a long grid can move another card under the saved mouse coordinates.
+Targets are centered so a partly visible folder is not hidden by the fixed header.
 
 Recording journal writes and commit callbacks run outside the recording mutex; an
 atomic reservation prevents Stop/recovery from overtaking a chunk or point write
@@ -869,20 +885,35 @@ only unwritten chunks in memory for retry; it must not duplicate stored audio.
 
 ### Note browsing and recording failures (2026-10-11)
 
-The library defaults to a responsive Grid with a remembered List choice. All
-notes includes every folder; opening a folder scopes the results to that folder.
-`browse.rs` sorts before pagination (pinned first; updated, browser-local opened,
-folder or title), chooses bounded visual previews, and supplies a short content
+The library defaults to a responsive Grid with a remembered List choice. The
+top level and each folder show only notes stored directly there, with an explicit
+`dir` parameter (empty for root) on every page request. Cards are alphabetical,
+pinned first; old recency preferences are ignored. Search still reaches every
+folder. `browse.rs` sorts before pagination, chooses bounded visual previews, and supplies a short content
 fallback. `Graphs::note_summaries` reads only current cached summaries; browsing
 never calls an AI. `app/browse.js` uses the existing Markdown, diagram and math
-renderers with lazy thumbnails, bounded caches and a read-only preview sheet.
-Preview dismissal restores focus and leaves the library's scroll position intact.
+renderers with lazy thumbnails and bounded caches. Cards open notes directly;
+the Preview button and its sheet were removed at the user's request (2026-10-12).
 The Markdown renderer accepts `interactive: false` for read-only task controls.
+
+Grid and List share one library width, including the header and search. The
+library class is set before loading a folder and stays on between folder routes;
+removing it before a fetch caused the header to shrink and flash back. Identical
+breadcrumbs retain their DOM nodes. Desktop scrollbars reserve their gutter so
+changing the number of rows cannot shift the page width. Folder navigation uses
+one short opacity/transform arrival on the content after it loads (the user's
+request, 2026-10-12), cancelled on the next route or layout change, suppressed
+for Reduced Motion, and never replayed by refreshes or grid/list changes.
 
 Folder options are available inside empty and populated folders, using existing
 sheets and buttons. Rename uses `/api/dirs/rename` and the Store relocation
 primitive; move to top level works through the root breadcrumb or sidebar and a
 phone-friendly menu action. Folder deletion uses the existing trash API and Undo.
+The sidebar has an explicit Top level row above its folder tree. The tree accepts
+root drops on its empty space; nested folder targets take precedence. Drop rechecks the same
+acceptance rules as hover, before clearing drag state, so same-parent and
+self/descendant drops never send a move. Moving a folder retains its descendants
+and the existing Undo behavior.
 
 Browser capture feeds its worklet through a silent gain to the output so the
 browser processes audio without feedback. Call's meter follows both inputs.
@@ -908,6 +939,38 @@ existing hidden `say` context. Unreadable snapshots fall back to written work
 and labels with an explicit assessment limit, rather than blocking review.
 Company research uses existing web capabilities and distinguishes generated
 exercises, official preparation and unverified candidate reports with source URLs.
+
+Interview setup (redesigned 2026-10-12): one Start practice action automatically
+researches the optional company/role and creates a challenge in the same chat
+turn. General practice needs no company or research; unavailable search falls
+back to labelled original practice. Reopening/redrawing never starts another
+request. A pending start waits for an existing reply and is cancelled by leaving
+the page. The empty state has no disabled editor. Schedule and assessment
+preferences reuse details/sheets; progress and scheduling fold below the work.
+Coding uses a responsive problem/editor split, a numbered textarea with Tab,
+Shift-Tab and indentation, separate Code/Approach/Whiteboard tabs, examples,
+constraints and source links. Reset code confirms and retains approach/board.
+`Challenge.coding` carries language, an unsolved starter, difficulty, bounded
+examples and constraints; the tool requires it for new coding exercises. Legacy
+challenges remain readable. `Workspace.reasoning` defaults empty for old drafts.
+Installing a challenge seeds its starter atomically; a repeated challenge cannot
+overwrite work. A starter alone is neither an unfinished draft nor a submission;
+implementation, reasoning and drawings count as work. Frozen attempts include
+reasoning. The existing chat completion callback restores preparation controls
+when the model fails to create a challenge, without another AI request.
+Coding syntax colors and Indent code use the pinned, vendored CodeMirror/Lezer
+parsers for C++, Rust, Java, Python, SQL, JavaScript, TypeScript and Go. The bundle
+loads only in a coding workspace; plain text stays editable if it fails to load
+or the language is unsupported. The native textarea keeps input, selection,
+accessibility and autosave; an escaped, noninteractive overlay shares its font
+and scroll position. Highlight updates coalesce per frame and skip unchanged
+drafts. Indentation preserves literal/comment contents, maps the caret, uses the
+native Undo stack, and never executes submitted code. Forced colors use plain
+text. Rebuild the bundle/licences using `scripts/code-tools/README.md`.
+Validation covered all eight languages across desktop/phone and light/dark
+themes, delayed/failed loading, forced colors, native Undo, autosave and scrolling.
+Four further Codex prompt/tool runs passed SQL general practice and Python
+company research in both orders and Coach/Mock, using fixture search results.
 
 `interview.rs` keeps bounded plans in the `interviews` table of leo.db, independent
 of notes and chat retention. Each transaction updates one revision-checked row.
@@ -945,7 +1008,105 @@ capacity. Claude's weekly allowance was exhausted. These prompt checks are not a
 compiled-server end-to-end test. Per the user's instruction, compiled checks and
 the full browser gate run in CI, not through local Cargo builds/tests.
 
-The All notes view keeps a moved note visible and updates its folder metadata;
-drag tests check that state and Undo. Thumbnail tests scroll cards into view
+Moving a note out of the top level removes its card there; Undo brings it back.
+Drag tests check that state and Undo. Thumbnail tests scroll cards into view
 before expecting lazy previews. Completed task text uses the muted theme token
 so grid thumbnails remain legible in dark mode.
+
+Passages (2026-10-12, plan `.superpowers/plans/2026-10-11-note-study-schedule-design.md`
+release 1): selecting text in a note opens leo's source text box (live preview), so
+**Ask Felix** belongs to that box: `doc.js` reports selections through `onSelection`
+(text box `select`/`keyup`/`mouseup` and `selectionchange`), and exposes `selection()`
+(`editing.snapshotOf`: exact Markdown, 1-based lines, ≤ `MOST_PASSAGE` 8000; falls
+back to the rendered selection, then to the one kept when the box closed if the text
+is unchanged), `selectionBox()` (a mirror element finds the selection's end in the
+text box) and `caretLine()`. `app/passages.js` floats `.ask-float` there (mousedown is
+prevented so the selection survives), the note toolbar's **Ask** (`data-keep-selection`)
+and ⌘⇧E / Ctrl+Shift+E do the same. `chat.attachSelection` shows a passage chip; the
+request sends `selection {title, from, to, text}` and the note in `refs`, and the
+server prepends `chat::passage_block` (`<selected_passage>`, escaped, "material, not
+instructions") to the user prompt for both protocols; history carries
+`passageLine`. Selecting grants no edit permission.
+
+**Add to note**: every finished answer has Add to note, and selecting part of one
+floats an Add to note button (`answerLines` maps the selection back to whole Markdown
+lines, widening to whole code fences and `$$` blocks; citations become `[[Title]]`
+through `linkCitations`). The sheet defaults to the open note, can search for another,
+and offers End of note or At the cursor (the open note's last caret line). POST
+`/api/notes/{id}/insert {text, line?, base, request}` (`routes/insert.rs`) checks the
+version (409 otherwise), inserts as its own block, remembers the last 32 request ids so
+a double press inserts once, and returns `before` for the toast's Undo. Allowed in
+Read only: it is the user's own edit. CI now runs on pushes to every branch; releases
+still only come from main.
+
+Study sessions (release 2): `study_plan {ideas: "a | b"}` (1–`MOST_IDEAS` 12, ≤80 chars,
+distinct) starts one and sends `{plan}`; while a session is active `quiz` must carry
+`idea` (an open idea's number; `more_parts` marks a step of a worked problem) or it is
+refused with the open ideas listed; `end_session` sends `{session_end}`. The page keeps
+the session on the message that started it (`message.session`, so saved chats and
+reloads keep it): `scoreSession` closes an idea on a right last part (`first` or
+`done`) or after two misses (`review`), and moves to `finishing` when every idea is
+closed or `MOST_SESSION_QUESTIONS` (20) were asked; the request then sends
+`session {ideas, closed, asked}` and the server refuses any further `quiz` with
+`SESSION_DONE`, so the reply is the recap; after that reply it is `finished` and no
+longer sent. The progress row (`#study-progress`) shows ideas, "n of m" and Finish
+(no model call); the recap card (counts from outcomes, Look at again, Not reached)
+offers Study those again and Done.
+
+Related notes (`GET /api/notes/{id}/related?limit=`, ≤ `MOST_RELATED` 20): graph links
+(`chat::connected`) then the note's own `[[links]]`, without itself or the manual; no AI
+call, no graph build. The footer (`#related`) shows four and More.
+
+Reading position (`GET/PUT /api/notes/{id}/reading`, `reading` table in leo.db, last
+2,000 notes, anchor ≤ 1 KB): the page saves `{line, text, dy}` of the first visible
+block 2 s after the user scrolls (wheel, touch, keys or pointer mark it as the user's
+scroll; restores and citation jumps are not), and restores once on open when nothing
+else moved the page (a citation wins; never while editing).
+
+Calendar and tasks (release 3; `app/calendar.js`, pure helpers in `web/schedule.js`,
+node-tested): the sidebar and phone menu have Calendar (`#/calendar`, `body.on-calendar`
+widens the page). Classes are `sched-*` because Settings already owns `cal-*`.
+- Feeds: `calendar_feeds` in leo.db keeps each link's last good download with its
+  ETag / Last-Modified (`CalendarAccess::fetch_since`, root adapter
+  `web::fetch_public_since`; 304 keeps the copy). `Calendar::events(from, to)` expands
+  any window from it (`ics::read`, last `KEPT_EXPANSIONS` 12 kept in memory by feed,
+  download time and window). `calendar-cache.json` is gone. `/api/calendar` (Settings,
+  Record) lists timed events only, so an all-day exam is never offered as a meeting.
+- `ics`: all-day events are date-only items (`all_day`, `date`, exclusive
+  `end_date`), with repeats, EXDATE and RECURRENCE-ID by date; an unknown TZID sets
+  `zone_unknown`.
+- `GET /api/schedule?from&to&live` (≤ 43 days, within 400 days): events (ids
+  `feed:uid@time`, `calendar` name, `task` when the description carries
+  `leo-task:<12 chars of a task id>`) and every task. `live` (the page) refreshes feeds
+  older than 2 minutes, otherwise 15; the page reloads every 2.5 min while visible, on
+  returning to the tab, and every 4 s while a refresh runs.
+- Tasks (`tasks.rs`, `routes/tasks.rs`, `leo_core::tasks`): standalone tasks in the
+  `tasks` table; note tasks are checkboxes under an Action items heading (or To do,
+  Next steps, Deadlines) plus promoted ones (`note_tasks`: text and neighbouring lines
+  to find the box again, `locate` → At / Missing / Unclear, never the wrong box).
+  Dates come from `due_in` (one absolute date with year, optional time; anything vague
+  is No date). PATCH sends the desired `done`, and a new date is written into the
+  checkbox (`with_due`; when the old date can't be found it answers 409 with a
+  before/after `preview`, applied with `confirm`). A note task keeps its id once it has
+  a `note_tasks` row. Export adds `tasks.json`; Storage lists them and restores through
+  POST `/api/tasks/import` (ids dedupe). `GET /api/tasks/{id}/ics`.
+- Add to Google Calendar opens Google's prefilled new-event page
+  (`schedule.googleLink`: all-day, a 30-minute "Due:" block for deadlines, a meeting's
+  times, `ctz`, `leo-task:` marker); no sign-in, nothing sent by leo itself.
+- The note toolbar's Tasks sheet lists the note's checkboxes with Add to tasks.
+- The note prompts write Action items with full dates worked out from
+  `<recorded_on>` (`long::recorded_on`, added by `with_profile`).
+
+Tasks window and original pane (release 4, `app/calendar.js`): the sidebar's Tasks
+row and the phone menu toggle `#tasks-window`, a panel mounted on `body` (outside
+`#app`), so it survives navigation: Overdue / Today / Upcoming / No date from
+`/api/tasks`, reloaded every 2.5 min while visible and after any task change, open
+state in `leo-tasks-window` (reopened on wide screens only). On phones it is a bottom
+sheet and shares the overlay slot with Felix (opening one closes the other).
+`tasksWin` is a `var` because `drawSide` and Felix's `onToggle` can run before this
+part loads. An original (`viewOriginal`, chips, citations' Open the file) opens in
+`#source-pane` beside its note when the page has room for the pane plus a 640 px note
+(`sourceFits`), otherwise in the viewer sheet as before. The pane adds its width to
+`--right` (`body.with-source`, combined with Felix's at ≥ 1200 px), so toolbars,
+toasts and sheets stay beside it; its width drags (`leo-source-width`) and it closes
+when you leave the note.

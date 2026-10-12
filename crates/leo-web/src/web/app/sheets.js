@@ -108,6 +108,8 @@ function menu() {
     <button class="list-row" data-action="upload">${ICON.upload}<span class="grow">Make a note from a file</span></button>
     <button class="list-row" data-action="new-folder">${ICON.folderPlus}<span class="grow">New folder${here ? ` in ${esc(folderLabel(here))}` : ''}</span></button>
     <button class="list-row" data-action="interviews">${ICON.chat}<span class="grow">Interview practice</span></button>
+    <button class="list-row" data-action="calendar">${ICON.calendar}<span class="grow">Calendar</span></button>
+    <button class="list-row" data-action="tasks-toggle">${ICON.check}<span class="grow">Tasks</span></button>
     <button class="list-row" data-action="map">${ICON.map}<span class="grow">Knowledge graph</span></button>
     <button class="list-row" data-action="settings">${ICON.gear}<span class="grow">Settings</span></button>
     <button class="list-row" data-action="trash">${ICON.trash}<span class="grow">Trash</span></button>
@@ -225,7 +227,7 @@ async function moveSheet() {
     `<button class="list-row" data-action="move-to" data-dir="${esc(name)}">${ICON.folder}<span class="grow">${esc(label)}</span>${
       name === note.directory ? ICON.check : ''
     }</button>`;
-  sheet(`<h3>Move “${esc(note.title)}”</h3>${row('', 'All notes (top level)')}${folders.map((f) => row(f.name, f.name)).join('')}`);
+  sheet(`<h3>Move “${esc(note.title)}”</h3>${row('', 'Top level')}${folders.map((f) => row(f.name, f.name)).join('')}`);
 }
 
 async function moveTo(dir) {

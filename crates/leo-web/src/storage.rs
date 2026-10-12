@@ -595,6 +595,40 @@ pub fn more_areas(store: &Store, chats_dir: &Path, kept: &Kept) -> Vec<Area> {
             ],
         });
     }
+    let tasks = crate::tasks::load_all(chats_dir);
+    if !tasks.is_empty() {
+        out.push(Area {
+            id: "tasks".into(),
+            title: "Tasks you added in leo".into(),
+            about: "Tasks made on the Calendar page. Tasks that come from notes stay in the notes. These are kept on this computer and included in Export, but not in the notes' backup.".into(),
+            path: chats::db_of(chats_dir).path().display().to_string(),
+            bytes: tasks.len() as u64 * 240,
+            items: tasks
+                .iter()
+                .map(|t| Item {
+                    id: t.id.clone(),
+                    label: t.title.clone(),
+                    detail: if t.done {
+                        "done".to_string()
+                    } else {
+                        t.date.map_or("no date".to_string(), |d| d.format("%b %-d, %Y").to_string())
+                    },
+                    bytes: 240,
+                    when: None,
+                    locked: false,
+                })
+                .collect(),
+            actions: vec![
+                act("delete", "Delete the selected tasks", None, true),
+                act(
+                    "delete-done",
+                    "Delete finished tasks",
+                    Some("Tasks you ticked off are deleted. Tasks still to do stay."),
+                    false,
+                ),
+            ],
+        });
+    }
     let reviewed = crate::review::count(chats_dir);
     out.push(row_area(
         "review",
@@ -721,6 +755,18 @@ pub fn act_on_more(
                 if gone == 1 { "" } else { "s" }
             ))
         }
+        ("tasks", "delete") => {
+            let gone = request
+                .items
+                .iter()
+                .filter(|id| crate::tasks::valid_id(id) && crate::tasks::remove(chats_dir, id))
+                .count();
+            Ok(plural_deleted(gone, "task"))
+        }
+        ("tasks", "delete-done") => Ok(plural_deleted(
+            crate::tasks::remove_done(chats_dir),
+            "finished task",
+        )),
         ("review", "reset") => {
             crate::review::reset(chats_dir);
             Ok("Study review starts over.".to_string())

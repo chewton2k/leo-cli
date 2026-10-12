@@ -193,10 +193,22 @@ key; `apply` validates every change against `choice`, writes through
 `toml_edit` (creating the commented default file when missing), and refuses to
 store a key unless the request was secure.
 
-`import.rs` turns uploads into a note: text from PDF (`lopdf::extract_text`;
-fewer than 40 letters a page means scanned, so its DCTDecode page images are
-used), .docx (`word/document.xml`), .pptx (slides in number order plus speaker
-notes), text and Markdown; images go to `ai::see`. One request for short
+`import.rs` turns uploads into a note: native Markdown extraction precedes AI
+study-note writing. `import/office.rs` preserves Word headings (including
+inherited styles), lists, emphasis, hyperlinks, tables and common OMML equations;
+PowerPoint follows presentation and notes relationships, orders shapes by
+position, and preserves titles, lists, tables and cached chart values. Picture
+slide numbers follow the same presentation order. This is a Rust implementation
+of the relevant [MarkItDown](https://github.com/microsoft/markitdown) conversion
+patterns, not a Python dependency or a complete port of its other formats.
+Office parts, decompressed bytes, XML nodes/depth and output are bounded; a
+streaming XML preflight rejects DTDs and excessive depth before tree parsing.
+Relationships stay inside the ZIP; external links are never fetched.
+PDF text uses `lopdf::extract_text_with_limit` per page: short digital text stays
+local, while empty pages or sparse text over a nearly full-page image use JPEG
+or RGB/gray PNG scan images. A page number must not hide a scan, and text on
+another page must not suppress it. Photos and scans still require `ai::see`;
+local OCR is not included. Text and Markdown remain direct reads. One request for short
 material, otherwise ~24k-char text parts and 6-page image batches, then
 `build_summary_prompt` for title and summary. Vision: `ChatProvider::
 complete_with_images` (default: a clear "cannot read images" error);

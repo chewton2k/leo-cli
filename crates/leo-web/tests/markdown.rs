@@ -22,6 +22,11 @@ fn the_chat_with_felix_passes_its_tests() {
 }
 
 #[test]
+fn the_calendar_helpers_pass_their_tests() {
+    run_node_tests("schedule.test.js");
+}
+
+#[test]
 fn saving_and_draft_recovery_pass_their_tests() {
     run_node_tests("saving.test.js");
 }

@@ -277,6 +277,7 @@ struct Ask {
     steer: crate::steer::Steer,
     marking: Option<String>,
     interview: Option<String>,
+    session: Option<tools::Session>,
 }
 
 pub(crate) const JUDGE: &str = "You check a student's answer to a practice question against the model answer given. Reply with exactly one word: correct if the answer gets the main idea right and its reasoning holds, incorrect if it is wrong, misses the main idea, skips a step the question asked for, or reaches the result by wrong reasoning. When the question has more than one good answer, a different answer that makes a defensible case with the relevant principles is correct. Use interpretable language.";
@@ -354,6 +355,15 @@ fn interact(
     if desk.asked > 0 {
         return quiet(tools::ALREADY_ASKED.into());
     }
+    if call.name == "quiz" && desk.session.is_some() {
+        if desk.session_over || desk.session.as_ref().is_some_and(tools::Session::over) {
+            return quiet(tools::SESSION_DONE.into());
+        }
+        let idea = tools::quiz_from(call).ok().and_then(|q| q.idea);
+        if let Some(Err(why)) = desk.session.as_ref().map(|s| s.check(idea)) {
+            return quiet(format!("That did not work: {why}."));
+        }
+    }
     let (step, shown) = if call.name == "quiz" {
         match tools::quiz_from(call) {
             Ok(quiz) => (
@@ -410,6 +420,47 @@ fn run_tool(
         tools::Done {
             step: "Waited for your answer".into(),
             result: tools::ALREADY_ASKED.into(),
+            proposal: None,
+            found: Vec::new(),
+        }
+    } else if call.name == "study_plan" {
+        match tools::plan_from(call) {
+            Ok(ideas) if desk.session.as_ref().is_none_or(|s| s.over()) => {
+                send(serde_json::json!({ "plan": { "ideas": ideas } }));
+                desk.session = Some(tools::Session {
+                    closed: vec![false; ideas.len()],
+                    ideas,
+                    asked: 0,
+                });
+                desk.session_over = false;
+                tools::Done {
+                    step: "Planned a study session".into(),
+                    result: tools::PLANNED.into(),
+                    proposal: None,
+                    found: Vec::new(),
+                }
+            }
+            Ok(_) => tools::Done {
+                step: "Tried to plan a study session".into(),
+                result: "That did not work: a study session is already running. Keep asking about its open ideas, or call end_session first.".into(),
+                proposal: None,
+                found: Vec::new(),
+            },
+            Err(why) => tools::Done {
+                step: "Tried to plan a study session".into(),
+                result: format!("That did not work: {why}."),
+                proposal: None,
+                found: Vec::new(),
+            },
+        }
+    } else if call.name == "end_session" {
+        if desk.session.is_some() && !desk.session_over {
+            send(serde_json::json!({ "session_end": true }));
+        }
+        desk.session_over = true;
+        tools::Done {
+            step: "Ended the study session".into(),
+            result: tools::ENDED.into(),
             proposal: None,
             found: Vec::new(),
         }
@@ -817,6 +868,7 @@ fn answer(
         steer,
         marking,
         interview,
+        session,
     } = ask;
     let said = std::cell::RefCell::new(String::new());
     let send = |value: serde_json::Value| {
@@ -859,6 +911,7 @@ fn answer(
         .with_meaning(state.meaning.clone(), Arc::clone(&state.vectors))
         .with_steer(steer);
     desk.interview = interview.clone();
+    desk.session = session;
     let mut specs = tools::native_specs(web_on, access);
     if interview.is_some() {
         specs.extend(tools::native_from(
@@ -1271,6 +1324,9 @@ pub(crate) async fn chat_reply(
             user = format!("{}\n{user}", crate::interview::context(&item));
         }
     }
+    if let Some(block) = body.selection.as_ref().and_then(chat::passage_block) {
+        user = format!("{block}\n{user}");
+    }
     if let (Some(id), Some(writer)) = (body.chat.clone(), state.graphs.writer()) {
         let from = memory
             .as_ref()
@@ -1291,6 +1347,13 @@ pub(crate) async fn chat_reply(
         .mark
         .then(|| body.messages.last().map(|t| t.text.clone()))
         .flatten();
+    let body_session = body.session.clone().filter(|s| {
+        !s.ideas.is_empty()
+            && s.ideas.len() <= tools::MOST_IDEAS
+            && s.ideas
+                .iter()
+                .all(|i| i.chars().count() <= tools::MOST_IDEA_CHARS)
+    });
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     let steer = state.steering.open();
     let _ = tx.send(ndjson(serde_json::json!({ "answer": steer.id() })));
@@ -1307,6 +1370,7 @@ pub(crate) async fn chat_reply(
             steer,
             marking,
             interview,
+            session: body_session,
         };
         let end = match answer(&worker, &streamer, ask, &tx) {
             Ok(spent) => {

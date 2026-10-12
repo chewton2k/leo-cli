@@ -31,6 +31,8 @@ uploads/  the files you uploaded, in a folder per note (named by the note's id,
 chats/    your conversations with Felix, one JSON file each.
 interviews/ interview frameworks, workspaces, attempts and practice schedules,
           included with chats.
+tasks.json the tasks you added on the Calendar page (Storage can restore
+          them). Tasks from notes are in the notes themselves.
 trash/    notes in the trash, as Markdown.
 recording-sources/ retained transcripts, original points and diagnostics,
           included with uploads. Audio recovery and calendar links
@@ -84,6 +86,15 @@ pub fn write_zip<W: Write + Seek>(
     zip.start_file("leo/README.txt", SimpleFileOptions::default())?;
     zip.write_all(README.as_bytes())?;
     add_dir(&mut zip, notes_dir, "leo/notes", true, &mut packed)?;
+    let tasks = crate::tasks::load_all(chats_dir);
+    if !tasks.is_empty() {
+        let text =
+            serde_json::to_string_pretty(&serde_json::json!({ "version": 1, "tasks": tasks }))?;
+        zip.start_file("leo/tasks.json", SimpleFileOptions::default())?;
+        zip.write_all(text.as_bytes())?;
+        packed.files += 1;
+        packed.bytes += text.len() as u64;
+    }
     if parts.trash {
         add_dir(
             &mut zip,

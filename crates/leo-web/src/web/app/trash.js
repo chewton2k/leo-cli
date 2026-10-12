@@ -27,7 +27,7 @@ function drawTrash() {
       const box = sel ? `<input type="checkbox" class="trash-box" data-trash-pick value="${esc(t.id)}"${picked.has(t.id) ? ' checked' : ''} aria-label="Select ${esc(t.title)}">` : ICON.note;
       const actions = sel ? '' : `<button class="btn sm plain" data-action="restore" data-id="${esc(t.id)}">Restore</button><button class="icon-btn trash-forget" data-action="trash-forget" data-id="${esc(t.id)}" aria-label="Delete ${esc(t.title)} for good" title="Delete for good">${ICON.trash}</button>`;
       const row = sel ? 'label' : 'div';
-      return `<${row} class="list-row trash-row${picked.has(t.id) ? ' picked' : ''}">${box}<span class="grow"><div>${esc(t.title)}</div><div class="sub">${esc(t.directory ? '/' + t.directory : 'All notes')} · deleted ${rel(t.deleted_at)}</div></span>${actions}</${row}>`;
+      return `<${row} class="list-row trash-row${picked.has(t.id) ? ' picked' : ''}">${box}<span class="grow"><div>${esc(t.title)}</div><div class="sub">${esc(t.directory ? '/' + t.directory : 'Top level')} · deleted ${rel(t.deleted_at)}</div></span>${actions}</${row}>`;
     })
     .join('');
   const all = picked.size === items.length;

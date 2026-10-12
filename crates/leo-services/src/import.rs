@@ -1,4 +1,4 @@
-use std::io::Read;
+pub(crate) mod office;
 
 use anyhow::{bail, Context, Result};
 
@@ -12,8 +12,15 @@ use crate::figures::{self, Figure};
 
 const PAGES_PER_LOOK: usize = 6;
 const MOST_IMAGES: usize = 40;
-const SCAN_CHARS_PER_PAGE: usize = 40;
 const NOTE_TOKENS: u32 = 8_000;
+const MOST_PDF_PAGES: usize = 2_048;
+const MOST_SCAN_PIXELS: i64 = 16_000_000;
+const MOST_SOURCE_BYTES: usize = 90 * 1024 * 1024;
+const MOST_PDF_CONTENT_BYTES: usize = 16 * 1024 * 1024;
+const MOST_PDF_OPERATIONS: usize = 300_000;
+const MOST_PDF_DEPTH: usize = 128;
+const SCAN_TEXT_LETTERS: usize = 40;
+const SCAN_PAGE_SHARE: f32 = 0.65;
 
 #[derive(Debug, Clone)]
 pub struct Upload {
@@ -141,59 +148,66 @@ pub fn xml_text(xml: &str, text_tag: &str, paragraph_tag: &str) -> String {
     tidy.trim().to_string()
 }
 
-fn zip_file(archive: &mut zip::ZipArchive<std::io::Cursor<&[u8]>>, name: &str) -> Option<String> {
-    let file = archive.by_name(name).ok()?;
-    let mut text = String::new();
-    file.take(64 * 1024 * 1024).read_to_string(&mut text).ok()?;
-    Some(text)
-}
-
-fn docx(bytes: &[u8]) -> Result<String> {
-    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))
-        .context("this Word file could not be opened")?;
-    let xml = zip_file(&mut archive, "word/document.xml")
-        .context("this Word file has no document in it")?;
-    Ok(xml_text(&xml, "w:t", "w:p"))
-}
-
-fn numbered(names: impl Iterator<Item = String>, prefix: &str) -> Vec<(u32, String)> {
-    let mut out: Vec<(u32, String)> = names
-        .filter_map(|n| {
-            let number = n.strip_prefix(prefix)?.strip_suffix(".xml")?.parse().ok()?;
-            Some((number, n))
-        })
-        .collect();
-    out.sort();
-    out
-}
-
-fn pptx(bytes: &[u8]) -> Result<String> {
-    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))
-        .context("this PowerPoint file could not be opened")?;
-    let names: Vec<String> = archive.file_names().map(str::to_string).collect();
-    let slides = numbered(names.iter().cloned(), "ppt/slides/slide");
-    if slides.is_empty() {
-        bail!("this PowerPoint file has no slides in it");
-    }
-    let notes = numbered(names.into_iter(), "ppt/notesSlides/notesSlide");
-    let mut out = String::new();
-    for (n, name) in slides {
-        let text = zip_file(&mut archive, &name)
-            .map(|x| xml_text(&x, "a:t", "a:p"))
-            .unwrap_or_default();
-        out.push_str(&format!("## Slide {n}\n{}\n", text.trim()));
-        if let Some((_, notes_name)) = notes.iter().find(|(m, _)| *m == n) {
-            let said = zip_file(&mut archive, notes_name)
-                .map(|x| xml_text(&x, "a:t", "a:p"))
-                .unwrap_or_default();
-            let said = said.trim();
-            if !said.is_empty() && !said.chars().all(|c| c.is_ascii_digit()) {
-                out.push_str(&format!("Speaker notes: {said}\n"));
+fn full_page_image(doc: &lopdf::Document, page: lopdf::ObjectId) -> Result<bool> {
+    let mut current = page;
+    let mut bounds = None;
+    for _ in 0..MOST_PDF_DEPTH {
+        let Ok(dict) = doc.get_dictionary(current) else {
+            break;
+        };
+        if let Ok(rect) = dict.get(b"MediaBox").and_then(lopdf::Object::as_array) {
+            if let [x0, y0, x1, y1] = rect.as_slice() {
+                bounds = x0
+                    .as_float()
+                    .ok()
+                    .zip(y0.as_float().ok())
+                    .zip(x1.as_float().ok().zip(y1.as_float().ok()))
+                    .map(|((x0, y0), (x1, y1))| ((x1 - x0) * (y1 - y0)).abs());
             }
+            break;
         }
-        out.push('\n');
+        let Ok(parent) = dict.get(b"Parent").and_then(lopdf::Object::as_reference) else {
+            break;
+        };
+        current = parent;
     }
-    Ok(out.trim().to_string())
+    let Some(area) = bounds.filter(|area| area.is_finite() && *area > 0.0) else {
+        return Ok(false);
+    };
+    let bytes = doc
+        .get_page_content_with_limit(page, MOST_PDF_CONTENT_BYTES)
+        .context("a PDF page expands to too much content; export a simpler PDF")?;
+    let Ok(content) = lopdf::content::Content::decode(&bytes) else {
+        return Ok(false);
+    };
+    if content.operations.len() > MOST_PDF_OPERATIONS {
+        bail!("a PDF page is too complex; export a simpler PDF");
+    }
+    let mut scale = 1.0f32;
+    let mut stack = Vec::new();
+    for operation in content.operations {
+        match operation.operator.as_str() {
+            "q" => {
+                if stack.len() >= MOST_PDF_DEPTH {
+                    bail!("a PDF page is nested too deeply; export a simpler PDF");
+                }
+                stack.push(scale);
+            }
+            "Q" => scale = stack.pop().unwrap_or(1.0),
+            "cm" => {
+                if let [a, b, c, d, _, _] = operation.operands.as_slice() {
+                    if let (Ok(a), Ok(b), Ok(c), Ok(d)) =
+                        (a.as_float(), b.as_float(), c.as_float(), d.as_float())
+                    {
+                        scale *= (a * d - b * c).abs();
+                    }
+                }
+            }
+            "Do" if scale.is_finite() && scale >= area * SCAN_PAGE_SHARE => return Ok(true),
+            _ => {}
+        }
+    }
+    Ok(false)
 }
 
 fn pdf(bytes: &[u8]) -> Result<Material> {
@@ -203,56 +217,81 @@ fn pdf(bytes: &[u8]) -> Result<Material> {
     if pages.is_empty() {
         bail!("this PDF has no pages");
     }
+    if pages.len() > MOST_PDF_PAGES {
+        bail!("this PDF has too many pages; split it into smaller documents");
+    }
     let mut text = String::new();
-    for &number in pages.keys() {
-        if let Ok(page) = doc.extract_text(&[number]) {
-            let page = page.trim();
-            if !page.is_empty() {
-                text.push_str(&format!("[page {number}]\n{page}\n\n"));
-            }
-        }
-    }
-    let letters = text.chars().filter(|c| c.is_alphanumeric()).count();
-    if letters >= SCAN_CHARS_PER_PAGE * pages.len() {
-        return Ok(Material {
-            text: text.trim().to_string(),
-            images: Vec::new(),
-            figures: figures::from_pdf(&doc),
-        });
-    }
     let mut images = Vec::new();
-    for &page in pages.values() {
+    for (&number, &page) in &pages {
+        let extracted = match doc.extract_text_with_limit(&[number], MOST_PDF_CONTENT_BYTES) {
+            Err(lopdf::Error::Decompress(lopdf::DecompressError::MemoryLimitExceeded {
+                ..
+            })) => bail!("a PDF page expands to too much content; export a simpler PDF"),
+            result => result.unwrap_or_default(),
+        };
+        let extracted = extracted.trim();
+        if !extracted.is_empty() {
+            text.push_str(&format!("[page {number}]\n{extracted}\n\n"));
+            if text.len() > MOST_SOURCE_BYTES {
+                bail!("this PDF expands to too much text; split it into smaller documents");
+            }
+            let letters = extracted
+                .chars()
+                .filter(|c| c.is_alphanumeric())
+                .take(SCAN_TEXT_LETTERS)
+                .count();
+            if letters >= SCAN_TEXT_LETTERS || !full_page_image(&doc, page)? {
+                continue;
+            }
+        }
         for image in doc.get_page_images(page).unwrap_or_default() {
-            let jpeg = image
-                .filters
-                .as_ref()
-                .is_some_and(|f| f.len() == 1 && f[0] == "DCTDecode");
-            if jpeg && image.width >= 200 && image.height >= 200 {
+            if image.width < 200 || image.height < 200 {
+                continue;
+            }
+            if image
+                .width
+                .checked_mul(image.height)
+                .is_none_or(|area| area > MOST_SCAN_PIXELS)
+            {
+                bail!("a scanned page is too large; export the PDF at a lower resolution");
+            }
+            if let Some(bytes) = figures::pdf_figure(&doc, &image) {
+                let mime = if image
+                    .filters
+                    .as_ref()
+                    .is_some_and(|filters| filters.len() == 1 && filters[0] == "DCTDecode")
+                {
+                    "image/jpeg"
+                } else {
+                    "image/png"
+                };
                 images.push(Image {
-                    mime: "image/jpeg".into(),
-                    bytes: image.content.to_vec(),
+                    mime: mime.into(),
+                    bytes,
                 });
+                if images.len() > MOST_IMAGES {
+                    bail!("this PDF has too many scanned images; upload it in smaller groups");
+                }
             }
         }
     }
-    if images.is_empty() {
-        if letters > 0 {
-            return Ok(Material {
-                text: text.trim().to_string(),
-                images: Vec::new(),
-                figures: figures::from_pdf(&doc),
-            });
-        }
+    if images.is_empty() && text.is_empty() {
         bail!("this PDF looks scanned, but leo cannot read its pages; take photos of them, or export them as images, and upload those");
     }
     Ok(Material {
         text: text.trim().to_string(),
         images,
-        figures: Vec::new(),
+        figures: figures::from_pdf(&doc),
     })
 }
 
 pub fn extract(upload: &Upload) -> Result<Material> {
+    if upload.bytes.len() > MOST_SOURCE_BYTES {
+        bail!(
+            "{} is too large to read; split it into smaller files",
+            upload.name
+        );
+    }
     let ext = extension(&upload.name);
     let mime = upload.mime.to_lowercase();
     let text = |t: String| Material {
@@ -280,11 +319,11 @@ pub fn extract(upload: &Upload) -> Result<Material> {
     }
     match ext.as_str() {
         "pdf" => pdf(&upload.bytes),
-        "docx" => docx(&upload.bytes).map(|t| Material {
+        "docx" => office::docx(&upload.bytes).map(|t| Material {
             figures: figures::from_docx(&upload.bytes),
             ..text(t)
         }),
-        "pptx" => pptx(&upload.bytes).map(|t| Material {
+        "pptx" => office::pptx(&upload.bytes).map(|t| Material {
             figures: figures::from_pptx(&upload.bytes),
             ..text(t)
         }),
@@ -788,6 +827,7 @@ mod tests {
                 .compression_method(zip::CompressionMethod::Deflated);
             for (name, text) in files {
                 zip.start_file(*name, options).unwrap();
+                let text = text.replacen('>', " xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:p=\"http://schemas.openxmlformats.org/presentationml/2006/main\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" xmlns:m=\"http://schemas.openxmlformats.org/officeDocument/2006/math\" xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\">", 1);
                 zip.write_all(text.as_bytes()).unwrap();
             }
             zip.finish().unwrap();
@@ -804,13 +844,87 @@ mod tests {
     }
 
     #[test]
+    fn native_sources_keep_word_structure_without_vision() {
+        let xml = r#"<w:document><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Café &amp; heaps</w:t></w:r></w:p><w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Minimum</w:t></w:r><w:r><w:t> first. </w:t></w:r><w:hyperlink r:id="rId1"><w:r><w:t>Read more</w:t></w:r></w:hyperlink></w:p><w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="2"/></w:numPr></w:pPr><w:r><w:t>Insert</w:t></w:r></w:p><w:p><w:pPr><w:numPr><w:ilvl w:val="1"/><w:numId w:val="2"/></w:numPr></w:pPr><w:r><w:t>Sift up</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Operation</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Cost</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Insert | push</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>O(log n)</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"#;
+        let rels = r#"<Relationships><Relationship Id="rId1" Type="http://x/hyperlink" Target="https://example.com/heaps" TargetMode="External"/></Relationships>"#;
+        let numbering = r#"<w:numbering><w:abstractNum w:abstractNumId="1"><w:lvl w:ilvl="0"><w:numFmt w:val="decimal"/><w:start w:val="3"/></w:lvl><w:lvl w:ilvl="1"><w:numFmt w:val="bullet"/></w:lvl></w:abstractNum><w:num w:numId="2"><w:abstractNumId w:val="1"/></w:num></w:numbering>"#;
+        let source = upload(
+            "notes.docx",
+            "",
+            office(&[
+                ("word/document.xml", xml),
+                ("word/_rels/document.xml.rels", rels),
+                ("word/numbering.xml", numbering),
+            ]),
+        );
+        let text = read_for_chat(&source, &never, &mut |_| {}).unwrap();
+        assert!(!text.contains("# Café &amp;"));
+        assert!(text.contains("# Café & heaps"), "{text}");
+        assert!(
+            text.contains("**Minimum** first. [Read more](https://example.com/heaps)"),
+            "{text}"
+        );
+        assert!(text.contains("3. Insert\n  - Sift up"), "{text}");
+        assert!(
+            text.contains("| Operation | Cost |\n| --- | --- |\n| Insert \\| push | O(log n) |"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn native_sources_follow_slide_and_notes_relationships() {
+        let presentation = r#"<p:presentation><p:sldIdLst><p:sldId id="256" r:id="rId2"/><p:sldId id="257" r:id="rId1"/></p:sldIdLst></p:presentation>"#;
+        let rels = r#"<Relationships><Relationship Id="rId1" Type="http://x/slide" Target="slides/slide1.xml"/><Relationship Id="rId2" Type="http://x/slide" Target="slides/slide2.xml"/></Relationships>"#;
+        let slide = r#"<p:sld><p:cSld><p:spTree><p:sp><p:nvSpPr><p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr><p:txBody><a:p><a:r><a:t>Heaps</a:t></a:r></a:p><a:p><a:pPr lvl="0"><a:buChar char="•"/></a:pPr><a:r><a:t>Minimum first</a:t></a:r></a:p></p:txBody></p:sp><p:graphicFrame><a:graphic><a:graphicData><a:tbl><a:tr><a:tc><a:txBody><a:p><a:r><a:t>Cost</a:t></a:r></a:p></a:txBody></a:tc></a:tr><a:tr><a:tc><a:txBody><a:p><a:r><a:t>O(log n)</a:t></a:r></a:p></a:txBody></a:tc></a:tr></a:tbl></a:graphicData></a:graphic></p:graphicFrame></p:spTree></p:cSld></p:sld>"#;
+        let slide_rels = r#"<Relationships><Relationship Id="rId7" Type="http://x/notesSlide" Target="../notesSlides/notesSlide9.xml"/></Relationships>"#;
+        let notes = r#"<p:notes><p:sp><p:nvSpPr><p:nvPr><p:ph type="body"/></p:nvPr></p:nvSpPr><p:txBody><a:p><a:r><a:t>Keep this speaker note</a:t></a:r></a:p></p:txBody></p:sp></p:notes>"#;
+        let source = upload(
+            "deck.pptx",
+            "",
+            office(&[
+                ("ppt/presentation.xml", presentation),
+                ("ppt/_rels/presentation.xml.rels", rels),
+                (
+                    "ppt/slides/slide1.xml",
+                    "<p:sld><a:p><a:r><a:t>Last</a:t></a:r></a:p></p:sld>",
+                ),
+                ("ppt/slides/slide2.xml", slide),
+                ("ppt/slides/_rels/slide2.xml.rels", slide_rels),
+                ("ppt/notesSlides/notesSlide9.xml", notes),
+            ]),
+        );
+        let text = read_for_chat(&source, &never, &mut |_| {}).unwrap();
+        assert!(text.starts_with("## Slide 1\n### Heaps"), "{text}");
+        assert!(text.contains("- Minimum first"), "{text}");
+        assert!(text.contains("| Cost |\n| --- |\n| O(log n) |"), "{text}");
+        assert!(
+            text.contains("Speaker notes: Keep this speaker note"),
+            "{text}"
+        );
+        assert!(text.ends_with("## Slide 2\nLast"), "{text}");
+    }
+
+    #[test]
+    fn native_sources_read_short_pdf_text_without_vision() {
+        let source = upload(
+            "short.pdf",
+            "application/pdf",
+            pdf_with(Some("Quiz"), Some(&[0xff, 0xd8, 0xff, 1])),
+        );
+        assert_eq!(
+            read_for_chat(&source, &never, &mut |_| {}).unwrap(),
+            "[page 1]\nQuiz"
+        );
+    }
+
+    #[test]
     fn word_documents_keep_their_paragraphs_and_symbols() {
         let xml = r#"<w:document><w:body><w:p><w:r><w:t>Heaps &amp; queues</w:t></w:r></w:p><w:p><w:r><w:t xml:space="preserve">Insert is </w:t></w:r><w:r><w:t>O(log n) &lt;fast&gt;</w:t></w:r></w:p><w:p/><w:p><w:r><w:t>Caf&#233;</w:t></w:r></w:p></w:body></w:document>"#;
         let bytes = office(&[("word/document.xml", xml)]);
         let got = extract(&upload("notes.docx", "application/octet-stream", bytes)).unwrap();
         assert_eq!(
             got.text,
-            "Heaps & queues\nInsert is O(log n) <fast>\n\nCafé"
+            "Heaps & queues\nInsert is O(log n) \\<fast\\>\n\nCafé"
         );
         assert!(got.images.is_empty());
     }
@@ -861,6 +975,12 @@ mod tests {
     }
 
     fn pdf_with(text: Option<&str>, jpeg: Option<&[u8]>) -> Vec<u8> {
+        pdf_with_pages(&[(text, jpeg, false)])
+    }
+
+    type PdfPart<'a> = (Option<&'a str>, Option<&'a [u8]>, bool);
+
+    fn pdf_with_pages(parts: &[PdfPart<'_>]) -> Vec<u8> {
         use lopdf::content::{Content, Operation};
         use lopdf::{dictionary, Document, Object, Stream};
         let mut doc = Document::with_version("1.5");
@@ -868,50 +988,54 @@ mod tests {
         let font_id = doc.add_object(
             dictionary! { "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Courier" },
         );
-        let mut xobjects = lopdf::Dictionary::new();
-        let mut ops = Vec::new();
-        if let Some(text) = text {
-            ops.extend([
-                Operation::new("BT", vec![]),
-                Operation::new("Tf", vec!["F1".into(), 12.into()]),
-                Operation::new("Td", vec![50.into(), 700.into()]),
-                Operation::new("Tj", vec![Object::string_literal(text)]),
-                Operation::new("ET", vec![]),
-            ]);
+        let mut kids = Vec::new();
+        for &(text, jpeg, full) in parts {
+            let mut xobjects = lopdf::Dictionary::new();
+            let mut ops = Vec::new();
+            if let Some(text) = text {
+                ops.extend([
+                    Operation::new("BT", vec![]),
+                    Operation::new("Tf", vec!["F1".into(), 12.into()]),
+                    Operation::new("Td", vec![50.into(), 700.into()]),
+                    Operation::new("Tj", vec![Object::string_literal(text)]),
+                    Operation::new("ET", vec![]),
+                ]);
+            }
+            if let Some(jpeg) = jpeg {
+                let image = Stream::new(
+                    dictionary! { "Type" => "XObject", "Subtype" => "Image", "Width" => 400, "Height" => 500, "ColorSpace" => "DeviceRGB", "BitsPerComponent" => 8, "Filter" => "DCTDecode" },
+                    jpeg.to_vec(),
+                );
+                let image_id = doc.add_object(image);
+                xobjects.set("Im1", image_id);
+                ops.extend([
+                    Operation::new("q", vec![]),
+                    Operation::new(
+                        "cm",
+                        vec![
+                            (if full { 612 } else { 400 }).into(),
+                            0.into(),
+                            0.into(),
+                            (if full { 792 } else { 500 }).into(),
+                            0.into(),
+                            0.into(),
+                        ],
+                    ),
+                    Operation::new("Do", vec!["Im1".into()]),
+                    Operation::new("Q", vec![]),
+                ]);
+            }
+            let content = Content { operations: ops };
+            let content_id = doc.add_object(Stream::new(dictionary! {}, content.encode().unwrap()));
+            let resources =
+                dictionary! { "Font" => dictionary! { "F1" => font_id }, "XObject" => xobjects };
+            let page_id = doc.add_object(dictionary! { "Type" => "Page", "Parent" => pages_id, "Contents" => content_id, "Resources" => resources, "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()] });
+            kids.push(page_id.into());
         }
-        if let Some(jpeg) = jpeg {
-            let image = Stream::new(
-                dictionary! { "Type" => "XObject", "Subtype" => "Image", "Width" => 400, "Height" => 500, "ColorSpace" => "DeviceRGB", "BitsPerComponent" => 8, "Filter" => "DCTDecode" },
-                jpeg.to_vec(),
-            );
-            let image_id = doc.add_object(image);
-            xobjects.set("Im1", image_id);
-            ops.extend([
-                Operation::new("q", vec![]),
-                Operation::new(
-                    "cm",
-                    vec![
-                        400.into(),
-                        0.into(),
-                        0.into(),
-                        500.into(),
-                        0.into(),
-                        0.into(),
-                    ],
-                ),
-                Operation::new("Do", vec!["Im1".into()]),
-                Operation::new("Q", vec![]),
-            ]);
-        }
-        let content = Content { operations: ops };
-        let content_id = doc.add_object(Stream::new(dictionary! {}, content.encode().unwrap()));
-        let resources =
-            dictionary! { "Font" => dictionary! { "F1" => font_id }, "XObject" => xobjects };
-        let page_id = doc.add_object(dictionary! { "Type" => "Page", "Parent" => pages_id, "Contents" => content_id, "Resources" => resources, "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()] });
         doc.objects.insert(
             pages_id,
             Object::Dictionary(
-                dictionary! { "Type" => "Pages", "Kids" => vec![page_id.into()], "Count" => 1 },
+                dictionary! { "Type" => "Pages", "Kids" => kids, "Count" => parts.len() as i64 },
             ),
         );
         let catalog_id = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
@@ -937,6 +1061,149 @@ mod tests {
         assert_eq!(got.images[0].bytes, fake_jpeg);
         assert!(extract(&upload("empty.pdf", "", pdf_with(None, None))).is_err());
         assert!(extract(&upload("junk.pdf", "", b"not a pdf".to_vec())).is_err());
+    }
+
+    #[test]
+    fn native_sources_only_send_scanned_pdf_pages_to_vision_in_either_order() {
+        let jpeg = [0xff, 0xd8, 0xff, 1];
+        for reversed in [false, true] {
+            let mut parts = [(Some("Digital text that is long enough to pass the old whole-document heuristic."), None, false), (Some("2"), Some(jpeg.as_slice()), true), (Some("Quiz"), Some(jpeg.as_slice()), false)];
+            if reversed {
+                parts.reverse();
+            }
+            let source = upload("mixed.pdf", "", pdf_with_pages(&parts));
+            let calls = Mutex::new(0);
+            let see = |_: Prompt, images: &[Image], _: u32| {
+                *calls.lock().unwrap() += 1;
+                assert_eq!(images.len(), 1);
+                Ok("Text from the scanned page".to_string())
+            };
+            let read = read_for_chat(&source, &see, &mut |_| {}).unwrap();
+            assert!(
+                read.contains("Digital text")
+                    && read.contains("Quiz")
+                    && read.contains("Text from the scanned page")
+            );
+            assert_eq!(*calls.lock().unwrap(), 1);
+        }
+    }
+
+    #[test]
+    fn native_sources_preserve_word_styles_equations_and_numbering_overrides() {
+        let xml = r#"<w:document><w:body><w:p><w:pPr><w:pStyle w:val="Custom"/></w:pPr><w:r><w:t>Fractions</w:t></w:r></w:p><w:p><m:oMath><m:f><m:num><m:r><m:t>α</m:t></m:r></m:num><m:den><m:sSup><m:e><m:r><m:t>x</m:t></m:r></m:e><m:sup><m:r><m:t>2</m:t></m:r></m:sup></m:sSup></m:den></m:f></m:oMath></w:p><w:p><w:pPr><w:numPr><w:numId w:val="7"/></w:numPr></w:pPr><w:r><w:rPr><w:b w:val="0"/><w:i/></w:rPr><w:t>First</w:t></w:r></w:p><w:p><w:pPr><w:numPr><w:numId w:val="7"/></w:numPr></w:pPr><w:r><w:t>Second</w:t></w:r></w:p></w:body></w:document>"#;
+        let styles = r#"<w:styles><w:style w:styleId="Custom"><w:basedOn w:val="Section"/></w:style><w:style w:styleId="Section"><w:pPr><w:outlineLvl w:val="1"/></w:pPr></w:style></w:styles>"#;
+        let numbers = r#"<w:numbering><w:abstractNum w:abstractNumId="1"><w:lvl w:ilvl="0"><w:numFmt w:val="decimal"/><w:start w:val="1"/></w:lvl></w:abstractNum><w:num w:numId="7"><w:abstractNumId w:val="1"/><w:lvlOverride w:ilvl="0"><w:startOverride w:val="5"/></w:lvlOverride></w:num></w:numbering>"#;
+        let source = upload(
+            "math.docx",
+            "",
+            office(&[
+                ("word/document.xml", xml),
+                ("word/styles.xml", styles),
+                ("word/numbering.xml", numbers),
+            ]),
+        );
+        let text = read_for_chat(&source, &never, &mut |_| {}).unwrap();
+        assert_eq!(
+            text,
+            "## Fractions\n$\\frac{α}{{x}^{2}}$\n5. *First*\n6. Second"
+        );
+    }
+
+    #[test]
+    fn native_sources_extract_chart_data_without_running_external_links() {
+        let slide = r#"<p:sld><a:graphic><a:graphicData><c:chart r:id="rId1"/></a:graphicData></a:graphic></p:sld>"#;
+        let rels = r#"<Relationships><Relationship Id="rId1" Type="http://x/chart" Target="../charts/chart1.xml"/><Relationship Id="rId2" Type="http://x/image" Target="http://127.0.0.1/private" TargetMode="External"/></Relationships>"#;
+        let chart = r#"<c:chartSpace><c:chart><c:plotArea><c:barChart><c:ser><c:tx><c:strRef><c:strCache><c:pt idx="0"><c:v>Café</c:v></c:pt></c:strCache></c:strRef></c:tx><c:cat><c:strRef><c:strCache><c:pt idx="1"><c:v>B</c:v></c:pt><c:pt idx="0"><c:v>A</c:v></c:pt></c:strCache></c:strRef></c:cat><c:val><c:numRef><c:numCache><c:pt idx="0"><c:v>3</c:v></c:pt><c:pt idx="1"><c:v>7</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser></c:barChart></c:plotArea></c:chart></c:chartSpace>"#;
+        let source = upload(
+            "chart.pptx",
+            "",
+            office(&[
+                ("ppt/slides/slide1.xml", slide),
+                ("ppt/slides/_rels/slide1.xml.rels", rels),
+                ("ppt/charts/chart1.xml", chart),
+            ]),
+        );
+        let text = read_for_chat(&source, &never, &mut |_| {}).unwrap();
+        assert!(
+            text.contains("| Category | Café |\n| --- | --- |\n| A | 3 |\n| B | 7 |"),
+            "{text}"
+        );
+        assert!(!text.contains("127.0.0.1"));
+    }
+
+    #[test]
+    fn native_sources_feed_markdown_to_one_study_note_request() {
+        let xml = r#"<w:document><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Heaps</w:t></w:r></w:p></w:body></w:document>"#;
+        let material = gather(&[upload(
+            "heaps.docx",
+            "",
+            office(&[("word/document.xml", xml)]),
+        )])
+        .unwrap();
+        let calls = Mutex::new(0);
+        let write = |p: Prompt, _: u32| {
+            *calls.lock().unwrap() += 1;
+            assert!(p.user.contains("# Heaps"));
+            Ok("Heaps\n\nPolished notes".to_string())
+        };
+        let (title, body) = write_note(
+            &material,
+            "heaps.docx",
+            "",
+            &write,
+            &never,
+            &mut |_, _, _| {},
+            Budget::FREE,
+        )
+        .unwrap();
+        assert_eq!((title.as_str(), body.as_str()), ("Heaps", "Polished notes"));
+        assert_eq!(*calls.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn native_sources_keep_png_scans_and_bound_pdf_decompression() {
+        use lopdf::{dictionary, Object, Stream};
+        let bytes = pdf_with(None, Some(&[0xff, 0xd8, 0xff, 1]));
+        let mut doc = lopdf::Document::load_mem(&bytes).unwrap();
+        let image = doc
+            .objects
+            .values_mut()
+            .find_map(|o| {
+                o.as_stream_mut().ok().filter(|s| {
+                    s.dict
+                        .get(b"Subtype")
+                        .is_ok_and(|v| v.as_name().is_ok_and(|name| name == b"Image"))
+                })
+            })
+            .unwrap();
+        image.dict.set("Filter", "FlateDecode");
+        image.content = figures::filtered_rows(&vec![50; 400 * 500 * 3], 400, 500, 3).unwrap();
+        image.dict.set("DecodeParms", dictionary! { "Predictor" => 15, "Colors" => 3, "BitsPerComponent" => 8, "Columns" => 400 });
+        let mut out = Vec::new();
+        doc.save_to(&mut out).unwrap();
+        let material = extract(&upload("scan.pdf", "", out)).unwrap();
+        assert_eq!(material.images.len(), 1);
+        assert_eq!(material.images[0].mime, "image/png");
+        assert_eq!(
+            leo_core::attachments::dimensions(&material.images[0].bytes),
+            Some((400, 500))
+        );
+
+        let page = *doc.get_pages().values().next().unwrap();
+        let mut stream = Stream::new(dictionary! {}, vec![b' '; MOST_PDF_CONTENT_BYTES + 1]);
+        stream.compress().unwrap();
+        let id = doc.add_object(stream);
+        doc.get_object_mut(page)
+            .unwrap()
+            .as_dict_mut()
+            .unwrap()
+            .set("Contents", Object::Reference(id));
+        let mut out = Vec::new();
+        doc.save_to(&mut out).unwrap();
+        let error = extract(&upload("bomb.pdf", "", out))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("too much content"), "{error}");
     }
 
     #[test]

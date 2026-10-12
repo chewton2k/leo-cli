@@ -60,6 +60,8 @@ fn a_document_given_to_felix_is_kept_as_text_and_read_with_the_question() {
         recent: vec![],
         practice: false,
         mark: false,
+        selection: None,
+        session: None,
     };
     run(async {
         let response = chat_reply(State(state.clone()), Json(body)).await;
@@ -141,6 +143,8 @@ fn a_chat_reply_streams_its_sources_then_the_answer() {
         recent: vec![],
         practice: false,
         mark: false,
+        selection: None,
+        session: None,
     };
     let text = run(async {
         let response = chat_reply(State(state.clone()), Json(body)).await;
@@ -186,6 +190,8 @@ fn a_chat_without_ai_or_a_question_is_refused() {
         recent: vec![],
         practice: false,
         mark: false,
+        selection: None,
+        session: None,
     };
     let status = run(async {
         chat_reply(State(state.clone()), Json(ask("hi")))
@@ -230,6 +236,16 @@ fn chat_lines_with(
     question: &str,
     access: Option<&str>,
 ) -> Vec<serde_json::Value> {
+    chat_lines_in(state, question, access, None, None)
+}
+
+fn chat_lines_in(
+    state: &AppState,
+    question: &str,
+    access: Option<&str>,
+    session: Option<tools::Session>,
+    selection: Option<chat::Selection>,
+) -> Vec<serde_json::Value> {
     let body = chat::ChatBody {
         messages: vec![chat::Turn {
             role: "user".into(),
@@ -244,6 +260,8 @@ fn chat_lines_with(
         recent: vec![],
         practice: false,
         mark: false,
+        selection,
+        session,
     };
     let text = run(async {
         let response = chat_reply(State(state.clone()), Json(body)).await;
@@ -1078,6 +1096,8 @@ fn a_long_chat_is_remembered_in_a_summary_instead_of_forgotten() {
             recent: vec![],
             practice: false,
             mark: false,
+            selection: None,
+            session: None,
         };
         run(async {
             let response = chat_reply(State(state.clone()), Json(body)).await;
@@ -1234,6 +1254,8 @@ fn a_practice_answer_is_marked_once_and_never_nudged_into_changing_a_note() {
         recent: vec![],
         practice: true,
         mark: false,
+        selection: None,
+        session: None,
     };
     let text = run(async {
         let response = chat_reply(State(state.clone()), Json(body)).await;
@@ -1351,6 +1373,8 @@ fn a_marking_without_a_verdict_gets_one_from_a_short_check() {
         recent: vec![],
         practice: true,
         mark: true,
+        selection: None,
+        session: None,
     };
     let text = run(async {
         let response = chat_reply(State(state.clone()), Json(body)).await;
@@ -1507,5 +1531,185 @@ fn interview_tools_share_the_native_and_text_paths_without_changing_notes_or_res
             .attempts
             .is_empty());
         assert!(state.store.lock().unwrap().store.notes.is_empty());
+    }
+}
+
+#[test]
+fn a_study_session_plans_names_ideas_and_refuses_questions_once_covered() {
+    let (mut state, _d, _) = state_with(&[("Heaps", "cs130")]);
+    let (streamer, prompts) = scripted(vec![
+        "<tool>{\"name\": \"study_plan\", \"ideas\": \"Root | Sift down\"}</tool>",
+        "<tool>{\"name\": \"quiz\", \"kind\": \"free_response\", \"question\": \"What is at the root?\", \"answer\": \"the minimum\"}</tool>",
+        "<tool>{\"name\": \"quiz\", \"kind\": \"free_response\", \"question\": \"What is at the root?\", \"answer\": \"the minimum\", \"idea\": \"1\"}</tool>",
+        "Try it.",
+    ]);
+    state.chat = Some(streamer);
+    let lines = chat_lines(&state, "quiz me on heaps");
+    let plan: Vec<&serde_json::Value> = lines.iter().filter_map(|l| l.get("plan")).collect();
+    assert_eq!(plan, [&serde_json::json!({"ideas": ["Root", "Sift down"]})]);
+    let quizzes: Vec<&serde_json::Value> = lines.iter().filter_map(|l| l.get("quiz")).collect();
+    assert_eq!(quizzes.len(), 1, "{lines:?}");
+    assert_eq!(quizzes[0]["idea"], 1);
+    assert!(prompts.lock().unwrap()[2]
+        .contains("give \"idea\": the number of an idea still open: 1 (Root), 2 (Sift down)"));
+
+    let (streamer, prompts) = scripted(vec![
+        "<tool>{\"name\": \"quiz\", \"kind\": \"free_response\", \"question\": \"More?\", \"answer\": \"x\", \"idea\": \"2\"}</tool>",
+        "You covered both ideas well.",
+    ]);
+    state.chat = Some(streamer);
+    let covered = tools::Session {
+        ideas: vec!["Root".into(), "Sift down".into()],
+        closed: vec![true, true],
+        asked: 2,
+    };
+    let lines = chat_lines_in(&state, "[[correct]] yes", None, Some(covered), None);
+    assert!(lines.iter().all(|l| l.get("quiz").is_none()), "{lines:?}");
+    assert!(prompts.lock().unwrap()[1].contains(tools::SESSION_DONE));
+
+    let (streamer, _) = scripted(vec![
+        "<tool>{\"name\": \"end_session\"}</tool>",
+        "Good work today.",
+    ]);
+    state.chat = Some(streamer);
+    let open = tools::Session {
+        ideas: vec!["Root".into()],
+        closed: vec![false],
+        asked: 1,
+    };
+    let lines = chat_lines_in(&state, "that's enough for today", None, Some(open), None);
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.get("session_end") == Some(&serde_json::json!(true))),
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn a_selected_passage_reaches_felix_as_quoted_material() {
+    let (mut state, _d, _) = state_with(&[("Heaps", "cs130")]);
+    let (streamer, prompts) = scripted(vec!["It means the root is smallest."]);
+    state.chat = Some(streamer);
+    let selection = chat::Selection {
+        title: "Heaps".into(),
+        from: 3,
+        to: 3,
+        text: "keeps the minimum".into(),
+    };
+    chat_lines_in(&state, "what does this mean?", None, None, Some(selection));
+    let prompt = prompts.lock().unwrap()[0].clone();
+    assert!(prompt.contains(
+        "<selected_passage note=\"Heaps\" lines=\"3\">\nkeeps the minimum\n</selected_passage>"
+    ));
+    assert!(
+        prompt.find("<selected_passage").unwrap() < prompt.rfind("what does this mean?").unwrap()
+    );
+}
+
+#[test]
+fn company_preparation_searches_and_creates_a_seeded_coding_workspace_on_both_protocols() {
+    const CHALLENGE: &str = r#"{"id":"challenge-prep-01","title":"Pair sum","question":"Return the two matching indices.","minutes":25,"skills":["Approach"],"origin":"generated","sources":[{"title":"Public candidate report","url":"https://example.com/interview","kind":"reported"}],"coding":{"language":"Python","starter":"def pair_sum(nums, target):\n    pass","difficulty":"easy","examples":[{"input":"nums=[2,3], target=5","output":"[0,1]"}],"constraints":["Exactly one pair exists."]}}"#;
+    struct PrepareNative {
+        company: bool,
+    }
+    impl chat::Conversation for PrepareNative {
+        fn native(&self) -> bool {
+            true
+        }
+        fn say(&mut self, _: &str, exchange: chat::Exchange<'_>) -> anyhow::Result<chat::Reply> {
+            let _ = (exchange.call)("interview_progress", &serde_json::json!({}));
+            if self.company {
+                let found = (exchange.call)(
+                    "web_search",
+                    &serde_json::json!({"query":"Pinterest software engineer past interview questions"}),
+                );
+                assert!(found.contains("Public candidate report"));
+            }
+            let mut incomplete: serde_json::Value = serde_json::from_str(CHALLENGE).unwrap();
+            incomplete.as_object_mut().unwrap().remove("coding");
+            let correction = (exchange.call)(
+                "interview_challenge",
+                &serde_json::json!({"data":incomplete.to_string()}),
+            );
+            assert!(correction.contains("unsolved function starter"));
+            let saved = (exchange.call)(
+                "interview_challenge",
+                &serde_json::json!({"data":CHALLENGE}),
+            );
+            assert!(!saved.starts_with("That did not work:"), "{saved}");
+            (exchange.piece)("Your problem is ready in the workspace.");
+            Ok("Your problem is ready in the workspace.".into())
+        }
+    }
+    for native in [false, true] {
+        for company in if native { [true, false] } else { [false, true] } {
+            let (mut state, _dir, _) = state_with(&[]);
+            let queries = Arc::new(Mutex::new(Vec::new()));
+            let seen = Arc::clone(&queries);
+            state.web = Some(crate::Web {
+                search: Arc::new(move |query| {
+                    seen.lock().unwrap().push(query.to_owned());
+                    Ok(vec![crate::WebHit {
+                        title: "Public candidate report".into(),
+                        url: "https://example.com/interview".into(),
+                        snippet: "Unverified interview topics.".into(),
+                    }])
+                }),
+                page: Arc::new(|_| Ok(String::new())),
+                needed: Arc::new(|| true),
+            });
+            let framework = serde_json::from_value(serde_json::json!({"title":"Coding practice","track":"coding","company":if company {"Pinterest"} else {""},"role":"Software engineer","language":"Python","style":"coach","date":"","weekly_minutes":120,"skills":["Approach"],"wants":""})).unwrap();
+            crate::interview::configure(&state.chats, "interview-prep-01", 0, framework).unwrap();
+            let mut replies = vec![r#"<tool>{"name":"interview_progress"}</tool>"#.to_string()];
+            if company {
+                replies.push(r#"<tool>{"name":"web_search","query":"Pinterest software engineer past interview questions"}</tool>"#.to_string());
+            }
+            replies.push(format!(
+                "<tool>{}</tool>",
+                serde_json::json!({"name":"interview_challenge","data":CHALLENGE})
+            ));
+            replies.push("Your problem is ready in the workspace.".into());
+            let replies = Arc::new(Mutex::new(replies.into_iter()));
+            state.chat = Some(Arc::new(move |system, _, _, piece, _| {
+                assert!(system.contains("automatically research before creating the challenge"));
+                let reply = replies.lock().unwrap().next().unwrap();
+                piece(&reply);
+                Ok(reply.into())
+            }));
+            if native {
+                state.converse = Some(Arc::new(move |given, specs| {
+                    assert!(given.native.contains("unsolved function/class signature"));
+                    assert!(specs.iter().any(|s| s.name == "web_search"));
+                    Some(Box::new(PrepareNative { company }) as Box<dyn chat::Conversation>)
+                }));
+            }
+            let body = serde_json::from_value(serde_json::json!({"chat":"interview-prep-01","mode":"interview","messages":[{"role":"user","text":"Start my practice and prepare a challenge."}]})).unwrap();
+            let bytes = run(async {
+                let reply = chat_reply(State(state.clone()), Json(body)).await;
+                axum::body::to_bytes(reply.into_body(), 1_000_000)
+                    .await
+                    .unwrap()
+            });
+            let lines: Vec<serde_json::Value> = std::str::from_utf8(&bytes)
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+            assert!(lines
+                .iter()
+                .all(|line| line.get("error").is_none() && line.get("restart").is_none()));
+            assert_eq!(queries.lock().unwrap().len(), usize::from(company));
+            let item = crate::interview::load(&state.chats, "interview-prep-01").unwrap();
+            assert_eq!(
+                item.workspace.answer,
+                "def pair_sum(nums, target):\n    pass"
+            );
+            assert_eq!(
+                item.challenge.unwrap().coding.unwrap().examples[0].output,
+                "[0,1]"
+            );
+            assert!(state.store.lock().unwrap().store.notes.is_empty());
+        }
     }
 }

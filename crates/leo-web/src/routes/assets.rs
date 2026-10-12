@@ -17,6 +17,8 @@ const APP_JS: &str = concat!(
     include_str!("../web/app/diagrams.js"),
     include_str!("../web/app/math.js"),
     include_str!("../web/app/sources.js"),
+    include_str!("../web/app/passages.js"),
+    include_str!("../web/app/calendar.js"),
     include_str!("../web/app/interviews.js"),
     include_str!("../web/app/actions.js"),
     include_str!("../web/app/events.js"),
@@ -29,9 +31,13 @@ const EDITING_JS: &str = include_str!("../web/editing.js");
 const SAVING_JS: &str = include_str!("../web/saving.js");
 const DOC_JS: &str = include_str!("../web/doc.js");
 const GRAPH_JS: &str = include_str!("../web/graph.js");
+const SCHEDULE_JS: &str = include_str!("../web/schedule.js");
 const CHAT_JS: &str = include_str!("../web/chat.js");
 pub(crate) async fn interview_js() -> Response {
     javascript(include_str!("../web/interview.js"))
+}
+pub(crate) async fn code_tools_js() -> Response {
+    javascript(include_str!("../web/vendor/code-tools.min.js"))
 }
 const AUDIO_QUEUE_JS: &str = include_str!("../web/audio-queue.js");
 pub(crate) async fn audio_queue_js() -> Response {
@@ -221,6 +227,10 @@ pub(crate) async fn graph_js() -> Response {
     javascript(GRAPH_JS)
 }
 
+pub(crate) async fn schedule_js() -> Response {
+    javascript(SCHEDULE_JS)
+}
+
 const FAVICON: &str = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"-1 -1 46 34\" shape-rendering=\"crispEdges\">\
 <rect x=\"0\" y=\"18\" width=\"5\" height=\"6\" fill=\"#b4cfe7\"/>\
 <rect x=\"39\" y=\"18\" width=\"5\" height=\"6\" fill=\"#b4cfe7\"/>\
@@ -271,7 +281,7 @@ mod tests {
                 parts += 1;
             }
         }
-        assert_eq!(parts, 16);
+        assert_eq!(parts, 18);
     }
 
     #[test]

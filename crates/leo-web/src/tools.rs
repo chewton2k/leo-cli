@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use leo_core::notes::Note;
 use leo_core::store::Store;
@@ -115,7 +115,7 @@ const NOTE: Param = Param {
     about: "which note: an id like n3 from a <note> tag or an earlier result, or the note's exact title",
 };
 
-pub const SPECS: [Spec; 12] = [
+pub const SPECS: [Spec; 14] = [
     Spec {
         name: "search_notes",
         purpose: "Find the user's notes that match words, abbreviations (BFS finds breadth-first search) or ideas in their knowledge graph.",
@@ -199,9 +199,37 @@ pub const SPECS: [Spec; 12] = [
                 required: false,
                 about: "one or two sentences shown after they answer, saying why",
             },
+            Param {
+                name: "idea",
+                required: false,
+                about: "during a study session: the number of the plan's idea this question is about (required then)",
+            },
+            Param {
+                name: "more_parts",
+                required: false,
+                about: "yes when this is one step of a worked problem and more steps of the same idea follow; leave it out on the last step",
+            },
         ],
         returns: "\"Asked.\" Then end your reply in one short sentence; how the user did comes as their next message. Write math in the question, choices and answer as $...$, like $f(x)=x^2+4\\cos x$.",
         example: r#"<tool>{"name": "quiz", "kind": "multiple_choice", "question": "What does BFS use to pick the next node?", "options": "a stack | a queue | a heap", "answer": "a queue", "explain": "BFS explores the oldest node found first."}</tool>"#,
+    },
+    Spec {
+        name: "study_plan",
+        purpose: "Start a study session: when the user wants to be quizzed or to study something for a while, first list the 3 to 8 key ideas or problems from what they are studying, then ask about them one at a time with quiz, giving each question's idea number. The session ends when every idea is covered.",
+        params: &[Param {
+            name: "ideas",
+            required: true,
+            about: "the ideas or problems, short names separated by |, in a good order to practise them",
+        }],
+        returns: "\"Planned.\" Then ask the first question with quiz in the same reply.",
+        example: r#"<tool>{"name": "study_plan", "ideas": "What a heap keeps at the root | Sift down | Building a heap in O(n) | Heap sort"}</tool>"#,
+    },
+    Spec {
+        name: "end_session",
+        purpose: "End the study session when the user says that is enough, wants to stop, or wants something else.",
+        params: &[],
+        returns: "\"Ended.\" Then write the recap in one short paragraph: what went well and what to look at again. Ask nothing more.",
+        example: r#"<tool>{"name": "end_session"}</tool>"#,
     },
     Spec {
         name: "look_at_picture",
@@ -996,6 +1024,80 @@ pub struct Quiz {
     pub options: Vec<String>,
     pub answer: String,
     pub explain: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub idea: Option<usize>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub more: bool,
+}
+
+pub const MOST_IDEAS: usize = 12;
+pub const MOST_IDEA_CHARS: usize = 80;
+pub const MOST_SESSION_QUESTIONS: usize = 20;
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Session {
+    #[serde(default)]
+    pub ideas: Vec<String>,
+    #[serde(default)]
+    pub closed: Vec<bool>,
+    #[serde(default)]
+    pub asked: usize,
+}
+
+impl Session {
+    pub fn over(&self) -> bool {
+        self.asked >= MOST_SESSION_QUESTIONS
+            || (!self.ideas.is_empty()
+                && (0..self.ideas.len()).all(|i| self.closed.get(i).copied().unwrap_or(false)))
+    }
+
+    pub fn check(&self, idea: Option<usize>) -> Result<(), String> {
+        let open: Vec<String> = self
+            .ideas
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !self.closed.get(*i).copied().unwrap_or(false))
+            .map(|(i, name)| format!("{} ({})", i + 1, clip_chars(name, 40)))
+            .collect();
+        match idea {
+            Some(n) if n >= 1 && n <= self.ideas.len() && !self.closed.get(n - 1).copied().unwrap_or(false) => Ok(()),
+            _ => Err(format!(
+                "a study session is running, so give \"idea\": the number of an idea still open: {}",
+                open.join(", ")
+            )),
+        }
+    }
+}
+
+fn clip_chars(text: &str, most: usize) -> String {
+    text.chars().take(most).collect()
+}
+
+pub const SESSION_DONE: &str = "That did not work: this study session is complete (every idea is covered, or it reached 20 questions). Do not ask another question. Write the recap now in one short paragraph: what went well and what to look at again.";
+pub const PLANNED: &str =
+    "Planned. Ask the first question now with quiz, giving its \"idea\" number.";
+pub const ENDED: &str = "Ended. Write the recap in one short paragraph: what went well and what to look at again. Ask nothing more.";
+
+pub fn plan_from(call: &Call) -> Result<Vec<String>, String> {
+    let mut ideas: Vec<String> = Vec::new();
+    for idea in call
+        .text("ideas")
+        .split('|')
+        .map(|i| i.trim())
+        .filter(|i| !i.is_empty())
+    {
+        if idea.chars().count() > MOST_IDEA_CHARS {
+            return Err(format!("keep each idea under {MOST_IDEA_CHARS} characters"));
+        }
+        if ideas.iter().any(|i| i.eq_ignore_ascii_case(idea)) {
+            return Err(format!("\"{idea}\" is listed twice"));
+        }
+        ideas.push(idea.to_string());
+    }
+    if ideas.is_empty() || ideas.len() > MOST_IDEAS {
+        return Err(format!("list 1 to {MOST_IDEAS} ideas separated by |"));
+    }
+    Ok(ideas)
 }
 
 pub const QUIZ_KINDS: [&str; 3] = ["multiple_choice", "fill_blank", "free_response"];
@@ -1041,6 +1143,16 @@ pub fn quiz_from(call: &Call) -> Result<Quiz, String> {
         question,
         answer,
         explain: call.text("explain").trim().to_string(),
+        idea: call
+            .text("idea")
+            .trim()
+            .trim_start_matches('#')
+            .parse::<usize>()
+            .ok(),
+        more: matches!(
+            call.text("more_parts").trim().to_lowercase().as_str(),
+            "yes" | "true" | "1"
+        ),
     })
 }
 
@@ -1089,6 +1201,8 @@ pub struct Desk {
     captions: Option<std::sync::Arc<crate::captions::Captions>>,
     pub asked: usize,
     pub interview: Option<String>,
+    pub session: Option<Session>,
+    pub session_over: bool,
     steer: Option<crate::steer::Steer>,
     meaning: Option<(
         crate::vectors::Meaning,
@@ -1113,6 +1227,8 @@ impl Desk {
             captions: None,
             asked: 0,
             interview: None,
+            session: None,
+            session_over: false,
             steer: None,
             meaning: None,
         }
@@ -1854,6 +1970,65 @@ pub fn continued(conversation: &str, call: &Call, done: &Done) -> String {
 mod tests {
     use super::*;
 
+    fn call_of(json: &str) -> Call {
+        find_call(&format!("<tool>{json}</tool>"))
+            .expect("a call")
+            .expect("a valid call")
+    }
+
+    #[test]
+    fn a_study_plan_is_a_short_list_of_distinct_ideas() {
+        let plan = plan_from(&call_of(
+            r#"{"name": "study_plan", "ideas": "Heaps | Sift down |  | Heap sort"}"#,
+        ))
+        .unwrap();
+        assert_eq!(plan, ["Heaps", "Sift down", "Heap sort"]);
+        assert!(plan_from(&call_of(r#"{"name": "study_plan", "ideas": "A | a"}"#)).is_err());
+        assert!(plan_from(&call_of(r#"{"name": "study_plan", "ideas": ""}"#)).is_err());
+        let many = (0..13)
+            .map(|i| format!("Idea {i}"))
+            .collect::<Vec<_>>()
+            .join(" | ");
+        assert!(plan_from(&call_of(&format!(
+            r#"{{"name": "study_plan", "ideas": "{many}"}}"#
+        )))
+        .is_err());
+    }
+
+    #[test]
+    fn a_session_question_must_name_an_open_idea_and_stops_when_covered() {
+        let mut session = Session {
+            ideas: vec!["Heaps".into(), "Sift down".into()],
+            closed: vec![true, false],
+            asked: 3,
+        };
+        assert!(session.check(Some(2)).is_ok());
+        let why = session.check(Some(1)).unwrap_err();
+        assert!(why.contains("2 (Sift down)") && !why.contains("1 (Heaps)"));
+        assert!(session.check(None).is_err());
+        assert!(session.check(Some(9)).is_err());
+        assert!(!session.over());
+        session.closed[1] = true;
+        assert!(session.over());
+        let capped = Session {
+            ideas: vec!["A".into()],
+            closed: vec![false],
+            asked: MOST_SESSION_QUESTIONS,
+        };
+        assert!(capped.over());
+        let quiz = quiz_from(&call_of(r#"{"name": "quiz", "kind": "free_response", "question": "Next step?", "answer": "x", "idea": "2", "more_parts": "yes"}"#)).unwrap();
+        assert_eq!((quiz.idea, quiz.more), (Some(2), true));
+        let plain = quiz_from(&call_of(
+            r#"{"name": "quiz", "kind": "free_response", "question": "Why?", "answer": "x"}"#,
+        ))
+        .unwrap();
+        assert_eq!((plain.idea, plain.more), (None, false));
+        assert!(!serde_json::json!(plain)
+            .as_object()
+            .unwrap()
+            .contains_key("idea"));
+    }
+
     #[test]
     fn latex_in_a_tool_call_keeps_its_backslashes() {
         let call = find_call(r#"<tool>{"name": "quiz", "kind": "fill_blank", "question": "Solve \(f'(x)=0\) where $f(x)=x^2+4\cos x$ and $\frac{1}{2}\theta \neq \nabla g$: ___", "answer": "x \approx 1.8955"}</tool>"#)
@@ -2058,7 +2233,7 @@ mod tests {
         assert!(number.contains("must be text in double quotes"));
         let unknown = wrong(serde_json::json!({"name": "delete_note", "note": "n1"}));
         assert!(unknown.contains(
-            "the tools are search_notes, open_note, connected_notes, calculate, ask_user, quiz, look_at_picture, read_original, read_transcript, read_document, edit_note, create_note"
+            "the tools are search_notes, open_note, connected_notes, calculate, ask_user, quiz, study_plan, end_session, look_at_picture, read_original, read_transcript, read_document, edit_note, create_note"
         ));
         assert_eq!(
             check(&Call {

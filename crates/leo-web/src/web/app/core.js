@@ -76,9 +76,17 @@ const chat = felix.create({
     if (open && !saving.unsaved()) showNote(note.id);
     toast(open && saving.unsaved() ? 'Felix changed this note while you were typing; reopen it to see the change.' : `Changed “${note.title}”`, { action: 'Open', run: () => go(noteHash(note.id)) });
   },
-  onToggle: () => drawSide(),
+  onToggle: (open) => {
+    if (open && tasksWin && tasksWin.open && !window.matchMedia('(min-width: 600px)').matches) setTasksWindow(false);
+    drawSide();
+  },
+  onAdd: (picked) => {
+    if (!window.matchMedia('(min-width: 900px)').matches) chat.toggle(false);
+    addSheet(picked);
+  },
   onInterview: (id) => { if (!sideWide()) chat.toggle(false); go(`#/interviews/${enc(id)}`); },
   onInterviewChanged: (id) => refreshInterview(id).catch(fail),
+  onInterviewReply: (id) => interviewReplyFinished(id),
   onSaved: (note) => {
     showLatest().catch(() => {});
     toast(`Saved as a note${note.directory ? ` in ${note.directory}` : ''}`, { action: 'Open', run: () => go(noteHash(note.id)) });
@@ -109,13 +117,16 @@ async function api(path, { method = 'GET', body, total = false } = {}) {
   if (response.status === 204) return null;
   if (!response.ok) {
     let said = '';
+    let data = null;
     try {
-      said = (await response.json()).error || '';
+      data = await response.json();
+      said = (data && data.error) || '';
     } catch (e) {
       said = '';
     }
     const error = new Error(said || (response.status === 404 ? 'That is not there any more.' : response.status === 400 ? 'Use a folder name inside your notes, without . or ..' : `leo answered ${response.status}.`));
     error.status = response.status;
+    error.data = data;
     throw error;
   }
   const text = await response.text();
@@ -227,7 +238,7 @@ function rel(iso) {
   return then.toLocaleDateString(undefined, sameYear ? { month: 'short', day: 'numeric' } : { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-const folderLabel = (dir) => (dir ? dir.split('/').pop() : 'All notes');
+const folderLabel = (dir) => (dir ? dir.split('/').pop() : 'Top level');
 
 function progress(note) {
   let done;
@@ -281,7 +292,6 @@ function card(note, { words = [], showFolder = false, pick = null, why = null, b
     ${text ? `<div class="card-snippet">${text}</div>` : ''}
     ${why ? `<div class="card-why">${ICON.map}${why.kind === 'idea' ? `Through the idea “${esc(why.name)}” in the knowledge graph` : why.kind === 'meaning' ? 'Close in meaning, though the words differ' : 'Through its summary in the knowledge graph'}</div>` : ''}
     <div class="card-meta">${where}<span title="${esc(`Edited ${rel(note.updated_at)}`)}">${browse ? esc(new Date(note.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })) : rel(note.updated_at)}</span>${progress(note)}</div>
-    ${browse && !pick ? `<button class="btn sm plain card-peek" data-action="note-preview" data-id="${esc(note.id)}" aria-label="Preview ${esc(note.title)}">Preview</button>` : ''}
   </div>`;
 }
 
@@ -315,7 +325,7 @@ function back() {
   go('#/');
 }
 
-const PAGE_NAMES = { '': 'All notes', f: 'All notes', search: 'Search', trash: 'Trash', map: 'Knowledge graph', settings: 'Settings', record: 'Record', interviews: 'Interview practice', new: 'New note' };
+const PAGE_NAMES = { '': 'Top level', f: 'Top level', search: 'Search', trash: 'Trash', map: 'Knowledge graph', calendar: 'Calendar', settings: 'Settings', record: 'Record', interviews: 'Interview practice', new: 'New note' };
 
 function pageName() {
   const [, kind = '', rest = ''] = location.hash.match(/^#\/([a-z]*)\/?(.*)$/) || [];
@@ -326,9 +336,10 @@ function pageName() {
 function chrome({ dir = '', showBack = false, fab = null, actions = null }) {
   $('#back').hidden = !showBack;
   const crumbs = $('#crumbs');
+  let trail;
   if (dir) {
     const parts = dir.split('/');
-    crumbs.innerHTML = `<button data-action="home" title="All notes · Drop a folder here to move it to the top level">All notes</button>` + parts
+    trail = `<button data-action="home" title="Top level · Drop a folder here to move it to the top level">Top level</button>` + parts
       .map((part, i) => {
         const path = parts.slice(0, i + 1).join('/');
         return `<span class="sep">/</span><button data-action="open-folder" data-dir="${esc(path)}" draggable="true">${esc(part)}</button>`;
@@ -336,8 +347,9 @@ function chrome({ dir = '', showBack = false, fab = null, actions = null }) {
       .join('');
   } else {
     const name = pageName();
-    crumbs.innerHTML = name ? `<span class="page-name">${esc(name)}</span>` : '';
+    trail = name ? `<span class="page-name">${esc(name)}</span>` : '';
   }
+  if (crumbs.innerHTML !== trail) crumbs.innerHTML = trail;
   floating.innerHTML = (fab || '') + (actions || '');
   document.title = dir ? `${folderLabel(dir)} · leo` : 'leo';
 }
@@ -346,14 +358,18 @@ const newButton = (dir) => `<div class="fabs"><button class="fab ghost" data-act
 
 async function showFolder(dir) {
   const mine = ++seq;
+  const arrived = state.view === 'folder' && state.dir !== dir;
+  stopLibraryArrival();
   const before = state.view === 'folder' && state.dir === dir ? state : null;
   state = { view: 'folder', dir, selecting: before ? before.selecting : false, picked: before ? new Set(before.picked) : new Set() };
+  libraryClasses();
   chrome({ dir, showBack: Boolean(dir), fab: newButton(dir) });
   if (!app.innerHTML.trim()) app.innerHTML = skeleton(4);
   const [dirs, page] = await Promise.all([api(`/api/dirs?parent=${enc(dir)}`), api(libraryQuery(dir), { total: true })]);
   if (mine !== seq) return;
   state.listing = { dirs, notes: page.items, total: page.total };
   drawFolder();
+  if (arrived) arriveInFolder();
 }
 
 const PAGE = 200;
@@ -389,12 +405,11 @@ function loadMoreNotes() {
       if (state.listing !== listing) return;
       const known = new Set(listing.notes.map((n) => n.id));
       const fresh = page.items.filter((n) => !known.has(n.id));
-      const previous = listing.notes[listing.notes.length - 1];
       listing.notes.push(...fresh);
       listing.total = Math.max(page.total, listing.notes.length);
       if (!fresh.length) listing.total = listing.notes.length;
       const cards = $('.cards');
-      if (cards) cards.insertAdjacentHTML('beforeend', libraryRows(fresh, previous));
+      if (cards) cards.insertAdjacentHTML('beforeend', libraryRows(fresh));
       watchPreviews();
       const sentinel = $('#more-notes');
       if (sentinel && listing.notes.length >= listing.total) sentinel.remove();
@@ -583,6 +598,8 @@ function noteActions(id, recorded = false) {
   return `<nav class="actions" aria-label="Note">
       ${id ? `<button data-action="note-map" data-id="${esc(id)}">${ICON.map}<span>Graph</span></button>` : ''}
       ${id && recorded ? `<button data-action="note-sources">${ICON.mic}<span>Transcript</span></button>` : ''}
+      ${id ? `<button data-action="ask-selection" data-keep-selection title="Ask Felix about the selected text (${navigator.platform && /Mac/.test(navigator.platform) ? '⌘⇧E' : 'Ctrl+Shift+E'})">${ICON.chat}<span>Ask</span></button>` : ''}
+      ${id ? `<button data-action="note-tasks">${ICON.calendar}<span>Tasks</span></button>` : ''}
       <button data-action="note-picture">${ICON.image}<span>Picture</span></button>
       <button data-action="move">${ICON.move}<span>Move</span></button>
       <button data-action="share">${ICON.share}<span>PDF</span></button>
@@ -594,7 +611,7 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
   const mine = ++seq;
   const note = fresh || (await api(`/api/notes/${enc(id)}`));
   if (mine !== seq) return;
-  openedNote(note.id);
+  if (source.note && source.note !== note.id) closeSource();
   if (state.session && state.session.doc) state.session.doc.destroy();
   const s = draft || saving.open(note);
   s.tags = [...s.edit.tags];
@@ -608,11 +625,15 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
     <header class="note-head"><h1 id="title" contenteditable="plaintext-only" spellcheck="true" data-placeholder="Title" enterkeyhint="next">${esc(s.edit.title)}</h1>
     <div class="note-meta">${where}<span id="save-state">${when}</span></div></header>
     <div class="prose doc" id="doc"></div>
+    <section class="related" id="related" hidden aria-label="Related notes"></section>
   </article>`;
   s.title = $('#title');
   drawOriginals(note);
-  s.doc = leoDoc.mount($('#doc'), { source: s.edit.body, onChange: () => changed(s), placeholder: 'Tap here to write', dir: note.directory || '', onPictures: (files) => addPictures(s, files) });
+  hideAskFloat();
+  s.doc = leoDoc.mount($('#doc'), { source: s.edit.body, onChange: () => changed(s), placeholder: 'Tap here to write', dir: note.directory || '', onPictures: (files) => addPictures(s, files), onSelection: (has) => placeAskFloat(has) });
   if (citedLines && citedLines.id === note.id) showCitedLines();
+  else restoreReading(note.id, mine);
+  drawRelated(note.id, mine);
   if (s.dirty) {
     mark(s, 'Recovered draft · saving…');
     flush(s).catch(fail);

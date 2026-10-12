@@ -45,6 +45,29 @@ function control(page, action) {
   return page.locator(`.fab[data-action="${action}"]:visible, #side [data-action="${action}"]:visible`).first();
 }
 
+async function dragBetween(page, source, target) {
+  await source.scrollIntoViewIfNeeded();
+  await source.evaluate(el => el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' }));
+  const from = await source.boundingBox();
+  expect(from).not.toBeNull();
+  const x = from.x + Math.min(16, from.width / 2);
+  const y = from.y + Math.min(20, from.height / 2);
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  try {
+    await page.mouse.move(x + 8, y + 8, { steps: 3 });
+    await target.evaluate(el => el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' }));
+    const into = await target.boundingBox();
+    expect(into).not.toBeNull();
+    const end = { x: into.x + into.width / 2, y: into.y + into.height / 2 };
+    expect(await target.evaluate((el, point) => el.contains(document.elementFromPoint(point.x, point.y)), end), 'the drop target is visible above fixed controls').toBe(true);
+    await page.mouse.move(end.x, end.y, { steps: 3 });
+    await page.mouse.move(end.x, end.y);
+  } finally {
+    await page.mouse.up();
+  }
+}
+
 async function openSearchBox(page) {
   if (await page.locator('#side').isHidden()) return page.locator('#search-toggle').click();
   await page.locator('#side [data-action="side-search"]').click();
@@ -406,19 +429,19 @@ test.describe('drag and drop', () => {
     const where = async () => (await (await page.request.get(`/api/notes/${note.id}`)).json()).directory;
     await page.goto('/');
     const card = page.locator(`.card[data-id="${note.id}"]`);
-    await card.dragTo(page.locator(`main .folder[data-dir="${a}"]`));
+    await dragBetween(page, card, page.locator(`main .folder[data-dir="${a}"]`));
     await expect(page.locator('.toast')).toContainText(`Moved “Drag me ${tag}” to ${a}`);
     expect(await where()).toBe(a);
-    await expect(card.locator('.card-meta')).toContainText(a);
+    await expect(card).toHaveCount(0);
     await page.locator('.toast button').click();
     await expect(card).toBeVisible();
     await expect(card.locator('.card-meta')).not.toContainText(a);
     expect(await where()).toBe('');
 
-    await card.dragTo(page.locator(`#side [data-action="open-folder"][data-dir="${b}"]`));
+    await dragBetween(page, card, page.locator(`#side [data-action="open-folder"][data-dir="${b}"]`));
     await expect.poll(where).toBe(b);
 
-    await page.locator(`main .folder[data-dir="${b}"]`).dragTo(page.locator(`main .folder[data-dir="${a}"]`));
+    await dragBetween(page, page.locator(`main .folder[data-dir="${b}"]`), page.locator(`main .folder[data-dir="${a}"]`));
     await expect(page.locator('.toast')).toContainText(`Moved ${b} into ${a}`);
     expect(await where()).toBe(`${a}/${b}`);
     await expect(page.locator(`main .folder[data-dir="${b}"]`)).toHaveCount(0);
@@ -429,7 +452,7 @@ test.describe('drag and drop', () => {
     expect(await where()).toBe(b);
 
     await page.goto(`/#/f/${b}`);
-    await page.locator(`.card[data-id="${note.id}"]`).dragTo(page.locator('#side .side-row[data-action="home"]'));
+    await dragBetween(page, page.locator(`.card[data-id="${note.id}"]`), page.locator('#side .side-row[data-action="home"]'));
     await expect.poll(where).toBe('');
   });
 
@@ -447,7 +470,7 @@ test.describe('drag and drop', () => {
     await dropFiles(page, '#chat', [{ name: 'for-felix.txt', type: 'text/plain', text: 'Heaps keep the minimum at the root.' }]);
     await expect(chat.locator('#chat-refs .file-card', { hasText: 'for-felix.txt' })).toBeVisible();
     await expect(page.locator('.scrim')).toHaveCount(0);
-    await page.locator(`.card[data-id="${note.id}"]`).dragTo(chat.locator('#chat-input'));
+    await dragBetween(page, page.locator(`.card[data-id="${note.id}"]`), chat.locator('#chat-input'));
     await expect(chat.locator('.chat-ref', { hasText: 'Dragged to Felix' })).toBeVisible();
   });
 });
@@ -821,13 +844,13 @@ test.describe('Felix', () => {
     await page.locator('#chat-toggle').click();
     const chat = page.locator('#chat');
     await chat.locator('[data-mode="study"]').click();
-    await chat.locator('.starter', { hasText: 'Quiz me on this note' }).click();
-    await expect(chat.locator('.chat-ask')).toContainText('Which note should I quiz you on?');
+    await chat.locator('.starter', { hasText: 'Start a study session on this note' }).click();
+    await expect(chat.locator('.chat-ask')).toContainText('Which note should the session cover?');
     expect(asked.length).toBe(0);
     await chat.locator('#chat-pick-search').fill(`Sorting lecture ${tag}`);
     await chat.locator('.chat-pick-row', { hasText: `Sorting lecture ${tag}` }).click();
     await expect(chat.locator('.msg.leo').last()).toContainText('Here we go.');
-    expect(asked[0].messages[0].text).toBe('Quiz me on this note');
+    expect(asked[0].messages[0].text).toBe('Start a study session on this note');
     expect(asked[0].refs).toEqual([note.id]);
 
     await chat.locator('.chat-head [data-chat="new"]').click();
@@ -1543,9 +1566,15 @@ test.describe('pictures', () => {
 
   test('a picture pasted into Felix shows as a thumbnail and goes with the message', async ({ page }) => {
     const asked = [];
-    await page.route('**/api/chats/*/files', (route) => {
+    const uploaded = [];
+    let finishReading;
+    const reading = new Promise(resolve => { finishReading = resolve; });
+    await page.route('**/api/chats/*/files', async (route) => {
       if (route.request().method() !== 'POST') return route.fulfill({ json: [] });
-      return route.fulfill({ status: 201, json: { id: 'doc-pic-1', name: route.request().postDataJSON().name, chars: 40 } });
+      const body = route.request().postDataJSON();
+      uploaded.push(body);
+      await reading;
+      return route.fulfill({ status: 201, json: { id: 'doc-pic-1', name: body.name, chars: 40 } });
     });
     await page.route('**/api/chat', async (route) => {
       asked.push(route.request().postDataJSON());
@@ -1555,8 +1584,19 @@ test.describe('pictures', () => {
     await page.locator('#chat-toggle').click();
     await pastePicture(page, '#chat-input');
     const chip = page.locator('#chat #chat-refs .file-card');
-    await expect(chip).toContainText('pasted-1.png');
+    try {
+      await expect(chip).toContainText('pasted-1.png');
+      await expect(chip).toHaveClass(/reading/);
+      await expect(chip.locator('.file-peek img')).toBeVisible();
+    } finally {
+      finishReading();
+    }
+    await expect(chip).not.toHaveClass(/reading/);
+    await expect(chip).toContainText('pasted-1.jpg');
     await expect(chip.locator('.file-peek img')).toBeVisible();
+    expect(uploaded).toHaveLength(1);
+    expect(uploaded[0]).toMatchObject({ name: 'pasted-1.jpg', type: 'image/jpeg' });
+    expect(Buffer.from(uploaded[0].data, 'base64').subarray(0, 3)).toEqual(Buffer.from([0xff, 0xd8, 0xff]));
     await page.locator('#chat-input').fill('what is this?');
     await page.locator('#chat-input').press('Enter');
     await expect(page.locator('#chat .msg.leo').last()).toContainText('That diagram shows a heap.');
@@ -1689,7 +1729,7 @@ test.describe('readability', () => {
         const low = await lowContrast(page);
         if (low.length) problems[name] = low;
       };
-      for (const [name, hash] of [['folders', '#/'], ['folder', '#/f/readable'], ['note', `#/n/${note.id}`], ['search', '#/search/readable'], ['trash', '#/trash'], ['settings', '#/settings'], ['storage', '#/settings/storage'], ['record', '#/record'], ['map', '#/map']]) {
+      for (const [name, hash] of [['folders', '#/'], ['folder', '#/f/readable'], ['note', `#/n/${note.id}`], ['search', '#/search/readable'], ['trash', '#/trash'], ['settings', '#/settings'], ['storage', '#/settings/storage'], ['record', '#/record'], ['calendar', '#/calendar'], ['map', '#/map']]) {
         await page.goto(`/${hash}`);
         await look(name);
       }
@@ -3078,7 +3118,7 @@ test('dropping one note on another offers to combine them, shows the result firs
   await page.goto(`/#/f/${folder}`);
   const from = page.locator(`.card[data-id="${a.id}"]`);
   const onto = page.locator(`.card[data-id="${b.id}"]`);
-  await from.dragTo(onto);
+  await dragBetween(page, from, onto);
   const sheet = page.locator('.sheet');
   await expect(sheet.locator('h3')).toHaveText('Combine these notes?');
   await sheet.locator('#combine-go').click();
@@ -3104,11 +3144,13 @@ test('only the folders scroll in the sidebar; the places above and below stay pu
   await page.reload();
   const tree = page.locator('#side .side-tree');
   await expect(tree).toBeVisible();
+  expect((await tree.boundingBox()).height).toBeGreaterThanOrEqual(100);
   const settings = page.locator('#side .side-foot [data-action="settings"]');
   const record = page.locator('#side [data-action="record"]');
   const before = [await settings.boundingBox(), await record.boundingBox()];
   expect(await tree.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
   await tree.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  await expect(page.locator('#side .side-group [data-dir=""]')).toBeInViewport();
   await page.mouse.wheel(0, 2000);
   const after = [await settings.boundingBox(), await record.boundingBox()];
   expect(after.map((b) => Math.round(b.y))).toEqual(before.map((b) => Math.round(b.y)));
@@ -3119,34 +3161,160 @@ test('only the folders scroll in the sidebar; the places above and below stay pu
   await expect.poll(() => tree.evaluate((el) => el.scrollTop)).toBe(scrolled);
 });
 
-test('note cards can be previewed without losing the library and layout choices persist', async ({ page }) => {
-  const made = await page.request.post('/api/notes', { data: { title: 'Library preview fixture', directory: 'library-grid-fixture', body: '# Traversals\nBreadth first search visits each layer.\n- [ ] Homework due Friday\n```svg\n<svg xmlns="http://www.w3.org/2000/svg" width="160" height="80"><rect width="160" height="80" fill="#b4cfe7"/></svg>\n```' } });
+test('note thumbnails are read only, cards open directly and layout choices persist', async ({ page }) => {
+  const made = await page.request.post('/api/notes', { data: { title: 'Library thumbnail fixture', body: '# Traversals\nBreadth first search visits each layer.\n- [ ] Homework due Friday\n```svg\n<svg xmlns="http://www.w3.org/2000/svg" width="160" height="80"><rect width="160" height="80" fill="#b4cfe7"/></svg>\n```' } });
   expect(made.status()).toBe(201);
   const note = await made.json();
   await page.goto('/#/');
   const card = page.locator(`.library-cards.grid .card[data-id="${note.id}"]`);
   await expect(card).toBeVisible();
   await expect(card.locator('.card-snippet')).toContainText('Breadth first search');
-  await expect(card.locator('.card-meta')).toContainText('library-grid-fixture');
   await card.scrollIntoViewIfNeeded();
   await expect(card.locator('.note-thumb img')).toBeVisible();
-  const preview = card.locator('[data-action="note-preview"]');
-  await preview.click();
-  await expect(page.locator('.sheet.note-preview .preview-body')).toContainText('Homework due Friday');
-  await expect(page.locator('.sheet.note-preview input:enabled')).toHaveCount(0);
-  await page.keyboard.press('Escape');
-  await expect(preview).toBeFocused();
-  await expect(card).toBeVisible();
+  await expect(card.locator('.note-thumb input:enabled')).toHaveCount(0);
+  await expect(page.locator('[data-action="note-preview"]')).toHaveCount(0);
   await page.locator('[data-action="library-view"][data-view="list"]').click();
   await expect(page.locator('.library-cards.list')).toBeVisible();
   await page.reload();
   await expect(page.locator('.library-cards.list')).toBeVisible();
-  await page.locator('[data-action="library-sort"]').click();
-  await page.locator('[data-action="library-order"][data-sort="title"]').click();
-  await expect(page.locator('[data-action="library-sort"]')).toHaveText('Name');
-  await expect(page.locator('[data-action="library-sort"]')).toBeFocused();
+  await expect(page.locator('[data-action="library-sort"]')).toHaveCount(0);
   await page.locator('[data-action="library-view"][data-view="grid"]').click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+  await card.click();
+  await expect(page).toHaveURL(new RegExp(`#/n/${note.id}$`));
+  await expect(page.locator('#doc')).toContainText('Homework due Friday');
+});
+
+test('grid and list keep the library and header width in every layout', async ({ page }) => {
+  const dir = `library-width-${Date.now()}`;
+  await page.request.post('/api/notes', { data: { title: 'Stable library width', directory: dir, body: 'Keep the layout steady.' } });
+  const bounds = () => page.locator('main, .bar-row, .search').evaluateAll((els) => els.map((el) => {
+    const rect = el.getBoundingClientRect();
+    return { left: rect.left, width: rect.width };
+  }));
+  for (const folder of ['', dir]) {
+    await page.goto(folder ? `/#/f/${encodeURIComponent(folder)}` : '/#/');
+    const layouts = test.info().project.name === 'desktop' ? ['wide', 'mini', 'chat'] : ['phone'];
+    for (const layout of layouts) {
+      if (layout === 'mini') await page.locator('[data-action="side-fold"]').click();
+      if (layout === 'chat') {
+        await page.locator('[data-action="side-fold"]').click();
+        await page.locator('#chat-toggle').click();
+        await expect(page.locator('.chat')).toBeVisible();
+      }
+      for (const views of [['grid', 'list'], ['list', 'grid']]) {
+        await page.locator(`[data-action="library-view"][data-view="${views[0]}"]`).click();
+        const before = await bounds();
+        await page.locator(`[data-action="library-view"][data-view="${views[1]}"]`).click();
+        expect(await bounds()).toEqual(before);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+      }
+      if (layout === 'chat') {
+        await page.locator('.chat [data-chat="close"]').click();
+        await expect(page.locator('body')).not.toHaveClass(/chat-open|chat-leaving/);
+      }
+    }
+  }
+});
+
+test('sidebar folders can move to the top level with their contents and Undo', async ({ page }) => {
+  test.skip(test.info().project.name !== 'desktop', 'sidebar dragging needs a mouse');
+  const tag = Date.now().toString(36);
+  const from = `sidebar-root-${tag}/Nested-${tag}`;
+  const root = from.split('/').pop();
+  const note = await (await page.request.post('/api/notes', { data: { title: 'Nested folder move', directory: `${from}/Child`, body: 'Keep descendants.' } })).json();
+  const where = async () => (await (await page.request.get(`/api/notes/${note.id}`)).json()).directory;
+  await page.goto(`/#/f/${encodeURIComponent(from)}`);
+  const target = page.locator('#side [data-action="open-folder"][data-dir=""]');
+  await expect(target).toHaveText('Top level');
+  await dragBetween(page, page.locator(`#side [data-action="open-folder"][data-dir="${from}"]`), target);
+  await expect.poll(where).toBe(`${root}/Child`);
+  await expect(page).toHaveURL(new RegExp(`#/f/${encodeURIComponent(root)}$`));
+  await expect(page.locator(`#side [data-action="open-folder"][data-dir="${root}"]`)).toBeVisible();
+  await page.locator('.toast button', { hasText: 'Undo' }).last().click();
+  await expect.poll(where).toBe(`${from}/Child`);
+  await expect(page).toHaveURL(new RegExp(`#/f/${encodeURIComponent(from)}$`));
+  const moves = [];
+  page.on('request', request => { if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/dirs/move') moves.push(request.postDataJSON()); });
+  const transfer = await page.evaluateHandle(() => new DataTransfer());
+  const parent = from.split('/')[0];
+  for (const [source, into] of [[parent, from], [from, parent], [parent, '']]) {
+    const dragged = `#side [data-action="open-folder"][data-dir="${source}"]`;
+    const dropped = `#side [data-action="open-folder"][data-dir="${into}"]`;
+    await page.dispatchEvent(dragged, 'dragstart', { dataTransfer: transfer });
+    await page.dispatchEvent(dropped, 'dragover', { dataTransfer: transfer });
+    await expect(page.locator(dropped)).not.toHaveClass(/drop-ok/);
+    await page.dispatchEvent(dropped, 'drop', { dataTransfer: transfer });
+  }
+  expect(moves).toEqual([]);
+  await page.dispatchEvent(`#side [data-action="open-folder"][data-dir="${from}"]`, 'dragstart', { dataTransfer: transfer });
+  await page.dispatchEvent('#side .side-tree', 'drop', { dataTransfer: transfer });
+  await expect.poll(where).toBe(`${root}/Child`);
+  expect(moves).toEqual([{ from, into: '' }]);
+});
+
+test('folder navigation keeps the header steady while loading and animates only content', async ({ page }) => {
+  const dir = `folder-arrival-${Date.now()}`;
+  await page.request.post('/api/notes', { data: { title: 'Folder arrival fixture', directory: dir, body: 'A smooth arrival.' } });
+  await page.addInitScript(() => {
+    const animate = Element.prototype.animate;
+    window.folderAnimations = [];
+    Element.prototype.animate = function (frames, options) {
+      if (this.id === 'app') window.folderAnimations.push({ frames, options });
+      return animate.call(this, frames, options);
+    };
+  });
+  await page.reload();
+  await page.goto('/#/');
+  await expect(page.locator(`main .folder[data-dir="${dir}"]`)).toBeVisible();
+  const header = page.locator('.bar-row');
+  const before = await header.boundingBox();
+  let release;
+  const hold = new Promise(resolve => { release = resolve; });
+  let waiting = false;
+  await page.route('**/api/notes?*', async route => {
+    if (new URL(route.request().url()).searchParams.get('dir') === dir) { waiting = true; await hold; }
+    await route.continue();
+  });
+  await page.locator(`main .folder[data-dir="${dir}"]`).click();
+  try {
+    await expect.poll(() => waiting).toBe(true);
+    const loading = await header.boundingBox();
+    expect(loading.width).toBe(before.width);
+    expect(loading.x).toBe(before.x);
+  } finally { release(); }
+  await expect(page.locator('.library-cards')).toContainText('Folder arrival fixture');
+  await expect.poll(() => page.evaluate(() => window.folderAnimations.length)).toBe(1);
+  await page.evaluate(() => { window.keptCrumb = document.querySelector('#crumbs button:last-child'); });
+  for (const view of ['list', 'grid']) await page.locator(`[data-action="library-view"][data-view="${view}"]`).click();
+  expect(await page.evaluate(() => window.keptCrumb === document.querySelector('#crumbs button:last-child'))).toBe(true);
+  expect(await page.evaluate(() => window.folderAnimations.length)).toBe(1);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.locator('#crumbs [data-action="home"]').click();
+  await expect(page.locator(`main .folder[data-dir="${dir}"]`)).toBeVisible();
+  expect(await page.evaluate(() => window.folderAnimations.length)).toBe(1);
+});
+
+test('top level and folders show only their own notes and ignore old recency preferences', async ({ page }) => {
+  const dir = `folder-scope-${Date.now()}`;
+  const notes = [];
+  for (const [title, directory] of [['Zebra scope fixture', ''], ['Alpha scope fixture', ''], ['Nested scope fixture', dir], ['Child scope fixture', `${dir}/Child`]]) {
+    notes.push(await (await page.request.post('/api/notes', { data: { title, directory, body: 'Only in its own folder.' } })).json());
+  }
+  await page.addInitScript(() => localStorage.setItem('leo-library', JSON.stringify({ view: 'grid', sort: 'opened' })));
+  await page.reload();
+  await page.goto('/#/');
+  await expect(page.locator(`.card[data-id="${notes[1].id}"]`)).toBeVisible();
+  for (const view of ['grid', 'list']) {
+    await page.locator(`[data-action="library-view"][data-view="${view}"]`).click();
+    await expect(page.locator(`.card[data-id="${notes[2].id}"], .card[data-id="${notes[3].id}"]`)).toHaveCount(0);
+    const ids = await page.locator('.card[data-id]').evaluateAll(els => els.map(el => el.dataset.id));
+    expect(ids.indexOf(notes[1].id)).toBeLessThan(ids.indexOf(notes[0].id));
+    await expect(page.locator('[data-action="library-sort"]')).toHaveCount(0);
+  }
+  await page.goto(`/#/f/${encodeURIComponent(dir)}`);
+  await expect(page.locator('.card[data-id]')).toHaveCount(1);
+  await expect(page.locator(`.card[data-id="${notes[2].id}"]`)).toBeVisible();
 });
 
 test('folder controls rename, move to root and delete from inside the folder with Undo', async ({ page }) => {
@@ -3165,7 +3333,7 @@ test('folder controls rename, move to root and delete from inside the folder wit
   await expect(page).toHaveURL(new RegExp(`#/f/${encodeURIComponent(full)}$`));
   await expect(page.locator(`.card[data-id="${note.id}"]`)).toBeVisible();
   if (test.info().project.name === 'desktop') {
-    await page.locator(`#crumbs [data-dir="${full}"]`).dragTo(page.locator('#crumbs [data-action="home"]'));
+    await dragBetween(page, page.locator(`#crumbs [data-dir="${full}"]`), page.locator('#crumbs [data-action="home"]'));
   } else {
     await page.locator('[data-action="folder-options"]').click();
     await page.locator('[data-action="folder-root"]').click();
@@ -3220,14 +3388,19 @@ test('a failed call has calm details and can be dismissed or deleted directly', 
 });
 
 test('interview practice starts without a note and schedules are editable dated tasks', async ({ page }) => {
+  await page.route('**/api/chat', (route) => route.fulfill({ contentType: 'application/x-ndjson', body: '{"t":"Ready to practise."}\n{"done":true}\n' }));
   await page.goto('/#/interviews');
   await page.locator('[data-interview="create"][data-track="systems"]').click();
+  await page.getByText('Schedule & assessment preferences', { exact: true }).click();
   await page.locator('#interview-title').fill('System design interview');
   await page.locator('#interview-company').fill('Example company');
   await page.locator('[data-interview="form-style"][data-style="mock"]').click();
   await page.locator('#interview-form-save').click();
   await expect(page.locator('.interview-heading h1')).toHaveText('System design interview');
+  await expect(page.locator('[data-chat="close"]')).toBeVisible();
+  await page.locator('[data-chat="close"]').click();
   const id = decodeURIComponent(new URL(page.url()).hash.split('/').pop());
+  await page.getByText('Practice schedule', { exact: true }).first().click();
   await page.locator('[data-interview="add-session"]').click();
   await page.locator('#interview-slot-title').fill('Requirements and scale');
   await page.locator('#interview-slot-date').fill('2026-10-20');
@@ -3334,7 +3507,7 @@ test('interview answers keep their focus and draft through saves, a conflict and
   await expect(page.locator('#interview-progress')).toContainText('3 reviewed attempts');
   await expect(page.locator('#chat .msg.user').last()).not.toContainText('interview_feedback');
   await page.locator('[data-chat="close"]').click();
-  await page.locator('[data-interview="tab"][data-tab="write"]').click();
+  await page.locator('[data-interview="tab"][data-tab="code"]').click();
 
   holdSave = true;
   const started = new Promise((resolve) => { saveStarted = resolve; });
@@ -3348,4 +3521,425 @@ test('interview answers keep their focus and draft through saves, a conflict and
   await (await response).finished();
   await page.waitForTimeout(500);
   await expect(page.locator('body')).not.toHaveClass(/chat-open/);
+});
+
+test.describe('passages', () => {
+  test('selected note text goes to Felix as a passage he is asked about, not an edit', async ({ page }) => {
+    const note = await (await page.request.post('/api/notes', { data: { title: 'Heaps', body: 'Intro line\n\nA binary heap keeps the minimum at the root.\n\nLast line' } })).json();
+    const asked = [];
+    await page.route('**/api/chat', async (route) => {
+      asked.push(route.request().postDataJSON());
+      const lines = [{ sources: [{ n: 1, id: note.id, title: 'Heaps', folder: '', why: 'open' }] }, { t: 'Because the heap property holds [n1].' }, { done: true }];
+      await route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: lines.map((l) => JSON.stringify(l)).join('\n') + '\n' });
+    });
+    await page.goto(`/#/n/${note.id}`);
+    await page.locator('#doc .blk').nth(2).click();
+    const area = page.locator('#doc textarea.line-edit');
+    await expect(area).toHaveCount(1);
+    await area.evaluate((a) => {
+      const at = a.value.indexOf('keeps the minimum');
+      a.focus();
+      a.setSelectionRange(at, at + 'keeps the minimum'.length);
+      a.dispatchEvent(new Event('select'));
+    });
+    const ask = page.locator('.ask-float');
+    await expect(ask).toBeVisible();
+    await ask.click();
+    const chat = page.locator('#chat');
+    await expect(chat).toBeVisible();
+    await expect(chat.locator('.chat-passage')).toContainText('keeps the minimum');
+    await chat.locator('#chat-input').fill('Why is that true?');
+    await chat.locator('#chat-input').press('Enter');
+    await expect(chat.locator('.msg.leo').last()).toContainText('heap property');
+    expect(asked[0].selection).toEqual({ title: 'Heaps', from: 3, to: 3, text: 'keeps the minimum' });
+    expect(asked[0].refs).toContain(note.id);
+    expect(asked[0].messages.at(-1).text).toBe('Why is that true?');
+    await expect(chat.locator('.msg.user .msg-passage')).toContainText('Heaps · line 3');
+    await expect(chat.locator('.chat-passage')).toHaveCount(0);
+    expect((await (await page.request.get(`/api/notes/${note.id}`)).json()).body).toBe('Intro line\n\nA binary heap keeps the minimum at the root.\n\nLast line');
+  });
+
+  test('the toolbar asks about the selection too, and says so when nothing is selected', async ({ page }) => {
+    const note = await (await page.request.post('/api/notes', { data: { title: 'Toolbar ask', body: 'Only line here' } })).json();
+    await page.goto(`/#/n/${note.id}`);
+    await page.locator('[data-action="ask-selection"]').click();
+    await expect(page.locator('.toast')).toContainText('Select some text in the note first');
+  });
+
+  test('part of an answer is added to the open note exactly once, and Undo takes it out', async ({ page }) => {
+    const note = await (await page.request.post('/api/notes', { data: { title: 'Collect', body: 'Mine already' } })).json();
+    await page.route('**/api/chat', async (route) => {
+      const lines = [{ sources: [{ n: 1, id: note.id, title: 'Collect', folder: '', why: 'open' }] }, { t: 'First idea stays out.\n\nThe **key** point is here [n1].\n\nLast bit.' }, { done: true }];
+      await route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: lines.map((l) => JSON.stringify(l)).join('\n') + '\n' });
+    });
+    await page.goto(`/#/n/${note.id}`);
+    await page.locator('#chat-toggle').click();
+    const chat = page.locator('#chat');
+    await chat.locator('#chat-input').fill('Tell me');
+    await chat.locator('#chat-input').press('Enter');
+    const answer = chat.locator('.msg.leo').last();
+    await expect(answer).toContainText('Last bit');
+    await answer.locator('strong', { hasText: 'key' }).evaluate((el) => {
+      const range = document.createRange();
+      range.selectNodeContents(el.parentElement);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+    });
+    const add = chat.locator('.float-act[data-chat="add-picked"]');
+    await expect(add).toBeVisible();
+    await add.click();
+    const sheet = page.locator('.sheet');
+    await expect(sheet.locator('.add-title')).toHaveText('Collect');
+    await expect(sheet.locator('.add-preview')).toContainText('The key point is here');
+    await expect(sheet.locator('.add-preview')).not.toContainText('First idea');
+    await sheet.locator('#add-go').dblclick();
+    await expect(page.locator('.toast')).toContainText('Added to “Collect”');
+    const body = async () => (await (await page.request.get(`/api/notes/${note.id}`)).json()).body;
+    await expect.poll(body).toBe('Mine already\n\nThe **key** point is here [[Collect]].\n');
+    await page.locator('.toast button').click();
+    await expect.poll(body).toBe('Mine already');
+  });
+});
+
+test.describe('study sessions', () => {
+  test('a session shows its ideas, ticks one off, and ends with a recap', async ({ page }) => {
+    const note = await (await page.request.post('/api/notes', { data: { title: 'Heaps', body: 'A heap keeps the minimum at the root.' } })).json();
+    const asked = [];
+    await page.route('**/api/chat', async (route) => {
+      asked.push(route.request().postDataJSON());
+      const source = { n: 1, id: note.id, title: 'Heaps', folder: '', why: 'open' };
+      const lines = asked.length === 1
+        ? [{ sources: [source] }, { step: 'Planned a study session', tool: 'study_plan', found: [] }, { plan: { ideas: ['Root', 'Sift down'] } }, { quiz: { kind: 'multiple_choice', question: 'What sits at the root?', options: ['the minimum', 'the maximum'], answer: 'the minimum', idea: 1 } }, { t: 'First one.' }, { done: true }]
+        : [{ sources: [source] }, { t: '[[correct]] Yes, the minimum.' }, { done: true }];
+      await route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: lines.map((l) => JSON.stringify(l)).join('\n') + '\n' });
+    });
+    await page.goto(`/#/n/${note.id}`);
+    await page.locator('#chat-toggle').click();
+    const chat = page.locator('#chat');
+    await chat.locator('[data-mode="study"]').click();
+    await chat.locator('#chat-input').fill('quiz me on heaps');
+    await chat.locator('#chat-input').press('Enter');
+    const progress = chat.locator('#study-progress');
+    await expect(progress).toBeVisible();
+    await expect(progress).toContainText('Root');
+    await expect(progress).toContainText('0 of 2');
+    await chat.locator('.quiz-card button', { hasText: 'the minimum' }).first().click();
+    await expect.poll(() => asked.length).toBe(2);
+    expect(asked[1].session).toEqual({ ideas: ['Root', 'Sift down'], closed: [true, false], asked: 1 });
+    await expect(progress).toContainText('1 of 2');
+    await expect(progress.locator('.study-idea.first')).toContainText('Root');
+    await progress.locator('[data-chat="session-finish"]').click();
+    await expect(progress).toBeHidden();
+    const recap = chat.locator('.session-recap');
+    await expect(recap).toContainText('1 of 2 ideas covered');
+    await expect(recap).toContainText('Not reached: Sift down');
+    await recap.locator('[data-chat="session-done"]').click();
+    await expect(recap).toHaveCount(0);
+  });
+});
+
+test.describe('reading', () => {
+  test('related notes sit under a note and open with a tap', async ({ page }) => {
+    const other = await (await page.request.post('/api/notes', { data: { title: 'Graph basics', body: 'Vertices and edges.' } })).json();
+    const note = await (await page.request.post('/api/notes', { data: { title: 'Dijkstra', body: 'Builds on [[Graph basics]].' } })).json();
+    await page.goto(`/#/n/${note.id}`);
+    const related = page.locator('#related');
+    await expect(related).toBeVisible();
+    await expect(related.locator('.related-row')).toHaveCount(1);
+    await expect(related).toContainText('Graph basics');
+    await expect(related).toContainText('Linked from this note');
+    await related.locator('.related-row').click();
+    await expect(page).toHaveURL(new RegExp(`#/n/${other.id}$`));
+    await expect(page.locator('#related')).toBeHidden();
+  });
+
+  test('a long note opens again where it was being read', async ({ page }) => {
+    test.skip(test.info().project.name !== 'desktop', 'scrolled with a mouse wheel');
+    const body = Array.from({ length: 160 }, (_, i) => `Paragraph number ${i + 1} about reading.`).join('\n\n');
+    const note = await (await page.request.post('/api/notes', { data: { title: 'Long read', body } })).json();
+    await page.goto(`/#/n/${note.id}`);
+    await expect(page.locator('#doc .blk').first()).toBeVisible();
+    await page.mouse.move(200, 300);
+    await page.mouse.wheel(0, 2400);
+    await expect.poll(async () => (await (await page.request.get(`/api/notes/${note.id}/reading`)).json()).anchor, { timeout: 8000 }).not.toBeNull();
+    const saved = (await (await page.request.get(`/api/notes/${note.id}/reading`)).json()).anchor;
+    expect(saved.text).toMatch(/^Paragraph number \d+/);
+    await page.goto('/#/');
+    await page.goto(`/#/n/${note.id}`);
+    await expect.poll(() => page.evaluate(() => window.scrollY), { timeout: 5000 }).toBeGreaterThan(1500);
+  });
+});
+
+test.describe('calendar', () => {
+  test('tasks are added, dated, ticked off and sent to Google Calendar from the Calendar page', async ({ page }) => {
+    const tag = `${test.info().project.name}-${Date.now().toString(36)}`;
+    await page.addInitScript(() => {
+      window.__opened = [];
+      window.open = (url) => {
+        window.__opened.push(String(url));
+        return null;
+      };
+    });
+    const undated = await (await page.request.post('/api/tasks', { data: { title: `Ask tutor ${tag}` } })).json();
+    const note = await (await page.request.post('/api/notes', { data: { title: `Lecture ${tag}`, body: '## Action items\n- [ ] Submit HW 4 — due October 16, 2026 at 11:59 pm.\n## Check yourself\n- [ ] What is a heap?' } })).json();
+    await page.goto('/');
+    await goPlace(page, 'calendar');
+    await expect(page).toHaveURL(/#\/calendar$/);
+    const box = page.locator('#sched-page');
+    await expect(box.locator('.sched-head h1')).toHaveText('Calendar');
+    const noDate = box.locator('.sched-list:visible', { hasText: 'No date' });
+    await expect(noDate).toContainText(`Ask tutor ${tag}`);
+
+    await noDate.locator(`.sched-row[data-task="${undated.id}"] [data-action="task-date"]`).click();
+    await page.locator('.sheet [data-pick-day]').filter({ hasText: 'Tomorrow' }).click();
+    await page.locator('.sheet [data-pick-time="09:00"]').click();
+    await page.locator('#pick-save').click();
+    await expect(page.locator('.toast')).toContainText('Date saved');
+    const row = box.locator(`.sched-agenda .sched-row[data-task="${undated.id}"]`);
+    await expect(row).toContainText(`Ask tutor ${tag}`);
+    const saved = (await (await page.request.get('/api/tasks')).json()).tasks.find((t) => t.id === undated.id);
+    expect(saved.time).toBe('09:00:00');
+
+    await row.locator('.sched-main').click();
+    await page.locator('.sheet [data-action="task-google"]').click();
+    const opened = await page.evaluate(() => window.__opened);
+    expect(opened.length).toBe(1);
+    const link = new URL(opened[0]);
+    expect(link.host).toBe('calendar.google.com');
+    expect(link.searchParams.get('action')).toBe('TEMPLATE');
+    expect(link.searchParams.get('details')).toContain(`leo-task:${undated.id.slice(0, 12)}`);
+    await expect(page.locator('.toast')).toContainText('Opened in Google Calendar');
+
+    await row.locator('.sched-check').click();
+    await expect(page.locator('.toast')).toContainText('Done');
+    await expect.poll(async () => (await (await page.request.get('/api/tasks')).json()).tasks.find((t) => t.id === undated.id).done).toBe(true);
+    await page.locator('.toast button', { hasText: 'Undo' }).click();
+    await expect.poll(async () => (await (await page.request.get('/api/tasks')).json()).tasks.find((t) => t.id === undated.id).done).toBe(false);
+
+    const hw = (await (await page.request.get('/api/tasks')).json()).tasks.find((t) => t.note && t.note.id === note.id);
+    expect(hw.title).toContain('Submit HW 4');
+    expect(hw.date).toBe('2026-10-16');
+    const all = (await (await page.request.get('/api/tasks')).json()).tasks;
+    expect(all.some((t) => t.title === 'What is a heap?')).toBe(false);
+  });
+
+  test('a new task can be typed in, and a note checkbox can be added to tasks', async ({ page }) => {
+    const tag = `${test.info().project.name}-${Date.now().toString(36)}`;
+    const note = await (await page.request.post('/api/notes', { data: { title: `Plans ${tag}`, body: 'Ideas\n- [ ] Book the room\nEnd' } })).json();
+    await page.goto('/#/calendar');
+    await page.locator('.sched-head [data-action="task-new"]').click();
+    await page.locator('#task-title').fill(`Send slides ${tag}`);
+    await page.locator('#task-title').press('Enter');
+    await expect(page.locator('.toast')).toContainText(`Added “Send slides ${tag}”`);
+    await expect(page.locator('#sched-page .sched-list:visible').getByText(`Send slides ${tag}`)).toBeVisible();
+
+    await page.goto(`/#/n/${note.id}`);
+    await page.locator('[data-action="note-tasks"]').click();
+    const sheet = page.locator('.sheet');
+    await expect(sheet).toContainText('Book the room');
+    await sheet.locator('[data-action="task-promote"]').click();
+    await expect(page.locator('.toast')).toContainText('Added to your tasks');
+    await expect(page.locator('.sheet [data-action="task-open-here"]')).toHaveText('In your tasks');
+    const tasks = (await (await page.request.get('/api/tasks')).json()).tasks;
+    expect(tasks.some((t) => t.title === 'Book the room' && t.note.id === note.id)).toBe(true);
+  });
+});
+
+test.describe('beside the note', () => {
+  test('on a wide screen an original opens beside its note and closes when you leave', async ({ page, browser }) => {
+    test.skip(test.info().project.name !== 'desktop', 'the pane needs a wide screen');
+    await page.setViewportSize({ width: 1600, height: 900 });
+    const note = await (await page.request.post('/api/notes', { data: { title: 'Beside the source', body: 'My notes on the paper.' } })).json();
+    const folder = path.join(process.env.LEO_BROWSER_HOME, 'attachments', note.id);
+    fs.mkdirSync(folder, { recursive: true });
+    fs.writeFileSync(path.join(folder, 'notes.txt'), 'Plain text from the upload.');
+    const maker = await browser.newPage();
+    await maker.setContent('<h1>Paper</h1>');
+    fs.writeFileSync(path.join(folder, 'paper.pdf'), await maker.pdf());
+    await maker.close();
+    await page.goto(`/#/n/${note.id}`);
+    await page.locator('.chip.original', { hasText: 'notes.txt' }).click();
+    const pane = page.locator('#source-pane');
+    await expect(pane).toBeVisible();
+    await expect(pane.locator('.source-text')).toHaveText('Plain text from the upload.');
+    await expect(page.locator('.sheet.viewer')).toHaveCount(0);
+    const paneBox = await pane.boundingBox();
+    const doc = await page.locator('#doc').boundingBox();
+    expect(doc.x + doc.width).toBeLessThanOrEqual(paneBox.x + 1);
+    await pane.locator('[data-action="source-file"]', { hasText: 'paper.pdf' }).click();
+    await expect(pane.locator('iframe.source-frame')).toHaveAttribute('src', /paper\.pdf\?view=1$/);
+    await page.locator('#side [data-action="home"]').first().click();
+    await expect(pane).toBeHidden();
+  });
+
+  test('the Tasks window stays open across pages and closes on request', async ({ page }) => {
+    const tag = `${test.info().project.name}-${Date.now().toString(36)}`;
+    await page.request.post('/api/tasks', { data: { title: `Window task ${tag}` } });
+    await page.goto('/');
+    await goPlace(page, 'tasks-toggle');
+    const box = page.locator('#tasks-window');
+    await expect(box).toBeVisible();
+    await expect(box).toContainText(`Window task ${tag}`);
+    await expect(box.locator('.tasks-group', { hasText: 'No date' })).toBeVisible();
+    if (test.info().project.name === 'desktop') {
+      await goPlace(page, 'settings');
+      await expect(page).toHaveURL(/#\/settings$/);
+      await expect(box).toBeVisible();
+    }
+    await box.locator('[data-action="tasks-close"]').click();
+    await expect(box).toBeHidden();
+  });
+});
+
+for (const company of ['Pinterest', '']) {
+  test(`interview start prepares a coding problem in one action for ${company || 'general practice'}`, async ({ page }) => {
+    const requests = [];
+    let item;
+    let ready;
+    let release;
+    const starter = 'def pair_sum(nums, target):\n    pass';
+    await page.route('**/api/interviews', (route) => route.fulfill({ json: [] }));
+    await page.route('**/api/interviews/*', (route) => {
+      const req = route.request();
+      if (req.method() === 'PUT') {
+        const change = req.postDataJSON();
+        if (change.action === 'framework') item = { id: req.url().split('/').at(-1), revision: 1, framework: change.framework, workspace: { answer: '', reasoning: '', board: [] }, challenge: null, attempts: [], schedule: [] };
+        else { item.workspace = change.workspace; item.revision++; }
+      }
+      return route.fulfill({ json: item });
+    });
+    await page.route('**/api/chats/*', (route) => route.request().method() === 'GET' ? route.fulfill({ status: 404, json: { error: 'No conversation yet' } }) : route.fulfill({ json: { id: item.id, title: 'Interview practice', updated_at: new Date().toISOString(), count: 2, named: true } }));
+    await page.route('**/api/chat', async (route) => {
+      requests.push(route.request().postDataJSON());
+      ready();
+      await new Promise((resolve) => { release = resolve; });
+      item.challenge = { id: 'challenge-start-01', title: 'Matching pair', question: 'Find two distinct indices whose values sum to the target.', minutes: 25, skills: item.framework.skills, origin: 'generated', sources: [], coding: { language: 'Python', starter, difficulty: 'easy', examples: [{ input: 'nums=[2,3], target=5', output: '[0,1]' }], constraints: ['Exactly one pair exists.'] } };
+      item.workspace = { answer: starter, reasoning: '', board: [] };
+      item.revision++;
+      await route.fulfill({ contentType: 'application/x-ndjson', body: [{ interview: { id: item.id, revision: item.revision } }, { t: 'Your challenge is ready.' }, { done: true }].map((v) => JSON.stringify(v)).join('\n') + '\n' });
+    });
+    await page.goto('/#/interviews');
+    await page.locator('[data-interview="create"][data-track="coding"]').click();
+    await page.locator('#interview-company').fill(company);
+    await page.locator('#interview-role').fill('Software engineer intern');
+    const started = new Promise((resolve) => { ready = resolve; });
+    await page.locator('#interview-form-save').click();
+    await started;
+    await expect(page.locator('#interview-answer')).toHaveCount(0);
+    await expect(page.locator('#interview-challenge')).toContainText('Preparing your first challenge');
+    expect(requests).toHaveLength(1);
+    const instruction = requests[0].messages.at(-1).text;
+    if (company) expect(instruction).toContain('Search the web before');
+    else expect(instruction).toContain('Do not ask for a company');
+    expect(instruction).toContain('interview_challenge');
+    release();
+    await expect(page.locator('#interview-answer')).toHaveValue(starter);
+    await page.locator('[data-chat="close"]').click();
+    await expect(page.locator('[data-interview="research"]')).toHaveCount(0);
+    await expect(page.locator('.interview-example')).toContainText('[0,1]');
+    await page.locator('[data-interview="submit"]').click();
+    expect(requests).toHaveLength(1);
+    await page.locator('[data-interview="tab"][data-tab="write"]').click();
+    const approach = page.locator('#interview-reasoning');
+    await approach.fill('Use a hash map and check duplicates.');
+    await approach.evaluate((el) => el.setSelectionRange(4, 8));
+    await expect.poll(() => item.workspace.reasoning).toContain('check duplicates');
+    await expect(approach).toBeFocused();
+    expect(await approach.evaluate((el) => [el.selectionStart, el.selectionEnd])).toEqual([4, 8]);
+    await page.locator('[data-interview="tab"][data-tab="code"]').click();
+    await expect(page.locator('#interview-answer')).toHaveValue(starter);
+    await page.reload();
+    await expect(page.locator('#interview-answer')).toHaveValue(starter);
+    expect(requests).toHaveLength(1);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+  });
+}
+
+test('coding colors and indentation preserve input, Undo, saves and scroll in every common language', async ({ page }) => {
+  const samples = [['C++', 'int solve() {\nreturn 2;\n}'], ['Rust', 'fn solve() -> i32 {\n2\n}'], ['Java', 'class Solution {\nint solve() {\nreturn 2;\n}\n}'], ['Python', 'def solve():\n  return 2'], ['SQL', 'SELECT name\nFROM users\nWHERE id = 2;'], ['TypeScript', 'function solve(value: number): number {\nreturn value + 2;\n}'], ['JavaScript', 'function solve(value) {\nreturn value + 2;\n}'], ['Go', 'package main\nfunc solve() int {\nreturn 2\n}']];
+  const id = 'coding-colors-01';
+  let item;
+  let requests = 0;
+  await page.route(`**/api/interviews/${id}`, async (route) => {
+    if (route.request().method() === 'PUT') {
+      const body = route.request().postDataJSON();
+      if (body.action === 'workspace') item.workspace = body.workspace;
+      item.revision++;
+    }
+    await route.fulfill({ json: item });
+  });
+  await page.route('**/api/chat', async (route) => { requests++; await route.fulfill({ status: 500, json: { error: 'No model is needed here.' } }); });
+  for (const [index, [language, code]] of samples.entries()) {
+    item = { id, revision: 1, framework: { title: 'Coding colors', track: 'coding', company: '', role: '', language, style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge: { id: `challenge-colors-${index}`, title: 'Solve the problem', question: 'Solve it.', minutes: 25, skills: ['Approach'], origin: 'generated', sources: [], coding: { language, starter: code, difficulty: 'easy', examples: [{ input: '2', output: '2' }], constraints: ['Be clear.'] } }, workspace: { answer: code, reasoning: '', board: [] }, attempts: [], schedule: [] };
+    await page.goto(`/#/interviews/${id}`);
+    if (index) await page.reload();
+    const area = page.locator('#interview-answer');
+    const colors = page.locator('#interview-colors');
+    await expect(area).toHaveValue(code);
+    await expect(colors.locator('.code-keyword').first()).toBeVisible();
+    expect(await colors.textContent()).toBe(code);
+    const originalColor = await colors.locator('.code-keyword').first().evaluate(el => getComputedStyle(el).color);
+    await page.emulateMedia({ colorScheme: 'dark' });
+    expect(await colors.locator('.code-keyword').first().evaluate(el => getComputedStyle(el).color)).not.toBe(originalColor);
+    await page.emulateMedia({ colorScheme: 'light' });
+    await area.focus();
+    await area.evaluate(el => el.setSelectionRange(el.value.length, el.value.length));
+    const expected = await page.evaluate(({ code, language }) => leoCode.indent(code, code.length, code.length, language), { code, language });
+    await page.locator('[data-interview="indent-code"]').click();
+    await expect(area).toHaveValue(expected.value);
+    await expect(area).toBeFocused();
+    expect(await area.evaluate(el => [el.selectionStart, el.selectionEnd])).toEqual([expected.from, expected.to]);
+    await expect.poll(() => item.workspace.answer).toBe(expected.value);
+    if (expected.value !== code) {
+      await area.press('ControlOrMeta+z');
+      await expect(area).toHaveValue(code);
+      await expect.poll(() => item.workspace.answer).toBe(code);
+    }
+    const long = Array.from({ length: 25 }, (_, i) => `${code}\n${' '.repeat(130)}${i}`).join('\n');
+    await area.fill(long);
+    await expect.poll(() => colors.textContent()).toBe(long);
+    await area.evaluate(el => { el.scrollTop = el.scrollHeight; el.scrollLeft = el.scrollWidth; el.dispatchEvent(new Event('scroll')); });
+    await expect.poll(() => colors.evaluate(el => [el.scrollTop, el.scrollLeft])).toEqual(await area.evaluate(el => [el.scrollTop, el.scrollLeft]));
+    await expect(area).toBeFocused();
+    await expect.poll(() => item.workspace.answer).toBe(long);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+  }
+  expect(requests).toBe(0);
+  await page.emulateMedia({ forcedColors: 'active' });
+  await expect(page.locator('#interview-colors')).toBeHidden();
+  expect(await page.locator('#interview-answer').evaluate(el => getComputedStyle(el).color)).not.toBe('rgba(0, 0, 0, 0)');
+});
+
+test('typing before syntax tools load and a failed load keep the code editable', async ({ page }) => {
+  const id = 'coding-lazy-01';
+  let workspace = { answer: 'def solve():\n    pass', reasoning: '', board: [] };
+  await page.route(`**/api/interviews/${id}`, route => {
+    if (route.request().method() === 'PUT') workspace = route.request().postDataJSON().workspace || workspace;
+    return route.fulfill({ json: { id, revision: 1, framework: { title: 'Lazy tools', track: 'coding', company: '', role: '', language: 'Python', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge: { id: 'challenge-lazy-01', title: 'A problem', question: 'Solve it.', minutes: 25, skills: ['Approach'], origin: 'generated', sources: [] }, workspace, attempts: [], schedule: [] } });
+  });
+  let release;
+  const held = new Promise(resolve => { release = resolve; });
+  await page.route('**/code-tools.js', async route => { await held; await route.continue(); });
+  await page.goto(`/#/interviews/${id}`, { waitUntil: 'domcontentloaded' });
+  const area = page.locator('#interview-answer');
+  const value = 'def solve():\n    return "<img src=x onerror=alert(1)>答え"';
+  await area.fill(value);
+  await area.evaluate(el => el.setSelectionRange(4, 9));
+  release();
+  await expect(page.locator('#interview-colors .code-keyword').first()).toBeVisible();
+  await expect(area).toHaveValue(value);
+  await expect(area).toBeFocused();
+  expect(await area.evaluate(el => [el.selectionStart, el.selectionEnd])).toEqual([4, 9]);
+  await expect(page.locator('#interview-colors img')).toHaveCount(0);
+  await expect.poll(() => workspace.answer).toBe(value);
+  await page.unroute('**/code-tools.js');
+  await page.route('**/code-tools.js', route => route.abort());
+  await page.reload();
+  await expect(area).toHaveValue(value);
+  await expect(page.locator('[data-interview="indent-code"]')).toBeDisabled();
+  await expect(page.locator('#interview-colors')).toBeHidden();
+  await area.fill('def solve():\n    return 3');
+  await expect.poll(() => workspace.answer).toContain('return 3');
+  await expect(area).toBeFocused();
 });

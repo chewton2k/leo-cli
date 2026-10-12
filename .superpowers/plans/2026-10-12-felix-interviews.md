@@ -8,7 +8,7 @@ Start with Coding, System design, Product/design, Marketing, Business/economics,
 
 A challenge includes a question, constraints/examples, time allowance, criteria and provenance. Generated questions say so. Researched questions retain source URLs and distinguish official preparation from unverified candidate reports. No claim that a question was asked without a source. Research uses the existing provider's own search or Leo's vetted web tools, never a new classifier/provider.
 
-The workspace has Write, Code and Whiteboard tabs. A native textarea supports multiline code and indentation. A bounded vector board supports pen strokes, boxes, arrows and text; keyboard-accessible controls offer undo and clear. Typed labels and geometry reach Felix as structured data; a drawing can also accompany a review as a raster image through the existing file-reading pipeline. Code is reviewed, never executed. Autosave is revision checked, serialized and bounded; failed saves retain the browser draft and expose retry, with no silent conflict overwrite. Async updates never replace a focused field. Only the latest generated board snapshot remains attached to the chat; frozen vector attempts and chat thumbnails retain the history, so repeated practice does not fill the file limit.
+Coding uses a problem/editor split with Code, Approach and Whiteboard tabs; other tracks have Write and Whiteboard. Code and reasoning are stored separately. The native textarea has line numbers, Tab/Shift-Tab indentation and matching indentation on Enter. A bounded vector board supports pen strokes, boxes, arrows and text; keyboard-accessible controls offer undo and clear. Typed labels and geometry reach Felix as structured data; a drawing can also accompany a review as a raster image through the existing file-reading pipeline. Code is reviewed, never executed. Autosave is revision checked, serialized and bounded; failed saves retain the browser draft and expose retry, with no silent conflict overwrite. Async updates never replace a focused field. Only the latest generated board snapshot remains attached to the chat; frozen vector attempts and chat thumbnails retain the history, so repeated practice does not fill the file limit.
 
 Submitting freezes the answer/board as an attempt before asking Felix to assess it. Assessment uses framework criteria, a 0–4 rubric, concrete evidence, strengths, gaps and a next exercise. Progress counts only actual submitted, assessed attempts, shows sample counts and treats early scores as provisional. Scores are AI feedback, not employer predictions or executable test results. Previous attempts and their challenge are retained when the next challenge starts.
 
@@ -36,3 +36,43 @@ Use scripted streamers/native conversations and temporary SQLite databases for p
 
 
 Implementation checks: 85 Node tests (35 focused on chat/interview helpers) and four mocked browser combinations (desktop/phone, light/dark) pass, with Leo’s actual strict CSP. Twelve board submissions retained one generated attachment; an unreadable image still allowed written/label-based review with an explicit limit. Navigation during a save no longer activates chat on the next page. A deliberate bounds regression made its test fail before restoring the fix. Sixteen live Codex prompt checks passed across coach/mock tracks, hints, assessment and scheduling, using fake tool results in a temporary home; these are prompt checks rather than compiled server integration. Claude's weekly quota and Codex capacity stopped further repetitions. Rust, full browser integration and platform checks are delegated to CI.
+
+
+## Workspace redesign (2026-10-12)
+
+One Start practice action saves the optional company/role, language and coaching
+style, then requests research and challenge creation together. Company research
+uses the provider's existing search and public sources, distinguishing official
+preparation, dated candidate reports and original exercises. With no company,
+start general practice immediately; unavailable research must not block practice.
+A blank page offers one Start practice action; the editor appears only with an
+actual problem. Opening an existing plan never generates another request.
+
+On desktop, show the problem and editor side by side; on phones, stack them.
+Keep the existing Settings cards, sheets, chips, segmented controls and themes.
+Coding problems include a starter function in the requested language, difficulty,
+examples with expected outputs, constraints and research links. Keep Approach
+separate from code. Reset code requires confirmation and keeps reasoning and the
+board. Assessment is a Felix review, with no execution or invented test passes.
+Progress/attempts and scheduling are folded below the main task; setup's advanced
+schedule/assessment fields are folded too.
+
+Persist the starter during the same database mutation that installs its challenge.
+An untouched starter cannot be submitted and must not block a different challenge.
+A retry with the same challenge never overwrites a user's implementation.
+Reasoning, code and drawings all count as work and belong to the frozen attempt.
+Old plans and browser drafts must remain readable without these new fields.
+Pending starts wait for the existing answer, cancel on navigation, and recover to
+an actionable start button if no challenge is created. No background AI polling.
+
+Reference: [LeetCode's problem workspace](https://leetcode.com/problems/two-sum/)
+separates Description, Code and examples/constraints;
+[NeetCode practice](https://neetcode.io/practice) informs the topic-based practice
+entry point. Leo retains its own layout and original generated exercises.
+
+Validation for this redesign: 42 focused Node tests pass; manual mocked browser
+checks pass in desktop/phone × light/dark with the actual CSP. Six live Codex
+plan-backed prompt/tool checks pass across company/general practice, Python/
+JavaScript and system design, Coach/Mock in both orders. Research results were
+fixtures; these checks validate model decisions, not real company search results.
+Compiled persistence/protocol tests and browser integration run in CI only.

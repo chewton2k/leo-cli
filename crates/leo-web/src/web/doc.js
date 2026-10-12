@@ -4,7 +4,7 @@
   const md = root.leoMarkdown;
   const ed = root.leoEditing;
 
-  function mount(container, { source, onChange, placeholder, dir = '', onPictures = null }) {
+  function mount(container, { source, onChange, placeholder, dir = '', onPictures = null, onSelection = null }) {
     let lines = String(source || '').replace(/\r\n?/g, '\n').split('\n');
     let blocks = [];
     let editing = null;
@@ -123,14 +123,66 @@
       area.style.height = `${area.scrollHeight}px`;
     }
 
+    let kept = { caret: null, picked: null, text: null };
+    let told = false;
+
+    function liveSelection() {
+      if (!editing) return null;
+      const { area } = editing;
+      if (area.selectionStart === area.selectionEnd) return null;
+      const base = lineStart(editing.start);
+      return ed.snapshotOf(lines, base + area.selectionStart, base + area.selectionEnd);
+    }
+
+    function keep() {
+      if (!editing) return;
+      const base = lineStart(editing.start);
+      kept = { caret: lineOf(base + editing.area.selectionEnd), picked: liveSelection(), text: lines.join('\n') };
+    }
+
+    function tell() {
+      if (!onSelection) return;
+      requestAnimationFrame(() => {
+        const has = Boolean(container.isConnected && ((editing && document.activeElement === editing.area && liveSelection()) || selectedSpan()));
+        if (has || told) onSelection(has);
+        told = has;
+      });
+    }
+
+    function caretBox(area, at) {
+      const style = getComputedStyle(area);
+      const mirror = document.createElement('div');
+      for (const p of ['boxSizing', 'width', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth', 'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'letterSpacing', 'lineHeight', 'textTransform', 'wordSpacing', 'tabSize', 'textIndent']) mirror.style[p] = style[p];
+      Object.assign(mirror.style, { position: 'absolute', visibility: 'hidden', whiteSpace: 'pre-wrap', overflowWrap: 'break-word', top: '0', left: '-9999px' });
+      mirror.textContent = area.value.slice(0, at);
+      const mark = document.createElement('span');
+      mark.textContent = area.value.slice(at, at + 1) || '.';
+      mirror.appendChild(mark);
+      document.body.appendChild(mirror);
+      const box = area.getBoundingClientRect();
+      const point = { x: box.left + mark.offsetLeft - area.scrollLeft, y: box.top + mark.offsetTop - area.scrollTop + mark.offsetHeight };
+      mirror.remove();
+      return point;
+    }
+
+    function onSelectionChange() {
+      if (!container.isConnected) return;
+      tell();
+    }
+
+    document.addEventListener('selectionchange', onSelectionChange);
+
     function stop() {
       if (!editing) return;
+      keep();
       const { area } = editing;
       area.removeEventListener('input', onInput);
       area.removeEventListener('keydown', onKey);
       area.removeEventListener('blur', onBlur);
+      for (const kind of ['select', 'keyup', 'mouseup']) area.removeEventListener(kind, tell);
       editing = null;
       draw();
+      tell();
     }
 
     function edit(index, caret) {
@@ -167,6 +219,7 @@
       area.addEventListener('input', onInput);
       area.addEventListener('keydown', onKey);
       area.addEventListener('blur', onBlur);
+      for (const kind of ['select', 'keyup', 'mouseup']) area.addEventListener(kind, tell);
       area.focus({ preventScroll: true });
       area.setSelectionRange(Math.max(0, Math.min(from, raw.length)), Math.max(0, Math.min(to, raw.length)));
       if (from === to) area.scrollIntoView({ block: 'nearest' });
@@ -271,6 +324,7 @@
     }
 
     function onInput() {
+      if (told) tell();
       const { area, start } = editing;
       const next = area.value.split('\n');
       lines.splice(start, editing.end - start, ...next);
@@ -550,6 +604,7 @@
     return {
       destroy: () => {
         stop();
+        document.removeEventListener('selectionchange', onSelectionChange);
         clearTimeout(release);
         document.removeEventListener('pointerup', onPointerUp);
         document.removeEventListener('keydown', onDocumentKey);
@@ -560,6 +615,24 @@
       source: () => lines.join('\n'),
       stop,
       isEditing: () => editing !== null,
+      selection() {
+        const live = editing && liveSelection();
+        if (live) return live;
+        const span = selectedSpan();
+        if (span) return ed.snapshotOf(lines, span[0], span[1]);
+        return kept.picked && kept.text === lines.join('\n') ? kept.picked : null;
+      },
+      selectionBox() {
+        if (editing && document.activeElement === editing.area && editing.area.selectionStart !== editing.area.selectionEnd) return caretBox(editing.area, editing.area.selectionEnd);
+        const picked = root.getSelection ? root.getSelection() : null;
+        if (!picked || picked.isCollapsed || !picked.rangeCount || !selectedSpan()) return null;
+        const box = picked.getRangeAt(0).getBoundingClientRect();
+        return { x: box.right, y: box.bottom };
+      },
+      caretLine() {
+        if (editing) return lineOf(lineStart(editing.start) + editing.area.selectionEnd);
+        return kept.text === lines.join('\n') ? kept.caret : null;
+      },
       highlight(from, to) {
         const hits = [...container.querySelectorAll('.blk')].filter((el) => {
           const block = blocks[Number(el.dataset.i)];
