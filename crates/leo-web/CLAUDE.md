@@ -859,6 +859,10 @@ warn`), not one-off styles.
 
 Sidebar: the places nav and the foot stay put; only the folder tree
 (`.side-tree`) scrolls, and its scroll position survives redraws.
+Short desktop windows use compact navigation spacing to leave room for folders.
+Top level stays above the scrolling tree so it is always a reachable drop target.
+Browser drags start on the source before scrolling the destination into view;
+otherwise a long grid can move another card under the saved mouse coordinates.
 
 Recording journal writes and commit callbacks run outside the recording mutex; an
 atomic reservation prevents Stop/recovery from overtaking a chunk or point write
@@ -901,8 +905,8 @@ Folder options are available inside empty and populated folders, using existing
 sheets and buttons. Rename uses `/api/dirs/rename` and the Store relocation
 primitive; move to top level works through the root breadcrumb or sidebar and a
 phone-friendly menu action. Folder deletion uses the existing trash API and Undo.
-The sidebar's folder tree has an explicit Top level row and accepts root drops
-on its empty space; nested folder targets take precedence. Drop rechecks the same
+The sidebar has an explicit Top level row above its folder tree. The tree accepts
+root drops on its empty space; nested folder targets take precedence. Drop rechecks the same
 acceptance rules as hover, before clearing drag state, so same-parent and
 self/descendant drops never send a move. Moving a folder retains its descendants
 and the existing Undo behavior.

@@ -1675,7 +1675,7 @@ fn company_preparation_searches_and_creates_a_seeded_coding_workspace_on_both_pr
                 assert!(system.contains("automatically research before creating the challenge"));
                 let reply = replies.lock().unwrap().next().unwrap();
                 piece(&reply);
-                Ok(reply)
+                Ok(reply.into())
             }));
             if native {
                 state.converse = Some(Arc::new(move |given, specs| {

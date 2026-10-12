@@ -1015,6 +1015,7 @@ mod tests {
             },
         )
         .unwrap();
+        assert_eq!(saved.workspace, work);
         let repeat =
             set_challenge(dir.path(), id, coding_challenge("challenge-starter-02")).unwrap();
         assert_eq!(repeat.workspace, work);
@@ -1023,7 +1024,7 @@ mod tests {
             dir.path(),
             id,
             Change::Submit {
-                revision: saved.revision,
+                revision: repeat.revision,
                 challenge: "challenge-starter-02".into(),
                 attempt: "attempt-starter-02".into(),
                 workspace: work,

@@ -45,6 +45,27 @@ function control(page, action) {
   return page.locator(`.fab[data-action="${action}"]:visible, #side [data-action="${action}"]:visible`).first();
 }
 
+async function dragBetween(page, source, target) {
+  await source.scrollIntoViewIfNeeded();
+  const from = await source.boundingBox();
+  expect(from).not.toBeNull();
+  const x = from.x + Math.min(16, from.width / 2);
+  const y = from.y + Math.min(20, from.height / 2);
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  try {
+    await page.mouse.move(x + 8, y + 8, { steps: 3 });
+    await target.scrollIntoViewIfNeeded();
+    const into = await target.boundingBox();
+    expect(into).not.toBeNull();
+    const end = { x: into.x + into.width / 2, y: into.y + into.height / 2 };
+    await page.mouse.move(end.x, end.y, { steps: 3 });
+    await page.mouse.move(end.x, end.y);
+  } finally {
+    await page.mouse.up();
+  }
+}
+
 async function openSearchBox(page) {
   if (await page.locator('#side').isHidden()) return page.locator('#search-toggle').click();
   await page.locator('#side [data-action="side-search"]').click();
@@ -406,7 +427,7 @@ test.describe('drag and drop', () => {
     const where = async () => (await (await page.request.get(`/api/notes/${note.id}`)).json()).directory;
     await page.goto('/');
     const card = page.locator(`.card[data-id="${note.id}"]`);
-    await card.dragTo(page.locator(`main .folder[data-dir="${a}"]`));
+    await dragBetween(page, card, page.locator(`main .folder[data-dir="${a}"]`));
     await expect(page.locator('.toast')).toContainText(`Moved “Drag me ${tag}” to ${a}`);
     expect(await where()).toBe(a);
     await expect(card).toHaveCount(0);
@@ -415,10 +436,10 @@ test.describe('drag and drop', () => {
     await expect(card.locator('.card-meta')).not.toContainText(a);
     expect(await where()).toBe('');
 
-    await card.dragTo(page.locator(`#side [data-action="open-folder"][data-dir="${b}"]`));
+    await dragBetween(page, card, page.locator(`#side [data-action="open-folder"][data-dir="${b}"]`));
     await expect.poll(where).toBe(b);
 
-    await page.locator(`main .folder[data-dir="${b}"]`).dragTo(page.locator(`main .folder[data-dir="${a}"]`));
+    await dragBetween(page, page.locator(`main .folder[data-dir="${b}"]`), page.locator(`main .folder[data-dir="${a}"]`));
     await expect(page.locator('.toast')).toContainText(`Moved ${b} into ${a}`);
     expect(await where()).toBe(`${a}/${b}`);
     await expect(page.locator(`main .folder[data-dir="${b}"]`)).toHaveCount(0);
@@ -429,7 +450,7 @@ test.describe('drag and drop', () => {
     expect(await where()).toBe(b);
 
     await page.goto(`/#/f/${b}`);
-    await page.locator(`.card[data-id="${note.id}"]`).dragTo(page.locator('#side .side-row[data-action="home"]'));
+    await dragBetween(page, page.locator(`.card[data-id="${note.id}"]`), page.locator('#side .side-row[data-action="home"]'));
     await expect.poll(where).toBe('');
   });
 
@@ -447,7 +468,7 @@ test.describe('drag and drop', () => {
     await dropFiles(page, '#chat', [{ name: 'for-felix.txt', type: 'text/plain', text: 'Heaps keep the minimum at the root.' }]);
     await expect(chat.locator('#chat-refs .file-card', { hasText: 'for-felix.txt' })).toBeVisible();
     await expect(page.locator('.scrim')).toHaveCount(0);
-    await page.locator(`.card[data-id="${note.id}"]`).dragTo(chat.locator('#chat-input'));
+    await dragBetween(page, page.locator(`.card[data-id="${note.id}"]`), chat.locator('#chat-input'));
     await expect(chat.locator('.chat-ref', { hasText: 'Dragged to Felix' })).toBeVisible();
   });
 });
@@ -3078,7 +3099,7 @@ test('dropping one note on another offers to combine them, shows the result firs
   await page.goto(`/#/f/${folder}`);
   const from = page.locator(`.card[data-id="${a.id}"]`);
   const onto = page.locator(`.card[data-id="${b.id}"]`);
-  await from.dragTo(onto);
+  await dragBetween(page, from, onto);
   const sheet = page.locator('.sheet');
   await expect(sheet.locator('h3')).toHaveText('Combine these notes?');
   await sheet.locator('#combine-go').click();
@@ -3104,11 +3125,13 @@ test('only the folders scroll in the sidebar; the places above and below stay pu
   await page.reload();
   const tree = page.locator('#side .side-tree');
   await expect(tree).toBeVisible();
+  expect((await tree.boundingBox()).height).toBeGreaterThanOrEqual(100);
   const settings = page.locator('#side .side-foot [data-action="settings"]');
   const record = page.locator('#side [data-action="record"]');
   const before = [await settings.boundingBox(), await record.boundingBox()];
   expect(await tree.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
   await tree.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  await expect(page.locator('#side .side-group [data-dir=""]')).toBeInViewport();
   await page.mouse.wheel(0, 2000);
   const after = [await settings.boundingBox(), await record.boundingBox()];
   expect(after.map((b) => Math.round(b.y))).toEqual(before.map((b) => Math.round(b.y)));
@@ -3185,7 +3208,7 @@ test('sidebar folders can move to the top level with their contents and Undo', a
   await page.goto(`/#/f/${encodeURIComponent(from)}`);
   const target = page.locator('#side [data-action="open-folder"][data-dir=""]');
   await expect(target).toHaveText('Top level');
-  await page.locator(`#side [data-action="open-folder"][data-dir="${from}"]`).dragTo(target);
+  await dragBetween(page, page.locator(`#side [data-action="open-folder"][data-dir="${from}"]`), target);
   await expect.poll(where).toBe(`${root}/Child`);
   await expect(page).toHaveURL(new RegExp(`#/f/${encodeURIComponent(root)}$`));
   await expect(page.locator(`#side [data-action="open-folder"][data-dir="${root}"]`)).toBeVisible();
@@ -3291,7 +3314,7 @@ test('folder controls rename, move to root and delete from inside the folder wit
   await expect(page).toHaveURL(new RegExp(`#/f/${encodeURIComponent(full)}$`));
   await expect(page.locator(`.card[data-id="${note.id}"]`)).toBeVisible();
   if (test.info().project.name === 'desktop') {
-    await page.locator(`#crumbs [data-dir="${full}"]`).dragTo(page.locator('#crumbs [data-action="home"]'));
+    await dragBetween(page, page.locator(`#crumbs [data-dir="${full}"]`), page.locator('#crumbs [data-action="home"]'));
   } else {
     await page.locator('[data-action="folder-options"]').click();
     await page.locator('[data-action="folder-root"]').click();
