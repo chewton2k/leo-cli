@@ -1126,9 +1126,10 @@ impl Graphs {
                 let mut found =
                     c.prepare("SELECT data FROM graph_notes WHERE id = ?1 AND length(data) <= ?2")?;
                 for note in notes.iter().take(SUMMARY_ROWS) {
-                    let data = found.query_row(rusqlite::params![&note.id, SUMMARY_BYTES], |r| {
-                        r.get::<_, String>(0)
-                    });
+                    let data = found
+                        .query_row(rusqlite::params![&note.id, SUMMARY_BYTES as i64], |r| {
+                            r.get::<_, String>(0)
+                        });
                     let Some(read) = data
                         .ok()
                         .and_then(|data| serde_json::from_str::<Read>(&data).ok())
