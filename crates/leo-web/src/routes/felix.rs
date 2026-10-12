@@ -464,6 +464,8 @@ fn run_tool(
             proposal: None,
             found: Vec::new(),
         }
+    } else if call.name == "list_schedule" || tools::organizes(&call.name) {
+        crate::routes::organize::run(state, desk, access, call)
     } else if call.name == "calculate" {
         let steps = call.text("steps");
         let lines = steps.lines().filter(|l| !l.trim().is_empty()).count();
@@ -520,6 +522,7 @@ fn run_tool(
                         tools::Proposal::Create { .. } => {
                             "Made. leo made the note; the user can undo it."
                         }
+                        _ => "Done. leo did it; the user can undo it.",
                     }
                     .into();
                     applied
@@ -1166,6 +1169,12 @@ pub(crate) fn change_note(
 }
 
 fn apply_now(state: &AppState, proposal: &tools::Proposal) -> Result<serde_json::Value, String> {
+    if !matches!(
+        proposal,
+        tools::Proposal::Edit { .. } | tools::Proposal::Create { .. }
+    ) {
+        return crate::routes::organize::act_now(state, proposal);
+    }
     let mut shown = serde_json::json!(proposal);
     store_now(state, |store| {
         match proposal {
@@ -1190,6 +1199,7 @@ fn apply_now(state: &AppState, proposal: &tools::Proposal) -> Result<serde_json:
                 shown["made"] = serde_json::json!(made.id);
                 shown["folder"] = serde_json::json!(made.directory);
             }
+            _ => {}
         }
         Ok(())
     })

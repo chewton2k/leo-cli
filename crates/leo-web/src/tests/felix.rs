@@ -1713,3 +1713,113 @@ fn company_preparation_searches_and_creates_a_seeded_coding_workspace_on_both_pr
         }
     }
 }
+
+#[test]
+fn felix_organizes_tasks_folders_and_notes_through_cards_that_undo() {
+    let (mut state, _d, ids) = state_with(&[("Heaps", "cs130"), ("Old draft", "")]);
+    {
+        let mut store = state.fresh();
+        store.create_dir("archive");
+        store.save().unwrap();
+    }
+    let (streamer, prompts) = scripted(vec![
+        "<tool>{\"name\": \"add_task\", \"title\": \"Submit lab\", \"date\": \"2026-10-16\", \"time\": \"23:59\", \"type\": \"assignment\"}</tool>",
+        "<tool>{\"name\": \"move_note\", \"note\": \"Heaps\", \"folder\": \"archive\"}</tool>",
+        "<tool>{\"name\": \"delete_note\", \"note\": \"Old draft\"}</tool>",
+        "<tool>{\"name\": \"make_folder\", \"folder\": \"archive/labs\"}</tool>",
+        "Here is what I suggest.",
+    ]);
+    state.chat = Some(streamer);
+    let lines = chat_lines(&state, "tidy things up");
+    let cards: Vec<serde_json::Value> = lines
+        .iter()
+        .filter_map(|l| l.get("proposal").cloned())
+        .collect();
+    let kinds: Vec<&str> = cards.iter().map(|c| c["kind"].as_str().unwrap()).collect();
+    assert_eq!(
+        kinds,
+        ["add_task", "move_note", "delete_note", "make_folder"],
+        "{lines:?}"
+    );
+    assert_eq!(
+        cards[0]["summary"],
+        "Add the task “Submit lab” · Fri, Oct 16 at 11:59 pm"
+    );
+    assert!(prompts.lock().unwrap()[1].contains("not done yet"));
+    assert!(
+        state.fresh().notes.iter().any(|n| n.id == ids[1]),
+        "Ask first changes nothing by itself"
+    );
+
+    let act = |p: &serde_json::Value| {
+        json_of(run(crate::routes::organize::act_route(
+            State(state.clone()),
+            Json(serde_json::from_value(p.clone()).unwrap()),
+        )))
+    };
+    let moved = act(&cards[1]);
+    assert_eq!(moved["state"], "applied");
+    assert_eq!(
+        state.fresh().find_note(&ids[0]).unwrap().directory,
+        "archive"
+    );
+    act(&moved["undo"]);
+    assert_eq!(state.fresh().find_note(&ids[0]).unwrap().directory, "cs130");
+    let trashed = act(&cards[2]);
+    assert!(state.fresh().find_note(&ids[1]).is_none());
+    act(&trashed["undo"]);
+    assert!(
+        state.fresh().find_note(&ids[1]).is_some(),
+        "Undo brings the note back from the trash"
+    );
+    let added = act(&cards[0]);
+    let task = added["task"].as_str().unwrap().to_string();
+    assert!(crate::tasks::load(&state.chats, &task).is_some());
+    act(&added["undo"]);
+    assert!(crate::tasks::load(&state.chats, &task).is_none());
+    let folder = act(&cards[3]);
+    assert!(state.fresh().dir_exists("archive/labs"));
+    act(&folder["undo"]);
+    assert!(!state.fresh().dir_exists("archive/labs"));
+}
+
+#[test]
+fn felix_in_auto_does_it_at_once_and_read_only_can_only_look() {
+    let (mut state, _d, ids) = state_with(&[("Heaps", "cs130")]);
+    {
+        let mut store = state.fresh();
+        store.create_dir("archive");
+        store.save().unwrap();
+    }
+    let (streamer, _) = scripted(vec![
+        "<tool>{\"name\": \"move_folder\", \"folder\": \"cs130\", \"into\": \"archive\"}</tool>",
+        "Moved it.",
+    ]);
+    state.chat = Some(streamer);
+    let lines = chat_lines_with(&state, "put cs130 in archive", Some("auto"));
+    let card = lines.iter().find_map(|l| l.get("proposal")).unwrap();
+    assert_eq!(card["state"], "applied");
+    assert_eq!(card["path"], "archive/cs130");
+    assert_eq!(card["undo"]["kind"], "move_folder");
+    assert_eq!(
+        state.fresh().find_note(&ids[0]).unwrap().directory,
+        "archive/cs130"
+    );
+
+    let (streamer, prompts) = scripted(vec![
+        "<tool>{\"name\": \"delete_note\", \"note\": \"Heaps\"}</tool>",
+        "<tool>{\"name\": \"list_schedule\", \"days\": \"3\"}</tool>",
+        "Nothing is due.",
+    ]);
+    state.chat = Some(streamer);
+    let lines = chat_lines_with(&state, "delete heaps and show my week", Some("read"));
+    assert!(lines.iter().all(|l| l.get("proposal").is_none()));
+    let prompts = prompts.lock().unwrap();
+    assert!(
+        !prompts[0].contains("\"delete_note\""),
+        "read only leaves the change tools out of the manual"
+    );
+    assert!(prompts[1].contains("read only"));
+    assert!(prompts[2].contains("Tasks and events from"));
+    assert!(state.fresh().find_note(&ids[0]).is_some());
+}

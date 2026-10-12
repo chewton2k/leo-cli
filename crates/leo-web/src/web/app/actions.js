@@ -62,14 +62,14 @@ const actions = {
   'task-promote': (el) => promoteTask(el.dataset.line),
   'event-open': (el) => eventSheet(el.dataset.id),
   'note-tasks': () => noteTasksSheet(),
-  'tasks-toggle': () => {
-    closeSheet();
-    setTasksWindow(!tasksWin.open);
-    drawSide();
-  },
-  'tasks-close': () => {
-    setTasksWindow(false);
-    drawSide();
+  'tasks-fold': () => {
+    tasksWin.folded = !tasksWin.folded;
+    try {
+      localStorage.setItem(TASKS_FOLDED, tasksWin.folded ? '1' : '0');
+    } catch (e) {
+      tasksWin.folded = Boolean(tasksWin.folded);
+    }
+    drawTasksWindow();
   },
   'source-close': () => closeSource(),
   'source-file': (el) => openSource(el.dataset.id, el.dataset.name),

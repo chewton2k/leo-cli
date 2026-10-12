@@ -9,6 +9,7 @@ pub(crate) mod insert;
 pub(crate) mod interviews;
 pub(crate) mod map;
 pub(crate) mod notes;
+pub(crate) mod organize;
 pub(crate) mod pictures;
 pub(crate) mod related;
 pub(crate) mod settings;

@@ -111,7 +111,7 @@ function drawActivity() {
     box.className = 'activity';
     box.setAttribute('aria-label', 'Working in the background');
     box.setAttribute('aria-live', 'polite');
-    document.body.appendChild(box);
+    dock().appendChild(box);
   }
   const shown = activity.tasks.filter((t) => !hiddenHere(t));
   box.hidden = !shown.length;

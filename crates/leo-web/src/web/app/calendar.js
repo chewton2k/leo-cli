@@ -60,6 +60,7 @@ async function loadSchedule(mine = seq) {
   if (mine !== seq || state.view !== 'calendar' || asked !== cal.month.getTime()) return;
   cal.failed = false;
   cal.data = data;
+  tasksWin.tasks = data.tasks || tasksWin.tasks;
   cal.loadedAt = Date.now();
   drawCalendar();
   drawTasksWindow();
@@ -90,6 +91,20 @@ function calStatus() {
   return `<span>${problem ? 'A calendar could not be read' : `Updated ${esc(when)}`}</span> · <button type="button" class="link-btn" data-action="cal-retry">Retry</button>`;
 }
 
+const TONES = 8;
+const TASK_TONES = { exam: '--hue-red', assignment: '--hue-indigo', meeting: '--hue-violet', 'follow-up': '--hue-teal', deadline: '--hue-amber', other: '--hue-slate' };
+
+function toneOfEvent(event) {
+  const key = String(event.title || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  let hash = 2166136261;
+  for (const ch of key) hash = Math.imul(hash ^ ch.codePointAt(0), 16777619) >>> 0;
+  return `--hue-${hash % TONES}`;
+}
+
+function toneOfTask(task) {
+  return TASK_TONES[task.kind] || '--hue-slate';
+}
+
 function taskLine(task, { showDate = false } = {}) {
   const time = task.time ? `<span class="sched-time">${esc(S.timeLabel(task.time, calLocale()))}</span>` : '<span class="sched-time"></span>';
   const kind = task.kind === 'exam' ? '<span class="sched-pill">Exam</span>' : `<span class="sched-kind">${esc(KIND_LABEL[task.kind] || 'Other')}</span>`;
@@ -99,7 +114,7 @@ function taskLine(task, { showDate = false } = {}) {
   const google = task.sent_at || (cal.data && (cal.data.events || []).some((e) => e.task === task.id)) ? '<span class="sched-badge">Google</span>' : '';
   const missing = task.found === false ? ' · <span class="sched-warn">not found in the note</span>' : '';
   const set = !task.date && !task.done ? `<button type="button" class="btn plain sm" data-action="task-date" data-id="${esc(task.id)}">Set date</button>` : '';
-  return `<div class="sched-row${task.done ? ' done' : ''}" data-task="${esc(task.id)}">
+  return `<div class="sched-row${task.done ? ' done' : ''}" data-task="${esc(task.id)}" style="--tone: var(${toneOfTask(task)})">
     ${showDate ? '' : time}
     <input type="checkbox" class="sched-check" data-action="task-done" data-id="${esc(task.id)}" aria-label="Done: ${esc(task.title)}"${task.done ? ' checked' : ''}>
     <button type="button" class="sched-main" data-action="task-open" data-id="${esc(task.id)}"><span class="sched-title">${esc(task.title)}</span><span class="sched-sub">${from}${when}${due}${missing}</span></button>
@@ -113,10 +128,11 @@ function eventLine(event) {
   const span = event.all_day ? '' : `${time}–${end}`;
   const place = event.location ? ` · ${esc(event.location)}` : '';
   const zone = event.zone_unknown ? ' · <span class="sched-warn">time zone unknown</span>' : '';
-  return `<div class="sched-row sched-event">
+  const sub = [span ? esc(span) : 'All day', event.location ? esc(event.location) : ''].filter(Boolean).join(' · ');
+  return `<div class="sched-row sched-event" style="--tone: var(${toneOfEvent(event)})">
     <span class="sched-time">${esc(time)}</span>
     <span class="sched-bar" aria-hidden="true"></span>
-    <button type="button" class="sched-main" data-action="event-open" data-id="${esc(event.id)}"><span class="sched-title">${esc(event.title)}</span><span class="sched-sub">Google${span ? ` · ${esc(span)}` : ''}${place}${zone}</span></button>
+    <button type="button" class="sched-main" data-action="event-open" data-id="${esc(event.id)}"><span class="sched-title">${esc(event.title)}</span><span class="sched-sub">${sub}${zone}</span></button>
   </div>`;
 }
 
@@ -140,8 +156,12 @@ function drawCalendar() {
     if (!day) return '';
     const items = [...day.allDay, ...day.timed].filter((i) => i.type === 'event' || !i.task.done);
     if (!items.length) return '';
-    if (items.length > 3) return `<span class="sched-more">+${items.length}</span>`;
-    return `<span class="sched-dots">${items.map((i) => `<i class="${i.type === 'event' ? 'ev' : i.task.date < today ? 'late' : 'task'}"></i>`).join('')}</span>`;
+    const tones = [];
+    for (const i of items) {
+      const tone = i.type === 'event' ? toneOfEvent(i.event) : i.task.date < today ? '--hue-red' : toneOfTask(i.task);
+      if (!tones.includes(tone)) tones.push(tone);
+    }
+    return `<span class="sched-dots" aria-label="${items.length} ${items.length === 1 ? 'item' : 'items'}">${tones.slice(0, 4).map((t) => `<i style="background: var(${t})"></i>`).join('')}</span>`;
   };
   const cell = (c) => `<button type="button" class="sched-day${c.inMonth ? '' : ' out'}${c.key === today ? ' today' : ''}${c.key === cal.selected ? ' on' : ''}" data-action="cal-pick" data-day="${c.key}" aria-label="${esc(S.fromKey(c.key).toLocaleDateString(calLocale(), { weekday: 'long', month: 'long', day: 'numeric' }))}"${c.key === cal.selected ? ' aria-pressed="true"' : ''}><span class="sched-n">${c.day}</span>${dots(c.key)}</button>`;
   const week = S.weekOf(S.fromKey(cal.selected), firstDay).map((key) => {
@@ -155,8 +175,43 @@ function drawCalendar() {
   const taskCount = [...allDay, ...timed].filter((i) => i.type === 'task').length;
   const eventCount = allDay.length + timed.length - taskCount;
   const summary = [taskCount ? plural(taskCount, 'task') : '', eventCount ? plural(eventCount, 'event') : ''].filter(Boolean).join(' · ');
+  const now = new Date();
+  const nowMs = now.getTime();
+  let nowShown = cal.selected !== today;
+  const timedRows = timed.map((item) => {
+    const at = item.type === 'event' ? new Date(item.event.start).getTime() : S.fromKey(item.task.date).getTime() + (() => {
+      const [h, m] = String(item.task.time || '00:00').split(':').map(Number);
+      return ((h || 0) * 60 + (m || 0)) * 60000;
+    })();
+    let line = '';
+    if (!nowShown && at > nowMs) {
+      nowShown = true;
+      line = `<div class="sched-now" aria-label="Now"><span>${esc(now.toLocaleTimeString(calLocale(), { hour: 'numeric', minute: '2-digit' }))}</span></div>`;
+    }
+    return line + calItem(item);
+  }).join('') + (nowShown || !timed.length ? '' : `<div class="sched-now" aria-label="Now"><span>${esc(now.toLocaleTimeString(calLocale(), { hour: 'numeric', minute: '2-digit' }))}</span></div>`);
+  const ahead = [];
+  for (let k = 1; k <= 7 && ahead.length < 6; k++) {
+    const key = S.dayKey(S.addDays(new Date(), k));
+    const later = plan.byDay.get(key);
+    if (!later) continue;
+    for (const item of [...later.allDay, ...later.timed]) {
+      if (item.type === 'task' && item.task.done) continue;
+      if (ahead.length >= 6) break;
+      ahead.push({ key, item });
+    }
+  }
+  const coming = ahead.length
+    ? `<section class="sched-coming"><h2>Coming up</h2>${ahead.map(({ key, item }) => {
+      const title = item.type === 'event' ? item.event.title : item.task.title;
+      const tone = item.type === 'event' ? toneOfEvent(item.event) : toneOfTask(item.task);
+      const time = item.type === 'event' ? (item.event.all_day ? '' : S.timeLabel(new Date(item.event.start).toTimeString().slice(0, 5), calLocale())) : (item.task.time ? S.timeLabel(item.task.time, calLocale()) : '');
+      const d = S.fromKey(key);
+      return `<button type="button" class="sched-ahead" data-action="cal-pick" data-day="${key}" style="--tone: var(${tone})"><span class="sched-ahead-day"><b>${esc(d.toLocaleDateString(calLocale(), { weekday: 'short' }))}</b>${d.getDate()}</span><span class="sched-ahead-text"><span class="sched-ahead-title">${esc(title)}</span>${time ? `<span class="sched-sub">${esc(time)}</span>` : ''}</span></button>`;
+    }).join('')}</section>`
+    : '';
   const agenda = allDay.length || timed.length
-    ? `${allDay.length ? `<div class="sched-group">All day</div>${allDay.map(calItem).join('')}` : ''}${timed.map(calItem).join('')}`
+    ? `${allDay.length ? `<div class="sched-group">All day</div>${allDay.map(calItem).join('')}` : ''}${timed.length ? `${allDay.length ? '<div class="sched-group">Schedule</div>' : ''}${timedRows}` : ''}`
     : `<p class="sched-empty">Nothing scheduled</p><button type="button" class="btn plain sm" data-action="task-new" data-day="${cal.selected}">+ Task for this day</button>`;
   const overdue = plan.overdue.length ? `<section class="sched-list"><h2 class="sched-late">Overdue · ${plan.overdue.length}</h2>${plan.overdue.map((t) => taskLine(t, { showDate: true })).join('')}</section>` : '';
   const undated = plan.undated.length ? `<section class="sched-list"><h2>No date · ${plan.undated.length}</h2>${plan.undated.map((t) => taskLine(t, { showDate: true })).join('')}</section>` : '';
@@ -180,6 +235,7 @@ function drawCalendar() {
           <div class="sched-grid" role="grid">${names.map((n) => `<span class="sched-wd">${esc(n)}</span>`).join('')}${grid.map(cell).join('')}</div>
         </section>
         <div class="sched-strip">${week}</div>
+        ${coming}
         <div class="sched-lists">${overdue}${undated}</div>
       </div>
       <section class="sched-agenda" aria-label="${esc(heading)}">
@@ -239,7 +295,7 @@ async function setTaskDone(id, done) {
     return loadSchedule(seq);
   }
   if (task) task.done = done;
-  if (tasksWin.open) setTimeout(drawTasksWindow, done ? 1200 : 0);
+  setTimeout(drawTasksWindow, done ? 1200 : 0);
   const row = app.querySelector(`.sched-row[data-task="${CSS.escape(id)}"]`);
   if (row) row.classList.toggle('done', done);
   if (done) {
@@ -325,7 +381,7 @@ async function saveDate(task, pick, confirm) {
   }
   closeSheet();
   toast(pick.date ? 'Date saved' : 'Date cleared');
-  if (tasksWin.open) loadTasksWindow().catch(() => {});
+  loadTasksWindow().catch(() => {});
   if (state.view === 'calendar') {
     if (pick.date) {
       cal.selected = pick.date;
@@ -366,7 +422,7 @@ function newTaskSheet(day = null) {
       const made = await api('/api/tasks', { method: 'POST', body: { title: text, date: pick.date, time: pick.time || null, kind } });
       closeSheet();
       toast(`Added “${made.title}”`);
-      if (tasksWin.open) loadTasksWindow().catch(() => {});
+      loadTasksWindow().catch(() => {});
       if (state.view === 'calendar') {
         if (made.date) {
           cal.selected = made.date;
@@ -547,94 +603,90 @@ async function openTaskAnywhere(id) {
   taskSheet(id);
 }
 
-var tasksWin = { open: false, timer: 0 };
-const TASKS_KEY = 'leo-tasks-window';
+var tasksWin = { folded: false, timer: 0, tasks: null };
+const TASKS_FOLDED = 'leo-tasks-folded';
+const TASKS_AHEAD_DAYS = 7;
+
+function dock() {
+  let box = document.getElementById('dock');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'dock';
+    box.className = 'dock';
+    document.body.appendChild(box);
+  }
+  return box;
+}
 
 const tasksBox = document.createElement('aside');
 tasksBox.className = 'tasks-window';
 tasksBox.id = 'tasks-window';
 tasksBox.hidden = true;
 tasksBox.setAttribute('aria-label', 'Tasks');
-document.body.appendChild(tasksBox);
+dock().prepend(tasksBox);
+
+try {
+  tasksWin.folded = localStorage.getItem(TASKS_FOLDED) === '1';
+} catch (e) {
+  tasksWin.folded = false;
+}
 
 function tasksGroups(tasks) {
   const today = S.dayKey(new Date());
-  const groups = [['Overdue', []], ['Today', []], ['Upcoming', []], ['No date', []]];
+  const ahead = S.dayKey(S.addDays(new Date(), TASKS_AHEAD_DAYS));
+  const groups = [['Overdue', []], ['Today', []], ['Coming up', []], ['No date', []]];
   for (const t of tasks) {
     if (t.done) continue;
     if (!t.date) groups[3][1].push(t);
     else if (t.date < today) groups[0][1].push(t);
     else if (t.date === today) groups[1][1].push(t);
-    else groups[2][1].push(t);
+    else if (t.date <= ahead) groups[2][1].push(t);
   }
   return groups.filter(([, list]) => list.length);
 }
 
 function drawTasksWindow() {
-  if (!tasksWin.open) {
-    tasksBox.hidden = true;
-    return;
-  }
-  const tasks = (cal.data && cal.data.tasks) || [];
+  const tasks = tasksWin.tasks || (cal.data && cal.data.tasks) || [];
   const groups = tasksGroups(tasks);
   const open = groups.reduce((n, [, list]) => n + list.length, 0);
-  const row = (t) => `<div class="tasks-row" data-task="${esc(t.id)}">
+  const here = /^#\/calendar/.test(location.hash);
+  tasksBox.hidden = !open || here || state.view === 'locked';
+  if (tasksBox.hidden) return;
+  const late = groups.find(([name]) => name === 'Overdue');
+  const row = (t) => `<div class="tasks-row" data-task="${esc(t.id)}" style="--tone: var(${toneOfTask(t)})">
     <input type="checkbox" class="sched-check" data-action="task-done" data-id="${esc(t.id)}" aria-label="Done: ${esc(t.title)}">
     <button type="button" class="tasks-title" data-action="task-open-here" data-id="${esc(t.id)}">${esc(t.title)}</button>
-    ${t.date ? `<span class="tasks-when">${esc(S.fromKey(t.date).toLocaleDateString(calLocale(), { month: 'short', day: 'numeric' }))}${t.time ? ` ${esc(S.timeLabel(t.time, calLocale()))}` : ''}</span>` : `<button type="button" class="btn plain sm" data-action="task-date" data-id="${esc(t.id)}">Set date</button>`}
+    ${t.date ? `<span class="tasks-when">${esc(t.date === S.dayKey(new Date()) ? (t.time ? S.timeLabel(t.time, calLocale()) : 'Today') : S.fromKey(t.date).toLocaleDateString(calLocale(), { month: 'short', day: 'numeric' }))}</span>` : `<button type="button" class="btn plain sm" data-action="task-date" data-id="${esc(t.id)}">Set date</button>`}
   </div>`;
-  tasksBox.hidden = false;
-  tasksBox.innerHTML = `<header class="tasks-head"><h2>Tasks${open ? ` <span>${open}</span>` : ''}</h2>
-      <button type="button" class="icon-btn" data-action="task-new" aria-label="New task" title="New task">${ICON.plus}</button>
-      <button type="button" class="icon-btn" data-action="tasks-close" aria-label="Close tasks" title="Close">${ICON.close}</button></header>
-    <div class="tasks-body">${groups.map(([name, list]) => `<div class="tasks-group${name === 'Overdue' ? ' late' : ''}">${name}</div>${list.slice(0, 50).map(row).join('')}`).join('') || '<p class="tasks-none">Nothing to do. New tasks and Action items from your notes show up here.</p>'}</div>
-    <footer class="tasks-foot"><button type="button" class="link-btn" data-action="calendar">Open calendar</button></footer>`;
+  const label = late ? `${late[1].length} overdue · ${open} to do` : `${open} to do`;
+  tasksBox.classList.toggle('folded', tasksWin.folded);
+  tasksBox.innerHTML = `<div class="tasks-head">
+      <button type="button" class="tasks-toggle" data-action="tasks-fold" aria-expanded="${!tasksWin.folded}"><span class="tasks-icon${late ? ' late' : ''}">${ICON.check}</span><span class="grow">Tasks <span class="tasks-count">${esc(label)}</span></span><span class="activity-fold">${tasksWin.folded ? 'Show' : 'Hide'}</span></button>
+      <button type="button" class="icon-btn tasks-new" data-action="task-new" aria-label="New task" title="New task">${ICON.plus}</button>
+    </div>
+    ${tasksWin.folded ? '' : `<div class="tasks-body">${groups.map(([name, list]) => `<div class="tasks-group${name === 'Overdue' ? ' late' : ''}">${name}</div>${list.slice(0, name === 'No date' ? 5 : 20).map(row).join('')}`).join('')}</div>
+    <div class="tasks-foot"><button type="button" class="link-btn" data-action="calendar">Open calendar</button></div>`}`;
 }
 
 async function loadTasksWindow() {
-  if (!tasksWin.open) return;
+  clearTimeout(tasksWin.timer);
+  if (state.view === 'locked') return;
   try {
-    const tasks = (await api('/api/tasks')).tasks;
-    cal.data = { ...(cal.data || { events: [] }), tasks };
+    tasksWin.tasks = (await api('/api/tasks')).tasks;
+    if (cal.data) cal.data = { ...cal.data, tasks: tasksWin.tasks };
+    else cal.data = { events: [], tasks: tasksWin.tasks };
   } catch (e) {
-    if (e instanceof Locked) throw e;
+    if (e instanceof Locked) return;
   }
   drawTasksWindow();
-  clearTimeout(tasksWin.timer);
   tasksWin.timer = setTimeout(() => {
     if (document.visibilityState === 'visible') loadTasksWindow().catch(() => {});
+    else tasksWin.timer = setTimeout(() => loadTasksWindow().catch(() => {}), CAL_POLL_MS);
   }, CAL_POLL_MS);
 }
 
-function setTasksWindow(open) {
-  tasksWin.open = open;
-  try {
-    localStorage.setItem(TASKS_KEY, open ? '1' : '0');
-  } catch (e) {
-    tasksWin.open = open;
-  }
-  if (open && !window.matchMedia('(min-width: 600px)').matches && chat.isOpen()) chat.toggle(false);
-  document.body.classList.toggle('tasks-open', open);
-  if (!open) {
-    clearTimeout(tasksWin.timer);
-    drawTasksWindow();
-    const opener = document.querySelector('[data-action="tasks-toggle"]');
-    if (opener) opener.focus();
-    return;
-  }
-  drawTasksWindow();
-  loadTasksWindow().catch(fail);
-}
-
-try {
-  if (localStorage.getItem(TASKS_KEY) === '1' && window.matchMedia('(min-width: 600px)').matches) {
-    tasksWin.open = true;
-    document.body.classList.add('tasks-open');
-    setTimeout(() => loadTasksWindow().catch(() => {}), 0);
-  }
-} catch (e) {
-  tasksWin.open = false;
-}
+setTimeout(() => loadTasksWindow().catch(() => {}), 0);
+window.addEventListener('hashchange', () => drawTasksWindow());
 
 const source = { note: null, name: null };
 const SOURCE_KEY = 'leo-source-width';

@@ -3773,22 +3773,25 @@ test.describe('beside the note', () => {
     await expect(pane).toBeHidden();
   });
 
-  test('the Tasks window stays open across pages and closes on request', async ({ page }) => {
+  test('the Tasks panel shows open tasks in the bottom corner, stays across pages and folds', async ({ page }) => {
+    test.skip(test.info().project.name !== 'desktop', 'the panel is for wider screens');
     const tag = `${test.info().project.name}-${Date.now().toString(36)}`;
-    await page.request.post('/api/tasks', { data: { title: `Window task ${tag}` } });
+    await page.request.post('/api/tasks', { data: { title: `Panel task ${tag}` } });
     await page.goto('/');
-    await goPlace(page, 'tasks-toggle');
-    const box = page.locator('#tasks-window');
+    const box = page.locator('#dock #tasks-window');
     await expect(box).toBeVisible();
-    await expect(box).toContainText(`Window task ${tag}`);
-    await expect(box.locator('.tasks-group', { hasText: 'No date' })).toBeVisible();
-    if (test.info().project.name === 'desktop') {
-      await goPlace(page, 'settings');
-      await expect(page).toHaveURL(/#\/settings$/);
-      await expect(box).toBeVisible();
-    }
-    await box.locator('[data-action="tasks-close"]').click();
-    await expect(box).toBeHidden();
+    await expect(box).toContainText(`Panel task ${tag}`);
+    await expect(page.locator('#side [data-action="tasks-toggle"]')).toHaveCount(0);
+    await page.goto('/#/settings');
+    await expect(box).toBeVisible();
+    await box.locator('[data-action="tasks-fold"]').click();
+    await expect(box.locator('.tasks-body')).toHaveCount(0);
+    await expect(box.locator('[data-action="tasks-fold"]')).toContainText('Show');
+    await page.reload();
+    await expect(page.locator('#dock #tasks-window [data-action="tasks-fold"]')).toContainText('Show');
+    await page.locator('#dock #tasks-window [data-action="tasks-fold"]').click();
+    await page.goto('/#/calendar');
+    await expect(page.locator('#tasks-window')).toBeHidden();
   });
 });
 
@@ -3943,3 +3946,30 @@ test('typing before syntax tools load and a failed load keep the code editable',
   await expect.poll(() => workspace.answer).toContain('return 3');
   await expect(area).toBeFocused();
 });
+
+test.describe('Felix organizes', () => {
+  test('a suggested move is applied from its card and undone', async ({ page }) => {
+    const tag = `${test.info().project.name}-${Date.now().toString(36)}`;
+    await page.request.post('/api/dirs', { data: { path: `archive-${tag}` } });
+    const note = await (await page.request.post('/api/notes', { data: { title: `Move me ${tag}`, body: 'x' } })).json();
+    await page.route('**/api/chat', async (route) => {
+      const lines = [{ sources: [] }, { proposal: { kind: 'move_note', summary: `Move “Move me ${tag}” to archive-${tag}`, note: note.id, title: `Move me ${tag}`, to: `archive-${tag}` } }, { t: 'I suggest moving it.' }, { done: true }];
+      await route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: lines.map((l) => JSON.stringify(l)).join('\n') + '\n' });
+    });
+    await page.goto('/');
+    await page.locator('#chat-toggle').click();
+    const chat = page.locator('#chat');
+    await chat.locator('#chat-input').fill('tidy my notes');
+    await chat.locator('#chat-input').press('Enter');
+    const card = chat.locator('.proposal.organize');
+    await expect(card).toContainText(`Move “Move me ${tag}” to archive-${tag}`);
+    await card.locator('[data-chat="apply"]').click();
+    await expect(card).toContainText('Done');
+    const where = async () => (await (await page.request.get(`/api/notes/${note.id}`)).json()).directory;
+    await expect.poll(where).toBe(`archive-${tag}`);
+    await card.locator('[data-chat="undo"]').click();
+    await expect.poll(where).toBe('');
+    await expect(card.locator('[data-chat="apply"]')).toBeVisible();
+  });
+});
+

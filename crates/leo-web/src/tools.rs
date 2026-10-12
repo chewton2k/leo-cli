@@ -106,7 +106,14 @@ pub fn linked(text: &str, sources: &[SourceRef], own: Option<&str>) -> String {
 }
 
 pub fn changes_notes(name: &str) -> bool {
-    matches!(name, "edit_note" | "create_note")
+    matches!(name, "edit_note" | "create_note") || organizes(name)
+}
+
+pub fn organizes(name: &str) -> bool {
+    matches!(
+        name,
+        "add_task" | "update_task" | "move_note" | "make_folder" | "move_folder" | "delete_note"
+    )
 }
 
 const NOTE: Param = Param {
@@ -115,7 +122,7 @@ const NOTE: Param = Param {
     about: "which note: an id like n3 from a <note> tag or an earlier result, or the note's exact title",
 };
 
-pub const SPECS: [Spec; 14] = [
+pub const SPECS: [Spec; 21] = [
     Spec {
         name: "search_notes",
         purpose: "Find the user's notes that match words, abbreviations (BFS finds breadth-first search) or ideas in their knowledge graph.",
@@ -212,6 +219,135 @@ pub const SPECS: [Spec; 14] = [
         ],
         returns: "\"Asked.\" Then end your reply in one short sentence; how the user did comes as their next message. Write math in the question, choices and answer as $...$, like $f(x)=x^2+4\\cos x$.",
         example: r#"<tool>{"name": "quiz", "kind": "multiple_choice", "question": "What does BFS use to pick the next node?", "options": "a stack | a queue | a heap", "answer": "a queue", "explain": "BFS explores the oldest node found first."}</tool>"#,
+    },
+    Spec {
+        name: "list_schedule",
+        purpose: "See the user's tasks (from their notes' Action items, ones they added, and checkboxes they track) and Google Calendar events for some days, to answer what is due, what is on, or when they are free. Each task has an id to use with update_task.",
+        params: &[
+            Param {
+                name: "from",
+                required: false,
+                about: "the first day as YYYY-MM-DD (today if left out)",
+            },
+            Param {
+                name: "days",
+                required: false,
+                about: "how many days, 1 to 42 (7 if left out)",
+            },
+        ],
+        returns: "Overdue and undated tasks, then each day's events and tasks with times and ids.",
+        example: r#"<tool>{"name": "list_schedule", "days": "7"}</tool>"#,
+    },
+    Spec {
+        name: "add_task",
+        purpose: "Add a task to the user's Calendar (not inside a note), when they ask for a reminder, a to-do or a deadline.",
+        params: &[
+            Param {
+                name: "title",
+                required: true,
+                about: "what to do, in plain words, like Submit lab report",
+            },
+            Param {
+                name: "date",
+                required: false,
+                about: "the day as YYYY-MM-DD; leave it out when no day was given",
+            },
+            Param {
+                name: "time",
+                required: false,
+                about: "the time as HH:MM (24-hour), only with a date",
+            },
+            Param {
+                name: "type",
+                required: false,
+                about: "assignment, exam, meeting, follow-up, deadline or other",
+            },
+        ],
+        returns: "Suggested or done, as the user's access setting allows.",
+        example: r#"<tool>{"name": "add_task", "title": "Submit lab report", "date": "2026-10-16", "time": "23:59", "type": "assignment"}</tool>"#,
+    },
+    Spec {
+        name: "update_task",
+        purpose: "Change one of the user's tasks: mark it done or not done, set or clear its date and time, or change its type. A task from a note has its date written into the note's checkbox.",
+        params: &[
+            Param {
+                name: "task",
+                required: true,
+                about: "the task's id from list_schedule, or its exact title",
+            },
+            Param {
+                name: "done",
+                required: false,
+                about: "yes or no",
+            },
+            Param {
+                name: "date",
+                required: false,
+                about: "YYYY-MM-DD, or none to clear the date",
+            },
+            Param {
+                name: "time",
+                required: false,
+                about: "HH:MM (24-hour), only with a date",
+            },
+            Param {
+                name: "type",
+                required: false,
+                about: "assignment, exam, meeting, follow-up, deadline or other",
+            },
+        ],
+        returns: "Suggested or done, as the user's access setting allows.",
+        example: r#"<tool>{"name": "update_task", "task": "t3f2a…", "done": "yes"}</tool>"#,
+    },
+    Spec {
+        name: "move_note",
+        purpose: "Move a note into another folder.",
+        params: &[
+            NOTE,
+            Param {
+                name: "folder",
+                required: true,
+                about: "the folder path like fall 2026/cs130, or an empty string for the top level",
+            },
+        ],
+        returns: "Suggested or done, as the user's access setting allows.",
+        example: r#"<tool>{"name": "move_note", "note": "n2", "folder": "fall 2026/cs130"}</tool>"#,
+    },
+    Spec {
+        name: "make_folder",
+        purpose: "Make a new folder, inside another one with a / path.",
+        params: &[Param {
+            name: "folder",
+            required: true,
+            about: "the new folder's path like fall 2026/cs130",
+        }],
+        returns: "Suggested or done, as the user's access setting allows.",
+        example: r#"<tool>{"name": "make_folder", "folder": "fall 2026/cs130"}</tool>"#,
+    },
+    Spec {
+        name: "move_folder",
+        purpose: "Move a folder, with everything in it, into another folder or to the top level.",
+        params: &[
+            Param {
+                name: "folder",
+                required: true,
+                about: "the folder to move, like older classes/cs130",
+            },
+            Param {
+                name: "into",
+                required: true,
+                about: "the folder to put it in, or an empty string for the top level",
+            },
+        ],
+        returns: "Suggested or done, as the user's access setting allows.",
+        example: r#"<tool>{"name": "move_folder", "folder": "cs130", "into": "older classes"}</tool>"#,
+    },
+    Spec {
+        name: "delete_note",
+        purpose: "Move a note to the trash, only when the user asks for that note to be deleted. It can be restored from the trash.",
+        params: &[NOTE],
+        returns: "Suggested or done, as the user's access setting allows.",
+        example: r#"<tool>{"name": "delete_note", "note": "n4"}</tool>"#,
     },
     Spec {
         name: "study_plan",
@@ -1156,8 +1292,8 @@ pub fn quiz_from(call: &Call) -> Result<Quiz, String> {
     })
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
-#[serde(tag = "kind", rename_all = "lowercase")]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Proposal {
     Edit {
         note: String,
@@ -1170,6 +1306,63 @@ pub enum Proposal {
         title: String,
         body: String,
         folder: String,
+    },
+    AddTask {
+        summary: String,
+        title: String,
+        #[serde(default)]
+        date: Option<String>,
+        #[serde(default)]
+        time: Option<String>,
+        #[serde(default)]
+        task_kind: Option<String>,
+    },
+    UpdateTask {
+        summary: String,
+        id: String,
+        #[serde(default)]
+        done: Option<bool>,
+        #[serde(default)]
+        date: Option<String>,
+        #[serde(default)]
+        clear_date: bool,
+        #[serde(default)]
+        time: Option<String>,
+        #[serde(default)]
+        task_kind: Option<String>,
+    },
+    DeleteTask {
+        summary: String,
+        id: String,
+    },
+    MoveNote {
+        summary: String,
+        note: String,
+        title: String,
+        to: String,
+    },
+    MakeFolder {
+        summary: String,
+        path: String,
+    },
+    RemoveFolder {
+        summary: String,
+        path: String,
+    },
+    MoveFolder {
+        summary: String,
+        from: String,
+        into: String,
+    },
+    DeleteNote {
+        summary: String,
+        note: String,
+        title: String,
+    },
+    RestoreNote {
+        summary: String,
+        note: String,
+        title: String,
     },
 }
 
@@ -2231,9 +2424,9 @@ mod tests {
         assert!(empty.starts_with("\"query\" is empty"));
         let number = wrong(serde_json::json!({"name": "open_note", "note": 3}));
         assert!(number.contains("must be text in double quotes"));
-        let unknown = wrong(serde_json::json!({"name": "delete_note", "note": "n1"}));
+        let unknown = wrong(serde_json::json!({"name": "erase_everything", "note": "n1"}));
         assert!(unknown.contains(
-            "the tools are search_notes, open_note, connected_notes, calculate, ask_user, quiz, study_plan, end_session, look_at_picture, read_original, read_transcript, read_document, edit_note, create_note"
+            "the tools are search_notes, open_note, connected_notes, calculate, ask_user, quiz, list_schedule, add_task, update_task, move_note, make_folder, move_folder, delete_note, study_plan, end_session, look_at_picture, read_original, read_transcript, read_document, edit_note, create_note"
         ));
         assert_eq!(
             check(&Call {

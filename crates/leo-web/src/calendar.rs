@@ -93,7 +93,7 @@ fn body_of(notes: &Path, id: &str) -> Option<(DateTime<Utc>, Vec<u8>)> {
 }
 
 impl Calendar {
-    fn events(
+    pub(crate) fn events(
         &self,
         notes: &Path,
         from: DateTime<Utc>,

@@ -109,7 +109,6 @@ function menu() {
     <button class="list-row" data-action="new-folder">${ICON.folderPlus}<span class="grow">New folder${here ? ` in ${esc(folderLabel(here))}` : ''}</span></button>
     <button class="list-row" data-action="interviews">${ICON.chat}<span class="grow">Interview practice</span></button>
     <button class="list-row" data-action="calendar">${ICON.calendar}<span class="grow">Calendar</span></button>
-    <button class="list-row" data-action="tasks-toggle">${ICON.check}<span class="grow">Tasks</span></button>
     <button class="list-row" data-action="map">${ICON.map}<span class="grow">Knowledge graph</span></button>
     <button class="list-row" data-action="settings">${ICON.gear}<span class="grow">Settings</span></button>
     <button class="list-row" data-action="trash">${ICON.trash}<span class="grow">Trash</span></button>

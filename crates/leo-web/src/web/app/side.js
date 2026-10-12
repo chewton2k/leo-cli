@@ -57,7 +57,6 @@ function drawSide() {
       ${sideRow('chat', chat.button(22), 'Ask Felix', { on: chatOpen })}
       ${sideRow('interviews', ICON.chat, 'Interview practice', { on: here === 'interviews' })}
       ${sideRow('calendar', ICON.calendar, 'Calendar', { on: here === 'calendar' })}
-      ${sideRow('tasks-toggle', ICON.check, 'Tasks', { on: Boolean(tasksWin && tasksWin.open) })}
       ${sideRow('map', ICON.map, 'Knowledge graph', { on: here === 'map' })}
       ${sideRow('record', ICON.mic, 'Record', { on: here === 'record', attrs: ` data-dir="${esc(dir)}"` })}
       ${sideRow('upload', ICON.upload, 'Note from a file')}

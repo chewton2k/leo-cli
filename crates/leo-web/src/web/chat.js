@@ -433,7 +433,8 @@
     }
     for (const p of m.proposals || []) {
       const state = p.state === 'applied' ? 'applied' : p.state === 'dismissed' ? 'dismissed by the user' : 'waiting for the user';
-      lines.push(`[${p.kind === 'create' ? `Suggested a new note “${clipped(p.title, 80)}”` : `Suggested a change to “${clipped(p.title, 80)}”: “${clipped(p.find, 80)}” → “${clipped(p.replace, 120)}”`}; ${state}]`);
+      const what = p.kind === 'create' ? `Suggested a new note “${clipped(p.title, 80)}”` : p.kind === 'edit' ? `Suggested a change to “${clipped(p.title, 80)}”: “${clipped(p.find, 80)}” → “${clipped(p.replace, 120)}”` : `Suggested: ${clipped(p.summary, 160)}`;
+      lines.push(`[${what}; ${state}]`);
     }
     lines.push(grade(m.text || '').text || m.text || '');
     return lines.filter(Boolean).join('\n');
@@ -520,7 +521,7 @@
 
   const CHAT_LEAVE_MS = 160;
 
-  function create({ render, escape, onOpen = () => {}, onOriginal = () => {}, storage = root.localStorage, prepare = null, notify = () => {}, onSaved = () => {}, onChanged = () => {}, onUndone = () => {}, onToggle = () => {}, onInterview = () => {}, onInterviewChanged = () => {}, onInterviewReply = () => {}, onAdd = () => {} }) {
+  function create({ render, escape, onOpen = () => {}, onOriginal = () => {}, storage = root.localStorage, prepare = null, notify = () => {}, onSaved = () => {}, onChanged = () => {}, onUndone = () => {}, onToggle = () => {}, onInterview = () => {}, onInterviewChanged = () => {}, onInterviewReply = () => {}, onAdd = () => {}, onOrganized = () => {} }) {
     const saved = load(storage);
     const state = { open: false, id: saved.id || newId(), mode: modeOf(saved.mode), messages: saved.messages, refs: saved.refs, context: null, dropped: null, busy: null, streak: 0, pick: null, chats: null, sidebar: null, doomed: null, asking: null, files: [], sent: [], filesFor: null, review: [], drafts: {}, found: null, selection: null };
     const panel = document.createElement('aside');
@@ -1431,6 +1432,14 @@
 
     function proposalCard(p, i, j) {
       const where = `data-i="${i}" data-j="${j}"`;
+      if (p.kind !== 'create' && p.kind !== 'edit') {
+        const acts = p.state === 'applied'
+          ? `<div class="proposal-done">Done · <button class="msg-act" data-chat="undo" ${where}>Undo</button></div>`
+          : p.state === 'dismissed'
+            ? '<div class="proposal-done">Dismissed</div>'
+            : `<div class="proposal-buttons"><button class="btn primary sm" data-chat="apply" ${where}>${p.kind === 'delete_note' ? 'Move to trash' : 'Do it'}</button><button class="btn plain sm" data-chat="dismiss" ${where}>Dismiss</button></div>`;
+        return `<div class="proposal organize ${escape(p.kind)}"><div class="proposal-title">${escape(p.summary || 'A change')}</div>${acts}</div>`;
+      }
       const done = p.state === 'applied'
         ? `<div class="proposal-done">${p.kind === 'create' ? 'Made' : 'Applied'} · <button class="msg-act" data-chat="open" data-id="${escape(p.made || p.note || '')}">Open the note</button><button class="msg-act" data-chat="undo" ${where}>Undo</button></div>`
         : p.state === 'dismissed'
@@ -1583,6 +1592,7 @@
         draw(false);
         return;
       }
+      if (p.kind !== 'create' && p.kind !== 'edit') return organize(p, p, true);
       const post = p.kind === 'create'
         ? ['/api/notes', { title: p.title, body: p.body || '', directory: p.folder || '' }]
         : [`/api/notes/${encodeURIComponent(p.note)}/suggestion`, { find: p.find || '', replace: p.replace || '' }];
@@ -1621,10 +1631,37 @@
       draw(false);
     }
 
+    async function organize(p, action, forward) {
+      const sending = Object.fromEntries(Object.entries(action || {}).filter(([k]) => !['state', 'undo', 'task', 'path'].includes(k)));
+      let done;
+      try {
+        const response = await fetch('/api/felix/act', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sending) });
+        done = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(done.error || 'That could not be done.');
+      } catch (e) {
+        notify(e.message || "Can't reach leo. Is leo serve still running?");
+        return;
+      }
+      if (forward) {
+        p.state = 'applied';
+        p.undo = done.undo;
+      } else {
+        p.state = 'new';
+        delete p.undo;
+      }
+      onOrganized(p);
+      remember();
+      draw(false);
+    }
+
     async function undo(i, j) {
       const m = state.messages[i];
       const p = m && m.proposals && m.proposals[j];
       if (!p || p.state !== 'applied') return;
+      if (p.kind !== 'create' && p.kind !== 'edit') {
+        if (!p.undo) return notify('This change was made before leo could undo it.');
+        return organize(p, p.undo, false);
+      }
       const create = p.kind === 'create';
       if (!create && (p.before === null || p.before === undefined || !p.after)) {
         notify('This change was applied before leo could undo it; open the note to change it back.');
@@ -1966,7 +2003,8 @@
               const done = e.proposal.state === 'applied';
               answer.proposals = [...(answer.proposals || []), { ...e.proposal, state: done ? 'applied' : 'new' }];
               if (done && e.proposal.kind === 'create' && e.proposal.made) onSaved({ id: e.proposal.made, title: e.proposal.title, directory: e.proposal.folder || '' });
-              else if (done) onChanged({ id: e.proposal.note, title: e.proposal.title });
+              else if (done && e.proposal.kind === 'edit') onChanged({ id: e.proposal.note, title: e.proposal.title });
+              else if (done) onOrganized(e.proposal);
             }
             if (typeof e.t === 'string') {
               if (!answer.text) talking();
