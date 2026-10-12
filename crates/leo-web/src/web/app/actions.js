@@ -43,7 +43,7 @@ const actions = {
     cal.showDone = !cal.showDone;
     drawCalendar();
   },
-  'task-new': (el) => newTaskSheet(el.dataset.day || (state.view === 'calendar' ? cal.selected : null)),
+  'task-new': (el) => newTaskSheet(el.dataset.day || null),
   'task-open': (el) => taskSheet(el.dataset.id),
   'task-open-here': (el) => openTaskAnywhere(el.dataset.id),
   'task-done': (el) => {
