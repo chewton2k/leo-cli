@@ -62,6 +62,7 @@ async function loadSchedule(mine = seq) {
   cal.data = data;
   cal.loadedAt = Date.now();
   drawCalendar();
+  drawTasksWindow();
   clearTimeout(cal.timer);
   if (data.refreshing && cal.polls < 6) {
     cal.polls++;
@@ -238,6 +239,7 @@ async function setTaskDone(id, done) {
     return loadSchedule(seq);
   }
   if (task) task.done = done;
+  if (tasksWin.open) setTimeout(drawTasksWindow, done ? 1200 : 0);
   const row = app.querySelector(`.sched-row[data-task="${CSS.escape(id)}"]`);
   if (row) row.classList.toggle('done', done);
   if (done) {
@@ -323,6 +325,7 @@ async function saveDate(task, pick, confirm) {
   }
   closeSheet();
   toast(pick.date ? 'Date saved' : 'Date cleared');
+  if (tasksWin.open) loadTasksWindow().catch(() => {});
   if (state.view === 'calendar') {
     if (pick.date) {
       cal.selected = pick.date;
@@ -363,6 +366,7 @@ function newTaskSheet(day = null) {
       const made = await api('/api/tasks', { method: 'POST', body: { title: text, date: pick.date, time: pick.time || null, kind } });
       closeSheet();
       toast(`Added “${made.title}”`);
+      if (tasksWin.open) loadTasksWindow().catch(() => {});
       if (state.view === 'calendar') {
         if (made.date) {
           cal.selected = made.date;
@@ -542,3 +546,195 @@ async function openTaskAnywhere(id) {
   }
   taskSheet(id);
 }
+
+var tasksWin = { open: false, timer: 0 };
+const TASKS_KEY = 'leo-tasks-window';
+
+const tasksBox = document.createElement('aside');
+tasksBox.className = 'tasks-window';
+tasksBox.id = 'tasks-window';
+tasksBox.hidden = true;
+tasksBox.setAttribute('aria-label', 'Tasks');
+document.body.appendChild(tasksBox);
+
+function tasksGroups(tasks) {
+  const today = S.dayKey(new Date());
+  const groups = [['Overdue', []], ['Today', []], ['Upcoming', []], ['No date', []]];
+  for (const t of tasks) {
+    if (t.done) continue;
+    if (!t.date) groups[3][1].push(t);
+    else if (t.date < today) groups[0][1].push(t);
+    else if (t.date === today) groups[1][1].push(t);
+    else groups[2][1].push(t);
+  }
+  return groups.filter(([, list]) => list.length);
+}
+
+function drawTasksWindow() {
+  if (!tasksWin.open) {
+    tasksBox.hidden = true;
+    return;
+  }
+  const tasks = (cal.data && cal.data.tasks) || [];
+  const groups = tasksGroups(tasks);
+  const open = groups.reduce((n, [, list]) => n + list.length, 0);
+  const row = (t) => `<div class="tasks-row" data-task="${esc(t.id)}">
+    <input type="checkbox" class="sched-check" data-action="task-done" data-id="${esc(t.id)}" aria-label="Done: ${esc(t.title)}">
+    <button type="button" class="tasks-title" data-action="task-open-here" data-id="${esc(t.id)}">${esc(t.title)}</button>
+    ${t.date ? `<span class="tasks-when">${esc(S.fromKey(t.date).toLocaleDateString(calLocale(), { month: 'short', day: 'numeric' }))}${t.time ? ` ${esc(S.timeLabel(t.time, calLocale()))}` : ''}</span>` : `<button type="button" class="btn plain sm" data-action="task-date" data-id="${esc(t.id)}">Set date</button>`}
+  </div>`;
+  tasksBox.hidden = false;
+  tasksBox.innerHTML = `<header class="tasks-head"><h2>Tasks${open ? ` <span>${open}</span>` : ''}</h2>
+      <button type="button" class="icon-btn" data-action="task-new" aria-label="New task" title="New task">${ICON.plus}</button>
+      <button type="button" class="icon-btn" data-action="tasks-close" aria-label="Close tasks" title="Close">${ICON.close}</button></header>
+    <div class="tasks-body">${groups.map(([name, list]) => `<div class="tasks-group${name === 'Overdue' ? ' late' : ''}">${name}</div>${list.slice(0, 50).map(row).join('')}`).join('') || '<p class="tasks-none">Nothing to do. New tasks and Action items from your notes show up here.</p>'}</div>
+    <footer class="tasks-foot"><button type="button" class="link-btn" data-action="calendar">Open calendar</button></footer>`;
+}
+
+async function loadTasksWindow() {
+  if (!tasksWin.open) return;
+  try {
+    const tasks = (await api('/api/tasks')).tasks;
+    cal.data = { ...(cal.data || { events: [] }), tasks };
+  } catch (e) {
+    if (e instanceof Locked) throw e;
+  }
+  drawTasksWindow();
+  clearTimeout(tasksWin.timer);
+  tasksWin.timer = setTimeout(() => {
+    if (document.visibilityState === 'visible') loadTasksWindow().catch(() => {});
+  }, CAL_POLL_MS);
+}
+
+function setTasksWindow(open) {
+  tasksWin.open = open;
+  try {
+    localStorage.setItem(TASKS_KEY, open ? '1' : '0');
+  } catch (e) {
+    tasksWin.open = open;
+  }
+  if (open && !window.matchMedia('(min-width: 600px)').matches && chat.isOpen()) chat.toggle(false);
+  document.body.classList.toggle('tasks-open', open);
+  if (!open) {
+    clearTimeout(tasksWin.timer);
+    drawTasksWindow();
+    const opener = document.querySelector('[data-action="tasks-toggle"]');
+    if (opener) opener.focus();
+    return;
+  }
+  drawTasksWindow();
+  loadTasksWindow().catch(fail);
+}
+
+try {
+  if (localStorage.getItem(TASKS_KEY) === '1' && window.matchMedia('(min-width: 600px)').matches) {
+    tasksWin.open = true;
+    document.body.classList.add('tasks-open');
+    setTimeout(() => loadTasksWindow().catch(() => {}), 0);
+  }
+} catch (e) {
+  tasksWin.open = false;
+}
+
+const source = { note: null, name: null };
+const SOURCE_KEY = 'leo-source-width';
+
+const sourcePane = document.createElement('aside');
+sourcePane.className = 'source-pane';
+sourcePane.id = 'source-pane';
+sourcePane.hidden = true;
+sourcePane.setAttribute('aria-label', 'Original file');
+document.body.appendChild(sourcePane);
+
+function sourceWidth() {
+  let kept = 0;
+  try {
+    kept = Number(localStorage.getItem(SOURCE_KEY)) || 0;
+  } catch (e) {
+    kept = 0;
+  }
+  return kept || Math.round(Math.min(640, Math.max(420, window.innerWidth * 0.38)));
+}
+
+function sourceFits() {
+  if (source.note) return true;
+  const style = getComputedStyle(document.body);
+  const side = parseFloat(style.getPropertyValue('--side')) || 0;
+  const right = document.body.classList.contains('chat-open') ? parseFloat(style.getPropertyValue('--right')) || 0 : 0;
+  return window.innerWidth - side - right >= sourceWidth() + 640;
+}
+
+function closeSource() {
+  if (!source.note) return;
+  source.note = null;
+  source.name = null;
+  sourcePane.hidden = true;
+  sourcePane.innerHTML = '';
+  document.body.classList.remove('with-source');
+}
+
+async function openSource(id, name, page = null) {
+  const kind = viewKind(name);
+  if (!kind) return;
+  source.note = id;
+  source.name = name;
+  document.body.style.setProperty('--source-w', `${sourceWidth()}px`);
+  document.body.classList.add('with-source');
+  const url = `/api/notes/${enc(id)}/originals/${enc(name)}`;
+  let files = [];
+  try {
+    files = (await api(`/api/notes/${enc(id)}/originals`)).filter((f) => viewKind(f.name));
+  } catch (e) {
+    if (e instanceof Locked) throw e;
+  }
+  if (source.note !== id || source.name !== name) return;
+  const picker = files.length > 1
+    ? `<span class="source-files">${files.slice(0, 12).map((f) => `<button type="button" class="chip${f.name === name ? ' accent' : ''}" data-action="source-file" data-id="${esc(id)}" data-name="${esc(f.name)}">${esc(f.name)}</button>`).join('')}</span>`
+    : `<b class="source-name" title="${esc(name)}">${esc(name)}</b>`;
+  const body = kind === 'pdf'
+    ? `<iframe class="source-frame" src="${url}?view=1${page ? `#page=${Number(page)}` : ''}" title="${esc(name)}"></iframe>`
+    : kind === 'image'
+      ? `<div class="source-scroll"><img class="source-img" src="${url}?view=1" alt="${esc(name)}"></div>`
+      : '<div class="source-scroll prose source-text">Loading…</div>';
+  sourcePane.hidden = false;
+  sourcePane.innerHTML = `<div class="source-grip" role="separator" aria-orientation="vertical" aria-label="Drag to resize the original" tabindex="0"></div>
+    <header class="source-head">${picker}<span class="source-tools"><a class="btn sm plain" href="${url}" download="${esc(name)}">Download</a><button type="button" class="icon-btn" data-action="source-close" aria-label="Close the original">${ICON.close}</button></span></header>
+    <div class="source-body">${body}</div>`;
+  if (kind === 'text') {
+    const box = sourcePane.querySelector('.source-text');
+    try {
+      const response = await fetch(url, { credentials: 'same-origin' });
+      if (!response.ok) throw new Error();
+      const text = await response.text();
+      if (!box.isConnected) return;
+      box.innerHTML = /\.md$/i.test(name) ? md.render(text) : `<pre>${esc(text)}</pre>`;
+    } catch (e) {
+      box.textContent = 'This file could not be shown. Download it instead.';
+    }
+  }
+}
+
+sourcePane.addEventListener('pointerdown', (e) => {
+  const grip = e.target.closest('.source-grip');
+  if (!grip) return;
+  e.preventDefault();
+  const startX = e.clientX;
+  const start = sourceWidth();
+  document.body.classList.add('source-resizing');
+  const move = (ev) => {
+    const width = Math.round(Math.min(window.innerWidth - 600, Math.max(360, start + startX - ev.clientX)));
+    document.body.style.setProperty('--source-w', `${width}px`);
+    try {
+      localStorage.setItem(SOURCE_KEY, String(width));
+    } catch (err) {
+      return;
+    }
+  };
+  const up = () => {
+    document.body.classList.remove('source-resizing');
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+  };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
+});

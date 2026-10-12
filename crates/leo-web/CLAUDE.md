@@ -1056,3 +1056,17 @@ widens the page). Classes are `sched-*` because Settings already owns `cal-*`.
 - The note toolbar's Tasks sheet lists the note's checkboxes with Add to tasks.
 - The note prompts write Action items with full dates worked out from
   `<recorded_on>` (`long::recorded_on`, added by `with_profile`).
+
+Tasks window and original pane (release 4, `app/calendar.js`): the sidebar's Tasks
+row and the phone menu toggle `#tasks-window`, a panel mounted on `body` (outside
+`#app`), so it survives navigation: Overdue / Today / Upcoming / No date from
+`/api/tasks`, reloaded every 2.5 min while visible and after any task change, open
+state in `leo-tasks-window` (reopened on wide screens only). On phones it is a bottom
+sheet and shares the overlay slot with Felix (opening one closes the other).
+`tasksWin` is a `var` because `drawSide` and Felix's `onToggle` can run before this
+part loads. An original (`viewOriginal`, chips, citations' Open the file) opens in
+`#source-pane` beside its note when the page has room for the pane plus a 640 px note
+(`sourceFits`), otherwise in the viewer sheet as before. The pane adds its width to
+`--right` (`body.with-source`, combined with Felix's at ≥ 1200 px), so toolbars,
+toasts and sheets stay beside it; its width drags (`leo-source-width`) and it closes
+when you leave the note.

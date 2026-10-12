@@ -3698,3 +3698,49 @@ test.describe('calendar', () => {
     expect(tasks.some((t) => t.title === 'Book the room' && t.note.id === note.id)).toBe(true);
   });
 });
+
+test.describe('beside the note', () => {
+  test('on a wide screen an original opens beside its note and closes when you leave', async ({ page, browser }) => {
+    test.skip(test.info().project.name !== 'desktop', 'the pane needs a wide screen');
+    await page.setViewportSize({ width: 1600, height: 900 });
+    const note = await (await page.request.post('/api/notes', { data: { title: 'Beside the source', body: 'My notes on the paper.' } })).json();
+    const folder = path.join(process.env.LEO_BROWSER_HOME, 'attachments', note.id);
+    fs.mkdirSync(folder, { recursive: true });
+    fs.writeFileSync(path.join(folder, 'notes.txt'), 'Plain text from the upload.');
+    const maker = await browser.newPage();
+    await maker.setContent('<h1>Paper</h1>');
+    fs.writeFileSync(path.join(folder, 'paper.pdf'), await maker.pdf());
+    await maker.close();
+    await page.goto(`/#/n/${note.id}`);
+    await page.locator('.chip.original', { hasText: 'notes.txt' }).click();
+    const pane = page.locator('#source-pane');
+    await expect(pane).toBeVisible();
+    await expect(pane.locator('.source-text')).toHaveText('Plain text from the upload.');
+    await expect(page.locator('.sheet.viewer')).toHaveCount(0);
+    const paneBox = await pane.boundingBox();
+    const doc = await page.locator('#doc').boundingBox();
+    expect(doc.x + doc.width).toBeLessThanOrEqual(paneBox.x + 1);
+    await pane.locator('[data-action="source-file"]', { hasText: 'paper.pdf' }).click();
+    await expect(pane.locator('iframe.source-frame')).toHaveAttribute('src', /paper\.pdf\?view=1$/);
+    await page.locator('#side [data-action="home"]').first().click();
+    await expect(pane).toBeHidden();
+  });
+
+  test('the Tasks window stays open across pages and closes on request', async ({ page }) => {
+    const tag = `${test.info().project.name}-${Date.now().toString(36)}`;
+    await page.request.post('/api/tasks', { data: { title: `Window task ${tag}` } });
+    await page.goto('/');
+    await goPlace(page, 'tasks-toggle');
+    const box = page.locator('#tasks-window');
+    await expect(box).toBeVisible();
+    await expect(box).toContainText(`Window task ${tag}`);
+    await expect(box.locator('.tasks-group', { hasText: 'No date' })).toBeVisible();
+    if (test.info().project.name === 'desktop') {
+      await goPlace(page, 'settings');
+      await expect(page).toHaveURL(/#\/settings$/);
+      await expect(box).toBeVisible();
+    }
+    await box.locator('[data-action="tasks-close"]').click();
+    await expect(box).toBeHidden();
+  });
+});

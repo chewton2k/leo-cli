@@ -62,6 +62,17 @@ const actions = {
   'task-promote': (el) => promoteTask(el.dataset.line),
   'event-open': (el) => eventSheet(el.dataset.id),
   'note-tasks': () => noteTasksSheet(),
+  'tasks-toggle': () => {
+    closeSheet();
+    setTasksWindow(!tasksWin.open);
+    drawSide();
+  },
+  'tasks-close': () => {
+    setTasksWindow(false);
+    drawSide();
+  },
+  'source-close': () => closeSource(),
+  'source-file': (el) => openSource(el.dataset.id, el.dataset.name),
   'set-model': (el) => changeSetting({ set: 'model', task: el.dataset.task, value: el.dataset.model }),
   'set-effort': (el) => changeSetting({ set: 'effort', value: el.dataset.effort === 'default' ? '' : el.dataset.effort }),
   'side-twist': (el) => twistFolder(el.dataset.dir),

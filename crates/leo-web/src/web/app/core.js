@@ -76,7 +76,10 @@ const chat = felix.create({
     if (open && !saving.unsaved()) showNote(note.id);
     toast(open && saving.unsaved() ? 'Felix changed this note while you were typing; reopen it to see the change.' : `Changed “${note.title}”`, { action: 'Open', run: () => go(noteHash(note.id)) });
   },
-  onToggle: () => drawSide(),
+  onToggle: (open) => {
+    if (open && tasksWin && tasksWin.open && !window.matchMedia('(min-width: 600px)').matches) setTasksWindow(false);
+    drawSide();
+  },
   onAdd: (picked) => {
     if (!window.matchMedia('(min-width: 900px)').matches) chat.toggle(false);
     addSheet(picked);
@@ -607,6 +610,7 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
   const mine = ++seq;
   const note = fresh || (await api(`/api/notes/${enc(id)}`));
   if (mine !== seq) return;
+  if (source.note && source.note !== note.id) closeSource();
   if (state.session && state.session.doc) state.session.doc.destroy();
   const s = draft || saving.open(note);
   s.tags = [...s.edit.tags];

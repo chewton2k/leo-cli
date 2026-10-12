@@ -177,6 +177,7 @@ document.addEventListener('click', (e) => {
 async function render() {
   hideAskFloat();
   clearTimeout(cal.timer);
+  if (!/^#\/n\//.test(location.hash)) closeSource();
   document.body.classList.toggle('on-calendar', /^#\/calendar/.test(location.hash));
   const hash = decodeURI(location.hash || '#/');
   const [, kind, rest = ''] = location.hash.match(/^#\/([a-z]*)\/?(.*)$/) || [null, '', ''];

@@ -227,6 +227,7 @@ function viewKind(name) {
 async function viewOriginal(id, name, page = null) {
   const kind = viewKind(name);
   if (!kind) return;
+  if (state.view === 'note' && state.session && state.session.note.id === id && sourceFits()) return openSource(id, name, page);
   const url = `/api/notes/${enc(id)}/originals/${enc(name)}`;
   const zoom = kind === 'image'
     ? '<button class="btn sm plain" data-action="viewer-zoom" data-step="-1" aria-label="Zoom out">−</button><button class="btn sm plain" data-action="viewer-zoom" data-step="1" aria-label="Zoom in">+</button><button class="btn sm plain" data-action="viewer-zoom" data-step="0">Fit</button>'
