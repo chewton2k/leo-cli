@@ -1437,7 +1437,7 @@
           ? `<div class="proposal-done">Done · <button class="msg-act" data-chat="undo" ${where}>Undo</button></div>`
           : p.state === 'dismissed'
             ? '<div class="proposal-done">Dismissed</div>'
-            : `<div class="proposal-buttons"><button class="btn primary sm" data-chat="apply" ${where}>${p.kind === 'delete_note' ? 'Move to trash' : 'Do it'}</button><button class="btn plain sm" data-chat="dismiss" ${where}>Dismiss</button></div>`;
+            : `<div class="proposal-buttons"><button class="btn primary sm" data-chat="apply" ${where}>${p.kind === 'delete_note' || p.kind === 'delete_folder' ? 'Move to trash' : p.kind === 'restore_note' ? 'Bring it back' : 'Do it'}</button><button class="btn plain sm" data-chat="dismiss" ${where}>Dismiss</button></div>`;
         return `<div class="proposal organize ${escape(p.kind)}"><div class="proposal-title">${escape(p.summary || 'A change')}</div>${acts}</div>`;
       }
       const done = p.state === 'applied'

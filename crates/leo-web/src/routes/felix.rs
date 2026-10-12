@@ -464,7 +464,11 @@ fn run_tool(
             proposal: None,
             found: Vec::new(),
         }
-    } else if call.name == "list_schedule" || tools::organizes(&call.name) {
+    } else if matches!(
+        call.name.as_str(),
+        "list_schedule" | "list_trash" | "search_chats"
+    ) || tools::organizes(&call.name)
+    {
         crate::routes::organize::run(state, desk, access, call)
     } else if call.name == "calculate" {
         let steps = call.text("steps");
@@ -513,27 +517,29 @@ fn run_tool(
     }
     if let Some(proposal) = &done.proposal {
         let shown = match access {
-            tools::Access::Auto => match apply_now(state, proposal) {
-                Ok(applied) => {
-                    done.result = match proposal {
-                        tools::Proposal::Edit { .. } => {
-                            "Changed. leo applied it; the user can undo it."
+            tools::Access::Auto if !matches!(proposal, tools::Proposal::DeleteFolder { .. }) => {
+                match apply_now(state, proposal) {
+                    Ok(applied) => {
+                        done.result = match proposal {
+                            tools::Proposal::Edit { .. } => {
+                                "Changed. leo applied it; the user can undo it."
+                            }
+                            tools::Proposal::Create { .. } => {
+                                "Made. leo made the note; the user can undo it."
+                            }
+                            _ => "Done. leo did it; the user can undo it.",
                         }
-                        tools::Proposal::Create { .. } => {
-                            "Made. leo made the note; the user can undo it."
-                        }
-                        _ => "Done. leo did it; the user can undo it.",
+                        .into();
+                        applied
                     }
-                    .into();
-                    applied
-                }
-                Err(why) => {
-                    done.result = format!(
+                    Err(why) => {
+                        done.result = format!(
                         "Suggested, but leo could not apply it ({why}); the user can press Apply."
                     );
-                    serde_json::json!(proposal)
+                        serde_json::json!(proposal)
+                    }
                 }
-            },
+            }
             _ => serde_json::json!(proposal),
         };
         send(serde_json::json!({ "proposal": shown }));

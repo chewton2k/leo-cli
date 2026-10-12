@@ -1837,3 +1837,99 @@ fn felix_in_auto_does_it_at_once_and_read_only_can_only_look() {
     assert!(prompts[2].contains("Tasks and events from"));
     assert!(state.fresh().find_note(&ids[0]).is_some());
 }
+
+#[test]
+fn felix_renames_pins_restores_and_deletes_folders_only_when_asked_and_finds_old_chats() {
+    let (mut state, _d, ids) = state_with(&[("Heaps", "s26"), ("Gone note", "")]);
+    {
+        let mut store = state.fresh();
+        store.delete_notes(std::slice::from_ref(&ids[1]));
+        store.save().unwrap();
+    }
+    crate::chats::save(
+        &state.chats,
+        "chat-midterm-0001",
+        serde_json::from_value(
+            serde_json::json!({"title": "Midterm prep", "mode": "study", "messages": [
+                {"role": "user", "text": "What is on the midterm?"},
+                {"role": "assistant", "text": "The midterm covers heaps and Dijkstra."}
+            ]}),
+        )
+        .unwrap(),
+        chrono::Utc::now(),
+    )
+    .unwrap();
+    let (streamer, prompts) = scripted(vec![
+        "<tool>{\"name\": \"list_trash\"}</tool>",
+        "<tool>{\"name\": \"search_chats\", \"query\": \"midterm\"}</tool>",
+        "<tool>{\"name\": \"rename_note\", \"note\": \"Heaps\", \"title\": \"Heaps and priority queues\"}</tool>",
+        "<tool>{\"name\": \"rename_folder\", \"folder\": \"s26\", \"new_name\": \"Spring 2026\"}</tool>",
+        "<tool>{\"name\": \"pin_note\", \"note\": \"Heaps\"}</tool>",
+        "<tool>{\"name\": \"restore_note\", \"note\": \"Gone note\"}</tool>",
+        "<tool>{\"name\": \"delete_folder\", \"folder\": \"Spring 2026\"}</tool>",
+        "Done.",
+    ]);
+    state.chat = Some(streamer);
+    let lines = chat_lines_with(&state, "sort things out", Some("auto"));
+    {
+        let prompts = prompts.lock().unwrap();
+        let at = prompts[1]
+            .rfind("<tool_result name=\"list_trash")
+            .unwrap_or(0);
+        assert!(
+            prompts[1].contains("“Gone note” from the top level"),
+            "{}",
+            &prompts[1][at..(at + 700).min(prompts[1].len())]
+        );
+        assert!(
+            prompts[2].contains("“Midterm prep”")
+                && prompts[2].contains("covers heaps and Dijkstra")
+        );
+    }
+    let cards: Vec<&serde_json::Value> = lines.iter().filter_map(|l| l.get("proposal")).collect();
+    let states: Vec<(&str, &str)> = cards
+        .iter()
+        .map(|c| {
+            (
+                c["kind"].as_str().unwrap(),
+                c["state"].as_str().unwrap_or("new"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        states,
+        [
+            ("rename_note", "applied"),
+            ("rename_folder", "applied"),
+            ("pin_note", "applied"),
+            ("restore_note", "applied"),
+            ("delete_folder", "new"),
+        ],
+        "a folder delete waits for the user even in Auto"
+    );
+    let store = state.fresh();
+    let heaps = store.find_note(&ids[0]).unwrap();
+    assert_eq!(
+        (heaps.title.as_str(), heaps.directory.as_str(), heaps.pinned),
+        ("Heaps and priority queues", "Spring 2026", true)
+    );
+    assert!(store.find_note(&ids[1]).is_some());
+    drop(store);
+
+    let act = |p: &serde_json::Value| {
+        json_of(run(crate::routes::organize::act_route(
+            State(state.clone()),
+            Json(serde_json::from_value(p.clone()).unwrap()),
+        )))
+    };
+    act(&cards[1]["undo"]);
+    assert_eq!(state.fresh().find_note(&ids[0]).unwrap().directory, "s26");
+    let deleted = act(&serde_json::json!({"kind": "delete_folder", "summary": "x", "path": "s26"}));
+    assert!(state.fresh().find_note(&ids[0]).is_none());
+    act(&deleted["undo"]);
+    assert_eq!(
+        state.fresh().find_note(&ids[0]).unwrap().directory,
+        "s26",
+        "Undo brings the folder and its notes back"
+    );
+}

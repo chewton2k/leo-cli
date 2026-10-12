@@ -128,8 +128,11 @@ fn find_task<'a>(all: &'a [Listed], wanted: &str) -> Result<&'a Listed, String> 
 }
 
 pub(crate) fn run(state: &AppState, desk: &mut tools::Desk, access: Access, call: &Call) -> Done {
-    if call.name == "list_schedule" {
-        return schedule(state, call);
+    match call.name.as_str() {
+        "list_schedule" => return schedule(state, call),
+        "list_trash" => return trash_list(state),
+        "search_chats" => return chat_search(state, call),
+        _ => {}
     }
     let step = match call.name.as_str() {
         "add_task" => "Tried to add a task",
@@ -137,6 +140,11 @@ pub(crate) fn run(state: &AppState, desk: &mut tools::Desk, access: Access, call
         "move_note" => "Tried to move a note",
         "make_folder" => "Tried to make a folder",
         "move_folder" => "Tried to move a folder",
+        "rename_note" => "Tried to rename a note",
+        "rename_folder" => "Tried to rename a folder",
+        "pin_note" => "Tried to pin a note",
+        "restore_note" => "Tried to bring a note back",
+        "delete_folder" => "Tried to delete a folder",
         _ => "Tried to delete a note",
     };
     if !access.changes() {
@@ -160,6 +168,11 @@ pub(crate) fn run(state: &AppState, desk: &mut tools::Desk, access: Access, call
         "move_note" => move_note(state, desk, call),
         "make_folder" => make_folder(state, call),
         "move_folder" => move_folder(state, call),
+        "rename_note" => rename_note(state, desk, call),
+        "rename_folder" => rename_folder(state, call),
+        "pin_note" => pin_note(state, desk, call),
+        "restore_note" => restore_note(state, call),
+        "delete_folder" => delete_folder(state, call),
         _ => delete_note(state, desk, call),
     };
     match made {
@@ -189,9 +202,238 @@ pub(crate) fn summary_of(p: &Proposal) -> String {
         | Proposal::RemoveFolder { summary, .. }
         | Proposal::MoveFolder { summary, .. }
         | Proposal::DeleteNote { summary, .. }
-        | Proposal::RestoreNote { summary, .. } => summary.clone(),
+        | Proposal::RestoreNote { summary, .. }
+        | Proposal::RenameNote { summary, .. }
+        | Proposal::RenameFolder { summary, .. }
+        | Proposal::PinNote { summary, .. }
+        | Proposal::DeleteFolder { summary, .. }
+        | Proposal::RestoreFolder { summary, .. } => summary.clone(),
         Proposal::Edit { title, .. } => format!("Change “{title}”"),
         Proposal::Create { title, .. } => format!("Make the note “{title}”"),
+    }
+}
+
+const MOST_TITLE_CHARS: usize = 300;
+const MOST_CHATS_SHOWN: usize = 5;
+const MOST_CHAT_LINES: usize = 8;
+
+fn rename_note(state: &AppState, desk: &tools::Desk, call: &Call) -> Result<Proposal, String> {
+    let title: String = call
+        .text("title")
+        .trim()
+        .chars()
+        .take(MOST_TITLE_CHARS)
+        .collect();
+    if title.is_empty() {
+        return Err("give the new title".into());
+    }
+    store_now(state, |store| {
+        let note = desk
+            .note_for(store, &call.text("note"))
+            .map_err(|_| StatusCode::NOT_FOUND)?;
+        Ok(Proposal::RenameNote {
+            summary: format!("Rename “{}” to “{title}”", note.title),
+            note: note.id.clone(),
+            from: note.title.clone(),
+            title: title.clone(),
+        })
+    })
+    .map_err(|_| "leo could not find that note; use its id like n3 or its exact title".into())
+}
+
+fn rename_folder(state: &AppState, call: &Call) -> Result<Proposal, String> {
+    let from = call.text("folder").trim().trim_matches('/').to_string();
+    let name = call.text("new_name").trim().to_string();
+    if name.is_empty()
+        || name.contains(['/', '\\'])
+        || name.chars().count() > leo_core::store::MOST_FOLDER_NAME_CHARS
+    {
+        return Err("give a new name without slashes".into());
+    }
+    store_now(state, |store| {
+        if from.is_empty() || !store.dir_exists(&from) {
+            return Err(StatusCode::NOT_FOUND);
+        }
+        Ok(Proposal::RenameFolder {
+            summary: format!("Rename the folder {from} to {name}"),
+            from: from.clone(),
+            name: name.clone(),
+        })
+    })
+    .map_err(|_| format!("there is no folder \"{from}\""))
+}
+
+fn pin_note(state: &AppState, desk: &tools::Desk, call: &Call) -> Result<Proposal, String> {
+    let pinned = !matches!(
+        call.text("pinned").trim().to_lowercase().as_str(),
+        "no" | "false"
+    );
+    store_now(state, |store| {
+        let note = desk
+            .note_for(store, &call.text("note"))
+            .map_err(|_| StatusCode::NOT_FOUND)?;
+        if note.pinned == pinned {
+            return Err(StatusCode::CONFLICT);
+        }
+        Ok(Proposal::PinNote {
+            summary: format!("{} “{}”", if pinned { "Pin" } else { "Unpin" }, note.title),
+            note: note.id.clone(),
+            title: note.title.clone(),
+            pinned,
+        })
+    })
+    .map_err(|code| {
+        if code == StatusCode::CONFLICT {
+            format!(
+                "the note is already {}",
+                if pinned { "pinned" } else { "unpinned" }
+            )
+        } else {
+            "leo could not find that note; use its id like n3 or its exact title".into()
+        }
+    })
+}
+
+fn restore_note(state: &AppState, call: &Call) -> Result<Proposal, String> {
+    let wanted = call.text("note").trim().to_string();
+    let trashed = store_now(state, |store| Ok(store.trashed()))
+        .map_err(|_| "leo could not read the trash".to_string())?;
+    let lower = wanted.to_lowercase();
+    let found: Vec<_> = trashed
+        .iter()
+        .filter(|t| t.id == wanted || t.title.to_lowercase() == lower)
+        .collect();
+    match found.as_slice() {
+        [one] => Ok(Proposal::RestoreNote {
+            summary: format!("Bring “{}” back from the trash", one.title),
+            note: one.id.clone(),
+            title: one.title.clone(),
+        }),
+        [] => Err(format!(
+            "no note in the trash is called \"{wanted}\"; use list_trash"
+        )),
+        _ => Err(format!(
+            "more than one trashed note is called \"{wanted}\"; use its id from list_trash"
+        )),
+    }
+}
+
+fn delete_folder(state: &AppState, call: &Call) -> Result<Proposal, String> {
+    let path = call.text("folder").trim().trim_matches('/').to_string();
+    store_now(state, |store| {
+        if path.is_empty() || store.validate_directory(&path).is_err() || !store.dir_exists(&path) {
+            return Err(StatusCode::NOT_FOUND);
+        }
+        let inside = format!("{path}/");
+        let notes = store
+            .notes
+            .iter()
+            .filter(|n| n.directory == path || n.directory.starts_with(&inside))
+            .count();
+        Ok(Proposal::DeleteFolder {
+            summary: format!(
+                "Move the folder {path} and its {notes} {} to the trash",
+                if notes == 1 { "note" } else { "notes" }
+            ),
+            path: path.clone(),
+        })
+    })
+    .map_err(|_| format!("there is no folder \"{path}\""))
+}
+
+fn trash_list(state: &AppState) -> Done {
+    let step = "Looked in the trash";
+    let trashed = match store_now(state, |store| Ok(store.trashed())) {
+        Ok(t) => t,
+        Err(_) => return fail(step, "leo could not read the trash"),
+    };
+    let mut trashed = trashed;
+    trashed.sort_by(|a, b| b.deleted_at.cmp(&a.deleted_at));
+    let lines: Vec<String> = trashed
+        .iter()
+        .take(100)
+        .map(|t| {
+            format!(
+                "- [{}] “{}” from {} · deleted {}",
+                t.id,
+                t.title,
+                folder_label(&t.directory),
+                t.deleted_at.with_timezone(&Local).format("%Y-%m-%d %H:%M")
+            )
+        })
+        .collect();
+    Done {
+        step: step.into(),
+        result: if lines.is_empty() {
+            "The trash is empty.".into()
+        } else {
+            format!("Notes in the trash, newest first:\n{}", lines.join("\n"))
+        },
+        proposal: None,
+        found: Vec::new(),
+    }
+}
+
+fn chat_search(state: &AppState, call: &Call) -> Done {
+    let query = call.text("query");
+    let step = format!(
+        "Searched your earlier chats for “{}”",
+        query.chars().take(60).collect::<String>()
+    );
+    let words: Vec<String> = query
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.chars().count() > 2)
+        .map(str::to_lowercase)
+        .collect();
+    if words.is_empty() {
+        return fail(&step, "give some words to look for");
+    }
+    let found = crate::chats::search(&state.chats, &query);
+    let mut out = Vec::new();
+    for summary in found.iter().take(MOST_CHATS_SHOWN) {
+        let Some(chat) = crate::chats::load(&state.chats, &summary.id) else {
+            continue;
+        };
+        let mut hits = Vec::new();
+        for message in &chat.messages {
+            let who = if message["role"] == "user" {
+                "User"
+            } else {
+                "Felix"
+            };
+            let text = message["text"].as_str().unwrap_or_default();
+            for line in text.lines() {
+                let lower = line.to_lowercase();
+                if words.iter().any(|w| lower.contains(w.as_str())) && hits.len() < MOST_CHAT_LINES
+                {
+                    hits.push(format!(
+                        "  {who}: {}",
+                        line.trim().chars().take(240).collect::<String>()
+                    ));
+                }
+            }
+        }
+        out.push(format!(
+            "- “{}” ({}, {} messages)\n{}",
+            summary.title,
+            summary.updated_at.with_timezone(&Local).format("%Y-%m-%d"),
+            summary.count,
+            hits.join("\n")
+        ));
+    }
+    Done {
+        step,
+        result: if out.is_empty() {
+            "No earlier chat mentions that.".into()
+        } else {
+            format!("Earlier chats that match:\n{}", out.join("\n"))
+        },
+        proposal: None,
+        found: found
+            .iter()
+            .take(MOST_CHATS_SHOWN)
+            .map(|s| s.title.clone())
+            .collect(),
     }
 }
 
@@ -792,6 +1034,112 @@ pub(crate) async fn act(
                     summary: format!("Move “{title}” to the trash"),
                     note: note.clone(),
                     title: title.clone(),
+                },
+            ))
+        }
+        Proposal::RenameNote {
+            note, from, title, ..
+        } => {
+            let body: notes::UpdateBody = parse(serde_json::json!({ "title": title }))?;
+            let _ = notes::update_note(State(state.clone()), Path(note.clone()), Json(body))
+                .await
+                .map_err(status_error)?;
+            Ok((
+                serde_json::Value::Null,
+                Proposal::RenameNote {
+                    summary: format!("Rename “{title}” back to “{from}”"),
+                    note: note.clone(),
+                    from: title.clone(),
+                    title: from.clone(),
+                },
+            ))
+        }
+        Proposal::PinNote {
+            note,
+            title,
+            pinned,
+            ..
+        } => {
+            let body: notes::UpdateBody = parse(serde_json::json!({ "pinned": pinned }))?;
+            let _ = notes::update_note(State(state.clone()), Path(note.clone()), Json(body))
+                .await
+                .map_err(status_error)?;
+            Ok((
+                serde_json::Value::Null,
+                Proposal::PinNote {
+                    summary: format!("{} “{title}”", if *pinned { "Unpin" } else { "Pin" }),
+                    note: note.clone(),
+                    title: title.clone(),
+                    pinned: !pinned,
+                },
+            ))
+        }
+        Proposal::RenameFolder { from, name, .. } => {
+            let old = from.rsplit('/').next().unwrap_or(from).to_string();
+            let body: notes::RenameDirBody =
+                parse(serde_json::json!({ "from": from, "name": name }))?;
+            let renamed = notes::rename_dir(State(state.clone()), Json(body))
+                .await
+                .map_err(status_error)?;
+            let now = renamed.0["path"].as_str().unwrap_or_default().to_string();
+            Ok((
+                serde_json::json!({ "path": now }),
+                Proposal::RenameFolder {
+                    summary: format!("Rename the folder {now} back to {old}"),
+                    from: now,
+                    name: old,
+                },
+            ))
+        }
+        Proposal::DeleteFolder { path, .. } => {
+            let wanted = path.trim().trim_matches('/').to_string();
+            if wanted.is_empty() {
+                return Err("say which folder".into());
+            }
+            let body: trash::TrashMove =
+                parse(serde_json::json!({ "notes": [], "dirs": [wanted] }))?;
+            let gone = trash::move_to_trash(State(state.clone()), Json(body))
+                .await
+                .map_err(status_error)?;
+            let ids: Vec<String> = gone.0["ids"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let mut dirs: Vec<String> = gone.0["dirs"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if !dirs.contains(&wanted) {
+                dirs.insert(0, wanted.clone());
+            }
+            Ok((
+                serde_json::Value::Null,
+                Proposal::RestoreFolder {
+                    summary: format!("Bring the folder {wanted} back from the trash"),
+                    ids,
+                    dirs,
+                },
+            ))
+        }
+        Proposal::RestoreFolder { ids, dirs, .. } => {
+            let body: trash::TrashChoice = parse(serde_json::json!({ "ids": ids, "dirs": dirs }))?;
+            let _ = trash::restore_many(State(state.clone()), Json(body))
+                .await
+                .map_err(status_error)?;
+            let first = dirs.first().cloned().unwrap_or_default();
+            Ok((
+                serde_json::Value::Null,
+                Proposal::DeleteFolder {
+                    summary: format!("Move the folder {first} to the trash"),
+                    path: first,
                 },
             ))
         }

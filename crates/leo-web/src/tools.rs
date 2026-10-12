@@ -112,7 +112,17 @@ pub fn changes_notes(name: &str) -> bool {
 pub fn organizes(name: &str) -> bool {
     matches!(
         name,
-        "add_task" | "update_task" | "move_note" | "make_folder" | "move_folder" | "delete_note"
+        "add_task"
+            | "update_task"
+            | "move_note"
+            | "make_folder"
+            | "move_folder"
+            | "delete_note"
+            | "rename_note"
+            | "rename_folder"
+            | "restore_note"
+            | "pin_note"
+            | "delete_folder"
     )
 }
 
@@ -122,7 +132,7 @@ const NOTE: Param = Param {
     about: "which note: an id like n3 from a <note> tag or an earlier result, or the note's exact title",
 };
 
-pub const SPECS: [Spec; 21] = [
+pub const SPECS: [Spec; 28] = [
     Spec {
         name: "search_notes",
         purpose: "Find the user's notes that match words, abbreviations (BFS finds breadth-first search) or ideas in their knowledge graph.",
@@ -348,6 +358,92 @@ pub const SPECS: [Spec; 21] = [
         params: &[NOTE],
         returns: "Suggested or done, as the user's access setting allows.",
         example: r#"<tool>{"name": "delete_note", "note": "n4"}</tool>"#,
+    },
+    Spec {
+        name: "rename_note",
+        purpose: "Give a note a new title.",
+        params: &[
+            NOTE,
+            Param {
+                name: "title",
+                required: true,
+                about: "the new title",
+            },
+        ],
+        returns: "Suggested or done, as the user's access setting allows.",
+        example: r#"<tool>{"name": "rename_note", "note": "n2", "title": "Lecture 5: Dijkstra"}</tool>"#,
+    },
+    Spec {
+        name: "rename_folder",
+        purpose: "Give a folder a new name; it stays where it is, with everything in it.",
+        params: &[
+            Param {
+                name: "folder",
+                required: true,
+                about: "the folder path, like older classes/s26",
+            },
+            Param {
+                name: "new_name",
+                required: true,
+                about: "the new name only, without slashes, like Spring 2026",
+            },
+        ],
+        returns: "Suggested or done, as the user's access setting allows.",
+        example: r#"<tool>{"name": "rename_folder", "folder": "older classes/s26", "new_name": "Spring 2026"}</tool>"#,
+    },
+    Spec {
+        name: "pin_note",
+        purpose: "Pin a note so it stays at the top of its folder, or unpin it.",
+        params: &[
+            NOTE,
+            Param {
+                name: "pinned",
+                required: false,
+                about: "yes to pin (the default) or no to unpin",
+            },
+        ],
+        returns: "Suggested or done, as the user's access setting allows.",
+        example: r#"<tool>{"name": "pin_note", "note": "n1", "pinned": "yes"}</tool>"#,
+    },
+    Spec {
+        name: "list_trash",
+        purpose: "See the notes in the trash, newest first, with when they were deleted and their ids, to find one the user wants back.",
+        params: &[],
+        returns: "Each trashed note's id, title, folder and when it was deleted.",
+        example: r#"<tool>{"name": "list_trash"}</tool>"#,
+    },
+    Spec {
+        name: "restore_note",
+        purpose: "Bring a note back from the trash into its old folder.",
+        params: &[Param {
+            name: "note",
+            required: true,
+            about: "the trashed note's id from list_trash, or its exact title",
+        }],
+        returns: "Suggested or done, as the user's access setting allows.",
+        example: r#"<tool>{"name": "restore_note", "note": "Graph traversals"}</tool>"#,
+    },
+    Spec {
+        name: "delete_folder",
+        purpose: "Move a folder and every note in it to the trash, only when the user asks for that folder to be deleted. The user always confirms this one.",
+        params: &[Param {
+            name: "folder",
+            required: true,
+            about: "the folder path, like older classes/s26",
+        }],
+        returns: "Suggested; the user decides.",
+        example: r#"<tool>{"name": "delete_folder", "folder": "older classes/s26"}</tool>"#,
+    },
+    Spec {
+        name: "search_chats",
+        purpose: "Search the user's earlier conversations with Felix (not this one) for what was said, to answer what did we talk about.",
+        params: &[Param {
+            name: "query",
+            required: true,
+            about: "the words to look for",
+        }],
+        returns: "Matching chats with their title, date and the lines that match.",
+        example: r#"<tool>{"name": "search_chats", "query": "midterm topics"}</tool>"#,
     },
     Spec {
         name: "study_plan",
@@ -1363,6 +1459,34 @@ pub enum Proposal {
         summary: String,
         note: String,
         title: String,
+    },
+    RenameNote {
+        summary: String,
+        note: String,
+        from: String,
+        title: String,
+    },
+    RenameFolder {
+        summary: String,
+        from: String,
+        name: String,
+    },
+    PinNote {
+        summary: String,
+        note: String,
+        title: String,
+        pinned: bool,
+    },
+    DeleteFolder {
+        summary: String,
+        path: String,
+    },
+    RestoreFolder {
+        summary: String,
+        #[serde(default)]
+        ids: Vec<String>,
+        #[serde(default)]
+        dirs: Vec<String>,
     },
 }
 
@@ -2426,7 +2550,7 @@ mod tests {
         assert!(number.contains("must be text in double quotes"));
         let unknown = wrong(serde_json::json!({"name": "erase_everything", "note": "n1"}));
         assert!(unknown.contains(
-            "the tools are search_notes, open_note, connected_notes, calculate, ask_user, quiz, list_schedule, add_task, update_task, move_note, make_folder, move_folder, delete_note, study_plan, end_session, look_at_picture, read_original, read_transcript, read_document, edit_note, create_note"
+            "the tools are search_notes, open_note, connected_notes, calculate, ask_user, quiz, list_schedule, add_task, update_task, move_note, make_folder, move_folder, delete_note, rename_note, rename_folder, pin_note, list_trash, restore_note, delete_folder, search_chats, study_plan, end_session, look_at_picture, read_original, read_transcript, read_document, edit_note, create_note"
         ));
         assert_eq!(
             check(&Call {

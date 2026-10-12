@@ -1130,3 +1130,12 @@ trash restore) and returns `undo`: the inverse card (DeleteTask, RemoveFolder on
 while still empty, RestoreNote, the earlier task values, the move back), which Undo
 posts to the same endpoint. The page refreshes the view after any of them
 (`onOrganized`).
+
+More Felix tools (same rules): `rename_note` (title), `rename_folder` (`new_name`;
+`name` would collide with the tool-name key), `pin_note`, `list_trash` (read only
+allowed: id, title, folder, when), `restore_note` (from the trash), `delete_folder`
+(folder and notes to the trash; it is always a card, even in Auto, and Undo
+restores the notes and folders through `/api/trash/restore`) and `search_chats`
+(read only allowed: earlier chats via `chats::search`, with the lines that match).
+Card kinds `rename_note`, `rename_folder`, `pin_note`, `delete_folder`,
+`restore_folder`.
