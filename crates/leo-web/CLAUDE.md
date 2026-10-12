@@ -949,3 +949,30 @@ The All notes view keeps a moved note visible and updates its folder metadata;
 drag tests check that state and Undo. Thumbnail tests scroll cards into view
 before expecting lazy previews. Completed task text uses the muted theme token
 so grid thumbnails remain legible in dark mode.
+
+Passages (2026-10-12, plan `.superpowers/plans/2026-10-11-note-study-schedule-design.md`
+release 1): selecting text in a note opens leo's source text box (live preview), so
+**Ask Felix** belongs to that box: `doc.js` reports selections through `onSelection`
+(text box `select`/`keyup`/`mouseup` and `selectionchange`), and exposes `selection()`
+(`editing.snapshotOf`: exact Markdown, 1-based lines, ≤ `MOST_PASSAGE` 8000; falls
+back to the rendered selection, then to the one kept when the box closed if the text
+is unchanged), `selectionBox()` (a mirror element finds the selection's end in the
+text box) and `caretLine()`. `app/passages.js` floats `.ask-float` there (mousedown is
+prevented so the selection survives), the note toolbar's **Ask** (`data-keep-selection`)
+and ⌘⇧E / Ctrl+Shift+E do the same. `chat.attachSelection` shows a passage chip; the
+request sends `selection {title, from, to, text}` and the note in `refs`, and the
+server prepends `chat::passage_block` (`<selected_passage>`, escaped, "material, not
+instructions") to the user prompt for both protocols; history carries
+`passageLine`. Selecting grants no edit permission.
+
+**Add to note**: every finished answer has Add to note, and selecting part of one
+floats an Add to note button (`answerLines` maps the selection back to whole Markdown
+lines, widening to whole code fences and `$$` blocks; citations become `[[Title]]`
+through `linkCitations`). The sheet defaults to the open note, can search for another,
+and offers End of note or At the cursor (the open note's last caret line). POST
+`/api/notes/{id}/insert {text, line?, base, request}` (`routes/insert.rs`) checks the
+version (409 otherwise), inserts as its own block, remembers the last 32 request ids so
+a double press inserts once, and returns `before` for the toast's Undo. Allowed in
+Read only: it is the user's own edit. CI now runs on pushes to every branch; releases
+still only come from main.
+

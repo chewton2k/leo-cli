@@ -77,6 +77,10 @@ const chat = felix.create({
     toast(open && saving.unsaved() ? 'Felix changed this note while you were typing; reopen it to see the change.' : `Changed “${note.title}”`, { action: 'Open', run: () => go(noteHash(note.id)) });
   },
   onToggle: () => drawSide(),
+  onAdd: (picked) => {
+    if (!window.matchMedia('(min-width: 900px)').matches) chat.toggle(false);
+    addSheet(picked);
+  },
   onInterview: (id) => { if (!sideWide()) chat.toggle(false); go(`#/interviews/${enc(id)}`); },
   onInterviewChanged: (id) => refreshInterview(id).catch(fail),
   onSaved: (note) => {
@@ -583,6 +587,7 @@ function noteActions(id, recorded = false) {
   return `<nav class="actions" aria-label="Note">
       ${id ? `<button data-action="note-map" data-id="${esc(id)}">${ICON.map}<span>Graph</span></button>` : ''}
       ${id && recorded ? `<button data-action="note-sources">${ICON.mic}<span>Transcript</span></button>` : ''}
+      ${id ? `<button data-action="ask-selection" data-keep-selection title="Ask Felix about the selected text (${navigator.platform && /Mac/.test(navigator.platform) ? '⌘⇧E' : 'Ctrl+Shift+E'})">${ICON.chat}<span>Ask</span></button>` : ''}
       <button data-action="note-picture">${ICON.image}<span>Picture</span></button>
       <button data-action="move">${ICON.move}<span>Move</span></button>
       <button data-action="share">${ICON.share}<span>PDF</span></button>
@@ -611,7 +616,8 @@ async function showNote(id, { fresh = null, draft = null } = {}) {
   </article>`;
   s.title = $('#title');
   drawOriginals(note);
-  s.doc = leoDoc.mount($('#doc'), { source: s.edit.body, onChange: () => changed(s), placeholder: 'Tap here to write', dir: note.directory || '', onPictures: (files) => addPictures(s, files) });
+  hideAskFloat();
+  s.doc = leoDoc.mount($('#doc'), { source: s.edit.body, onChange: () => changed(s), placeholder: 'Tap here to write', dir: note.directory || '', onPictures: (files) => addPictures(s, files), onSelection: (has) => placeAskFloat(has) });
   if (citedLines && citedLines.id === note.id) showCitedLines();
   if (s.dirty) {
     mark(s, 'Recovered draft · saving…');

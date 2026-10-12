@@ -255,16 +255,76 @@
     return { text: parts.filter(Boolean).join(' · '), title };
   }
 
-  function asNote(question, text, sources) {
+  function linkCitations(text, sources) {
     const byN = new Map((sources || []).map((s) => [`n${s.n}`, s]));
-    const answer = grade(String(text || '')).text.replace(/\[(n\d+(?:\s*,\s*n\d+)*)\]/g, (whole, list) => {
+    return String(text || '').replace(/\[(n\d+(?:\s*,\s*n\d+)*)(?:\s+L\d+(?:-\d+)?)?\]/g, (whole, list) => {
       const links = list
         .split(/\s*,\s*/)
         .map((n) => byN.get(n))
         .filter(Boolean)
         .map((s) => `[[${s.title.replace(/[[\]|]/g, '')}]]`);
       return links.length ? links.join(' ') : whole;
-    }).trim();
+    });
+  }
+
+  function squash(text) {
+    return String(text || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+  }
+
+  function wholeBlocks(lines, a, b) {
+    let fence = -1;
+    let math = -1;
+    const opens = [];
+    for (let k = 0; k < lines.length; k++) {
+      const line = lines[k].trim();
+      if (math < 0 && /^(```|~~~)/.test(line)) {
+        if (fence < 0) fence = k;
+        else {
+          opens.push([fence, k]);
+          fence = -1;
+        }
+      } else if (fence < 0 && line === '$$') {
+        if (math < 0) math = k;
+        else {
+          opens.push([math, k]);
+          math = -1;
+        }
+      }
+    }
+    for (const [start, end] of opens) {
+      if (a > start && a <= end) a = start;
+      if (b >= start && b < end) b = end;
+    }
+    return [a, b];
+  }
+
+  function answerLines(source, picked) {
+    const lines = String(source || '').split('\n');
+    const want = squash(picked);
+    if (!want) return '';
+    let joined = '';
+    const ends = [];
+    for (const line of lines) {
+      joined += squash(line);
+      ends.push(joined.length);
+    }
+    const lineAt = (pos) => ends.findIndex((e) => e > pos);
+    let from = joined.indexOf(want);
+    let to = from + want.length - 1;
+    if (from < 0) {
+      const head = want.slice(0, 24);
+      const tail = want.slice(-24);
+      from = joined.indexOf(head);
+      const end = from < 0 ? -1 : joined.indexOf(tail, from);
+      if (end < 0) return String(picked).trim();
+      to = end + tail.length - 1;
+    }
+    const [a, b] = wholeBlocks(lines, lineAt(from), lineAt(to));
+    return lines.slice(a, b + 1).join('\n').trim();
+  }
+
+  function asNote(question, text, sources) {
+    const answer = linkCitations(grade(String(text || '')).text, sources).trim();
     const asked = String(question || '').replace(/\s+/g, ' ').trim();
     let title = asked;
     if (title.length > 70) {
@@ -304,8 +364,14 @@
     return flat.length > most ? `${flat.slice(0, most - 1)}…` : flat;
   };
 
+  function passageLine(p) {
+    if (!p || typeof p.text !== 'string') return '';
+    const lines = p.from ? ` lines ${p.from}${p.to > p.from ? `–${p.to}` : ''}` : '';
+    return `[Selected passage from “${clipped(p.title || 'a note', 80)}”${lines}: “${clipped(p.text, 300)}”]`;
+  }
+
   function historyText(m) {
-    if (m.role === 'user') return m.say || m.text;
+    if (m.role === 'user') return [passageLine(m.selection), m.say || m.text].filter(Boolean).join('\n');
     const lines = [];
     const by = m.spent && typeof m.spent.by === 'string' ? [m.spent.by, m.spent.model].filter(Boolean).join(' · ') : '';
     if (by) lines.push(`[Written by ${by}${m.mode ? `, in ${m.mode} style` : ''}]`);
@@ -413,9 +479,9 @@
 
   const CHAT_LEAVE_MS = 160;
 
-  function create({ render, escape, onOpen = () => {}, onOriginal = () => {}, storage = root.localStorage, prepare = null, notify = () => {}, onSaved = () => {}, onChanged = () => {}, onUndone = () => {}, onToggle = () => {}, onInterview = () => {}, onInterviewChanged = () => {} }) {
+  function create({ render, escape, onOpen = () => {}, onOriginal = () => {}, storage = root.localStorage, prepare = null, notify = () => {}, onSaved = () => {}, onChanged = () => {}, onUndone = () => {}, onToggle = () => {}, onInterview = () => {}, onInterviewChanged = () => {}, onAdd = () => {} }) {
     const saved = load(storage);
-    const state = { open: false, id: saved.id || newId(), mode: modeOf(saved.mode), messages: saved.messages, refs: saved.refs, context: null, dropped: null, busy: null, streak: 0, pick: null, chats: null, sidebar: null, doomed: null, asking: null, files: [], sent: [], filesFor: null, review: [], drafts: {}, found: null };
+    const state = { open: false, id: saved.id || newId(), mode: modeOf(saved.mode), messages: saved.messages, refs: saved.refs, context: null, dropped: null, busy: null, streak: 0, pick: null, chats: null, sidebar: null, doomed: null, asking: null, files: [], sent: [], filesFor: null, review: [], drafts: {}, found: null, selection: null };
     const panel = document.createElement('aside');
     panel.className = 'chat';
     panel.id = 'chat';
@@ -870,7 +936,11 @@
     }
 
     function drawRefs() {
-      const notes = state.refs
+      const p = state.selection;
+      const passage = p
+        ? `<span class="chat-ref chat-passage"><button class="chat-ref-open" data-chat="open" data-id="${escape(p.note)}" data-line="${p.from}-${p.to}" title="${escape(clipped(p.text, 400))}"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M7 7h4v4c0 2.5-1.5 4-4 5M14 7h4v4c0 2.5-1.5 4-4 5"/></svg>${escape(p.title || 'Note')}<span class="chat-passage-text">${escape(clipped(p.text.replace(/\s+/g, ' '), 60))}</span></button><button class="chat-ref-x" data-chat="unselect" aria-label="Remove the selected passage">×</button></span>`
+        : '';
+      const notes = passage + state.refs
         .map((r) => `<span class="chat-ref"><button class="chat-ref-open" data-chat="open" data-id="${escape(r.id)}" title="${escape(r.title)}">${escape(r.title)}</button><button class="chat-ref-x" data-chat="unref" data-id="${escape(r.id)}" aria-label="Remove ${escape(r.title)}">×</button></span>`)
         .join('');
       const files = state.files
@@ -1138,12 +1208,16 @@
           ? m.cards.filter((c) => c && typeof c.name === 'string')
           : [...(m.docs || []).map((name) => ({ name })), ...(m.pics || []).filter((p) => p && typeof p.name === 'string')];
         const refs = notes.length ? `<div class="msg-refs">${notes.join('')}</div>` : '';
+        const p = m.selection && typeof m.selection.text === 'string' ? m.selection : null;
+        const quote = p
+          ? `<div class="msg-passage"><button class="msg-passage-from" data-chat="open" data-id="${escape(p.note || '')}" data-line="${Number(p.from) || 1}-${Number(p.to) || Number(p.from) || 1}">${escape(p.title || 'Note')}${p.from ? ` · ${p.to > p.from ? `lines ${p.from}–${p.to}` : `line ${p.from}`}` : ''}</button><div class="msg-passage-text">${escape(clipped(p.text, 280))}</div></div>`
+          : '';
         const files = cards.length ? `<div class="file-cards sent">${cards.filter(Boolean).map((c) => fileCard(c, escape, { reading: c.reading === true })).join('')}</div>` : '';
         const quiz = m.quiz && typeof m.quiz === 'object'
           ? `<div class="msg-note">${m.quiz.correct === true ? 'Practice answer · correct' : m.quiz.correct === false ? 'Practice answer · not quite' : 'Practice answer'}</div>`
           : '';
         const steer = m.steer === 'waiting' ? '<div class="msg-note">Felix reads this at his next step</div>' : m.steer === 'read' ? '<div class="msg-note">Sent while Felix worked</div>' : '';
-        return `<div class="msg user${m.steer === 'waiting' ? ' queued' : ''}">${refs}${files}<div class="bubble">${escape(m.text).replace(/\n/g, '<br>')}</div>${quiz}${steer}</div>`;
+        return `<div class="msg user${m.steer === 'waiting' ? ' queued' : ''}">${quote}${refs}${files}<div class="bubble">${escape(m.text).replace(/\n/g, '<br>')}</div>${quiz}${steer}</div>`;
       }
       const shown = grade(m.text).text;
       let html = shown ? cite(render(shown), m.sources, escape, m.files).replace(/<input /g, '<input disabled ') : '';
@@ -1160,7 +1234,7 @@
       const save = !m.pending && !m.error && shown
         ? (m.saved
           ? `<button class="msg-act" data-chat="open" data-id="${escape(m.saved)}">Open the saved note</button>`
-          : `<button class="msg-act" data-chat="save" data-i="${i}">Save as note</button>`)
+          : `<button class="msg-act" data-chat="save" data-i="${i}">Save as note</button>`) + `<button class="msg-act" data-chat="add" data-i="${i}">Add to note</button>`
         : '';
       const keep = save || meta ? `<div class="msg-acts">${save}${meta}</div>` : '';
       const steps = (m.steps || []).length ? `<div class="msg-steps">${m.steps.map((t, k) => stepLine(t, m.pending && !shown && k === m.steps.length - 1)).join('')}</div>` : '';
@@ -1504,6 +1578,62 @@
       onUndone(note, create);
     }
 
+    function addAnswer(i, picked) {
+      const m = state.messages[i];
+      if (!m || m.role !== 'assistant' || m.pending) return;
+      const source = grade(m.text || '').text;
+      const chosen = picked ? answerLines(source, picked) : source;
+      const text = linkCitations(chosen, m.sources).trim();
+      if (text) onAdd({ text, folder: m.folder || '' });
+    }
+
+    const addFloat = root.document.createElement('button');
+    addFloat.type = 'button';
+    addFloat.className = 'float-act';
+    addFloat.dataset.chat = 'add-picked';
+    addFloat.textContent = 'Add to note';
+    addFloat.hidden = true;
+    addFloat.addEventListener('mousedown', (e) => e.preventDefault());
+    panel.appendChild(addFloat);
+
+    function hideAddFloat() {
+      addFloat.hidden = true;
+      state.picked = null;
+    }
+
+    function pickedInAnswer() {
+      const selection = root.getSelection ? root.getSelection() : null;
+      if (!selection || selection.isCollapsed || !selection.rangeCount) return null;
+      const range = selection.getRangeAt(0);
+      const start = range.startContainer.nodeType === 1 ? range.startContainer : range.startContainer.parentElement;
+      const end = range.endContainer.nodeType === 1 ? range.endContainer : range.endContainer.parentElement;
+      const msg = start && start.closest('.msg.leo:not(.pending)');
+      if (!msg || !body.contains(msg) || !end || end.closest('.msg.leo') !== msg || !start.closest('.prose') || !end.closest('.prose')) return null;
+      const text = selection.toString();
+      if (!text.trim()) return null;
+      const box = range.getBoundingClientRect();
+      return { i: Number(msg.dataset.i), text, box };
+    }
+
+    function placeAddFloat() {
+      const picked = pickedInAnswer();
+      if (!picked) return hideAddFloat();
+      state.picked = picked;
+      const area = panel.getBoundingClientRect();
+      addFloat.hidden = false;
+      const width = addFloat.offsetWidth;
+      const left = Math.max(8, Math.min(picked.box.right - area.left - width / 2, area.width - width - 8));
+      addFloat.style.left = `${left}px`;
+      addFloat.style.top = `${picked.box.bottom - area.top + 6}px`;
+    }
+
+    root.document.addEventListener('selectionchange', () => {
+      if (!state.open) return;
+      clearTimeout(state.pickWait);
+      state.pickWait = setTimeout(placeAddFloat, 120);
+    });
+    body.addEventListener('scroll', () => hideAddFloat(), { passive: true });
+
     async function saveAnswer(i) {
       const m = state.messages[i];
       if (!m || m.role !== 'assistant' || m.saved) return;
@@ -1627,12 +1757,14 @@
       const access = state.access;
       const going = card ? [] : state.files.filter((f) => f.status === 'ready' || f.status === 'reading');
       const attached = card ? [] : state.refs.slice();
+      const passage = card ? null : state.selection;
       if (!card) {
         state.files = state.files.filter((f) => !going.includes(f));
         state.refs = [];
+        state.selection = null;
         drawRefs();
       }
-      const asked = { role: 'user', text: question, refs: attached, docs: [], files: [], cards: going.map(cardOf), ...(extra.say ? { say: extra.say } : {}), ...(extra.quiz ? { quiz: extra.quiz } : {}) };
+      const asked = { role: 'user', text: question, refs: attached, docs: [], files: [], cards: going.map(cardOf), ...(passage ? { selection: passage } : {}), ...(extra.say ? { say: extra.say } : {}), ...(extra.quiz ? { quiz: extra.quiz } : {}) };
       const settle = (i, doc) => {
         if (!doc) {
           asked.cards[i] = null;
@@ -1675,12 +1807,15 @@
       const files = state.sent.map((f) => f.id);
       const history = state.messages.filter((m) => m !== answer && !m.error && m.steer !== 'waiting').map((m) => ({ role: m.role, text: historyText(m) }));
       if (card) history.push({ role: 'user', text: historyText(asked) });
+      if (passage && history.length) history[history.length - 1] = { role: 'user', text: asked.say || asked.text };
+      const sentRefs = threadRefs(thread.messages).map((r) => r.id);
+      if (passage && passage.note && !sentRefs.includes(passage.note)) sentRefs.unshift(passage.note);
       try {
         const response = await fetch('/api/chat', {
           method: 'POST',
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: history, mode: thread.mode, note: ctx, refs: threadRefs(thread.messages).map((r) => r.id), recent: recentNotes(thread.messages.filter((m) => m !== answer)), chat: thread.id, files, access, practice: Boolean(card), mark: Boolean(card && !extra.hint && card.correct === null) }),
+          body: JSON.stringify({ messages: history, mode: thread.mode, note: ctx, refs: sentRefs.slice(0, MOST_REFS), recent: recentNotes(thread.messages.filter((m) => m !== answer)), chat: thread.id, files, access, practice: Boolean(card), mark: Boolean(card && !extra.hint && card.correct === null), selection: passage ? { title: passage.title, from: passage.from, to: passage.to, text: passage.text } : null }),
           signal: controller.signal,
         });
         if (response.status === 401) throw new Error('This page needs its link again. Open the link leo serve printed.');
@@ -1851,6 +1986,16 @@
       } else if (what === 'history') showSidebar(!panel.classList.contains('with-history'));
       else if (what === 'resume') resume(el.dataset.id);
       else if (what === 'save') saveAnswer(Number(el.dataset.i));
+      else if (what === 'add') addAnswer(Number(el.dataset.i), '');
+      else if (what === 'add-picked') {
+        const picked = state.picked;
+        hideAddFloat();
+        if (picked) addAnswer(picked.i, picked.text);
+      }
+      else if (what === 'unselect') {
+        state.selection = null;
+        drawRefs();
+      }
       else if (what === 'apply' || what === 'dismiss') decide(Number(el.dataset.i), Number(el.dataset.j), what === 'apply');
       else if (what === 'undo') undo(Number(el.dataset.i), Number(el.dataset.j));
       else if (what === 'ask-pick') {
@@ -2065,6 +2210,17 @@
 
     return {
       toggle,
+      attachSelection(selection) {
+        if (!selection || typeof selection.text !== 'string' || !selection.text.trim()) return;
+        state.selection = { note: String(selection.note || ''), title: String(selection.title || ''), from: Number(selection.from) || 0, to: Number(selection.to) || 0, text: selection.text };
+        if (state.mode === 'interview') {
+          state.mode = 'chat';
+          drawModes();
+        }
+        toggle(true);
+        drawRefs();
+        input.focus();
+      },
       isOpen: () => state.open,
       isBusy: () => Boolean(state.busy),
       send,
@@ -2112,5 +2268,5 @@
     };
   }
 
-  root.leoChat = { historyText, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS };
+  root.leoChat = { linkCitations, answerLines, passageLine, historyText, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS };
 })(typeof window !== 'undefined' ? window : globalThis);

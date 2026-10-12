@@ -3149,6 +3149,54 @@ test('note cards can be previewed without losing the library and layout choices 
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
 });
 
+test('grid and list keep the library and header width in every layout', async ({ page }) => {
+  const dir = `library-width-${Date.now()}`;
+  await page.request.post('/api/notes', { data: { title: 'Stable library width', directory: dir, body: 'Keep the layout steady.' } });
+  const bounds = () => page.locator('main, .bar-row, .search').evaluateAll((els) => els.map((el) => {
+    const rect = el.getBoundingClientRect();
+    return { left: rect.left, width: rect.width };
+  }));
+  for (const folder of ['', dir]) {
+    await page.goto(folder ? `/#/f/${encodeURIComponent(folder)}` : '/#/');
+    const layouts = test.info().project.name === 'desktop' ? ['wide', 'mini', 'chat'] : ['phone'];
+    for (const layout of layouts) {
+      if (layout === 'mini') await page.locator('[data-action="side-fold"]').click();
+      if (layout === 'chat') {
+        await page.locator('[data-action="side-fold"]').click();
+        await page.locator('#felix-toggle').click();
+        await expect(page.locator('.chat')).toBeVisible();
+      }
+      for (const views of [['grid', 'list'], ['list', 'grid']]) {
+        await page.locator(`[data-action="library-view"][data-view="${views[0]}"]`).click();
+        const before = await bounds();
+        await page.locator(`[data-action="library-view"][data-view="${views[1]}"]`).click();
+        expect(await bounds()).toEqual(before);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+      }
+      if (layout === 'chat') await page.locator('.chat [data-chat="close"]').click();
+    }
+  }
+});
+
+test('sidebar folders can move to the top level with their contents and Undo', async ({ page }) => {
+  test.skip(test.info().project.name !== 'desktop', 'sidebar dragging needs a mouse');
+  const tag = Date.now().toString(36);
+  const from = `sidebar-root-${tag}/Nested-${tag}`;
+  const root = from.split('/').pop();
+  const note = await (await page.request.post('/api/notes', { data: { title: 'Nested folder move', directory: `${from}/Child`, body: 'Keep descendants.' } })).json();
+  const where = async () => (await (await page.request.get(`/api/notes/${note.id}`)).json()).directory;
+  await page.goto(`/#/f/${encodeURIComponent(from)}`);
+  const target = page.locator('#side [data-action="open-folder"][data-dir=""]');
+  await expect(target).toHaveText('Top level');
+  await page.locator(`#side [data-action="open-folder"][data-dir="${from}"]`).dragTo(target);
+  await expect.poll(where).toBe(`${root}/Child`);
+  await expect(page).toHaveURL(new RegExp(`#/f/${encodeURIComponent(root)}$`));
+  await expect(page.locator(`#side [data-action="open-folder"][data-dir="${root}"]`)).toBeVisible();
+  await page.locator('.toast button', { hasText: 'Undo' }).last().click();
+  await expect.poll(where).toBe(`${from}/Child`);
+  await expect(page).toHaveURL(new RegExp(`#/f/${encodeURIComponent(from)}$`));
+});
+
 test('folder controls rename, move to root and delete from inside the folder with Undo', async ({ page }) => {
   const original = `folder-controls-${Date.now()}/nested`;
   const made = await page.request.post('/api/notes', { data: { title: 'Folder controls fixture', directory: original, body: 'Keep this note through renaming and moving.' } });
@@ -3348,4 +3396,83 @@ test('interview answers keep their focus and draft through saves, a conflict and
   await (await response).finished();
   await page.waitForTimeout(500);
   await expect(page.locator('body')).not.toHaveClass(/chat-open/);
+});
+
+test.describe('passages', () => {
+  test('selected note text goes to Felix as a passage he is asked about, not an edit', async ({ page }) => {
+    const note = await (await page.request.post('/api/notes', { data: { title: 'Heaps', body: 'Intro line\n\nA binary heap keeps the minimum at the root.\n\nLast line' } })).json();
+    const asked = [];
+    await page.route('**/api/chat', async (route) => {
+      asked.push(route.request().postDataJSON());
+      const lines = [{ sources: [{ n: 1, id: note.id, title: 'Heaps', folder: '', why: 'open' }] }, { t: 'Because the heap property holds [n1].' }, { done: true }];
+      await route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: lines.map((l) => JSON.stringify(l)).join('\n') + '\n' });
+    });
+    await page.goto(`/#/n/${note.id}`);
+    await page.locator('#doc .blk').nth(2).click();
+    const area = page.locator('#doc textarea.line-edit');
+    await expect(area).toHaveCount(1);
+    await area.evaluate((a) => {
+      const at = a.value.indexOf('keeps the minimum');
+      a.focus();
+      a.setSelectionRange(at, at + 'keeps the minimum'.length);
+      a.dispatchEvent(new Event('select'));
+    });
+    const ask = page.locator('.ask-float');
+    await expect(ask).toBeVisible();
+    await ask.click();
+    const chat = page.locator('#chat');
+    await expect(chat).toBeVisible();
+    await expect(chat.locator('.chat-passage')).toContainText('keeps the minimum');
+    await chat.locator('#chat-input').fill('Why is that true?');
+    await chat.locator('#chat-input').press('Enter');
+    await expect(chat.locator('.msg.leo').last()).toContainText('heap property');
+    expect(asked[0].selection).toEqual({ title: 'Heaps', from: 3, to: 3, text: 'keeps the minimum' });
+    expect(asked[0].refs).toContain(note.id);
+    expect(asked[0].messages.at(-1).text).toBe('Why is that true?');
+    await expect(chat.locator('.msg.user .msg-passage')).toContainText('Heaps · line 3');
+    await expect(chat.locator('.chat-passage')).toHaveCount(0);
+    expect((await (await page.request.get(`/api/notes/${note.id}`)).json()).body).toBe('Intro line\n\nA binary heap keeps the minimum at the root.\n\nLast line');
+  });
+
+  test('the toolbar asks about the selection too, and says so when nothing is selected', async ({ page }) => {
+    const note = await (await page.request.post('/api/notes', { data: { title: 'Toolbar ask', body: 'Only line here' } })).json();
+    await page.goto(`/#/n/${note.id}`);
+    await page.locator('[data-action="ask-selection"]').click();
+    await expect(page.locator('.toast')).toContainText('Select some text in the note first');
+  });
+
+  test('part of an answer is added to the open note exactly once, and Undo takes it out', async ({ page }) => {
+    const note = await (await page.request.post('/api/notes', { data: { title: 'Collect', body: 'Mine already' } })).json();
+    await page.route('**/api/chat', async (route) => {
+      const lines = [{ sources: [{ n: 1, id: note.id, title: 'Collect', folder: '', why: 'open' }] }, { t: 'First idea stays out.\n\nThe **key** point is here [n1].\n\nLast bit.' }, { done: true }];
+      await route.fulfill({ status: 200, headers: { 'content-type': 'application/x-ndjson' }, body: lines.map((l) => JSON.stringify(l)).join('\n') + '\n' });
+    });
+    await page.goto(`/#/n/${note.id}`);
+    await page.locator('#chat-toggle').click();
+    const chat = page.locator('#chat');
+    await chat.locator('#chat-input').fill('Tell me');
+    await chat.locator('#chat-input').press('Enter');
+    const answer = chat.locator('.msg.leo').last();
+    await expect(answer).toContainText('Last bit');
+    await answer.locator('strong', { hasText: 'key' }).evaluate((el) => {
+      const range = document.createRange();
+      range.selectNodeContents(el.parentElement);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+    });
+    const add = chat.locator('.float-act[data-chat="add-picked"]');
+    await expect(add).toBeVisible();
+    await add.click();
+    const sheet = page.locator('.sheet');
+    await expect(sheet.locator('.add-title')).toHaveText('Collect');
+    await expect(sheet.locator('.add-preview')).toContainText('The key point is here');
+    await expect(sheet.locator('.add-preview')).not.toContainText('First idea');
+    await sheet.locator('#add-go').dblclick();
+    await expect(page.locator('.toast')).toContainText('Added to “Collect”');
+    const body = async () => (await (await page.request.get(`/api/notes/${note.id}`)).json()).body;
+    await expect.poll(body).toBe('Mine already\n\nThe **key** point is here [[Collect]].\n');
+    await page.locator('.toast button').click();
+    await expect.poll(body).toBe('Mine already');
+  });
 });

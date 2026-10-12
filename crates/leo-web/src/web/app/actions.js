@@ -4,6 +4,7 @@ const actions = {
   interviews: () => go('#/interviews'),
   'side-fold': foldSide,
   'toggle-picker': togglePicker,
+  'ask-selection': () => askAboutSelection(),
   'set-model': (el) => changeSetting({ set: 'model', task: el.dataset.task, value: el.dataset.model }),
   'set-effort': (el) => changeSetting({ set: 'effort', value: el.dataset.effort === 'default' ? '' : el.dataset.effort }),
   'side-twist': (el) => twistFolder(el.dataset.dir),

@@ -338,3 +338,24 @@ test('only explicitly generated interview snapshots are replaced after a chat re
   assert.equal(docs[0].interviewBoard, undefined);
   assert.deepEqual(C.splitFiles(docs, [{ role: 'assistant', cards: [{ name: 'my-board.png', interviewBoard: true }] }]).waiting, docs);
 });
+
+test('a selection in an answer maps back to its whole Markdown lines, fences and math kept', () => {
+  const source = 'Intro line.\n\nA **heap** keeps the *minimum* at the root [n1].\n\n```js\nconst a = 1;\nconst b = 2;\n```\n\n$$\nx^2\n$$\nEnd.';
+  assert.equal(C.answerLines(source, 'heap keeps the minimum'), 'A **heap** keeps the *minimum* at the root [n1].');
+  assert.equal(C.answerLines(source, 'const b = 2;'), '```js\nconst a = 1;\nconst b = 2;\n```');
+  assert.equal(C.answerLines(source, 'x2'), '$$\nx^2\n$$');
+  assert.equal(C.answerLines(source, 'Intro line.\n\nA heap keeps'), 'Intro line.\n\nA **heap** keeps the *minimum* at the root [n1].');
+  assert.equal(C.answerLines(source, 'something Felix never wrote'), 'something Felix never wrote');
+  assert.equal(C.answerLines(source, '   '), '');
+});
+
+test('citations become links to the notes, line citations too, unknown ones stay', () => {
+  const sources = [{ n: 1, id: 'a', title: 'Heaps [intro]' }, { n: 2, id: 'b', title: 'Graphs' }];
+  assert.equal(C.linkCitations('Root [n1]. Both [n1, n2]. Lines [n2 L14-18]. Gone [n9].', sources), 'Root [[Heaps intro]]. Both [[Heaps intro]] [[Graphs]]. Lines [[Graphs]]. Gone [n9].');
+});
+
+test('a selected passage travels with its message into the history Felix reads', () => {
+  const m = { role: 'user', text: 'Why?', selection: { note: 'a', title: 'Heaps', from: 3, to: 4, text: 'A heap keeps the minimum at the root.' } };
+  assert.equal(C.historyText(m), '[Selected passage from “Heaps” lines 3–4: “A heap keeps the minimum at the root.”]\nWhy?');
+  assert.equal(C.historyText({ role: 'user', text: 'Hi' }), 'Hi');
+});

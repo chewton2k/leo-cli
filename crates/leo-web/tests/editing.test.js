@@ -5,6 +5,17 @@ const md = require('../src/web/markdown.js');
 const cases = [];
 const test = (name, fn) => cases.push([name, fn]);
 
+test('a selection becomes its exact Markdown and 1-based lines, either direction', () => {
+  const lines = ['# Heaps', '', 'A **min** heap', 'keeps 😀 the root', '$$x^2$$'];
+  assert.deepEqual(ed.snapshotOf(lines, 9, 23), { from: 3, to: 3, text: 'A **min** heap' });
+  assert.deepEqual(ed.snapshotOf(lines, 23, 9), { from: 3, to: 3, text: 'A **min** heap' });
+  const whole = lines.join('\n');
+  assert.deepEqual(ed.snapshotOf(lines, whole.indexOf('keeps'), whole.length), { from: 4, to: 5, text: 'keeps 😀 the root\n$$x^2$$' });
+  assert.equal(ed.snapshotOf(lines, 0, 9).to, 2, 'ending at the start of a line does not take that line');
+  assert.equal(ed.snapshotOf(lines, 8, 9), null, 'blank selections ask nothing');
+  assert.equal(ed.snapshotOf(['x'.repeat(9000)], 0, 9000).text.length, ed.MOST_PASSAGE);
+});
+
 test('every ordinary line is its own block, blank lines included', () => {
   const lines = ['# Title', '', 'para one', 'para two', '- item'];
   assert.deepEqual(

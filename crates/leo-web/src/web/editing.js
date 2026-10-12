@@ -138,7 +138,32 @@
     return out[k - 1] + 1;
   }
 
-  const api = { splitBlocks, boxesBefore, boxLine, continueLine, toggleBox, indent, outdent, rawOffset, isBox };
+  const MOST_PASSAGE = 8000;
+
+  function lineAtOffset(lines, pos) {
+    let start = 0;
+    for (let k = 0; k < lines.length; k++) {
+      if (pos <= start + lines[k].length) return k;
+      start += lines[k].length + 1;
+    }
+    return lines.length - 1;
+  }
+
+  function snapshotOf(lines, from, to) {
+    const text = lines.join('\n');
+    let a = Math.max(0, Math.min(from, text.length));
+    let b = Math.max(0, Math.min(to, text.length));
+    if (a > b) [a, b] = [b, a];
+    const picked = text.slice(a, b);
+    if (!picked.trim()) return null;
+    return {
+      from: lineAtOffset(lines, a) + 1,
+      to: lineAtOffset(lines, Math.max(a, b - 1)) + 1,
+      text: [...picked].slice(0, MOST_PASSAGE).join(''),
+    };
+  }
+
+  const api = { splitBlocks, boxesBefore, boxLine, continueLine, toggleBox, indent, outdent, rawOffset, isBox, snapshotOf, lineAtOffset, MOST_PASSAGE };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.leoEditing = api;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -1271,6 +1271,9 @@ pub(crate) async fn chat_reply(
             user = format!("{}\n{user}", crate::interview::context(&item));
         }
     }
+    if let Some(block) = body.selection.as_ref().and_then(chat::passage_block) {
+        user = format!("{block}\n{user}");
+    }
     if let (Some(id), Some(writer)) = (body.chat.clone(), state.graphs.writer()) {
         let from = memory
             .as_ref()

@@ -60,6 +60,7 @@ fn a_document_given_to_felix_is_kept_as_text_and_read_with_the_question() {
         recent: vec![],
         practice: false,
         mark: false,
+        selection: None,
     };
     run(async {
         let response = chat_reply(State(state.clone()), Json(body)).await;
@@ -141,6 +142,7 @@ fn a_chat_reply_streams_its_sources_then_the_answer() {
         recent: vec![],
         practice: false,
         mark: false,
+        selection: None,
     };
     let text = run(async {
         let response = chat_reply(State(state.clone()), Json(body)).await;
@@ -186,6 +188,7 @@ fn a_chat_without_ai_or_a_question_is_refused() {
         recent: vec![],
         practice: false,
         mark: false,
+        selection: None,
     };
     let status = run(async {
         chat_reply(State(state.clone()), Json(ask("hi")))
@@ -244,6 +247,7 @@ fn chat_lines_with(
         recent: vec![],
         practice: false,
         mark: false,
+        selection: None,
     };
     let text = run(async {
         let response = chat_reply(State(state.clone()), Json(body)).await;
@@ -1078,6 +1082,7 @@ fn a_long_chat_is_remembered_in_a_summary_instead_of_forgotten() {
             recent: vec![],
             practice: false,
             mark: false,
+            selection: None,
         };
         run(async {
             let response = chat_reply(State(state.clone()), Json(body)).await;
@@ -1234,6 +1239,7 @@ fn a_practice_answer_is_marked_once_and_never_nudged_into_changing_a_note() {
         recent: vec![],
         practice: true,
         mark: false,
+        selection: None,
     };
     let text = run(async {
         let response = chat_reply(State(state.clone()), Json(body)).await;
@@ -1351,6 +1357,7 @@ fn a_marking_without_a_verdict_gets_one_from_a_short_check() {
         recent: vec![],
         practice: true,
         mark: true,
+        selection: None,
     };
     let text = run(async {
         let response = chat_reply(State(state.clone()), Json(body)).await;

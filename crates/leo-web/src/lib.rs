@@ -554,6 +554,10 @@ fn router(state: AppState) -> Router {
         .route("/api/notes/{id}/combine", post(routes::combine::preview))
         .route("/api/notes/{id}/combined", post(routes::combine::keep))
         .route("/api/notes/{id}/suggestion", post(apply_suggestion))
+        .route(
+            "/api/notes/{id}/insert",
+            post(routes::insert::insert_into_note),
+        )
         .route("/api/search", get(search_notes))
         .route("/api/dirs", get(list_dirs).post(create_dir))
         .route("/api/dirs/move", post(move_dir))

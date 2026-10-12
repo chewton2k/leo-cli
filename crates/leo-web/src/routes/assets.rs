@@ -17,6 +17,7 @@ const APP_JS: &str = concat!(
     include_str!("../web/app/diagrams.js"),
     include_str!("../web/app/math.js"),
     include_str!("../web/app/sources.js"),
+    include_str!("../web/app/passages.js"),
     include_str!("../web/app/interviews.js"),
     include_str!("../web/app/actions.js"),
     include_str!("../web/app/events.js"),
@@ -271,7 +272,7 @@ mod tests {
                 parts += 1;
             }
         }
-        assert_eq!(parts, 16);
+        assert_eq!(parts, 17);
     }
 
     #[test]

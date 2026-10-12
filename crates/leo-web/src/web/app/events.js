@@ -175,6 +175,7 @@ document.addEventListener('click', (e) => {
 });
 
 async function render() {
+  hideAskFloat();
   const hash = decodeURI(location.hash || '#/');
   const [, kind, rest = ''] = location.hash.match(/^#\/([a-z]*)\/?(.*)$/) || [null, '', ''];
   const arg = decodeURIComponent(rest);
