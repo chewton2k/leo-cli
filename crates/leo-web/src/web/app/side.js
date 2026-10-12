@@ -61,7 +61,8 @@ function drawSide() {
       ${sideRow('record', ICON.mic, 'Record', { on: here === 'record', attrs: ` data-dir="${esc(dir)}"` })}
       ${sideRow('upload', ICON.upload, 'Note from a file')}
     </nav>
-    <div class="side-group">${sideRow('open-folder', ICON.folder, 'Top level', { attrs: ' data-dir=""', on: here === 'home' })}<button class="side-add side-label" data-action="new-folder" data-parent="" aria-label="New folder" title="New folder at the top level">${ICON.plus}</button></div>
+    <div class="side-group"><span class="side-label">Folders</span><button class="side-add side-label" data-action="new-folder" data-parent="" aria-label="New folder" title="New folder at the top level">${ICON.plus}</button></div>
+    <div class="side-nav side-top"><div class="side-folder side-root${here === 'home' ? ' on' : ''}" style="--depth:0"><span class="side-twist none"></span><button class="side-row" data-action="open-folder" data-dir="" title="Top level"${here === 'home' ? ' aria-current="page"' : ''}>${ICON.folder}<span class="side-label">Top level</span></button></div></div>
     <nav class="side-nav side-tree" aria-label="Folders" data-drop-dir="">
       ${folders || '<p class="side-none side-label">Folders you make show up here.</p>'}
     </nav>

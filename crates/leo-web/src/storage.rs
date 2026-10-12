@@ -600,15 +600,24 @@ pub fn more_areas(store: &Store, chats_dir: &Path, kept: &Kept) -> Vec<Area> {
         out.push(Area {
             id: "tasks".into(),
             title: "Tasks you added in leo".into(),
-            about: "Tasks made on the Calendar page. Tasks that come from notes stay in the notes. These are kept on this computer and included in Export, but not in the notes' backup.".into(),
-            path: chats::db_of(chats_dir).path().display().to_string(),
-            bytes: tasks.len() as u64 * 240,
+            about: "Tasks made on the Calendar page or by Felix, one small file each beside your notes, so they go into the notes' backup and Export. Tasks that come from notes stay in the notes.".into(),
+            path: crate::tasks::tasks_dir(chats_dir).display().to_string(),
+            bytes: std::fs::read_dir(crate::tasks::tasks_dir(chats_dir))
+                .map(|dir| {
+                    dir.flatten()
+                        .filter_map(|e| e.metadata().ok())
+                        .map(|m| m.len())
+                        .sum()
+                })
+                .unwrap_or(0),
             items: tasks
                 .iter()
                 .map(|t| Item {
                     id: t.id.clone(),
                     label: t.title.clone(),
-                    detail: if t.done {
+                    detail: if !t.repeat.is_empty() {
+                        "repeats weekly".to_string()
+                    } else if t.done {
                         "done".to_string()
                     } else {
                         t.date.map_or("no date".to_string(), |d| d.format("%b %-d, %Y").to_string())

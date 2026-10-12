@@ -446,6 +446,12 @@ function drawFolder() {
   const sel = state.selecting;
   const picked = state.picked;
   libraryClasses();
+  if (!dirs.length && !notes.length && libraryFiltered()) {
+    state.selecting = false;
+    chrome({ dir, showBack: Boolean(dir), fab: newButton(dir) });
+    app.innerHTML = libraryTools() + libraryNoMatch();
+    return;
+  }
   if (!dirs.length && !notes.length) {
     state.selecting = false;
     chrome({ dir, showBack: Boolean(dir), fab: newButton(dir) });
@@ -469,6 +475,8 @@ function drawFolder() {
     const total = Math.max(state.listing.total || 0, notes.length);
     html += `<div class="section-title">${total > notes.length ? `Notes · ${total}` : 'Notes'}</div><div class="cards library-cards ${library.view}${sel ? ' picking' : ''}">${libraryRows(notes)}</div>`;
     if (total > notes.length) html += '<div class="more-notes" id="more-notes" aria-hidden="true">Loading more notes…</div>';
+  } else if (libraryFiltered()) {
+    html += `<div class="section-title">Notes</div>${libraryNoMatch()}`;
   }
   app.innerHTML = html;
   watchMore();

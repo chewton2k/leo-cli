@@ -2543,6 +2543,7 @@ dependencies = [
  "chrono-tz",
  "colored",
  "futures-util",
+ "iana-time-zone",
  "leo-core",
  "local-ip-address",
  "qrcode",

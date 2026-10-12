@@ -1,25 +1,70 @@
 const LIBRARY_KEY = 'leo-library';
 const PREVIEWS_KEPT = 200;
-const library = { view: 'grid', previews: new Map(), observer: null, arrival: null };
+const LIBRARY_SORTS = [['updated', 'Last edited'], ['oldest', 'Oldest edit'], ['created', 'Newest made'], ['title', 'Title A–Z'], ['title-desc', 'Title Z–A']];
+const LIBRARY_SHOWS = [['all', 'All notes'], ['pinned', 'Pinned'], ['tasks', 'Open tasks'], ['week', 'Edited this week']];
+const library = { view: 'grid', sort: 'updated', show: 'all', previews: new Map(), observer: null, arrival: null };
 
 try {
   const raw = localStorage.getItem(LIBRARY_KEY) || '{}';
   const kept = raw.length < 1000 ? JSON.parse(raw) : {};
   if (kept && ['grid', 'list'].includes(kept.view)) library.view = kept.view;
+  if (kept && LIBRARY_SORTS.some(([id]) => id === kept.sort)) library.sort = kept.sort;
+  if (kept && LIBRARY_SHOWS.some(([id]) => id === kept.show)) library.show = kept.show;
 } catch (e) {}
 
 function keepLibrary() {
-  try { localStorage.setItem(LIBRARY_KEY, JSON.stringify({ view: library.view })); } catch (e) {}
+  try { localStorage.setItem(LIBRARY_KEY, JSON.stringify({ view: library.view, sort: library.sort, show: library.show })); } catch (e) {}
 }
 
 function libraryQuery(dir, offset = 0) {
-  const params = new URLSearchParams({ dir, limit: String(PAGE), offset: String(offset), brief: 'true', sort: 'title' });
+  const params = new URLSearchParams({ dir, limit: String(PAGE), offset: String(offset), brief: 'true', sort: library.sort, show: library.show });
   return `/api/notes?${params}`;
 }
+
+function libraryChoice(name, label, choices, value) {
+  return `<label class="library-choice"><select data-library="${name}" aria-label="${esc(label)}">${choices.map(([id, text]) => `<option value="${id}"${id === value ? ' selected' : ''}>${esc(text)}</option>`).join('')}</select></label>`;
+}
+
+function libraryFiltered() {
+  return library.show !== 'all';
+}
+
+function libraryNoMatch() {
+  const name = (LIBRARY_SHOWS.find(([id]) => id === library.show) || [, ''])[1].toLowerCase();
+  return `<div class="library-none"><p>No notes here match “${esc(name)}”.</p><button class="btn sm plain" data-action="library-show-all">Show all notes</button></div>`;
+}
+
+async function changeLibrary(name, value) {
+  if (state.view !== 'folder') return;
+  if (name === 'sort' && LIBRARY_SORTS.some(([id]) => id === value)) library.sort = value;
+  else if (name === 'show' && LIBRARY_SHOWS.some(([id]) => id === value)) library.show = value;
+  else return;
+  keepLibrary();
+  const mine = ++seq;
+  const dir = state.dir;
+  try {
+    const page = await api(libraryQuery(dir), { total: true });
+    if (mine !== seq || state.view !== 'folder' || state.dir !== dir) return;
+    state.listing = { ...state.listing, notes: page.items, total: page.total };
+    drawFolder();
+    const again = $(`[data-library="${name}"]`);
+    if (again) again.focus();
+  } catch (e) {
+    if (e instanceof Locked) throw e;
+    toast(e.message, { bad: true });
+  }
+}
+
+app.addEventListener('change', (e) => {
+  const select = e.target.closest && e.target.closest('select[data-library]');
+  if (select) changeLibrary(select.dataset.library, select.value);
+});
 
 function libraryTools() {
   return `<div class="library-tools">
     <div class="library-views" role="group" aria-label="Note layout">${['grid', 'list'].map((view) => `<button class="btn sm plain${library.view === view ? ' on' : ''}" data-action="library-view" data-view="${view}" aria-pressed="${library.view === view}">${view === 'grid' ? ICON.grid : ICON.list}<span>${view === 'grid' ? 'Grid' : 'List'}</span></button>`).join('')}</div>
+    ${libraryChoice('sort', 'Sort notes', LIBRARY_SORTS, library.sort)}
+    ${libraryChoice('show', 'Show', LIBRARY_SHOWS, library.show)}
     <span class="grow"></span>
     ${state.dir ? `<button class="icon-btn" data-action="folder-options" aria-label="Folder options" title="Folder options">${ICON.more}</button>` : ''}
     <button class="btn sm plain" data-action="folder-select">${state.selecting ? 'Done' : 'Select'}</button>

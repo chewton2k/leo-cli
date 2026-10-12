@@ -21,13 +21,13 @@ env:
 
 jobs:
   changes:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       rust: ${{ steps.scope.outputs.rust }}
       browser: ${{ steps.scope.outputs.browser }}
       systems: ${{ steps.scope.outputs.systems }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
       - id: scope
@@ -57,7 +57,7 @@ jobs:
         os: ${{ fromJSON(needs.changes.outputs.systems) }}
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Drop a partly restored speech library
@@ -135,9 +135,9 @@ jobs:
       fail-fast: false
       matrix:
         project: [desktop, phone]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Drop a partly restored speech library
@@ -151,10 +151,10 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
       - name: Build leo
         run: cargo build --locked --bin leo
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '24'
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v5
         with:
           version: '12.9.1'
       - name: Browser integration tests (${{ matrix.project }})
@@ -164,7 +164,7 @@ jobs:
           pnpm --dir crates/leo-web/tests/browser exec playwright test --project=${{ matrix.project }}
       - name: Browser previews and failure traces
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: browser-previews-${{ matrix.project }}
           path: |
@@ -174,12 +174,12 @@ jobs:
           retention-days: 14
 
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     concurrency:
       group: ci-lint-${{ github.ref }}
       cancel-in-progress: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -206,9 +206,9 @@ jobs:
     concurrency:
       group: ci-msrv-${{ github.ref }}
       cancel-in-progress: true
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.88
       - uses: Swatinem/rust-cache@v2
       - name: Drop a partly restored speech library
@@ -240,7 +240,7 @@ jobs:
             os: ubuntu-22.04-arm
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}

@@ -60,6 +60,30 @@ test('a Google Calendar link is prefilled for all-day, deadline and meeting task
   assert.equal(S.googleDay('2026-10-08'), 'https://calendar.google.com/calendar/r/day/2026/10/8');
 });
 
+test('a repeating task shows on its weekdays from its start, done day by day, never overdue', () => {
+  const gym = { id: 'g', title: 'Gym', date: '2026-10-12', repeat: [0, 2], done_on: ['2026-10-12'] };
+  const p = S.plan([gym], [], '2026-10-20', { from: '2026-10-05', to: '2026-10-25' });
+  const days = [...p.byDay.keys()].sort();
+  assert.deepEqual(days, ['2026-10-12', '2026-10-14', '2026-10-19', '2026-10-21']);
+  assert.equal(p.byDay.get('2026-10-12').allDay[0].task.done, true);
+  assert.equal(p.byDay.get('2026-10-14').allDay[0].task.done, false);
+  assert.equal(p.byDay.get('2026-10-14').allDay[0].task.on, '2026-10-14');
+  assert.deepEqual(p.overdue, []);
+  assert.deepEqual(p.undated, []);
+  assert.equal(S.weekdayOf('2026-10-12'), 0);
+  assert.equal(S.weekdayOf('2026-10-18'), 6);
+  assert.equal(S.nextOpen(gym, '2026-10-12', '2026-10-19').date, '2026-10-14');
+  assert.equal(S.repeatLabel([0, 1, 2, 3, 4]), 'Every weekday');
+  assert.equal(S.repeatLabel([6, 5, 0, 1, 2, 3, 4]), 'Every day');
+  assert.equal(S.rrule([4, 0, 2]), 'RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR');
+});
+
+test('Google gets a weekly rule starting on the first repeat day', () => {
+  const link = new URL(S.googleLink({ id: 'g', title: 'Gym', date: '2026-10-13', repeat: [2], kind: 'other' }));
+  assert.equal(link.searchParams.get('recur'), 'RRULE:FREQ=WEEKLY;BYDAY=WE');
+  assert.equal(link.searchParams.get('dates'), '20261014/20261015');
+});
+
 let failed = 0;
 for (const [name, fn] of cases) {
   try {

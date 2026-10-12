@@ -23,5 +23,6 @@ rusqlite.workspace = true
 tempfile.workspace = true
 zip.workspace = true
 chrono-tz.workspace = true
+iana-time-zone = "0.1"
 
 [dev-dependencies]

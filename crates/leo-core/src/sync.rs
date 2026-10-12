@@ -405,6 +405,7 @@ fn print_output(output: String) {
 /// the caller may be a full-screen UI.
 pub fn auto_commit(notes_dir: &Path) -> Result<()> {
     ensure_lines(&notes_dir.join(".gitignore"), GITIGNORE)?;
+    ensure_lines(&notes_dir.join(".gitattributes"), GITATTRIBUTES)?;
     run_git(notes_dir, &["add", "."])?;
 
     // Only create a commit if there are staged changes
@@ -424,11 +425,12 @@ pub fn auto_commit(notes_dir: &Path) -> Result<()> {
 
 /// Files inside the notes directory that are leo's business, not the user's
 /// notes, and so must never be pushed to their remote.
-const GITIGNORE: &str = "*.wav\n*.bak\n.manual-installed\ndirectories.json\n.trash/\n.obsidian/\n";
+const GITIGNORE: &str =
+    "*.wav\n*.bak\n.manual-installed\ndirectories.json\n.trash/\n.obsidian/\n.leo/tasks/.*.tmp\n";
 
 /// A note edited on two computers keeps both sides' lines rather than one
 /// side's edit being lost; the user tidies it, instead of it vanishing.
-const GITATTRIBUTES: &str = "*.md merge=union\n";
+const GITATTRIBUTES: &str = "*.md merge=union\n.leo/tasks/*.json merge=union\n";
 
 /// Bring the repository's own files up to date: the ignore list, the merge
 /// rule for notes, and — for a repository made by an earlier version — no
@@ -663,6 +665,46 @@ mod tests {
         now(&second).unwrap();
 
         assert!(second.join("from-first.md").exists());
+    }
+
+    #[test]
+    fn a_task_changed_on_two_computers_keeps_both_versions_to_pick_the_newest() {
+        let tmp = TempDir::new().unwrap();
+        let remote = tmp.path().join("remote.git");
+        assert!(Command::new("git")
+            .args(["init", "--bare", "-q"])
+            .arg(&remote)
+            .status()
+            .unwrap()
+            .success());
+        let url = remote.to_str().unwrap();
+        let first = tmp.path().join("first");
+        let task = |root: &Path| root.join(".leo").join("tasks").join("t1.json");
+        std::fs::create_dir_all(first.join(".leo/tasks")).unwrap();
+        init(&first).unwrap();
+        std::fs::write(task(&first), "{\"v\":0}\n").unwrap();
+        auto_commit(&first).unwrap();
+        connect(&first, url).unwrap();
+        now(&first).unwrap();
+        let second = tmp.path().join("second");
+        assert!(Command::new("git")
+            .args(["clone", "-q", "-b", "main", url])
+            .arg(&second)
+            .status()
+            .unwrap()
+            .success());
+
+        std::fs::write(task(&first), "{\"v\":1}\n").unwrap();
+        auto_commit(&first).unwrap();
+        now(&first).unwrap();
+        std::fs::write(task(&second), "{\"v\":2}\n").unwrap();
+        auto_commit(&second).unwrap();
+        now(&second).unwrap();
+
+        let merged = std::fs::read_to_string(task(&second)).unwrap();
+        assert!(merged.contains("{\"v\":1}"), "{merged}");
+        assert!(merged.contains("{\"v\":2}"), "{merged}");
+        assert!(!merged.contains("<<<<<<<"), "{merged}");
     }
 
     /// The directory list is rebuilt from the notes on every load, so it is

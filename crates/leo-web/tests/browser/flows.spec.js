@@ -3150,7 +3150,7 @@ test('only the folders scroll in the sidebar; the places above and below stay pu
   const before = [await settings.boundingBox(), await record.boundingBox()];
   expect(await tree.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
   await tree.evaluate((el) => { el.scrollTop = el.scrollHeight; });
-  await expect(page.locator('#side .side-group [data-dir=""]')).toBeInViewport();
+  await expect(page.locator('#side .side-top [data-dir=""]')).toBeInViewport();
   await page.mouse.wheel(0, 2000);
   const after = [await settings.boundingBox(), await record.boundingBox()];
   expect(after.map((b) => Math.round(b.y))).toEqual(before.map((b) => Math.round(b.y)));
@@ -3183,6 +3183,30 @@ test('note thumbnails are read only, cards open directly and layout choices pers
   await card.click();
   await expect(page).toHaveURL(new RegExp(`#/n/${note.id}$`));
   await expect(page.locator('#doc')).toContainText('Homework due Friday');
+});
+
+test('notes come newest edit first, sort and show choices filter the folder and are remembered', async ({ page }) => {
+  const dir = `library-sort-${Date.now()}`;
+  const make = async (title, body) => (await (await page.request.post('/api/notes', { data: { title, directory: dir, body } })).json()).id;
+  const zebra = await make('Zebra notes', '- [ ] feed the zebra');
+  const apple = await make('Apple notes', 'Nothing to do.');
+  await page.goto(`/#/f/${encodeURIComponent(dir)}`);
+  const ids = () => page.locator('.library-cards .card').evaluateAll((els) => els.map((el) => el.dataset.id));
+  await expect.poll(ids).toEqual([apple, zebra]);
+  await page.locator('select[data-library="sort"]').selectOption('title-desc');
+  await expect.poll(ids).toEqual([zebra, apple]);
+  await page.locator('select[data-library="show"]').selectOption('tasks');
+  await expect.poll(ids).toEqual([zebra]);
+  await page.reload();
+  await expect(page.locator('select[data-library="sort"]')).toHaveValue('title-desc');
+  await expect(page.locator('select[data-library="show"]')).toHaveValue('tasks');
+  await expect.poll(ids).toEqual([zebra]);
+  await page.locator('select[data-library="show"]').selectOption('pinned');
+  await expect(page.locator('.library-none')).toBeVisible();
+  await page.locator('[data-action="library-show-all"]').click();
+  await expect.poll(ids).toEqual([zebra, apple]);
+  await page.locator('select[data-library="sort"]').selectOption('updated');
+  await expect.poll(ids).toEqual([apple, zebra]);
 });
 
 test('grid and list keep the library and header width in every layout', async ({ page }) => {

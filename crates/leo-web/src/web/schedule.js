@@ -55,8 +55,52 @@
     return Number.isNaN(start.getTime()) ? [] : [dayKey(start)];
   }
 
-  function plan(tasks, events, today) {
+  const BYDAY = ['MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU'];
+
+  function weekdayOf(key) {
+    return (fromKey(key).getDay() + 6) % 7;
+  }
+
+  function repeats(task) {
+    return Array.isArray(task.repeat) && task.repeat.length > 0;
+  }
+
+  function repeatsOn(task, key) {
+    return repeats(task) && task.repeat.includes(weekdayOf(key)) && (!task.date || key >= task.date);
+  }
+
+  function occurrence(task, key) {
+    return { ...task, date: key, done: (task.done_on || []).includes(key), on: key };
+  }
+
+  function occurrences(task, from, to) {
+    const out = [];
+    if (!repeats(task)) return out;
+    for (let d = fromKey(from); dayKey(d) <= to && out.length < 400; d = addDays(d, 1)) {
+      const key = dayKey(d);
+      if (repeatsOn(task, key)) out.push(occurrence(task, key));
+    }
+    return out;
+  }
+
+  function nextOpen(task, from, to) {
+    return occurrences(task, from, to).find((o) => !o.done) || null;
+  }
+
+  function repeatLabel(repeat, locale) {
+    const days = [...new Set(repeat || [])].filter((d) => d >= 0 && d < 7).sort((a, b) => a - b);
+    if (!days.length) return '';
+    if (days.length === 7) return 'Every day';
+    if (days.join() === '0,1,2,3,4') return 'Every weekday';
+    if (days.join() === '5,6') return 'Every weekend';
+    const name = (d) => new Date(2024, 0, 1 + d).toLocaleDateString(locale || undefined, { weekday: 'short' });
+    return `Every ${days.map(name).join(', ')}`;
+  }
+
+  function plan(tasks, events, today, range) {
     const todayKey = typeof today === 'string' ? today : dayKey(today);
+    const from = (range && range.from) || dayKey(addDays(fromKey(todayKey), -42));
+    const to = (range && range.to) || dayKey(addDays(fromKey(todayKey), 42));
     const byDay = new Map();
     const slot = (key) => {
       if (!byDay.has(key)) byDay.set(key, { allDay: [], timed: [] });
@@ -66,6 +110,14 @@
     const undated = [];
     const linked = new Set(events.map((e) => e.task).filter(Boolean));
     for (const task of tasks) {
+      if (repeats(task)) {
+        for (const one of occurrences(task, from, to)) {
+          const item = { type: 'task', task: one, time: one.time || null };
+          if (one.time) slot(one.date).timed.push(item);
+          else slot(one.date).allDay.push(item);
+        }
+        continue;
+      }
       if (!task.date) {
         if (!task.done) undated.push(task);
         continue;
@@ -123,7 +175,20 @@
     return { key: dayKey(at), time: `${pad(at.getHours())}:${pad(at.getMinutes())}` };
   }
 
+  function firstDay(task) {
+    if (!repeats(task)) return task.date || null;
+    const start = task.date || dayKey(new Date());
+    const found = occurrences({ ...task, date: start }, start, dayKey(addDays(fromKey(start), 7)));
+    return found.length ? found[0].date : start;
+  }
+
+  function rrule(repeat) {
+    const days = [...new Set(repeat || [])].filter((d) => d >= 0 && d < 7).sort((a, b) => a - b);
+    return days.length ? `RRULE:FREQ=WEEKLY;BYDAY=${days.map((d) => BYDAY[d]).join(',')}` : '';
+  }
+
   function googleLink(task, zone) {
+    if (task && repeats(task)) task = { ...task, date: firstDay(task) };
     if (!task || !task.date) return null;
     let dates;
     let title = task.title;
@@ -139,6 +204,7 @@
     const from = task.note && task.note.title ? ` · ${task.note.title}` : '';
     const params = new URLSearchParams({ action: 'TEMPLATE', text: title, dates, details: `From leo${from} · leo-task:${String(task.id).slice(0, 12)}` });
     if (zone) params.set('ctz', zone);
+    if (repeats(task)) params.set('recur', rrule(task.repeat));
     return `https://calendar.google.com/calendar/render?${params.toString()}`;
   }
 
@@ -154,7 +220,7 @@
     return at.toLocaleTimeString(locale || undefined, { hour: 'numeric', minute: '2-digit' });
   }
 
-  const api = { dayKey, fromKey, addDays, weekStart, monthGrid, weekOf, eventDays, plan, quickDates, googleLink, googleDay, timeLabel, nextWeekday };
+  const api = { dayKey, fromKey, addDays, weekStart, monthGrid, weekOf, eventDays, plan, quickDates, weekdayOf, repeats, repeatsOn, occurrences, nextOpen, repeatLabel, rrule, googleLink, googleDay, timeLabel, nextWeekday };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.leoSchedule = api;
 })(typeof window !== 'undefined' ? window : globalThis);

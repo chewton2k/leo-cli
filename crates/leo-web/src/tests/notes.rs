@@ -222,6 +222,7 @@ fn a_reload_failure_is_reported_instead_of_serving_a_stale_store() {
             brief: false,
             sort: None,
             recent: None,
+            show: None,
         }),
     ));
     assert_eq!(result.err(), Some(StatusCode::INTERNAL_SERVER_ERROR));
@@ -271,6 +272,7 @@ fn a_large_folder_comes_in_pages_with_its_total_and_short_cards() {
                 brief: true,
                 sort: None,
                 recent: None,
+                show: None,
             }),
         ))
         .unwrap();

@@ -39,6 +39,38 @@ pub struct Task {
     pub sent_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub repeat: Vec<u8>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub done_on: Vec<NaiveDate>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deleted: bool,
+}
+
+pub const MOST_DONE_DAYS: usize = 400;
+
+pub fn clean_repeat(days: &[u8]) -> Vec<u8> {
+    let mut out: Vec<u8> = days.iter().copied().filter(|d| *d < 7).collect();
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
+pub fn repeats_on(repeat: &[u8], start: Option<NaiveDate>, day: NaiveDate) -> bool {
+    use chrono::Datelike;
+    !repeat.is_empty()
+        && repeat.contains(&(day.weekday().num_days_from_monday() as u8))
+        && start.is_none_or(|start| day >= start)
+}
+
+const WEEKDAYS: [&str; 7] = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"];
+
+pub fn rrule_of(repeat: &[u8]) -> Option<String> {
+    let days: Vec<&str> = repeat
+        .iter()
+        .filter_map(|d| WEEKDAYS.get(*d as usize).copied())
+        .collect();
+    (!days.is_empty()).then(|| format!("RRULE:FREQ=WEEKLY;BYDAY={}", days.join(",")))
 }
 
 fn other() -> String {
@@ -130,6 +162,10 @@ pub struct Listed {
     pub found: bool,
     pub promoted: bool,
     pub sent_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub repeat: Vec<u8>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub done_on: Vec<NaiveDate>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -250,6 +286,8 @@ fn listed(
         found,
         promoted,
         sent_at,
+        repeat: Vec::new(),
+        done_on: Vec::new(),
     }
 }
 
@@ -277,6 +315,8 @@ pub fn standalone(task: &Task, store: Option<&Store>) -> Listed {
         found: true,
         promoted: false,
         sent_at: task.sent_at,
+        repeat: task.repeat.clone(),
+        done_on: task.done_on.clone(),
     }
 }
 
@@ -327,6 +367,9 @@ pub fn ics_of(task: &Listed, stamp: DateTime<Utc>) -> String {
         }
         _ => {}
     }
+    if let Some(rule) = rrule_of(&task.repeat) {
+        lines.push(rule);
+    }
     let from = task
         .note
         .as_ref()
@@ -345,52 +388,114 @@ pub fn db_of(chats: &Path) -> std::sync::Arc<crate::db::Db> {
     crate::chats::db_of(chats)
 }
 
-pub fn load_all(chats: &Path) -> Vec<Task> {
-    db_of(chats)
-        .with(|c| {
-            let mut statement =
-                c.prepare("SELECT data FROM tasks ORDER BY updated DESC LIMIT ?1")?;
-            let rows = statement.query_map([MOST_TASKS as i64], |r| r.get::<_, String>(0))?;
-            Ok(rows
-                .flatten()
-                .filter_map(|text| serde_json::from_str::<Task>(&text).ok())
-                .collect::<Vec<_>>())
-        })
-        .unwrap_or_default()
+pub fn tasks_dir(chats: &Path) -> std::path::PathBuf {
+    chats
+        .parent()
+        .unwrap_or(chats)
+        .join("notes")
+        .join(".leo")
+        .join("tasks")
 }
 
-pub fn load(chats: &Path, id: &str) -> Option<Task> {
-    db_of(chats)
-        .with(|c| {
-            c.query_row("SELECT data FROM tasks WHERE id = ?1", [id], |r| {
-                r.get::<_, String>(0)
-            })
-        })
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
+const MOST_FILE_BYTES: u64 = 256 * 1024;
+
+fn read_file(path: &Path) -> Option<Task> {
+    let meta = std::fs::symlink_metadata(path).ok()?;
+    if !meta.is_file() || meta.len() > MOST_FILE_BYTES {
+        return None;
+    }
+    let text = std::fs::read_to_string(path).ok()?;
+    text.lines()
+        .filter_map(|line| serde_json::from_str::<Task>(line.trim()).ok())
+        .max_by_key(|t| t.updated_at)
 }
 
-pub fn count(chats: &Path) -> usize {
-    db_of(chats)
-        .with(|c| c.query_row("SELECT COUNT(*) FROM tasks", [], |r| r.get::<_, i64>(0)))
-        .map_or(0, |n| n.max(0) as usize)
-}
-
-pub fn put(chats: &Path, task: &Task) -> anyhow::Result<()> {
-    let text = serde_json::to_string(task)?;
-    db_of(chats).with(|c| {
-        c.execute(
-            "INSERT INTO tasks (id, updated, data) VALUES (?1, ?2, ?3) ON CONFLICT(id) DO UPDATE SET updated = excluded.updated, data = excluded.data",
-            [&task.id, &task.updated_at.to_rfc3339(), &text],
-        )
-    })?;
+fn write_file(chats: &Path, task: &Task) -> anyhow::Result<()> {
+    anyhow::ensure!(valid_id(&task.id), "that task id is not valid");
+    let dir = tasks_dir(chats);
+    std::fs::create_dir_all(&dir)?;
+    let line = serde_json::to_string(task)? + "\n";
+    let path = dir.join(format!("{}.json", task.id));
+    let temp = dir.join(format!(".{}.{}.tmp", task.id, std::process::id()));
+    std::fs::write(&temp, line)?;
+    std::fs::rename(&temp, &path)?;
     Ok(())
 }
 
+fn migrate(chats: &Path) {
+    let db = db_of(chats);
+    let old: Vec<String> = db
+        .with(|c| {
+            let mut statement = c.prepare("SELECT data FROM tasks LIMIT ?1")?;
+            let rows = statement.query_map([MOST_TASKS as i64], |r| r.get::<_, String>(0))?;
+            Ok(rows.flatten().collect::<Vec<_>>())
+        })
+        .unwrap_or_default();
+    if old.is_empty() {
+        return;
+    }
+    for text in &old {
+        if let Ok(task) = serde_json::from_str::<Task>(text) {
+            let path = tasks_dir(chats).join(format!("{}.json", task.id));
+            if valid_id(&task.id) && !path.exists() && write_file(chats, &task).is_err() {
+                return;
+            }
+        }
+    }
+    let _ = db.with(|c| c.execute("DELETE FROM tasks", []));
+}
+
+fn read_all(chats: &Path) -> Vec<Task> {
+    migrate(chats);
+    let Ok(entries) = std::fs::read_dir(tasks_dir(chats)) else {
+        return Vec::new();
+    };
+    let mut out: Vec<Task> = entries
+        .flatten()
+        .filter(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            !name.starts_with('.') && name.ends_with(".json")
+        })
+        .take(MOST_TASKS * 2)
+        .filter_map(|e| read_file(&e.path()))
+        .filter(|t| valid_id(&t.id))
+        .collect();
+    out.sort_by_key(|t| std::cmp::Reverse(t.updated_at));
+    out
+}
+
+pub fn load_all(chats: &Path) -> Vec<Task> {
+    read_all(chats)
+        .into_iter()
+        .filter(|t| !t.deleted)
+        .take(MOST_TASKS)
+        .collect()
+}
+
+pub fn load(chats: &Path, id: &str) -> Option<Task> {
+    if !valid_id(id) {
+        return None;
+    }
+    migrate(chats);
+    read_file(&tasks_dir(chats).join(format!("{id}.json"))).filter(|t| !t.deleted && t.id == id)
+}
+
+pub fn count(chats: &Path) -> usize {
+    load_all(chats).len()
+}
+
+pub fn put(chats: &Path, task: &Task) -> anyhow::Result<()> {
+    migrate(chats);
+    write_file(chats, task)
+}
+
 pub fn remove(chats: &Path, id: &str) -> bool {
-    db_of(chats)
-        .with(|c| c.execute("DELETE FROM tasks WHERE id = ?1", [id]))
-        .is_ok_and(|n| n > 0)
+    let Some(mut task) = load(chats, id) else {
+        return false;
+    };
+    task.deleted = true;
+    task.updated_at = Utc::now();
+    write_file(chats, &task).is_ok()
 }
 
 pub fn remove_done(chats: &Path) -> usize {
@@ -525,6 +630,9 @@ mod tests {
                     sent_at: None,
                     created_at: now,
                     updated_at: now,
+                    repeat: Vec::new(),
+                    done_on: Vec::new(),
+                    deleted: false,
                 },
                 None,
             )
@@ -543,5 +651,105 @@ mod tests {
         assert!(ics.contains("leo-task:sooner"));
         assert_eq!(kind_of("Biology midterm"), "exam");
         assert_eq!(clean_kind("Party"), "other");
+    }
+
+    fn plain(id: &str, title: &str, at: DateTime<Utc>) -> Task {
+        Task {
+            id: id.into(),
+            title: title.into(),
+            kind: "other".into(),
+            done: false,
+            date: None,
+            time: None,
+            end: None,
+            note: None,
+            sent_at: None,
+            created_at: at,
+            updated_at: at,
+            repeat: Vec::new(),
+            done_on: Vec::new(),
+            deleted: false,
+        }
+    }
+
+    #[test]
+    fn tasks_live_in_files_beside_the_notes_and_the_newest_merged_line_wins() {
+        let dir = tempfile::tempdir().unwrap();
+        let chats = dir.path().join("chats");
+        let now = Utc::now();
+        put(&chats, &plain("task-0001", "Write essay", now)).unwrap();
+        let file = dir.path().join("notes/.leo/tasks/task-0001.json");
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert_eq!(text.lines().count(), 1);
+        let newer = plain("task-0001", "Write the essay", now + chrono::Duration::seconds(5));
+        let older = plain("task-0001", "Old title", now - chrono::Duration::seconds(5));
+        std::fs::write(
+            &file,
+            format!(
+                "{}\n{}\n{}\n",
+                serde_json::to_string(&older).unwrap(),
+                serde_json::to_string(&newer).unwrap(),
+                text.trim()
+            ),
+        )
+        .unwrap();
+        assert_eq!(load(&chats, "task-0001").unwrap().title, "Write the essay");
+        assert!(remove(&chats, "task-0001"));
+        assert!(load(&chats, "task-0001").is_none());
+        assert!(load_all(&chats).is_empty());
+        assert!(
+            file.exists(),
+            "a deletion is a newer line, not a missing file"
+        );
+        let mut back = newer.clone();
+        back.updated_at = Utc::now() + chrono::Duration::seconds(10);
+        put(&chats, &back).unwrap();
+        assert_eq!(load_all(&chats).len(), 1);
+    }
+
+    #[test]
+    fn tasks_kept_in_the_database_move_into_files_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let chats = dir.path().join("chats");
+        let task = plain("task-0009", "From before", Utc::now());
+        db_of(&chats)
+            .with(|c| {
+                c.execute(
+                    "INSERT INTO tasks (id, updated, data) VALUES (?1, ?2, ?3)",
+                    rusqlite::params![
+                        task.id,
+                        task.updated_at.to_rfc3339(),
+                        serde_json::to_string(&task).unwrap()
+                    ],
+                )
+            })
+            .unwrap();
+        assert_eq!(load_all(&chats), vec![task.clone()]);
+        assert!(dir.path().join("notes/.leo/tasks/task-0009.json").exists());
+        let left: i64 = db_of(&chats)
+            .with(|c| c.query_row("SELECT COUNT(*) FROM tasks", [], |r| r.get(0)))
+            .unwrap();
+        assert_eq!(left, 0);
+    }
+
+    #[test]
+    fn a_repeating_task_falls_on_its_weekdays_from_its_start() {
+        let monday = NaiveDate::from_ymd_opt(2026, 10, 12).unwrap();
+        assert!(repeats_on(&[0, 2], Some(monday), monday));
+        assert!(!repeats_on(
+            &[0, 2],
+            Some(monday),
+            monday.succ_opt().unwrap()
+        ));
+        assert!(!repeats_on(
+            &[0],
+            Some(monday),
+            monday - chrono::Duration::days(7)
+        ));
+        assert_eq!(clean_repeat(&[9, 2, 0, 2]), vec![0, 2]);
+        assert_eq!(
+            rrule_of(&[0, 4]).as_deref(),
+            Some("RRULE:FREQ=WEEKLY;BYDAY=MO,FR")
+        );
     }
 }

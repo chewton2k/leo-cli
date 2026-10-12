@@ -72,6 +72,8 @@ pub(crate) struct NewTask {
     note: Option<String>,
     #[serde(default)]
     done: bool,
+    #[serde(default)]
+    repeat: Vec<u8>,
 }
 
 pub(crate) async fn create_task(
@@ -101,18 +103,28 @@ pub(crate) async fn create_task(
         );
     }
     let now = Utc::now();
+    let repeat = tasks::clean_repeat(&body.repeat);
+    let date = if repeat.is_empty() {
+        body.date
+    } else {
+        body.date
+            .or_else(|| Some(chrono::Local::now().date_naive()))
+    };
     let task = Task {
         id,
         title,
         kind: tasks::clean_kind(body.kind.as_deref().unwrap_or("other")),
-        done: body.done,
-        date: body.date,
-        time: body.date.and(time),
-        end: body.date.and(time).and(end),
+        done: body.done && repeat.is_empty(),
+        date,
+        time: date.and(time),
+        end: date.and(time).and(end),
         note: body.note.filter(|n| !n.is_empty() && n.len() <= 64),
         sent_at: None,
         created_at: now,
         updated_at: now,
+        repeat,
+        done_on: Vec::new(),
+        deleted: false,
     };
     if tasks::put(&chats, &task).is_err() {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
@@ -144,6 +156,10 @@ pub(crate) struct Change {
     sent: Option<bool>,
     #[serde(default)]
     confirm: bool,
+    #[serde(default)]
+    repeat: Option<Vec<u8>>,
+    #[serde(default)]
+    on: Option<NaiveDate>,
 }
 
 pub(crate) async fn change_task(
@@ -172,8 +188,30 @@ pub(crate) async fn change_task(
         if let Some(kind) = change.kind {
             task.kind = tasks::clean_kind(&kind);
         }
+        if let Some(repeat) = &change.repeat {
+            task.repeat = tasks::clean_repeat(repeat);
+            if !task.repeat.is_empty() {
+                task.done = false;
+                if task.date.is_none() && change.date.is_none() {
+                    task.date = Some(chrono::Local::now().date_naive());
+                }
+            }
+        }
         if let Some(done) = change.done {
-            task.done = done;
+            if task.repeat.is_empty() {
+                task.done = done;
+            } else {
+                let day = change
+                    .on
+                    .unwrap_or_else(|| chrono::Local::now().date_naive());
+                task.done_on.retain(|d| *d != day);
+                if done {
+                    task.done_on.push(day);
+                    task.done_on.sort_unstable();
+                    let extra = task.done_on.len().saturating_sub(tasks::MOST_DONE_DAYS);
+                    task.done_on.drain(..extra);
+                }
+            }
         }
         if let Some(date) = change.date {
             task.date = date;
@@ -404,6 +442,12 @@ pub(crate) async fn import_tasks(
         }
         task.title = task.title.trim().chars().take(tasks::MOST_TITLE).collect();
         task.kind = tasks::clean_kind(&task.kind);
+        task.repeat = tasks::clean_repeat(&task.repeat);
+        task.done_on.sort_unstable();
+        task.done_on.dedup();
+        let extra = task.done_on.len().saturating_sub(tasks::MOST_DONE_DAYS);
+        task.done_on.drain(..extra);
+        task.deleted = false;
         match tasks::load(&state.chats, &task.id) {
             Some(mine) if mine.updated_at >= task.updated_at => kept += 1,
             _ => {

@@ -1,5 +1,11 @@
 const S = window.leoSchedule;
-const cal = { month: null, selected: null, data: null, loadedAt: 0, timer: 0, polls: 0, showDone: false, gridOpen: false };
+const cal = { month: null, selected: null, data: null, loadedAt: 0, timer: 0, polls: 0, showDone: true, gridOpen: false };
+const CAL_DONE_KEY = 'leo-calendar-hide-done';
+try {
+  cal.showDone = localStorage.getItem(CAL_DONE_KEY) !== '1';
+} catch (e) {
+  cal.showDone = true;
+}
 const CAL_POLL_MS = 150000;
 const KIND_LABEL = { assignment: 'Assignment', exam: 'Exam', meeting: 'Meeting', 'follow-up': 'Follow-up', deadline: 'Deadline', other: 'Other' };
 const KIND_ORDER = ['assignment', 'exam', 'meeting', 'follow-up', 'deadline', 'other'];
@@ -105,6 +111,38 @@ function toneOfTask(task) {
   return TASK_TONES[task.kind] || '--hue-slate';
 }
 
+function repeatBubbles(on) {
+  return `<div class="repeat-days" role="group" aria-label="Repeat every">${[0, 1, 2, 3, 4, 5, 6].map((d) => {
+    const day = new Date(2024, 0, 1 + d);
+    const name = day.toLocaleDateString(calLocale(), { weekday: 'long' });
+    const letter = day.toLocaleDateString(calLocale(), { weekday: 'narrow' });
+    return `<button type="button" class="repeat-day${on.includes(d) ? ' on' : ''}" data-repeat-day="${d}" aria-pressed="${on.includes(d)}" aria-label="${esc(name)}" title="${esc(name)}">${esc(letter)}</button>`;
+  }).join('')}</div>`;
+}
+
+function repeatHint(repeat) {
+  return repeat.length ? S.repeatLabel(repeat, calLocale()) : 'Does not repeat';
+}
+
+function repeatPicker(box, start, onChange) {
+  const days = [...start];
+  box.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-repeat-day]');
+    if (!b) return;
+    const d = Number(b.dataset.repeatDay);
+    const at = days.indexOf(d);
+    if (at >= 0) days.splice(at, 1);
+    else days.push(d);
+    days.sort((a, c) => a - c);
+    b.classList.toggle('on', at < 0);
+    b.setAttribute('aria-pressed', String(at < 0));
+    const hint = box.querySelector('.repeat-hint');
+    if (hint) hint.textContent = repeatHint(days);
+    onChange([...days]);
+  });
+  return days;
+}
+
 function taskLine(task, { showDate = false } = {}) {
   const time = task.time ? `<span class="sched-time">${esc(S.timeLabel(task.time, calLocale()))}</span>` : '<span class="sched-time"></span>';
   const kind = task.kind === 'exam' ? '<span class="sched-pill">Exam</span>' : `<span class="sched-kind">${esc(KIND_LABEL[task.kind] || 'Other')}</span>`;
@@ -113,11 +151,13 @@ function taskLine(task, { showDate = false } = {}) {
   const due = task.time && task.kind !== 'meeting' ? ` · Due ${esc(S.timeLabel(task.time, calLocale()))}` : '';
   const google = task.sent_at || (cal.data && (cal.data.events || []).some((e) => e.task === task.id)) ? '<span class="sched-badge">Google</span>' : '';
   const missing = task.found === false ? ' · <span class="sched-warn">not found in the note</span>' : '';
+  const repeat = S.repeats(task) ? ` · ${esc(S.repeatLabel(task.repeat, calLocale()))}` : '';
+  const on = task.on ? ` data-on="${esc(task.on)}"` : '';
   const set = !task.date && !task.done ? `<button type="button" class="btn plain sm" data-action="task-date" data-id="${esc(task.id)}">Set date</button>` : '';
   return `<div class="sched-row${task.done ? ' done' : ''}" data-task="${esc(task.id)}" style="--tone: var(${toneOfTask(task)})">
     ${showDate ? '' : time}
-    <input type="checkbox" class="sched-check" data-action="task-done" data-id="${esc(task.id)}" aria-label="Done: ${esc(task.title)}"${task.done ? ' checked' : ''}>
-    <button type="button" class="sched-main" data-action="task-open" data-id="${esc(task.id)}"><span class="sched-title">${esc(task.title)}</span><span class="sched-sub">${from}${when}${due}${missing}</span></button>
+    <input type="checkbox" class="sched-check" data-action="task-done" data-id="${esc(task.id)}"${on} aria-label="Done: ${esc(task.title)}"${task.done ? ' checked' : ''}>
+    <button type="button" class="sched-main" data-action="task-open" data-id="${esc(task.id)}"${on}><span class="sched-title">${esc(task.title)}</span><span class="sched-sub">${from}${when}${due}${repeat}${missing}</span></button>
     ${google}${kind}${set}
   </div>`;
 }
@@ -147,8 +187,13 @@ function drawCalendar() {
   const firstDay = S.weekStart(calLocale());
   const tasks = (cal.data && cal.data.tasks) || [];
   const events = (cal.data && cal.data.events) || [];
-  const plan = S.plan(tasks, events, today);
   const { grid } = calWindow();
+  const strip = S.weekOf(S.fromKey(cal.selected), firstDay);
+  const ahead7 = S.dayKey(S.addDays(new Date(), 7));
+  const plan = S.plan(tasks, events, today, {
+    from: [grid[0].key, strip[0], today].sort()[0],
+    to: [grid[grid.length - 1].key, strip[6], ahead7].sort()[2],
+  });
   const monthName = cal.month.toLocaleDateString(calLocale(), { month: 'long', year: 'numeric' });
   const names = grid.slice(0, 7).map((c) => S.fromKey(c.key).toLocaleDateString(calLocale(), { weekday: 'short' }));
   const dots = (key) => {
@@ -164,7 +209,7 @@ function drawCalendar() {
     return `<span class="sched-dots" aria-label="${items.length} ${items.length === 1 ? 'item' : 'items'}">${tones.slice(0, 4).map((t) => `<i style="background: var(${t})"></i>`).join('')}</span>`;
   };
   const cell = (c) => `<button type="button" class="sched-day${c.inMonth ? '' : ' out'}${c.key === today ? ' today' : ''}${c.key === cal.selected ? ' on' : ''}" data-action="cal-pick" data-day="${c.key}" aria-label="${esc(S.fromKey(c.key).toLocaleDateString(calLocale(), { weekday: 'long', month: 'long', day: 'numeric' }))}"${c.key === cal.selected ? ' aria-pressed="true"' : ''}><span class="sched-n">${c.day}</span>${dots(c.key)}</button>`;
-  const week = S.weekOf(S.fromKey(cal.selected), firstDay).map((key) => {
+  const week = strip.map((key) => {
     const d = S.fromKey(key);
     return `<button type="button" class="sched-day strip${key === today ? ' today' : ''}${key === cal.selected ? ' on' : ''}" data-action="cal-pick" data-day="${key}"><span class="sched-wd">${esc(d.toLocaleDateString(calLocale(), { weekday: 'narrow' }))}</span><span class="sched-n">${d.getDate()}</span>${dots(key)}</button>`;
   }).join('');
@@ -242,7 +287,7 @@ function drawCalendar() {
         <h2 class="sched-day-head">${esc(heading)}</h2>
         ${summary ? `<p class="sched-summary">${summary}</p>` : ''}
         ${agenda}
-        ${tasks.some((t) => t.done) ? `<button type="button" class="link-btn sched-done-toggle" data-action="cal-done">${cal.showDone ? 'Hide completed' : 'Show completed'}</button>` : ''}
+        ${tasks.some((t) => t.done || (t.done_on || []).length) ? `<button type="button" class="link-btn sched-done-toggle" data-action="cal-done">${cal.showDone ? 'Hide completed' : 'Show completed'}</button>` : ''}
       </section>
       <div class="sched-lists phone">${overdue}${undated}</div>
     </div>`;
@@ -285,23 +330,31 @@ app.addEventListener('keydown', (e) => {
   if (again) again.focus();
 });
 
-async function setTaskDone(id, done) {
+function taskDoneOn(task, on) {
+  return on ? (task.done_on || []).includes(on) : Boolean(task.done);
+}
+
+async function setTaskDone(id, done, on = null) {
   const task = calFind(id);
   try {
-    await api(`/api/tasks/${enc(id)}`, { method: 'PATCH', body: { done } });
+    await api(`/api/tasks/${enc(id)}`, { method: 'PATCH', body: on ? { done, on } : { done } });
   } catch (e) {
     if (e instanceof Locked) throw e;
     toast(e.message, { bad: true });
     return loadSchedule(seq);
   }
-  if (task) task.done = done;
+  if (task && on) {
+    task.done_on = (task.done_on || []).filter((d) => d !== on);
+    if (done) task.done_on = [...task.done_on, on].sort();
+  } else if (task) task.done = done;
   setTimeout(drawTasksWindow, done ? 1200 : 0);
-  const row = app.querySelector(`.sched-row[data-task="${CSS.escape(id)}"]`);
+  const rowOf = () => app.querySelector(`.sched-row[data-task="${CSS.escape(id)}"]${on ? `:has(.sched-check[data-on="${CSS.escape(on)}"])` : ''}`);
+  const row = rowOf();
   if (row) row.classList.toggle('done', done);
   if (done) {
-    toast('Done', { action: 'Undo', run: () => setTaskDone(id, false) });
+    toast('Done', { action: 'Undo', run: () => setTaskDone(id, false, on) });
     setTimeout(() => {
-      const still = app.querySelector(`.sched-row[data-task="${CSS.escape(id)}"]`);
+      const still = rowOf();
       if (still && !cal.showDone && still.classList.contains('done')) slideHeight(still, still.getBoundingClientRect().height, 0, () => drawCalendar());
     }, 1200);
   } else drawCalendar();
@@ -395,10 +448,13 @@ function newTaskSheet(day = null) {
   const box = sheet(`<h3>New task</h3>
     <input class="set-input task-title" id="task-title" maxlength="300" placeholder="What needs doing? Like Submit lab report" autocomplete="off">
     <div class="picker-box" id="pick-box"></div>
+    <div class="set-row column task-repeat" id="task-repeat"><span class="set-label">Repeat</span>${repeatBubbles([])}<span class="hint repeat-hint">${esc(repeatHint([]))}</span></div>
     <details class="task-more"><summary>Details</summary><div class="chips task-kinds" id="task-kinds">${KIND_ORDER.map((k) => `<button type="button" class="chip pick-chip${k === 'other' ? ' on' : ''}" data-kind="${k}" aria-pressed="${k === 'other'}">${esc(KIND_LABEL[k])}</button>`).join('')}</div></details>
     <div class="buttons"><button type="button" class="btn plain" data-action="close">Cancel</button><button type="button" class="btn primary" id="task-add">Add task</button></div>`);
   let kind = 'other';
+  let repeat = [];
   const pick = pickerBody($('#pick-box', box), { date: day }, { meeting: false });
+  repeatPicker($('#task-repeat', box), [], (days) => { repeat = days; });
   $('#task-kinds', box).addEventListener('click', (e) => {
     const chip = e.target.closest('[data-kind]');
     if (!chip) return;
@@ -419,12 +475,12 @@ function newTaskSheet(day = null) {
     if (add.disabled) return;
     add.disabled = true;
     try {
-      const made = await api('/api/tasks', { method: 'POST', body: { title: text, date: pick.date, time: pick.time || null, kind } });
+      const made = await api('/api/tasks', { method: 'POST', body: { title: text, date: pick.date, time: pick.time || null, kind, repeat } });
       closeSheet();
       toast(`Added “${made.title}”`);
       loadTasksWindow().catch(() => {});
       if (state.view === 'calendar') {
-        if (made.date) {
+        if (made.date && !S.repeats(made)) {
           cal.selected = made.date;
           cal.month = monthOf(made.date);
         }
@@ -446,9 +502,13 @@ function newTaskSheet(day = null) {
   title.focus();
 }
 
-function taskSheet(id) {
+function taskSheet(id, on = null) {
   const task = calFind(id);
   if (!task) return;
+  const repeating = S.repeats(task);
+  const day = repeating ? on || (state.view === 'calendar' ? cal.selected : S.dayKey(new Date())) : null;
+  const doneNow = taskDoneOn(task, day);
+  const dayName = day ? S.fromKey(day).toLocaleDateString(calLocale(), { weekday: 'short', month: 'short', day: 'numeric' }) : '';
   const onGoogle = (cal.data && (cal.data.events || []).find((e) => e.task === task.id)) || null;
   const google = onGoogle ? 'On Google Calendar' : task.sent_at ? 'Opened in Google Calendar' : 'Not added';
   const when = task.date
@@ -457,7 +517,8 @@ function taskSheet(id) {
   const moved = onGoogle && task.date && !onGoogle.all_day && S.dayKey(new Date(onGoogle.start)) !== task.date && task.time;
   const box = sheet(`<h3 class="task-sheet-title">${esc(task.title)}</h3>
     ${task.found === false ? '<p class="set-note warn">leo could not find this checkbox in the note any more. Open the note to check it.</p>' : ''}
-    <div class="set-row"><span class="set-label">Date</span><span class="set-value">${esc(when)}<button type="button" class="btn plain sm" data-action="task-date" data-id="${esc(task.id)}">${task.date ? 'Change' : 'Set date'}</button></span></div>
+    <div class="set-row"><span class="set-label">${repeating ? 'Starts' : 'Date'}</span><span class="set-value">${esc(when)}<button type="button" class="btn plain sm" data-action="task-date" data-id="${esc(task.id)}">${task.date ? 'Change' : 'Set date'}</button></span></div>
+    ${task.source === 'leo' ? `<div class="set-row column task-repeat" id="task-repeat"><span class="set-label">Repeat</span>${repeatBubbles(task.repeat || [])}<span class="hint repeat-hint">${esc(repeatHint(task.repeat || []))}</span></div>` : ''}
     <div class="set-row column"><span class="set-label">Type</span><div class="chips task-kinds" id="task-kinds">${KIND_ORDER.map((k) => `<button type="button" class="chip pick-chip${task.kind === k ? ' on' : ''}" data-kind="${k}" aria-pressed="${task.kind === k}">${esc(KIND_LABEL[k])}</button>`).join('')}</div></div>
     <div class="set-row"><span class="set-label">Note</span><span class="set-value">${task.note ? `<a href="${noteHash(task.note.id)}">${esc(task.note.title || 'Untitled')}</a>` : 'Added in Leo'}</span></div>
     <div class="set-row"><span class="set-label">Google</span><span class="set-value">${esc(google)}</span></div>
@@ -466,9 +527,23 @@ function taskSheet(id) {
       ${task.date && !onGoogle ? `<button type="button" class="btn primary" data-action="task-google" data-id="${esc(task.id)}">${ICON.calendar}<span>Add to Google Calendar</span></button>` : ''}
       ${!task.date ? `<button type="button" class="btn primary" data-action="task-date" data-id="${esc(task.id)}" data-then="google">Set a date to add it to Google Calendar</button>` : ''}
       ${task.date ? `<a class="btn plain" href="/api/tasks/${enc(task.id)}/ics" download>Download .ics</a>` : ''}
-      <button type="button" class="btn plain" data-action="task-done" data-id="${esc(task.id)}" data-set="${task.done ? '0' : '1'}">${task.done ? 'Not done' : 'Done'}</button>
+      <button type="button" class="btn plain" data-action="task-done" data-id="${esc(task.id)}"${day ? ` data-on="${esc(day)}"` : ''} data-set="${doneNow ? '0' : '1'}">${doneNow ? (day ? `Not done on ${esc(dayName)}` : 'Not done') : (day ? `Done for ${esc(dayName)}` : 'Done')}</button>
       ${task.source === 'leo' ? `<button type="button" class="btn plain danger" data-action="task-delete" data-id="${esc(task.id)}">Delete</button>` : task.promoted ? `<button type="button" class="btn plain" data-action="task-delete" data-id="${esc(task.id)}">Stop tracking</button>` : ''}
     </div>`);
+  const repeatBox = $('#task-repeat', box);
+  if (repeatBox) {
+    repeatPicker(repeatBox, task.repeat || [], async (days) => {
+      try {
+        const saved = await api(`/api/tasks/${enc(task.id)}`, { method: 'PATCH', body: { repeat: days } });
+        Object.assign(task, saved && saved.id ? saved : { repeat: days });
+        if (state.view === 'calendar') drawCalendar();
+        drawTasksWindow();
+      } catch (err) {
+        if (err instanceof Locked) throw err;
+        toast(err.message, { bad: true });
+      }
+    });
+  }
   $('#task-kinds', box).addEventListener('click', async (e) => {
     const chip = e.target.closest('[data-kind]');
     if (!chip || chip.classList.contains('on')) return;
@@ -591,7 +666,7 @@ async function promoteTask(line) {
   }
 }
 
-async function openTaskAnywhere(id) {
+async function openTaskAnywhere(id, on = null) {
   if (!cal.data || !calFind(id)) {
     try {
       cal.data = { ...(cal.data || {}), tasks: (await api('/api/tasks')).tasks, events: (cal.data && cal.data.events) || [] };
@@ -600,7 +675,7 @@ async function openTaskAnywhere(id) {
       return;
     }
   }
-  taskSheet(id);
+  taskSheet(id, on);
 }
 
 var tasksWin = { folded: false, timer: 0, tasks: null };
@@ -635,14 +710,28 @@ function tasksGroups(tasks) {
   const today = S.dayKey(new Date());
   const ahead = S.dayKey(S.addDays(new Date(), TASKS_AHEAD_DAYS));
   const groups = [['Overdue', []], ['Today', []], ['Coming up', []], ['No date', []]];
-  for (const t of tasks) {
-    if (t.done) continue;
+  for (const task of tasks) {
+    const t = S.repeats(task) ? S.nextOpen(task, today, ahead) : task;
+    if (!t || t.done) continue;
     if (!t.date) groups[3][1].push(t);
     else if (t.date < today) groups[0][1].push(t);
     else if (t.date === today) groups[1][1].push(t);
     else if (t.date <= ahead) groups[2][1].push(t);
   }
   return groups.filter(([, list]) => list.length);
+}
+
+function tasksDue() {
+  const tasks = tasksWin.tasks || (cal.data && cal.data.tasks) || [];
+  const groups = new Map(tasksGroups(tasks));
+  const late = (groups.get('Overdue') || []).length;
+  return { late, due: late + (groups.get('Today') || []).length };
+}
+
+function tasksDueBadge() {
+  const { late, due } = tasksDue();
+  if (!due) return '';
+  return `<span class="due-badge${late ? ' late' : ''}" aria-label="${esc(late ? `${due} due, ${late} overdue` : `${due} due today`)}">${due} due</span>`;
 }
 
 function drawTasksWindow() {
@@ -654,8 +743,8 @@ function drawTasksWindow() {
   if (tasksBox.hidden) return;
   const late = groups.find(([name]) => name === 'Overdue');
   const row = (t) => `<div class="tasks-row" data-task="${esc(t.id)}" style="--tone: var(${toneOfTask(t)})">
-    <input type="checkbox" class="sched-check" data-action="task-done" data-id="${esc(t.id)}" aria-label="Done: ${esc(t.title)}">
-    <button type="button" class="tasks-title" data-action="task-open-here" data-id="${esc(t.id)}">${esc(t.title)}</button>
+    <input type="checkbox" class="sched-check" data-action="task-done" data-id="${esc(t.id)}"${t.on ? ` data-on="${esc(t.on)}"` : ''} aria-label="Done: ${esc(t.title)}">
+    <button type="button" class="tasks-title" data-action="task-open-here" data-id="${esc(t.id)}"${t.on ? ` data-on="${esc(t.on)}"` : ''}>${esc(t.title)}</button>
     ${t.date ? `<span class="tasks-when">${esc(t.date === S.dayKey(new Date()) ? (t.time ? S.timeLabel(t.time, calLocale()) : 'Today') : S.fromKey(t.date).toLocaleDateString(calLocale(), { month: 'short', day: 'numeric' }))}</span>` : `<button type="button" class="btn plain sm" data-action="task-date" data-id="${esc(t.id)}">Set date</button>`}
   </div>`;
   const label = late ? `${late[1].length} overdue · ${open} to do` : `${open} to do`;

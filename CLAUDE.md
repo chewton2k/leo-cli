@@ -308,6 +308,9 @@ way.
   install.ps1; e2e is `cfg(unix)`. Folder names are always `/`-joined, even
   when read from disk; TOML paths in tests use literal `'...'` strings.
 - Knowledge graph (code and routes still say `map`): `leo serve` only (web), see crates/leo-web/CLAUDE.md.
+- Tasks made on the website live in `<notes>/.leo/tasks/<id>.json` (one JSON
+  line each, tombstones for deletes), so the git backup carries them;
+  `sync::GITATTRIBUTES` merges them by union and leo-web reads the newest line.
 - Tags are hidden everywhere a person looks (decided 2026-10-08: folders,
   search and the knowledge graph cover it): no `#tag` in `new` (split_new returns (dir,
   title)), no tag column, completion, `--tags`/`--tag` flags, Tags page or chips

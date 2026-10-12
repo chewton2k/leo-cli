@@ -437,6 +437,26 @@ fn chat_search(state: &AppState, call: &Call) -> Done {
     }
 }
 
+const DAY_NAMES: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+fn repeat_of(text: &str) -> Result<Vec<u8>, String> {
+    let mut out = Vec::new();
+    for word in text
+        .split(|c: char| c == ',' || c.is_whitespace())
+        .filter(|w| !w.is_empty())
+    {
+        let w = word.to_lowercase();
+        let day = ["mo", "tu", "we", "th", "fr", "sa", "su"]
+            .iter()
+            .position(|d| w.starts_with(d))
+            .ok_or_else(|| {
+                format!("\"{word}\" is not a day; use mon, tue, wed, thu, fri, sat or sun")
+            })?;
+        out.push(day as u8);
+    }
+    Ok(tasks::clean_repeat(&out))
+}
+
 fn add_task(call: &Call) -> Result<Proposal, String> {
     let title: String = call
         .text("title")
@@ -454,9 +474,22 @@ fn add_task(call: &Call) -> Result<Proposal, String> {
         None
     };
     let kind = kind_of(&call.text("type"))?;
+    let repeat = repeat_of(&call.text("repeat"))?;
+    let every = if repeat.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " · every {}",
+            repeat
+                .iter()
+                .map(|d| DAY_NAMES[*d as usize])
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
     Ok(Proposal::AddTask {
         summary: format!(
-            "Add the task “{title}”{}",
+            "Add the task “{title}”{}{every}",
             if date.is_some() {
                 format!(" · {}", when_label(date, time))
             } else {
@@ -467,6 +500,7 @@ fn add_task(call: &Call) -> Result<Proposal, String> {
         date: date.map(|d| d.to_string()),
         time: time.map(|t| t.format("%H:%M").to_string()),
         task_kind: kind,
+        repeat,
     })
 }
 
@@ -520,6 +554,10 @@ fn update_task(state: &AppState, call: &Call) -> Result<Proposal, String> {
             }
         ));
     }
+    let on = date_of(&call.text("on"))?;
+    if on.is_some() && task.repeat.is_empty() {
+        return Err("\"on\" is only for repeating tasks".into());
+    }
     Ok(Proposal::UpdateTask {
         summary: format!("“{}”: {}", task.title, parts.join(", ")),
         id: task.id.clone(),
@@ -528,6 +566,7 @@ fn update_task(state: &AppState, call: &Call) -> Result<Proposal, String> {
         clear_date,
         time: time.map(|t| t.format("%H:%M").to_string()),
         task_kind: kind,
+        on: on.map(|d| d.to_string()),
     })
 }
 
@@ -676,7 +715,7 @@ fn schedule(state: &AppState, call: &Call) -> Done {
     )];
     let overdue: Vec<&Listed> = all
         .iter()
-        .filter(|t| !t.done && t.date.is_some_and(|d| d < today))
+        .filter(|t| !t.done && t.repeat.is_empty() && t.date.is_some_and(|d| d < today))
         .collect();
     if !overdue.is_empty() {
         lines.push("Overdue:".into());
@@ -724,12 +763,21 @@ fn schedule(state: &AppState, call: &Call) -> Done {
                 format!("- {when} {}{place} (event in {calendar})", e.title),
             ));
         }
-        for t in all.iter().filter(|t| t.date == Some(day)) {
+        for t in all.iter().filter(|t| {
+            (t.repeat.is_empty() && t.date == Some(day))
+                || tasks::repeats_on(&t.repeat, t.date, day)
+        }) {
             items.push((
                 t.time
                     .map(|tm| tm.format("%H:%M").to_string())
                     .unwrap_or_else(|| "00:00".into()),
-                task_line(t),
+                if t.repeat.is_empty() {
+                    task_line(t)
+                } else {
+                    let mut on = t.clone();
+                    on.done = t.done_on.contains(&day);
+                    format!("{} · repeats weekly", task_line(&on))
+                },
             ));
         }
         if !items.is_empty() {
@@ -797,12 +845,13 @@ pub(crate) async fn act(
             date,
             time,
             task_kind,
+            repeat,
             ..
         } => {
             let made = reply_of(
                 task_routes::create_task(
                     State(state.clone()),
-                    Json(parse(serde_json::json!({ "title": title, "date": date, "time": time, "kind": task_kind.clone().unwrap_or_else(|| "other".into()) }))?),
+                    Json(parse(serde_json::json!({ "title": title, "date": date, "time": time, "kind": task_kind.clone().unwrap_or_else(|| "other".into()), "repeat": repeat }))?),
                 )
                 .await,
             )
@@ -829,6 +878,14 @@ pub(crate) async fn act(
                     date: gone["date"].as_str().map(str::to_string),
                     time: gone["time"].as_str().map(|t| t.chars().take(5).collect()),
                     task_kind: gone["kind"].as_str().map(str::to_string),
+                    repeat: gone["repeat"]
+                        .as_array()
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|d| d.as_u64().map(|d| d as u8))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
                 },
             ))
         }
@@ -839,6 +896,7 @@ pub(crate) async fn act(
             clear_date,
             time,
             task_kind,
+            on,
             ..
         } => {
             let all = listed_now(state)?;
@@ -850,6 +908,9 @@ pub(crate) async fn act(
             let mut change = serde_json::Map::new();
             if let Some(done) = done {
                 change.insert("done".into(), serde_json::json!(done));
+            }
+            if let Some(on) = on {
+                change.insert("on".into(), serde_json::json!(on));
             }
             let new_date = if *clear_date {
                 None
@@ -881,12 +942,21 @@ pub(crate) async fn act(
             )
             .await?;
             let dated = *clear_date || date.is_some() || time.is_some();
+            let day = on
+                .as_deref()
+                .and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
+                .unwrap_or_else(|| chrono::Local::now().date_naive());
+            let was_done = if before.repeat.is_empty() {
+                before.done
+            } else {
+                before.done_on.contains(&day)
+            };
             Ok((
                 serde_json::Value::Null,
                 Proposal::UpdateTask {
                     summary: format!("Put “{}” back as it was", before.title),
                     id: id.clone(),
-                    done: done.map(|_| before.done),
+                    done: done.map(|_| was_done),
                     date: if dated {
                         before.date.map(|d| d.to_string())
                     } else {
@@ -899,6 +969,7 @@ pub(crate) async fn act(
                         None
                     },
                     task_kind: task_kind.as_ref().map(|_| before.kind.clone()),
+                    on: (!before.repeat.is_empty()).then(|| day.to_string()),
                 },
             ))
         }

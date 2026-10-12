@@ -18,6 +18,7 @@ pub(crate) struct ListParams {
     pub(crate) brief: bool,
     pub(crate) sort: Option<String>,
     pub(crate) recent: Option<String>,
+    pub(crate) show: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -218,6 +219,7 @@ pub(crate) async fn list_notes(
             } else {
                 store.list_notes(params.tag.as_deref(), usize::MAX)
             };
+            crate::browse::only(&mut notes, params.show.as_deref(), chrono::Utc::now())?;
             crate::browse::order(&mut notes, params.sort.as_deref(), params.recent.as_deref())?;
             let total = notes.len();
             let page: Vec<leo_core::notes::Note> = notes

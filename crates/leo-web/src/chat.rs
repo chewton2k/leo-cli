@@ -604,7 +604,7 @@ pub fn unnumbered(text: &str) -> Option<String> {
 }
 
 const BASE: &str = "\
-You are Felix, the friendly study buddy built into leo, the user's notes app. You work from the user's own notes, given in <note> tags with ids like n1. Each note says why it was included: notes the user attached to the conversation (treat these as what they are asking about), the note the user has open, notes that match the question, or notes connected to one of those in their knowledge graph (with the reason). Use those connections to relate ideas across notes and classes.
+You are Felix, the friendly study buddy built into leo, the user's notes app. You work from the user's own notes, given in <note> tags with ids like n1. Each note says why it was included: notes the user attached to the conversation (treat these as what they are asking about), the note the user has open, notes that match the question, or notes connected to one of those in their knowledge graph (with the reason). Use those connections to relate ideas across notes and classes. <today> gives the user's current date, time and time zone: use it to work out words like today, tomorrow, Friday or next week, and write dates for tools as YYYY-MM-DD.
 
 - Each line of a note starts with its line number and a bar, like \"14| \". The number is not part of the note: never copy it into a quote or an edit.
 - Ground what you say in the notes and cite them right after the sentence: the note's id and the lines you used, like [n2 L14] or [n2 L14-18], so the user can open the note at those lines; [n2] alone when the whole note supports it. Cite only notes you actually used.
@@ -778,6 +778,21 @@ pub fn memory_prompt(old: Option<&crate::chats::Memory>, more: &[Turn]) -> (Stri
     (MEMORY_RULES.to_string(), user, MEMORY_WORDS * 2)
 }
 
+pub fn today_line(now: chrono::DateTime<chrono::Local>, zone: Option<&str>) -> String {
+    let hour = now.format("%I").to_string();
+    let zone = zone.map(|z| format!(", {z}")).unwrap_or_default();
+    format!(
+        "<today>{}, {} {}, {} at {}:{} {}{zone}</today>\n\n",
+        now.format("%A"),
+        now.format("%B"),
+        now.format("%-d"),
+        now.format("%Y"),
+        hour.trim_start_matches('0'),
+        now.format("%M"),
+        now.format("%p").to_string().to_lowercase()
+    )
+}
+
 pub fn prompt_within(
     mode: &str,
     notes: &str,
@@ -787,7 +802,9 @@ pub fn prompt_within(
     memory: Option<&crate::chats::Memory>,
 ) -> (String, String) {
     let system = format!("{BASE}\n\n{}", style(mode));
-    let mut user = documents_within(documents, scaled(DOCS_CHARS, room));
+    let zone = iana_time_zone::get_timezone().ok();
+    let mut user = today_line(chrono::Local::now(), zone.as_deref());
+    user.push_str(&documents_within(documents, scaled(DOCS_CHARS, room)));
     if notes.trim().is_empty() {
         user.push_str("<notes>\nNo notes matched this conversation.\n</notes>\n\n");
     } else {
@@ -1189,6 +1206,29 @@ mod tests {
     }
 
     #[test]
+    fn felix_knows_the_day_and_time_where_the_user_is() {
+        use chrono::TimeZone;
+        let at = chrono::Local
+            .with_ymd_and_hms(2026, 10, 12, 15, 4, 0)
+            .unwrap();
+        assert_eq!(
+            today_line(at, Some("America/Los_Angeles")),
+            "<today>Monday, October 12, 2026 at 3:04 pm, America/Los_Angeles</today>\n\n"
+        );
+        let (system, user) = prompt(
+            "chat",
+            "",
+            &[],
+            &[Turn {
+                role: "user".into(),
+                text: "what is due tomorrow?".into(),
+            }],
+        );
+        assert!(user.starts_with("<today>"));
+        assert!(system.contains("<today> gives the user's current date"));
+    }
+
+    #[test]
     fn felix_is_told_to_use_interpretable_language_in_every_style() {
         for mode in MODES {
             assert!(prompt(mode, "", &[], &[])
@@ -1229,7 +1269,8 @@ mod tests {
         }];
         let (system, user) = prompt("chat", "<note id=\"n1\">", &docs, &turns);
         assert!(system.contains("<document> tags"));
-        assert!(user.starts_with("<documents>\n<document id=\"d1\" name=\"slides.pdf\">"));
+        assert!(user.starts_with("<today>"));
+        assert!(user.contains("</today>\n\n<documents>\n<document id=\"d1\" name=\"slides.pdf\">"));
         assert!(user.contains("name=\"big 'one'.txt\""));
         assert!(user.find("</documents>").unwrap() < user.find("<notes>").unwrap());
         assert!(

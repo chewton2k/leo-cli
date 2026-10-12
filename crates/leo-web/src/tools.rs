@@ -272,6 +272,11 @@ pub const SPECS: [Spec; 28] = [
                 required: false,
                 about: "assignment, exam, meeting, follow-up, deadline or other",
             },
+            Param {
+                name: "repeat",
+                required: false,
+                about: "for a task that comes back every week: the days, like mon, wed, fri (the date is then when it starts)",
+            },
         ],
         returns: "Suggested or done, as the user's access setting allows.",
         example: r#"<tool>{"name": "add_task", "title": "Submit lab report", "date": "2026-10-16", "time": "23:59", "type": "assignment"}</tool>"#,
@@ -304,6 +309,11 @@ pub const SPECS: [Spec; 28] = [
                 name: "type",
                 required: false,
                 about: "assignment, exam, meeting, follow-up, deadline or other",
+            },
+            Param {
+                name: "on",
+                required: false,
+                about: "for a repeating task, the day (YYYY-MM-DD) whose done or not done this is; today if left out",
             },
         ],
         returns: "Suggested or done, as the user's access setting allows.",
@@ -1412,6 +1422,8 @@ pub enum Proposal {
         time: Option<String>,
         #[serde(default)]
         task_kind: Option<String>,
+        #[serde(default)]
+        repeat: Vec<u8>,
     },
     UpdateTask {
         summary: String,
@@ -1426,6 +1438,8 @@ pub enum Proposal {
         time: Option<String>,
         #[serde(default)]
         task_kind: Option<String>,
+        #[serde(default)]
+        on: Option<String>,
     },
     DeleteTask {
         summary: String,

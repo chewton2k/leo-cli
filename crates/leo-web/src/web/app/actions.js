@@ -41,18 +41,24 @@ const actions = {
   },
   'cal-done': () => {
     cal.showDone = !cal.showDone;
+    try {
+      localStorage.setItem(CAL_DONE_KEY, cal.showDone ? '0' : '1');
+    } catch (e) {
+      cal.showDone = Boolean(cal.showDone);
+    }
     drawCalendar();
   },
   'task-new': (el) => newTaskSheet(el.dataset.day || null),
-  'task-open': (el) => taskSheet(el.dataset.id),
-  'task-open-here': (el) => openTaskAnywhere(el.dataset.id),
+  'task-open': (el) => taskSheet(el.dataset.id, el.dataset.on || null),
+  'task-open-here': (el) => openTaskAnywhere(el.dataset.id, el.dataset.on || null),
   'task-done': (el) => {
     const id = el.dataset.id;
+    const on = el.dataset.on || null;
     const task = calFind(id);
-    const done = el.dataset.set ? el.dataset.set === '1' : !(task && task.done);
+    const done = el.dataset.set ? el.dataset.set === '1' : !(task && taskDoneOn(task, on));
     if (el.dataset.set) closeSheet();
-    return setTaskDone(id, done).then(() => {
-      const box = app.querySelector(`.sched-check[data-id="${CSS.escape(id)}"]`);
+    return setTaskDone(id, done, on).then(() => {
+      const box = app.querySelector(`.sched-check[data-id="${CSS.escape(id)}"]${on ? `[data-on="${CSS.escape(on)}"]` : ''}`);
       if (box) box.checked = done;
     });
   },
@@ -117,6 +123,8 @@ const actions = {
   'open-note': (el) => go(noteHash(el.dataset.id)),
   'pin-card': pinCard,
   'library-view': changeLibraryView,
+  'library-show-all': () => changeLibrary('show', 'all'),
+  'tasks-restore-go': () => tasksRestoreGo().catch(fail),
   new: (el) => {
     closeSheet();
     go(el.dataset.dir ? `#/new/${enc(el.dataset.dir)}` : '#/new');

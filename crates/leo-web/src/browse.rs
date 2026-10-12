@@ -16,7 +16,10 @@ pub(crate) fn order(
     recent: Option<&str>,
 ) -> Result<(), StatusCode> {
     let sort = sort.unwrap_or("updated");
-    if !matches!(sort, "updated" | "opened" | "folder" | "title") {
+    if !matches!(
+        sort,
+        "updated" | "oldest" | "created" | "opened" | "folder" | "title" | "title-desc"
+    ) {
         return Err(StatusCode::BAD_REQUEST);
     }
     let recent = recent.unwrap_or_default();
@@ -30,29 +33,50 @@ pub(crate) fn order(
         }
         opened.entry(id).or_insert(i);
     }
-    notes.sort_by_cached_key(|note| {
-        let rank = if sort == "opened" {
-            *opened.get(note.id.as_str()).unwrap_or(&usize::MAX)
-        } else {
-            0
+    notes.sort_by(|a, b| {
+        let rank = |note: &Note| {
+            if sort == "opened" {
+                *opened.get(note.id.as_str()).unwrap_or(&usize::MAX)
+            } else {
+                0
+            }
         };
-        (
-            !note.pinned,
-            rank,
-            if sort == "folder" {
-                note.directory.to_lowercase()
-            } else {
-                String::new()
-            },
-            if matches!(sort, "title" | "folder") {
-                note.title.to_lowercase()
-            } else {
-                String::new()
-            },
-            std::cmp::Reverse(note.updated_at),
-            note.id.clone(),
-        )
+        let title = |note: &Note| note.title.to_lowercase();
+        let by = match sort {
+            "oldest" => a.updated_at.cmp(&b.updated_at),
+            "created" => b.created_at.cmp(&a.created_at),
+            "title" => title(a).cmp(&title(b)),
+            "title-desc" => title(b).cmp(&title(a)),
+            "folder" => {
+                (a.directory.to_lowercase(), title(a)).cmp(&(b.directory.to_lowercase(), title(b)))
+            }
+            _ => std::cmp::Ordering::Equal,
+        };
+        (!a.pinned)
+            .cmp(&!b.pinned)
+            .then(rank(a).cmp(&rank(b)))
+            .then(by)
+            .then(b.updated_at.cmp(&a.updated_at))
+            .then(a.id.cmp(&b.id))
     });
+    Ok(())
+}
+
+pub(crate) fn only(
+    notes: &mut Vec<&Note>,
+    show: Option<&str>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<(), StatusCode> {
+    match show.unwrap_or("all") {
+        "all" => {}
+        "pinned" => notes.retain(|n| n.pinned),
+        "tasks" => notes.retain(|n| {
+            let [done, all] = crate::routes::notes::tasks_in(&n.body);
+            done < all
+        }),
+        "week" => notes.retain(|n| now - n.updated_at <= chrono::Duration::days(7)),
+        _ => return Err(StatusCode::BAD_REQUEST),
+    }
     Ok(())
 }
 
@@ -141,6 +165,72 @@ pub(crate) fn summary(body: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::{Duration, Utc};
+
+    fn note(title: &str, edited_days_ago: i64, created_days_ago: i64) -> Note {
+        let mut n = Note::new(title, "", vec![], "");
+        n.updated_at = Utc::now() - Duration::days(edited_days_ago);
+        n.created_at = Utc::now() - Duration::days(created_days_ago);
+        n
+    }
+
+    fn titles(notes: &[&Note]) -> Vec<String> {
+        notes.iter().map(|n| n.title.clone()).collect()
+    }
+
+    #[test]
+    fn notes_are_newest_edit_first_by_default_with_pinned_on_top() {
+        let a = note("Apple", 3, 9);
+        let b = note("banana", 1, 1);
+        let mut c = note("Cherry", 10, 5);
+        let d = note("Date", 0, 20);
+        let all = [&a, &b, &c, &d];
+        let mut list = all.to_vec();
+        order(&mut list, None, None).unwrap();
+        assert_eq!(titles(&list), ["Date", "banana", "Apple", "Cherry"]);
+        order(&mut list, Some("oldest"), None).unwrap();
+        assert_eq!(titles(&list), ["Cherry", "Apple", "banana", "Date"]);
+        order(&mut list, Some("created"), None).unwrap();
+        assert_eq!(titles(&list), ["banana", "Cherry", "Apple", "Date"]);
+        order(&mut list, Some("title"), None).unwrap();
+        assert_eq!(titles(&list), ["Apple", "banana", "Cherry", "Date"]);
+        order(&mut list, Some("title-desc"), None).unwrap();
+        assert_eq!(titles(&list), ["Date", "Cherry", "banana", "Apple"]);
+        c.pinned = true;
+        let mut list = vec![&a, &b, &c, &d];
+        order(&mut list, None, None).unwrap();
+        assert_eq!(titles(&list), ["Cherry", "Date", "banana", "Apple"]);
+        assert_eq!(
+            order(&mut list, Some("size"), None),
+            Err(StatusCode::BAD_REQUEST)
+        );
+    }
+
+    #[test]
+    fn filters_keep_pinned_notes_open_tasks_or_this_weeks_edits() {
+        let mut pinned = note("Pinned", 30, 30);
+        pinned.pinned = true;
+        let mut tasks = note("Tasks", 30, 30);
+        tasks.body = "- [x] done\n- [ ] still to do".into();
+        let mut finished = note("Finished", 30, 30);
+        finished.body = "- [x] done".into();
+        let recent = note("Recent", 2, 30);
+        let all = vec![&pinned, &tasks, &finished, &recent];
+        let shown = |show: &str| {
+            let mut list = all.clone();
+            only(&mut list, Some(show), Utc::now()).unwrap();
+            titles(&list)
+        };
+        assert_eq!(shown("all").len(), 4);
+        assert_eq!(shown("pinned"), ["Pinned"]);
+        assert_eq!(shown("tasks"), ["Tasks"]);
+        assert_eq!(shown("week"), ["Recent"]);
+        let mut list = all.clone();
+        assert_eq!(
+            only(&mut list, Some("nope"), Utc::now()),
+            Err(StatusCode::BAD_REQUEST)
+        );
+    }
 
     #[test]
     fn a_visual_preview_is_complete_bounded_and_unicode_safe() {

@@ -171,6 +171,11 @@ function drawStorage(page) {
       </div>
       <a class="btn primary sm" id="export-link" download href="${exportHref()}">Download zip</a>
     </section>
+    <section class="set-card store-restore">
+      <header><h3>Restore tasks</h3></header>
+      <p class="hint">Bring back tasks from an export: pick the <b>tasks.json</b> inside the zip. Tasks you already have are kept when they are newer.</p>
+      <label class="btn plain sm">Choose tasks.json<input type="file" id="tasks-restore" accept=".json,application/json" hidden></label>
+    </section>
   </div>`;
   storageBarHover();
 }
@@ -255,6 +260,35 @@ function storageAsk(el) {
     <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn danger" data-action="storage-go">${esc(action.selected ? 'Delete' : action.label)}</button></div>`);
 }
 
+async function tasksRestoreAsk(file) {
+  let tasks;
+  try {
+    if (file.size > 8 * 1024 * 1024) throw new Error('too big');
+    const data = JSON.parse(await file.text());
+    tasks = Array.isArray(data) ? data : data && data.tasks;
+    if (!Array.isArray(tasks)) throw new Error('no tasks');
+  } catch (e) {
+    return toast('That file is not a tasks.json from a leo export.', { bad: true });
+  }
+  if (!tasks.length) return toast('That file has no tasks in it.');
+  state.tasksRestore = tasks;
+  sheet(`<h3>Restore ${esc(plural(tasks.length, 'task'))}?</h3>
+    <p><b>${esc(file.name)}</b></p>
+    <p>Tasks that are not here come back. A task you already have stays as it is unless the file's copy is newer.</p>
+    <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn primary" data-action="tasks-restore-go">Restore</button></div>`);
+}
+
+async function tasksRestoreGo() {
+  const tasks = state.tasksRestore;
+  closeSheet();
+  state.tasksRestore = null;
+  if (!tasks) return;
+  const done = await api('/api/tasks/import', { method: 'POST', body: { tasks } });
+  toast(done.added ? `Restored ${plural(done.added, 'task')}${done.kept ? ` · ${done.kept} already here` : ''}` : 'Every task in that file is already here');
+  loadTasksWindow().catch(() => {});
+  if (state.view === 'storage') drawStorage(await api('/api/storage'));
+}
+
 async function storageGo() {
   const request = state.storagePending;
   closeSheet();
@@ -283,4 +317,9 @@ app.addEventListener('change', (e) => {
   if (e.target.closest('[data-export]')) $('#export-link').href = exportHref();
   const keep = e.target.closest('select[data-keep]');
   if (keep) changeKeep(keep).catch(fail);
+  const restore = e.target.closest('#tasks-restore');
+  if (restore && restore.files && restore.files[0]) {
+    tasksRestoreAsk(restore.files[0]).catch(fail);
+    restore.value = '';
+  }
 });

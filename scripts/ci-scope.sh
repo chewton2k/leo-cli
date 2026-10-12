@@ -4,7 +4,7 @@ set -eu
 everything() {
     echo "rust=true"
     echo "browser=true"
-    echo 'systems=["ubuntu-latest","macos-latest","windows-latest"]'
+    echo 'systems=["ubuntu-24.04","macos-latest","windows-latest"]'
     exit 0
 }
 
@@ -29,9 +29,9 @@ browser=false
 outside "$docs|$not_served" && browser=true
 
 if [ "$rust" = true ]; then
-    systems='["ubuntu-latest","macos-latest","windows-latest"]'
+    systems='["ubuntu-24.04","macos-latest","windows-latest"]'
 elif printf '%s\n' "$changed" | grep -q '^crates/leo-web/'; then
-    systems='["ubuntu-latest"]'
+    systems='["ubuntu-24.04"]'
 else
     systems='[]'
 fi
