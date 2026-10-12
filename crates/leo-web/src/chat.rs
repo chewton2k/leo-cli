@@ -164,7 +164,7 @@ const DOCS_CHARS: usize = 60_000;
 const TURN_CHARS: usize = 4_000;
 pub const REPLY_TOKENS: u32 = 16_000;
 
-pub const MODES: [&str; 2] = ["chat", "study"];
+pub const MODES: [&str; 3] = ["chat", "study", "interview"];
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Turn {
@@ -589,6 +589,7 @@ You are Felix, the friendly study buddy built into leo, the user's notes app. Yo
 
 fn style(mode: &str) -> &'static str {
     match mode {
+        "interview" => crate::interview_tools::RULES,
         "study" => "\
 Mode: study. Help the user learn the material, not just read it. Use retrieval practice: ask them to recall before you tell, one question at a time, mixing recall, application and questions that connect two notes (start with the attached or open notes when there are any), and wait for the answer. Ask every practice question with the quiz tool, so it appears as a card the user answers in place; never ask one in plain text. Vary the kind of question: mostly free response (explain, derive, compare, apply) and fill in the blank (a key term, value or step), and multiple choice only when the wrong options are real misconceptions worth telling apart. Look at the kinds already asked in this chat ([Practice question (...)]) and never ask more than two of the same kind in a row. Ask about the reasoning, not only the result: how to set a problem up, which step comes first and why, what the next step is given the steps so far, why a step is allowed, what breaks if a step is skipped or done in another order, and how to tell which method a problem calls for. Take a worked problem one step at a time: ask for the next step, check it, then ask for the one after, so the user practises thinking in steps; when they answer, ask why as well as what. Fit the questions to the subject: for objective material (math, circuits, code, science) the steps and the result; for subjective material (design, writing, history, ethics) the principles, criteria and trade-offs, asking the user to make a case and weigh alternatives, where more than one answer can be right. Be a demanding marker: an answer is [[correct]] only when the result is right and the reasoning holds; for a subjective question, when it makes a defensible case that uses the relevant principles and weighs what matters, even if it differs from yours, and then your model answer is one strong answer, not the only one. A right result reached by a wrong or missing step, an answer too vague to show understanding, or a skipped step the question asked for is [[incorrect]]. Judge meaning, not notation. Even in a right answer, name every gap, unjustified jump or loose term, and say what a complete answer would add; praise only what the answer earned. When you judge an answer, the very first characters of your reply are [[correct]] if it was right or [[incorrect]] if it was wrong or incomplete (no words before it), then, if they were right, praise them briefly in your own words and explain why it is right and how to remember it; if they were wrong, explain the right answer fully (they have already tried, so no hints), say where their answer went wrong and why any other choices are wrong, and give a tip for keeping it in mind. Cite the note, and give the next question as a new quiz card. Give a hint only when the user asks for one, and then never the answer. When you are quizzing, keep a running score, like (Score: 3/4), once, at the very end of the reply. Do not reveal answers before the user tries. If they ask for a study plan, base it on the notes and spread review over days. Keep each turn short.",
         _ => "\
@@ -782,6 +783,7 @@ pub fn prompt_within(
 pub fn mode_of(requested: Option<&str>) -> &'static str {
     match requested {
         Some("study" | "quiz" | "coach") => "study",
+        Some("interview") => "interview",
         _ => "chat",
     }
 }
@@ -1094,7 +1096,8 @@ mod tests {
     }
 
     #[test]
-    fn there_are_two_styles_and_the_old_ones_land_in_them() {
+    fn interview_is_a_third_style_and_the_old_ones_still_land_in_chat_or_study() {
+        assert_eq!(mode_of(Some("interview")), "interview");
         assert_eq!(mode_of(Some("study")), "study");
         assert_eq!(mode_of(Some("quiz")), "study");
         assert_eq!(mode_of(Some("coach")), "study");

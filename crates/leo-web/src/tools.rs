@@ -368,6 +368,7 @@ pub fn spec_of(name: &str) -> Option<&'static Spec> {
     SPECS
         .iter()
         .chain(WEB_SPECS.iter())
+        .chain(crate::interview_tools::SPECS.iter())
         .find(|s| s.name == name)
 }
 
@@ -528,7 +529,11 @@ fn offered(web: bool, access: Access) -> impl Iterator<Item = Spec> {
 }
 
 pub fn native_specs(web: bool, access: Access) -> Vec<crate::chat::ToolSpec> {
-    offered(web, access)
+    native_from(offered(web, access))
+}
+
+pub fn native_from(specs: impl Iterator<Item = Spec>) -> Vec<crate::chat::ToolSpec> {
+    specs
         .map(|spec| {
             let properties: serde_json::Map<String, serde_json::Value> = spec
                 .params
@@ -1083,6 +1088,7 @@ pub struct Desk {
     documents: Vec<(String, String)>,
     captions: Option<std::sync::Arc<crate::captions::Captions>>,
     pub asked: usize,
+    pub interview: Option<String>,
     steer: Option<crate::steer::Steer>,
     meaning: Option<(
         crate::vectors::Meaning,
@@ -1106,6 +1112,7 @@ impl Desk {
             documents: Vec::new(),
             captions: None,
             asked: 0,
+            interview: None,
             steer: None,
             meaning: None,
         }

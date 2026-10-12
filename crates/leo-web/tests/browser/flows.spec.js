@@ -715,7 +715,7 @@ test.describe('Felix', () => {
     await page.goto('/');
     await page.locator('#chat-toggle').click();
     const chat = page.locator('#chat');
-    await expect(chat.locator('.chat-mode')).toHaveText(['Chat', 'Study']);
+    await expect(chat.locator('.chat-mode')).toHaveText(['Chat', 'Study', 'Interview']);
     await chat.locator('#chat-input').pressSequentially(`compare @dijkstra shortest paths ${tag}`);
     await expect(chat.locator('.chat-pick-row').first()).toContainText('Dijkstra shortest paths');
     await chat.locator('#chat-input').press('Enter');
@@ -3215,4 +3215,67 @@ test('a failed call has calm details and can be dismissed or deleted directly', 
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
   await page.reload();
   await expect(page.locator('.rec-idle')).toBeVisible();
+});
+
+test('interview practice starts without a note and schedules are editable dated tasks', async ({ page }) => {
+  await page.goto('/#/interviews');
+  await page.locator('[data-interview="create"][data-track="systems"]').click();
+  await page.locator('#interview-title').fill('System design interview');
+  await page.locator('#interview-company').fill('Example company');
+  await page.locator('[data-interview="form-style"][data-style="mock"]').click();
+  await page.locator('#interview-form-save').click();
+  await expect(page.locator('.interview-heading h1')).toHaveText('System design interview');
+  const id = decodeURIComponent(new URL(page.url()).hash.split('/').pop());
+  await page.locator('[data-interview="add-session"]').click();
+  await page.locator('#interview-slot-title').fill('Requirements and scale');
+  await page.locator('#interview-slot-date').fill('2026-10-20');
+  await page.locator('#interview-slot-save').click();
+  await expect(page.locator('.interview-agenda').filter({ hasText: 'Requirements and scale' })).toBeVisible();
+  const task = page.locator('[data-interview="complete"]').first();
+  await task.check();
+  await expect.poll(async () => (await (await page.request.get(`/api/interviews/${id}`)).json()).schedule[0].done).toBe(true);
+  await page.reload();
+  await expect(page.locator('.interview-heading .eyebrow')).toContainText('Mock interview');
+  await expect(page.locator('[data-interview="complete"]').first()).toBeChecked();
+  await page.locator('[data-interview="edit-session"]').first().click();
+  await page.locator('#interview-slot-title').fill('Capacity estimates');
+  await page.locator('#interview-slot-save').click();
+  await expect(page.locator('.interview-agenda').filter({ hasText: 'Capacity estimates' })).toBeVisible();
+  await page.request.delete(`/api/interviews/${id}`);
+});
+
+test('interview answers keep their focus and draft through saves, a conflict and reload', async ({ page }) => {
+  const id = 'interview-browser-01';
+  let item = { id, revision: 1, updated: new Date().toISOString(), framework: { title: 'Coding practice', track: 'coding', company: '', role: '', language: 'Python', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach', 'Testing'], wants: '' }, challenge: { id: 'challenge-browser-01', title: 'Pair sum', question: 'Find two distinct indices whose values sum to a target. Explain duplicates.', minutes: 25, skills: ['Approach', 'Testing'], origin: 'generated', sources: [] }, workspace: { answer: '', board: [] }, attempts: [], schedule: [] };
+  let conflict = false;
+  await page.route(`**/api/interviews/${id}`, async (route) => {
+    if (route.request().method() === 'PUT') {
+      const change = route.request().postDataJSON();
+      if (conflict) { conflict = false; return route.fulfill({ status: 409, json: { error: 'This practice changed in another window. Reload before saving; your draft is kept.' } }); }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      item = { ...item, workspace: change.workspace, revision: item.revision + 1 };
+    }
+    await route.fulfill({ json: item });
+  });
+  await page.goto(`/#/interviews/${id}`);
+  const answer = page.locator('#interview-answer');
+  await answer.fill('Use a hash map. Check duplicates.');
+  await answer.evaluate((el) => el.setSelectionRange(4, 8));
+  await expect.poll(() => item.workspace.answer).toBe('Use a hash map. Check duplicates.');
+  await expect(answer).toBeFocused();
+  expect(await answer.evaluate((el) => [el.selectionStart, el.selectionEnd])).toEqual([4, 8]);
+  conflict = true;
+  await answer.fill('Use a hash map. Check duplicates and negatives.');
+  await expect(page.locator('#interview-save-error')).toBeVisible();
+  await page.locator('[data-interview="retry"]').click();
+  await expect.poll(() => item.workspace.answer).toBe('Use a hash map. Check duplicates and negatives.');
+  await page.locator('[data-interview="tab"][data-tab="board"]').click();
+  await page.locator('#interview-board-label').fill('Client → Server');
+  await page.locator('[data-interview="label-board"]').click();
+  await expect.poll(() => item.workspace.board.length).toBe(1);
+  await expect(page.locator('#interview-board text')).toHaveText('Client → Server');
+  await page.reload();
+  await expect(answer).toHaveValue('Use a hash map. Check duplicates and negatives.');
+  await expect(page.locator('#interview-board text')).toHaveText('Client → Server');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
 });

@@ -11,6 +11,8 @@ pub mod db;
 pub mod export;
 pub mod graph;
 mod ics;
+mod interview;
+mod interview_tools;
 mod originals;
 pub mod record;
 mod record_journal;
@@ -577,6 +579,15 @@ fn router(state: AppState) -> Router {
         .route("/saving.js", get(saving_js))
         .route("/graph.js", get(graph_js))
         .route("/chat.js", get(chat_js))
+        .route("/interview.js", get(routes::assets::interview_js))
+        .route("/api/interviews", get(routes::interviews::list))
+        .route(
+            "/api/interviews/{id}",
+            get(routes::interviews::get)
+                .put(routes::interviews::put)
+                .delete(routes::interviews::remove)
+                .layer(axum::extract::DefaultBodyLimit::max(interview::BODY_BYTES)),
+        )
         .route("/api/chat", post(chat_reply))
         .route("/api/chat/{answer}/steer", post(steer_answer))
         .route("/api/chats", get(list_chats))

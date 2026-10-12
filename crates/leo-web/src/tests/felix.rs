@@ -1449,3 +1449,63 @@ fn an_edit_copied_with_line_numbers_still_finds_its_text() {
     assert_eq!(proposal["find"], "BFS uses a stack.");
     assert_eq!(proposal["replace"], "BFS uses a queue.");
 }
+
+#[test]
+fn interview_tools_share_the_native_and_text_paths_without_changing_notes_or_restarting_answers() {
+    struct InterviewNative;
+    impl chat::Conversation for InterviewNative {
+        fn native(&self) -> bool {
+            true
+        }
+        fn say(&mut self, _: &str, exchange: chat::Exchange<'_>) -> anyhow::Result<chat::Reply> {
+            let bad = (exchange.call)(
+                "interview_feedback",
+                &serde_json::json!({"data":"{\"attempt\":\"invented-attempt\",\"summary\":\"Great\",\"scores\":[]}"}),
+            );
+            assert!(bad.starts_with("That did not work:"));
+            let read = (exchange.call)("interview_progress", &serde_json::json!({}));
+            assert!(read.contains("Coding practice"));
+            (exchange.piece)("Let's work through your approach.");
+            Ok("Let's work through your approach.".into())
+        }
+    }
+    for native in [false, true] {
+        let (mut state, _d, _) = state_with(&[]);
+        let framework: crate::interview::Framework = serde_json::from_value(serde_json::json!({"title":"Coding practice","track":"coding","company":"Example","role":"Engineer","language":"Python","style":"coach","date":"","weekly_minutes":120,"skills":["Approach"],"wants":"Hints first"})).unwrap();
+        crate::interview::configure(&state.chats, "interview-chat-01", 0, framework).unwrap();
+        state.chat = Some(scripted(vec![r#"<tool>{"name":"interview_feedback","data":"{\"attempt\":\"invented-attempt\",\"summary\":\"Great\",\"scores\":[]}"}</tool>"#, r#"<tool>{"name":"interview_progress"}</tool>"#, "Let's work through your approach."]).0);
+        if native {
+            state.converse = Some(Arc::new(|given, specs| {
+                assert!(given.native.contains("Mode: interview"));
+                assert!(specs.iter().any(|s| s.name == "interview_feedback"));
+                assert!(specs.iter().any(|s| s.name == "interview_attempt"));
+                Some(Box::new(InterviewNative) as Box<dyn chat::Conversation>)
+            }));
+        }
+        let body: chat::ChatBody = serde_json::from_value(serde_json::json!({"chat":"interview-chat-01","mode":"interview","messages":[{"role":"user","text":"Help me practise."}]})).unwrap();
+        let bytes = run(async {
+            let reply = chat_reply(State(state.clone()), Json(body)).await;
+            axum::body::to_bytes(reply.into_body(), 1_000_000)
+                .await
+                .unwrap()
+        });
+        let lines: Vec<serde_json::Value> = std::str::from_utf8(&bytes)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert!(lines
+            .iter()
+            .all(|line| line.get("error").is_none() && line.get("restart").is_none()));
+        assert!(lines
+            .iter()
+            .any(|line| line["interview"]["id"] == "interview-chat-01"));
+        let shown: String = lines.iter().filter_map(|line| line["t"].as_str()).collect();
+        assert_eq!(shown, "Let's work through your approach.");
+        assert!(crate::interview::load(&state.chats, "interview-chat-01")
+            .unwrap()
+            .attempts
+            .is_empty());
+        assert!(state.store.lock().unwrap().store.notes.is_empty());
+    }
+}

@@ -276,6 +276,7 @@ struct Ask {
     documents: Vec<(String, String)>,
     steer: crate::steer::Steer,
     marking: Option<String>,
+    interview: Option<String>,
 }
 
 pub(crate) const JUDGE: &str = "You check a student's answer to a practice question against the model answer given. Reply with exactly one word: correct if the answer gets the main idea right and its reasoning holds, incorrect if it is wrong, misses the main idea, skips a step the question asked for, or reaches the result by wrong reasoning. When the question has more than one good answer, a different answer that makes a defensible case with the relevant principles is correct. Use interpretable language.";
@@ -424,6 +425,13 @@ fn run_tool(
             proposal: None,
             found: Vec::new(),
         }
+    } else if crate::interview_tools::is_tool(&call.name) {
+        let (done, updated) =
+            crate::interview_tools::run(&state.chats, desk.interview.as_deref(), call);
+        if let Some(item) = updated {
+            send(serde_json::json!({"interview": {"id": item.id, "revision": item.revision}}));
+        }
+        done
     } else if tools::is_web(&call.name) {
         desk.run_web(call)
     } else if call.name == "look_at_picture" {
@@ -808,6 +816,7 @@ fn answer(
         documents,
         steer,
         marking,
+        interview,
     } = ask;
     let said = std::cell::RefCell::new(String::new());
     let send = |value: serde_json::Value| {
@@ -831,7 +840,15 @@ fn answer(
     };
     let web = state.web.clone().filter(|w| (w.needed)());
     let web_on = web.is_some();
-    let text = format!("{system}\n\n{}", tools::manual_for(web_on, access));
+    let interview_manual = if interview.is_some() {
+        crate::interview_tools::manual()
+    } else {
+        String::new()
+    };
+    let text = format!(
+        "{system}\n\n{}\n\n{interview_manual}",
+        tools::manual_for(web_on, access)
+    );
     let last = format!("{system}\n\n{}", tools::NO_MORE_TOOLS);
     let native = format!("{system}\n\n{}", tools::guidance_for(web_on, access));
     let mut desk = tools::Desk::new(sources, room)
@@ -841,6 +858,13 @@ fn answer(
         .with_captions(Arc::clone(&state.captions))
         .with_meaning(state.meaning.clone(), Arc::clone(&state.vectors))
         .with_steer(steer);
+    desk.interview = interview.clone();
+    let mut specs = tools::native_specs(web_on, access);
+    if interview.is_some() {
+        specs.extend(tools::native_from(
+            crate::interview_tools::SPECS.iter().copied(),
+        ));
+    }
     let chosen = state.converse.as_ref().and_then(|converse| {
         converse(
             &chat::Instructions {
@@ -848,7 +872,7 @@ fn answer(
                 text: &text,
                 last: &last,
             },
-            &tools::native_specs(web_on, access),
+            &specs,
         )
     });
     if let Some(mut talk) = chosen {
@@ -1225,7 +1249,7 @@ pub(crate) async fn chat_reply(
         .as_deref()
         .and_then(|id| chats::load(&state.chats, id))
         .and_then(|c| c.memory);
-    let (system, user) = chat::prompt_within(
+    let (system, mut user) = chat::prompt_within(
         mode,
         &notes,
         &documents,
@@ -1233,6 +1257,20 @@ pub(crate) async fn chat_reply(
         room,
         memory.as_ref(),
     );
+    let interview = if mode == "interview" {
+        body.chat.clone().filter(|id| chats::valid_id(id))
+    } else {
+        None
+    };
+    if let Some(id) = &interview {
+        let path = state.chats.clone();
+        let wanted = id.clone();
+        if let Ok(Ok(item)) =
+            tokio::task::spawn_blocking(move || crate::interview::load(&path, &wanted)).await
+        {
+            user = format!("{}\n{user}", crate::interview::context(&item));
+        }
+    }
     if let (Some(id), Some(writer)) = (body.chat.clone(), state.graphs.writer()) {
         let from = memory
             .as_ref()
@@ -1268,6 +1306,7 @@ pub(crate) async fn chat_reply(
             documents,
             steer,
             marking,
+            interview,
         };
         let end = match answer(&worker, &streamer, ask, &tx) {
             Ok(spent) => {

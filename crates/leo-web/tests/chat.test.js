@@ -58,7 +58,7 @@ test('Felix keeps his colour and shape', () => {
   assert.equal((svg.match(/width="4" height="4"/g) || []).length, 2, 'two eyes');
   assert.match(svg, /class="felix-eyes" shape-rendering="geometricPrecision"/, 'eyes are drawn exactly, so both come out the same size');
   assert.equal((svg.match(/class="felix-arm/g) || []).length, 2, 'two arms');
-  assert.deepEqual(C.MODES.map((m) => m.id), ['chat', 'study']);
+  assert.deepEqual(C.MODES.map((m) => m.id), ['chat', 'study', 'interview']);
 });
 
 test('typing @ starts a note search, but an email address does not', () => {
@@ -326,4 +326,15 @@ test('each further hint knows the hints already given and goes one step further'
   assert.ok(said.includes('one step further'));
   assert.ok(said.includes('Do not give the answer'));
   assert.ok(C.hintSay({ kind: 'free_response', question: 'Why?' }).includes('Give me one short hint'));
+});
+
+
+test('only explicitly generated interview snapshots are replaced after a chat reload', () => {
+  const docs = [{ id: 'board-1', name: 'board.png' }, { id: 'notes-1', name: 'notes.pdf' }, { id: 'upload-1', name: 'my-board.png' }];
+  const messages = [{ role: 'user', files: ['board-1', 'notes-1'], cards: [{ name: 'board.png', interviewBoard: true }, { name: 'notes.pdf' }] }];
+  const { sent, waiting } = C.splitFiles(docs, messages);
+  assert.deepEqual(sent, [{ ...docs[0], interviewBoard: true }, docs[1]]);
+  assert.deepEqual(waiting, [docs[2]]);
+  assert.equal(docs[0].interviewBoard, undefined);
+  assert.deepEqual(C.splitFiles(docs, [{ role: 'assistant', cards: [{ name: 'my-board.png', interviewBoard: true }] }]).waiting, docs);
 });

@@ -18,6 +18,7 @@ fn the_map_of_ideas_passes_its_tests() {
 #[test]
 fn the_chat_with_felix_passes_its_tests() {
     run_node_tests("chat.test.js");
+    run_node_tests("interview.test.js");
 }
 
 #[test]

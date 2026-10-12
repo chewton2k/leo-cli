@@ -29,6 +29,11 @@
       { text: 'Quiz me across my classes', needs: 'classes', ask: 'Which classes should the quiz cover?' },
       { text: 'Make me a 3-day review plan', needs: 'classes', ask: 'Which classes should the plan cover?' },
     ] },
+    { id: 'interview', label: 'Interview', hint: 'Practise coding, system design or a role-specific interview with a workspace and feedback', starters: [
+      { text: 'Help me set up interview practice', ask: 'What kind of interview are you preparing for?' },
+      { text: 'Research interviews for my target company', ask: 'Which company and role are you preparing for?' },
+      { text: 'Plan my interview practice', ask: 'What is your interview date and weekly practice time?' },
+    ] },
   ];
   const OLD_MODES = { ask: 'chat', explain: 'chat', meeting: 'chat', quiz: 'study', coach: 'study' };
   const modeOf = (id) => (MODES.some((m) => m.id === id) ? id : OLD_MODES[id] || 'chat');
@@ -391,14 +396,16 @@
   function splitFiles(docs, messages) {
     const ids = new Set();
     const names = new Set();
+    const boards = new Set();
     for (const m of messages || []) {
       if (m.role !== 'user') continue;
+      for (const card of m.cards || []) if (card.interviewBoard) boards.add(card.name);
       for (const id of m.files || []) ids.add(id);
       if (!m.files) for (const name of m.docs || []) names.add(name);
     }
     const sent = [];
     const waiting = [];
-    for (const d of docs || []) (ids.has(d.id) || names.has(d.name) ? sent : waiting).push(d);
+    for (const d of docs || []) (ids.has(d.id) || names.has(d.name) ? sent : waiting).push(boards.has(d.name) ? { ...d, interviewBoard: true } : d);
     return { sent, waiting };
   }
   const FILE_TYPES = '.pdf,.docx,.pptx,.txt,.md,image/*';
@@ -406,7 +413,7 @@
 
   const CHAT_LEAVE_MS = 160;
 
-  function create({ render, escape, onOpen = () => {}, onOriginal = () => {}, storage = root.localStorage, prepare = null, notify = () => {}, onSaved = () => {}, onChanged = () => {}, onUndone = () => {}, onToggle = () => {} }) {
+  function create({ render, escape, onOpen = () => {}, onOriginal = () => {}, storage = root.localStorage, prepare = null, notify = () => {}, onSaved = () => {}, onChanged = () => {}, onUndone = () => {}, onToggle = () => {}, onInterview = () => {}, onInterviewChanged = () => {} }) {
     const saved = load(storage);
     const state = { open: false, id: saved.id || newId(), mode: modeOf(saved.mode), messages: saved.messages, refs: saved.refs, context: null, dropped: null, busy: null, streak: 0, pick: null, chats: null, sidebar: null, doomed: null, asking: null, files: [], sent: [], filesFor: null, review: [], drafts: {}, found: null };
     const panel = document.createElement('aside');
@@ -428,6 +435,7 @@
         <button class="icon-btn" data-chat="new" aria-label="New chat" title="New chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
         <button class="icon-btn" data-chat="close" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
       </header>
+      <button class="chat-workspace" data-chat="interview-workspace" hidden>Open interview workspace ↗</button>
       <div class="chat-modes" role="tablist" aria-label="How Felix helps">${MODES.map((m) => `<button role="tab" class="chat-mode" data-chat="mode" data-mode="${m.id}" title="${escape(m.hint)}">${m.label}</button>`).join('')}</div>
       <div class="chat-body" id="chat-body" aria-live="polite"></div>
       <footer class="chat-foot">
@@ -780,9 +788,12 @@
       return `<div class="chat-history-row${c.id === state.id ? ' on' : ''}"><button class="chat-history-item" data-chat="resume" data-id="${escape(c.id)}" title="${escape(c.about ? `${c.title}\n${c.about}` : c.title)}"><span class="chat-history-title">${escape(c.title)}</span>${c.about ? `<span class="chat-history-about">${escape(c.about)}</span>` : ''}</button><button class="chat-history-x${state.doomed === c.id ? ' sure' : ''}" data-chat="forget" data-id="${escape(c.id)}" aria-label="${state.doomed === c.id ? 'Confirm delete' : 'Delete'} ${escape(c.title)}">${state.doomed === c.id ? 'Delete' : '×'}</button></div>`;
     }
 
-    function begin() {
+    let resumeSeq = 0;
+
+    function begin(id = newId()) {
+      resumeSeq++;
       if (state.busy) state.busy.abort();
-      state.id = newId();
+      state.id = id;
       state.messages = [];
       state.refs = [];
       state.files = [];
@@ -802,18 +813,25 @@
     async function resume(id) {
       if (id === state.id) {
         if (!wide()) showSidebar(false);
-        return;
+        return true;
       }
       if (state.busy) state.busy.abort();
+      const mine = ++resumeSeq;
       let chat;
       try {
         const response = await fetch(`/api/chats/${encodeURIComponent(id)}`, { credentials: 'same-origin' });
-        if (!response.ok) throw new Error('gone');
+        if (mine !== resumeSeq) return null;
+        if (response.status === 404) {
+          state.chats = (state.chats || []).filter((c) => c.id !== id);
+          drawChats();
+          return false;
+        }
+        if (!response.ok) throw new Error('Leo could not open that conversation. Try again.');
         chat = await response.json();
+        if (mine !== resumeSeq) return null;
       } catch (e) {
-        state.chats = (state.chats || []).filter((c) => c.id !== id);
-        drawChats();
-        return;
+        if (mine === resumeSeq) notify('Leo could not open that conversation. Check your connection and try again.');
+        return null;
       }
       state.id = chat.id;
       state.mode = modeOf(chat.mode);
@@ -824,12 +842,14 @@
       state.streak = 0;
       closePick();
       persist();
-      loadFiles();
+      await loadFiles();
+      if (mine !== resumeSeq || state.id !== id) return null;
       drawModes();
       drawRefs();
       draw();
       drawChats();
       if (!wide()) showSidebar(false);
+      return true;
     }
 
     async function forget(id) {
@@ -892,17 +912,17 @@
 
     const reading = new Map();
 
-    function addFile(file) {
+    function addFile(file, interviewBoard = false) {
       const key = `${Date.now()}-${Math.random()}`;
       state.files.push({ key, name: file.name, status: 'reading', thumb: null });
       drawRefs();
-      const work = readFile(file, key, state.id);
+      const work = readFile(file, key, state.id, interviewBoard);
       reading.set(key, work);
       work.then(() => reading.delete(key));
       return work;
     }
 
-    async function readFile(file, key, chat) {
+    async function readFile(file, key, chat, interviewBoard = false) {
       const thumb = await thumbOf(file);
       if (thumb) {
         state.files = state.files.map((f) => (f.key === key ? { ...f, thumb } : f));
@@ -936,7 +956,7 @@
         notify(said ? `Felix could not read ${file.name}: ${said}` : reply.status === 413 ? `${file.name} is too large for Felix.` : `Felix could not read ${file.name}.`);
         return drop();
       }
-      const doc = { ...(await reply.json()), key, status: 'ready', thumb };
+      const doc = { ...(await reply.json()), key, status: 'ready', thumb, ...(interviewBoard ? { interviewBoard: true } : {}) };
       if (state.id === chat) {
         state.files = state.files.map((f) => (f.key === key ? doc : f));
         drawRefs();
@@ -945,7 +965,7 @@
     }
 
     function cardOf(f) {
-      const card = { name: f.name };
+      const card = { name: f.name, ...(f.interviewBoard ? { interviewBoard: true } : {}) };
       if (f.thumb) card.thumb = f.thumb;
       else if (f.excerpt) card.excerpt = String(f.excerpt).slice(0, 320);
       if (f.status === 'reading') card.reading = true;
@@ -1072,6 +1092,7 @@
     }
 
     function drawModes() {
+      $('.chat-workspace').hidden = state.mode !== 'interview';
       for (const b of panel.querySelectorAll('.chat-mode')) {
         const on = b.dataset.mode === state.mode;
         b.classList.toggle('on', on);
@@ -1620,7 +1641,7 @@
         asked.cards[i] = cardOf(doc);
         asked.files.push(doc.id);
         if (!doc.thumb) asked.docs.push(doc.name);
-        state.sent = [...state.sent, { id: doc.id, name: doc.name }];
+        state.sent = [...state.sent, { id: doc.id, name: doc.name, ...(doc.interviewBoard ? { interviewBoard: true } : {}) }];
       };
       going.forEach((f, i) => {
         if (f.status === 'ready') settle(i, f);
@@ -1682,6 +1703,7 @@
           const { events, rest } = splitLines(buffer);
           buffer = rest;
           for (const e of events) {
+            if (e.interview && typeof e.interview.id === 'string') onInterviewChanged(e.interview.id);
             if (typeof e.answer === 'string') {
               work.answerId = e.answer;
               for (const m of work.waiting) postSteer(work, m);
@@ -1822,6 +1844,7 @@
       e.preventDefault();
       const what = el.dataset.chat;
       if (what === 'close') toggle(false);
+      else if (what === 'interview-workspace') onInterview(state.id);
       else if (what === 'new') {
         begin();
         if (!wide()) showSidebar(false);
@@ -2043,6 +2066,38 @@
     return {
       toggle,
       isOpen: () => state.open,
+      isBusy: () => Boolean(state.busy),
+      send,
+      async attachBoard(file) {
+        const id = state.id;
+        const old = [...state.files, ...state.sent].filter((f) => f.interviewBoard);
+        for (const doc of old) {
+          const reply = await fetch(`/api/chats/${encodeURIComponent(id)}/files/${encodeURIComponent(doc.id)}`, { method: 'DELETE', credentials: 'same-origin' });
+          if (!reply.ok) throw new Error('The previous board snapshot could not be replaced. Try again.');
+        }
+        if (state.id !== id) return false;
+        const previous = new Set(old.map((f) => f.id));
+        state.files = state.files.filter((f) => !previous.has(f.id));
+        state.sent = state.sent.filter((f) => !previous.has(f.id));
+        if (state.files.length + state.sent.length >= MOST_FILES) throw new Error('This chat already has 10 files. Remove a file or start a new practice before sending a board snapshot.');
+        const doc = await addFile(file, true);
+        return Boolean(doc && state.id === id);
+      },
+      async openInterview(id) {
+        if (state.busy && state.id !== id) return false;
+        if (state.id !== id) {
+          const opened = await resume(id);
+          if (opened === null) return false;
+          if (!opened) begin(id);
+        }
+        if (state.busy) { toggle(true); return false; }
+        state.mode = 'interview';
+        drawModes();
+        draw();
+        persist();
+        toggle(true);
+        return true;
+      },
       setContext(ctx) {
         const next = ctx && ctx.id ? { id: ctx.id, title: ctx.title, directory: ctx.directory || '' } : null;
         if ((next && next.id) === (state.context && state.context.id) && (!next || next.title === state.context.title)) return;

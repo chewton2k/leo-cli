@@ -10,6 +10,12 @@ pub const BEFORE: &str = ".before-database";
 const VERSION: i64 = 1;
 
 const SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS interviews (
+    id TEXT PRIMARY KEY,
+    updated TEXT NOT NULL,
+    data TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS interviews_by_time ON interviews(updated);
 CREATE TABLE IF NOT EXISTS chats (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,

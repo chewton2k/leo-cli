@@ -634,13 +634,11 @@ point. Screenshots require selecting a shared screen or tab.
 open questions and action items. Limit retrieval to selected notes, a folder, or
 creation dates; setting a scope begins a new conversation.
 
-Google Calendar uses a read-only OAuth connection. Enable the Calendar API in
-Google Cloud, create a **Desktop app** OAuth client, and paste the client ID and
-secret on Leo’s local page. If the OAuth consent screen is in testing, add your
-Google account as a test user. Sign in in the popup; Leo stores credentials through
-its SecretStore in the OS keychain and refreshes access automatically.
-Calendar settings contain only the client ID, calendar ID and secret-store reference. Upcoming events populate recording
-titles and context. **Sync now** refreshes them; **Disconnect** revokes access.
+In **Settings → Calendar**, paste your calendar's secret iCal address. For Google,
+find it under Calendar settings → Integrate calendar → Secret address in iCal
+format. Leo keeps that link in its SecretStore and shows upcoming events for
+recordings and interview practice. The connection is read-only and needs no OAuth
+client setup. Refresh and disconnect controls are in Calendar settings.
 
 Browser uploads are queued in IndexedDB and acknowledged after saving to disk.
 Retries use sequence numbers to avoid duplicate audio. An offline browser stays
@@ -695,7 +693,7 @@ looks up notes that match your question, by their words and by the summaries
 and key ideas the knowledge graph found in them (so "breadth first search" finds a
 note that only says "BFS"). The best matches bring their own connections on the
 map along, each with the reason they are connected, so answers can tie ideas
-across classes. There are two styles, the same Felix
+across classes. There are three styles, the same Felix
 with different instructions:
 
 - **Chat**: anything you like, with your notes as sources. Ask him to explain
@@ -707,8 +705,27 @@ with different instructions:
   hint before the answer, keeps score, and plans spaced review. Felix dances
   when you get one right.
 
-Switching between Chat and Study starts a new conversation (the notes you
-added come along); the old one stays in the list.
+- **Interview**: a customizable interview partner for coding, system design,
+  product/design, marketing, business/economics, quant, or your own role. Coach
+  offers incremental hints; Mock interview leaves the coaching for a debrief.
+
+Switching styles keeps your conversation and attached notes.
+
+Open **Interview practice** in the sidebar (or **More** on phones) to create a
+framework without a note. Set your company, role, language, interview date, weekly
+practice budget and skill criteria. **Talk with Felix** opens its Interview chat;
+ask for an original challenge, publicly reported company topics or a practice plan.
+Research distinguishes official preparation, unverified candidate reports and
+generated exercises, with source links.
+
+Work in **Write**, **Code**, or **Whiteboard**. The board has pen, boxes, arrows and
+text. Drafts save automatically and keep a browser backup on failed saves. **Review
+with Felix** freezes an attempt and asks for criterion-based feedback. Code is
+reviewed without execution. Progress includes actual reviewed attempts and sample
+counts; early scores are provisional AI feedback. Practice sessions are editable
+dated checkboxes beside connected calendar events in Leo, with no Google Calendar
+writes. Plans remain until you delete them, independently of chat retention, and
+are included when you export chats.
 
 **Files for Felix:** the paperclip also takes **a file from this device** (PDF,
 Word, PowerPoint, text, or photos and scans, which the AI you chose for writing

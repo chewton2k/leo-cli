@@ -5,6 +5,7 @@ pub(crate) mod combine;
 pub(crate) mod downloads;
 pub(crate) mod felix;
 pub(crate) mod housekeeping;
+pub(crate) mod interviews;
 pub(crate) mod map;
 pub(crate) mod notes;
 pub(crate) mod pictures;

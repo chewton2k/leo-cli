@@ -1,6 +1,7 @@
 const actions = {
   back,
   home: () => go('#/'),
+  interviews: () => go('#/interviews'),
   'side-fold': foldSide,
   'toggle-picker': togglePicker,
   'set-model': (el) => changeSetting({ set: 'model', task: el.dataset.task, value: el.dataset.model }),

@@ -77,6 +77,8 @@ const chat = felix.create({
     toast(open && saving.unsaved() ? 'Felix changed this note while you were typing; reopen it to see the change.' : `Changed “${note.title}”`, { action: 'Open', run: () => go(noteHash(note.id)) });
   },
   onToggle: () => drawSide(),
+  onInterview: (id) => { if (!sideWide()) chat.toggle(false); go(`#/interviews/${enc(id)}`); },
+  onInterviewChanged: (id) => refreshInterview(id).catch(fail),
   onSaved: (note) => {
     showLatest().catch(() => {});
     toast(`Saved as a note${note.directory ? ` in ${note.directory}` : ''}`, { action: 'Open', run: () => go(noteHash(note.id)) });
@@ -313,7 +315,7 @@ function back() {
   go('#/');
 }
 
-const PAGE_NAMES = { '': 'All notes', f: 'All notes', search: 'Search', trash: 'Trash', map: 'Knowledge graph', settings: 'Settings', record: 'Record', new: 'New note' };
+const PAGE_NAMES = { '': 'All notes', f: 'All notes', search: 'Search', trash: 'Trash', map: 'Knowledge graph', settings: 'Settings', record: 'Record', interviews: 'Interview practice', new: 'New note' };
 
 function pageName() {
   const [, kind = '', rest = ''] = location.hash.match(/^#\/([a-z]*)\/?(.*)$/) || [];

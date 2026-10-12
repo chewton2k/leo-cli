@@ -11,7 +11,7 @@
   `src/tests/mod.rs`.
 - `/app.js` is `web/app/*.js` joined in one closure by `routes/assets.rs`
   (`concat!`, order: core, browse, trash, map, settings, storage, uploads, sheets, side, drag, diagrams, math,
-  actions, events). The parts share scope on purpose: pages reassign `state`.
+  sources, interviews, actions, events). The parts share scope on purpose: pages reassign `state`.
   Add a part to the `concat!` list; `every_part_of_the_page_script_is_served`
   fails otherwise and `the_page_script_parses` runs `node --check` on the whole.
 
@@ -141,7 +141,7 @@
   them into the message and empties the box, and every later request in that
   chat sends the notes attached so far (`threadRefs`, newest first, at most 8),
   so follow-ups still use them.
-  Two styles only (`MODES` = chat, study; the user asked to merge
+  Three styles (`MODES` = chat, study, interview; the user asked to merge
   ask/explain/meeting into chat and quiz/coach into study). Old ids map over in
   `mode_of` and `modeOf` (saved conversations and old pages). Felix's body is 34x28 (a box a bit wider than
   tall); the test checks the ratio, not exact numbers.
@@ -895,3 +895,47 @@ The blocking worker owns that lease, so disconnecting the request cannot release
 it early. A bounded set of discarded ids prevents an in-flight recovery or late
 upload from resurrecting the deleted job. Storage remains available for older
 interrupted recordings. Notes already written are kept.
+
+### Interview practice (2026-10-12)
+
+Felix's Interview style and `#/interviews[/<chat-id>]` reuse the same conversation
+and tool loop, sidebar/menu, Settings cards, sheets, segmented controls, Markdown
+and diagrams. Tracks are presets over one customizable framework: coding,
+system design, product/design, marketing, business/economics, quant and custom.
+Coach withholds solutions until requested; Mock saves coaching for a debrief.
+Company research uses existing web capabilities and distinguishes generated
+exercises, official preparation and unverified candidate reports with source URLs.
+
+`interview.rs` keeps bounded plans in the `interviews` table of leo.db, independent
+of notes and chat retention. Each transaction updates one revision-checked row.
+Drafts and frozen submitted attempts are separate; only actual submissions can be
+assessed. Challenge IDs and attempt IDs make retries safe; a new challenge cannot
+discard unfinished work. Scores use the challenge's criteria, concrete evidence
+and next steps, with sample counts and provisional AI feedback labels. Schedules
+respect the weekly budget/interview date; only the user marks completion. Events
+from the existing read-only calendar appear alongside practice sessions. Chat
+exports include interview JSON; deleting a practice keeps its conversation.
+
+`interview_tools.rs` supplies the shared native/text specification and rules:
+interview_framework, interview_challenge, interview_progress, interview_attempt,
+interview_feedback and interview_schedule, offered only in Interview mode. Full
+submitted work is read with interview_attempt before assessment. All material is
+data; generated code is never executed. AI runs in the existing chat worker and
+nothing is requested on redraw. Database work is off the async executor, with no
+AI/network under a mutex.
+
+`web/interview.js` has pure preset/progress/agenda/board/draft helpers;
+`app/interviews.js` uses serialized saves, page identity checks and bounded browser
+backups. Async updates do not redraw focused editors. The board stores geometry,
+not arbitrary SVG; only escaped labels reach its renderer. Submitted drawings are
+rasterized and read through Felix's existing file reader; the next snapshot
+replaces the previous generated document so long practice does not fill the file
+limit. Frozen vectors preserve every submitted drawing. Draft conflicts require
+an explicit reload-and-save action. Typed input during submission is retained.
+
+Validation: pure Node checks, scripted/native Rust fakes and browser regression
+coverage. Live prompt/tool checks with the installed Codex plan passed 16 cases
+across six tracks, Coach/Mock and reversed order; later runs were stopped by model
+capacity. Claude's weekly allowance was exhausted. These prompt checks are not a
+compiled-server end-to-end test. Per the user's instruction, compiled checks and
+the full browser gate run in CI, not through local Cargo builds/tests.

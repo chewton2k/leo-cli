@@ -326,3 +326,11 @@ durable. Default AI gap-filling and merging of typed points always stay, whateve
 the user asks for. Note workflows (folder defaults, note formats, vocabulary, saved
 actions, chat scope) were removed on 2026-10-10, the user's call: the "What do you
 want from the notes?" box replaces formats.
+
+Interview practice is Felix's third style and a sidebar/menu page (2026-10-12).
+Use shared configurable frameworks, independent of notes, with frozen attempts,
+provisional evidence-based feedback, typed/code/vector workspaces and dated
+practice schedules beside read-only calendar events. Generated code never runs.
+Reuse current cards, sheets, controls and theme tokens; keep asynchronous updates
+from replacing a focused editor. See crates/leo-web/CLAUDE.md and
+.superpowers/plans/2026-10-12-felix-interviews.md for the implementation invariants.
