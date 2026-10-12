@@ -312,12 +312,18 @@
     let from = joined.indexOf(want);
     let to = from + want.length - 1;
     if (from < 0) {
-      const head = want.slice(0, 24);
-      const tail = want.slice(-24);
-      from = joined.indexOf(head);
-      const end = from < 0 ? -1 : joined.indexOf(tail, from);
-      if (end < 0) return String(picked).trim();
-      to = end + tail.length - 1;
+      const ends = Math.max(4, Math.min(16, Math.floor(want.length / 2)));
+      let start = -1;
+      for (let k = 0; k + ends <= want.length && k <= 200 && start < 0; k++) start = joined.indexOf(want.slice(k, k + ends));
+      if (start < 0) return String(picked).trim();
+      let end = -1;
+      for (let k = want.length; k - ends >= 0 && k >= want.length - 200 && end < 0; k--) {
+        const tail = want.slice(k - ends, k);
+        const at = joined.indexOf(tail, start);
+        if (at >= 0) end = at + tail.length - 1;
+      }
+      from = start;
+      to = end < 0 ? start + ends - 1 : end;
     }
     const [a, b] = wholeBlocks(lines, lineAt(from), lineAt(to));
     return lines.slice(a, b + 1).join('\n').trim();
@@ -1683,7 +1689,9 @@
       const end = range.endContainer.nodeType === 1 ? range.endContainer : range.endContainer.parentElement;
       const msg = start && start.closest('.msg.leo:not(.pending)');
       if (!msg || !body.contains(msg) || !end || end.closest('.msg.leo') !== msg || !start.closest('.prose') || !end.closest('.prose')) return null;
-      const text = selection.toString();
+      const copy = range.cloneContents();
+      for (const chip of copy.querySelectorAll('.cite, .katex-mathml')) chip.remove();
+      const text = copy.textContent || selection.toString();
       if (!text.trim()) return null;
       const box = range.getBoundingClientRect();
       return { i: Number(msg.dataset.i), text, box };

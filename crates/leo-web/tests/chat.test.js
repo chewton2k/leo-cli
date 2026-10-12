@@ -346,6 +346,7 @@ test('a selection in an answer maps back to its whole Markdown lines, fences and
   assert.equal(C.answerLines(source, 'x2'), '$$\nx^2\n$$');
   assert.equal(C.answerLines(source, 'Intro line.\n\nA heap keeps'), 'Intro line.\n\nA **heap** keeps the *minimum* at the root [n1].');
   assert.equal(C.answerLines(source, 'something Felix never wrote'), 'something Felix never wrote');
+  assert.equal(C.answerLines(source, 'A heap keeps the minimum at the root Heaps.'), 'A **heap** keeps the *minimum* at the root [n1].', 'a citation shown as its note title still maps back');
   assert.equal(C.answerLines(source, '   '), '');
 });
 
