@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 env:
-  CARGO_TERM_COLOR: always
+  CARGO_TERM_COLOR: never
   RUST_BACKTRACE: 1
   # The store commits to git on save, and the backup tests push to a local
   # bare repository; both need an identity.
