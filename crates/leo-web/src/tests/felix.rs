@@ -1092,7 +1092,7 @@ fn permissions_changed_during_a_reply_gate_notes_and_repeating_tasks_in_both_pro
                 let call = if kind == "task" {
                     tools::Call {
                         name: "add_task".into(),
-                        args: serde_json::json!({"title":"Interview studying", "date":"2026-10-12", "repeat":"mon | tue | wed | thu | fri"}),
+                        args: serde_json::json!({"title":"Interview studying", "date":"2026-10-12", "repeat":"mon, tue, wed, thu, fri"}),
                     }
                 } else if kind == "schedule" {
                     let sessions: Vec<_> = (0..5).map(|n| serde_json::json!({"id":format!("permission-session-{n}"), "date":format!("2026-10-{}",12+n), "time":"18:00", "title":"Interview studying", "minutes":20, "skill":"Approach", "done":true})).collect();
@@ -1748,9 +1748,10 @@ fn interview_tools_share_the_native_and_text_paths_without_changing_notes_or_res
         assert!(lines
             .iter()
             .all(|line| line.get("error").is_none() && line.get("restart").is_none()));
+        assert!(lines.iter().all(|line| line.get("interview").is_none()));
         assert!(lines
             .iter()
-            .any(|line| line["interview"]["id"] == "interview-chat-01"));
+            .any(|line| line["tool"] == "interview_progress"));
         let shown: String = lines.iter().filter_map(|line| line["t"].as_str()).collect();
         assert_eq!(shown, "Let's work through your approach.");
         assert!(crate::interview::load(&state.chats, "interview-chat-01")
