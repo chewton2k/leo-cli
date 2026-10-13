@@ -1525,8 +1525,15 @@ body.on-interviews main:has(.interview-practice) { max-width: none; }
 .interview-problems > .btn { margin-left: auto; }
 .interview-home { max-width: 1200px; margin: 0 auto; }
 .interview-home.interview-practice { max-width: none; }
-.interview-solve { display: grid; grid-template-columns: 1fr; gap: 16px; align-items: start; margin-bottom: 20px; }
-.interview-practice .interview-solve:has(.interview-workspace) { grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); }
+.interview-solve { position: relative; display: grid; grid-template-columns: 1fr; gap: 16px; align-items: start; margin-bottom: 20px; }
+.interview-practice .interview-solve:has(.interview-workspace) { grid-template-columns: minmax(0, var(--split, 45%)) minmax(0, 1fr); }
+.interview-split { display: none; }
+body.interview-resizing { cursor: col-resize; user-select: none; }
+@container interview (min-width: 900px) {
+  .interview-split { display: block; position: absolute; z-index: 3; top: 0; bottom: 0; left: calc(var(--split, 45%) + 3px); width: 10px; cursor: col-resize; touch-action: none; outline: 0; }
+  .interview-split::after { content: ""; position: absolute; left: 4px; top: 0; bottom: 0; width: 2px; border-radius: 1px; background: var(--accent); opacity: 0; transition: opacity .15s; }
+  .interview-split:hover::after, .interview-split:focus-visible::after, body.interview-resizing .interview-split::after { opacity: 1; }
+}
 .interview-solve > .set-card { min-width: 0; margin: 0; }
 .interview-question { min-width: 0; }
 .interview-question > .set-card { margin: 0; }

@@ -80,13 +80,13 @@ function drawInterview(session) {
   const tabs = coding ? [['code', 'Code'], ['write', 'Approach'], ['board', 'Whiteboard']] : [['write', 'Write'], ['board', 'Whiteboard']];
   app.innerHTML = `<div class="interview-home interview-practice${coding ? ' interview-coding' : ''}"><div class="interview-heading"><div><p class="eyebrow">${esc(interviews.preset(item.framework.track).label)} · ${item.framework.style === 'mock' ? 'Mock interview' : 'Coach'}</p><h1>${esc(item.framework.title)}</h1><p class="hint">${esc([item.framework.company || 'General practice', item.framework.role].filter(Boolean).join(' · '))}</p></div><div class="buttons"><button class="btn sm" data-interview="configure">Preferences</button></div></div>
     <div id="interview-problems" class="interview-problems" role="group" aria-label="Practice problems"></div>
-    <div class="interview-solve"><div class="interview-question"><section id="interview-challenge" class="set-card interview-problem"><div id="interview-panes" class="interview-panes"></div><div id="interview-pane-question" role="tabpanel"></div><div id="interview-pane-cases" role="tabpanel" hidden></div><div id="interview-pane-result" role="tabpanel" hidden><div id="interview-results" class="interview-results" aria-live="polite"></div></div><div id="interview-pane-submissions" role="tabpanel" hidden><section id="interview-attempts"></section><section id="interview-progress"></section></div></section></div>
+    <div class="interview-solve" style="--split: ${interviewSplit()}%"><div class="interview-question"><section id="interview-challenge" class="set-card interview-problem"><div id="interview-panes" class="interview-panes"></div><div id="interview-pane-question" role="tabpanel"></div><div id="interview-pane-cases" role="tabpanel" hidden></div><div id="interview-pane-result" role="tabpanel" hidden><div id="interview-results" class="interview-results" aria-live="polite"></div></div><div id="interview-pane-submissions" role="tabpanel" hidden><section id="interview-attempts"></section><section id="interview-progress"></section></div></section></div>
     ${item.challenge ? `<section class="set-card interview-workspace"><div class="interview-toolbar"><div class="library-views" role="tablist" aria-label="Your answer workspace">${tabs.map(([id, label]) => `<button class="btn sm plain${session.tab === id ? ' on' : ''}" role="tab" aria-selected="${session.tab === id}" data-interview="tab" data-tab="${id}">${label}</button>`).join('')}</div><span id="interview-save" class="hint" role="status"></span></div>
     <div id="interview-editor"${session.tab !== (coding ? 'code' : 'write') ? ' hidden' : ''}><div class="interview-toolbar"><label class="interview-label" for="interview-answer">${coding ? esc(item.challenge.coding?.language || item.framework.language || 'Code') : 'Your answer'}</label></div><div class="interview-code-shell${coding ? ' numbered' : ''}">${coding ? '<pre id="interview-lines" aria-hidden="true"></pre>' : ''}<div class="interview-code-pane">${coding ? '<pre id="interview-colors" aria-hidden="true"></pre>' : ''}<textarea id="interview-answer" class="set-input${coding ? ' interview-code' : ''}" maxlength="32000" spellcheck="${!coding}" autocapitalize="off" autocomplete="off" aria-label="${coding ? 'Code editor' : 'Your answer'}" placeholder="${coding ? 'Write your implementation here…' : 'Clarify the problem, outline an approach, and work through it…'}">${esc(session.draft.answer)}</textarea></div></div></div>
     ${coding ? `<div id="interview-reasoning-editor"${session.tab !== 'write' ? ' hidden' : ''}><label class="interview-label" for="interview-reasoning">Your approach</label><p class="hint">Explain your idea, complexity, and edge cases. Your code stays in the Code tab.</p><textarea id="interview-reasoning" class="set-input" maxlength="8000" placeholder="What’s your approach?">${esc(session.draft.reasoning)}</textarea></div>` : ''}
     <div id="interview-whiteboard"${session.tab !== 'board' ? ' hidden' : ''}><div class="interview-toolbar board-toolbar"><div class="library-views board-tools" role="toolbar" aria-label="Drawing tools">${BOARD_TOOLS.map(([id, label, icon, key]) => `<button class="btn sm plain${session.tool === id ? ' on' : ''}" aria-pressed="${session.tool === id}" data-interview="tool" data-tool="${id}" aria-label="${label}" title="${label} (${key})">${ICON[icon]}</button>`).join('')}</div><div class="library-views board-tools" role="toolbar" aria-label="Board actions"><button class="btn sm plain" data-interview="undo-board" aria-label="Undo" title="Undo (⌘Z)">${ICON.undo}</button><button class="btn sm plain" data-interview="redo-board" aria-label="Redo" title="Redo (⇧⌘Z)">${ICON.redo}</button><button class="btn sm plain" data-interview="delete-board" aria-label="Delete selected" title="Delete (⌫)">${ICON.trash}</button><button class="btn sm plain" data-interview="zoom-board" data-step="-1" aria-label="Zoom out" title="Zoom out">${ICON.minus}</button><button class="btn sm plain" data-interview="zoom-board" data-step="1" aria-label="Zoom in" title="Zoom in">${ICON.plus}</button><button class="btn sm plain" data-interview="fit-board" aria-label="Fit everything" title="Fit everything">${ICON.fit}</button></div></div><div class="interview-board-frame"><div id="interview-board" tabindex="0" role="group" aria-label="Whiteboard. Click a shape to select it, drag empty space to select several, and double-click to write. Hold Space, scroll or drag with one finger to move around."></div></div><p class="hint">Drag empty space to select several things. Double-click to write or edit text. Hold Space or scroll to move around.</p></div>
     <div id="interview-checks" class="interview-checks"></div>
-    <div id="interview-save-error" class="set-note warn" hidden></div><div class="interview-toolbar interview-submit"><p class="hint" id="interview-submit-hint"></p><div class="buttons"><button class="btn sm" data-interview="reset">Reset</button><button class="btn sm" data-interview="hint">Hint</button><button class="btn sm primary" data-interview="submit">Submit</button></div></div></section>` : ''}</div>
+    <div id="interview-save-error" class="set-note warn" hidden></div><div class="interview-toolbar interview-submit"><p class="hint" id="interview-submit-hint"></p><div class="buttons"><button class="btn sm" data-interview="reset">Reset</button><button class="btn sm" data-interview="hint">Hint</button><button class="btn sm primary" data-interview="submit">Submit</button></div></div></section><div class="interview-split" role="separator" aria-orientation="vertical" aria-label="Resize the question and workspace" tabindex="0" aria-valuemin="${SPLIT_LEAST}" aria-valuemax="${SPLIT_MOST}" aria-valuenow="${interviewSplit()}" title="Drag to resize · double-click to reset"></div>` : ''}</div>
     </div>`;
   drawInterviewContext(session);
   drawInterviewProblems(session);
@@ -98,6 +98,7 @@ function drawInterview(session) {
   drawInterviewResults(session);
   drawInterviewPanes(session);
   wireInterviewResults(session);
+  wireInterviewSplit();
   loadInterviewKey(session);
   const answer = $('#interview-answer');
   if (answer) {
@@ -1206,6 +1207,61 @@ function chooseInterviewCase(session, check, focus = false) {
     else if (picked.offsetLeft + picked.offsetWidth > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = picked.offsetLeft + picked.offsetWidth - strip.clientWidth;
     if (focus) picked.focus({ preventScroll: true });
   }
+}
+
+const SPLIT_KEY = 'leo-interview-split';
+const SPLIT_DEFAULT = 45;
+const SPLIT_LEAST = 25;
+const SPLIT_MOST = 70;
+
+function interviewSplit() {
+  try {
+    const kept = Number(localStorage.getItem(SPLIT_KEY));
+    return kept >= SPLIT_LEAST && kept <= SPLIT_MOST ? kept : SPLIT_DEFAULT;
+  } catch (e) { return SPLIT_DEFAULT; }
+}
+
+function setInterviewSplit(value, keep = true) {
+  const split = Math.round(Math.max(SPLIT_LEAST, Math.min(SPLIT_MOST, value)) * 10) / 10;
+  $('.interview-solve')?.style.setProperty('--split', `${split}%`);
+  $('.interview-split')?.setAttribute('aria-valuenow', String(Math.round(split)));
+  if (keep) { try { localStorage.setItem(SPLIT_KEY, String(split)); } catch (e) {} }
+  return split;
+}
+
+function wireInterviewSplit() {
+  const handle = $('.interview-split');
+  if (!handle) return;
+  let drag = null;
+  handle.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    drag = { pointer: e.pointerId, box: handle.parentElement.getBoundingClientRect() };
+    handle.setPointerCapture(e.pointerId);
+    document.body.classList.add('interview-resizing');
+  });
+  handle.addEventListener('pointermove', (e) => {
+    if (!drag || e.pointerId !== drag.pointer) return;
+    setInterviewSplit((e.clientX - drag.box.left - 8) / drag.box.width * 100, false);
+  });
+  const stop = (e) => {
+    if (!drag || e.pointerId !== drag.pointer) return;
+    drag = null;
+    document.body.classList.remove('interview-resizing');
+    setInterviewSplit(parseFloat(getComputedStyle(handle.parentElement).getPropertyValue('--split')) || SPLIT_DEFAULT);
+  };
+  handle.addEventListener('pointerup', stop);
+  handle.addEventListener('pointercancel', stop);
+  handle.addEventListener('dblclick', () => setInterviewSplit(SPLIT_DEFAULT));
+  handle.addEventListener('keydown', (e) => {
+    const now = interviewSplit();
+    const step = e.shiftKey ? 10 : 2;
+    const next = e.key === 'ArrowLeft' ? now - step : e.key === 'ArrowRight' ? now + step : e.key === 'Home' ? SPLIT_DEFAULT : e.key === 'End' ? SPLIT_MOST : null;
+    if (next === null) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setInterviewSplit(next);
+  });
 }
 
 function wireInterviewResults(session) {

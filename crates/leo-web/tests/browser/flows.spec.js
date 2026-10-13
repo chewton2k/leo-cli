@@ -5135,3 +5135,53 @@ test('the whiteboard works like a slide editor: icon tools, selecting inside sha
   await expect(page.locator('[data-interview="tool"][data-tool="select"]')).toHaveAttribute('aria-pressed', 'true');
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
 });
+
+test('the question and workspace split can be dragged, nudged, reset and is remembered', async ({ page }) => {
+  const id = 'split-practice-01';
+  const challenge = { id: 'split-problem', title: 'Sum a list', question: 'Return the sum.', minutes: 10, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'Python', starter: 'def solve(nums):\n    pass', difficulty: 'easy', examples: [{ input: '[1,2]', output: '3' }], constraints: ['n <= 10'] } };
+  const workspace = { answer: 'def solve(nums):\n    pass', reasoning: '', board: [] };
+  const item = { id, revision: 1, framework: { title: 'Split practice', track: 'coding', company: '', role: '', language: 'Python', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace, problems: [{ challenge, workspace }], attempts: [] };
+  await page.route('**/api/interviews', (route) => route.fulfill({ json: [] }));
+  await page.route(`**/api/interviews/${id}/key?*`, (route) => route.fulfill({ json: { status: 'none' } }));
+  await page.route(`**/api/interviews/${id}`, (route) => route.fulfill({ json: item }));
+  await page.evaluate(() => localStorage.removeItem('leo-interview-split'));
+  await page.goto(`/#/interviews/${id}`);
+  const handle = page.locator('.interview-split');
+  if (test.info().project.name.includes('phone')) {
+    await expect(page.locator('#interview-answer')).toBeVisible();
+    await expect(handle).toBeHidden();
+    return;
+  }
+  await expect(handle).toBeVisible();
+  const share = () => page.evaluate(() => { const solve = document.querySelector('.interview-solve').getBoundingClientRect(); return Math.round(document.querySelector('.interview-question').getBoundingClientRect().width / solve.width * 100); });
+  expect(Math.abs(await share() - 45)).toBeLessThanOrEqual(1);
+  const box = await handle.boundingBox();
+  const solve = await page.locator('.interview-solve').boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + 40);
+  await page.mouse.down();
+  await page.mouse.move(solve.x + solve.width * 0.6, box.y + 40, { steps: 6 });
+  await page.mouse.up();
+  expect(Math.abs(await share() - 60)).toBeLessThanOrEqual(2);
+  const moved = await handle.boundingBox();
+  expect(moved.x).toBeGreaterThan(box.x + 50);
+  await page.mouse.move(moved.x + moved.width / 2, box.y + 40);
+  await page.mouse.down();
+  await page.mouse.move(solve.x + solve.width * 0.95, box.y + 40, { steps: 6 });
+  await page.mouse.up();
+  expect(await share()).toBeLessThanOrEqual(70);
+  await page.reload();
+  await expect(handle).toBeVisible();
+  expect(Math.abs(await share() - 70)).toBeLessThanOrEqual(1);
+  await handle.focus();
+  await page.keyboard.press('ArrowLeft');
+  await page.keyboard.press('Shift+ArrowLeft');
+  expect(Math.abs(await share() - 58)).toBeLessThanOrEqual(1);
+  await expect(handle).toHaveAttribute('aria-valuenow', '58');
+  await page.keyboard.press('Home');
+  expect(Math.abs(await share() - 45)).toBeLessThanOrEqual(1);
+  await page.keyboard.press('ArrowRight');
+  await handle.dblclick();
+  expect(Math.abs(await share() - 45)).toBeLessThanOrEqual(1);
+  await expect(page).toHaveURL(new RegExp(`#/interviews/${id}$`));
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+});

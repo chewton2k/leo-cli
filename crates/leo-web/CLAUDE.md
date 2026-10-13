@@ -266,6 +266,10 @@ seer, meaning, web, room).
   (`interviews.attemptStatus`: checks decide, then the quick review, then Felix's
   scores; Passed, Failed · n/m, Partly, Awaiting review). The top bar is opaque
   (no backdrop blur), which stopped it flickering over sticky and animating content.
+  The question card and the workspace share the width through a draggable
+  separator (`.interview-split`, from 900 px; `--split` on `.interview-solve`,
+  25-70%, default 45%, kept in `leo-interview-split`): drag, arrow keys (Shift
+  for 10%), Home or double-click to reset, End for the widest question.
   Practice preferences ("What would you like to practise?") take up to
   `MOST_WANTS` (8,000) characters.
   Practice schedules were removed (2026-10-13, the user's call): no schedule
