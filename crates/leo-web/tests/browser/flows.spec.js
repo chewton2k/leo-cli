@@ -4146,6 +4146,20 @@ test('coding typing pairs brackets, preserves scroll and Undo across every suppo
     await page.reload();
     const area = page.locator('#interview-answer');
     await expect(page.locator('#interview-colors')).toBeVisible();
+    if (language === 'Python') {
+      const header = 'class Solution:\n    def solve(self):';
+      await area.fill(header); await area.press('End'); await area.press('Enter');
+      await expect(area).toHaveValue(header + '\n        ');
+    }
+    const fragment = '        value = 1;';
+    await area.fill(fragment); await area.press('End'); await area.press('Enter');
+    await expect(area).toHaveValue(fragment + '\n        ');
+    await expect(area).toBeFocused();
+    await area.press('ControlOrMeta+z'); await expect(area).toHaveValue(fragment);
+    await area.press('ControlOrMeta+Shift+z'); await expect(area).toHaveValue(fragment + '\n        ');
+    await area.evaluate(el=>el.dispatchEvent(new InputEvent('beforeinput',{inputType:'insertLineBreak',bubbles:true,cancelable:true})));
+    await expect(area).toHaveValue(fragment + '\n\n        ');
+    await expect.poll(()=>item.workspace.answer).toBe(fragment + '\n\n        ');
     if (language === 'Rust') {
       await area.fill('&'); await area.press("'"); await area.press('a');
       await expect(area).toHaveValue("&'a");
@@ -4757,4 +4771,52 @@ test('Storage shows interview practices and browser copies, opens them and confi
   await expect(local.locator(`[data-store-item][value="${value}"]`)).toBeChecked();
   await page.request.delete(`/api/interviews/${ids[1]}`);
   await page.request.delete(`/api/chats/${chatId}`);
+});
+
+test('interview attempts and late feedback stay under their own problem while practice progress stays shared', async ({ page }) => {
+  const id = 'scoped-attempts-ui';
+  const problem = n => ({challenge:{id:`scoped-problem-${n}`,title:'Same exercise title',question:`Solve problem ${n}.`,minutes:30,skills:['Approach'],origin:'generated',sources:[],coding:{language:'Python',starter:'def solve():\n    pass',difficulty:'easy',examples:[{input:'1',output:'1'}],constraints:['Explain it.']}},workspace:{answer:'def solve():\n    pass',reasoning:'',board:[]}});
+  const problems = [problem(3),problem(4),problem(5)];
+  const feedback = text => ({summary:text,scores:[{skill:'Approach',value:3,evidence:'Clear steps',next:'Check boundaries'}]});
+  const attempt = (n, suffix, summary) => ({id:`scoped-attempt-${n}-${suffix}`,at:'2026-10-13T12:00:00Z',challenge:structuredClone(problems[n-3].challenge),workspace:structuredClone(problems[n-3].workspace),feedback:summary?feedback(summary):null});
+  let item = {id,revision:1,framework:{title:'Attempts by problem',track:'coding',company:'',role:'',language:'Python',style:'coach',date:'',weekly_minutes:120,skills:['Approach'],wants:''},challenge:problems[1].challenge,workspace:problems[1].workspace,problems,attempts:[attempt(3,'first','Feedback for problem 3'),attempt(4,'first','First feedback for problem 4'),attempt(4,'second','Second feedback for problem 4')],schedule:[]};
+  await page.route('**/api/interviews/*/key?*', route=>route.fulfill({json:{status:'unavailable',tests:[],asks:[],rubric:[]}}));
+  await page.route(`**/api/interviews/${id}`, async route => {
+    if (route.request().method()==='PUT') { const change=route.request().postDataJSON(); if(change.action==='select'){const p=problems.find(p=>p.challenge.id===change.challenge);item.challenge=p.challenge;item.workspace=p.workspace;} item.revision++; }
+    await route.fulfill({json:item});
+  });
+  await page.route('**/api/chats/*', route=>route.request().method()==='GET'?route.fulfill({status:404,json:{error:'No conversation'}}):route.fulfill({json:{id,title:'Attempts',updated_at:new Date().toISOString(),count:2,named:true}}));
+  await page.route('**/api/chat', route=>{
+    item.attempts[0].feedback=feedback('Late feedback for problem 3');item.revision++;
+    return route.fulfill({contentType:'application/x-ndjson',body:[{interview:{id,revision:item.revision}},{t:'Review saved.'},{done:true}].map(e=>JSON.stringify(e)).join('\n')+'\n'});
+  });
+  await page.goto(`/#/interviews/${id}`);
+  const attempts = page.locator('#interview-attempts');
+  await expect(attempts.locator('.interview-attempt')).toHaveCount(2);
+  await expect(attempts).not.toContainText('Feedback for problem 3');
+  await expect(attempts).toContainText('First feedback for problem 4');
+  await expect(attempts).toContainText('Second feedback for problem 4');
+  expect(await attempts.locator('.prose').allTextContents()).toEqual(['Second feedback for problem 4','First feedback for problem 4']);
+  expect(await attempts.evaluate(el=>el.parentElement.contains(document.querySelector('#interview-challenge')))).toBe(true);
+  await expect(page.locator('#interview-progress')).toContainText('3 reviewed attempts');
+  await page.locator('#chat-toggle').click();
+  await page.locator('#chat-input').fill('Review the earlier submission.');
+  await page.locator('#chat-input').press('Enter');
+  await expect(page.locator('.msg.leo').last()).toContainText('Review saved');
+  await expect(attempts).not.toContainText('Late feedback for problem 3');
+  await expect(attempts.locator('.interview-attempt')).toHaveCount(2);
+  await page.locator('#chat [data-chat="close"]').click();
+  await page.getByRole('button',{name:'Problem 1 · Submitted',exact:true}).click();
+  await expect(attempts.locator('.interview-attempt')).toHaveCount(1);
+  await expect(attempts).toContainText('Late feedback for problem 3');
+  await expect(attempts).not.toContainText('feedback for problem 4');
+  await page.getByRole('button',{name:'Problem 3',exact:true}).click();
+  await expect(attempts.locator('.interview-attempt')).toHaveCount(0);
+  await expect(attempts).toContainText('No submissions for this problem yet');
+  await expect(page.locator('#interview-progress')).toContainText('3 reviewed attempts');
+  await page.getByRole('button',{name:'Problem 2 · Submitted',exact:true}).click();
+  await expect(attempts.locator('.interview-attempt')).toHaveCount(2);
+  await page.reload();
+  await expect(attempts.locator('.interview-attempt')).toHaveCount(2);
+  await expect(attempts).not.toContainText('Late feedback for problem 3');
 });

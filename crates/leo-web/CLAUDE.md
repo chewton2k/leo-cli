@@ -416,3 +416,10 @@ browser draft/preferences and IndexedDB recovery audio separately from the serve
 Browser cleanup affects only Leo keys or selected recordings, never other apps;
 deleting a practice forgets its local backups. Export's Chats and interview
 practices option includes saved practice data, never hidden keys or secrets.
+
+Interview Enter retains manual indentation in unfinished and blank lines while
+CodeMirror handles new scopes, continuations and leaving multiline delimiters;
+the final edit is still bounded at 32,000 characters. Attempts and reviews are
+filtered by the selected challenge ID and shown beneath that question. Overall
+practice progress uses all attempts; late reviews cannot appear under another
+problem, even when problem titles match.

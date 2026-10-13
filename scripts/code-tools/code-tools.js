@@ -1,5 +1,5 @@
 import { EditorState, EditorSelection, countColumn } from '@codemirror/state';
-import { ensureSyntaxTree, indentRange, indentUnit, indentOnInput } from '@codemirror/language';
+import { ensureSyntaxTree, syntaxTree, indentRange, indentUnit, indentOnInput } from '@codemirror/language';
 import { insertNewlineAndIndent, indentMore, indentLess, deleteCharBackward } from '@codemirror/commands';
 import { closeBrackets, insertBracket, deleteBracketPair } from '@codemirror/autocomplete';
 import { cpp } from '@codemirror/lang-cpp';
@@ -13,6 +13,7 @@ import { highlightTree, tagHighlighter, tags } from '@lezer/highlight';
 
 const MOST_CODE = 32000;
 const PARSE_MS = 75;
+const MOST_INDENT_CONTEXT = 32;
 const modes = { cpp: cpp(), rust: rust(), java: java(), python: python(), sql: sql(), javascript: javascript({ jsx: true }), typescript: javascript({ typescript: true, jsx: true }), go: go() };
 const aliases = { 'c++': 'cpp', cxx: 'cpp', cc: 'cpp', rs: 'rust', py: 'python', python3: 'python', 'python 3': 'python', js: 'javascript', jsx: 'javascript', nodejs: 'javascript', 'node.js': 'javascript', ts: 'typescript', tsx: 'typescript', golang: 'go', postgresql: 'sql', postgres: 'sql', mysql: 'sql', sqlite: 'sql' };
 const escape = (s) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -78,6 +79,28 @@ function difference(before, after) {
   return { from, to, insert: after.slice(from, end) };
 }
 
+function keepIndent(state, transaction) {
+  const at = state.selection.main.from, line = state.doc.lineAt(at);
+  const leading = /^[\t ]*/.exec(line.text)[0];
+  const selection = transaction.state.selection.main, next = transaction.newDoc.lineAt(selection.from);
+  if (countColumn(transaction.newDoc.sliceString(next.from, selection.from), 4) >= countColumn(leading, 4)) return transaction;
+  const pairs = { '(': ')', '[': ']', '{': '}' };
+  const tree = syntaxTree(state);
+  const tail = tree.resolveInner(at, -1);
+  const end = /Comment$/.test(tail.name) && tail.from >= line.from ? tail.from : at;
+  const before = state.sliceDoc(line.from, end).replace(/[\t ;]*$/, '');
+  const closingAt = /[)\]}]$/.test(before) ? line.from + before.length : at;
+  let node = tree.resolveInner(closingAt, -1);
+  for (let depth = 0; node && depth < MOST_INDENT_CONTEXT; depth++, node = node.parent) {
+    const first = node.firstChild, last = node.lastChild;
+    if (!first || !Object.hasOwn(pairs, first.name)) continue;
+    const closed = last?.name === pairs[first.name];
+    if (first.to <= at && (!closed || last.to > at) && (first.name !== '{' || first.from >= line.from)) return transaction;
+    if (closed && last.to === closingAt && first.from < line.from) return transaction;
+  }
+  return transaction.state.update({ changes: { from: next.from, to: selection.from, insert: leading }, selection: EditorSelection.cursor(next.from + leading.length) });
+}
+
 function editor(name) {
   const id = language(name);
   let state = EditorState.create({ extensions: [id ? modes[id] : [], indentUnit.of('    '), EditorState.tabSize.of(4), indentOnInput(), closeBrackets()] });
@@ -103,6 +126,8 @@ function editor(name) {
         if (!transaction && /^[\t ]*$/.test(state.sliceDoc(state.doc.lineAt(from).from, from)) && ')]}'.includes(key)) transaction = state.update(state.replaceSelection(key), { userEvent: 'input.type' });
       }
       if (!transaction || transaction.newDoc.length > MOST_CODE) return null;
+      if (key === 'Enter') transaction = keepIndent(state, transaction);
+      if (transaction.newDoc.length > MOST_CODE) return null;
       state = transaction.state;
       const result = state.doc.toString(), selection = state.selection.main;
       return { value: result, from: selection.from, to: selection.to, direction: selection.anchor > selection.head ? 'backward' : 'forward', change: difference(value, result) };

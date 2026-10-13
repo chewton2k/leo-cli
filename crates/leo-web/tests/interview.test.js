@@ -211,3 +211,52 @@ test('a summary of automatic checks goes to Felix so the review builds on it', (
   assert.match(note, /not by you/);
   assert.equal(I.reviewNote({ checks: [] }), '');
 });
+
+test('Enter keeps manual indentation while fragments and blank lines are being written', () => {
+  for (const language of ['Python', 'C++', 'Rust', 'Java', 'SQL', 'TypeScript', 'JavaScript', 'Go']) {
+    for (const value of ['    answer = 1;', '        ', '\tanswer = 1;', '    # comment\n        ']) {
+      const edit = C.editor(language).edit(value, value.length, value.length, 'Enter');
+      const indentation = /^[\t ]*/.exec(value.slice(value.lastIndexOf('\n') + 1))[0];
+      assert.equal(edit.value.slice(edit.value.lastIndexOf('\n') + 1), indentation, `${language}: ${JSON.stringify(value)}`);
+      assert.equal(edit.from, edit.value.length);
+    }
+    const full = '        ' + 'x'.repeat(31988);
+    assert.equal(C.editor(language).edit(full, full.length, full.length, 'Enter'), null, language);
+  }
+});
+
+test('Python Enter indents scopes and keeps body indentation during incremental typing', () => {
+  for (const value of ['def solve():', 'if ready: # ready', 'async def solve():', 'class Solution:\n    def solve(self):', 'def solve():\n    for x in items:', 'match value:\n    case 1:', 'def solve(\n    items,\n):']) {
+    const engine = C.editor('Python');
+    const spaces = value.slice(value.lastIndexOf('\n') + 1).match(/^ */)[0] + '    ';
+    let edit = engine.edit(value, value.length, value.length, 'Enter');
+    assert.equal(edit.value.slice(edit.value.lastIndexOf('\n') + 1), spaces, value);
+    edit = engine.edit(edit.value, edit.from, edit.to, 'Enter');
+    assert.equal(edit.value.slice(edit.value.lastIndexOf('\n') + 1), spaces, value);
+  }
+  const engine = C.editor('Python');
+  let value = 'class Solution:\n    ', at = value.length;
+  for (const key of 'def solve(self):') {
+    const edit = engine.edit(value, at, at, key);
+    if (edit) { value = edit.value; at = edit.from; }
+    else { value = value.slice(0, at) + key + value.slice(at); at++; }
+  }
+  const edit = engine.edit(value, at, at, 'Enter');
+  assert.equal(edit.value, 'class Solution:\n    def solve(self):\n        ');
+  assert.equal(C.editor('Python').edit('    print(value)', 16, 16, 'Enter').value, '    print(value)\n    ');
+});
+
+test('Enter keeps language-aware continuation and exits multiline delimiters in every language', () => {
+  const samples = [['C++', 'int solve() {\n    return 1;\n    }'], ['Rust', 'fn solve() {\n    1\n    }'], ['Java', 'void solve() {\n    return;\n    }'], ['Python', 'items = [\n    first,\n    ]'], ['SQL', 'SELECT (\n    1\n    )'], ['TypeScript', 'function solve() {\n    return 1;\n    }'], ['JavaScript', 'function solve() {\n    return 1;\n    }'], ['Go', 'func solve() {\n    value := 1\n    }']];
+  for (const [language, closed] of samples) {
+    const open = 'solve(\n    first,';
+    const edit = C.editor(language).edit(open, open.length, open.length, 'Enter');
+    assert.ok(edit.value.slice(edit.value.lastIndexOf('\n') + 1).length >= 4, language);
+    const next = C.editor(language).edit(closed, closed.length, closed.length, 'Enter');
+    assert.equal(next.value.slice(next.value.lastIndexOf('\n') + 1), '', language);
+  }
+  for (const [language, closed] of [['C++', 'int items[] = {\n    1,\n    };'], ['JavaScript', 'const items = [\n    1,\n    ]; // done'], ['Python', 'items = [\n    1,\n    ] # done']]) {
+    const edit = C.editor(language).edit(closed, closed.length, closed.length, 'Enter');
+    assert.equal(edit.value.slice(edit.value.lastIndexOf('\n') + 1), '', language);
+  }
+});
