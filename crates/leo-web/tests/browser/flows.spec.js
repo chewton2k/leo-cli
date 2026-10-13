@@ -1729,6 +1729,7 @@ test.describe('readability', () => {
       await expect(page.locator('.toast.bad')).toContainText('Choose tasks.json');
       await page.waitForTimeout(300);
       expect(await lowContrast(page)).toEqual([]);
+      await page.request.put(`/api/chats/other-${tag}`, { data: { title: `Other chat ${tag}`, mode: 'chat', messages: [{ role: 'user', text: 'Hello' }, { role: 'assistant', text: 'Hi' }] } });
       await page.request.put(`/api/chats/readable-${tag}`, { data: { title: `Readable chat ${tag}`, mode: 'chat', messages: [{ role: 'user', text: 'Hello' }, { role: 'assistant', text: 'Hi' }] } });
       await page.goto('/');
       await page.locator('#chat-toggle').click();

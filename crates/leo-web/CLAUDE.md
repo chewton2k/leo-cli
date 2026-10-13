@@ -69,6 +69,8 @@ seer, meaning, web, room).
   (≥3:1).
   Filled danger buttons, error toasts and chat deletion confirmations reuse
   `--accent-text` for legible text on colored backgrounds in both themes.
+  Chat deletion icons stay fully opaque on touch screens; readability checks
+  seed multiple chats so unselected icons are covered too.
 - Motion (reworked 2026-10-10, the user found the first pass tacky): only what
   follows a click, quick (`MOTION_MS` 180), transform/clip/height only. No
   entrances, hover lifts or sliding gliders. `<details>` slide their height
