@@ -1938,10 +1938,11 @@
       const viewing = state.mode === 'interview' && state.interview?.id === state.id ? state.interview : null;
       if (state.mode === 'interview') {
         const id = state.id;
+        let prepared = false;
         state.preparingSend = true;
-        try { if (await onBeforeSend({ id, mode: state.mode, challenge: viewing?.challenge }) === false || state.id !== id || state.mode !== 'interview' || state.busy) return; }
+        try { if (await onBeforeSend({ id, mode: state.mode, challenge: viewing?.challenge }) === false || state.id !== id || state.mode !== 'interview' || state.busy) return; prepared = true; }
         catch (e) { notify(e.message || 'Your practice could not be saved. Try saving it again before asking Felix.'); return; }
-        finally { state.preparingSend = false; }
+        finally { state.preparingSend = false; if (!prepared) onInterviewReply(id); }
       }
       const card = extra.card || null;
       if (!extra.quiz) {
@@ -2484,7 +2485,7 @@
         input.focus();
       },
       isOpen: () => state.open,
-      isBusy: () => Boolean(state.busy),
+      isBusy: () => Boolean(state.busy || state.preparingSend),
       send,
       async attachBoard(file) {
         const id = state.id;
