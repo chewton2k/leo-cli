@@ -238,6 +238,9 @@ seer, meaning, web, room).
   Coding wraps with aligned syntax and line numbers,
   and adapts when Felix opens. Python deletion on blank indented lines uses
   four-column stops and native Undo; there is no Indent code action.
+  Coding languages use a themed select, defaulting to Python. Vendored CodeMirror
+  editing commands drive indentation and paired brackets; the textarea applies
+  only the changed range and keeps page scroll, native Undo and IME input intact.
   Send flushes the draft and binds context to `interview_problem`, with the
   problem number, title and tab retained on the user message in chat history.
   Reading progress preserves that binding even if the user switches problems.
@@ -247,6 +250,11 @@ seer, meaning, web, room).
   up to 20 edits; a reset's Undo also restores its viewport. Other tabs stay saved.
   `interview_schedule` uses the same Ask/Auto/Read proposal and Undo flow as tasks;
   Apply and Undo reject changed schedules while allowing concurrent draft edits.
+  `interview_code` reads the full bound draft. `interview_code_edit` suggests one
+  exact unique fragment per Accept/Decline card, always pending even in Auto.
+  Apply and contextual Undo change only that problem’s code, including archived
+  problems, and refuse stale/ambiguous fragments. Read only refuses suggestions;
+  the page flushes drafts and merges non-overlapping typing during application.
 - Felix activity records its position in the streamed response, stays between
   the corresponding passages after reload, and is excluded from copied note
   selections. Legacy activity without positions stays at the beginning.

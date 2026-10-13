@@ -3,6 +3,7 @@ let interviewPage = null;
 let interviewStart = null;
 let interviewCodeLoad = null;
 const MOST_BOARD_UNDO = 20;
+const MOST_CODE_HISTORY = 40;
 
 function loadInterviewCode() {
   if (window.leoCode) return Promise.resolve(window.leoCode);
@@ -106,9 +107,17 @@ function drawInterview(session) {
   if (answer) {
     answer.addEventListener('input', (e) => { session.draft.answer = e.target.value; interviewChanged(session); drawInterviewLines(session); });
     answer.addEventListener('scroll', syncInterviewCodeScroll);
+    session.codeHistory = [];
+    answer.addEventListener('input', e => {
+      const key = e.inputType === 'historyUndo' ? 'before' : e.inputType === 'historyRedo' ? 'after' : '';
+      if (!key) return;
+      const match = [...session.codeHistory].reverse().find(change => change[key].value === answer.value);
+      if (match) answer.setSelectionRange(match[key].from, match[key].to, match[key].direction);
+      syncInterviewCodeScroll();
+    });
     let engine = null, changing = false;
     const type = (e, key) => {
-      if (!coding || answer.readOnly || e.isComposing || changing || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (!coding || answer.readOnly || e.isComposing || changing || session.codeApplying || (e.type === 'beforeinput' && !e.cancelable) || ((e.ctrlKey || e.metaKey || e.altKey) && !e.getModifierState?.('AltGraph'))) return;
       const language = session.item.challenge?.coding?.language || session.item.framework.language;
       if (!engine && window.leoCode?.editor) engine = window.leoCode.editor(language);
       const edit = engine?.edit(answer.value, answer.selectionStart, answer.selectionEnd, key, e.shiftKey, answer.selectionDirection) || interviews.codeEdit(answer.value, answer.selectionStart, answer.selectionEnd, key, e.shiftKey, language);
@@ -204,18 +213,27 @@ async function selectInterviewProblem(session, id) {
 
 function applyInterviewTyping(session, answer, edit) {
   const pageX = scrollX, pageY = scrollY;
+  const before = { value: answer.value, from: answer.selectionStart, to: answer.selectionEnd, direction: answer.selectionDirection };
   let from = 0, to = answer.value.length, end = edit.value.length;
   while (from < to && from < end && answer.value[from] === edit.value[from]) from++;
   while (to > from && end > from && answer.value[to - 1] === edit.value[end - 1]) { to--; end--; }
   const change = edit.change || { from, to, insert: edit.value.slice(from, end) };
-  if (answer.value !== edit.value) {
-    answer.setSelectionRange(change.from, change.to);
-    if (!document.execCommand('insertText', false, change.insert)) answer.setRangeText(change.insert, change.from, change.to, 'end');
-  }
-  answer.setSelectionRange(edit.from, edit.to, edit.direction || 'forward');
-  if (session.draft.answer !== answer.value) answer.dispatchEvent(new Event('input', { bubbles: true }));
-  window.scrollTo({ left: pageX, top: pageY, behavior: 'instant' });
-  syncInterviewCodeScroll();
+  session.codeApplying = true;
+  try {
+    if (answer.value !== edit.value) {
+      answer.setSelectionRange(change.from, change.to);
+      if (document.activeElement !== answer || !document.execCommand('insertText', false, change.insert)) answer.setRangeText(change.insert, change.from, change.to, 'end');
+    }
+    answer.setSelectionRange(edit.from, edit.to, edit.direction || 'forward');
+    if (before.value !== answer.value) {
+      session.codeHistory ||= [];
+      session.codeHistory.push({ before, after: { value: answer.value, from: edit.from, to: edit.to, direction: edit.direction || 'forward' } });
+      if (session.codeHistory.length > MOST_CODE_HISTORY) session.codeHistory.shift();
+    }
+    if (session.draft.answer !== answer.value) answer.dispatchEvent(new Event('input', { bubbles: true }));
+    window.scrollTo({ left: pageX, top: pageY, behavior: 'instant' });
+    syncInterviewCodeScroll();
+  } finally { session.codeApplying = false; }
 }
 
 function drawInterviewLines(session) {
@@ -324,6 +342,39 @@ async function retryInterviewSave(session) {
   }
   session.item = latest;
   await saveInterviewWorkspace(session);
+}
+
+async function applyInterviewCodeSuggestion(action) {
+  const session = interviewPage;
+  if (!session || session.item.id !== action.interview || !interviewHere(session)) return api('/api/felix/act', { method: 'POST', body: action });
+  if (session.switching) throw new Error('Wait for the problem to finish switching, then accept this change again.');
+  for (let tries = 0; tries < 2 && session.generation !== session.saved; tries++) await saveInterviewWorkspace(session);
+  if (session.generation !== session.saved) throw new Error('Your code is still being saved. Wait a moment, then accept this change again.');
+  return interviewQueue(session, async () => {
+    const challenge = action.challenge;
+    const generation = session.generation;
+    const shown = session.item.challenge?.id === challenge;
+    const result = await api('/api/felix/act', { method: 'POST', body: action });
+    session.item.revision = result.revision;
+    if (shown && interviewHere(session) && session.item.challenge?.id === challenge) {
+      const code = session.draft.answer;
+      const start = code.indexOf(action.find);
+      if ((!action.find && code) || start < 0 || (action.find && code.indexOf(action.find, start + action.find.length) >= 0)) {
+        session.error = 'Your code changed while this suggestion was being accepted. Your draft is kept; review it or use Undo on the change card.';
+        drawInterviewStatus(session);
+      } else {
+        const next = code.slice(0, start) + action.replace + code.slice(start + action.find.length);
+        if (next.length > interviews.MOST_ANSWER) { session.error = 'Your newer draft plus this change exceeds the code limit. Your draft is kept; review it or use Undo on the card.'; drawInterviewStatus(session); return result; }
+        const area = $('#interview-answer');
+        const map = position => position <= start ? position : position >= start + action.find.length ? position + action.replace.length - action.find.length : start + Math.min(position - start, action.replace.length);
+        applyInterviewTyping(session, area, { value: next, from: map(area.selectionStart), to: map(area.selectionEnd), direction: area.selectionDirection, change: { from: start, to: start + action.find.length, insert: action.replace } });
+        session.item.workspace.answer = next;
+        if (session.generation === generation + 1) { session.saved = session.generation; clearTimeout(session.timer); interviews.clearDraft(localStorage, session.item.id, challenge); }
+        drawInterviewStatus(session);
+      }
+    }
+    return result;
+  });
 }
 
 async function refreshInterview(id) {

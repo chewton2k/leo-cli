@@ -2263,6 +2263,84 @@ fn interview_problems_and_calendar_context_work_on_native_and_text_sessions() {
 }
 
 #[test]
+fn code_suggestions_are_independent_pending_cards_in_native_and_text_even_in_auto() {
+    struct CodeNative;
+    impl chat::Conversation for CodeNative {
+        fn native(&self) -> bool {
+            true
+        }
+        fn say(&mut self, _: &str, exchange: chat::Exchange<'_>) -> anyhow::Result<chat::Reply> {
+            let read = (exchange.call)("interview_code", &serde_json::json!({}));
+            assert!(read.contains("return 0"));
+            (exchange.call)(
+                "interview_code_edit",
+                &serde_json::json!({"summary":"Use the corrected result", "find":"return 0", "replace":"return 1"}),
+            );
+            (exchange.piece)("Review the code change card.");
+            Ok("Review the code change card.".into())
+        }
+    }
+    for native in [false, true] {
+        for access in ["ask", "auto", "read"] {
+            let (mut state, _dir, _) = state_with(&[]);
+            let id = "code-felix-practice";
+            let framework = serde_json::from_value(serde_json::json!({"title":"Code review", "track":"coding", "company":"", "role":"", "language":"Python", "style":"coach", "date":"", "weekly_minutes":120, "skills":["Approach"], "wants":""})).unwrap();
+            crate::interview::configure(&state.chats, id, 0, framework).unwrap();
+            let challenge = serde_json::from_value(serde_json::json!({"id":"code-felix-problem", "title":"Return value", "question":"Return a result", "minutes":30, "skills":["Approach"], "origin":"generated", "sources":[], "coding":{"language":"Python", "starter":"def solve():\n    return 0", "difficulty":"easy", "examples":[{"input":"1","output":"1"}], "constraints":["Explain"]}})).unwrap();
+            crate::interview::set_challenge(&state.chats, id, challenge).unwrap();
+            state.chat = Some(scripted(vec![r#"<tool>{"name":"interview_code"}</tool>"#, r#"<tool>{"name":"interview_code_edit","summary":"Use the corrected result","find":"return 0","replace":"return 1"}</tool>"#, "Review the code change card."]).0);
+            if native {
+                state.converse = Some(Arc::new(|_, _| {
+                    Some(Box::new(CodeNative) as Box<dyn chat::Conversation>)
+                }));
+            }
+            let body: chat::ChatBody = serde_json::from_value(serde_json::json!({"chat":id,"mode":"interview","interview_problem":"code-felix-problem","access":access,"messages":[{"role":"user","text":"Suggest a focused correction."}]})).unwrap();
+            let bytes = run(async {
+                let response = chat_reply(State(state.clone()), Json(body)).await;
+                axum::body::to_bytes(response.into_body(), 1_000_000)
+                    .await
+                    .unwrap()
+            });
+            let lines: Vec<serde_json::Value> = std::str::from_utf8(&bytes)
+                .unwrap()
+                .lines()
+                .map(|l| serde_json::from_str(l).unwrap())
+                .collect();
+            assert!(lines.iter().all(|l| l.get("error").is_none()), "{lines:?}");
+            let proposals: Vec<_> = lines.iter().filter_map(|l| l.get("proposal")).collect();
+            assert_eq!(
+                proposals.len(),
+                usize::from(access != "read"),
+                "{native} {access}: {lines:?}"
+            );
+            assert_eq!(
+                crate::interview::load(&state.chats, id)
+                    .unwrap()
+                    .workspace
+                    .answer,
+                "def solve():\n    return 0"
+            );
+            if let Some(p) = proposals.first() {
+                assert_ne!(p["state"], "applied");
+                let response = run(crate::routes::organize::act_route(
+                    State(state.clone()),
+                    Json(serde_json::from_value((*p).clone()).unwrap()),
+                ));
+                assert_eq!(response.status(), StatusCode::OK);
+                assert_eq!(
+                    crate::interview::load(&state.chats, id)
+                        .unwrap()
+                        .workspace
+                        .answer,
+                    "def solve():\n    return 1"
+                );
+            }
+        }
+    }
+    assert!(tools::check(&tools::Call { name: "interview_code_edit".into(), args: serde_json::json!({"summary":"Delete the redundant line", "find":"redundant", "replace":""}) }).is_ok());
+}
+
+#[test]
 fn a_follow_up_in_the_same_chat_reuses_one_warm_session_and_sends_only_whats_new() {
     struct Echo {
         heard: Arc<Mutex<Vec<String>>>,

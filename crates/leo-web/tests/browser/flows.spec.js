@@ -4048,6 +4048,141 @@ for (const company of ['Pinterest', '']) {
   });
 }
 
+test('Felix code suggestions accept and decline independently, merge current typing and guard stale code', async ({ page }) => {
+  const id = 'code-suggestions-ui';
+  const starter = 'def solve():\n    left = 0\n    right = 1\n    return left';
+  const challenge = { id: 'suggestion-problem-01', title: 'Independent changes', question: 'Explain this solution.', minutes: 30, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'Python', starter, difficulty: 'easy', examples: [{ input: '1', output: '1' }], constraints: ['Describe'] } };
+  let item = { id, revision: 1, framework: { title: 'Code changes', track: 'coding', company: '', role: '', language: 'Python', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace: { answer: starter, reasoning: 'Keep my approach', board: [] }, problems: [{ challenge, workspace: { answer: starter, reasoning: 'Keep my approach', board: [] } }], attempts: [], schedule: [] };
+  const proposal = (find, replace, summary) => ({ kind: 'interview_code_edit', title: 'Problem 1 · Independent changes', summary, interview: id, challenge: challenge.id, find, replace });
+  const edits = [proposal('0', '2', 'Initialize the left index'), proposal('right = 1', 'right = 3', 'Initialize the right index'), proposal('1', '(', 'Begin an expression')];
+  let hold, release, acts = 0;
+  await page.route('**/api/interviews/*', route => { if (route.request().method() === 'PUT') { item.workspace = route.request().postDataJSON().workspace || item.workspace; item.revision++; } return route.fulfill({ json: item }); });
+  await page.route('**/api/chats/*', route => route.request().method() === 'GET' ? route.fulfill({ status: 404, json: { error: 'No chat yet' } }) : route.fulfill({ json: { id, title: 'Code changes', named: true, count: 2, updated_at: new Date().toISOString() } }));
+  await page.route('**/api/chat', route => route.fulfill({ contentType: 'application/x-ndjson', body: [...edits.map(proposal => ({ proposal })), { t: 'Review each suggested change.' }, { done: true }].map(e => JSON.stringify(e)).join('\n') + '\n' }));
+  await page.route('**/api/felix/act', async route => {
+    acts++;
+    const p = route.request().postDataJSON();
+    if (hold) await hold;
+    const code = item.workspace.answer;
+    if (code.indexOf(p.find) < 0 || code.indexOf(p.find) !== code.lastIndexOf(p.find)) return route.fulfill({ status: 409, json: { error: 'This code changed. Your draft was kept; request a new suggestion.' } });
+    item.workspace.answer = code.replace(p.find, p.replace); item.revision++;
+    const undo = p.replace === '(' ? { ...p, find: 'right = (', replace: 'right = 1' } : { ...p, find: p.replace, replace: p.find };
+    return route.fulfill({ json: { revision: item.revision, undo } });
+  });
+  await page.goto(`/#/interviews/${id}`);
+  await page.locator('#chat-toggle').click();
+  await page.locator('#chat-input').fill('Suggest focused fixes to my code.');
+  await page.locator('#chat-input').press('Enter');
+  const cards = page.locator('.proposal-code');
+  await expect(cards).toHaveCount(3);
+  await expect(cards.nth(0).locator('.proposal-old')).toHaveText('0');
+  await expect(cards.nth(0).locator('.proposal-new')).toHaveText('2');
+  expect(item.workspace.answer).toBe(starter);
+  if (await page.locator('#interview-answer').isVisible()) await page.locator('#interview-answer').fill(starter + '\n# Keep my newest draft');
+  else { await page.locator('[data-chat="close"]').click(); await page.locator('#interview-answer').fill(starter + '\n# Keep my newest draft'); await page.locator('#chat-toggle').click(); }
+  await cards.nth(0).locator('[data-chat="apply"]').click();
+  await expect(cards.nth(0)).toContainText('Accepted');
+  await expect.poll(() => item.workspace.answer).toContain('left = 2');
+  expect(item.workspace.answer).toContain('Keep my newest draft');
+  await cards.nth(1).locator('[data-chat="dismiss"]').click();
+  await expect(cards.nth(1)).toContainText('Declined');
+  expect(acts).toBe(1);
+  expect(item.workspace.answer).toContain('right = 1');
+  await cards.nth(0).locator('[data-chat="undo"]').click();
+  await expect(cards.nth(0).locator('[data-chat="apply"]')).toBeVisible();
+  await expect.poll(() => item.workspace.answer).toContain('left = 0');
+  const after = item.workspace.answer;
+  await page.locator('#chat-input').fill('Do not overwrite this next question');
+  hold = new Promise(resolve => { release = resolve; });
+  await cards.nth(0).locator('[data-chat="apply"]').click();
+  await expect(cards.nth(0)).toContainText('Saving code');
+  if (await page.locator('#interview-answer').isVisible()) {
+    await page.locator('#interview-answer').fill(after + '\n# Typed during application');
+    release(); hold = null;
+    await expect(cards.nth(0)).toContainText('Accepted');
+    await expect.poll(() => item.workspace.answer).toContain('Typed during application');
+  } else { release(); hold = null; await expect(cards.nth(0)).toContainText('Accepted'); }
+  await expect(page.locator('#chat-input')).toHaveValue('Do not overwrite this next question');
+  expect(item.workspace.reasoning).toBe('Keep my approach');
+  await cards.nth(0).locator('[data-chat="undo"]').click();
+  await expect(cards.nth(0).locator('[data-chat="apply"]')).toBeVisible();
+  await page.locator('#interview-answer').evaluate(el => el.focus({ preventScroll: true }));
+  await cards.nth(2).locator('[data-chat="apply"]').evaluate(el => el.click());
+  await expect(cards.nth(2)).toContainText('Accepted');
+  await expect(page.locator('#interview-answer')).toHaveValue(item.workspace.answer);
+  expect(item.workspace.answer).toContain('right = (\n');
+  expect(item.workspace.answer).not.toContain('right = ()');
+  await cards.nth(2).locator('[data-chat="undo"]').click();
+  await expect(cards.nth(2).locator('[data-chat="apply"]')).toBeVisible();
+  item.workspace.answer = item.workspace.answer.replace('left = 0', 'left = 99');
+  await cards.nth(0).locator('[data-chat="apply"]').click();
+  await expect(page.locator('.toast')).toContainText('Your draft was kept');
+  expect(item.workspace.answer).toContain('left = 99');
+});
+
+test('coding typing pairs brackets, preserves scroll and Undo across every supported language with a default language dropdown', async ({ page }) => {
+  const languages = ['Python', 'C++', 'Rust', 'Java', 'SQL', 'TypeScript', 'JavaScript', 'Go'];
+  const id = 'typing-languages-01';
+  let item;
+  await page.route('**/api/interviews', route => route.fulfill({ json: [] }));
+  await page.route(`**/api/interviews/${id}`, route => {
+    if (route.request().method() === 'PUT') { const data = route.request().postDataJSON(); item.workspace = data.workspace || item.workspace; item.revision++; }
+    return route.fulfill({ json: item });
+  });
+  await page.route('**/api/interviews/*/key?*', route => route.fulfill({ json: { status: 'unavailable', tests: [], asks: [], rubric: [] } }));
+  await page.goto('/#/interviews');
+  await page.locator('[data-interview="create"][data-track="coding"]').click();
+  const dropdown = page.locator('select#interview-language');
+  await expect(dropdown).toHaveValue('Python');
+  expect(await dropdown.locator('option').allTextContents()).toEqual(languages);
+  await expect(dropdown.locator('..').locator(':scope > svg')).toBeVisible();
+  await dropdown.selectOption('C++');
+  await expect(dropdown).toHaveValue('C++');
+  await page.locator('.sheet [data-action="close"]').click();
+  for (const language of languages) {
+    const challenge = { id: 'typing-problem-01', title: 'Typing practice', question: 'Work through this exercise.', minutes: 30, skills: ['Approach'], origin: 'generated', sources: [], coding: { language, starter: '', difficulty: 'easy', examples: [{ input: '1', output: '1' }], constraints: ['Describe the approach.'] } };
+    item = { id, revision: 1, framework: { title: 'Typing', track: 'coding', company: '', role: '', language, style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace: { answer: '', reasoning: '', board: [] }, problems: [], attempts: [], schedule: [] };
+    await page.goto(`/#/interviews/${id}`);
+    await page.reload();
+    const area = page.locator('#interview-answer');
+    await expect(page.locator('#interview-colors')).toBeVisible();
+    await area.fill('');
+    await area.press('('); await area.press('['); await area.press('x');
+    await expect(area).toHaveValue('([x])');
+    await area.press(']'); await area.press(')');
+    await expect(area).toHaveValue('([x])');
+    expect(await area.evaluate(el => el.selectionStart)).toBe(5);
+    await area.fill(''); await area.press('{');
+    await expect(area).toHaveValue('{}');
+    await area.press('Backspace'); await expect(area).toHaveValue('');
+    const long = 'value;\n'.repeat(60) + '{}';
+    await area.fill(long);
+    await area.scrollIntoViewIfNeeded();
+    await area.evaluate(el => { const at = el.value.length - 1; el.setSelectionRange(at, at); el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event('scroll')); });
+    const position = await area.evaluate(el => ({ page: scrollY, editor: el.scrollTop }));
+    expect(position.editor).toBeGreaterThan(100);
+    await area.press('Enter');
+    const expanded = long.slice(0, -1) + '\n    \n}';
+    await expect(area).toHaveValue(expanded);
+    await expect(area).toBeFocused();
+    expect(Math.abs(await page.evaluate(() => scrollY) - position.page)).toBeLessThan(2);
+    expect(await area.evaluate(el => el.scrollTop)).toBeGreaterThan(position.editor - 24);
+    await area.press('ControlOrMeta+z'); await expect(area).toHaveValue(long);
+    await area.press('ControlOrMeta+Shift+z'); await expect(area).toHaveValue(expanded);
+    await area.press('Tab');
+    await expect(area).toHaveValue(expanded.replace('\n    \n}', '\n        \n}'));
+    await area.press('Shift+Tab'); await expect(area).toHaveValue(expanded);
+    await area.fill('a\nb'); await area.selectText();
+    await area.press('Tab'); await expect(area).toHaveValue('    a\n    b');
+    await area.press('Shift+Tab'); await expect(area).toHaveValue('a\nb');
+    await area.fill('答😀'); await area.selectText(); await area.press('[');
+    await expect(area).toHaveValue('[答😀]');
+    expect(await area.evaluate(el => el.value.slice(el.selectionStart, el.selectionEnd))).toBe('答😀');
+    await expect.poll(() => item.workspace.answer).toBe('[答😀]');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+  }
+});
+
 test('coding colors and indentation preserve input, Undo, saves and scroll in every common language', async ({ page }) => {
   const samples = [['C++', 'int solve() {\nreturn 2;\n}'], ['Rust', 'fn solve() -> i32 {\n2\n}'], ['Java', 'class Solution {\nint solve() {\nreturn 2;\n}\n}'], ['Python', 'def solve():\n  return 2'], ['SQL', 'SELECT name\nFROM users\nWHERE id = 2;'], ['TypeScript', 'function solve(value: number): number {\nreturn value + 2;\n}'], ['JavaScript', 'function solve(value) {\nreturn value + 2;\n}'], ['Go', 'package main\nfunc solve() int {\nreturn 2\n}']];
   const id = 'coding-colors-01';

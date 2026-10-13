@@ -85,7 +85,9 @@ const chat = felix.create({
     toast(open && saving.unsaved() ? 'Felix changed this note while you were typing; reopen it to see the change.' : `Changed “${note.title}”`, { action: 'Open', run: () => go(noteHash(note.id)) });
   },
   onToggle: () => drawSide(),
+  onCodeEdit: action => applyInterviewCodeSuggestion(action),
   onOrganized: (proposal) => {
+    if (proposal.kind === 'interview_code_edit') { refreshInterview(proposal.interview).catch(fail); return; }
     if (proposal.kind === 'interview_schedule') { refreshInterview(proposal.interview).catch(fail); loadTasksWindow().catch(() => {}); if (state.view === 'calendar') loadSchedule(seq); return; }
     loadSideFolders().catch(() => {});
     if (state.view === 'calendar') loadSchedule(seq);

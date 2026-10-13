@@ -878,7 +878,10 @@ pub fn check(call: &Call) -> Result<(), String> {
     for param in spec.params {
         match args.get(param.name) {
             Some(serde_json::Value::String(text))
-                if param.required && param.name != "body" && text.trim().is_empty() =>
+                if param.required
+                    && param.name != "body"
+                    && !(call.name == "interview_code_edit" && param.name == "replace")
+                    && text.trim().is_empty() =>
             {
                 return Err(format!(
                     "\"{}\" is empty. How to call it:\n{}",
@@ -1620,6 +1623,14 @@ pub enum Proposal {
         interview: String,
         before: Vec<crate::interview::Slot>,
         schedule: Vec<crate::interview::Slot>,
+    },
+    InterviewCodeEdit {
+        title: String,
+        summary: String,
+        interview: String,
+        challenge: String,
+        find: String,
+        replace: String,
     },
 }
 

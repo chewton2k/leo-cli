@@ -14,7 +14,9 @@ const DATA: Param = Param {
         "one JSON object encoded as a string, matching the fields described below; no extra fields",
 };
 
-pub const SPECS: [Spec; 7] = [
+pub const SPECS: [Spec; 9] = [
+    crate::code_edits::SPECS[0],
+    crate::code_edits::SPECS[1],
     Spec {
         name: "interview_framework",
         purpose: "Create or customize this chat's interview framework when the user asks. Keep their existing preferences unless they ask to change them. Read interview_progress first before updating.",
@@ -86,6 +88,9 @@ pub fn run(
     call: &Call,
     problem: Option<&str>,
 ) -> (Done, Option<interview::Interview>) {
+    if matches!(call.name.as_str(), "interview_code" | "interview_code_edit") {
+        return (crate::code_edits::run(path, id, problem, call), None);
+    }
     if call.name == "interview_schedule" {
         let proposal = (|| {
             let id = id.ok_or_else(|| {

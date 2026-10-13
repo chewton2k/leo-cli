@@ -6,6 +6,7 @@ pub mod captions;
 pub mod chat;
 pub mod chat_files;
 pub mod chats;
+mod code_edits;
 mod combine;
 pub mod db;
 pub mod export;

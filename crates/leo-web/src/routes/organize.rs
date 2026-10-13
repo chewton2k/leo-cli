@@ -208,6 +208,7 @@ pub(crate) fn summary_of(p: &Proposal) -> String {
         | Proposal::PinNote { summary, .. }
         | Proposal::DeleteFolder { summary, .. }
         | Proposal::InterviewSchedule { summary, .. }
+        | Proposal::InterviewCodeEdit { summary, .. }
         | Proposal::RestoreFolder { summary, .. } => summary.clone(),
         Proposal::Edit { title, .. } => format!("Change “{title}”"),
         Proposal::Create { title, .. } => format!("Make the note “{title}”"),
@@ -841,6 +842,16 @@ pub(crate) async fn act(
 ) -> Result<(serde_json::Value, Proposal), String> {
     use crate::routes::{notes, tasks as task_routes, trash};
     match p {
+        Proposal::InterviewCodeEdit { .. } => {
+            let path = state.chats.clone();
+            let proposal = p.clone();
+            let (item, undo) =
+                tokio::task::spawn_blocking(move || crate::code_edits::apply(&path, &proposal))
+                    .await
+                    .map_err(|_| "Leo could not apply the code change. Try again.".to_string())?
+                    .map_err(|e| e.message())?;
+            Ok((serde_json::json!({"revision":item.revision}), undo))
+        }
         Proposal::InterviewSchedule {
             interview,
             before,

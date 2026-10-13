@@ -553,7 +553,7 @@
   const MOST_INTERVIEW_PROBLEMS = 128;
   const MOST_INTERVIEW_TITLE = 160;
 
-  function create({ render, escape, icons = {}, onOpen = () => {}, onOriginal = () => {}, storage = root.localStorage, prepare = null, notify = () => {}, onSaved = () => {}, onChanged = () => {}, onUndone = () => {}, onToggle = () => {}, onInterview = () => {}, onInterviewChanged = () => {}, onInterviewReply = () => {}, onAdd = () => {}, onOrganized = () => {}, onBeforeSend = () => true }) {
+  function create({ render, escape, icons = {}, onOpen = () => {}, onOriginal = () => {}, storage = root.localStorage, prepare = null, notify = () => {}, onSaved = () => {}, onChanged = () => {}, onUndone = () => {}, onToggle = () => {}, onInterview = () => {}, onInterviewChanged = () => {}, onInterviewReply = () => {}, onAdd = () => {}, onOrganized = () => {}, onBeforeSend = () => true, onCodeEdit = null }) {
     const saved = load(storage);
     const stepChevron = (icons.chevron || '').replace('<svg ', '<svg class="msg-step-chevron" ');
     const state = { open: false, id: saved.id || newId(), mode: modeOf(saved.mode), messages: saved.messages, refs: saved.refs, context: null, dropped: null, busy: null, streak: 0, pick: null, chats: null, sidebar: null, doomed: null, asking: null, files: [], sent: [], filesFor: null, review: [], drafts: {}, found: null, selection: null };
@@ -1496,6 +1496,10 @@
 
     function proposalCard(p, i, j) {
       const where = `data-i="${i}" data-j="${j}"`;
+      if (p.kind === 'interview_code_edit') {
+        const actions = p.state === 'applied' ? `<div class="proposal-done">Accepted · <button class="msg-act" data-chat="undo" ${where}>Undo</button></div>` : p.state === 'dismissed' ? '<div class="proposal-done">Declined</div>' : p.state === 'applying' || p.state === 'undoing' ? '<div class="proposal-done" role="status">Saving code…</div>' : `<div class="proposal-buttons"><button class="btn primary sm" data-chat="apply" ${where}>Accept</button><button class="btn plain sm" data-chat="dismiss" ${where}>Decline</button></div>`;
+        return `<div class="proposal proposal-code"><div class="proposal-title">${escape(p.title || 'Code change')}</div><div class="proposal-why">${escape(p.summary || '')}</div><span class="proposal-note">Before</span><pre class="proposal-old">${escape(p.find || 'Empty code')}</pre><span class="proposal-note">After</span><pre class="proposal-new">${escape(p.replace || 'Remove this code')}</pre>${actions}</div>`;
+      }
       if (p.kind !== 'create' && p.kind !== 'edit') {
         const acts = p.state === 'applied'
           ? `<div class="proposal-done">Done · <button class="msg-act" data-chat="undo" ${where}>Undo</button></div>`
@@ -1700,11 +1704,17 @@
     async function organize(p, action, forward) {
       const sending = Object.fromEntries(Object.entries(action || {}).filter(([k]) => !['state', 'undo', 'task', 'path'].includes(k)));
       let done;
+      const previous = p.state;
+      if (p.kind === 'interview_code_edit') { p.state = forward ? 'applying' : 'undoing'; draw(false); }
       try {
-        const response = await fetch('/api/felix/act', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sending) });
-        done = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(done.error || 'That could not be done.');
+        if (p.kind === 'interview_code_edit' && onCodeEdit) done = await onCodeEdit(sending);
+        else {
+          const response = await fetch('/api/felix/act', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sending) });
+          done = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(done.error || 'That could not be done.');
+        }
       } catch (e) {
+        p.state = previous; draw(false);
         notify(e.message || "Can't reach leo. Is leo serve still running?");
         return;
       }

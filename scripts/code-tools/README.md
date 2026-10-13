@@ -3,7 +3,9 @@
 This builds the local syntax and indentation helpers used by Leo’s interview
 textarea. Code is parsed as data and never executed. The supported languages are
 C++, Rust, Java, Python, SQL, JavaScript, TypeScript and Go; aliases are handled in
-`code-tools.js`. Indent code adjusts indentation, rather than rewriting syntax.
+`code-tools.js`. CodeMirror commands handle newline indentation, selection indent/outdent,
+and bracket pairing/type-over. The textarea adapter applies a minimal text change
+so browser Undo, wrapping and the visible scroll position survive each edit.
 
 Install the pinned dependencies and rebuild the vendored bundle and licences:
 

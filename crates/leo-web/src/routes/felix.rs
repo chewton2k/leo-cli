@@ -550,6 +550,16 @@ fn run_tool(
                 found: Vec::new(),
             });
         }
+        if call.name == "interview_code_edit" && !access.changes() {
+            return Ok(tools::Done {
+                step: "Kept your code unchanged".into(),
+                result:
+                    "Read only is active. Explain your observations without proposing code changes."
+                        .into(),
+                proposal: None,
+                found: vec![],
+            });
+        }
         let (mut done, updated) = crate::interview_tools::run(
             &state.chats,
             desk.interview.as_deref(),
@@ -613,7 +623,13 @@ fn run_tool(
     }
     if let Some(proposal) = &done.proposal {
         let shown = match latest_access {
-            tools::Access::Auto if !matches!(proposal, tools::Proposal::DeleteFolder { .. }) => {
+            tools::Access::Auto
+                if !matches!(
+                    proposal,
+                    tools::Proposal::DeleteFolder { .. }
+                        | tools::Proposal::InterviewCodeEdit { .. }
+                ) =>
+            {
                 match apply_now(state, proposal) {
                     Ok(applied) => {
                         done.result = match proposal {

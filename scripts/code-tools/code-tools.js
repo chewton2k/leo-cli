@@ -1,5 +1,7 @@
-import { EditorState } from '@codemirror/state';
-import { ensureSyntaxTree, indentRange, indentUnit } from '@codemirror/language';
+import { EditorState, EditorSelection, countColumn } from '@codemirror/state';
+import { ensureSyntaxTree, indentRange, indentUnit, indentOnInput } from '@codemirror/language';
+import { insertNewlineAndIndent, indentMore, indentLess, deleteCharBackward } from '@codemirror/commands';
+import { closeBrackets, insertBracket, deleteBracketPair } from '@codemirror/autocomplete';
 import { cpp } from '@codemirror/lang-cpp';
 import { rust } from '@codemirror/lang-rust';
 import { java } from '@codemirror/lang-java';
@@ -66,4 +68,45 @@ function indent(value, from, to, name) {
   return { value: change.apply(state.doc).toString(), from: change.mapPos(from), to: change.mapPos(to) };
 }
 
-globalThis.leoCode = { language, highlight, indent };
+function difference(before, after) {
+  let from = 0, to = before.length, end = after.length;
+  while (from < to && from < end && before[from] === after[from]) from++;
+  const split = (s, at) => at > 0 && /[\uD800-\uDBFF]/.test(s[at - 1]) && /[\uDC00-\uDFFF]/.test(s[at] || '');
+  if (split(before, from) || split(after, from)) from--;
+  while (to > from && end > from && before[to - 1] === after[end - 1]) { to--; end--; }
+  if (split(before, to) || split(after, end)) { to++; end++; }
+  return { from, to, insert: after.slice(from, end) };
+}
+
+function editor(name) {
+  const id = language(name);
+  let state = EditorState.create({ extensions: [id ? modes[id] : [], indentUnit.of('    '), EditorState.tabSize.of(4), indentOnInput(), closeBrackets()] });
+  return {
+    edit(value, from, to, key, shift = false, direction = 'forward') {
+      if (typeof value !== 'string' || value.length > MOST_CODE || !Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < from || to > value.length) return null;
+      const before = state.doc.toString();
+      state = state.update({ ...(before !== value ? { changes: difference(before, value) } : {}), selection: EditorSelection.range(direction === 'backward' ? to : from, direction === 'backward' ? from : to) }).state;
+      if (key !== 'Tab') ensureSyntaxTree(state, to, PARSE_MS);
+      let transaction = null;
+      const target = { state, dispatch: tr => { transaction = tr; } };
+      if (key === 'Enter') insertNewlineAndIndent(target);
+      else if (key === 'Tab' && shift) indentLess(target);
+      else if (key === 'Tab' && from !== to) indentMore(target);
+      else if (key === 'Tab') {
+        const column = countColumn(state.sliceDoc(state.doc.lineAt(from).from, from), 4);
+        transaction = state.update(state.replaceSelection(' '.repeat(4 - column % 4)), { userEvent: 'input.type' });
+      } else if (key === 'Backspace') {
+        if (!deleteBracketPair(target) && from === to && from > state.doc.lineAt(from).from && !/\S/.test(state.sliceDoc(state.doc.lineAt(from).from, from))) deleteCharBackward(target);
+      } else if ('()[]{}\'"`'.includes(key) && key.length === 1) {
+        transaction = insertBracket(state, key);
+        if (!transaction && /^[\t ]*$/.test(state.sliceDoc(state.doc.lineAt(from).from, from)) && ')]}'.includes(key)) transaction = state.update(state.replaceSelection(key), { userEvent: 'input.type' });
+      }
+      if (!transaction || transaction.newDoc.length > MOST_CODE) return null;
+      state = transaction.state;
+      const result = state.doc.toString(), selection = state.selection.main;
+      return { value: result, from: selection.from, to: selection.to, direction: selection.anchor > selection.head ? 'backward' : 'forward', change: difference(value, result) };
+    },
+  };
+}
+
+globalThis.leoCode = { language, highlight, indent, editor, difference };
