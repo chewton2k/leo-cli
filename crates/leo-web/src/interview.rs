@@ -11,6 +11,7 @@ pub const MOST_ATTEMPTS: usize = 100;
 pub const MOST_PROBLEMS: usize = 128;
 pub const BODY_BYTES: usize = 1_000_000;
 pub const MOST_ANSWER: usize = 32_000;
+pub const MOST_WANTS: usize = 8_000;
 pub const BOARD_LIMIT: f64 = 1_000_000.0;
 
 #[derive(Debug)]
@@ -213,7 +214,7 @@ impl Framework {
     pub fn validate(&self) -> Result<(), Error> {
         require(text(&self.title, 120, true) && text(&self.company, 120, false)
             && text(&self.role, 120, false) && text(&self.language, 80, false)
-            && text(&self.wants, 2_000, false), "Keep the practice title, company and role under 120 characters, and your preferences under 2,000.")?;
+            && text(&self.wants, MOST_WANTS, false), "Keep the practice title, company and role under 120 characters, and what you want to practise under 8,000.")?;
         require(
             [
                 "coding",
@@ -1002,6 +1003,11 @@ mod tests {
             f.title = title;
             assert!(f.validate().is_err());
         }
+        let mut f = framework();
+        f.wants = "練".repeat(MOST_WANTS);
+        assert!(f.validate().is_ok(), "a full practice brief fits");
+        f.wants.push('x');
+        assert!(f.validate().is_err());
         let mut f = framework();
         f.skills.push("approach".into());
         assert!(f.validate().is_err());

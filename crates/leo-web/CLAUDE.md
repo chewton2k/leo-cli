@@ -243,10 +243,31 @@ seer, meaning, web, room).
   Send flushes the draft and binds context to `interview_problem`, with the
   problem number, title and tab retained on the user message in chat history.
   Reading progress preserves that binding even if the user switches problems.
-  Whiteboards use a pannable/zoomable viewport over bounded ±1,000,000 coordinates;
-  labels and selected shapes drag, Enter places a label, and snapshots fit all content.
-  Reset affects only the current tab of the captured problem. Board Undo retains
-  up to 20 edits; a reset's Undo also restores its viewport. Other tabs stay saved.
+  Whiteboards use a pannable/zoomable viewport over bounded ±1,000,000 coordinates
+  and work like a slide editor (2026-10-13, the user's request): white paper and
+  black ink in every theme (`INK`; snapshots draw their own white); icon tools
+  (`BOARD_TOOLS`: Select and move, Pen, Box, Arrow, Text; V P R A T) with Select
+  and Pan merged. Select hits a shape's whole area (`board-hit` transparent fills
+  and wide strokes), Shift adds or removes, dragging empty space draws a marquee
+  that picks shapes fully inside (`shapesWithin`), and a touch drag, Space or the
+  middle button pans. One selected box or drawing gets eight handles, an arrow its
+  two ends (`handlesFor`, `resizeShape`); labels only move. Double-click (detected
+  in pointerdown, since redraws reset the browser's click count) or Enter edits
+  a label's, box's or arrow's text in place (`.interview-board-editor`, Enter saves,
+  Escape cancels; an emptied label is deleted); double-click empty space or click
+  with Text to add a label. Box and arrow tools return to Select after placing a
+  shape (a plain click gives a default size); the pen stays. Keys: Delete,
+  ⌘/Ctrl A C X V D Z (⇧Z or Y redo), arrows nudge (Shift for more), Escape
+  deselects (and only then falls through to Back); handled keys stop at the board.
+  Reset affects only the current tab of the captured problem. Board Undo and Redo
+  keep up to 20 edits; a reset's Undo also restores its viewport. Other tabs stay
+  saved. The saved shape kinds and limits did not change.
+  Past submissions carry a status label and matching outline
+  (`interviews.attemptStatus`: checks decide, then the quick review, then Felix's
+  scores; Passed, Failed · n/m, Partly, Awaiting review). The top bar is opaque
+  (no backdrop blur), which stopped it flickering over sticky and animating content.
+  Practice preferences ("What would you like to practise?") take up to
+  `MOST_WANTS` (8,000) characters.
   Practice schedules were removed (2026-10-13, the user's call): no schedule
   section, session editor, `interview_schedule` tool or proposal, `Interview.schedule`
   or `Change::Schedule`; old rows keep loading (the field is ignored) and an old

@@ -277,3 +277,56 @@ test('submission results become named cases, and the first failure is chosen unl
   assert.equal(I.pickCase([], 'x'), '');
   assert.deepEqual(I.resultCases(undefined), []);
 });
+
+test('each submission is labelled passed, failed or partly from its checks, then its quick review, then Felix’s scores', () => {
+  const check = (pass) => ({ id: String(Math.random()), kind: 'test', label: 'x', pass });
+  assert.deepEqual(I.attemptStatus({ checks: [check(true), check(true)] }), { kind: 'passed', label: 'Passed' });
+  assert.deepEqual(I.attemptStatus({ checks: [check(true), check(false), check(false)] }), { kind: 'failed', label: 'Failed · 1/3' });
+  const verdicts = (...v) => ({ grade: { criteria: v.map((verdict) => ({ verdict })) } });
+  assert.equal(I.attemptStatus(verdicts('met', 'met')).kind, 'passed');
+  assert.equal(I.attemptStatus(verdicts('missed', 'missed')).kind, 'failed');
+  assert.deepEqual(I.attemptStatus(verdicts('met', 'partly', 'missed')), { kind: 'partly', label: 'Partly · 1/3 met' });
+  assert.equal(I.attemptStatus({ checks: [check(true)], ...verdicts('missed') }).kind, 'passed', 'checks decide when there are any');
+  const scored = (...v) => ({ feedback: { scores: v.map((value) => ({ value })) } });
+  assert.deepEqual(I.attemptStatus(scored(4, 3)), { kind: 'passed', label: 'Solid' });
+  assert.deepEqual(I.attemptStatus(scored(2, 2)), { kind: 'partly', label: 'Developing' });
+  assert.deepEqual(I.attemptStatus(scored(1, 0)), { kind: 'failed', label: 'Needs work' });
+  assert.deepEqual(I.attemptStatus({}), { kind: 'pending', label: 'Awaiting review' });
+});
+
+test('the board selects what a drag box encloses, resizes like a slide editor and renders hit areas, handles and text', () => {
+  const board = [
+    { kind: 'box', points: [[100, 100], [300, 200]], text: 'API' },
+    { kind: 'text', points: [[120, 400]], text: 'Queue' },
+    { kind: 'arrow', points: [[300, 150], [500, 150]], text: 'calls' },
+    { kind: 'pen', points: [[600, 600], [700, 650], [800, 600]], text: '' },
+  ];
+  assert.deepEqual(I.shapesWithin(board, I.normalRect([90, 90], [520, 420])), [0, 1, 2]);
+  assert.deepEqual(I.shapesWithin(board, I.normalRect([520, 420], [90, 90])), [0, 1, 2], 'any drag direction');
+  assert.deepEqual(I.shapesWithin(board, { x: 150, y: 90, w: 400, h: 400 }), [2], 'only shapes fully inside');
+  assert.deepEqual(I.unionBounds(board, [0, 3]), { x: 100, y: 100, w: 700, h: 550 });
+  assert.equal(I.unionBounds(board, []), null);
+  assert.deepEqual(I.resizeShape(board[0], 'se', [400, 260]).points, [[100, 100], [400, 260]]);
+  assert.deepEqual(I.resizeShape(board[0], 'nw', [350, 250]).points, [[300, 200], [350, 250]], 'dragging past the opposite corner flips cleanly');
+  assert.deepEqual(I.resizeShape(board[0], 'n', [0, 50]).points, [[100, 50], [300, 200]]);
+  assert.deepEqual(I.resizeShape(board[2], 'end', [520, 180]).points, [[300, 150], [520, 180]]);
+  assert.deepEqual(I.resizeShape(board[3], 'e', [1000, 0]).points, [[600, 600], [800, 650], [1000, 600]], 'a drawing scales with its box');
+  assert.equal(I.resizeShape(board[1], 'se', [999, 999]), board[1], 'labels only move');
+  assert.deepEqual(I.handlesFor(board[0]).map((h) => h[0]), ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']);
+  assert.deepEqual(I.handlesFor(board[2]).map((h) => h[0]), ['start', 'end']);
+  assert.deepEqual(I.handlesFor(board[1]), []);
+  const view = { x: 0, y: 0, w: 1000, h: 700 };
+  const live = I.boardSvg(board, { view, interactive: true, selected: [0], marquee: { x: 10, y: 10, w: 50, h: 50 } });
+  assert.match(live, /<rect x="100" y="100" width="200" height="100" rx="8" fill="transparent"\/>/, 'a box is clickable inside, not just on its outline');
+  assert.equal((live.match(/class="board-hit"/g) || []).length, 3, 'labels, arrows and drawings get wide invisible hit areas');
+  assert.equal((live.match(/data-board-handle=/g) || []).length, 8);
+  assert.match(live, /class="board-marquee"/);
+  assert.match(live, />API<\/text>/);
+  assert.match(live, /color:#19191b/, 'black ink on the white board in every theme');
+  assert.doesNotMatch(I.boardSvg(board, { view, interactive: true, selected: [0], editing: 0 }), />API<\/text>/, 'text being edited is hidden');
+  const two = I.boardSvg(board, { view, interactive: true, selected: [0, 1] });
+  assert.equal((two.match(/data-board-handle=/g) || []).length, 0, 'a group moves together without handles');
+  const still = I.boardSvg(board, { view });
+  assert.match(still, /fill="white"\/>/);
+  assert.doesNotMatch(still, /board-hit|data-board-shape|fill="transparent"/);
+});

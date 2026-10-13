@@ -3668,8 +3668,7 @@ test('interview answers keep their focus and draft through saves, a conflict and
   await page.locator('[data-interview="retry"]').click();
   await expect.poll(() => item.workspace.answer).toBe('Use a hash map. Check duplicates and negatives.');
   await page.locator('[data-interview="tab"][data-tab="board"]').click();
-  await page.locator('#interview-board-label').fill('Client → Server');
-  await page.locator('[data-interview="label-board"]').click();
+  await boardLabel(page, 'Client → Server', 0.15, 0.2);
   await expect.poll(() => item.workspace.board.length).toBe(1);
   await expect(page.locator('#interview-board text')).toHaveText('Client → Server');
   await page.reload();
@@ -3683,8 +3682,7 @@ test('interview answers keep their focus and draft through saves, a conflict and
   expect(item.attempts[0].workspace.board[0].text).toBe('Client → Server');
   await expect(answer).toHaveValue('Use a hash map. Check duplicates and negatives.');
   await page.locator('[data-interview="tab"][data-tab="board"]').click();
-  await page.locator('#interview-board-label').fill('Another drawing');
-  await page.locator('[data-interview="label-board"]').click();
+  await boardLabel(page, 'Another drawing', 0.15, 0.45);
   await page.locator('[data-interview="submit"]').click();
   await expect(page.locator('#interview-progress')).toContainText('2 reviewed attempts');
   expect(item.attempts[0].workspace.board).toHaveLength(1);
@@ -3693,8 +3691,8 @@ test('interview answers keep their focus and draft through saves, a conflict and
   expect(files.size).toBe(1);
   expect(uploads).toBe(2);
   refuseImage = true;
-  await page.locator('#interview-board-label').fill('A readable label');
-  await page.locator('[data-interview="label-board"]').click();
+  await page.locator('[data-interview="tab"][data-tab="board"]').click();
+  await boardLabel(page, 'A readable label', 0.15, 0.7);
   await page.locator('[data-interview="submit"]').click();
   await expect(page.locator('#interview-progress')).toContainText('3 reviewed attempts');
   await expect(page.locator('#chat .msg.user').last()).not.toContainText('interview_feedback');
@@ -4435,7 +4433,7 @@ test('coding problems keep separate drafts, wrap long functions and open their o
   await expect(page.getByRole('heading', { name: 'Interview practice', exact: true })).toBeVisible();
 });
 
-test('whiteboards pan, labels drag and Enter places them while Reset affects only the active problem tab', async ({ page }) => {
+test('whiteboards pan, labels drag and typed labels land where clicked while Reset affects only the active problem tab', async ({ page }) => {
   const id = 'whiteboard-workspace';
   const starter = 'def solve(values):\n    pass';
   const make = n => ({ challenge: { id: `whiteboard-problem-${n}`, title: `Problem title ${n}`, question: 'Explain the system and implement its queue.', minutes: 30, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'Python', starter, difficulty: 'medium', examples: [{ input: '[1]', output: '1' }], constraints: ['Explain trade-offs'] } }, workspace: { answer: `${starter}\n# draft ${n}`, reasoning: `Approach ${n}`, board: [] } });
@@ -4458,10 +4456,9 @@ test('whiteboards pan, labels drag and Enter places them while Reset affects onl
   await expect(page.locator('[data-interview="clear-workspace"], [data-interview="reset-code"], [data-interview="clear-board"], [data-interview="chat"]')).toHaveCount(0);
   await expect(page.locator('.interview-submit [data-interview="reset"]')).toHaveText('Reset');
   await page.locator('[data-interview="tab"][data-tab="board"]').click();
-  await page.locator('#interview-board-label').fill('Client → Queue');
-  await page.locator('#interview-board-label').press('Enter');
+  await boardLabel(page, 'Client → Queue', 0.2, 0.25);
   await expect(page.locator('#interview-board text')).toHaveText('Client → Queue');
-  await expect(page.locator('#interview-board-label')).toHaveValue('');
+  await expect(page.locator('[data-interview="tool"][data-tool="select"]')).toHaveAttribute('aria-pressed', 'true');
   await expect.poll(() => item.workspace.board.length).toBe(1);
   const original = structuredClone(item.workspace.board[0]);
   const label = await page.locator('#interview-board text').boundingBox();
@@ -4476,18 +4473,19 @@ test('whiteboards pan, labels drag and Enter places them while Reset affects onl
   const board = page.locator('#interview-board');
   const before = await board.locator('svg').getAttribute('viewBox');
   const saved = JSON.stringify(item.workspace.board);
-  await page.locator('[data-interview="tool"][data-tool="pan"]').click();
   await board.scrollIntoViewIfNeeded();
   const box = await board.boundingBox();
+  await board.focus();
+  await page.keyboard.down('Space');
   await page.mouse.move(box.x + box.width * .75, box.y + box.height * .7);
   await page.mouse.down();
   await page.mouse.move(box.x + box.width * .75 + 60, box.y + box.height * .7 + 40, { steps: 3 });
   await page.mouse.up();
+  await page.keyboard.up('Space');
   expect(await board.locator('svg').getAttribute('viewBox')).not.toBe(before);
   expect(JSON.stringify(item.workspace.board)).toBe(saved);
   await board.dispatchEvent('wheel', { deltaY: 1800, deltaMode: 0, clientX: box.x + 80, clientY: box.y + 80 });
-  await page.locator('#interview-board-label').fill('Far away label');
-  await page.locator('#interview-board-label').press('Enter');
+  await boardLabel(page, 'Far away label', 0.2, 0.5);
   await expect.poll(() => item.workspace.board.length).toBe(2);
   expect(item.workspace.board[1].points[0][1]).toBeGreaterThan(1000);
   await page.locator('[data-interview="tool"][data-tool="box"]').click();
@@ -4498,6 +4496,7 @@ test('whiteboards pan, labels drag and Enter places them while Reset affects onl
   await page.mouse.up();
   await expect.poll(() => item.workspace.board.length).toBe(3);
   expect(item.workspace.board[2].kind).toBe('box');
+  await expect(page.locator('[data-interview="tool"][data-tool="select"]')).toHaveAttribute('aria-pressed', 'true');
   await page.locator('[data-interview="fit-board"]').click();
   expect(await board.locator('svg').getAttribute('viewBox')).not.toBe(before);
   const reset = async () => { await page.locator('.interview-submit [data-interview="reset"]').click(); await page.locator('[data-interview="confirm-reset"]').click(); };
@@ -5030,5 +5029,109 @@ test('Run shows its results in the Test cases tab beside the question', async ({
   await tabs.nth(0).click();
   await expect(page.locator('#interview-pane-question')).toContainText('Return the sum of the list.');
   await expect(cases).toBeHidden();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+});
+
+async function boardLabel(page, text, fx = 0.2, fy = 0.25) {
+  await page.locator('[data-interview="tool"][data-tool="text"]').click();
+  const board = page.locator('#interview-board');
+  await board.scrollIntoViewIfNeeded();
+  const box = await board.boundingBox();
+  await page.mouse.click(box.x + box.width * fx, box.y + box.height * fy);
+  const editor = page.locator('.interview-board-editor');
+  await expect(editor).toBeFocused();
+  await editor.fill(text);
+  await editor.press('Enter');
+  await expect(editor).toHaveCount(0);
+}
+
+test('the whiteboard works like a slide editor: icon tools, selecting inside shapes, drag boxes, handles, editing text and shortcuts', async ({ page }) => {
+  const id = 'slide-board-01';
+  const challenge = { id: 'slide-board-problem', title: 'Design a cache', question: 'Sketch it.', minutes: 30, skills: ['Approach'], origin: 'generated', sources: [] };
+  const workspace = { answer: 'Draft', reasoning: '', board: [
+    { kind: 'box', points: [[100, 100], [300, 220]], text: '' },
+    { kind: 'text', points: [[500, 170]], text: 'Cache' },
+    { kind: 'arrow', points: [[310, 160], [480, 160]], text: '' },
+    { kind: 'pen', points: [[150, 420], [250, 470], [350, 430]], text: '' },
+  ] };
+  const item = { id, revision: 1, framework: { title: 'Board practice', track: 'systems', company: '', role: '', language: '', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace, problems: [{ challenge, workspace }], attempts: [] };
+  await page.route('**/api/interviews', (route) => route.fulfill({ json: [] }));
+  await page.route(`**/api/interviews/${id}/key?*`, (route) => route.fulfill({ json: { status: 'none' } }));
+  await page.route(`**/api/interviews/${id}`, (route) => {
+    if (route.request().method() === 'PUT') { item.workspace = route.request().postDataJSON().workspace || item.workspace; item.revision++; }
+    return route.fulfill({ json: item });
+  });
+  await page.goto(`/#/interviews/${id}`);
+  await page.locator('[data-interview="tab"][data-tab="board"]').click();
+  const board = page.locator('#interview-board');
+  await board.scrollIntoViewIfNeeded();
+  const tools = page.locator('[data-interview="tool"]');
+  await expect(tools).toHaveCount(5);
+  expect(await tools.evaluateAll((els) => els.map((el) => [el.dataset.tool, el.textContent.trim(), Boolean(el.querySelector('svg')), el.getAttribute('aria-label')]))).toEqual([['select', '', true, 'Select and move'], ['pen', '', true, 'Pen'], ['box', '', true, 'Box'], ['arrow', '', true, 'Arrow'], ['text', '', true, 'Text']]);
+  await expect(page.locator('[data-interview="tool"][data-tool="pan"]')).toHaveCount(0);
+  await expect(tools.first()).toHaveAttribute('aria-pressed', 'true');
+  expect(await board.evaluate((el) => [getComputedStyle(el).backgroundColor, getComputedStyle(el.querySelector('svg')).color])).toEqual(['rgb(255, 255, 255)', 'rgb(25, 25, 27)']);
+  const at = (x, y) => board.locator('svg').evaluate((svg, [x, y]) => { const p = new DOMPoint(x, y).matrixTransform(svg.getScreenCTM()); return { x: p.x, y: p.y }; }, [x, y]);
+  const click = async (x, y, { shift = false } = {}) => { const p = await at(x, y); if (shift) await page.keyboard.down('Shift'); await page.mouse.click(p.x, p.y); if (shift) await page.keyboard.up('Shift'); };
+  const drag = async (from, to) => { const a = await at(...from), b = await at(...to); await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 5 }); await page.mouse.up(); };
+  const chosen = () => board.locator('[data-board-shape][aria-pressed="true"]').evaluateAll((els) => els.map((el) => Number(el.dataset.boardShape)).sort());
+  await click(200, 160);
+  await expect.poll(chosen).toEqual([0]);
+  await expect(board.locator('[data-board-handle]')).toHaveCount(8);
+  await drag([300, 220], [380, 260]);
+  await expect.poll(() => item.workspace.board[0].points).toEqual([[100, 100], [380, 260]]);
+  await page.keyboard.press('Escape');
+  await expect.poll(chosen).toEqual([]);
+  await drag([60, 60], [620, 300]);
+  await expect.poll(chosen).toEqual([0, 1, 2]);
+  await click(200, 445, { shift: true });
+  await expect.poll(chosen).toEqual([0, 1, 2, 3]);
+  await click(200, 445, { shift: true });
+  await expect.poll(chosen).toEqual([0, 1, 2]);
+  await expect(board.locator('[data-board-handle]')).toHaveCount(0);
+  await page.keyboard.press('Delete');
+  await expect.poll(() => item.workspace.board.map((s) => s.kind)).toEqual(['pen']);
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect.poll(() => item.workspace.board.length).toBe(4);
+  await page.keyboard.press('ControlOrMeta+Shift+z');
+  await expect.poll(() => item.workspace.board.length).toBe(1);
+  await page.locator('[data-interview="undo-board"]').click();
+  await expect.poll(() => item.workspace.board.length).toBe(4);
+  const label = await at(530, 160);
+  await page.mouse.dblclick(label.x, label.y);
+  const editor = page.locator('.interview-board-editor');
+  await expect(editor).toBeFocused();
+  await expect(editor).toHaveValue('Cache');
+  await editor.fill('Redis cache');
+  await editor.press('Enter');
+  await expect.poll(() => item.workspace.board[1].text).toBe('Redis cache');
+  const middle = await at(240, 180);
+  await page.mouse.dblclick(middle.x, middle.y);
+  await expect(editor).toBeFocused();
+  await editor.fill('API');
+  await editor.press('Enter');
+  await expect.poll(() => item.workspace.board[0].text).toBe('API');
+  await expect(board.locator('text', { hasText: 'API' })).toHaveCount(1);
+  await page.mouse.dblclick(label.x, label.y);
+  await editor.fill('Never saved');
+  await editor.press('Escape');
+  await expect.poll(() => item.workspace.board[1].text).toBe('Redis cache');
+  await board.focus();
+  await page.keyboard.press('ControlOrMeta+a');
+  await expect.poll(chosen).toEqual([0, 1, 2, 3]);
+  await page.keyboard.press('ControlOrMeta+d');
+  await expect.poll(() => item.workspace.board.length).toBe(8);
+  await expect.poll(chosen).toEqual([4, 5, 6, 7]);
+  await page.keyboard.press('ArrowRight');
+  await expect.poll(() => item.workspace.board[4].points[0][0]).toBeGreaterThan(item.workspace.board[0].points[0][0]);
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('t');
+  await expect(page.locator('[data-interview="tool"][data-tool="text"]')).toHaveAttribute('aria-pressed', 'true');
+  await click(600, 380);
+  await expect(editor).toBeFocused();
+  await editor.fill('Read replica');
+  await editor.press('Enter');
+  await expect.poll(() => item.workspace.board.at(-1)).toMatchObject({ kind: 'text', text: 'Read replica' });
+  await expect(page.locator('[data-interview="tool"][data-tool="select"]')).toHaveAttribute('aria-pressed', 'true');
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
 });
