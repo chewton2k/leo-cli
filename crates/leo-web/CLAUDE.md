@@ -139,12 +139,19 @@ seer, meaning, web, room).
 
 - POST `/api/chat` streams NDJSON (`answer`, `sources`, `t`, `step`,
   `proposal`, `ask`, `quiz`, `plan`, `spent`, `reset`, `done`/`error`). The
-  user prompt starts with `<today>` (date, time and IANA zone,
-  `chat::today_line`), then `<selected_passage>`, `<documents>`, notes.
+  user prompt is `<selected_passage>` (when given), `<documents>`, notes,
+  the chat, then `<today>` (date, time and IANA zone, `chat::today_line`).
 - Context (`gather`): attached notes (`refs`, ≤8), notes used earlier in the
   chat, documents, the open note and its graph neighbours, word matches,
   meaning matches; budgets scale with the model (`Powers.room`,
-  `chat::scaled`). Note bodies are line-numbered; citations `[n2 L14-18]`
+  `chat::scaled`), except interview turns and practice marking, which read the
+  usual share (`chat::notes_room`: at most `ROOM`) since they rarely need many
+  notes. The prompt keeps what changes least first (documents, notes,
+  earlier chat, conversation); the `<today>` line (it changes every minute)
+  and the interview context go last, before the reply line
+  (`chat::before_reply`), so prefix caches (Codex, OpenAI-compatible APIs)
+  reuse the rest. Claude Code places its own cache breakpoints, so across
+  answers it reuses only the system prompt (measured: 10.5k of 31.8k tokens). Note bodies are line-numbered; citations `[n2 L14-18]`
   and `[f1 p4]` become chips. Citations never go into notes
   (`tools::linked` → `[[Title]]`).
 - Long chats: `turns_for(room)` keeps recent turns verbatim, older ones go in

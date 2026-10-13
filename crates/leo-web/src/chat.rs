@@ -638,6 +638,14 @@ pub fn documents_block(docs: &[(String, String)]) -> String {
     documents_within(docs, DOCS_CHARS)
 }
 
+pub fn notes_room(mode: &str, practice: bool, room: usize) -> usize {
+    if mode == "interview" || practice {
+        room.min(ROOM)
+    } else {
+        room
+    }
+}
+
 pub fn scaled(at_default: usize, room: usize) -> usize {
     at_default * room.clamp(LEAST_ROOM, MOST_ROOM) / ROOM
 }
@@ -804,8 +812,7 @@ pub fn prompt_within(
 ) -> (String, String) {
     let system = format!("{BASE}\n\n{}", style(mode));
     let zone = iana_time_zone::get_timezone().ok();
-    let mut user = today_line(chrono::Local::now(), zone.as_deref());
-    user.push_str(&documents_within(documents, scaled(DOCS_CHARS, room)));
+    let mut user = documents_within(documents, scaled(DOCS_CHARS, room));
     if notes.trim().is_empty() {
         user.push_str("<notes>\nNo notes matched this conversation.\n</notes>\n\n");
     } else {
@@ -828,8 +835,19 @@ pub fn prompt_within(
             clip(turn.text.trim(), TURN_CHARS)
         ));
     }
-    user.push_str("</conversation>\n\nReply as Felix to the user's last message.");
+    user.push_str("</conversation>\n\n");
+    user.push_str(&today_line(chrono::Local::now(), zone.as_deref()));
+    user.push_str(REPLY_LINE);
     (system, user)
+}
+
+pub const REPLY_LINE: &str = "Reply as Felix to the user's last message.";
+
+pub fn before_reply(user: &str, block: &str) -> String {
+    match user.rfind("<today>") {
+        Some(at) => format!("{}{}\n{}", &user[..at], block, &user[at..]),
+        None => format!("{user}\n\n{block}"),
+    }
 }
 
 pub fn mode_of(requested: Option<&str>) -> &'static str {
@@ -851,6 +869,15 @@ mod tests {
                 text: format!("message {i}"),
             })
             .collect()
+    }
+
+    #[test]
+    fn practice_and_interviews_read_the_usual_share_of_notes_even_on_big_models() {
+        assert_eq!(notes_room("chat", false, MOST_ROOM), MOST_ROOM);
+        assert_eq!(notes_room("study", false, MOST_ROOM), MOST_ROOM);
+        assert_eq!(notes_room("study", true, MOST_ROOM), ROOM);
+        assert_eq!(notes_room("interview", false, MOST_ROOM), ROOM);
+        assert_eq!(notes_room("interview", false, LEAST_ROOM), LEAST_ROOM);
     }
 
     #[test]
@@ -1225,8 +1252,15 @@ mod tests {
                 text: "what is due tomorrow?".into(),
             }],
         );
-        assert!(user.starts_with("<today>"));
+        assert!(
+            user.find("</conversation>").unwrap() < user.find("<today>").unwrap(),
+            "the line that changes every minute comes after what a cache can reuse"
+        );
+        assert!(user.ends_with(&format!("</today>\n\n{REPLY_LINE}")));
         assert!(system.contains("<today> gives the user's current date"));
+        let with = before_reply(&user, "<practice>p</practice>\n");
+        assert!(with.find("<practice>").unwrap() > with.find("</conversation>").unwrap());
+        assert!(with.find("<practice>").unwrap() < with.find("<today>").unwrap());
     }
 
     #[test]
@@ -1270,8 +1304,7 @@ mod tests {
         }];
         let (system, user) = prompt("chat", "<note id=\"n1\">", &docs, &turns);
         assert!(system.contains("<document> tags"));
-        assert!(user.starts_with("<today>"));
-        assert!(user.contains("</today>\n\n<documents>\n<document id=\"d1\" name=\"slides.pdf\">"));
+        assert!(user.starts_with("<documents>\n<document id=\"d1\" name=\"slides.pdf\">"));
         assert!(user.contains("name=\"big 'one'.txt\""));
         assert!(user.find("</documents>").unwrap() < user.find("<notes>").unwrap());
         assert!(

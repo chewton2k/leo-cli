@@ -1288,6 +1288,7 @@ pub(crate) async fn chat_reply(
         .await
         .unwrap_or_default()
     };
+    let note_room = chat::notes_room(mode, body.practice, room);
     let gathered = state
         .with_store(move |store| {
             let cache = graphs.load();
@@ -1298,7 +1299,7 @@ pub(crate) async fn chat_reply(
                 &attached,
                 &recent,
                 &question,
-                room,
+                note_room,
                 Some(&seen),
                 &close,
             ))
@@ -1337,7 +1338,7 @@ pub(crate) async fn chat_reply(
         if let Ok(Ok(item)) =
             tokio::task::spawn_blocking(move || crate::interview::load(&path, &wanted)).await
         {
-            user = format!("{}\n{user}", crate::interview::context(&item));
+            user = chat::before_reply(&user, &crate::interview::context(&item));
         }
     }
     if let Some(block) = body.selection.as_ref().and_then(chat::passage_block) {
