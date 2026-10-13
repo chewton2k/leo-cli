@@ -399,20 +399,20 @@ fn run_tool(
     let files_before = desk.files.len();
     let mut done = if call.name == "invalid" {
         tools::Done {
-            step: "Tried to use a tool".into(),
+            step: "Fixed a tool call".into(),
             result: format!(
-                "That did not work: {}. Write the call as one line: <tool>{{\"name\": \"search_notes\", \"query\": \"...\"}}</tool>",
+                "That did not work: {}. Write the call as one line: <tool>{{\"name\": \"search_notes\", \"query\": \"...\"}}</tool>. Inside a JSON string write a line break as \\n and a quote as \\\".",
                 call.text("problem")
             ),
             proposal: None,
-            found: Vec::new(),
+            found: vec![tools::why_it_failed(&call.text("problem"))],
         }
     } else if let Err(problem) = tools::check(call) {
         tools::Done {
-            step: "Tried to use a tool".into(),
+            step: "Fixed a tool call".into(),
             result: format!("That did not work: {problem}"),
             proposal: None,
-            found: Vec::new(),
+            found: vec![tools::why_it_failed(&problem)],
         }
     } else if tools::is_interaction(&call.name) {
         interact(desk, call, send)

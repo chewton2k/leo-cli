@@ -353,6 +353,7 @@ pub struct Heard {
     pub usage: Option<crate::usage::Usage>,
     pub model: Option<String>,
     pub tokens: Option<(u64, u64)>,
+    pub cache: (u64, u64),
 }
 
 pub fn codex_banner(stderr: &str) -> (Option<String>, Option<String>, Option<u64>) {
@@ -429,6 +430,10 @@ pub fn hear(line: &str, heard: &mut Heard, sink: Sink<'_>) -> bool {
             .sum::<u64>();
             if let Some(output) = usage["output_tokens"].as_u64() {
                 heard.tokens = Some((input, output));
+                heard.cache = (
+                    usage["cache_read_input_tokens"].as_u64().unwrap_or(0),
+                    usage["cache_creation_input_tokens"].as_u64().unwrap_or(0),
+                );
             }
             true
         }
@@ -440,15 +445,36 @@ pub struct ClaudeSession {
     name: String,
     child: std::process::Child,
     stdin: Option<std::process::ChildStdin>,
-    lines: std::sync::mpsc::Receiver<String>,
+    lines: std::sync::mpsc::Receiver<super::mcp::Incoming>,
     quiet: Duration,
     model: Option<String>,
     effort: Option<String>,
+    native: bool,
+    _bridge: Option<super::mcp::Bridge>,
     _room: tempfile::TempDir,
 }
 
 impl ClaudeSession {
+    pub fn native(&self) -> bool {
+        self.native
+    }
+
     pub fn say(&mut self, text: &str, sink: Sink<'_>) -> ProviderResult<(String, Spent)> {
+        self.say_with(
+            text,
+            sink,
+            &mut |_, _| "That did not work: no tools are offered here.".to_string(),
+            &mut || {},
+        )
+    }
+
+    pub fn say_with(
+        &mut self,
+        text: &str,
+        sink: Sink<'_>,
+        call: &mut dyn FnMut(&str, &serde_json::Value) -> String,
+        gap: &mut dyn FnMut(),
+    ) -> ProviderResult<(String, Spent)> {
         let message = serde_json::json!({
             "type": "user",
             "message": { "role": "user", "content": [{ "type": "text", "text": text }] },
@@ -464,10 +490,14 @@ impl ClaudeSession {
         let mut heard = Heard::default();
         loop {
             match self.lines.recv_timeout(self.quiet) {
-                Ok(line) => {
+                Ok(super::mcp::Incoming::Line(line)) => {
                     if hear(&line, &mut heard, sink) {
                         break;
                     }
+                }
+                Ok(super::mcp::Incoming::Call { name, args, reply }) => {
+                    gap();
+                    let _ = reply.send(call(&name, &args));
                 }
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                     stop_all(&mut self.child);
@@ -518,7 +548,8 @@ impl ClaudeSession {
                 input,
                 output,
                 estimated,
-                ..Spent::default()
+                cached: heard.cache.0,
+                cache_written: heard.cache.1,
             },
         ))
     }
@@ -558,41 +589,92 @@ impl AgentCli {
     }
 
     pub fn session_arguments(&self, system: &str) -> Vec<String> {
-        let mut args: Vec<String> = [
-            "-p",
-            "--safe-mode",
-            "--tools",
-            "WebSearch",
-            "--allowedTools",
-            "WebSearch",
-            "--no-session-persistence",
-            "--input-format",
-            "stream-json",
-            "--output-format",
-            "stream-json",
-            "--include-partial-messages",
-            "--verbose",
-        ]
-        .map(String::from)
-        .to_vec();
+        self.session_arguments_with(system, None)
+    }
+
+    fn session_arguments_with(
+        &self,
+        system: &str,
+        bridge: Option<&super::mcp::Bridge>,
+    ) -> Vec<String> {
+        let allowed = match bridge {
+            Some(_) => format!("WebSearch mcp__{}", super::mcp::SERVER),
+            None => "WebSearch".to_string(),
+        };
+        let isolation: &[&str] = match bridge {
+            Some(_) => &["--setting-sources", "", "--disable-slash-commands"],
+            None => &["--safe-mode"],
+        };
+        let mut args: Vec<String> = ["-p"]
+            .iter()
+            .chain(isolation)
+            .map(|a| a.to_string())
+            .collect();
+        args.extend(
+            [
+                "--tools",
+                "WebSearch",
+                "--allowedTools",
+                allowed.as_str(),
+                "--no-session-persistence",
+                "--input-format",
+                "stream-json",
+                "--output-format",
+                "stream-json",
+                "--include-partial-messages",
+                "--verbose",
+            ]
+            .map(String::from),
+        );
         if let Some(model) = &self.model {
             args.extend(["--model".to_string(), model.clone()]);
         }
         if let Some(effort) = &self.effort {
             args.extend(["--effort".to_string(), effort.clone()]);
         }
+        if let Some(bridge) = bridge {
+            args.extend([
+                "--mcp-config".to_string(),
+                bridge.config(),
+                "--strict-mcp-config".to_string(),
+            ]);
+        }
         args.extend(["--system-prompt".to_string(), system.to_string()]);
         args
     }
 
     pub fn claude_session(&self, system: &str) -> ProviderResult<ClaudeSession> {
+        self.claude_session_with(system, Vec::new())
+    }
+
+    pub fn claude_native(
+        &self,
+        system: &str,
+        tools: Vec<super::mcp::Tool>,
+    ) -> ProviderResult<ClaudeSession> {
+        self.claude_session_with(system, tools)
+    }
+
+    fn claude_session_with(
+        &self,
+        system: &str,
+        tools: Vec<super::mcp::Tool>,
+    ) -> ProviderResult<ClaudeSession> {
         let program = locate(&self.bin).ok_or_else(|| {
             ProviderError::Retryable(format!("{}: {} is not installed", self.name, self.bin))
         })?;
         let room = self.room()?;
+        let (tx, lines) = std::sync::mpsc::channel();
+        let bridge = if tools.is_empty() {
+            None
+        } else {
+            Some(super::mcp::Bridge::start(tools, tx.clone()).map_err(|e| {
+                ProviderError::Retryable(format!("{}: could not offer leo's tools: {e}", self.name))
+            })?)
+        };
         let mut command = Command::new(program);
         command
-            .args(self.session_arguments(system))
+            .args(self.session_arguments_with(system, bridge.as_ref()))
             .current_dir(room.path())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -606,10 +688,9 @@ impl AgentCli {
         let stdout = child.stdout.take().ok_or_else(|| {
             ProviderError::Retryable(format!("{}: could not read {}", self.name, self.bin))
         })?;
-        let (tx, lines) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-                if tx.send(line).is_err() {
+                if tx.send(super::mcp::Incoming::Line(line)).is_err() {
                     break;
                 }
             }
@@ -622,6 +703,8 @@ impl AgentCli {
             quiet: self.quiet_limit,
             model: self.model.clone(),
             effort: self.effort.clone(),
+            native: bridge.is_some(),
+            _bridge: bridge,
             _room: room,
         })
     }
@@ -665,6 +748,7 @@ impl AgentCli {
         };
         if let Some((input, output)) = heard.tokens {
             (spent.input, spent.output, spent.estimated) = (input, output, false);
+            (spent.cached, spent.cache_written) = heard.cache;
         } else if let Some(total) = banner_tokens {
             spent.output = spent.output.min(total);
             spent.input = total - spent.output;
@@ -1154,6 +1238,56 @@ done"##,
         assert!(second.to_lowercase().contains("maple"));
     }
 
+    #[test]
+    #[ignore = "talks to the real Claude Code on this computer"]
+    fn real_claude_calls_leos_tools_natively_inside_one_turn() {
+        let cfg = config(ProviderKind::ClaudeCode, "claude", None);
+        let agent = AgentCli::new("claude_code".into(), Agent::ClaudeCode, &cfg);
+        let tools = vec![
+            super::super::mcp::Tool {
+                name: "secret_word".into(),
+                description: "Returns today's secret word.".into(),
+                schema: serde_json::json!({ "type": "object", "properties": {} }),
+            },
+            super::super::mcp::Tool {
+                name: "save_brief".into(),
+                description: "Saves a brief. Text may span lines and contain quotes.".into(),
+                schema: serde_json::json!({ "type": "object", "properties": { "text": { "type": "string" } }, "required": ["text"] }),
+            },
+        ];
+        let mut session = agent
+            .claude_native(
+                "Use the tools you are given. Answer in one short sentence.",
+                tools,
+            )
+            .unwrap();
+        assert!(session.native());
+        let mut calls: Vec<(String, serde_json::Value)> = Vec::new();
+        let started = Instant::now();
+        let (answer, spent) = session
+            .say_with(
+                "Call secret_word, then call save_brief with a three-line brief that quotes the word in double quotes, then tell me the word.",
+                &mut |_| {},
+                &mut |name, args| {
+                    calls.push((name.to_string(), args.clone()));
+                    if name == "secret_word" { "maple".into() } else { "Saved.".into() }
+                },
+                &mut || {},
+            )
+            .unwrap();
+        println!(
+            "answer: {answer}\ncalls: {calls:?}\nspent: {spent:?}\ntook: {:?}",
+            started.elapsed()
+        );
+        assert_eq!(calls.first().map(|c| c.0.as_str()), Some("secret_word"));
+        let brief = calls
+            .iter()
+            .find(|c| c.0 == "save_brief")
+            .expect("save_brief called");
+        assert!(brief.1["text"].as_str().unwrap().contains("\"maple\""));
+        assert!(answer.to_lowercase().contains("maple"));
+    }
+
     #[cfg(unix)]
     #[test]
     fn claude_code_reporting_an_error_is_a_failure_even_when_it_exits_cleanly() {
@@ -1304,6 +1438,7 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"x
         let heard = read_stream(stream.as_bytes(), &mut |_| {});
         assert_eq!(heard.model.as_deref(), Some("claude-sonnet-5-5"));
         assert_eq!(heard.tokens, Some((3052, 7)));
+        assert_eq!(heard.cache, (3000, 40));
     }
 
     #[test]

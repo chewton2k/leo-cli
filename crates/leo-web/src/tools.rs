@@ -1128,10 +1128,123 @@ fn latex_kept(json: &str) -> String {
     out
 }
 
+fn closes_string(rest: &[char]) -> bool {
+    let mut ahead = rest.iter().skip_while(|c| c.is_whitespace());
+    match ahead.next() {
+        None | Some(':' | '}' | ']') => true,
+        Some(',') => {
+            let after: String = ahead.skip_while(|c| c.is_whitespace()).take(40).collect();
+            let value_ends = |tail: &str| {
+                let tail = tail.trim_start();
+                tail.is_empty() || tail.starts_with([',', '}', ']'])
+            };
+            after.is_empty()
+                || after.starts_with(['"', '{', '[', '}', ']'])
+                || ["true", "false", "null"]
+                    .iter()
+                    .any(|w| after.strip_prefix(w).is_some_and(value_ends))
+                || {
+                    let number: String = after
+                        .chars()
+                        .take_while(|c| {
+                            c.is_ascii_digit() || matches!(c, '-' | '+' | '.' | 'e' | 'E')
+                        })
+                        .collect();
+                    !number.is_empty()
+                        && number.parse::<f64>().is_ok()
+                        && value_ends(&after[number.len()..])
+                }
+        }
+        _ => false,
+    }
+}
+
+fn repaired(json: &str) -> String {
+    let chars: Vec<char> = json.chars().collect();
+    let mut out = String::with_capacity(json.len() + 32);
+    let mut open: Vec<char> = Vec::new();
+    let mut in_string = false;
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if in_string {
+            match c {
+                '\\' => {
+                    out.push(c);
+                    if let Some(next) = chars.get(i + 1) {
+                        out.push(*next);
+                    }
+                    i += 2;
+                    continue;
+                }
+                '"' if closes_string(&chars[i + 1..]) => {
+                    in_string = false;
+                    out.push(c);
+                }
+                '"' => out.push_str("\\\""),
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
+                c => out.push(c),
+            }
+        } else {
+            match c {
+                '"' => {
+                    in_string = true;
+                    out.push(c);
+                }
+                '{' => {
+                    open.push('}');
+                    out.push(c);
+                }
+                '[' => {
+                    open.push(']');
+                    out.push(c);
+                }
+                '}' | ']' => {
+                    if open.last() == Some(&c) {
+                        open.pop();
+                    }
+                    out.push(c);
+                }
+                ',' if chars[i + 1..]
+                    .iter()
+                    .find(|c| !c.is_whitespace())
+                    .is_some_and(|c| matches!(c, '}' | ']')) => {}
+                c => out.push(c),
+            }
+        }
+        i += 1;
+    }
+    if !in_string {
+        while let Some(close) = open.pop() {
+            out.push(close);
+        }
+    }
+    out
+}
+
+pub fn why_it_failed(problem: &str) -> String {
+    let first = problem.lines().next().unwrap_or_default().trim();
+    let plain = if first.contains("not valid JSON") {
+        "The call was not valid JSON, so Felix was asked to write it again".to_string()
+    } else {
+        let mut chars = first.chars();
+        chars.next().map_or_else(String::new, |c| {
+            c.to_uppercase().collect::<String>() + chars.as_str()
+        })
+    };
+    plain.chars().take(160).collect()
+}
+
 fn call_from(json: &str) -> Result<Call, String> {
     let json = latex_kept(json);
-    let value: serde_json::Value = serde_json::from_str(json.trim())
-        .map_err(|e| format!("that tool call is not valid JSON ({e})"))?;
+    let value: serde_json::Value = match serde_json::from_str(json.trim()) {
+        Ok(value) => value,
+        Err(e) => serde_json::from_str(repaired(json.trim()).as_str())
+            .map_err(|_| format!("that tool call is not valid JSON ({e})"))?,
+    };
     let object = value.as_object().ok_or(
         "a tool call is one JSON object, like {\"name\": \"open_note\", \"note\": \"n2\"}",
     )?;
@@ -2305,6 +2418,27 @@ mod tests {
         find_call(&format!("<tool>{json}</tool>"))
             .expect("a call")
             .expect("a valid call")
+    }
+
+    #[test]
+    fn a_long_hand_written_call_with_raw_lines_and_quotes_is_still_read() {
+        let call = call_of(
+            "{\"name\": \"interview_challenge\", \"title\": \"Logs pipeline\", \"question\": \"Design a \"fleet-wide\" pipeline.\nState your \"numbers\", then the trade-offs.\n\tKeep it simple.\", \"minutes\": 45,}",
+        );
+        assert_eq!(call.name, "interview_challenge");
+        assert_eq!(
+            call.text("question"),
+            "Design a \"fleet-wide\" pipeline.\nState your \"numbers\", then the trade-offs.\n\tKeep it simple."
+        );
+        assert_eq!(call.args["minutes"], 45);
+        let short = call_of("{\"name\": \"open_note\", \"note\": \"n2\"");
+        assert_eq!(short.text("note"), "n2");
+        let quoted = call_of(
+            r#"{"name": "add_task", "title": "Say "yes", true story", "date": "2026-10-14"}"#,
+        );
+        assert_eq!(quoted.text("title"), "Say \"yes\", true story");
+        assert_eq!(quoted.text("date"), "2026-10-14");
+        assert!(find_call("<tool>{\"name\": </tool>").unwrap().is_err());
     }
 
     #[test]

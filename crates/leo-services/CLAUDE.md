@@ -233,6 +233,26 @@ Transcription is unchanged: Parakeet's 20-25 s cuts are for memory, cloud
 speech is only split past a provider's `max_bytes`, and 5-minute segments are
 transcribed while recording.
 
+### Claude Code gets leo's tools natively (`ai/provider/mcp.rs`)
+
+When Felix offers tools, `session::open` starts Claude Code with
+`AgentCli::claude_native`: a `Bridge` (an MCP server over HTTP on
+127.0.0.1, one per answer, its address carrying a random 64-hex secret;
+requests with an `Origin` header or another path get 404) lists the tools
+with their JSON schemas and forwards each `tools/call` to the running turn
+(`Incoming::Call` on the same channel as Claude's stdout lines), where
+`ClaudeSession::say_with` runs it through `Turn.call`. Claude then chains
+calls inside one turn like Codex instead of ending a turn per call, and its
+arguments are structured, so long briefs with quotes and line breaks cannot
+break a call. `--safe-mode` turns MCP off, so native sessions isolate with
+`--setting-sources "" --disable-slash-commands --strict-mcp-config` (no user
+settings, hooks, plugins, skills or other MCP servers; safe mode still listed
+the user's plugins) and allow only `WebSearch mcp__leo`. If the bridge cannot
+start, the text protocol is used. Cache reads and writes from Claude Code's
+`result.usage` are recorded (`Heard.cache`). Measured with Claude Code
+2.1.295 (`real_claude_calls_leos_tools_natively_inside_one_turn`, ignored):
+two calls and the answer in one turn, about 5 s.
+
 ### What the agent CLIs may use
 
 Web search is allowed (the user wants it): Claude Code gets `--tools WebSearch

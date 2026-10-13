@@ -162,7 +162,13 @@ seer, meaning, web, room).
 - Tools: a text protocol (`<tool>{…}</tool>`) so every provider works, plus
   native sessions where available; generated from `tools::SPECS` (`manual()`,
   every call `check`ed; mistakes answered with the spec). At most
-  `MOST_STEPS` (12) steps and `MOST_PROPOSALS` (8) changes. Text written
+  `MOST_STEPS` (12) steps and `MOST_PROPOSALS` (8) changes. Codex and Claude
+  Code (through leo-services' MCP bridge) and the APIs get the tools natively;
+  the text protocol is the fallback. A hand-written call that is not valid
+  JSON is repaired when it can be (`tools::repaired`: raw line breaks, quotes
+  that do not end a string, trailing commas, missing closing braces) before it
+  is refused; a refused call shows as "Fixed a tool call" with the reason
+  (`why_it_failed`) when expanded. Text written
   before a tool call is kept (a paragraph break, not a restart). A broken
   agent session sends `{"reset"}` and is redone through the text protocol
   (`FALLBACK_TRIES`). Web tools only for AIs without their own web

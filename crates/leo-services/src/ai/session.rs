@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 use crate::ai::provider::agent_cli::{Agent, AgentCli, ClaudeSession};
 use crate::ai::provider::anthropic::{self, Anthropic};
 use crate::ai::provider::codex_app::{tool_specs, CodexThread, CodexTurn};
+use crate::ai::provider::mcp;
 use crate::ai::provider::openai::{self, OpenAiChat};
 use crate::ai::provider::Spent;
 use crate::ai::provider::{ChatProvider, Sink};
@@ -47,7 +48,7 @@ struct ClaudeTalk {
 
 impl Session for ClaudeTalk {
     fn native(&self) -> bool {
-        false
+        self.session.native()
     }
 
     fn say(&mut self, text: &str, turn: Turn<'_>) -> Result<(String, Option<Answered>)> {
@@ -58,7 +59,7 @@ impl Session for ClaudeTalk {
         };
         let (answer, spent) = self
             .session
-            .say(&message, turn.sink)
+            .say_with(&message, turn.sink, turn.call, turn.restart)
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         Ok((answer, Some(answered(&self.config, &self.provider, spent))))
     }
@@ -325,7 +326,22 @@ pub fn open(
                 if !agent.available() {
                     continue;
                 }
-                let session = agent.claude_session(systems.text).ok()?;
+                let offered: Vec<mcp::Tool> = tools
+                    .iter()
+                    .map(|t| mcp::Tool {
+                        name: t.name.clone(),
+                        description: t.description.clone(),
+                        schema: t.schema.clone(),
+                    })
+                    .collect();
+                let session = if offered.is_empty() {
+                    agent.claude_session(systems.text).ok()?
+                } else {
+                    agent
+                        .claude_native(systems.native, offered)
+                        .or_else(|_| agent.claude_session(systems.text))
+                        .ok()?
+                };
                 return Some(Box::new(ClaudeTalk {
                     session,
                     provider: name.clone(),
