@@ -4184,7 +4184,8 @@ test('coding typing pairs brackets, preserves scroll and Undo across every suppo
 });
 
 test('coding colors and indentation preserve input, Undo, saves and scroll in every common language', async ({ page }) => {
-  const samples = [['C++', 'int solve() {\nreturn 2;\n}'], ['Rust', 'fn solve() -> i32 {\n2\n}'], ['Java', 'class Solution {\nint solve() {\nreturn 2;\n}\n}'], ['Python', 'def solve():\n  return 2'], ['SQL', 'SELECT name\nFROM users\nWHERE id = 2;'], ['TypeScript', 'function solve(value: number): number {\nreturn value + 2;\n}'], ['JavaScript', 'function solve(value) {\nreturn value + 2;\n}'], ['Go', 'package main\nfunc solve() int {\nreturn 2\n}']];
+  await page.emulateMedia({ colorScheme: 'light' });
+  const samples = [['C++', 'int solve() {\nreturn 2;\n}', 3], ['Rust', 'fn solve() -> i32 {\n2\n}', 3], ['Java', 'class Solution {\nint solve() {\nreturn 2;\n}\n}', 3], ['Python', 'def solve():\n  return 2', 2], ['SQL', 'SELECT name\nFROM users\nWHERE id = 2;', 3], ['TypeScript', 'function solve(value: number): number {\nreturn value + 2;\n}', 3], ['JavaScript', 'function solve(value) {\nreturn value + 2;\n}', 3], ['Go', 'package main\nfunc solve() int {\nreturn 2\n}', 3]];
   const id = 'coding-colors-01';
   let item;
   let requests = 0;
@@ -4197,7 +4198,7 @@ test('coding colors and indentation preserve input, Undo, saves and scroll in ev
     await route.fulfill({ json: item });
   });
   await page.route('**/api/chat', async (route) => { requests++; await route.fulfill({ status: 500, json: { error: 'No model is needed here.' } }); });
-  for (const [index, [language, code]] of samples.entries()) {
+  for (const [index, [language, code, tabWidth]] of samples.entries()) {
     item = { id, revision: 1, framework: { title: 'Coding colors', track: 'coding', company: '', role: '', language, style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge: { id: `challenge-colors-${index}`, title: 'Solve the problem', question: 'Solve it.', minutes: 25, skills: ['Approach'], origin: 'generated', sources: [], coding: { language, starter: code, difficulty: 'easy', examples: [{ input: '2', output: '2' }], constraints: ['Be clear.'] } }, workspace: { answer: code, reasoning: '', board: [] }, attempts: [], schedule: [] };
     await page.goto(`/#/interviews/${id}`);
     if (index) await page.reload();
@@ -4213,10 +4214,11 @@ test('coding colors and indentation preserve input, Undo, saves and scroll in ev
     await area.focus();
     await area.evaluate(el => el.setSelectionRange(el.value.length, el.value.length));
     await area.press('Tab');
-    await expect(area).toHaveValue(code + '    ');
+    const tab = ' '.repeat(tabWidth);
+    await expect(area).toHaveValue(code + tab);
     await expect(area).toBeFocused();
-    expect(await area.evaluate(el => [el.selectionStart, el.selectionEnd])).toEqual([code.length + 4, code.length + 4]);
-    await expect.poll(() => item.workspace.answer).toBe(code + '    ');
+    expect(await area.evaluate(el => [el.selectionStart, el.selectionEnd])).toEqual([code.length + tabWidth, code.length + tabWidth]);
+    await expect.poll(() => item.workspace.answer).toBe(code + tab);
     await area.press('ControlOrMeta+z');
     await expect(area).toHaveValue(code);
     await expect.poll(() => item.workspace.answer).toBe(code);
