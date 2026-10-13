@@ -388,3 +388,19 @@ test('a study session closes ideas on a right answer or two misses, and finishes
   C.scoreSession(capped, 1, true, false);
   assert.equal(capped.state, 'finishing');
 });
+
+
+test('tool activity follows streamed text without dropping text or splitting Unicode', () => {
+  const text = 'Read first.\n\nReview next.\n\nDone.';
+  const parts = C.timeline(text, [{ text: 'Read attempt', at: 13 }, { text: 'Read progress', at: 27 }, { text: 'Saved review', at: 27 }]);
+  assert.equal(parts.map((p) => p.text || '').join(''), text);
+  assert.deepEqual(parts.map((p) => p.text || p.steps.map((s) => s.text)), ['Read first.\n\n', ['Read attempt'], 'Review next.\n\n', ['Read progress', 'Saved review'], 'Done.']);
+  const emoji = C.timeline('答😀え', [{ text: 'Looked', at: 2 }]);
+  assert.equal(emoji[0].text, '答😀');
+  assert.equal(emoji[2].text, 'え');
+  const malformed = C.timeline('answer', [null, {}, { text: 'Read', at: -4, found: 'bad' }, { text: 'Done', at: 999 }, { text: 'Later', at: 1 }]);
+  assert.equal(malformed.map((p) => p.text || '').join(''), 'answer');
+  assert.equal(malformed[0].steps[0].found.length, 0);
+  assert.equal(C.timeline('answer', Array(100).fill('Read')).flatMap((p) => p.steps || []).length, 64);
+  assert.deepEqual(C.timeline('old answer', ['Legacy step']).map((p) => p.text || p.steps[0].text), ['Legacy step', 'old answer']);
+});

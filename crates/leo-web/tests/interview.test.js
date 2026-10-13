@@ -113,3 +113,10 @@ test('code indentation preserves literal contents and maps the selection without
   }
   for (const [text, from, to, language] of [['x'.repeat(32001), 0, 0, 'Java'], ['x', -1, 0, 'Go'], ['x', 1, 2, 'SQL'], ['x', 0, 0, 'unknown']]) assert.equal(C.indent(text, from, to, language), null);
 });
+
+test('Python deletes one indentation stop on blank lines while ordinary deletion stays native', () => {
+  for (const [value, at, key, expected, caret] of [['    ', 4, 'Backspace', '', 0], ['        ', 8, 'Backspace', '    ', 4], ['      ', 6, 'Backspace', '    ', 4], ['  ', 2, 'Backspace', '', 0], ['\t', 1, 'Backspace', '', 0], ['    \n        ', 13, 'Backspace', '    \n    ', 9], ['        ', 0, 'Delete', '    ', 0], ['      ', 2, 'Delete', '    ', 2]]) {
+    assert.deepEqual(I.codeEdit(value, at, at, key, false, 'Python'), { value: expected, from: caret, to: caret });
+  }
+  for (const [value, from, to, key, language] of [['', 0, 0, 'Backspace', 'Python'], ['    return 1', 4, 4, 'Backspace', 'Python'], ['    ', 0, 4, 'Backspace', 'Python'], ['    ', 4, 4, 'Backspace', 'Java'], ['    ', 0, 0, 'Delete', 'SQL']]) assert.equal(I.codeEdit(value, from, to, key, false, language), null);
+});

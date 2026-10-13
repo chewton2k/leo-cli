@@ -8,6 +8,7 @@ use crate::{chats, db};
 
 pub const MOST_PLANS: usize = 100;
 pub const MOST_ATTEMPTS: usize = 100;
+pub const MOST_PROBLEMS: usize = 128;
 pub const BODY_BYTES: usize = 1_000_000;
 pub const MOST_ANSWER: usize = 32_000;
 
@@ -143,6 +144,12 @@ pub struct Slot {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Problem {
+    pub challenge: Challenge,
+    pub workspace: Workspace,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Interview {
     pub id: String,
     pub revision: u64,
@@ -152,6 +159,8 @@ pub struct Interview {
     pub workspace: Workspace,
     pub attempts: Vec<Attempt>,
     pub schedule: Vec<Slot>,
+    #[serde(default)]
+    pub problems: Vec<Problem>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -171,6 +180,10 @@ pub enum Change {
         challenge: String,
         attempt: String,
         workspace: Workspace,
+    },
+    Select {
+        revision: u64,
+        challenge: String,
     },
     Schedule {
         revision: u64,
@@ -342,6 +355,75 @@ fn validate_schedule(slots: &[Slot], framework: &Framework) -> Result<(), Error>
     Ok(())
 }
 
+fn remember(item: &mut Interview) -> Result<(), Error> {
+    if let Some(challenge) = &item.challenge {
+        let problem = Problem {
+            challenge: challenge.clone(),
+            workspace: item.workspace.clone(),
+        };
+        if let Some(old) = item
+            .problems
+            .iter_mut()
+            .find(|p| p.challenge.id == challenge.id)
+        {
+            *old = problem;
+        } else {
+            require(
+                item.problems.len() < MOST_PROBLEMS,
+                "This practice is full. Start another practice to add more.",
+            )?;
+            item.problems.push(problem);
+        }
+    }
+    Ok(())
+}
+
+fn legacy_problems(item: &mut Interview) -> Result<(), Error> {
+    if !item.problems.is_empty() {
+        return Ok(());
+    }
+    for attempt in &item.attempts {
+        let problem = Problem {
+            challenge: attempt.challenge.clone(),
+            workspace: attempt.workspace.clone(),
+        };
+        if let Some(old) = item
+            .problems
+            .iter_mut()
+            .find(|p| p.challenge.id == attempt.challenge.id)
+        {
+            *old = problem;
+        } else {
+            require(
+                item.problems.len() < MOST_PROBLEMS,
+                "This practice is full. Start another practice to add more.",
+            )?;
+            item.problems.push(problem);
+        }
+    }
+    if item.workspace.empty() {
+        if let Some(previous) = item
+            .problems
+            .iter()
+            .find(|p| Some(&p.challenge) == item.challenge.as_ref())
+        {
+            item.workspace = previous.workspace.clone();
+        }
+    }
+    remember(item)
+}
+
+fn select(item: &mut Interview, challenge: &str) -> Result<(), Error> {
+    let problem = item
+        .problems
+        .iter()
+        .find(|p| p.challenge.id == challenge)
+        .ok_or_else(|| Error::Invalid("Choose a saved problem from this practice.".into()))?;
+    item.challenge = Some(problem.challenge.clone());
+    item.workspace = problem.workspace.clone();
+    Ok(())
+}
+
 pub fn load(path: &Path, id: &str) -> Result<Interview, Error> {
     require(chats::valid_id(id), "Choose a valid interview practice.")?;
     let data: Option<String> = db::for_chats(path)
@@ -352,7 +434,10 @@ pub fn load(path: &Path, id: &str) -> Result<Interview, Error> {
             .optional()
         })
         .map_err(|_| Error::Storage)?;
-    serde_json::from_str(&data.ok_or(Error::Missing)?).map_err(|_| Error::Storage)
+    let mut item: Interview =
+        serde_json::from_str(&data.ok_or(Error::Missing)?).map_err(|_| Error::Storage)?;
+    legacy_problems(&mut item)?;
+    Ok(item)
 }
 
 pub fn list(path: &Path) -> Result<Vec<serde_json::Value>, Error> {
@@ -407,7 +492,10 @@ pub fn mutate(
             problem = Some(Error::Conflict);
             return Ok(());
         }
-        if let Err(why) = work(&mut item) {
+        if let Err(why) = legacy_problems(&mut item)
+            .and_then(|()| work(&mut item))
+            .and_then(|()| remember(&mut item))
+        {
             problem = Some(why);
             return Ok(());
         }
@@ -459,6 +547,7 @@ pub fn configure(
         workspace: Workspace::default(),
         attempts: Vec::new(),
         schedule: Vec::new(),
+        problems: Vec::new(),
     };
     let data = serde_json::to_string(&item).map_err(|_| Error::Storage)?;
     let mut conflict = false;
@@ -505,11 +594,21 @@ pub fn change(path: &Path, id: &str, change: Change) -> Result<Interview, Error>
         } => {
             workspace.validate()?;
             mutate(path, id, Some(revision), |item| {
-                require(
-                    item.challenge.as_ref().is_some_and(|c| c.id == challenge),
-                    "The challenge changed. Reload before saving your answer.",
-                )?;
-                item.workspace = workspace;
+                if item.challenge.as_ref().is_some_and(|c| c.id == challenge) {
+                    item.workspace = workspace;
+                } else {
+                    let problem = item
+                        .problems
+                        .iter_mut()
+                        .find(|p| p.challenge.id == challenge)
+                        .ok_or_else(|| {
+                            Error::Invalid(
+                                "The problem is no longer here. Your draft stays on this device."
+                                    .into(),
+                            )
+                        })?;
+                    problem.workspace = workspace;
+                }
                 Ok(())
             })
         }
@@ -546,14 +645,18 @@ pub fn change(path: &Path, id: &str, change: Change) -> Result<Interview, Error>
                 item.attempts.push(Attempt {
                     id: attempt,
                     challenge: current.clone(),
-                    workspace,
+                    workspace: workspace.clone(),
                     at: Utc::now().to_rfc3339(),
                     feedback: None,
                 });
-                item.workspace = Workspace::default();
+                item.workspace = workspace;
                 Ok(())
             })
         }
+        Change::Select {
+            revision,
+            challenge,
+        } => mutate(path, id, Some(revision), |item| select(item, &challenge)),
         Change::Schedule { revision, schedule } => mutate(path, id, Some(revision), |item| {
             validate_schedule(&schedule, &item.framework)?;
             item.schedule = schedule;
@@ -568,12 +671,21 @@ pub fn set_challenge(path: &Path, id: &str, challenge: Challenge) -> Result<Inte
         if item.challenge.as_ref() == Some(&challenge) {
             return Ok(());
         }
+        if let Some(previous) = item
+            .problems
+            .iter()
+            .find(|p| p.challenge.id == challenge.id)
+        {
+            require(
+                previous.challenge == challenge,
+                "Use a new ID for a new problem; saved problems cannot be overwritten.",
+            )?;
+            return select(item, &challenge.id);
+        }
         require(
-            !item.attempts.iter().any(|a| a.challenge.id == challenge.id)
-                && item.challenge.as_ref().is_none_or(|c| c.id != challenge.id),
-            "Use a new ID for a new challenge.",
+            item.problems.len() < MOST_PROBLEMS,
+            "This practice is full. Start another practice to add more.",
         )?;
-        require(item.workspace.untouched(item.challenge.as_ref()), "There is an unfinished answer. Ask the user to submit or clear their workspace before replacing the challenge.")?;
         item.workspace = Workspace {
             answer: challenge
                 .coding
@@ -585,6 +697,10 @@ pub fn set_challenge(path: &Path, id: &str, challenge: Challenge) -> Result<Inte
         item.challenge = Some(challenge);
         Ok(())
     })
+}
+
+pub fn select_problem(path: &Path, id: &str, challenge: &str) -> Result<Interview, Error> {
+    mutate(path, id, None, |item| select(item, challenge))
 }
 
 pub fn assess(path: &Path, id: &str, feedback: Feedback) -> Result<Interview, Error> {
@@ -649,7 +765,7 @@ pub fn context(item: &Interview) -> String {
         let values: Vec<_> = item.attempts.iter().filter_map(|a| a.feedback.as_ref()).flat_map(|f| &f.scores).filter(|s| &s.skill == skill).map(|s| s.value).collect();
         serde_json::json!({"skill":skill,"observations":values.len(),"latest_scores":values.iter().rev().take(5).collect::<Vec<_>>()})
     }).collect();
-    let data = serde_json::json!({"id":item.id,"revision":item.revision,"framework":item.framework,"challenge":item.challenge,"draft_answer":crate::chat::clip(&item.workspace.answer, 8000),"draft_reasoning":item.workspace.reasoning,"board":board_material(&item.workspace),"latest_attempts":attempts,"assessed_scores":scores,"schedule":item.schedule});
+    let data = serde_json::json!({"id":item.id,"revision":item.revision,"framework":item.framework,"challenge":item.challenge,"draft_answer":crate::chat::clip(&item.workspace.answer, 8000),"draft_reasoning":item.workspace.reasoning,"board":board_material(&item.workspace),"latest_attempts":attempts,"assessed_scores":scores,"schedule":item.schedule,"problems":item.problems.iter().enumerate().map(|(i,p)| serde_json::json!({"number":i+1,"id":p.challenge.id,"title":p.challenge.title,"submitted":item.attempts.iter().any(|a|a.challenge.id==p.challenge.id)})).collect::<Vec<_>>()});
     format!("<interview_material>\n{}\n</interview_material>\nFor full submitted work use interview_attempt with its ID before assessing it.\n", data)
 }
 
@@ -731,7 +847,7 @@ mod tests {
             ),
             Err(Error::Conflict)
         ));
-        assert!(set_challenge(path, id, challenge("challenge-test-02")).is_err());
+        assert!(set_challenge(path, id, challenge("challenge-test-02")).is_ok());
         let duplicate = set_challenge(path, id, challenge("challenge-test-01")).unwrap();
         assert_eq!(duplicate.workspace, saved.workspace);
         let submit = || Change::Submit {
@@ -741,7 +857,7 @@ mod tests {
             workspace: workspace(),
         };
         let submitted = change(path, id, submit()).unwrap();
-        assert!(submitted.workspace.empty());
+        assert_eq!(submitted.workspace, workspace());
         let retried = change(path, id, submit()).unwrap();
         assert_eq!(retried.attempts.len(), 1);
         assert_eq!(retried.attempts[0].workspace.answer, "答え: use a hash map");
@@ -1019,12 +1135,13 @@ mod tests {
         let repeat =
             set_challenge(dir.path(), id, coding_challenge("challenge-starter-02")).unwrap();
         assert_eq!(repeat.workspace, work);
-        assert!(set_challenge(dir.path(), id, coding_challenge("challenge-starter-03")).is_err());
+        assert!(set_challenge(dir.path(), id, coding_challenge("challenge-starter-03")).is_ok());
+        select_problem(dir.path(), id, "challenge-starter-02").unwrap();
         let submitted = change(
             dir.path(),
             id,
             Change::Submit {
-                revision: repeat.revision,
+                revision: load(dir.path(), id).unwrap().revision,
                 challenge: "challenge-starter-02".into(),
                 attempt: "attempt-starter-02".into(),
                 workspace: work,
@@ -1050,6 +1167,128 @@ mod tests {
             serde_json::from_value(serde_json::json!({"answer":"old draft","board":[]})).unwrap();
         assert_eq!(legacy.reasoning, "");
         assert_eq!(legacy.answer, "old draft");
+    }
+
+    #[test]
+    fn new_problems_preserve_unsubmitted_code_reasoning_and_boards() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = "interview-problems-01";
+        configure(dir.path(), id, 0, framework()).unwrap();
+        let first =
+            set_challenge(dir.path(), id, coding_challenge("challenge-problems-01")).unwrap();
+        let work = workspace();
+        change(
+            dir.path(),
+            id,
+            Change::Workspace {
+                revision: first.revision,
+                challenge: "challenge-problems-01".into(),
+                workspace: work.clone(),
+            },
+        )
+        .unwrap();
+        let next =
+            set_challenge(dir.path(), id, coding_challenge("challenge-problems-02")).unwrap();
+        let data = serde_json::to_value(load(dir.path(), id).unwrap()).unwrap();
+        assert_eq!(data["problems"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            data["problems"][0]["workspace"],
+            serde_json::to_value(work).unwrap()
+        );
+        assert_eq!(next.challenge.unwrap().id, "challenge-problems-02");
+        let restored = select_problem(dir.path(), id, "challenge-problems-01").unwrap();
+        assert_eq!(restored.workspace, workspace());
+        assert_eq!(restored.problems.len(), 2);
+        let old_revision = restored.revision;
+        let duplicate =
+            set_challenge(dir.path(), id, coding_challenge("challenge-problems-01")).unwrap();
+        assert_eq!(duplicate.workspace, workspace());
+        assert_eq!(duplicate.problems.len(), 2);
+        assert!(matches!(
+            change(
+                dir.path(),
+                id,
+                Change::Select {
+                    revision: old_revision,
+                    challenge: "challenge-problems-02".into()
+                }
+            ),
+            Err(Error::Conflict)
+        ));
+        assert!(select_problem(dir.path(), id, "challenge-missing-01").is_err());
+        let mut collision = coding_challenge("challenge-problems-01");
+        collision.title = "Replacement".into();
+        assert!(set_challenge(dir.path(), id, collision).is_err());
+        let item = load(dir.path(), id).unwrap();
+        assert_eq!(item.workspace, workspace());
+        assert_eq!(item.problems.len(), 2);
+    }
+
+    #[test]
+    fn problem_history_is_bounded_and_legacy_attempts_remain_reopenable() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = "interview-history-01";
+        configure(dir.path(), id, 0, framework()).unwrap();
+        for n in 0..MOST_PROBLEMS {
+            set_challenge(
+                dir.path(),
+                id,
+                coding_challenge(&format!("challenge-history-{n:03}")),
+            )
+            .unwrap();
+        }
+        assert!(set_challenge(
+            dir.path(),
+            id,
+            coding_challenge("challenge-history-overflow")
+        )
+        .is_err());
+        assert_eq!(load(dir.path(), id).unwrap().problems.len(), MOST_PROBLEMS);
+        select_problem(dir.path(), id, "challenge-history-000").unwrap();
+        let mut item = load(dir.path(), id).unwrap();
+        item.problems.clear();
+        item.attempts = vec![Attempt {
+            id: "attempt-history-01".into(),
+            challenge: coding_challenge("challenge-history-001"),
+            workspace: workspace(),
+            at: Utc::now().to_rfc3339(),
+            feedback: None,
+        }];
+        item.workspace = Workspace::default();
+        item.challenge = Some(item.attempts[0].challenge.clone());
+        let mut data = serde_json::to_value(item).unwrap();
+        data.as_object_mut().unwrap().remove("problems");
+        db::for_chats(dir.path())
+            .with(|c| {
+                c.execute(
+                    "UPDATE interviews SET data = ?1 WHERE id = ?2",
+                    rusqlite::params![data.to_string(), id],
+                )
+            })
+            .unwrap();
+        let restored = load(dir.path(), id).unwrap();
+        assert_eq!(restored.problems.len(), 1);
+        assert_eq!(restored.workspace, workspace());
+        let current =
+            set_challenge(dir.path(), id, coding_challenge("challenge-history-002")).unwrap();
+        assert_eq!(current.problems.len(), 2);
+        let previous = select_problem(dir.path(), id, "challenge-history-001").unwrap();
+        assert_eq!(previous.workspace, workspace());
+        let saved = change(
+            dir.path(),
+            id,
+            Change::Workspace {
+                revision: previous.revision,
+                challenge: "challenge-history-002".into(),
+                workspace: workspace(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            saved.challenge.as_ref().unwrap().id,
+            "challenge-history-001"
+        );
+        assert_eq!(saved.problems[1].workspace, workspace());
     }
 
     #[test]

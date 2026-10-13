@@ -25,6 +25,7 @@ function loadInterviewCode() {
 async function showInterviews(id = '') {
   const mine = ++seq;
   state = { view: 'interviews', dir: '' };
+  interviewPage?.codeResize?.disconnect();
   interviewPage = null;
   if (interviewStart && interviewStart.id !== id) interviewStart = null;
   chrome({ showBack: Boolean(id) });
@@ -72,19 +73,22 @@ function interviewHere(session) {
 
 function drawInterview(session) {
   if (!interviewHere(session)) return;
+  session.codeResize?.disconnect();
   const active = document.activeElement;
   const focus = active && app.contains(active) && (active instanceof HTMLTextAreaElement || (active instanceof HTMLInputElement && active.type === 'text')) ? { id: active.id, from: active.selectionStart, to: active.selectionEnd, scroll: active.scrollTop } : null;
   const item = session.item;
   const coding = item.framework.track === 'coding';
   const tabs = coding ? [['code', 'Code'], ['write', 'Approach'], ['board', 'Whiteboard']] : [['write', 'Write'], ['board', 'Whiteboard']];
   app.innerHTML = `<div class="interview-home${coding ? ' interview-coding' : ''}"><div class="interview-heading"><div><p class="eyebrow">${esc(interviews.preset(item.framework.track).label)} · ${item.framework.style === 'mock' ? 'Mock interview' : 'Coach'}</p><h1>${esc(item.framework.title)}</h1><p class="hint">${esc([item.framework.company || 'General practice', item.framework.role].filter(Boolean).join(' · '))}</p></div><div class="buttons"><button class="btn sm" data-interview="configure">Preferences</button><button class="btn sm" data-interview="chat">Talk with Felix</button></div></div>
+    <div id="interview-problems" class="interview-problems" role="group" aria-label="Practice problems"></div>
     <div class="interview-solve"><section id="interview-challenge" class="set-card"></section>
     ${item.challenge ? `<section class="set-card interview-workspace"><div class="interview-toolbar"><div class="library-views" role="tablist" aria-label="Your answer workspace">${tabs.map(([id, label]) => `<button class="btn sm plain${session.tab === id ? ' on' : ''}" role="tab" aria-selected="${session.tab === id}" data-interview="tab" data-tab="${id}">${label}</button>`).join('')}</div><span id="interview-save" class="hint" role="status"></span></div>
-    <div id="interview-editor"${session.tab !== (coding ? 'code' : 'write') ? ' hidden' : ''}><div class="interview-toolbar"><label class="interview-label" for="interview-answer">${coding ? esc(item.challenge.coding?.language || item.framework.language || 'Code') : 'Your answer'}</label>${coding ? '<button class="btn sm plain" data-interview="indent-code" title="Format indentation without changing your code" disabled>Indent code</button>' : ''}</div><div class="interview-code-shell${coding ? ' numbered' : ''}">${coding ? '<pre id="interview-lines" aria-hidden="true"></pre>' : ''}<div class="interview-code-pane">${coding ? '<pre id="interview-colors" aria-hidden="true"></pre>' : ''}<textarea id="interview-answer" class="set-input${coding ? ' interview-code' : ''}" maxlength="32000" spellcheck="${!coding}" autocapitalize="off" autocomplete="off" aria-label="${coding ? 'Code editor' : 'Your answer'}" placeholder="${coding ? 'Write your implementation here…' : 'Clarify the problem, outline an approach, and work through it…'}">${esc(session.draft.answer)}</textarea></div></div></div>
+    <div id="interview-editor"${session.tab !== (coding ? 'code' : 'write') ? ' hidden' : ''}><div class="interview-toolbar"><label class="interview-label" for="interview-answer">${coding ? esc(item.challenge.coding?.language || item.framework.language || 'Code') : 'Your answer'}</label></div><div class="interview-code-shell${coding ? ' numbered' : ''}">${coding ? '<pre id="interview-lines" aria-hidden="true"></pre>' : ''}<div class="interview-code-pane">${coding ? '<pre id="interview-colors" aria-hidden="true"></pre>' : ''}<textarea id="interview-answer" class="set-input${coding ? ' interview-code' : ''}" maxlength="32000" spellcheck="${!coding}" autocapitalize="off" autocomplete="off" aria-label="${coding ? 'Code editor' : 'Your answer'}" placeholder="${coding ? 'Write your implementation here…' : 'Clarify the problem, outline an approach, and work through it…'}">${esc(session.draft.answer)}</textarea></div></div></div>
     ${coding ? `<div id="interview-reasoning-editor"${session.tab !== 'write' ? ' hidden' : ''}><label class="interview-label" for="interview-reasoning">Your approach</label><p class="hint">Explain your idea, complexity, and edge cases. Your code stays in the Code tab.</p><textarea id="interview-reasoning" class="set-input" maxlength="8000" placeholder="What’s your approach?">${esc(session.draft.reasoning)}</textarea></div>` : ''}
     <div id="interview-whiteboard"${session.tab !== 'board' ? ' hidden' : ''}><div class="interview-toolbar"><div class="pick-chips" aria-label="Drawing tools">${[['pen', 'Pen'], ['box', 'Box'], ['arrow', 'Arrow'], ['text', 'Text']].map(([id, label]) => `<button class="pick-chip${session.tool === id ? ' on' : ''}" aria-pressed="${session.tool === id}" data-interview="tool" data-tool="${id}">${label}</button>`).join('')}</div><div class="buttons"><button class="btn sm" data-interview="undo-board">Undo</button><button class="btn sm" data-interview="clear-board">Clear</button></div></div><label class="interview-label" for="interview-board-label">Board label</label><input class="set-input" id="interview-board-label" value="${esc(session.label || '')}" maxlength="300" placeholder="Type a label, then tap the board to place it"><button class="btn sm" data-interview="label-board">Add label to board</button><div id="interview-board" tabindex="0" role="group" aria-label="Whiteboard. Draw with a pointer; add text with the Add label button."></div><p class="hint">Draw to explain your thinking. Felix can review a snapshot when you submit.</p></div>
     <div id="interview-save-error" class="set-note warn" hidden></div><div class="interview-toolbar interview-submit"><p class="hint">${coding ? 'Felix reviews your code and reasoning; examples are not executed.' : 'Work at your pace. Submit when you’re ready for feedback.'}</p><div class="buttons"><button class="icon-btn" data-interview="clear-workspace" aria-label="Clear your draft" title="Clear your draft">${ICON.trash}</button>${coding && item.challenge.coding ? '<button class="btn sm" data-interview="reset-code">Reset code</button>' : ''}<button class="btn sm" data-interview="hint">Hint</button><button class="btn sm primary" data-interview="submit">Submit for review</button></div></div></section>` : ''}</div>
-    <details class="interview-details"${item.attempts.length ? ' open' : ''}><summary>Progress & previous attempts</summary><section id="interview-progress"></section><section id="interview-attempts"></section></details><details class="interview-details"${item.schedule.length ? ' open' : ''}><summary>Practice schedule</summary><section id="interview-schedule"></section></details></div>`;
+    <details class="interview-details source-more"${item.attempts.length ? ' open' : ''}><summary>${ICON.chevron}<span>Progress & previous attempts</span></summary><section id="interview-progress"></section><section id="interview-attempts"></section></details><details class="interview-details source-more"${item.schedule.length ? ' open' : ''}><summary>${ICON.chevron}<span>Practice schedule</span></summary><section id="interview-schedule"></section></details></div>`;
+  drawInterviewProblems(session);
   drawInterviewChallenge(session);
   drawInterviewBoard(session);
   drawInterviewStatus(session);
@@ -95,19 +99,22 @@ function drawInterview(session) {
     answer.addEventListener('input', (e) => { session.draft.answer = e.target.value; interviewChanged(session); drawInterviewLines(session); });
     answer.addEventListener('scroll', syncInterviewCodeScroll);
     answer.addEventListener('keydown', (e) => {
-      if (!coding || e.isComposing || !['Tab', 'Enter'].includes(e.key) || e.ctrlKey || e.metaKey || e.altKey) return;
-      const edit = interviews.codeEdit(answer.value, answer.selectionStart, answer.selectionEnd, e.key, e.shiftKey);
+      if (!coding || answer.readOnly || e.isComposing || !['Tab', 'Enter', 'Backspace', 'Delete'].includes(e.key) || e.ctrlKey || e.metaKey || e.altKey) return;
+      const edit = interviews.codeEdit(answer.value, answer.selectionStart, answer.selectionEnd, e.key, e.shiftKey, session.item.challenge?.coding?.language || session.item.framework.language);
       if (!edit) { if (e.key === 'Tab') e.preventDefault(); return; }
       e.preventDefault();
-      answer.setRangeText(edit.value, 0, answer.value.length, 'preserve');
+      answer.setSelectionRange(0, answer.value.length);
+      if (!document.execCommand('insertText', false, edit.value)) answer.setRangeText(edit.value, 0, answer.value.length, 'preserve');
       answer.setSelectionRange(edit.from, edit.to);
-      answer.dispatchEvent(new Event('input', { bubbles: true }));
+      if (session.draft.answer !== answer.value) answer.dispatchEvent(new Event('input', { bubbles: true }));
     });
+    if (coding) {
+      session.codeResize = new ResizeObserver(() => syncInterviewCodeScroll());
+      session.codeResize.observe(answer);
+    }
     drawInterviewLines(session);
     if (coding) loadInterviewCode().then((code) => {
       if (!code || !interviewHere(session)) return;
-      const button = $('[data-interview="indent-code"]');
-      if (button) button.disabled = !code.language(session.item.challenge?.coding?.language || session.item.framework.language);
       drawInterviewLines(session);
     });
     $('#interview-reasoning')?.addEventListener('input', (e) => { session.draft.reasoning = e.target.value; interviewChanged(session); });
@@ -120,10 +127,62 @@ function drawInterview(session) {
   }
 }
 
+function drawInterviewProblems(session) {
+  if (!interviewHere(session)) return;
+  const box = $('#interview-problems');
+  if (!box) return;
+  const item = session.item;
+  const problems = item.problems?.length ? item.problems : item.challenge ? [{ challenge: item.challenge }] : [];
+  const busy = Boolean(session.preparing || session.submitting || session.switching);
+  box.innerHTML = `${problems.slice(0, interviews.MOST_PROBLEMS).map((p, i) => `<button class="pick-chip${p.challenge.id === item.challenge?.id ? ' on' : ''}" data-interview="problem" data-id="${esc(p.challenge.id)}" aria-pressed="${p.challenge.id === item.challenge?.id}" title="${esc(p.challenge.title)}"${busy ? ' disabled' : ''}>Problem ${i + 1}${item.attempts.some((a) => a.challenge.id === p.challenge.id) ? ' · Submitted' : ''}</button>`).join('')}<button class="btn sm plain" data-interview="next"${busy || problems.length >= interviews.MOST_PROBLEMS ? ' disabled' : ''}>${session.preparing ? 'Preparing…' : '+ Problem'}</button>`;
+}
+
+function useInterviewProblem(session, item) {
+  session.item = item;
+  session.draft = interviews.workspace(item.workspace);
+  session.generation = 0;
+  session.saved = 0;
+  session.blocked = false;
+  session.error = '';
+  const local = item.challenge && interviews.readDraft(localStorage, item.id, item.challenge.id);
+  if (local && JSON.stringify(local) !== JSON.stringify(session.draft)) {
+    session.draft = local;
+    session.generation = 1;
+    session.error = 'An unsaved draft was recovered on this device. Review it, then save it when you are ready.';
+  }
+}
+
+async function selectInterviewProblem(session, id) {
+  if (session.switching || session.preparing || session.submitting || id === session.item.challenge?.id) return;
+  session.switching = true;
+  drawInterviewProblems(session);
+  const fields = [...app.querySelectorAll('#interview-answer, #interview-reasoning, #interview-board-label')];
+  fields.forEach((field) => { field.readOnly = true; });
+  try {
+    await saveInterviewWorkspace(session);
+    await interviewQueue(session, async () => {
+      const item = await api(`/api/interviews/${enc(session.item.id)}`, { method: 'PUT', body: { action: 'select', revision: session.item.revision, challenge: id } });
+      if (!interviewHere(session)) return;
+      useInterviewProblem(session, item);
+    });
+    session.switching = false;
+    if (interviewHere(session)) drawInterview(session);
+  } finally {
+    session.switching = false;
+    fields.forEach((field) => { field.readOnly = false; });
+    drawInterviewProblems(session);
+  }
+}
+
 function drawInterviewLines(session) {
   if (!interviewHere(session)) return;
   const lines = $('#interview-lines');
-  if (lines) lines.textContent = Array.from({ length: Math.min(32001, session.draft.answer.split('\n').length) }, (_, i) => i + 1).join('\n');
+  if (lines && (session.linesNode !== lines || session.linesValue !== session.draft.answer)) {
+    lines.innerHTML = session.draft.answer.split('\n').slice(0, 32001).map((line, i) => `<span class="interview-line"><span class="interview-line-number">${i + 1}</span><span class="interview-line-measure">${esc(line || ' ')}</span></span>`).join('');
+    session.linesNode = lines;
+    session.linesValue = session.draft.answer;
+  }
+  syncInterviewCodeScroll();
   if (!lines || !window.leoCode) return;
   if (session.codeFrame) cancelAnimationFrame(session.codeFrame);
   session.codeFrame = requestAnimationFrame(() => {
@@ -150,29 +209,9 @@ function syncInterviewCodeScroll() {
   const answer = $('#interview-answer');
   if (!answer) return;
   const lines = $('#interview-lines');
-  if (lines) lines.scrollTop = answer.scrollTop;
+  if (lines) { lines.style.setProperty('--code-scrollbar', `${answer.offsetWidth - answer.clientWidth}px`); lines.scrollTop = answer.scrollTop; }
   const colors = $('#interview-colors');
-  if (colors) { colors.scrollTop = answer.scrollTop; colors.scrollLeft = answer.scrollLeft; }
-}
-
-function indentInterviewCode(session) {
-  const answer = $('#interview-answer');
-  if (!answer || !window.leoCode) return;
-  const language = session.item.challenge?.coding?.language || session.item.framework.language;
-  let edit = null;
-  try { edit = window.leoCode.indent(answer.value, answer.selectionStart, answer.selectionEnd, language); } catch {}
-  if (!edit) { toast('This code could not be indented. You can keep editing it.'); return; }
-  const scroll = [answer.scrollTop, answer.scrollLeft];
-  if (edit.value !== answer.value) {
-    answer.focus({ preventScroll: true });
-    answer.setSelectionRange(0, answer.value.length);
-    if (!document.execCommand('insertText', false, edit.value)) answer.setRangeText(edit.value, 0, answer.value.length, 'preserve');
-    if (session.draft.answer !== answer.value) answer.dispatchEvent(new Event('input', { bubbles: true }));
-  }
-  answer.focus({ preventScroll: true });
-  answer.setSelectionRange(edit.from, edit.to);
-  [answer.scrollTop, answer.scrollLeft] = scroll;
-  syncInterviewCodeScroll();
+  if (colors) { colors.style.width = `${answer.clientWidth}px`; colors.style.height = `${answer.clientHeight}px`; colors.scrollTop = answer.scrollTop; colors.scrollLeft = answer.scrollLeft; }
 }
 
 function drawInterviewChallenge(session) {
@@ -180,7 +219,7 @@ function drawInterviewChallenge(session) {
   const c = session.item.challenge;
   const coding = c?.coding;
   const busy = session.preparing;
-  $('#interview-challenge').innerHTML = c ? `<div class="interview-toolbar"><h2>${esc(c.title)}</h2><div class="buttons">${coding ? `<span class="chip">${esc(coding.difficulty)}</span>` : ''}<span class="chip">${c.minutes} min</span></div></div><p class="hint">${esc(c.origin === 'generated' ? 'Original practice' : c.origin === 'official' ? 'Official preparation' : 'Candidate report · unverified')}</p><div class="prose">${md.render(c.question, { interactive: false })}</div>${coding ? `<h3>Examples</h3>${coding.examples.map((e, i) => `<div class="interview-example"><b>Example ${i + 1}</b><pre>Input: ${esc(e.input)}\nOutput: ${esc(e.output)}</pre>${e.explanation ? `<p class="hint">${esc(e.explanation)}</p>` : ''}</div>`).join('')}<h3>Constraints</h3><ul class="interview-constraints">${coding.constraints.map((s) => `<li>${esc(s)}</li>`).join('')}</ul>` : ''}${c.sources.length ? `<details class="interview-research"><summary>Research & sources</summary><p class="hint">Reported questions are unverified. This exercise is labelled separately above.</p><div class="interview-sources">${c.sources.map((s) => `<a class="chip" href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title)} · ${esc(s.kind)}</a>`).join('')}</div></details>` : ''}<button class="btn sm" data-interview="next"${busy ? ' disabled' : ''}>${busy ? 'Preparing…' : 'Next challenge'}</button>` : `<div class="interview-welcome"><p class="eyebrow">${session.item.framework.company ? 'Company preparation' : 'General practice'}</p><h2>${busy ? 'Preparing your first challenge…' : 'Ready when you are'}</h2><p class="hint" role="status">${busy ? session.waiting ? 'Felix is finishing the previous reply. Your practice will start automatically after it.' : session.item.framework.company ? 'Felix is researching the company and role, then preparing an exercise. You can follow along in chat.' : 'Felix is choosing an exercise for your goals. You can follow along in chat.' : 'Start once. Felix will research your company if you have one, then put a challenge and workspace here.'}</p><div class="buttons"><button class="btn sm primary" data-interview="next"${busy ? ' disabled' : ''}>${busy ? 'Preparing…' : 'Start practice'}</button><button class="btn sm" data-interview="chat">Talk with Felix</button></div></div>`;
+  $('#interview-challenge').innerHTML = c ? `<div class="interview-toolbar"><h2>${esc(c.title)}</h2><div class="buttons">${coding ? `<span class="chip">${esc(coding.difficulty)}</span>` : ''}<span class="chip">${c.minutes} min</span></div></div><p class="hint">${esc(c.origin === 'generated' ? 'Original practice' : c.origin === 'official' ? 'Official preparation' : 'Candidate report · unverified')}</p><div class="prose">${md.render(c.question, { interactive: false })}</div>${coding ? `<h3>Examples</h3>${coding.examples.map((e, i) => `<div class="interview-example"><b>Example ${i + 1}</b><pre>Input: ${esc(e.input)}\nOutput: ${esc(e.output)}</pre>${e.explanation ? `<p class="hint">${esc(e.explanation)}</p>` : ''}</div>`).join('')}<h3>Constraints</h3><ul class="interview-constraints">${coding.constraints.map((s) => `<li>${esc(s)}</li>`).join('')}</ul>` : ''}${c.sources.length ? `<details class="interview-research source-more"><summary>${ICON.chevron}<span>Research & sources</span></summary><p class="hint">Reported questions are unverified. This exercise is labelled separately above.</p><div class="interview-sources">${c.sources.map((s) => `<a class="chip" href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title)} · ${esc(s.kind)}</a>`).join('')}</div></details>` : ''}<button class="btn sm" data-interview="next"${busy ? ' disabled' : ''}>${busy ? 'Preparing…' : 'Next challenge'}</button>` : `<div class="interview-welcome"><p class="eyebrow">${session.item.framework.company ? 'Company preparation' : 'General practice'}</p><h2>${busy ? 'Preparing your first challenge…' : 'Ready when you are'}</h2><p class="hint" role="status">${busy ? session.waiting ? 'Felix is finishing the previous reply. Your practice will start automatically after it.' : session.item.framework.company ? 'Felix is researching the company and role, then preparing an exercise. You can follow along in chat.' : 'Felix is choosing an exercise for your goals. You can follow along in chat.' : 'Start once. Felix will research your company if you have one, then put a challenge and workspace here.'}</p><div class="buttons"><button class="btn sm primary" data-interview="next"${busy ? ' disabled' : ''}>${busy ? 'Preparing…' : 'Start practice'}</button><button class="btn sm" data-interview="chat">Talk with Felix</button></div></div>`;
 }
 
 function interviewChanged(session) {
@@ -246,21 +285,40 @@ async function refreshInterview(id) {
   const session = interviewPage;
   if (!session || session.item.id !== id || !interviewHere(session)) return;
   await interviewQueue(session, async () => {
-    const latest = await api(`/api/interviews/${enc(id)}`);
+    let latest = await api(`/api/interviews/${enc(id)}`);
     if (!interviewHere(session)) return;
     const changed = latest.challenge?.id !== session.item.challenge?.id;
     if (changed) {
-      if (session.generation !== session.saved) {
-        session.blocked = true;
-        session.error = 'The challenge changed while you were writing. Your draft is kept; reopen this practice to continue.';
-        drawInterviewStatus(session);
-      } else {
-        session.item = latest;
-        session.draft = interviews.workspace(latest.workspace);
-        drawInterview(session);
+      session.switching = true;
+      drawInterviewProblems(session);
+      const fields = [...app.querySelectorAll('#interview-answer, #interview-reasoning, #interview-board-label')];
+      fields.forEach((field) => { field.readOnly = true; });
+      try {
+        if (session.generation !== session.saved) {
+          const challenge = session.item.challenge.id;
+          try {
+            latest = await api(`/api/interviews/${enc(id)}`, { method: 'PUT', body: { action: 'workspace', revision: latest.revision, challenge, workspace: structuredClone(session.draft) } });
+            if (!interviewHere(session)) return;
+            interviews.clearDraft(localStorage, id, challenge);
+            useInterviewProblem(session, latest);
+            drawInterview(session);
+          } catch (e) {
+            session.blocked = true;
+            session.error = 'Your earlier problem has an unsaved draft on this device. Reopen this practice to recover it before continuing.';
+            drawInterviewStatus(session);
+          }
+        } else {
+          useInterviewProblem(session, latest);
+          drawInterview(session);
+        }
+      } finally {
+        session.switching = false;
+        fields.forEach((field) => { field.readOnly = false; });
+        drawInterviewProblems(session);
       }
     } else {
       session.item = latest;
+      drawInterviewProblems(session);
       drawInterviewChallenge(session);
       drawInterviewProgress(session);
       drawInterviewSchedule(session);
@@ -302,7 +360,7 @@ function wireInterviewBoard(session) {
     return interviews.point((e.clientX - rect.left) / rect.width * 1000, (e.clientY - rect.top) / rect.height * 700);
   };
   board.addEventListener('pointerdown', (e) => {
-    if (!session.item.challenge || e.button !== 0 || session.draft.board.length >= interviews.MOST_SHAPES) return;
+    if (session.switching || !session.item.challenge || e.button !== 0 || session.draft.board.length >= interviews.MOST_SHAPES) return;
     e.preventDefault();
     const first = locate(e);
     if (session.tool === 'text') { addInterviewLabel(session, first); return; }
@@ -333,7 +391,7 @@ function wireInterviewBoard(session) {
 }
 
 function addInterviewLabel(session, point = [50, 50 + Math.min(session.draft.board.length * 30, 600)]) {
-  if (!session.item.challenge) return;
+  if (session.switching || !session.item.challenge) return;
   const field = $('#interview-board-label');
   const text = field.value.trim();
   if (!text) { field.focus(); return; }
@@ -393,21 +451,21 @@ async function prepareInterview(session) {
   if (chat.isBusy()) {
     session.waiting = true;
     session.preparing = true;
+    drawInterviewProblems(session);
     drawInterviewChallenge(session);
     return;
   }
   session.waiting = false;
-  if (interviews.hasWork(session.draft, session.item.challenge)) {
-    session.preparing = false;
-    drawInterviewChallenge(session);
-    toast('Submit your current work or clear the draft before starting another challenge.');
-    return;
-  }
+  if (session.switching || session.submitting) return;
   session.preparing = true;
+  drawInterviewProblems(session);
   drawInterviewChallenge(session);
-  const request = interviews.preparation(session.item.framework);
-  try { await talkInterview(session, request.text, [], request.say); }
-  finally { if (!chat.isBusy()) { session.preparing = false; drawInterviewChallenge(session); } }
+  try {
+    await saveInterviewWorkspace(session);
+    if (!interviewHere(session)) return;
+    const request = interviews.preparation(session.item.framework);
+    await talkInterview(session, request.text, [], request.say);
+  } finally { if (!chat.isBusy()) { session.preparing = false; drawInterviewProblems(session); drawInterviewChallenge(session); } }
 }
 
 function interviewReplyFinished(id) {
@@ -416,6 +474,7 @@ function interviewReplyFinished(id) {
   if (session.waiting) { prepareInterview(session).catch(fail); return; }
   if (session.item.id !== id) return;
   session.preparing = false;
+  drawInterviewProblems(session);
   refreshInterview(id).catch(fail);
 }
 
@@ -424,6 +483,7 @@ async function submitInterview(session) {
   const workspace = structuredClone(session.draft);
   if (!interviews.hasWork(workspace, session.item.challenge)) { $('#interview-answer').focus(); toast('Add your implementation, approach or drawing first.'); return; }
   session.submitting = true;
+  drawInterviewProblems(session);
   drawInterviewStatus(session);
   try {
     await saveInterviewWorkspace(session);
@@ -434,17 +494,15 @@ async function submitInterview(session) {
     });
     if (JSON.stringify(session.draft) === JSON.stringify(workspace)) {
       interviews.clearDraft(localStorage, session.item.id, challenge);
-      session.draft = interviews.workspace();
       session.saved = session.generation;
-      if (interviewHere(session)) { $('#interview-answer').value = ''; if ($('#interview-reasoning')) $('#interview-reasoning').value = ''; drawInterviewBoard(session); drawInterviewLines(session); }
-    }
-    else {
+    } else {
       session.saved = -1;
       interviews.keepDraft(localStorage, session.item.id, challenge, session.draft);
     }
+    drawInterviewProblems(session);
     drawInterviewProgress(session);
     await talkInterview(session, `Review my submitted answer${workspace.board.length ? ' and whiteboard' : ''}. Explain my strengths, gaps and what to practise next. Keep the full solution for when I ask.`, workspace.board, `Review my submitted attempt ${attempt}. Read interview_progress, assess the submitted answer and board against the challenge criteria with interview_feedback, explain my strengths and gaps, and suggest the next practice step. Do not reveal a complete solution unless I ask for it.`);
-  } finally { session.submitting = false; drawInterviewStatus(session); }
+  } finally { session.submitting = false; drawInterviewProblems(session); drawInterviewStatus(session); }
 }
 
 function interviewForm(track, id = felix.newId(), item = null) {
@@ -457,7 +515,7 @@ function interviewForm(track, id = felix.newId(), item = null) {
     ${coding ? `<div class="pick-chips" aria-label="Coding language">${['Python', 'JavaScript', 'TypeScript', 'Java', 'C++', 'Go', 'Rust', 'SQL'].map((language) => `<button class="pick-chip${f.language === language ? ' on' : ''}" data-interview="form-language" data-language="${language}" aria-pressed="${f.language === language}">${language}</button>`).join('')}</div>` : ''}
     <p class="interview-label">How would you like to practise?</p><div class="pick-chips" role="group" aria-label="Interview style"><button class="pick-chip${f.style === 'coach' ? ' on' : ''}" data-interview="form-style" data-style="coach" aria-pressed="${f.style === 'coach'}">Coach</button><button class="pick-chip${f.style === 'mock' ? ' on' : ''}" data-interview="form-style" data-style="mock" aria-pressed="${f.style === 'mock'}">Mock interview</button></div><p class="hint">Coach helps when you ask. Mock saves feedback for your debrief.</p>
     <label class="interview-label" for="interview-wants">What would you like to practise? <span class="hint">Optional</span></label><textarea class="set-input" id="interview-wants" maxlength="2000" rows="2" placeholder="e.g. I’m just practising, start with easy array problems…">${esc(f.wants)}</textarea>
-    <details class="interview-details"><summary>Schedule & assessment preferences</summary><label class="interview-label" for="interview-title">Practice title</label><div class="field"><input id="interview-title" maxlength="120" value="${esc(f.title)}"></div><label class="interview-label" for="interview-date">Interview date (optional)</label><div class="field"><input id="interview-date" type="date" value="${esc(f.date)}"></div><label class="interview-label" for="interview-budget">Practice minutes per week</label><div class="field"><input id="interview-budget" type="number" min="15" max="2400" value="${f.weekly_minutes}"></div><label class="interview-label" for="interview-skills">Skills to assess · one per line, up to 12</label><textarea class="set-input" id="interview-skills" rows="4" maxlength="1000">${esc(f.skills.join('\n'))}</textarea></details>
+    <details class="interview-details source-more"><summary>${ICON.chevron}<span>Schedule & assessment preferences</span></summary><label class="interview-label" for="interview-title">Practice title</label><div class="field"><input id="interview-title" maxlength="120" value="${esc(f.title)}"></div><label class="interview-label" for="interview-date">Interview date (optional)</label><div class="field"><input id="interview-date" type="date" value="${esc(f.date)}"></div><label class="interview-label" for="interview-budget">Practice minutes per week</label><div class="field"><input id="interview-budget" type="number" min="15" max="2400" value="${f.weekly_minutes}"></div><label class="interview-label" for="interview-skills">Skills to assess · one per line, up to 12</label><textarea class="set-input" id="interview-skills" rows="4" maxlength="1000">${esc(f.skills.join('\n'))}</textarea></details>
     <p class="set-note warn" id="interview-form-error" hidden></p><div class="buttons"><button class="btn" data-action="close">Cancel</button><button class="btn primary" id="interview-form-save" data-interview="save-framework" data-id="${esc(id)}" data-track="${esc(f.track)}" data-revision="${item ? item.revision : 0}" data-style="${esc(f.style)}">${item ? 'Save preferences' : 'Start practice'}</button></div>`);
   $('#interview-company').focus();
   $('#interview-language').addEventListener('input', (e) => {
@@ -530,7 +588,8 @@ async function interviewAction(el) {
   if (action === 'configure') { await saveInterviewWorkspace(session); return interviewForm(session.item.framework.track, session.item.id, session.item); }
   if (action === 'chat') return chat.openInterview(session.item.id, () => interviewHere(session));
   if (action === 'next') return prepareInterview(session);
-  if (action === 'plan') return talkInterview(session, 'Help me make a realistic practice schedule from my goals and progress.', [], `Help me plan interview practice with interview_schedule. Read my progress, respect my weekly budget and interview date, and ask about availability if needed. Today on my device is ${new Date().toLocaleDateString('en-CA')}; timezone ${Intl.DateTimeFormat().resolvedOptions().timeZone}.`);
+  if (action === 'problem') return selectInterviewProblem(session, el.dataset.id);
+  if (action === 'plan') return talkInterview(session, 'Help me make a realistic practice schedule from my goals and progress.', [], `Help me plan interview practice with interview_schedule. Use interpretable language. Read interview_progress and list_schedule for the coming week before planning. Use my existing events, tasks and saved sessions to avoid conflicts, respect my weekly budget and interview date, and save a reasonable editable plan with interview_schedule. Do not ask me to repeat my schedule. If there is no interview date, plan the coming week. Briefly state timing assumptions and let me adjust them. Today on my device is ${new Date().toLocaleDateString('en-CA')}; timezone ${Intl.DateTimeFormat().resolvedOptions().timeZone}.`);
   if (action === 'hint') return talkInterview(session, 'Give me a small hint without the solution.', [], 'Give me one small hint for the current interview challenge, without revealing the solution or assessing my draft.');
   if (action === 'submit') return submitInterview(session);
   if (action === 'review-attempt') {
@@ -548,7 +607,6 @@ async function interviewAction(el) {
     if (session.tab !== 'board') $(coding && session.tab === 'write' ? '#interview-reasoning' : '#interview-answer').focus();
     return;
   }
-  if (action === 'indent-code') return indentInterviewCode(session);
   if (action === 'reset-code') {
     sheet('<h2>Reset your code?</h2><p>Your implementation will be replaced by the starting function. Your approach and whiteboard stay here.</p><div class="buttons"><button class="btn" data-action="close">Cancel</button><button class="btn danger" data-interview="confirm-reset-code">Reset code</button></div>');
     return;

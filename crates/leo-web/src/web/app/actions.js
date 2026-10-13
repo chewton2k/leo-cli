@@ -196,7 +196,16 @@ const actions = {
     picked.splice(Number(el.dataset.i), 1);
     drawPicked();
   },
-  chat: () => chat.toggle(),
+  chat: async () => {
+    if (chat.isOpen()) return chat.toggle(false);
+    const session = interviewPage;
+    if (session && interviewHere(session)) {
+      await saveInterviewWorkspace(session);
+      if (interviewHere(session)) return chat.openInterview(session.item.id, () => interviewHere(session));
+      return;
+    }
+    chat.toggle(true);
+  },
   'map-build': () => mapBuild(false),
   'map-build-now': () => mapBuild(true),
   'map-rebuild': mapRebuildAsk,

@@ -90,6 +90,27 @@
     return { verdict: null, text: value };
   }
 
+  const MOST_REPLY_STEPS = 64;
+
+  function timeline(text, steps) {
+    const value = String(text || '');
+    const parts = [];
+    let at = 0;
+    for (const raw of (Array.isArray(steps) ? steps : []).slice(0, MOST_REPLY_STEPS)) {
+      const item = typeof raw === 'string' ? { text: raw } : raw;
+      if (!item || typeof item.text !== 'string' || !item.text) continue;
+      let end = Number.isInteger(item.at) ? Math.max(at, Math.min(value.length, item.at)) : at;
+      if (end > 0 && end < value.length && /[\uD800-\uDBFF]/.test(value[end - 1]) && /[\uDC00-\uDFFF]/.test(value[end])) end++;
+      if (end > at) parts.push({ text: value.slice(at, end) });
+      const step = { text: item.text, tool: typeof item.tool === 'string' ? item.tool : '', found: Array.isArray(item.found) ? item.found.filter((f) => typeof f === 'string').slice(0, 12) : [] };
+      if (parts.at(-1)?.steps) parts.at(-1).steps.push(step);
+      else parts.push({ steps: [step] });
+      at = end;
+    }
+    if (at < value.length) parts.push({ text: value.slice(at) });
+    return parts;
+  }
+
   const QUIZ_KINDS = { multiple_choice: 'Multiple choice', fill_blank: 'Fill in the blank', free_response: 'Free response' };
 
   function plainAnswer(text) {
@@ -1300,8 +1321,7 @@
         return `<div class="msg user${m.steer === 'waiting' ? ' queued' : ''}">${quote}${refs}${files}<div class="bubble">${escape(m.text).replace(/\n/g, '<br>')}</div>${quiz}${steer}</div>`;
       }
       const shown = grade(m.text).text;
-      let html = shown ? cite(render(shown), m.sources, escape, m.files).replace(/<input /g, '<input disabled ') : '';
-      if (!html && m.pending) html = '<span class="typing"><i></i><i></i><i></i></span>';
+      const html = !shown && m.pending ? '<span class="typing"><i></i><i></i><i></i></span>' : '';
       const used = cited(m.text, m.sources);
       const from = !m.pending && used.length > 1
         ? `<div class="msg-from">${used.map((s) => `<button class="cite" data-chat="open" data-id="${escape(s.id)}">${escape(s.title)}</button>`).join('')}</div>`
@@ -1317,11 +1337,15 @@
           : `<button class="msg-act" data-chat="save" data-i="${i}">Save as note</button>`) + `<button class="msg-act" data-chat="add" data-i="${i}">Add to note</button>`
         : '';
       const keep = save || meta ? `<div class="msg-acts">${save}${meta}</div>` : '';
-      const steps = (m.steps || []).length ? `<div class="msg-steps">${m.steps.map((t, k) => stepLine(t, m.pending && !shown && k === m.steps.length - 1)).join('')}</div>` : '';
+      const removed = verdict ? m.text.length - shown.length : 0;
+      const parts = timeline(shown, (Array.isArray(m.steps) ? m.steps : []).slice(0, MOST_REPLY_STEPS).map((s) => typeof s === 'string' || !s ? s : { ...s, at: Number.isInteger(s.at) ? s.at - removed : 0 }));
+      const body = parts.length ? parts.map((part, k) => part.steps
+        ? `<div class="msg-steps">${part.steps.map((step, j) => stepLine(step, m.pending && k === parts.length - 1 && j === part.steps.length - 1)).join('')}</div>`
+        : `<div class="prose">${cite(render(part.text), m.sources, escape, m.files).replace(/<input /g, '<input disabled ')}</div>`).join('') : `<div class="prose">${html}</div>`;
       const offers = (m.proposals || []).map((p, j) => proposalCard(p, i, j)).join('');
       const asks = (m.asks || []).map((a, k) => askCard(a, i, k, m.pending)).join('');
       const quizzes = (m.quizzes || []).map((q, k) => quizCard(q, i, k, m.pending, m.sources)).join('');
-      return `<div class="msg leo${m.pending ? ' pending' : ''}" data-i="${i}">${badge}${steps}<div class="prose">${html}</div>${quizzes}${asks}${offers}${error}${from}${keep}</div>`;
+      return `<div class="msg leo${m.pending ? ' pending' : ''}" data-i="${i}">${badge}${body}${quizzes}${asks}${offers}${error}${from}${keep}</div>`;
     }
 
     function onNote() {
@@ -1727,7 +1751,7 @@
       const msg = start && start.closest('.msg.leo:not(.pending)');
       if (!msg || !body.contains(msg) || !end || end.closest('.msg.leo') !== msg || !start.closest('.prose') || !end.closest('.prose')) return null;
       const copy = range.cloneContents();
-      for (const chip of copy.querySelectorAll('.cite, .katex-mathml')) chip.remove();
+      for (const chip of copy.querySelectorAll('.cite, .katex-mathml, .msg-steps')) chip.remove();
       const text = copy.textContent || selection.toString();
       if (!text.trim()) return null;
       const box = range.getBoundingClientRect();
@@ -1997,7 +2021,7 @@
             if (Array.isArray(e.files)) answer.files = e.files;
             if (e.restart) answer.text = '';
             if (typeof e.step === 'string') pose(e.tool);
-            if (typeof e.step === 'string') answer.steps = [...(answer.steps || []), { text: e.step, tool: typeof e.tool === 'string' ? e.tool : '', found: Array.isArray(e.found) ? e.found.filter((f) => typeof f === 'string').slice(0, 12) : [] }];
+            if (typeof e.step === 'string') answer.steps = [...(answer.steps || []), { text: e.step, at: answer.text.length, tool: typeof e.tool === 'string' ? e.tool : '', found: Array.isArray(e.found) ? e.found.filter((f) => typeof f === 'string').slice(0, 12) : [] }];
             if (e.spent && typeof e.spent === 'object') answer.spent = e.spent;
             if (e.proposal && typeof e.proposal === 'object') {
               const done = e.proposal.state === 'applied';
@@ -2429,5 +2453,5 @@
     };
   }
 
-  root.leoChat = { startSession, scoreSession, sessionBody, sessionSummary, linkCitations, answerLines, passageLine, historyText, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS };
+  root.leoChat = { timeline, startSession, scoreSession, sessionBody, sessionSummary, linkCitations, answerLines, passageLine, historyText, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS };
 })(typeof window !== 'undefined' ? window : globalThis);

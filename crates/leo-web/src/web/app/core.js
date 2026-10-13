@@ -322,6 +322,8 @@ const folderHash = (dir) => (dir ? `#/f/${enc(dir)}` : '#/');
 const noteHash = (id) => `#/n/${enc(id)}`;
 
 function back() {
+  const practice = interviewPage;
+  if (practice && interviewHere(practice)) return saveInterviewWorkspace(practice).then(() => { if (interviewHere(practice)) go('#/interviews'); }).catch(fail);
   if (state.view === 'map' && state.focus) return go(noteHash(state.focus));
   if (state.view === 'storage') return go('#/settings');
   if (state.view === 'note') return go(folderHash(state.dir || ''));

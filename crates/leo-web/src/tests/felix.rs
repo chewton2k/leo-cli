@@ -1933,3 +1933,103 @@ fn felix_renames_pins_restores_and_deletes_folders_only_when_asked_and_finds_old
         "Undo brings the folder and its notes back"
     );
 }
+
+#[test]
+fn interview_problems_and_calendar_context_work_on_native_and_text_sessions() {
+    const PROBLEM: &str = r#"{"id":"challenge-context-02","title":"Category coverage","question":"Find a shortest covering segment.","minutes":45,"skills":["Approach"],"origin":"generated","sources":[],"coding":{"language":"Python","starter":"def coverage(feed, required):\n    pass","difficulty":"medium","examples":[{"input":"feed=['art'], required=['art']","output":"[0,0]"}],"constraints":["At most 200000 categories."]}}"#;
+    struct ProblemsNative;
+    impl chat::Conversation for ProblemsNative {
+        fn native(&self) -> bool {
+            true
+        }
+        fn say(&mut self, _: &str, exchange: chat::Exchange<'_>) -> anyhow::Result<chat::Reply> {
+            let progress = (exchange.call)("interview_progress", &serde_json::json!({}));
+            assert!(progress.contains("challenge-context-01"));
+            let _ = (exchange.call)("list_schedule", &serde_json::json!({"days":"7"}));
+            let created =
+                (exchange.call)("interview_challenge", &serde_json::json!({"data":PROBLEM}));
+            assert!(created.contains("challenge-context-02"));
+            let reopened = (exchange.call)(
+                "interview_problem",
+                &serde_json::json!({"challenge":"challenge-context-01"}),
+            );
+            assert!(reopened.contains("Saved implementation"));
+            (exchange.piece)("Problem 2 is saved. Problem 1 is open again.");
+            Ok("Problem 2 is saved. Problem 1 is open again.".into())
+        }
+    }
+    for native in [false, true] {
+        let (mut state, _dir, _) = state_with(&[]);
+        let framework = serde_json::from_value(serde_json::json!({"title":"Coding practice","track":"coding","company":"","role":"Intern","language":"Python","style":"coach","date":"","weekly_minutes":120,"skills":["Approach"],"wants":""})).unwrap();
+        let id = "interview-context-01";
+        crate::interview::configure(&state.chats, id, 0, framework).unwrap();
+        let mut first: serde_json::Value = serde_json::from_str(PROBLEM).unwrap();
+        first["id"] = "challenge-context-01".into();
+        let first = crate::interview::set_challenge(
+            &state.chats,
+            id,
+            serde_json::from_value(first).unwrap(),
+        )
+        .unwrap();
+        crate::interview::change(
+            &state.chats,
+            id,
+            crate::interview::Change::Workspace {
+                revision: first.revision,
+                challenge: "challenge-context-01".into(),
+                workspace: crate::interview::Workspace {
+                    answer: "Saved implementation".into(),
+                    ..Default::default()
+                },
+            },
+        )
+        .unwrap();
+        let replies = vec![
+            r#"<tool>{"name":"interview_progress"}</tool>"#.to_string(),
+            r#"<tool>{"name":"list_schedule","days":"7"}</tool>"#.to_string(),
+            format!(
+                "<tool>{}</tool>",
+                serde_json::json!({"name":"interview_challenge","data":PROBLEM})
+            ),
+            r#"<tool>{"name":"interview_problem","challenge":"challenge-context-01"}</tool>"#
+                .to_string(),
+            "Problem 2 is saved. Problem 1 is open again.".into(),
+        ];
+        let replies = Arc::new(Mutex::new(replies.into_iter()));
+        state.chat = Some(Arc::new(move |system, _, _, piece, _| {
+            assert!(system.contains("read both interview_progress and list_schedule"));
+            let reply = replies.lock().unwrap().next().unwrap();
+            piece(&reply);
+            Ok(reply.into())
+        }));
+        if native {
+            state.converse = Some(Arc::new(|given, specs| {
+                assert!(given.native.contains("give me this problem"));
+                assert!(specs.iter().any(|s| s.name == "interview_problem"));
+                assert!(specs.iter().any(|s| s.name == "list_schedule"));
+                Some(Box::new(ProblemsNative) as Box<dyn chat::Conversation>)
+            }));
+        }
+        let body = serde_json::from_value(serde_json::json!({"chat":id,"mode":"interview","messages":[{"role":"user","text":"Can you give me this problem please, then reopen problem 1?"}]})).unwrap();
+        let bytes = run(async {
+            let reply = chat_reply(State(state.clone()), Json(body)).await;
+            axum::body::to_bytes(reply.into_body(), 1_000_000)
+                .await
+                .unwrap()
+        });
+        let lines: Vec<serde_json::Value> = std::str::from_utf8(&bytes)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert!(lines
+            .iter()
+            .all(|line| line.get("error").is_none() && line.get("restart").is_none()));
+        let item = crate::interview::load(&state.chats, id).unwrap();
+        assert_eq!(item.problems.len(), 2);
+        assert_eq!(item.challenge.unwrap().id, "challenge-context-01");
+        assert_eq!(item.workspace.answer, "Saved implementation");
+        let text: String = lines.iter().filter_map(|line| line["t"].as_str()).collect();
+        assert_eq!(text, "Problem 2 is saved. Problem 1 is open again.");
+    }
+}

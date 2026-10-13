@@ -73,6 +73,8 @@ seer, meaning, web, room).
   seed multiple chats so unselected icons are covered too.
   The calendar's completed-task toggle sits at the right of the agenda's
   date heading, with the date wrapping on narrow screens.
+  Interview section disclosures reuse `source-more` and `ICON.chevron`,
+  including the existing keyboard behavior and quick expand/collapse motion.
 - Motion (reworked 2026-10-10, the user found the first pass tacky): only what
   follows a click, quick (`MOTION_MS` 180), transform/clip/height only. No
   entrances, hover lifts or sliding gliders. `<details>` slide their height
@@ -184,6 +186,22 @@ seer, meaning, web, room).
   `.superpowers/plans/2026-10-12-felix-interviews.md`; `interview.rs`,
   `interview_tools.rs`, `web/interview.js`, `app/interviews.js`. Generated
   code never runs; async updates never replace a focused editor.
+  Problems are ordered snapshots of their challenge and workspace (128 max,
+  within the existing 1 MB practice limit). Legacy attempts become reopenable
+  problems. `interview_challenge` appends; `interview_problem` reopens;
+  revision-checked Select and workspace saves also handle archived problems.
+  Submission freezes an attempt and keeps the editor for iteration. Problem
+  switching flushes drafts before selecting; model-created problems preserve
+  pending edits before switching. The global Felix button opens the active
+  practice conversation; Back saves then returns to the practice list.
+  Scheduling reads interview progress and `list_schedule` before proposing
+  candidate gaps around saved commitments and relevant note preferences.
+  Coding uses available width, wraps with aligned syntax and line numbers,
+  and adapts when Felix opens. Python deletion on blank indented lines uses
+  four-column stops and native Undo; there is no Indent code action.
+- Felix activity records its position in the streamed response, stays between
+  the corresponding passages after reload, and is excluded from copied note
+  selections. Legacy activity without positions stays at the beginning.
 
 ## Uploads, originals, recording
 
@@ -276,3 +294,10 @@ the same idle loop.
   plan, quiz and correct answer ended with its recap. Installed
   Chrome checks covered 28 page/theme/viewport combinations with no overflow
   or contrast findings, plus danger controls across both themes and sizes.
+  The interview follow-up used six signed-in Codex turns in a throwaway home:
+  workspace creation, preserved drafts, reopening, calendar-aware planning,
+  reviewed submissions and continued iteration passed. Native and text fakes
+  cover the same tools; installed Chrome checks cover problem switching,
+  recovery, wrapping, Python deletion/Undo and chronological activity in both
+  themes on desktop and phone. Grid/List alignment is measured against both
+  button centers; restoring the old CSS reproduces the three-pixel offset.

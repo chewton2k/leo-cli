@@ -3200,6 +3200,13 @@ test('note thumbnails are read only, cards open directly and layout choices pers
   await expect(card.locator('.note-thumb img')).toBeVisible();
   await expect(card.locator('.note-thumb input:enabled')).toHaveCount(0);
   await expect(page.locator('[data-action="note-preview"]')).toHaveCount(0);
+  const aligned = await page.locator('[data-action="library-view"]').evaluateAll((buttons) => buttons.map((button) => {
+    const icon = button.querySelector('svg').getBoundingClientRect();
+    const text = button.querySelector('span').getBoundingClientRect();
+    const box = button.getBoundingClientRect();
+    return [Math.abs(icon.y + icon.height / 2 - text.y - text.height / 2), Math.abs((icon.x + text.right) / 2 - box.x - box.width / 2)];
+  }));
+  for (const offsets of aligned) for (const offset of offsets) expect(offset).toBeLessThanOrEqual(1);
   await page.locator('[data-action="library-view"][data-view="list"]').click();
   await expect(page.locator('.library-cards.list')).toBeVisible();
   await page.reload();
@@ -3939,17 +3946,14 @@ test('coding colors and indentation preserve input, Undo, saves and scroll in ev
     await page.emulateMedia({ colorScheme: 'light' });
     await area.focus();
     await area.evaluate(el => el.setSelectionRange(el.value.length, el.value.length));
-    const expected = await page.evaluate(({ code, language }) => leoCode.indent(code, code.length, code.length, language), { code, language });
-    await page.locator('[data-interview="indent-code"]').click();
-    await expect(area).toHaveValue(expected.value);
+    await area.press('Tab');
+    await expect(area).toHaveValue(code + '    ');
     await expect(area).toBeFocused();
-    expect(await area.evaluate(el => [el.selectionStart, el.selectionEnd])).toEqual([expected.from, expected.to]);
-    await expect.poll(() => item.workspace.answer).toBe(expected.value);
-    if (expected.value !== code) {
-      await area.press('ControlOrMeta+z');
-      await expect(area).toHaveValue(code);
-      await expect.poll(() => item.workspace.answer).toBe(code);
-    }
+    expect(await area.evaluate(el => [el.selectionStart, el.selectionEnd])).toEqual([code.length + 4, code.length + 4]);
+    await expect.poll(() => item.workspace.answer).toBe(code + '    ');
+    await area.press('ControlOrMeta+z');
+    await expect(area).toHaveValue(code);
+    await expect.poll(() => item.workspace.answer).toBe(code);
     const long = Array.from({ length: 25 }, (_, i) => `${code}\n${' '.repeat(130)}${i}`).join('\n');
     await area.fill(long);
     await expect.poll(() => colors.textContent()).toBe(long);
@@ -3991,7 +3995,7 @@ test('typing before syntax tools load and a failed load keep the code editable',
   await page.route('**/code-tools.js', route => route.abort());
   await page.reload();
   await expect(area).toHaveValue(value);
-  await expect(page.locator('[data-interview="indent-code"]')).toBeDisabled();
+  await expect(page.locator('[data-interview="indent-code"]')).toHaveCount(0);
   await expect(page.locator('#interview-colors')).toBeHidden();
   await area.fill('def solve():\n    return 3');
   await expect.poll(() => workspace.answer).toContain('return 3');
@@ -4024,3 +4028,141 @@ test.describe('Felix organizes', () => {
   });
 });
 
+
+test('coding problems keep separate drafts, wrap long functions and open their own Felix chat', async ({ page }) => {
+  const id = 'coding-problems-ui';
+  const starter = 'def shortest_category_segment(feed: list[str], required_categories_with_counts: list[str], preferred_category_order: list[str]) -> list[int]:\n    pass';
+  const challenge = (n) => ({ id: `challenge-problem-${n}`, title: `Category coverage ${n}`, question: 'Find the shortest contiguous segment covering every required count. Explain duplicates, ties and complexity.', minutes: 45, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'Python', starter, difficulty: 'medium', examples: [{ input: 'feed=["art","food"], required=["food"]', output: '[1,1]' }], constraints: ['Up to 200000 categories.'] } });
+  const first = { challenge: challenge(1), workspace: { answer: starter, reasoning: 'A sliding window', board: [] } };
+  const second = { challenge: challenge(2), workspace: { answer: 'def other():\n    return [0, 1]', reasoning: 'Earlier explanation', board: [{ kind: 'text', text: 'Earlier diagram', points: [[20, 40]] }] } };
+  let item = { id, revision: 1, framework: { title: 'Coding practice', track: 'coding', company: '', role: '', language: 'Python', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge: first.challenge, workspace: first.workspace, problems: [first, second], attempts: [], schedule: [] };
+  let failSelect = false;
+  let prepareRelease;
+  let archiveRelease;
+  const requests = [];
+  await page.route('**/api/interviews/*', async (route) => {
+    if (route.request().method() === 'PUT') {
+      const change = route.request().postDataJSON();
+      if (change.action === 'select') {
+        if (failSelect) { failSelect = false; return route.fulfill({ status: 409, json: { error: 'This practice changed. Reload before switching; your draft is kept.' } }); }
+        const problem = item.problems.find((p) => p.challenge.id === change.challenge);
+        item.challenge = problem.challenge;
+        item.workspace = problem.workspace;
+      } else if (change.action === 'submit') {
+        item.attempts.push({ id: change.attempt, challenge: structuredClone(item.challenge), workspace: structuredClone(change.workspace), at: new Date().toISOString(), feedback: null });
+        item.workspace = change.workspace;
+      } else if (change.action === 'workspace') {
+        const problem = item.problems.find((p) => p.challenge.id === change.challenge);
+        if (item.challenge.id !== change.challenge) await new Promise((resolve) => { archiveRelease = resolve; });
+        problem.workspace = change.workspace;
+        if (item.challenge.id === change.challenge) item.workspace = change.workspace;
+      }
+      item.revision++;
+    }
+    await route.fulfill({ json: item });
+  });
+  await page.route('**/api/chats/*', (route) => route.request().method() === 'GET' ? route.fulfill({ status: 404, json: { error: 'No conversation yet' } }) : route.fulfill({ json: { id, title: 'Coding practice', updated_at: new Date().toISOString(), count: 2, named: true } }));
+  await page.route('**/api/chat', async (route) => {
+    const request = route.request().postDataJSON();
+    requests.push(request);
+    if (!request.messages.at(-1).text.includes('interview_challenge')) return route.fulfill({ contentType: 'application/x-ndjson', body: JSON.stringify({ t: 'Your code stays in this workspace. Keep iterating.' }) + '\n' + JSON.stringify({ done: true }) + '\n' });
+    await new Promise((resolve) => { prepareRelease = resolve; });
+    const third = { challenge: challenge(3), workspace: { answer: starter, reasoning: '', board: [] } };
+    item.problems.push(third);
+    item.challenge = third.challenge;
+    item.workspace = third.workspace;
+    item.revision++;
+    await route.fulfill({ contentType: 'application/x-ndjson', body: [{ interview: { id, revision: item.revision } }, { t: 'Problem 3 is ready in your workspace.' }, { done: true }].map((event) => JSON.stringify(event)).join('\n') + '\n' });
+  });
+  await page.goto(`/#/interviews/${id}`);
+  const area = page.locator('#interview-answer');
+  await expect(area).toHaveValue(starter);
+  await expect(page.locator('#interview-colors .code-keyword').first()).toBeVisible();
+  const wrapping = await area.evaluate((el) => ({ whiteSpace: getComputedStyle(el).whiteSpace, scroll: el.scrollWidth, width: el.clientWidth }));
+  expect(wrapping.whiteSpace).toBe('pre-wrap');
+  expect(wrapping.scroll).toBeLessThanOrEqual(wrapping.width);
+  await expect(page.locator('[data-interview="indent-code"]')).toHaveCount(0);
+  await area.fill(starter + '\n        ');
+  await area.evaluate((el) => el.setSelectionRange(el.value.length, el.value.length));
+  await area.press('Backspace');
+  await expect(area).toHaveValue(starter + '\n    ');
+  await area.press('ControlOrMeta+z');
+  await expect(area).toHaveValue(starter + '\n        ');
+  const draft = starter.replace('pass', 'return [0, 2]');
+  await area.fill(draft);
+  await page.getByRole('button', { name: 'Problem 2', exact: true }).click();
+  await expect(area).toHaveValue(second.workspace.answer);
+  expect(item.problems[0].workspace.answer).toBe(draft);
+  await page.locator('[data-interview="tab"][data-tab="write"]').click();
+  await expect(page.locator('#interview-reasoning')).toHaveValue('Earlier explanation');
+  await page.locator('[data-interview="tab"][data-tab="board"]').click();
+  await expect(page.locator('#interview-board')).toContainText('Earlier diagram');
+  failSelect = true;
+  await page.getByRole('button', { name: /^Problem 1(?: · Submitted)?$/ }).click();
+  await expect(page.locator('.toast')).toContainText('Reload before switching');
+  expect(item.challenge.id).toBe(second.challenge.id);
+  await page.getByRole('button', { name: /^Problem 1(?: · Submitted)?$/ }).click();
+  await page.locator('[data-interview="tab"][data-tab="code"]').click();
+  await expect(area).toHaveValue(draft);
+  await page.locator('[data-interview="submit"]').click();
+  await expect(page.locator('.msg.leo').last()).toContainText('Keep iterating');
+  await expect(area).toHaveValue(draft);
+  expect(item.attempts[0].workspace.answer).toBe(draft);
+  await page.locator('[data-chat="close"]').click();
+  await page.locator('#chat-toggle').click();
+  await expect(page.locator('.chat')).toBeVisible();
+  await page.locator('#chat-input').fill('Which problem am I working on?');
+  await page.locator('#chat-input').press('Enter');
+  await expect.poll(() => requests.length).toBe(2);
+  expect(requests[1].mode).toBe('interview');
+  expect(requests[1].chat).toBe(id);
+  await expect(page.locator('.msg.leo').last()).toContainText('Keep iterating');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+  await page.locator('[data-chat="close"]').click();
+  await page.getByRole('button', { name: '+ Problem', exact: true }).click();
+  await expect.poll(() => typeof prepareRelease).toBe('function');
+  const lateDraft = draft + '\n    result = [0, 2]';
+  await area.fill(lateDraft);
+  prepareRelease();
+  await expect.poll(() => typeof archiveRelease).toBe('function');
+  await expect(area).toHaveJSProperty('readOnly', true);
+  archiveRelease();
+  await expect(page.getByRole('button', { name: 'Problem 3', exact: true })).toBeVisible();
+  expect(item.problems[0].workspace.answer).toBe(lateDraft);
+  await expect(area).toHaveValue(starter);
+  expect(requests).toHaveLength(3);
+  expect(requests[0].mode).toBe('interview');
+  expect(requests[0].chat).toBe(id);
+  expect(requests.at(-1).messages.at(-1).text).toContain('interview_challenge');
+  await page.locator('[data-chat="close"]').click();
+  await page.getByRole('button', { name: /^Problem 1(?: · Submitted)?$/ }).click();
+  await expect(area).toHaveValue(lateDraft);
+  await page.reload();
+  await expect(area).toHaveValue(lateDraft);
+  expect(item.problems).toHaveLength(3);
+  await page.route('**/api/interviews', (route) => route.fulfill({ json: [] }));
+  await page.locator('#back').click();
+  await expect(page).toHaveURL(/#\/interviews$/);
+  await expect(page.getByRole('heading', { name: 'Interview practice', exact: true })).toBeVisible();
+});
+
+test('Felix tool activity stays between the response passages it belongs to after reload', async ({ page }) => {
+  const events = [{ t: 'I will read your submitted code first.\n\n' }, { step: 'Read your submitted attempt', tool: 'interview_attempt' }, { t: 'Your sliding-window approach fits the problem.\n\n' }, { step: 'Looked at your interview progress', tool: 'interview_progress' }, { step: 'Reviewed your interview attempt', tool: 'interview_feedback' }, { t: 'Next, check repeated categories and ties.' }, { done: true }];
+  await page.route('**/api/chat', (route) => route.fulfill({ contentType: 'application/x-ndjson', body: events.map((event) => JSON.stringify(event)).join('\n') + '\n' }));
+  await page.goto('/');
+  await page.locator('#chat-toggle').click();
+  await page.locator('#chat-input').fill('Review my code.');
+  await page.locator('#chat-input').press('Enter');
+  const answer = page.locator('.msg.leo').last();
+  await expect(answer).toContainText('Next, check repeated categories and ties.');
+  const ordered = async () => {
+    const content = await answer.innerText();
+    const pieces = ['I will read your submitted code first.', 'Read your submitted attempt', 'Your sliding-window approach fits the problem.', 'Looked at your interview progress', 'Reviewed your interview attempt', 'Next, check repeated categories and ties.'];
+    for (let i = 1; i < pieces.length; i++) expect(content.indexOf(pieces[i])).toBeGreaterThan(content.indexOf(pieces[i - 1]));
+  };
+  await ordered();
+  await page.reload();
+  await page.locator('#chat-toggle').click();
+  await expect(answer).toContainText('Next, check repeated categories and ties.');
+  await ordered();
+});

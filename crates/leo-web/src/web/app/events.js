@@ -176,6 +176,7 @@ document.addEventListener('click', (e) => {
 
 async function render() {
   hideAskFloat();
+  interviewPage?.codeResize?.disconnect();
   clearTimeout(cal.timer);
   if (!/^#\/n\//.test(location.hash)) closeSource();
   document.body.classList.toggle('on-calendar', /^#\/calendar/.test(location.hash));
