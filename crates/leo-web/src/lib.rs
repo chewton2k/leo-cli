@@ -54,8 +54,9 @@ use crate::routes::auth::{
 };
 use crate::routes::downloads::{export_zip, originals_zip};
 use crate::routes::felix::{
-    add_chat_file, apply_suggestion, chat_reply, delete_chat, get_chat, get_review,
-    list_chat_files, list_chats, mark_reviewed, put_chat, remove_chat_file, steer_answer,
+    add_chat_file, apply_suggestion, change_answer_access, chat_reply, delete_chat, get_chat,
+    get_review, list_chat_files, list_chats, mark_reviewed, put_chat, remove_chat_file,
+    steer_answer,
 };
 use crate::routes::housekeeping::{change_storage, get_keep, get_storage, set_keep};
 use crate::routes::map::{build_graph, get_graph, graph_status};
@@ -636,6 +637,7 @@ fn router(state: AppState) -> Router {
         )
         .route("/api/chat", post(chat_reply))
         .route("/api/chat/{answer}/steer", post(steer_answer))
+        .route("/api/chat/{answer}/access", post(change_answer_access))
         .route("/api/chats", get(list_chats))
         .route("/api/review", get(get_review).post(mark_reviewed))
         .route(

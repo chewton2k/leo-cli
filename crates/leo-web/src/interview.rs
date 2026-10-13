@@ -11,6 +11,7 @@ pub const MOST_ATTEMPTS: usize = 100;
 pub const MOST_PROBLEMS: usize = 128;
 pub const BODY_BYTES: usize = 1_000_000;
 pub const MOST_ANSWER: usize = 32_000;
+pub const BOARD_LIMIT: f64 = 1_000_000.0;
 
 #[derive(Debug)]
 pub enum Error {
@@ -273,7 +274,7 @@ impl Workspace {
                         .points
                         .iter()
                         .flatten()
-                        .all(|p| p.is_finite() && (0.0..=1_000.0).contains(p)),
+                        .all(|p| p.is_finite() && p.abs() <= BOARD_LIMIT),
                 "Use bounded board shapes and labels of at most 300 characters.",
             )?;
         }
@@ -331,7 +332,7 @@ impl Challenge {
     }
 }
 
-fn validate_schedule(slots: &[Slot], framework: &Framework) -> Result<(), Error> {
+pub(crate) fn validate_schedule(slots: &[Slot], framework: &Framework) -> Result<(), Error> {
     require(
         slots.len() <= 60,
         "Keep a practice schedule to at most 60 sessions.",
@@ -722,15 +723,28 @@ pub fn assess(path: &Path, id: &str, feedback: Feedback) -> Result<Interview, Er
     })
 }
 
-pub fn set_schedule(path: &Path, id: &str, mut schedule: Vec<Slot>) -> Result<Interview, Error> {
+pub fn prepare_schedule(item: &Interview, mut schedule: Vec<Slot>) -> Result<Vec<Slot>, Error> {
+    validate_schedule(&schedule, &item.framework)?;
+    for slot in &mut schedule {
+        slot.done = item
+            .schedule
+            .iter()
+            .any(|old| old.id == slot.id && old.done);
+    }
+    Ok(schedule)
+}
+
+pub fn apply_schedule(
+    path: &Path,
+    id: &str,
+    before: &[Slot],
+    schedule: Vec<Slot>,
+) -> Result<Interview, Error> {
     mutate(path, id, None, |item| {
-        validate_schedule(&schedule, &item.framework)?;
-        for slot in &mut schedule {
-            slot.done = item
-                .schedule
-                .iter()
-                .any(|old| old.id == slot.id && old.done);
+        if item.schedule.as_slice() != before {
+            return Err(Error::Conflict);
         }
+        validate_schedule(&schedule, &item.framework)?;
         item.schedule = schedule;
         Ok(())
     })
@@ -756,7 +770,12 @@ pub fn attempt_material(attempt: &Attempt) -> String {
     serde_json::json!({"id":attempt.id,"challenge":attempt.challenge,"answer":attempt.workspace.answer,"reasoning":attempt.workspace.reasoning,"board":board_material(&attempt.workspace),"feedback":attempt.feedback}).to_string()
 }
 
-pub fn context(item: &Interview) -> String {
+pub fn context_problem(item: &Interview, wanted: Option<&str>) -> String {
+    let problem = wanted
+        .filter(|id| item.challenge.as_ref().is_none_or(|c| c.id != *id))
+        .and_then(|id| item.problems.iter().find(|p| p.challenge.id == id));
+    let challenge = problem.map(|p| &p.challenge).or(item.challenge.as_ref());
+    let workspace = problem.map(|p| &p.workspace).unwrap_or(&item.workspace);
     let attempts: Vec<_> = item.attempts.iter().rev().take(3).map(|a| {
         let feedback = a.feedback.as_ref().map(|f| serde_json::json!({"summary":crate::chat::clip(&f.summary, 500),"scores":f.scores.iter().map(|s| serde_json::json!({"skill":s.skill,"value":s.value,"evidence_excerpt":crate::chat::clip(&s.evidence, 150),"next":crate::chat::clip(&s.next, 150)})).collect::<Vec<_>>()}));
         serde_json::json!({"id":a.id,"title":a.challenge.title,"answer_excerpt":crate::chat::clip(&a.workspace.answer, 1000),"feedback":feedback})
@@ -765,13 +784,20 @@ pub fn context(item: &Interview) -> String {
         let values: Vec<_> = item.attempts.iter().filter_map(|a| a.feedback.as_ref()).flat_map(|f| &f.scores).filter(|s| &s.skill == skill).map(|s| s.value).collect();
         serde_json::json!({"skill":skill,"observations":values.len(),"latest_scores":values.iter().rev().take(5).collect::<Vec<_>>()})
     }).collect();
-    let data = serde_json::json!({"id":item.id,"revision":item.revision,"framework":item.framework,"challenge":item.challenge,"draft_answer":crate::chat::clip(&item.workspace.answer, 8000),"draft_reasoning":item.workspace.reasoning,"board":board_material(&item.workspace),"latest_attempts":attempts,"assessed_scores":scores,"schedule":item.schedule,"problems":item.problems.iter().enumerate().map(|(i,p)| serde_json::json!({"number":i+1,"id":p.challenge.id,"title":p.challenge.title,"submitted":item.attempts.iter().any(|a|a.challenge.id==p.challenge.id)})).collect::<Vec<_>>()});
-    format!("<interview_material>\n{}\n</interview_material>\nFor full submitted work use interview_attempt with its ID before assessing it.\n", data)
+    let active_problem = challenge.map(|c| serde_json::json!({"id":c.id,"title":c.title,"number":item.problems.iter().position(|p|p.challenge.id==c.id).map_or(1,|i|i+1)}));
+    let data = serde_json::json!({"active_problem":active_problem,"id":item.id,"revision":item.revision,"framework":item.framework,"challenge":challenge,"draft_answer":crate::chat::clip(&workspace.answer, 8000),"draft_reasoning":workspace.reasoning,"board":board_material(workspace),"latest_attempts":attempts,"assessed_scores":scores,"schedule":item.schedule,"problems":item.problems.iter().enumerate().map(|(i,p)| serde_json::json!({"number":i+1,"id":p.challenge.id,"title":p.challenge.title,"submitted":item.attempts.iter().any(|a|a.challenge.id==p.challenge.id)})).collect::<Vec<_>>()});
+    format!("<interview_material>\n{}\n</interview_material>\nUse interpretable language. The active_problem is the problem open in the workspace. References like this problem or my code refer to it and its current draft unless the user names a different problem. For full submitted work use interview_attempt with its ID before assessing it.\n", data)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn set_schedule(path: &Path, id: &str, schedule: Vec<Slot>) -> Result<Interview, Error> {
+        let item = load(path, id)?;
+        let schedule = prepare_schedule(&item, schedule)?;
+        apply_schedule(path, id, &item.schedule, schedule)
+    }
 
     fn framework() -> Framework {
         Framework {
@@ -913,7 +939,7 @@ mod tests {
         let item = assess(dir.path(), id, feedback).unwrap();
         assert_eq!(item.attempts.len(), 1);
         assert_eq!(item.attempts[0].feedback.as_ref().unwrap().scores.len(), 1);
-        assert!(context(&item).contains("interview_attempt"));
+        assert!(context_problem(&item, None).contains("interview_attempt"));
         assert!(attempt_material(&item.attempts[0]).contains("答え"));
     }
 
@@ -967,6 +993,58 @@ mod tests {
     }
 
     #[test]
+    fn schedule_approval_and_undo_check_the_plan_without_blocking_draft_edits() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = "schedule-approval-01";
+        configure(dir.path(), id, 0, framework()).unwrap();
+        let item = set_challenge(dir.path(), id, coding_challenge("schedule-problem-01")).unwrap();
+        let slot = Slot {
+            id: "schedule-session-01".into(),
+            date: "2026-10-13".into(),
+            time: "09:00".into(),
+            title: "Testing".into(),
+            minutes: 30,
+            skill: "Testing".into(),
+            done: false,
+        };
+        change(
+            dir.path(),
+            id,
+            Change::Workspace {
+                revision: item.revision,
+                challenge: "schedule-problem-01".into(),
+                workspace: workspace(),
+            },
+        )
+        .unwrap();
+        let applied = apply_schedule(dir.path(), id, &[], vec![slot.clone()]).unwrap();
+        assert_eq!(applied.workspace, workspace());
+        assert!(matches!(
+            apply_schedule(dir.path(), id, &[], vec![]),
+            Err(Error::Conflict)
+        ));
+        let undone = apply_schedule(dir.path(), id, &[slot.clone()], vec![]).unwrap();
+        assert!(undone.schedule.is_empty());
+        let applied = apply_schedule(dir.path(), id, &[], vec![slot.clone()]).unwrap();
+        let mut completed = slot.clone();
+        completed.done = true;
+        change(
+            dir.path(),
+            id,
+            Change::Schedule {
+                revision: applied.revision,
+                schedule: vec![completed.clone()],
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            apply_schedule(dir.path(), id, &[slot], vec![]),
+            Err(Error::Conflict)
+        ));
+        assert_eq!(load(dir.path(), id).unwrap().schedule, vec![completed]);
+    }
+
+    #[test]
     fn large_progress_is_complete_json_and_full_submissions_stay_available() {
         let dir = tempfile::tempdir().unwrap();
         let id = "interview-test-04";
@@ -1007,7 +1085,7 @@ mod tests {
                 feedback: Some(feedback.clone()),
             })
             .collect();
-        let material = context(&item);
+        let material = context_problem(&item, None);
         let body = material
             .split_once("<interview_material>\n")
             .unwrap()
@@ -1067,11 +1145,18 @@ mod tests {
         assert!(c.validate(&framework()).is_err());
         c.sources[0].url = "https://example.com/preparation".into();
         assert!(c.validate(&framework()).is_ok());
-        for point in [[f64::NAN, 1.0], [1001.0, 1.0], [-1.0, 1.0]] {
+        for point in [
+            [f64::NAN, 1.0],
+            [BOARD_LIMIT + 1.0, 1.0],
+            [-BOARD_LIMIT - 1.0, 1.0],
+        ] {
             let mut w = workspace();
             w.board[0].points = vec![point];
             assert!(w.validate().is_err());
         }
+        let mut extended = workspace();
+        extended.board[0].points = vec![[-2000.0, 3000.0]];
+        assert!(extended.validate().is_ok());
         let mut w = workspace();
         w.board[0].points = vec![[1.0, 2.0]; 129];
         assert!(w.validate().is_err());
@@ -1195,6 +1280,20 @@ mod tests {
             data["problems"][0]["workspace"],
             serde_json::to_value(work).unwrap()
         );
+        let material: serde_json::Value =
+            serde_json::from_str(context_problem(&next, None).lines().nth(1).unwrap()).unwrap();
+        assert_eq!(material["active_problem"]["number"], 2);
+        assert_eq!(material["active_problem"]["id"], "challenge-problems-02");
+        let previous: serde_json::Value = serde_json::from_str(
+            context_problem(&next, Some("challenge-problems-01"))
+                .lines()
+                .nth(1)
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(previous["active_problem"]["number"], 1);
+        assert_eq!(previous["draft_answer"], workspace().answer);
+        assert_eq!(previous["draft_reasoning"], workspace().reasoning);
         assert_eq!(next.challenge.unwrap().id, "challenge-problems-02");
         let restored = select_problem(dir.path(), id, "challenge-problems-01").unwrap();
         assert_eq!(restored.workspace, workspace());

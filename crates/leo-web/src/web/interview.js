@@ -64,29 +64,55 @@
     const selected = key === 'Tab' && (from !== to || shift);
     return { value: next, from: selected ? start : start + replacement.length, to: start + replacement.length };
   }
-  const point = (x, y) => [Math.round(Math.max(0, Math.min(1000, x))), Math.round(Math.max(0, Math.min(1000, y)))];
+  const BOARD_LIMIT = 1000000;
+  const coordinate = (n) => Number.isFinite(n) ? Math.round(Math.max(-BOARD_LIMIT, Math.min(BOARD_LIMIT, n)) * 100) / 100 : 0;
+  const point = (x, y) => [coordinate(x), coordinate(y)];
   function validBoard(board) {
     return Array.isArray(board) && board.length <= MOST_SHAPES && board.every((s) => s && typeof s === 'object') && board.reduce((n, s) => n + (Array.isArray(s.points) ? s.points.length : MOST_POINTS + 1), 0) <= MOST_POINTS
       && board.reduce((n, s) => n + (typeof s.text === 'string' ? [...s.text].length : 4001), 0) <= 4000
       && board.every((s) => ['pen', 'box', 'arrow', 'text'].includes(s.kind) && typeof s.text === 'string' && [...s.text].length <= 300
-        && Array.isArray(s.points) && s.points.length > 0 && s.points.length <= 128 && s.points.every((p) => Array.isArray(p) && p.length === 2 && p.every((n) => Number.isFinite(n) && n >= 0 && n <= 1000)));
+        && Array.isArray(s.points) && s.points.length > 0 && s.points.length <= 128 && s.points.every((p) => Array.isArray(p) && p.length === 2 && p.every((n) => Number.isFinite(n) && Math.abs(n) <= BOARD_LIMIT)));
   }
-  function boardSvg(board) {
-    if (!validBoard(board)) return '';
-    const shapes = board.map((s) => {
+  function shapeBounds(shape) {
+    const xs = shape.points.map(p => p[0]);
+    const ys = shape.points.map(p => p[1]);
+    const x = Math.min(...xs), y = Math.min(...ys);
+    return shape.kind === 'text' ? { x, y: y - 24, w: Math.max(24, [...shape.text].length * 22), h: 32 } : { x, y, w: Math.max(1, Math.max(...xs) - x), h: Math.max(1, Math.max(...ys) - y) };
+  }
+  function moveShape(shape, dx, dy) {
+    const xs = shape.points.map(p => p[0]), ys = shape.points.map(p => p[1]);
+    const x = Math.max(-BOARD_LIMIT - Math.min(...xs), Math.min(BOARD_LIMIT - Math.max(...xs), Number.isFinite(dx) ? dx : 0));
+    const y = Math.max(-BOARD_LIMIT - Math.min(...ys), Math.min(BOARD_LIMIT - Math.max(...ys), Number.isFinite(dy) ? dy : 0));
+    return { ...shape, points: shape.points.map(p => point(p[0] + x, p[1] + y)) };
+  }
+  function fitBoard(board, minimum = 1000) {
+    minimum = Number.isFinite(minimum) ? Math.max(100, Math.min(BOARD_LIMIT * 2, minimum)) : 1000;
+    if (!validBoard(board) || !board.length) return { x: 0, y: 0, w: minimum, h: minimum * 7 / 10 };
+    const bounds = board.map(shapeBounds);
+    const left = Math.min(...bounds.map(b => b.x)) - 40, top = Math.min(...bounds.map(b => b.y)) - 40;
+    const width = Math.max(...bounds.map(b => b.x + b.w)) - left + 40, height = Math.max(...bounds.map(b => b.y + b.h)) - top + 40;
+    const w = Math.max(minimum, width, height * 10 / 7), h = w * 7 / 10;
+    return { x: left - (w - width) / 2, y: top - (h - height) / 2, w, h };
+  }
+  function boardSvg(board, { view = fitBoard(board), interactive = false, selected = -1 } = {}) {
+    if (!validBoard(board) || ![view.x, view.y, view.w, view.h].every(Number.isFinite) || view.w <= 0 || view.h <= 0) return '';
+    const shapes = board.map((s, i) => {
       const [x, y] = s.points[0];
       const [endX, endY] = s.points[s.points.length - 1];
-      if (s.kind === 'text') return `<text x="${x}" y="${y}" fill="#19191b" stroke="none" font-family="system-ui, sans-serif" font-size="22">${escape(s.text)}</text>`;
-      if (s.kind === 'box') return `<rect x="${Math.min(x, endX)}" y="${Math.min(y, endY)}" width="${Math.abs(endX - x)}" height="${Math.abs(endY - y)}" rx="8"/>`;
-      if (s.kind === 'arrow') {
+      let shape;
+      if (s.kind === 'text') shape = `<text x="${x}" y="${y}" fill="currentColor" stroke="none" font-family="system-ui, sans-serif" font-size="22">${escape(s.text)}</text>`;
+      else if (s.kind === 'box') shape = `<rect x="${Math.min(x, endX)}" y="${Math.min(y, endY)}" width="${Math.abs(endX - x)}" height="${Math.abs(endY - y)}" rx="8"/>`;
+      else if (s.kind === 'arrow') {
         const angle = Math.atan2(endY - y, endX - x);
         const a = point(endX - 18 * Math.cos(angle - Math.PI / 6), endY - 18 * Math.sin(angle - Math.PI / 6));
         const b = point(endX - 18 * Math.cos(angle + Math.PI / 6), endY - 18 * Math.sin(angle + Math.PI / 6));
-        return `<path d="M${x},${y} L${endX},${endY} M${a.join(',')} L${endX},${endY} L${b.join(',')}"/>`;
-      }
-      return `<polyline points="${s.points.map((p) => p.join(',')).join(' ')}"/>`;
+        shape = `<path d="M${x},${y} L${endX},${endY} M${a.join(',')} L${endX},${endY} L${b.join(',')}"/>`;
+      } else shape = `<polyline points="${s.points.map((p) => p.join(',')).join(' ')}"/>`;
+      const b = shapeBounds(s);
+      const highlight = interactive && i === selected ? `<rect class="board-selection" x="${b.x - 6}" y="${b.y - 6}" width="${b.w + 12}" height="${b.h + 12}" fill="none" stroke="var(--accent)" stroke-width="1.5" vector-effect="non-scaling-stroke" pointer-events="none"/>` : '';
+      return `<g${interactive ? ` data-board-shape="${i}" tabindex="0" role="button" aria-label="${escape(s.kind === 'text' ? 'Move label: ' + s.text : 'Move ' + s.kind)}"` : ''}>${shape}${highlight}</g>`;
     }).join('');
-    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 700" role="img" aria-label="Interview whiteboard"><rect width="1000" height="700" fill="white"/><g fill="none" stroke="#19191b" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">${shapes}</g></svg>`;
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${view.x} ${view.y} ${view.w} ${view.h}" role="${interactive ? 'group' : 'img'}" aria-label="Interview whiteboard" style="color:${interactive ? 'var(--text)' : '#19191b'}">${interactive ? '' : `<rect x="${view.x}" y="${view.y}" width="${view.w}" height="${view.h}" fill="white"/>`}<g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">${shapes}</g></svg>`;
   }
   function progress(attempts) {
     const grouped = new Map();
@@ -135,5 +161,5 @@
       storage.setItem('leo-interview-drafts', JSON.stringify(drafts));
     } catch (e) {}
   }
-  root.leoInterview = { PRESETS, preset, framework, preparation, workspace, hasWork, codeEdit, point, validBoard, boardSvg, progress, agenda, keepDraft, readDraft, clearDraft, MOST_SHAPES, MOST_POINTS, MOST_ANSWER, MOST_PROBLEMS };
+  root.leoInterview = { PRESETS, preset, framework, preparation, workspace, hasWork, codeEdit, point, validBoard, boardSvg, fitBoard, moveShape, BOARD_LIMIT, progress, agenda, keepDraft, readDraft, clearDraft, MOST_SHAPES, MOST_POINTS, MOST_ANSWER, MOST_PROBLEMS };
 })(typeof window !== 'undefined' ? window : globalThis);

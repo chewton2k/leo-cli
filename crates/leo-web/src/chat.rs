@@ -186,6 +186,8 @@ pub struct ChatBody {
     #[serde(default)]
     pub chat: Option<String>,
     #[serde(default)]
+    pub interview_problem: Option<String>,
+    #[serde(default)]
     pub files: Vec<String>,
     #[serde(default)]
     pub access: Option<String>,

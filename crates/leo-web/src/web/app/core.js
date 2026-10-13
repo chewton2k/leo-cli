@@ -54,6 +54,13 @@ const chat = felix.create({
   render: (text) => md.render(text),
   escape: md.escape,
   icons: ICON,
+  onBeforeSend: async ({ id, mode, challenge }) => {
+    const session = interviewPage;
+    if (mode !== 'interview' || !session || session.item.id !== id || !interviewHere(session)) return true;
+    if (session.switching) throw new Error('The problem is switching. Ask Felix once it finishes.');
+    await saveInterviewWorkspace(session);
+    return interviewHere(session) && (!challenge || session.item.challenge?.id === challenge);
+  },
   onOpen: (id, lines) => {
     citedLines = lines ? { id, ...lines } : null;
     if (state.view === 'note' && state.session && state.session.note.id === id && lines) showCitedLines();
@@ -78,7 +85,8 @@ const chat = felix.create({
     toast(open && saving.unsaved() ? 'Felix changed this note while you were typing; reopen it to see the change.' : `Changed “${note.title}”`, { action: 'Open', run: () => go(noteHash(note.id)) });
   },
   onToggle: () => drawSide(),
-  onOrganized: () => {
+  onOrganized: (proposal) => {
+    if (proposal.kind === 'interview_schedule') { refreshInterview(proposal.interview).catch(fail); loadTasksWindow().catch(() => {}); if (state.view === 'calendar') loadSchedule(seq); return; }
     loadSideFolders().catch(() => {});
     if (state.view === 'calendar') loadSchedule(seq);
     loadTasksWindow().catch(() => {});

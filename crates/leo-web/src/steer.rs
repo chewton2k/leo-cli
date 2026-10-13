@@ -5,7 +5,13 @@ pub const MOST_WAITING: usize = 8;
 pub const MOST_CHARS: usize = 4000;
 
 #[derive(Clone, Default)]
-pub struct Steering(Arc<Mutex<HashMap<String, Vec<String>>>>);
+pub struct Steering(Arc<Mutex<HashMap<String, Waiting>>>);
+
+#[derive(Default)]
+struct Waiting {
+    texts: Vec<String>,
+    access: Option<crate::tools::Access>,
+}
 
 pub struct Steer {
     id: String,
@@ -16,7 +22,7 @@ impl Steering {
     pub fn open(&self) -> Steer {
         let id = uuid::Uuid::new_v4().to_string();
         if let Ok(mut all) = self.0.lock() {
-            all.insert(id.clone(), Vec::new());
+            all.insert(id.clone(), Waiting::default());
         }
         Steer {
             id,
@@ -35,11 +41,18 @@ impl Steering {
         let Some(waiting) = all.get_mut(id) else {
             return Err("gone");
         };
-        if waiting.len() >= MOST_WAITING {
+        if waiting.texts.len() >= MOST_WAITING {
             return Err("full");
         }
-        waiting.push(text.chars().take(MOST_CHARS).collect());
-        Ok(waiting.len())
+        waiting.texts.push(text.chars().take(MOST_CHARS).collect());
+        Ok(waiting.texts.len())
+    }
+
+    pub fn set_access(&self, id: &str, access: crate::tools::Access) -> Result<(), &'static str> {
+        let mut all = self.0.lock().map_err(|_| "gone")?;
+        let waiting = all.get_mut(id).ok_or("gone")?;
+        waiting.access = Some(access);
+        Ok(())
     }
 
     #[cfg(test)]
@@ -65,8 +78,20 @@ impl Steer {
             .0
             .lock()
             .ok()
-            .and_then(|mut all| all.get_mut(&self.id).map(std::mem::take))
+            .and_then(|mut all| all.get_mut(&self.id).map(|w| std::mem::take(&mut w.texts)))
             .unwrap_or_default()
+    }
+
+    pub fn access(&self, fallback: crate::tools::Access) -> crate::tools::Access {
+        self.all
+            .0
+            .lock()
+            .map(|all| {
+                all.get(&self.id)
+                    .map(|w| w.access.unwrap_or(fallback))
+                    .unwrap_or(crate::tools::Access::Read)
+            })
+            .unwrap_or(crate::tools::Access::Read)
     }
 }
 

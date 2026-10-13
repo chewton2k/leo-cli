@@ -1615,6 +1615,12 @@ pub enum Proposal {
         #[serde(default)]
         dirs: Vec<String>,
     },
+    InterviewSchedule {
+        summary: String,
+        interview: String,
+        before: Vec<crate::interview::Slot>,
+        schedule: Vec<crate::interview::Slot>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1645,9 +1651,11 @@ pub struct Desk {
     captions: Option<std::sync::Arc<crate::captions::Captions>>,
     pub asked: usize,
     pub interview: Option<String>,
+    pub interview_problem: Option<String>,
     pub session: Option<Session>,
     pub session_over: bool,
     steer: Option<crate::steer::Steer>,
+    reply: Option<tokio::sync::mpsc::UnboundedSender<String>>,
     meaning: Option<(
         crate::vectors::Meaning,
         std::sync::Arc<crate::vectors::Vectors>,
@@ -1671,9 +1679,11 @@ impl Desk {
             captions: None,
             asked: 0,
             interview: None,
+            interview_problem: None,
             session: None,
             session_over: false,
             steer: None,
+            reply: None,
             meaning: None,
         }
     }
@@ -1690,6 +1700,27 @@ impl Desk {
     pub fn with_steer(mut self, steer: crate::steer::Steer) -> Desk {
         self.steer = Some(steer);
         self
+    }
+
+    pub fn with_reply(mut self, reply: tokio::sync::mpsc::UnboundedSender<String>) -> Desk {
+        self.reply = Some(reply);
+        self
+    }
+
+    pub fn current_access(&mut self) -> Access {
+        self.access = if self.reply_closed() {
+            Access::Read
+        } else {
+            self.steer
+                .as_ref()
+                .map(|s| s.access(self.access))
+                .unwrap_or(self.access)
+        };
+        self.access
+    }
+
+    pub fn reply_closed(&self) -> bool {
+        self.reply.as_ref().is_some_and(|r| r.is_closed())
     }
 
     pub fn take_steering(&self) -> Vec<String> {

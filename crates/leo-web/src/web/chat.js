@@ -433,7 +433,7 @@
   }
 
   function historyText(m) {
-    if (m.role === 'user') return [passageLine(m.selection), m.say || m.text].filter(Boolean).join('\n');
+    if (m.role === 'user') return [interviewLine(m.interview), passageLine(m.selection), m.say || m.text].filter(Boolean).join('\n');
     const lines = [];
     const by = m.spent && typeof m.spent.by === 'string' ? [m.spent.by, m.spent.model].filter(Boolean).join(' · ') : '';
     if (by) lines.push(`[Written by ${by}${m.mode ? `, in ${m.mode} style` : ''}]`);
@@ -459,6 +459,14 @@
     }
     lines.push(grade(m.text || '').text || m.text || '');
     return lines.filter(Boolean).join('\n');
+  }
+
+  function interviewLine(view) {
+    if (!view || !Number.isInteger(view.number) || view.number < 1 || view.number > MOST_INTERVIEW_PROBLEMS || typeof view.challenge !== 'string' || !/^[a-zA-Z0-9-]{8,64}$/.test(view.challenge) || typeof view.title !== 'string') return '';
+    const title = [];
+    for (const c of view.title) { if (title.length >= MOST_INTERVIEW_TITLE) break; title.push(c); }
+    const data = JSON.stringify({ number: view.number, challenge: view.challenge, title: title.join(''), tab: ['Code', 'Approach', 'Whiteboard', 'Answer'].includes(view.tab) ? view.tab : '' }).replace(/</g, '\\u003c');
+    return `<interview_workspace_reference>\n${data}\n</interview_workspace_reference>`;
   }
 
   function threadRefs(messages) {
@@ -541,8 +549,11 @@
   const NOTE_DRAG = 'application/x-leo-note';
 
   const CHAT_LEAVE_MS = 160;
+  const PERMISSION_MS = 5000;
+  const MOST_INTERVIEW_PROBLEMS = 128;
+  const MOST_INTERVIEW_TITLE = 160;
 
-  function create({ render, escape, icons = {}, onOpen = () => {}, onOriginal = () => {}, storage = root.localStorage, prepare = null, notify = () => {}, onSaved = () => {}, onChanged = () => {}, onUndone = () => {}, onToggle = () => {}, onInterview = () => {}, onInterviewChanged = () => {}, onInterviewReply = () => {}, onAdd = () => {}, onOrganized = () => {} }) {
+  function create({ render, escape, icons = {}, onOpen = () => {}, onOriginal = () => {}, storage = root.localStorage, prepare = null, notify = () => {}, onSaved = () => {}, onChanged = () => {}, onUndone = () => {}, onToggle = () => {}, onInterview = () => {}, onInterviewChanged = () => {}, onInterviewReply = () => {}, onAdd = () => {}, onOrganized = () => {}, onBeforeSend = () => true }) {
     const saved = load(storage);
     const stepChevron = (icons.chevron || '').replace('<svg ', '<svg class="msg-step-chevron" ');
     const state = { open: false, id: saved.id || newId(), mode: modeOf(saved.mode), messages: saved.messages, refs: saved.refs, context: null, dropped: null, busy: null, streak: 0, pick: null, chats: null, sidebar: null, doomed: null, asking: null, files: [], sent: [], filesFor: null, review: [], drafts: {}, found: null, selection: null };
@@ -697,8 +708,29 @@
       $('#chat-access-menu').hidden = true;
       $('#chat-access').setAttribute('aria-expanded', 'false');
       drawAccess();
+      if (state.busy) { state.busy.permissionWanted = state.access; postPermission(state.busy); }
     }
     drawAccess();
+
+    async function postPermission(work) {
+      if (state.busy !== work || !work.answerId || work.permissionWorking || work.permissionPosted === work.permissionWanted) return;
+      work.permissionWorking = true;
+      const wanted = work.permissionWanted;
+      let failed = false;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), PERMISSION_MS);
+      try {
+        const reply = await fetch(`/api/chat/${encodeURIComponent(work.answerId)}/access`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ access: wanted }), signal: controller.signal });
+        if (!reply.ok && reply.status !== 410) throw new Error('Permissions could not be changed for the current reply. Send your message again with the access you want.');
+        work.permissionPosted = wanted;
+      } catch (e) {
+        failed = true;
+        if (state.busy === work) { work.abort(); notify('Permissions could not be changed for the current reply. Send your message again with the access you want.'); }
+      } finally {
+        clearTimeout(timer); work.permissionWorking = false;
+        if (state.busy === work && work.permissionPosted !== work.permissionWanted && !failed && !controller.signal.aborted) setTimeout(() => postPermission(work), 0);
+      }
+    }
 
     const SIDEBAR = 'leo-chat-sidebar';
     const wide = () => Boolean(root.matchMedia && root.matchMedia('(min-width: 900px)').matches);
@@ -1275,13 +1307,15 @@
         b.classList.toggle('on', on);
         b.setAttribute('aria-selected', String(on));
       }
+      drawContext();
       input.placeholder = state.mode === 'study' ? 'Answer, or ask for a question…' : 'Message Felix, or type @ to add a note…';
     }
 
     function drawContext() {
       const box = $('#chat-context');
       const ctx = state.context && state.dropped !== state.context.id ? state.context : null;
-      box.innerHTML = ctx
+      const interview = state.mode === 'interview' && state.interview?.id === state.id ? state.interview : null;
+      box.innerHTML = interview ? `<span class="chat-using">Problem ${interview.number} · <b>${escape(interview.title)}</b> · ${escape(interview.tab)}</span>` : ctx
         ? `<span class="chat-using">Also reading <b>${escape(ctx.title || 'Untitled')}</b> and notes connected to it</span><button class="chat-drop" data-chat="drop" aria-label="Stop using this note">×</button>`
         : '<span class="chat-using">Looks through your notes when they help</span>';
     }
@@ -1467,8 +1501,10 @@
           ? `<div class="proposal-done">Done · <button class="msg-act" data-chat="undo" ${where}>Undo</button></div>`
           : p.state === 'dismissed'
             ? '<div class="proposal-done">Dismissed</div>'
-            : `<div class="proposal-buttons"><button class="btn primary sm" data-chat="apply" ${where}>${p.kind === 'delete_note' || p.kind === 'delete_folder' ? 'Move to trash' : p.kind === 'restore_note' ? 'Bring it back' : 'Do it'}</button><button class="btn plain sm" data-chat="dismiss" ${where}>Dismiss</button></div>`;
-        return `<div class="proposal organize ${escape(p.kind)}"><div class="proposal-title">${escape(p.summary || 'A change')}</div>${acts}</div>`;
+            : `<div class="proposal-buttons"><button class="btn primary sm" data-chat="apply" ${where}>${p.kind === 'delete_note' || p.kind === 'delete_folder' ? 'Move to trash' : p.kind === 'restore_note' ? 'Bring it back' : p.kind === 'interview_schedule' ? 'Apply' : 'Do it'}</button><button class="btn plain sm" data-chat="dismiss" ${where}>Dismiss</button></div>`;
+        const sessions = p.kind === 'interview_schedule' && Array.isArray(p.schedule) ? p.schedule.slice(0, 60).filter(s => s && typeof s.title === 'string' && typeof s.date === 'string' && typeof s.time === 'string' && typeof s.skill === 'string' && Number.isFinite(s.minutes)) : [];
+        const schedule = sessions.length ? `<div class="proposal-schedule">${sessions.map(s => `<div class="set-row"><span class="grow"><b>${escape(s.title)}</b><span class="hint">${escape(s.date)}${s.time ? ' · ' + escape(s.time) : ''} · ${s.minutes} min · ${escape(s.skill)}</span></span></div>`).join('')}</div>` : '';
+        return `<div class="proposal organize ${escape(p.kind)}"><div class="proposal-title">${escape(p.summary || 'A change')}</div>${schedule}${acts}</div>`;
       }
       const done = p.state === 'applied'
         ? `<div class="proposal-done">${p.kind === 'create' ? 'Made' : 'Applied'} · <button class="msg-act" data-chat="open" data-id="${escape(p.made || p.note || '')}">Open the note</button><button class="msg-act" data-chat="undo" ${where}>Undo</button></div>`
@@ -1898,7 +1934,15 @@
 
     async function send(text, extra = {}) {
       const question = text.trim();
-      if (!question || state.busy) return;
+      if (!question || state.busy || state.preparingSend) return;
+      const viewing = state.mode === 'interview' && state.interview?.id === state.id ? state.interview : null;
+      if (state.mode === 'interview') {
+        const id = state.id;
+        state.preparingSend = true;
+        try { if (await onBeforeSend({ id, mode: state.mode, challenge: viewing?.challenge }) === false || state.id !== id || state.mode !== 'interview' || state.busy) return; }
+        catch (e) { notify(e.message || 'Your practice could not be saved. Try saving it again before asking Felix.'); return; }
+        finally { state.preparingSend = false; }
+      }
       const card = extra.card || null;
       if (!extra.quiz) {
         const last = [...state.messages].reverse().find((m) => m.role === 'assistant');
@@ -1906,7 +1950,7 @@
       }
       closePick();
       const ctx = state.context && state.dropped !== state.context.id ? state.context.id : null;
-      const access = state.access;
+      let access = state.access;
       const going = card ? [] : state.files.filter((f) => f.status === 'ready' || f.status === 'reading');
       const attached = card ? [] : state.refs.slice();
       const passage = card ? null : state.selection;
@@ -1916,7 +1960,7 @@
         state.selection = null;
         drawRefs();
       }
-      const asked = { role: 'user', text: question, refs: attached, docs: [], files: [], cards: going.map(cardOf), ...(passage ? { selection: passage } : {}), ...(extra.say ? { say: extra.say } : {}), ...(extra.quiz ? { quiz: extra.quiz } : {}) };
+      const asked = { role: 'user', text: question, refs: attached, docs: [], files: [], cards: going.map(cardOf), ...(viewing ? { interview: { ...viewing } } : {}), ...(passage ? { selection: passage } : {}), ...(extra.say ? { say: extra.say } : {}), ...(extra.quiz ? { quiz: extra.quiz } : {}) };
       const settle = (i, doc) => {
         if (!doc) {
           asked.cards[i] = null;
@@ -1937,12 +1981,12 @@
       else {
         state.messages.push(asked);
         state.messages.push(answer);
-        input.value = '';
+        if (input.value.trim() === question) input.value = '';
         fit();
       }
       const controller = new AbortController();
       const thread = { id: state.id, mode: state.mode, refs: state.refs.slice(), messages: state.messages };
-      const work = { abort: () => controller.abort(), thread, answer, waiting: [], answerId: null };
+      const work = { abort: () => controller.abort(), thread, answer, waiting: [], answerId: null, permissionWanted: state.access, permissionPosted: access, permissionWorking: false };
       state.busy = work;
       awake();
       mood('nod', 450);
@@ -1963,11 +2007,12 @@
       const sentRefs = threadRefs(thread.messages).map((r) => r.id);
       if (passage && passage.note && !sentRefs.includes(passage.note)) sentRefs.unshift(passage.note);
       try {
+        access = state.access; work.permissionPosted = access;
         const response = await fetch('/api/chat', {
           method: 'POST',
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: history, mode: thread.mode, note: ctx, refs: sentRefs.slice(0, MOST_REFS), recent: recentNotes(thread.messages.filter((m) => m !== answer)), chat: thread.id, files, access, practice: Boolean(card), mark: Boolean(card && !extra.hint && card.correct === null), selection: passage ? { title: passage.title, from: passage.from, to: passage.to, text: passage.text } : null, session: sessionBody(currentSession()) }),
+          body: JSON.stringify({ messages: history, mode: thread.mode, note: ctx, refs: sentRefs.slice(0, MOST_REFS), recent: recentNotes(thread.messages.filter((m) => m !== answer)), chat: thread.id, interview_problem: viewing?.challenge || null, files, access, practice: Boolean(card), mark: Boolean(card && !extra.hint && card.correct === null), selection: passage ? { title: passage.title, from: passage.from, to: passage.to, text: passage.text } : null, session: sessionBody(currentSession()) }),
           signal: controller.signal,
         });
         if (response.status === 401) throw new Error('This page needs its link again. Open the link leo serve printed.');
@@ -1993,6 +2038,7 @@
             if (e.interview && typeof e.interview.id === 'string') onInterviewChanged(e.interview.id);
             if (typeof e.answer === 'string') {
               work.answerId = e.answer;
+              postPermission(work);
               for (const m of work.waiting) postSteer(work, m);
             }
             if (Array.isArray(e.steered)) steered(work, e.steered);
@@ -2471,6 +2517,7 @@
         toggle(true);
         return true;
       },
+      setInterviewContext(context) { state.interview = context; if (state.open) drawContext(); },
       setContext(ctx) {
         const next = ctx && ctx.id ? { id: ctx.id, title: ctx.title, directory: ctx.directory || '' } : null;
         if ((next && next.id) === (state.context && state.context.id) && (!next || next.title === state.context.title)) return;

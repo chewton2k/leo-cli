@@ -183,6 +183,9 @@ seer, meaning, web, room).
 - Access (`tools::Access`, `leo-felix-access`, Shift+Tab): Ask first (cards to
   Apply), Auto (applied at once, cards come back applied with Undo), Read only
   (change tools left out of the manual and refused).
+  Changes during a reply POST to `/api/chat/{answer}/access`; both protocols
+  check the live setting before tool execution and automatic application.
+  A failed permission update stops the reply; a closed stream prevents further changes.
 - Read tools: search_notes, open_note, connected_notes, read_document,
   read_transcript, read_original, look_at_picture, calculate (`calc.rs`, a
   safe evaluator), list_schedule, list_trash, search_chats.
@@ -216,9 +219,19 @@ seer, meaning, web, room).
   practice conversation; Back saves then returns to the practice list.
   Scheduling reads interview progress and `list_schedule` before proposing
   candidate gaps around saved commitments and relevant note preferences.
-  Coding uses available width, wraps with aligned syntax and line numbers,
+  All active practices use available width and adapt when Felix opens.
+  Coding wraps with aligned syntax and line numbers,
   and adapts when Felix opens. Python deletion on blank indented lines uses
   four-column stops and native Undo; there is no Indent code action.
+  Send flushes the draft and binds context to `interview_problem`, with the
+  problem number, title and tab retained on the user message in chat history.
+  Reading progress preserves that binding even if the user switches problems.
+  Whiteboards use a pannable/zoomable viewport over bounded ±1,000,000 coordinates;
+  labels and selected shapes drag, Enter places a label, and snapshots fit all content.
+  Reset affects only the current tab of the captured problem. Board Undo retains
+  up to 20 edits; a reset's Undo also restores its viewport. Other tabs stay saved.
+  `interview_schedule` uses the same Ask/Auto/Read proposal and Undo flow as tasks;
+  Apply and Undo reject changed schedules while allowing concurrent draft edits.
 - Felix activity records its position in the streamed response, stays between
   the corresponding passages after reload, and is excluded from copied note
   selections. Legacy activity without positions stays at the beginning.

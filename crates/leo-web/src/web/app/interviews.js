@@ -2,6 +2,7 @@ const interviews = window.leoInterview;
 let interviewPage = null;
 let interviewStart = null;
 let interviewCodeLoad = null;
+const MOST_BOARD_UNDO = 20;
 
 function loadInterviewCode() {
   if (window.leoCode) return Promise.resolve(window.leoCode);
@@ -26,6 +27,7 @@ async function showInterviews(id = '') {
   const mine = ++seq;
   state = { view: 'interviews', dir: '' };
   interviewPage?.codeResize?.disconnect();
+  if (interviewPage?.boardFrame) cancelAnimationFrame(interviewPage.boardFrame);
   interviewPage = null;
   if (interviewStart && interviewStart.id !== id) interviewStart = null;
   chrome({ showBack: Boolean(id) });
@@ -74,20 +76,22 @@ function interviewHere(session) {
 function drawInterview(session) {
   if (!interviewHere(session)) return;
   session.codeResize?.disconnect();
+  if (session.boardFrame) { cancelAnimationFrame(session.boardFrame); session.boardFrame = 0; }
   const active = document.activeElement;
   const focus = active && app.contains(active) && (active instanceof HTMLTextAreaElement || (active instanceof HTMLInputElement && active.type === 'text')) ? { id: active.id, from: active.selectionStart, to: active.selectionEnd, scroll: active.scrollTop } : null;
   const item = session.item;
   const coding = item.framework.track === 'coding';
   const tabs = coding ? [['code', 'Code'], ['write', 'Approach'], ['board', 'Whiteboard']] : [['write', 'Write'], ['board', 'Whiteboard']];
-  app.innerHTML = `<div class="interview-home${coding ? ' interview-coding' : ''}"><div class="interview-heading"><div><p class="eyebrow">${esc(interviews.preset(item.framework.track).label)} · ${item.framework.style === 'mock' ? 'Mock interview' : 'Coach'}</p><h1>${esc(item.framework.title)}</h1><p class="hint">${esc([item.framework.company || 'General practice', item.framework.role].filter(Boolean).join(' · '))}</p></div><div class="buttons"><button class="btn sm" data-interview="configure">Preferences</button><button class="btn sm" data-interview="chat">Talk with Felix</button></div></div>
+  app.innerHTML = `<div class="interview-home interview-practice${coding ? ' interview-coding' : ''}"><div class="interview-heading"><div><p class="eyebrow">${esc(interviews.preset(item.framework.track).label)} · ${item.framework.style === 'mock' ? 'Mock interview' : 'Coach'}</p><h1>${esc(item.framework.title)}</h1><p class="hint">${esc([item.framework.company || 'General practice', item.framework.role].filter(Boolean).join(' · '))}</p></div><div class="buttons"><button class="btn sm" data-interview="configure">Preferences</button></div></div>
     <div id="interview-problems" class="interview-problems" role="group" aria-label="Practice problems"></div>
     <div class="interview-solve"><section id="interview-challenge" class="set-card"></section>
     ${item.challenge ? `<section class="set-card interview-workspace"><div class="interview-toolbar"><div class="library-views" role="tablist" aria-label="Your answer workspace">${tabs.map(([id, label]) => `<button class="btn sm plain${session.tab === id ? ' on' : ''}" role="tab" aria-selected="${session.tab === id}" data-interview="tab" data-tab="${id}">${label}</button>`).join('')}</div><span id="interview-save" class="hint" role="status"></span></div>
     <div id="interview-editor"${session.tab !== (coding ? 'code' : 'write') ? ' hidden' : ''}><div class="interview-toolbar"><label class="interview-label" for="interview-answer">${coding ? esc(item.challenge.coding?.language || item.framework.language || 'Code') : 'Your answer'}</label></div><div class="interview-code-shell${coding ? ' numbered' : ''}">${coding ? '<pre id="interview-lines" aria-hidden="true"></pre>' : ''}<div class="interview-code-pane">${coding ? '<pre id="interview-colors" aria-hidden="true"></pre>' : ''}<textarea id="interview-answer" class="set-input${coding ? ' interview-code' : ''}" maxlength="32000" spellcheck="${!coding}" autocapitalize="off" autocomplete="off" aria-label="${coding ? 'Code editor' : 'Your answer'}" placeholder="${coding ? 'Write your implementation here…' : 'Clarify the problem, outline an approach, and work through it…'}">${esc(session.draft.answer)}</textarea></div></div></div>
     ${coding ? `<div id="interview-reasoning-editor"${session.tab !== 'write' ? ' hidden' : ''}><label class="interview-label" for="interview-reasoning">Your approach</label><p class="hint">Explain your idea, complexity, and edge cases. Your code stays in the Code tab.</p><textarea id="interview-reasoning" class="set-input" maxlength="8000" placeholder="What’s your approach?">${esc(session.draft.reasoning)}</textarea></div>` : ''}
-    <div id="interview-whiteboard"${session.tab !== 'board' ? ' hidden' : ''}><div class="interview-toolbar"><div class="pick-chips" aria-label="Drawing tools">${[['pen', 'Pen'], ['box', 'Box'], ['arrow', 'Arrow'], ['text', 'Text']].map(([id, label]) => `<button class="pick-chip${session.tool === id ? ' on' : ''}" aria-pressed="${session.tool === id}" data-interview="tool" data-tool="${id}">${label}</button>`).join('')}</div><div class="buttons"><button class="btn sm" data-interview="undo-board">Undo</button><button class="btn sm" data-interview="clear-board">Clear</button></div></div><label class="interview-label" for="interview-board-label">Board label</label><input class="set-input" id="interview-board-label" value="${esc(session.label || '')}" maxlength="300" placeholder="Type a label, then tap the board to place it"><button class="btn sm" data-interview="label-board">Add label to board</button><div id="interview-board" tabindex="0" role="group" aria-label="Whiteboard. Draw with a pointer; add text with the Add label button."></div><p class="hint">Draw to explain your thinking. Felix can review a snapshot when you submit.</p></div>
-    <div id="interview-save-error" class="set-note warn" hidden></div><div class="interview-toolbar interview-submit"><p class="hint">${coding ? 'Felix reviews your code and reasoning; examples are not executed.' : 'Work at your pace. Submit when you’re ready for feedback.'}</p><div class="buttons"><button class="icon-btn" data-interview="clear-workspace" aria-label="Clear your draft" title="Clear your draft">${ICON.trash}</button>${coding && item.challenge.coding ? '<button class="btn sm" data-interview="reset-code">Reset code</button>' : ''}<button class="btn sm" data-interview="hint">Hint</button><button class="btn sm primary" data-interview="submit">Submit for review</button></div></div></section>` : ''}</div>
+    <div id="interview-whiteboard"${session.tab !== 'board' ? ' hidden' : ''}><div class="interview-toolbar"><div class="pick-chips" aria-label="Drawing tools">${[['select', 'Select'], ['pan', 'Pan'], ['pen', 'Pen'], ['box', 'Box'], ['arrow', 'Arrow'], ['text', 'Text']].map(([id, label]) => `<button class="pick-chip${session.tool === id ? ' on' : ''}" aria-pressed="${session.tool === id}" data-interview="tool" data-tool="${id}">${label}</button>`).join('')}</div><div class="buttons"><button class="btn sm" data-interview="undo-board">Undo</button><button class="btn sm" data-interview="zoom-board" data-step="-1" aria-label="Zoom out">${ICON.minus}</button><button class="btn sm" data-interview="zoom-board" data-step="1" aria-label="Zoom in">${ICON.plus}</button><button class="btn sm" data-interview="fit-board">${ICON.fit}<span>Fit</span></button></div></div><label class="interview-label" for="interview-board-label">Board label</label><div class="interview-board-label-row"><input class="set-input" id="interview-board-label" value="${esc(session.label || '')}" maxlength="300" placeholder="Type a label and press Enter"><button class="btn sm" data-interview="label-board">Add label</button></div><div id="interview-board" tabindex="0" role="group" aria-label="Whiteboard. Drag labels to move them. Use Pan or hold Space to drag the canvas."></div><p class="hint">Drag labels to move them. Pan or hold Space to move the canvas; scroll to explore. Felix reviews the whole board when you submit.</p></div>
+    <div id="interview-save-error" class="set-note warn" hidden></div><div class="interview-toolbar interview-submit"><p class="hint">${coding ? 'Felix reviews your code and reasoning; examples are not executed.' : 'Work at your pace. Submit when you’re ready for feedback.'}</p><div class="buttons"><button class="btn sm" data-interview="reset">Reset</button><button class="btn sm" data-interview="hint">Hint</button><button class="btn sm primary" data-interview="submit">Submit for review</button></div></div></section>` : ''}</div>
     <details class="interview-details source-more"${item.attempts.length ? ' open' : ''}><summary>${ICON.chevron}<span>Progress & previous attempts</span></summary><section id="interview-progress"></section><section id="interview-attempts"></section></details><details class="interview-details source-more"${item.schedule.length ? ' open' : ''}><summary>${ICON.chevron}<span>Practice schedule</span></summary><section id="interview-schedule"></section></details></div>`;
+  drawInterviewContext(session);
   drawInterviewProblems(session);
   drawInterviewChallenge(session);
   drawInterviewBoard(session);
@@ -119,12 +123,19 @@ function drawInterview(session) {
     });
     $('#interview-reasoning')?.addEventListener('input', (e) => { session.draft.reasoning = e.target.value; interviewChanged(session); });
     $('#interview-board-label').addEventListener('input', (e) => { session.label = e.target.value; });
+    $('#interview-board-label').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); addInterviewLabel(session); } });
     wireInterviewBoard(session);
   }
   if (focus) {
     const again = document.getElementById(focus.id);
     if (again && !again.disabled) { again.focus({ preventScroll: true }); again.setSelectionRange(focus.from, focus.to); again.scrollTop = focus.scroll; syncInterviewCodeScroll(); }
   }
+}
+
+function drawInterviewContext(session) {
+  const item = session.item, c = item.challenge;
+  const number = (item.problems || []).findIndex(p => p.challenge.id === c?.id) + 1;
+  chat.setInterviewContext(c ? { id: item.id, challenge: c.id, number: number || 1, title: c.title, tab: session.tab === 'board' ? 'Whiteboard' : session.tab === 'code' ? 'Code' : item.framework.track === 'coding' ? 'Approach' : 'Answer' } : null);
 }
 
 function drawInterviewProblems(session) {
@@ -138,6 +149,7 @@ function drawInterviewProblems(session) {
 }
 
 function useInterviewProblem(session, item) {
+  if (session.item.challenge?.id !== item.challenge?.id) { session.boardUndo = []; session.selected = -1; session.gesture = null; session.stroke = null; }
   session.item = item;
   session.draft = interviews.workspace(item.workspace);
   session.generation = 0;
@@ -219,7 +231,7 @@ function drawInterviewChallenge(session) {
   const c = session.item.challenge;
   const coding = c?.coding;
   const busy = session.preparing;
-  $('#interview-challenge').innerHTML = c ? `<div class="interview-toolbar"><h2>${esc(c.title)}</h2><div class="buttons">${coding ? `<span class="chip">${esc(coding.difficulty)}</span>` : ''}<span class="chip">${c.minutes} min</span></div></div><p class="hint">${esc(c.origin === 'generated' ? 'Original practice' : c.origin === 'official' ? 'Official preparation' : 'Candidate report · unverified')}</p><div class="prose">${md.render(c.question, { interactive: false })}</div>${coding ? `<h3>Examples</h3>${coding.examples.map((e, i) => `<div class="interview-example"><b>Example ${i + 1}</b><pre>Input: ${esc(e.input)}\nOutput: ${esc(e.output)}</pre>${e.explanation ? `<p class="hint">${esc(e.explanation)}</p>` : ''}</div>`).join('')}<h3>Constraints</h3><ul class="interview-constraints">${coding.constraints.map((s) => `<li>${esc(s)}</li>`).join('')}</ul>` : ''}${c.sources.length ? `<details class="interview-research source-more"><summary>${ICON.chevron}<span>Research & sources</span></summary><p class="hint">Reported questions are unverified. This exercise is labelled separately above.</p><div class="interview-sources">${c.sources.map((s) => `<a class="chip" href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title)} · ${esc(s.kind)}</a>`).join('')}</div></details>` : ''}<button class="btn sm" data-interview="next"${busy ? ' disabled' : ''}>${busy ? 'Preparing…' : 'Next challenge'}</button>` : `<div class="interview-welcome"><p class="eyebrow">${session.item.framework.company ? 'Company preparation' : 'General practice'}</p><h2>${busy ? 'Preparing your first challenge…' : 'Ready when you are'}</h2><p class="hint" role="status">${busy ? session.waiting ? 'Felix is finishing the previous reply. Your practice will start automatically after it.' : session.item.framework.company ? 'Felix is researching the company and role, then preparing an exercise. You can follow along in chat.' : 'Felix is choosing an exercise for your goals. You can follow along in chat.' : 'Start once. Felix will research your company if you have one, then put a challenge and workspace here.'}</p><div class="buttons"><button class="btn sm primary" data-interview="next"${busy ? ' disabled' : ''}>${busy ? 'Preparing…' : 'Start practice'}</button><button class="btn sm" data-interview="chat">Talk with Felix</button></div></div>`;
+  $('#interview-challenge').innerHTML = c ? `<div class="interview-toolbar"><h2>${esc(c.title)}</h2><div class="buttons">${coding ? `<span class="chip">${esc(coding.difficulty)}</span>` : ''}<span class="chip">${c.minutes} min</span></div></div><p class="hint">${esc(c.origin === 'generated' ? 'Original practice' : c.origin === 'official' ? 'Official preparation' : 'Candidate report · unverified')}</p><div class="prose">${md.render(c.question, { interactive: false })}</div>${coding ? `<h3>Examples</h3>${coding.examples.map((e, i) => `<div class="interview-example"><b>Example ${i + 1}</b><pre>Input: ${esc(e.input)}\nOutput: ${esc(e.output)}</pre>${e.explanation ? `<p class="hint">${esc(e.explanation)}</p>` : ''}</div>`).join('')}<h3>Constraints</h3><ul class="interview-constraints">${coding.constraints.map((s) => `<li>${esc(s)}</li>`).join('')}</ul>` : ''}${c.sources.length ? `<details class="interview-research source-more"><summary>${ICON.chevron}<span>Research & sources</span></summary><p class="hint">Reported questions are unverified. This exercise is labelled separately above.</p><div class="interview-sources">${c.sources.map((s) => `<a class="chip" href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title)} · ${esc(s.kind)}</a>`).join('')}</div></details>` : ''}<button class="btn sm" data-interview="next"${busy ? ' disabled' : ''}>${busy ? 'Preparing…' : 'Next challenge'}</button>` : `<div class="interview-welcome"><p class="eyebrow">${session.item.framework.company ? 'Company preparation' : 'General practice'}</p><h2>${busy ? 'Preparing your first challenge…' : 'Ready when you are'}</h2><p class="hint" role="status">${busy ? session.waiting ? 'Felix is finishing the previous reply. Your practice will start automatically after it.' : session.item.framework.company ? 'Felix is researching the company and role, then preparing an exercise. You can follow along in chat.' : 'Felix is choosing an exercise for your goals. You can follow along in chat.' : 'Start once. Felix will research your company if you have one, then put a challenge and workspace here.'}</p><div class="buttons"><button class="btn sm primary" data-interview="next"${busy ? ' disabled' : ''}>${busy ? 'Preparing…' : 'Start practice'}</button></div></div>`;
 }
 
 function interviewChanged(session) {
@@ -257,6 +269,7 @@ async function saveInterviewWorkspace(session) {
     if (session.blocked) throw new Error('The challenge changed. Copy your draft or reopen this practice before continuing.');
     const generation = session.generation;
     const workspace = structuredClone(session.draft);
+    if (session.gesture?.kind === 'move') workspace.board[session.gesture.index] = structuredClone(session.gesture.shape);
     const challenge = session.item.challenge.id;
     try {
       const item = await api(`/api/interviews/${enc(session.item.id)}`, { method: 'PUT', body: { action: 'workspace', revision: session.item.revision, challenge, workspace } });
@@ -347,62 +360,175 @@ function drawInterviewSchedule(session) {
   }).join('') : '<p class="hint">A realistic plan, a little at a time. Ask Felix to focus on the skills you want to strengthen.</p>'}</div>`;
 }
 
+function interviewBoardView(session) {
+  session.boardViews ||= new Map();
+  const id = session.item.challenge?.id || '';
+  if (!session.boardViews.has(id)) {
+    if (session.boardViews.size >= interviews.MOST_PROBLEMS) session.boardViews.delete(session.boardViews.keys().next().value);
+    const width = $('#interview-board')?.clientWidth || 0;
+    const view = interviews.fitBoard(session.draft.board, width ? width * 1.5 : 1000);
+    if (!width) return view;
+    session.boardViews.set(id, view);
+  }
+  return session.boardViews.get(id);
+}
+
+function setInterviewBoardView(session, view) {
+  const next = { ...view, x: interviews.point(view.x, view.y)[0], y: interviews.point(view.x, view.y)[1] };
+  session.boardViews.set(session.item.challenge.id, next);
+  const svg = $('#interview-board > svg');
+  if (svg) svg.setAttribute('viewBox', `${next.x} ${next.y} ${next.w} ${next.h}`);
+}
+
+function rememberInterviewBoard(session, board = session.draft.board, view = false) {
+  session.boardUndo ||= [];
+  session.boardUndo.push({ board: board.map(s => ({ ...s, points: s.points.map(p => [...p]) })), view: view ? { ...interviewBoardView(session) } : null });
+  if (session.boardUndo.length > MOST_BOARD_UNDO) session.boardUndo.shift();
+}
+
 function drawInterviewBoard(session) {
   if (!interviewHere(session)) return;
   const board = $('#interview-board');
-  if (board) board.innerHTML = interviews.boardSvg(session.stroke ? [...session.draft.board, session.stroke] : session.draft.board);
+  if (board) {
+    board.dataset.tool = session.tool;
+    board.innerHTML = interviews.boardSvg(session.stroke ? [...session.draft.board, session.stroke] : session.draft.board, { view: interviewBoardView(session), interactive: true, selected: session.selected ?? -1 });
+    const selected = board.querySelector(`[data-board-shape="${session.selected}"]`);
+    const outline = selected?.querySelector('.board-selection');
+    if (outline) { const bounds = selected.firstElementChild.getBBox(); outline.setAttribute('x', bounds.x - 6); outline.setAttribute('y', bounds.y - 6); outline.setAttribute('width', bounds.width + 12); outline.setAttribute('height', bounds.height + 12); }
+  }
+}
+
+function queueInterviewBoard(session) {
+  if (session.boardFrame) return;
+  session.boardFrame = requestAnimationFrame(() => { session.boardFrame = 0; drawInterviewBoard(session); });
 }
 
 function wireInterviewBoard(session) {
   const board = $('#interview-board');
   const locate = (e) => {
-    const rect = board.getBoundingClientRect();
-    return interviews.point((e.clientX - rect.left) / rect.width * 1000, (e.clientY - rect.top) / rect.height * 700);
+    const svg = board.querySelector('svg');
+    const matrix = svg?.getScreenCTM();
+    if (!matrix) return [0, 0];
+    const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(matrix.inverse());
+    return interviews.point(p.x, p.y);
+  };
+  const finish = (cancel = false) => {
+    const gesture = session.gesture;
+    if (!gesture) return;
+    if (gesture.kind === 'move') {
+      if (cancel) session.draft.board[gesture.index] = gesture.shape;
+      else if (JSON.stringify(session.draft.board[gesture.index]) !== JSON.stringify(gesture.shape)) {
+        const before = [...session.draft.board]; before[gesture.index] = gesture.shape;
+        rememberInterviewBoard(session, before); interviewChanged(session);
+      }
+    } else if (session.stroke && !cancel) {
+      const next = [...session.draft.board, session.stroke];
+      if (interviews.validBoard(next)) { rememberInterviewBoard(session); session.draft.board = next; interviewChanged(session); }
+      else toast('Your board is full. Undo some strokes to make room.', { bad: true });
+    }
+    session.stroke = null;
+    session.gesture = null;
+    board.classList.remove('panning');
+    if (board.hasPointerCapture(gesture.pointer)) board.releasePointerCapture(gesture.pointer);
+    drawInterviewBoard(session);
   };
   board.addEventListener('pointerdown', (e) => {
-    if (session.switching || !session.item.challenge || e.button !== 0 || session.draft.board.length >= interviews.MOST_SHAPES) return;
+    if (session.switching || session.gesture || !session.item.challenge || ![0, 1].includes(e.button)) return;
     e.preventDefault();
     const first = locate(e);
-    if (session.tool === 'text') { addInterviewLabel(session, first); return; }
-    session.stroke = { kind: session.tool, points: [first], text: '' };
+    const target = e.target.closest('[data-board-shape]');
+    const index = target ? Number(target.dataset.boardShape) : -1;
+    const shape = session.draft.board[index];
+    if (session.tool === 'pan' || session.panHeld || e.button === 1) {
+      session.gesture = { kind: 'pan', pointer: e.pointerId, x: e.clientX, y: e.clientY, view: { ...interviewBoardView(session) } };
+      board.classList.add('panning');
+    } else if (shape && (session.tool === 'select' || shape.kind === 'text')) {
+      session.selected = index;
+      session.gesture = { kind: 'move', pointer: e.pointerId, first, index, shape };
+    } else if (session.tool === 'select') { session.selected = -1; drawInterviewBoard(session); return; }
+    else if (session.tool === 'text') { addInterviewLabel(session, first); return; }
+    else {
+      if (session.draft.board.length >= interviews.MOST_SHAPES) { toast('Your board is full. Undo a shape first.', { bad: true }); return; }
+      session.selected = -1;
+      session.stroke = { kind: session.tool, points: [first], text: '' };
+      session.gesture = { kind: 'draw', pointer: e.pointerId };
+    }
     board.setPointerCapture(e.pointerId);
+    board.focus({ preventScroll: true });
     drawInterviewBoard(session);
   });
   board.addEventListener('pointermove', (e) => {
-    if (!session.stroke) return;
+    const gesture = session.gesture;
+    if (!gesture || e.pointerId !== gesture.pointer) return;
+    if (gesture.kind === 'pan') {
+      const rect = board.getBoundingClientRect(), v = gesture.view;
+      setInterviewBoardView(session, { ...v, x: v.x - (e.clientX - gesture.x) / rect.width * v.w, y: v.y - (e.clientY - gesture.y) / rect.height * v.h });
+      return;
+    }
     const p = locate(e);
-    const shape = session.stroke;
-    if (shape.kind === 'pen') {
-      const last = shape.points.at(-1);
-      if (shape.points.length < 128 && Math.hypot(p[0] - last[0], p[1] - last[1]) > 4) shape.points.push(p);
-    } else shape.points = [shape.points[0], p];
-    if (interviews.validBoard([...session.draft.board, shape])) drawInterviewBoard(session);
+    if (gesture.kind === 'move') session.draft.board[gesture.index] = interviews.moveShape(gesture.shape, p[0] - gesture.first[0], p[1] - gesture.first[1]);
+    else if (session.stroke.kind === 'pen') {
+      const last = session.stroke.points.at(-1);
+      if (session.stroke.points.length < 128 && Math.hypot(p[0] - last[0], p[1] - last[1]) > 4 * interviewBoardView(session).w / 1000) {
+        session.stroke.points.push(p);
+        if (!interviews.validBoard([...session.draft.board, session.stroke])) session.stroke.points.pop();
+      }
+    } else session.stroke.points = [session.stroke.points[0], p];
+    queueInterviewBoard(session);
   });
-  const finish = () => {
-    if (!session.stroke) return;
-    const board = [...session.draft.board, session.stroke];
-    if (interviews.validBoard(board)) { session.draft.board = board; interviewChanged(session); }
-    else toast('Your board is full. Undo some strokes to make room.', { bad: true });
-    session.stroke = null;
-    drawInterviewBoard(session);
-  };
-  board.addEventListener('pointerup', finish);
-  board.addEventListener('pointercancel', finish);
+  board.addEventListener('pointerup', e => { if (e.pointerId === session.gesture?.pointer) finish(); });
+  board.addEventListener('pointercancel', e => { if (e.pointerId === session.gesture?.pointer) finish(true); });
+  board.addEventListener('lostpointercapture', () => finish(true));
+  board.addEventListener('wheel', e => {
+    if (session.gesture) return;
+    e.preventDefault();
+    const v = interviewBoardView(session), rect = board.getBoundingClientRect();
+    const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? rect.height : 1;
+    if (e.ctrlKey || e.metaKey) {
+      const p = locate(e), w = Math.max(100, Math.min(interviews.BOARD_LIMIT * 2, v.w * Math.exp(Math.max(-1, Math.min(1, e.deltaY * unit / 500)))));
+      const ratio = w / v.w;
+      setInterviewBoardView(session, { x: p[0] - (p[0] - v.x) * ratio, y: p[1] - (p[1] - v.y) * ratio, w, h: w * 7 / 10 });
+    } else setInterviewBoardView(session, { ...v, x: v.x + e.deltaX * unit / rect.width * v.w, y: v.y + e.deltaY * unit / rect.height * v.h });
+  }, { passive: false });
+  board.addEventListener('keydown', e => {
+    if (e.code === 'Space') { e.preventDefault(); session.panHeld = true; board.classList.add('panning'); return; }
+    if (e.key === 'Escape') { finish(true); session.selected = -1; drawInterviewBoard(session); return; }
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key) || session.switching || session.gesture) return;
+    e.preventDefault();
+    const target = e.target.closest('[data-board-shape]');
+    const index = target ? Number(target.dataset.boardShape) : -1;
+    const step = (e.shiftKey ? 50 : 10) * interviewBoardView(session).w / 1000;
+    const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+    const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
+    if (session.draft.board[index]) {
+      rememberInterviewBoard(session); session.selected = index;
+      session.draft.board[index] = interviews.moveShape(session.draft.board[index], dx, dy);
+      interviewChanged(session); drawInterviewBoard(session);
+      board.querySelector(`[data-board-shape="${index}"]`)?.focus({ preventScroll: true });
+    } else { const v = interviewBoardView(session); setInterviewBoardView(session, { ...v, x: v.x + dx, y: v.y + dy }); }
+  });
+  board.addEventListener('keyup', e => { if (e.code === 'Space') { session.panHeld = false; if (session.gesture?.kind !== 'pan') board.classList.remove('panning'); } });
+  board.addEventListener('blur', e => { if (!board.contains(e.relatedTarget)) { session.panHeld = false; if (session.gesture?.kind !== 'pan') board.classList.remove('panning'); } }, true);
 }
 
-function addInterviewLabel(session, point = [50, 50 + Math.min(session.draft.board.length * 30, 600)]) {
+function addInterviewLabel(session, at = null) {
   if (session.switching || !session.item.challenge) return;
   const field = $('#interview-board-label');
   const text = field.value.trim();
   if (!text) { field.focus(); return; }
-  const board = [...session.draft.board, { kind: 'text', points: [point], text }];
+  const v = interviewBoardView(session);
+  const rows = Math.max(1, Math.min(6, Math.floor((v.h - 80) / 40)));
+  const position = at || interviews.point(v.x + Math.max(30, 50 * v.w / 1000), v.y + Math.max(50, 60 * v.w / 1000) + session.draft.board.length % rows * Math.max(40, 40 * v.w / 1000));
+  const board = [...session.draft.board, { kind: 'text', points: [position], text }];
   if (!interviews.validBoard(board)) { toast('Your board is full. Undo a shape first.', { bad: true }); return; }
+  rememberInterviewBoard(session);
   session.draft.board = board;
-  field.value = '';
-  session.label = '';
-  interviewChanged(session);
-  drawInterviewBoard(session);
-  field.focus();
+  session.selected = board.length - 1;
+  field.value = ''; session.label = '';
+  interviewChanged(session); drawInterviewBoard(session);
+  const placed = $('#interview-board').querySelector(`[data-board-shape="${session.selected}"]`);
+  placed?.focus({ preventScroll: true });
+  placed?.scrollIntoView({ block: 'nearest', behavior: 'instant' });
 }
 
 async function interviewPicture(board) {
@@ -599,49 +725,47 @@ async function interviewAction(el) {
   if (action === 'retry') return retryInterviewSave(session);
   if (action === 'tab') {
     session.tab = el.dataset.tab;
+    drawInterviewContext(session);
     const coding = session.item.framework.track === 'coding';
     $('#interview-editor').hidden = session.tab !== (coding ? 'code' : 'write');
     if ($('#interview-reasoning-editor')) $('#interview-reasoning-editor').hidden = session.tab !== 'write';
     $('#interview-whiteboard').hidden = session.tab !== 'board';
     app.querySelectorAll('[data-interview="tab"]').forEach((b) => { b.classList.toggle('on', b.dataset.tab === session.tab); b.setAttribute('aria-selected', String(b.dataset.tab === session.tab)); });
+    if (session.tab === 'board') drawInterviewBoard(session);
     if (session.tab !== 'board') $(coding && session.tab === 'write' ? '#interview-reasoning' : '#interview-answer').focus();
     return;
   }
-  if (action === 'reset-code') {
-    sheet('<h2>Reset your code?</h2><p>Your implementation will be replaced by the starting function. Your approach and whiteboard stay here.</p><div class="buttons"><button class="btn" data-action="close">Cancel</button><button class="btn danger" data-interview="confirm-reset-code">Reset code</button></div>');
+  if (action === 'reset') {
+    const tab = session.tab;
+    const name = tab === 'board' ? 'whiteboard' : tab === 'code' ? 'code' : 'answer';
+    sheet(`<h2>Reset your ${name}?</h2><p>${tab === 'code' ? 'This code will return to its starting function.' : tab === 'board' ? 'This problem’s whiteboard will be cleared.' : 'This problem’s written answer will be cleared.'}</p><div class="buttons"><button class="btn" data-action="close">Cancel</button><button class="btn danger" data-interview="confirm-reset" data-tab="${tab}" data-challenge="${esc(session.item.challenge.id)}">Reset</button></div>`);
     return;
   }
-  if (action === 'confirm-reset-code') {
-    session.draft.answer = session.item.challenge?.coding?.starter || '';
+  if (action === 'confirm-reset') {
     closeSheet();
-    $('#interview-answer').value = session.draft.answer;
-    interviewChanged(session); drawInterviewLines(session); return;
+    if (session.switching || el.dataset.challenge !== session.item.challenge?.id) { toast('The active problem changed. Choose Reset again on the problem you want to reset.', { bad: true }); return; }
+    const tab = el.dataset.tab;
+    if (tab === 'board') { rememberInterviewBoard(session, session.draft.board, true); session.boardViews.delete(session.item.challenge.id); session.draft.board = []; session.selected = -1; session.stroke = null; session.gesture = null; drawInterviewBoard(session); }
+    else if (tab === 'code' || session.item.framework.track !== 'coding') { session.draft.answer = tab === 'code' ? session.item.challenge.coding?.starter || '' : ''; $('#interview-answer').value = session.draft.answer; drawInterviewLines(session); }
+    else { session.draft.reasoning = ''; $('#interview-reasoning').value = ''; }
+    interviewChanged(session); return;
   }
   if (action === 'tool') {
     session.tool = el.dataset.tool;
     app.querySelectorAll('[data-interview="tool"]').forEach((b) => { b.classList.toggle('on', b === el); b.setAttribute('aria-pressed', String(b === el)); });
+    $('#interview-board').dataset.tool = session.tool;
     return;
   }
   if (action === 'label-board') return addInterviewLabel(session);
-  if (action === 'undo-board' || action === 'clear-board') {
-    if (action === 'clear-board' && session.draft.board.length) {
-      sheet('<h2>Clear your whiteboard?</h2><p>Your written answer stays here.</p><div class="buttons"><button class="btn" data-action="close">Cancel</button><button class="btn danger" data-interview="confirm-clear-board">Clear board</button></div>');
-      return;
-    }
-    session.draft.board.pop(); interviewChanged(session); drawInterviewBoard(session); return;
+  if (action === 'zoom-board') { const v = interviewBoardView(session), w = Math.max(100, Math.min(interviews.BOARD_LIMIT * 2, v.w * (Number(el.dataset.step) > 0 ? .8 : 1.25))), h = w * 7 / 10; setInterviewBoardView(session, { x: v.x + (v.w - w) / 2, y: v.y + (v.h - h) / 2, w, h }); return; }
+  if (action === 'fit-board') { setInterviewBoardView(session, interviews.fitBoard(session.draft.board, $('#interview-board').clientWidth * 1.5)); return; }
+  if (action === 'undo-board') {
+    const before = session.boardUndo?.pop();
+    if (before) { session.draft.board = before.board; if (before.view) setInterviewBoardView(session, before.view); }
+    else if (session.draft.board.length) session.draft.board.pop();
+    else return;
+    session.selected = -1; interviewChanged(session); drawInterviewBoard(session); return;
   }
-  if (action === 'clear-workspace') {
-    sheet('<h2>Clear your draft?</h2><p>Your code, approach and whiteboard will be cleared. Submitted attempts stay in your history.</p><div class="buttons"><button class="btn" data-action="close">Cancel</button><button class="btn danger" data-interview="confirm-clear-workspace">Clear draft</button></div>');
-    return;
-  }
-  if (action === 'confirm-clear-workspace') {
-    session.draft = interviews.workspace();
-    closeSheet();
-    if ($('#interview-answer')) $('#interview-answer').value = '';
-    if ($('#interview-reasoning')) $('#interview-reasoning').value = '';
-    interviewChanged(session); drawInterviewBoard(session); drawInterviewLines(session); return;
-  }
-  if (action === 'confirm-clear-board') { session.draft.board = []; closeSheet(); interviewChanged(session); drawInterviewBoard(session); return; }
   if (action === 'add-session' || action === 'edit-session') return interviewSlotForm(session, el.dataset.id || '');
   if (action === 'complete') {
     const schedule = (slots) => slots.map((s) => s.id === el.dataset.id ? { ...s, done: el.checked } : s);

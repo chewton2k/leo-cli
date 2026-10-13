@@ -59,6 +59,7 @@ fn a_document_given_to_felix_is_kept_as_text_and_read_with_the_question() {
         access: None,
         recent: vec![],
         practice: false,
+        interview_problem: None,
         mark: false,
         selection: None,
         session: None,
@@ -142,6 +143,7 @@ fn a_chat_reply_streams_its_sources_then_the_answer() {
         access: None,
         recent: vec![],
         practice: false,
+        interview_problem: None,
         mark: false,
         selection: None,
         session: None,
@@ -189,6 +191,7 @@ fn a_chat_without_ai_or_a_question_is_refused() {
         access: None,
         recent: vec![],
         practice: false,
+        interview_problem: None,
         mark: false,
         selection: None,
         session: None,
@@ -259,6 +262,7 @@ fn chat_lines_in(
         access: access.map(str::to_string),
         recent: vec![],
         practice: false,
+        interview_problem: None,
         mark: false,
         selection,
         session,
@@ -1048,6 +1052,226 @@ fn messages_can_be_added_only_to_an_answer_still_being_written() {
 }
 
 #[test]
+fn permissions_changed_during_a_reply_gate_notes_and_repeating_tasks_in_both_protocols() {
+    struct Changing {
+        steering: crate::steer::Steering,
+        access: tools::Access,
+        call: tools::Call,
+    }
+    impl chat::Conversation for Changing {
+        fn native(&self) -> bool {
+            true
+        }
+        fn say(&mut self, _: &str, exchange: chat::Exchange<'_>) -> anyhow::Result<chat::Reply> {
+            for id in self.steering.open_ids() {
+                self.steering.set_access(&id, self.access).unwrap();
+            }
+            (exchange.call)(&self.call.name, &self.call.args);
+            (exchange.piece)("Ready.");
+            Ok("Ready.".into())
+        }
+    }
+    for native in [false, true] {
+        for (before, after) in [
+            ("auto", "ask"),
+            ("ask", "auto"),
+            ("auto", "read"),
+            ("read", "auto"),
+            ("ask", "read"),
+            ("read", "ask"),
+        ] {
+            for kind in ["note", "task", "schedule"] {
+                let (mut state, _dir, _) = state_with(&[]);
+                let steering = state.steering.clone();
+                let access = tools::Access::named(after);
+                let practice = "permissions-practice";
+                if kind == "schedule" {
+                    let framework = serde_json::from_value(serde_json::json!({"title":"Interview studying", "track":"coding", "company":"", "role":"", "language":"Python", "style":"coach", "date":"", "weekly_minutes":120, "skills":["Approach"], "wants":""})).unwrap();
+                    crate::interview::configure(&state.chats, practice, 0, framework).unwrap();
+                }
+                let call = if kind == "task" {
+                    tools::Call {
+                        name: "add_task".into(),
+                        args: serde_json::json!({"title":"Interview studying", "date":"2026-10-12", "repeat":"mon | tue | wed | thu | fri"}),
+                    }
+                } else if kind == "schedule" {
+                    let sessions: Vec<_> = (0..5).map(|n| serde_json::json!({"id":format!("permission-session-{n}"), "date":format!("2026-10-{}",12+n), "time":"18:00", "title":"Interview studying", "minutes":20, "skill":"Approach", "done":true})).collect();
+                    tools::Call {
+                        name: "interview_schedule".into(),
+                        args: serde_json::json!({"data":serde_json::json!({"sessions":sessions}).to_string()}),
+                    }
+                } else {
+                    tools::Call {
+                        name: "create_note".into(),
+                        args: serde_json::json!({"title":"Interview studying", "body":"Practise interview questions", "folder":""}),
+                    }
+                };
+                if native {
+                    let call = call.clone();
+                    state.converse = Some(Arc::new(
+                        move |_: &chat::Instructions, _: &[chat::ToolSpec]| {
+                            Some(Box::new(Changing {
+                                steering: steering.clone(),
+                                access,
+                                call: call.clone(),
+                            })
+                                as Box<dyn chat::Conversation>)
+                        },
+                    ));
+                    state.chat = Some(scripted(vec!["Ready."]).0);
+                } else {
+                    let first = Arc::new(std::sync::atomic::AtomicBool::new(true));
+                    state.chat = Some(Arc::new(
+                        move |_: &str,
+                              _: &str,
+                              _: u32,
+                              piece: &mut dyn FnMut(&str),
+                              _: &mut dyn FnMut()| {
+                            let reply = if first.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                                for id in steering.open_ids() {
+                                    steering.set_access(&id, access).unwrap();
+                                }
+                                let mut args = call.args.clone();
+                                args["name"] = serde_json::json!(call.name);
+                                format!("<tool>{args}</tool>")
+                            } else {
+                                "Ready.".into()
+                            };
+                            piece(&reply);
+                            Ok(reply.into())
+                        },
+                    ));
+                }
+                let lines = if kind == "schedule" {
+                    let body: chat::ChatBody = serde_json::from_value(serde_json::json!({"messages":[{"role":"user","text":"Prepare it"}], "mode":"interview", "chat":practice, "access":before})).unwrap();
+                    let text = run(async {
+                        let response = chat_reply(State(state.clone()), Json(body)).await;
+                        let bytes = axum::body::to_bytes(response.into_body(), 1_000_000)
+                            .await
+                            .unwrap();
+                        String::from_utf8(bytes.to_vec()).unwrap()
+                    });
+                    text.lines()
+                        .map(|l| serde_json::from_str(l).unwrap())
+                        .collect()
+                } else {
+                    chat_lines_with(&state, "Prepare it", Some(before))
+                };
+                let proposals: Vec<_> = lines.iter().filter_map(|l| l.get("proposal")).collect();
+                assert_eq!(
+                    proposals.len(),
+                    usize::from(after != "read"),
+                    "{native} {before}->{after} kind={kind}: {lines:?}"
+                );
+                if let Some(proposal) = proposals.first() {
+                    assert_eq!(proposal["state"] == "applied", after == "auto");
+                }
+                let count = if kind == "schedule" {
+                    crate::interview::load(&state.chats, practice)
+                        .unwrap()
+                        .schedule
+                        .len()
+                } else if kind == "task" {
+                    crate::tasks::count(&state.chats)
+                } else {
+                    state.store.lock().unwrap().store.notes.len()
+                };
+                assert_eq!(
+                    count,
+                    usize::from(after == "auto") * if kind == "schedule" { 5 } else { 1 }
+                );
+                if kind == "task" && after == "auto" {
+                    assert_eq!(
+                        crate::tasks::load_all(&state.chats)[0].repeat,
+                        [0, 1, 2, 3, 4]
+                    );
+                }
+                if kind == "schedule" && after != "read" {
+                    let mut applied = proposals[0].clone();
+                    if after == "ask" {
+                        let proposal = serde_json::from_value(applied).unwrap();
+                        let response = run(crate::routes::organize::act_route(
+                            State(state.clone()),
+                            Json(proposal),
+                        ));
+                        assert_eq!(response.status(), StatusCode::OK);
+                        applied = json_of(response);
+                    }
+                    let saved = crate::interview::load(&state.chats, practice).unwrap();
+                    assert_eq!(saved.schedule.len(), 5);
+                    assert!(saved.schedule.iter().all(|s| !s.done));
+                    let undo = serde_json::from_value(applied["undo"].clone()).unwrap();
+                    assert_eq!(
+                        run(crate::routes::organize::act_route(
+                            State(state.clone()),
+                            Json(undo)
+                        ))
+                        .status(),
+                        StatusCode::OK
+                    );
+                    assert!(crate::interview::load(&state.chats, practice)
+                        .unwrap()
+                        .schedule
+                        .is_empty());
+                }
+                assert!(lines.iter().all(|l| l.get("error").is_none()));
+            }
+        }
+    }
+}
+
+#[test]
+fn permission_updates_validate_access_and_only_change_the_live_answer() {
+    let (state, _dir, _) = state_with(&[]);
+    let steer = state.steering.open();
+    let other = state.steering.open();
+    let post = |access: &str| {
+        run(crate::routes::felix::change_answer_access(
+            State(state.clone()),
+            Path(steer.id().into()),
+            Json(crate::routes::felix::Permission {
+                access: access.into(),
+            }),
+        ))
+    };
+    for (name, access) in [
+        ("auto", tools::Access::Auto),
+        ("ask", tools::Access::Ask),
+        ("read", tools::Access::Read),
+    ] {
+        assert_eq!(post(name).status(), StatusCode::OK);
+        assert_eq!(steer.access(tools::Access::Ask), access);
+        assert_eq!(other.access(tools::Access::Ask), tools::Access::Ask);
+    }
+    assert_eq!(post("anything").status(), StatusCode::BAD_REQUEST);
+    assert_eq!(steer.access(tools::Access::Auto), tools::Access::Read);
+    let id = steer.id().to_string();
+    drop(steer);
+    assert_eq!(
+        run(crate::routes::felix::change_answer_access(
+            State(state),
+            Path(id),
+            Json(crate::routes::felix::Permission {
+                access: "auto".into()
+            })
+        ))
+        .status(),
+        StatusCode::GONE
+    );
+}
+
+#[test]
+fn closing_the_reply_prevents_further_automatic_changes() {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut desk = tools::Desk::new(vec![], 32000)
+        .with_access(tools::Access::Auto)
+        .with_reply(tx);
+    assert_eq!(desk.current_access(), tools::Access::Auto);
+    drop(rx);
+    assert_eq!(desk.current_access(), tools::Access::Read);
+}
+
+#[test]
 fn a_long_chat_is_remembered_in_a_summary_instead_of_forgotten() {
     let (mut state, dir, _) = state_with(&[]);
     let summaries = Arc::new(Mutex::new(Vec::new()));
@@ -1095,6 +1319,7 @@ fn a_long_chat_is_remembered_in_a_summary_instead_of_forgotten() {
             access: None,
             recent: vec![],
             practice: false,
+            interview_problem: None,
             mark: false,
             selection: None,
             session: None,
@@ -1253,6 +1478,7 @@ fn a_practice_answer_is_marked_once_and_never_nudged_into_changing_a_note() {
         access: None,
         recent: vec![],
         practice: true,
+        interview_problem: None,
         mark: false,
         selection: None,
         session: None,
@@ -1372,6 +1598,7 @@ fn a_marking_without_a_verdict_gets_one_from_a_short_check() {
         access: None,
         recent: vec![],
         practice: true,
+        interview_problem: None,
         mark: true,
         selection: None,
         session: None,

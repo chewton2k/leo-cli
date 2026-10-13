@@ -23,10 +23,31 @@ test('progress counts assessed attempts only, uses recent observations and expos
 });
 
 test('the board bounds coordinates, shape and point counts and escapes text', () => {
-  assert.deepEqual(I.point(-5, 2000), [0, 1000]);
+  assert.deepEqual(I.point(-5, 2000), [-5, 2000]);
   const shape = { kind: 'text', text: '<script>alert(1)</script>', points: [[30, 40]] };
   assert.ok(I.boardSvg([shape]).includes('&lt;script&gt;'));
-  for (const bad of [[null], [3], Array(101).fill(shape), [{ ...shape, kind: 'script' }], [{ ...shape, points: [[Infinity, 2]] }], [{ ...shape, points: [[-1, 2]] }], [{ ...shape, points: Array(129).fill([1, 2]) }], Array(40).fill({ ...shape, points: Array(128).fill([1, 2]) })]) assert.equal(I.validBoard(bad), false);
+  for (const bad of [[null], [3], Array(101).fill(shape), [{ ...shape, kind: 'script' }], [{ ...shape, points: [[Infinity, 2]] }], [{ ...shape, points: [[-I.BOARD_LIMIT - 1, 2]] }], [{ ...shape, points: Array(129).fill([1, 2]) }], Array(40).fill({ ...shape, points: Array(128).fill([1, 2]) })]) assert.equal(I.validBoard(bad), false);
+});
+
+test('board panning and moving preserve geometry, fit distant content and bound the virtual canvas', () => {
+  const shape = { kind: 'box', text: '', points: [[-2000, 3000], [-1700, 3200]] };
+  assert.deepEqual(I.moveShape(shape, 100, -200).points, [[-1900, 2800], [-1600, 3000]]);
+  const moved = I.moveShape(shape, I.BOARD_LIMIT * 3, -I.BOARD_LIMIT * 3);
+  assert.ok(I.validBoard([moved]));
+  assert.equal(moved.points[1][0] - moved.points[0][0], 300);
+  assert.equal(moved.points[1][1] - moved.points[0][1], 200);
+  const board = [shape, { kind: 'text', text: 'Client → Server <script>', points: [[5000, -4000]] }];
+  const view = I.fitBoard(board);
+  for (const item of board) for (const [x, y] of item.points) assert.ok(x >= view.x && x <= view.x + view.w && y >= view.y && y <= view.y + view.h);
+  const html = I.boardSvg(board);
+  assert.ok(html.includes(`viewBox="${view.x} ${view.y} ${view.w} ${view.h}"`));
+  assert.ok(html.includes('&lt;script&gt;'));
+  assert.ok(!html.includes('tabindex'));
+  const live = I.boardSvg(board, { view: { x: 2000, y: -5000, w: 1000, h: 700 }, interactive: true });
+  assert.ok(live.includes('data-board-shape="1"'));
+  assert.ok(live.includes('tabindex="0"'));
+  assert.ok(live.includes('currentColor'));
+  assert.deepEqual(I.point(Infinity, NaN), [0, 0]);
 });
 
 test('practice and real calendar events share an agenda without losing completion or untimed dates', () => {

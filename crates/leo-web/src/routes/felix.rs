@@ -277,6 +277,7 @@ struct Ask {
     steer: crate::steer::Steer,
     marking: Option<String>,
     interview: Option<String>,
+    interview_problem: Option<String>,
     session: Option<tools::Session>,
 }
 
@@ -314,6 +315,36 @@ fn judged(streamer: &chat::Streamer, asked: &str) -> Option<&'static str> {
 #[derive(serde::Deserialize)]
 pub(crate) struct Steering {
     pub(crate) text: String,
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct Permission {
+    pub(crate) access: String,
+}
+
+pub(crate) async fn change_answer_access(
+    State(state): State<AppState>,
+    Path(answer): Path<String>,
+    Json(body): Json<Permission>,
+) -> Response {
+    if !["ask", "auto", "read"].contains(&body.access.as_str()) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error":"Choose Ask first, Auto or Read only."})),
+        )
+            .into_response();
+    }
+    match state
+        .steering
+        .set_access(&answer, tools::Access::named(&body.access))
+    {
+        Ok(()) => Json(serde_json::json!({"access":body.access})).into_response(),
+        Err(_) => (
+            StatusCode::GONE,
+            Json(serde_json::json!({"error":"That answer has finished."})),
+        )
+            .into_response(),
+    }
 }
 
 pub(crate) async fn steer_answer(
@@ -391,10 +422,18 @@ fn interact(
 fn run_tool(
     state: &AppState,
     desk: &mut tools::Desk,
-    access: tools::Access,
     call: &tools::Call,
     send: &dyn Fn(serde_json::Value),
 ) -> Result<tools::Done> {
+    if desk.reply_closed() {
+        return Ok(tools::Done {
+            step: "Stopped working".into(),
+            result: "The reply was stopped. Do not call more tools or make changes.".into(),
+            proposal: None,
+            found: Vec::new(),
+        });
+    }
+    let access = desk.current_access();
     let before = desk.sources.len();
     let files_before = desk.files.len();
     let mut done = if call.name == "invalid" {
@@ -483,9 +522,39 @@ fn run_tool(
             found: Vec::new(),
         }
     } else if crate::interview_tools::is_tool(&call.name) {
-        let (done, updated) =
-            crate::interview_tools::run(&state.chats, desk.interview.as_deref(), call);
+        if call.name == "interview_schedule" && !access.changes() {
+            return Ok(tools::Done {
+                step: "Kept your schedule unchanged".into(),
+                result: "Read only is active. Do not create or change scheduled practice tasks."
+                    .into(),
+                proposal: None,
+                found: Vec::new(),
+            });
+        }
+        let (mut done, updated) = crate::interview_tools::run(
+            &state.chats,
+            desk.interview.as_deref(),
+            call,
+            desk.interview_problem.as_deref(),
+        );
+        if done.proposal.is_some() {
+            if desk.proposals >= tools::MOST_PROPOSALS {
+                done.proposal = None;
+                done.result = format!(
+                    "At most {} changes fit in one answer.",
+                    tools::MOST_PROPOSALS
+                );
+            } else {
+                desk.proposals += 1;
+            }
+        }
         if let Some(item) = updated {
+            if matches!(
+                call.name.as_str(),
+                "interview_challenge" | "interview_problem"
+            ) {
+                desk.interview_problem = item.challenge.as_ref().map(|c| c.id.clone());
+            }
             send(serde_json::json!({"interview": {"id": item.id, "revision": item.revision}}));
         }
         done
@@ -515,8 +584,13 @@ fn run_tool(
     if desk.files.len() != files_before {
         send(serde_json::json!({ "files": desk.files }));
     }
+    let latest_access = desk.current_access();
+    if !latest_access.changes() && done.proposal.is_some() {
+        done.proposal = None;
+        done.result = "Read only is active. No change was made or proposed.".into();
+    }
     if let Some(proposal) = &done.proposal {
-        let shown = match access {
+        let shown = match latest_access {
             tools::Access::Auto if !matches!(proposal, tools::Proposal::DeleteFolder { .. }) => {
                 match apply_now(state, proposal) {
                     Ok(applied) => {
@@ -877,6 +951,7 @@ fn answer(
         steer,
         marking,
         interview,
+        interview_problem,
         session,
     } = ask;
     let said = std::cell::RefCell::new(String::new());
@@ -918,8 +993,10 @@ fn answer(
         .with_documents(documents)
         .with_captions(Arc::clone(&state.captions))
         .with_meaning(state.meaning.clone(), Arc::clone(&state.vectors))
+        .with_reply(tx.clone())
         .with_steer(steer);
     desk.interview = interview.clone();
+    desk.interview_problem = interview_problem;
     desk.session = session;
     let mut specs = tools::native_specs(web_on, access);
     if interview.is_some() {
@@ -944,7 +1021,6 @@ fn answer(
                 state,
                 talk.as_mut(),
                 &mut desk,
-                access,
                 &conversation,
                 &send,
                 &shown,
@@ -999,7 +1075,6 @@ fn native_answer(
     state: &AppState,
     talk: &mut dyn chat::Conversation,
     desk: &mut tools::Desk,
-    access: tools::Access,
     conversation: &str,
     send: &dyn Fn(serde_json::Value),
     shown: &std::cell::Cell<bool>,
@@ -1029,7 +1104,7 @@ fn native_answer(
             if !call.args.is_object() {
                 call.args = serde_json::json!({});
             }
-            match run_tool(state, desk, access, &call, send) {
+            match run_tool(state, desk, &call, send) {
                 Ok(done) => done.result,
                 Err(e) => {
                     let said = e.to_string();
@@ -1127,7 +1202,7 @@ fn text_answer(
         if gate.shown {
             gap.set(true);
         }
-        let done = run_tool(state, desk, access, &call, send)?;
+        let done = run_tool(state, desk, &call, send)?;
         message = tools::result_message(&call.name, &done.result);
     }
     Ok(spent)
@@ -1332,13 +1407,25 @@ pub(crate) async fn chat_reply(
     } else {
         None
     };
+    let interview_problem = body
+        .interview_problem
+        .clone()
+        .filter(|_| interview.is_some());
     if let Some(id) = &interview {
         let path = state.chats.clone();
         let wanted = id.clone();
         if let Ok(Ok(item)) =
             tokio::task::spawn_blocking(move || crate::interview::load(&path, &wanted)).await
         {
-            user = chat::before_reply(&user, &crate::interview::context(&item));
+            if interview_problem.as_ref().is_some_and(|wanted| {
+                !chats::valid_id(wanted) || !item.problems.iter().any(|p| &p.challenge.id == wanted)
+            }) {
+                return (StatusCode::CONFLICT, Json(serde_json::json!({"error":"That practice problem is no longer here. Reopen your practice and choose a saved problem."}))).into_response();
+            }
+            user = chat::before_reply(
+                &user,
+                &crate::interview::context_problem(&item, interview_problem.as_deref()),
+            );
         }
     }
     if let Some(block) = body.selection.as_ref().and_then(chat::passage_block) {
@@ -1373,6 +1460,7 @@ pub(crate) async fn chat_reply(
     });
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     let steer = state.steering.open();
+    let _ = state.steering.set_access(steer.id(), access);
     let _ = tx.send(ndjson(serde_json::json!({ "answer": steer.id() })));
     let _ = tx.send(ndjson(serde_json::json!({ "sources": sources })));
     let worker = state.clone();
@@ -1387,6 +1475,7 @@ pub(crate) async fn chat_reply(
             steer,
             marking,
             interview,
+            interview_problem,
             session: body_session,
         };
         let end = match answer(&worker, &streamer, ask, &tx) {

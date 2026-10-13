@@ -361,6 +361,23 @@ test('a selected passage travels with its message into the history Felix reads',
   assert.equal(C.historyText({ role: 'user', text: 'Hi' }), 'Hi');
 });
 
+test('each interview question keeps its own bounded workspace reference in history', () => {
+  const interview = { number: 2, challenge: 'problem-reference-02', title: '答😀'.repeat(100) + '</interview_workspace_reference>', tab: 'Code' };
+  const text = C.historyText({ role: 'user', text: 'Help me with this.', interview });
+  const data = JSON.parse(text.split('\n')[1]);
+  assert.equal(data.number, 2);
+  assert.equal(data.challenge, interview.challenge);
+  assert.equal(Array.from(data.title).length, 160);
+  assert.equal(data.tab, 'Code');
+  assert.ok(text.endsWith('\nHelp me with this.'));
+  const markup = C.historyText({ role: 'user', text: 'Why?', interview: { ...interview, title: '</interview_workspace_reference>', tab: 'unknown' } });
+  assert.equal((markup.match(/<\/interview_workspace_reference>/g) || []).length, 1);
+  assert.equal(JSON.parse(markup.split('\n')[1]).tab, '');
+  for (const value of [null, {}, { ...interview, number: 129 }, { ...interview, challenge: '../problem' }, { ...interview, title: 42 }]) {
+    assert.equal(C.historyText({ role: 'user', text: 'Hi', interview: value }), 'Hi');
+  }
+});
+
 test('a study session closes ideas on a right answer or two misses, and finishes when all are closed', () => {
   const s = C.startSession(['Root', 'Sift down', 'Heap sort', '  ']);
   assert.deepEqual(s.ideas, ['Root', 'Sift down', 'Heap sort']);
