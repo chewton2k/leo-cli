@@ -24,6 +24,7 @@ pub mod search;
 pub mod sessions;
 pub mod steer;
 pub mod storage;
+mod storage_saved;
 mod tasks;
 mod terminal;
 #[cfg(test)]
@@ -744,6 +745,10 @@ fn router(state: AppState) -> Router {
         .route("/api/record/{id}/recover", post(record::recover))
         .route("/recorder.js", get(recorder_js))
         .route("/audio-queue.js", get(routes::assets::audio_queue_js))
+        .route(
+            "/browser-storage.js",
+            get(routes::assets::browser_storage_js),
+        )
         .route("/recording.js", get(recording_js))
         .route("/api/notes/{id}/originals", get(list_originals))
         .route(

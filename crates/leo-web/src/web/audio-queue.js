@@ -1,6 +1,12 @@
 (function(root) {
   'use strict';
   const MOST_CHUNKS=100000;
+  function addSummary(groups, item) {
+    if (typeof item.id !== 'string' || item.id.length > 200) return;
+    const old = groups.get(item.id) || {id:item.id,chunks:0,bytes:0};
+    old.chunks++; old.bytes += item.bytes?.byteLength || 0;
+    groups.set(item.id,old);
+  }
   function indexed() {
     let opening;
     function db() {
@@ -28,6 +34,11 @@
       remove: (item) => transaction('readwrite',(store) => store.delete(item.key || `${item.id}:${String(item.seq).padStart(20,'0')}`)),
       list: (id,limit=MOST_CHUNKS) => transaction('readonly',(store,done) => { const out=[]; const range=id ? root.IDBKeyRange.bound(`${id}:`,`${id}:~`) : undefined; const request=store.openCursor(range); request.onsuccess=() => { const cursor=request.result; if (!cursor || out.length>=limit) return done(out); out.push(cursor.value); cursor.continue(); }; }),
       clear: (id) => transaction('readwrite', (store) => { const request = store.openKeyCursor(root.IDBKeyRange.bound(`${id}:`, `${id}:~`)); let count = 0; request.onsuccess = () => { const cursor = request.result; if (!cursor || count++ >= MOST_CHUNKS) return; store.delete(cursor.primaryKey); cursor.continue(); }; }),
+      summaries: () => transaction('readonly',(store,done) => {
+        const groups = new Map(); let seen = 0;
+        const request = store.openCursor();
+        request.onsuccess = () => { const cursor=request.result; if (!cursor || seen++>=MOST_CHUNKS) return done([...groups.values()]); addSummary(groups,cursor.value); cursor.continue(); };
+      }),
       count: (id) => transaction('readonly',(store,done) => { const request=store.count(root.IDBKeyRange.bound(`${id}:`,`${id}:~`)); request.onsuccess=() => done(request.result); }),
     };
   }
@@ -44,6 +55,7 @@
       list: async (id, limit = MOST_CHUNKS) => mine(id).slice(0, limit),
       clear: async (id) => { for (const item of mine(id).slice(0, MOST_CHUNKS)) items.delete(item.key); },
       count: async (id) => mine(id).length,
+      summaries: async () => { const groups = new Map(); let seen = 0; for (const item of items.values()) { if (seen++ >= MOST_CHUNKS) break; addSummary(groups,item); } return [...groups.values()]; },
     };
   }
   function pick() {

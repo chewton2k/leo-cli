@@ -152,6 +152,8 @@ const actions = {
   },
   storage: () => go('#/settings/storage'),
   'storage-act': storageAsk,
+  'storage-more': storageMore,
+  'storage-open-chat': storageOpenChat,
   'storage-go': () => storageGo().catch(fail),
   'session-end': sessionAsk,
   'session-end-others': sessionAsk,

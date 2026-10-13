@@ -479,9 +479,13 @@ pub fn list(path: &Path) -> Result<Vec<serde_json::Value>, Error> {
 pub fn remove(path: &Path, id: &str) -> Result<(), Error> {
     require(chats::valid_id(id), "Choose a valid interview practice.")?;
     db::for_chats(path)
-        .with(|c| c.execute("DELETE FROM interviews WHERE id = ?1", [id]))
+        .with(|c| {
+            let tx = c.transaction()?;
+            tx.execute("DELETE FROM interview_keys WHERE interview = ?1", [id])?;
+            tx.execute("DELETE FROM interviews WHERE id = ?1", [id])?;
+            tx.commit()
+        })
         .map_err(|_| Error::Storage)?;
-    crate::interview_keys::forget(path, id);
     Ok(())
 }
 

@@ -519,7 +519,7 @@ pub fn remembered(dir: &Path) -> Vec<(String, String, usize, u64)> {
                 .into_iter()
                 .filter_map(|(id, title, memory)| {
                     let memory: Memory = serde_json::from_str(&memory).ok()?;
-                    Some((id, title, memory.upto, memory.text.len() as u64))
+                    Some((id, title, memory.upto, serde_json::to_vec(&memory).ok()?.len() as u64))
                 })
                 .collect())
         })
@@ -541,7 +541,7 @@ pub fn bytes_of(dir: &Path, id: &str) -> u64 {
     db_of(dir)
         .with(|c| {
             c.query_row(
-                "SELECT length(messages) + length(refs) + length(title) + coalesce(length(memory), 0) FROM chats WHERE id = ?1",
+                "SELECT length(CAST(messages AS BLOB)) + length(CAST(refs AS BLOB)) + length(CAST(title AS BLOB)) + coalesce(length(CAST(memory AS BLOB)), 0) FROM chats WHERE id = ?1",
                 [id],
                 |r| r.get::<_, i64>(0),
             )

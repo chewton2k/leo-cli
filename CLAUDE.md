@@ -343,3 +343,8 @@ in crates/leo-web/CLAUDE.md.
 Reuse current cards, sheets, controls and theme tokens; keep asynchronous updates
 from replacing a focused editor. See crates/leo-web/CLAUDE.md and
 .superpowers/plans/2026-10-12-felix-interviews.md for the implementation invariants.
+
+Storage scans use a read-only Store snapshot and blocking workers so filesystem
+walks and database compaction do not hold the notes lock. The Housekeeper lists
+both config and data folder settings, the application, Python runtime and other
+model downloads; cache removal refuses symlinks and active partial downloads.

@@ -95,3 +95,14 @@ test('deleting recovery audio clears only the chosen recording and is repeatable
   assert.equal(await storage.count('failed-01'), 0);
   assert.equal(await storage.count('keep-01'), 3);
 });
+
+
+test('recovery inventory counts actual audio bytes across recordings and clears only the selected copy', async () => {
+  const store = globalThis.leoAudioQueue.memory();
+  await store.put({id:'recording-one',seq:0,bytes:new Uint8Array(32).buffer});
+  await store.put({id:'recording-one',seq:1,bytes:new Uint8Array(64).buffer});
+  await store.put({id:'recording-two',seq:0,bytes:new Uint8Array(16).buffer});
+  assert.deepEqual(await store.summaries(), [{id:'recording-one',chunks:2,bytes:96},{id:'recording-two',chunks:1,bytes:16}]);
+  await store.clear('recording-one');
+  assert.deepEqual(await store.summaries(), [{id:'recording-two',chunks:1,bytes:16}]);
+});

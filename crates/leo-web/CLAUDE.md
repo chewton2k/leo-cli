@@ -368,7 +368,7 @@ the same idle loop.
 
 - Settings (`SettingsApi` from `src/cli/web_settings.rs`): one model picker
   per AI with prices and effort chips; keys only on `secure_request`.
-- Storage (`storage.rs` + the `Housekeeper`): every area leo keeps, with size,
+- Storage (`storage.rs`, `storage_saved.rs` + the `Housekeeper`): every area leo keeps, with size,
   items and confirmed actions; signed-in browsers; how long trash and chats
   are kept (`/api/keep`); Export (zip of notes, optional uploads, chats,
   trash; never config or keys); Restore tasks.
@@ -398,3 +398,20 @@ the same idle loop.
   recovery, wrapping, Python deletion/Undo and chronological activity in both
   themes on desktop and phone. Grid/List alignment is measured against both
   button centers; restoring the old CSS reproduces the three-pixel offset.
+
+Storage includes interview workspaces, attempts and schedules with Open practice,
+separate hidden check metadata, reading positions, note task settings and cached
+calendar events. Selected/bulk deletion is transactional; deleting a practice
+also deletes its checks while preserving notes, tasks and conversations. Check
+workers update only their claimed generation while the parent practice exists,
+so clearing or deleting data cannot be undone by a late worker. Calendar cache
+clearing waits for refresh and invalidates expansions without disconnecting feeds.
+Task sizes use actual files, including deletion markers; erasing markers is
+explicit because older backups may restore them. Database overhead/unused space
+is separate from payload sizes, with safe compaction; folder walks are bounded
+at 100,000 entries and 64 levels and omit symlinks. Storage lists 100 rows at a
+time, preserves open sections/selection/focus on background refresh, and shows
+browser draft/preferences and IndexedDB recovery audio separately from the server.
+Browser cleanup affects only Leo keys or selected recordings, never other apps;
+deleting a practice forgets its local backups. Export's Chats and interview
+practices option includes saved practice data, never hidden keys or secrets.

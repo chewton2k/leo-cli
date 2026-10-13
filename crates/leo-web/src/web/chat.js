@@ -2496,6 +2496,20 @@
       },
       isOpen: () => state.open,
       isBusy: () => Boolean(state.busy || state.preparingSend),
+      async openSaved(id) {
+        if (state.busy || state.preparingSend) return false;
+        const opened = await resume(id);
+        if (opened) toggle(true);
+        return opened;
+      },
+      forgetBrowserCache() {
+        if (state.busy || state.preparingSend) return false;
+        begin();
+        input.value = '';
+        state.drafts = {};
+        storage.removeItem(KEY);
+        return true;
+      },
       send,
       async attachBoard(file) {
         const id = state.id;

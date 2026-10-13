@@ -311,57 +311,51 @@ pub fn ready(path: &Path, interview: &str, challenge: &str) -> Option<Key> {
     }
 }
 
-fn save(path: &Path, interview: &str, challenge: &str, status: &str, key: Option<&Key>) {
-    let data = key
-        .and_then(|k| serde_json::to_string(k).ok())
-        .unwrap_or_else(|| "{}".into());
+fn finish(
+    path: &Path,
+    interview: &str,
+    challenge: &str,
+    generation: &str,
+    made: Result<Key, String>,
+) {
+    let (status, data) = match made {
+        Ok(key) => (
+            "ready",
+            serde_json::to_string(&key).unwrap_or_else(|_| "{}".into()),
+        ),
+        Err(why) => (
+            "failed",
+            serde_json::json!({"error": why.chars().take(300).collect::<String>()}).to_string(),
+        ),
+    };
     let _ = db::for_chats(path).with(|c| {
         c.execute(
-            "INSERT INTO interview_keys (interview, challenge, status, updated, data) VALUES (?1, ?2, ?3, ?4, ?5)
-             ON CONFLICT(interview, challenge) DO UPDATE SET status = excluded.status, updated = excluded.updated, data = excluded.data",
-            rusqlite::params![interview, challenge, status, Utc::now().to_rfc3339(), data],
+            "UPDATE interview_keys SET status = ?3, updated = ?4, data = ?5 WHERE interview = ?1 AND challenge = ?2 AND status = 'preparing' AND data = ?6 AND EXISTS (SELECT 1 FROM interviews WHERE id = ?1)",
+            rusqlite::params![interview, challenge, status, Utc::now().to_rfc3339(), data, generation],
         )
     });
 }
 
-fn failed(path: &Path, interview: &str, challenge: &str, why: &str) {
-    let data =
-        serde_json::json!({ "error": why.chars().take(300).collect::<String>() }).to_string();
-    let _ = db::for_chats(path).with(|c| {
-        c.execute(
-            "UPDATE interview_keys SET status = 'failed', updated = ?3, data = ?4 WHERE interview = ?1 AND challenge = ?2",
-            rusqlite::params![interview, challenge, Utc::now().to_rfc3339(), data],
-        )
-    });
-}
-
-pub fn forget(path: &Path, interview: &str) {
-    let _ = db::for_chats(path).with(|c| {
-        c.execute(
-            "DELETE FROM interview_keys WHERE interview = ?1",
-            [interview],
-        )
-    });
-}
-
-fn claim(path: &Path, interview: &str, challenge: &str, again: bool) -> bool {
+fn claim(path: &Path, interview: &str, challenge: &str, again: bool) -> Option<String> {
+    let generation =
+        serde_json::json!({"generation": uuid::Uuid::new_v4().to_string()}).to_string();
     db::for_chats(path)
         .with(|c| {
             let now = Utc::now().to_rfc3339();
             let changed = if again {
                 c.execute(
-                    "UPDATE interview_keys SET status = 'preparing', updated = ?3 WHERE interview = ?1 AND challenge = ?2 AND status = 'failed'",
-                    rusqlite::params![interview, challenge, now],
+                    "UPDATE interview_keys SET status = 'preparing', updated = ?3, data = ?4 WHERE interview = ?1 AND challenge = ?2 AND status = 'failed' AND EXISTS (SELECT 1 FROM interviews WHERE id = ?1)",
+                    rusqlite::params![interview, challenge, now, generation],
                 )?
             } else {
                 c.execute(
-                    "INSERT OR IGNORE INTO interview_keys (interview, challenge, status, updated, data) VALUES (?1, ?2, 'preparing', ?3, '{}')",
-                    rusqlite::params![interview, challenge, now],
+                    "INSERT OR IGNORE INTO interview_keys (interview, challenge, status, updated, data) SELECT ?1, ?2, 'preparing', ?3, ?4 WHERE EXISTS (SELECT 1 FROM interviews WHERE id = ?1)",
+                    rusqlite::params![interview, challenge, now, generation],
                 )?
             };
             Ok(changed == 1)
         })
-        .unwrap_or(false)
+        .ok().filter(|done| *done).map(|_| generation)
 }
 
 pub const KEY_RULES: &str = "You write the hidden answer key for one practice interview exercise, so the user's answer can be checked the moment they submit. Reply with one JSON object only, no prose, with these fields:
@@ -399,9 +393,9 @@ pub fn prepare(path: &Path, writer: Option<Writer>, item: &Interview, again: boo
     let (Some(writer), Some(challenge)) = (writer, item.challenge.clone()) else {
         return false;
     };
-    if !claim(path, &item.id, &challenge.id, again) {
+    let Some(generation) = claim(path, &item.id, &challenge.id, again) else {
         return false;
-    }
+    };
     let path = path.to_path_buf();
     let framework = item.framework.clone();
     let interview = item.id.clone();
@@ -410,10 +404,7 @@ pub fn prepare(path: &Path, writer: Option<Writer>, item: &Interview, again: boo
         .spawn(move || {
             let made = write_key(&writer, &framework, &challenge)
                 .or_else(|_| write_key(&writer, &framework, &challenge));
-            match made {
-                Ok(key) => save(&path, &interview, &challenge.id, "ready", Some(&key)),
-                Err(why) => failed(&path, &interview, &challenge.id, &why),
-            }
+            finish(&path, &interview, &challenge.id, &generation, made);
         })
         .is_ok()
 }
@@ -732,6 +723,57 @@ pub fn valid(interview: &str, challenge: &str) -> bool {
 mod tests {
     use super::*;
     use crate::interview::{Coding, Example};
+
+    #[test]
+    fn cleared_keys_and_deleted_practices_cannot_be_recreated_by_old_workers() {
+        for failure in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let path = temp.path();
+            db::for_chats(path)
+                .with(|c| {
+                    c.execute(
+                        "INSERT INTO interviews VALUES ('practice-one', 'now', '{}')",
+                        [],
+                    )
+                })
+                .unwrap();
+            let old = claim(path, "practice-one", "problem-one", false).unwrap();
+            assert!(claim(path, "practice-one", "problem-one", false).is_none());
+            let clear = crate::storage::Request {
+                area: "interview-checks".into(),
+                action: "all".into(),
+                items: vec![],
+            };
+            crate::storage_saved::act_on(path, &clear).unwrap().unwrap();
+            let made = || {
+                if failure {
+                    Err("old failure".into())
+                } else {
+                    Ok(Key::default())
+                }
+            };
+            finish(path, "practice-one", "problem-one", &old, made());
+            assert!(status(path, "practice-one", "problem-one").is_none());
+            let new = claim(path, "practice-one", "problem-one", false).unwrap();
+            finish(path, "practice-one", "problem-one", &old, made());
+            assert_eq!(
+                status(path, "practice-one", "problem-one").unwrap().0,
+                "preparing"
+            );
+            finish(
+                path,
+                "practice-one",
+                "problem-one",
+                &new,
+                Ok(Key::default()),
+            );
+            assert!(ready(path, "practice-one", "problem-one").is_some());
+            crate::interview::remove(path, "practice-one").unwrap();
+            finish(path, "practice-one", "problem-one", &new, made());
+            assert!(status(path, "practice-one", "problem-one").is_none());
+            assert!(claim(path, "practice-one", "problem-one", false).is_none());
+        }
+    }
 
     fn coding_challenge() -> Challenge {
         Challenge {

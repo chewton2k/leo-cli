@@ -532,6 +532,18 @@ pub struct Store {
 }
 
 impl Store {
+    pub fn read_snapshot(&self) -> Self {
+        Self {
+            notes: self.notes.clone(),
+            directories: self.directories.clone(),
+            notes_dir: self.notes_dir.clone(),
+            unreadable: self.unreadable.clone(),
+            undo: Vec::new(),
+            seen: std::cell::RefCell::new(HashMap::new()),
+            fingerprint: std::cell::Cell::new(self.fingerprint.get()),
+        }
+    }
+
     /// Load notes from the platform data directory.
     /// Automatically migrates from legacy notes.json on first run.
     pub fn load() -> Result<Self> {

@@ -93,6 +93,23 @@ fn body_of(notes: &Path, id: &str) -> Option<(DateTime<Utc>, Vec<u8>)> {
 }
 
 impl Calendar {
+    pub(crate) fn clear_cached(
+        &self,
+        path: &Path,
+        request: &crate::storage::Request,
+    ) -> Result<String> {
+        let _busy = Busy::take(&self.busy).ok_or_else(|| anyhow::anyhow!("Leo is refreshing your calendars. Wait for that to finish, then clear the cached events."))?;
+        let result = crate::storage_saved::act_on(path, request)
+            .ok_or_else(|| anyhow::anyhow!("Choose an action offered in Storage."))??;
+        self.expanded
+            .lock()
+            .map_err(|_| {
+                anyhow::anyhow!("Calendar cache could not be cleared. Restart Leo and try again.")
+            })?
+            .clear();
+        Ok(result)
+    }
+
     pub(crate) fn events(
         &self,
         notes: &Path,
@@ -641,6 +658,49 @@ pub(crate) mod tests {
     use super::*;
     use std::collections::HashMap;
     use std::sync::Mutex;
+
+    #[test]
+    fn clearing_cached_events_waits_for_refresh_and_keeps_calendar_connections() {
+        let temp = tempfile::tempdir().unwrap();
+        let notes = temp.path().join("notes");
+        std::fs::create_dir(&notes).unwrap();
+        let path = crate::chats::dir_for(&notes);
+        let settings = settings_path(&notes);
+        std::fs::write(&settings, "saved calendar connection").unwrap();
+        crate::db::for_chats(&path).with(|c| c.execute("INSERT INTO calendar_feeds (feed, tried_at, body) VALUES ('calendar-one', 'now', X'0102')", [])).unwrap();
+        let calendar = Calendar::default();
+        let request = crate::storage::Request {
+            area: "calendar-cache".into(),
+            action: "all".into(),
+            items: vec![],
+        };
+        let refresh = Busy::take(&calendar.busy).unwrap();
+        assert!(calendar.clear_cached(&path, &request).is_err());
+        assert_eq!(
+            crate::db::for_chats(&path)
+                .with(
+                    |c| c.query_row("SELECT count(*) FROM calendar_feeds", [], |r| r
+                        .get::<_, i64>(0))
+                )
+                .unwrap(),
+            1
+        );
+        drop(refresh);
+        calendar.clear_cached(&path, &request).unwrap();
+        assert_eq!(
+            crate::db::for_chats(&path)
+                .with(
+                    |c| c.query_row("SELECT count(*) FROM calendar_feeds", [], |r| r
+                        .get::<_, i64>(0))
+                )
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            std::fs::read_to_string(settings).unwrap(),
+            "saved calendar connection"
+        );
+    }
 
     #[derive(Default)]
     pub(crate) struct Fake {

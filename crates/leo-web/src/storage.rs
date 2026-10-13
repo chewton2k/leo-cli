@@ -55,19 +55,35 @@ pub struct Request {
 
 pub const OLD_CHAT_DAYS: i64 = 30;
 
+const MOST_SIZE_ENTRIES: usize = 100_000;
+const MOST_SIZE_DEPTH: usize = 64;
+
 pub fn size_of(path: &Path) -> u64 {
-    let Ok(meta) = std::fs::symlink_metadata(path) else {
-        return 0;
-    };
-    if meta.file_type().is_symlink() {
-        return 0;
+    let mut pending = vec![(path.to_path_buf(), 0)];
+    let mut seen = 0;
+    let mut bytes: u64 = 0;
+    while let Some((path, depth)) = pending.pop() {
+        if seen >= MOST_SIZE_ENTRIES {
+            break;
+        }
+        seen += 1;
+        let Ok(meta) = std::fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if meta.is_file() {
+            bytes = bytes.saturating_add(meta.len());
+        } else if meta.is_dir() && depth < MOST_SIZE_DEPTH {
+            if let Ok(entries) = std::fs::read_dir(&path) {
+                for entry in entries
+                    .take(MOST_SIZE_ENTRIES.saturating_sub(seen + pending.len()))
+                    .flatten()
+                {
+                    pending.push((entry.path(), depth + 1));
+                }
+            }
+        }
     }
-    if meta.is_file() {
-        return meta.len();
-    }
-    std::fs::read_dir(path)
-        .map(|entries| entries.flatten().map(|e| size_of(&e.path())).sum())
-        .unwrap_or(0)
+    bytes
 }
 
 fn sized(bytes: u64) -> String {
@@ -113,7 +129,7 @@ fn modified(path: &Path) -> Option<DateTime<Utc>> {
 }
 
 fn notes_bytes(notes_dir: &Path) -> u64 {
-    std::fs::read_dir(notes_dir)
+    let total: u64 = std::fs::read_dir(notes_dir)
         .map(|entries| {
             entries
                 .flatten()
@@ -124,7 +140,8 @@ fn notes_bytes(notes_dir: &Path) -> u64 {
                 .map(|e| size_of(&e.path()))
                 .sum()
         })
-        .unwrap_or(0)
+        .unwrap_or(0);
+    total.saturating_sub(size_of(&notes_dir.join(".leo/tasks")))
 }
 
 pub fn areas(store: &Store, graphs: &Graphs, chats_dir: &Path, now: DateTime<Utc>) -> Vec<Area> {
@@ -185,6 +202,13 @@ pub fn areas(store: &Store, graphs: &Graphs, chats_dir: &Path, now: DateTime<Utc
     });
 
     let summaries = chats::list(chats_dir);
+    let memories: std::collections::HashMap<String, u64> = chats::remembered(chats_dir)
+        .into_iter()
+        .map(|(id, _, _, bytes)| (id, bytes))
+        .collect();
+    let chat_bytes = |id: &str| {
+        chats::bytes_of(chats_dir, id).saturating_sub(memories.get(id).copied().unwrap_or(0))
+    };
     let cutoff = now - chrono::Duration::days(OLD_CHAT_DAYS);
     let mut chat_actions = Vec::new();
     if !summaries.is_empty() {
@@ -214,14 +238,14 @@ pub fn areas(store: &Store, graphs: &Graphs, chats_dir: &Path, now: DateTime<Utc
         title: "Chats with Felix".into(),
         about: "Every conversation, so you can go back to it. Kept in leo's database beside your notes; never backed up.".into(),
         path: chats::db_of(chats_dir).path().display().to_string(),
-        bytes: summaries.iter().map(|c| chats::bytes_of(chats_dir, &c.id)).sum(),
+        bytes: summaries.iter().map(|c| chat_bytes(&c.id)).sum(),
         items: summaries
             .iter()
             .map(|c| Item {
                 id: c.id.clone(),
                 label: c.title.clone(),
                 detail: format!("{} message{}", c.count, if c.count == 1 { "" } else { "s" }),
-                bytes: chats::bytes_of(chats_dir, &c.id),
+                bytes: chat_bytes(&c.id),
                 when: Some(c.updated_at),
                 locked: false,
             })
@@ -527,7 +551,7 @@ const SMALL_FILES: [(&str, &str); 7] = [
     ),
 ];
 
-const LISTED_ELSEWHERE: [&str; 12] = [
+const LISTED_ELSEWHERE: [&str; 13] = [
     "recording-sources",
     "browser-audio",
     "notes",
@@ -537,6 +561,7 @@ const LISTED_ELSEWHERE: [&str; 12] = [
     "captions.json",
     "meaning.json",
     "recordings",
+    "models",
     "leo.db",
     "leo.db-wal",
     "leo.db-shm",
@@ -571,7 +596,7 @@ pub fn more_areas(store: &Store, chats_dir: &Path, kept: &Kept) -> Vec<Area> {
             id: "memory".into(),
             title: "What Felix remembers of long chats".into(),
             about: "Summaries of the older part of long chats, so Felix keeps up once the first messages are out of view. Forgetting one means Felix sees only the recent messages of that chat until it is summarized again.".into(),
-            path: chats_dir.display().to_string(),
+            path: chats::db_of(chats_dir).path().display().to_string(),
             bytes: remembered.iter().map(|r| r.3).sum(),
             items: remembered
                 .iter()
@@ -595,40 +620,37 @@ pub fn more_areas(store: &Store, chats_dir: &Path, kept: &Kept) -> Vec<Area> {
             ],
         });
     }
-    let tasks = crate::tasks::load_all(chats_dir);
-    if !tasks.is_empty() {
+    let tasks = crate::tasks::storage_entries(chats_dir);
+    let task_bytes = size_of(&crate::tasks::tasks_dir(chats_dir));
+    if !tasks.is_empty() || task_bytes > 0 {
         out.push(Area {
             id: "tasks".into(),
             title: "Tasks you added in leo".into(),
-            about: "Tasks made on the Calendar page or by Felix, one small file each beside your notes, so they go into the notes' backup and Export. Tasks that come from notes stay in the notes.".into(),
+            about: "Tasks made on the Calendar page or by Felix, kept beside your notes for backup and Export. Deleting a task keeps a small deletion marker for backup; Erase deleted tasks removes those markers. Checkboxes from notes stay in the notes.".into(),
             path: crate::tasks::tasks_dir(chats_dir).display().to_string(),
-            bytes: std::fs::read_dir(crate::tasks::tasks_dir(chats_dir))
-                .map(|dir| {
-                    dir.flatten()
-                        .filter_map(|e| e.metadata().ok())
-                        .map(|m| m.len())
-                        .sum()
-                })
-                .unwrap_or(0),
+            bytes: task_bytes,
             items: tasks
                 .iter()
                 .map(|t| Item {
                     id: t.id.clone(),
                     label: t.title.clone(),
-                    detail: if !t.repeat.is_empty() {
-                        "repeats weekly".to_string()
+                    detail: if t.deleted {
+                        "Deleted · a small marker keeps older backups from bringing this task back".to_string()
+                    } else if !t.repeat.is_empty() {
+                        format!("Repeats weekly · starts {}", t.date.map_or("today".into(), |d| d.to_string()))
                     } else if t.done {
                         "done".to_string()
                     } else {
                         t.date.map_or("no date".to_string(), |d| d.format("%b %-d, %Y").to_string())
                     },
-                    bytes: 240,
-                    when: None,
-                    locked: false,
+                    bytes: size_of(&crate::tasks::tasks_dir(chats_dir).join(format!("{}.json", t.id))),
+                    when: Some(t.updated_at),
+                    locked: t.deleted,
                 })
                 .collect(),
             actions: vec![
-                act("delete", "Delete the selected tasks", None, true),
+                act("delete", "Delete the selected tasks", Some("Selected tasks are removed from Calendar. Small deletion markers stay in the backup until you erase them."), true),
+                act("erase-deleted", "Erase deleted tasks", Some("Deleted task records, including their titles, are erased from this computer. Old backups may still contain them and can bring them back when restored or merged. Active tasks stay."), false),
                 act(
                     "delete-done",
                     "Delete finished tasks",
@@ -638,13 +660,13 @@ pub fn more_areas(store: &Store, chats_dir: &Path, kept: &Kept) -> Vec<Area> {
             ],
         });
     }
-    let reviewed = crate::review::count(chats_dir);
+    let reviewed = chats::db_of(chats_dir).with(|c| c.query_row("SELECT coalesce(sum(length(CAST(key AS BLOB)) + length(CAST(n AS BLOB))), 0) FROM reviewed", [], |r| r.get::<_, i64>(0))).unwrap_or(0).max(0) as u64;
     out.push(row_area(
         "review",
         "Study review progress",
         "Which missed questions you have already reviewed, so Study does not offer them again.",
         chats::db_of(chats_dir).path(),
-        reviewed as u64 * 48,
+        reviewed,
         act(
             "reset",
             "Start review over",
@@ -771,6 +793,9 @@ pub fn act_on_more(
                 .filter(|id| crate::tasks::valid_id(id) && crate::tasks::remove(chats_dir, id))
                 .count();
             Ok(plural_deleted(gone, "task"))
+        }
+        ("tasks", "erase-deleted") => {
+            crate::tasks::erase_deleted(chats_dir).map(|n| plural_deleted(n, "deleted task record"))
         }
         ("tasks", "delete-done") => Ok(plural_deleted(
             crate::tasks::remove_done(chats_dir),
@@ -1180,6 +1205,102 @@ mod tests {
 
     fn area<'a>(list: &'a [Area], id: &str) -> &'a Area {
         list.iter().find(|a| a.id == id).unwrap()
+    }
+
+    #[test]
+    fn task_storage_counts_files_once_and_can_erase_only_deleted_markers() {
+        let (_temp, store, graphs, path) = setup();
+        let notes_before = notes_bytes(&store.notes_dir);
+        for id in ["task-one", "task-two"] {
+            let task: crate::tasks::Task = serde_json::from_value(serde_json::json!({"id":id,"title":"Study Python café", "created_at":at(13), "updated_at":at(13)})).unwrap();
+            crate::tasks::put(&path, &task).unwrap();
+        }
+        assert!(crate::tasks::remove(&path, "task-one"));
+        let captions = crate::captions::Captions::for_notes(&store.notes_dir);
+        let vectors = crate::vectors::Vectors::for_notes(&store.notes_dir);
+        let kept = Kept {
+            captions: &captions,
+            vectors: &vectors,
+            recording: None,
+        };
+        let list = more_areas(&store, &path, &kept);
+        let tasks = area(&list, "tasks");
+        assert_eq!(tasks.items.len(), 2);
+        assert!(
+            tasks
+                .items
+                .iter()
+                .find(|i| i.id == "task-one")
+                .unwrap()
+                .locked
+        );
+        assert_eq!(tasks.bytes, size_of(&crate::tasks::tasks_dir(&path)));
+        assert_eq!(
+            tasks.bytes,
+            tasks.items.iter().map(|i| i.bytes).sum::<u64>()
+        );
+        assert!(notes_bytes(&store.notes_dir).saturating_sub(notes_before) < tasks.bytes);
+        act_on_more(
+            &store,
+            &path,
+            &kept,
+            &Request {
+                area: "tasks".into(),
+                action: "erase-deleted".into(),
+                items: vec![],
+            },
+        )
+        .unwrap()
+        .unwrap();
+        assert!(crate::tasks::load(&path, "task-two").is_some());
+        assert_eq!(crate::tasks::storage_entries(&path).len(), 1);
+        assert!(!crate::tasks::tasks_dir(&path)
+            .join("task-one.json")
+            .exists());
+        let list = areas(&store, &graphs, &path, at(13));
+        assert!(area(&list, "notes").bytes > 0);
+    }
+
+    #[test]
+    fn chat_memory_and_unicode_are_counted_once() {
+        let (_temp, store, graphs, path) = setup();
+        assert!(chats::set_memory(
+            &path,
+            "chat-new-0002",
+            chats::Memory {
+                upto: 1,
+                hash: "hash".into(),
+                text: "café résumé".into()
+            }
+        ));
+        let memories = chats::remembered(&path);
+        let list = areas(&store, &graphs, &path, at(13));
+        let chat = area(&list, "chats")
+            .items
+            .iter()
+            .find(|i| i.id == "chat-new-0002")
+            .unwrap();
+        assert_eq!(
+            chat.bytes + memories[0].3,
+            chats::bytes_of(&path, "chat-new-0002")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn storage_sizes_ignore_symlinks_and_bound_nested_folders() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("secret"), vec![0; 1000]).unwrap();
+        std::os::unix::fs::symlink(outside.path(), root.path().join("linked")).unwrap();
+        std::fs::write(root.path().join("kept"), vec![0; 10]).unwrap();
+        let mut nested = root.path().to_path_buf();
+        for _ in 0..MOST_SIZE_DEPTH + 1 {
+            nested.push("a");
+            std::fs::create_dir(&nested).unwrap();
+        }
+        std::fs::write(nested.join("deep"), vec![0; 1000]).unwrap();
+        assert_eq!(size_of(root.path()), 10);
     }
 
     #[test]

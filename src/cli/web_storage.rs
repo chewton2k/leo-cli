@@ -116,30 +116,173 @@ fn meaning_model() -> Area {
     }
 }
 
-fn settings() -> Option<Area> {
-    let dir = leo_core::paths::config_dir().ok()?;
-    let items: Vec<Item> = leo_web::storage::CONFIG_FILES
+fn python_runtime_at(dir: &Path) -> Area {
+    let bytes = size_of(dir);
+    Area {
+        id: "python-runtime".into(), title: "Python practice runtime".into(),
+        about: "The Python engine downloaded for Run in coding practice. Your code runs in your browser. Removing this download keeps practices, code, attempts and reviews; a future Run downloads the engine again.".into(),
+        path: dir.display().to_string(), bytes, items: vec![],
+        actions: if bytes > 0 { vec![act("remove", "Remove Python runtime", Some("Only the downloaded Python engine is removed. Your practices and code stay. The next Python Run may download about 12 MB again; an engine already loaded in this browser keeps working until the page is closed."), false)] } else { vec![] },
+    }
+}
+
+fn application() -> Option<Area> {
+    let path = std::env::current_exe().ok()?;
+    Some(Area {
+        id: "application".into(), title: "Leo application".into(),
+        about: "The Leo program, including the website and its coding editor. Keep it to use Leo. To remove the installed application, use leo uninstall in your terminal.".into(),
+        path: path.display().to_string(), bytes: size_of(&path), items: vec![], actions: vec![],
+    })
+}
+
+const MOST_MODEL_FILES: usize = 1000;
+
+fn other_models() -> Area {
+    let root = leo_services::config::choice::models_dir();
+    let named = [
+        leo_services::providers::speech_model_dir(),
+        leo_services::meaning::dir(),
+        leo_services::pyodide::dir(),
+    ];
+    let items: Vec<Item> = std::fs::read_dir(&root)
+        .ok()
+        .into_iter()
+        .flatten()
+        .flatten()
+        .take(MOST_MODEL_FILES)
+        .filter(|e| {
+            e.file_type().is_ok_and(|t| t.is_file() || t.is_dir()) && !named.contains(&e.path())
+        })
+        .map(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            let locked = name.ends_with(".part");
+            Item {
+                id: name.clone(),
+                label: name,
+                detail: if locked {
+                    "A download in progress; wait for it to finish".into()
+                } else {
+                    "Other downloaded or older model files".into()
+                },
+                bytes: size_of(&e.path()),
+                when: e
+                    .metadata()
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .map(chrono::DateTime::from),
+                locked,
+            }
+        })
+        .collect();
+    let can_delete = items.iter().any(|i| !i.locked);
+    Area { id: "other-models".into(), title: "Other downloaded model files".into(), about: "Older models and other files in Leo's model download folder. The speech model, meaning model and Python engine are listed separately.".into(), path: root.display().to_string(), bytes: items.iter().map(|i| i.bytes).sum(), items, actions: if can_delete { vec![act("delete", "Delete selected", Some("Selected downloaded files are removed from this computer. Leo may need to download a model again if you choose to use it."), true)] } else { vec![] } }
+}
+
+fn remove_cached_dir(dir: &Path, name: &str) -> Result<String> {
+    let Ok(meta) = std::fs::symlink_metadata(dir) else {
+        return Ok(format!("No {name} download is present."));
+    };
+    if !meta.is_dir() {
+        bail!(
+            "Choose a downloaded folder shown in Storage; symbolic links cannot be removed here."
+        );
+    }
+    let checked = leo_core::paths::contained_path(
+        dir.parent()
+            .ok_or_else(|| anyhow!("That download folder could not be checked."))?,
+        Path::new(
+            dir.file_name()
+                .ok_or_else(|| anyhow!("That download folder could not be checked."))?,
+        ),
+    )?;
+    if std::fs::read_dir(&checked)?
+        .take(MOST_MODEL_FILES)
+        .flatten()
+        .any(|e| e.file_name().to_string_lossy().ends_with(".part"))
+    {
+        bail!("{name} is being downloaded. Wait for it to finish, then remove it in Storage.");
+    }
+    std::fs::remove_dir_all(&checked).map_err(|_| anyhow!("Could not remove {name}. Stop any recording or practice Run, check that Leo can write to its download folder, then try again."))?;
+    Ok(format!("Removed {name}. Your saved work stays."))
+}
+
+fn remove_other_models(
+    root: &Path,
+    ids: &[String],
+    named: &[std::path::PathBuf],
+) -> Result<String> {
+    if ids.len() > MOST_MODEL_FILES
+        || ids.iter().any(|id| {
+            id.is_empty()
+                || id.len() > 255
+                || id.contains(['/', '\\', ':'])
+                || id == "."
+                || id == ".."
+                || id.ends_with(".part")
+        })
+    {
+        bail!("Choose downloaded files shown in Storage; wait for active downloads to finish.");
+    }
+    let paths = ids
         .iter()
-        .filter_map(|(name, what)| {
-            let path = dir.join(name);
-            path.is_file().then(|| Item {
-                id: (*name).to_string(),
-                label: (*name).to_string(),
-                detail: (*what).to_string(),
-                bytes: size_of(&path),
-                when: None,
-                locked: true,
-            })
+        .map(|id| leo_core::paths::contained_path(root, Path::new(id)))
+        .collect::<Result<Vec<_>>>()?;
+    if paths.iter().any(|p| named.contains(p)) {
+        bail!("Use the speech, meaning or Python card to remove that download.");
+    }
+    let mut gone = 0;
+    for path in paths {
+        let Ok(meta) = std::fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if meta.is_dir() {
+            remove_cached_dir(&path, "downloaded model")?;
+        } else if meta.is_file() {
+            std::fs::remove_file(&path).map_err(|_| anyhow!("A downloaded file could not be deleted. Check that Leo can write to its download folder, then try again."))?;
+        } else {
+            bail!("Choose a downloaded file shown in Storage.");
+        }
+        gone += 1;
+    }
+    Ok(format!(
+        "Deleted {gone} downloaded files. Saved notes and practices stay."
+    ))
+}
+
+fn settings() -> Option<Area> {
+    let config = leo_core::paths::config_dir().ok()?;
+    let mut roots = vec![config];
+    if let Ok(data) = leo_core::paths::data_dir() {
+        if !roots.contains(&data) {
+            roots.push(data);
+        }
+    }
+    let items: Vec<Item> = roots
+        .iter()
+        .flat_map(|dir| {
+            leo_web::storage::CONFIG_FILES
+                .iter()
+                .filter_map(move |(name, what)| {
+                    let path = dir.join(name);
+                    std::fs::symlink_metadata(&path)
+                        .ok()
+                        .filter(|m| m.is_file())
+                        .map(|meta| Item {
+                            id: path.display().to_string(),
+                            label: (*name).into(),
+                            detail: format!("{what} · {}", dir.display()),
+                            bytes: meta.len(),
+                            when: meta.modified().ok().map(chrono::DateTime::from),
+                            locked: true,
+                        })
+                })
         })
         .collect();
     Some(Area {
-        id: "settings".into(),
-        title: "Settings and small caches".into(),
-        about: "Your settings, the code in the leo serve link, signed-in browsers and small caches such as plan usage. leo needs these; they are not deleted from here.".into(),
-        path: dir.display().to_string(),
-        bytes: items.iter().map(|i| i.bytes).sum(),
-        items,
-        actions: Vec::new(),
+        id: "settings".into(), title: "Settings and small caches".into(),
+        about: "Settings, protected credentials, the serve link, signed-in browsers and small usage caches, from both Leo's settings and data folders. Manage settings and sign-ins using their controls; secret values are never shown here.".into(),
+        path: roots.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(" · "),
+        bytes: items.iter().map(|i| i.bytes).sum(), items, actions: Vec::new(),
     })
 }
 
@@ -237,6 +380,9 @@ impl Housekeeper for Housekeeping {
         out.extend(recordings());
         out.push(speech_model());
         out.push(meaning_model());
+        out.push(python_runtime_at(&leo_services::pyodide::dir()));
+        out.push(other_models());
+        out.extend(application());
         out.extend(settings());
         out
     }
@@ -248,26 +394,27 @@ impl Housekeeper for Housekeeping {
                     .map_err(|e| anyhow!(e))
                     .and_then(|root| delete_recordings(&root, items)),
             ),
-            ("meaning-model", "remove") => {
-                let dir = leo_services::meaning::dir();
-                Some(
-                    std::fs::remove_dir_all(&dir)
-                        .map(|()| {
-                            "Removed the meaning model. `leo update` or the next `leo serve` downloads it again.".to_string()
-                        })
-                        .map_err(|e| anyhow!("Could not remove {}: {e}", dir.display())),
-                )
-            }
-            ("speech", "remove") => {
-                let dir = leo_services::providers::speech_model_dir();
-                Some(
-                    std::fs::remove_dir_all(&dir)
-                        .map(|()| {
-                            "Removed the speech model. `leo update` downloads it again.".to_string()
-                        })
-                        .map_err(|e| anyhow!("Could not remove {}: {e}", dir.display())),
-                )
-            }
+            ("meaning-model", "remove") => Some(remove_cached_dir(
+                &leo_services::meaning::dir(),
+                "the meaning model",
+            )),
+            ("speech", "remove") => Some(remove_cached_dir(
+                &leo_services::providers::speech_model_dir(),
+                "the speech model",
+            )),
+            ("python-runtime", "remove") => Some(remove_cached_dir(
+                &leo_services::pyodide::dir(),
+                "the Python runtime",
+            )),
+            ("other-models", "delete") => Some(remove_other_models(
+                &leo_services::config::choice::models_dir(),
+                items,
+                &[
+                    leo_services::providers::speech_model_dir(),
+                    leo_services::meaning::dir(),
+                    leo_services::pyodide::dir(),
+                ],
+            )),
             _ => None,
         }
     }
@@ -276,6 +423,79 @@ impl Housekeeper for Housekeeping {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn downloaded_runtime_sizes_and_removal_preserve_saved_work() {
+        let temp = tempfile::tempdir().unwrap();
+        let runtime = temp.path().join("python");
+        std::fs::create_dir(&runtime).unwrap();
+        std::fs::write(runtime.join("python.wasm"), vec![0; 2048]).unwrap();
+        let saved = temp.path().join("leo.db");
+        std::fs::write(&saved, "saved practices").unwrap();
+        let area = python_runtime_at(&runtime);
+        assert_eq!(area.bytes, 2048);
+        assert_eq!(area.actions[0].id, "remove");
+        std::fs::write(runtime.join("python.part"), "downloading").unwrap();
+        assert!(remove_cached_dir(&runtime, "Python").is_err());
+        assert!(runtime.join("python.wasm").exists());
+        std::fs::remove_file(runtime.join("python.part")).unwrap();
+        remove_cached_dir(&runtime, "Python").unwrap();
+        assert!(!runtime.exists());
+        assert_eq!(std::fs::read_to_string(saved).unwrap(), "saved practices");
+        assert!(python_runtime_at(&runtime).actions.is_empty());
+        remove_cached_dir(&runtime, "Python").unwrap();
+    }
+
+    #[test]
+    fn other_download_cleanup_validates_all_paths_before_deleting() {
+        let temp = tempfile::tempdir().unwrap();
+        let keep = temp.path().join("speech");
+        std::fs::create_dir(&keep).unwrap();
+        let old = temp.path().join("older-model");
+        std::fs::write(&old, "old").unwrap();
+        for bad in [
+            "../outside",
+            "a/b",
+            "a\\b",
+            "..",
+            ".",
+            "",
+            "speech",
+            "active.part",
+        ] {
+            assert!(
+                remove_other_models(
+                    temp.path(),
+                    &["older-model".into(), bad.into()],
+                    std::slice::from_ref(&keep)
+                )
+                .is_err(),
+                "{bad}"
+            );
+            assert!(old.exists());
+        }
+        remove_other_models(
+            temp.path(),
+            &["older-model".into()],
+            std::slice::from_ref(&keep),
+        )
+        .unwrap();
+        assert!(!old.exists());
+        assert!(keep.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn downloaded_folders_cannot_follow_a_symbolic_link() {
+        let temp = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("keep"), "keep").unwrap();
+        let link = temp.path().join("linked-model");
+        std::os::unix::fs::symlink(outside.path(), &link).unwrap();
+        assert!(remove_cached_dir(&link, "model").is_err());
+        assert!(remove_other_models(temp.path(), &["linked-model".into()], &[]).is_err());
+        assert!(outside.path().join("keep").exists());
+    }
 
     #[test]
     fn discarding_a_call_removes_both_tracks_and_keeps_other_recordings() {

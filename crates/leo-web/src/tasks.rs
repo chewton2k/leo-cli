@@ -464,6 +464,22 @@ fn read_all(chats: &Path) -> Vec<Task> {
     out
 }
 
+pub fn storage_entries(chats: &Path) -> Vec<Task> {
+    read_all(chats)
+}
+
+pub fn erase_deleted(chats: &Path) -> anyhow::Result<usize> {
+    let mut gone = 0;
+    for task in read_all(chats).into_iter().filter(|t| t.deleted) {
+        let path = tasks_dir(chats).join(format!("{}.json", task.id));
+        if read_file(&path).is_some_and(|t| t.deleted && t.updated_at == task.updated_at) {
+            std::fs::remove_file(path).map_err(|_| anyhow::anyhow!("A deleted task file could not be erased. Check that Leo can write to its notes folder, then try again."))?;
+            gone += 1;
+        }
+    }
+    Ok(gone)
+}
+
 pub fn load_all(chats: &Path) -> Vec<Task> {
     read_all(chats)
         .into_iter()
