@@ -232,8 +232,6 @@ seer, meaning, web, room).
   switching flushes drafts before selecting; model-created problems preserve
   pending edits before switching. The global Felix button opens the active
   practice conversation; Back saves then returns to the practice list.
-  Scheduling reads interview progress and `list_schedule` before proposing
-  candidate gaps around saved commitments and relevant note preferences.
   All active practices use available width and adapt when Felix opens.
   Coding wraps with aligned syntax and line numbers,
   and adapts when Felix opens. Python deletion on blank indented lines uses
@@ -249,8 +247,31 @@ seer, meaning, web, room).
   labels and selected shapes drag, Enter places a label, and snapshots fit all content.
   Reset affects only the current tab of the captured problem. Board Undo retains
   up to 20 edits; a reset's Undo also restores its viewport. Other tabs stay saved.
-  `interview_schedule` uses the same Ask/Auto/Read proposal and Undo flow as tasks;
-  Apply and Undo reject changed schedules while allowing concurrent draft edits.
+  Practice schedules were removed (2026-10-13, the user's call): no schedule
+  section, session editor, `interview_schedule` tool or proposal, `Interview.schedule`
+  or `Change::Schedule`; old rows keep loading (the field is ignored) and an old
+  schedule card in a saved chat says schedules are no longer part of leo. The
+  preferences form keeps the interview date and drops the weekly minutes field
+  (the stored value is sent back unchanged).
+  The problem card is tabbed like a judge site (`drawInterviewPanes`, the shared
+  `library-views` control, sticky under the header, arrow keys move): Question;
+  Test cases (coding with key tests: the visible examples and the last Run, which
+  switches here); Result (only for this page's latest submission of the open
+  problem, `Result · passed/total`; Submit switches here and scrolls the card
+  into view only when its top is off screen); Submissions (this problem's
+  attempts, then shared progress). Switching problems returns to Question.
+  Submission results (`paintInterviewResults`): a passed/failed summary, one
+  horizontally scrolling strip of case chips (`interviews.resultCases`: tests
+  as Case n, answers as Answer n, parts by name) acting as tabs, and one detail
+  panel: input only when the visible call is known (never for hidden tests),
+  your output and expected output in bounded wrapping boxes, and "This check
+  looks wrong" for a failed case, which names the check to Felix. The selection
+  (`session.resultCase`, `interviews.pickCase`: first failure, else the first
+  case) survives redraws of the same submission and resets for another; choosing
+  a case repaints only the strip state and the panel, never the editor or page
+  scroll. The quick review shows its counts and summary and folds the
+  per-criterion feedback into `source-more`. Grading errors are kept per
+  submission.
   `interview_code` reads the full bound draft. `interview_code_edit` suggests one
   exact unique fragment per Accept/Decline card, always pending even in Auto.
   Apply and contextual Undo change only that problem’s code, including archived
@@ -359,7 +380,7 @@ the same idle loop.
   Coming up 7 days / No date), folds (`leo-tasks-folded`), hidden on the
   Calendar page and under 600 px.
   Active interview practices start with Tasks folded so its expanded rows
-  cannot block the workspace or schedule. Show still expands it; this local
+  cannot block the workspace. Show still expands it; this local
   practice choice leaves the remembered preference for other pages intact.
 - Export adds `tasks.json`; Storage → Restore tasks takes that file and POSTs
   `/api/tasks/import` (ids dedupe; a newer local copy is kept).

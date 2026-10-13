@@ -207,7 +207,6 @@ pub(crate) fn summary_of(p: &Proposal) -> String {
         | Proposal::RenameFolder { summary, .. }
         | Proposal::PinNote { summary, .. }
         | Proposal::DeleteFolder { summary, .. }
-        | Proposal::InterviewSchedule { summary, .. }
         | Proposal::InterviewCodeEdit { summary, .. }
         | Proposal::RestoreFolder { summary, .. } => summary.clone(),
         Proposal::Edit { title, .. } => format!("Change “{title}”"),
@@ -851,32 +850,6 @@ pub(crate) async fn act(
                     .map_err(|_| "Leo could not apply the code change. Try again.".to_string())?
                     .map_err(|e| e.message())?;
             Ok((serde_json::json!({"revision":item.revision}), undo))
-        }
-        Proposal::InterviewSchedule {
-            interview,
-            before,
-            schedule,
-            ..
-        } => {
-            let path = state.chats.clone();
-            let id = interview.clone();
-            let expected = before.clone();
-            let sessions = schedule.clone();
-            let item = tokio::task::spawn_blocking(move || {
-                crate::interview::apply_schedule(&path, &id, &expected, sessions)
-            })
-            .await
-            .map_err(|_| "Leo could not save your practice schedule. Try again.".to_string())?
-            .map_err(|e| e.message())?;
-            Ok((
-                serde_json::json!({"revision":item.revision}),
-                Proposal::InterviewSchedule {
-                    summary: "Restore the previous interview schedule".into(),
-                    interview: interview.clone(),
-                    before: item.schedule,
-                    schedule: before.clone(),
-                },
-            ))
         }
         Proposal::AddTask {
             title,

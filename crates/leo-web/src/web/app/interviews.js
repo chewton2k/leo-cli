@@ -50,7 +50,7 @@ async function showInterviews(id = '') {
     return;
   }
   if (mine !== seq) return;
-  const session = { item, mine, draft: interviews.workspace(item.workspace), generation: 0, saved: 0, timer: 0, queue: Promise.resolve(), error: '', tab: item.framework.track === 'coding' ? 'code' : 'write', tool: 'pen', stroke: null, submitting: false, calendar: [] };
+  const session = { item, mine, draft: interviews.workspace(item.workspace), generation: 0, saved: 0, timer: 0, queue: Promise.resolve(), error: '', tab: item.framework.track === 'coding' ? 'code' : 'write', tool: 'pen', stroke: null, submitting: false, pane: 'question', paneFor: '' };
   interviewPage = session;
   const local = item.challenge && interviews.readDraft(localStorage, id, item.challenge.id);
   if (local && JSON.stringify(local) !== JSON.stringify(interviews.workspace(item.workspace))) {
@@ -63,11 +63,6 @@ async function showInterviews(id = '') {
     interviewStart = null;
     prepareInterview(session).catch(fail);
   }
-  api('/api/calendar').then((calendar) => {
-    if (interviewPage !== session || mine !== seq) return;
-    session.calendar = calendar.events || [];
-    drawInterviewSchedule(session);
-  }).catch(() => {});
 }
 
 function interviewHere(session) {
@@ -85,23 +80,23 @@ function drawInterview(session) {
   const tabs = coding ? [['code', 'Code'], ['write', 'Approach'], ['board', 'Whiteboard']] : [['write', 'Write'], ['board', 'Whiteboard']];
   app.innerHTML = `<div class="interview-home interview-practice${coding ? ' interview-coding' : ''}"><div class="interview-heading"><div><p class="eyebrow">${esc(interviews.preset(item.framework.track).label)} · ${item.framework.style === 'mock' ? 'Mock interview' : 'Coach'}</p><h1>${esc(item.framework.title)}</h1><p class="hint">${esc([item.framework.company || 'General practice', item.framework.role].filter(Boolean).join(' · '))}</p></div><div class="buttons"><button class="btn sm" data-interview="configure">Preferences</button></div></div>
     <div id="interview-problems" class="interview-problems" role="group" aria-label="Practice problems"></div>
-    <div class="interview-solve"><div class="interview-question"><section id="interview-challenge" class="set-card"></section><section id="interview-attempts"></section></div>
+    <div class="interview-solve"><div class="interview-question"><section id="interview-challenge" class="set-card interview-problem"><div id="interview-panes" class="interview-panes"></div><div id="interview-pane-question" role="tabpanel"></div><div id="interview-pane-cases" role="tabpanel" hidden></div><div id="interview-pane-result" role="tabpanel" hidden><div id="interview-results" class="interview-results" aria-live="polite"></div></div><div id="interview-pane-submissions" role="tabpanel" hidden><section id="interview-attempts"></section><section id="interview-progress"></section></div></section></div>
     ${item.challenge ? `<section class="set-card interview-workspace"><div class="interview-toolbar"><div class="library-views" role="tablist" aria-label="Your answer workspace">${tabs.map(([id, label]) => `<button class="btn sm plain${session.tab === id ? ' on' : ''}" role="tab" aria-selected="${session.tab === id}" data-interview="tab" data-tab="${id}">${label}</button>`).join('')}</div><span id="interview-save" class="hint" role="status"></span></div>
     <div id="interview-editor"${session.tab !== (coding ? 'code' : 'write') ? ' hidden' : ''}><div class="interview-toolbar"><label class="interview-label" for="interview-answer">${coding ? esc(item.challenge.coding?.language || item.framework.language || 'Code') : 'Your answer'}</label></div><div class="interview-code-shell${coding ? ' numbered' : ''}">${coding ? '<pre id="interview-lines" aria-hidden="true"></pre>' : ''}<div class="interview-code-pane">${coding ? '<pre id="interview-colors" aria-hidden="true"></pre>' : ''}<textarea id="interview-answer" class="set-input${coding ? ' interview-code' : ''}" maxlength="32000" spellcheck="${!coding}" autocapitalize="off" autocomplete="off" aria-label="${coding ? 'Code editor' : 'Your answer'}" placeholder="${coding ? 'Write your implementation here…' : 'Clarify the problem, outline an approach, and work through it…'}">${esc(session.draft.answer)}</textarea></div></div></div>
     ${coding ? `<div id="interview-reasoning-editor"${session.tab !== 'write' ? ' hidden' : ''}><label class="interview-label" for="interview-reasoning">Your approach</label><p class="hint">Explain your idea, complexity, and edge cases. Your code stays in the Code tab.</p><textarea id="interview-reasoning" class="set-input" maxlength="8000" placeholder="What’s your approach?">${esc(session.draft.reasoning)}</textarea></div>` : ''}
     <div id="interview-whiteboard"${session.tab !== 'board' ? ' hidden' : ''}><div class="interview-toolbar"><div class="pick-chips" aria-label="Drawing tools">${[['select', 'Select'], ['pan', 'Pan'], ['pen', 'Pen'], ['box', 'Box'], ['arrow', 'Arrow'], ['text', 'Text']].map(([id, label]) => `<button class="pick-chip${session.tool === id ? ' on' : ''}" aria-pressed="${session.tool === id}" data-interview="tool" data-tool="${id}">${label}</button>`).join('')}</div><div class="buttons"><button class="btn sm" data-interview="undo-board">Undo</button><button class="btn sm" data-interview="zoom-board" data-step="-1" aria-label="Zoom out">${ICON.minus}</button><button class="btn sm" data-interview="zoom-board" data-step="1" aria-label="Zoom in">${ICON.plus}</button><button class="btn sm" data-interview="fit-board">${ICON.fit}<span>Fit</span></button></div></div><label class="interview-label" for="interview-board-label">Board label</label><div class="interview-board-label-row"><input class="set-input" id="interview-board-label" value="${esc(session.label || '')}" maxlength="300" placeholder="Type a label and press Enter"><button class="btn sm" data-interview="label-board">Add label</button></div><div id="interview-board" tabindex="0" role="group" aria-label="Whiteboard. Drag labels to move them. Use Pan or hold Space to drag the canvas."></div><p class="hint">Drag labels to move them. Pan or hold Space to move the canvas; scroll to explore. Felix reviews the whole board when you submit.</p></div>
     <div id="interview-checks" class="interview-checks"></div>
-    <div id="interview-save-error" class="set-note warn" hidden></div><div class="interview-toolbar interview-submit"><p class="hint" id="interview-submit-hint"></p><div class="buttons"><button class="btn sm" data-interview="reset">Reset</button><button class="btn sm" data-interview="hint">Hint</button><button class="btn sm primary" data-interview="submit">Submit</button></div></div><div id="interview-results" class="interview-results" aria-live="polite"></div></section>` : ''}</div>
-    <details class="interview-details source-more"${item.attempts.length ? ' open' : ''}><summary>${ICON.chevron}<span>Practice progress</span></summary><section id="interview-progress"></section></details><details class="interview-details source-more"${item.schedule.length ? ' open' : ''}><summary>${ICON.chevron}<span>Practice schedule</span></summary><section id="interview-schedule"></section></details></div>`;
+    <div id="interview-save-error" class="set-note warn" hidden></div><div class="interview-toolbar interview-submit"><p class="hint" id="interview-submit-hint"></p><div class="buttons"><button class="btn sm" data-interview="reset">Reset</button><button class="btn sm" data-interview="hint">Hint</button><button class="btn sm primary" data-interview="submit">Submit</button></div></div></section>` : ''}</div>
+    </div>`;
   drawInterviewContext(session);
   drawInterviewProblems(session);
   drawInterviewChallenge(session);
   drawInterviewBoard(session);
   drawInterviewStatus(session);
   drawInterviewProgress(session);
-  drawInterviewSchedule(session);
   drawInterviewChecks(session);
   drawInterviewResults(session);
+  drawInterviewPanes(session);
   wireInterviewResults(session);
   loadInterviewKey(session);
   const answer = $('#interview-answer');
@@ -282,7 +277,7 @@ function drawInterviewChallenge(session) {
   const c = session.item.challenge;
   const coding = c?.coding;
   const busy = session.preparing;
-  $('#interview-challenge').innerHTML = c ? `<div class="interview-toolbar"><h2>${esc(c.title)}</h2><div class="buttons">${coding ? `<span class="chip">${esc(coding.difficulty)}</span>` : ''}<span class="chip">${c.minutes} min</span></div></div><p class="hint">${esc(c.origin === 'generated' ? 'Original practice' : c.origin === 'official' ? 'Official preparation' : 'Candidate report · unverified')}</p><div class="prose">${md.render(c.question, { interactive: false })}</div>${coding ? `<h3>Examples</h3>${coding.examples.map((e, i) => `<div class="interview-example"><b>Example ${i + 1}</b><pre>Input: ${esc(e.input)}\nOutput: ${esc(e.output)}</pre>${e.explanation ? `<p class="hint">${esc(e.explanation)}</p>` : ''}</div>`).join('')}<h3>Constraints</h3><ul class="interview-constraints">${coding.constraints.map((s) => `<li>${esc(s)}</li>`).join('')}</ul>` : ''}${c.sources.length ? `<details class="interview-research source-more"><summary>${ICON.chevron}<span>Research & sources</span></summary><p class="hint">Reported questions are unverified. This exercise is labelled separately above.</p><div class="interview-sources">${c.sources.map((s) => `<a class="chip" href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title)} · ${esc(s.kind)}</a>`).join('')}</div></details>` : ''}<button class="btn sm" data-interview="next"${busy ? ' disabled' : ''}>${busy ? 'Preparing…' : 'Next challenge'}</button>` : `<div class="interview-welcome"><p class="eyebrow">${session.item.framework.company ? 'Company preparation' : 'General practice'}</p><h2>${busy ? 'Preparing your first challenge…' : 'Ready when you are'}</h2><p class="hint" role="status">${busy ? session.waiting ? 'Felix is finishing the previous reply. Your practice will start automatically after it.' : session.item.framework.company ? 'Felix is researching the company and role, then preparing an exercise. You can follow along in chat.' : 'Felix is choosing an exercise for your goals. You can follow along in chat.' : 'Start once. Felix will research your company if you have one, then put a challenge and workspace here.'}</p><div class="buttons"><button class="btn sm primary" data-interview="next"${busy ? ' disabled' : ''}>${busy ? 'Preparing…' : 'Start practice'}</button></div></div>`;
+  $('#interview-pane-question').innerHTML = c ? `<div class="interview-toolbar"><h2>${esc(c.title)}</h2><div class="buttons">${coding ? `<span class="chip">${esc(coding.difficulty)}</span>` : ''}<span class="chip">${c.minutes} min</span></div></div><p class="hint">${esc(c.origin === 'generated' ? 'Original practice' : c.origin === 'official' ? 'Official preparation' : 'Candidate report · unverified')}</p><div class="prose">${md.render(c.question, { interactive: false })}</div>${coding ? `<h3>Examples</h3>${coding.examples.map((e, i) => `<div class="interview-example"><b>Example ${i + 1}</b><pre>Input: ${esc(e.input)}\nOutput: ${esc(e.output)}</pre>${e.explanation ? `<p class="hint">${esc(e.explanation)}</p>` : ''}</div>`).join('')}<h3>Constraints</h3><ul class="interview-constraints">${coding.constraints.map((s) => `<li>${esc(s)}</li>`).join('')}</ul>` : ''}${c.sources.length ? `<details class="interview-research source-more"><summary>${ICON.chevron}<span>Research & sources</span></summary><p class="hint">Reported questions are unverified. This exercise is labelled separately above.</p><div class="interview-sources">${c.sources.map((s) => `<a class="chip" href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title)} · ${esc(s.kind)}</a>`).join('')}</div></details>` : ''}<button class="btn sm" data-interview="next"${busy ? ' disabled' : ''}>${busy ? 'Preparing…' : 'Next challenge'}</button>` : `<div class="interview-welcome"><p class="eyebrow">${session.item.framework.company ? 'Company preparation' : 'General practice'}</p><h2>${busy ? 'Preparing your first challenge…' : 'Ready when you are'}</h2><p class="hint" role="status">${busy ? session.waiting ? 'Felix is finishing the previous reply. Your practice will start automatically after it.' : session.item.framework.company ? 'Felix is researching the company and role, then preparing an exercise. You can follow along in chat.' : 'Felix is choosing an exercise for your goals. You can follow along in chat.' : 'Start once. Felix will research your company if you have one, then put a challenge and workspace here.'}</p><div class="buttons"><button class="btn sm primary" data-interview="next"${busy ? ' disabled' : ''}>${busy ? 'Preparing…' : 'Start practice'}</button></div></div>`;
 }
 
 function interviewChanged(session) {
@@ -418,32 +413,27 @@ async function refreshInterview(id) {
       drawInterviewProblems(session);
       drawInterviewChallenge(session);
       drawInterviewProgress(session);
-      drawInterviewSchedule(session);
+      drawInterviewResults(session);
+      drawInterviewPanes(session);
     }
   });
 }
 
 function drawInterviewProgress(session) {
+  paintInterviewProgress(session);
+  drawInterviewPanes(session);
+}
+
+function paintInterviewProgress(session) {
   if (!interviewHere(session)) return;
   const attempts = session.item.attempts;
   const assessed = attempts.filter((a) => a.feedback).length;
-  if (attempts.length) $('#interview-progress').closest('details').open = true;
   const scores = interviews.progress(attempts);
   $('#interview-progress').innerHTML = `<h2>What you’re learning</h2><div class="set-card"><p class="hint">${assessed ? `${assessed} reviewed attempt${assessed === 1 ? '' : 's'}. AI feedback is provisional; averages use your last five observations per skill.` : 'Complete an attempt to start seeing strengths and areas to practise. Felix won’t guess from an empty history.'}</p>${scores.map((s) => `<div class="set-row"><div class="grow"><b>${esc(s.skill)}</b><span class="hint">${s.n} observation${s.n === 1 ? '' : 's'}${s.n < 3 ? ' · early signal' : ''}</span></div><span class="chip">${s.value.toFixed(1)} / 4</span></div>`).join('')}</div>`;
   const current = attempts.filter(a => a.challenge.id === session.item.challenge?.id);
   $('#interview-attempts').innerHTML = current.length ? `<h2>Your attempts for this problem</h2><div class="set-card">${[...current].reverse().map((a) => `<details class="interview-attempt source-more"><summary>${ICON.chevron}<span class="grow"><b>${esc(a.challenge.title)}</b><span class="hint">${new Date(a.at).toLocaleDateString()} · ${[...interviews.checkSummary(a.checks).map((g) => `${g.pass}/${g.total} ${g.name}`), a.grade ? `quick review ${a.grade.criteria.filter((v) => v.verdict === 'met').length}/${a.grade.criteria.length} met` : '', a.feedback ? 'Reviewed' : 'Awaiting feedback'].filter(Boolean).join(' · ')}</span></span></summary>${a.feedback ? `<div class="prose">${md.render(a.feedback.summary, { interactive: false })}</div>${a.feedback.scores.map((s) => `<p><b>${esc(s.skill)} · ${s.value}/4</b><br>${esc(s.evidence)}<br><span class="hint">Next: ${esc(s.next)}</span></p>`).join('')}` : `<button class="btn sm" data-interview="review-attempt" data-id="${esc(a.id)}">Ask Felix to review</button>`}<details class="source-more interview-work"><summary>${ICON.chevron}<span>Your submitted work</span></summary><pre class="interview-submitted">${esc(a.workspace.answer)}</pre>${a.workspace.reasoning ? `<h3>Approach</h3><div class="prose">${md.render(a.workspace.reasoning, { interactive: false })}</div>` : ''}${a.workspace.board.length ? `<div class="interview-board-snapshot">${interviews.boardSvg(a.workspace.board)}</div>` : ''}</details></details>`).join('')}</div>` : session.item.challenge ? '<p class="hint">No submissions for this problem yet.</p>' : '';
 }
 
-function drawInterviewSchedule(session) {
-  if (!interviewHere(session)) return;
-  const rows = interviews.agenda(session.item.schedule, session.calendar);
-  let day = '';
-  $('#interview-schedule').innerHTML = `<div class="interview-toolbar"><h2>Your practice schedule</h2><div class="buttons"><button class="btn sm" data-interview="add-session">Add session</button><button class="btn sm" data-interview="plan">Plan with Felix</button></div></div><p class="hint">${session.item.framework.weekly_minutes} minutes per week${session.item.framework.date ? ` · Interview ${esc(session.item.framework.date)}` : ''}. Connected calendar events appear here too.</p><div class="set-card">${rows.length ? rows.map((r) => {
-    const heading = day !== r.day ? `<h3 class="interview-day">${esc(new Date(`${r.day}T12:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }))}</h3>` : '';
-    day = r.day;
-    return `${heading}<div class="set-row interview-agenda">${r.kind === 'practice' ? `<input type="checkbox" data-interview="complete" data-id="${esc(r.id)}" aria-label="Complete ${esc(r.title)}"${r.done ? ' checked' : ''}>` : `<span class="cal-icon">${ICON.calendar}</span>`}<div class="grow${r.done ? ' interview-complete' : ''}"><b>${esc(r.title)}</b><span class="hint">${esc(r.at || 'Any time')}${r.kind === 'practice' ? ` · ${r.minutes} min · ${esc(r.skill)}` : ' · Calendar event'}</span></div>${r.kind === 'practice' ? `<button class="icon-btn" data-interview="edit-session" data-id="${esc(r.id)}" aria-label="Edit ${esc(r.title)}">${ICON.more}</button>` : ''}</div>`;
-  }).join('') : '<p class="hint">A realistic plan, a little at a time. Ask Felix to focus on the skills you want to strengthen.</p>'}</div>`;
-}
 
 function interviewBoardView(session) {
   session.boardViews ||= new Map();
@@ -726,6 +716,7 @@ async function submitInterview(session) {
     drawInterviewProblems(session);
     drawInterviewProgress(session);
   } finally { session.submitting = false; session.running = ''; drawInterviewProblems(session); drawInterviewStatus(session); drawInterviewChecks(session); drawInterviewResults(session); }
+  if (attempt) showInterviewPane(session, 'result', true);
   if (attempt) gradeAndReview(session, attempt, workspace.board).catch(fail);
 }
 
@@ -871,6 +862,7 @@ async function runInterviewExamples(session) {
     if (!interviewHere(session)) return;
     session.ran = { challenge: session.item.challenge.id, ...run };
   } finally { session.running = ''; if (interviewHere(session)) drawInterviewChecks(session); }
+  if (session.ran?.challenge === session.item.challenge?.id) showInterviewPane(session, 'cases', true);
 }
 
 async function checkInterviewCoverage(session) {
@@ -890,8 +882,15 @@ async function checkInterviewCoverage(session) {
 const COVER_MARK = { yes: 'Covered', partly: 'Partly', no: 'Not yet' };
 
 function drawInterviewChecks(session) {
+  paintInterviewChecks(session);
+  drawInterviewPanes(session);
+}
+
+function paintInterviewChecks(session) {
   if (!interviewHere(session)) return;
   const box = $('#interview-checks');
+  const pane = $('#interview-pane-cases');
+  if (pane) pane.innerHTML = '';
   const hint = $('#interview-submit-hint');
   const c = session.item.challenge;
   if (!box || !c) return;
@@ -916,12 +915,63 @@ function drawInterviewChecks(session) {
   const sections = key.sections.length ? `<div class="interview-covers"><h3>A strong answer covers</h3><div class="pick-chips">${key.sections.map((x) => { const state = coverOf(x.id, cover?.sections); return `<span class="chip interview-cover${state ? ` ${state}` : ''}">${state === 'yes' ? ICON.check : ''}${esc(x.name)}</span>`; }).join('')}</div></div>` : '';
   const criteria = cover?.criteria?.length ? `<ul class="interview-coverage">${cover.criteria.map((x) => `<li class="${esc(x.covered)}"><span class="chip">${COVER_MARK[x.covered] || 'Not yet'}</span> ${esc(x.text)}</li>`).join('')}</ul>` : '';
   const ran = session.ran?.challenge === c.id ? session.ran : null;
-  const tests = coding && key.tests.length ? `<div class="interview-tests"><h3>Examples</h3>${ran?.error ? `<p class="set-note warn">${esc(ran.error)}</p>` : ''}<ul>${key.tests.map((t) => { const r = ran?.reports.find((x) => x.id === t.id); return `<li class="${r ? (r.pass ? 'pass' : 'fail') : ''}"><span class="interview-mark">${r ? (r.pass ? ICON.check : ICON.close) : ''}</span><code>${esc(key.entry)}(${esc(t.args.map((a) => JSON.stringify(a)).join(', '))})</code><span class="hint">→ ${esc(JSON.stringify(t.expected))}${r && !r.pass ? ` · yours: ${esc(r.got)}` : ''}</span></li>`; }).join('')}</ul>${ran?.logs?.length ? `<details class="source-more"><summary>${ICON.chevron}<span>Printed output</span></summary><pre class="interview-submitted">${esc(ran.logs.join('\n'))}</pre></details>` : ''}</div>` : '';
+  const tests = coding && key.tests.length ? `<div class="interview-tests"><div class="interview-toolbar"><h3>Test cases</h3>${ran?.reports.length ? `<span class="chip interview-tally ${ran.reports.every((r) => r.pass) ? 'good' : 'bad'}">${ran.reports.filter((r) => r.pass).length}/${ran.reports.length} passed</span>` : ''}</div><p class="hint">${runnable ? 'Run checks these in your browser. Submit adds the hidden tests.' : 'These are the visible examples. Felix reviews your code against them.'}</p>${ran?.error ? `<p class="set-note warn">${esc(ran.error)}</p>` : ''}<ul>${key.tests.map((t) => { const r = ran?.reports.find((x) => x.id === t.id); return `<li class="${r ? (r.pass ? 'pass' : 'fail') : ''}"><span class="interview-mark">${r ? (r.pass ? ICON.check : ICON.close) : ''}</span><code>${esc(key.entry)}(${esc(t.args.map((a) => JSON.stringify(a)).join(', '))})</code><span class="hint">→ ${esc(JSON.stringify(t.expected))}${r && !r.pass ? ` · yours: ${esc(r.got)}` : ''}</span></li>`; }).join('')}</ul>${ran?.logs?.length ? `<details class="source-more"><summary>${ICON.chevron}<span>Printed output</span></summary><pre class="interview-submitted">${esc(ran.logs.join('\n'))}</pre></details>` : ''}</div>` : '';
   const buttons = [
     runnable && key.tests.length ? `<button class="btn sm" data-interview="run"${session.running ? ' disabled' : ''}>${session.running === 'examples' ? 'Running…' : session.running === 'submit' ? 'Running tests…' : 'Run'}</button>` : '',
     !coding || key.sections.length ? `<button class="btn sm" data-interview="coverage"${session.covering ? ' disabled' : ''}>${session.covering ? 'Checking…' : 'Check coverage'}</button>` : '',
   ].filter(Boolean).join('');
-  box.innerHTML = `${python}${tests}${asks}${sections}${criteria}${buttons ? `<div class="buttons">${buttons}</div>` : ''}`;
+  if (pane) pane.innerHTML = tests;
+  box.innerHTML = `${python}${asks}${sections}${criteria}${buttons ? `<div class="buttons">${buttons}</div>` : ''}`;
+}
+
+const PANES = ['question', 'cases', 'result', 'submissions'];
+
+function interviewPanes(session) {
+  const c = session.item.challenge;
+  if (!c) return [];
+  const key = interviewKey(session);
+  const result = interviewResultAttempt(session);
+  const submitted = session.item.attempts.filter((a) => a.challenge.id === c.id).length;
+  const passed = result ? (result.checks || []).filter((x) => x.pass).length : 0;
+  const total = result ? (result.checks || []).length : 0;
+  return [
+    ['question', 'Question'],
+    ...(c.coding && key?.tests?.length ? [['cases', 'Test cases']] : []),
+    ...(result ? [['result', total ? `Result · ${passed}/${total}` : 'Result']] : []),
+    ['submissions', submitted ? `Submissions · ${submitted}` : 'Submissions'],
+  ];
+}
+
+function drawInterviewPanes(session) {
+  if (!interviewHere(session)) return;
+  const bar = $('#interview-panes');
+  if (!bar) return;
+  const id = session.item.challenge?.id || '';
+  if (session.paneFor !== id) { session.paneFor = id; session.pane = 'question'; }
+  const panes = interviewPanes(session);
+  if (!panes.some(([name]) => name === session.pane)) session.pane = 'question';
+  const html = panes.length ? `<div class="library-views" role="tablist" aria-label="Problem">${panes.map(([name, label]) => `<button class="btn sm plain${session.pane === name ? ' on' : ''}" role="tab" id="interview-tab-${name}" aria-controls="interview-pane-${name}" aria-selected="${session.pane === name}" tabindex="${session.pane === name ? 0 : -1}" data-interview="pane" data-pane="${name}">${esc(label)}</button>`).join('')}</div>` : '';
+  if (bar.dataset.drawn !== html) {
+    const focused = bar.contains(document.activeElement) ? document.activeElement.dataset.pane : '';
+    bar.innerHTML = html;
+    bar.dataset.drawn = html;
+    if (focused) bar.querySelector(`[data-pane="${focused}"]`)?.focus({ preventScroll: true });
+  }
+  bar.hidden = !panes.length;
+  for (const name of PANES) {
+    const pane = $(`#interview-pane-${name}`);
+    if (!pane) continue;
+    pane.hidden = panes.length ? session.pane !== name : name !== 'question';
+    if (panes.length) pane.setAttribute('aria-labelledby', `interview-tab-${name}`);
+  }
+}
+
+function showInterviewPane(session, name, reveal = false) {
+  if (!interviewHere(session)) return;
+  session.pane = name;
+  drawInterviewPanes(session);
+  const card = $('#interview-challenge');
+  if (reveal && card && card.getBoundingClientRect().top < 0) card.scrollIntoView({ block: 'start' });
 }
 
 const VERDICT = { met: 'Met', partly: 'Partly', missed: 'Missed' };
@@ -942,6 +992,11 @@ function interviewCaseDetail(chosen) {
 }
 
 function drawInterviewResults(session) {
+  paintInterviewResults(session);
+  drawInterviewPanes(session);
+}
+
+function paintInterviewResults(session) {
   if (!interviewHere(session)) return;
   const box = $('#interview-results');
   if (!box || !session.item.challenge) return;
@@ -961,7 +1016,7 @@ function drawInterviewResults(session) {
   const review = grade
     ? `<div class="interview-review"><h3>Quick review</h3>${counts.length ? `<div class="pick-chips">${counts.map(([v, n]) => `<span class="chip interview-tally ${v}">${n} ${VERDICT[v].toLowerCase()}</span>`).join('')}</div>` : ''}${grade.overall ? `<p>${esc(grade.overall)}</p>` : ''}<details class="source-more interview-review-more"${open ? ' open' : ''}><summary>${ICON.chevron}<span>Feedback by criterion · ${grade.criteria.length}</span></summary><ul class="interview-verdicts">${grade.criteria.map((v) => `<li class="${esc(v.verdict)}"><span class="chip">${VERDICT[v.verdict] || esc(v.verdict)}</span><span><b>${esc(v.text)}</b><span class="hint">${esc(v.why)}</span></span></li>`).join('')}</ul></details></div>`
     : session.grading === attempt.id ? '<p class="hint" role="status">Quick review in progress…</p>' : gradeError ? `<p class="hint">${esc(gradeError)}</p>` : '';
-  box.innerHTML = `<div class="set-card interview-result"><div class="interview-toolbar"><h3>Your result</h3><span class="hint">${new Date(attempt.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span></div>
+  box.innerHTML = `<div class="interview-result"><div class="interview-toolbar"><h3>Your result</h3><span class="hint">${new Date(attempt.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span></div>
     ${cases.length ? `<div class="interview-result-summary"><span class="chip interview-tally good">${ICON.check}${passed} passed</span>${failed ? `<span class="chip interview-tally bad">${ICON.close}${failed} failed</span>` : ''}<span class="hint">${esc(groups)}</span></div>
     <div class="interview-cases" role="tablist" aria-label="Checked cases">${cases.map((x) => { const on = x.id === chosen.id; return `<button class="pick-chip ${x.pass ? 'pass' : 'fail'}${on ? ' on' : ''}" role="tab" id="interview-case-${esc(x.id)}" aria-controls="interview-case" aria-selected="${on}" tabindex="${on ? 0 : -1}" aria-label="${esc(x.name)}, ${x.pass ? 'passed' : 'failed'}" data-interview="result-case" data-check="${esc(x.id)}"><span class="interview-mark">${x.pass ? ICON.check : ICON.close}</span><span>${esc(x.name)}</span></button>`; }).join('')}</div>
     <div class="interview-case" id="interview-case" role="tabpanel" aria-labelledby="interview-case-${esc(chosen.id)}">${interviewCaseDetail(chosen)}</div>` : ''}
@@ -997,6 +1052,16 @@ function chooseInterviewCase(session, check, focus = false) {
 }
 
 function wireInterviewResults(session) {
+  $('#interview-panes')?.addEventListener('keydown', (e) => {
+    const tab = e.target.closest('[data-interview="pane"]');
+    if (!tab || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+    const tabs = [...$('#interview-panes').querySelectorAll('[data-interview="pane"]')];
+    const at = tabs.indexOf(tab);
+    const next = e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : (at + (e.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+    e.preventDefault();
+    showInterviewPane(session, tabs[next].dataset.pane);
+    $('#interview-panes').querySelector(`[data-pane="${tabs[next].dataset.pane}"]`)?.focus({ preventScroll: true });
+  });
   const box = $('#interview-results');
   if (!box) return;
   box.addEventListener('keydown', (e) => {
@@ -1024,8 +1089,8 @@ function interviewForm(track, id = felix.newId(), item = null) {
     <label class="interview-label" for="interview-language">${coding ? 'Coding language' : 'Specialism'} <span class="hint">${coding ? 'The starting function will use this language' : 'Optional'}</span></label>${coding ? `<div class="field"><div class="select-control"><select id="interview-language">${['Python', 'C++', 'Rust', 'Java', 'SQL', 'TypeScript', 'JavaScript', 'Go'].map(language => `<option${language === (f.language || 'Python') ? ' selected' : ''}>${language}</option>`).join('')}</select>${ICON.chevron}</div></div>` : `<div class="field"><input id="interview-language" maxlength="80" value="${esc(f.language)}" placeholder="Your area of focus"></div>`}
     <p class="interview-label">How would you like to practise?</p><div class="pick-chips" role="group" aria-label="Interview style"><button class="pick-chip${f.style === 'coach' ? ' on' : ''}" data-interview="form-style" data-style="coach" aria-pressed="${f.style === 'coach'}">Coach</button><button class="pick-chip${f.style === 'mock' ? ' on' : ''}" data-interview="form-style" data-style="mock" aria-pressed="${f.style === 'mock'}">Mock interview</button></div><p class="hint">Coach helps when you ask. Mock saves feedback for your debrief.</p>
     <label class="interview-label" for="interview-wants">What would you like to practise? <span class="hint">Optional</span></label><textarea class="set-input" id="interview-wants" maxlength="2000" rows="2" placeholder="e.g. I’m just practising, start with easy array problems…">${esc(f.wants)}</textarea>
-    <details class="interview-details source-more"><summary>${ICON.chevron}<span>Schedule & assessment preferences</span></summary><label class="interview-label" for="interview-title">Practice title</label><div class="field"><input id="interview-title" maxlength="120" value="${esc(f.title)}"></div><label class="interview-label" for="interview-date">Interview date (optional)</label><div class="field"><input id="interview-date" type="date" value="${esc(f.date)}"></div><label class="interview-label" for="interview-budget">Practice minutes per week</label><div class="field"><input id="interview-budget" type="number" min="15" max="2400" value="${f.weekly_minutes}"></div><label class="interview-label" for="interview-skills">Skills to assess · one per line, up to 12</label><textarea class="set-input" id="interview-skills" rows="4" maxlength="1000">${esc(f.skills.join('\n'))}</textarea></details>
-    <p class="set-note warn" id="interview-form-error" hidden></p><div class="buttons"><button class="btn" data-action="close">Cancel</button><button class="btn primary" id="interview-form-save" data-interview="save-framework" data-id="${esc(id)}" data-track="${esc(f.track)}" data-revision="${item ? item.revision : 0}" data-style="${esc(f.style)}">${item ? 'Save preferences' : 'Start practice'}</button></div>`);
+    <details class="interview-details source-more"><summary>${ICON.chevron}<span>More preferences</span></summary><label class="interview-label" for="interview-title">Practice title</label><div class="field"><input id="interview-title" maxlength="120" value="${esc(f.title)}"></div><label class="interview-label" for="interview-date">Interview date (optional)</label><div class="field"><input id="interview-date" type="date" value="${esc(f.date)}"></div><label class="interview-label" for="interview-skills">Skills to assess · one per line, up to 12</label><textarea class="set-input" id="interview-skills" rows="4" maxlength="1000">${esc(f.skills.join('\n'))}</textarea></details>
+    <p class="set-note warn" id="interview-form-error" hidden></p><div class="buttons"><button class="btn" data-action="close">Cancel</button><button class="btn primary" id="interview-form-save" data-interview="save-framework" data-id="${esc(id)}" data-track="${esc(f.track)}" data-revision="${item ? item.revision : 0}" data-minutes="${f.weekly_minutes}" data-style="${esc(f.style)}">${item ? 'Save preferences' : 'Start practice'}</button></div>`);
   $('#interview-company').focus();
 
 }
@@ -1033,7 +1098,7 @@ function interviewForm(track, id = felix.newId(), item = null) {
 async function saveInterviewForm(el) {
   if (el.disabled) return;
   el.disabled = true;
-  const framework = { title: $('#interview-title').value.trim(), track: el.dataset.track, company: $('#interview-company').value.trim(), role: $('#interview-role').value.trim(), language: $('#interview-language').value.trim(), date: $('#interview-date').value, weekly_minutes: Number($('#interview-budget').value), skills: $('#interview-skills').value.split('\n').map((s) => s.trim()).filter(Boolean), wants: $('#interview-wants').value, style: el.dataset.style };
+  const framework = { title: $('#interview-title').value.trim(), track: el.dataset.track, company: $('#interview-company').value.trim(), role: $('#interview-role').value.trim(), language: $('#interview-language').value.trim(), date: $('#interview-date').value, weekly_minutes: Number(el.dataset.minutes) || 120, skills: $('#interview-skills').value.split('\n').map((s) => s.trim()).filter(Boolean), wants: $('#interview-wants').value, style: el.dataset.style };
   try {
     await api(`/api/interviews/${enc(el.dataset.id)}`, { method: 'PUT', body: { action: 'framework', revision: Number(el.dataset.revision), framework } });
     if (Number(el.dataset.revision) === 0) interviewStart = { id: el.dataset.id };
@@ -1045,23 +1110,7 @@ async function saveInterviewForm(el) {
   } finally { el.disabled = false; }
 }
 
-function interviewSlotForm(session, id = '') {
-  const old = session.item.schedule.find((s) => s.id === id);
-  const today = new Date();
-  const day = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-  const slot = old || { id: felix.newId(), title: '', date: day, time: '', minutes: 30, skill: session.item.framework.skills[0] };
-  sheet(`<h2>${old ? 'Edit practice session' : 'Add practice session'}</h2><div class="field"><input id="interview-slot-title" maxlength="160" aria-label="Session title" placeholder="What will you practise?" value="${esc(slot.title)}"></div><label class="interview-label" for="interview-slot-date">Date</label><div class="field"><input id="interview-slot-date" type="date" value="${esc(slot.date)}"></div><label class="interview-label" for="interview-slot-time">Time (optional)</label><div class="field"><input id="interview-slot-time" type="time" value="${esc(slot.time)}"></div><label class="interview-label" for="interview-slot-minutes">Minutes</label><div class="field"><input id="interview-slot-minutes" type="number" min="5" max="180" value="${slot.minutes}"></div><p class="interview-label">Skill focus</p><div class="pick-chips">${session.item.framework.skills.map((s) => `<button class="pick-chip${s === slot.skill ? ' on' : ''}" data-interview="slot-skill" data-skill="${esc(s)}" aria-pressed="${s === slot.skill}">${esc(s)}</button>`).join('')}</div><p id="interview-slot-error" class="set-note warn" hidden></p><div class="buttons">${old ? `<button class="btn danger" data-interview="remove-session" data-id="${esc(slot.id)}">Remove</button>` : '<button class="btn" data-action="close">Cancel</button>'}<button class="btn primary" id="interview-slot-save" data-interview="save-session" data-id="${esc(slot.id)}" data-skill="${esc(slot.skill)}">Save</button></div>`);
-  $('#interview-slot-title').focus();
-}
 
-async function saveInterviewSchedule(session, schedule) {
-  await saveInterviewWorkspace(session);
-  await interviewQueue(session, async () => {
-    const next = typeof schedule === 'function' ? schedule(session.item.schedule) : schedule;
-    session.item = await api(`/api/interviews/${enc(session.item.id)}`, { method: 'PUT', body: { action: 'schedule', revision: session.item.revision, schedule: next } });
-  });
-  drawInterviewSchedule(session);
-}
 
 async function interviewAction(el) {
   const action = el.dataset.interview;
@@ -1069,16 +1118,15 @@ async function interviewAction(el) {
   if (action === 'open') return go(`#/interviews/${enc(el.dataset.id)}`);
   if (action === 'create') return interviewForm(el.dataset.track, el.dataset.id || felix.newId());
   if (action === 'save-framework') return saveInterviewForm(el);
-  if (action === 'form-style' || action === 'slot-skill') {
+  if (action === 'form-style') {
     const group = el.parentElement;
     group.querySelectorAll('.pick-chip').forEach((button) => { button.classList.toggle('on', button === el); button.setAttribute('aria-pressed', String(button === el)); });
-    if (action === 'form-style') $('#interview-form-save').dataset.style = el.dataset.style;
-    else $('#interview-slot-save').dataset.skill = el.dataset.skill;
+    $('#interview-form-save').dataset.style = el.dataset.style;
     return;
   }
   if (action === 'delete') {
     const id = el.dataset.id;
-    sheet(`<h2>Delete this interview practice?</h2><p>Its workspace, attempts and schedule will be removed. The Felix conversation stays in your chats.</p><div class="buttons"><button class="btn" data-action="close">Cancel</button><button class="btn danger" data-interview="confirm-delete" data-id="${esc(id)}">Delete practice</button></div>`);
+    sheet(`<h2>Delete this interview practice?</h2><p>Its workspace and attempts will be removed. The Felix conversation stays in your chats.</p><div class="buttons"><button class="btn" data-action="close">Cancel</button><button class="btn danger" data-interview="confirm-delete" data-id="${esc(id)}">Delete practice</button></div>`);
     return;
   }
   if (action === 'confirm-delete') {
@@ -1091,7 +1139,6 @@ async function interviewAction(el) {
   if (action === 'chat') return chat.openInterview(session.item.id, () => interviewHere(session));
   if (action === 'next') return prepareInterview(session);
   if (action === 'problem') return selectInterviewProblem(session, el.dataset.id);
-  if (action === 'plan') return talkInterview(session, 'Help me make a realistic practice schedule from my goals and progress.', [], `Help me plan interview practice with interview_schedule. Use interpretable language. Read interview_progress and list_schedule for the coming week before planning. Use my existing events, tasks and saved sessions to avoid conflicts, respect my weekly budget and interview date, and save a reasonable editable plan with interview_schedule. Do not ask me to repeat my schedule. If there is no interview date, plan the coming week. Briefly state timing assumptions and let me adjust them. Today on my device is ${new Date().toLocaleDateString('en-CA')}; timezone ${Intl.DateTimeFormat().resolvedOptions().timeZone}.`);
   if (action === 'hint') return talkInterview(session, 'Give me a small hint without the solution.', [], 'Give me one small hint for the current interview challenge, without revealing the solution or assessing my draft.');
   if (action === 'submit') return submitInterview(session);
   if (action === 'run') return runInterviewExamples(session);
@@ -1111,6 +1158,7 @@ async function interviewAction(el) {
     return;
   }
   if (action === 'result-case') return chooseInterviewCase(session, el.dataset.check);
+  if (action === 'pane') return showInterviewPane(session, el.dataset.pane);
   if (action === 'check-wrong') {
     const attempt = session.item.attempts.find((a) => a.id === session.latest);
     const check = attempt?.checks?.find((x) => x.id === el.dataset.check);
@@ -1165,29 +1213,11 @@ async function interviewAction(el) {
     else return;
     session.selected = -1; interviewChanged(session); drawInterviewBoard(session); return;
   }
-  if (action === 'add-session' || action === 'edit-session') return interviewSlotForm(session, el.dataset.id || '');
-  if (action === 'complete') {
-    const schedule = (slots) => slots.map((s) => s.id === el.dataset.id ? { ...s, done: el.checked } : s);
-    try { return await saveInterviewSchedule(session, schedule); } catch (e) { drawInterviewSchedule(session); throw e; }
-  }
-  if (action === 'save-session' || action === 'remove-session') {
-    if (el.disabled) return;
-    el.disabled = true;
-    try {
-      const slot = action === 'save-session' ? { id: el.dataset.id, title: $('#interview-slot-title').value.trim(), date: $('#interview-slot-date').value, time: $('#interview-slot-time').value, minutes: Number($('#interview-slot-minutes').value), skill: el.dataset.skill, done: session.item.schedule.find((s) => s.id === el.dataset.id)?.done || false } : null;
-      await saveInterviewSchedule(session, (slots) => [...slots.filter((s) => s.id !== el.dataset.id), ...(slot ? [slot] : [])]);
-      closeSheet();
-    } catch (e) { const error = $('#interview-slot-error'); if (error) { error.hidden = false; error.textContent = e.message; } }
-    finally { el.disabled = false; }
-  }
 }
 
 document.addEventListener('click', (e) => {
   const button = e.target.closest('[data-interview]');
-  if (!button || button.dataset.interview === 'complete') return;
+  if (!button) return;
   e.preventDefault();
   interviewAction(button).catch(fail);
-});
-document.addEventListener('change', (e) => {
-  if (e.target.dataset.interview === 'complete') interviewAction(e.target).catch(fail);
 });

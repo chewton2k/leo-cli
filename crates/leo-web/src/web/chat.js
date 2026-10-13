@@ -1501,14 +1501,14 @@
         return `<div class="proposal proposal-code"><div class="proposal-title">${escape(p.title || 'Code change')}</div><div class="proposal-why">${escape(p.summary || '')}</div><span class="proposal-note">Before</span><pre class="proposal-old">${escape(p.find || 'Empty code')}</pre><span class="proposal-note">After</span><pre class="proposal-new">${escape(p.replace || 'Remove this code')}</pre>${actions}</div>`;
       }
       if (p.kind !== 'create' && p.kind !== 'edit') {
-        const acts = p.state === 'applied'
+        const acts = p.kind === 'interview_schedule'
+          ? '<div class="proposal-done">Practice schedules are no longer part of leo</div>'
+          : p.state === 'applied'
           ? `<div class="proposal-done">Done · <button class="msg-act" data-chat="undo" ${where}>Undo</button></div>`
           : p.state === 'dismissed'
             ? '<div class="proposal-done">Dismissed</div>'
-            : `<div class="proposal-buttons"><button class="btn primary sm" data-chat="apply" ${where}>${p.kind === 'delete_note' || p.kind === 'delete_folder' ? 'Move to trash' : p.kind === 'restore_note' ? 'Bring it back' : p.kind === 'interview_schedule' ? 'Apply' : 'Do it'}</button><button class="btn plain sm" data-chat="dismiss" ${where}>Dismiss</button></div>`;
-        const sessions = p.kind === 'interview_schedule' && Array.isArray(p.schedule) ? p.schedule.slice(0, 60).filter(s => s && typeof s.title === 'string' && typeof s.date === 'string' && typeof s.time === 'string' && typeof s.skill === 'string' && Number.isFinite(s.minutes)) : [];
-        const schedule = sessions.length ? `<div class="proposal-schedule">${sessions.map(s => `<div class="set-row"><span class="grow"><b>${escape(s.title)}</b><span class="hint">${escape(s.date)}${s.time ? ' · ' + escape(s.time) : ''} · ${s.minutes} min · ${escape(s.skill)}</span></span></div>`).join('')}</div>` : '';
-        return `<div class="proposal organize ${escape(p.kind)}"><div class="proposal-title">${escape(p.summary || 'A change')}</div>${schedule}${acts}</div>`;
+            : `<div class="proposal-buttons"><button class="btn primary sm" data-chat="apply" ${where}>${p.kind === 'delete_note' || p.kind === 'delete_folder' ? 'Move to trash' : p.kind === 'restore_note' ? 'Bring it back' : 'Do it'}</button><button class="btn plain sm" data-chat="dismiss" ${where}>Dismiss</button></div>`;
+        return `<div class="proposal organize ${escape(p.kind)}"><div class="proposal-title">${escape(p.summary || 'A change')}</div>${acts}</div>`;
       }
       const done = p.state === 'applied'
         ? `<div class="proposal-done">${p.kind === 'create' ? 'Made' : 'Applied'} · <button class="msg-act" data-chat="open" data-id="${escape(p.made || p.note || '')}">Open the note</button><button class="msg-act" data-chat="undo" ${where}>Undo</button></div>`

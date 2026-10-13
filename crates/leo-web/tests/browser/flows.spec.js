@@ -3575,13 +3575,14 @@ test('a failed call has calm details and can be dismissed or deleted directly', 
   await expect(page.locator('.rec-idle')).toBeVisible();
 });
 
-test('interview practice starts without a note and schedules are editable dated tasks', async ({ page }) => {
+test('interview practice starts without a note, keeps its style and has no practice schedule', async ({ page }) => {
   await page.request.post('/api/tasks', { data: { title: 'A task alongside interview practice' } });
   await page.evaluate(() => localStorage.setItem('leo-tasks-folded', '0'));
   await page.route('**/api/chat', (route) => route.fulfill({ contentType: 'application/x-ndjson', body: '{"t":"Ready to practise."}\n{"done":true}\n' }));
   await page.goto('/#/interviews');
   await page.locator('[data-interview="create"][data-track="systems"]').click();
-  await page.getByText('Schedule & assessment preferences', { exact: true }).click();
+  await page.getByText('More preferences', { exact: true }).click();
+  await expect(page.locator('#interview-budget')).toHaveCount(0);
   await page.locator('#interview-title').fill('System design interview');
   await page.locator('#interview-company').fill('Example company');
   await page.locator('[data-interview="form-style"][data-style="mock"]').click();
@@ -3598,22 +3599,12 @@ test('interview practice starts without a note and schedules are editable dated 
     await panel.locator('[data-action="tasks-fold"]').click();
     expect(await page.evaluate(() => localStorage.getItem('leo-tasks-folded'))).toBe('0');
   }
-  await page.getByText('Practice schedule', { exact: true }).first().click();
-  await page.locator('[data-interview="add-session"]').click();
-  await page.locator('#interview-slot-title').fill('Requirements and scale');
-  await page.locator('#interview-slot-date').fill('2026-10-20');
-  await page.locator('#interview-slot-save').click();
-  await expect(page.locator('.interview-agenda').filter({ hasText: 'Requirements and scale' })).toBeVisible();
-  const task = page.locator('[data-interview="complete"]').first();
-  await task.check();
-  await expect.poll(async () => (await (await page.request.get(`/api/interviews/${id}`)).json()).schedule[0].done).toBe(true);
+  await expect(page.getByText('Practice schedule', { exact: true })).toHaveCount(0);
+  await expect(page.locator('[data-interview="plan"], [data-interview="add-session"]')).toHaveCount(0);
+  expect((await (await page.request.get(`/api/interviews/${id}`)).json()).schedule).toBeUndefined();
   await page.reload();
   await expect(page.locator('.interview-heading .eyebrow')).toContainText('Mock interview');
-  await expect(page.locator('[data-interview="complete"]').first()).toBeChecked();
-  await page.locator('[data-interview="edit-session"]').first().click();
-  await page.locator('#interview-slot-title').fill('Capacity estimates');
-  await page.locator('#interview-slot-save').click();
-  await expect(page.locator('.interview-agenda').filter({ hasText: 'Capacity estimates' })).toBeVisible();
+  await expect(page.locator('.interview-heading h1')).toHaveText('System design interview');
   await page.request.delete(`/api/interviews/${id}`);
 });
 
@@ -4601,23 +4592,21 @@ test('Felix permission changes reach an active reply and Ask first keeps later e
   await page.evaluate(() => window.finishPermissionReply({ kind: 'create', title: 'Daily study', body: 'Study on weekdays', folder: '' }));
   await expect(page.locator('.proposal [data-chat="apply"]')).toBeVisible();
   await expect(page.locator('#chat .msg:not(.user)').last()).toContainText('I am preparing the change. Ready.');
-  const sessions = Array.from({ length: 5 }, (_, n) => ({ id: `study-session-${n}`, date: `2026-10-${12 + n}`, time: '18:00', title: `Study day ${n + 1}`, minutes: 20, skill: 'Approach', done: false }));
   await page.locator('#chat-input').fill('Plan my weekday interview studying');
   await page.locator('#chat-input').press('Enter');
   await expect(page.locator('#chat-send')).toHaveAttribute('aria-label', 'Stop');
-  await page.evaluate(sessions => window.finishPermissionReply({ kind: 'interview_schedule', summary: 'Plan 5 interview practice sessions', interview: 'practice-permission-01', before: [], schedule: sessions }), sessions);
-  await expect(page.locator('.proposal-schedule .set-row')).toHaveCount(5);
-  await expect(page.locator('.proposal-schedule')).toContainText('2026-10-12 · 18:00 · 20 min');
+  await page.evaluate(() => window.finishPermissionReply({ kind: 'add_task', summary: 'Add the task “Study weekdays” · every Mon, Tue, Wed, Thu, Fri', title: 'Study weekdays', date: '2026-10-12', repeat: [0, 1, 2, 3, 4] }));
+  const taskCard = page.locator('.proposal.add_task');
+  await expect(taskCard).toContainText('Study weekdays');
   expect(acts).toHaveLength(0);
-  const scheduleCard = page.locator('.proposal').filter({ has: page.locator('.proposal-schedule') });
-  await scheduleCard.locator('[data-chat="apply"]').click();
-  await expect(scheduleCard.locator('[data-chat="undo"]')).toBeVisible();
-  expect(acts[0].schedule).toEqual(sessions);
-  await scheduleCard.locator('[data-chat="undo"]').click();
-  await expect(scheduleCard.locator('[data-chat="apply"]')).toBeVisible();
-  expect(acts[1].schedule).toEqual([]);
-  expect(acts[1].before).toEqual(sessions);
-  await page.locator('#chat-input').fill('One more interview schedule');
+  await taskCard.locator('[data-chat="apply"]').click();
+  await expect(taskCard.locator('[data-chat="undo"]')).toBeVisible();
+  expect(acts[0].kind).toBe('add_task');
+  expect(acts[0].repeat).toEqual([0, 1, 2, 3, 4]);
+  await taskCard.locator('[data-chat="undo"]').click();
+  await expect(taskCard.locator('[data-chat="apply"]')).toBeVisible();
+  expect(acts).toHaveLength(2);
+  await page.locator('#chat-input').fill('One more study task');
   await page.locator('#chat-input').press('Enter');
   await expect(page.locator('#chat-send')).toHaveAttribute('aria-label', 'Stop');
   await page.locator('#chat-access').click();
@@ -4808,7 +4797,10 @@ test('interview attempts and late feedback stay under their own problem while pr
   await expect(attempts).toContainText('First feedback for problem 4');
   await expect(attempts).toContainText('Second feedback for problem 4');
   expect(await attempts.locator('.prose').allTextContents()).toEqual(['Second feedback for problem 4','First feedback for problem 4']);
-  expect(await attempts.evaluate(el=>el.parentElement.contains(document.querySelector('#interview-challenge')))).toBe(true);
+  expect(await attempts.evaluate(el=>document.querySelector('#interview-pane-submissions').contains(el) && document.querySelector('#interview-challenge').contains(el))).toBe(true);
+  await expect(page.locator('#interview-panes [data-pane="submissions"]')).toHaveText('Submissions · 2');
+  await page.locator('#interview-panes [data-pane="submissions"]').click();
+  await expect(attempts).toBeVisible();
   await expect(page.locator('#interview-progress')).toContainText('3 reviewed attempts');
   await page.locator('#chat-toggle').click();
   await page.locator('#chat-input').fill('Review the earlier submission.');
@@ -4879,8 +4871,15 @@ test('submission results show a compact case strip with one detail panel that ke
   await page.goto(`/#/interviews/${id}`);
   const area = page.locator('#interview-answer');
   await area.fill('func solve(nums []int) int {\n\ttotal := 0\n\treturn total\n}');
+  const tabs = page.locator('#interview-panes [data-interview="pane"]');
+  await expect(tabs).toHaveText(['Question', 'Submissions']);
+  await expect(page.getByText('Practice schedule', { exact: true })).toHaveCount(0);
   await page.locator('[data-interview="submit"]').click();
   const results = page.locator('#interview-results');
+  await expect(tabs).toHaveText(['Question', 'Result · 8/12', 'Submissions · 1']);
+  await expect(tabs.nth(1)).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#interview-pane-question')).toBeHidden();
+  await expect(results).toBeVisible();
   await expect(results.locator('.interview-result-summary')).toContainText('8 passed');
   await expect(results.locator('.interview-result-summary')).toContainText('4 failed');
   const chips = results.locator('[data-interview="result-case"]');
@@ -4922,6 +4921,14 @@ test('submission results show a compact case strip with one detail panel that ke
   const after = await page.evaluate(() => ({ y: scrollY, answer: document.querySelector('#interview-answer').value }));
   expect(after.answer).toBe(before.answer);
   expect(Math.abs(after.y - before.y)).toBeLessThan(2);
+  await tabs.nth(0).click();
+  await expect(page.locator('#interview-pane-question')).toContainText('Return the sum of the list.');
+  await expect(results).toBeHidden();
+  await tabs.nth(0).focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(tabs.nth(1)).toBeFocused();
+  await expect(results).toBeVisible();
+  await expect(chips.nth(0)).toHaveAttribute('aria-selected', 'true');
   await chips.nth(7).click();
   await expect.poll(() => typeof gradeRelease).toBe('function');
   await expect(results).toContainText('Quick review in progress');
@@ -4947,11 +4954,15 @@ test('submission results show a compact case strip with one detail panel that ke
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
   await page.getByRole('button', { name: 'Problem 2', exact: true }).click();
   await expect(results.locator('.interview-result')).toHaveCount(0);
+  await expect(tabs).toHaveText(['Question', 'Submissions']);
+  await expect(page.locator('#interview-pane-question')).toContainText('Return the sum of the list.');
   await page.getByRole('button', { name: /^Problem 1(?: · Submitted)?$/ }).click();
   await expect(results.locator('[data-interview="result-case"]')).toHaveCount(12);
   checks = mixed.map((c) => ({ ...c, pass: true }));
   await area.fill('func solve(nums []int) int {\n\treturn 0\n}');
   await page.locator('[data-interview="submit"]').click();
+  await expect(tabs.nth(1)).toHaveText('Result · 12/12');
+  await expect(results).toBeVisible();
   await expect(results.locator('.interview-result-summary')).toContainText('12 passed');
   await expect(results.locator('.interview-result-summary')).not.toContainText('failed');
   await expect(results.locator('[data-interview="result-case"]').first()).toHaveAttribute('aria-selected', 'true');
@@ -4988,3 +4999,35 @@ async function practiceWithResults(page, id) {
   await expect(page.locator('.msg.leo').last()).toContainText('Here is my review.');
   await page.locator('[data-chat="close"]').click();
 }
+
+test('Run shows its results in the Test cases tab beside the question', async ({ page }) => {
+  const id = 'run-cases-01';
+  const challenge = { id: 'run-cases-problem', title: 'Sum a list', question: 'Return the sum of the list.', minutes: 10, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'JavaScript', starter: 'function solve(nums) {\n}', difficulty: 'easy', examples: [{ input: '[1,2]', output: '3' }], constraints: ['n <= 10'] } };
+  const workspace = { answer: 'function solve(nums) {\n}', reasoning: '', board: [] };
+  const item = { id, revision: 1, framework: { title: 'Run practice', track: 'coding', company: '', role: '', language: 'JavaScript', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace, problems: [{ challenge, workspace }], attempts: [] };
+  await page.route('**/api/interviews', (route) => route.fulfill({ json: [] }));
+  await page.route(`**/api/interviews/${id}/key?*`, (route) => route.fulfill({ json: { status: 'ready', key: { entry: 'solve', tests: [{ id: 't1', args: [[1, 2]], expected: 3, hidden: false, unordered: false }, { id: 't2', args: [[]], expected: 0, hidden: false, unordered: false }], hidden_tests: 3, asks: [], sections: [], criteria: 1 } } }));
+  await page.route(`**/api/interviews/${id}`, (route) => {
+    if (route.request().method() === 'PUT') { item.workspace = route.request().postDataJSON().workspace || item.workspace; item.revision++; }
+    return route.fulfill({ json: item });
+  });
+  await page.goto(`/#/interviews/${id}`);
+  const tabs = page.locator('#interview-panes [data-interview="pane"]');
+  await expect(tabs).toHaveText(['Question', 'Test cases', 'Submissions']);
+  await expect(tabs.nth(0)).toHaveAttribute('aria-selected', 'true');
+  await page.locator('#interview-answer').fill('function solve(nums) {\n  return nums.length ? nums.reduce((a, b) => a + b) : 1;\n}');
+  const before = await page.evaluate(() => document.querySelector('#interview-answer').value);
+  await page.locator('[data-interview="run"]').click();
+  await expect(tabs.nth(1)).toHaveAttribute('aria-selected', 'true');
+  const cases = page.locator('#interview-pane-cases');
+  await expect(cases).toBeVisible();
+  await expect(cases.locator('.interview-tally')).toHaveText('1/2 passed');
+  await expect(cases.locator('li.pass')).toHaveCount(1);
+  await expect(cases.locator('li.fail')).toContainText('yours: 1');
+  await expect(page.locator('#interview-checks .interview-tests')).toHaveCount(0);
+  expect(await page.evaluate(() => document.querySelector('#interview-answer').value)).toBe(before);
+  await tabs.nth(0).click();
+  await expect(page.locator('#interview-pane-question')).toContainText('Return the sum of the list.');
+  await expect(cases).toBeHidden();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+});

@@ -192,15 +192,6 @@
     }
     return [...grouped].map(([skill, values]) => ({ skill, n: values.length, value: values.slice(-5).reduce((a, b) => a + b, 0) / Math.min(5, values.length) })).sort((a, b) => a.value - b.value);
   }
-  function agenda(slots, events) {
-    const tasks = (slots || []).slice(0, 60).map((s) => ({ ...s, kind: 'practice', day: s.date, at: s.time || '' }));
-    const calendar = (events || []).slice(0, 200).filter((e) => Number.isFinite(Date.parse(e.start))).map((e) => {
-      const d = new Date(e.start);
-      const pad = (n) => String(n).padStart(2, '0');
-      return { ...e, kind: 'event', day: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`, at: `${pad(d.getHours())}:${pad(d.getMinutes())}` };
-    });
-    return [...tasks, ...calendar].sort((a, b) => a.day.localeCompare(b.day) || (a.at || '24:00').localeCompare(b.at || '24:00'));
-  }
   const draftKey = (id, challenge) => `${id}:${challenge}`;
   function keepDraft(storage, id, challenge, workspace) {
     if (!validBoard(workspace.board) || [...workspace.answer].length > MOST_ANSWER || [...(workspace.reasoning || '')].length > 8000) return false;
@@ -226,5 +217,5 @@
       storage.setItem('leo-interview-drafts', JSON.stringify(drafts));
     } catch (e) {}
   }
-  root.leoInterview = { PRESETS, preset, framework, preparation, workspace, cleanValues, sameValue, checkSummary, resultCases, pickCase, reviewNote, hasWork, codeEdit, point, validBoard, boardSvg, fitBoard, moveShape, BOARD_LIMIT, progress, agenda, keepDraft, readDraft, clearDraft, MOST_SHAPES, MOST_POINTS, MOST_ANSWER, MOST_PROBLEMS };
+  root.leoInterview = { PRESETS, preset, framework, preparation, workspace, cleanValues, sameValue, checkSummary, resultCases, pickCase, reviewNote, hasWork, codeEdit, point, validBoard, boardSvg, fitBoard, moveShape, BOARD_LIMIT, progress, keepDraft, readDraft, clearDraft, MOST_SHAPES, MOST_POINTS, MOST_ANSWER, MOST_PROBLEMS };
 })(typeof window !== 'undefined' ? window : globalThis);

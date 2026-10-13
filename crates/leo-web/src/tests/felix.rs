@@ -1080,25 +1080,14 @@ fn permissions_changed_during_a_reply_gate_notes_and_repeating_tasks_in_both_pro
             ("ask", "read"),
             ("read", "ask"),
         ] {
-            for kind in ["note", "task", "schedule"] {
+            for kind in ["note", "task"] {
                 let (mut state, _dir, _) = state_with(&[]);
                 let steering = state.steering.clone();
                 let access = tools::Access::named(after);
-                let practice = "permissions-practice";
-                if kind == "schedule" {
-                    let framework = serde_json::from_value(serde_json::json!({"title":"Interview studying", "track":"coding", "company":"", "role":"", "language":"Python", "style":"coach", "date":"", "weekly_minutes":120, "skills":["Approach"], "wants":""})).unwrap();
-                    crate::interview::configure(&state.chats, practice, 0, framework).unwrap();
-                }
                 let call = if kind == "task" {
                     tools::Call {
                         name: "add_task".into(),
                         args: serde_json::json!({"title":"Interview studying", "date":"2026-10-12", "repeat":"mon, tue, wed, thu, fri"}),
-                    }
-                } else if kind == "schedule" {
-                    let sessions: Vec<_> = (0..5).map(|n| serde_json::json!({"id":format!("permission-session-{n}"), "date":format!("2026-10-{}",12+n), "time":"18:00", "title":"Interview studying", "minutes":20, "skill":"Approach", "done":true})).collect();
-                    tools::Call {
-                        name: "interview_schedule".into(),
-                        args: serde_json::json!({"data":serde_json::json!({"sessions":sessions}).to_string()}),
                     }
                 } else {
                     tools::Call {
@@ -1142,21 +1131,7 @@ fn permissions_changed_during_a_reply_gate_notes_and_repeating_tasks_in_both_pro
                         },
                     ));
                 }
-                let lines = if kind == "schedule" {
-                    let body: chat::ChatBody = serde_json::from_value(serde_json::json!({"messages":[{"role":"user","text":"Prepare it"}], "mode":"interview", "chat":practice, "access":before})).unwrap();
-                    let text = run(async {
-                        let response = chat_reply(State(state.clone()), Json(body)).await;
-                        let bytes = axum::body::to_bytes(response.into_body(), 1_000_000)
-                            .await
-                            .unwrap();
-                        String::from_utf8(bytes.to_vec()).unwrap()
-                    });
-                    text.lines()
-                        .map(|l| serde_json::from_str(l).unwrap())
-                        .collect()
-                } else {
-                    chat_lines_with(&state, "Prepare it", Some(before))
-                };
+                let lines = chat_lines_with(&state, "Prepare it", Some(before));
                 let proposals: Vec<_> = lines.iter().filter_map(|l| l.get("proposal")).collect();
                 assert_eq!(
                     proposals.len(),
@@ -1166,53 +1141,17 @@ fn permissions_changed_during_a_reply_gate_notes_and_repeating_tasks_in_both_pro
                 if let Some(proposal) = proposals.first() {
                     assert_eq!(proposal["state"] == "applied", after == "auto");
                 }
-                let count = if kind == "schedule" {
-                    crate::interview::load(&state.chats, practice)
-                        .unwrap()
-                        .schedule
-                        .len()
-                } else if kind == "task" {
+                let count = if kind == "task" {
                     crate::tasks::count(&state.chats)
                 } else {
                     state.store.lock().unwrap().store.notes.len()
                 };
-                assert_eq!(
-                    count,
-                    usize::from(after == "auto") * if kind == "schedule" { 5 } else { 1 }
-                );
+                assert_eq!(count, usize::from(after == "auto"));
                 if kind == "task" && after == "auto" {
                     assert_eq!(
                         crate::tasks::load_all(&state.chats)[0].repeat,
                         [0, 1, 2, 3, 4]
                     );
-                }
-                if kind == "schedule" && after != "read" {
-                    let mut applied = proposals[0].clone();
-                    if after == "ask" {
-                        let proposal = serde_json::from_value(applied).unwrap();
-                        let response = run(crate::routes::organize::act_route(
-                            State(state.clone()),
-                            Json(proposal),
-                        ));
-                        assert_eq!(response.status(), StatusCode::OK);
-                        applied = json_of(response);
-                    }
-                    let saved = crate::interview::load(&state.chats, practice).unwrap();
-                    assert_eq!(saved.schedule.len(), 5);
-                    assert!(saved.schedule.iter().all(|s| !s.done));
-                    let undo = serde_json::from_value(applied["undo"].clone()).unwrap();
-                    assert_eq!(
-                        run(crate::routes::organize::act_route(
-                            State(state.clone()),
-                            Json(undo)
-                        ))
-                        .status(),
-                        StatusCode::OK
-                    );
-                    assert!(crate::interview::load(&state.chats, practice)
-                        .unwrap()
-                        .schedule
-                        .is_empty());
                 }
                 assert!(lines.iter().all(|l| l.get("error").is_none()));
             }
@@ -2225,7 +2164,8 @@ fn interview_problems_and_calendar_context_work_on_native_and_text_sessions() {
         ];
         let replies = Arc::new(Mutex::new(replies.into_iter()));
         state.chat = Some(Arc::new(move |system, _, _, piece, _| {
-            assert!(system.contains("read both interview_progress and list_schedule"));
+            assert!(system.contains("give me this problem"));
+            assert!(!system.contains("interview_schedule"));
             let reply = replies.lock().unwrap().next().unwrap();
             piece(&reply);
             Ok(reply.into())

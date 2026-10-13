@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use chrono::{NaiveDate, NaiveTime, Utc};
+use chrono::{NaiveDate, Utc};
 use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 
@@ -138,19 +138,6 @@ pub struct Attempt {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct Slot {
-    pub id: String,
-    pub date: String,
-    pub time: String,
-    pub title: String,
-    pub minutes: u32,
-    pub skill: String,
-    #[serde(default)]
-    pub done: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Problem {
     pub challenge: Challenge,
     pub workspace: Workspace,
@@ -165,7 +152,6 @@ pub struct Interview {
     pub challenge: Option<Challenge>,
     pub workspace: Workspace,
     pub attempts: Vec<Attempt>,
-    pub schedule: Vec<Slot>,
     #[serde(default)]
     pub problems: Vec<Problem>,
 }
@@ -193,10 +179,6 @@ pub enum Change {
     Select {
         revision: u64,
         challenge: String,
-    },
-    Schedule {
-        revision: u64,
-        schedule: Vec<Slot>,
     },
 }
 
@@ -350,30 +332,6 @@ impl Challenge {
             "An official challenge needs an official source.",
         )
     }
-}
-
-pub(crate) fn validate_schedule(slots: &[Slot], framework: &Framework) -> Result<(), Error> {
-    require(
-        slots.len() <= 60,
-        "Keep a practice schedule to at most 60 sessions.",
-    )?;
-    let mut weeks = std::collections::BTreeMap::<String, u32>::new();
-    for (i, slot) in slots.iter().enumerate() {
-        require(chats::valid_id(&slot.id) && !slots[..i].iter().any(|s| s.id == slot.id)
-            && date(&slot.date, false) && (slot.time.is_empty() || (slot.time.len() == 5 && NaiveTime::parse_from_str(&slot.time, "%H:%M").is_ok()))
-            && text(&slot.title, 160, true) && (5..=180).contains(&slot.minutes)
-            && framework.skills.contains(&slot.skill), "Give each session a unique ID, valid date/time, title, 5–180 minutes and a framework skill.")?;
-        require(
-            framework.date.is_empty() || slot.date <= framework.date,
-            "Practice sessions must be on or before your interview date.",
-        )?;
-        let day = NaiveDate::parse_from_str(&slot.date, "%Y-%m-%d")
-            .map_err(|_| Error::Invalid("Choose a valid session date.".into()))?;
-        let minutes = weeks.entry(day.format("%G-%V").to_string()).or_default();
-        *minutes += slot.minutes;
-        require(*minutes <= framework.weekly_minutes, "This schedule exceeds your weekly practice budget. Shorten it or update the budget first.")?;
-    }
-    Ok(())
 }
 
 fn remember(item: &mut Interview) -> Result<(), Error> {
@@ -559,7 +517,6 @@ pub fn configure(
     require(chats::valid_id(id), "Choose a valid interview practice.")?;
     if revision != 0 {
         return mutate(path, id, Some(revision), |item| {
-            validate_schedule(&item.schedule, &framework)?;
             item.framework = framework;
             Ok(())
         });
@@ -572,7 +529,6 @@ pub fn configure(
         challenge: None,
         workspace: Workspace::default(),
         attempts: Vec::new(),
-        schedule: Vec::new(),
         problems: Vec::new(),
     };
     let data = serde_json::to_string(&item).map_err(|_| Error::Storage)?;
@@ -689,11 +645,6 @@ pub fn change(path: &Path, id: &str, change: Change) -> Result<Interview, Error>
             revision,
             challenge,
         } => mutate(path, id, Some(revision), |item| select(item, &challenge)),
-        Change::Schedule { revision, schedule } => mutate(path, id, Some(revision), |item| {
-            validate_schedule(&schedule, &item.framework)?;
-            item.schedule = schedule;
-            Ok(())
-        }),
     }
 }
 
@@ -771,33 +722,6 @@ pub fn assess(path: &Path, id: &str, feedback: Feedback) -> Result<Interview, Er
     })
 }
 
-pub fn prepare_schedule(item: &Interview, mut schedule: Vec<Slot>) -> Result<Vec<Slot>, Error> {
-    validate_schedule(&schedule, &item.framework)?;
-    for slot in &mut schedule {
-        slot.done = item
-            .schedule
-            .iter()
-            .any(|old| old.id == slot.id && old.done);
-    }
-    Ok(schedule)
-}
-
-pub fn apply_schedule(
-    path: &Path,
-    id: &str,
-    before: &[Slot],
-    schedule: Vec<Slot>,
-) -> Result<Interview, Error> {
-    mutate(path, id, None, |item| {
-        if item.schedule.as_slice() != before {
-            return Err(Error::Conflict);
-        }
-        validate_schedule(&schedule, &item.framework)?;
-        item.schedule = schedule;
-        Ok(())
-    })
-}
-
 fn board_material(workspace: &Workspace) -> Vec<serde_json::Value> {
     workspace
         .board
@@ -833,19 +757,13 @@ pub fn context_problem(item: &Interview, wanted: Option<&str>) -> String {
         serde_json::json!({"skill":skill,"observations":values.len(),"latest_scores":values.iter().rev().take(5).collect::<Vec<_>>()})
     }).collect();
     let active_problem = challenge.map(|c| serde_json::json!({"id":c.id,"title":c.title,"number":item.problems.iter().position(|p|p.challenge.id==c.id).map_or(1,|i|i+1)}));
-    let data = serde_json::json!({"active_problem":active_problem,"id":item.id,"revision":item.revision,"framework":item.framework,"challenge":challenge,"draft_answer":crate::chat::clip(&workspace.answer, 8000),"draft_reasoning":workspace.reasoning,"board":board_material(workspace),"latest_attempts":attempts,"assessed_scores":scores,"schedule":item.schedule,"problems":item.problems.iter().enumerate().map(|(i,p)| serde_json::json!({"number":i+1,"id":p.challenge.id,"title":p.challenge.title,"submitted":item.attempts.iter().any(|a|a.challenge.id==p.challenge.id)})).collect::<Vec<_>>()});
+    let data = serde_json::json!({"active_problem":active_problem,"id":item.id,"revision":item.revision,"framework":item.framework,"challenge":challenge,"draft_answer":crate::chat::clip(&workspace.answer, 8000),"draft_reasoning":workspace.reasoning,"board":board_material(workspace),"latest_attempts":attempts,"assessed_scores":scores,"problems":item.problems.iter().enumerate().map(|(i,p)| serde_json::json!({"number":i+1,"id":p.challenge.id,"title":p.challenge.title,"submitted":item.attempts.iter().any(|a|a.challenge.id==p.challenge.id)})).collect::<Vec<_>>()});
     format!("<interview_material>\n{}\n</interview_material>\nUse interpretable language. The active_problem is the problem open in the workspace. References like this problem or my code refer to it and its current draft unless the user names a different problem. For full submitted work use interview_attempt with its ID before assessing it.\n", data)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn set_schedule(path: &Path, id: &str, schedule: Vec<Slot>) -> Result<Interview, Error> {
-        let item = load(path, id)?;
-        let schedule = prepare_schedule(&item, schedule)?;
-        apply_schedule(path, id, &item.schedule, schedule)
-    }
 
     fn framework() -> Framework {
         Framework {
@@ -992,107 +910,6 @@ mod tests {
         assert_eq!(item.attempts[0].feedback.as_ref().unwrap().scores.len(), 1);
         assert!(context_problem(&item, None).contains("interview_attempt"));
         assert!(attempt_material(&item.attempts[0]).contains("答え"));
-    }
-
-    #[test]
-    fn schedules_validate_dates_budget_and_criteria_and_models_cannot_complete_sessions() {
-        let dir = tempfile::tempdir().unwrap();
-        let id = "interview-test-03";
-        configure(dir.path(), id, 0, framework()).unwrap();
-        let slot = Slot {
-            id: "schedule-test-01".into(),
-            date: "2026-10-13".into(),
-            time: "09:00".into(),
-            title: "Testing".into(),
-            minutes: 30,
-            skill: "Testing".into(),
-            done: true,
-        };
-        let item = set_schedule(dir.path(), id, vec![slot.clone()]).unwrap();
-        assert!(!item.schedule[0].done);
-        let item = change(
-            dir.path(),
-            id,
-            Change::Schedule {
-                revision: item.revision,
-                schedule: vec![slot.clone()],
-            },
-        )
-        .unwrap();
-        assert!(item.schedule[0].done);
-        assert!(
-            set_schedule(dir.path(), id, vec![slot.clone()])
-                .unwrap()
-                .schedule[0]
-                .done
-        );
-        for (day, time, minutes, skill) in [
-            ("2026-10-32", "", 30, "Testing"),
-            ("2026-11-02", "", 30, "Testing"),
-            ("2026-10-13", "25:00", 30, "Testing"),
-            ("2026-10-13", "", 121, "Testing"),
-            ("2026-10-13", "", 30, "Missing"),
-        ] {
-            let mut bad = slot.clone();
-            bad.date = day.into();
-            bad.time = time.into();
-            bad.minutes = minutes;
-            bad.skill = skill.into();
-            assert!(set_schedule(dir.path(), id, vec![bad]).is_err());
-        }
-        assert!(set_schedule(dir.path(), id, vec![slot.clone(), slot]).is_err());
-    }
-
-    #[test]
-    fn schedule_approval_and_undo_check_the_plan_without_blocking_draft_edits() {
-        let dir = tempfile::tempdir().unwrap();
-        let id = "schedule-approval-01";
-        configure(dir.path(), id, 0, framework()).unwrap();
-        let item = set_challenge(dir.path(), id, coding_challenge("schedule-problem-01")).unwrap();
-        let slot = Slot {
-            id: "schedule-session-01".into(),
-            date: "2026-10-13".into(),
-            time: "09:00".into(),
-            title: "Testing".into(),
-            minutes: 30,
-            skill: "Testing".into(),
-            done: false,
-        };
-        change(
-            dir.path(),
-            id,
-            Change::Workspace {
-                revision: item.revision,
-                challenge: "schedule-problem-01".into(),
-                workspace: workspace(),
-            },
-        )
-        .unwrap();
-        let applied = apply_schedule(dir.path(), id, &[], vec![slot.clone()]).unwrap();
-        assert_eq!(applied.workspace, workspace());
-        assert!(matches!(
-            apply_schedule(dir.path(), id, &[], vec![]),
-            Err(Error::Conflict)
-        ));
-        let undone = apply_schedule(dir.path(), id, std::slice::from_ref(&slot), vec![]).unwrap();
-        assert!(undone.schedule.is_empty());
-        let applied = apply_schedule(dir.path(), id, &[], vec![slot.clone()]).unwrap();
-        let mut completed = slot.clone();
-        completed.done = true;
-        change(
-            dir.path(),
-            id,
-            Change::Schedule {
-                revision: applied.revision,
-                schedule: vec![completed.clone()],
-            },
-        )
-        .unwrap();
-        assert!(matches!(
-            apply_schedule(dir.path(), id, &[slot], vec![]),
-            Err(Error::Conflict)
-        ));
-        assert_eq!(load(dir.path(), id).unwrap().schedule, vec![completed]);
     }
 
     #[test]

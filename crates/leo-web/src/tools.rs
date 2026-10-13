@@ -1618,12 +1618,6 @@ pub enum Proposal {
         #[serde(default)]
         dirs: Vec<String>,
     },
-    InterviewSchedule {
-        summary: String,
-        interview: String,
-        before: Vec<crate::interview::Slot>,
-        schedule: Vec<crate::interview::Slot>,
-    },
     InterviewCodeEdit {
         title: String,
         summary: String,

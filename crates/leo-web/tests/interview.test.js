@@ -85,14 +85,6 @@ test('board panning and moving preserve geometry, fit distant content and bound 
   assert.deepEqual(I.point(Infinity, NaN), [0, 0]);
 });
 
-test('practice and real calendar events share an agenda without losing completion or untimed dates', () => {
-  const result = I.agenda([{ id: 'task-0001', date: '2026-10-12', time: '', done: true }], [{ id: 'gcal-0001', start: new Date(2026, 9, 12, 9).toISOString() }, { start: 'invalid' }]);
-  assert.equal(result.length, 2);
-  assert.equal(result[0].kind, 'event');
-  assert.equal(result[1].done, true);
-  assert.equal(result[1].day, '2026-10-12');
-});
-
 test('drafts survive failed saves, remain isolated by plan and challenge, and stay bounded', () => {
   let data = '{}';
   const storage = { getItem: () => data, setItem: (_, value) => { data = value; } };

@@ -541,15 +541,6 @@ fn run_tool(
             found: Vec::new(),
         }
     } else if crate::interview_tools::is_tool(&call.name) {
-        if call.name == "interview_schedule" && !access.changes() {
-            return Ok(tools::Done {
-                step: "Kept your schedule unchanged".into(),
-                result: "Read only is active. Do not create or change scheduled practice tasks."
-                    .into(),
-                proposal: None,
-                found: Vec::new(),
-            });
-        }
         if call.name == "interview_code_edit" && !access.changes() {
             return Ok(tools::Done {
                 step: "Kept your code unchanged".into(),
