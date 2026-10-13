@@ -3487,6 +3487,7 @@ test('dropdowns and nested disclosures share real icons and keep their native co
   const workspace = { answer: 'My submitted approach', reasoning: '', board: [] };
   await page.route('**/api/interviews/*', route => route.fulfill({ json: { id, revision: 1, framework: { title: 'Coding practice', track: 'coding', company: '', role: '', language: 'Python', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace, problems: [{ challenge, workspace }], attempts: [{ id: 'controls-attempt', at: new Date().toISOString(), challenge, workspace, feedback: null }], schedule: [] } }));
   await page.goto(`/#/interviews/${id}`);
+  await page.locator('#interview-panes [data-pane="submissions"]').click();
   const attempt = page.locator('.interview-attempt');
   await expect(attempt.locator(':scope > summary > svg')).toHaveCount(1);
   await attempt.locator(':scope > summary').click();
