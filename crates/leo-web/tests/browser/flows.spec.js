@@ -4667,6 +4667,15 @@ test('the code runner runs only your code in a sandbox, stops endless loops and 
 });
 
 test('Storage shows interview practices and browser copies, opens them and confirms selective deletion', async ({ page }) => {
+  await page.addInitScript(() => {
+    let queue;
+    Object.defineProperty(window, 'leoAudioQueue', {configurable:true,get:()=>queue,set:value=>{
+      const pick = value.pick;
+      value.pick = () => { const data = pick(); const summaries = data.summaries; data.summaries = async () => { await new Promise(resolve=>setTimeout(resolve,750)); return summaries(); }; return data; };
+      queue = value;
+    }});
+  });
+  await page.reload();
   const tag = `${test.info().project.name}-${Date.now()}`;
   const ids = [`storage-practice-one-${tag}`, `storage-practice-two-${tag}`];
   for (const [index, id] of ids.entries()) {
@@ -4681,8 +4690,14 @@ test('Storage shows interview practices and browser copies, opens them and confi
   }, ids);
   await page.evaluate(async () => { await window.leoAudioQueue.pick().put({id:'storage-recovery-01',seq:0,bytes:new Uint8Array(16).buffer}); });
   await page.goto('/#/settings/storage');
+  const restore = await page.locator('#tasks-restore').elementHandle();
+  await page.locator('[data-export="chats"]').uncheck();
+  await page.locator('#tasks-restore').setInputFiles({name:'tasks.json',mimeType:'application/json',buffer:Buffer.from('{"wrong":[]}')});
+  await expect(page.locator('.toast.bad')).toContainText('Choose tasks.json');
   const chats = page.locator('[data-area="chats"].store-area');
   await expect(page.locator('[data-area="browser-local"].store-area')).toBeVisible();
+  expect(await restore.evaluate(el=>el.isConnected)).toBe(true);
+  await expect(page.locator('[data-export="chats"]')).not.toBeChecked();
   await chats.locator('summary').click();
   await chats.locator('.store-item', {hasText:`Stored conversation ${tag}`}).getByRole('button', {name:'Open chat'}).click();
   await expect(page.locator('#chat')).toContainText(`Stored conversation ${tag}`);

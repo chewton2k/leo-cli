@@ -124,6 +124,7 @@ function storageWhen(iso) {
 }
 
 function drawStorage(page) {
+  const exports = [...app.querySelectorAll('[data-export]')].map(el => [el.dataset.export, el.checked]);
   const selected = [...app.querySelectorAll('[data-store-item]:checked')].map(el => [el.dataset.storeItem, el.value]);
   const focused = document.activeElement?.matches('[data-store-item]') ? [document.activeElement.dataset.storeItem, document.activeElement.value] : null;
   const pageX = scrollX, pageY = scrollY;
@@ -172,6 +173,8 @@ function drawStorage(page) {
   for (const [area, id] of selected) { const box = app.querySelector(`input[data-store-item="${CSS.escape(area)}"][value="${CSS.escape(id)}"]:not(:disabled)`); if (box) box.checked = true; }
   if (focused) app.querySelector(`input[data-store-item="${CSS.escape(focused[0])}"][value="${CSS.escape(focused[1])}"]`)?.focus({ preventScroll: true });
   window.scrollTo({left:pageX, top:pageY, behavior:'instant'});
+  for (const [part, checked] of exports) { const box = app.querySelector(`[data-export="${CSS.escape(part)}"]`); if (box) box.checked = checked; }
+  $('#export-link').href = exportHref();
   storageCounts();
   storageBarHover();
 }
@@ -245,7 +248,25 @@ async function loadBrowserStorage(mine = seq) {
   if (mine !== seq || state.view !== 'storage') return;
   for (const area of areas) area.size=L.size(area.bytes);
   state.browserStorage={areas,total:areas.reduce((n,a)=>n+a.bytes,0),error:errors.join(' ')};
-  drawStorage(state.storage);
+  drawBrowserStorage();
+}
+
+function drawBrowserStorage() {
+  const box = $('#browser-storage');
+  if (!box || state.view !== 'storage') return;
+  const selected = [...box.querySelectorAll('[data-store-item]:checked')].map(el => [el.dataset.storeItem, el.value]);
+  const active = document.activeElement;
+  const focused = box.contains(active) && active.matches('[data-store-item]') ? [active.dataset.storeItem, active.value] : null;
+  const pageX = scrollX, pageY = scrollY;
+  for (const area of box.querySelectorAll('details.store-area')) {
+    if (area.open) state.storageOpen.add(area.dataset.area);
+    else state.storageOpen.delete(area.dataset.area);
+  }
+  box.innerHTML = browserStorageCard();
+  for (const [area, id] of selected) { const selectedBox = box.querySelector(`input[data-store-item="${CSS.escape(area)}"][value="${CSS.escape(id)}"]:not(:disabled)`); if (selectedBox) selectedBox.checked = true; }
+  if (focused) box.querySelector(`input[data-store-item="${CSS.escape(focused[0])}"][value="${CSS.escape(focused[1])}"]`)?.focus({preventScroll:true});
+  window.scrollTo({left:pageX, top:pageY, behavior:'instant'});
+  storageCounts();
 }
 
 function storageMore(el) {

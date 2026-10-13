@@ -410,7 +410,8 @@ Task sizes use actual files, including deletion markers; erasing markers is
 explicit because older backups may restore them. Database overhead/unused space
 is separate from payload sizes, with safe compaction; folder walks are bounded
 at 100,000 entries and 64 levels and omit symlinks. Storage lists 100 rows at a
-time, preserves open sections/selection/focus on background refresh, and shows
+time, preserves open sections/selection/focus, and refreshes browser data only
+inside its own section so file pickers and export choices stay intact. It shows
 browser draft/preferences and IndexedDB recovery audio separately from the server.
 Browser cleanup affects only Leo keys or selected recordings, never other apps;
 deleting a practice forgets its local backups. Export's Chats and interview
