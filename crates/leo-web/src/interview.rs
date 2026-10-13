@@ -1023,7 +1023,7 @@ mod tests {
             apply_schedule(dir.path(), id, &[], vec![]),
             Err(Error::Conflict)
         ));
-        let undone = apply_schedule(dir.path(), id, &[slot.clone()], vec![]).unwrap();
+        let undone = apply_schedule(dir.path(), id, std::slice::from_ref(&slot), vec![]).unwrap();
         assert!(undone.schedule.is_empty());
         let applied = apply_schedule(dir.path(), id, &[], vec![slot.clone()]).unwrap();
         let mut completed = slot.clone();
