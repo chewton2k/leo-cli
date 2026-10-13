@@ -67,6 +67,8 @@ seer, meaning, web, room).
   `library-views` segmented control, settings-style `<select>`. Readability:
   `flows.spec.js` measures every visible text's contrast in light and dark
   (≥3:1).
+  Filled danger buttons, error toasts and chat deletion confirmations reuse
+  `--accent-text` for legible text on colored backgrounds in both themes.
 - Motion (reworked 2026-10-10, the user found the first pass tacky): only what
   follows a click, quick (`MOTION_MS` 180), transform/clip/height only. No
   entrances, hover lifts or sliding gliders. `<details>` slide their height
@@ -264,3 +266,9 @@ the same idle loop.
 - Real-model checks (Codex, Claude Code) are what the prompt wording rests on:
   intent comes from the conversation, never keyword guesses; a change is only
   claimed after its tool result.
+  The 2026-10-12 review used Claude Code through a real local server and a
+  throwaway home: relative dates, repeating tasks, per-day Undo, note/folder
+  actions and Ask/Auto/Read access passed 16 action/access turns. A live Study
+  plan, quiz and correct answer ended with its recap. Installed
+  Chrome checks covered 28 page/theme/viewport combinations with no overflow
+  or contrast findings, plus danger controls across both themes and sizes.

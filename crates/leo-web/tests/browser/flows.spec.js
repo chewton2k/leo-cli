@@ -1714,6 +1714,32 @@ test.describe('readability', () => {
   }
 
   for (const scheme of ['light', 'dark']) {
+    test(`filled danger controls read clearly in ${scheme} mode`, async ({ page }) => {
+      await page.emulateMedia({ colorScheme: scheme });
+      const tag = `${test.info().project.name}-${scheme}-${Date.now()}`;
+      const task = await (await page.request.post('/api/tasks', { data: { title: `Readable task ${tag}` } })).json();
+      await page.goto('/#/calendar');
+      await page.locator(`.sched-main[data-id="${task.id}"]:visible`).click();
+      await expect(page.locator('.sheet .btn.danger')).toBeVisible();
+      await page.waitForTimeout(300);
+      expect(await lowContrast(page)).toEqual([]);
+      await page.keyboard.press('Escape');
+      await page.goto('/#/settings/storage');
+      await page.locator('#tasks-restore').setInputFiles({ name: 'tasks.json', mimeType: 'application/json', buffer: Buffer.from('{"wrong":[]}') });
+      await expect(page.locator('.toast.bad')).toContainText('Choose tasks.json');
+      await page.waitForTimeout(300);
+      expect(await lowContrast(page)).toEqual([]);
+      await page.request.put(`/api/chats/readable-${tag}`, { data: { title: `Readable chat ${tag}`, mode: 'chat', messages: [{ role: 'user', text: 'Hello' }, { role: 'assistant', text: 'Hi' }] } });
+      await page.goto('/');
+      await page.locator('#chat-toggle').click();
+      const history = page.locator('.chat-history');
+      if (await history.isHidden()) await page.getByRole('button', { name: 'Your chats', exact: true }).click();
+      await history.locator(`[data-chat="forget"][data-id="readable-${tag}"]`).click();
+      await expect(history.locator('.chat-history-x.sure')).toHaveText('Delete');
+      await page.waitForTimeout(300);
+      expect(await lowContrast(page)).toEqual([]);
+    });
+
     test(`every page reads clearly in ${scheme} mode`, async ({ page }) => {
       test.skip(test.info().project.name !== 'desktop', 'colours do not depend on the screen size');
       test.setTimeout(90000);
