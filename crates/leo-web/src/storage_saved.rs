@@ -281,7 +281,7 @@ mod tests {
         assert!(practice
             .detail
             .contains("2 problems · 1 submitted attempts · 1 scheduled sessions"));
-        let actual: u64 = crate::db::for_chats(&path)
+        let actual: i64 = crate::db::for_chats(&path)
             .with(|c| {
                 c.query_row(
                     "SELECT length(CAST(data AS BLOB)) FROM interviews WHERE id = ?1",
@@ -290,7 +290,7 @@ mod tests {
                 )
             })
             .unwrap();
-        assert_eq!(practice.bytes, actual);
+        assert_eq!(practice.bytes, u64::try_from(actual).unwrap());
         assert_eq!(list[2].bytes, "café".len() as u64);
         assert_eq!(list[2].items[0].label, "Study notes");
         let shown = serde_json::to_string(&list).unwrap();
