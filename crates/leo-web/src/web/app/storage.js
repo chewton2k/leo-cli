@@ -21,7 +21,7 @@ function keepCard() {
   const keep = state.keep;
   if (!keep) return '';
   const select = (field, choices) =>
-    `<select data-keep="${field}">${choices.map((c) => `<option value="${keepValue(c.days)}"${keepValue(c.days) === keepValue(keep[field]) ? ' selected' : ''}>${esc(c.label === 'forever' ? 'Forever' : c.label)}</option>`).join('')}</select>`;
+    `<span class="select-control"><select data-keep="${field}">${choices.map((c) => `<option value="${keepValue(c.days)}"${keepValue(c.days) === keepValue(keep[field]) ? ' selected' : ''}>${esc(c.label === 'forever' ? 'Forever' : c.label)}</option>`).join('')}</select>${ICON.chevron}</span>`;
   return `<section class="set-card store-keep">
       <header><h3>How long leo keeps things</h3></header>
       <label class="set-row"><span class="set-label">Trash</span>${select('trash_days', keep.trash_choices)}</label>

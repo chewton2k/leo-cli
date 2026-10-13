@@ -22,7 +22,7 @@ function libraryQuery(dir, offset = 0) {
 }
 
 function libraryChoice(name, label, choices, value) {
-  return `<label class="library-choice"><select data-library="${name}" aria-label="${esc(label)}">${choices.map(([id, text]) => `<option value="${id}"${id === value ? ' selected' : ''}>${esc(text)}</option>`).join('')}</select></label>`;
+  return `<label class="library-choice select-control"><select data-library="${name}" aria-label="${esc(label)}">${choices.map(([id, text]) => `<option value="${id}"${id === value ? ' selected' : ''}>${esc(text)}</option>`).join('')}</select>${ICON.chevron}</label>`;
 }
 
 function libraryFiltered() {

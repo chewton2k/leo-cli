@@ -53,6 +53,7 @@ const recorder = window.leoRecording.create({ api, esc, toast, go: (hash, opts) 
 const chat = felix.create({
   render: (text) => md.render(text),
   escape: md.escape,
+  icons: ICON,
   onOpen: (id, lines) => {
     citedLines = lines ? { id, ...lines } : null;
     if (state.view === 'note' && state.session && state.session.note.id === id && lines) showCitedLines();

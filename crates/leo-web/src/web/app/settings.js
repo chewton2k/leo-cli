@@ -176,7 +176,7 @@ function taskCard(t, secure) {
   return `<section class="set-card" data-task-card="${t.task}">
     <header><h3>${TASK_TITLE[t.task]}</h3>${status}</header>
     <p class="hint">${TASK_USE[t.task]}</p>
-    <label class="set-row"><span class="set-label">Provider</span><select data-set="provider" data-task="${t.task}">${providers}</select></label>
+    <label class="set-row"><span class="set-label">Provider</span><span class="select-control"><select data-set="provider" data-task="${t.task}">${providers}</select>${ICON.chevron}</span></label>
     ${model}${key}${signin}${usage}${note}
     <div class="set-test"><button class="btn plain sm" data-action="test-ai" data-task="${t.task}">Test</button><span class="set-result" id="test-${t.task}"></span></div>
   </section>`;
@@ -192,7 +192,7 @@ function drawSettings(page) {
     <section class="set-card">
       <header><h3>Backup</h3>${backup.remote ? '<span class="set-status ok">On</span>' : '<span class="set-status missing">Not set up</span>'}</header>
       <p class="hint">${backup.remote ? `Your notes are copied to ${esc(backup.remote)}.` : 'Backup is not set up yet. Run :backup in leo on your computer to keep a copy on GitHub.'}</p>
-      <label class="set-row"><span class="set-label">Push changes</span><select data-set="auto_push">${backup.options.map((o) => settingsOption(o.id, o.label, backup.auto_push)).join('')}</select></label>
+      <label class="set-row"><span class="set-label">Push changes</span><span class="select-control"><select data-set="auto_push">${backup.options.map((o) => settingsOption(o.id, o.label, backup.auto_push)).join('')}</select>${ICON.chevron}</span></label>
     </section>
     <section class="set-card">
       <header><h3>Where things are</h3></header>

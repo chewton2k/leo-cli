@@ -604,7 +604,7 @@
       const ready = micReady(env());
       const insecure = ready !== 'ok' && !ov.local ? `<p class="set-note warn">${esc(micProblem(ready))}</p>` : '';
       const event = upcoming.length
-        ? `<label class="set-row"><span class="set-label">Calendar event</span><select id="rec-event"><option value="">None</option>${upcoming.map((e, i) => `<option value="${i}"${i === s.event ? ' selected' : ''}>${esc(whenOf(e))} · ${esc(e.title)}</option>`).join('')}</select></label>
+        ? `<label class="set-row"><span class="set-label">Calendar event</span><span class="select-control"><select id="rec-event"><option value="">None</option>${upcoming.map((e, i) => `<option value="${i}"${i === s.event ? ' selected' : ''}>${esc(whenOf(e))} · ${esc(e.title)}</option>`).join('')}</select>${icons.chevron}</span></label>
           ${picked ? '<p class="set-note rec-event-note">The AI gets this event’s description, place and who was invited.</p>' : ''}`
         : '';
       const connect = s.calendar && !s.calendar.connected ? '<p class="set-note">Name recordings after your classes and meetings: <a href="#/settings">connect a calendar in Settings</a>.</p>' : '';
@@ -618,7 +618,7 @@
           <header><h3>New recording</h3></header>
           <p class="hint">leo writes down what is said as you go and turns it into a note when you stop.</p>
           ${kindChoices(ov.local)}
-          <label class="set-row"><span class="set-label">Folder</span><select id="rec-dir">${options}</select></label>
+          <label class="set-row"><span class="set-label">Folder</span><span class="select-control"><select id="rec-dir">${options}</select>${icons.chevron}</span></label>
           <label class="set-row"><span class="set-label">Title</span><input id="rec-title" class="set-input rec-title-input" placeholder="Optional; the AI names it otherwise" autocomplete="off"></label>
           ${event}
           <label class="set-row column"><span class="set-label">What you want from the notes</span><textarea id="rec-wants" class="set-input" rows="2" maxlength="4000" placeholder="Optional. For example: focus on what will be on the exam, keep it short"></textarea></label>
@@ -698,7 +698,7 @@
         <section class="set-card rec-done-card rec-failed-card">${felix.felix(64, 'droop')}<h3>${esc(failure.title)}</h3>
           <p class="hint">${esc(failure.message)}</p>
           <div class="rec-failed-context">${icons.mic}<span>${esc(clock(v.secs))} recorded · ${v.source === 'call' ? 'Call' : 'Recording'}</span></div>
-          ${failure.details.length ? `<details class="rec-error-details"><summary>Error details</summary>${failure.details.map((w) => `<p>${esc(w)}</p>`).join('')}</details>` : ''}
+          ${failure.details.length ? `<details class="rec-error-details source-more"><summary>${icons.chevron}<span>Error details</span></summary>${failure.details.map((w) => `<p>${esc(w)}</p>`).join('')}</details>` : ''}
           <div class="buttons"><button class="btn primary sm" data-action="rec-again">Record again</button><button class="btn sm plain danger" data-action="rec-discard" data-id="${esc(v.id)}">Delete recording</button></div>
           <button class="btn plain sm" data-action="rec-dismiss">Dismiss warning</button>
         </section>

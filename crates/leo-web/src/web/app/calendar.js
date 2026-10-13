@@ -451,7 +451,7 @@ function newTaskSheet(day = null) {
     <input class="set-input task-title" id="task-title" maxlength="300" placeholder="What needs doing? Like Submit lab report" autocomplete="off">
     <div class="picker-box" id="pick-box"></div>
     <div class="set-row column task-repeat" id="task-repeat"><span class="set-label">Repeat</span>${repeatBubbles([])}<span class="hint repeat-hint">${esc(repeatHint([]))}</span></div>
-    <details class="task-more"><summary>Details</summary><div class="chips task-kinds" id="task-kinds">${KIND_ORDER.map((k) => `<button type="button" class="chip pick-chip${k === 'other' ? ' on' : ''}" data-kind="${k}" aria-pressed="${k === 'other'}">${esc(KIND_LABEL[k])}</button>`).join('')}</div></details>
+    <details class="task-more source-more"><summary>${ICON.chevron}<span>Details</span></summary><div class="chips task-kinds" id="task-kinds">${KIND_ORDER.map((k) => `<button type="button" class="chip pick-chip${k === 'other' ? ' on' : ''}" data-kind="${k}" aria-pressed="${k === 'other'}">${esc(KIND_LABEL[k])}</button>`).join('')}</div></details>
     <div class="buttons"><button type="button" class="btn plain" data-action="close">Cancel</button><button type="button" class="btn primary" id="task-add">Add task</button></div>`);
   let kind = 'other';
   let repeat = [];

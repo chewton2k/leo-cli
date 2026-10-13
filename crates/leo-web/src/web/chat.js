@@ -542,8 +542,9 @@
 
   const CHAT_LEAVE_MS = 160;
 
-  function create({ render, escape, onOpen = () => {}, onOriginal = () => {}, storage = root.localStorage, prepare = null, notify = () => {}, onSaved = () => {}, onChanged = () => {}, onUndone = () => {}, onToggle = () => {}, onInterview = () => {}, onInterviewChanged = () => {}, onInterviewReply = () => {}, onAdd = () => {}, onOrganized = () => {} }) {
+  function create({ render, escape, icons = {}, onOpen = () => {}, onOriginal = () => {}, storage = root.localStorage, prepare = null, notify = () => {}, onSaved = () => {}, onChanged = () => {}, onUndone = () => {}, onToggle = () => {}, onInterview = () => {}, onInterviewChanged = () => {}, onInterviewReply = () => {}, onAdd = () => {}, onOrganized = () => {} }) {
     const saved = load(storage);
+    const stepChevron = (icons.chevron || '').replace('<svg ', '<svg class="msg-step-chevron" ');
     const state = { open: false, id: saved.id || newId(), mode: modeOf(saved.mode), messages: saved.messages, refs: saved.refs, context: null, dropped: null, busy: null, streak: 0, pick: null, chats: null, sidebar: null, doomed: null, asking: null, files: [], sent: [], filesFor: null, review: [], drafts: {}, found: null, selection: null };
     const panel = document.createElement('aside');
     panel.className = 'chat';
@@ -564,7 +565,7 @@
         <button class="icon-btn" data-chat="new" aria-label="New chat" title="New chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
         <button class="icon-btn" data-chat="close" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
       </header>
-      <button class="chat-workspace" data-chat="interview-workspace" hidden>Open interview workspace ↗</button>
+      <button class="chat-workspace" data-chat="interview-workspace" hidden><span>Open interview workspace</span>${icons.chevron || ''}</button>
       <div class="chat-modes" role="tablist" aria-label="How Felix helps">${MODES.map((m) => `<button role="tab" class="chat-mode" data-chat="mode" data-mode="${m.id}" title="${escape(m.hint)}">${m.label}</button>`).join('')}</div>
       <div class="study-progress" id="study-progress" hidden></div>
       <div class="chat-body" id="chat-body" aria-live="polite"></div>
@@ -573,9 +574,9 @@
         <div class="chat-pick" id="chat-pick" hidden></div>
         <div class="chat-refs" id="chat-refs"></div>
         <form class="chat-compose" id="chat-form">
-          <div class="chat-attach-menu" id="chat-attach-menu" hidden><button type="button" data-chat="attach-note">A note from leo</button>${prepare ? '<button type="button" data-chat="attach-file">A file from this device</button>' : ''}</div>
+          <div class="chat-attach-menu" id="chat-attach-menu" role="menu" hidden><button type="button" role="menuitem" data-chat="attach-note">${icons.note || ''}<span>A note from leo</span></button>${prepare ? `<button type="button" role="menuitem" data-chat="attach-file">${icons.paperclip || ''}<span>A file from this device</span></button>` : ''}</div>
           <input type="file" id="chat-file" multiple accept="${FILE_TYPES}" hidden>
-          <button class="chat-attach" type="button" data-chat="attach" aria-label="Add a note or a file" title="Add a note or a file to the conversation (or type @ for a note)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11l-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7"/></svg></button>
+          <button class="chat-attach" type="button" data-chat="attach" aria-haspopup="menu" aria-controls="chat-attach-menu" aria-expanded="false" aria-label="Add a note or a file" title="Add a note or a file to the conversation (or type @ for a note)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11l-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7"/></svg></button>
           <textarea id="chat-input" rows="1" placeholder="Message Felix, or type @ to add a note…" enterkeyhint="send"></textarea>
           <button class="chat-send" id="chat-send" type="submit" aria-label="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button>
         </form>
@@ -590,6 +591,11 @@
     const $ = (sel) => panel.querySelector(sel);
     const body = $('#chat-body');
     const input = $('#chat-input');
+
+    function attachMenu(open) {
+      $('#chat-attach-menu').hidden = !open;
+      $('[data-chat="attach"]').setAttribute('aria-expanded', String(open));
+    }
 
     const faces = () => [...document.querySelectorAll('.felix')];
     let blinkTimer = 0;
@@ -1451,7 +1457,7 @@
       const label = `${icon}<span>${escape(item.text || '')}</span>${working ? '<span class="msg-step-busy" aria-label="working"></span>' : ''}`;
       const found = (item.found || []).filter((f) => f && f !== item.text);
       if (!found.length || item.tool === 'open_note') return `<div class="msg-step">${label}</div>`;
-      return `<details class="msg-step"><summary>${label}<span class="msg-step-count">${found.length}</span></summary><ul>${found.map((f) => `<li>${escape(f)}</li>`).join('')}</ul></details>`;
+      return `<details class="msg-step"><summary>${label}<span class="msg-step-count">${found.length}</span>${stepChevron}</summary><ul>${found.map((f) => `<li>${escape(f)}</li>`).join('')}</ul></details>`;
     }
 
     function proposalCard(p, i, j) {
@@ -2128,7 +2134,7 @@
     panel.addEventListener('keydown', awake);
     panel.addEventListener('click', (e) => {
       awake();
-      if (!e.target.closest('[data-chat^="attach"]')) $('#chat-attach-menu').hidden = true;
+      if (!e.target.closest('[data-chat^="attach"]')) attachMenu(false);
       if (!e.target.closest('[data-chat^="access"]')) {
         $('#chat-access-menu').hidden = true;
         $('#chat-access').setAttribute('aria-expanded', 'false');
@@ -2234,12 +2240,12 @@
         const menu = $('#chat-attach-menu');
         if (state.pick && state.pick.from === 'button') closePick();
         else if (!prepare) openPick('button', '', 0);
-        else menu.hidden = !menu.hidden;
+        else attachMenu(menu.hidden);
       } else if (what === 'attach-note') {
-        $('#chat-attach-menu').hidden = true;
+        attachMenu(false);
         openPick('button', '', 0);
       } else if (what === 'attach-file') {
-        $('#chat-attach-menu').hidden = true;
+        attachMenu(false);
         if (state.files.length + state.sent.length >= MOST_FILES) notify(`A chat holds up to ${MOST_FILES} documents; remove one first.`);
         else $('#chat-file').click();
       } else if (what === 'unfile') removeFile(el.dataset.id); else if (what === 'pick') choose(Number(el.dataset.i));
@@ -2328,7 +2334,7 @@
     });
     input.addEventListener('click', watchMention);
     $('#chat-file').addEventListener('change', (e) => {
-      $('#chat-attach-menu').hidden = true;
+      attachMenu(false);
       addFiles(e.target.files);
       e.target.value = '';
     });
@@ -2354,6 +2360,31 @@
         clearTimeout(findTimer);
         const query = e.target.value;
         findTimer = setTimeout(() => findChats(query), 180);
+      }
+    });
+    panel.addEventListener('keydown', (e) => {
+      const attach = !$('#chat-attach-menu').hidden;
+      const access = !$('#chat-access-menu').hidden;
+      if (!attach && !access) return;
+      const menu = $(attach ? '#chat-attach-menu' : '#chat-access-menu');
+      const trigger = $(attach ? '[data-chat="attach"]' : '#chat-access');
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (attach) attachMenu(false);
+        else { menu.hidden = true; trigger.setAttribute('aria-expanded', 'false'); }
+        trigger.focus();
+      } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key) && (menu.contains(e.target) || e.target === trigger)) {
+        const items = [...menu.querySelectorAll('button')].slice(0, ACCESS.length);
+        if (!items.length) return;
+        e.preventDefault();
+        const at = items.indexOf(document.activeElement);
+        let next;
+        if (e.key === 'Home') next = 0;
+        else if (e.key === 'End') next = items.length - 1;
+        else if (at < 0) next = e.key === 'ArrowUp' ? items.length - 1 : 0;
+        else next = (at + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+        items[next].focus();
       }
     });
     panel.addEventListener('keydown', (e) => {

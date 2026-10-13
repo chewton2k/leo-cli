@@ -75,6 +75,13 @@ seer, meaning, web, room).
   date heading, with the date wrapping on narrow screens.
   Interview section disclosures reuse `source-more` and `ICON.chevron`,
   including the existing keyboard behavior and quick expand/collapse motion.
+  Native dropdowns share `select-control` and the same SVG chevron across
+  the library, Settings, Storage, uploads and recording. Keep their labels,
+  native options and keyboard behavior; forced colors restores the OS arrow.
+  Icon buttons share centered flex alignment. Disclosure selectors affect
+  only their own summary, so opening a parent never rotates a child's icon.
+  Felix menus reuse `ICON`; Arrow keys move between items and Escape closes
+  the menu and returns focus to its button without closing the conversation.
 - Motion (reworked 2026-10-10, the user found the first pass tacky): only what
   follows a click, quick (`MOTION_MS` 180), transform/clip/height only. No
   entrances, hover lifts or sliding gliders. `<details>` slide their height

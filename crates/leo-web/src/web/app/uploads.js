@@ -98,7 +98,7 @@ async function uploadSheet(files, into) {
     <p>Slides, handouts, papers or worksheets as PDF, Word, PowerPoint or text, or photos and scans of pages. Your AI reads them and writes study notes.</p>
     <label class="upload-drop" id="upload-zone">${ICON.upload}<span id="upload-pick-label">Choose files, or take photos</span><input type="file" id="upload-input" multiple accept="${UPLOAD_ACCEPT}"></label>
     <div class="upload-list" id="upload-list"></div>
-    <label class="field">${ICON.folder}<select id="upload-dir">${options}</select></label>
+    <label class="field">${ICON.folder}<span class="select-control"><select id="upload-dir" aria-label="Folder">${options}</select>${ICON.chevron}</span></label>
     <label class="field">${ICON.note}<input id="upload-title" placeholder="Title (optional; the AI names it otherwise)" autocomplete="off"></label>
     <label class="field upload-wants"><textarea id="upload-wants" rows="2" maxlength="2000" placeholder="What do you want from it? (optional) e.g. the interview problem, then the code, explained step by step"></textarea></label>
     <p class="hint upload-hint">You can also paste a picture here. Photos stay in the note, and pictures and diagrams in slides and documents are kept beside the text. Reading photos and scans needs an AI that can see images: OpenAI, Anthropic, Gemini, xAI, Claude Code or Codex.</p>
