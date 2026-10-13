@@ -20,6 +20,10 @@ Verify with `cargo test` at the root (runs every crate) and
 `cargo clippy --workspace --all-targets`. Do not run `cargo build` or
 `cargo install` unless asked.
 
+The e2e server fixture follows the port in Leo's printed link when the requested
+port is occupied; a forced-busy-port case keeps the 401/401/200 authentication
+checks intact.
+
 Never run the full test suites on the developer's machine (no
 workspace-wide `cargo test`, no full Playwright run; the user's call,
 2026-10-10). Build out every feature asked for using only quick targeted

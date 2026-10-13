@@ -1073,7 +1073,7 @@ fn backup_before_setup_says_what_to_do() {
 
 struct Serving {
     child: std::process::Child,
-    port: u16,
+    port: std::cell::Cell<u16>,
     lines: std::sync::mpsc::Receiver<String>,
 }
 
@@ -1083,6 +1083,10 @@ impl Serving {
         let port = 38000
             + (std::process::id() % 500) as u16 * 4
             + NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Self::start_at(leo, extra, port)
+    }
+
+    fn start_at(leo: &Leo, extra: &[&str], port: u16) -> Serving {
         let port_arg = port.to_string();
         let mut args = vec!["serve", "--port", &port_arg];
         args.extend_from_slice(extra);
@@ -1099,7 +1103,11 @@ impl Serving {
                 let _ = tx.send(line);
             }
         });
-        Serving { child, port, lines }
+        Serving {
+            child,
+            port: std::cell::Cell::new(port),
+            lines,
+        }
     }
 
     fn link(&self, needle: &str) -> String {
@@ -1112,6 +1120,14 @@ impl Serving {
                         .take_while(|c| !c.is_whitespace())
                         .collect();
                     if link.contains(needle) {
+                        if let Some(port) = link
+                            .split_once("://")
+                            .and_then(|(_, rest)| rest.split('/').next())
+                            .and_then(|host| host.rsplit_once(':'))
+                            .and_then(|(_, port)| port.parse().ok())
+                        {
+                            self.port.set(port);
+                        }
                         return link;
                     }
                 }
@@ -1132,7 +1148,7 @@ impl Serving {
     fn get(&self, path: &str, headers: &str) -> String {
         let deadline = Instant::now() + Duration::from_secs(30);
         while Instant::now() < deadline {
-            if let Ok(mut s) = std::net::TcpStream::connect(("127.0.0.1", self.port)) {
+            if let Ok(mut s) = std::net::TcpStream::connect(("127.0.0.1", self.port.get())) {
                 s.set_read_timeout(Some(Duration::from_secs(10))).ok();
                 let asked = write!(
                     s,
@@ -1177,6 +1193,31 @@ fn serve_needs_its_token_and_then_lists_the_notes() {
     let allowed = server.get(&format!("/api/notes?token={token}"), "");
     assert!(allowed.starts_with("HTTP/1.1 200"), "{allowed}");
     assert!(allowed.contains("Served note"), "{allowed}");
+}
+
+#[test]
+fn serving_follows_the_announced_port_when_the_requested_one_is_busy() {
+    let leo = Leo::new();
+    leo.ok(&["new", "Busy port note", "--body", "x"]);
+    const MOST_PORT_TRIES: usize = 20;
+    let busy = (0..MOST_PORT_TRIES)
+        .find_map(|_| {
+            let busy = std::net::TcpListener::bind(("0.0.0.0", 0)).ok()?;
+            (busy.local_addr().ok()?.port() <= u16::MAX - 20).then_some(busy)
+        })
+        .expect("Choose a test port with room for Leo's fallback");
+    let wanted = busy.local_addr().unwrap().port();
+    let server = Serving::start_at(&leo, &["--local"], wanted);
+    let token = server.token();
+    assert_ne!(server.port.get(), wanted);
+    assert!(server.get("/api/notes", "").starts_with("HTTP/1.1 401"));
+    assert!(server
+        .get("/api/notes?token=0000", "")
+        .starts_with("HTTP/1.1 401"));
+    let response = server.get(&format!("/api/notes?token={token}"), "");
+    assert!(response.starts_with("HTTP/1.1 200"));
+    assert!(response.contains("Busy port note"));
+    drop(busy);
 }
 
 #[test]
