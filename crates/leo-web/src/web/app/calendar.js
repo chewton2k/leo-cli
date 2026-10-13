@@ -284,10 +284,12 @@ function drawCalendar() {
         <div class="sched-lists">${overdue}${undated}</div>
       </div>
       <section class="sched-agenda" aria-label="${esc(heading)}">
-        <h2 class="sched-day-head">${esc(heading)}</h2>
+        <div class="sched-agenda-head">
+          <h2 class="sched-day-head">${esc(heading)}</h2>
+          ${tasks.some((t) => t.done || (t.done_on || []).length) ? `<button type="button" class="link-btn sched-done-toggle" data-action="cal-done">${cal.showDone ? 'Hide completed' : 'Show completed'}</button>` : ''}
+        </div>
         ${summary ? `<p class="sched-summary">${summary}</p>` : ''}
         ${agenda}
-        ${tasks.some((t) => t.done || (t.done_on || []).length) ? `<button type="button" class="link-btn sched-done-toggle" data-action="cal-done">${cal.showDone ? 'Hide completed' : 'Show completed'}</button>` : ''}
       </section>
       <div class="sched-lists phone">${overdue}${undated}</div>
     </div>`;

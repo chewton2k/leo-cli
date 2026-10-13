@@ -986,6 +986,8 @@ body.on-calendar main { max-width: 1040px; }
 .sched-list + .sched-list { margin-top: 16px; }
 .sched-list h2 { margin: 0 0 4px; font-size: 13px; font-weight: 650; color: var(--muted); }
 .sched-list h2.sched-late { color: var(--danger); }
+.sched-agenda-head { display: flex; align-items: baseline; gap: 12px; }
+.sched-agenda-head .sched-day-head { flex: 1; min-width: 0; }
 .sched-day-head { margin: 4px 0 0; font-size: 17px; font-weight: 650; }
 .sched-summary { margin: 2px 0 10px; font-size: 13px; color: var(--muted); }
 .sched-group { margin: 12px 0 2px; font-size: 13px; font-weight: 600; color: var(--muted); }
@@ -1019,7 +1021,7 @@ body.on-calendar main { max-width: 1040px; }
 .sched-ahead-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .sched-ahead-title { font-size: 14px; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sched-empty { margin: 18px 0 6px; font-size: 14px; color: var(--muted); }
-.sched-done-toggle { margin-top: 14px; font-size: 13px; }
+.sched-done-toggle { flex: none; font-size: 13px; }
 .sched-preview { padding: 10px 12px; border-radius: 10px; background: var(--surface-2); }
 .sched-preview p { margin: 2px 0 10px; }
 .sched-about { white-space: pre-wrap; font-size: 14px; color: var(--muted); max-height: 200px; overflow: auto; }
