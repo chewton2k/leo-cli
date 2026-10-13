@@ -84,6 +84,7 @@ function editor(name) {
   return {
     edit(value, from, to, key, shift = false, direction = 'forward') {
       if (typeof value !== 'string' || value.length > MOST_CODE || !Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < from || to > value.length) return null;
+      if (id === 'rust' && key === "'" && from === to) return null;
       const before = state.doc.toString();
       state = state.update({ ...(before !== value ? { changes: difference(before, value) } : {}), selection: EditorSelection.range(direction === 'backward' ? to : from, direction === 'backward' ? from : to) }).state;
       if (key !== 'Tab') ensureSyntaxTree(state, to, PARSE_MS);

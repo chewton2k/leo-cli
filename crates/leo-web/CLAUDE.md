@@ -241,6 +241,7 @@ seer, meaning, web, room).
   Coding languages use a themed select, defaulting to Python. Vendored CodeMirror
   editing commands drive indentation and paired brackets; the textarea applies
   only the changed range and keeps page scroll, native Undo and IME input intact.
+  Rust apostrophes type normally so lifetimes and loop labels are never auto-closed.
   Send flushes the draft and binds context to `interview_problem`, with the
   problem number, title and tab retained on the user message in chat history.
   Reading progress preserves that binding even if the user switches problems.

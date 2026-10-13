@@ -27,6 +27,8 @@ test('CodeMirror typing handles indentation and paired delimiters in every suppo
     assert.equal(engine.edit('    ', 4, 4, 'Tab', true).value, '', language);
     assert.equal(engine.edit('x'.repeat(32000), 32000, 32000, '('), null);
   }
+  for (const value of ['&', 'fn solve<', '', 'break ']) assert.equal(C.editor('Rust').edit(value, value.length, value.length, "'"), null);
+  assert.equal(C.editor('Rust').edit('', 0, 0, '"').value, '""');
   const python = C.editor('Python').edit('def solve():', 12, 12, 'Enter');
   assert.equal(python.value, 'def solve():\n    ');
   const cpp = C.editor('C++');

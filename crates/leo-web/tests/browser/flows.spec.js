@@ -4146,6 +4146,10 @@ test('coding typing pairs brackets, preserves scroll and Undo across every suppo
     await page.reload();
     const area = page.locator('#interview-answer');
     await expect(page.locator('#interview-colors')).toBeVisible();
+    if (language === 'Rust') {
+      await area.fill('&'); await area.press("'"); await area.press('a');
+      await expect(area).toHaveValue("&'a");
+    }
     await area.fill('');
     await area.press('('); await area.press('['); await area.press('x');
     await expect(area).toHaveValue('([x])');
