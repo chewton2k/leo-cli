@@ -1576,12 +1576,12 @@ body.on-interviews main:has(.interview-practice) { max-width: none; }
 .interview-checks h3, .interview-result h3 { margin: 0 0 8px; font-size: 14px; }
 .interview-checks-status { margin: 0; }
 .interview-checks ul, .interview-result ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
-.interview-tests li, .interview-misses li, .interview-verdicts li { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: 13px; overflow-wrap: anywhere; }
+.interview-tests li, .interview-verdicts li { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: 13px; overflow-wrap: anywhere; }
 .interview-tests code { font-size: 12.5px; background: var(--code-bg); padding: 1px 6px; border-radius: 6px; }
 .interview-mark { display: inline-flex; width: 16px; flex: none; align-self: center; }
 .interview-mark svg { width: 16px; height: 16px; }
 .interview-tests li.pass .interview-mark, .interview-cover.yes svg { color: var(--good); }
-.interview-tests li.fail .interview-mark, .interview-misses .interview-mark { color: var(--danger); }
+.interview-tests li.fail .interview-mark { color: var(--danger); }
 .interview-cover { display: inline-flex; align-items: center; gap: 4px; }
 .interview-cover svg { width: 14px; height: 14px; }
 .interview-cover.yes { color: var(--good); }
@@ -1601,10 +1601,34 @@ body.on-interviews main:has(.interview-practice) { max-width: none; }
 .interview-coverage .partly .chip, .interview-verdicts .partly .chip { background: color-mix(in srgb, var(--hue-amber) 16%, transparent); color: var(--hue-amber); }
 .interview-coverage .no .chip, .interview-verdicts .missed .chip { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
 .interview-verdicts li > span:last-child { display: grid; gap: 2px; min-width: 0; flex: 1; }
-.interview-misses .grow { display: grid; gap: 2px; min-width: 0; }
 .interview-results { margin: 16px 0 0; }
 .interview-result { display: grid; gap: 10px; }
 .interview-result p { margin: 0; font-size: 14px; line-height: 1.55; }
+.interview-result-summary { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.interview-tally { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; }
+.interview-tally svg { width: 14px; height: 14px; flex: none; }
+.interview-tally.good, .interview-tally.met { background: color-mix(in srgb, var(--good) 14%, transparent); color: var(--good); }
+.interview-tally.bad, .interview-tally.missed { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
+.interview-tally.partly { background: color-mix(in srgb, var(--hue-amber) 16%, transparent); color: var(--hue-amber); }
+.interview-cases { display: flex; gap: 6px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; padding: 2px 2px 6px; margin: 0 -2px; }
+.interview-cases .pick-chip { flex: none; display: inline-flex; align-items: center; gap: 5px; max-width: 200px; }
+.interview-cases .pick-chip > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.interview-cases .pick-chip.pass .interview-mark { color: var(--good); }
+.interview-cases .pick-chip.fail .interview-mark { color: var(--danger); }
+.interview-cases .pick-chip.on .interview-mark { color: inherit; }
+.interview-cases .pick-chip .interview-mark, .interview-cases .pick-chip .interview-mark svg { width: 14px; height: 14px; }
+.interview-cases .pick-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.interview-case { display: grid; gap: 10px; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); }
+.interview-case-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.interview-case-head b { min-width: 0; overflow-wrap: anywhere; font-size: 14px; }
+.interview-case .link-btn { justify-self: start; }
+.interview-io { display: grid; gap: 4px; min-width: 0; }
+.interview-io-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 10px; }
+.interview-output { margin: 0; padding: 8px 10px; max-height: 160px; overflow: auto; border-radius: 8px; background: var(--code-bg); color: var(--text); font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.interview-review { display: grid; gap: 8px; }
+.interview-review .pick-chips { padding: 0; }
+.interview-review-more > summary { border-top: 0; padding: 4px 0; }
+.interview-review-more .interview-verdicts { padding-top: 4px; }
 @container interview (max-width: 899px) { .interview-practice .interview-solve:has(.interview-workspace) { grid-template-columns: 1fr; } }
 @container interview (min-width: 900px) { .interview-practice .interview-workspace { position: sticky; top: calc(var(--top) + 72px); } }
 .interview-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 24px; }

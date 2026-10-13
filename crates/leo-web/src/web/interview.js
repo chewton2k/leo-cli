@@ -60,6 +60,22 @@
     }
     return [...groups.values()];
   }
+  function resultCases(checks = []) {
+    const counts = { test: 0, answer: 0, section: 0 };
+    return (checks || []).map((c) => {
+      const group = c.kind === 'test' ? 'test' : c.kind === 'section' ? 'section' : 'answer';
+      counts[group] += 1;
+      const n = counts[group];
+      const hidden = group === 'test' && c.label === 'Hidden test';
+      const name = group === 'test' ? `Case ${n}` : group === 'answer' ? `Answer ${n}` : String(c.label || `Part ${n}`);
+      const title = group === 'test' ? `Case ${n}${hidden ? ' · hidden test' : ''}` : String(c.label || name);
+      return { id: String(c.id), group, name, title, pass: Boolean(c.pass), hidden, input: group === 'test' && !hidden ? String(c.label || '') : '', yours: String(c.given || ''), expected: String(c.expected || '') };
+    });
+  }
+  function pickCase(cases, wanted) {
+    if (cases.some((c) => c.id === wanted)) return wanted;
+    return (cases.find((c) => !c.pass) || cases[0] || { id: '' }).id;
+  }
   function reviewNote(attempt) {
     const lines = [];
     const summary = checkSummary(attempt.checks);
@@ -210,5 +226,5 @@
       storage.setItem('leo-interview-drafts', JSON.stringify(drafts));
     } catch (e) {}
   }
-  root.leoInterview = { PRESETS, preset, framework, preparation, workspace, cleanValues, sameValue, checkSummary, reviewNote, hasWork, codeEdit, point, validBoard, boardSvg, fitBoard, moveShape, BOARD_LIMIT, progress, agenda, keepDraft, readDraft, clearDraft, MOST_SHAPES, MOST_POINTS, MOST_ANSWER, MOST_PROBLEMS };
+  root.leoInterview = { PRESETS, preset, framework, preparation, workspace, cleanValues, sameValue, checkSummary, resultCases, pickCase, reviewNote, hasWork, codeEdit, point, validBoard, boardSvg, fitBoard, moveShape, BOARD_LIMIT, progress, agenda, keepDraft, readDraft, clearDraft, MOST_SHAPES, MOST_POINTS, MOST_ANSWER, MOST_PROBLEMS };
 })(typeof window !== 'undefined' ? window : globalThis);

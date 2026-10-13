@@ -102,6 +102,7 @@ function drawInterview(session) {
   drawInterviewSchedule(session);
   drawInterviewChecks(session);
   drawInterviewResults(session);
+  wireInterviewResults(session);
   loadInterviewKey(session);
   const answer = $('#interview-answer');
   if (answer) {
@@ -740,7 +741,7 @@ async function gradeAndReview(session, attempt, board) {
       });
     } catch (e) {
       if (e instanceof Locked) throw e;
-      session.gradeError = e.message;
+      session.gradeError = { attempt, message: e.message };
     } finally {
       session.grading = '';
       if (interviewHere(session)) { drawInterviewResults(session); drawInterviewProgress(session); }
@@ -925,21 +926,93 @@ function drawInterviewChecks(session) {
 
 const VERDICT = { met: 'Met', partly: 'Partly', missed: 'Missed' };
 
+function interviewResultAttempt(session) {
+  const c = session.item.challenge;
+  return c ? session.item.attempts.find((a) => a.id === session.latest && a.challenge.id === c.id) || null : null;
+}
+
+function interviewCaseDetail(chosen) {
+  if (!chosen) return '';
+  const status = `<span class="chip interview-tally ${chosen.pass ? 'good' : 'bad'}">${chosen.pass ? ICON.check : ICON.close}${chosen.pass ? 'Passed' : 'Failed'}</span>`;
+  const block = (label, text, empty) => `<div class="interview-io"><span class="set-label">${label}</span>${text ? `<pre class="interview-output">${esc(text)}</pre>` : `<p class="hint">${empty}</p>`}</div>`;
+  const body = chosen.group === 'section'
+    ? `<p class="hint">${chosen.pass ? 'Your answer covers this part.' : 'This part was not found in your answer. A strong answer covers it.'}</p>`
+    : `${chosen.input ? block('Input', chosen.input, '') : ''}<div class="interview-io-pair">${block(chosen.group === 'test' ? 'Your output' : 'Your answer', chosen.yours, chosen.group === 'test' ? 'Nothing was returned.' : 'Not answered.')}${block(chosen.group === 'test' ? 'Expected output' : 'Expected answer', chosen.expected, 'Not given.')}</div>`;
+  return `<div class="interview-case-head"><b>${esc(chosen.title)}</b>${status}</div>${body}${chosen.pass ? '' : `<button class="link-btn" data-interview="check-wrong" data-check="${esc(chosen.id)}">This check looks wrong</button>`}`;
+}
+
 function drawInterviewResults(session) {
   if (!interviewHere(session)) return;
   const box = $('#interview-results');
-  const c = session.item.challenge;
-  if (!box || !c) return;
-  const attempt = session.item.attempts.find((a) => a.id === session.latest && a.challenge.id === c.id);
+  if (!box || !session.item.challenge) return;
+  const attempt = interviewResultAttempt(session);
   if (!attempt) { box.innerHTML = ''; return; }
-  const summary = interviews.checkSummary(attempt.checks);
-  const misses = (attempt.checks || []).filter((x) => !x.pass);
+  const cases = interviews.resultCases(attempt.checks);
+  if (session.resultCase?.attempt !== attempt.id) session.resultCase = { attempt: attempt.id, check: '' };
+  session.resultCase.check = interviews.pickCase(cases, session.resultCase.check);
+  const chosen = cases.find((x) => x.id === session.resultCase.check);
+  const passed = cases.filter((x) => x.pass).length;
+  const failed = cases.length - passed;
+  const groups = interviews.checkSummary(attempt.checks).map((g) => `${g.pass}/${g.total} ${g.name}`).join(' · ');
   const grade = attempt.grade;
+  const counts = grade ? ['met', 'partly', 'missed'].map((v) => [v, grade.criteria.filter((x) => x.verdict === v).length]).filter(([, n]) => n) : [];
+  const open = session.reviewOpen?.attempt === attempt.id && session.reviewOpen.open;
+  const gradeError = session.gradeError?.attempt === attempt.id ? session.gradeError.message : '';
+  const review = grade
+    ? `<div class="interview-review"><h3>Quick review</h3>${counts.length ? `<div class="pick-chips">${counts.map(([v, n]) => `<span class="chip interview-tally ${v}">${n} ${VERDICT[v].toLowerCase()}</span>`).join('')}</div>` : ''}${grade.overall ? `<p>${esc(grade.overall)}</p>` : ''}<details class="source-more interview-review-more"${open ? ' open' : ''}><summary>${ICON.chevron}<span>Feedback by criterion · ${grade.criteria.length}</span></summary><ul class="interview-verdicts">${grade.criteria.map((v) => `<li class="${esc(v.verdict)}"><span class="chip">${VERDICT[v.verdict] || esc(v.verdict)}</span><span><b>${esc(v.text)}</b><span class="hint">${esc(v.why)}</span></span></li>`).join('')}</ul></details></div>`
+    : session.grading === attempt.id ? '<p class="hint" role="status">Quick review in progress…</p>' : gradeError ? `<p class="hint">${esc(gradeError)}</p>` : '';
   box.innerHTML = `<div class="set-card interview-result"><div class="interview-toolbar"><h3>Your result</h3><span class="hint">${new Date(attempt.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span></div>
-    ${summary.length ? `<div class="pick-chips">${summary.map((g) => `<span class="chip${g.pass === g.total ? ' accent' : ''}">${g.pass}/${g.total} ${esc(g.name)}</span>`).join('')}</div>` : ''}
-    ${misses.length ? `<ul class="interview-misses">${misses.slice(0, 12).map((x) => `<li><span class="interview-mark">${ICON.close}</span><span class="grow"><b>${esc(x.label)}</b>${x.kind !== 'section' ? `<span class="hint">${x.given ? `Yours: ${esc(x.given)} · ` : ''}Expected: ${esc(x.expected)}</span>` : '<span class="hint">Not found in your answer</span>'}</span><button class="link-btn" data-interview="check-wrong" data-check="${esc(x.id)}">This check looks wrong</button></li>`).join('')}</ul>` : summary.length ? '<p class="hint">Every automatic check passed.</p>' : ''}
-    ${grade ? `<h3>Quick review</h3><ul class="interview-verdicts">${grade.criteria.map((v) => `<li class="${esc(v.verdict)}"><span class="chip">${VERDICT[v.verdict] || esc(v.verdict)}</span><span><b>${esc(v.text)}</b><span class="hint">${esc(v.why)}</span></span></li>`).join('')}</ul>${grade.overall ? `<p>${esc(grade.overall)}</p>` : ''}` : session.grading === attempt.id ? '<p class="hint" role="status">Quick review in progress…</p>' : session.gradeError ? `<p class="hint">${esc(session.gradeError)}</p>` : ''}
+    ${cases.length ? `<div class="interview-result-summary"><span class="chip interview-tally good">${ICON.check}${passed} passed</span>${failed ? `<span class="chip interview-tally bad">${ICON.close}${failed} failed</span>` : ''}<span class="hint">${esc(groups)}</span></div>
+    <div class="interview-cases" role="tablist" aria-label="Checked cases">${cases.map((x) => { const on = x.id === chosen.id; return `<button class="pick-chip ${x.pass ? 'pass' : 'fail'}${on ? ' on' : ''}" role="tab" id="interview-case-${esc(x.id)}" aria-controls="interview-case" aria-selected="${on}" tabindex="${on ? 0 : -1}" aria-label="${esc(x.name)}, ${x.pass ? 'passed' : 'failed'}" data-interview="result-case" data-check="${esc(x.id)}"><span class="interview-mark">${x.pass ? ICON.check : ICON.close}</span><span>${esc(x.name)}</span></button>`; }).join('')}</div>
+    <div class="interview-case" id="interview-case" role="tabpanel" aria-labelledby="interview-case-${esc(chosen.id)}">${interviewCaseDetail(chosen)}</div>` : ''}
+    ${review}
     <p class="hint">Felix’s full review follows in the chat. You can keep working or start the next problem.</p></div>`;
+}
+
+function chooseInterviewCase(session, check, focus = false) {
+  const attempt = interviewResultAttempt(session);
+  const box = $('#interview-results');
+  if (!attempt || !box) return;
+  const cases = interviews.resultCases(attempt.checks);
+  const chosen = cases.find((x) => x.id === check);
+  if (!chosen) return;
+  session.resultCase = { attempt: attempt.id, check: chosen.id };
+  let picked = null;
+  box.querySelectorAll('[data-interview="result-case"]').forEach((b) => {
+    const on = b.dataset.check === chosen.id;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-selected', String(on));
+    b.tabIndex = on ? 0 : -1;
+    if (on) picked = b;
+  });
+  const panel = $('#interview-case');
+  panel.innerHTML = interviewCaseDetail(chosen);
+  panel.setAttribute('aria-labelledby', `interview-case-${chosen.id}`);
+  if (picked) {
+    const strip = picked.parentElement;
+    if (picked.offsetLeft < strip.scrollLeft) strip.scrollLeft = picked.offsetLeft;
+    else if (picked.offsetLeft + picked.offsetWidth > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = picked.offsetLeft + picked.offsetWidth - strip.clientWidth;
+    if (focus) picked.focus({ preventScroll: true });
+  }
+}
+
+function wireInterviewResults(session) {
+  const box = $('#interview-results');
+  if (!box) return;
+  box.addEventListener('keydown', (e) => {
+    const chip = e.target.closest('[data-interview="result-case"]');
+    if (!chip || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+    const chips = [...box.querySelectorAll('[data-interview="result-case"]')];
+    const at = chips.indexOf(chip);
+    const next = e.key === 'Home' ? 0 : e.key === 'End' ? chips.length - 1 : (at + (e.key === 'ArrowRight' ? 1 : -1) + chips.length) % chips.length;
+    e.preventDefault();
+    chooseInterviewCase(session, chips[next].dataset.check, true);
+  });
+  box.addEventListener('toggle', (e) => {
+    if (!e.target.classList?.contains('interview-review-more')) return;
+    const attempt = interviewResultAttempt(session);
+    if (attempt) session.reviewOpen = { attempt: attempt.id, open: e.target.open };
+  }, true);
 }
 
 function interviewForm(track, id = felix.newId(), item = null) {
@@ -1037,11 +1110,12 @@ async function interviewAction(el) {
     drawInterviewChecks(session);
     return;
   }
+  if (action === 'result-case') return chooseInterviewCase(session, el.dataset.check);
   if (action === 'check-wrong') {
     const attempt = session.item.attempts.find((a) => a.id === session.latest);
     const check = attempt?.checks?.find((x) => x.id === el.dataset.check);
     if (!check) return;
-    return talkInterview(session, `I think this automatic check might be wrong: “${check.label}”${check.expected ? ` expects ${check.expected}` : ''}${check.given ? `, and I gave ${check.given}` : ''}. Can you check it?`, [], `The user disputes one automatic check from their submitted attempt ${attempt.id}. Read the attempt with interview_attempt, work the check out carefully yourself and say plainly whether the expected result was right. The check was written by an AI in advance and can be wrong. Do not reveal the full solution unless asked.`);
+    return talkInterview(session, `I think this automatic check might be wrong: “${check.label}”${check.expected ? ` expects ${check.expected}` : ''}${check.given ? `, and I gave ${check.given}` : ''}. Can you check it?`, [], `The user disputes one automatic check from their submitted attempt ${attempt.id}: check ${check.id} (${check.kind}) “${check.label}”, expected ${check.expected || 'not given'}, the user gave ${check.given || 'nothing'}. Read the attempt with interview_attempt, work that check out carefully yourself and say plainly whether the expected result was right. The check was written by an AI in advance and can be wrong. Do not reveal the full solution unless asked.`);
   }
   if (action === 'review-attempt') {
     const attempt = session.item.attempts.find((a) => a.id === el.dataset.id);

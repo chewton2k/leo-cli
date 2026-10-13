@@ -260,3 +260,28 @@ test('Enter keeps language-aware continuation and exits multiline delimiters in 
     assert.equal(edit.value.slice(edit.value.lastIndexOf('\n') + 1), '', language);
   }
 });
+
+test('submission results become named cases, and the first failure is chosen unless one is already chosen', () => {
+  const checks = [
+    { id: 't1', kind: 'test', label: 'pair_sum([2,3], 5)', pass: true, given: '[0,1]', expected: '[0,1]' },
+    { id: 't2', kind: 'test', label: 'Hidden test', pass: false, given: 'Error: index out of range', expected: '[]' },
+    { id: 'a1', kind: 'value', label: 'Expected payout ($)', pass: false, given: '3', expected: '$3.5' },
+    { id: 'a2', kind: 'choice', label: 'Which rolls to keep?', pass: true, given: 'Keep 4 or higher', expected: 'Keep 4 or higher' },
+    { id: 's1', kind: 'section', label: 'Requirements', pass: false, given: '', expected: '' },
+  ];
+  const cases = I.resultCases(checks);
+  assert.deepEqual(cases.map((c) => c.name), ['Case 1', 'Case 2', 'Answer 1', 'Answer 2', 'Requirements']);
+  assert.equal(cases[0].input, 'pair_sum([2,3], 5)');
+  assert.equal(cases[1].input, '', 'a hidden test has no input to show');
+  assert.equal(cases[1].title, 'Case 2 · hidden test');
+  assert.equal(cases[2].title, 'Expected payout ($)');
+  assert.deepEqual([cases[2].yours, cases[2].expected], ['3', '$3.5']);
+  assert.equal(cases[4].group, 'section');
+  assert.equal(I.pickCase(cases, ''), 't2');
+  assert.equal(I.pickCase(cases, 'a2'), 'a2', 'a chosen case stays chosen');
+  assert.equal(I.pickCase(cases, 'gone'), 't2');
+  const passed = I.resultCases(checks.map((c) => ({ ...c, pass: true })));
+  assert.equal(I.pickCase(passed, ''), 't1');
+  assert.equal(I.pickCase([], 'x'), '');
+  assert.deepEqual(I.resultCases(undefined), []);
+});

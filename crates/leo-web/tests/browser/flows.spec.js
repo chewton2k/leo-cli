@@ -1658,8 +1658,8 @@ test.describe('large libraries', () => {
 });
 
 test.describe('readability', () => {
-  async function lowContrast(page) {
-    return page.evaluate(() => {
+  async function lowContrast(page, within = 'body') {
+    return page.evaluate((within) => {
       const parse = (s) => {
         const m = /rgba?\(([^)]+)\)/.exec(s || '');
         if (!m) return [0, 0, 0, 0];
@@ -1695,7 +1695,7 @@ test.describe('readability', () => {
         return o;
       };
       const found = [];
-      for (const el of document.querySelectorAll('body *')) {
+      for (const el of document.querySelectorAll(`${within} *`)) {
         if (![...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim())) continue;
         if (el.closest('[disabled], [aria-disabled="true"], .skeleton, canvas, svg, option, select, [hidden]')) continue;
         const style = getComputedStyle(el);
@@ -1710,10 +1710,21 @@ test.describe('readability', () => {
         if (ratio < 3) found.push(`${ratio.toFixed(2)} ${el.tagName.toLowerCase()}.${[...el.classList].join('.')} "${el.textContent.trim().slice(0, 40)}"`);
       }
       return [...new Set(found)];
-    });
+    }, within);
   }
 
   for (const scheme of ['light', 'dark']) {
+    test(`interview submission results read clearly in ${scheme} mode`, async ({ page }) => {
+      await page.emulateMedia({ colorScheme: scheme });
+      await practiceWithResults(page, `readable-results-${scheme}`);
+      await page.locator('#interview-results').scrollIntoViewIfNeeded();
+      await page.locator('.interview-review-more > summary').click();
+      await page.waitForTimeout(300);
+      expect(await lowContrast(page, '#interview-results')).toEqual([]);
+      await page.locator('[data-interview="result-case"]').first().click();
+      expect(await lowContrast(page, '#interview-results')).toEqual([]);
+    });
+
     test(`filled danger controls read clearly in ${scheme} mode`, async ({ page }) => {
       await page.emulateMedia({ colorScheme: scheme });
       const tag = `${test.info().project.name}-${scheme}-${Date.now()}`;
@@ -4820,3 +4831,160 @@ test('interview attempts and late feedback stay under their own problem while pr
   await expect(attempts.locator('.interview-attempt')).toHaveCount(2);
   await expect(attempts).not.toContainText('Late feedback for problem 3');
 });
+
+test('submission results show a compact case strip with one detail panel that keeps its place', async ({ page }) => {
+  const id = 'results-cases-01';
+  const challenge = (n) => ({ id: `results-problem-0${n}`, title: `Results problem ${n}`, question: 'Return the sum of the list.', minutes: 20, skills: ['Approach', 'Correctness'], origin: 'generated', sources: [], coding: { language: 'Go', starter: 'func solve(nums []int) int {\n}', difficulty: 'easy', examples: [{ input: '[1,2]', output: '3' }], constraints: ['n <= 10'] } });
+  const first = { challenge: challenge(1), workspace: { answer: 'func solve(nums []int) int {\n}', reasoning: '', board: [] } };
+  const second = { challenge: challenge(2), workspace: { answer: 'func solve(nums []int) int {\n}', reasoning: '', board: [] } };
+  const item = { id, revision: 1, framework: { title: 'Results practice', track: 'coding', company: '', role: '', language: 'Go', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach', 'Correctness'], wants: '' }, challenge: first.challenge, workspace: first.workspace, problems: [first, second], attempts: [], schedule: [] };
+  const long = Array.from({ length: 400 }, (_, i) => `line ${i} of a very long output that keeps going`).join('\n');
+  const mixed = [
+    ...Array.from({ length: 10 }, (_, i) => ({ id: `t${i + 1}`, kind: 'test', label: i < 3 ? `solve([${i}, ${i + 1}])` : 'Hidden test', pass: ![2, 5, 7].includes(i), given: i === 5 ? long : String(2 * i + 1), expected: String(2 * i + 1) })),
+    { id: 'a1', kind: 'value', label: 'Time complexity in n', pass: false, given: 'n^2', expected: 'n' },
+    { id: 's1', kind: 'section', label: 'Edge cases', pass: true, given: '', expected: '' },
+  ];
+  let checks = mixed;
+  let gradeRelease;
+  const asked = [];
+  await page.route('**/api/interviews', (route) => route.fulfill({ json: [] }));
+  await page.route(`**/api/interviews/${id}/key?*`, (route) => route.fulfill({ json: { status: 'ready', key: { entry: 'solve', tests: [], hidden_tests: 10, asks: [], sections: [], criteria: 2 } } }));
+  await page.route(`**/api/interviews/${id}/grade`, async (route) => {
+    const attempt = route.request().postDataJSON().attempt;
+    await new Promise((resolve) => { gradeRelease = resolve; });
+    const found = item.attempts.find((a) => a.id === attempt);
+    found.grade = { criteria: [{ id: 'c1', text: 'Handles an empty list', verdict: 'missed', why: 'Returns garbage for [].' }, { id: 'c2', text: 'Explains the complexity', verdict: 'met', why: 'Says linear.' }], overall: 'A sound start; cover the empty list.', at: new Date().toISOString() };
+    item.revision++;
+    await route.fulfill({ json: item });
+  });
+  await page.route(`**/api/interviews/${id}`, async (route) => {
+    if (route.request().method() === 'PUT') {
+      const change = route.request().postDataJSON();
+      if (change.action === 'submit') item.attempts.push({ id: change.attempt, challenge: structuredClone(item.challenge), workspace: structuredClone(change.workspace), at: new Date().toISOString(), feedback: null, checks: structuredClone(checks) });
+      if (change.action === 'select') {
+        const problem = item.problems.find((p) => p.challenge.id === change.challenge);
+        item.challenge = problem.challenge;
+        item.workspace = problem.workspace;
+      }
+      if (change.action === 'workspace') item.workspace = change.workspace;
+      item.revision++;
+    }
+    await route.fulfill({ json: item });
+  });
+  await page.route('**/api/chats/*', (route) => route.request().method() === 'GET' ? route.fulfill({ status: 404, json: { error: 'No conversation yet' } }) : route.fulfill({ json: { id, title: 'Results practice', updated_at: new Date().toISOString(), count: 2, named: true } }));
+  await page.route('**/api/chat', (route) => {
+    asked.push(route.request().postDataJSON());
+    return route.fulfill({ contentType: 'application/x-ndjson', body: JSON.stringify({ t: 'Noted.' }) + '\n' + JSON.stringify({ done: true }) + '\n' });
+  });
+  await page.goto(`/#/interviews/${id}`);
+  const area = page.locator('#interview-answer');
+  await area.fill('func solve(nums []int) int {\n\ttotal := 0\n\treturn total\n}');
+  await page.locator('[data-interview="submit"]').click();
+  const results = page.locator('#interview-results');
+  await expect(results.locator('.interview-result-summary')).toContainText('8 passed');
+  await expect(results.locator('.interview-result-summary')).toContainText('4 failed');
+  const chips = results.locator('[data-interview="result-case"]');
+  await expect(chips).toHaveCount(12);
+  const strip = await results.locator('.interview-cases').evaluate((el) => ({ tops: [...el.children].map((c) => c.offsetTop), scroll: el.scrollWidth, width: el.clientWidth }));
+  expect(new Set(strip.tops).size).toBe(1);
+  expect(strip.scroll).toBeGreaterThan(strip.width);
+  await expect(chips.nth(2)).toHaveAttribute('aria-selected', 'true');
+  const panel = results.locator('#interview-case');
+  await expect(panel).toContainText('Case 3');
+  await expect(panel).toContainText('Failed');
+  await expect(panel.locator('.interview-io').first()).toContainText('solve([2, 3])');
+  await expect(panel).toContainText('Your output');
+  await expect(panel).toContainText('Expected output');
+  await expect(panel.locator('[data-interview="check-wrong"]')).toBeVisible();
+  await results.locator('.interview-cases').scrollIntoViewIfNeeded();
+  const before = await page.evaluate(() => ({ y: scrollY, answer: document.querySelector('#interview-answer').value }));
+  await chips.nth(0).click();
+  await expect(panel).toContainText('Passed');
+  await expect(panel.locator('[data-interview="check-wrong"]')).toHaveCount(0);
+  await chips.nth(5).click();
+  await expect(panel).toContainText('hidden test');
+  await expect(panel.getByText('Input', { exact: true })).toHaveCount(0);
+  const output = await panel.locator('.interview-output').first().evaluate((el) => ({ height: el.clientHeight, scroll: el.scrollHeight, wraps: getComputedStyle(el).whiteSpace }));
+  expect(output.height).toBeLessThanOrEqual(170);
+  expect(output.scroll).toBeGreaterThan(output.height);
+  expect(output.wraps).toBe('pre-wrap');
+  await chips.nth(10).click();
+  await expect(panel).toContainText('Time complexity in n');
+  await expect(panel).toContainText('Your answer');
+  await chips.nth(11).click();
+  await expect(panel).toContainText('Your answer covers this part.');
+  await chips.nth(10).focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(chips.nth(11)).toBeFocused();
+  await expect(chips.nth(11)).toHaveAttribute('aria-selected', 'true');
+  await page.keyboard.press('Home');
+  await expect(chips.nth(0)).toBeFocused();
+  const after = await page.evaluate(() => ({ y: scrollY, answer: document.querySelector('#interview-answer').value }));
+  expect(after.answer).toBe(before.answer);
+  expect(Math.abs(after.y - before.y)).toBeLessThan(2);
+  await chips.nth(7).click();
+  await expect.poll(() => typeof gradeRelease).toBe('function');
+  await expect(results).toContainText('Quick review in progress');
+  gradeRelease();
+  await expect(results.locator('.interview-review')).toContainText('A sound start');
+  await expect(results.locator('.interview-review .interview-tally')).toHaveText(['1 met', '1 missed']);
+  await expect(results.locator('.interview-review-more')).not.toHaveAttribute('open', '');
+  await expect(results.getByText('Returns garbage for [].')).toBeHidden();
+  await expect(chips.nth(7)).toHaveAttribute('aria-selected', 'true');
+  await expect(panel).toContainText('Case 8');
+  await expect.poll(() => asked.length).toBe(1);
+  await expect(page.locator('.msg.leo').last()).toContainText('Noted.');
+  await page.locator('[data-chat="close"]').click();
+  await results.locator('.interview-review-more > summary').click();
+  await expect(results.getByText('Returns garbage for [].')).toBeVisible();
+  await expect(chips.nth(7)).toHaveAttribute('aria-selected', 'true');
+  await chips.nth(2).click();
+  await panel.locator('[data-interview="check-wrong"]').click();
+  await expect.poll(() => asked.length).toBe(2);
+  expect(asked[1].messages.at(-1).text).toContain('solve([2, 3])');
+  await expect(page.locator('.msg.leo').last()).toContainText('Noted.');
+  await page.locator('[data-chat="close"]').click();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+  await page.getByRole('button', { name: 'Problem 2', exact: true }).click();
+  await expect(results.locator('.interview-result')).toHaveCount(0);
+  await page.getByRole('button', { name: /^Problem 1(?: · Submitted)?$/ }).click();
+  await expect(results.locator('[data-interview="result-case"]')).toHaveCount(12);
+  checks = mixed.map((c) => ({ ...c, pass: true }));
+  await area.fill('func solve(nums []int) int {\n\treturn 0\n}');
+  await page.locator('[data-interview="submit"]').click();
+  await expect(results.locator('.interview-result-summary')).toContainText('12 passed');
+  await expect(results.locator('.interview-result-summary')).not.toContainText('failed');
+  await expect(results.locator('[data-interview="result-case"]').first()).toHaveAttribute('aria-selected', 'true');
+  await expect(panel).toContainText('Passed');
+  await expect(panel.locator('[data-interview="check-wrong"]')).toHaveCount(0);
+  gradeRelease();
+});
+
+async function practiceWithResults(page, id) {
+  const challenge = { id: `${id}-problem`, title: 'Two sum', question: 'Return two indices.', minutes: 20, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'Go', starter: 'func twoSum(nums []int, target int) []int {\n}', difficulty: 'easy', examples: [{ input: '[2,7], 9', output: '[0,1]' }], constraints: ['n <= 100'] } };
+  const workspace = { answer: 'func twoSum(nums []int, target int) []int {\n}', reasoning: '', board: [] };
+  const item = { id, revision: 1, framework: { title: 'Results', track: 'coding', company: '', role: '', language: 'Go', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace, problems: [{ challenge, workspace }], attempts: [], schedule: [] };
+  const checks = [{ id: 't1', kind: 'test', label: 'twoSum([2, 7], 9)', pass: true, given: '[0,1]', expected: '[0,1]' }, { id: 't2', kind: 'test', label: 'Hidden test', pass: false, given: 'Error: index out of range', expected: '[]' }, { id: 'a1', kind: 'value', label: 'Time complexity in n', pass: false, given: 'n^2', expected: 'n' }, { id: 's1', kind: 'section', label: 'Edge cases', pass: true, given: '', expected: '' }];
+  await page.route('**/api/interviews', (route) => route.fulfill({ json: [] }));
+  await page.route(`**/api/interviews/${id}/key?*`, (route) => route.fulfill({ json: { status: 'ready', key: { entry: 'twoSum', tests: [], hidden_tests: 1, asks: [], sections: [], criteria: 3 } } }));
+  await page.route(`**/api/interviews/${id}/grade`, (route) => {
+    item.attempts.at(-1).grade = { criteria: [{ id: 'c1', text: 'Handles duplicates', verdict: 'partly', why: 'Misses equal pairs.' }, { id: 'c2', text: 'States complexity', verdict: 'met', why: 'Linear.' }, { id: 'c3', text: 'Explains the plan', verdict: 'missed', why: 'No plan given.' }], overall: 'Correct idea; explain the plan first.', at: new Date().toISOString() };
+    return route.fulfill({ json: item });
+  });
+  await page.route(`**/api/interviews/${id}`, (route) => {
+    if (route.request().method() === 'PUT') {
+      const change = route.request().postDataJSON();
+      if (change.action === 'submit') item.attempts.push({ id: change.attempt, challenge, workspace: change.workspace, at: new Date().toISOString(), feedback: null, checks });
+      item.revision++;
+    }
+    return route.fulfill({ json: item });
+  });
+  await page.route('**/api/chats/*', (route) => route.request().method() === 'GET' ? route.fulfill({ status: 404, json: { error: 'No conversation yet' } }) : route.fulfill({ json: { id, title: 'Results', updated_at: new Date().toISOString(), count: 2, named: true } }));
+  await page.route('**/api/chat', (route) => route.fulfill({ contentType: 'application/x-ndjson', body: JSON.stringify({ t: 'Here is my review.' }) + '\n' + JSON.stringify({ done: true }) + '\n' }));
+  await page.goto(`/#/interviews/${id}`);
+  await page.locator('#interview-answer').fill('func twoSum(nums []int, target int) []int {\n\treturn nil\n}');
+  await page.locator('[data-interview="submit"]').click();
+  await expect(page.locator('.interview-review')).toBeVisible();
+  await expect(page.locator('.msg.leo').last()).toContainText('Here is my review.');
+  await page.locator('[data-chat="close"]').click();
+}
