@@ -154,6 +154,21 @@ seer, meaning, web, room).
   answers it reuses only the system prompt (measured: 10.5k of 31.8k tokens). Note bodies are line-numbered; citations `[n2 L14-18]`
   and `[f1 p4]` become chips. Citations never go into notes
   (`tools::linked` → `[[Title]]`).
+- Warm sessions (`warm.rs`, 2026-10-13): one slot for all of leo. After an
+  answer, its Claude Code / Codex / API session is kept (the previous one is
+  stopped), so at most one idle session exists. The next answer continues it
+  only when it is the same chat, the history is unchanged except the reply and
+  one new message (`Warm::continues`: `seen`, `history_of`), the style, access,
+  web and interview settings match and `config.toml` has not changed
+  (`config_stamp`; Settings changes also `clear` it). A continued answer sends
+  `chat::follow_up`: documents and notes not yet read in this session
+  (`warm::renumber` keeps each note's `n` number, marks changed ones
+  `updated`), the message and `<today>`; the session and its cache hold the
+  rest. A mismatch stops the warm session before a new one starts; a failed
+  warm answer falls back to a fresh one with full context. Practice marking
+  never uses the slot. Idle 10 minutes (`IDLE`, checked every 30 s) or past
+  `limit` (2 x room chars) stops it. Measured with Claude Code: first answer
+  4.7 s, follow-ups 2.4 s with 99% of the prompt cached, one process.
 - Long chats: `turns_for(room)` keeps recent turns verbatim, older ones go in
   `<earlier_in_this_chat>` with a background summary (`MEMORY_EVERY`).
   History carries who wrote each answer, what Felix did, cards and passages,

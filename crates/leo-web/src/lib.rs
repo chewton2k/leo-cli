@@ -31,6 +31,7 @@ mod token;
 pub mod tools;
 pub mod tunnel;
 pub mod vectors;
+mod warm;
 
 #[cfg(test)]
 use std::sync::MutexGuard;
@@ -191,6 +192,7 @@ struct AppState {
     quick: Option<Writer>,
     python: Option<Python>,
     python_fetch: Arc<Mutex<Option<String>>>,
+    warm: Arc<warm::Slot>,
     chat: Option<Streamer>,
     settings: Option<Arc<dyn SettingsApi>>,
     importer: Option<Importer>,
@@ -440,6 +442,7 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
         quick,
         python,
         python_fetch: Default::default(),
+        warm: Default::default(),
         chat,
         settings,
         importer,
@@ -466,6 +469,7 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
         vectors,
     };
     tokio::spawn(keep_graph_current(state.clone()));
+    tokio::spawn(stop_idle_sessions(Arc::clone(&state.warm)));
     let app = router(state);
 
     let tunnel = if !options.local {
@@ -765,6 +769,15 @@ fn router(state: AppState) -> Router {
         .layer(axum::middleware::from_fn(security_headers))
         .layer(axum::middleware::from_fn(note_peer))
         .with_state(state)
+}
+
+async fn stop_idle_sessions(warm: Arc<warm::Slot>) {
+    let mut every = tokio::time::interval(std::time::Duration::from_secs(30));
+    loop {
+        every.tick().await;
+        let warm = Arc::clone(&warm);
+        let _ = tokio::task::spawn_blocking(move || warm.tidy()).await;
+    }
 }
 
 fn store_now<R>(

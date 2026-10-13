@@ -51,8 +51,10 @@ pub(crate) async fn change_setting(
         Err(code) => return code.into_response(),
     };
     let secure = secure_request(&headers, peer);
+    let warm = std::sync::Arc::clone(&state.warm);
     let done = tokio::task::spawn_blocking(move || {
         settings.apply(&change, secure).map(|message| {
+            warm.clear();
             let mut page = settings.describe(&notes_dir);
             page["secure"] = serde_json::Value::Bool(secure);
             (message, page)

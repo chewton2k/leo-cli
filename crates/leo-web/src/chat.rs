@@ -845,6 +845,25 @@ pub fn prompt_within(
 
 pub const REPLY_LINE: &str = "Reply as Felix to the user's last message.";
 
+pub fn follow_up(
+    documents: &[(String, String)],
+    notes: &str,
+    message: &str,
+    room: usize,
+) -> String {
+    let zone = iana_time_zone::get_timezone().ok();
+    let mut user = documents_within(documents, scaled(DOCS_CHARS, room));
+    if !notes.trim().is_empty() {
+        user.push_str("<more_notes>\nNotes for this message that you have not read yet in this chat. Notes given earlier in this chat still apply.\n");
+        user.push_str(notes);
+        user.push_str("</more_notes>\n\n");
+    }
+    user.push_str(&format!("User: {}\n\n", clip(message.trim(), TURN_CHARS)));
+    user.push_str(&today_line(chrono::Local::now(), zone.as_deref()));
+    user.push_str(REPLY_LINE);
+    user
+}
+
 pub fn before_reply(user: &str, block: &str) -> String {
     match user.rfind("<today>") {
         Some(at) => format!("{}{}\n{}", &user[..at], block, &user[at..]),

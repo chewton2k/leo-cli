@@ -69,6 +69,7 @@ fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<Strin
         quick: None,
         python: None,
         python_fetch: Default::default(),
+        warm: Default::default(),
         chat: None,
         settings: None,
         importer: None,

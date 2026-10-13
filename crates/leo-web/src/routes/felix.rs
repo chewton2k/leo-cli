@@ -267,9 +267,28 @@ pub(crate) async fn delete_chat(
     }
 }
 
+struct Continued {
+    warm: crate::warm::Warm,
+    text: String,
+    sources: Vec<chat::SourceRef>,
+    notes: std::collections::BTreeMap<String, u64>,
+}
+
+struct Remember {
+    key: u64,
+    chat: Option<String>,
+    seen: usize,
+    history: u64,
+    notes: std::collections::BTreeMap<String, u64>,
+    documents: std::collections::BTreeSet<u64>,
+    limit: usize,
+}
+
 struct Ask {
     system: String,
     conversation: String,
+    continued: Option<Continued>,
+    remember: Remember,
     sources: Vec<chat::SourceRef>,
     room: usize,
     access: tools::Access,
@@ -947,6 +966,8 @@ fn answer(
     let Ask {
         system,
         conversation,
+        continued,
+        remember,
         sources,
         room,
         access,
@@ -990,14 +1011,19 @@ fn answer(
     );
     let last = format!("{system}\n\n{}", tools::NO_MORE_TOOLS);
     let native = format!("{system}\n\n{}", tools::guidance_for(web_on, access));
-    let mut desk = tools::Desk::new(sources, room)
-        .with_web(web)
-        .with_access(access)
-        .with_documents(documents)
-        .with_captions(Arc::clone(&state.captions))
-        .with_meaning(state.meaning.clone(), Arc::clone(&state.vectors))
-        .with_reply(tx.clone())
-        .with_steer(steer);
+    let mut desk = tools::Desk::new(
+        continued
+            .as_ref()
+            .map_or_else(|| sources.clone(), |c| c.sources.clone()),
+        room,
+    )
+    .with_web(web)
+    .with_access(access)
+    .with_documents(documents)
+    .with_captions(Arc::clone(&state.captions))
+    .with_meaning(state.meaning.clone(), Arc::clone(&state.vectors))
+    .with_reply(tx.clone())
+    .with_steer(steer);
     desk.interview = interview.clone();
     desk.interview_problem = interview_problem;
     desk.session = session;
@@ -1006,6 +1032,70 @@ fn answer(
         specs.extend(tools::native_from(
             crate::interview_tools::SPECS.iter().copied(),
         ));
+    }
+    let keep = |talk: Box<dyn chat::Conversation>,
+                sent: usize,
+                sources: Vec<chat::SourceRef>,
+                notes: std::collections::BTreeMap<String, u64>,
+                documents: std::collections::BTreeSet<u64>| {
+        if let Some(chat) = &remember.chat {
+            state.warm.keep(crate::warm::Warm {
+                key: remember.key,
+                chat: chat.clone(),
+                seen: remember.seen,
+                history: remember.history,
+                sources,
+                notes,
+                documents,
+                sent,
+                limit: remember.limit,
+                talk,
+                used: std::time::Instant::now(),
+            });
+        }
+    };
+    if let Some(Continued {
+        warm,
+        text: follow,
+        notes,
+        ..
+    }) = continued
+    {
+        let crate::warm::Warm {
+            talk: mut warm_talk,
+            sent,
+            mut documents,
+            ..
+        } = warm;
+        let shown = std::cell::Cell::new(false);
+        let tried = if warm_talk.native() {
+            native_answer(state, warm_talk.as_mut(), &mut desk, &follow, &send, &shown)
+        } else {
+            text_answer(
+                state,
+                warm_talk.as_mut(),
+                &mut desk,
+                access,
+                &follow,
+                &send,
+                &shown,
+            )
+        };
+        match tried {
+            Ok(spent) => {
+                documents.extend(remember.documents.iter().copied());
+                let used = sent + follow.len() + said.borrow().len();
+                keep(warm_talk, used, desk.sources.clone(), notes, documents);
+                return Ok(finished(spent));
+            }
+            Err(_) => {
+                drop(warm_talk);
+                send(serde_json::json!({ "reset": true }));
+                desk.asked = 0;
+                desk.sources = sources.clone();
+                send(serde_json::json!({ "sources": sources }));
+            }
+        }
     }
     let chosen = state.converse.as_ref().and_then(|converse| {
         converse(
@@ -1040,7 +1130,17 @@ fn answer(
             )
         };
         match tried {
-            Ok(spent) => return Ok(finished(spent)),
+            Ok(spent) => {
+                let used = conversation.len() + said.borrow().len();
+                keep(
+                    talk,
+                    used,
+                    desk.sources.clone(),
+                    remember.notes.clone(),
+                    remember.documents.clone(),
+                );
+                return Ok(finished(spent));
+            }
             Err(_) => {
                 send(serde_json::json!({ "reset": true }));
                 desk.asked = 0;
@@ -1414,6 +1514,46 @@ pub(crate) async fn chat_reply(
         .interview_problem
         .clone()
         .filter(|_| interview.is_some());
+    let warm_chat = body
+        .chat
+        .clone()
+        .filter(|id| chats::valid_id(id) && !body.practice && state.converse.is_some());
+    let warm_key = crate::warm::hash_of(&(
+        mode,
+        format!("{access:?}"),
+        state.web.as_ref().is_some_and(|w| (w.needed)()),
+        interview.is_some(),
+        crate::warm::config_stamp(),
+    ));
+    let documents_seen: std::collections::BTreeSet<u64> =
+        documents.iter().map(crate::warm::hash_of).collect();
+    let remember = Remember {
+        key: warm_key,
+        chat: warm_chat.clone(),
+        seen: body.messages.len(),
+        history: crate::warm::history_of(&body.messages),
+        notes: crate::warm::fingerprints(&notes, &sources),
+        documents: documents_seen,
+        limit: (room * 2).min(chat::MOST_ROOM),
+    };
+    let mut continued = warm_chat
+        .as_deref()
+        .and_then(|id| state.warm.take(warm_key, id, &body.messages))
+        .map(|warm| {
+            let renumbered = crate::warm::renumber(&notes, &sources, &warm.sources, &warm.notes);
+            let fresh_documents: Vec<(String, String)> = documents
+                .iter()
+                .filter(|d| !warm.documents.contains(&crate::warm::hash_of(d)))
+                .cloned()
+                .collect();
+            let message = body.messages.last().map_or("", |t| t.text.as_str());
+            Continued {
+                text: chat::follow_up(&fresh_documents, &renumbered.text, message, room),
+                sources: renumbered.sources,
+                notes: renumbered.notes,
+                warm,
+            }
+        });
     if let Some(id) = &interview {
         let path = state.chats.clone();
         let wanted = id.clone();
@@ -1425,14 +1565,18 @@ pub(crate) async fn chat_reply(
             }) {
                 return (StatusCode::CONFLICT, Json(serde_json::json!({"error":"That practice problem is no longer here. Reopen your practice and choose a saved problem."}))).into_response();
             }
-            user = chat::before_reply(
-                &user,
-                &crate::interview::context_problem(&item, interview_problem.as_deref()),
-            );
+            let context = crate::interview::context_problem(&item, interview_problem.as_deref());
+            user = chat::before_reply(&user, &context);
+            if let Some(c) = continued.as_mut() {
+                c.text = chat::before_reply(&c.text, &context);
+            }
         }
     }
     if let Some(block) = body.selection.as_ref().and_then(chat::passage_block) {
         user = format!("{block}\n{user}");
+        if let Some(c) = continued.as_mut() {
+            c.text = format!("{block}\n{}", c.text);
+        }
     }
     if let (Some(id), Some(writer)) = (body.chat.clone(), state.graphs.writer()) {
         let from = memory
@@ -1465,12 +1609,16 @@ pub(crate) async fn chat_reply(
     let steer = state.steering.open();
     let _ = state.steering.set_access(steer.id(), access);
     let _ = tx.send(ndjson(serde_json::json!({ "answer": steer.id() })));
-    let _ = tx.send(ndjson(serde_json::json!({ "sources": sources })));
+    let _ = tx.send(ndjson(
+        serde_json::json!({ "sources": continued.as_ref().map_or(&sources, |c| &c.sources) }),
+    ));
     let worker = state.clone();
     tokio::task::spawn_blocking(move || {
         let ask = Ask {
             system,
             conversation: user,
+            continued,
+            remember,
             sources,
             room,
             access,

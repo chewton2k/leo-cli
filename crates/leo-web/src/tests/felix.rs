@@ -2261,3 +2261,153 @@ fn interview_problems_and_calendar_context_work_on_native_and_text_sessions() {
         assert_eq!(text, "Problem 2 is saved. Problem 1 is open again.");
     }
 }
+
+#[test]
+fn a_follow_up_in_the_same_chat_reuses_one_warm_session_and_sends_only_whats_new() {
+    struct Echo {
+        heard: Arc<Mutex<Vec<String>>>,
+        stopped: Arc<std::sync::atomic::AtomicUsize>,
+    }
+    impl chat::Conversation for Echo {
+        fn native(&self) -> bool {
+            true
+        }
+        fn say(&mut self, text: &str, exchange: chat::Exchange<'_>) -> anyhow::Result<chat::Reply> {
+            self.heard.lock().unwrap().push(text.to_string());
+            let reply = "Heaps keep the smallest key on top [n1].";
+            (exchange.piece)(reply);
+            Ok(chat::Reply::from(reply))
+        }
+    }
+    impl Drop for Echo {
+        fn drop(&mut self) {
+            self.stopped
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    let (mut state, _d, _) = state_with(&[("Heaps", "algo"), ("Graphs", "algo")]);
+    let heard = Arc::new(Mutex::new(Vec::new()));
+    let opened = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let stopped = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let (ears, opens, stops) = (
+        Arc::clone(&heard),
+        Arc::clone(&opened),
+        Arc::clone(&stopped),
+    );
+    state.converse = Some(Arc::new(
+        move |_: &chat::Instructions, _: &[chat::ToolSpec]| {
+            opens.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Some(Box::new(Echo {
+                heard: Arc::clone(&ears),
+                stopped: Arc::clone(&stops),
+            }) as Box<dyn chat::Conversation>)
+        },
+    ));
+    state.chat = Some(scripted(vec!["never used"]).0);
+    let ask = |chat: &str, messages: &[(&str, &str)], practice: bool| {
+        let body = chat::ChatBody {
+            messages: messages
+                .iter()
+                .map(|(role, text)| chat::Turn {
+                    role: role.to_string(),
+                    text: text.to_string(),
+                })
+                .collect(),
+            mode: None,
+            note: None,
+            refs: vec![],
+            chat: Some(chat.into()),
+            files: vec![],
+            access: None,
+            recent: vec![],
+            practice,
+            interview_problem: None,
+            mark: false,
+            selection: None,
+            session: None,
+        };
+        let text = run(async {
+            let response = chat_reply(State(state.clone()), Json(body)).await;
+            String::from_utf8(
+                axum::body::to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .unwrap()
+                    .to_vec(),
+            )
+            .unwrap()
+        });
+        text.lines()
+            .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap())
+            .collect::<Vec<_>>()
+    };
+    let alive = || {
+        opened.load(std::sync::atomic::Ordering::SeqCst)
+            - stopped.load(std::sync::atomic::Ordering::SeqCst)
+    };
+    let first = ask("warm-chat-0001", &[("user", "what is a heap?")], false);
+    assert!(first.iter().any(|l| l.get("done").is_some()));
+    assert_eq!(opened.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(alive(), 1, "the finished answer's session stays warm");
+    let second = ask(
+        "warm-chat-0001",
+        &[
+            ("user", "what is a heap?"),
+            ("assistant", "Heaps keep the smallest key on top."),
+            ("user", "and how does heap sort use it?"),
+        ],
+        false,
+    );
+    assert!(second.iter().any(|l| l.get("done").is_some()));
+    assert_eq!(
+        opened.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "the follow-up reused the warm session"
+    );
+    let said = heard.lock().unwrap().clone();
+    assert!(said[0].contains("<conversation>") && said[0].contains("title=\"Heaps\""));
+    assert!(!said[1].contains("<conversation>"), "{}", said[1]);
+    assert!(
+        !said[1].contains("title=\"Heaps\""),
+        "a note already read is not sent again"
+    );
+    assert!(said[1].contains("User: and how does heap sort use it?"));
+    assert!(said[1].contains("<today>"));
+    let sources = second.iter().find_map(|l| l.get("sources")).unwrap();
+    assert!(sources
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|s| s["n"] == 1 && s["title"] == "Heaps"));
+    ask("warm-chat-0002", &[("user", "what is a graph?")], false);
+    assert_eq!(opened.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert_eq!(
+        alive(),
+        1,
+        "another chat stops the warm session before starting its own"
+    );
+    ask(
+        "warm-chat-0002",
+        &[
+            ("user", "what is a graph?"),
+            ("assistant", "x"),
+            ("user", "mark my answer"),
+        ],
+        true,
+    );
+    assert_eq!(alive(), 1, "practice marking never keeps a second session");
+    ask(
+        "warm-chat-0002",
+        &[
+            ("user", "edited question"),
+            ("assistant", "x"),
+            ("user", "and then?"),
+        ],
+        false,
+    );
+    assert_eq!(
+        alive(),
+        1,
+        "an edited history starts fresh, still one session"
+    );
+    assert_eq!(opened.load(std::sync::atomic::Ordering::SeqCst), 4);
+}
