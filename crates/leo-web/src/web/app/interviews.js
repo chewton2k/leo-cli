@@ -359,7 +359,7 @@ async function applyInterviewCodeSuggestion(action) {
     if (shown && interviewHere(session) && session.item.challenge?.id === challenge) {
       const code = session.draft.answer;
       const start = code.indexOf(action.find);
-      if ((!action.find && code) || start < 0 || (action.find && code.indexOf(action.find, start + action.find.length) >= 0)) {
+      if ((!action.find && code) || start < 0 || (action.find && code.indexOf(action.find, start + 1) >= 0)) {
         session.error = 'Your code changed while this suggestion was being accepted. Your draft is kept; review it or use Undo on the change card.';
         drawInterviewStatus(session);
       } else {

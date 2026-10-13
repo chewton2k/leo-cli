@@ -54,7 +54,7 @@ fn changed(code: &str, find: &str, replace: &str) -> Result<String, Error> {
         ));
     }
     if (find.is_empty() && !code.is_empty())
-        || (!find.is_empty() && code.match_indices(find).count() != 1)
+        || (!find.is_empty() && (code.find(find).is_none() || code.find(find) != code.rfind(find)))
     {
         return Err(Error::Invalid("This code changed or matches more than once. Read the latest code and make a new suggestion; your draft was kept.".into()));
     }
@@ -167,7 +167,7 @@ pub fn apply(path: &Path, proposal: &Proposal) -> Result<(Interview, Proposal), 
                 .collect();
             let right: String = suffix.chars().take(size).collect();
             let expected = format!("{left}{replace}{right}");
-            if (!expected.is_empty() && after.match_indices(&expected).count() == 1)
+            if (!expected.is_empty() && after.find(&expected) == after.rfind(&expected))
                 || after.is_empty()
             {
                 undo = Some(Proposal::InterviewCodeEdit {
@@ -277,6 +277,7 @@ mod tests {
         );
         assert!(changed("x", "x", &"😀".repeat(MOST_ANSWER + 1)).is_err());
         assert!(changed("x", "", "new").is_err());
+        assert!(changed("aaa", "aa", "b").is_err());
     }
 
     #[test]
