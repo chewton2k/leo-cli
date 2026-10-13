@@ -264,6 +264,9 @@ the same idle loop.
 - Tasks panel: in `#dock`, appears when there are open tasks (Overdue / Today /
   Coming up 7 days / No date), folds (`leo-tasks-folded`), hidden on the
   Calendar page and under 600 px.
+  Active interview practices start with Tasks folded so its expanded rows
+  cannot block the workspace or schedule. Show still expands it; this local
+  practice choice leaves the remembered preference for other pages intact.
 - Export adds `tasks.json`; Storage → Restore tasks takes that file and POSTs
   `/api/tasks/import` (ids dedupe; a newer local copy is kept).
 

@@ -680,7 +680,7 @@ async function openTaskAnywhere(id, on = null) {
   taskSheet(id, on);
 }
 
-var tasksWin = { folded: false, timer: 0, tasks: null };
+var tasksWin = { folded: false, practice: '', practiceFolded: true, timer: 0, tasks: null };
 const TASKS_FOLDED = 'leo-tasks-folded';
 const TASKS_AHEAD_DAYS = 7;
 
@@ -737,6 +737,9 @@ function tasksDueBadge() {
 }
 
 function drawTasksWindow() {
+  const practice = /^#\/interviews\/([a-zA-Z0-9-]{8,64})$/.exec(location.hash)?.[1] || '';
+  if (practice !== tasksWin.practice) { tasksWin.practice = practice; tasksWin.practiceFolded = true; }
+  const folded = practice ? tasksWin.practiceFolded : tasksWin.folded;
   const tasks = tasksWin.tasks || (cal.data && cal.data.tasks) || [];
   const groups = tasksGroups(tasks);
   const open = groups.reduce((n, [, list]) => n + list.length, 0);
@@ -750,12 +753,12 @@ function drawTasksWindow() {
     ${t.date ? `<span class="tasks-when">${esc(t.date === S.dayKey(new Date()) ? (t.time ? S.timeLabel(t.time, calLocale()) : 'Today') : S.fromKey(t.date).toLocaleDateString(calLocale(), { month: 'short', day: 'numeric' }))}</span>` : `<button type="button" class="btn plain sm" data-action="task-date" data-id="${esc(t.id)}">Set date</button>`}
   </div>`;
   const label = late ? `${late[1].length} overdue · ${open} to do` : `${open} to do`;
-  tasksBox.classList.toggle('folded', tasksWin.folded);
+  tasksBox.classList.toggle('folded', folded);
   tasksBox.innerHTML = `<div class="tasks-head">
-      <button type="button" class="tasks-toggle" data-action="tasks-fold" aria-expanded="${!tasksWin.folded}"><span class="tasks-icon${late ? ' late' : ''}">${ICON.check}</span><span class="grow">Tasks <span class="tasks-count">${esc(label)}</span></span><span class="activity-fold">${tasksWin.folded ? 'Show' : 'Hide'}</span></button>
+      <button type="button" class="tasks-toggle" data-action="tasks-fold" aria-expanded="${!folded}"><span class="tasks-icon${late ? ' late' : ''}">${ICON.check}</span><span class="grow">Tasks <span class="tasks-count">${esc(label)}</span></span><span class="activity-fold">${folded ? 'Show' : 'Hide'}</span></button>
       <button type="button" class="icon-btn tasks-new" data-action="task-new" aria-label="New task" title="New task">${ICON.plus}</button>
     </div>
-    ${tasksWin.folded ? '' : `<div class="tasks-body">${groups.map(([name, list]) => `<div class="tasks-group${name === 'Overdue' ? ' late' : ''}">${name}</div>${list.slice(0, name === 'No date' ? 5 : 20).map(row).join('')}`).join('')}</div>
+    ${folded ? '' : `<div class="tasks-body">${groups.map(([name, list]) => `<div class="tasks-group${name === 'Overdue' ? ' late' : ''}">${name}</div>${list.slice(0, name === 'No date' ? 5 : 20).map(row).join('')}`).join('')}</div>
     <div class="tasks-foot"><button type="button" class="link-btn" data-action="calendar">Open calendar</button></div>`}`;
 }
 

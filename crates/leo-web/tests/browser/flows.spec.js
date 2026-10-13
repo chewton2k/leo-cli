@@ -3446,6 +3446,8 @@ test('a failed call has calm details and can be dismissed or deleted directly', 
 });
 
 test('interview practice starts without a note and schedules are editable dated tasks', async ({ page }) => {
+  await page.request.post('/api/tasks', { data: { title: 'A task alongside interview practice' } });
+  await page.evaluate(() => localStorage.setItem('leo-tasks-folded', '0'));
   await page.route('**/api/chat', (route) => route.fulfill({ contentType: 'application/x-ndjson', body: '{"t":"Ready to practise."}\n{"done":true}\n' }));
   await page.goto('/#/interviews');
   await page.locator('[data-interview="create"][data-track="systems"]').click();
@@ -3458,6 +3460,14 @@ test('interview practice starts without a note and schedules are editable dated 
   await expect(page.locator('[data-chat="close"]')).toBeVisible();
   await page.locator('[data-chat="close"]').click();
   const id = decodeURIComponent(new URL(page.url()).hash.split('/').pop());
+  if (!test.info().project.name.includes('phone')) {
+    const panel = page.locator('#tasks-window');
+    await expect(panel.locator('.tasks-body')).toHaveCount(0);
+    await panel.locator('[data-action="tasks-fold"]').click();
+    await expect(panel.locator('.tasks-body')).toBeVisible();
+    await panel.locator('[data-action="tasks-fold"]').click();
+    expect(await page.evaluate(() => localStorage.getItem('leo-tasks-folded'))).toBe('0');
+  }
   await page.getByText('Practice schedule', { exact: true }).first().click();
   await page.locator('[data-interview="add-session"]').click();
   await page.locator('#interview-slot-title').fill('Requirements and scale');
@@ -3495,7 +3505,7 @@ test('interview answers keep their focus and draft through saves, a conflict and
       await new Promise((resolve) => setTimeout(resolve, 100));
       if (change.action === 'submit') {
         item.attempts.push({ id: change.attempt, at: new Date().toISOString(), challenge: structuredClone(item.challenge), workspace: change.workspace, feedback: null });
-        item.workspace = { answer: '', board: [] };
+        item.workspace = change.workspace;
       } else item.workspace = change.workspace;
       item.revision++;
     }
@@ -3549,12 +3559,14 @@ test('interview answers keep their focus and draft through saves, a conflict and
   await page.locator('[data-chat="close"]').click();
   expect(item.attempts[0].workspace.answer).toBe('Use a hash map. Check duplicates and negatives.');
   expect(item.attempts[0].workspace.board[0].text).toBe('Client → Server');
-  await expect(answer).toHaveValue('');
+  await expect(answer).toHaveValue('Use a hash map. Check duplicates and negatives.');
   await page.locator('[data-interview="tab"][data-tab="board"]').click();
   await page.locator('#interview-board-label').fill('Another drawing');
   await page.locator('[data-interview="label-board"]').click();
   await page.locator('[data-interview="submit"]').click();
   await expect(page.locator('#interview-progress')).toContainText('2 reviewed attempts');
+  expect(item.attempts[0].workspace.board).toHaveLength(1);
+  expect(item.workspace.board).toHaveLength(2);
   await page.locator('[data-chat="close"]').click();
   expect(files.size).toBe(1);
   expect(uploads).toBe(2);

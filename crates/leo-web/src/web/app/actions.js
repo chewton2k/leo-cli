@@ -69,6 +69,11 @@ const actions = {
   'event-open': (el) => eventSheet(el.dataset.id),
   'note-tasks': () => noteTasksSheet(),
   'tasks-fold': () => {
+    if (tasksWin.practice) {
+      tasksWin.practiceFolded = !tasksWin.practiceFolded;
+      drawTasksWindow();
+      return;
+    }
     tasksWin.folded = !tasksWin.folded;
     try {
       localStorage.setItem(TASKS_FOLDED, tasksWin.folded ? '1' : '0');
