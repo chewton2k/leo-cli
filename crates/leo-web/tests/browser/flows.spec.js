@@ -4490,3 +4490,37 @@ test('Felix tool activity stays between the response passages it belongs to afte
   await expect(answer).toContainText('Next, check repeated categories and ties.');
   await ordered();
 });
+
+test('the code runner runs only your code in a sandbox, stops endless loops and cannot reach leo', async ({ page }) => {
+  const run = (job) => page.evaluate((job) => new Promise((resolve) => {
+    const frame = document.createElement('iframe');
+    frame.setAttribute('sandbox', 'allow-scripts');
+    frame.hidden = true;
+    const started = Date.now();
+    const heard = (e) => {
+      if (e.source !== frame.contentWindow) return;
+      if (e.data.kind === 'ready') frame.contentWindow.postMessage({ ...job, kind: 'run', run: 'r1' }, '*');
+      if (e.data.kind === 'done') { window.removeEventListener('message', heard); frame.remove(); resolve({ ...e.data, took: Date.now() - started }); }
+    };
+    window.addEventListener('message', heard);
+    frame.src = '/runner.html';
+    document.body.appendChild(frame);
+  }), job);
+  const ok = await run({ code: 'function pair_sum(nums, target) { console.log("seen", nums.length); const at = new Map(); for (let i = 0; i < nums.length; i++) { if (at.has(target - nums[i])) return [at.get(target - nums[i]), i]; at.set(nums[i], i); } return []; }', entry: 'pair_sum', tests: [{ id: 't1', args: [[2, 7, 11], 9] }, { id: 't2', args: [[], 1] }] });
+  expect(ok.error).toBeUndefined();
+  expect(ok.results.map((r) => r.got)).toEqual([[0, 1], []]);
+  expect(ok.logs[0]).toBe('seen 3');
+  const solution = await run({ code: 'class Solution { twice(x) { return x * 2; } }', entry: 'twice', tests: [{ id: 't1', args: [4] }] });
+  expect(solution.results[0].got).toBe(8);
+  const ticking = page.evaluate(() => new Promise((resolve) => { let n = 0; const timer = setInterval(() => { n++; if (n === 5) { clearInterval(timer); resolve(n); } }, 100); }));
+  const loop = await run({ code: 'function spin() { while (true) {} }', entry: 'spin', tests: [{ id: 't1', args: [] }], limit: 1000 });
+  expect(loop.error).toMatch(/Stopped after 1 seconds/);
+  expect(await ticking).toBe(5);
+  const nosy = await run({ code: 'function steal() { const x = new XMLHttpRequest(); x.open("GET", "/api/notes", false); x.send(); return x.status; }', entry: 'steal', tests: [{ id: 't1', args: [] }] });
+  expect(nosy.results[0].error).toBeTruthy();
+  expect(nosy.results[0].got).toBeUndefined();
+  const broken = await run({ code: 'function f( {', entry: 'f', tests: [] });
+  expect(broken.error).toMatch(/did not run/);
+  const injected = await run({ code: 'function f() { return 1; }', entry: 'f; fetch("/api/notes")', tests: [] });
+  expect(injected.error).toMatch(/no function to call/);
+});

@@ -12,6 +12,7 @@ pub mod import;
 pub mod listen;
 pub mod meaning;
 pub mod providers;
+pub mod pyodide;
 pub mod session;
 pub mod update;
 pub mod usage;

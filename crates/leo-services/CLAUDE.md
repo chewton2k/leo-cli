@@ -253,6 +253,15 @@ start, the text protocol is used. Cache reads and writes from Claude Code's
 2.1.295 (`real_claude_calls_leos_tools_natively_inside_one_turn`, ignored):
 two calls and the answer in one turn, about 5 s.
 
+### The quick model and Python (`ai::quick_config`, `pyodide.rs`)
+
+`quick_outcome` runs the `[chat]` chain with each provider set to the first
+(cheapest) model in its `choice::WRITING` list and its lowest effort (Claude
+Code: Haiku, low), for interview grading and coverage. `pyodide` pins Pyodide
+0.28.3's five files by SHA-256 in `models_dir()/pyodide-0.28.3`, fetched only
+when the user first runs Python (`LEO_PYODIDE_URL` / `LEO_PYODIDE_MANIFEST`
+for tests).
+
 ### What the agent CLIs may use
 
 Web search is allowed (the user wants it): Claude Code gets `--tools WebSearch

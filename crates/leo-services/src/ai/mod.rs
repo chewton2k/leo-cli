@@ -124,6 +124,38 @@ pub fn chat_outcome(prompt: chat::Prompt, max_tokens: u32) -> Result<chain::Chai
     chat::complete(&cfg, &store, prompt, max_tokens)
 }
 
+pub fn quick_config(cfg: &Config) -> Config {
+    let mut quick = cfg.clone();
+    for name in &cfg.chat.chain {
+        let Some(choice) = crate::config::choice::WRITING
+            .iter()
+            .find(|c| c.provider == name.as_str())
+        else {
+            continue;
+        };
+        let Some(model) = choice.models.first() else {
+            continue;
+        };
+        let mut provider = cfg
+            .provider(name)
+            .cloned()
+            .or_else(|| Config::built_in_provider(name));
+        if let Some(provider) = provider.as_mut() {
+            provider.model = Some(model.id.to_string());
+            provider.effort = crate::config::choice::efforts(name, model.id)
+                .first()
+                .map(|e| e.to_string());
+            quick.providers.insert(name.clone(), provider.clone());
+        }
+    }
+    quick
+}
+
+pub fn quick_outcome(prompt: chat::Prompt, max_tokens: u32) -> Result<chain::ChainOutcome<String>> {
+    let (cfg, store) = context();
+    chat::complete(&quick_config(&cfg), &store, prompt, max_tokens)
+}
+
 pub fn see(prompt: chat::Prompt, images: &[provider::Image], max_tokens: u32) -> Result<String> {
     let (cfg, store) = context();
     let req = provider::ChatRequest {
@@ -313,6 +345,25 @@ pub fn expand_leo_prompts(body: &str, title: &str) -> Result<(String, usize)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_quick_model_is_the_cheapest_model_of_the_same_ai_at_low_effort() {
+        let mut cfg = Config::default();
+        cfg.chat.chain = vec!["claude_code".into(), "ollama".into()];
+        let mut chosen = Config::built_in_provider("claude_code").unwrap();
+        chosen.model = Some("claude-opus-5-5".into());
+        chosen.effort = Some("high".into());
+        cfg.providers.insert("claude_code".into(), chosen);
+        let quick = quick_config(&cfg);
+        let claude = quick.provider("claude_code").unwrap();
+        assert_eq!(claude.model.as_deref(), Some("claude-haiku-5-5"));
+        assert_eq!(claude.effort.as_deref(), Some("low"));
+        assert_eq!(quick.chat.chain, cfg.chat.chain);
+        assert_eq!(
+            quick.provider("ollama").and_then(|p| p.model.clone()),
+            cfg.provider("ollama").and_then(|p| p.model.clone())
+        );
+    }
 
     /// The question stays in the note, above its answer, so a later reader can
     /// see what was asked.

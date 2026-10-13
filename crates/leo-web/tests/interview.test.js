@@ -5,6 +5,39 @@ const I = globalThis.leoInterview;
 require('../src/web/vendor/code-tools.min.js');
 const C = globalThis.leoCode;
 
+test('CodeMirror typing handles indentation and paired delimiters in every supported language', () => {
+  for (const language of ['C++', 'Rust', 'Java', 'Python', 'SQL', 'TypeScript', 'JavaScript', 'Go']) {
+    const engine = C.editor(language);
+    for (const [open, close] of [['(', ')'], ['[', ']'], ['{', '}']]) {
+      const inserted = engine.edit('', 0, 0, open);
+      assert.equal(inserted.value, open + close, language);
+      assert.equal(inserted.from, 1);
+      const skipped = engine.edit(inserted.value, 1, 1, close);
+      assert.equal(skipped.value, open + close, language);
+      assert.equal(skipped.from, 2);
+      const removed = engine.edit(open + close, 1, 1, 'Backspace');
+      assert.equal(removed.value, '', language);
+    }
+    const block = engine.edit('{}', 1, 1, 'Enter');
+    assert.equal(block.value, '{\n    \n}', language);
+    assert.equal(block.from, 6);
+    const tab = engine.edit('  ', 2, 2, 'Tab');
+    assert.equal(tab.value, '    ', language);
+    assert.equal(tab.change.insert, '  ');
+    assert.equal(engine.edit('    ', 4, 4, 'Tab', true).value, '', language);
+    assert.equal(engine.edit('x'.repeat(32000), 32000, 32000, '('), null);
+  }
+  const python = C.editor('Python').edit('def solve():', 12, 12, 'Enter');
+  assert.equal(python.value, 'def solve():\n    ');
+  const cpp = C.editor('C++');
+  const selected = cpp.edit('答😀', 0, 3, '[');
+  assert.equal(selected.value, '[答😀]');
+  assert.equal(selected.value.slice(selected.from, selected.to), '答😀');
+  const multiline = cpp.edit('a\nb', 0, 3, 'Tab');
+  assert.equal(multiline.value, '    a\n    b');
+  assert.equal(cpp.edit(multiline.value, multiline.from, multiline.to, 'Tab', true).value, 'a\nb');
+});
+
 test('every interview track has distinct editable criteria and one shared framework', () => {
   assert.equal(I.PRESETS.length, 7);
   for (const p of I.PRESETS) {
@@ -140,4 +173,39 @@ test('Python deletes one indentation stop on blank lines while ordinary deletion
     assert.deepEqual(I.codeEdit(value, at, at, key, false, 'Python'), { value: expected, from: caret, to: caret });
   }
   for (const [value, from, to, key, language] of [['', 0, 0, 'Backspace', 'Python'], ['    return 1', 4, 4, 'Backspace', 'Python'], ['    ', 0, 4, 'Backspace', 'Python'], ['    ', 4, 4, 'Backspace', 'Java'], ['    ', 0, 0, 'Delete', 'SQL']]) assert.equal(I.codeEdit(value, from, to, key, false, language), null);
+});
+
+test('answer fields are part of the work, normalised the way the server stores them', () => {
+  const kept = I.workspace({ answer: '', reasoning: '', board: [], values: { b2: '50k', a1: ' 3.5 ', empty: '  ', long: 'x'.repeat(201) } });
+  assert.deepEqual(Object.keys(kept.values), ['a1', 'b2']);
+  assert.equal(I.workspace({ answer: 'x' }).values, undefined);
+  assert.equal(JSON.stringify(I.workspace({ answer: 'x', values: {} })), JSON.stringify(I.workspace({ answer: 'x' })));
+  assert.ok(I.hasWork({ answer: '', values: { a1: '3.5' } }, null));
+  assert.ok(!I.hasWork({ answer: '', values: { a1: ' ' } }, null));
+});
+
+test('test results compare JSON values, floats and unordered lists like a judge would', () => {
+  assert.ok(I.sameValue([0, 1], [0, 1]));
+  assert.ok(!I.sameValue([0, 1], [1, 0]));
+  assert.ok(I.sameValue([[1, 2], [3]], [[3], [1, 2]], true));
+  assert.ok(I.sameValue(0.1 + 0.2, 0.3));
+  assert.ok(I.sameValue({ a: [1, 2], b: null }, { b: null, a: [1, 2] }));
+  assert.ok(!I.sameValue({ a: 1 }, { a: 1, b: 2 }));
+  assert.ok(!I.sameValue('1', 1));
+  assert.ok(!I.sameValue([1], [1, 1], true));
+});
+
+test('a summary of automatic checks goes to Felix so the review builds on it', () => {
+  const checks = [
+    { id: 't1', kind: 'test', label: 'pair_sum([2,3], 5)', pass: true, given: '[0,1]', expected: '[0,1]' },
+    { id: 't2', kind: 'test', label: 'Hidden test', pass: false, given: 'None', expected: '[]' },
+    { id: 's1', kind: 'section', label: 'Requirements', pass: true, given: '', expected: '' },
+  ];
+  assert.deepEqual(I.checkSummary(checks), [{ name: 'tests', pass: 1, total: 2 }, { name: 'parts covered', pass: 1, total: 1 }]);
+  const note = I.reviewNote({ checks, grade: { criteria: [{ id: 'c1', text: 'Handles duplicates', verdict: 'partly', why: '' }] } });
+  assert.match(note, /1\/2 tests/);
+  assert.match(note, /Missed: Hidden test \(I wrote None\)/);
+  assert.match(note, /Handles duplicates: partly/);
+  assert.match(note, /not by you/);
+  assert.equal(I.reviewNote({ checks: [] }), '');
 });

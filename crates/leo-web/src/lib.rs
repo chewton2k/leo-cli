@@ -12,6 +12,7 @@ pub mod export;
 pub mod graph;
 mod ics;
 mod interview;
+mod interview_keys;
 mod interview_tools;
 mod originals;
 pub mod record;
@@ -155,9 +156,18 @@ pub type Importer = Arc<
     dyn Fn(Vec<UploadFile>, &str, &mut dyn FnMut(&str, usize, usize)) -> Result<Made> + Send + Sync,
 >;
 
+#[derive(Clone)]
+pub struct Python {
+    pub dir: std::path::PathBuf,
+    pub ready: Arc<dyn Fn() -> bool + Send + Sync>,
+    pub fetch: Arc<dyn Fn() -> anyhow::Result<()> + Send + Sync>,
+}
+
 #[derive(Clone, Default)]
 pub struct Powers {
     pub writer: Option<Writer>,
+    pub quick: Option<Writer>,
+    pub python: Option<Python>,
     pub chat: Option<Streamer>,
     pub settings: Option<Arc<dyn SettingsApi>>,
     pub importer: Option<Importer>,
@@ -178,6 +188,9 @@ struct AppState {
     store: Arc<Mutex<Storage>>,
     gate: Arc<sessions::Gate>,
     graphs: Arc<graph::Graphs>,
+    quick: Option<Writer>,
+    python: Option<Python>,
+    python_fetch: Arc<Mutex<Option<String>>>,
     chat: Option<Streamer>,
     settings: Option<Arc<dyn SettingsApi>>,
     importer: Option<Importer>,
@@ -383,6 +396,8 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
             .with_vectors(Arc::clone(&vectors)),
     );
     let chats = chats::dir_for(&store.notes_dir);
+    let quick = powers.quick;
+    let python = powers.python;
     let chat = powers.chat;
     let settings = powers.settings;
     let importer = powers.importer;
@@ -422,6 +437,9 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
         })),
         gate: Arc::clone(&gate),
         graphs,
+        quick,
+        python,
+        python_fetch: Default::default(),
         chat,
         settings,
         importer,
@@ -627,7 +645,27 @@ fn router(state: AppState) -> Router {
         .route("/chat.js", get(chat_js))
         .route("/interview.js", get(routes::assets::interview_js))
         .route("/code-tools.js", get(routes::assets::code_tools_js))
+        .route(
+            "/api/python",
+            get(routes::python::status).post(routes::python::fetch),
+        )
         .route("/api/interviews", get(routes::interviews::list))
+        .route(
+            "/api/interviews/{id}/key",
+            get(routes::interviews::key).post(routes::interviews::prepare_key),
+        )
+        .route(
+            "/api/interviews/{id}/hidden-tests",
+            post(routes::interviews::hidden_tests),
+        )
+        .route(
+            "/api/interviews/{id}/grade",
+            post(routes::interviews::grade),
+        )
+        .route(
+            "/api/interviews/{id}/coverage",
+            post(routes::interviews::coverage),
+        )
         .route(
             "/api/interviews/{id}",
             get(routes::interviews::get)
@@ -721,6 +759,9 @@ fn router(state: AppState) -> Router {
             note_activity,
         ))
         .route("/favicon.svg", get(favicon))
+        .route("/runner.html", get(routes::assets::runner_html))
+        .route("/runner.js", get(routes::assets::runner_js))
+        .route("/pyodide/{name}", get(routes::python::file))
         .layer(axum::middleware::from_fn(security_headers))
         .layer(axum::middleware::from_fn(note_peer))
         .with_state(state)

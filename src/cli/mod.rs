@@ -375,7 +375,24 @@ pub fn run(cli: Cli) -> Result<()> {
                     new_token,
                 },
                 leo_web::Powers {
+                    python: Some(leo_web::Python {
+                        dir: leo_services::pyodide::dir(),
+                        ready: std::sync::Arc::new(leo_services::pyodide::ready),
+                        fetch: std::sync::Arc::new(|| leo_services::pyodide::fetch().map(|_| ())),
+                    }),
                     writer: Some(writer),
+                    quick: Some(std::sync::Arc::new(
+                        |system: &str, user: &str, most: u32| {
+                            leo_services::ai::quick_outcome(
+                                leo_services::ai::chat::Prompt {
+                                    system: system.to_string(),
+                                    user: user.to_string(),
+                                },
+                                most,
+                            )
+                            .map(|outcome| outcome.value)
+                        },
+                    )),
                     chat: Some(streamer),
                     settings: Some(std::sync::Arc::new(web_settings::WebSettings)),
                     importer: Some(std::sync::Arc::new(

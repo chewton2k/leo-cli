@@ -555,6 +555,9 @@ fn run_tool(
             ) {
                 desk.interview_problem = item.challenge.as_ref().map(|c| c.id.clone());
             }
+            if call.name == "interview_challenge" {
+                crate::interview_keys::prepare(&state.chats, state.graphs.writer(), &item, false);
+            }
             send(serde_json::json!({"interview": {"id": item.id, "revision": item.revision}}));
         }
         done

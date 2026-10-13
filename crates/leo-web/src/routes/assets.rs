@@ -32,6 +32,10 @@ const SAVING_JS: &str = include_str!("../web/saving.js");
 const DOC_JS: &str = include_str!("../web/doc.js");
 const GRAPH_JS: &str = include_str!("../web/graph.js");
 const SCHEDULE_JS: &str = include_str!("../web/schedule.js");
+const RUNNER_HTML: &str = include_str!("../web/runner.html");
+const RUNNER_JS: &str = include_str!("../web/runner.js");
+pub(crate) const RUNNER_POLICY: &str = "default-src 'none'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval' blob:; \
+     worker-src blob:; connect-src 'self'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'; sandbox allow-scripts";
 const CHAT_JS: &str = include_str!("../web/chat.js");
 pub(crate) async fn interview_js() -> Response {
     javascript(include_str!("../web/interview.js"))
@@ -227,6 +231,29 @@ pub(crate) async fn graph_js() -> Response {
     javascript(GRAPH_JS)
 }
 
+pub(crate) async fn runner_html() -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+            (header::CONTENT_SECURITY_POLICY, RUNNER_POLICY),
+            (header::X_FRAME_OPTIONS, "SAMEORIGIN"),
+        ],
+        RUNNER_HTML,
+    )
+        .into_response()
+}
+
+pub(crate) async fn runner_js() -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
+            (header::CONTENT_SECURITY_POLICY, RUNNER_POLICY),
+        ],
+        RUNNER_JS,
+    )
+        .into_response()
+}
+
 pub(crate) async fn schedule_js() -> Response {
     javascript(SCHEDULE_JS)
 }
@@ -282,6 +309,21 @@ mod tests {
             }
         }
         assert_eq!(parts, 18);
+    }
+
+    #[test]
+    fn the_code_runner_is_sandboxed_and_reaches_only_leo_without_its_cookies() {
+        for part in [
+            "connect-src 'self'",
+            "sandbox allow-scripts",
+            "frame-ancestors 'self'",
+            "form-action 'none'",
+        ] {
+            assert!(RUNNER_POLICY.contains(part), "{part}");
+        }
+        assert!(!RUNNER_POLICY.contains("allow-same-origin"));
+        assert!(RUNNER_HTML.contains("src=\"/runner.js\""));
+        assert!(!RUNNER_JS.contains("fetch(") && !RUNNER_JS.contains("XMLHttpRequest"));
     }
 
     #[test]

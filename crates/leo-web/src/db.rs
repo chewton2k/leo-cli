@@ -16,6 +16,14 @@ CREATE TABLE IF NOT EXISTS interviews (
     data TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS interviews_by_time ON interviews(updated);
+CREATE TABLE IF NOT EXISTS interview_keys (
+    interview TEXT NOT NULL,
+    challenge TEXT NOT NULL,
+    status TEXT NOT NULL,
+    updated TEXT NOT NULL,
+    data TEXT NOT NULL,
+    PRIMARY KEY (interview, challenge)
+);
 CREATE TABLE IF NOT EXISTS chats (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,

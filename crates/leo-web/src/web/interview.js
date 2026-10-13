@@ -16,8 +16,57 @@
   const escape = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const preset = (id) => PRESETS.find((p) => p.id === id) || PRESETS[0];
   const framework = (id) => ({ title: `${preset(id).label} practice`, track: preset(id).id, company: '', role: '', language: id === 'coding' ? 'Python' : '', style: 'coach', date: '', weekly_minutes: 120, skills: [...preset(id).skills], wants: '' });
-  const workspace = (draft = {}) => ({ answer: draft.answer || '', reasoning: draft.reasoning || '', board: draft.board || [] });
-  const hasWork = (draft, challenge) => Boolean(draft.board?.length || draft.reasoning?.trim() || (draft.answer.trim() && draft.answer.trim() !== challenge?.coding?.starter?.trim()));
+  const MOST_VALUES = 16;
+  function cleanValues(values) {
+    if (!values || typeof values !== 'object') return {};
+    return Object.fromEntries(Object.entries(values)
+      .filter(([k, v]) => typeof v === 'string' && v.trim() && k.length <= 40 && [...v].length <= 200)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .slice(0, MOST_VALUES));
+  }
+  function workspace(draft = {}) {
+    const out = { answer: draft.answer || '', reasoning: draft.reasoning || '', board: draft.board || [] };
+    const values = cleanValues(draft.values);
+    if (Object.keys(values).length) out.values = values;
+    return out;
+  }
+  const hasWork = (draft, challenge) => Boolean(draft.board?.length || draft.reasoning?.trim() || Object.keys(cleanValues(draft.values)).length || (draft.answer.trim() && draft.answer.trim() !== challenge?.coding?.starter?.trim()));
+  function sameValue(expected, got, unordered = false) {
+    if (typeof expected === 'number' && typeof got === 'number') return Math.abs(expected - got) <= 1e-6 * Math.max(1, Math.abs(expected));
+    if (Array.isArray(expected) && Array.isArray(got)) {
+      if (expected.length !== got.length) return false;
+      if (unordered) {
+        const left = expected.map((v) => JSON.stringify(v)).sort();
+        const right = got.map((v) => JSON.stringify(v)).sort();
+        return left.every((v, i) => v === right[i] || sameValue(JSON.parse(v), JSON.parse(right[i])));
+      }
+      return expected.every((v, i) => sameValue(v, got[i]));
+    }
+    if (expected && got && typeof expected === 'object' && typeof got === 'object' && !Array.isArray(expected) && !Array.isArray(got)) {
+      const keys = Object.keys(expected);
+      return keys.length === Object.keys(got).length && keys.every((k) => k in got && sameValue(expected[k], got[k]));
+    }
+    return expected === got;
+  }
+  function checkSummary(checks = []) {
+    const kinds = { test: 'tests', value: 'answers', choice: 'answers', section: 'parts covered' };
+    const groups = new Map();
+    for (const c of checks) {
+      const name = kinds[c.kind] || 'checks';
+      const g = groups.get(name) || { name, pass: 0, total: 0 };
+      g.total += 1;
+      if (c.pass) g.pass += 1;
+      groups.set(name, g);
+    }
+    return [...groups.values()];
+  }
+  function reviewNote(attempt) {
+    const lines = [];
+    const summary = checkSummary(attempt.checks);
+    if (summary.length) lines.push(`Automatic checks already shown to me: ${summary.map((g) => `${g.pass}/${g.total} ${g.name}`).join(', ')}. ${(attempt.checks || []).filter((c) => !c.pass).slice(0, 8).map((c) => `Missed: ${c.label}${c.given ? ` (I wrote ${c.given})` : ''}`).join('; ')}`.trim());
+    if (attempt.grade) lines.push(`Quick rubric check already shown to me: ${attempt.grade.criteria.map((v) => `${v.text}: ${v.verdict}`).join('; ')}.`);
+    return lines.length ? `${lines.join('\n')}\nBuild on these results instead of repeating them; tests ran in my browser, not by you.` : '';
+  }
   function preparation(f) {
     const company = f.company.trim();
     const text = company ? `Start a ${preset(f.track).label.toLowerCase()} challenge for ${[f.role, company].filter(Boolean).join(' at ')}. Research the interviews and prepare a problem I can work on.` : `Start a ${preset(f.track).label.toLowerCase()} challenge. I’m just practising${f.role ? ` for ${f.role}` : ''}.`;
@@ -151,7 +200,7 @@
   function readDraft(storage, id, challenge) {
     try {
       const draft = JSON.parse(storage.getItem('leo-interview-drafts') || '{}')[draftKey(id, challenge)];
-      return draft && typeof draft.answer === 'string' && [...draft.answer].length <= MOST_ANSWER && typeof (draft.reasoning || '') === 'string' && [...(draft.reasoning || '')].length <= 8000 && validBoard(draft.board) ? workspace(draft) : null;
+      return draft && typeof draft.answer === 'string' && (draft.values === undefined || typeof draft.values === 'object') && [...draft.answer].length <= MOST_ANSWER && typeof (draft.reasoning || '') === 'string' && [...(draft.reasoning || '')].length <= 8000 && validBoard(draft.board) ? workspace(draft) : null;
     } catch (e) { return null; }
   }
   function clearDraft(storage, id, challenge) {
@@ -161,5 +210,5 @@
       storage.setItem('leo-interview-drafts', JSON.stringify(drafts));
     } catch (e) {}
   }
-  root.leoInterview = { PRESETS, preset, framework, preparation, workspace, hasWork, codeEdit, point, validBoard, boardSvg, fitBoard, moveShape, BOARD_LIMIT, progress, agenda, keepDraft, readDraft, clearDraft, MOST_SHAPES, MOST_POINTS, MOST_ANSWER, MOST_PROBLEMS };
+  root.leoInterview = { PRESETS, preset, framework, preparation, workspace, cleanValues, sameValue, checkSummary, reviewNote, hasWork, codeEdit, point, validBoard, boardSvg, fitBoard, moveShape, BOARD_LIMIT, progress, agenda, keepDraft, readDraft, clearDraft, MOST_SHAPES, MOST_POINTS, MOST_ANSWER, MOST_PROBLEMS };
 })(typeof window !== 'undefined' ? window : globalThis);

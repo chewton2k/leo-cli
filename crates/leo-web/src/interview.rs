@@ -103,6 +103,8 @@ pub struct Workspace {
     #[serde(default)]
     pub reasoning: String,
     pub board: Vec<Shape>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub values: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -129,6 +131,10 @@ pub struct Attempt {
     pub workspace: Workspace,
     pub at: String,
     pub feedback: Option<Feedback>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub checks: Vec<crate::interview_keys::CheckResult>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grade: Option<crate::interview_keys::Grade>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -181,6 +187,8 @@ pub enum Change {
         challenge: String,
         attempt: String,
         workspace: Workspace,
+        #[serde(default)]
+        tests: Vec<crate::interview_keys::TestReport>,
     },
     Select {
         revision: u64,
@@ -281,17 +289,29 @@ impl Workspace {
         require(
             points <= 4_000 && labels <= 4_000,
             "Your board is full. Undo or clear some strokes before drawing more.",
+        )?;
+        require(
+            self.values.len() <= 16
+                && self
+                    .values
+                    .iter()
+                    .all(|(k, v)| k.len() <= 40 && text(v, 200, false)),
+            "Keep each answer field under 200 characters.",
         )
     }
 
     fn empty(&self) -> bool {
-        self.answer.trim().is_empty() && self.reasoning.trim().is_empty() && self.board.is_empty()
+        self.answer.trim().is_empty()
+            && self.reasoning.trim().is_empty()
+            && self.board.is_empty()
+            && self.values.values().all(|v| v.trim().is_empty())
     }
 
     fn untouched(&self, challenge: Option<&Challenge>) -> bool {
         self.empty()
             || (self.reasoning.trim().is_empty()
                 && self.board.is_empty()
+                && self.values.values().all(|v| v.trim().is_empty())
                 && challenge
                     .and_then(|c| c.coding.as_ref())
                     .is_some_and(|c| self.answer.trim() == c.starter.trim()))
@@ -461,6 +481,7 @@ pub fn remove(path: &Path, id: &str) -> Result<(), Error> {
     db::for_chats(path)
         .with(|c| c.execute("DELETE FROM interviews WHERE id = ?1", [id]))
         .map_err(|_| Error::Storage)?;
+    crate::interview_keys::forget(path, id);
     Ok(())
 }
 
@@ -618,8 +639,12 @@ pub fn change(path: &Path, id: &str, change: Change) -> Result<Interview, Error>
             challenge,
             attempt,
             workspace,
+            tests,
         } => {
             workspace.validate()?;
+            let checks = crate::interview_keys::ready(path, id, &challenge)
+                .map(|key| crate::interview_keys::instant(&key, &workspace, &tests))
+                .unwrap_or_default();
             require(
                 chats::valid_id(&attempt) && !workspace.empty(),
                 "Write an answer or draw on the board before submitting.",
@@ -649,6 +674,8 @@ pub fn change(path: &Path, id: &str, change: Change) -> Result<Interview, Error>
                     workspace: workspace.clone(),
                     at: Utc::now().to_rfc3339(),
                     feedback: None,
+                    checks,
+                    grade: None,
                 });
                 item.workspace = workspace;
                 Ok(())
@@ -702,6 +729,23 @@ pub fn set_challenge(path: &Path, id: &str, challenge: Challenge) -> Result<Inte
 
 pub fn select_problem(path: &Path, id: &str, challenge: &str) -> Result<Interview, Error> {
     mutate(path, id, None, |item| select(item, challenge))
+}
+
+pub fn graded(
+    path: &Path,
+    id: &str,
+    attempt: &str,
+    grade: crate::interview_keys::Grade,
+) -> Result<Interview, Error> {
+    mutate(path, id, None, |item| {
+        let found = item
+            .attempts
+            .iter_mut()
+            .find(|a| a.id == attempt)
+            .ok_or(Error::Missing)?;
+        found.grade = Some(grade);
+        Ok(())
+    })
 }
 
 pub fn assess(path: &Path, id: &str, feedback: Feedback) -> Result<Interview, Error> {
@@ -767,7 +811,7 @@ fn board_material(workspace: &Workspace) -> Vec<serde_json::Value> {
 }
 
 pub fn attempt_material(attempt: &Attempt) -> String {
-    serde_json::json!({"id":attempt.id,"challenge":attempt.challenge,"answer":attempt.workspace.answer,"reasoning":attempt.workspace.reasoning,"board":board_material(&attempt.workspace),"feedback":attempt.feedback}).to_string()
+    serde_json::json!({"id":attempt.id,"challenge":attempt.challenge,"answer":attempt.workspace.answer,"reasoning":attempt.workspace.reasoning,"values":attempt.workspace.values,"board":board_material(&attempt.workspace),"automatic_checks":attempt.checks,"quick_grade":attempt.grade,"feedback":attempt.feedback}).to_string()
 }
 
 pub fn context_problem(item: &Interview, wanted: Option<&str>) -> String {
@@ -829,6 +873,7 @@ mod tests {
 
     fn workspace() -> Workspace {
         Workspace {
+            values: Default::default(),
             answer: "答え: use a hash map".into(),
             reasoning: String::new(),
             board: vec![Shape {
@@ -877,6 +922,7 @@ mod tests {
         let duplicate = set_challenge(path, id, challenge("challenge-test-01")).unwrap();
         assert_eq!(duplicate.workspace, saved.workspace);
         let submit = || Change::Submit {
+            tests: Vec::new(),
             revision: duplicate.revision,
             challenge: "challenge-test-01".into(),
             attempt: "attempt-test-01".into(),
@@ -919,6 +965,7 @@ mod tests {
             dir.path(),
             id,
             Change::Submit {
+                tests: Vec::new(),
                 revision: item.revision,
                 challenge: "challenge-test-01".into(),
                 attempt: "attempt-test-01".into(),
@@ -1055,6 +1102,7 @@ mod tests {
         c.skills = item.framework.skills.clone();
         c.question = "界".repeat(12_000);
         let work = Workspace {
+            values: Default::default(),
             answer: "答".repeat(MOST_ANSWER),
             reasoning: String::new(),
             board: vec![],
@@ -1078,6 +1126,8 @@ mod tests {
         item.workspace = work.clone();
         item.attempts = (0..3)
             .map(|n| Attempt {
+                checks: Vec::new(),
+                grade: None,
                 id: format!("attempt-large-{n:02}"),
                 challenge: c.clone(),
                 workspace: work.clone(),
@@ -1196,6 +1246,7 @@ mod tests {
             dir.path(),
             id,
             Change::Submit {
+                tests: Vec::new(),
                 revision: seeded.revision,
                 challenge: c.id.clone(),
                 attempt: "attempt-starter-01".into(),
@@ -1226,6 +1277,7 @@ mod tests {
             dir.path(),
             id,
             Change::Submit {
+                tests: Vec::new(),
                 revision: load(dir.path(), id).unwrap().revision,
                 challenge: "challenge-starter-02".into(),
                 attempt: "attempt-starter-02".into(),
@@ -1347,6 +1399,8 @@ mod tests {
         let mut item = load(dir.path(), id).unwrap();
         item.problems.clear();
         item.attempts = vec![Attempt {
+            checks: Vec::new(),
+            grade: None,
             id: "attempt-history-01".into(),
             challenge: coding_challenge("challenge-history-001"),
             workspace: workspace(),

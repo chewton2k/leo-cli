@@ -236,6 +236,43 @@ seer, meaning, web, room).
   the corresponding passages after reload, and is excluded from copied note
   selections. Legacy activity without positions stays at the beginning.
 
+## Interview instant feedback (2026-10-12, `interview_keys.rs`)
+
+Submit used to wait 30-90 s for Felix. Now the thinking happens while the user
+works (plan: `.superpowers/plans/2026-10-12-interview-instant-feedback.md`):
+
+- When `interview_challenge` saves a problem, `interview_keys::prepare` asks the
+  writing AI on a thread for a hidden answer key (`interview_keys` table in
+  leo.db, status preparing / ready / failed with its reason). A key is a mix of
+  `tests` (coding: `{args, expected, hidden, unordered}` for the starter's
+  `entry`; data only, never code), `asks` (value with tolerance or a ratio
+  `factor`, or choice), `sections` (parts a strong answer covers, matched by
+  words ignoring plurals), `criteria` (rubric with `good` and `misses`) and a
+  `reference` outline. Keys are read leniently (a string where a list was
+  asked) and validated; a failed key leaves Submit working with the review.
+- The page sees only `Key::public` (visible tests, ask labels and options,
+  section names) via GET `/api/interviews/{id}/key`, polled every 3 s while
+  preparing; hidden tests come from POST `hidden-tests` only at Submit.
+  References, answers and criteria never reach the page before grading.
+- Submit: the page runs every test in the sandbox, PUT `submit` carries
+  `tests` reports, the server grades asks and sections instantly into
+  `Attempt.checks`; then POST `grade` asks the quick model (`Powers.quick`:
+  the writing AI's cheapest model at low effort, `ai::quick_config`) to mark
+  the criteria into `Attempt.grade`; then Felix's full review runs in the chat
+  without blocking, told the results (`interviews.reviewNote`). Check coverage
+  (POST `coverage`) says which criteria a draft covers, never judging them.
+- Running code: `/runner.html` + `/runner.js` (public, CSP `RUNNER_POLICY`:
+  sandbox allow-scripts, opaque origin, so requests carry no leo cookies) start
+  a blob Worker per JavaScript run and one warm Worker for Python, so an
+  endless loop is stopped by `terminate` without freezing the page (a
+  sandboxed frame can share the page's thread). Python is Pyodide 0.28.3,
+  fetched once on first use (`leo_services::pyodide`, SHA-256 pinned, about
+  12 MB) and served at `/pyodide/{name}` (allowlisted, CORS `*`, immutable).
+  Other languages get the quick and full reviews only.
+- Measured with Claude Code (Opus 5.5 writing, Haiku quick): problem in 16-19 s,
+  key ready about 30 s later, Run 1.0 s, Submit results 0.1 s, quick review
+  8-9 s, coverage 4 s.
+
 ## Uploads, originals, recording
 
 - Uploads: POST `/api/import` runs the `Importer` on a thread; "What do you

@@ -333,7 +333,9 @@ want from the notes?" box replaces formats.
 Interview practice is Felix's third style and a sidebar/menu page (2026-10-12).
 Use shared configurable frameworks, independent of notes, with frozen attempts,
 provisional evidence-based feedback, typed/code/vector workspaces and dated
-practice schedules beside read-only calendar events. Generated code never runs.
+practice schedules beside read-only calendar events. Only the user's own code
+runs, in their browser's sandbox (never on the server); see "Instant feedback"
+in crates/leo-web/CLAUDE.md.
 Reuse current cards, sheets, controls and theme tokens; keep asynchronous updates
 from replacing a focused editor. See crates/leo-web/CLAUDE.md and
 .superpowers/plans/2026-10-12-felix-interviews.md for the implementation invariants.

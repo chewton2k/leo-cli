@@ -66,6 +66,9 @@ fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<Strin
             sessions::Sessions::in_memory(),
         )),
         graphs,
+        quick: None,
+        python: None,
+        python_fetch: Default::default(),
         chat: None,
         settings: None,
         importer: None,
@@ -131,4 +134,8 @@ fn host(name: &str) -> axum::http::HeaderMap {
 fn json_of(response: Response) -> serde_json::Value {
     let bytes = run(axum::body::to_bytes(response.into_body(), usize::MAX)).unwrap();
     serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null)
+}
+
+pub(crate) fn state_for_python() -> (AppState, tempfile::TempDir, Vec<String>) {
+    state_with(&[])
 }
