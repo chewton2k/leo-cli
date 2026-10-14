@@ -161,7 +161,7 @@ pub type Importer = Arc<
 >;
 
 #[derive(Clone)]
-pub struct Python {
+pub struct Runtime {
     pub dir: std::path::PathBuf,
     pub ready: Arc<dyn Fn() -> bool + Send + Sync>,
     pub fetch: Arc<dyn Fn() -> anyhow::Result<()> + Send + Sync>,
@@ -171,7 +171,8 @@ pub struct Python {
 pub struct Powers {
     pub writer: Option<Writer>,
     pub quick: Option<Writer>,
-    pub python: Option<Python>,
+    pub python: Option<Runtime>,
+    pub cpp: Option<Runtime>,
     pub chat: Option<Streamer>,
     pub settings: Option<Arc<dyn SettingsApi>>,
     pub importer: Option<Importer>,
@@ -193,8 +194,10 @@ struct AppState {
     gate: Arc<sessions::Gate>,
     graphs: Arc<graph::Graphs>,
     quick: Option<Writer>,
-    python: Option<Python>,
+    python: Option<Runtime>,
     python_fetch: Arc<Mutex<Option<String>>>,
+    cpp: Option<Runtime>,
+    cpp_fetch: Arc<Mutex<Option<String>>>,
     progress: Arc<progress::Board>,
     warm: Arc<warm::Slot>,
     chat: Option<Streamer>,
@@ -404,6 +407,7 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
     let chats = chats::dir_for(&store.notes_dir);
     let quick = powers.quick;
     let python = powers.python;
+    let cpp = powers.cpp;
     let chat = powers.chat;
     let settings = powers.settings;
     let importer = powers.importer;
@@ -446,6 +450,8 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
         quick,
         python,
         python_fetch: Default::default(),
+        cpp,
+        cpp_fetch: Default::default(),
         progress: Default::default(),
         warm: Default::default(),
         chat,
@@ -662,6 +668,10 @@ fn router(state: AppState) -> Router {
             "/api/python",
             get(routes::python::status).post(routes::python::fetch),
         )
+        .route(
+            "/api/cpp",
+            get(routes::python::cpp_status).post(routes::python::cpp_fetch),
+        )
         .route("/api/progress/{key}", get(routes::interviews::progress))
         .route("/api/interviews", get(routes::interviews::list))
         .route(
@@ -792,6 +802,7 @@ fn router(state: AppState) -> Router {
         .route("/runner.html", get(routes::assets::runner_html))
         .route("/runner.js", get(routes::assets::runner_js))
         .route("/pyodide/{name}", get(routes::python::file))
+        .route("/clang/{name}", get(routes::python::cpp_file))
         .route("/sql/{name}", get(routes::assets::sql_file))
         .layer(axum::middleware::from_fn(security_headers))
         .layer(axum::middleware::from_fn(note_peer))

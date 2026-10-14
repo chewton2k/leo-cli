@@ -365,7 +365,20 @@ works (plan: `.superpowers/plans/2026-10-12-interview-instant-feedback.md`):
   SQL (SQLite via sql.js, vendored, `/sql/{name}` with CORS `*`): key `entry`
   is `sql`, each test's one argument is the setup SQL, expected is the rows as
   arrays; the worker runs setup then the user's query on a fresh database per
-  test. Other languages get the quick and full reviews only.
+  test. C++ (2026-10-14): the writing machine fetches @yowasp/clang 22 once
+  (npm tarball, 27 MB, SHA-256 pinned, each unpacked file pinned too;
+  `leo_services::clang`, `/api/cpp`, `/clang/{name}` with CORS `*`; the
+  Python and C++ downloads share `routes/python.rs` `Kind`s). The page makes a
+  driver (`interviews.cppDriver`: reads the entry's signature, fills int,
+  floating, bool, char, string and nested vectors from the JSON args, calls
+  `Solution().entry` or the free function, prints `@@leo id <json>` per test,
+  user output goes to Printed output; pointers such as ListNode are refused
+  with a plain message). The runner fetches the bundle and runs it as a
+  classic worker (module workers do not start in the opaque-origin sandbox),
+  compiles `-O1 -std=c++20 -fno-exceptions`, and runs the program in a fresh
+  worker with a small WASI shim so an endless loop is stopped. Measured in
+  Chromium: first compile and run 2.2 s, then about 1.3 s. Other languages
+  get the quick and full reviews only.
 - Progress (`progress.rs`, 2026-10-14): long AI jobs get a `Meter` on
   `AppState.progress` (`key:`, `grade:`, `coverage:` keys, GET
   `/api/progress/{key}`). It counts streamed characters (keys stream through

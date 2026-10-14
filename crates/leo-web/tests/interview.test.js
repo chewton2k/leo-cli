@@ -339,3 +339,23 @@ test('a test case reads as a call, or as its tables for SQL', () => {
   assert.equal(I.callText('sql', ['CREATE TABLE t(x); INSERT INTO t VALUES (1);']), 'CREATE TABLE t(x); INSERT INTO t VALUES (1);');
   assert.equal(I.callText('solve'), 'solve()');
 });
+
+test('C++ tests become a driver that fills in the arguments and prints results as JSON', () => {
+  const code = '#include <vector>\nclass Solution {\npublic:\n    vector<int> twoSum(vector<int>& nums, int target) {\n        return {};\n    }\n};';
+  const made = I.cppDriver(code, 'twoSum', [{ id: 't1', args: [[2, 7], 9] }, { id: 't2', args: [[], -3000000000] }]);
+  assert.equal(made.files['solution.cpp'], code);
+  const main = made.files['main.cpp'];
+  assert.match(main, /using namespace std;[\s\S]*#include "solution\.cpp"/);
+  assert.match(main, /std::vector<int> a0 = std::vector<int>\{2, 7\}; int a1 = 9; auto leo_result = Solution\(\)\.twoSum\(a0, a1\); std::cout << "\\n@@leo t1 "; leo_out\(std::cout, leo_result\);/);
+  assert.match(main, /int a1 = -3000000000LL;/);
+  const text = I.cppDriver('string echo(const std::string& s, char c, bool b, double d) { return s; }', 'echo', [{ id: 'x', args: ['a"\\\né', 'q', true, 0.5] }]).files['main.cpp'];
+  assert.match(text, /std::string a0 = "a\\"\\\\\\n\\303\\251"; char a1 = 'q'; bool a2 = true; double a3 = 0.5; auto leo_result = echo\(a0, a1, a2, a3\);/);
+  const inPlace = I.cppDriver('void rev(vector<int>& v) {}', 'rev', [{ id: 'r', args: [[1]] }]).files['main.cpp'];
+  assert.match(inPlace, /rev\(a0\); std::cout << "\\n@@leo r "; leo_out\(std::cout, a0\);/);
+  assert.match(I.cppDriver('ListNode* f(ListNode* h) { return h; }', 'f', [{ id: 'a', args: [[1]] }]).error, /types the browser can’t fill in/);
+  assert.match(I.cppDriver('int f(int a) { return a; }', 'f', [{ id: 'a', args: [1, 2] }]).error, /gives 2 arguments, but f takes 1/);
+  assert.match(I.cppDriver('int f(int a) { return a; }', 'f', [{ id: 'a', args: [1.5] }]).error, /expected a whole number/);
+  assert.match(I.cppDriver('int g() { return 1; }', 'f', []).error, /Define a function named f/);
+  assert.deepEqual(I.cppResults('hello\n@@leo t1 [0,1]\n\n@@leo t2 "x"\n@@leo t3 oops'), { results: [{ id: 't1', got: [0, 1] }, { id: 't2', got: 'x' }, { id: 't3', got: 'oops' }], logs: ['hello'] });
+  assert.equal(I.cppProblem('In file included from main.cpp:29:\n./solution.cpp:1:23: error: nope\n'), 'line 1:23: error: nope');
+});

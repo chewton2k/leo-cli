@@ -375,10 +375,15 @@ pub fn run(cli: Cli) -> Result<()> {
                     new_token,
                 },
                 leo_web::Powers {
-                    python: Some(leo_web::Python {
+                    python: Some(leo_web::Runtime {
                         dir: leo_services::pyodide::dir(),
                         ready: std::sync::Arc::new(leo_services::pyodide::ready),
                         fetch: std::sync::Arc::new(|| leo_services::pyodide::fetch().map(|_| ())),
+                    }),
+                    cpp: Some(leo_web::Runtime {
+                        dir: leo_services::clang::dir(),
+                        ready: std::sync::Arc::new(leo_services::clang::ready),
+                        fetch: std::sync::Arc::new(|| leo_services::clang::fetch().map(|_| ())),
                     }),
                     writer: Some(writer),
                     quick: Some(std::sync::Arc::new(

@@ -155,8 +155,134 @@ json.dumps(out)
   let snake = null;
   let snakeLoaded = false;
 
+  function program() {
+    let memory = null;
+    let out = '';
+    const decode = new TextDecoder();
+    const view = () => new DataView(memory.buffer);
+    const calls = {
+      fd_write(fd, iovs, count, written) {
+        const v = view();
+        let total = 0;
+        for (let i = 0; i < count; i++) {
+          const at = v.getUint32(iovs + i * 8, true);
+          const length = v.getUint32(iovs + i * 8 + 4, true);
+          if (fd === 1 && out.length < 2000000) out += decode.decode(new Uint8Array(memory.buffer, at, length), { stream: true });
+          total += length;
+        }
+        v.setUint32(written, total, true);
+        return 0;
+      },
+      fd_read(fd, iovs, count, read) { view().setUint32(read, 0, true); return 0; },
+      fd_close() { return 0; },
+      fd_seek() { return 70; },
+      fd_fdstat_get(fd, at) {
+        if (fd > 2) return 8;
+        const v = view();
+        for (let i = 0; i < 24; i++) v.setUint8(at + i, 0);
+        v.setUint8(at, 2);
+        return 0;
+      },
+      fd_prestat_get() { return 8; },
+      fd_prestat_dir_name() { return 8; },
+      args_sizes_get(count, size) { view().setUint32(count, 0, true); view().setUint32(size, 0, true); return 0; },
+      args_get() { return 0; },
+      environ_sizes_get(count, size) { view().setUint32(count, 0, true); view().setUint32(size, 0, true); return 0; },
+      environ_get() { return 0; },
+      clock_res_get(id, at) { view().setBigUint64(at, 1000n, true); return 0; },
+      clock_time_get(id, precision, at) { view().setBigUint64(at, BigInt(Math.round((performance.timeOrigin + performance.now()) * 1e6)), true); return 0; },
+      random_get(at, length) {
+        for (let i = 0; i < length; i += 65536) crypto.getRandomValues(new Uint8Array(memory.buffer, at + i, Math.min(65536, length - i)));
+        return 0;
+      },
+      sched_yield() { return 0; },
+      proc_exit(code) { throw { exit: code }; },
+    };
+    const wasi = new Proxy(calls, { get: (all, name) => all[name] || (() => 52) });
+    self.onmessage = async (e) => {
+      try {
+        const made = await WebAssembly.instantiate(await WebAssembly.compile(e.data.wasm), { wasi_snapshot_preview1: wasi });
+        memory = made.exports.memory;
+        made.exports._start();
+        self.postMessage({ stdout: out });
+      } catch (err) {
+        if (err && err.exit !== undefined) self.postMessage({ stdout: out, ...(err.exit ? { error: `Your program stopped with exit code ${err.exit}.` } : {}) });
+        else self.postMessage({ stdout: out, error: `Your program crashed: ${String(err && err.message ? err.message : err).slice(0, 300)}` });
+      }
+    };
+  }
+
+  const programSource = `(${program.toString()})();`;
+  const compilerSource = (bundle, base) => `${bundle.split('import.meta.url').join(JSON.stringify(`${base}clang/bundle.js`)).replace(/\nexport\s*\{[^}]*\};?\s*$/, '\n')}
+const decode = new TextDecoder();
+self.onmessage = async (e) => {
+  let errors = '';
+  try {
+    const out = await runClang(['clang++', '-O1', '-std=c++20', '-fno-exceptions', '-w', 'main.cpp', '-o', 'main.wasm'], e.data.files, {
+      stdout: () => {},
+      stderr: (bytes) => { if (bytes && errors.length < 20000) errors += decode.decode(bytes); },
+      fetchProgress: ({ doneLength, totalLength }) => self.postMessage({ progress: totalLength ? doneLength / totalLength : 0 }),
+    });
+    const wasm = out['main.wasm'];
+    self.postMessage({ wasm }, [wasm.buffer]);
+  } catch (err) {
+    self.postMessage({ compile: errors || String(err && err.message ? err.message : err) });
+  }
+};
+self.postMessage({ loaded: true });
+`;
+  let compiler = null;
+  let compiled = false;
+
+  async function runCpp(job, done) {
+    const limit = Math.min(Math.max(Number(job.limit) || 4000, 500), 10000);
+    if (!compiler) {
+      const base = String(job.base || '');
+      try {
+        const bundle = await (await fetch(`${base}clang/bundle.js`)).text();
+        compiler = new Worker(URL.createObjectURL(new Blob([compilerSource(bundle, base)], { type: 'text/javascript' })));
+      } catch (e) {
+        return done({ error: 'This browser could not start the C++ compiler.', stdout: '' });
+      }
+    }
+    const worker = compiler;
+    let timer = 0;
+    const arm = (ms, message) => { clearTimeout(timer); timer = setTimeout(() => finish({ error: message, stdout: '' }, true), ms); };
+    const finish = (result, broken) => {
+      clearTimeout(timer);
+      worker.onmessage = null;
+      worker.onerror = null;
+      if (broken) { worker.terminate(); compiler = null; }
+      done(result);
+    };
+    arm(compiled ? 60000 : 240000, compiled ? 'Compiling took too long. Try Run again.' : 'The C++ compiler took too long to start. Try Run again.');
+    worker.onerror = (e) => { e.preventDefault(); finish({ error: 'The C++ compiler could not start in this browser.', stdout: '' }, true); };
+    worker.onmessage = (e) => {
+      const data = e.data || {};
+      if (data.loaded) return;
+      if (typeof data.progress === 'number') { send({ kind: 'progress', run: job.run, fraction: data.progress }); return; }
+      compiled = true;
+      if (data.compile !== undefined) return finish({ compile: String(data.compile), stdout: '' });
+      clearTimeout(timer);
+      worker.onmessage = null;
+      worker.onerror = null;
+      let running;
+      try {
+        running = new Worker(URL.createObjectURL(new Blob([programSource], { type: 'text/javascript' })));
+      } catch (err) {
+        return done({ error: 'This browser could not run the program.', stdout: '' });
+      }
+      const stopped = setTimeout(() => { running.terminate(); done({ stopped: true, error: `Stopped after ${limit / 1000} seconds. Check for an endless loop.`, stdout: '' }); }, limit);
+      running.onmessage = (r) => { clearTimeout(stopped); running.terminate(); done(r.data || { stdout: '' }); };
+      running.onerror = (r) => { r.preventDefault(); clearTimeout(stopped); running.terminate(); done({ error: `Your program crashed: ${r.message || 'unknown error'}`, stdout: '' }); };
+      running.postMessage({ wasm: data.wasm }, [data.wasm.buffer]);
+    };
+    worker.postMessage({ files: job.files || {} });
+  }
+
   function run(job) {
     const done = (result) => send({ kind: 'done', run: job.run, ...result });
+    if (job.language === 'cpp') { runCpp(job, done); return; }
     if (!ENTRY.test(job.entry || '')) return done({ error: 'This problem has no function to call.', results: [], logs: [] });
     const python = job.language === 'python';
     let worker;

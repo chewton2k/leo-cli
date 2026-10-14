@@ -65,6 +65,141 @@
     if (entry === 'sql') return String(list[0] ?? '');
     return `${entry}(${list.map((a) => JSON.stringify(a)).join(', ')})`;
   }
+  const CPP_INTS = /^(?:(?:unsigned|signed)\s+)?(?:int|long|long\s+long|short|long\s+int|long\s+long\s+int|unsigned)$|^(?:std::)?(?:size_t|u?int(?:8|16|32|64)_t)$/;
+  const CPP_HEADERS = ['iostream', 'vector', 'string', 'unordered_map', 'unordered_set', 'map', 'set', 'algorithm', 'queue', 'stack', 'deque', 'climits', 'cmath', 'numeric', 'sstream', 'functional', 'utility', 'tuple', 'array', 'bitset', 'cstring', 'cstdio', 'iomanip', 'limits', 'list', 'cstdint', 'type_traits'];
+  function cppSplit(text) {
+    const parts = [];
+    let depth = 0;
+    let start = 0;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (c === '<' || c === '(' || c === '[' || c === '{') depth++;
+      else if (c === '>' || c === ')' || c === ']' || c === '}') depth--;
+      else if (c === ',' && depth === 0) { parts.push(text.slice(start, i)); start = i + 1; }
+    }
+    if (text.slice(start).trim()) parts.push(text.slice(start));
+    return parts.map((p) => p.trim()).filter(Boolean);
+  }
+  function cppType(text) {
+    let t = String(text).replace(/\b(const|volatile|constexpr|static|inline|virtual|explicit)\b/g, ' ').replace(/&+/g, ' ').replace(/\s+/g, ' ').trim();
+    t = t.replace(/\s*<\s*/g, '<').replace(/\s*>\s*/g, '>').replace(/\s*::\s*/g, '::');
+    if (t.includes('*')) return null;
+    const vec = t.match(/^(?:std::)?vector<(.*)>$/);
+    if (vec) { const of = cppType(vec[1]); return of ? { kind: 'vector', of, spelled: `std::vector<${of.spelled}>` } : null; }
+    if (/^(?:std::)?string$/.test(t)) return { kind: 'string', spelled: 'std::string' };
+    if (t === 'bool') return { kind: 'bool', spelled: 'bool' };
+    if (t === 'char') return { kind: 'char', spelled: 'char' };
+    if (t === 'double' || t === 'float' || t === 'long double') return { kind: 'double', spelled: t };
+    if (t === 'void') return { kind: 'void', spelled: 'void' };
+    if (CPP_INTS.test(t)) return { kind: 'int', spelled: t };
+    return null;
+  }
+  function cppText(value) {
+    let out = '"';
+    for (const byte of new TextEncoder().encode(String(value))) {
+      if (byte === 0x22) out += '\\"';
+      else if (byte === 0x5c) out += '\\\\';
+      else if (byte === 0x0a) out += '\\n';
+      else if (byte === 0x09) out += '\\t';
+      else if (byte === 0x0d) out += '\\r';
+      else if (byte < 0x20 || byte >= 0x7f) out += `\\${byte.toString(8).padStart(3, '0')}`;
+      else out += String.fromCharCode(byte);
+    }
+    return `${out}"`;
+  }
+  function cppLiteral(type, value) {
+    if (type.kind === 'int') {
+      if (!Number.isInteger(value)) throw new Error('expected a whole number');
+      return Math.abs(value) > 2147483647 ? `${value}LL` : String(value);
+    }
+    if (type.kind === 'double') {
+      if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error('expected a number');
+      return String(value);
+    }
+    if (type.kind === 'bool') {
+      if (typeof value !== 'boolean') throw new Error('expected true or false');
+      return value ? 'true' : 'false';
+    }
+    if (type.kind === 'string') {
+      if (typeof value !== 'string') throw new Error('expected text');
+      return cppText(value);
+    }
+    if (type.kind === 'char') {
+      if (typeof value !== 'string' || [...value].length !== 1 || value.charCodeAt(0) > 127) throw new Error('expected one character');
+      return `'${cppText(value).slice(1, -1).replace(/'/g, "\\'")}'`;
+    }
+    if (type.kind === 'vector') {
+      if (!Array.isArray(value)) throw new Error('expected a list');
+      return `${type.spelled}{${value.map((v) => cppLiteral(type.of, v)).join(', ')}}`;
+    }
+    throw new Error('unsupported type');
+  }
+  function cppSignature(code, entry) {
+    const clean = String(code).replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ').replace(/"(?:[^"\\\n]|\\.)*"/g, '""').replace(/^\s*#[^\n]*/gm, ' ').replace(/\btemplate\s*<[^>]*>/g, ' ');
+    const at = new RegExp(`\\b${entry}\\s*\\(([^()]*(?:\\([^()]*\\)[^()]*)*)\\)\\s*(?:const\\s*)?(?:noexcept\\s*)?\\{`).exec(clean);
+    if (!at) return null;
+    const before = clean.slice(0, at.index).split(/[;{}]|\b(?:public|private|protected)\s*:/).pop().trim();
+    const returns = cppType(before);
+    const params = cppSplit(at[1]).filter((p) => p !== 'void').map((p) => {
+      const plain = p.replace(/=.*$/s, '').trim();
+      const name = plain.match(/([A-Za-z_]\w*)\s*(?:\[\s*\])?$/);
+      return cppType(name ? plain.slice(0, name.index) : plain);
+    });
+    const owner = clean.slice(0, at.index);
+    const opened = owner.lastIndexOf('class Solution') >= 0 || owner.lastIndexOf('struct Solution') >= 0;
+    return { returns, params, method: opened && /\b(?:class|struct)\s+Solution\b/.test(owner) };
+  }
+  const CPP_OUT = String.raw`
+static void leo_out(std::ostream& o, bool v) { o << (v ? "true" : "false"); }
+static void leo_out(std::ostream& o, const std::string& v) { o << '"'; for (unsigned char c : v) { if (c == '"') o << "\\\""; else if (c == '\\') o << "\\\\"; else if (c == '\n') o << "\\n"; else if (c == '\t') o << "\\t"; else if (c == '\r') o << "\\r"; else if (c < 0x20) { char b[8]; std::snprintf(b, sizeof b, "\\u%04x", c); o << b; } else o << c; } o << '"'; }
+static void leo_out(std::ostream& o, char v) { leo_out(o, std::string(1, v)); }
+static void leo_out(std::ostream& o, const char* v) { leo_out(o, std::string(v)); }
+template <class T> static typename std::enable_if<std::is_integral<T>::value>::type leo_out(std::ostream& o, T v) { o << +v; }
+template <class T> static typename std::enable_if<std::is_floating_point<T>::value>::type leo_out(std::ostream& o, T v) { if (std::isfinite((double)v)) { char b[40]; std::snprintf(b, sizeof b, "%.15g", (double)v); o << b; } else o << "null"; }
+template <class T> static void leo_out(std::ostream& o, const std::vector<T>& v) { o << '['; for (size_t i = 0; i < v.size(); i++) { if (i) o << ','; leo_out(o, (T)v[i]); } o << ']'; }
+`;
+  function cppDriver(code, entry, tests = []) {
+    if (!/^[A-Za-z_]\w{0,79}$/.test(String(entry || ''))) return { error: 'This problem has no function to call.' };
+    const sig = cppSignature(code, entry);
+    if (!sig) return { error: `Define a function named ${entry}.` };
+    if (!sig.returns || sig.params.some((p) => !p || p.kind === 'void')) return { error: `${entry} uses types the browser can’t fill in yet (numbers, text, true/false and lists of them work). Submit still gets the reviews.` };
+    const call = (args) => `${sig.method ? 'Solution().' : ''}${entry}(${args.join(', ')})`;
+    const cases = [];
+    for (const test of tests) {
+      const args = Array.isArray(test.args) ? test.args : [];
+      if (args.length !== sig.params.length) return { error: `Test ${test.id} gives ${args.length} argument${args.length === 1 ? '' : 's'}, but ${entry} takes ${sig.params.length}.` };
+      let lines;
+      try {
+        lines = args.map((value, i) => `${sig.params[i].spelled} a${i} = ${cppLiteral(sig.params[i], value)};`);
+      } catch (e) {
+        return { error: `Test ${test.id} doesn’t fit ${entry}’s types: ${e.message}.` };
+      }
+      const names = args.map((_, i) => `a${i}`);
+      const mark = `std::cout << "\\n@@leo ${test.id} ";`;
+      const shown = sig.returns.kind === 'void' ? `${call(names)}; ${mark} ${names.length ? 'leo_out(std::cout, a0);' : 'std::cout << "null";'}` : `auto leo_result = ${call(names)}; ${mark} leo_out(std::cout, leo_result);`;
+      if (!/^[\w-]{1,40}$/.test(String(test.id))) return { error: 'A test id is not usable.' };
+      cases.push(`  { ${lines.join(' ')} ${shown} std::cout << "\\n"; }`);
+    }
+    const main = `#include "solution.cpp"\n${CPP_OUT}\nint main() {\n  std::cout << std::unitbuf;\n${cases.join('\n')}\n  return 0;\n}\n`;
+    const prelude = `${CPP_HEADERS.map((h) => `#include <${h}>`).join('\n')}\nusing namespace std;\n`;
+    return { files: { 'main.cpp': `${prelude}${main}`, 'solution.cpp': String(code) } };
+  }
+  function cppProblem(text = '') {
+    return String(text).replace(/^In file included from main\.cpp:\d+:\n/gm, '').replace(/\.\/solution\.cpp:(\d+):(\d+):/g, 'line $1:$2:').trim().slice(0, 1500);
+  }
+  function cppResults(stdout = '') {
+    const results = [];
+    const logs = [];
+    for (const line of String(stdout).split('\n')) {
+      const found = line.match(/^@@leo ([\w-]{1,40}) (.*)$/);
+      if (found) {
+        let got;
+        try { got = JSON.parse(found[2]); } catch (e) { got = found[2]; }
+        results.push({ id: found[1], got });
+      } else if (line.trim() && logs.length < 40) logs.push(line.slice(0, 300));
+    }
+    return { results, logs };
+  }
   function resultCases(checks = []) {
     const counts = { test: 0, answer: 0, section: 0 };
     return (checks || []).map((c) => {
@@ -313,5 +448,5 @@
       storage.setItem('leo-interview-drafts', JSON.stringify(drafts));
     } catch (e) {}
   }
-  root.leoInterview = { PRESETS, preset, framework, preparation, workspace, cleanValues, sameValue, checkSummary, callText, resultCases, pickCase, attemptStatus, reviewNote, hasWork, codeEdit, point, validBoard, boardSvg, fitBoard, moveShape, shapeBounds, unionBounds, normalRect, shapesWithin, handlesFor, resizeShape, BOARD_LIMIT, progress, keepDraft, readDraft, clearDraft, MOST_SHAPES, MOST_POINTS, MOST_ANSWER, MOST_PROBLEMS };
+  root.leoInterview = { PRESETS, preset, framework, preparation, workspace, cleanValues, sameValue, checkSummary, callText, cppDriver, cppResults, cppProblem, resultCases, pickCase, attemptStatus, reviewNote, hasWork, codeEdit, point, validBoard, boardSvg, fitBoard, moveShape, shapeBounds, unionBounds, normalRect, shapesWithin, handlesFor, resizeShape, BOARD_LIMIT, progress, keepDraft, readDraft, clearDraft, MOST_SHAPES, MOST_POINTS, MOST_ANSWER, MOST_PROBLEMS };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -260,7 +260,9 @@ two calls and the answer in one turn, about 5 s.
 Code: Haiku, low), for interview grading and coverage. `pyodide` pins Pyodide
 0.28.3's five files by SHA-256 in `models_dir()/pyodide-0.28.3`, fetched only
 when the user first runs Python (`LEO_PYODIDE_URL` / `LEO_PYODIDE_MANIFEST`
-for tests).
+for tests). `clang` does the same for C++ (`@yowasp/clang` 22 from the npm
+registry, tarball and unpacked files SHA-256 pinned in `models_dir()/clang-…`,
+unpacked with `tar`; `fetch_into` is tested with a local tarball).
 
 ### What the agent CLIs may use
 

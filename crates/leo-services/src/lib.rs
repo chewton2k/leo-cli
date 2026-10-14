@@ -4,6 +4,7 @@
 //! about how it is displayed.
 
 pub mod ai;
+pub mod clang;
 pub mod config;
 pub mod doctor;
 pub mod figures;

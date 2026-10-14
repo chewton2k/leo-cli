@@ -977,6 +977,7 @@ function interviewRunLanguage(session) {
   if (/^(typescript|ts)$/i.test(language)) return 'typescript';
   if (/^(python|py)\s*3?$/i.test(language)) return 'python';
   if (/^(sql|sqlite|postgres(ql)?|mysql|t-?sql|pl\/?sql)$/i.test(language)) return 'sql';
+  if (/^(c\+\+|cpp|cxx|cc)(\s*\d+)?$/i.test(language)) return 'cpp';
   return '';
 }
 
@@ -984,22 +985,28 @@ function interviewRunnable(session) {
   return Boolean(interviewRunLanguage(session));
 }
 
-async function interviewPythonReady(session) {
-  let view = await api('/api/python');
+const RUNTIMES = {
+  python: { path: '/api/python', label: 'Getting Python ready, once', none: 'Python can’t run on this copy of leo.', failed: 'Python could not be downloaded. Check the connection and try again.', mb: 12 },
+  cpp: { path: '/api/cpp', label: 'Getting C++ ready, once', none: 'C++ can’t run on this copy of leo.', failed: 'The C++ compiler could not be downloaded. Check the connection and try again.', mb: 27 },
+};
+
+async function interviewRuntimeReady(session, name) {
+  const runtime = RUNTIMES[name];
+  let view = await api(runtime.path);
   if (view.status === 'ready') return true;
-  if (view.status === 'unavailable') { session.pythonNote = 'Python can’t run on this copy of leo.'; return false; }
-  if (view.status !== 'fetching') view = await api('/api/python', { method: 'POST' });
+  if (view.status === 'unavailable') { session.runtimeNote = runtime.none; return false; }
+  if (view.status !== 'fetching') view = await api(runtime.path, { method: 'POST' });
   const started = Date.now();
   let drawn = false;
-  while (view.status === 'fetching' && Date.now() - started < 300000) {
-    const total = Number(view.total) || (view.mb || 12) * 1e6;
-    session.pythonFetch = { fraction: Math.min(0.99, (Number(view.done) || 0) / total), seconds: Math.round((Date.now() - started) / 1000) };
-    if (!drawn && interviewHere(session)) { drawInterviewChecks(session); drawn = true; } else setMeter('interview-python-meter', session.pythonFetch);
+  while (view.status === 'fetching' && Date.now() - started < 600000) {
+    const total = Number(view.total) || (view.mb || runtime.mb) * 1e6;
+    session.runtimeFetch = { label: `${runtime.label} (about ${view.mb || runtime.mb} MB)`, fraction: Math.min(0.99, (Number(view.done) || 0) / total), seconds: Math.round((Date.now() - started) / 1000) };
+    if (!drawn && interviewHere(session)) { drawInterviewChecks(session); drawn = true; } else setMeter('interview-runtime-meter', session.runtimeFetch);
     await new Promise((resolve) => setTimeout(resolve, 800));
-    view = await api('/api/python');
+    view = await api(runtime.path);
   }
-  session.pythonFetch = null;
-  session.pythonNote = view.status === 'ready' ? '' : view.error || 'Python could not be downloaded. Check the connection and try again.';
+  session.runtimeFetch = null;
+  session.runtimeNote = view.status === 'ready' ? '' : view.error || runtime.failed;
   return view.status === 'ready';
 }
 
@@ -1020,10 +1027,11 @@ async function loadInterviewKey(session, force = false) {
   } catch (e) { if (e instanceof Locked) throw e; }
 }
 
-const runner = { frame: null, ready: null };
+const runner = { frame: null, ready: null, cppWarm: false };
 
 function runnerFrame() {
   if (runner.frame?.isConnected && runner.ready) return runner.ready;
+  runner.cppWarm = false;
   const frame = document.createElement('iframe');
   frame.setAttribute('sandbox', 'allow-scripts');
   frame.hidden = true;
@@ -1042,8 +1050,8 @@ function runnerFrame() {
   return runner.ready;
 }
 
-async function runInSandbox(job) {
-  const limit = job.language === 'python' ? 75000 : 15000;
+async function runInSandbox(job, onProgress = null) {
+  const limit = job.language === 'python' ? 75000 : job.language === 'cpp' ? 270000 : 15000;
   const frame = await Promise.race([runnerFrame(), new Promise((resolve) => setTimeout(() => resolve(null), 10000))]);
   if (!frame) { runner.frame?.remove(); runner.frame = null; runner.ready = null; return { error: 'The code runner did not start. Try Run again.', results: [], logs: [] }; }
   return new Promise((resolve) => {
@@ -1055,7 +1063,9 @@ async function runInSandbox(job) {
       resolve(result);
     };
     const heard = (e) => {
-      if (e.source === frame.contentWindow && e.data?.kind === 'done' && e.data.run === run) finish(e.data);
+      if (e.source !== frame.contentWindow || e.data?.run !== run) return;
+      if (e.data.kind === 'progress' && onProgress) onProgress(Number(e.data.fraction) || 0);
+      if (e.data.kind === 'done') finish(e.data);
     };
     window.addEventListener('message', heard);
     timer = setTimeout(() => { frame.remove(); runner.frame = null; runner.ready = null; finish({ error: 'The code runner did not answer. Try Run again.', results: [], logs: [] }); }, limit);
@@ -1065,7 +1075,34 @@ async function runInSandbox(job) {
 
 async function runInterviewTests(session, code, entry, tests) {
   let language = interviewRunLanguage(session);
-  if (language === 'python' && !(await interviewPythonReady(session))) return { reports: [], error: session.pythonNote, logs: [] };
+  if ((language === 'python' || language === 'cpp') && !(await interviewRuntimeReady(session, language))) return { reports: [], error: session.runtimeNote, logs: [] };
+  if (language === 'cpp') {
+    const made = interviews.cppDriver(code, entry, tests);
+    const failed = (why) => ({ reports: tests.map((t) => ({ id: t.id, pass: false, got: why.split('\n')[0] })), error: why, logs: [] });
+    if (made.error) return failed(made.error);
+    const started = Date.now();
+    let loaded = 0;
+    const show = () => {
+      const seconds = (Date.now() - started) / 1000;
+      const first = !session.runtimeFetch;
+      session.runtimeFetch = { label: 'Starting the C++ compiler, once per visit', fraction: Math.min(0.97, Math.max(loaded * 0.9, 0.9 * (1 - Math.exp(-seconds / 20)))), seconds: Math.round(seconds), expected: 20 };
+      if (first && interviewHere(session)) drawInterviewChecks(session); else setMeter('interview-runtime-meter', session.runtimeFetch);
+    };
+    const ticking = runner.cppWarm ? 0 : setInterval(show, 500);
+    const out = await runInSandbox({ language: 'cpp', entry, files: made.files }, (fraction) => { loaded = fraction; if (!runner.cppWarm) show(); });
+    clearInterval(ticking);
+    if (out.compile !== undefined || out.stdout !== undefined) runner.cppWarm = true;
+    if (session.runtimeFetch) { session.runtimeFetch = null; if (interviewHere(session)) drawInterviewChecks(session); }
+    if (out.compile !== undefined) return failed(`Your code did not compile:\n${interviews.cppProblem(out.compile)}`);
+    const parsed = interviews.cppResults(out.stdout || '');
+    const byId = new Map(parsed.results.map((r) => [r.id, r]));
+    const reports = tests.map((t) => {
+      const r = byId.get(t.id);
+      if (!r) return { id: t.id, pass: false, got: out.error || 'Did not run' };
+      return { id: t.id, pass: interviews.sameValue(t.expected, r.got, t.unordered), got: JSON.stringify(r.got) };
+    });
+    return { reports, error: out.error || '', logs: parsed.logs };
+  }
   if (language === 'typescript') {
     const strip = await interviewTypeScript();
     if (!strip) return { reports: tests.map((t) => ({ id: t.id, pass: false, got: 'TypeScript could not load' })), error: 'TypeScript could not load in this browser. Try Run again.', logs: [] };
@@ -1145,7 +1182,7 @@ function paintInterviewChecks(session) {
   }
   if (view.status === 'preparing') { box.innerHTML = `<div class="interview-checks-status">${meterBar('interview-key-meter', 'Preparing instant checks', view.progress || { fraction: 0 })}<p class="hint">Start working; they’ll appear here.</p></div>`; return; }
   if (view.status === 'ready' && view.key?.verify) { box.innerHTML = '<p class="hint interview-checks-status" role="status">Checking the test cases against a reference solution…</p>'; return; }
-  const python = session.pythonFetch ? meterBar('interview-python-meter', 'Getting Python ready, once', session.pythonFetch) : session.pythonNote ? `<p class="hint interview-checks-status" role="status">${esc(session.pythonNote)}</p>` : '';
+  const python = session.runtimeFetch ? meterBar('interview-runtime-meter', session.runtimeFetch.label, session.runtimeFetch) : session.runtimeNote ? `<p class="hint interview-checks-status" role="status">${esc(session.runtimeNote)}</p>` : '';
   if (view.status === 'failed') { box.innerHTML = '<p class="hint interview-checks-status">Instant checks couldn’t be prepared. Submit still gets Felix’s review. <button class="link-btn" data-interview="prepare-key">Try again</button></p>'; return; }
   const values = session.draft.values || {};
   const cover = session.coverage?.challenge === c.id ? session.coverage : null;
