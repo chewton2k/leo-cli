@@ -871,6 +871,23 @@ test.describe('Felix', () => {
     expect(asked.length).toBe(2);
   });
 
+  test('tapping Felix can tickle him, and about one tap in ten he turns into a monster and back', async ({ page }) => {
+    await page.goto('/');
+    await page.locator('#chat-toggle').click();
+    const face = page.locator('#chat-face .felix');
+    await page.evaluate(() => { Math.random = () => 0.99; });
+    await face.click();
+    await expect(face).toHaveClass(/\btickle\b/);
+    await page.evaluate(() => { Math.random = () => 0.01; });
+    await face.click();
+    await expect(face).toHaveClass(/\bmonster\b/);
+    await expect(face.locator('.felix-rawr')).toHaveCount(1);
+    await face.click();
+    await expect(face).toHaveClass(/\bmonster\b/, { timeout: 500 });
+    await expect(face).not.toHaveClass(/\bmonster\b/, { timeout: 5000 });
+    await expect(face.locator('.felix-monster')).toHaveCSS('opacity', '0');
+  });
+
   test('Felix thinks, talks, reacts to answers and to being tapped', async ({ page }) => {
     let release;
     const hold = new Promise((resolve) => { release = resolve; });
@@ -894,8 +911,9 @@ test.describe('Felix', () => {
     await page.locator('#chat-input').press('Enter');
     await expect(face).toHaveClass(/droop/);
     await expect(face).toHaveClass(/perk/, { timeout: 4000 });
+    await page.evaluate(() => { Math.random = () => 0.5; });
     await face.click();
-    await expect(face).toHaveClass(/boop|hop|spin|giggle/);
+    await expect(face).toHaveClass(/boop|hop|spin|giggle|tickle/);
     const sizes = await face.evaluate((svg) => {
       const skin = svg.querySelector('.felix-skin');
       return [Number(skin.getAttribute('width')), Number(skin.getAttribute('height'))];

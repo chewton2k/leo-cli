@@ -87,7 +87,11 @@ seer, meaning, web, room).
   entrances, hover lifts or sliding gliders. `<details>` slide their height
   (`slideHeight`); Felix slides in/out (`CHAT_LEAVE_MS`); sheets and toasts
   ease out (`LEAVE_MS`). Folder navigation has one short arrival on the
-  content. Reduced Motion turns all of it off.
+  content. Reduced Motion turns all of it off. Tapping Felix is the one
+  playful exception (the user asked, 2026-10-14): `TAPS` (boop, hop, spin,
+  giggle, tickle) and, one tap in `MONSTER_ONE_IN` (10), `monster`: he grows,
+  turns purple with horns, fangs, claws and a "RAWR!", then shrinks back
+  (2.8 s; taps during it are ignored).
 
 ## Notes, editing and browsing
 

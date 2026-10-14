@@ -650,6 +650,27 @@ body.on-map main { padding: 0; max-width: none; }
 .felix.spin .felix-body { animation: felix-spin .8s cubic-bezier(.5, 0, .3, 1) 1; transform-origin: 50% 50%; }
 .felix.giggle .felix-body { animation: felix-shake .18s ease-in-out 4; }
 .felix.giggle .felix-eyes { transform: scaleY(.3); }
+.felix.tickle .felix-body { animation: felix-tickle .14s ease-in-out 8; }
+.felix.tickle .felix-eyes { transform: scaleY(.22); }
+.felix.tickle .felix-cheeks { opacity: 1; transition: opacity .15s; }
+.felix.tickle .felix-left { animation: felix-arm .14s steps(2, jump-none) 8; }
+.felix.tickle .felix-right { animation: felix-arm .14s steps(2, jump-none) .07s 8; }
+.felix.tickle .felix-spark rect { animation: felix-spark .45s ease-out 2; }
+.felix.tickle .felix-heart { animation: felix-float 1.1s ease-out 1; }
+.felix .felix-monster, .felix .felix-rawr { opacity: 0; }
+.felix .felix-monster .felix-horns rect { fill: #f3e2b3; }
+.felix .felix-monster .felix-spikes rect { fill: #4b318f; }
+.felix .felix-monster .felix-brows rect, .felix .felix-monster .felix-maw { fill: #19191b; }
+.felix .felix-monster .felix-fangs rect, .felix .felix-monster .felix-claws rect { fill: #ffffff; }
+.felix .felix-rawr text { fill: #e5484d; }
+.felix.monster { overflow: visible; position: relative; z-index: 60; transform-origin: 50% 100%; animation: felix-monster 2.8s cubic-bezier(.3, 1.4, .5, 1) 1; }
+.felix.monster .felix-body { animation: felix-rumble .09s linear 30; }
+.felix.monster .felix-skin { animation: felix-monster-skin 2.8s ease-in-out 1; }
+.felix.monster .felix-eyes rect { animation: felix-monster-eyes 2.8s ease-in-out 1; }
+.felix.monster .felix-monster { animation: felix-monster-parts 2.8s ease-in-out 1; }
+.felix.monster .felix-rawr { transform-box: fill-box; transform-origin: 0% 100%; animation: felix-monster-rawr 2.8s ease-out 1; }
+.felix.monster .felix-left, .felix.monster .felix-right { animation: felix-arm .2s steps(2, jump-none) .5s 8, felix-monster-skin 2.8s ease-in-out 1; }
+.felix.monster .felix-spark rect { animation: felix-spark .5s ease-out 2.2s 1; }
 .felix.sleep .felix-eyes { transform: scaleY(.12); transition: transform 1.2s ease-in; }
 .felix.sleep .felix-body { animation: felix-breathe 3.6s ease-in-out infinite; }
 .felix.sleep .felix-z { opacity: 1; animation: felix-snooze 2.4s ease-in-out infinite; }
@@ -703,6 +724,13 @@ body.on-map main { padding: 0; max-width: none; }
 @keyframes felix-drip { 0% { opacity: 0; transform: translateY(0); } 15% { opacity: 1; } 80% { opacity: 1; transform: translateY(6px); } 100% { opacity: 0; transform: translateY(8px); } }
 @keyframes felix-squish { 0% { transform: scale(1, 1); } 30% { transform: scale(1.12, .82); } 60% { transform: scale(.94, 1.08); } 100% { transform: scale(1, 1); } }
 @keyframes felix-spin { 0% { transform: rotate(0); } 100% { transform: rotate(360deg); } }
+@keyframes felix-tickle { 0%, 100% { transform: rotate(0) translateY(0); } 25% { transform: rotate(-7deg) translateY(-1px); } 75% { transform: rotate(7deg) translateY(-1px); } }
+@keyframes felix-monster { 0%, 8% { transform: scale(1); } 22% { transform: scale(2.1); } 30%, 72% { transform: scale(1.9); } 88%, 100% { transform: scale(1); } }
+@keyframes felix-rumble { 0%, 100% { transform: translate(0, 0); } 25% { transform: translate(-.6px, .3px); } 75% { transform: translate(.6px, -.3px); } }
+@keyframes felix-monster-skin { 0%, 8% { fill: #b4cfe7; } 20%, 76% { fill: #7b5ccf; } 92%, 100% { fill: #b4cfe7; } }
+@keyframes felix-monster-eyes { 0%, 8% { fill: #19191b; } 20%, 76% { fill: #ff4d4d; } 92%, 100% { fill: #19191b; } }
+@keyframes felix-monster-parts { 0%, 12% { opacity: 0; } 22%, 76% { opacity: 1; } 86%, 100% { opacity: 0; } }
+@keyframes felix-monster-rawr { 0%, 26% { opacity: 0; transform: scale(.4); } 34% { opacity: 1; transform: scale(1.15); } 40%, 66% { opacity: 1; transform: scale(1); } 74%, 100% { opacity: 0; transform: scale(.9); } }
 @keyframes felix-breathe { 0%, 100% { transform: scale(1, 1); } 50% { transform: scale(1.03, .97); } }
 @keyframes felix-snooze { 0% { opacity: 0; transform: translate(0, 2px) scale(.7); } 30% { opacity: 1; } 100% { opacity: 0; transform: translate(3px, -4px) scale(1.1); } }
 @media (prefers-reduced-motion: reduce) {
