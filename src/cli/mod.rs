@@ -385,6 +385,11 @@ pub fn run(cli: Cli) -> Result<()> {
                         ready: std::sync::Arc::new(leo_services::clang::ready),
                         fetch: std::sync::Arc::new(|| leo_services::clang::fetch().map(|_| ())),
                     }),
+                    go: Some(leo_web::Runtime {
+                        dir: leo_services::gorunner::dir(),
+                        ready: std::sync::Arc::new(leo_services::gorunner::ready),
+                        fetch: std::sync::Arc::new(|| leo_services::gorunner::fetch().map(|_| ())),
+                    }),
                     writer: Some(writer),
                     quick: Some(std::sync::Arc::new(
                         |system: &str, user: &str, most: u32| {

@@ -383,8 +383,27 @@ works (plan: `.superpowers/plans/2026-10-12-interview-instant-feedback.md`):
   classic worker (module workers do not start in the opaque-origin sandbox),
   compiles `-O1 -std=c++20 -fno-exceptions`, and runs the program in a fresh
   worker with a small WASI shim so an endless loop is stopped. Measured in
-  Chromium: first compile and run 2.2 s, then about 1.3 s. Other languages
-  get the quick and full reviews only.
+  Chromium: first compile and run 2.2 s, then about 1.3 s.
+  Go (2026-10-14): the real Go 1.27.2 compiler and linker (`cmd/compile`,
+  `cmd/link` built for wasip1) plus 82 precompiled standard-library archives
+  (`scripts/go-runner`: `GO_VERSION`, `PACKAGES`, `build.sh`; 21 MB packed).
+  CI builds it, checks its `files.sha256` against `MANIFEST` (= 
+  `leo_services::gorunner::FILES_SHA256`; the `go-runner` CI job fails if a
+  build ever differs) and attaches `leo-go.tar.gz` to each release; leo fetches
+  its own version's asset (then latest), unpacks it and checks every file.
+  `/api/go`, `/goroot/{path}` (plain paths only, CORS `*`). The page loads the
+  toolchain once per visit (`interviewGoToolchain`, a progress bar) and
+  transfers it to the runner, which keeps it in a worker on the vendored WASI
+  shim (`/wasi-shim.js`, @bjorn3/browser_wasi_shim, in-memory files). The
+  driver (`interviews.goDriver`) adds `package main` and any used standard
+  imports on line 1 (errors keep the user's line numbers), supplies the
+  LeetCode ListNode/TreeNode types when only commented, and a `leo_driver.go`
+  that fills arguments with reflect and JSON (lists and level-order trees
+  from arrays), recovers panics per test and prints `@@leo <json>`. Programs
+  run in a fresh worker on the small shim, so loops are stopped. Measured in
+  Chromium: first run 2.2 s, then 0.8 s; compile errors 0.14 s. Yaegi was
+  tried first and dropped: it got `a, b = f(x), f(y)` with recursion wrong.
+  Other languages get the quick and full reviews only.
 - Progress (`progress.rs`, 2026-10-14): long AI jobs get a `Meter` on
   `AppState.progress` (`key:`, `grade:`, `coverage:` keys, GET
   `/api/progress/{key}`). It counts streamed characters (keys stream through

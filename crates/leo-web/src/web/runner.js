@@ -231,6 +231,102 @@ self.onmessage = async (e) => {
 };
 self.postMessage({ loaded: true });
 `;
+  function gopher() {
+    const { WASI, File, OpenFile, ConsoleStdout, PreopenDirectory, Directory } = self.leoWasi;
+    let tools = null;
+    let root = null;
+    let config = '';
+    const encode = (text) => new TextEncoder().encode(text);
+    function tree(files) {
+      const top = new Map();
+      for (const [name, bytes] of Object.entries(files)) {
+        const parts = name.split('/');
+        let here = top;
+        for (const part of parts.slice(0, -1)) {
+          if (!here.has(part)) here.set(part, new Directory(new Map()));
+          here = here.get(part).contents;
+        }
+        here.set(parts[parts.length - 1], new File(new Uint8Array(bytes), { readonly: true }));
+      }
+      return top;
+    }
+    async function tool(name, args, work, log) {
+      const out = (line) => { if (log.text.length < 20000) log.text += `${line}\n`; };
+      const wasi = new WASI([name, ...args], ['GOROOT=/go', 'TMPDIR=/work', 'HOME=/work'], [new OpenFile(new File([])), ConsoleStdout.lineBuffered(out), ConsoleStdout.lineBuffered(out), root, work], { debug: false });
+      const made = await WebAssembly.instantiate(tools[name], { wasi_snapshot_preview1: wasi.wasiImport });
+      try { return wasi.start(made); } catch (err) { log.text += String(err && err.message ? err.message : err); return 1; }
+    }
+    self.onmessage = async (e) => {
+      const job = e.data || {};
+      try {
+        if (job.files) {
+          const files = job.files;
+          config = new TextDecoder().decode(files.importcfg);
+          tools = { compile: await WebAssembly.compile(files['compile.wasm']), link: await WebAssembly.compile(files['link.wasm']) };
+          const std = {};
+          for (const [name, bytes] of Object.entries(files)) if (name.startsWith('std/')) std[name] = bytes;
+          root = new PreopenDirectory('/go', tree(std));
+        }
+        if (!tools) { self.postMessage({ missing: true }); return; }
+        const work = new PreopenDirectory('/work', [
+          ...Object.entries(job.sources || {}).map(([name, text]) => [name, new File(encode(text))]),
+          ['importcfg', new File(encode(config))],
+          ['importcfg.link', new File(encode(`${config}packagefile main=/work/main.a\n`))],
+        ]);
+        const log = { text: '' };
+        const names = Object.keys(job.sources || {}).map((name) => `/work/${name}`);
+        if (await tool('compile', ['-p', 'main', '-complete', '-o', '/work/main.a', '-importcfg', '/work/importcfg', '-pack', ...names], work, log) !== 0) { self.postMessage({ compile: log.text }); return; }
+        if (await tool('link', ['-o', '/work/prog.wasm', '-importcfg', '/work/importcfg.link', '-buildmode=exe', '/work/main.a'], work, log) !== 0) { self.postMessage({ compile: log.text || 'The program could not be linked.' }); return; }
+        const wasm = work.dir.contents.get('prog.wasm').data;
+        const copy = wasm.slice().buffer;
+        self.postMessage({ wasm: copy }, [copy]);
+      } catch (err) {
+        self.postMessage({ error: `Go could not build this: ${String(err && err.message ? err.message : err).slice(0, 300)}` });
+      }
+    };
+  }
+
+  let goWorker = null;
+  let goBusy = false;
+
+  function runGo(job, done) {
+    const limit = Math.min(Math.max(Number(job.limit) || 4000, 500), 10000);
+    if (!goWorker) {
+      if (typeof job.shim !== 'string' || !job.shim || !job.files) return done({ missing: true, stdout: '' });
+      try {
+        goWorker = new Worker(URL.createObjectURL(new Blob([`${job.shim}\n(${gopher.toString()})();`], { type: 'text/javascript' })));
+      } catch (e) {
+        return done({ error: 'This browser could not start Go.', stdout: '' });
+      }
+    }
+    if (goBusy) return done({ error: 'Go is still building the last run. Try again in a moment.', stdout: '' });
+    goBusy = true;
+    const worker = goWorker;
+    const first = Boolean(job.files);
+    const timer = setTimeout(() => { worker.terminate(); goWorker = null; goBusy = false; done({ error: 'Building took too long. Try Run again.', stdout: '' }); }, first ? 240000 : 60000);
+    worker.onerror = (e) => { e.preventDefault(); clearTimeout(timer); worker.terminate(); goWorker = null; goBusy = false; done({ error: 'Go could not start in this browser.', stdout: '' }); };
+    worker.onmessage = (e) => {
+      clearTimeout(timer);
+      goBusy = false;
+      const data = e.data || {};
+      if (data.missing) { worker.terminate(); goWorker = null; return done({ missing: true, stdout: '' }); }
+      if (data.compile !== undefined) return done({ compile: String(data.compile), stdout: '' });
+      if (!data.wasm) return done({ error: data.error || 'Go could not build this.', stdout: '' });
+      let running;
+      try {
+        running = new Worker(URL.createObjectURL(new Blob([programSource], { type: 'text/javascript' })));
+      } catch (err) {
+        return done({ error: 'This browser could not run the program.', stdout: '' });
+      }
+      const stopped = setTimeout(() => { running.terminate(); done({ stopped: true, error: `Stopped after ${limit / 1000} seconds. Check for an endless loop.`, stdout: '' }); }, limit);
+      running.onmessage = (r) => { clearTimeout(stopped); running.terminate(); done(r.data || { stdout: '' }); };
+      running.onerror = (r) => { r.preventDefault(); clearTimeout(stopped); running.terminate(); done({ error: `Your program crashed: ${r.message || 'unknown error'}`, stdout: '' }); };
+      running.postMessage({ wasm: data.wasm }, [data.wasm]);
+    };
+    const transfer = first ? Object.values(job.files).filter((b) => b instanceof ArrayBuffer) : [];
+    worker.postMessage({ sources: job.sources || {}, ...(first ? { files: job.files } : {}) }, transfer);
+  }
+
   let compiler = null;
   let compiled = false;
 
@@ -282,6 +378,7 @@ self.postMessage({ loaded: true });
   function run(job) {
     const done = (result) => send({ kind: 'done', run: job.run, ...result });
     if (job.language === 'cpp') return runCpp(job, done);
+    if (job.language === 'go') return runGo(job, done);
     if (!ENTRY.test(job.entry || '')) return done({ error: 'This problem has no function to call.', results: [], logs: [] });
     const python = job.language === 'python';
     let worker;

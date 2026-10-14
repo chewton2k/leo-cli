@@ -200,6 +200,251 @@ template <class T> static void leo_out(std::ostream& o, const std::vector<T>& v)
     }
     return { results, logs };
   }
+  const GO_PACKAGES = [['fmt', 'fmt'], ['strings', 'strings'], ['strconv', 'strconv'], ['sort', 'sort'], ['math', 'math'], ['bits', 'math/bits'], ['rand', 'math/rand'], ['heap', 'container/heap'], ['unicode', 'unicode'], ['utf8', 'unicode/utf8'], ['slices', 'slices'], ['maps', 'maps'], ['bytes', 'bytes'], ['errors', 'errors'], ['regexp', 'regexp'], ['cmp', 'cmp']];
+  const GO_DRIVER = String.raw`package main
+
+import (
+	leoBytes "bytes"
+	leoJSON "encoding/json"
+	leoFmt "fmt"
+	leoReflect "reflect"
+	leoTime "time"
+)
+
+func leoField(t leoReflect.Type, name string) (leoReflect.StructField, bool) {
+	if t.Kind() != leoReflect.Ptr || t.Elem().Kind() != leoReflect.Struct {
+		return leoReflect.StructField{}, false
+	}
+	return t.Elem().FieldByName(name)
+}
+
+func leoLinked(t leoReflect.Type) bool {
+	_, val := leoField(t, "Val")
+	next, ok := leoField(t, "Next")
+	return val && ok && next.Type == t
+}
+
+func leoTreed(t leoReflect.Type) bool {
+	_, val := leoField(t, "Val")
+	left, l := leoField(t, "Left")
+	right, r := leoField(t, "Right")
+	return val && l && r && left.Type == t && right.Type == t
+}
+
+func leoNode(t leoReflect.Type, raw leoJSON.RawMessage) (leoReflect.Value, error) {
+	if string(leoBytes.TrimSpace(raw)) == "null" {
+		return leoReflect.Zero(t), nil
+	}
+	made := leoReflect.New(t.Elem())
+	val := made.Elem().FieldByName("Val")
+	holder := leoReflect.New(val.Type())
+	if err := leoJSON.Unmarshal(raw, holder.Interface()); err != nil {
+		return leoReflect.Value{}, err
+	}
+	val.Set(holder.Elem())
+	return made, nil
+}
+
+func leoFill(t leoReflect.Type, raw leoJSON.RawMessage) (leoReflect.Value, error) {
+	trimmed := leoBytes.TrimSpace(raw)
+	if (leoLinked(t) || leoTreed(t)) && len(trimmed) > 0 && (trimmed[0] == '[' || string(trimmed) == "null") {
+		var items []leoJSON.RawMessage
+		if string(trimmed) != "null" {
+			if err := leoJSON.Unmarshal(trimmed, &items); err != nil {
+				return leoReflect.Value{}, err
+			}
+		}
+		if leoLinked(t) {
+			head := leoReflect.Zero(t)
+			for i := len(items) - 1; i >= 0; i-- {
+				made, err := leoNode(t, items[i])
+				if err != nil {
+					return leoReflect.Value{}, err
+				}
+				if made.IsNil() {
+					continue
+				}
+				made.Elem().FieldByName("Next").Set(head)
+				head = made
+			}
+			return head, nil
+		}
+		if len(items) == 0 {
+			return leoReflect.Zero(t), nil
+		}
+		root, err := leoNode(t, items[0])
+		if err != nil || root.IsNil() {
+			return root, err
+		}
+		queue := []leoReflect.Value{root}
+		for i := 1; i < len(items) && len(queue) > 0; {
+			parent := queue[0]
+			queue = queue[1:]
+			for _, side := range []string{"Left", "Right"} {
+				if i >= len(items) {
+					break
+				}
+				child, err := leoNode(t, items[i])
+				if err != nil {
+					return leoReflect.Value{}, err
+				}
+				i++
+				if !child.IsNil() {
+					parent.Elem().FieldByName(side).Set(child)
+					queue = append(queue, child)
+				}
+			}
+		}
+		return root, nil
+	}
+	holder := leoReflect.New(t)
+	if err := leoJSON.Unmarshal(raw, holder.Interface()); err != nil {
+		return leoReflect.Value{}, err
+	}
+	return holder.Elem(), nil
+}
+
+func leoShown(v leoReflect.Value) any {
+	if !v.IsValid() {
+		return nil
+	}
+	t := v.Type()
+	if leoLinked(t) {
+		out := []any{}
+		for n, seen := v, 0; !n.IsNil() && seen < 100000; n, seen = n.Elem().FieldByName("Next"), seen+1 {
+			out = append(out, n.Elem().FieldByName("Val").Interface())
+		}
+		return out
+	}
+	if leoTreed(t) {
+		out := []any{}
+		queue := []leoReflect.Value{v}
+		for len(queue) > 0 && len(out) < 100000 {
+			n := queue[0]
+			queue = queue[1:]
+			if n.IsNil() {
+				out = append(out, nil)
+				continue
+			}
+			out = append(out, n.Elem().FieldByName("Val").Interface())
+			queue = append(queue, n.Elem().FieldByName("Left"), n.Elem().FieldByName("Right"))
+		}
+		for len(out) > 0 && out[len(out)-1] == nil {
+			out = out[:len(out)-1]
+		}
+		return out
+	}
+	return v.Interface()
+}
+
+type leoTest struct {
+	ID   string            ` + "`json:\"id\"`" + String.raw`
+	Args []leoJSON.RawMessage ` + "`json:\"args\"`" + String.raw`
+}
+
+func leoCall(fn leoReflect.Value, t leoTest) (out map[string]any) {
+	out = map[string]any{"id": t.ID}
+	started := leoTime.Now()
+	defer func() {
+		out["ms"] = leoTime.Since(started).Milliseconds()
+		if r := recover(); r != nil {
+			delete(out, "got")
+			out["error"] = leoFmt.Sprint("panic: ", r)
+		}
+	}()
+	kind := fn.Type()
+	if kind.IsVariadic() || kind.NumIn() != len(t.Args) {
+		out["error"] = leoFmt.Sprintf("the test gives %d arguments, but the function takes %d", len(t.Args), kind.NumIn())
+		return
+	}
+	args := make([]leoReflect.Value, len(t.Args))
+	for i, raw := range t.Args {
+		value, err := leoFill(kind.In(i), raw)
+		if err != nil {
+			out["error"] = leoFmt.Sprintf("argument %d does not fit %s: %v", i+1, kind.In(i), err)
+			return
+		}
+		args[i] = value
+	}
+	values := fn.Call(args)
+	switch len(values) {
+	case 0:
+		if len(args) > 0 {
+			out["got"] = leoShown(args[0])
+		} else {
+			out["got"] = nil
+		}
+	case 1:
+		out["got"] = leoShown(values[0])
+	default:
+		list := make([]any, len(values))
+		for i, v := range values {
+			list[i] = leoShown(v)
+		}
+		out["got"] = list
+	}
+	return
+}
+
+func main() {
+	var tests []leoTest
+	if err := leoJSON.Unmarshal([]byte(leoTests), &tests); err != nil {
+		leoFmt.Println("@@leo-error the tests could not be read")
+		return
+	}
+	fn := leoReflect.ValueOf(leoEntry)
+	for _, t := range tests {
+		line, err := leoJSON.Marshal(leoCall(fn, t))
+		if err != nil {
+			line, _ = leoJSON.Marshal(map[string]any{"id": t.ID, "error": "the result cannot be shown as JSON"})
+		}
+		leoFmt.Printf("\n@@leo %s\n", line)
+	}
+}
+`;
+  function goDriver(code, entry, tests = []) {
+    if (!/^[A-Za-z_]\w{0,79}$/.test(String(entry || ''))) return { error: 'This problem has no function to call.' };
+    const text = String(code);
+    if (/^\s*func\s+main\s*\(/m.test(text)) return { error: 'Remove func main; leo calls your function with each test.' };
+    if (!new RegExp(`\\bfunc\\s+(?:\\([^)]*\\)\\s*)?${entry}\\s*[\\[(]`).test(text)) return { error: `Define a function named ${entry}.` };
+    if (!tests.every((t) => /^[\w-]{1,40}$/.test(String(t.id)))) return { error: 'A test id is not usable.' };
+    const own = /^\s*package\s+\w+/m.test(text);
+    let solution = text;
+    let offset = 0;
+    if (!own) {
+      const wanted = GO_PACKAGES.filter(([name, path]) => new RegExp(`\\b${name}\\.[A-Za-z_]`).test(text) && !text.includes(`"${path}"`)).map(([, path]) => JSON.stringify(path));
+      solution = `package main;${wanted.length ? ` import (${wanted.join('; ')});` : ''}\n${text}`;
+      offset = 1;
+    } else solution = text.replace(/^(\s*package\s+)\w+/m, '$1main');
+    const plain = JSON.stringify(tests.map((t) => ({ id: String(t.id), args: Array.isArray(t.args) ? t.args : [] })));
+    const bare = text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
+    const types = [['ListNode', 'type ListNode struct {\n\tVal  int\n\tNext *ListNode\n}'], ['TreeNode', 'type TreeNode struct {\n\tVal   int\n\tLeft  *TreeNode\n\tRight *TreeNode\n}']]
+      .filter(([name]) => new RegExp(`\\b${name}\\b`).test(bare) && !new RegExp(`\\btype\\s+${name}\\b`).test(bare))
+      .map(([, body]) => body)
+      .join('\n\n');
+    const driver = `${GO_DRIVER}\n${types ? `${types}\n\n` : ''}var leoEntry = ${entry}\n\nconst leoTests = ${JSON.stringify(plain)}\n`;
+    return { files: { 'solution.go': solution, 'leo_driver.go': driver }, offset };
+  }
+  function goResults(stdout = '') {
+    const results = [];
+    const logs = [];
+    let error = '';
+    for (const line of String(stdout).split('\n')) {
+      if (line.startsWith('@@leo-error ')) { error = line.slice(12); continue; }
+      if (line.startsWith('@@leo ')) {
+        try {
+          const r = JSON.parse(line.slice(6));
+          results.push({ id: String(r.id), ...(r.error ? { error: String(r.error).slice(0, 300) } : { got: r.got }), ms: r.ms });
+          continue;
+        } catch (e) { }
+      }
+      if (line.trim() && logs.length < 40) logs.push(line.slice(0, 300));
+    }
+    return { results, logs, error };
+  }
+  function goProblem(text = '', offset = 1) {
+    return String(text).replace(/\/work\/solution\.go:(\d+):(\d+):/g, (m, line, col) => `line ${Number(line) - offset}:${col}:`).replace(/^# main\n/m, '').replace(/\/work\/leo_driver\.go:\d+:\d+: /g, '').trim().slice(0, 1500);
+  }
   function resultCases(checks = []) {
     const counts = { test: 0, answer: 0, section: 0 };
     return (checks || []).map((c) => {
@@ -448,5 +693,5 @@ template <class T> static void leo_out(std::ostream& o, const std::vector<T>& v)
       storage.setItem('leo-interview-drafts', JSON.stringify(drafts));
     } catch (e) {}
   }
-  root.leoInterview = { PRESETS, preset, framework, preparation, workspace, cleanValues, sameValue, checkSummary, callText, cppDriver, cppResults, cppProblem, resultCases, pickCase, attemptStatus, reviewNote, hasWork, codeEdit, point, validBoard, boardSvg, fitBoard, moveShape, shapeBounds, unionBounds, normalRect, shapesWithin, handlesFor, resizeShape, BOARD_LIMIT, progress, keepDraft, readDraft, clearDraft, MOST_SHAPES, MOST_POINTS, MOST_ANSWER, MOST_PROBLEMS };
+  root.leoInterview = { PRESETS, preset, framework, preparation, workspace, cleanValues, sameValue, checkSummary, callText, cppDriver, cppResults, cppProblem, goDriver, goResults, goProblem, resultCases, pickCase, attemptStatus, reviewNote, hasWork, codeEdit, point, validBoard, boardSvg, fitBoard, moveShape, shapeBounds, unionBounds, normalRect, shapesWithin, handlesFor, resizeShape, BOARD_LIMIT, progress, keepDraft, readDraft, clearDraft, MOST_SHAPES, MOST_POINTS, MOST_ANSWER, MOST_PROBLEMS };
 })(typeof window !== 'undefined' ? window : globalThis);

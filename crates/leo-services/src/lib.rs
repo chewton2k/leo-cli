@@ -8,6 +8,7 @@ pub mod clang;
 pub mod config;
 pub mod doctor;
 pub mod figures;
+pub mod gorunner;
 pub mod health;
 pub mod import;
 pub mod listen;

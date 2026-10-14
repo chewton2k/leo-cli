@@ -46,6 +46,9 @@ pub(crate) async fn code_tools_js() -> Response {
 pub(crate) async fn typescript_js() -> Response {
     javascript(include_str!("../web/vendor/typescript.min.js"))
 }
+pub(crate) async fn wasi_shim_js() -> Response {
+    javascript(include_str!("../web/vendor/wasi-shim.min.js"))
+}
 const SQL_JS: &str = include_str!("../web/vendor/sql/sql-wasm.js");
 const SQL_WASM: &[u8] = include_bytes!("../web/vendor/sql/sql-wasm.wasm");
 

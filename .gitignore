@@ -10,3 +10,4 @@ docs
 node_modules/
 playwright-report/
 test-results/
+scripts/go-runner/out/

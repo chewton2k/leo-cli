@@ -166,6 +166,9 @@ importers:
 
   .:
     devDependencies:
+      '@bjorn3/browser_wasi_shim':
+        specifier: 0.4.2
+        version: 0.4.2
       esbuild:
         specifier: 0.28.2
         version: 0.28.2
@@ -177,6 +180,9 @@ importers:
         version: 3.35.0
 
 packages:
+
+  '@bjorn3/browser_wasi_shim@0.4.2':
+    resolution: {integrity: sha512-/iHkCVUG3VbcbmEHn5iIUpIrh7a7WPiwZ3sHy4HZKZzBdSadwdddYDZAII2zBvQYV0Lfi8naZngPCN7WPHI/hA==}
 
   '@esbuild/aix-ppc64@0.28.2':
     resolution: {integrity: sha512-XExcO+dvLKvVtNTibSTBej1NCAbaGhWn9Ww1ZPx80qsahhPFe/8jgWP0IchNe0F3HwkU7n8ejhH8bjonqht8mQ==}
@@ -524,6 +530,8 @@ packages:
     engines: {node: '>=12'}
 
 snapshots:
+
+  '@bjorn3/browser_wasi_shim@0.4.2': {}
 
   '@esbuild/aix-ppc64@0.28.2':
     optional: true

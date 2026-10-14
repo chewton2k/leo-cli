@@ -5220,6 +5220,34 @@ test('C++ downloads its compiler once with a progress bar and explains types it 
   expect(asked).toBe(1);
 });
 
+test('Go downloads once with a progress bar and explains code it cannot test', async ({ page }) => {
+  const id = 'go-wiring-01';
+  const starter = 'func main() {\n}\n\nfunc twoSum(nums []int, target int) []int {\n}';
+  const challenge = { id: 'go-wiring-problem', title: 'Two sum', question: 'Return indices.', minutes: 10, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'Go', starter, difficulty: 'easy', examples: [{ input: '[2,7], 9', output: '[0,1]' }], constraints: ['small'] } };
+  const workspace = { answer: starter, reasoning: '', board: [] };
+  const item = { id, revision: 1, framework: { title: 'Go practice', track: 'coding', company: '', role: '', language: 'Go', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace, problems: [{ challenge, workspace }], attempts: [] };
+  let done = 0;
+  let asked = 0;
+  await page.route('**/api/interviews', (route) => route.fulfill({ json: [] }));
+  await page.route(`**/api/interviews/${id}/key?*`, (route) => route.fulfill({ json: { status: 'ready', key: { entry: 'twoSum', tests: [{ id: 't1', args: [[2, 7], 9], expected: [0, 1], hidden: false, unordered: false }], hidden_tests: 0, revealed: false, verify: false, asks: [], sections: [], criteria: 1 } } }));
+  await page.route(`**/api/interviews/${id}/run`, (route) => route.fulfill({ status: 204 }));
+  await page.route(`**/api/interviews/${id}`, (route) => route.fulfill({ json: item }));
+  await page.route('**/api/go', (route) => {
+    if (route.request().method() === 'POST') asked++;
+    else if (!asked) return route.fulfill({ json: { status: 'missing', mb: 21 } });
+    if (done >= 3) return route.fulfill({ json: { status: 'ready' } });
+    done++;
+    return route.fulfill({ json: { status: 'fetching', mb: 21, done: done * 7000000, total: 20900000 } });
+  });
+  await page.goto(`/#/interviews/${id}`);
+  await page.locator('[data-interview="run"]').click();
+  await expect(page.locator('#interview-runtime-meter')).toContainText('Getting Go ready, once (about 21 MB)');
+  const cases = page.locator('#interview-pane-cases');
+  await expect(cases.locator('.set-note.warn')).toContainText('Remove func main');
+  await expect(cases.locator('li.fail')).toHaveCount(1);
+  expect(asked).toBe(1);
+});
+
 async function boardLabel(page, text, fx = 0.2, fy = 0.25) {
   await page.locator('[data-interview="tool"][data-tool="text"]').click();
   const board = page.locator('#interview-board');

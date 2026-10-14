@@ -359,3 +359,24 @@ test('C++ tests become a driver that fills in the arguments and prints results a
   assert.deepEqual(I.cppResults('hello\n@@leo t1 [0,1]\n\n@@leo t2 "x"\n@@leo t3 oops'), { results: [{ id: 't1', got: [0, 1] }, { id: 't2', got: 'x' }, { id: 't3', got: 'oops' }], logs: ['hello'] });
   assert.equal(I.cppProblem('In file included from main.cpp:29:\n./solution.cpp:1:23: error: nope\n'), 'line 1:23: error: nope');
 });
+
+test('Go tests become a driver beside the user’s file, with missing imports added and lines kept', () => {
+  const made = I.goDriver('func twoSum(nums []int, target int) []int {\n\tsort.Ints(nums)\n\tfmt.Println(strings.Repeat("a", 2))\n\treturn nil\n}', 'twoSum', [{ id: 't1', args: [[2, 7], 9] }]);
+  assert.equal(made.offset, 1);
+  assert.equal(made.files['solution.go'].split('\n')[0], 'package main; import ("fmt"; "strings"; "sort");');
+  assert.match(made.files['leo_driver.go'], /var leoEntry = twoSum\n\nconst leoTests = "\[\{\\"id\\":\\"t1\\",\\"args\\":\[\[2,7\],9\]\}\]"/);
+  assert.match(made.files['leo_driver.go'], /^package main\n/);
+  const own = I.goDriver('package solution\n\nimport "fmt"\n\nfunc f() { fmt.Println() }', 'f', []);
+  assert.equal(own.offset, 0);
+  assert.match(own.files['solution.go'], /^package main\n\nimport "fmt"/);
+  assert.match(I.goDriver('func main() {}\nfunc f() {}', 'f', []).error, /Remove func main/);
+  assert.match(I.goDriver('func g() {}', 'f', []).error, /Define a function named f/);
+  assert.ok(I.goDriver('func (s *Solution) f() {}\nfunc f[T any](x T) T { return x }', 'f', []).files);
+  assert.deepEqual(I.goResults('hi\n\n@@leo {"id":"t1","got":[0,1],"ms":2}\n\n@@leo {"id":"t2","error":"panic: boom","ms":0}\n'), { results: [{ id: 't1', got: [0, 1], ms: 2 }, { id: 't2', error: 'panic: boom', ms: 0 }], logs: ['hi'], error: '' });
+  assert.equal(I.goResults('@@leo-error the tests could not be read').error, 'the tests could not be read');
+  assert.equal(I.goProblem('# main\n/work/solution.go:3:9: undefined: y\n', 1), 'line 2:9: undefined: y');
+  const leet = I.goDriver('/**\n * type ListNode struct {\n *     Val int\n *     Next *ListNode\n * }\n */\nfunc reverseList(head *ListNode) *ListNode { return head }', 'reverseList', []);
+  assert.match(leet.files['leo_driver.go'], /type ListNode struct \{\n\tVal  int\n\tNext \*ListNode\n\}/);
+  assert.doesNotMatch(leet.files['leo_driver.go'], /type TreeNode/);
+  assert.doesNotMatch(I.goDriver('type ListNode struct { Val int; Next *ListNode }\nfunc f(h *ListNode) {}', 'f', []).files['leo_driver.go'], /type ListNode/);
+});

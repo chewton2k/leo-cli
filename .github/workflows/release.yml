@@ -123,8 +123,31 @@ jobs:
           name: leo-${{ matrix.target }}
           path: leo-${{ matrix.target }}.*
 
+  go-runner:
+    needs: bump
+    if: needs.bump.outputs.sha != ''
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.bump.outputs.sha }}
+      - id: go
+        run: echo "version=$(sed 's/^go//' scripts/go-runner/GO_VERSION)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ steps.go.outputs.version }}
+          cache: false
+      - name: Build the Go runner
+        run: |
+          sh scripts/go-runner/build.sh "$RUNNER_TEMP/go-runner"
+          cp "$RUNNER_TEMP/go-runner/leo-go.tar.gz" .
+      - uses: actions/upload-artifact@v6
+        with:
+          name: leo-go
+          path: leo-go.tar.gz
+
   publish:
-    needs: [version, bump, build]
+    needs: [version, bump, build, go-runner]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5

@@ -173,6 +173,7 @@ pub struct Powers {
     pub quick: Option<Writer>,
     pub python: Option<Runtime>,
     pub cpp: Option<Runtime>,
+    pub go: Option<Runtime>,
     pub chat: Option<Streamer>,
     pub settings: Option<Arc<dyn SettingsApi>>,
     pub importer: Option<Importer>,
@@ -198,6 +199,8 @@ struct AppState {
     python_fetch: Arc<Mutex<Option<String>>>,
     cpp: Option<Runtime>,
     cpp_fetch: Arc<Mutex<Option<String>>>,
+    go: Option<Runtime>,
+    go_fetch: Arc<Mutex<Option<String>>>,
     progress: Arc<progress::Board>,
     warm: Arc<warm::Slot>,
     chat: Option<Streamer>,
@@ -409,6 +412,7 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
     let quick = powers.quick;
     let python = powers.python;
     let cpp = powers.cpp;
+    let go = powers.go;
     let chat = powers.chat;
     let settings = powers.settings;
     let importer = powers.importer;
@@ -453,6 +457,8 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
         python_fetch: Default::default(),
         cpp,
         cpp_fetch: Default::default(),
+        go,
+        go_fetch: Default::default(),
         progress: Default::default(),
         warm: Default::default(),
         chat,
@@ -671,6 +677,7 @@ fn router(state: AppState) -> Router {
         .route("/interview.js", get(routes::assets::interview_js))
         .route("/code-tools.js", get(routes::assets::code_tools_js))
         .route("/typescript.js", get(routes::assets::typescript_js))
+        .route("/wasi-shim.js", get(routes::assets::wasi_shim_js))
         .route(
             "/api/python",
             get(routes::python::status).post(routes::python::fetch),
@@ -678,6 +685,10 @@ fn router(state: AppState) -> Router {
         .route(
             "/api/cpp",
             get(routes::python::cpp_status).post(routes::python::cpp_fetch),
+        )
+        .route(
+            "/api/go",
+            get(routes::python::go_status).post(routes::python::go_fetch),
         )
         .route("/api/progress/{key}", get(routes::interviews::progress))
         .route("/api/interviews", get(routes::interviews::list))
@@ -810,6 +821,7 @@ fn router(state: AppState) -> Router {
         .route("/runner.js", get(routes::assets::runner_js))
         .route("/pyodide/{name}", get(routes::python::file))
         .route("/clang/{name}", get(routes::python::cpp_file))
+        .route("/goroot/{*name}", get(routes::python::go_file))
         .route("/sql/{name}", get(routes::assets::sql_file))
         .layer(axum::middleware::from_fn(security_headers))
         .layer(axum::middleware::from_fn(note_peer))

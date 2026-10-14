@@ -7,6 +7,8 @@ Python (Pyodide, downloaded on first use):
   runs as JavaScript in the sandbox.
 - `sql/sql-wasm.js` and `sql/sql-wasm.wasm`: SQLite (sql.js) for SQL problems,
   loaded by the sandboxed runner.
+- `wasi-shim.min.js`: an in-memory WASI system (@bjorn3/browser_wasi_shim) that
+  the Go compiler and linker run on in the sandbox.
 
 Install the pinned dependencies and rebuild the vendored files and licences:
 

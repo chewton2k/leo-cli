@@ -259,8 +259,24 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
       - run: cargo build --release --locked --target ${{ matrix.target }}
 
+  go-runner:
+    name: Go runner builds to its pinned files
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: ci-go-runner-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v5
+      - id: go
+        run: echo "version=$(sed 's/^go//' scripts/go-runner/GO_VERSION)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ steps.go.outputs.version }}
+          cache: false
+      - run: sh scripts/go-runner/build.sh "$RUNNER_TEMP/go-runner"
+
   release:
-    needs: [changes, test, browser, lint, msrv, targets]
+    needs: [changes, test, browser, lint, msrv, targets, go-runner]
     if: >-
       always()
       && github.event_name == 'push' && github.ref == 'refs/heads/main'

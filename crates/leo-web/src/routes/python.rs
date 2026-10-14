@@ -11,6 +11,7 @@ use crate::{AppState, Runtime};
 
 pub(crate) struct Kind {
     files: &'static [(&'static str, &'static str)],
+    any_file: bool,
     bytes: u64,
     mb: u32,
     failed: &'static str,
@@ -24,6 +25,7 @@ pub(crate) static PYTHON: Kind = Kind {
         ("python_stdlib.zip", "application/zip"),
         ("pyodide-lock.json", "application/json"),
     ],
+    any_file: false,
     bytes: 12_262_929,
     mb: 12,
     failed: "Python could not be downloaded. Check the connection and try again.",
@@ -38,14 +40,25 @@ pub(crate) static CPP: Kind = Kind {
         ("llvm.core3.wasm", "application/wasm"),
         ("llvm.core4.wasm", "application/wasm"),
     ],
+    any_file: false,
     bytes: 27_112_311,
     mb: 27,
     failed: "The C++ compiler could not be downloaded. Check the connection and try again.",
 };
 
+pub(crate) static GO: Kind = Kind {
+    files: &[],
+    any_file: true,
+    bytes: 20_900_000,
+    mb: 21,
+    failed: "Go could not be downloaded. Check the connection and try again.",
+};
+
 fn parts(state: &AppState, kind: &Kind) -> (Option<Runtime>, Arc<Mutex<Option<String>>>) {
     if std::ptr::eq(kind, &CPP) {
         (state.cpp.clone(), Arc::clone(&state.cpp_fetch))
+    } else if std::ptr::eq(kind, &GO) {
+        (state.go.clone(), Arc::clone(&state.go_fetch))
     } else {
         (state.python.clone(), Arc::clone(&state.python_fetch))
     }
@@ -117,11 +130,38 @@ async fn fetch_of(state: AppState, kind: &'static Kind) -> Response {
     status_of(state, kind).await
 }
 
+fn any_content(name: &str) -> Option<&'static str> {
+    let safe = name.len() <= 200
+        && name.split('/').all(|part| {
+            !part.is_empty()
+                && !part.starts_with('.')
+                && part
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        });
+    if !safe {
+        return None;
+    }
+    if name.ends_with(".wasm") {
+        Some("application/wasm")
+    } else if name.ends_with(".a") || name == "importcfg" {
+        Some("application/octet-stream")
+    } else {
+        None
+    }
+}
+
 async fn file_of(state: AppState, kind: &'static Kind, name: String) -> Response {
     let (runtime, _) = parts(&state, kind);
-    let (Some(runtime), Some((_, content))) =
-        (runtime, kind.files.iter().find(|(file, _)| *file == name))
-    else {
+    let content = if kind.any_file {
+        any_content(&name)
+    } else {
+        kind.files
+            .iter()
+            .find(|(file, _)| *file == name)
+            .map(|(_, content)| *content)
+    };
+    let (Some(runtime), Some(content)) = (runtime, content) else {
         return StatusCode::NOT_FOUND.into_response();
     };
     if !(runtime.ready)() {
@@ -130,7 +170,7 @@ async fn file_of(state: AppState, kind: &'static Kind, name: String) -> Response
     match tokio::fs::read(runtime.dir.join(&name)).await {
         Ok(bytes) => (
             [
-                (header::CONTENT_TYPE, *content),
+                (header::CONTENT_TYPE, content),
                 (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
                 (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
             ],
@@ -151,6 +191,18 @@ pub(crate) async fn fetch(State(state): State<AppState>) -> Response {
 
 pub(crate) async fn file(State(state): State<AppState>, Path(name): Path<String>) -> Response {
     file_of(state, &PYTHON, name).await
+}
+
+pub(crate) async fn go_status(State(state): State<AppState>) -> Response {
+    status_of(state, &GO).await
+}
+
+pub(crate) async fn go_fetch(State(state): State<AppState>) -> Response {
+    fetch_of(state, &GO).await
+}
+
+pub(crate) async fn go_file(State(state): State<AppState>, Path(name): Path<String>) -> Response {
+    file_of(state, &GO, name).await
 }
 
 pub(crate) async fn cpp_status(State(state): State<AppState>) -> Response {
@@ -217,5 +269,42 @@ mod tests {
         state.cpp = None;
         assert_eq!(view(&state, &CPP)["status"], "unavailable");
         assert_eq!(view(&state, &PYTHON)["status"], "unavailable");
+    }
+
+    #[test]
+    fn go_serves_only_plain_toolchain_files_from_its_own_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("std/math")).unwrap();
+        std::fs::write(dir.path().join("compile.wasm"), "c").unwrap();
+        std::fs::write(dir.path().join("std/math/bits.a"), "b").unwrap();
+        std::fs::write(
+            dir.path().join("importcfg"),
+            "packagefile math/bits=/go/std/math/bits.a",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("files.sha256"), "x").unwrap();
+        let (mut state, _d, _) = crate::tests::state_for_python();
+        state.go = Some(crate::Runtime {
+            dir: dir.path().to_path_buf(),
+            ready: std::sync::Arc::new(|| true),
+            fetch: std::sync::Arc::new(|| Ok(())),
+        });
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        for served in ["compile.wasm", "std/math/bits.a", "importcfg"] {
+            let answer = runtime.block_on(go_file(State(state.clone()), Path(served.into())));
+            assert_eq!(answer.status(), StatusCode::OK, "{served}");
+            assert_eq!(answer.headers()["access-control-allow-origin"], "*");
+        }
+        for refused in [
+            "files.sha256",
+            "../compile.wasm",
+            "std/../compile.wasm",
+            ".hidden.wasm",
+            "std//math/bits.a",
+            "missing.wasm",
+        ] {
+            let answer = runtime.block_on(go_file(State(state.clone()), Path(refused.into())));
+            assert_eq!(answer.status(), StatusCode::NOT_FOUND, "{refused}");
+        }
     }
 }
