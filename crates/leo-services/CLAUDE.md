@@ -265,8 +265,9 @@ registry, tarball and unpacked files SHA-256 pinned in `models_dir()/clang-…`,
 unpacked with `tar`; `fetch_into` is tested with a local tarball). `runtimes`
 fetches the Go and Java toolchains leo's own release carries (`GO`/`JAVA`
 packs: `leo-go.tar.gz`, `leo-java.tar.gz`, built by CI from
-`scripts/go-runner` and `scripts/java-runner`) and trusts one only when its
-`files.sha256` matches the pack's pin and every listed file matches its sum.
+`scripts/go-runner` and `scripts/java-runner`) and trusts one only when every file matches its sum in the pack's
+`files.sha256`, which for Go and Rust must also match the pinned sum (Java
+builds differ between machines, so leo takes its own release's).
 
 ### What the agent CLIs may use
 

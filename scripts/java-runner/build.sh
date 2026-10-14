@@ -38,17 +38,5 @@ sum() {
 
 (cd "$files" && for f in $(ls | LC_ALL=C sort); do sum "$f"; done) >"$out/files.sha256"
 mv "$out/files.sha256" "$files/files.sha256"
-got=$(sum "$files/files.sha256" | cut -d' ' -f1)
-pinned=$(cat "$here/MANIFEST")
-if [ "$got" != "$pinned" ]; then
-    if [ -n "${GITHUB_ACTIONS:-}" ]; then
-        echo "::error title=Runner build differs::$(java -version 2>&1 | head -n 1 || true) files.sha256=$got $(tr '\n' ' ' <"$files/files.sha256")"
-    fi
-    cat "$files/files.sha256" >&2
-    echo "files.sha256 is $got, MANIFEST pins $pinned." >&2
-    echo "If COMMIT, the patch or the JDK changed on purpose, update MANIFEST and leo_services::runtimes::JAVA together." >&2
-    exit 1
-fi
-
 tar -czf "$out/leo-java.tar.gz" -C "$files" .
 echo "Built $out/leo-java.tar.gz"

@@ -276,7 +276,7 @@ jobs:
       - run: sh scripts/go-runner/build.sh "$RUNNER_TEMP/go-runner"
 
   java-runner:
-    name: Java runner builds to its pinned files
+    name: Java runner builds
     runs-on: ubuntu-24.04
     concurrency:
       group: ci-java-runner-${{ github.ref }}

@@ -5,19 +5,24 @@ use anyhow::{bail, ensure, Result};
 pub struct Pack {
     pub folder: &'static str,
     pub asset: &'static str,
-    pub files_sha256: &'static str,
+    pub files_sha256: Option<&'static str>,
 }
 
 pub const GO_VERSION: &str = "go1.27.2";
 pub const GO: Pack = Pack {
     folder: "go-go1.27.2",
     asset: "leo-go.tar.gz",
-    files_sha256: "ebe6932ac6e36739735ce4da0b0ea2bcdf61f19ded09dc02e8d540506e4b5cd0",
+    files_sha256: Some("ebe6932ac6e36739735ce4da0b0ea2bcdf61f19ded09dc02e8d540506e4b5cd0"),
 };
 pub const JAVA: Pack = Pack {
     folder: "java-teavm-javac",
     asset: "leo-java.tar.gz",
-    files_sha256: "5c601fd87cb25430f2c1fe1371baf4b2961c6648766d96277b2b9d2608e39ae7",
+    files_sha256: None,
+};
+pub const RUST: Pack = Pack {
+    folder: "rust-miri-2024-06",
+    asset: "leo-rust.tar.gz",
+    files_sha256: Some("fce14624025b377e9054f49427064b9494af5540fd2df3a3a5884dce7046276a"),
 };
 const REPO: &str = "chewton2k/leo-cli";
 const LIST: &str = "files.sha256";
@@ -27,12 +32,14 @@ pub fn dir(pack: &Pack) -> PathBuf {
     crate::config::choice::models_dir().join(pack.folder)
 }
 
-fn listed(dir: &Path, pin: &str) -> Result<Vec<(String, String)>> {
+fn listed(dir: &Path, pin: Option<&str>) -> Result<Vec<(String, String)>> {
     let list = dir.join(LIST);
-    ensure!(
-        crate::providers::sha256_of(&list)?.eq_ignore_ascii_case(pin),
-        "the runtime's file list does not match this leo"
-    );
+    if let Some(pin) = pin {
+        ensure!(
+            crate::providers::sha256_of(&list)?.eq_ignore_ascii_case(pin),
+            "the runtime's file list does not match this leo"
+        );
+    }
     let text = std::fs::read_to_string(&list)?;
     let mut out = Vec::new();
     for line in text.lines() {
@@ -60,7 +67,7 @@ pub fn check(pack: &Pack, dir: &Path) -> Result<Vec<String>> {
     check_with(dir, pack.files_sha256)
 }
 
-fn check_with(dir: &Path, pin: &str) -> Result<Vec<String>> {
+fn check_with(dir: &Path, pin: Option<&str>) -> Result<Vec<String>> {
     let files = listed(dir, pin)?;
     for (name, sha) in &files {
         ensure!(
@@ -96,7 +103,7 @@ pub fn fetch(pack: &Pack) -> Result<PathBuf> {
     Ok(dir)
 }
 
-pub fn fetch_into(dir: &Path, urls: &[String], pin: &str) -> Result<()> {
+pub fn fetch_into(dir: &Path, urls: &[String], pin: Option<&str>) -> Result<()> {
     if check_with(dir, pin).is_ok() {
         return Ok(());
     }
@@ -145,19 +152,23 @@ mod tests {
     #[test]
     fn the_pins_match_the_runner_build_scripts() {
         assert_eq!(
-            include_str!("../../../scripts/go-runner/MANIFEST").trim(),
+            Some(include_str!("../../../scripts/go-runner/MANIFEST").trim()),
             GO.files_sha256
         );
         assert_eq!(
-            include_str!("../../../scripts/java-runner/MANIFEST").trim(),
-            JAVA.files_sha256
+            Some(include_str!("../../../scripts/rust-runner/MANIFEST").trim()),
+            RUST.files_sha256
+        );
+        assert_eq!(
+            JAVA.files_sha256, None,
+            "Java builds differ between machines, so each release carries its own"
         );
         assert_eq!(
             include_str!("../../../scripts/go-runner/GO_VERSION").trim(),
             GO_VERSION
         );
         assert!(GO.folder.ends_with(GO_VERSION));
-        for pack in [GO, JAVA] {
+        for pack in [GO, JAVA, RUST] {
             assert!(urls(&pack)
                 .iter()
                 .all(|u| u.starts_with("https://github.com/") && u.ends_with(pack.asset)));
@@ -179,16 +190,16 @@ mod tests {
         std::fs::write(dir.path().join(LIST), &list).unwrap();
         let pin = sum(LIST);
         assert_eq!(
-            check_with(dir.path(), &pin).unwrap(),
+            check_with(dir.path(), Some(&pin)).unwrap(),
             ["compile.wasm", "std/math/bits.a"]
         );
         assert!(
-            check_with(dir.path(), &"0".repeat(64)).is_err(),
+            check_with(dir.path(), Some(&"0".repeat(64))).is_err(),
             "an unpinned list is refused"
         );
         std::fs::write(dir.path().join("std/math/bits.a"), "changed").unwrap();
         assert!(
-            check_with(dir.path(), &pin).is_err(),
+            check_with(dir.path(), Some(&pin)).is_err(),
             "a damaged file is refused"
         );
         for bad in ["../evil", "/abs", "a//b", "./a"] {
@@ -198,13 +209,24 @@ mod tests {
             )
             .unwrap();
             let pin = sum(LIST);
-            assert!(check_with(dir.path(), &pin).is_err(), "{bad}");
+            assert!(check_with(dir.path(), Some(&pin)).is_err(), "{bad}");
         }
         assert!(fetch_into(
             dir.path(),
             &["file:///nowhere/leo-go.tar.gz".to_string()],
-            &pin
+            Some(&pin)
         )
         .is_err());
+    }
+
+    #[test]
+    fn an_unpinned_pack_still_needs_every_listed_file_to_match() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("compiler.wasm"), "c").unwrap();
+        let sum = crate::providers::sha256_of(&dir.path().join("compiler.wasm")).unwrap();
+        std::fs::write(dir.path().join(LIST), format!("{sum}  compiler.wasm\n")).unwrap();
+        assert!(check_with(dir.path(), None).is_ok());
+        std::fs::write(dir.path().join("compiler.wasm"), "changed").unwrap();
+        assert!(check_with(dir.path(), None).is_err());
     }
 }

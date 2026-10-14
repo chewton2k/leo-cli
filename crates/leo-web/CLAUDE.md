@@ -417,9 +417,10 @@ works (plan: `.superpowers/plans/2026-10-12-interview-instant-feedback.md`):
   Java (2026-10-14): javac and TeaVM compiled to WebAssembly GC by
   teavm-javac (`scripts/java-runner`: `COMMIT`, `JDK_VERSION`, leo's
   `inner-classes.patch` so `Map.Entry` and other nested library types resolve,
-  `NOTICE` with the licences and source links; about 4.3 MB packed). CI builds
-  it, pins it like Go (`leo_services::runtimes::JAVA`) and attaches
-  `leo-java.tar.gz`; `/api/java`, `/javaroot/{four names}`. The page loads it
+  `NOTICE` with the licences and source links; about 4.3 MB packed). Its builds
+  differ between machines (same JDK), so it is not pinned: every release
+  builds and attaches its own `leo-java.tar.gz`, and leo checks the files
+  against the `files.sha256` inside (`runtimes::JAVA.files_sha256` is None); `/api/java`, `/javaroot/{four names}`. The page loads it
   once per visit; the runner turns TeaVM's ES-module loader into a classic
   script (`teaRuntime`), compiles `LeoMain.java` (the user's classes with
   `public` blanked and `package` removed, same lines, plus `interviews.javaDriver`'s

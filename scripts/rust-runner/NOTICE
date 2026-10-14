@@ -1,0 +1,11 @@
+leo's Rust runner
+
+These files run Rust in the browser with Miri, the Rust interpreter. They are
+taken unchanged from rubri (https://github.com/LyonSyonII/rubri, MIT) at the
+commit in COMMIT: Miri compiled to WebAssembly (example/public/wasm-rustc/bin)
+and the parts of the Rust standard library a plain program needs
+(example/public/wasm-rustc/lib).
+
+- rubri: MIT License.
+- Miri (https://github.com/rust-lang/miri) and the Rust standard library
+  (https://github.com/rust-lang/rust): MIT License or Apache License 2.0.
