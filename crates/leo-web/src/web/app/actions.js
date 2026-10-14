@@ -186,7 +186,7 @@ const actions = {
   'rec-start': () => recorder.begin().catch(fail),
   'rec-pause': () => recorder.pause().catch(fail),
   'rec-stop': () => recorder.stop().then(checkActivity).catch(fail),
-  'activity-open': (el) => go(el.dataset.href),
+  'activity-open': (el) => (el.dataset.href.startsWith('#combine/') ? reviewCombine(el.dataset.href.slice('#combine/'.length)).catch(fail) : go(el.dataset.href)),
   'activity-fold': () => {
     activity.folded = !activity.folded;
     drawActivity();

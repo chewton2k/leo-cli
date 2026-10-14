@@ -3140,28 +3140,54 @@ test('a calendar is connected in Settings by pasting one link, and can be remove
   await expect(page.locator('.cal-card')).toContainText('Not connected');
 });
 
-test('dropping one note on another combines them at once, both whole under their titles, and Undo brings both back', async ({ page }) => {
+test('dropping one note on another combines them in the background with progress, then shows the result first, and Undo brings both back', async ({ page }) => {
   const tag = Date.now().toString(36);
   const folder = `combine-${tag}`;
   await page.request.post('/api/dirs', { data: { path: folder } });
   const a = await (await page.request.post('/api/notes', { data: { title: `BFS ${tag}`, body: 'BFS uses a queue.', directory: folder } })).json();
   const b = await (await page.request.post('/api/notes', { data: { title: `Graphs ${tag}`, body: 'A graph has nodes and edges.', directory: folder } })).json();
+  const versions = async (id) => (await (await page.request.get(`/api/notes/${id}`)).json()).version;
+  const job = { id: `job-${tag}`, into: b.id, with: a.id, into_title: b.title, with_title: a.title, state: 'working' };
+  let percent = 30;
+  let forgotten = false;
+  await page.route(`**/api/notes/${b.id}/combine`, (route) => {
+    expect(route.request().postDataJSON()).toEqual({ with: a.id });
+    return route.fulfill({ json: job });
+  });
+  await page.route(`**/api/combines/${job.id}`, (route) => {
+    if (route.request().method() === 'DELETE') { forgotten = true; return route.fulfill({ status: 204 }); }
+    return route.fulfill({ json: job });
+  });
+  await page.route('**/api/activity', (route) => route.fulfill({ json: { tasks: forgotten ? [] : [{ kind: 'combine', label: `Combining “${a.title}” into “${b.title}”`, step: job.state === 'working' ? 'Felix is writing one note' : 'Ready to review', done: job.state === 'working' ? percent : 100, total: 100, href: `#combine/${job.id}`, ...(job.state === 'working' ? {} : { ready: true }) }] } }));
   await page.goto(`/#/f/${folder}`);
-  const from = page.locator(`.card[data-id="${a.id}"]`);
-  const onto = page.locator(`.card[data-id="${b.id}"]`);
-  await dragBetween(page, from, onto);
+  await dragBetween(page, page.locator(`.card[data-id="${a.id}"]`), page.locator(`.card[data-id="${b.id}"]`));
   const sheet = page.locator('.sheet');
   await expect(sheet.locator('h3')).toHaveText('Combine these notes?');
-  await expect(sheet).toContainText('each whole under its own title');
+  await expect(sheet).toContainText('runs in the background with a progress bar');
   await sheet.locator('#combine-go').click();
-  await expect(page.locator('.toast')).toContainText(`Combined into “${b.title}”`);
   await expect(sheet).toHaveCount(0);
-  await expect(page.locator(`.card[data-id="${a.id}"]`)).toHaveCount(0);
-  const body = (await (await page.request.get(`/api/notes/${b.id}`)).json()).body;
-  expect(body).toBe(`## BFS ${tag}\n\nBFS uses a queue.\n\n---\n\n## Graphs ${tag}\n\nA graph has nodes and edges.\n`);
+  await expect(page.locator('.toast')).toContainText('Combining in the background');
+  const panel = page.locator('#activity');
+  await expect(panel).toContainText('Felix is writing one note · 30%');
+  await expect(panel.locator('.activity-bar i')).toHaveAttribute('style', /width:\s*(3\d)%/);
+  await page.goto('/#/');
+  percent = 70;
+  await expect(panel).toContainText('· 70%');
+  Object.assign(job, { state: 'ready', result: { title: b.title, with_title: a.title, body: '## Graphs\nA graph has nodes and edges.\n\n## BFS\nBFS uses a queue.', added: ['![Tree](tree.png)'], kept: 0.7, kept_enough: false, base: await versions(b.id), with_base: await versions(a.id) } });
+  await expect(page.locator('.toast')).toContainText('are combined');
+  await expect(panel).toContainText('Ready to review');
+  await expect(panel).toContainText('Ready in the background');
+  await panel.locator('.activity-row').click();
+  const review = page.locator('.sheet');
+  await expect(review.locator('.combine-preview')).toContainText('BFS uses a queue.');
+  await expect(review).toContainText('put back one thing');
+  await expect(review.locator('.set-note.warn')).toContainText('about 70%');
+  await review.locator('#combine-save').click();
+  await expect(page.locator('.toast')).toContainText(`Combined into “${b.title}”`);
+  await expect.poll(() => forgotten).toBe(true);
+  expect((await (await page.request.get(`/api/notes/${b.id}`)).json()).body).toContain('BFS uses a queue.');
   await page.locator('.toast button', { hasText: 'Undo' }).click();
   await expect(page.locator('.toast')).toContainText('Both notes are back');
-  await expect(page.locator(`.card[data-id="${a.id}"]`)).toBeVisible();
   expect((await (await page.request.get(`/api/notes/${b.id}`)).json()).body).toBe('A graph has nodes and edges.');
 });
 

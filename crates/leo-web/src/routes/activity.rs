@@ -12,6 +12,8 @@ pub(crate) struct Task {
     pub(crate) done: usize,
     pub(crate) total: usize,
     pub(crate) href: String,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) ready: bool,
 }
 
 pub(crate) fn activity_tasks(
@@ -33,6 +35,7 @@ pub(crate) fn activity_tasks(
             } else {
                 format!("#/f/{}", job.dir)
             },
+            ready: false,
         })
         .collect();
     out.sort_by(|a, b| a.label.cmp(&b.label));
@@ -45,6 +48,7 @@ pub(crate) fn activity_tasks(
             done,
             total,
             href: "#/record".to_string(),
+            ready: false,
         });
     }
     if let Some((done, total)) = map {
@@ -59,6 +63,7 @@ pub(crate) fn activity_tasks(
             done,
             total,
             href: "#/map".to_string(),
+            ready: false,
         });
     }
     out
@@ -71,6 +76,45 @@ pub(crate) async fn activity(State(state): State<AppState>) -> Json<serde_json::
         .lock()
         .ok()
         .and_then(|held| held.as_ref().map(|j| j.view()));
-    let tasks = activity_tasks(&imports, recording.as_ref(), state.graphs.building());
+    let mut tasks = activity_tasks(&imports, recording.as_ref(), state.graphs.building());
+    let jobs: Vec<_> = state
+        .combines
+        .lock()
+        .map(|jobs| jobs.values().cloned().collect())
+        .unwrap_or_default();
+    tasks.extend(combine_tasks(&jobs, |id| {
+        state
+            .progress
+            .view(&format!("combine:{id}"))
+            .and_then(|v| v["fraction"].as_f64())
+    }));
     Json(serde_json::json!({ "tasks": tasks }))
+}
+
+pub(crate) fn combine_tasks(
+    jobs: &[crate::routes::combine::CombineJob],
+    fraction: impl Fn(&str) -> Option<f64>,
+) -> Vec<Task> {
+    let mut out: Vec<Task> = jobs
+        .iter()
+        .map(|j| Task {
+            kind: "combine",
+            label: format!("Combining “{}” into “{}”", j.with_title, j.into_title),
+            step: match j.state {
+                "working" => "Felix is writing one note".into(),
+                "ready" => "Ready to review".into(),
+                _ => format!("Not combined: {}", j.error),
+            },
+            done: if j.state == "working" {
+                fraction(&j.id).map_or(0, |f| (f * 100.0).round() as usize)
+            } else {
+                100
+            },
+            total: 100,
+            href: format!("#combine/{}", j.id),
+            ready: j.state != "working",
+        })
+        .collect();
+    out.sort_by(|a, b| a.label.cmp(&b.label));
+    out
 }

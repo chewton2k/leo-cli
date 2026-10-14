@@ -121,13 +121,18 @@ seer, meaning, web, room).
   (`/api/trash/restore {ids, dirs}`); rename `/api/dirs/rename`; drag and drop
   (`drag.js`) moves notes and folders (`Store::move_dir` refuses itself, its
   own subfolder, or a taken name), files dropped open the upload sheet.
-  Dropping a note on another opens Combine (2026-10-14, the user's call: no
-  AI, instant). `combine::joined` keeps both notes whole under their own `##`
-  titles, older first, split by `---`, pictures relinked; the other note's
-  recording transcripts are copied over (`recording::copy_to`, labelled
-  `Archive.from`, shown as "Recording n · from “Title”" and in
-  read_transcript); the other note goes to the trash. Undo restores the body,
-  the note and removes the copied transcripts (POST `uncombine`).
+  Dropping a note on another opens Combine (`combine.rs`: the AI writes one
+  note, leo puts back anything it dropped). It runs in the background
+  (2026-10-14, the user's call): POST `combine` starts a job on a thread
+  (`AppState.combines`, at most 20, kept 6 h) metered as `combine:<id>`
+  (streamed characters against the two notes' length); the Background panel
+  shows its percent, then "Ready to review" (`Task.ready`, no spinner), and a
+  toast offers Review. The review sheet saves through POST `combined`
+  (version-checked) or discards (DELETE `/api/combines/{job}`). Saving also
+  copies the other note's recording transcripts over, kept separate and
+  labelled (`recording::copy_to`, `Archive.from`, "Recording n · from
+  “Title”", read_transcript); Undo restores the body and the note and removes
+  the copied transcripts (POST `uncombine`).
 - Sidebar (`side.js`, ≥1000 px): places, a Top level row (styled like a
   folder row, outside the scrolling tree so it is always a drop target), the
   folder tree (`folderTree`, open state in `leo-side-open`, only `.side-tree`

@@ -1,6 +1,20 @@
 use super::*;
 use crate::routes::combine;
 
+fn with_writer(state: &mut AppState, reply: &'static str) -> Arc<Mutex<Vec<String>>> {
+    let asked = Arc::new(Mutex::new(Vec::new()));
+    let heard = Arc::clone(&asked);
+    let notes = state.fresh().notes_dir.clone();
+    state.graphs = Arc::new(graph::Graphs::for_notes(
+        &notes,
+        Some(Arc::new(move |system: &str, user: &str, _| {
+            heard.lock().unwrap().push(format!("{system}\n{user}"));
+            Ok(reply.to_string())
+        })),
+    ));
+    asked
+}
+
 fn bodies(state: &AppState, ids: &[String], texts: [&str; 2]) {
     store_now(state, |store| {
         for (id, text) in ids.iter().zip(texts) {
@@ -10,14 +24,6 @@ fn bodies(state: &AppState, ids: &[String], texts: [&str; 2]) {
         Ok(())
     })
     .unwrap();
-}
-
-fn combined(state: &AppState, into: &str, with: &str) -> Response {
-    run(combine::combine(
-        State(state.clone()),
-        Path(into.to_string()),
-        Json(serde_json::from_value(serde_json::json!({ "with": with })).unwrap()),
-    ))
 }
 
 fn transcript(id: &str) -> leo_core::recording::Archive {
@@ -39,29 +45,99 @@ fn transcript(id: &str) -> leo_core::recording::Archive {
     }
 }
 
+fn started(state: &AppState, into: &str, with: &str) -> Response {
+    run(combine::start(
+        State(state.clone()),
+        Path(into.to_string()),
+        Json(serde_json::from_value(serde_json::json!({ "with": with })).unwrap()),
+    ))
+}
+
+fn finished(state: &AppState, id: &str) -> serde_json::Value {
+    for _ in 0..400 {
+        let job = json_of(run(combine::job(
+            State(state.clone()),
+            Path(id.to_string()),
+        )));
+        if job["state"] != "working" {
+            return job;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    panic!("the combine never finished");
+}
+
+fn keep(state: &AppState, into: &str, value: serde_json::Value) -> Response {
+    run(combine::keep(
+        State(state.clone()),
+        Path(into.to_string()),
+        Json(serde_json::from_value(value).unwrap()),
+    ))
+}
+
 #[test]
-fn combining_keeps_both_notes_whole_and_both_transcripts_at_once_without_an_ai() {
-    let (state, _d, ids) = state_with(&[("Graphs", ""), ("BFS", "")]);
+fn notes_combine_in_the_background_then_wait_for_review_and_keep_both_transcripts() {
+    let (mut state, _d, ids) = state_with(&[("Graphs", ""), ("BFS", "")]);
     bodies(
         &state,
         &ids,
-        ["A graph has nodes and edges.", "BFS uses a queue."],
+        [
+            "A graph has nodes and edges.",
+            "BFS uses a queue.\n\n- [x] read chapter 3\n\n![Tree](attachments/tree.png)",
+        ],
     );
     let notes = state.fresh().notes_dir.clone();
     leo_core::recording::save(&notes, &ids[0], &transcript("session-graphs")).unwrap();
     leo_core::recording::save(&notes, &ids[1], &transcript("session-bfs01")).unwrap();
-    let saved = json_of(combined(&state, &ids[0], &ids[1]));
+    let asked = with_writer(
+        &mut state,
+        "## Graphs\nA graph has nodes and edges.\n\n## BFS\nBFS uses a queue.\n\n- [x] read chapter 3",
+    );
+    let job = json_of(started(&state, &ids[0], &ids[1]));
+    assert_eq!(
+        (job["state"].as_str(), job["into_title"].as_str()),
+        (Some("working"), Some("Graphs"))
+    );
+    let id = job["id"].as_str().unwrap().to_string();
+    let done = finished(&state, &id);
+    assert_eq!(done["state"], "ready", "{done}");
+    let page = &done["result"];
+    let body = page["body"].as_str().unwrap().to_string();
+    assert!(
+        body.contains("![Tree](attachments/tree.png)"),
+        "the AI's omission is put back: {body}"
+    );
+    assert_eq!(page["added"].as_array().unwrap().len(), 1);
+    let prompt = asked.lock().unwrap()[0].clone();
+    assert!(
+        prompt.contains("A graph has nodes and edges.") && prompt.contains("BFS uses a queue.")
+    );
+    assert!(
+        state.fresh().find_note(&ids[1]).is_some(),
+        "nothing changes until it is saved"
+    );
+    let panel = run(crate::routes::activity::activity(State(state.clone()))).0;
+    let row = panel["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["kind"] == "combine")
+        .unwrap()
+        .clone();
+    assert_eq!(
+        (row["step"].as_str(), row["ready"].as_bool()),
+        (Some("Ready to review"), Some(true))
+    );
+    assert_eq!(row["href"], format!("#combine/{id}"));
+
+    let saved = json_of(keep(
+        &state,
+        &ids[0],
+        serde_json::json!({ "with": ids[1], "body": body, "base": page["base"], "with_base": page["with_base"] }),
+    ));
     assert_eq!(saved["before"], "A graph has nodes and edges.");
-    assert_eq!(saved["removed"], ids[1].as_str());
     assert_eq!(saved["sources"], serde_json::json!(["session-bfs01"]));
     let store = state.fresh();
-    let body = store.find_note(&ids[0]).unwrap().body.clone();
-    assert!(
-        body.starts_with(
-            "## Graphs\n\nA graph has nodes and edges.\n\n---\n\n## BFS\n\nBFS uses a queue."
-        ),
-        "{body}"
-    );
     assert!(store.find_note(&ids[1]).is_none());
     assert!(
         store.trashed().iter().any(|t| t.id == ids[1]),
@@ -69,10 +145,10 @@ fn combining_keeps_both_notes_whole_and_both_transcripts_at_once_without_an_ai()
     );
     drop(store);
     let both = leo_core::recording::load(&notes, &ids[0]).unwrap();
-    assert_eq!(both.len(), 2);
     assert!(both
         .iter()
         .any(|s| s.id == "session-bfs01" && s.from == "BFS"));
+    assert_eq!(both.len(), 2, "both transcripts stay, each labelled");
     let undone = run(combine::uncombine(
         State(state.clone()),
         Path(ids[0].clone()),
@@ -80,18 +156,61 @@ fn combining_keeps_both_notes_whole_and_both_transcripts_at_once_without_an_ai()
     ));
     assert_eq!(undone.status(), StatusCode::NO_CONTENT);
     assert_eq!(leo_core::recording::load(&notes, &ids[0]).unwrap().len(), 1);
+    assert_eq!(
+        run(combine::forget(State(state.clone()), Path(id.clone()))).status(),
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        run(combine::job(State(state.clone()), Path(id))).status(),
+        StatusCode::NOT_FOUND
+    );
 }
 
 #[test]
-fn combining_needs_two_different_notes() {
-    let (state, _d, ids) = state_with(&[("Graphs", ""), ("BFS", "")]);
+fn a_note_changed_while_combining_is_not_overwritten() {
+    let (mut state, _d, ids) = state_with(&[("Graphs", ""), ("BFS", "")]);
+    bodies(&state, &ids, ["edges", "queue"]);
+    with_writer(&mut state, "edges and queue");
+    let job = json_of(started(&state, &ids[0], &ids[1]));
+    let done = finished(&state, job["id"].as_str().unwrap());
+    let page = &done["result"];
+    bodies(&state, &ids, ["edges, edited meanwhile", "queue"]);
+    let refused = keep(
+        &state,
+        &ids[0],
+        serde_json::json!({ "with": ids[1], "body": page["body"], "base": page["base"], "with_base": page["with_base"] }),
+    );
+    assert_eq!(refused.status(), StatusCode::CONFLICT);
+    let store = state.fresh();
     assert_eq!(
-        combined(&state, &ids[0], &ids[0]).status(),
+        store.find_note(&ids[0]).unwrap().body,
+        "edges, edited meanwhile"
+    );
+    assert!(store.find_note(&ids[1]).is_some());
+}
+
+#[test]
+fn combining_needs_an_ai_and_two_different_notes_and_a_failed_ai_changes_nothing() {
+    let (mut state, _d, ids) = state_with(&[("Graphs", ""), ("BFS", "")]);
+    assert_eq!(
+        started(&state, &ids[0], &ids[1]).status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    with_writer(&mut state, "  ");
+    assert_eq!(
+        started(&state, &ids[0], &ids[0]).status(),
         StatusCode::BAD_REQUEST
     );
     assert_eq!(
-        combined(&state, &ids[0], "nope").status(),
+        started(&state, &ids[0], "nope").status(),
         StatusCode::NOT_FOUND
     );
+    let job = json_of(started(&state, &ids[0], &ids[1]));
+    let done = finished(&state, job["id"].as_str().unwrap());
+    assert_eq!(done["state"], "failed");
+    assert!(done["error"]
+        .as_str()
+        .unwrap()
+        .contains("Nothing was changed"));
     assert!(state.fresh().find_note(&ids[1]).is_some());
 }

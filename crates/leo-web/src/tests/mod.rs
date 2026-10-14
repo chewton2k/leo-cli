@@ -77,6 +77,7 @@ fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<Strin
         settings: None,
         importer: None,
         imports: Default::default(),
+        combines: Default::default(),
         listener: None,
         regenerator: None,
         calendar_access: None,

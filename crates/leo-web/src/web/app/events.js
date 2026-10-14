@@ -131,15 +131,16 @@ function drawActivity() {
       const creep = 1 - Math.exp(-((now - seen.stepSince) / 1000) / Math.max(3, typical));
       const share = t.total ? Math.max(4, Math.min(99, Math.round(((Math.min(t.done, t.total) + (t.done < t.total ? 0.9 * creep : 0)) / t.total) * 100))) : 0;
       const took = Math.round((now - seen.since) / 1000);
-      const count = `${t.total ? ` · ${t.done}/${t.total}` : ''} · ${took >= 60 ? `${Math.floor(took / 60)}:${String(took % 60).padStart(2, '0')}` : `${took} s`}`;
+      const count = t.ready ? '' : `${t.kind === 'combine' ? ` · ${t.done}%` : t.total ? ` · ${t.done}/${t.total}` : ''} · ${took >= 60 ? `${Math.floor(took / 60)}:${String(took % 60).padStart(2, '0')}` : `${took} s`}`;
       return `<button class="activity-row" data-action="activity-open" data-href="${esc(t.href)}">
         <span class="activity-label">${esc(t.label)}</span>
         <span class="activity-step">${esc(t.step)}${count}</span>
-        <span class="activity-bar${t.total ? '' : ' busy'}"><i style="width:${share}%"></i></span>
+        ${t.ready ? '' : `<span class="activity-bar${t.total ? '' : ' busy'}"><i style="width:${share}%"></i></span>`}
       </button>`;
     })
     .join('');
-  box.innerHTML = `<button class="activity-head" data-action="activity-fold" aria-expanded="${!activity.folded}"><span class="activity-spin"></span><span class="grow">${shown.length === 1 ? 'Working in the background' : `${shown.length} things in the background`}</span><span class="activity-fold">${activity.folded ? 'Show' : 'Hide'}</span></button>${activity.folded ? '' : rows}`;
+  const settled = shown.every((t) => t.ready);
+  box.innerHTML = `<button class="activity-head" data-action="activity-fold" aria-expanded="${!activity.folded}">${settled ? '' : '<span class="activity-spin"></span>'}<span class="grow">${settled ? (shown.length === 1 ? 'Ready in the background' : `${shown.length} ready in the background`) : shown.length === 1 ? 'Working in the background' : `${shown.length} things in the background`}</span><span class="activity-fold">${activity.folded ? 'Show' : 'Hide'}</span></button>${activity.folded ? '' : rows}`;
 }
 
 async function checkActivity() {
@@ -151,7 +152,8 @@ async function checkActivity() {
     if (e instanceof Locked) return;
   }
   drawActivity();
-  if (activity.tasks.length) activity.timer = setTimeout(checkActivity, 1000);
+  for (const t of activity.tasks) if (t.kind === 'combine' && !t.ready) watchCombine(t.href.slice('#combine/'.length));
+  if (activity.tasks.some((t) => !t.ready)) activity.timer = setTimeout(checkActivity, 1000);
 }
 
 function closedHeight(box, summary) {

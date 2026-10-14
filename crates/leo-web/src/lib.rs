@@ -204,6 +204,7 @@ struct AppState {
     settings: Option<Arc<dyn SettingsApi>>,
     importer: Option<Importer>,
     imports: Arc<Mutex<std::collections::HashMap<String, ImportJob>>>,
+    combines: Arc<Mutex<std::collections::HashMap<String, routes::combine::CombineJob>>>,
     listener: Option<record::Listener>,
     regenerator: Option<record::Regenerator>,
     calendar_access: Option<Arc<dyn CalendarAccess>>,
@@ -458,6 +459,7 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
         settings,
         importer,
         imports: Default::default(),
+        combines: Default::default(),
         listener: recorder,
         regenerator: powers.regenerator,
         calendar_access: powers.calendar_access,
@@ -604,10 +606,15 @@ fn router(state: AppState) -> Router {
             post(routes::sources::regenerate),
         )
         .route("/api/notes/{id}/move", post(move_note))
-        .route("/api/notes/{id}/combine", post(routes::combine::combine))
+        .route("/api/notes/{id}/combine", post(routes::combine::start))
+        .route("/api/notes/{id}/combined", post(routes::combine::keep))
         .route(
             "/api/notes/{id}/uncombine",
             post(routes::combine::uncombine),
+        )
+        .route(
+            "/api/combines/{job}",
+            get(routes::combine::job).delete(routes::combine::forget),
         )
         .route("/api/notes/{id}/suggestion", post(apply_suggestion))
         .route("/api/felix/act", post(routes::organize::act_route))

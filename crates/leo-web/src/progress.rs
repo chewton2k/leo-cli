@@ -26,6 +26,11 @@ pub const GRADE: Kind = Kind {
     chars: 1_500.0,
     secs: 10.0,
 };
+pub const COMBINE: Kind = Kind {
+    name: "combine",
+    chars: 6_000.0,
+    secs: 60.0,
+};
 pub const COVERAGE: Kind = Kind {
     name: "coverage",
     chars: 500.0,
@@ -86,12 +91,28 @@ impl Drop for Ticket {
 
 impl Board {
     pub fn start(self: &Arc<Self>, key: String, kind: Kind) -> Option<Ticket> {
-        let (chars, secs) = self
+        self.start_sized(key, kind, None)
+    }
+
+    pub fn start_sized(
+        self: &Arc<Self>,
+        key: String,
+        kind: Kind,
+        expected: Option<f64>,
+    ) -> Option<Ticket> {
+        let (learned_chars, learned_secs) = self
             .learned
             .lock()
             .ok()
             .and_then(|l| l.get(kind.name).copied())
             .unwrap_or((kind.chars, kind.secs));
+        let (chars, secs) = match expected {
+            Some(chars) if chars > 0.0 => (
+                chars,
+                (learned_secs / learned_chars.max(1.0) * chars).clamp(5.0, 900.0),
+            ),
+            _ => (learned_chars, learned_secs),
+        };
         let mut meters = self.meters.lock().ok()?;
         if meters.contains_key(&key) || meters.len() >= MOST_METERS {
             return None;
@@ -142,7 +163,7 @@ impl Board {
 pub fn valid_key(key: &str) -> bool {
     key.len() <= 200
         && key.split_once(':').is_some_and(|(kind, rest)| {
-            [KEY.name, GRADE.name, COVERAGE.name].contains(&kind)
+            [KEY.name, GRADE.name, COVERAGE.name, COMBINE.name].contains(&kind)
                 && !rest.is_empty()
                 && rest
                     .chars()
@@ -221,5 +242,19 @@ mod tests {
         assert!(ticket.meter.fraction() > 0.9);
         assert!(valid_key("coverage:practice-1:problem-1"));
         assert!(!valid_key("other:x") && !valid_key("key:") && !valid_key("key:a/b"));
+    }
+
+    #[test]
+    fn a_sized_job_expects_time_in_proportion_to_its_length() {
+        let board = Arc::new(Board::default());
+        let small = board
+            .start_sized("combine:a".into(), COMBINE, Some(3_000.0))
+            .unwrap();
+        let large = board
+            .start_sized("combine:b".into(), COMBINE, Some(24_000.0))
+            .unwrap();
+        assert_eq!(small.meter.view()["expected"], 30);
+        assert_eq!(large.meter.view()["expected"], 240);
+        assert!(valid_key("combine:a"));
     }
 }

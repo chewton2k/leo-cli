@@ -123,8 +123,8 @@ document.addEventListener('drop', (e) => {
 function combineSheet(from, into) {
   const box = sheet(`<div class="combine">
     <h3>Combine these notes?</h3>
-    <p>Both notes go into “${esc(into.title)}”, each whole under its own title, the older one first. Any recording transcripts come along too, so you can read both.</p>
-    <p class="hint">“${esc(from.title)}” goes to the trash, and Undo brings both back as they were.</p>
+    <p>Felix writes one note with everything from “${esc(from.title)}” and “${esc(into.title)}”. What both say is written once; nothing unique is left out. Recording transcripts stay separate, each labelled with the note it came from.</p>
+    <p class="hint">It runs in the background with a progress bar, so you can keep working. You see the result before anything changes; then “${esc(from.title)}” goes to the trash and Undo brings both back.</p>
     <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn primary" id="combine-go">Combine</button></div>
   </div>`);
   $('#combine-go', box).addEventListener('click', () => combineNow(from, into).catch(fail));
@@ -133,15 +133,80 @@ function combineSheet(from, into) {
 async function combineNow(from, into) {
   const go = $('#combine-go');
   if (go) go.disabled = true;
-  let saved;
+  let job;
   try {
-    saved = await api(`/api/notes/${enc(into.id)}/combine`, { method: 'POST', body: { with: from.id } });
+    job = await api(`/api/notes/${enc(into.id)}/combine`, { method: 'POST', body: { with: from.id } });
   } catch (e) {
     const open = $('.scrim .combine');
     if (open) open.innerHTML = `<h3>The notes could not be combined</h3><p class="upload-error">${esc(e.message)}</p><div class="buttons"><button class="btn plain" data-action="close">Close</button></div>`;
     return;
   }
+  if ($('.scrim .combine')) closeSheet();
+  toast('Combining in the background. Its progress is in the Background panel; you’ll review it before anything changes.');
+  checkActivity();
+  watchCombine(job.id);
+}
+
+const combinesWatched = new Set();
+
+function watchCombine(id) {
+  if (combinesWatched.has(id)) return;
+  combinesWatched.add(id);
+  const look = async () => {
+    let job;
+    try {
+      job = await api(`/api/combines/${enc(id)}`);
+    } catch (e) {
+      combinesWatched.delete(id);
+      return;
+    }
+    if (job.state === 'working') { setTimeout(look, 1500); return; }
+    combinesWatched.delete(id);
+    checkActivity();
+    if (job.state === 'ready') toast(`“${job.with_title}” and “${job.into_title}” are combined`, { action: 'Review', run: () => reviewCombine(id).catch(fail) });
+    else toast(job.error || 'The notes could not be combined.', { bad: true });
+  };
+  setTimeout(look, 1500);
+}
+
+async function forgetCombine(id) {
+  await api(`/api/combines/${enc(id)}`, { method: 'DELETE' }).catch(() => {});
+  checkActivity();
+}
+
+async function reviewCombine(id) {
+  const job = await api(`/api/combines/${enc(id)}`);
+  if (job.state === 'working') { toast('Still combining. Its progress is in the Background panel.'); return; }
+  if (job.state !== 'ready') {
+    await forgetCombine(id);
+    toast(job.error || 'The notes could not be combined.', { bad: true });
+    return;
+  }
+  const made = job.result;
+  const from = { id: job.with, title: job.with_title };
+  const into = { id: job.into, title: job.into_title };
+  const putBack = made.added.length
+    ? `<p>leo put back ${made.added.length === 1 ? 'one thing' : `${made.added.length} things`} the AI left out (pictures, links, code, math or checkboxes), at the end under “Also in the original notes”.</p>`
+    : '';
+  const thin = made.kept_enough
+    ? ''
+    : `<p class="set-note warn">Some wording from the originals may be missing (about ${Math.round(made.kept * 100)}% of their words are here). Read it through before you save.</p>`;
+  const shown = sheet(`<div class="combine"><h3>${esc(made.title)}</h3>
+    <p class="hint">Everything from “${esc(made.with_title)}” and “${esc(made.title)}”, combined. Nothing changes until you save.</p>
+    ${putBack}${thin}
+    <div class="prose combine-preview">${md.render(made.body)}</div>
+    <div class="buttons"><button class="btn plain" id="combine-discard">Discard</button><button class="btn primary" id="combine-save">Save combined note</button></div></div>`);
+  $('#combine-discard', shown).addEventListener('click', () => { closeSheet(); forgetCombine(id); });
+  $('#combine-save', shown).addEventListener('click', () => saveCombined(made, from, into, id).catch(fail));
+}
+
+async function saveCombined(made, from, into, id) {
+  const saved = await api(`/api/notes/${enc(into.id)}/combined`, {
+    method: 'POST',
+    body: { with: from.id, body: made.body, base: made.base, with_base: made.with_base },
+  });
   closeSheet();
+  forgetCombine(id);
   await afterCombine(into.id);
   toast(`Combined into “${into.title}”`, {
     action: 'Undo',
