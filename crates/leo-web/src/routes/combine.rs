@@ -6,7 +6,7 @@ use axum::{
 };
 use serde::Deserialize;
 
-use super::notes::{save, version_of, NoteResponse};
+use super::notes::{save, NoteResponse};
 use crate::{combine, AppState};
 
 fn error(code: StatusCode, message: &str) -> Response {
@@ -14,127 +14,84 @@ fn error(code: StatusCode, message: &str) -> Response {
 }
 
 #[derive(Deserialize)]
-pub(crate) struct Preview {
+pub(crate) struct Combine {
     with: String,
 }
 
-pub(crate) async fn preview(
+pub(crate) async fn combine(
     State(state): State<AppState>,
     Path(into): Path<String>,
-    Json(body): Json<Preview>,
+    Json(body): Json<Combine>,
 ) -> Response {
-    let Some(writer) = state.graphs.writer() else {
-        return error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Combining notes needs a writing AI. Choose one in Settings.",
-        );
-    };
-    let found = state
+    let done = state
         .with_store(move |store| {
-            let a = store.find_note(&into).ok_or(StatusCode::NOT_FOUND)?.clone();
-            let b = store
+            let from = store
                 .find_note(&body.with)
                 .ok_or(StatusCode::NOT_FOUND)?
                 .clone();
-            if a.id == b.id {
+            let target = store.find_note(&into).ok_or(StatusCode::NOT_FOUND)?.clone();
+            if target.id == from.id {
                 return Err(StatusCode::BAD_REQUEST);
             }
-            Ok((a, b, store.notes_dir.clone()))
-        })
-        .await;
-    let (into, from, notes_dir) = match found {
-        Ok(found) => found,
-        Err(StatusCode::BAD_REQUEST) => {
-            return error(StatusCode::BAD_REQUEST, "Drop a note on a different note.")
-        }
-        Err(code) => return error(code, "One of those notes is gone. Refresh and try again."),
-    };
-    if into.body.chars().count() + from.body.chars().count() > combine::MOST_CHARS {
-        return error(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            "These notes are too long to combine with the AI in one go. Move the parts you want by hand.",
-        );
-    }
-    let written = tokio::task::spawn_blocking(move || {
-        let reply = writer(
-            combine::SYSTEM,
-            &combine::prompt(&into, &from),
-            combine::reply_tokens(&into, &from),
-        )?;
-        anyhow::ensure!(!reply.trim().is_empty(), "the AI sent back nothing");
-        let combined = combine::settle(&notes_dir, &into, &from, &reply);
-        Ok::<_, anyhow::Error>((into, from, combined))
-    })
-    .await;
-    let (into, from, combined) = match written {
-        Ok(Ok(done)) => done,
-        _ => {
-            return error(
-                StatusCode::BAD_GATEWAY,
-                "The AI could not combine these notes. Nothing was changed; try again.",
-            )
-        }
-    };
-    Json(serde_json::json!({
-        "title": into.title,
-        "with_title": from.title,
-        "body": combined.body,
-        "added": combined.added,
-        "kept": combined.kept,
-        "kept_enough": combined.kept >= combine::KEPT_ENOUGH,
-        "base": version_of(&into),
-        "with_base": version_of(&from),
-    }))
-    .into_response()
-}
-
-#[derive(Deserialize)]
-pub(crate) struct Keep {
-    with: String,
-    body: String,
-    base: String,
-    with_base: String,
-}
-
-pub(crate) async fn keep(
-    State(state): State<AppState>,
-    Path(into): Path<String>,
-    Json(body): Json<Keep>,
-) -> Response {
-    if body.body.trim().is_empty() || body.body.chars().count() > combine::MOST_CHARS * 2 {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "The combined note is empty or too long.",
-        );
-    }
-    let done = state
-        .with_store(move |store| {
-            let from = store.find_note(&body.with).ok_or(StatusCode::NOT_FOUND)?;
-            if version_of(from) != body.with_base {
-                return Err(StatusCode::CONFLICT);
+            if target.body.chars().count() + from.body.chars().count() > combine::MOST_CHARS {
+                return Err(StatusCode::PAYLOAD_TOO_LARGE);
             }
-            let from = from.id.clone();
-            let note = store.find_note_mut(&into).ok_or(StatusCode::NOT_FOUND)?;
-            if note.id == from {
-                return Err(StatusCode::BAD_REQUEST);
-            }
-            if version_of(note) != body.base {
-                return Err(StatusCode::CONFLICT);
-            }
-            let before = std::mem::replace(&mut note.body, body.body);
+            let joined = combine::joined(&store.notes_dir, &target, &from);
+            let notes_dir = store.notes_dir.clone();
+            let copied = leo_core::recording::copy_to(&notes_dir, &from.id, &target.id, &from.title)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            let note = store.find_note_mut(&target.id).ok_or(StatusCode::NOT_FOUND)?;
+            let before = std::mem::replace(&mut note.body, joined);
             note.updated_at = chrono::Utc::now();
             let response = NoteResponse::from_note(note);
-            store.delete_notes(std::slice::from_ref(&from));
-            save(store)?;
-            Ok(serde_json::json!({ "note": response, "before": before, "removed": from }))
+            store.delete_notes(std::slice::from_ref(&from.id));
+            if let Err(code) = save(store) {
+                let _ = leo_core::recording::remove(&notes_dir, &target.id, &copied);
+                return Err(code);
+            }
+            Ok(serde_json::json!({ "note": response, "before": before, "removed": from.id, "sources": copied }))
         })
         .await;
     match done {
         Ok(value) => Json(value).into_response(),
-        Err(StatusCode::CONFLICT) => error(
-            StatusCode::CONFLICT,
-            "One of the notes changed while they were being combined. Combine them again.",
+        Err(StatusCode::BAD_REQUEST) => {
+            error(StatusCode::BAD_REQUEST, "Drop a note on a different note.")
+        }
+        Err(StatusCode::PAYLOAD_TOO_LARGE) => error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "These notes are too long to combine. Move the parts you want by hand.",
         ),
-        Err(code) => error(code, "The combined note could not be saved."),
+        Err(StatusCode::NOT_FOUND) => error(
+            StatusCode::NOT_FOUND,
+            "One of those notes is gone. Refresh and try again.",
+        ),
+        Err(code) => error(code, "The notes could not be combined."),
+    }
+}
+
+#[derive(Deserialize)]
+pub(crate) struct Uncombine {
+    #[serde(default)]
+    sources: Vec<String>,
+}
+
+pub(crate) async fn uncombine(
+    State(state): State<AppState>,
+    Path(into): Path<String>,
+    Json(body): Json<Uncombine>,
+) -> Response {
+    if body.sources.len() > 1000 {
+        return error(StatusCode::BAD_REQUEST, "Too many recordings.");
+    }
+    let done = state
+        .with_store(move |store| {
+            store.find_note(&into).ok_or(StatusCode::NOT_FOUND)?;
+            leo_core::recording::remove(&store.notes_dir, &into, &body.sources)
+                .map_err(|_| StatusCode::BAD_REQUEST)
+        })
+        .await;
+    match done {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(code) => error(code, "The recordings could not be moved back."),
     }
 }

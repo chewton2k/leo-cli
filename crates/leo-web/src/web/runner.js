@@ -74,9 +74,43 @@ json.dumps(out)
       }
       return py;
     }
+    let lite = null;
+    function sqlite(base) {
+      if (!lite) {
+        importScripts(`${base}sql/sql-wasm.js`);
+        lite = initSqlJs({ locateFile: (file) => `${base}sql/${file}` });
+      }
+      return lite;
+    }
     self.onmessage = async (e) => {
       const job = e.data;
       const logs = [];
+      if (job.language === 'sql') {
+        let SQL;
+        try {
+          SQL = await sqlite(job.base);
+        } catch (err) {
+          self.postMessage({ error: 'SQLite could not start in this browser.', results: [], logs });
+          return;
+        }
+        const results = [];
+        for (const test of job.tests || []) {
+          const started = performance.now();
+          const db = new SQL.Database();
+          try {
+            db.exec(String((test.args || [])[0] || ''));
+            const out = db.exec(String(job.code || ''));
+            const last = out[out.length - 1];
+            results.push({ id: test.id, got: last ? last.values.map((row) => row.map(plain)) : [], ms: Math.round(performance.now() - started) });
+          } catch (err) {
+            results.push({ id: test.id, error: String(err && err.message ? err.message : err).slice(0, 300), ms: Math.round(performance.now() - started) });
+          } finally {
+            db.close();
+          }
+        }
+        self.postMessage({ results, logs });
+        return;
+      }
       if (job.language === 'python') {
         try {
           const ready = await python(job.base);
@@ -148,7 +182,7 @@ json.dumps(out)
       stop(e.data || {});
     };
     worker.onerror = (e) => { stop({ stopped: true, error: `Your code did not run: ${e.message || 'unknown error'}`, results: [], logs: [] }); e.preventDefault(); };
-    worker.postMessage({ code: String(job.code || ''), entry: job.entry, tests: job.tests || [], language: python ? 'python' : 'javascript', base: String(job.base || '') });
+    worker.postMessage({ code: String(job.code || ''), entry: job.entry, tests: job.tests || [], language: python ? 'python' : job.language === 'sql' ? 'sql' : 'javascript', base: String(job.base || '') });
   }
 
   window.addEventListener('message', (e) => {

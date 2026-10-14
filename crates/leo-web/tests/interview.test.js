@@ -264,8 +264,11 @@ test('submission results become named cases, and the first failure is chosen unl
   const cases = I.resultCases(checks);
   assert.deepEqual(cases.map((c) => c.name), ['Case 1', 'Case 2', 'Answer 1', 'Answer 2', 'Requirements']);
   assert.equal(cases[0].input, 'pair_sum([2,3], 5)');
-  assert.equal(cases[1].input, '', 'a hidden test has no input to show');
+  assert.equal(cases[1].input, '', 'an old hidden test saved without its call has no input to show');
   assert.equal(cases[1].title, 'Case 2 · hidden test');
+  const revealed = I.resultCases([{ id: 't9', kind: 'test', label: 'pair_sum([], 0)', hidden: true, pass: false, given: 'null', expected: '[]' }]);
+  assert.equal(revealed[0].input, 'pair_sum([], 0)', 'a hidden test shows its input once submitted');
+  assert.equal(revealed[0].title, 'Case 1 · hidden test');
   assert.equal(cases[2].title, 'Expected payout ($)');
   assert.deepEqual([cases[2].yours, cases[2].expected], ['3', '$3.5']);
   assert.equal(cases[4].group, 'section');
@@ -329,4 +332,10 @@ test('the board selects what a drag box encloses, resizes like a slide editor an
   const still = I.boardSvg(board, { view });
   assert.match(still, /fill="white"\/>/);
   assert.doesNotMatch(still, /board-hit|data-board-shape|fill="transparent"/);
+});
+
+test('a test case reads as a call, or as its tables for SQL', () => {
+  assert.equal(I.callText('two_sum', [[2, 7], 9]), 'two_sum([2,7], 9)');
+  assert.equal(I.callText('sql', ['CREATE TABLE t(x); INSERT INTO t VALUES (1);']), 'CREATE TABLE t(x); INSERT INTO t VALUES (1);');
+  assert.equal(I.callText('solve'), 'solve()');
 });

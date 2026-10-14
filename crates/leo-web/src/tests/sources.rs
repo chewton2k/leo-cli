@@ -18,6 +18,7 @@ fn source(id: &str) -> leo_core::recording::Archive {
         wants: String::new(),
         warnings: vec![],
         trace: vec![],
+        from: String::new(),
     }
 }
 #[test]

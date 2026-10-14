@@ -15,14 +15,14 @@ pub const SPECS: [Spec; 2] = [
     },
     Spec {
         name: "interview_code_edit",
-        purpose: "Suggest one focused code change when the user asks for edits or concrete fixes. Read interview_code first. Call separately for independent non-overlapping changes so each gets its own Accept/Decline card. Never apply directly, even in Auto. Respect hint requests; do not give a full solution unless asked. Use interpretable language in summary.",
+        purpose: "Suggest one focused code change when the user asks for edits or concrete fixes. Read interview_code first. Call separately for independent non-overlapping changes so each gets its own Accept/Decline card. In Ask first the user accepts each card; in Auto leo applies it in their editor at once with Undo. Respect hint requests; do not give a full solution unless asked. Use interpretable language in summary.",
         params: &[
             Param { name: "summary", required: true, about: "brief reason for this one change, up to 300 characters" },
             Param { name: "find", required: true, about: "exact non-empty code appearing once, up to 8000 characters" },
             Param { name: "replace", required: true, about: "replacement code, up to 8000 characters; empty deletes the matched code" },
             Param { name: "challenge", required: false, about: "a saved problem ID; omit for the active problem" },
         ],
-        returns: "An unapplied code suggestion. The user accepts or declines each change independently. Do not claim it was saved or run. Stale or ambiguous code is refused; read the latest code and retry. Read only prevents suggestions.",
+        returns: "A code change: a card the user accepts or declines in Ask first, applied with Undo in Auto. Do not claim it was saved or run. Stale or ambiguous code is refused; read the latest code and retry. Read only prevents suggestions.",
         example: r#"<tool>{"name":"interview_code_edit","summary":"Check the complement before inserting this index","find":"seen[value] = i\nif target - value in seen:","replace":"if target - value in seen:"}</tool>"#,
     },
 ];

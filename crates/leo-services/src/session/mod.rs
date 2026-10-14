@@ -487,6 +487,7 @@ impl Session {
                 })
                 .collect(),
             trace: self.traces(),
+            from: String::new(),
         }
     }
 

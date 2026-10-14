@@ -5,7 +5,7 @@ use axum::{
     Json,
 };
 
-use crate::{interview, AppState};
+use crate::{interview, progress, AppState};
 
 fn failed(why: interview::Error) -> Response {
     let code = match &why {
@@ -58,11 +58,55 @@ pub(crate) struct ChallengeQuery {
     challenge: String,
 }
 
+pub(crate) fn key_writer(
+    state: &AppState,
+    item: &interview::Interview,
+) -> Option<crate::graph::Writer> {
+    let writer = state.graphs.writer()?;
+    let challenge = item.challenge.as_ref()?;
+    let Some(ticket) = state
+        .progress
+        .start(format!("key:{}:{}", item.id, challenge.id), progress::KEY)
+    else {
+        return Some(writer);
+    };
+    let inner = progress::metered(
+        writer,
+        state.chat.clone(),
+        std::sync::Arc::clone(&ticket.meter),
+    );
+    Some(std::sync::Arc::new(
+        move |system: &str, user: &str, most: u32| {
+            let _held = &ticket;
+            inner(system, user, most)
+        },
+    ))
+}
+
+pub(crate) async fn progress(State(state): State<AppState>, Path(key): Path<String>) -> Response {
+    if !progress::valid_key(&key) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    Json(
+        state
+            .progress
+            .view(&key)
+            .unwrap_or_else(|| serde_json::json!({ "fraction": null })),
+    )
+    .into_response()
+}
+
 fn key_view(state: &AppState, id: &str, challenge: &str) -> serde_json::Value {
     match crate::interview_keys::status(&state.chats, id, challenge) {
         Some((status, Some(key))) if status == "ready" => {
-            serde_json::json!({"status": status, "key": key.public()})
+            let revealed = interview::load(&state.chats, id)
+                .is_ok_and(|item| item.attempts.iter().any(|a| a.challenge.id == challenge));
+            serde_json::json!({"status": status, "key": key.public(revealed)})
         }
+        Some((status, _)) if status == "preparing" => serde_json::json!({
+            "status": status,
+            "progress": state.progress.view(&format!("key:{id}:{challenge}")),
+        }),
         Some((status, _)) => serde_json::json!({"status": status}),
         None => serde_json::json!({"status": "none"}),
     }
@@ -102,7 +146,7 @@ pub(crate) async fn prepare_key(
             ));
         }
         let again = crate::interview_keys::status(&state.chats, &id, &query.challenge).is_some();
-        crate::interview_keys::prepare(&state.chats, state.graphs.writer(), &item, again);
+        crate::interview_keys::prepare(&state.chats, key_writer(&state, &item), &item, again);
         Ok(key_view(&state, &id, &query.challenge))
     })
     .await;
@@ -137,6 +181,98 @@ pub(crate) async fn hidden_tests(
 }
 
 #[derive(serde::Deserialize)]
+pub(crate) struct RunBody {
+    challenge: String,
+    #[serde(default)]
+    stamp: String,
+    #[serde(default)]
+    reports: Vec<crate::interview_keys::TestReport>,
+    #[serde(default)]
+    error: String,
+}
+
+fn too_many(body: &RunBody) -> bool {
+    body.reports.len() > crate::interview_keys::MOST_TESTS
+        || body.error.len() > 4_000
+        || body
+            .reports
+            .iter()
+            .any(|r| r.id.len() > 40 || r.got.len() > 4_000)
+}
+
+pub(crate) async fn check_key(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(query): Json<ChallengeQuery>,
+) -> Response {
+    if !crate::interview_keys::valid(&id, &query.challenge) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let job = tokio::task::spawn_blocking(move || {
+        crate::interview_keys::verify_job(&state.chats, &id, &query.challenge)
+    })
+    .await
+    .ok()
+    .flatten();
+    Json(job.unwrap_or_else(|| serde_json::json!({"done": true}))).into_response()
+}
+
+pub(crate) async fn key_checked(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<RunBody>,
+) -> Response {
+    if !crate::interview_keys::valid(&id, &body.challenge) || too_many(&body) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let done = tokio::task::spawn_blocking(move || {
+        crate::interview_keys::verified(
+            &state.chats,
+            &id,
+            &body.challenge,
+            &body.stamp,
+            &body.reports,
+            &body.error,
+        )
+        .map(|dropped| (dropped, key_view(&state, &id, &body.challenge)))
+    })
+    .await;
+    match done {
+        Ok(Ok((dropped, mut view))) => {
+            view["dropped"] = serde_json::json!(dropped);
+            Json(view).into_response()
+        }
+        Ok(Err(why)) => failed(interview::Error::Invalid(why)),
+        Err(_) => failed(interview::Error::Storage),
+    }
+}
+
+pub(crate) async fn save_run(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<RunBody>,
+) -> Response {
+    if !crate::interview_keys::valid(&id, &body.challenge) || too_many(&body) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let done = tokio::task::spawn_blocking(move || {
+        crate::interview_keys::save_run(
+            &state.chats,
+            &id,
+            &body.challenge,
+            body.reports,
+            &body.error,
+        )
+    })
+    .await;
+    match done {
+        Ok(Ok(())) => StatusCode::NO_CONTENT.into_response(),
+        Ok(Err(why)) => failed(interview::Error::Invalid(why)),
+        Err(_) => failed(interview::Error::Storage),
+    }
+}
+
+#[derive(serde::Deserialize)]
 pub(crate) struct GradeBody {
     attempt: String,
 }
@@ -158,7 +294,15 @@ pub(crate) async fn grade(
             "Choose a writing AI in Settings to grade answers.".into(),
         ));
     };
+    let ticket = state
+        .progress
+        .start(format!("grade:{}", body.attempt), progress::GRADE);
+    let quick = match &ticket {
+        Some(t) => progress::metered(quick, None, std::sync::Arc::clone(&t.meter)),
+        None => quick,
+    };
     let done = tokio::task::spawn_blocking(move || {
+        let _held = ticket;
         let item = interview::load(&state.chats, &id)?;
         let attempt = item
             .attempts
@@ -215,7 +359,16 @@ pub(crate) async fn coverage(
             "Choose a writing AI in Settings to check coverage.".into(),
         ));
     };
+    let ticket = state.progress.start(
+        format!("coverage:{id}:{}", body.challenge),
+        progress::COVERAGE,
+    );
+    let quick = match &ticket {
+        Some(t) => progress::metered(quick, None, std::sync::Arc::clone(&t.meter)),
+        None => quick,
+    };
     let done = tokio::task::spawn_blocking(move || {
+        let _held = ticket;
         let item = interview::load(&state.chats, &id)?;
         let challenge = item
             .challenge

@@ -541,7 +541,9 @@ fn run_tool(
             found: Vec::new(),
         }
     } else if crate::interview_tools::is_tool(&call.name) {
-        if call.name == "interview_code_edit" && !access.changes() {
+        if matches!(call.name.as_str(), "interview_code_edit" | "interview_test")
+            && !access.changes()
+        {
             return Ok(tools::Done {
                 step: "Kept your code unchanged".into(),
                 result:
@@ -576,7 +578,12 @@ fn run_tool(
                 desk.interview_problem = item.challenge.as_ref().map(|c| c.id.clone());
             }
             if call.name == "interview_challenge" {
-                crate::interview_keys::prepare(&state.chats, state.graphs.writer(), &item, false);
+                crate::interview_keys::prepare(
+                    &state.chats,
+                    crate::routes::interviews::key_writer(state, &item),
+                    &item,
+                    false,
+                );
             }
             send(serde_json::json!({"interview": {"id": item.id, "revision": item.revision}}));
         }
@@ -615,12 +622,14 @@ fn run_tool(
     if let Some(proposal) = &done.proposal {
         let shown = match latest_access {
             tools::Access::Auto
-                if !matches!(
-                    proposal,
-                    tools::Proposal::DeleteFolder { .. }
-                        | tools::Proposal::InterviewCodeEdit { .. }
-                ) =>
+                if matches!(proposal, tools::Proposal::InterviewCodeEdit { .. }) =>
             {
+                done.result = "Auto is on: leo applies this change in the user's editor now, merging it with their typing; they can undo it. It has not been run.".into();
+                let mut shown = serde_json::json!(proposal);
+                shown["auto"] = serde_json::json!(true);
+                shown
+            }
+            tools::Access::Auto if !matches!(proposal, tools::Proposal::DeleteFolder { .. }) => {
                 match apply_now(state, proposal) {
                     Ok(applied) => {
                         done.result = match proposal {
@@ -1572,7 +1581,29 @@ pub(crate) async fn chat_reply(
             }) {
                 return (StatusCode::CONFLICT, Json(serde_json::json!({"error":"That practice problem is no longer here. Reopen your practice and choose a saved problem."}))).into_response();
             }
-            let context = crate::interview::context_problem(&item, interview_problem.as_deref());
+            let mut context =
+                crate::interview::context_problem(&item, interview_problem.as_deref());
+            if let Some(active) = interview_problem
+                .clone()
+                .or_else(|| item.challenge.as_ref().map(|c| c.id.clone()))
+            {
+                let path = state.chats.clone();
+                let checks =
+                    crate::interview_tools::latest_checks(&item, &active).map(<[_]>::to_vec);
+                let interview_id = item.id.clone();
+                if let Ok(tests) = tokio::task::spawn_blocking(move || {
+                    crate::interview_keys::tests_material(
+                        &path,
+                        &interview_id,
+                        &active,
+                        checks.as_deref(),
+                    )
+                })
+                .await
+                {
+                    context.push_str(&tests);
+                }
+            }
             user = chat::before_reply(&user, &context);
             if let Some(c) = continued.as_mut() {
                 c.text = chat::before_reply(&c.text, &context);

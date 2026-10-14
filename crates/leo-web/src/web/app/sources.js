@@ -45,7 +45,7 @@ function drawRecordingSources(query = '') {
   const many = page.sources.length > 1;
   const body = page.sources
     .map((source, i) => {
-      const label = many ? `<div class="source-label">Recording ${i + 1} · ${esc(new Date(source.started).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}</div>` : '';
+      const label = many ? `<div class="source-label">Recording ${i + 1}${source.from ? ` · from “${esc(source.from)}”` : ''} · ${esc(new Date(source.started).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}</div>` : '';
       const points = source.points.length ? `<div class="source-label">Your points</div>${sourceRows(source, i, 'point')}` : '';
       return `<section class="recording-source">${label}${sourceRows(source, i, 'passage')}${points}${sourceDetails(source)}</section>`;
     })

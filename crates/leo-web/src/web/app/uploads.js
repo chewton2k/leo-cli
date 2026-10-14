@@ -123,11 +123,23 @@ async function uploadSheet(files, into) {
   drawPicked();
 }
 
+const uploadClock = { since: 0, step: '', stepSince: 0, steps: [] };
+
 function uploadProgress(text, done, total) {
-  const bar = total ? Math.round((done / total) * 100) : 8;
+  const now = Date.now();
+  if (!uploadClock.since) Object.assign(uploadClock, { since: now, stepSince: now, steps: [] });
+  if (uploadClock.step !== `${done}/${total}`) {
+    if (uploadClock.step) uploadClock.steps = [...uploadClock.steps, (now - uploadClock.stepSince) / 1000].slice(-6);
+    uploadClock.step = `${done}/${total}`;
+    uploadClock.stepSince = now;
+  }
+  const typical = uploadClock.steps.length ? uploadClock.steps.reduce((a, b) => a + b, 0) / uploadClock.steps.length : 20;
+  const creep = 1 - Math.exp(-((now - uploadClock.stepSince) / 1000) / Math.max(3, typical));
+  const bar = total ? Math.round(((Math.min(done, total) + (done < total ? 0.9 * creep : 0)) / total) * 100) : Math.round(60 * creep);
+  const took = Math.round((now - uploadClock.since) / 1000);
   const box = $('#upload-progress');
   if (!box) return;
-  box.innerHTML = `<div class="upload-step">${esc(text)}</div><div class="upload-bar"><i style="width:${Math.max(6, bar)}%"></i></div>`;
+  box.innerHTML = `<div class="upload-step">${esc(text)} <span class="hint">· ${took >= 60 ? `${Math.floor(took / 60)}:${String(took % 60).padStart(2, '0')}` : `${took} s`}</span></div><div class="upload-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.max(6, Math.min(99, bar))}"><i style="width:${Math.max(6, Math.min(99, bar))}%"></i></div>`;
 }
 
 async function uploadGo() {
@@ -137,6 +149,7 @@ async function uploadGo() {
   const wants = $('#upload-wants').value.trim();
   const names = picked.map((f) => f.name);
   sheet(`<div class="upload-working">${felix.felix(72, 'idle think')}<h3>Making your note</h3><p>${esc(names.length === 1 ? names[0] : `${names.length} files`)}</p><div id="upload-progress"></div><p class="hint">This can take a minute for long files. You can close this; the note appears in the folder when it is ready.</p></div>`);
+  Object.assign(uploadClock, { since: Date.now(), step: '', stepSince: Date.now(), steps: [] });
   uploadProgress('Preparing the files', 0, 0);
   const files = [];
   let total = 0;

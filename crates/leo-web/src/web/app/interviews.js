@@ -24,6 +24,27 @@ function loadInterviewCode() {
   return interviewCodeLoad;
 }
 
+let interviewTypeScriptLoad = null;
+
+function interviewTypeScript() {
+  if (!interviewTypeScriptLoad) interviewTypeScriptLoad = new Promise((resolve) => {
+    const script = document.createElement('script');
+    const finish = (strip = null) => {
+      clearTimeout(timer);
+      script.onload = script.onerror = null;
+      script.remove();
+      if (!strip) interviewTypeScriptLoad = null;
+      resolve(strip);
+    };
+    const timer = setTimeout(finish, 10000);
+    script.src = '/typescript.js';
+    script.onload = () => finish(window.leoTypeScript || null);
+    script.onerror = () => finish();
+    document.head.append(script);
+  });
+  return interviewTypeScriptLoad;
+}
+
 async function showInterviews(id = '') {
   const mine = ++seq;
   state = { view: 'interviews', dir: '' };
@@ -370,6 +391,13 @@ async function applyInterviewCodeSuggestion(action) {
     }
     return result;
   });
+}
+
+function refreshInterviewTests(id, challenge) {
+  const session = interviewPage;
+  if (!session || session.item.id !== id || !interviewHere(session)) return Promise.resolve();
+  if (session.ran?.challenge === challenge) session.ran = null;
+  return loadInterviewKey(session, true);
 }
 
 async function refreshInterview(id) {
@@ -848,13 +876,14 @@ async function submitInterview(session) {
   try {
     await saveInterviewWorkspace(session);
     const challenge = session.item.challenge.id;
-    const key = interviewKey(session);
+    await checkInterviewKey(session).catch((e) => { if (e instanceof Locked) throw e; });
+    const key = interviewKey(session) || (session.key?.challenge === challenge && session.key.status === 'ready' ? session.key.key : null);
     let tests = [];
     if (key?.tests?.length && interviewRunnable(session)) {
       session.running = 'submit';
       drawInterviewChecks(session);
       const hidden = await api(`/api/interviews/${enc(session.item.id)}/hidden-tests`, { method: 'POST', body: { challenge } }).catch(() => ({ tests: [] }));
-      const run = await runInterviewTests(session, workspace.answer, key.entry, [...key.tests, ...(hidden.tests || [])]);
+      const run = await runInterviewTests(session, workspace.answer, key.entry, [...key.tests, ...(hidden.tests || []).filter((t) => !key.tests.some((k) => k.id === t.id))]);
       tests = run.reports;
       session.running = '';
     }
@@ -875,6 +904,7 @@ async function submitInterview(session) {
     drawInterviewProgress(session);
   } finally { session.submitting = false; session.running = ''; drawInterviewProblems(session); drawInterviewStatus(session); drawInterviewChecks(session); drawInterviewResults(session); }
   if (attempt) showInterviewPane(session, 'result', true);
+  if (attempt) loadInterviewKey(session, true).catch(() => {});
   if (attempt) gradeAndReview(session, attempt, workspace.board).catch(fail);
 }
 
@@ -882,7 +912,9 @@ async function gradeAndReview(session, attempt, board) {
   const id = session.item.id;
   if (interviewKey(session)) {
     session.grading = attempt;
+    session.gradeProgress = null;
     drawInterviewResults(session);
+    const stop = watchProgress(`grade:${attempt}`, (view) => { session.gradeProgress = { attempt, ...view }; setMeter('interview-grade-meter', view); });
     try {
       await interviewQueue(session, async () => {
         const item = await api(`/api/interviews/${enc(id)}/grade`, { method: 'POST', body: { attempt } });
@@ -892,6 +924,7 @@ async function gradeAndReview(session, attempt, board) {
       if (e instanceof Locked) throw e;
       session.gradeError = { attempt, message: e.message };
     } finally {
+      stop();
       session.grading = '';
       if (interviewHere(session)) { drawInterviewResults(session); drawInterviewProgress(session); }
     }
@@ -904,7 +937,34 @@ async function gradeAndReview(session, attempt, board) {
 
 function interviewKey(session) {
   const c = session.item.challenge;
-  return c && session.key?.challenge === c.id && session.key.status === 'ready' ? session.key.key : null;
+  return c && session.key?.challenge === c.id && session.key.status === 'ready' && !session.key.key?.verify ? session.key.key : null;
+}
+
+function checkInterviewKey(session) {
+  const c = session.item.challenge;
+  const id = session.item.id;
+  if (!c || session.key?.challenge !== c.id || session.key.status !== 'ready' || !session.key.key?.verify) return Promise.resolve();
+  if (session.checking?.challenge === c.id) return session.checking.done;
+  const done = (async () => {
+    const job = await api(`/api/interviews/${enc(id)}/key/check`, { method: 'POST', body: { challenge: c.id } });
+    let view;
+    if (job.done) view = await api(`/api/interviews/${enc(id)}/key?challenge=${enc(c.id)}`);
+    else {
+      const out = await runInSandbox({ code: job.solution, entry: job.entry, language: job.language === 'sql' ? 'sql' : 'javascript', tests: job.tests.map((t) => ({ id: t.id, args: t.args })) });
+      const byId = new Map((out.results || []).map((r) => [r.id, r]));
+      const reports = job.tests.map((t) => {
+        const r = byId.get(t.id);
+        return { id: t.id, pass: Boolean(r && !r.error && interviews.sameValue(t.expected, r.got, t.unordered)), got: r ? (r.error ? `Error: ${r.error}` : JSON.stringify(r.got) || '') : 'Did not run' };
+      });
+      view = await api(`/api/interviews/${enc(id)}/key/checked`, { method: 'POST', body: { challenge: c.id, stamp: job.stamp, reports, error: out.error || '' } });
+    }
+    if (session.item.id === id && session.item.challenge?.id === c.id) {
+      session.key = { challenge: c.id, ...view };
+      if (interviewHere(session)) drawInterviewChecks(session);
+    }
+  })().finally(() => { if (session.checking?.done === done) session.checking = null; });
+  session.checking = { challenge: c.id, done };
+  return done;
 }
 
 function interviewLanguage(session) {
@@ -914,7 +974,9 @@ function interviewLanguage(session) {
 function interviewRunLanguage(session) {
   const language = interviewLanguage(session);
   if (/^(javascript|js|node(\.?js)?)$/i.test(language)) return 'javascript';
+  if (/^(typescript|ts)$/i.test(language)) return 'typescript';
   if (/^(python|py)\s*3?$/i.test(language)) return 'python';
+  if (/^(sql|sqlite|postgres(ql)?|mysql|t-?sql|pl\/?sql)$/i.test(language)) return 'sql';
   return '';
 }
 
@@ -928,12 +990,15 @@ async function interviewPythonReady(session) {
   if (view.status === 'unavailable') { session.pythonNote = 'Python can’t run on this copy of leo.'; return false; }
   if (view.status !== 'fetching') view = await api('/api/python', { method: 'POST' });
   const started = Date.now();
+  let drawn = false;
   while (view.status === 'fetching' && Date.now() - started < 300000) {
-    session.pythonNote = `Getting Python ready (about ${view.mb || 12} MB, once)…`;
-    if (interviewHere(session)) drawInterviewChecks(session);
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    const total = Number(view.total) || (view.mb || 12) * 1e6;
+    session.pythonFetch = { fraction: Math.min(0.99, (Number(view.done) || 0) / total), seconds: Math.round((Date.now() - started) / 1000) };
+    if (!drawn && interviewHere(session)) { drawInterviewChecks(session); drawn = true; } else setMeter('interview-python-meter', session.pythonFetch);
+    await new Promise((resolve) => setTimeout(resolve, 800));
     view = await api('/api/python');
   }
+  session.pythonFetch = null;
   session.pythonNote = view.status === 'ready' ? '' : view.error || 'Python could not be downloaded. Check the connection and try again.';
   return view.status === 'ready';
 }
@@ -946,10 +1011,12 @@ async function loadInterviewKey(session, force = false) {
   try {
     const view = await api(`/api/interviews/${enc(session.item.id)}/key?challenge=${enc(c.id)}`);
     if (!interviewHere(session) || session.item.challenge?.id !== c.id) return;
-    const changed = session.key?.challenge !== c.id || session.key.status !== view.status;
+    const changed = session.key?.challenge !== c.id || session.key.status !== view.status || JSON.stringify(session.key.key) !== JSON.stringify(view.key);
     session.key = { challenge: c.id, ...view };
     if (changed) drawInterviewChecks(session);
-    if (view.status === 'preparing') session.keyTimer = setTimeout(() => loadInterviewKey(session, true).catch(() => {}), 3000);
+    else if (view.progress) setMeter('interview-key-meter', view.progress);
+    if (view.key?.verify) checkInterviewKey(session).catch(() => {});
+    if (view.status === 'preparing') session.keyTimer = setTimeout(() => loadInterviewKey(session, true).catch(() => {}), 1500);
   } catch (e) { if (e instanceof Locked) throw e; }
 }
 
@@ -997,8 +1064,19 @@ async function runInSandbox(job) {
 }
 
 async function runInterviewTests(session, code, entry, tests) {
-  const language = interviewRunLanguage(session);
+  let language = interviewRunLanguage(session);
   if (language === 'python' && !(await interviewPythonReady(session))) return { reports: [], error: session.pythonNote, logs: [] };
+  if (language === 'typescript') {
+    const strip = await interviewTypeScript();
+    if (!strip) return { reports: tests.map((t) => ({ id: t.id, pass: false, got: 'TypeScript could not load' })), error: 'TypeScript could not load in this browser. Try Run again.', logs: [] };
+    try {
+      code = strip(code);
+    } catch (e) {
+      const why = `Your code did not compile: ${String(e && e.message ? e.message : e).slice(0, 300)}`;
+      return { reports: tests.map((t) => ({ id: t.id, pass: false, got: why })), error: why, logs: [] };
+    }
+    language = 'javascript';
+  }
   const out = await runInSandbox({ code, entry, language, tests: tests.map((t) => ({ id: t.id, args: t.args })) });
   const byId = new Map((out.results || []).map((r) => [r.id, r]));
   const reports = tests.map((t) => {
@@ -1017,8 +1095,10 @@ async function runInterviewExamples(session) {
   drawInterviewChecks(session);
   try {
     const run = await runInterviewTests(session, session.draft.answer, key.entry, key.tests);
+    const challenge = session.item.challenge.id;
+    api(`/api/interviews/${enc(session.item.id)}/run`, { method: 'POST', body: { challenge, reports: run.reports, error: run.error || '' } }).catch(() => {});
     if (!interviewHere(session)) return;
-    session.ran = { challenge: session.item.challenge.id, ...run };
+    session.ran = { challenge, ...run };
   } finally { session.running = ''; if (interviewHere(session)) drawInterviewChecks(session); }
   if (session.ran?.challenge === session.item.challenge?.id) showInterviewPane(session, 'cases', true);
 }
@@ -1027,14 +1107,16 @@ async function checkInterviewCoverage(session) {
   const c = session.item.challenge;
   if (!c || session.covering) return;
   session.covering = true;
+  session.coverProgress = null;
   drawInterviewChecks(session);
+  const stop = watchProgress(`coverage:${session.item.id}:${c.id}`, (view) => { session.coverProgress = view; setMeter('interview-coverage-meter', view); });
   try {
     const found = await api(`/api/interviews/${enc(session.item.id)}/coverage`, { method: 'POST', body: { challenge: c.id, workspace: interviews.workspace(session.draft) } });
     if (interviewHere(session) && session.item.challenge?.id === c.id) session.coverage = { challenge: c.id, ...found };
   } catch (e) {
     if (e instanceof Locked) throw e;
     toast(e.message, { bad: true });
-  } finally { session.covering = false; if (interviewHere(session)) drawInterviewChecks(session); }
+  } finally { stop(); session.covering = false; if (interviewHere(session)) drawInterviewChecks(session); }
 }
 
 const COVER_MARK = { yes: 'Covered', partly: 'Partly', no: 'Not yet' };
@@ -1061,8 +1143,9 @@ function paintInterviewChecks(session) {
     box.innerHTML = session.item.framework.track ? `<p class="hint interview-checks-status">This problem has no instant checks. <button class="link-btn" data-interview="prepare-key">Prepare them</button></p>` : '';
     return;
   }
-  if (view.status === 'preparing') { box.innerHTML = '<p class="hint interview-checks-status" role="status">Preparing instant checks… Start working; they’ll appear here.</p>'; return; }
-  const python = session.pythonNote ? `<p class="hint interview-checks-status" role="status">${esc(session.pythonNote)}</p>` : '';
+  if (view.status === 'preparing') { box.innerHTML = `<div class="interview-checks-status">${meterBar('interview-key-meter', 'Preparing instant checks', view.progress || { fraction: 0 })}<p class="hint">Start working; they’ll appear here.</p></div>`; return; }
+  if (view.status === 'ready' && view.key?.verify) { box.innerHTML = '<p class="hint interview-checks-status" role="status">Checking the test cases against a reference solution…</p>'; return; }
+  const python = session.pythonFetch ? meterBar('interview-python-meter', 'Getting Python ready, once', session.pythonFetch) : session.pythonNote ? `<p class="hint interview-checks-status" role="status">${esc(session.pythonNote)}</p>` : '';
   if (view.status === 'failed') { box.innerHTML = '<p class="hint interview-checks-status">Instant checks couldn’t be prepared. Submit still gets Felix’s review. <button class="link-btn" data-interview="prepare-key">Try again</button></p>'; return; }
   const values = session.draft.values || {};
   const cover = session.coverage?.challenge === c.id ? session.coverage : null;
@@ -1073,13 +1156,14 @@ function paintInterviewChecks(session) {
   const sections = key.sections.length ? `<div class="interview-covers"><h3>A strong answer covers</h3><div class="pick-chips">${key.sections.map((x) => { const state = coverOf(x.id, cover?.sections); return `<span class="chip interview-cover${state ? ` ${state}` : ''}">${state === 'yes' ? ICON.check : ''}${esc(x.name)}</span>`; }).join('')}</div></div>` : '';
   const criteria = cover?.criteria?.length ? `<ul class="interview-coverage">${cover.criteria.map((x) => `<li class="${esc(x.covered)}"><span class="chip">${COVER_MARK[x.covered] || 'Not yet'}</span> ${esc(x.text)}</li>`).join('')}</ul>` : '';
   const ran = session.ran?.challenge === c.id ? session.ran : null;
-  const tests = coding && key.tests.length ? `<div class="interview-tests"><div class="interview-toolbar"><h3>Test cases</h3>${ran?.reports.length ? `<span class="chip interview-tally ${ran.reports.every((r) => r.pass) ? 'good' : 'bad'}">${ran.reports.filter((r) => r.pass).length}/${ran.reports.length} passed</span>` : ''}</div><p class="hint">${runnable ? 'Run checks these in your browser. Submit adds the hidden tests.' : 'These are the visible examples. Felix reviews your code against them.'}</p>${ran?.error ? `<p class="set-note warn">${esc(ran.error)}</p>` : ''}<ul>${key.tests.map((t) => { const r = ran?.reports.find((x) => x.id === t.id); return `<li class="${r ? (r.pass ? 'pass' : 'fail') : ''}"><span class="interview-mark">${r ? (r.pass ? ICON.check : ICON.close) : ''}</span><code>${esc(key.entry)}(${esc(t.args.map((a) => JSON.stringify(a)).join(', '))})</code><span class="hint">→ ${esc(JSON.stringify(t.expected))}${r && !r.pass ? ` · yours: ${esc(r.got)}` : ''}</span></li>`; }).join('')}</ul>${ran?.logs?.length ? `<details class="source-more"><summary>${ICON.chevron}<span>Printed output</span></summary><pre class="interview-submitted">${esc(ran.logs.join('\n'))}</pre></details>` : ''}</div>` : '';
+  const tests = coding && key.tests.length ? `<div class="interview-tests"><div class="interview-toolbar"><h3>Test cases</h3>${ran?.reports.length ? `<span class="chip interview-tally ${ran.reports.every((r) => r.pass) ? 'good' : 'bad'}">${ran.reports.filter((r) => r.pass).length}/${ran.reports.length} passed</span>` : ''}</div><p class="hint">${key.revealed ? (runnable ? 'Run checks every test in your browser, including the ones hidden until you submitted.' : 'Every test, including the ones hidden until you submitted. Felix reviews your code against them.') : runnable ? 'Run checks these in your browser. Submit adds the hidden tests.' : 'These are the visible examples. Felix reviews your code against them.'}</p>${ran?.error ? `<p class="set-note warn">${esc(ran.error)}</p>` : ''}<ul>${key.tests.map((t) => { const r = ran?.reports.find((x) => x.id === t.id); return `<li class="${r ? (r.pass ? 'pass' : 'fail') : ''}"><span class="interview-mark">${r ? (r.pass ? ICON.check : ICON.close) : ''}</span><code>${esc(interviews.callText(key.entry, t.args))}</code>${t.hidden ? '<span class="chip">Hidden</span>' : ''}<span class="hint">→ ${esc(JSON.stringify(t.expected))}${r && !r.pass ? ` · yours: ${esc(r.got)}` : ''}</span></li>`; }).join('')}</ul>${ran?.logs?.length ? `<details class="source-more"><summary>${ICON.chevron}<span>Printed output</span></summary><pre class="interview-submitted">${esc(ran.logs.join('\n'))}</pre></details>` : ''}</div>` : '';
   const buttons = [
     runnable && key.tests.length ? `<button class="btn sm" data-interview="run"${session.running ? ' disabled' : ''}>${session.running === 'examples' ? 'Running…' : session.running === 'submit' ? 'Running tests…' : 'Run'}</button>` : '',
     !coding || key.sections.length ? `<button class="btn sm" data-interview="coverage"${session.covering ? ' disabled' : ''}>${session.covering ? 'Checking…' : 'Check coverage'}</button>` : '',
   ].filter(Boolean).join('');
   if (pane) pane.innerHTML = tests;
-  box.innerHTML = `${python}${asks}${sections}${criteria}${buttons ? `<div class="buttons">${buttons}</div>` : ''}`;
+  const covering = session.covering ? meterBar('interview-coverage-meter', 'Checking coverage', session.coverProgress || { fraction: 0 }) : '';
+  box.innerHTML = `${python}${asks}${sections}${criteria}${covering}${buttons ? `<div class="buttons">${buttons}</div>` : ''}`;
 }
 
 const PANES = ['question', 'cases', 'result', 'submissions'];
@@ -1173,7 +1257,7 @@ function paintInterviewResults(session) {
   const gradeError = session.gradeError?.attempt === attempt.id ? session.gradeError.message : '';
   const review = grade
     ? `<div class="interview-review"><h3>Quick review</h3>${counts.length ? `<div class="pick-chips">${counts.map(([v, n]) => `<span class="chip interview-tally ${v}">${n} ${VERDICT[v].toLowerCase()}</span>`).join('')}</div>` : ''}${grade.overall ? `<p>${esc(grade.overall)}</p>` : ''}<details class="source-more interview-review-more"${open ? ' open' : ''}><summary>${ICON.chevron}<span>Feedback by criterion · ${grade.criteria.length}</span></summary><ul class="interview-verdicts">${grade.criteria.map((v) => `<li class="${esc(v.verdict)}"><span class="chip">${VERDICT[v.verdict] || esc(v.verdict)}</span><span><b>${esc(v.text)}</b><span class="hint">${esc(v.why)}</span></span></li>`).join('')}</ul></details></div>`
-    : session.grading === attempt.id ? '<p class="hint" role="status">Quick review in progress…</p>' : gradeError ? `<p class="hint">${esc(gradeError)}</p>` : '';
+    : session.grading === attempt.id ? meterBar('interview-grade-meter', 'Quick review', session.gradeProgress?.attempt === attempt.id ? session.gradeProgress : { fraction: 0 }) : gradeError ? `<p class="hint">${esc(gradeError)}</p>` : '';
   box.innerHTML = `<div class="interview-result"><div class="interview-toolbar"><h3>Your result</h3><span class="hint">${new Date(attempt.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span></div>
     ${cases.length ? `<div class="interview-result-summary"><span class="chip interview-tally good">${ICON.check}${passed} passed</span>${failed ? `<span class="chip interview-tally bad">${ICON.close}${failed} failed</span>` : ''}<span class="hint">${esc(groups)}</span></div>
     <div class="interview-cases" role="tablist" aria-label="Checked cases">${cases.map((x) => { const on = x.id === chosen.id; return `<button class="pick-chip ${x.pass ? 'pass' : 'fail'}${on ? ' on' : ''}" role="tab" id="interview-case-${esc(x.id)}" aria-controls="interview-case" aria-selected="${on}" tabindex="${on ? 0 : -1}" aria-label="${esc(x.name)}, ${x.pass ? 'passed' : 'failed'}" data-interview="result-case" data-check="${esc(x.id)}"><span class="interview-mark">${x.pass ? ICON.check : ICON.close}</span><span>${esc(x.name)}</span></button>`; }).join('')}</div>

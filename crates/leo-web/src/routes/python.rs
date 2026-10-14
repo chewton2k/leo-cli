@@ -15,6 +15,22 @@ pub(crate) const FILES: [(&str, &str); 5] = [
     ("pyodide-lock.json", "application/json"),
 ];
 
+const BYTES: u64 = 12_262_929;
+
+fn fetched(dir: &std::path::Path) -> u64 {
+    std::fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .filter_map(|e| e.metadata().ok())
+                .filter(|m| m.is_file())
+                .map(|m| m.len())
+                .sum::<u64>()
+                .min(BYTES)
+        })
+        .unwrap_or(0)
+}
+
 fn view(state: &AppState) -> serde_json::Value {
     let Some(python) = &state.python else {
         return serde_json::json!({ "status": "unavailable" });
@@ -28,7 +44,9 @@ fn view(state: &AppState) -> serde_json::Value {
         .unwrap_or_else(|e| e.into_inner())
         .clone();
     match fetching.as_deref() {
-        Some("fetching") => serde_json::json!({ "status": "fetching", "mb": 12 }),
+        Some("fetching") => {
+            serde_json::json!({ "status": "fetching", "mb": 12, "done": fetched(&python.dir), "total": BYTES })
+        }
         Some(problem) => serde_json::json!({ "status": "failed", "error": problem, "mb": 12 }),
         None => serde_json::json!({ "status": "missing", "mb": 12 }),
     }

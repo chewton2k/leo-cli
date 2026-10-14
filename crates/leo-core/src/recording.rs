@@ -69,6 +69,8 @@ pub struct Archive {
     pub warnings: Vec<String>,
     #[serde(default)]
     pub trace: Vec<Trace>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub from: String,
 }
 
 pub fn valid_id(id: &str) -> bool {
@@ -127,6 +129,38 @@ pub fn save(notes: &Path, note: &str, source: &Archive) -> Result<()> {
     let dir = folder(notes, note)?;
     let path = crate::paths::contained_path(&dir, Path::new(&format!("{}.json", source.id)))?;
     write_json(&path, source)
+}
+
+pub fn copy_to(notes: &Path, from: &str, into: &str, label: &str) -> Result<Vec<String>> {
+    let have: std::collections::HashSet<String> =
+        load(notes, into)?.into_iter().map(|s| s.id).collect();
+    let mut copied = Vec::new();
+    for mut source in load(notes, from)? {
+        if have.contains(&source.id) {
+            continue;
+        }
+        if source.from.is_empty() {
+            source.from = label.chars().take(200).collect();
+        }
+        save(notes, into, &source)?;
+        copied.push(source.id);
+    }
+    Ok(copied)
+}
+
+pub fn remove(notes: &Path, note: &str, ids: &[String]) -> Result<()> {
+    let dir = folder(notes, note)?;
+    for id in ids {
+        if !valid_id(id) {
+            bail!("Invalid recording id");
+        }
+        let path = crate::paths::contained_path(&dir, Path::new(&format!("{id}.json")))?;
+        match std::fs::remove_file(&path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 pub fn load(notes: &Path, note: &str) -> Result<Vec<Archive>> {
@@ -202,11 +236,41 @@ mod tests {
             wants: String::new(),
             warnings: vec![],
             trace: vec![],
+            from: String::new(),
         };
         save(&notes, "note-1234", &source).unwrap();
         save(&notes, "note-1234", &source).unwrap();
         assert_eq!(load(&notes, "note-1234").unwrap().len(), 1);
         assert!(save(&notes, "../../outside", &source).is_err());
+        let later = Archive {
+            id: "session-456".into(),
+            started: Utc::now(),
+            ..source.clone()
+        };
+        save(&notes, "note-5678", &later).unwrap();
+        assert_eq!(
+            copy_to(&notes, "note-5678", "note-1234", "Lecture 2").unwrap(),
+            ["session-456"]
+        );
+        assert!(copy_to(&notes, "note-5678", "note-1234", "Lecture 2")
+            .unwrap()
+            .is_empty());
+        let both = load(&notes, "note-1234").unwrap();
+        assert_eq!(
+            both.iter()
+                .map(|s| (s.id.as_str(), s.from.as_str()))
+                .collect::<Vec<_>>(),
+            [("session-123", ""), ("session-456", "Lecture 2")]
+        );
+        assert_eq!(
+            load(&notes, "note-5678").unwrap().len(),
+            1,
+            "the original keeps its own copy"
+        );
+        remove(&notes, "note-1234", &["session-456".into()]).unwrap();
+        remove(&notes, "note-1234", &["session-456".into()]).unwrap();
+        assert_eq!(load(&notes, "note-1234").unwrap().len(), 1);
+        assert!(remove(&notes, "note-1234", &["../x".into()]).is_err());
     }
     #[cfg(unix)]
     #[test]

@@ -16,6 +16,7 @@ mod interview;
 mod interview_keys;
 mod interview_tools;
 mod originals;
+mod progress;
 pub mod record;
 mod record_journal;
 pub mod review;
@@ -194,6 +195,7 @@ struct AppState {
     quick: Option<Writer>,
     python: Option<Python>,
     python_fetch: Arc<Mutex<Option<String>>>,
+    progress: Arc<progress::Board>,
     warm: Arc<warm::Slot>,
     chat: Option<Streamer>,
     settings: Option<Arc<dyn SettingsApi>>,
@@ -444,6 +446,7 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
         quick,
         python,
         python_fetch: Default::default(),
+        progress: Default::default(),
         warm: Default::default(),
         chat,
         settings,
@@ -595,8 +598,11 @@ fn router(state: AppState) -> Router {
             post(routes::sources::regenerate),
         )
         .route("/api/notes/{id}/move", post(move_note))
-        .route("/api/notes/{id}/combine", post(routes::combine::preview))
-        .route("/api/notes/{id}/combined", post(routes::combine::keep))
+        .route("/api/notes/{id}/combine", post(routes::combine::combine))
+        .route(
+            "/api/notes/{id}/uncombine",
+            post(routes::combine::uncombine),
+        )
         .route("/api/notes/{id}/suggestion", post(apply_suggestion))
         .route("/api/felix/act", post(routes::organize::act_route))
         .route(
@@ -651,10 +657,12 @@ fn router(state: AppState) -> Router {
         .route("/chat.js", get(chat_js))
         .route("/interview.js", get(routes::assets::interview_js))
         .route("/code-tools.js", get(routes::assets::code_tools_js))
+        .route("/typescript.js", get(routes::assets::typescript_js))
         .route(
             "/api/python",
             get(routes::python::status).post(routes::python::fetch),
         )
+        .route("/api/progress/{key}", get(routes::interviews::progress))
         .route("/api/interviews", get(routes::interviews::list))
         .route(
             "/api/interviews/{id}/key",
@@ -663,6 +671,18 @@ fn router(state: AppState) -> Router {
         .route(
             "/api/interviews/{id}/hidden-tests",
             post(routes::interviews::hidden_tests),
+        )
+        .route(
+            "/api/interviews/{id}/key/check",
+            post(routes::interviews::check_key),
+        )
+        .route(
+            "/api/interviews/{id}/key/checked",
+            post(routes::interviews::key_checked),
+        )
+        .route(
+            "/api/interviews/{id}/run",
+            post(routes::interviews::save_run),
         )
         .route(
             "/api/interviews/{id}/grade",
@@ -772,6 +792,7 @@ fn router(state: AppState) -> Router {
         .route("/runner.html", get(routes::assets::runner_html))
         .route("/runner.js", get(routes::assets::runner_js))
         .route("/pyodide/{name}", get(routes::python::file))
+        .route("/sql/{name}", get(routes::assets::sql_file))
         .layer(axum::middleware::from_fn(security_headers))
         .layer(axum::middleware::from_fn(note_peer))
         .with_state(state)

@@ -1626,6 +1626,16 @@ pub enum Proposal {
         find: String,
         replace: String,
     },
+    InterviewTest {
+        title: String,
+        summary: String,
+        interview: String,
+        challenge: String,
+        action: String,
+        test: crate::interview_keys::Test,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before: Option<crate::interview_keys::Test>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1787,7 +1797,16 @@ impl Desk {
         let mut lines: Vec<String> = Vec::new();
         for (n, source) in sources.iter().enumerate() {
             if sources.len() > 1 {
-                lines.push(format!("Recording {} of {}:", n + 1, sources.len()));
+                lines.push(if source.from.is_empty() {
+                    format!("Recording {} of {}:", n + 1, sources.len())
+                } else {
+                    format!(
+                        "Recording {} of {} (from the note “{}”):",
+                        n + 1,
+                        sources.len(),
+                        source.from
+                    )
+                });
             }
             for p in &source.passages {
                 let who = if speakers.len() > 1 && !p.speaker.is_empty() {

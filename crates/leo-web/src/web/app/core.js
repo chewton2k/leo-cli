@@ -95,6 +95,7 @@ const chat = felix.create({
   onCodeEdit: action => applyInterviewCodeSuggestion(action),
   onOrganized: (proposal) => {
     if (proposal.kind === 'interview_code_edit') { refreshInterview(proposal.interview).catch(fail); return; }
+    if (proposal.kind === 'interview_test') { refreshInterviewTests(proposal.interview, proposal.challenge).catch(fail); return; }
     loadSideFolders().catch(() => {});
     if (state.view === 'calendar') loadSchedule(seq);
     loadTasksWindow().catch(() => {});
@@ -760,4 +761,54 @@ async function showRecord(dir) {
   }
   if (mine !== seq) return;
   await recorder.show($('#rec-box'), { dir, folders: folders.map((f) => f.name).filter(Boolean) });
+}
+
+window.addEventListener('beforeprint', () => {
+  for (const el of document.body.querySelectorAll('*')) {
+    if (getComputedStyle(el).position === 'fixed') el.setAttribute('data-print-off', '');
+  }
+});
+window.addEventListener('afterprint', () => {
+  document.body.querySelectorAll('[data-print-off]').forEach((el) => el.removeAttribute('data-print-off'));
+});
+
+function meterPercent(fraction) {
+  return Math.max(2, Math.min(100, Math.round((Number(fraction) || 0) * 100)));
+}
+
+function meterText(label, view) {
+  const seconds = Number(view?.seconds) || 0;
+  const expected = Number(view?.expected) || 0;
+  const took = seconds >= 60 ? `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}` : `${seconds} s`;
+  return `${label} · ${meterPercent(view?.fraction)}%${seconds ? ` · ${took}` : ''}${expected && seconds < expected ? ` of about ${expected >= 60 ? `${Math.round(expected / 60)} min` : `${expected} s`}` : ''}`;
+}
+
+function meterBar(id, label, view) {
+  const pct = meterPercent(view?.fraction);
+  return `<div class="meter" id="${id}" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="${esc(label)}" data-label="${esc(label)}"><span class="hint meter-text">${esc(meterText(label, view))}</span><span class="activity-bar"><i style="width:${pct}%"></i></span></div>`;
+}
+
+function setMeter(id, view) {
+  const el = document.getElementById(id);
+  if (!el || !view || view.fraction === null || view.fraction === undefined) return;
+  const pct = meterPercent(view.fraction);
+  el.setAttribute('aria-valuenow', String(pct));
+  el.querySelector('.meter-text').textContent = meterText(el.dataset.label, view);
+  el.querySelector('i').style.width = `${pct}%`;
+}
+
+function watchProgress(key, seen) {
+  let stopped = false;
+  const look = async () => {
+    if (stopped) return;
+    try {
+      const view = await api(`/api/progress/${enc(key)}`);
+      if (!stopped && view && view.fraction !== null) seen(view);
+    } catch (e) {
+      if (e instanceof Locked) return;
+    }
+    if (!stopped) setTimeout(look, 800);
+  };
+  setTimeout(look, 300);
+  return () => { stopped = true; };
 }

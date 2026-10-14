@@ -338,8 +338,10 @@ Interview practice is Felix's third style and a sidebar/menu page (2026-10-12).
 Use shared configurable frameworks, independent of notes, with frozen attempts,
 provisional evidence-based feedback and typed/code/vector workspaces. Practice
 schedules were removed (2026-10-13, the user's call). Only the user's own code
-runs, in their browser's sandbox (never on the server); see "Instant feedback"
-in crates/leo-web/CLAUDE.md.
+and the answer key's reference solution (to check the tests) run, in the
+browser's sandbox (never on the server); see "Instant feedback" in
+crates/leo-web/CLAUDE.md. Felix sees and can fix the test cases; hidden tests
+show once submitted; Auto applies Felix's code edits with Undo.
 Reuse current cards, sheets, controls and theme tokens; keep asynchronous updates
 from replacing a focused editor. See crates/leo-web/CLAUDE.md and
 .superpowers/plans/2026-10-12-felix-interviews.md for the implementation invariants.

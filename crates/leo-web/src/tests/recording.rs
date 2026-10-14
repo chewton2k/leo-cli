@@ -374,6 +374,7 @@ fn source_commit_runs_after_the_note_is_visible_on_disk_and_recovery_uses_the_sa
             wants: String::new(),
             warnings: vec![],
             trace: vec![],
+            from: String::new(),
         };
         let seen = seen.clone();
         Ok(record::Recorded {

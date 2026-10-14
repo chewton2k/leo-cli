@@ -3140,38 +3140,61 @@ test('a calendar is connected in Settings by pasting one link, and can be remove
   await expect(page.locator('.cal-card')).toContainText('Not connected');
 });
 
-test('dropping one note on another offers to combine them, shows the result first, and Undo brings both back', async ({ page }) => {
+test('dropping one note on another combines them at once, both whole under their titles, and Undo brings both back', async ({ page }) => {
   const tag = Date.now().toString(36);
   const folder = `combine-${tag}`;
   await page.request.post('/api/dirs', { data: { path: folder } });
   const a = await (await page.request.post('/api/notes', { data: { title: `BFS ${tag}`, body: 'BFS uses a queue.', directory: folder } })).json();
   const b = await (await page.request.post('/api/notes', { data: { title: `Graphs ${tag}`, body: 'A graph has nodes and edges.', directory: folder } })).json();
-  let release;
-  const late = new Promise((resolve) => { release = resolve; });
-  await page.route(`**/api/notes/${b.id}/combine`, async (route) => {
-    await late;
-    const versions = async (id) => (await (await page.request.get(`/api/notes/${id}`)).json()).version;
-    return route.fulfill({ json: { title: b.title, with_title: a.title, body: '## Graphs\nA graph has nodes and edges.\n\n## BFS\nBFS uses a queue.', added: ['![Tree](tree.png)'], kept: 0.7, kept_enough: false, base: await versions(b.id), with_base: await versions(a.id) } });
-  });
   await page.goto(`/#/f/${folder}`);
   const from = page.locator(`.card[data-id="${a.id}"]`);
   const onto = page.locator(`.card[data-id="${b.id}"]`);
   await dragBetween(page, from, onto);
   const sheet = page.locator('.sheet');
   await expect(sheet.locator('h3')).toHaveText('Combine these notes?');
+  await expect(sheet).toContainText('each whole under its own title');
   await sheet.locator('#combine-go').click();
-  await expect(sheet).toContainText('Combining your notes');
-  release();
-  await expect(sheet.locator('.combine-preview')).toContainText('BFS uses a queue.');
-  await expect(sheet).toContainText('put back one thing');
-  await expect(sheet.locator('.set-note.warn')).toContainText('about 70%');
-  await sheet.locator('#combine-save').click();
   await expect(page.locator('.toast')).toContainText(`Combined into “${b.title}”`);
+  await expect(sheet).toHaveCount(0);
   await expect(page.locator(`.card[data-id="${a.id}"]`)).toHaveCount(0);
-  expect((await (await page.request.get(`/api/notes/${b.id}`)).json()).body).toContain('BFS uses a queue.');
+  const body = (await (await page.request.get(`/api/notes/${b.id}`)).json()).body;
+  expect(body).toBe(`## BFS ${tag}\n\nBFS uses a queue.\n\n---\n\n## Graphs ${tag}\n\nA graph has nodes and edges.\n`);
   await page.locator('.toast button', { hasText: 'Undo' }).click();
+  await expect(page.locator('.toast')).toContainText('Both notes are back');
   await expect(page.locator(`.card[data-id="${a.id}"]`)).toBeVisible();
   expect((await (await page.request.get(`/api/notes/${b.id}`)).json()).body).toBe('A graph has nodes and edges.');
+});
+
+test('PDF export leaves out the tasks panel and every overlay, with the same full-width page on any screen', async ({ page }) => {
+  test.skip(test.info().project.name === 'phone', 'the tasks panel is for wider windows');
+  const tag = Date.now().toString(36);
+  const note = await (await page.request.post('/api/notes', { data: { title: `Print ${tag}`, body: 'A paragraph to print.' } })).json();
+  const task = await (await page.request.post('/api/tasks', { data: { title: `Print task ${tag}` } })).json();
+  const covering = () => page.evaluate(() => [...document.body.querySelectorAll('*')].filter((el) => {
+    const s = getComputedStyle(el);
+    const r = el.getBoundingClientRect();
+    return ['fixed', 'sticky'].includes(s.position) && s.display !== 'none' && s.visibility !== 'hidden' && r.width > 0 && r.height > 0;
+  }).map((el) => el.id || String(el.className)));
+  const layout = () => page.evaluate(() => {
+    const main = document.querySelector('main');
+    const body = getComputedStyle(document.body);
+    return { left: Math.round(main.getBoundingClientRect().left), width: Math.round(main.getBoundingClientRect().width), page: document.documentElement.clientWidth, padding: [body.paddingLeft, body.paddingRight, getComputedStyle(main).paddingLeft] };
+  });
+  for (const width of [1440, 1100, 760]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.emulateMedia({ media: 'screen' });
+    await page.goto(`/#/n/${note.id}`);
+    await page.reload();
+    await expect(page.locator('#title, .note-head h1').first()).toContainText(`Print ${tag}`);
+    if (width >= 1000) await expect(page.locator('#tasks-window')).toBeVisible();
+    await page.emulateMedia({ media: 'print' });
+    expect(await covering(), `${width}px`).toEqual([]);
+    const shape = await layout();
+    expect(shape.padding, `${width}px`).toEqual(['0px', '0px', '0px']);
+    expect(shape.left, `${width}px`).toBe(0);
+    expect(shape.width, `${width}px`).toBe(shape.page);
+  }
+  await page.request.delete(`/api/tasks/${task.id}`);
 });
 
 test('only the folders scroll in the sidebar; the places above and below stay put', async ({ page }) => {
@@ -4931,7 +4954,7 @@ test('submission results show a compact case strip with one detail panel that ke
   await expect(chips.nth(0)).toHaveAttribute('aria-selected', 'true');
   await chips.nth(7).click();
   await expect.poll(() => typeof gradeRelease).toBe('function');
-  await expect(results).toContainText('Quick review in progress');
+  await expect(results.locator('#interview-grade-meter[role="progressbar"]')).toContainText('Quick review ·');
   gradeRelease();
   await expect(results.locator('.interview-review')).toContainText('A sound start');
   await expect(results.locator('.interview-review .interview-tally')).toHaveText(['1 met', '1 missed']);
@@ -5030,6 +5053,117 @@ test('Run shows its results in the Test cases tab beside the question', async ({
   await expect(page.locator('#interview-pane-question')).toContainText('Return the sum of the list.');
   await expect(cases).toBeHidden();
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+});
+
+test('test cases are checked against a reference solution first, Run is kept for Felix, and hidden tests show after Submit', async ({ page }) => {
+  const id = 'checked-cases-01';
+  const challenge = { id: 'checked-cases-problem', title: 'Sum a list', question: 'Return the sum of the list.', minutes: 10, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'JavaScript', starter: 'function solve(nums) {\n}', difficulty: 'easy', examples: [{ input: '[1,2]', output: '3' }], constraints: ['n <= 10'] } };
+  const workspace = { answer: 'function solve(nums) {\n}', reasoning: '', board: [] };
+  const item = { id, revision: 1, framework: { title: 'Checked practice', track: 'coding', company: '', role: '', language: 'JavaScript', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace, problems: [{ challenge, workspace }], attempts: [] };
+  const t1 = { id: 't1', args: [[1, 2]], expected: 3, hidden: false, unordered: false };
+  const t2 = { id: 't2', args: [[2, 2]], expected: 5, hidden: false, unordered: false };
+  const t3 = { id: 't3', args: [[]], expected: 0, hidden: true, unordered: false };
+  const base = { entry: 'solve', asks: [], sections: [], criteria: 1 };
+  let key = { ...base, tests: [t1, t2], hidden_tests: 1, revealed: false, verify: true };
+  let checked = null;
+  let saved = null;
+  await page.route('**/api/interviews', (route) => route.fulfill({ json: [] }));
+  await page.route(`**/api/interviews/${id}/key?*`, (route) => route.fulfill({ json: { status: 'ready', key } }));
+  await page.route(`**/api/interviews/${id}/key/check`, (route) => route.fulfill({ json: { entry: 'solve', solution: 'function solve(nums) { return nums.reduce((a, b) => a + b, 0); }', stamp: 'stamp-1', tests: [t1, t2, t3] } }));
+  await page.route(`**/api/interviews/${id}/key/checked`, (route) => {
+    checked = route.request().postDataJSON();
+    key = { ...base, tests: [t1], hidden_tests: 1, revealed: false, verify: false };
+    return route.fulfill({ json: { status: 'ready', key, dropped: 1 } });
+  });
+  await page.route(`**/api/interviews/${id}/run`, (route) => { saved = route.request().postDataJSON(); return route.fulfill({ status: 204 }); });
+  await page.route(`**/api/interviews/${id}/hidden-tests`, (route) => route.fulfill({ json: { tests: [t3] } }));
+  await page.route(`**/api/interviews/${id}/grade`, (route) => route.fulfill({ status: 400, json: { error: 'No quick review in this test.' } }));
+  await page.route(`**/api/interviews/${id}`, (route) => {
+    if (route.request().method() === 'PUT') {
+      const change = route.request().postDataJSON();
+      if (change.action === 'submit') {
+        item.attempts.push({ id: change.attempt, challenge: structuredClone(challenge), workspace: structuredClone(change.workspace), at: new Date().toISOString(), feedback: null, checks: change.tests.map((r) => { const t = [t1, t3].find((x) => x.id === r.id); return { id: r.id, kind: 'test', label: `solve(${JSON.stringify(t.args[0])})`, pass: r.pass, given: r.got, expected: JSON.stringify(t.expected), ...(t.hidden ? { hidden: true } : {}) }; }) });
+        key = { ...base, tests: [t1, t3], hidden_tests: 1, revealed: true, verify: false };
+      } else if (change.workspace) item.workspace = change.workspace;
+      item.revision++;
+    }
+    return route.fulfill({ json: item });
+  });
+  await page.route('**/api/chats/*', (route) => route.request().method() === 'GET' ? route.fulfill({ status: 404, json: { error: 'No conversation yet' } }) : route.fulfill({ json: { id, title: 'Checked practice', updated_at: new Date().toISOString(), count: 2, named: true } }));
+  await page.route('**/api/chat', (route) => route.fulfill({ contentType: 'application/x-ndjson', body: JSON.stringify({ t: 'Noted.' }) + '\n' + JSON.stringify({ done: true }) + '\n' }));
+  await page.goto(`/#/interviews/${id}`);
+  await expect.poll(() => checked && checked.stamp).toBe('stamp-1');
+  expect(checked.reports.map((r) => [r.id, r.pass])).toEqual([['t1', true], ['t2', false], ['t3', true]]);
+  expect(checked.error).toBe('');
+  const tabs = page.locator('#interview-panes [data-interview="pane"]');
+  await expect(tabs).toHaveText(['Question', 'Test cases', 'Submissions']);
+  await tabs.nth(1).click();
+  const cases = page.locator('#interview-pane-cases');
+  await expect(cases.locator('li')).toHaveCount(1);
+  await expect(cases).not.toContainText('[2,2]');
+  await page.locator('#interview-answer').fill('function solve(nums) {\n  return nums.reduce((a, b) => a + b);\n}');
+  await page.locator('[data-interview="run"]').click();
+  await expect(cases.locator('.interview-tally')).toHaveText('1/1 passed');
+  await expect.poll(() => saved && saved.challenge).toBe(challenge.id);
+  expect(saved.reports).toEqual([{ id: 't1', pass: true, got: '3' }]);
+  await page.locator('[data-interview="submit"]').click();
+  await expect(tabs.nth(2)).toHaveText('Result · 1/2');
+  const results = page.locator('#interview-results');
+  await expect(results.locator('#interview-case-t3')).toHaveAttribute('aria-selected', 'true');
+  await expect(results).toContainText('solve([])');
+  await expect(results).toContainText('hidden test');
+  await expect(page.locator('.msg.leo').last()).toContainText('Noted.');
+  await page.locator('[data-chat="close"]').click();
+  await tabs.nth(1).click();
+  await expect(cases.locator('li')).toHaveCount(2);
+  await expect(cases.locator('li').nth(1)).toContainText('Hidden');
+  await expect(cases).toContainText('including the ones hidden until you submitted');
+});
+
+for (const [language, starter, answer, tests, passed] of [
+  ['TypeScript', 'function solve(nums: number[]): number {\n}', 'function solve(nums: number[]): number {\n  const total: number = nums.reduce((a: number, b: number) => a + b, 0);\n  return total;\n}', [{ id: 't1', args: [[1, 2]], expected: 3, hidden: false, unordered: false }, { id: 't2', args: [[]], expected: 0, hidden: false, unordered: false }], '2/2 passed'],
+  ['SQL', 'SELECT -- your query', 'SELECT name FROM people WHERE age >= 18 ORDER BY name;', [{ id: 't1', args: ["CREATE TABLE people(name TEXT, age INTEGER); INSERT INTO people VALUES ('Ana', 30), ('Bo', 12), ('Cy', 18);"], expected: [['Ana'], ['Cy']], hidden: false, unordered: false }, { id: 't2', args: ['CREATE TABLE people(name TEXT, age INTEGER);'], expected: [['Nobody']], hidden: false, unordered: false }], '1/2 passed'],
+]) {
+  test(`${language} problems run their tests in the browser sandbox`, async ({ page }) => {
+    const id = `run-${language.toLowerCase()}-01`;
+    const challenge = { id: `run-${language.toLowerCase()}-problem`, title: `${language} practice`, question: 'Do the thing.', minutes: 10, skills: ['Approach'], origin: 'generated', sources: [], coding: { language, starter, difficulty: 'easy', examples: [{ input: 'x', output: 'y' }], constraints: ['small'] } };
+    const workspace = { answer: starter, reasoning: '', board: [] };
+    const item = { id, revision: 1, framework: { title: `${language} practice`, track: 'coding', company: '', role: '', language, style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace, problems: [{ challenge, workspace }], attempts: [] };
+    await page.route('**/api/interviews', (route) => route.fulfill({ json: [] }));
+    await page.route(`**/api/interviews/${id}/key?*`, (route) => route.fulfill({ json: { status: 'ready', key: { entry: language === 'SQL' ? 'sql' : 'solve', tests, hidden_tests: 0, revealed: false, verify: false, asks: [], sections: [], criteria: 1 } } }));
+    await page.route(`**/api/interviews/${id}/run`, (route) => route.fulfill({ status: 204 }));
+    await page.route(`**/api/interviews/${id}`, (route) => {
+      if (route.request().method() === 'PUT') { item.workspace = route.request().postDataJSON().workspace || item.workspace; item.revision++; }
+      return route.fulfill({ json: item });
+    });
+    await page.goto(`/#/interviews/${id}`);
+    await page.locator('#interview-answer').fill(answer);
+    await page.locator('[data-interview="run"]').click();
+    const cases = page.locator('#interview-pane-cases');
+    await expect(cases.locator('.interview-tally')).toHaveText(passed, { timeout: 20000 });
+    if (language === 'SQL') {
+      await expect(cases.locator('li').first()).toContainText('CREATE TABLE people');
+      await expect(cases.locator('li.fail')).toContainText('yours: []');
+    }
+  });
+}
+
+test('preparing instant checks shows a moving progress bar with time so far', async ({ page }) => {
+  const id = 'progress-key-01';
+  const challenge = { id: 'progress-key-problem', title: 'Sum a list', question: 'Return the sum.', minutes: 10, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'JavaScript', starter: 'function solve(nums) {\n}', difficulty: 'easy', examples: [{ input: '[1,2]', output: '3' }], constraints: ['n <= 10'] } };
+  const workspace = { answer: 'function solve(nums) {\n}', reasoning: '', board: [] };
+  const item = { id, revision: 1, framework: { title: 'Progress practice', track: 'coding', company: '', role: '', language: 'JavaScript', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace, problems: [{ challenge, workspace }], attempts: [] };
+  let fraction = 0.2;
+  await page.route('**/api/interviews', (route) => route.fulfill({ json: [] }));
+  await page.route(`**/api/interviews/${id}/key?*`, (route) => route.fulfill({ json: { status: 'preparing', progress: { fraction, seconds: Math.round(fraction * 60), expected: 45 } } }));
+  await page.route(`**/api/interviews/${id}`, (route) => route.fulfill({ json: item }));
+  await page.goto(`/#/interviews/${id}`);
+  const meter = page.locator('#interview-key-meter');
+  await expect(meter).toHaveAttribute('role', 'progressbar');
+  await expect(meter).toContainText('Preparing instant checks · 20% · 12 s of about 45 s');
+  fraction = 0.6;
+  await expect(meter).toHaveAttribute('aria-valuenow', '60');
+  await expect(meter).toContainText('60% · 36 s');
 });
 
 async function boardLabel(page, text, fx = 0.2, fy = 0.25) {

@@ -15,6 +15,7 @@ pub const MOST_ASKS: usize = 8;
 pub const MOST_SECTIONS: usize = 8;
 pub const MOST_CRITERIA: usize = 10;
 pub const MOST_REFERENCE: usize = 6_000;
+pub const MOST_SOLUTION: usize = 12_000;
 const MOST_VALUE_BYTES: usize = 4_000;
 const KEY_TOKENS: u32 = 6_000;
 const GRADE_TOKENS: u32 = 1_500;
@@ -119,6 +120,24 @@ pub struct Key {
     pub criteria: Vec<Criterion>,
     #[serde(default)]
     pub reference: String,
+    #[serde(default)]
+    pub solution: String,
+    #[serde(default)]
+    pub verified: bool,
+    #[serde(default)]
+    pub doubtful: bool,
+    #[serde(default)]
+    pub dropped: Vec<Test>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_run: Option<LastRun>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LastRun {
+    pub at: String,
+    pub reports: Vec<TestReport>,
+    #[serde(default)]
+    pub error: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -139,6 +158,8 @@ pub struct CheckResult {
     pub given: String,
     #[serde(default)]
     pub expected: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hidden: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -201,9 +222,29 @@ impl Key {
         self.sections.truncate(MOST_SECTIONS);
         self.criteria.truncate(MOST_CRITERIA);
         self.reference = self.reference.chars().take(MOST_REFERENCE).collect();
+        if self.solution.chars().count() > MOST_SOLUTION || self.tests.is_empty() {
+            self.solution.clear();
+        }
+        self.last_run = None;
+        self.dropped.clear();
         if let Some(coding) = &challenge.coding {
+            let sql = is_sql(&coding.language);
+            if sql {
+                self.entry = "sql".into();
+            }
             if !self.tests.is_empty() {
-                if !identifier(&self.entry) || !coding.starter.contains(self.entry.as_str()) {
+                if sql
+                    && !self.tests.iter().all(|t| {
+                        t.args.len() == 1 && t.args[0].is_string() && t.expected.is_array()
+                    })
+                {
+                    return Err(
+                        "SQL tests need one setup string and an array of result rows".into(),
+                    );
+                }
+                if !sql
+                    && (!identifier(&self.entry) || !coding.starter.contains(self.entry.as_str()))
+                {
                     return Err("entry must be the starter's function name".into());
                 }
                 if !self
@@ -221,7 +262,10 @@ impl Key {
         } else {
             self.tests.clear();
             self.entry.clear();
+            self.solution.clear();
         }
+        self.verified = self.solution.trim().is_empty();
+        self.doubtful = false;
         if !distinct(self.tests.iter().map(|t| t.id.as_str())) {
             return Err("test ids must be short and distinct".into());
         }
@@ -277,11 +321,28 @@ impl Key {
         Ok(())
     }
 
-    pub fn public(&self) -> Value {
+    pub fn needs_check(&self) -> bool {
+        !self.verified && !self.solution.trim().is_empty() && !self.tests.is_empty()
+    }
+
+    pub fn stamp(&self) -> String {
+        format!(
+            "{:016x}",
+            crate::warm::hash_of(&(
+                serde_json::to_string(&self.tests).unwrap_or_default(),
+                &self.solution,
+                &self.entry
+            ))
+        )
+    }
+
+    pub fn public(&self, revealed: bool) -> Value {
         serde_json::json!({
             "entry": self.entry,
-            "tests": self.tests.iter().filter(|t| !t.hidden).collect::<Vec<_>>(),
+            "tests": self.tests.iter().filter(|t| revealed || !t.hidden).collect::<Vec<_>>(),
             "hidden_tests": self.tests.iter().filter(|t| t.hidden).count(),
+            "revealed": revealed,
+            "verify": self.needs_check(),
             "asks": self.asks.iter().map(|a| serde_json::json!({"id": a.id, "label": a.label, "kind": a.kind, "unit": a.unit, "options": a.options})).collect::<Vec<_>>(),
             "sections": self.sections.iter().map(|s| serde_json::json!({"id": s.id, "name": s.name})).collect::<Vec<_>>(),
             "criteria": self.criteria.len(),
@@ -309,6 +370,256 @@ pub fn ready(path: &Path, interview: &str, challenge: &str) -> Option<Key> {
         Some((status, key)) if status == "ready" => key,
         _ => None,
     }
+}
+
+fn update<T>(
+    path: &Path,
+    interview: &str,
+    challenge: &str,
+    change: impl FnOnce(&mut Key) -> Result<T, String>,
+) -> Result<T, String> {
+    let mut change = Some(change);
+    let mut out = None;
+    let mut refused = None;
+    db::for_chats(path)
+        .with(|c| {
+            let tx = c.transaction()?;
+            let row: Option<(String, String)> = tx
+                .query_row(
+                    "SELECT status, data FROM interview_keys WHERE interview = ?1 AND challenge = ?2",
+                    [interview, challenge],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?;
+            let Some((_, data)) = row.filter(|(status, _)| status == "ready") else {
+                refused = Some("This problem's test cases are not ready yet.".to_string());
+                return Ok(());
+            };
+            let Ok(mut key) = serde_json::from_str::<Key>(&data) else {
+                refused = Some("This problem's test cases could not be read.".to_string());
+                return Ok(());
+            };
+            match (change.take().expect("one change"))(&mut key) {
+                Ok(value) => {
+                    let next = serde_json::to_string(&key).unwrap_or(data);
+                    tx.execute(
+                        "UPDATE interview_keys SET data = ?3, updated = ?4 WHERE interview = ?1 AND challenge = ?2",
+                        rusqlite::params![interview, challenge, next, Utc::now().to_rfc3339()],
+                    )?;
+                    out = Some(value);
+                }
+                Err(why) => refused = Some(why),
+            }
+            tx.commit()
+        })
+        .map_err(|_| "leo could not save the test cases.".to_string())?;
+    match (out, refused) {
+        (Some(value), _) => Ok(value),
+        (None, Some(why)) => Err(why),
+        (None, None) => Err("leo could not save the test cases.".into()),
+    }
+}
+
+pub fn verify_job(path: &Path, interview: &str, challenge: &str) -> Option<Value> {
+    let key = ready(path, interview, challenge)?;
+    key.needs_check().then(|| {
+        serde_json::json!({
+            "entry": key.entry,
+            "language": if key.entry == "sql" { "sql" } else { "javascript" },
+            "solution": key.solution,
+            "stamp": key.stamp(),
+            "tests": key.tests.iter().map(|t| serde_json::json!({"id": t.id, "args": t.args, "expected": t.expected, "unordered": t.unordered})).collect::<Vec<_>>(),
+        })
+    })
+}
+
+pub fn verified(
+    path: &Path,
+    interview: &str,
+    challenge: &str,
+    stamp: &str,
+    reports: &[TestReport],
+    error: &str,
+) -> Result<usize, String> {
+    update(path, interview, challenge, |key| {
+        if !key.needs_check() || key.stamp() != stamp {
+            return Ok(0);
+        }
+        let failed: Vec<String> = key
+            .tests
+            .iter()
+            .filter(|t| !reports.iter().any(|r| r.id == t.id && r.pass))
+            .map(|t| t.id.clone())
+            .collect();
+        key.verified = true;
+        if !error.trim().is_empty() || failed.len() * 2 > key.tests.len() {
+            key.doubtful = true;
+            return Ok(0);
+        }
+        let (dropped, kept): (Vec<Test>, Vec<Test>) = std::mem::take(&mut key.tests)
+            .into_iter()
+            .partition(|t| failed.contains(&t.id));
+        key.tests = kept;
+        if !key.tests.is_empty() && key.tests.iter().all(|t| t.hidden) {
+            key.tests[0].hidden = false;
+        }
+        key.dropped = dropped;
+        Ok(key.dropped.len())
+    })
+}
+
+pub fn save_run(
+    path: &Path,
+    interview: &str,
+    challenge: &str,
+    reports: Vec<TestReport>,
+    error: &str,
+) -> Result<(), String> {
+    update(path, interview, challenge, |key| {
+        key.last_run = Some(LastRun {
+            at: Utc::now().to_rfc3339(),
+            reports: reports
+                .into_iter()
+                .filter(|r| key.tests.iter().any(|t| t.id == r.id))
+                .map(|r| TestReport {
+                    got: r.got.chars().take(500).collect(),
+                    ..r
+                })
+                .collect(),
+            error: error.chars().take(500).collect(),
+        });
+        Ok(())
+    })
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TestChange {
+    pub action: String,
+    pub test: Test,
+}
+
+pub fn check_test(key: &Key, change: &TestChange) -> Result<Key, String> {
+    if key.entry.is_empty() {
+        return Err(
+            "This problem has no test cases: it is not a coding problem with a function to call."
+                .into(),
+        );
+    }
+    let test = &change.test;
+    if !tag(&test.id) {
+        return Err("Give the test a short id of letters, digits, - or _, like t7.".into());
+    }
+    let mut next = key.clone();
+    let at = next.tests.iter().position(|t| t.id == test.id);
+    match (change.action.as_str(), at) {
+        ("add", None) => next.tests.push(test.clone()),
+        ("add", Some(_)) => {
+            return Err(format!(
+                "Test {} already exists; use edit to change it.",
+                test.id
+            ))
+        }
+        ("edit", Some(i)) => next.tests[i] = test.clone(),
+        ("delete", Some(i)) => {
+            next.tests.remove(i);
+        }
+        ("edit" | "delete", None) => {
+            return Err(format!(
+                "There is no test {}. Read the test cases for their ids.",
+                test.id
+            ))
+        }
+        _ => return Err("Use action add, edit or delete.".into()),
+    }
+    if next.tests.len() > MOST_TESTS {
+        return Err(format!("A problem keeps at most {MOST_TESTS} test cases."));
+    }
+    if test.args.len() > 8 || !test.args.iter().all(small) || !small(&test.expected) {
+        return Err("Tests need at most 8 small JSON arguments and a small JSON result.".into());
+    }
+    if next.tests.iter().all(|t| t.hidden) {
+        return Err("Keep at least one visible test so the user has an example to run.".into());
+    }
+    Ok(next)
+}
+
+pub fn change_test(
+    path: &Path,
+    interview: &str,
+    challenge: &str,
+    change: &TestChange,
+) -> Result<TestChange, String> {
+    update(path, interview, challenge, |key| {
+        let before = key.tests.iter().find(|t| t.id == change.test.id).cloned();
+        let next = check_test(key, change)?;
+        *key = next;
+        key.last_run = None;
+        Ok(match (change.action.as_str(), before) {
+            ("add", _) => TestChange {
+                action: "delete".into(),
+                test: change.test.clone(),
+            },
+            ("edit", Some(old)) => TestChange {
+                action: "edit".into(),
+                test: old,
+            },
+            (_, Some(old)) => TestChange {
+                action: "add".into(),
+                test: old,
+            },
+            _ => TestChange {
+                action: "delete".into(),
+                test: change.test.clone(),
+            },
+        })
+    })
+}
+
+pub fn tests_material(
+    path: &Path,
+    interview: &str,
+    challenge: &str,
+    submitted: Option<&[CheckResult]>,
+) -> String {
+    let body = match status(path, interview, challenge) {
+        None => return String::new(),
+        Some((status, _)) if status == "preparing" => {
+            "The test cases and answer key are still being written.".to_string()
+        }
+        Some((status, _)) if status != "ready" => {
+            "The answer key could not be written, so this problem has no test cases.".to_string()
+        }
+        Some((_, None)) => return String::new(),
+        Some((_, Some(key))) if key.entry.is_empty() => return String::new(),
+        Some((_, Some(key))) => {
+            let ran = key.last_run.as_ref().map(|run| serde_json::json!({
+                "at": run.at,
+                "error": run.error,
+                "results": run.reports.iter().map(|r| serde_json::json!({"id": r.id, "pass": r.pass, "got": r.got})).collect::<Vec<_>>(),
+            }));
+            let checked = if key.needs_check() {
+                "not yet checked against the reference solution"
+            } else if key.doubtful {
+                "the reference solution disagreed with most tests, so they were kept as written: double-check any that look wrong"
+            } else if key.solution.is_empty() {
+                "written without a reference solution: double-check any that look wrong"
+            } else {
+                "every test matched the reference solution in the browser"
+            };
+            serde_json::json!({
+                "problem": challenge,
+                "entry": key.entry,
+                "checked": checked,
+                "tests": key.tests.iter().map(|t| serde_json::json!({"id": t.id, "call": call_of(&key.entry, t), "args": t.args, "expected": t.expected, "hidden": t.hidden, "unordered": t.unordered})).collect::<Vec<_>>(),
+                "dropped_as_wrong": key.dropped.iter().map(|t| serde_json::json!({"id": t.id, "call": call_of(&key.entry, t), "expected": t.expected})).collect::<Vec<_>>(),
+                "last_run": ran,
+                "latest_submission_checks": submitted.map(|checks| checks.iter().map(|c| serde_json::json!({"id": c.id, "kind": c.kind, "label": c.label, "pass": c.pass, "given": c.given, "expected": c.expected})).collect::<Vec<_>>()),
+            })
+            .to_string()
+            .replace('<', "\\u003c")
+        }
+    };
+    format!("<test_cases>\n{body}\n</test_cases>\nThese are this problem's test cases, the user's latest Run in their browser and their latest submission's checks. Use them directly; never ask the user to paste a test. Hidden tests stay unmentioned until the user has submitted or asks. When a test is wrong, fix it with interview_test instead of asking the user to ignore it.\n")
 }
 
 fn finish(
@@ -361,7 +672,8 @@ fn claim(path: &Path, interview: &str, challenge: &str, again: bool) -> Option<S
 pub const KEY_RULES: &str = "You write the hidden answer key for one practice interview exercise, so the user's answer can be checked the moment they submit. Reply with one JSON object only, no prose, with these fields:
 - criteria (always, 2-8): {id: short tag like c1, text: what a strong answer does, in one sentence, weight: 1-5, good: what meeting it looks like for this exercise, misses: common ways people fall short}. Use the exercise's skills.
 - reference (always): an outline of a strong answer in at most 2,500 characters, with the key numbers, steps or trade-offs. The user never sees it before submitting.
-- For coding exercises also: entry: the name of the function the starter defines; tests: 6-14 {id: t1..., args: [the arguments as JSON values, in order], expected: the exact JSON result, hidden: false for 2-4 tests that match the examples and true for the rest, unordered: true only when any order of a list result is right}. Cover edge cases (empty input, duplicates, limits, negative numbers) in hidden tests. Work every expected value out carefully; a wrong expected value is worse than none. Use only JSON values (numbers, strings, booleans, null, arrays, objects); represent linked lists and trees as arrays.
+- For coding exercises also: entry: the name of the function the starter defines; tests: 6-14 {id: t1..., args: [the arguments as JSON values, in order], expected: the exact JSON result, hidden: false for 2-4 tests that match the examples and true for the rest, unordered: true only when any order of a list result is right}. Cover edge cases (empty input, duplicates, limits, negative numbers) in hidden tests. Work every expected value out carefully by tracing the solution below; a wrong expected value is worse than none. solution: a correct, plain JavaScript function named exactly like entry that takes the test arguments in order and returns the expected JSON value, with no imports, input or printing; leo runs it in the user's browser sandbox before showing the tests and drops any test it disagrees with. The user never sees it. Use only JSON values (numbers, strings, booleans, null, arrays, objects); represent linked lists and trees as arrays.
+- For SQL exercises instead: entry: \"sql\"; each test has args: [one string of SQLite statements that create and fill the tables for that case], expected: the result rows as an array of row arrays in column order (numbers as numbers, NULL as null), unordered: true unless the question asks for a specific order; solution: the SQLite query that answers the question. Write SQLite-compatible SQL.
 - For quantitative exercises and estimates also: asks: 1-6 {id: a1..., label: the quantity or question the user should state, kind: value, unit, answer: the number, tolerance: relative error allowed (0.01 for exact maths, 0 means exact), factor: for rough estimates the accepted ratio either way (like 3 for within 3x), else 0} or {id, label, kind: choice, options: 2-6 strings, answer: one of the options}. Only ask for quantities the exercise asks for or that are a natural step towards them.
 - For open-ended exercises (system design, product, design, marketing, business, cases) also: sections: 3-7 {id: s1..., name: a part a strong answer covers, like Requirements or Success metrics, look_for: 1-5 words that show it is there}. System design may add value asks for capacity estimates with a factor.
 Never include anything except the JSON object. Use interpretable language.";
@@ -519,18 +831,11 @@ pub fn instant(key: &Key, workspace: &Workspace, reports: &[TestReport]) -> Vec<
             out.push(CheckResult {
                 id: test.id.clone(),
                 kind: "test".into(),
-                label: if test.hidden {
-                    "Hidden test".into()
-                } else {
-                    format!(
-                        "{}({})",
-                        key.entry,
-                        test.args.iter().map(show).collect::<Vec<_>>().join(", ")
-                    )
-                },
+                label: call_of(&key.entry, test),
                 pass: report.pass,
                 given: report.got.chars().take(500).collect(),
                 expected: show(&test.expected),
+                hidden: test.hidden,
             });
         }
     }
@@ -550,6 +855,7 @@ pub fn instant(key: &Key, workspace: &Workspace, reports: &[TestReport]) -> Vec<
             pass,
             given,
             expected: amount(ask),
+            hidden: false,
         });
     }
     let text = written(workspace);
@@ -561,9 +867,34 @@ pub fn instant(key: &Key, workspace: &Workspace, reports: &[TestReport]) -> Vec<
             pass: covers(&text, section),
             given: String::new(),
             expected: String::new(),
+            hidden: false,
         });
     }
     out
+}
+
+pub fn is_sql(language: &str) -> bool {
+    let l = language.trim().to_ascii_lowercase();
+    l.contains("sql") || l == "postgres" || l == "sqlite"
+}
+
+fn call_of(entry: &str, test: &Test) -> String {
+    if entry == "sql" {
+        return test
+            .args
+            .first()
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+    }
+    format!(
+        "{entry}({})",
+        test.args
+            .iter()
+            .map(|a| serde_json::to_string(a).unwrap_or_default())
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
 }
 
 pub const GRADE_RULES: &str = "You mark a practice interview answer against a rubric written before the user answered. Be strict and specific: met means the answer clearly does it, partly means it is attempted with a gap, missed means it is absent or wrong. A right result with wrong or missing reasoning is at most partly. Use the reference only to judge; never quote it or give the full solution. Reply with one JSON object only: {\"criteria\": [{\"id\": the criterion id, \"verdict\": \"met\" | \"partly\" | \"missed\", \"why\": one sentence that points at the user's answer}], \"overall\": two sentences: the biggest strength and the most important fix}. Use interpretable language.";
@@ -826,10 +1157,18 @@ mod tests {
             ..Key::default()
         };
         assert!(key.validate(&challenge).is_ok());
-        let public = key.public();
+        let public = key.public(false);
         assert_eq!(public["tests"].as_array().unwrap().len(), 1);
         assert_eq!(public["hidden_tests"], 1);
         assert!(public.get("reference").is_none());
+        let revealed = key.public(true);
+        assert_eq!(
+            revealed["tests"].as_array().unwrap().len(),
+            2,
+            "after a submission every test is shown"
+        );
+        assert_eq!(revealed["tests"][1]["hidden"], true);
+        assert!(revealed.get("solution").is_none() && revealed.get("last_run").is_none());
         let mut wrong = key.clone();
         wrong.entry = "solve".into();
         assert!(wrong.validate(&challenge).is_err());
@@ -884,7 +1223,7 @@ mod tests {
             ..Key::default()
         };
         assert!(key.validate(&challenge).is_ok());
-        assert!(key.public()["asks"][0].get("answer").is_none());
+        assert!(key.public(false)["asks"][0].get("answer").is_none());
         let mut workspace = Workspace {
             answer: "## Requirement list\nUsers upload logs.".into(),
             ..Workspace::default()
@@ -956,8 +1295,12 @@ mod tests {
         );
         assert_eq!(checks.len(), 2);
         assert_eq!(checks[0].label, "pair_sum([2,3], 5)");
-        assert_eq!(checks[1].label, "Hidden test");
-        assert!(!checks[1].pass);
+        assert_eq!(
+            (checks[1].label.as_str(), checks[1].hidden),
+            ("pair_sum([], 1)", true),
+            "a submitted hidden test shows its call"
+        );
+        assert!(!checks[0].hidden && !checks[1].pass);
     }
 
     #[test]
@@ -1086,5 +1429,238 @@ mod tests {
         });
         let covered = coverage(&shy, &key, &challenge, &Workspace::default()).unwrap();
         assert_eq!(covered[0].covered, "yes");
+    }
+
+    fn stored(path: &Path, key: &Key) {
+        db::for_chats(path)
+            .with(|c| {
+                c.execute(
+                    "INSERT INTO interview_keys VALUES ('practice-keys-01', 'problem-keys-01', 'ready', '2026-10-13T12:00:00Z', ?1)",
+                    [serde_json::to_string(key).unwrap()],
+                )
+            })
+            .unwrap();
+    }
+
+    fn sums(ids: &[(&str, bool, i64)]) -> Key {
+        Key {
+            entry: "add".into(),
+            tests: ids
+                .iter()
+                .map(|(id, hidden, expected)| Test {
+                    id: (*id).into(),
+                    args: vec![serde_json::json!(1), serde_json::json!(2)],
+                    expected: serde_json::json!(expected),
+                    hidden: *hidden,
+                    unordered: false,
+                })
+                .collect(),
+            criteria: vec![criterion()],
+            solution: "function add(a, b) { return a + b; }".into(),
+            ..Key::default()
+        }
+    }
+
+    fn report(id: &str, pass: bool) -> TestReport {
+        TestReport {
+            id: id.into(),
+            pass,
+            got: "3".into(),
+        }
+    }
+
+    #[test]
+    fn tests_the_reference_solution_disagrees_with_are_dropped_before_anyone_sees_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path();
+        let (i, c) = ("practice-keys-01", "problem-keys-01");
+        let key = sums(&[("t1", true, 4), ("t2", false, 3), ("t3", true, 3)]);
+        assert!(key.needs_check() && key.public(false)["verify"] == true);
+        stored(path, &key);
+        let job = verify_job(path, i, c).unwrap();
+        assert_eq!(job["tests"].as_array().unwrap().len(), 3);
+        let stamp = job["stamp"].as_str().unwrap();
+        assert_eq!(
+            verified(path, i, c, "stale", &[report("t1", false)], "").unwrap(),
+            0,
+            "a check of older tests changes nothing"
+        );
+        assert!(ready(path, i, c).unwrap().needs_check());
+        let reports = [report("t1", false), report("t2", true), report("t3", true)];
+        assert_eq!(verified(path, i, c, stamp, &reports, "").unwrap(), 1);
+        let now = ready(path, i, c).unwrap();
+        assert!(!now.needs_check() && !now.doubtful);
+        assert_eq!(
+            now.tests.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(),
+            ["t2", "t3"]
+        );
+        assert_eq!(now.dropped[0].id, "t1");
+        assert!(verify_job(path, i, c).is_none());
+        let text = tests_material(path, i, c, None);
+        assert!(text.contains("matched the reference") && text.contains("dropped_as_wrong"));
+    }
+
+    #[test]
+    fn a_reference_solution_that_fails_most_tests_is_doubted_instead_of_emptying_the_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path();
+        let (i, c) = ("practice-keys-01", "problem-keys-01");
+        stored(
+            path,
+            &sums(&[("t1", false, 3), ("t2", true, 3), ("t3", true, 3)]),
+        );
+        let stamp = verify_job(path, i, c).unwrap()["stamp"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let reports = [report("t1", false), report("t2", false), report("t3", true)];
+        assert_eq!(verified(path, i, c, &stamp, &reports, "").unwrap(), 0);
+        let now = ready(path, i, c).unwrap();
+        assert!(now.verified && now.doubtful);
+        assert_eq!(now.tests.len(), 3);
+        assert!(tests_material(path, i, c, None).contains("double-check"));
+    }
+
+    #[test]
+    fn felix_adds_corrects_and_deletes_tests_and_each_change_undoes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path();
+        let (i, c) = ("practice-keys-01", "problem-keys-01");
+        let mut key = sums(&[("t1", false, 4), ("t2", true, 3)]);
+        key.verified = true;
+        key.last_run = Some(LastRun {
+            at: "2026-10-13T12:00:00Z".into(),
+            reports: vec![report("t1", false)],
+            error: String::new(),
+        });
+        stored(path, &key);
+        let text = tests_material(path, i, c, None);
+        assert!(text.contains("\"last_run\":{") && text.contains("add(1, 2)"));
+        let mut fixed = key.tests[0].clone();
+        fixed.expected = serde_json::json!(3);
+        let undo = change_test(
+            path,
+            i,
+            c,
+            &TestChange {
+                action: "edit".into(),
+                test: fixed,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            (undo.action.as_str(), &undo.test.expected),
+            ("edit", &serde_json::json!(4))
+        );
+        let now = ready(path, i, c).unwrap();
+        assert_eq!(now.tests[0].expected, serde_json::json!(3));
+        assert!(
+            now.last_run.is_none(),
+            "an old run no longer matches the tests"
+        );
+        change_test(path, i, c, &undo).unwrap();
+        assert_eq!(
+            ready(path, i, c).unwrap().tests[0].expected,
+            serde_json::json!(4)
+        );
+        let mut extra = key.tests[1].clone();
+        extra.id = "t9".into();
+        let undo = change_test(
+            path,
+            i,
+            c,
+            &TestChange {
+                action: "add".into(),
+                test: extra.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(undo.action, "delete");
+        assert_eq!(ready(path, i, c).unwrap().tests.len(), 3);
+        assert!(change_test(
+            path,
+            i,
+            c,
+            &TestChange {
+                action: "add".into(),
+                test: extra
+            }
+        )
+        .is_err());
+        change_test(path, i, c, &undo).unwrap();
+        let gone = change_test(
+            path,
+            i,
+            c,
+            &TestChange {
+                action: "delete".into(),
+                test: key.tests[1].clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!((gone.action.as_str(), gone.test.hidden), ("add", true));
+        assert!(
+            change_test(
+                path,
+                i,
+                c,
+                &TestChange {
+                    action: "delete".into(),
+                    test: key.tests[0].clone()
+                }
+            )
+            .is_err(),
+            "the last visible test stays"
+        );
+        assert!(change_test(
+            path,
+            i,
+            c,
+            &TestChange {
+                action: "edit".into(),
+                test: extra_named("t42")
+            }
+        )
+        .is_err());
+    }
+
+    fn extra_named(id: &str) -> Test {
+        Test {
+            id: id.into(),
+            args: vec![],
+            expected: serde_json::Value::Null,
+            hidden: false,
+            unordered: false,
+        }
+    }
+
+    #[test]
+    fn a_sql_key_runs_setup_statements_and_compares_result_rows() {
+        let mut challenge = coding_challenge();
+        if let Some(coding) = challenge.coding.as_mut() {
+            coding.language = "SQL".into();
+            coding.starter = "SELECT -- your query".into();
+        }
+        let setup = "CREATE TABLE t(x INTEGER); INSERT INTO t VALUES (1), (2);";
+        let mut key = Key {
+            entry: "anything".into(),
+            tests: vec![Test {
+                id: "t1".into(),
+                args: vec![serde_json::json!(setup)],
+                expected: serde_json::json!([[3]]),
+                hidden: false,
+                unordered: false,
+            }],
+            criteria: vec![criterion()],
+            solution: "SELECT SUM(x) FROM t".into(),
+            ..Key::default()
+        };
+        assert!(key.validate(&challenge).is_ok());
+        assert_eq!(key.entry, "sql");
+        assert_eq!(call_of(&key.entry, &key.tests[0]), setup);
+        let mut wrong = key.clone();
+        wrong.tests[0].args = vec![serde_json::json!(1), serde_json::json!(2)];
+        assert!(wrong.validate(&challenge).is_err());
+        assert!(is_sql("PostgreSQL") && is_sql("sqlite") && !is_sql("Python"));
     }
 }

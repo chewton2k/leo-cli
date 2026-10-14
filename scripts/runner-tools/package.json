@@ -1,0 +1,14 @@
+{
+  "name": "leo-runner-tools",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "sql.js": "1.14.2",
+    "sucrase": "3.35.0"
+  },
+  "packageManager": "pnpm@12.9.1"
+}

@@ -630,6 +630,17 @@
         setTimeout(() => f.classList.remove(name), ms);
       }
     }
+    const working = new WeakMap();
+    function workingFor(since) {
+      const secs = Math.max(0, Math.round((Date.now() - since) / 1000));
+      return `Working · ${secs >= 60 ? `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}` : `${secs} s`}`;
+    }
+    const ticking = setInterval(() => {
+      if (typeof document === 'undefined') return;
+      for (const el of document.querySelectorAll('.msg-clock[data-since]')) el.textContent = workingFor(Number(el.dataset.since));
+    }, 1000);
+    if (ticking.unref) ticking.unref();
+
     function thinking(on) {
       if (!on) pose(null);
       for (const f of faces()) {
@@ -1385,7 +1396,9 @@
       const offers = (m.proposals || []).map((p, j) => proposalCard(p, i, j)).join('');
       const asks = (m.asks || []).map((a, k) => askCard(a, i, k, m.pending)).join('');
       const quizzes = (m.quizzes || []).map((q, k) => quizCard(q, i, k, m.pending, m.sources)).join('');
-      return `<div class="msg leo${m.pending ? ' pending' : ''}" data-i="${i}">${badge}${body}${quizzes}${asks}${offers}${error}${from}${keep}</div>`;
+      const since = m.pending ? working.get(m) : 0;
+      const clock = since ? `<div class="msg-note msg-clock" data-since="${since}" role="timer">${workingFor(since)}</div>` : '';
+      return `<div class="msg leo${m.pending ? ' pending' : ''}" data-i="${i}">${badge}${body}${quizzes}${asks}${offers}${clock}${error}${from}${keep}</div>`;
     }
 
     function onNote() {
@@ -1499,6 +1512,14 @@
       if (p.kind === 'interview_code_edit') {
         const actions = p.state === 'applied' ? `<div class="proposal-done">Accepted · <button class="msg-act" data-chat="undo" ${where}>Undo</button></div>` : p.state === 'dismissed' ? '<div class="proposal-done">Declined</div>' : p.state === 'applying' || p.state === 'undoing' ? '<div class="proposal-done" role="status">Saving code…</div>' : `<div class="proposal-buttons"><button class="btn primary sm" data-chat="apply" ${where}>Accept</button><button class="btn plain sm" data-chat="dismiss" ${where}>Decline</button></div>`;
         return `<div class="proposal proposal-code"><div class="proposal-title">${escape(p.title || 'Code change')}</div><div class="proposal-why">${escape(p.summary || '')}</div><span class="proposal-note">Before</span><pre class="proposal-old">${escape(p.find || 'Empty code')}</pre><span class="proposal-note">After</span><pre class="proposal-new">${escape(p.replace || 'Remove this code')}</pre>${actions}</div>`;
+      }
+      if (p.kind === 'interview_test') {
+        const t = p.test || {};
+        const call = (x) => `(${(Array.isArray(x.args) ? x.args : []).map((a) => JSON.stringify(a)).join(', ')}) → ${JSON.stringify(x.expected)}${x.hidden ? ' · hidden' : ''}`;
+        const verb = p.action === 'add' ? 'Add' : p.action === 'delete' ? 'Delete' : 'Correct';
+        const actions = p.state === 'applied' ? `<div class="proposal-done">Saved · <button class="msg-act" data-chat="undo" ${where}>Undo</button></div>` : p.state === 'dismissed' ? '<div class="proposal-done">Dismissed</div>' : `<div class="proposal-buttons"><button class="btn primary sm" data-chat="apply" ${where}>${verb} test</button><button class="btn plain sm" data-chat="dismiss" ${where}>Dismiss</button></div>`;
+        const before = p.before ? `<span class="proposal-note">Before</span><pre class="proposal-old">${escape(call(p.before))}</pre><span class="proposal-note">After</span>` : '';
+        return `<div class="proposal proposal-code"><div class="proposal-title">${escape(`${p.title || 'Test case'} · ${verb} test ${t.id || ''}`)}</div><div class="proposal-why">${escape(p.summary || '')}</div>${before}<pre class="${p.action === 'delete' ? 'proposal-old' : 'proposal-new'}">${escape(call(t))}</pre>${actions}</div>`;
       }
       if (p.kind !== 'create' && p.kind !== 'edit') {
         const acts = p.kind === 'interview_schedule'
@@ -1987,6 +2008,7 @@
       });
       asked.mode = state.mode;
       const answer = { role: 'assistant', text: '', sources: [], pending: true, folder: (state.context && state.context.directory) || '', mode: state.mode };
+      working.set(answer, Date.now());
       if (card && extra.hint) card.hints = [...(Array.isArray(card.hints) ? card.hints : []), answer];
       else if (card) card.reply = answer;
       else {
@@ -2088,7 +2110,10 @@
             if (e.spent && typeof e.spent === 'object') answer.spent = e.spent;
             if (e.proposal && typeof e.proposal === 'object') {
               const done = e.proposal.state === 'applied';
-              answer.proposals = [...(answer.proposals || []), { ...e.proposal, state: done ? 'applied' : 'new' }];
+              const { auto, ...shown } = e.proposal;
+              const card = { ...shown, state: done ? 'applied' : 'new' };
+              answer.proposals = [...(answer.proposals || []), card];
+              if (auto && card.kind === 'interview_code_edit') queueMicrotask(() => organize(card, card, true));
               if (done && e.proposal.kind === 'create' && e.proposal.made) onSaved({ id: e.proposal.made, title: e.proposal.title, directory: e.proposal.folder || '' });
               else if (done && e.proposal.kind === 'edit') onChanged({ id: e.proposal.note, title: e.proposal.title });
               else if (done) onOrganized(e.proposal);

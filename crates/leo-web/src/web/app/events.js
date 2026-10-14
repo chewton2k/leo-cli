@@ -95,7 +95,7 @@ async function route() {
   await render();
 }
 
-const activity = { tasks: [], timer: 0, folded: false, route: '' };
+const activity = { tasks: [], timer: 0, folded: false, route: '', seen: new Map() };
 
 function hiddenHere(task) {
   if (task.kind === 'recording') return activity.route === 'record';
@@ -117,10 +117,21 @@ function drawActivity() {
   box.hidden = !shown.length;
   if (!shown.length) return;
   box.classList.toggle('folded', activity.folded);
+  const now = Date.now();
   const rows = shown
     .map((t) => {
-      const share = t.total ? Math.max(4, Math.round((t.done / t.total) * 100)) : 0;
-      const count = t.total ? ` · ${t.done}/${t.total}` : '';
+      const seen = activity.seen.get(t.label) || { since: now, step: `${t.done}/${t.total}`, stepSince: now, steps: [] };
+      if (seen.step !== `${t.done}/${t.total}`) {
+        seen.steps = [...seen.steps, (now - seen.stepSince) / 1000].slice(-6);
+        seen.step = `${t.done}/${t.total}`;
+        seen.stepSince = now;
+      }
+      activity.seen.set(t.label, seen);
+      const typical = seen.steps.length ? seen.steps.reduce((a, b) => a + b, 0) / seen.steps.length : 20;
+      const creep = 1 - Math.exp(-((now - seen.stepSince) / 1000) / Math.max(3, typical));
+      const share = t.total ? Math.max(4, Math.min(99, Math.round(((Math.min(t.done, t.total) + (t.done < t.total ? 0.9 * creep : 0)) / t.total) * 100))) : 0;
+      const took = Math.round((now - seen.since) / 1000);
+      const count = `${t.total ? ` · ${t.done}/${t.total}` : ''} · ${took >= 60 ? `${Math.floor(took / 60)}:${String(took % 60).padStart(2, '0')}` : `${took} s`}`;
       return `<button class="activity-row" data-action="activity-open" data-href="${esc(t.href)}">
         <span class="activity-label">${esc(t.label)}</span>
         <span class="activity-step">${esc(t.step)}${count}</span>
@@ -135,11 +146,12 @@ async function checkActivity() {
   clearTimeout(activity.timer);
   try {
     activity.tasks = (await api('/api/activity')).tasks;
+    for (const label of [...activity.seen.keys()]) if (!activity.tasks.some((t) => t.label === label)) activity.seen.delete(label);
   } catch (e) {
     if (e instanceof Locked) return;
   }
   drawActivity();
-  if (activity.tasks.length) activity.timer = setTimeout(checkActivity, 1500);
+  if (activity.tasks.length) activity.timer = setTimeout(checkActivity, 1000);
 }
 
 function closedHeight(box, summary) {

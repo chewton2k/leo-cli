@@ -60,16 +60,22 @@
     }
     return [...groups.values()];
   }
+  function callText(entry, args = []) {
+    const list = Array.isArray(args) ? args : [];
+    if (entry === 'sql') return String(list[0] ?? '');
+    return `${entry}(${list.map((a) => JSON.stringify(a)).join(', ')})`;
+  }
   function resultCases(checks = []) {
     const counts = { test: 0, answer: 0, section: 0 };
     return (checks || []).map((c) => {
       const group = c.kind === 'test' ? 'test' : c.kind === 'section' ? 'section' : 'answer';
       counts[group] += 1;
       const n = counts[group];
-      const hidden = group === 'test' && c.label === 'Hidden test';
+      const unlabelled = group === 'test' && c.label === 'Hidden test';
+      const hidden = group === 'test' && (Boolean(c.hidden) || unlabelled);
       const name = group === 'test' ? `Case ${n}` : group === 'answer' ? `Answer ${n}` : String(c.label || `Part ${n}`);
       const title = group === 'test' ? `Case ${n}${hidden ? ' · hidden test' : ''}` : String(c.label || name);
-      return { id: String(c.id), group, name, title, pass: Boolean(c.pass), hidden, input: group === 'test' && !hidden ? String(c.label || '') : '', yours: String(c.given || ''), expected: String(c.expected || '') };
+      return { id: String(c.id), group, name, title, pass: Boolean(c.pass), hidden, input: group === 'test' && !unlabelled ? String(c.label || '') : '', yours: String(c.given || ''), expected: String(c.expected || '') };
     });
   }
   function attemptStatus(attempt = {}) {
@@ -307,5 +313,5 @@
       storage.setItem('leo-interview-drafts', JSON.stringify(drafts));
     } catch (e) {}
   }
-  root.leoInterview = { PRESETS, preset, framework, preparation, workspace, cleanValues, sameValue, checkSummary, resultCases, pickCase, attemptStatus, reviewNote, hasWork, codeEdit, point, validBoard, boardSvg, fitBoard, moveShape, shapeBounds, unionBounds, normalRect, shapesWithin, handlesFor, resizeShape, BOARD_LIMIT, progress, keepDraft, readDraft, clearDraft, MOST_SHAPES, MOST_POINTS, MOST_ANSWER, MOST_PROBLEMS };
+  root.leoInterview = { PRESETS, preset, framework, preparation, workspace, cleanValues, sameValue, checkSummary, callText, resultCases, pickCase, attemptStatus, reviewNote, hasWork, codeEdit, point, validBoard, boardSvg, fitBoard, moveShape, shapeBounds, unionBounds, normalRect, shapesWithin, handlesFor, resizeShape, BOARD_LIMIT, progress, keepDraft, readDraft, clearDraft, MOST_SHAPES, MOST_POINTS, MOST_ANSWER, MOST_PROBLEMS };
 })(typeof window !== 'undefined' ? window : globalThis);

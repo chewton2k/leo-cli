@@ -208,6 +208,7 @@ pub(crate) fn summary_of(p: &Proposal) -> String {
         | Proposal::PinNote { summary, .. }
         | Proposal::DeleteFolder { summary, .. }
         | Proposal::InterviewCodeEdit { summary, .. }
+        | Proposal::InterviewTest { summary, .. }
         | Proposal::RestoreFolder { summary, .. } => summary.clone(),
         Proposal::Edit { title, .. } => format!("Change “{title}”"),
         Proposal::Create { title, .. } => format!("Make the note “{title}”"),
@@ -850,6 +851,40 @@ pub(crate) async fn act(
                     .map_err(|_| "Leo could not apply the code change. Try again.".to_string())?
                     .map_err(|e| e.message())?;
             Ok((serde_json::json!({"revision":item.revision}), undo))
+        }
+        Proposal::InterviewTest {
+            title,
+            summary,
+            interview,
+            challenge,
+            action,
+            test,
+            ..
+        } => {
+            let path = state.chats.clone();
+            let (id, problem) = (interview.clone(), challenge.clone());
+            let change = crate::interview_keys::TestChange {
+                action: action.clone(),
+                test: test.clone(),
+            };
+            let back = tokio::task::spawn_blocking(move || {
+                crate::interview_keys::change_test(&path, &id, &problem, &change)
+            })
+            .await
+            .map_err(|_| "Leo could not change the test case. Try again.".to_string())??;
+            let undo = Proposal::InterviewTest {
+                title: title.clone(),
+                summary: format!("Undo: {summary}"),
+                interview: interview.clone(),
+                challenge: challenge.clone(),
+                before: (back.action == "edit").then(|| test.clone()),
+                action: back.action,
+                test: back.test,
+            };
+            Ok((
+                serde_json::json!({"interview": interview, "challenge": challenge}),
+                undo,
+            ))
         }
         Proposal::AddTask {
             title,

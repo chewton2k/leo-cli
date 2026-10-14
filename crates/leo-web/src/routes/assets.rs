@@ -43,6 +43,28 @@ pub(crate) async fn interview_js() -> Response {
 pub(crate) async fn code_tools_js() -> Response {
     javascript(include_str!("../web/vendor/code-tools.min.js"))
 }
+pub(crate) async fn typescript_js() -> Response {
+    javascript(include_str!("../web/vendor/typescript.min.js"))
+}
+const SQL_JS: &str = include_str!("../web/vendor/sql/sql-wasm.js");
+const SQL_WASM: &[u8] = include_bytes!("../web/vendor/sql/sql-wasm.wasm");
+
+pub(crate) async fn sql_file(axum::extract::Path(name): axum::extract::Path<String>) -> Response {
+    let (kind, body): (&str, &'static [u8]) = match name.as_str() {
+        "sql-wasm.js" => ("text/javascript; charset=utf-8", SQL_JS.as_bytes()),
+        "sql-wasm.wasm" => ("application/wasm", SQL_WASM),
+        _ => return axum::http::StatusCode::NOT_FOUND.into_response(),
+    };
+    (
+        [
+            (header::CONTENT_TYPE, kind),
+            (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+            (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
+        ],
+        body,
+    )
+        .into_response()
+}
 const AUDIO_QUEUE_JS: &str = include_str!("../web/audio-queue.js");
 pub(crate) async fn browser_storage_js() -> Response {
     javascript(include_str!("../web/browser-storage.js"))

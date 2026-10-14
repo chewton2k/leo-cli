@@ -121,8 +121,13 @@ seer, meaning, web, room).
   (`/api/trash/restore {ids, dirs}`); rename `/api/dirs/rename`; drag and drop
   (`drag.js`) moves notes and folders (`Store::move_dir` refuses itself, its
   own subfolder, or a taken name), files dropped open the upload sheet.
-  Dropping a note on another opens Combine (`combine.rs`: preview, puts back
-  anything the AI dropped, Undo restores both).
+  Dropping a note on another opens Combine (2026-10-14, the user's call: no
+  AI, instant). `combine::joined` keeps both notes whole under their own `##`
+  titles, older first, split by `---`, pictures relinked; the other note's
+  recording transcripts are copied over (`recording::copy_to`, labelled
+  `Archive.from`, shown as "Recording n · from “Title”" and in
+  read_transcript); the other note goes to the trash. Undo restores the body,
+  the note and removes the copied transcripts (POST `uncombine`).
 - Sidebar (`side.js`, ≥1000 px): places, a Top level row (styled like a
   folder row, outside the scrolling tree so it is always a drop target), the
   folder tree (`folderTree`, open state in `leo-side-open`, only `.side-tree`
@@ -223,7 +228,8 @@ seer, meaning, web, room).
 - Interview practice (2026-10-12): see the root CLAUDE.md and
   `.superpowers/plans/2026-10-12-felix-interviews.md`; `interview.rs`,
   `interview_tools.rs`, `web/interview.js`, `app/interviews.js`. Generated
-  code never runs; async updates never replace a focused editor.
+  code never runs, except the key's reference solution in the sandbox; async
+  updates never replace a focused editor.
   Problems are ordered snapshots of their challenge and workspace (128 max,
   within the existing 1 MB practice limit). Legacy attempts become reopenable
   problems. `interview_challenge` appends; `interview_problem` reopens;
@@ -288,7 +294,8 @@ seer, meaning, web, room).
   Submission results (`paintInterviewResults`): a passed/failed summary, one
   horizontally scrolling strip of case chips (`interviews.resultCases`: tests
   as Case n, answers as Answer n, parts by name) acting as tabs, and one detail
-  panel: input only when the visible call is known (never for hidden tests),
+  panel: the input (hidden tests too, once submitted: `CheckResult.hidden`;
+  old attempts saved as "Hidden test" have none),
   your output and expected output in bounded wrapping boxes, and "This check
   looks wrong" for a failed case, which names the check to Felix. The selection
   (`session.resultCase`, `interviews.pickCase`: first failure, else the first
@@ -298,7 +305,9 @@ seer, meaning, web, room).
   per-criterion feedback into `source-more`. Grading errors are kept per
   submission.
   `interview_code` reads the full bound draft. `interview_code_edit` suggests one
-  exact unique fragment per Accept/Decline card, always pending even in Auto.
+  exact unique fragment per Accept/Decline card in Ask first; in Auto
+  (2026-10-14, the user's call) the proposal arrives with `auto: true` and the
+  page applies it at once through the same merge path, with Undo on the card.
   Apply and contextual Undo change only that problem’s code, including archived
   problems, and refuse stale/ambiguous fragments. Read only refuses suggestions;
   the page flushes drafts and merges non-overlapping typing during application.
@@ -321,9 +330,22 @@ works (plan: `.superpowers/plans/2026-10-12-interview-instant-feedback.md`):
   `reference` outline. Keys are read leniently (a string where a list was
   asked) and validated; a failed key leaves Submit working with the review.
 - The page sees only `Key::public` (visible tests, ask labels and options,
-  section names) via GET `/api/interviews/{id}/key`, polled every 3 s while
-  preparing; hidden tests come from POST `hidden-tests` only at Submit.
+  section names) via GET `/api/interviews/{id}/key`, polled every 1.5 s while
+  preparing (with `progress`); hidden tests come from POST `hidden-tests` at
+  Submit, and once the problem has a submission `public(true)` shows every
+  test with its `hidden` flag (2026-10-14: hidden only until submitted).
   References, answers and criteria never reach the page before grading.
+- Keys carry a JavaScript reference `solution` (never shown). While `verify`
+  is set the page shows no tests: POST `key/check` gives the solution, tests
+  and a `stamp`; the page runs it in the sandbox and POST `key/checked` drops
+  every test it disagrees with (`Key.dropped`), unless most fail or it errors,
+  then the key is kept and marked `doubtful`. A stale stamp changes nothing.
+- Felix sees the active problem's tests (all, with hidden flags), whether they
+  matched the reference, the last Run (POST `run` → `Key.last_run`) and the
+  latest submission's checks in `<test_cases>` (`interview_keys::tests_material`),
+  and has `interview_tests` (read) and `interview_test` (add, edit, delete one
+  test: a `Proposal::InterviewTest` card in Ask first, applied with Undo in
+  Auto, refused in Read only; at least one visible test always stays).
 - Submit: the page runs every test in the sandbox, PUT `submit` carries
   `tests` reports, the server grades asks and sections instantly into
   `Attempt.checks`; then POST `grade` asks the quick model (`Powers.quick`:
@@ -338,7 +360,22 @@ works (plan: `.superpowers/plans/2026-10-12-interview-instant-feedback.md`):
   sandboxed frame can share the page's thread). Python is Pyodide 0.28.3,
   fetched once on first use (`leo_services::pyodide`, SHA-256 pinned, about
   12 MB) and served at `/pyodide/{name}` (allowlisted, CORS `*`, immutable).
-  Other languages get the quick and full reviews only.
+  TypeScript: the page loads `/typescript.js` (sucrase, vendored by
+  `scripts/runner-tools`) to strip types, then runs the result as JavaScript.
+  SQL (SQLite via sql.js, vendored, `/sql/{name}` with CORS `*`): key `entry`
+  is `sql`, each test's one argument is the setup SQL, expected is the rows as
+  arrays; the worker runs setup then the user's query on a fresh database per
+  test. Other languages get the quick and full reviews only.
+- Progress (`progress.rs`, 2026-10-14): long AI jobs get a `Meter` on
+  `AppState.progress` (`key:`, `grade:`, `coverage:` keys, GET
+  `/api/progress/{key}`). It counts streamed characters (keys stream through
+  `Powers.chat`) against the expected size and also moves with time
+  (1 - e^-t/expected), so a thinking model never looks stuck; it stops at 97%
+  until the job ends and learns sizes and durations per kind. The page draws
+  `meterBar` (percent, elapsed, about how long). Python's download reports
+  bytes on disk. Background panel, upload and recording bars creep within a
+  step using the average step time and show elapsed time; Felix's answer in
+  progress shows "Working · n s".
 - Measured with Claude Code (Opus 5.5 writing, Haiku quick): problem in 16-19 s,
   key ready about 30 s later, Run 1.0 s, Submit results 0.1 s, quick review
   8-9 s, coverage 4 s.
@@ -359,6 +396,11 @@ works (plan: `.superpowers/plans/2026-10-12-interview-instant-feedback.md`):
   Failed recordings can be dismissed (audio kept) or deleted. The live page
   is notepad first; the transcript is folded. Calendar events now (or within
   15 min) are preselected and sent as `profile.context`.
+- PDF export (Share → PDF, or the browser's print): print CSS hides every
+  fixed overlay (dock, tasks, source pane, toasts, chat, FABs…), zeroes the
+  layout variables and the scrollbar gutter, and uses fixed `@page` margins
+  (22/24/24 mm), so the PDF is the same on any screen; `beforeprint` also
+  marks anything else `position: fixed` with `data-print-off`.
 - Background panel and Tasks panel share `#dock` (bottom left; activity on
   top). On the knowledge graph the dock moves right of the map tools
   (`body.on-map .dock`) so zoom and Tidy stay reachable.

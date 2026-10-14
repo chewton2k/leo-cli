@@ -678,12 +678,25 @@
 
     function drawWriting() {
       const v = s.view;
-      const bar = v.steps ? (v.steps[0] / Math.max(1, v.steps[1])) * 100 : 0;
+      const now = Date.now();
+      const step = v.steps ? `${v.steps[0]}/${v.steps[1]}` : String(v.step || '');
+      const at = s.writeClock && s.writeClock.id === v.id ? s.writeClock : (s.writeClock = { id: v.id, since: now, step, stepSince: now, took: [] });
+      if (at.step !== step) {
+        at.took = [...at.took, (now - at.stepSince) / 1000].slice(-6);
+        at.step = step;
+        at.stepSince = now;
+      }
+      const typical = at.took.length ? at.took.reduce((a, b) => a + b, 0) / at.took.length : 20;
+      const creep = 1 - Math.exp(-((now - at.stepSince) / 1000) / Math.max(3, typical));
+      const done = v.steps ? Math.min(v.steps[0], v.steps[1]) : 0;
+      const total = v.steps ? Math.max(1, v.steps[1]) : 0;
+      const bar = Math.min(99, total ? ((done + (done < total ? 0.9 * creep : 0)) / total) * 100 : 60 * creep);
+      const waited = Math.round((now - at.since) / 1000);
       return `<div class="rec rec-writing">
         <div class="section-title">Recording</div>
         <section class="set-card rec-done-card">${felix.felix(72, 'idle think')}<h3>${esc(stateWord(v) || 'Writing the notes')}</h3>
-          <div class="upload-bar"><i style="width:${Math.max(6, bar)}%"></i></div>
-          <p class="hint">${clock(v.secs)} recorded. You can leave this page; the note appears in its folder when it is ready.</p>
+          <div class="upload-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(Math.max(6, bar))}"><i style="width:${Math.max(6, bar)}%"></i></div>
+          <p class="hint">Writing for ${clock(waited)} · ${clock(v.secs)} recorded. You can leave this page; the note appears in its folder when it is ready.</p>
           ${v.warnings.map((w) => `<p class="set-note warn">${esc(w)}</p>`).join('')}
           <button class="btn plain sm" data-action="rec-finish">Finish with what is transcribed so far</button>
         </section>
