@@ -285,7 +285,7 @@ jobs:
       - uses: actions/checkout@v5
       - id: jdk
         run: echo "version=$(cat scripts/java-runner/JDK_VERSION)" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: ${{ steps.jdk.outputs.version }}

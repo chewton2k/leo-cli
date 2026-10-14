@@ -31,6 +31,9 @@ mv "$out/files.sha256" "$files/files.sha256"
 got=$(sum "$files/files.sha256" | cut -d' ' -f1)
 pinned=$(cat "$here/MANIFEST")
 if [ "$got" != "$pinned" ]; then
+    if [ -n "${GITHUB_ACTIONS:-}" ]; then
+        echo "::error title=Runner build differs::$(java -version 2>&1 | head -n 1 || true) files.sha256=$got $(tr '\n' ' ' <"$files/files.sha256")"
+    fi
     echo "files.sha256 is $got, MANIFEST pins $pinned." >&2
     echo "If the Go version or PACKAGES changed on purpose, update MANIFEST and leo_services::gorunner::FILES_SHA256 together." >&2
     exit 1
