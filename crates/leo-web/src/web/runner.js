@@ -234,13 +234,12 @@ self.postMessage({ loaded: true });
   let compiler = null;
   let compiled = false;
 
-  async function runCpp(job, done) {
+  function runCpp(job, done) {
     const limit = Math.min(Math.max(Number(job.limit) || 4000, 500), 10000);
     if (!compiler) {
-      const base = String(job.base || '');
+      if (typeof job.bundle !== 'string' || !job.bundle) return done({ error: 'The C++ compiler is not loaded yet. Try Run again.', stdout: '' });
       try {
-        const bundle = await (await fetch(`${base}clang/bundle.js`)).text();
-        compiler = new Worker(URL.createObjectURL(new Blob([compilerSource(bundle, base)], { type: 'text/javascript' })));
+        compiler = new Worker(URL.createObjectURL(new Blob([compilerSource(job.bundle, String(job.base || ''))], { type: 'text/javascript' })));
       } catch (e) {
         return done({ error: 'This browser could not start the C++ compiler.', stdout: '' });
       }
@@ -282,7 +281,7 @@ self.postMessage({ loaded: true });
 
   function run(job) {
     const done = (result) => send({ kind: 'done', run: job.run, ...result });
-    if (job.language === 'cpp') { runCpp(job, done); return; }
+    if (job.language === 'cpp') return runCpp(job, done);
     if (!ENTRY.test(job.entry || '')) return done({ error: 'This problem has no function to call.', results: [], logs: [] });
     const python = job.language === 'python';
     let worker;

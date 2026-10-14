@@ -373,7 +373,8 @@ works (plan: `.superpowers/plans/2026-10-12-interview-instant-feedback.md`):
   floating, bool, char, string and nested vectors from the JSON args, calls
   `Solution().entry` or the free function, prints `@@leo id <json>` per test,
   user output goes to Printed output; pointers such as ListNode are refused
-  with a plain message). The runner fetches the bundle and runs it as a
+  with a plain message). The page fetches the bundle (runner.js never calls
+  fetch; a test checks) and the runner starts it as a
   classic worker (module workers do not start in the opaque-origin sandbox),
   compiles `-O1 -std=c++20 -fno-exceptions`, and runs the program in a fresh
   worker with a small WASI shim so an endless loop is stopped. Measured in

@@ -1027,7 +1027,7 @@ async function loadInterviewKey(session, force = false) {
   } catch (e) { if (e instanceof Locked) throw e; }
 }
 
-const runner = { frame: null, ready: null, cppWarm: false };
+const runner = { frame: null, ready: null, cppWarm: false, clangBundle: '' };
 
 function runnerFrame() {
   if (runner.frame?.isConnected && runner.ready) return runner.ready;
@@ -1089,7 +1089,18 @@ async function runInterviewTests(session, code, entry, tests) {
       if (first && interviewHere(session)) drawInterviewChecks(session); else setMeter('interview-runtime-meter', session.runtimeFetch);
     };
     const ticking = runner.cppWarm ? 0 : setInterval(show, 500);
-    const out = await runInSandbox({ language: 'cpp', entry, files: made.files }, (fraction) => { loaded = fraction; if (!runner.cppWarm) show(); });
+    if (!runner.clangBundle) {
+      try {
+        const response = await fetch('/clang/bundle.js', { credentials: 'same-origin' });
+        if (!response.ok) throw new Error(String(response.status));
+        runner.clangBundle = await response.text();
+      } catch (e) {
+        clearInterval(ticking);
+        session.runtimeFetch = null;
+        return failed('The C++ compiler could not load. Try Run again.');
+      }
+    }
+    const out = await runInSandbox({ language: 'cpp', entry, files: made.files, bundle: runner.clangBundle }, (fraction) => { loaded = fraction; if (!runner.cppWarm) show(); });
     clearInterval(ticking);
     if (out.compile !== undefined || out.stdout !== undefined) runner.cppWarm = true;
     if (session.runtimeFetch) { session.runtimeFetch = null; if (interviewHere(session)) drawInterviewChecks(session); }
