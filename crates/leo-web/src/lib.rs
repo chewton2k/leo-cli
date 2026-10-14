@@ -174,6 +174,7 @@ pub struct Powers {
     pub python: Option<Runtime>,
     pub cpp: Option<Runtime>,
     pub go: Option<Runtime>,
+    pub java: Option<Runtime>,
     pub chat: Option<Streamer>,
     pub settings: Option<Arc<dyn SettingsApi>>,
     pub importer: Option<Importer>,
@@ -201,6 +202,8 @@ struct AppState {
     cpp_fetch: Arc<Mutex<Option<String>>>,
     go: Option<Runtime>,
     go_fetch: Arc<Mutex<Option<String>>>,
+    java: Option<Runtime>,
+    java_fetch: Arc<Mutex<Option<String>>>,
     progress: Arc<progress::Board>,
     warm: Arc<warm::Slot>,
     chat: Option<Streamer>,
@@ -413,6 +416,7 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
     let python = powers.python;
     let cpp = powers.cpp;
     let go = powers.go;
+    let java = powers.java;
     let chat = powers.chat;
     let settings = powers.settings;
     let importer = powers.importer;
@@ -459,6 +463,8 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
         cpp_fetch: Default::default(),
         go,
         go_fetch: Default::default(),
+        java,
+        java_fetch: Default::default(),
         progress: Default::default(),
         warm: Default::default(),
         chat,
@@ -690,6 +696,10 @@ fn router(state: AppState) -> Router {
             "/api/go",
             get(routes::python::go_status).post(routes::python::go_fetch),
         )
+        .route(
+            "/api/java",
+            get(routes::python::java_status).post(routes::python::java_fetch),
+        )
         .route("/api/progress/{key}", get(routes::interviews::progress))
         .route("/api/interviews", get(routes::interviews::list))
         .route(
@@ -822,6 +832,7 @@ fn router(state: AppState) -> Router {
         .route("/pyodide/{name}", get(routes::python::file))
         .route("/clang/{name}", get(routes::python::cpp_file))
         .route("/goroot/{*name}", get(routes::python::go_file))
+        .route("/javaroot/{name}", get(routes::python::java_file))
         .route("/sql/{name}", get(routes::assets::sql_file))
         .layer(axum::middleware::from_fn(security_headers))
         .layer(axum::middleware::from_fn(note_peer))

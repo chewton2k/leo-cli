@@ -5248,6 +5248,33 @@ test('Go downloads once with a progress bar and explains code it cannot test', a
   expect(asked).toBe(1);
 });
 
+test('Java downloads once with a progress bar and explains types it cannot fill in', async ({ page }) => {
+  const id = 'java-wiring-01';
+  const starter = 'class Solution {\n    public int count(Map<String, Integer> words) {\n    }\n}';
+  const challenge = { id: 'java-wiring-problem', title: 'Count', question: 'Count them.', minutes: 10, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'Java', starter, difficulty: 'easy', examples: [{ input: '{}', output: '0' }], constraints: ['small'] } };
+  const workspace = { answer: starter, reasoning: '', board: [] };
+  const item = { id, revision: 1, framework: { title: 'Java practice', track: 'coding', company: '', role: '', language: 'Java', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace, problems: [{ challenge, workspace }], attempts: [] };
+  let done = 0;
+  let asked = 0;
+  await page.route('**/api/interviews', (route) => route.fulfill({ json: [] }));
+  await page.route(`**/api/interviews/${id}/key?*`, (route) => route.fulfill({ json: { status: 'ready', key: { entry: 'count', tests: [{ id: 't1', args: [{}], expected: 0, hidden: false, unordered: false }], hidden_tests: 0, revealed: false, verify: false, asks: [], sections: [], criteria: 1 } } }));
+  await page.route(`**/api/interviews/${id}/run`, (route) => route.fulfill({ status: 204 }));
+  await page.route(`**/api/interviews/${id}`, (route) => route.fulfill({ json: item }));
+  await page.route('**/api/java', (route) => {
+    if (route.request().method() === 'POST') asked++;
+    else if (!asked) return route.fulfill({ json: { status: 'missing', mb: 5 } });
+    if (done >= 3) return route.fulfill({ json: { status: 'ready' } });
+    done++;
+    return route.fulfill({ json: { status: 'fetching', mb: 5, done: done * 1400000, total: 4320000 } });
+  });
+  await page.goto(`/#/interviews/${id}`);
+  await page.locator('[data-interview="run"]').click();
+  await expect(page.locator('#interview-runtime-meter')).toContainText('Getting Java ready, once (about 5 MB)');
+  const cases = page.locator('#interview-pane-cases');
+  await expect(cases.locator('.set-note.warn')).toContainText('types the browser can’t fill in yet');
+  expect(asked).toBe(1);
+});
+
 async function boardLabel(page, text, fx = 0.2, fy = 0.25) {
   await page.locator('[data-interview="tool"][data-tool="text"]').click();
   const board = page.locator('#interview-board');

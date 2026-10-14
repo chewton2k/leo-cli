@@ -275,8 +275,24 @@ jobs:
           cache: false
       - run: sh scripts/go-runner/build.sh "$RUNNER_TEMP/go-runner"
 
+  java-runner:
+    name: Java runner builds to its pinned files
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: ci-java-runner-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v5
+      - id: jdk
+        run: echo "version=$(cat scripts/java-runner/JDK_VERSION)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ steps.jdk.outputs.version }}
+      - run: sh scripts/java-runner/build.sh "$RUNNER_TEMP/java-runner"
+
   release:
-    needs: [changes, test, browser, lint, msrv, targets, go-runner]
+    needs: [changes, test, browser, lint, msrv, targets, go-runner, java-runner]
     if: >-
       always()
       && github.event_name == 'push' && github.ref == 'refs/heads/main'

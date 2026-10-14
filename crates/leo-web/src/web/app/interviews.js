@@ -979,6 +979,7 @@ function interviewRunLanguage(session) {
   if (/^(sql|sqlite|postgres(ql)?|mysql|t-?sql|pl\/?sql)$/i.test(language)) return 'sql';
   if (/^(c\+\+|cpp|cxx|cc)(\s*\d+)?$/i.test(language)) return 'cpp';
   if (/^(go|golang)$/i.test(language)) return 'go';
+  if (/^java(\s*\d+)?$/i.test(language)) return 'java';
   return '';
 }
 
@@ -990,6 +991,7 @@ const RUNTIMES = {
   python: { path: '/api/python', label: 'Getting Python ready, once', none: 'Python can’t run on this copy of leo.', failed: 'Python could not be downloaded. Check the connection and try again.', mb: 12 },
   cpp: { path: '/api/cpp', label: 'Getting C++ ready, once', none: 'C++ can’t run on this copy of leo.', failed: 'The C++ compiler could not be downloaded. Check the connection and try again.', mb: 27 },
   go: { path: '/api/go', label: 'Getting Go ready, once', none: 'Go can’t run on this copy of leo.', failed: 'Go could not be downloaded. Check the connection and try again.', mb: 21 },
+  java: { path: '/api/java', label: 'Getting Java ready, once', none: 'Java can’t run on this copy of leo.', failed: 'Java could not be downloaded. Check the connection and try again.', mb: 5 },
 };
 
 async function interviewRuntimeReady(session, name) {
@@ -1029,12 +1031,13 @@ async function loadInterviewKey(session, force = false) {
   } catch (e) { if (e instanceof Locked) throw e; }
 }
 
-const runner = { frame: null, ready: null, cppWarm: false, clangBundle: '', goWarm: false };
+const runner = { frame: null, ready: null, cppWarm: false, clangBundle: '', goWarm: false, javaWarm: false };
 
 function runnerFrame() {
   if (runner.frame?.isConnected && runner.ready) return runner.ready;
   runner.cppWarm = false;
   runner.goWarm = false;
+  runner.javaWarm = false;
   const frame = document.createElement('iframe');
   frame.setAttribute('sandbox', 'allow-scripts');
   frame.hidden = true;
@@ -1054,7 +1057,7 @@ function runnerFrame() {
 }
 
 async function runInSandbox(job, onProgress = null, transfer = []) {
-  const limit = job.language === 'python' ? 75000 : job.language === 'cpp' || job.language === 'go' ? 270000 : 15000;
+  const limit = job.language === 'python' ? 75000 : ['cpp', 'go', 'java'].includes(job.language) ? 270000 : 15000;
   const frame = await Promise.race([runnerFrame(), new Promise((resolve) => setTimeout(() => resolve(null), 10000))]);
   if (!frame) { runner.frame?.remove(); runner.frame = null; runner.ready = null; return { error: 'The code runner did not start. Try Run again.', results: [], logs: [] }; }
   return new Promise((resolve) => {
@@ -1106,6 +1109,68 @@ async function interviewGoToolchain(session) {
   return { shim, files };
 }
 
+async function interviewJavaToolchain(session) {
+  const started = Date.now();
+  const show = (fraction) => {
+    const first = !session.runtimeFetch;
+    session.runtimeFetch = { label: 'Loading Java into this page, once per visit', fraction, seconds: Math.round((Date.now() - started) / 1000) };
+    if (first && interviewHere(session)) drawInterviewChecks(session); else setMeter('interview-runtime-meter', session.runtimeFetch);
+  };
+  show(0);
+  const get = async (name, text) => {
+    const response = await fetch(`/javaroot/${name}`, { credentials: 'same-origin' });
+    if (!response.ok) throw new Error(`${name} ${response.status}`);
+    return text ? response.text() : response.arrayBuffer();
+  };
+  const runtime = await get('compiler.wasm-runtime.js', true);
+  show(0.05);
+  const files = {};
+  const sizes = { 'compiler.wasm': 0.6, 'runtime-classlib-teavm.bin': 0.33, 'compile-classlib-teavm.bin': 0.03 };
+  let done = 0.05;
+  await Promise.all(Object.keys(sizes).map(async (name) => {
+    files[name] = await get(name);
+    done += sizes[name];
+    show(Math.min(0.97, done));
+  }));
+  return { runtime, files };
+}
+
+async function runInterviewJava(session, code, entry, tests) {
+  const made = interviews.javaDriver(code, entry, tests);
+  const failed = (why) => ({ reports: tests.map((t) => ({ id: t.id, pass: false, got: why.split('\n')[0] })), error: why, logs: [] });
+  if (made.error) return failed(made.error);
+  let out = null;
+  for (let tries = 0; tries < 2; tries++) {
+    let extra = {};
+    let transfer = [];
+    if (!runner.javaWarm) {
+      try {
+        extra = await interviewJavaToolchain(session);
+      } catch (e) {
+        session.runtimeFetch = null;
+        if (interviewHere(session)) drawInterviewChecks(session);
+        return failed('Java could not load in this page. Try Run again.');
+      }
+      transfer = Object.values(extra.files);
+    }
+    out = await runInSandbox({ language: 'java', entry, source: made.source, main: made.main, ...extra }, null, transfer);
+    if (session.runtimeFetch) { session.runtimeFetch = null; if (interviewHere(session)) drawInterviewChecks(session); }
+    if (!out.missing) { runner.javaWarm = true; break; }
+    runner.javaWarm = false;
+  }
+  if (out.missing) return failed('Java could not start in this page. Try Run again.');
+  if (out.diagnostics) return failed(`Your code did not compile:\n${interviews.javaProblem(out.diagnostics, made.offset)}`);
+  const parsed = interviews.driverResults(out.stdout || '');
+  const byId = new Map(parsed.results.map((r) => [r.id, r]));
+  const reports = tests.map((t) => {
+    const r = byId.get(t.id);
+    if (!r) return { id: t.id, pass: false, got: out.error || parsed.error || 'Did not run' };
+    if (r.error) return { id: t.id, pass: false, got: `Error: ${r.error}` };
+    return { id: t.id, pass: interviews.sameValue(t.expected, r.got, t.unordered), got: JSON.stringify(r.got) };
+  });
+  return { reports, error: out.error || parsed.error || '', logs: parsed.logs };
+}
+
 async function runInterviewGo(session, code, entry, tests) {
   const made = interviews.goDriver(code, entry, tests);
   const failed = (why) => ({ reports: tests.map((t) => ({ id: t.id, pass: false, got: why.split('\n')[0] })), error: why, logs: [] });
@@ -1131,7 +1196,7 @@ async function runInterviewGo(session, code, entry, tests) {
   }
   if (out.missing) return failed('Go could not start in this page. Try Run again.');
   if (out.compile !== undefined) return failed(`Your code did not compile:\n${interviews.goProblem(out.compile, made.offset)}`);
-  const parsed = interviews.goResults(out.stdout || '');
+  const parsed = interviews.driverResults(out.stdout || '');
   const byId = new Map(parsed.results.map((r) => [r.id, r]));
   const reports = tests.map((t) => {
     const r = byId.get(t.id);
@@ -1144,8 +1209,9 @@ async function runInterviewGo(session, code, entry, tests) {
 
 async function runInterviewTests(session, code, entry, tests) {
   let language = interviewRunLanguage(session);
-  if ((language === 'python' || language === 'cpp' || language === 'go') && !(await interviewRuntimeReady(session, language))) return { reports: [], error: session.runtimeNote, logs: [] };
+  if (['python', 'cpp', 'go', 'java'].includes(language) && !(await interviewRuntimeReady(session, language))) return { reports: [], error: session.runtimeNote, logs: [] };
   if (language === 'go') return runInterviewGo(session, code, entry, tests);
+  if (language === 'java') return runInterviewJava(session, code, entry, tests);
   if (language === 'cpp') {
     const made = interviews.cppDriver(code, entry, tests);
     const failed = (why) => ({ reports: tests.map((t) => ({ id: t.id, pass: false, got: why.split('\n')[0] })), error: why, logs: [] });

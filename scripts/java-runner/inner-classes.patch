@@ -1,0 +1,38 @@
+diff --git a/compiler/src/main/java/org/teavm/javac/StdlibConverter.java b/compiler/src/main/java/org/teavm/javac/StdlibConverter.java
+index dbc902a..77abf2a 100644
+--- a/compiler/src/main/java/org/teavm/javac/StdlibConverter.java
++++ b/compiler/src/main/java/org/teavm/javac/StdlibConverter.java
+@@ -104,6 +104,33 @@ public class StdlibConverter extends ClassVisitor {
+         super.visit(version, access, name, signature, superName, interfaces);
+     }
+ 
++    @Override
++    public void visitInnerClass(String name, String outerName, String innerName, int access) {
++        if ((access & Opcodes.ACC_PRIVATE) != 0) {
++            return;
++        }
++        String renamed = rename(name);
++        if (innerName != null && renamed.contains("$")) {
++            innerName = renamed.substring(renamed.lastIndexOf('$') + 1);
++        }
++        super.visitInnerClass(renamed, outerName != null ? rename(outerName) : null, innerName, access);
++    }
++
++    @Override
++    public void visitOuterClass(String owner, String name, String descriptor) {
++        super.visitOuterClass(rename(owner), name, descriptor != null ? renameMethodDesc(descriptor) : null);
++    }
++
++    @Override
++    public void visitNestHost(String nestHost) {
++        super.visitNestHost(rename(nestHost));
++    }
++
++    @Override
++    public void visitNestMember(String nestMember) {
++        super.visitNestMember(rename(nestMember));
++    }
++
+     @Override
+     public FieldVisitor visitField(int access, String name, String desc, String signature, Object value) {
+         if ((access & Opcodes.ACC_PUBLIC) == 0 && ((access & Opcodes.ACC_PROTECTED) == 0)) {

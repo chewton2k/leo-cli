@@ -425,7 +425,7 @@ func main() {
     const driver = `${GO_DRIVER}\n${types ? `${types}\n\n` : ''}var leoEntry = ${entry}\n\nconst leoTests = ${JSON.stringify(plain)}\n`;
     return { files: { 'solution.go': solution, 'leo_driver.go': driver }, offset };
   }
-  function goResults(stdout = '') {
+  function driverResults(stdout = '') {
     const results = [];
     const logs = [];
     let error = '';
@@ -444,6 +444,141 @@ func main() {
   }
   function goProblem(text = '', offset = 1) {
     return String(text).replace(/\/work\/solution\.go:(\d+):(\d+):/g, (m, line, col) => `line ${Number(line) - offset}:${col}:`).replace(/^# main\n/m, '').replace(/\/work\/leo_driver\.go:\d+:\d+: /g, '').trim().slice(0, 1500);
+  }
+  const JAVA_BOXES = { int: 'Integer', long: 'Long', double: 'Double', float: 'Float', boolean: 'Boolean', char: 'Character', short: 'Short', byte: 'Byte' };
+  function javaType(text) {
+    let t = String(text).replace(/\bfinal\b/g, ' ').replace(/\s+/g, '').replace(/\.\.\.$/, '[]');
+    t = t.replace(/^java\.util\./, '');
+    if (t.endsWith('[]')) { const of = javaType(t.slice(0, -2)); return of ? { kind: 'array', of, spelled: `${of.spelled}[]` } : null; }
+    const list = t.match(/^(?:List|ArrayList|LinkedList|Collection|Iterable)<(.+)>$/);
+    if (list) { const of = javaType(list[1]); return of && of.boxed !== false ? { kind: 'list', of, spelled: `List<${of.box || of.spelled}>` } : null; }
+    if (JAVA_BOXES[t]) return { kind: t, spelled: t, box: JAVA_BOXES[t] };
+    const boxed = Object.entries(JAVA_BOXES).find(([, b]) => b === t);
+    if (boxed) return { kind: boxed[0], spelled: t, box: t };
+    if (t === 'String') return { kind: 'string', spelled: 'String', box: 'String' };
+    if (t === 'ListNode' || t === 'TreeNode') return { kind: t, spelled: t, box: t };
+    if (t === 'void') return { kind: 'void', spelled: 'void' };
+    return null;
+  }
+  function javaLiteral(type, value) {
+    const whole = (v) => { if (!Number.isInteger(v)) throw new Error('expected a whole number'); return v; };
+    switch (type.kind) {
+      case 'int': case 'short': case 'byte': return `${type.kind === 'int' ? '' : `(${type.kind}) `}${whole(value)}`;
+      case 'long': return `${whole(value)}L`;
+      case 'double': case 'float': if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error('expected a number'); return `${Number.isInteger(value) ? `${value}.0` : value}${type.kind === 'float' ? 'f' : ''}`;
+      case 'boolean': if (typeof value !== 'boolean') throw new Error('expected true or false'); return String(value);
+      case 'char': if (typeof value !== 'string' || value.length !== 1) throw new Error('expected one character'); return `'${JSON.stringify(value).slice(1, -1).replace(/'/g, "\\'")}'`;
+      case 'string': if (value === null) return 'null'; if (typeof value !== 'string') throw new Error('expected text'); return JSON.stringify(value).replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
+      case 'array': if (value === null) return 'null'; if (!Array.isArray(value)) throw new Error('expected a list'); return `new ${type.spelled}{${value.map((v) => javaInner(type.of, v)).join(', ')}}`;
+      case 'list': if (value === null) return 'null'; if (!Array.isArray(value)) throw new Error('expected a list'); return value.length ? `new ArrayList<${type.of.box || type.of.spelled}>(Arrays.asList(${value.map((v) => javaLiteral(type.of, v)).join(', ')}))` : `new ArrayList<${type.of.box || type.of.spelled}>()`;
+      case 'ListNode': if (value === null) return 'null'; if (!Array.isArray(value) || !value.every(Number.isInteger)) throw new Error('expected a list of whole numbers'); return `leoList(new int[]{${value.join(', ')}})`;
+      case 'TreeNode': if (value === null) return 'null'; if (!Array.isArray(value) || !value.every((v) => v === null || Number.isInteger(v))) throw new Error('expected a level-order list of whole numbers and nulls'); return `leoTree(new Integer[]{${value.map((v) => (v === null ? 'null' : v)).join(', ')}})`;
+      default: throw new Error('unsupported type');
+    }
+  }
+  function javaInner(type, value) {
+    const text = javaLiteral(type, value);
+    return type.kind === 'array' && text.startsWith('new ') ? text.replace(/^new [^{]*/, '') : text;
+  }
+  const JAVA_SUPPORT = String.raw`
+    static ListNode leoList(int[] values) { ListNode head = null; for (int i = values.length - 1; i >= 0; i--) { ListNode n = new ListNode(values[i]); n.next = head; head = n; } return head; }
+    static TreeNode leoTree(Integer[] values) {
+        if (values.length == 0 || values[0] == null) return null;
+        TreeNode root = new TreeNode(values[0]);
+        java.util.ArrayDeque<TreeNode> queue = new java.util.ArrayDeque<>();
+        queue.add(root);
+        int i = 1;
+        while (i < values.length && !queue.isEmpty()) {
+            TreeNode parent = queue.poll();
+            if (i < values.length) { if (values[i] != null) { parent.left = new TreeNode(values[i]); queue.add(parent.left); } i++; }
+            if (i < values.length) { if (values[i] != null) { parent.right = new TreeNode(values[i]); queue.add(parent.right); } i++; }
+        }
+        return root;
+    }`;
+  const JAVA_JSON = String.raw`
+    static void leoText(StringBuilder out, String s) {
+        out.append('"');
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '"') out.append("\\\""); else if (c == '\\') out.append("\\\\"); else if (c == '\n') out.append("\\n"); else if (c == '\t') out.append("\\t"); else if (c == '\r') out.append("\\r");
+            else if (c < 0x20 || c > 0x7e) { String h = Integer.toHexString(c); out.append("\\u"); for (int k = h.length(); k < 4; k++) out.append('0'); out.append(h); }
+            else out.append(c);
+        }
+        out.append('"');
+    }
+    static void leoJson(StringBuilder out, Object v, int depth) {
+        if (depth > 200) { out.append("null"); return; }
+        if (v == null) { out.append("null"); return; }
+        if (v instanceof String) { leoText(out, (String) v); return; }
+        if (v instanceof Character) { leoText(out, String.valueOf(v)); return; }
+        if (v instanceof Boolean) { out.append(v.toString()); return; }
+        if (v instanceof Double || v instanceof Float) { double d = ((Number) v).doubleValue(); if (Double.isNaN(d) || Double.isInfinite(d)) out.append("null"); else if (d == Math.rint(d) && Math.abs(d) < 1e15) out.append((long) d); else out.append(d); return; }
+        if (v instanceof Number) { out.append(v.toString()); return; }
+        if (v instanceof int[]) { int[] a = (int[]) v; out.append('['); for (int i = 0; i < a.length; i++) { if (i > 0) out.append(','); out.append(a[i]); } out.append(']'); return; }
+        if (v instanceof long[]) { long[] a = (long[]) v; out.append('['); for (int i = 0; i < a.length; i++) { if (i > 0) out.append(','); out.append(a[i]); } out.append(']'); return; }
+        if (v instanceof double[]) { double[] a = (double[]) v; out.append('['); for (int i = 0; i < a.length; i++) { if (i > 0) out.append(','); leoJson(out, a[i], depth + 1); } out.append(']'); return; }
+        if (v instanceof boolean[]) { boolean[] a = (boolean[]) v; out.append('['); for (int i = 0; i < a.length; i++) { if (i > 0) out.append(','); out.append(a[i]); } out.append(']'); return; }
+        if (v instanceof char[]) { char[] a = (char[]) v; out.append('['); for (int i = 0; i < a.length; i++) { if (i > 0) out.append(','); leoText(out, String.valueOf(a[i])); } out.append(']'); return; }
+        if (v instanceof Object[]) { Object[] a = (Object[]) v; out.append('['); for (int i = 0; i < a.length; i++) { if (i > 0) out.append(','); leoJson(out, a[i], depth + 1); } out.append(']'); return; }
+        if (v instanceof java.util.Map) { java.util.Map<?, ?> m = (java.util.Map<?, ?>) v; out.append('{'); boolean first = true; for (Object k : m.keySet()) { if (!first) out.append(','); first = false; leoText(out, String.valueOf(k)); out.append(':'); leoJson(out, m.get(k), depth + 1); } out.append('}'); return; }
+        if (v instanceof Iterable) { out.append('['); boolean first = true; for (Object x : (Iterable<?>) v) { if (!first) out.append(','); first = false; leoJson(out, x, depth + 1); } out.append(']'); return; }
+LEO_NODES        leoText(out, String.valueOf(v));
+    }`;
+  const JAVA_LIST_JSON = `        if (v instanceof ListNode) { out.append('['); ListNode n = (ListNode) v; int seen = 0; boolean first = true; while (n != null && seen++ < 100000) { if (!first) out.append(','); first = false; out.append(n.val); n = n.next; } out.append(']'); return; }\n`;
+  const JAVA_TREE_JSON = `        if (v instanceof TreeNode) { java.util.ArrayList<TreeNode> level = new java.util.ArrayList<>(); level.add((TreeNode) v); java.util.ArrayList<String> items = new java.util.ArrayList<>(); for (int i = 0; i < level.size() && i < 100000; i++) { TreeNode n = level.get(i); if (n == null) { items.add("null"); continue; } items.add(String.valueOf(n.val)); level.add(n.left); level.add(n.right); } while (!items.isEmpty() && items.get(items.size() - 1).equals("null")) items.remove(items.size() - 1); out.append('[').append(String.join(",", items)).append(']'); return; }\n`;
+  function javaDriver(code, entry, tests = []) {
+    if (!/^[A-Za-z_$][\w$]{0,79}$/.test(String(entry || ''))) return { error: 'This problem has no function to call.' };
+    if (!tests.every((t) => /^[\w-]{1,40}$/.test(String(t.id)))) return { error: 'A test id is not usable.' };
+    const text = String(code);
+    const bare = text.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' ')).replace(/\/\/[^\n]*/g, (m) => ' '.repeat(m.length)).replace(/"(?:[^"\\\n]|\\.)*"/g, (m) => `"${' '.repeat(m.length - 2)}"`);
+    const at = new RegExp(`((?:\\b(?:public|private|protected|static|final|synchronized)\\s+)*)([\\w.<>\\[\\],\\s?]+?)\\s+${entry.replace(/\$/g, '\\$')}\\s*\\(([^()]*)\\)\\s*(?:throws[^{]*)?\\{`).exec(bare);
+    if (!at) return { error: `Define a method named ${entry}.` };
+    const frames = [];
+    let pending = null;
+    const declared = /\b(?:class|record|enum|interface)\s+([A-Za-z_$][\w$]*)/y;
+    for (let i = 0; i < at.index; i++) {
+      declared.lastIndex = i;
+      const found = (i === 0 || !/[\w$]/.test(bare[i - 1])) && declared.exec(bare);
+      if (found) { pending = found[1]; i = declared.lastIndex - 1; continue; }
+      if (bare[i] === '{') { frames.push(pending); pending = null; } else if (bare[i] === '}') frames.pop(); else if (bare[i] === ';') pending = null;
+    }
+    const enclosing = frames.filter(Boolean).pop();
+    if (!enclosing) return { error: `Put ${entry} inside a class, such as class Solution.` };
+    const owner = [null, enclosing];
+    const head = `${at[1]} ${at[2]}`;
+    const returns = javaType(at[2].trim().replace(/^(?:(?:public|private|protected|static|final|synchronized|abstract)\s+)+/, ''));
+    const params = at[3].trim() ? (() => { const out = []; let depth = 0; let start = 0; const s = at[3]; for (let i = 0; i < s.length; i++) { if (s[i] === '<') depth++; else if (s[i] === '>') depth--; else if (s[i] === ',' && depth === 0) { out.push(s.slice(start, i)); start = i + 1; } } out.push(s.slice(start)); return out.map((p) => { const m = p.trim().match(/^(.*?)\s*([A-Za-z_$][\w$]*)\s*(\[\])*$/); return m ? javaType(m[1] + (m[3] || '')) : null; }); })() : [];
+    if (!returns || params.some((p) => !p || p.kind === 'void')) return { error: `${entry} uses types the browser can’t fill in yet (numbers, text, true/false, arrays, lists, ListNode and TreeNode work). Submit still gets the reviews.` };
+    const isStatic = /\bstatic\b/.test(head);
+    const target = isStatic ? `${owner[1]}.${entry}` : `new ${owner[1]}().${entry}`;
+    const cases = [];
+    for (const test of tests) {
+      const args = Array.isArray(test.args) ? test.args : [];
+      if (args.length !== params.length) return { error: `Test ${test.id} gives ${args.length} argument${args.length === 1 ? '' : 's'}, but ${entry} takes ${params.length}.` };
+      let decls;
+      try {
+        decls = args.map((value, i) => `${params[i].spelled} a${i} = ${javaLiteral(params[i], value)};`);
+      } catch (e) {
+        return { error: `Test ${test.id} doesn’t fit ${entry}’s types: ${e.message}.` };
+      }
+      const names = args.map((_, i) => `a${i}`).join(', ');
+      const call = returns.kind === 'void' ? `${target}(${names}); Object r = ${params.length ? 'a0' : 'null'};` : `Object r = ${target}(${names});`;
+      const show = returns.kind === 'ListNode' || returns.kind === 'TreeNode' || (returns.kind === 'void' && ['ListNode', 'TreeNode'].includes(params[0]?.kind)) ? 'if (r == null) out.append("[]"); else leoJson(out, r, 0);' : 'leoJson(out, r, 0);';
+      cases.push(`        try { ${decls.join(' ')} ${call} StringBuilder out = new StringBuilder("@@leo {\\"id\\":\\"${test.id}\\",\\"got\\":"); ${show} System.out.println("\\n" + out.append('}')); } catch (Throwable e) { StringBuilder out = new StringBuilder("@@leo {\\"id\\":\\"${test.id}\\",\\"error\\":"); leoText(out, e.getClass().getSimpleName() + (e.getMessage() == null ? "" : ": " + e.getMessage())); System.out.println("\\n" + out.append('}')); }`);
+    }
+    const uses = (name) => new RegExp(`\\b${name}\\b`).test(bare) || params.some((p) => p.kind === name) || returns.kind === name;
+    const defines = (name) => new RegExp(`\\b(?:class|record)\\s+${name}\\b`).test(bare);
+    const nodes = [];
+    if (uses('ListNode') && !defines('ListNode')) nodes.push('class ListNode { int val; ListNode next; ListNode() {} ListNode(int val) { this.val = val; } ListNode(int val, ListNode next) { this.val = val; this.next = next; } }');
+    if (uses('TreeNode') && !defines('TreeNode')) nodes.push('class TreeNode { int val; TreeNode left; TreeNode right; TreeNode() {} TreeNode(int val) { this.val = val; } TreeNode(int val, TreeNode left, TreeNode right) { this.val = val; this.left = left; this.right = right; } }');
+    const json = JAVA_JSON.replace('LEO_NODES', `${uses('ListNode') ? JAVA_LIST_JSON : ''}${uses('TreeNode') ? JAVA_TREE_JSON : ''}`);
+    const support = `${uses('ListNode') ? JAVA_SUPPORT.split('\n    static TreeNode')[0] : ''}${uses('TreeNode') ? `\n    static TreeNode${JAVA_SUPPORT.split('\n    static TreeNode')[1]}` : ''}`;
+    const user = text.replace(/^(\s*)package\s+[\w.]+\s*;/m, (m, space) => space + ' '.repeat(m.length - space.length)).replace(/^(\s*)public(\s+(?:final\s+|abstract\s+)?(?:class|interface|enum|record)\b)/gm, '$1      $2');
+    const source = `import java.util.*; import java.util.function.*; import java.util.stream.*;\n${user}\n${nodes.join('\n')}\npublic class LeoMain {${support}\n${json}\n    public static void main(String[] args) {\n${cases.join('\n')}\n    }\n}\n`;
+    return { source, offset: 1, main: 'LeoMain' };
+  }
+  function javaProblem(diagnostics = [], offset = 1) {
+    return (diagnostics || []).filter((d) => d && d.severity === 'error').slice(0, 12).map((d) => `${d.lineNumber > 0 ? `line ${d.lineNumber - offset}: ` : ''}${String(d.message || '').trim()}`).join('\n').slice(0, 1500) || 'Your code did not compile.';
   }
   function resultCases(checks = []) {
     const counts = { test: 0, answer: 0, section: 0 };
@@ -693,5 +828,5 @@ func main() {
       storage.setItem('leo-interview-drafts', JSON.stringify(drafts));
     } catch (e) {}
   }
-  root.leoInterview = { PRESETS, preset, framework, preparation, workspace, cleanValues, sameValue, checkSummary, callText, cppDriver, cppResults, cppProblem, goDriver, goResults, goProblem, resultCases, pickCase, attemptStatus, reviewNote, hasWork, codeEdit, point, validBoard, boardSvg, fitBoard, moveShape, shapeBounds, unionBounds, normalRect, shapesWithin, handlesFor, resizeShape, BOARD_LIMIT, progress, keepDraft, readDraft, clearDraft, MOST_SHAPES, MOST_POINTS, MOST_ANSWER, MOST_PROBLEMS };
+  root.leoInterview = { PRESETS, preset, framework, preparation, workspace, cleanValues, sameValue, checkSummary, callText, cppDriver, cppResults, cppProblem, goDriver, driverResults, goProblem, javaDriver, javaProblem, resultCases, pickCase, attemptStatus, reviewNote, hasWork, codeEdit, point, validBoard, boardSvg, fitBoard, moveShape, shapeBounds, unionBounds, normalRect, shapesWithin, handlesFor, resizeShape, BOARD_LIMIT, progress, keepDraft, readDraft, clearDraft, MOST_SHAPES, MOST_POINTS, MOST_ANSWER, MOST_PROBLEMS };
 })(typeof window !== 'undefined' ? window : globalThis);

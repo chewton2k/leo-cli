@@ -2,29 +2,42 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, ensure, Result};
 
+pub struct Pack {
+    pub folder: &'static str,
+    pub asset: &'static str,
+    pub files_sha256: &'static str,
+}
+
 pub const GO_VERSION: &str = "go1.27.2";
-pub const FILES_SHA256: &str = "ebe6932ac6e36739735ce4da0b0ea2bcdf61f19ded09dc02e8d540506e4b5cd0";
-pub const ASSET: &str = "leo-go.tar.gz";
-pub const PACKAGE_BYTES: u64 = 20_900_000;
+pub const GO: Pack = Pack {
+    folder: "go-go1.27.2",
+    asset: "leo-go.tar.gz",
+    files_sha256: "ebe6932ac6e36739735ce4da0b0ea2bcdf61f19ded09dc02e8d540506e4b5cd0",
+};
+pub const JAVA: Pack = Pack {
+    folder: "java-teavm-javac",
+    asset: "leo-java.tar.gz",
+    files_sha256: "5c601fd87cb25430f2c1fe1371baf4b2961c6648766d96277b2b9d2608e39ae7",
+};
 const REPO: &str = "chewton2k/leo-cli";
 const LIST: &str = "files.sha256";
 const MOST_FILES: usize = 400;
 
-pub fn dir() -> PathBuf {
-    crate::config::choice::models_dir().join(format!("go-{GO_VERSION}"))
+pub fn dir(pack: &Pack) -> PathBuf {
+    crate::config::choice::models_dir().join(pack.folder)
 }
 
 fn listed(dir: &Path, pin: &str) -> Result<Vec<(String, String)>> {
     let list = dir.join(LIST);
     ensure!(
         crate::providers::sha256_of(&list)?.eq_ignore_ascii_case(pin),
-        "the Go runner's file list does not match this leo"
+        "the runtime's file list does not match this leo"
     );
     let text = std::fs::read_to_string(&list)?;
     let mut out = Vec::new();
     for line in text.lines() {
         let Some((sha, name)) = line.split_once("  ") else {
-            bail!("the Go runner's file list is damaged");
+            bail!("the runtime's file list is damaged");
         };
         ensure!(
             sha.len() == 64
@@ -32,19 +45,19 @@ fn listed(dir: &Path, pin: &str) -> Result<Vec<(String, String)>> {
                 && name
                     .split('/')
                     .all(|part| !part.is_empty() && part != ".." && part != "."),
-            "the Go runner's file list is damaged"
+            "the runtime's file list is damaged"
         );
         out.push((name.to_string(), sha.to_string()));
     }
     ensure!(
         !out.is_empty() && out.len() <= MOST_FILES,
-        "the Go runner's file list is damaged"
+        "the runtime's file list is damaged"
     );
     Ok(out)
 }
 
-pub fn check(dir: &Path) -> Result<Vec<String>> {
-    check_with(dir, FILES_SHA256)
+pub fn check(pack: &Pack, dir: &Path) -> Result<Vec<String>> {
+    check_with(dir, pack.files_sha256)
 }
 
 fn check_with(dir: &Path, pin: &str) -> Result<Vec<String>> {
@@ -59,36 +72,37 @@ fn check_with(dir: &Path, pin: &str) -> Result<Vec<String>> {
     Ok(files.into_iter().map(|(name, _)| name).collect())
 }
 
-pub fn ready() -> bool {
-    check(&dir()).is_ok()
+pub fn ready(pack: &Pack) -> bool {
+    check(pack, &dir(pack)).is_ok()
 }
 
-pub fn urls() -> Vec<String> {
-    if let Ok(url) = std::env::var("LEO_GO_URL") {
-        return vec![url];
-    }
+pub fn urls(pack: &Pack) -> Vec<String> {
     vec![
         format!(
-            "https://github.com/{REPO}/releases/download/v{}/{ASSET}",
-            env!("CARGO_PKG_VERSION")
+            "https://github.com/{REPO}/releases/download/v{}/{}",
+            env!("CARGO_PKG_VERSION"),
+            pack.asset
         ),
-        format!("https://github.com/{REPO}/releases/latest/download/{ASSET}"),
+        format!(
+            "https://github.com/{REPO}/releases/latest/download/{}",
+            pack.asset
+        ),
     ]
 }
 
-pub fn fetch() -> Result<PathBuf> {
-    let dir = dir();
-    fetch_into(&dir, &urls())?;
+pub fn fetch(pack: &Pack) -> Result<PathBuf> {
+    let dir = dir(pack);
+    fetch_into(&dir, &urls(pack), pack.files_sha256)?;
     Ok(dir)
 }
 
-pub fn fetch_into(dir: &Path, urls: &[String]) -> Result<()> {
-    if check(dir).is_ok() {
+pub fn fetch_into(dir: &Path, urls: &[String], pin: &str) -> Result<()> {
+    if check_with(dir, pin).is_ok() {
         return Ok(());
     }
     std::fs::create_dir_all(dir)?;
-    let package = dir.join(format!("{ASSET}.part"));
-    let mut last = anyhow::anyhow!("the Go runner could not be downloaded; try again when online");
+    let package = dir.join("runtime.tar.gz.part");
+    let mut last = anyhow::anyhow!("the runtime could not be downloaded; try again when online");
     for url in urls {
         let _ = std::fs::remove_file(&package);
         let fetched = std::process::Command::new("curl")
@@ -113,10 +127,10 @@ pub fn fetch_into(dir: &Path, urls: &[String]) -> Result<()> {
             .status();
         let _ = std::fs::remove_file(&package);
         if !unpacked.is_ok_and(|s| s.success()) {
-            last = anyhow::anyhow!("the Go runner could not be unpacked");
+            last = anyhow::anyhow!("the runtime could not be unpacked");
             continue;
         }
-        match check(dir) {
+        match check_with(dir, pin) {
             Ok(_) => return Ok(()),
             Err(why) => last = why,
         }
@@ -129,16 +143,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_pin_matches_the_runner_build_script() {
-        let pinned = include_str!("../../../scripts/go-runner/MANIFEST").trim();
-        assert_eq!(pinned, FILES_SHA256);
+    fn the_pins_match_the_runner_build_scripts() {
+        assert_eq!(
+            include_str!("../../../scripts/go-runner/MANIFEST").trim(),
+            GO.files_sha256
+        );
+        assert_eq!(
+            include_str!("../../../scripts/java-runner/MANIFEST").trim(),
+            JAVA.files_sha256
+        );
         assert_eq!(
             include_str!("../../../scripts/go-runner/GO_VERSION").trim(),
             GO_VERSION
         );
-        assert!(urls()
-            .iter()
-            .all(|u| u.starts_with("https://github.com/") && u.ends_with(ASSET)));
+        assert!(GO.folder.ends_with(GO_VERSION));
+        for pack in [GO, JAVA] {
+            assert!(urls(&pack)
+                .iter()
+                .all(|u| u.starts_with("https://github.com/") && u.ends_with(pack.asset)));
+        }
     }
 
     #[test]
@@ -177,6 +200,11 @@ mod tests {
             let pin = sum(LIST);
             assert!(check_with(dir.path(), &pin).is_err(), "{bad}");
         }
-        assert!(fetch_into(dir.path(), &["file:///nowhere/leo-go.tar.gz".to_string()]).is_err());
+        assert!(fetch_into(
+            dir.path(),
+            &["file:///nowhere/leo-go.tar.gz".to_string()],
+            &pin
+        )
+        .is_err());
     }
 }

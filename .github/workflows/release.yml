@@ -146,8 +146,31 @@ jobs:
           name: leo-go
           path: leo-go.tar.gz
 
+  java-runner:
+    needs: bump
+    if: needs.bump.outputs.sha != ''
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.bump.outputs.sha }}
+      - id: jdk
+        run: echo "version=$(cat scripts/java-runner/JDK_VERSION)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ steps.jdk.outputs.version }}
+      - name: Build the Java runner
+        run: |
+          sh scripts/java-runner/build.sh "$RUNNER_TEMP/java-runner"
+          cp "$RUNNER_TEMP/java-runner/leo-java.tar.gz" .
+      - uses: actions/upload-artifact@v6
+        with:
+          name: leo-java
+          path: leo-java.tar.gz
+
   publish:
-    needs: [version, bump, build, go-runner]
+    needs: [version, bump, build, go-runner, java-runner]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5

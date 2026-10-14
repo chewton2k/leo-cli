@@ -373,11 +373,28 @@ test('Go tests become a driver beside the user’s file, with missing imports ad
   assert.match(I.goDriver('func main() {}\nfunc f() {}', 'f', []).error, /Remove func main/);
   assert.match(I.goDriver('func g() {}', 'f', []).error, /Define a function named f/);
   assert.ok(I.goDriver('func (s *Solution) f() {}\nfunc f[T any](x T) T { return x }', 'f', []).files);
-  assert.deepEqual(I.goResults('hi\n\n@@leo {"id":"t1","got":[0,1],"ms":2}\n\n@@leo {"id":"t2","error":"panic: boom","ms":0}\n'), { results: [{ id: 't1', got: [0, 1], ms: 2 }, { id: 't2', error: 'panic: boom', ms: 0 }], logs: ['hi'], error: '' });
-  assert.equal(I.goResults('@@leo-error the tests could not be read').error, 'the tests could not be read');
+  assert.deepEqual(I.driverResults('hi\n\n@@leo {"id":"t1","got":[0,1],"ms":2}\n\n@@leo {"id":"t2","error":"panic: boom","ms":0}\n'), { results: [{ id: 't1', got: [0, 1], ms: 2 }, { id: 't2', error: 'panic: boom', ms: 0 }], logs: ['hi'], error: '' });
+  assert.equal(I.driverResults('@@leo-error the tests could not be read').error, 'the tests could not be read');
   assert.equal(I.goProblem('# main\n/work/solution.go:3:9: undefined: y\n', 1), 'line 2:9: undefined: y');
   const leet = I.goDriver('/**\n * type ListNode struct {\n *     Val int\n *     Next *ListNode\n * }\n */\nfunc reverseList(head *ListNode) *ListNode { return head }', 'reverseList', []);
   assert.match(leet.files['leo_driver.go'], /type ListNode struct \{\n\tVal  int\n\tNext \*ListNode\n\}/);
   assert.doesNotMatch(leet.files['leo_driver.go'], /type TreeNode/);
   assert.doesNotMatch(I.goDriver('type ListNode struct { Val int; Next *ListNode }\nfunc f(h *ListNode) {}', 'f', []).files['leo_driver.go'], /type ListNode/);
+});
+
+test('Java tests become a LeoMain driver beside the user’s classes, keeping their line numbers', () => {
+  const made = I.javaDriver('import java.util.*;\npublic class Solution {\n    public List<Integer> f(int[][] grid, List<String> words, long big, char c, TreeNode root) { return null; }\n}', 'f', [{ id: 't1', args: [[[1, 2], []], ['a"b'], 5, 'x', [1, null, 2]] }]);
+  assert.equal(made.main, 'LeoMain');
+  const lines = made.source.split('\n');
+  assert.match(lines[0], /^import java\.util\.\*; import java\.util\.function\.\*; import java\.util\.stream\.\*;$/);
+  assert.equal(lines[2], '       class Solution {', 'public is blanked so the line keeps its length');
+  assert.match(made.source, /int\[\]\[\] a0 = new int\[\]\[\]\{\{1, 2\}, \{\}\}; List<String> a1 = new ArrayList<String>\(Arrays\.asList\("a\\"b"\)\); long a2 = 5L; char a3 = 'x'; TreeNode a4 = leoTree\(new Integer\[\]\{1, null, 2\}\); Object r = new Solution\(\)\.f\(a0, a1, a2, a3, a4\);/);
+  assert.match(made.source, /class TreeNode \{ int val; TreeNode left; TreeNode right;/, 'LeetCode’s TreeNode is supplied');
+  assert.doesNotMatch(made.source, /class ListNode/);
+  const nested = I.javaDriver('class Solution {\n    record P(int a) {}\n    public static int g(int x) { return x; }\n}', 'g', [{ id: 's', args: [1] }]);
+  assert.match(nested.source, /Object r = Solution\.g\(a0\);/, 'a static method is called on its class, not on a nested record');
+  assert.match(I.javaDriver('class Solution { public int f(Map<String, Integer> m) { return 0; } }', 'f', [{ id: 'm', args: [{}] }]).error, /types the browser can’t fill in/);
+  assert.match(I.javaDriver('int f() { return 1; }', 'f', []).error, /Define a method named f|inside a class/);
+  assert.match(I.javaDriver('class Solution { public int f(int a) { return a; } }', 'f', [{ id: 'x', args: [1.5] }]).error, /expected a whole number/);
+  assert.equal(I.javaProblem([{ severity: 'error', lineNumber: 4, message: 'cannot find symbol' }, { severity: 'warning', lineNumber: 2, message: 'unchecked' }], 1), 'line 3: cannot find symbol');
 });

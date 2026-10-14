@@ -54,11 +54,26 @@ pub(crate) static GO: Kind = Kind {
     failed: "Go could not be downloaded. Check the connection and try again.",
 };
 
+pub(crate) static JAVA: Kind = Kind {
+    files: &[
+        ("compiler.wasm", "application/wasm"),
+        ("compiler.wasm-runtime.js", "text/javascript; charset=utf-8"),
+        ("compile-classlib-teavm.bin", "application/octet-stream"),
+        ("runtime-classlib-teavm.bin", "application/octet-stream"),
+    ],
+    any_file: false,
+    bytes: 4_320_000,
+    mb: 5,
+    failed: "Java could not be downloaded. Check the connection and try again.",
+};
+
 fn parts(state: &AppState, kind: &Kind) -> (Option<Runtime>, Arc<Mutex<Option<String>>>) {
     if std::ptr::eq(kind, &CPP) {
         (state.cpp.clone(), Arc::clone(&state.cpp_fetch))
     } else if std::ptr::eq(kind, &GO) {
         (state.go.clone(), Arc::clone(&state.go_fetch))
+    } else if std::ptr::eq(kind, &JAVA) {
+        (state.java.clone(), Arc::clone(&state.java_fetch))
     } else {
         (state.python.clone(), Arc::clone(&state.python_fetch))
     }
@@ -205,6 +220,18 @@ pub(crate) async fn go_file(State(state): State<AppState>, Path(name): Path<Stri
     file_of(state, &GO, name).await
 }
 
+pub(crate) async fn java_status(State(state): State<AppState>) -> Response {
+    status_of(state, &JAVA).await
+}
+
+pub(crate) async fn java_fetch(State(state): State<AppState>) -> Response {
+    fetch_of(state, &JAVA).await
+}
+
+pub(crate) async fn java_file(State(state): State<AppState>, Path(name): Path<String>) -> Response {
+    file_of(state, &JAVA, name).await
+}
+
 pub(crate) async fn cpp_status(State(state): State<AppState>) -> Response {
     status_of(state, &CPP).await
 }
@@ -304,6 +331,34 @@ mod tests {
             "missing.wasm",
         ] {
             let answer = runtime.block_on(go_file(State(state.clone()), Path(refused.into())));
+            assert_eq!(answer.status(), StatusCode::NOT_FOUND, "{refused}");
+        }
+    }
+
+    #[test]
+    fn java_serves_only_its_four_files() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["compiler.wasm", "compiler.wasm-runtime.js", "NOTICE"] {
+            std::fs::write(dir.path().join(name), "x").unwrap();
+        }
+        let (mut state, _d, _) = crate::tests::state_for_python();
+        state.java = Some(crate::Runtime {
+            dir: dir.path().to_path_buf(),
+            ready: std::sync::Arc::new(|| true),
+            fetch: std::sync::Arc::new(|| Ok(())),
+        });
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let js = runtime.block_on(java_file(
+            State(state.clone()),
+            Path("compiler.wasm-runtime.js".into()),
+        ));
+        assert_eq!(js.status(), StatusCode::OK);
+        assert_eq!(
+            js.headers()["content-type"],
+            "text/javascript; charset=utf-8"
+        );
+        for refused in ["NOTICE", "files.sha256", "../compiler.wasm"] {
+            let answer = runtime.block_on(java_file(State(state.clone()), Path(refused.into())));
             assert_eq!(answer.status(), StatusCode::NOT_FOUND, "{refused}");
         }
     }

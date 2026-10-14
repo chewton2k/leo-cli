@@ -414,6 +414,20 @@ works (plan: `.superpowers/plans/2026-10-12-interview-instant-feedback.md`):
   run in a fresh worker on the small shim, so loops are stopped. Measured in
   Chromium: first run 2.2 s, then 0.8 s; compile errors 0.14 s. Yaegi was
   tried first and dropped: it got `a, b = f(x), f(y)` with recursion wrong.
+  Java (2026-10-14): javac and TeaVM compiled to WebAssembly GC by
+  teavm-javac (`scripts/java-runner`: `COMMIT`, `JDK_VERSION`, leo's
+  `inner-classes.patch` so `Map.Entry` and other nested library types resolve,
+  `NOTICE` with the licences and source links; about 4.3 MB packed). CI builds
+  it, pins it like Go (`leo_services::runtimes::JAVA`) and attaches
+  `leo-java.tar.gz`; `/api/java`, `/javaroot/{four names}`. The page loads it
+  once per visit; the runner turns TeaVM's ES-module loader into a classic
+  script (`teaRuntime`), compiles `LeoMain.java` (the user's classes with
+  `public` blanked and `package` removed, same lines, plus `interviews.javaDriver`'s
+  `LeoMain` with typed literals for ints, floats, chars, strings, arrays, lists,
+  ListNode and TreeNode from arrays, a JSON printer, and the LeetCode node
+  classes when only commented) and runs the program in a fresh worker. Needs
+  WebAssembly GC (current Chrome, Edge, Firefox, Safari). Measured in Chromium:
+  first run 1.4 s, then 0.8 s.
   Other languages get the quick and full reviews only.
 - Progress (`progress.rs`, 2026-10-14): long AI jobs get a `Meter` on
   `AppState.progress` (`key:`, `grade:`, `coverage:` keys, GET

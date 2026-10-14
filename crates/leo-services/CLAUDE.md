@@ -262,10 +262,11 @@ Code: Haiku, low), for interview grading and coverage. `pyodide` pins Pyodide
 when the user first runs Python (`LEO_PYODIDE_URL` / `LEO_PYODIDE_MANIFEST`
 for tests). `clang` does the same for C++ (`@yowasp/clang` 22 from the npm
 registry, tarball and unpacked files SHA-256 pinned in `models_dir()/clang-…`,
-unpacked with `tar`; `fetch_into` is tested with a local tarball). `gorunner`
-fetches the Go toolchain leo's own release carries (`leo-go.tar.gz`, built
-by CI from `scripts/go-runner`) and trusts it only when `files.sha256`
-matches `FILES_SHA256` and every listed file matches its sum.
+unpacked with `tar`; `fetch_into` is tested with a local tarball). `runtimes`
+fetches the Go and Java toolchains leo's own release carries (`GO`/`JAVA`
+packs: `leo-go.tar.gz`, `leo-java.tar.gz`, built by CI from
+`scripts/go-runner` and `scripts/java-runner`) and trusts one only when its
+`files.sha256` matches the pack's pin and every listed file matches its sum.
 
 ### What the agent CLIs may use
 

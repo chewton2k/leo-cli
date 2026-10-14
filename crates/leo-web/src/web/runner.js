@@ -286,6 +286,93 @@ self.postMessage({ loaded: true });
     };
   }
 
+  const teaRuntime = (text) => text.replace(/export\s*\{([^}]*)\}\s*;?\s*$/, (m, names) => `self.leoTea = {${names.split(',').map((pair) => { const [local, as] = pair.trim().split(/\s+as\s+/); return `${as || local}: ${local}`; }).join(', ')}};`);
+
+  function javac() {
+    let compiler = null;
+    self.onmessage = async (e) => {
+      const job = e.data || {};
+      try {
+        if (job.files) {
+          const teavm = await self.leoTea.load(job.files['compiler.wasm']);
+          compiler = teavm.exports.createCompiler();
+          compiler.setSdk(new Int8Array(job.files['compile-classlib-teavm.bin']));
+          compiler.setTeaVMClasslib(new Int8Array(job.files['runtime-classlib-teavm.bin']));
+        }
+        if (!compiler) { self.postMessage({ missing: true }); return; }
+        const diagnostics = [];
+        const listening = compiler.onDiagnostic((d) => { if (diagnostics.length < 50) diagnostics.push({ severity: String(d.severity), lineNumber: Number(d.lineNumber), message: String(d.message) }); });
+        compiler.clearSourceFiles();
+        compiler.clearOutputFiles();
+        compiler.addSourceFile('LeoMain.java', String(job.source || ''));
+        const built = compiler.compile() && compiler.generateWebAssembly({ outputName: 'app', mainClass: String(job.main || 'LeoMain') });
+        listening.destroy();
+        if (!built) { self.postMessage({ diagnostics }); return; }
+        const wasm = new Uint8Array(compiler.getWebAssemblyOutputFile('app.wasm')).slice().buffer;
+        self.postMessage({ wasm }, [wasm]);
+      } catch (err) {
+        self.postMessage({ error: `Java could not build this: ${String(err && err.message ? err.message : err).slice(0, 300)}` });
+      }
+    };
+  }
+
+  function javaProgram() {
+    self.onmessage = async (e) => {
+      let out = '';
+      const put = (c) => { if (out.length < 2000000) out += String.fromCharCode(c); };
+      try {
+        const made = await self.leoTea.load(e.data.wasm, { installImports(o) { o.teavmConsole.putcharStdout = put; o.teavmConsole.putcharStderr = put; } });
+        made.exports.main([]);
+        self.postMessage({ stdout: out });
+      } catch (err) {
+        self.postMessage({ stdout: out, error: `Your program crashed: ${String(err && err.message ? err.message : err).slice(0, 300)}` });
+      }
+    };
+  }
+
+  let javaWorker = null;
+  let javaRuntime = '';
+  let javaBusy = false;
+
+  function runJava(job, done) {
+    const limit = Math.min(Math.max(Number(job.limit) || 4000, 500), 10000);
+    if (!javaWorker) {
+      if (typeof job.runtime !== 'string' || !job.runtime || !job.files) return done({ missing: true, stdout: '' });
+      try {
+        javaRuntime = teaRuntime(job.runtime);
+        javaWorker = new Worker(URL.createObjectURL(new Blob([`${javaRuntime}\n(${javac.toString()})();`], { type: 'text/javascript' })));
+      } catch (e) {
+        return done({ error: 'This browser could not start Java.', stdout: '' });
+      }
+    }
+    if (javaBusy) return done({ error: 'Java is still building the last run. Try again in a moment.', stdout: '' });
+    javaBusy = true;
+    const worker = javaWorker;
+    const first = Boolean(job.files);
+    const timer = setTimeout(() => { worker.terminate(); javaWorker = null; javaBusy = false; done({ error: 'Building took too long. Try Run again.', stdout: '' }); }, first ? 240000 : 60000);
+    worker.onerror = (e) => { e.preventDefault(); clearTimeout(timer); worker.terminate(); javaWorker = null; javaBusy = false; done({ error: 'Java could not start in this browser. It needs a browser with WebAssembly garbage collection (a recent Chrome, Edge, Firefox or Safari).', stdout: '' }); };
+    worker.onmessage = (e) => {
+      clearTimeout(timer);
+      javaBusy = false;
+      const data = e.data || {};
+      if (data.missing) { worker.terminate(); javaWorker = null; return done({ missing: true, stdout: '' }); }
+      if (data.diagnostics) return done({ diagnostics: data.diagnostics, stdout: '' });
+      if (!data.wasm) return done({ error: data.error || 'Java could not build this.', stdout: '' });
+      let running;
+      try {
+        running = new Worker(URL.createObjectURL(new Blob([`${javaRuntime}\n(${javaProgram.toString()})();`], { type: 'text/javascript' })));
+      } catch (err) {
+        return done({ error: 'This browser could not run the program.', stdout: '' });
+      }
+      const stopped = setTimeout(() => { running.terminate(); done({ stopped: true, error: `Stopped after ${limit / 1000} seconds. Check for an endless loop.`, stdout: '' }); }, limit);
+      running.onmessage = (r) => { clearTimeout(stopped); running.terminate(); done(r.data || { stdout: '' }); };
+      running.onerror = (r) => { r.preventDefault(); clearTimeout(stopped); running.terminate(); done({ error: `Your program crashed: ${r.message || 'unknown error'}`, stdout: '' }); };
+      running.postMessage({ wasm: data.wasm }, [data.wasm]);
+    };
+    const transfer = first ? Object.values(job.files).filter((b) => b instanceof ArrayBuffer) : [];
+    worker.postMessage({ source: job.source || '', main: job.main || 'LeoMain', ...(first ? { files: job.files } : {}) }, transfer);
+  }
+
   let goWorker = null;
   let goBusy = false;
 
@@ -379,6 +466,7 @@ self.postMessage({ loaded: true });
     const done = (result) => send({ kind: 'done', run: job.run, ...result });
     if (job.language === 'cpp') return runCpp(job, done);
     if (job.language === 'go') return runGo(job, done);
+    if (job.language === 'java') return runJava(job, done);
     if (!ENTRY.test(job.entry || '')) return done({ error: 'This problem has no function to call.', results: [], logs: [] });
     const python = job.language === 'python';
     let worker;

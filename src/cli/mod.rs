@@ -386,9 +386,22 @@ pub fn run(cli: Cli) -> Result<()> {
                         fetch: std::sync::Arc::new(|| leo_services::clang::fetch().map(|_| ())),
                     }),
                     go: Some(leo_web::Runtime {
-                        dir: leo_services::gorunner::dir(),
-                        ready: std::sync::Arc::new(leo_services::gorunner::ready),
-                        fetch: std::sync::Arc::new(|| leo_services::gorunner::fetch().map(|_| ())),
+                        dir: leo_services::runtimes::dir(&leo_services::runtimes::GO),
+                        ready: std::sync::Arc::new(|| {
+                            leo_services::runtimes::ready(&leo_services::runtimes::GO)
+                        }),
+                        fetch: std::sync::Arc::new(|| {
+                            leo_services::runtimes::fetch(&leo_services::runtimes::GO).map(|_| ())
+                        }),
+                    }),
+                    java: Some(leo_web::Runtime {
+                        dir: leo_services::runtimes::dir(&leo_services::runtimes::JAVA),
+                        ready: std::sync::Arc::new(|| {
+                            leo_services::runtimes::ready(&leo_services::runtimes::JAVA)
+                        }),
+                        fetch: std::sync::Arc::new(|| {
+                            leo_services::runtimes::fetch(&leo_services::runtimes::JAVA).map(|_| ())
+                        }),
                     }),
                     writer: Some(writer),
                     quick: Some(std::sync::Arc::new(

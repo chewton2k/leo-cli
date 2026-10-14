@@ -1,0 +1,12 @@
+leo's Java runner
+
+This package holds a Java compiler and Java-to-WebAssembly compiler built
+from teavm-javac (https://github.com/konsoletyper/teavm-javac) at commit
+208d4c97a602ba0df055f16e6882059fb69d0122, with leo's patch inner-classes.patch applied.
+
+- teavm-javac and TeaVM (https://teavm.org): Apache License 2.0.
+- The Java compiler (javac) from OpenJDK, built from
+  https://github.com/openjdk/jdk25u/tree/6c48f4ed707bf0b15f9b6098de30db8aae6fa40f : GNU General Public
+  License version 2 with the Classpath Exception. Its corresponding source is
+  at that address, and teavm-javac's build at the commit above shows how this
+  module is made from it.
