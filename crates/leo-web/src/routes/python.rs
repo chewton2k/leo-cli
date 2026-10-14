@@ -67,6 +67,14 @@ pub(crate) static JAVA: Kind = Kind {
     failed: "Java could not be downloaded. Check the connection and try again.",
 };
 
+pub(crate) static RUST: Kind = Kind {
+    files: &[],
+    any_file: true,
+    bytes: 46_200_000,
+    mb: 46,
+    failed: "Rust could not be downloaded. Check the connection and try again.",
+};
+
 fn parts(state: &AppState, kind: &Kind) -> (Option<Runtime>, Arc<Mutex<Option<String>>>) {
     if std::ptr::eq(kind, &CPP) {
         (state.cpp.clone(), Arc::clone(&state.cpp_fetch))
@@ -74,6 +82,8 @@ fn parts(state: &AppState, kind: &Kind) -> (Option<Runtime>, Arc<Mutex<Option<St
         (state.go.clone(), Arc::clone(&state.go_fetch))
     } else if std::ptr::eq(kind, &JAVA) {
         (state.java.clone(), Arc::clone(&state.java_fetch))
+    } else if std::ptr::eq(kind, &RUST) {
+        (state.rust.clone(), Arc::clone(&state.rust_fetch))
     } else {
         (state.python.clone(), Arc::clone(&state.python_fetch))
     }
@@ -159,7 +169,9 @@ fn any_content(name: &str) -> Option<&'static str> {
     }
     if name.ends_with(".wasm") {
         Some("application/wasm")
-    } else if name.ends_with(".a") || name == "importcfg" {
+    } else if name == "files.sha256" {
+        Some("text/plain; charset=utf-8")
+    } else if name.ends_with(".a") || name.ends_with(".rlib") || name == "importcfg" {
         Some("application/octet-stream")
     } else {
         None
@@ -218,6 +230,18 @@ pub(crate) async fn go_fetch(State(state): State<AppState>) -> Response {
 
 pub(crate) async fn go_file(State(state): State<AppState>, Path(name): Path<String>) -> Response {
     file_of(state, &GO, name).await
+}
+
+pub(crate) async fn rust_status(State(state): State<AppState>) -> Response {
+    status_of(state, &RUST).await
+}
+
+pub(crate) async fn rust_fetch(State(state): State<AppState>) -> Response {
+    fetch_of(state, &RUST).await
+}
+
+pub(crate) async fn rust_file(State(state): State<AppState>, Path(name): Path<String>) -> Response {
+    file_of(state, &RUST, name).await
 }
 
 pub(crate) async fn java_status(State(state): State<AppState>) -> Response {
@@ -323,7 +347,7 @@ mod tests {
             assert_eq!(answer.headers()["access-control-allow-origin"], "*");
         }
         for refused in [
-            "files.sha256",
+            "NOTICE",
             "../compile.wasm",
             "std/../compile.wasm",
             ".hidden.wasm",
@@ -359,6 +383,30 @@ mod tests {
         );
         for refused in ["NOTICE", "files.sha256", "../compiler.wasm"] {
             let answer = runtime.block_on(java_file(State(state.clone()), Path(refused.into())));
+            assert_eq!(answer.status(), StatusCode::NOT_FOUND, "{refused}");
+        }
+    }
+
+    #[test]
+    fn rust_serves_its_libraries_and_file_list_only() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("lib/rustlib")).unwrap();
+        std::fs::write(dir.path().join("lib/rustlib/libcore-1.rlib"), "r").unwrap();
+        std::fs::write(dir.path().join("files.sha256"), "x").unwrap();
+        std::fs::write(dir.path().join("NOTICE"), "n").unwrap();
+        let (mut state, _d, _) = crate::tests::state_for_python();
+        state.rust = Some(crate::Runtime {
+            dir: dir.path().to_path_buf(),
+            ready: std::sync::Arc::new(|| true),
+            fetch: std::sync::Arc::new(|| Ok(())),
+        });
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        for served in ["lib/rustlib/libcore-1.rlib", "files.sha256"] {
+            let answer = runtime.block_on(rust_file(State(state.clone()), Path(served.into())));
+            assert_eq!(answer.status(), StatusCode::OK, "{served}");
+        }
+        for refused in ["NOTICE", "lib/../NOTICE", "lib/rustlib/x.so"] {
+            let answer = runtime.block_on(rust_file(State(state.clone()), Path(refused.into())));
             assert_eq!(answer.status(), StatusCode::NOT_FOUND, "{refused}");
         }
     }

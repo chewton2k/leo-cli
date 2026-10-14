@@ -12,3 +12,4 @@ playwright-report/
 test-results/
 scripts/go-runner/out/
 scripts/java-runner/out/
+scripts/rust-runner/out/

@@ -169,8 +169,25 @@ jobs:
           name: leo-java
           path: leo-java.tar.gz
 
+  rust-runner:
+    needs: bump
+    if: needs.bump.outputs.sha != ''
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.bump.outputs.sha }}
+      - name: Gather the Rust runner
+        run: |
+          sh scripts/rust-runner/build.sh "$RUNNER_TEMP/rust-runner"
+          cp "$RUNNER_TEMP/rust-runner/leo-rust.tar.gz" .
+      - uses: actions/upload-artifact@v6
+        with:
+          name: leo-rust
+          path: leo-rust.tar.gz
+
   publish:
-    needs: [version, bump, build, go-runner, java-runner]
+    needs: [version, bump, build, go-runner, java-runner, rust-runner]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5

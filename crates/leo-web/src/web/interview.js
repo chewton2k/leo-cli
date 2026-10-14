@@ -580,6 +580,198 @@ LEO_NODES        leoText(out, String.valueOf(v));
   function javaProblem(diagnostics = [], offset = 1) {
     return (diagnostics || []).filter((d) => d && d.severity === 'error').slice(0, 12).map((d) => `${d.lineNumber > 0 ? `line ${d.lineNumber - offset}: ` : ''}${String(d.message || '').trim()}`).join('\n').slice(0, 1500) || 'Your code did not compile.';
   }
+  const RUST_INTS = ['i8', 'i16', 'i32', 'i64', 'i128', 'isize', 'u8', 'u16', 'u32', 'u64', 'u128', 'usize'];
+  function rustType(text) {
+    const t = String(text).replace(/\s+/g, '').replace(/^mut(?=[A-Za-z])/, '');
+    const ref = t.match(/^&(mut)?(.*)$/);
+    if (ref) {
+      const inner = ref[2] === 'str' ? { kind: 'str', spelled: 'String' } : ref[2].startsWith('[') && ref[2].endsWith(']') ? rustType(`Vec<${ref[2].slice(1, -1)}>`) : rustType(ref[2]);
+      return inner ? { ...inner, borrow: ref[1] ? '&mut ' : '&' } : null;
+    }
+    const vec = t.match(/^Vec<(.+)>$/);
+    if (vec) { const of = rustType(vec[1]); return of && !of.borrow ? { kind: 'vec', of, spelled: `Vec<${of.spelled}>` } : null; }
+    if (t === 'Option<Box<ListNode>>') return { kind: 'list', spelled: t };
+    if (t === 'Option<Rc<RefCell<TreeNode>>>') return { kind: 'tree', spelled: t };
+    if (RUST_INTS.includes(t)) return { kind: 'int', spelled: t };
+    if (t === 'f64' || t === 'f32') return { kind: 'float', spelled: t };
+    if (t === 'bool') return { kind: 'bool', spelled: t };
+    if (t === 'char') return { kind: 'char', spelled: t };
+    if (t === 'String') return { kind: 'string', spelled: t };
+    if (t === '()' || t === '') return { kind: 'unit', spelled: '()' };
+    return null;
+  }
+  function rustText(value) {
+    return JSON.stringify(value).replace(/\\u([0-9a-fA-F]{4})/g, (m, h) => `\\u{${h}}`);
+  }
+  function rustLiteral(type, value) {
+    switch (type.kind) {
+      case 'int': if (!Number.isInteger(value)) throw new Error('expected a whole number'); if (value < 0 && type.spelled.startsWith('u')) throw new Error('expected a number that is not negative'); return String(value);
+      case 'float': if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error('expected a number'); return Number.isInteger(value) ? `${value}.0` : String(value);
+      case 'bool': if (typeof value !== 'boolean') throw new Error('expected true or false'); return String(value);
+      case 'char': if (typeof value !== 'string' || [...value].length !== 1) throw new Error('expected one character'); return `'${rustText(value).slice(1, -1).replace(/'/g, "\\'").replace(/\\"/g, '"')}'`;
+      case 'string': case 'str': if (typeof value !== 'string') throw new Error('expected text'); return `String::from(${rustText(value)})`;
+      case 'vec': if (!Array.isArray(value)) throw new Error('expected a list'); return `vec![${value.map((v) => rustLiteral(type.of, v)).join(', ')}]`;
+      case 'list': if (value === null) return 'None'; if (!Array.isArray(value) || !value.every(Number.isInteger)) throw new Error('expected a list of whole numbers'); return `leo_list(vec![${value.join(', ')}])`;
+      case 'tree': if (value === null) return 'None'; if (!Array.isArray(value) || !value.every((v) => v === null || Number.isInteger(v))) throw new Error('expected a level-order list of whole numbers and nulls'); return `leo_tree(vec![${value.map((v) => (v === null ? 'None' : `Some(${v})`)).join(', ')}])`;
+      default: throw new Error('unsupported type');
+    }
+  }
+  const RUST_DRIVER = String.raw`
+#[allow(dead_code)]
+mod leo_json {
+    pub trait Json { fn json(&self, out: &mut String); }
+    macro_rules! whole { ($($t:ty),*) => { $(impl Json for $t { fn json(&self, out: &mut String) { out.push_str(&self.to_string()); } })* } }
+    whole!(i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize);
+    impl Json for f64 { fn json(&self, out: &mut String) { if self.is_finite() { out.push_str(&format!("{}", self)); } else { out.push_str("null"); } } }
+    impl Json for f32 { fn json(&self, out: &mut String) { (*self as f64).json(out) } }
+    impl Json for bool { fn json(&self, out: &mut String) { out.push_str(if *self { "true" } else { "false" }); } }
+    pub fn text(s: &str, out: &mut String) {
+        out.push('"');
+        for c in s.chars() {
+            match c {
+                '"' => out.push_str("\\\""),
+                '\\' => out.push_str("\\\\"),
+                '\n' => out.push_str("\\n"),
+                '\t' => out.push_str("\\t"),
+                '\r' => out.push_str("\\r"),
+                c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+                c => out.push(c),
+            }
+        }
+        out.push('"');
+    }
+    impl Json for char { fn json(&self, out: &mut String) { text(&self.to_string(), out) } }
+    impl Json for String { fn json(&self, out: &mut String) { text(self, out) } }
+    impl Json for &str { fn json(&self, out: &mut String) { text(self, out) } }
+    impl Json for () { fn json(&self, out: &mut String) { out.push_str("null") } }
+    impl<T: Json> Json for Vec<T> { fn json(&self, out: &mut String) { out.push('['); for (i, v) in self.iter().enumerate() { if i > 0 { out.push(','); } v.json(out); } out.push(']'); } }
+    impl<T: Json> Json for &[T] { fn json(&self, out: &mut String) { out.push('['); for (i, v) in self.iter().enumerate() { if i > 0 { out.push(','); } v.json(out); } out.push(']'); } }
+    impl<T: Json> Json for Option<T> { fn json(&self, out: &mut String) { match self { Some(v) => v.json(out), None => out.push_str("null") } } }
+    impl<A: Json, B: Json> Json for (A, B) { fn json(&self, out: &mut String) { out.push('['); self.0.json(out); out.push(','); self.1.json(out); out.push(']'); } }
+}
+`;
+  const RUST_LIST = `
+#[allow(dead_code)]
+fn leo_list(values: Vec<i32>) -> Option<Box<ListNode>> {
+    let mut head: Option<Box<ListNode>> = None;
+    for v in values.into_iter().rev() { let mut node = Box::new(ListNode::new(v)); node.next = head; head = Some(node); }
+    head
+}
+#[allow(dead_code)]
+fn leo_list_json(mut node: &Option<Box<ListNode>>, out: &mut String) {
+    out.push('[');
+    let mut first = true;
+    let mut seen = 0;
+    while let Some(n) = node { if seen > 100000 { break; } seen += 1; if !first { out.push(','); } first = false; out.push_str(&n.val.to_string()); node = &n.next; }
+    out.push(']');
+}
+`;
+  const RUST_TREE = `
+#[allow(dead_code)]
+fn leo_tree(values: Vec<Option<i32>>) -> Option<std::rc::Rc<std::cell::RefCell<TreeNode>>> {
+    use std::{cell::RefCell, collections::VecDeque, rc::Rc};
+    let first = match values.first() { Some(Some(v)) => *v, _ => return None };
+    let root = Rc::new(RefCell::new(TreeNode::new(first)));
+    let mut queue = VecDeque::from([Rc::clone(&root)]);
+    let mut i = 1;
+    while i < values.len() {
+        let Some(parent) = queue.pop_front() else { break };
+        if let Some(Some(v)) = values.get(i) { let child = Rc::new(RefCell::new(TreeNode::new(*v))); parent.borrow_mut().left = Some(Rc::clone(&child)); queue.push_back(child); }
+        i += 1;
+        if let Some(Some(v)) = values.get(i) { let child = Rc::new(RefCell::new(TreeNode::new(*v))); parent.borrow_mut().right = Some(Rc::clone(&child)); queue.push_back(child); }
+        i += 1;
+    }
+    Some(root)
+}
+#[allow(dead_code)]
+fn leo_tree_json(root: &Option<std::rc::Rc<std::cell::RefCell<TreeNode>>>, out: &mut String) {
+    let mut items: Vec<String> = Vec::new();
+    let mut queue = std::collections::VecDeque::from([root.clone()]);
+    while let Some(node) = queue.pop_front() {
+        if items.len() > 100000 { break; }
+        match node { Some(n) => { let n = n.borrow(); items.push(n.val.to_string()); queue.push_back(n.left.clone()); queue.push_back(n.right.clone()); } None => items.push("null".into()) }
+    }
+    while items.last().map(|s| s == "null").unwrap_or(false) { items.pop(); }
+    out.push('['); out.push_str(&items.join(",")); out.push(']');
+}
+`;
+  const RUST_NODES = {
+    ListNode: `#[derive(PartialEq, Eq, Clone, Debug)]\npub struct ListNode {\n    pub val: i32,\n    pub next: Option<Box<ListNode>>,\n}\nimpl ListNode {\n    #[inline]\n    fn new(val: i32) -> Self { ListNode { next: None, val } }\n}\n`,
+    TreeNode: `#[derive(Debug, PartialEq, Eq)]\npub struct TreeNode {\n    pub val: i32,\n    pub left: Option<std::rc::Rc<std::cell::RefCell<TreeNode>>>,\n    pub right: Option<std::rc::Rc<std::cell::RefCell<TreeNode>>>,\n}\nimpl TreeNode {\n    #[inline]\n    pub fn new(val: i32) -> Self { TreeNode { val, left: None, right: None } }\n}\n`,
+  };
+  function rustDriver(code, entry, tests = []) {
+    if (!/^[A-Za-z_]\w{0,79}$/.test(String(entry || ''))) return { error: 'This problem has no function to call.' };
+    if (!tests.every((t) => /^[\w-]{1,40}$/.test(String(t.id)))) return { error: 'A test id is not usable.' };
+    const text = String(code);
+    const bare = text.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' ')).replace(/\/\/[^\n]*/g, (m) => ' '.repeat(m.length)).replace(/"(?:[^"\\]|\\.)*"/g, (m) => `"${' '.repeat(Math.max(0, m.length - 2))}"`);
+    if (/^\s*fn\s+main\s*\(/m.test(bare)) return { error: 'Remove fn main; leo calls your function with each test.' };
+    const at = new RegExp(`\\bfn\\s+${entry}\\s*(?:<[^>]*>)?\\s*\\(([^)]*)\\)\\s*(?:->\\s*([^{]+?))?\\s*(?:where[^{]*)?\\{`).exec(bare);
+    if (!at) return { error: `Define a function named ${entry}.` };
+    const before = bare.slice(0, at.index);
+    const impl = [...before.matchAll(/\bimpl\s+(?:<[^>]*>\s*)?([A-Za-z_]\w*)\s*\{/g)].pop();
+    let depth = 0;
+    if (impl) for (const c of bare.slice(impl.index, at.index)) { if (c === '{') depth++; else if (c === '}') depth--; }
+    const owner = impl && depth > 0 ? impl[1] : null;
+    const raw = at[1].trim() ? at[1].split(',').map((p) => p.trim()).filter(Boolean) : [];
+    if (raw.some((p) => /self\b/.test(p))) return { error: `${entry} takes self; write it as an associated function like LeetCode’s impl Solution.` };
+    const params = raw.map((p) => { const m = p.match(/^(?:mut\s+)?[A-Za-z_]\w*\s*:\s*(.+)$/); return m ? rustType(m[1]) : null; });
+    const returns = rustType(at[2] ? at[2].trim() : '');
+    if (!returns || params.some((p) => !p || p.kind === 'unit')) return { error: `${entry} uses types the browser can’t fill in yet (numbers, text, true/false, Vec, ListNode and TreeNode work). Submit still gets the reviews.` };
+    const call = (names) => `${owner ? `${owner}::` : ''}${entry}(${names.join(', ')})`;
+    const cases = [];
+    for (const test of tests) {
+      const args = Array.isArray(test.args) ? test.args : [];
+      if (args.length !== params.length) return { error: `Test ${test.id} gives ${args.length} argument${args.length === 1 ? '' : 's'}, but ${entry} takes ${params.length}.` };
+      let decls;
+      try {
+        decls = args.map((value, i) => `let mut a${i}: ${params[i].spelled} = ${rustLiteral(params[i], value)};`);
+      } catch (e) {
+        return { error: `Test ${test.id} doesn’t fit ${entry}’s types: ${e.message}.` };
+      }
+      const names = params.map((p, i) => `${p.borrow === '&mut ' ? '&mut ' : p.borrow ? '&' : ''}a${i}${p.kind === 'str' && p.borrow ? '[..]' : ''}`);
+      const shown = (value, type) => (type.kind === 'list' ? `leo_list_json(&${value}, &mut out);` : type.kind === 'tree' ? `leo_tree_json(&${value}, &mut out);` : `leo_json::Json::json(&${value}, &mut out);`);
+      const body = returns.kind === 'unit' ? `${call(names)}; ${params.length ? shown('a0', params[0]) : 'out.push_str("null");'}` : `let r = ${call(names)}; ${shown('r', returns)}`;
+      cases.push(`    if from <= ${cases.length} {\n        println!("\\n@@leo-start ${test.id}");\n        ${decls.join(' ')}\n        let mut out = String::new();\n        ${body}\n        println!("\\n@@leo {{\\"id\\":\\"${test.id}\\",\\"got\\":{}}}", out);\n    }`);
+    }
+    const uses = (name) => new RegExp(`\\b${name}\\b`).test(bare);
+    const defines = (name) => new RegExp(`\\bstruct\\s+${name}\\b`).test(bare);
+    const extra = [];
+    if (owner && !defines(owner) && !new RegExp(`\\b(?:enum|type|trait)\\s+${owner}\\b`).test(bare)) extra.push(`#[allow(dead_code)]\nstruct ${owner};`);
+    for (const name of ['ListNode', 'TreeNode']) if (uses(name) && !defines(name)) extra.push(RUST_NODES[name]);
+    if ((uses('TreeNode') || returns.kind === 'tree') && !/\buse\s+std::rc::Rc\b/.test(bare)) extra.push('#[allow(unused_imports)]\nuse std::rc::Rc;');
+    if ((uses('TreeNode') || returns.kind === 'tree') && !/\buse\s+std::cell::RefCell\b/.test(bare)) extra.push('#[allow(unused_imports)]\nuse std::cell::RefCell;');
+    const helpers = `${uses('ListNode') ? RUST_LIST : ''}${uses('TreeNode') ? RUST_TREE : ''}`;
+    const source = `${text}\n\n${extra.join('\n')}\n${RUST_DRIVER}${helpers}\n#[allow(unused_mut, unused_variables)]\nfn main() {\n    let from: usize = std::env::var("LEO_FROM").ok().and_then(|v| v.parse().ok()).unwrap_or(0);\n${cases.join('\n')}\n}\n`;
+    return { source, offset: 0, ids: tests.map((t) => String(t.id)) };
+  }
+  function rustRound(stdout = '', stderr = '', ids = [], from = 0) {
+    const results = [];
+    const logs = [];
+    let started = null;
+    for (const line of String(stdout).split('\n')) {
+      if (line.startsWith('@@leo-start ')) { started = line.slice(12).trim(); continue; }
+      if (line.startsWith('@@leo ')) {
+        try {
+          const r = JSON.parse(line.slice(6));
+          results.push({ id: String(r.id), got: r.got });
+          if (String(r.id) === started) started = null;
+          continue;
+        } catch (e) { }
+      }
+      if (line.trim() && logs.length < 40) logs.push(line.slice(0, 300));
+    }
+    if (started === null && !results.length && from === 0 && /\berror(\[E\d+\])?:/.test(stderr)) return { compile: rustProblem(stderr), results, logs, next: null };
+    if (started !== null) {
+      const panic = String(stderr).match(/panicked at [^\n]*:\n([^\n]*)/);
+      results.push({ id: started, error: `panic: ${panic ? panic[1].trim() : 'the program stopped'}`.slice(0, 300) });
+      const at = ids.indexOf(started);
+      return { results, logs, next: at >= 0 && at + 1 < ids.length ? at + 1 : null };
+    }
+    return { results, logs, next: null };
+  }
+  function rustProblem(text = '') {
+    return String(text).split('\n').filter((line) => !/^(error: aborting due to|For more information about|Some errors have detailed explanations|warning: )/.test(line)).join('\n').replace(/--> main\.rs:(\d+):(\d+)/g, '--> line $1:$2').trim().slice(0, 1500);
+  }
   function resultCases(checks = []) {
     const counts = { test: 0, answer: 0, section: 0 };
     return (checks || []).map((c) => {
@@ -828,5 +1020,5 @@ LEO_NODES        leoText(out, String.valueOf(v));
       storage.setItem('leo-interview-drafts', JSON.stringify(drafts));
     } catch (e) {}
   }
-  root.leoInterview = { PRESETS, preset, framework, preparation, workspace, cleanValues, sameValue, checkSummary, callText, cppDriver, cppResults, cppProblem, goDriver, driverResults, goProblem, javaDriver, javaProblem, resultCases, pickCase, attemptStatus, reviewNote, hasWork, codeEdit, point, validBoard, boardSvg, fitBoard, moveShape, shapeBounds, unionBounds, normalRect, shapesWithin, handlesFor, resizeShape, BOARD_LIMIT, progress, keepDraft, readDraft, clearDraft, MOST_SHAPES, MOST_POINTS, MOST_ANSWER, MOST_PROBLEMS };
+  root.leoInterview = { PRESETS, preset, framework, preparation, workspace, cleanValues, sameValue, checkSummary, callText, cppDriver, cppResults, cppProblem, goDriver, driverResults, goProblem, javaDriver, javaProblem, rustDriver, rustProblem, rustRound, resultCases, pickCase, attemptStatus, reviewNote, hasWork, codeEdit, point, validBoard, boardSvg, fitBoard, moveShape, shapeBounds, unionBounds, normalRect, shapesWithin, handlesFor, resizeShape, BOARD_LIMIT, progress, keepDraft, readDraft, clearDraft, MOST_SHAPES, MOST_POINTS, MOST_ANSWER, MOST_PROBLEMS };
 })(typeof window !== 'undefined' ? window : globalThis);

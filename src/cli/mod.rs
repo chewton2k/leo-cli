@@ -394,6 +394,15 @@ pub fn run(cli: Cli) -> Result<()> {
                             leo_services::runtimes::fetch(&leo_services::runtimes::GO).map(|_| ())
                         }),
                     }),
+                    rust: Some(leo_web::Runtime {
+                        dir: leo_services::runtimes::dir(&leo_services::runtimes::RUST),
+                        ready: std::sync::Arc::new(|| {
+                            leo_services::runtimes::ready(&leo_services::runtimes::RUST)
+                        }),
+                        fetch: std::sync::Arc::new(|| {
+                            leo_services::runtimes::fetch(&leo_services::runtimes::RUST).map(|_| ())
+                        }),
+                    }),
                     java: Some(leo_web::Runtime {
                         dir: leo_services::runtimes::dir(&leo_services::runtimes::JAVA),
                         ready: std::sync::Arc::new(|| {

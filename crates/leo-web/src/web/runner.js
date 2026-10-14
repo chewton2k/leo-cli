@@ -330,6 +330,80 @@ self.postMessage({ loaded: true });
     };
   }
 
+  function rusty() {
+    const { WASI, File, OpenFile, ConsoleStdout, PreopenDirectory, Directory } = self.leoWasi;
+    const ARGS = ['miri', '--sysroot', '/sysroot', 'main.rs', '--target', 'x86_64-unknown-linux-gnu', '-Zmir-opt-level=3', '-Zmiri-ignore-leaks', '-Zmiri-permissive-provenance', '-Zmiri-preemption-rate=0', '-Zmiri-disable-alignment-check', '-Zmiri-disable-data-race-detector', '-Zmiri-disable-stacked-borrows', '-Zmiri-disable-validation', '-Zmir-emit-retag=false', '-Zmiri-disable-isolation', '-Zmiri-panic-on-unsupported', '--color=never'];
+    let miri = null;
+    let sysroot = null;
+    function tree(files) {
+      const top = new Map();
+      for (const [name, bytes] of Object.entries(files)) {
+        const parts = name.split('/');
+        let here = top;
+        for (const part of parts.slice(0, -1)) {
+          if (!here.has(part)) here.set(part, new Directory(new Map()));
+          here = here.get(part).contents;
+        }
+        here.set(parts[parts.length - 1], new File(new Uint8Array(bytes), { readonly: true }));
+      }
+      return top;
+    }
+    self.onmessage = async (e) => {
+      const job = e.data || {};
+      try {
+        if (job.files) {
+          const wasm = Object.keys(job.files).find((name) => name.startsWith('bin/') && name.endsWith('.wasm'));
+          miri = await WebAssembly.compile(job.files[wasm]);
+          const libs = {};
+          for (const [name, bytes] of Object.entries(job.files)) if (name.startsWith('lib/')) libs[name] = bytes;
+          const top = tree(libs);
+          top.get('lib').contents.get('rustlib').contents.set('wasm32-wasi', new Directory([['lib', new Directory([])]]));
+          sysroot = new PreopenDirectory('/sysroot', top);
+        }
+        if (!miri) { self.postMessage({ missing: true }); return; }
+        let stdout = '';
+        let stderr = '';
+        const root = new PreopenDirectory('/', [['main.rs', new File(new TextEncoder().encode(String(job.source || '')))]]);
+        const wasi = new WASI(ARGS, [`LEO_FROM=${Number(job.from) || 0}`], [new OpenFile(new File([])), ConsoleStdout.lineBuffered((line) => { if (stdout.length < 2000000) stdout += `${line}\n`; }), ConsoleStdout.lineBuffered((line) => { if (stderr.length < 200000) stderr += `${line}\n`; }), new PreopenDirectory('/tmp', []), sysroot, root], { debug: false });
+        const made = await WebAssembly.instantiate(miri, { env: { memory: new WebAssembly.Memory({ initial: 256, maximum: 4096, shared: false }) }, wasi: { 'thread-spawn': () => { throw new Error('Threads are not available here.'); } }, wasi_snapshot_preview1: wasi.wasiImport });
+        try { wasi.start(made); } catch (err) { stderr += `\n${String(err && err.message ? err.message : err)}`; }
+        self.postMessage({ stdout, stderr });
+      } catch (err) {
+        self.postMessage({ error: `Rust could not run this: ${String(err && err.message ? err.message : err).slice(0, 300)}` });
+      }
+    };
+  }
+
+  let rustWorker = null;
+  let rustBusy = false;
+
+  function runRust(job, done) {
+    const limit = Math.min(Math.max(Number(job.limit) || 15000, 1000), 30000);
+    if (!rustWorker) {
+      if (typeof job.shim !== 'string' || !job.shim || !job.files) return done({ missing: true, stdout: '' });
+      try {
+        rustWorker = new Worker(URL.createObjectURL(new Blob([`${job.shim}\n(${rusty.toString()})();`], { type: 'text/javascript' })));
+      } catch (e) {
+        return done({ error: 'This browser could not start Rust.', stdout: '' });
+      }
+    }
+    if (rustBusy) return done({ error: 'Rust is still running the last run. Try again in a moment.', stdout: '' });
+    rustBusy = true;
+    const worker = rustWorker;
+    const first = Boolean(job.files);
+    const timer = setTimeout(() => { worker.terminate(); rustWorker = null; rustBusy = false; done({ stopped: true, error: `Stopped after ${Math.round(limit / 1000)} seconds. Check for an endless loop.`, stdout: '' }); }, first ? limit + 120000 : limit);
+    worker.onerror = (e) => { e.preventDefault(); clearTimeout(timer); worker.terminate(); rustWorker = null; rustBusy = false; done({ error: 'Rust could not start in this browser.', stdout: '' }); };
+    worker.onmessage = (e) => {
+      clearTimeout(timer);
+      rustBusy = false;
+      const data = e.data || {};
+      if (data.missing) { worker.terminate(); rustWorker = null; return done({ missing: true, stdout: '' }); }
+      done({ stdout: data.stdout || '', stderr: data.stderr || '', ...(data.error ? { error: data.error } : {}) });
+    };
+    const transfer = first ? Object.values(job.files).filter((b) => b instanceof ArrayBuffer) : [];
+    worker.postMessage({ source: job.source || '', from: Number(job.from) || 0, ...(first ? { files: job.files } : {}) }, transfer);
+  }
+
   let javaWorker = null;
   let javaRuntime = '';
   let javaBusy = false;
@@ -467,6 +541,7 @@ self.postMessage({ loaded: true });
     if (job.language === 'cpp') return runCpp(job, done);
     if (job.language === 'go') return runGo(job, done);
     if (job.language === 'java') return runJava(job, done);
+    if (job.language === 'rust') return runRust(job, done);
     if (!ENTRY.test(job.entry || '')) return done({ error: 'This problem has no function to call.', results: [], logs: [] });
     const python = job.language === 'python';
     let worker;

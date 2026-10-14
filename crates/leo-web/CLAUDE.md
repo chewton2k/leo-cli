@@ -429,6 +429,20 @@ works (plan: `.superpowers/plans/2026-10-12-interview-instant-feedback.md`):
   classes when only commented) and runs the program in a fresh worker. Needs
   WebAssembly GC (current Chrome, Edge, Firefox, Safari). Measured in Chromium:
   first run 1.4 s, then 0.8 s.
+  Rust (2026-10-14): Miri (the Rust interpreter) compiled to WebAssembly with
+  the parts of a mid-2024 standard library a plain program needs, taken
+  unchanged from rubri at a pinned commit (`scripts/rust-runner`: `COMMIT`,
+  `FILES` pins each file, `NOTICE`; 46 MB packed, 131 MB unpacked). CI
+  gathers and pins it (`runtimes::RUST`) and attaches `leo-rust.tar.gz`;
+  `/api/rust`, `/rustroot/{path}` (`.wasm`, `.rlib`, `files.sha256` for the
+  list). `interviews.rustDriver` keeps the user's code first (same lines),
+  adds `struct Solution;` and the LeetCode node types when missing, typed
+  literals (`vec!`, `String::from`, `leo_list`, `leo_tree`), a JSON trait,
+  and a `main` that marks each test with `@@leo-start` and starts at
+  `LEO_FROM`. This Miri cannot unwind, so a panic ends the run:
+  `interviews.rustRound` records it from stderr and the page runs again from
+  the next test. Measured in Chromium: first run 1.75 s; a compile error
+  0.25 s; three panicking tests 0.86 s.
   Other languages get the quick and full reviews only.
 - Progress (`progress.rs`, 2026-10-14): long AI jobs get a `Meter` on
   `AppState.progress` (`key:`, `grade:`, `coverage:` keys, GET

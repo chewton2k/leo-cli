@@ -291,8 +291,18 @@ jobs:
           java-version: ${{ steps.jdk.outputs.version }}
       - run: sh scripts/java-runner/build.sh "$RUNNER_TEMP/java-runner"
 
+  rust-runner:
+    name: Rust runner gathers its pinned files
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: ci-rust-runner-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v5
+      - run: sh scripts/rust-runner/build.sh "$RUNNER_TEMP/rust-runner"
+
   release:
-    needs: [changes, test, browser, lint, msrv, targets, go-runner, java-runner]
+    needs: [changes, test, browser, lint, msrv, targets, go-runner, java-runner, rust-runner]
     if: >-
       always()
       && github.event_name == 'push' && github.ref == 'refs/heads/main'

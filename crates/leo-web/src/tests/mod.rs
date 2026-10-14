@@ -75,6 +75,8 @@ fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<Strin
         go_fetch: Default::default(),
         java: None,
         java_fetch: Default::default(),
+        rust: None,
+        rust_fetch: Default::default(),
         progress: Default::default(),
         warm: Default::default(),
         chat: None,

@@ -980,6 +980,7 @@ function interviewRunLanguage(session) {
   if (/^(c\+\+|cpp|cxx|cc)(\s*\d+)?$/i.test(language)) return 'cpp';
   if (/^(go|golang)$/i.test(language)) return 'go';
   if (/^java(\s*\d+)?$/i.test(language)) return 'java';
+  if (/^(rust|rs)$/i.test(language)) return 'rust';
   return '';
 }
 
@@ -992,6 +993,7 @@ const RUNTIMES = {
   cpp: { path: '/api/cpp', label: 'Getting C++ ready, once', none: 'C++ can’t run on this copy of leo.', failed: 'The C++ compiler could not be downloaded. Check the connection and try again.', mb: 27 },
   go: { path: '/api/go', label: 'Getting Go ready, once', none: 'Go can’t run on this copy of leo.', failed: 'Go could not be downloaded. Check the connection and try again.', mb: 21 },
   java: { path: '/api/java', label: 'Getting Java ready, once', none: 'Java can’t run on this copy of leo.', failed: 'Java could not be downloaded. Check the connection and try again.', mb: 5 },
+  rust: { path: '/api/rust', label: 'Getting Rust ready, once', none: 'Rust can’t run on this copy of leo.', failed: 'Rust could not be downloaded. Check the connection and try again.', mb: 46 },
 };
 
 async function interviewRuntimeReady(session, name) {
@@ -1031,13 +1033,14 @@ async function loadInterviewKey(session, force = false) {
   } catch (e) { if (e instanceof Locked) throw e; }
 }
 
-const runner = { frame: null, ready: null, cppWarm: false, clangBundle: '', goWarm: false, javaWarm: false };
+const runner = { frame: null, ready: null, cppWarm: false, clangBundle: '', goWarm: false, javaWarm: false, rustWarm: false };
 
 function runnerFrame() {
   if (runner.frame?.isConnected && runner.ready) return runner.ready;
   runner.cppWarm = false;
   runner.goWarm = false;
   runner.javaWarm = false;
+  runner.rustWarm = false;
   const frame = document.createElement('iframe');
   frame.setAttribute('sandbox', 'allow-scripts');
   frame.hidden = true;
@@ -1057,7 +1060,7 @@ function runnerFrame() {
 }
 
 async function runInSandbox(job, onProgress = null, transfer = []) {
-  const limit = job.language === 'python' ? 75000 : ['cpp', 'go', 'java'].includes(job.language) ? 270000 : 15000;
+  const limit = job.language === 'python' ? 75000 : ['cpp', 'go', 'java', 'rust'].includes(job.language) ? 270000 : 15000;
   const frame = await Promise.race([runnerFrame(), new Promise((resolve) => setTimeout(() => resolve(null), 10000))]);
   if (!frame) { runner.frame?.remove(); runner.frame = null; runner.ready = null; return { error: 'The code runner did not start. Try Run again.', results: [], logs: [] }; }
   return new Promise((resolve) => {
@@ -1171,6 +1174,82 @@ async function runInterviewJava(session, code, entry, tests) {
   return { reports, error: out.error || parsed.error || '', logs: parsed.logs };
 }
 
+async function interviewRustToolchain(session) {
+  const started = Date.now();
+  const show = (fraction) => {
+    const first = !session.runtimeFetch;
+    session.runtimeFetch = { label: 'Loading Rust into this page, once per visit', fraction, seconds: Math.round((Date.now() - started) / 1000) };
+    if (first && interviewHere(session)) drawInterviewChecks(session); else setMeter('interview-runtime-meter', session.runtimeFetch);
+  };
+  show(0);
+  const get = async (path, text) => {
+    const response = await fetch(path, { credentials: 'same-origin' });
+    if (!response.ok) throw new Error(`${path} ${response.status}`);
+    return text ? response.text() : response.arrayBuffer();
+  };
+  const shim = await get('/wasi-shim.js', true);
+  const listed = (await get('/rustroot/files.sha256', true)).split('\n').map((line) => line.split('  ')[1]).filter((name) => name && (name.endsWith('.wasm') || name.endsWith('.rlib')));
+  const files = {};
+  let done = 0;
+  const queue = [...listed];
+  await Promise.all(Array.from({ length: 4 }, async () => {
+    while (queue.length) {
+      const name = queue.shift();
+      files[name] = await get(`/rustroot/${name}`);
+      done += files[name].byteLength;
+      show(Math.min(0.97, done / 131000000));
+    }
+  }));
+  return { shim, files };
+}
+
+async function runInterviewRust(session, code, entry, tests) {
+  const made = interviews.rustDriver(code, entry, tests);
+  const failed = (why) => ({ reports: tests.map((t) => ({ id: t.id, pass: false, got: why.split('\n')[0] })), error: why, logs: [] });
+  if (made.error) return failed(made.error);
+  const results = [];
+  const logs = [];
+  let from = 0;
+  let error = '';
+  for (let round = 0; round <= tests.length; round++) {
+    let out = null;
+    for (let tries = 0; tries < 2; tries++) {
+      let extra = {};
+      let transfer = [];
+      if (!runner.rustWarm) {
+        try {
+          extra = await interviewRustToolchain(session);
+        } catch (e) {
+          session.runtimeFetch = null;
+          if (interviewHere(session)) drawInterviewChecks(session);
+          return failed('Rust could not load in this page. Try Run again.');
+        }
+        transfer = Object.values(extra.files);
+      }
+      out = await runInSandbox({ language: 'rust', entry, source: made.source, from, ...extra }, null, transfer);
+      if (session.runtimeFetch) { session.runtimeFetch = null; if (interviewHere(session)) drawInterviewChecks(session); }
+      if (!out.missing) { runner.rustWarm = true; break; }
+      runner.rustWarm = false;
+    }
+    if (out.missing) return failed('Rust could not start in this page. Try Run again.');
+    if (out.error && !out.stdout) { error = out.error; break; }
+    const step = interviews.rustRound(out.stdout || '', out.stderr || '', made.ids, from);
+    if (step.compile) return failed(`Your code did not compile:\n${step.compile}`);
+    results.push(...step.results);
+    logs.push(...step.logs);
+    if (step.next === null) break;
+    from = step.next;
+  }
+  const byId = new Map(results.map((r) => [r.id, r]));
+  const reports = tests.map((t) => {
+    const r = byId.get(t.id);
+    if (!r) return { id: t.id, pass: false, got: error || 'Did not run' };
+    if (r.error) return { id: t.id, pass: false, got: `Error: ${r.error}` };
+    return { id: t.id, pass: interviews.sameValue(t.expected, r.got, t.unordered), got: JSON.stringify(r.got) };
+  });
+  return { reports, error, logs: logs.slice(0, 40) };
+}
+
 async function runInterviewGo(session, code, entry, tests) {
   const made = interviews.goDriver(code, entry, tests);
   const failed = (why) => ({ reports: tests.map((t) => ({ id: t.id, pass: false, got: why.split('\n')[0] })), error: why, logs: [] });
@@ -1209,7 +1288,8 @@ async function runInterviewGo(session, code, entry, tests) {
 
 async function runInterviewTests(session, code, entry, tests) {
   let language = interviewRunLanguage(session);
-  if (['python', 'cpp', 'go', 'java'].includes(language) && !(await interviewRuntimeReady(session, language))) return { reports: [], error: session.runtimeNote, logs: [] };
+  if (['python', 'cpp', 'go', 'java', 'rust'].includes(language) && !(await interviewRuntimeReady(session, language))) return { reports: [], error: session.runtimeNote, logs: [] };
+  if (language === 'rust') return runInterviewRust(session, code, entry, tests);
   if (language === 'go') return runInterviewGo(session, code, entry, tests);
   if (language === 'java') return runInterviewJava(session, code, entry, tests);
   if (language === 'cpp') {

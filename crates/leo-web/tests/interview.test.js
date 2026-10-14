@@ -398,3 +398,26 @@ test('Java tests become a LeoMain driver beside the user’s classes, keeping th
   assert.match(I.javaDriver('class Solution { public int f(int a) { return a; } }', 'f', [{ id: 'x', args: [1.5] }]).error, /expected a whole number/);
   assert.equal(I.javaProblem([{ severity: 'error', lineNumber: 4, message: 'cannot find symbol' }, { severity: 'warning', lineNumber: 2, message: 'unchecked' }], 1), 'line 3: cannot find symbol');
 });
+
+test('Rust tests become a main that resumes after a panic, with LeetCode’s Solution and node types supplied', () => {
+  const made = I.rustDriver('use std::rc::Rc;\nuse std::cell::RefCell;\nimpl Solution {\n    pub fn f(nums: Vec<i32>, s: String, t: &str, root: Option<Rc<RefCell<TreeNode>>>, xs: &[i64]) -> Vec<Vec<i32>> { vec![] }\n}', 'f', [{ id: 't1', args: [[1, 2], 'a"é', 'x', [1, null, 2], [3]] }, { id: 't2', args: [[], '', '', [], []] }]);
+  assert.deepEqual(made.ids, ['t1', 't2']);
+  assert.equal(made.source.split('\n')[0], 'use std::rc::Rc;', 'the user’s code stays first, so lines keep their numbers');
+  assert.match(made.source, /struct Solution;/);
+  assert.match(made.source, /pub struct TreeNode \{/);
+  assert.doesNotMatch(made.source, /pub struct ListNode/);
+  assert.match(made.source, /if from <= 0 \{\n {8}println!\("\\n@@leo-start t1"\);\n {8}let mut a0: Vec<i32> = vec!\[1, 2\]; let mut a1: String = String::from\("a\\"é"\); let mut a2: String = String::from\("x"\); let mut a3: Option<Rc<RefCell<TreeNode>>> = leo_tree\(vec!\[Some\(1\), None, Some\(2\)\]\); let mut a4: Vec<i64> = vec!\[3\];/);
+  assert.match(made.source, /let r = Solution::f\(a0, a1, &a2\[\.\.\], a3, &a4\);/);
+  assert.match(made.source, /if from <= 1 \{/);
+  assert.match(I.rustDriver('fn main() {}\nfn f() {}', 'f', []).error, /Remove fn main/);
+  assert.match(I.rustDriver('impl Solution { pub fn f(&self) -> i32 { 1 } }', 'f', []).error, /takes self/);
+  assert.match(I.rustDriver('pub fn f(m: HashMap<i32, i32>) -> i32 { 0 }', 'f', [{ id: 'm', args: [{}] }]).error, /types the browser can’t fill in/);
+  assert.match(I.rustDriver('pub fn f(x: u32) -> u32 { x }', 'f', [{ id: 'n', args: [-1] }]).error, /not negative/);
+  const panicked = I.rustRound('\n@@leo-start a\n\n@@leo {"id":"a","got":1}\n\n@@leo-start b\nprinted\n', "thread 'main' panicked at main.rs:4:14:\nindex out of bounds: the len is 1 but the index is 5\nnote: run with RUST_BACKTRACE\n", ['a', 'b', 'c'], 0);
+  assert.deepEqual(panicked.results, [{ id: 'a', got: 1 }, { id: 'b', error: 'panic: index out of bounds: the len is 1 but the index is 5' }]);
+  assert.deepEqual(panicked.logs, ['printed']);
+  assert.equal(panicked.next, 2);
+  const broken = I.rustRound('', 'error[E0425]: cannot find value `y` in this scope\n --> main.rs:3:9\n\nerror: aborting due to 1 previous error\n', ['a'], 0);
+  assert.equal(broken.compile, 'error[E0425]: cannot find value `y` in this scope\n --> line 3:9');
+  assert.equal(I.rustRound('\n@@leo-start a\n\n@@leo {"id":"a","got":[]}\n', '', ['a'], 0).next, null);
+});
