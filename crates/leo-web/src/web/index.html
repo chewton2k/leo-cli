@@ -661,15 +661,18 @@ body.on-map main { padding: 0; max-width: none; }
 .felix .felix-monster .felix-horns rect { fill: #f3e2b3; }
 .felix .felix-monster .felix-spikes rect { fill: #4b318f; }
 .felix .felix-monster .felix-brows rect, .felix .felix-monster .felix-maw { fill: #19191b; }
-.felix .felix-monster .felix-fangs rect, .felix .felix-monster .felix-claws rect { fill: #ffffff; }
-.felix .felix-rawr text { fill: #e5484d; }
+.felix .felix-monster .felix-fangs rect { fill: #ffffff; }
+.felix .felix-body .felix-claws rect { fill: #f3e2b3; }
+.felix .felix-claws { opacity: 0; }
+.felix .felix-rawr text { fill: #e5484d; stroke: var(--bg); stroke-width: 2px; paint-order: stroke; stroke-linejoin: round; }
 .felix.monster { overflow: visible; position: relative; z-index: 60; transform-origin: 50% 100%; animation: felix-monster 2.8s cubic-bezier(.3, 1.4, .5, 1) 1; }
+.felix.monster.grow-down { transform-origin: 50% 0%; }
 .felix.monster .felix-body { animation: felix-rumble .09s linear 30; }
-.felix.monster .felix-skin { animation: felix-monster-skin 2.8s ease-in-out 1; }
+.felix.monster .felix-skin, .felix.monster .felix-arm-skin { animation: felix-monster-skin 2.8s ease-in-out 1; }
 .felix.monster .felix-eyes rect { animation: felix-monster-eyes 2.8s ease-in-out 1; }
-.felix.monster .felix-monster { animation: felix-monster-parts 2.8s ease-in-out 1; }
+.felix.monster .felix-monster, .felix.monster .felix-claws { animation: felix-monster-parts 2.8s ease-in-out 1; }
 .felix.monster .felix-rawr { transform-box: fill-box; transform-origin: 0% 100%; animation: felix-monster-rawr 2.8s ease-out 1; }
-.felix.monster .felix-left, .felix.monster .felix-right { animation: felix-arm .2s steps(2, jump-none) .5s 8, felix-monster-skin 2.8s ease-in-out 1; }
+.felix.monster .felix-left, .felix.monster .felix-right { animation: felix-arm .2s steps(2, jump-none) .5s 8; }
 .felix.monster .felix-spark rect { animation: felix-spark .5s ease-out 2.2s 1; }
 .felix.sleep .felix-eyes { transform: scaleY(.12); transition: transform 1.2s ease-in; }
 .felix.sleep .felix-body { animation: felix-breathe 3.6s ease-in-out infinite; }

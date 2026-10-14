@@ -57,7 +57,9 @@ test('Felix keeps his colour and shape', () => {
   assert.ok(ratio > 1 && ratio < 1.4, `a box a little wider than tall, not ${ratio}`);
   assert.equal((svg.match(/width="4" height="4"/g) || []).length, 2, 'two eyes');
   assert.match(svg, /class="felix-eyes" shape-rendering="geometricPrecision"/, 'eyes are drawn exactly, so both come out the same size');
-  assert.equal((svg.match(/class="felix-arm/g) || []).length, 2, 'two arms');
+  assert.equal((svg.match(/class="felix-arm felix-(left|right)"/g) || []).length, 2, 'two arms');
+  assert.match(svg, /<g class="felix-arm felix-left"><rect class="felix-arm-skin"[^>]*\/><g class="felix-claws">/, 'the monster’s claws move with his arms');
+  assert.match(svg, /<g class="felix-rawr">/);
   assert.deepEqual(C.MODES.map((m) => m.id), ['chat', 'study', 'interview']);
 });
 
