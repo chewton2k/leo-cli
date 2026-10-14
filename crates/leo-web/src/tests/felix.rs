@@ -2510,3 +2510,136 @@ fn felix_reads_every_test_case_and_fixes_one_as_a_card_in_ask_applied_in_auto_re
         }
     }
 }
+
+#[test]
+fn felix_lists_every_practice_reads_another_and_changes_a_problem_by_access() {
+    for access in ["ask", "auto", "read"] {
+        let (mut state, _dir, _) = state_with(&[]);
+        let framework = |title: &str| {
+            serde_json::from_value::<crate::interview::Framework>(serde_json::json!({"title":title, "track":"coding", "company":"", "role":"", "language":"Python", "style":"coach", "date":"", "weekly_minutes":120, "skills":["Approach"], "wants":""})).unwrap()
+        };
+        let id = "edit-felix-practice";
+        let other = "other-felix-practice";
+        crate::interview::configure(&state.chats, id, 0, framework("Arrays")).unwrap();
+        crate::interview::configure(&state.chats, other, 0, framework("Graphs")).unwrap();
+        let challenge = |cid: &str, title: &str| {
+            serde_json::from_value::<crate::interview::Challenge>(serde_json::json!({"id":cid, "title":title, "question":"Add two numbers.", "minutes":30, "skills":["Approach"], "origin":"generated", "sources":[], "coding":{"language":"Python", "starter":"def add(a, b):\n    pass", "difficulty":"easy", "examples":[{"input":"1, 2","output":"3"}], "constraints":["Small"]}})).unwrap()
+        };
+        crate::interview::set_challenge(&state.chats, id, challenge("edit-felix-problem", "Add"))
+            .unwrap();
+        crate::interview::set_challenge(
+            &state.chats,
+            other,
+            challenge("other-felix-problem", "Shortest path"),
+        )
+        .unwrap();
+        crate::interview::change(
+            &state.chats,
+            id,
+            serde_json::from_value(serde_json::json!({"action":"workspace","revision":crate::interview::load(&state.chats, id).unwrap().revision,"challenge":"edit-felix-problem","workspace":{"answer":"def add(a, b):\n    return a + b","reasoning":"","board":[]}})).unwrap(),
+        )
+        .unwrap();
+        let (chat, prompts) = scripted(vec![
+            r#"<tool>{"name":"interview_list"}</tool>"#,
+            r#"<tool>{"name":"interview_progress","interview":"other-felix-practice"}</tool>"#,
+            r#"<tool>{"name":"interview_problem_edit","data":"{\"summary\":\"Say the numbers may be negative\",\"changes\":{\"question\":\"Add two numbers, which may be negative.\",\"coding\":{\"constraints\":[\"-100 <= a, b <= 100\"]}}}"}</tool>"#,
+            "Updated the problem.",
+        ]);
+        state.chat = Some(chat);
+        let body: chat::ChatBody = serde_json::from_value(serde_json::json!({"chat":id,"mode":"interview","interview_problem":"edit-felix-problem","access":access,"messages":[{"role":"user","text":"Mention negative numbers."}]})).unwrap();
+        let bytes = run(async {
+            let response = chat_reply(State(state.clone()), Json(body)).await;
+            axum::body::to_bytes(response.into_body(), 1_000_000)
+                .await
+                .unwrap()
+        });
+        let lines: Vec<serde_json::Value> = std::str::from_utf8(&bytes)
+            .unwrap()
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        let seen = prompts.lock().unwrap().join("\n");
+        assert!(
+            seen.contains("\"current\":true")
+                && seen.contains("Shortest path")
+                && seen.contains("other-felix-practice"),
+            "{access}: Felix sees every practice"
+        );
+        assert!(
+            seen.contains("other-felix-problem"),
+            "{access}: Felix reads another practice"
+        );
+        let proposals: Vec<_> = lines.iter().filter_map(|l| l.get("proposal")).collect();
+        let item = crate::interview::load(&state.chats, id).unwrap();
+        let question = item.challenge.as_ref().unwrap().question.clone();
+        assert_eq!(
+            item.workspace.answer, "def add(a, b):\n    return a + b",
+            "the user's code is never touched"
+        );
+        match access {
+            "read" => {
+                assert!(proposals.is_empty());
+                assert_eq!(question, "Add two numbers.");
+            }
+            "ask" => {
+                assert_eq!(proposals[0]["kind"], "interview_problem_edit");
+                assert_ne!(proposals[0]["state"], "applied");
+                assert_eq!(question, "Add two numbers.");
+            }
+            _ => {
+                assert_eq!(proposals[0]["state"], "applied", "{lines:?}");
+                assert_eq!(question, "Add two numbers, which may be negative.");
+                assert_eq!(
+                    item.problems[0].challenge.question, question,
+                    "the saved problem changes too"
+                );
+                assert_eq!(
+                    item.challenge
+                        .as_ref()
+                        .unwrap()
+                        .coding
+                        .as_ref()
+                        .unwrap()
+                        .constraints,
+                    ["-100 <= a, b <= 100"]
+                );
+                assert_eq!(
+                    item.challenge
+                        .as_ref()
+                        .unwrap()
+                        .coding
+                        .as_ref()
+                        .unwrap()
+                        .examples
+                        .len(),
+                    1,
+                    "unchanged fields stay"
+                );
+                let undo: tools::Proposal =
+                    serde_json::from_value(proposals[0]["undo"].clone()).unwrap();
+                let response = run(crate::routes::organize::act_route(
+                    State(state.clone()),
+                    Json(undo.clone()),
+                ));
+                assert_eq!(response.status(), StatusCode::OK);
+                assert_eq!(
+                    crate::interview::load(&state.chats, id)
+                        .unwrap()
+                        .challenge
+                        .unwrap()
+                        .question,
+                    "Add two numbers."
+                );
+                let stale = run(crate::routes::organize::act_route(
+                    State(state.clone()),
+                    Json(undo),
+                ));
+                assert_eq!(
+                    stale.status(),
+                    StatusCode::CONFLICT,
+                    "a change built on an old version is refused"
+                );
+            }
+        }
+    }
+}

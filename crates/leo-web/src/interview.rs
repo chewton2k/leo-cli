@@ -302,7 +302,7 @@ impl Workspace {
 }
 
 impl Challenge {
-    fn validate(&self, framework: &Framework) -> Result<(), Error> {
+    pub(crate) fn validate(&self, framework: &Framework) -> Result<(), Error> {
         require(chats::valid_id(&self.id) && text(&self.title, 160, true)
             && text(&self.question, 12_000, true) && (5..=180).contains(&self.minutes)
             && skills(&self.skills) && self.skills.iter().all(|s| framework.skills.contains(s)), "Give the challenge a stable 8–64 character ID, title, question, 5–180 minutes and skills from this framework.")?;
@@ -679,6 +679,73 @@ pub fn set_challenge(path: &Path, id: &str, challenge: Challenge) -> Result<Inte
             ..Workspace::default()
         };
         item.challenge = Some(challenge);
+        Ok(())
+    })
+}
+
+pub fn merged(base: &mut serde_json::Value, patch: &serde_json::Value) {
+    match (base, patch) {
+        (serde_json::Value::Object(base), serde_json::Value::Object(patch)) => {
+            for (key, value) in patch {
+                if value.is_null() {
+                    base.remove(key);
+                } else {
+                    merged(
+                        base.entry(key.clone()).or_insert(serde_json::Value::Null),
+                        value,
+                    );
+                }
+            }
+        }
+        (base, patch) => *base = patch.clone(),
+    }
+}
+
+pub fn problem(item: &Interview, challenge: &str) -> Option<Challenge> {
+    item.challenge
+        .as_ref()
+        .filter(|c| c.id == challenge)
+        .or_else(|| {
+            item.problems
+                .iter()
+                .map(|p| &p.challenge)
+                .find(|c| c.id == challenge)
+        })
+        .cloned()
+}
+
+pub fn update_problem(
+    path: &Path,
+    id: &str,
+    challenge: Challenge,
+    before: &Challenge,
+) -> Result<Interview, Error> {
+    mutate(path, id, None, |item| {
+        require(
+            challenge.id == before.id,
+            "A problem keeps its ID when it is changed.",
+        )?;
+        challenge.validate(&item.framework)?;
+        let saved = problem(item, &challenge.id).ok_or_else(|| {
+            Error::Invalid("Choose a saved problem from interview_progress.".into())
+        })?;
+        if saved != *before {
+            return Err(Error::Conflict);
+        }
+        if item
+            .challenge
+            .as_ref()
+            .is_some_and(|c| c.id == challenge.id)
+        {
+            item.challenge = Some(challenge.clone());
+        }
+        if let Some(found) = item
+            .problems
+            .iter_mut()
+            .find(|p| p.challenge.id == challenge.id)
+        {
+            found.challenge = challenge;
+        }
         Ok(())
     })
 }

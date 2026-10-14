@@ -103,7 +103,8 @@ test('starting practice combines company research and challenge creation, while 
     const company = I.preparation(f);
     assert.match(company.say, /Search the web before/);
     assert.match(company.say, /interview_challenge/);
-    assert.match(company.say, /unverified candidate reports/);
+    assert.match(company.say, /keep the links in the problem’s sources/);
+    assert.match(company.say, /no remarks about whether it is a real, valid or official company question/);
     assert.ok(company.text.includes('Pinterest'));
     const general = I.preparation({ ...f, company: '' });
     assert.match(general.say, /Do not ask for a company/);

@@ -541,8 +541,10 @@ fn run_tool(
             found: Vec::new(),
         }
     } else if crate::interview_tools::is_tool(&call.name) {
-        if matches!(call.name.as_str(), "interview_code_edit" | "interview_test")
-            && !access.changes()
+        if matches!(
+            call.name.as_str(),
+            "interview_code_edit" | "interview_test" | "interview_problem_edit"
+        ) && !access.changes()
         {
             return Ok(tools::Done {
                 step: "Kept your code unchanged".into(),

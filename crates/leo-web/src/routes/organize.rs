@@ -209,6 +209,7 @@ pub(crate) fn summary_of(p: &Proposal) -> String {
         | Proposal::DeleteFolder { summary, .. }
         | Proposal::InterviewCodeEdit { summary, .. }
         | Proposal::InterviewTest { summary, .. }
+        | Proposal::InterviewProblemEdit { summary, .. }
         | Proposal::RestoreFolder { summary, .. } => summary.clone(),
         Proposal::Edit { title, .. } => format!("Change “{title}”"),
         Proposal::Create { title, .. } => format!("Make the note “{title}”"),
@@ -851,6 +852,38 @@ pub(crate) async fn act(
                     .map_err(|_| "Leo could not apply the code change. Try again.".to_string())?
                     .map_err(|e| e.message())?;
             Ok((serde_json::json!({"revision":item.revision}), undo))
+        }
+        Proposal::InterviewProblemEdit {
+            title,
+            summary,
+            interview,
+            challenge,
+            before,
+            after,
+        } => {
+            let path = state.chats.clone();
+            let (id, next, previous) = (interview.clone(), (**after).clone(), (**before).clone());
+            tokio::task::spawn_blocking(move || {
+                crate::interview::update_problem(&path, &id, next, &previous)
+            })
+            .await
+            .map_err(|_| "Leo could not change the problem. Try again.".to_string())?
+            .map_err(|e| match e {
+                crate::interview::Error::Conflict => {
+                    "This problem changed since it was read. Read it again and make a new change."
+                        .to_string()
+                }
+                other => other.message(),
+            })?;
+            let undo = Proposal::InterviewProblemEdit {
+                title: title.clone(),
+                summary: format!("Undo: {summary}"),
+                interview: interview.clone(),
+                challenge: challenge.clone(),
+                before: after.clone(),
+                after: before.clone(),
+            };
+            Ok((serde_json::json!({}), undo))
         }
         Proposal::InterviewTest {
             title,

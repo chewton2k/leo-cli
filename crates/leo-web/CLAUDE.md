@@ -309,6 +309,17 @@ seer, meaning, web, room).
   scroll. The quick review shows its counts and summary and folds the
   per-criterion feedback into `source-more`. Grading errors are kept per
   submission.
+  Felix can reach every practice (2026-10-14, the user's call): `interview_list`
+  (every practice with its numbered problems), an optional `interview` on
+  `interview_progress`, `interview_attempt` and `interview_tests`, and
+  `interview_problem_edit` (a JSON merge of the changed fields onto a saved
+  problem; `interview::update_problem` checks the problem still matches what
+  was read, never touches the workspace or attempts; a
+  `Proposal::InterviewProblemEdit` card in Ask first, applied with Undo in
+  Auto, refused in Read only; the page redraws the question). New problems
+  carry their provenance only in `origin` and `sources`: the question and the
+  reply never say whether it is a real or official company question or where
+  it came from (also in `interviews.preparation`).
   `interview_code` reads the full bound draft. `interview_code_edit` suggests one
   exact unique fragment per Accept/Decline card in Ask first; in Auto
   (2026-10-14, the user's call) the proposal arrives with `auto: true` and the

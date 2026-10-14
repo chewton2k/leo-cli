@@ -1626,6 +1626,14 @@ pub enum Proposal {
         find: String,
         replace: String,
     },
+    InterviewProblemEdit {
+        title: String,
+        summary: String,
+        interview: String,
+        challenge: String,
+        before: Box<crate::interview::Challenge>,
+        after: Box<crate::interview::Challenge>,
+    },
     InterviewTest {
         title: String,
         summary: String,
