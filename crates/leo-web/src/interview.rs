@@ -750,6 +750,42 @@ pub fn update_problem(
     })
 }
 
+pub fn relanguage(
+    path: &Path,
+    id: &str,
+    before: &Challenge,
+    after: Challenge,
+    answer: impl FnOnce(&str) -> Option<String>,
+) -> Result<(Interview, String), Error> {
+    let mut previous = String::new();
+    let item = mutate(path, id, None, |item| {
+        require(
+            after.id == before.id,
+            "A problem keeps its ID when it is changed.",
+        )?;
+        if item.challenge.as_ref() != Some(before) {
+            return Err(Error::Conflict);
+        }
+        after.validate(&item.framework)?;
+        previous = item.workspace.answer.clone();
+        if let Some(answer) = answer(&item.workspace.answer) {
+            item.workspace.answer = answer;
+        }
+        item.challenge = Some(after.clone());
+        let workspace = item.workspace.clone();
+        if let Some(found) = item
+            .problems
+            .iter_mut()
+            .find(|p| p.challenge.id == after.id)
+        {
+            found.challenge = after;
+            found.workspace = workspace;
+        }
+        Ok(())
+    })?;
+    Ok((item, previous))
+}
+
 pub fn select_problem(path: &Path, id: &str, challenge: &str) -> Result<Interview, Error> {
     mutate(path, id, None, |item| select(item, challenge))
 }
@@ -1126,6 +1162,46 @@ mod tests {
             constraints: vec!["Two or more values; exactly one pair.".into()],
         });
         c
+    }
+
+    #[test]
+    fn a_problem_changes_language_only_from_what_was_read_and_keeps_both_copies_in_step() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = "interview-language-01";
+        configure(dir.path(), id, 0, framework()).unwrap();
+        let before = coding_challenge("challenge-language-01");
+        let seeded = set_challenge(dir.path(), id, before.clone()).unwrap();
+        let mut after = before.clone();
+        if let Some(c) = after.coding.as_mut() {
+            c.language = "Java".into();
+            c.starter =
+                "class Solution {\n    int[] pair_sum(int[] nums, int target) { return null; }\n}"
+                    .into();
+        }
+        let java = after.coding.as_ref().unwrap().starter.clone();
+        let (item, previous) = relanguage(dir.path(), id, &before, after.clone(), |_| {
+            Some(java.clone())
+        })
+        .unwrap();
+        assert_eq!(previous, seeded.workspace.answer);
+        assert_eq!(item.workspace.answer, java);
+        assert_eq!(item.challenge.as_ref(), Some(&after));
+        let kept = item
+            .problems
+            .iter()
+            .find(|p| p.challenge.id == after.id)
+            .unwrap();
+        assert_eq!(
+            (&kept.challenge, kept.workspace.answer.as_str()),
+            (&after, java.as_str())
+        );
+        assert!(matches!(
+            relanguage(dir.path(), id, &before, after.clone(), |_| None),
+            Err(Error::Conflict)
+        ));
+        let mut renamed = after.clone();
+        renamed.id = "challenge-language-02".into();
+        assert!(relanguage(dir.path(), id, &after, renamed, |_| None).is_err());
     }
 
     #[test]

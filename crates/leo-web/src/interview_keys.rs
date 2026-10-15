@@ -873,6 +873,69 @@ pub fn instant(key: &Key, workspace: &Workspace, reports: &[TestReport]) -> Vec<
     out
 }
 
+const STARTER_RULES: &str = "You rewrite the starting code of a coding interview problem in another programming language. Reply with only the new starting code in one fenced code block. Keep the function or method name exactly as given, the same parameters in the same order and the same kind of result, with the new language's usual types for the example arguments shown (whole numbers as int or long, lists as the language's usual list or array type). Use the layout LeetCode uses for that language: a Solution class in Python, Java and C++, impl Solution in Rust, a plain function in Go, JavaScript and TypeScript. When the problem uses linked lists or binary trees, use LeetCode's ListNode and TreeNode and include their definitions as a comment, as LeetCode does. Leave the body unsolved: a placeholder return or a TODO, never the solution. No explanation outside the code block.";
+const STARTER_TOKENS: u32 = 2_000;
+
+fn code_in(reply: &str) -> String {
+    let Some(start) = reply.find("```") else {
+        return reply.trim().to_string();
+    };
+    let after = &reply[start + 3..];
+    let body = after.split_once('\n').map_or("", |(_, rest)| rest);
+    body.split("```")
+        .next()
+        .unwrap_or("")
+        .trim_end()
+        .to_string()
+}
+
+pub fn translate_starter(
+    writer: &Writer,
+    challenge: &Challenge,
+    language: &str,
+    key: Option<&Key>,
+) -> Result<String, String> {
+    let coding = challenge.coding.as_ref().ok_or("not a coding problem")?;
+    let entry = key.map(|k| k.entry.as_str()).filter(|e| !e.is_empty());
+    let calls: Vec<String> = key
+        .map(|k| {
+            k.tests
+                .iter()
+                .filter(|t| !t.hidden)
+                .take(3)
+                .map(|t| call_of(&k.entry, t))
+                .collect()
+        })
+        .unwrap_or_default();
+    let question: String = challenge.question.chars().take(4_000).collect();
+    let prompt = format!(
+        "<question>\n{question}\n</question>\n<starter language=\"{}\">\n{}\n</starter>\n{}{}Rewrite this starter in {language}.",
+        coding.language,
+        coding.starter,
+        entry.map_or(String::new(), |e| format!("<function_name>{e}</function_name>\n")),
+        if calls.is_empty() { String::new() } else { format!("<example_calls>\n{}\n</example_calls>\n", calls.join("\n")) },
+    );
+    let mut last = String::from("the new starter was empty");
+    for _ in 0..2 {
+        let reply = match writer(STARTER_RULES, &prompt, STARTER_TOKENS) {
+            Ok(reply) => reply,
+            Err(e) => {
+                last = e.to_string();
+                continue;
+            }
+        };
+        let code = code_in(&reply);
+        if code.trim().is_empty() || code.chars().count() > 8_000 {
+            last = "the new starter was empty or too long".into();
+        } else if entry.is_some_and(|e| !code.contains(e)) {
+            last = "the new starter renamed the function".into();
+        } else {
+            return Ok(code);
+        }
+    }
+    Err(last)
+}
+
 pub fn is_sql(language: &str) -> bool {
     let l = language.trim().to_ascii_lowercase();
     l.contains("sql") || l == "postgres" || l == "sqlite"
@@ -1052,6 +1115,47 @@ pub fn valid(interview: &str, challenge: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_starter_is_rewritten_with_the_same_function_name_or_refused() {
+        let mut challenge = coding_challenge();
+        challenge.question = "Return the indices of two numbers that add up to target.".into();
+        let key = Key {
+            entry: "pair_sum".into(),
+            tests: vec![Test {
+                id: "t1".into(),
+                args: vec![serde_json::json!([2, 3]), serde_json::json!(5)],
+                expected: serde_json::json!([0, 1]),
+                hidden: false,
+                unordered: false,
+            }],
+            ..Key::default()
+        };
+        let asked = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let heard = std::sync::Arc::clone(&asked);
+        let writer: Writer = std::sync::Arc::new(move |_: &str, user: &str, _| {
+            *heard.lock().unwrap() = user.to_string();
+            Ok("Here it is:\n```java\nclass Solution {\n    public int[] pair_sum(int[] nums, int target) {\n        return new int[0];\n    }\n}\n```\n".into())
+        });
+        let code = translate_starter(&writer, &challenge, "Java", Some(&key)).unwrap();
+        assert!(
+            code.starts_with("class Solution {") && code.ends_with('}'),
+            "{code}"
+        );
+        let prompt = asked.lock().unwrap().clone();
+        assert!(
+            prompt.contains("pair_sum([2,3], 5)")
+                && prompt.contains("def pair_sum")
+                && prompt.contains("in Java"),
+            "{prompt}"
+        );
+        let renamer: Writer = std::sync::Arc::new(|_: &str, _: &str, _| {
+            Ok("```go\nfunc twoSum(nums []int) []int { return nil }\n```".into())
+        });
+        assert!(translate_starter(&renamer, &challenge, "Go", Some(&key)).is_err());
+        assert_eq!(code_in("plain code"), "plain code");
+    }
+
     use super::*;
     use crate::interview::{Coding, Example};
 

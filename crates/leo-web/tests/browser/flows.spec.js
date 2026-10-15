@@ -3119,6 +3119,48 @@ test.describe('past chats', () => {
   });
 });
 
+test('changing the language in Preferences rewrites the open problem\'s starting code, with Undo', async ({ page }) => {
+  const id = 'language-switch-ui';
+  const python = 'def pair_sum(nums, target):\n    pass';
+  const java = 'class Solution {\n    public int[] pair_sum(int[] nums, int target) {\n        return new int[0];\n    }\n}';
+  const mine = 'def pair_sum(nums, target):\n    seen = {}\n    return []';
+  const challenge = { id: 'language-problem-01', title: 'Pair sum', question: 'Find two indices that add up to target.', minutes: 20, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'Python', starter: python, difficulty: 'easy', examples: [{ input: '[2,3], 5', output: '[0,1]' }], constraints: ['One pair.'] } };
+  let item = { id, revision: 1, framework: { title: 'Switching', track: 'coding', company: '', role: '', language: 'Python', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace: { answer: mine, reasoning: '', board: [] }, problems: [{ challenge, workspace: { answer: mine, reasoning: '', board: [] } }], attempts: [] };
+  const asked = [];
+  await page.route('**/api/interviews/*', (route) => {
+    if (route.request().method() === 'PUT') {
+      const body = route.request().postDataJSON();
+      if (body.framework) item.framework = body.framework;
+      if (body.workspace) item.workspace = body.workspace;
+      item.revision++;
+    }
+    return route.fulfill({ json: item });
+  });
+  await page.route('**/api/interviews/*/language', async (route) => {
+    const body = route.request().postDataJSON();
+    asked.push(body);
+    const previous = { language: item.challenge.coding.language, starter: item.challenge.coding.starter, answer: item.workspace.answer };
+    const starter = body.restore ? body.restore.starter : java;
+    const fresh = { ...item.challenge, coding: { ...item.challenge.coding, language: body.language, starter } };
+    item = { ...item, revision: item.revision + 1, challenge: fresh, workspace: { ...item.workspace, answer: body.restore ? body.restore.answer : java }, problems: [{ challenge: fresh, workspace: item.workspace }] };
+    return route.fulfill({ json: { item, changed: true, previous, replaced: true } });
+  });
+  await page.goto(`/#/interviews/${id}`);
+  await expect(page.locator('#interview-answer')).toHaveValue(mine);
+  await page.locator('[data-interview="configure"]').click();
+  await page.locator('#interview-language').selectOption('Java');
+  await page.locator('#interview-form-save').click();
+  await expect(page.locator('#interview-answer')).toHaveValue(java);
+  await expect(page.locator('label[for="interview-answer"]')).toHaveText('Java');
+  expect(asked[0]).toEqual({ challenge: challenge.id, language: 'Java' });
+  const toast = page.locator('.toast');
+  await expect(toast).toContainText('now in Java');
+  await expect(toast).toContainText('Your Python code is kept in Undo');
+  await toast.getByRole('button', { name: 'Undo' }).click();
+  await expect(page.locator('#interview-answer')).toHaveValue(mine);
+  expect(asked[1]).toEqual({ challenge: challenge.id, language: 'Python', restore: { from: java, starter: python, answer: mine } });
+});
+
 test('Settings chooses light or dark for this browser, or follows the device', async ({ page }) => {
   const background = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
   await page.emulateMedia({ colorScheme: 'light' });

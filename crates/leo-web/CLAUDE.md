@@ -329,6 +329,14 @@ seer, meaning, web, room).
   carry their provenance only in `origin` and `sources`: the question and the
   reply never say whether it is a real or official company question or where
   it came from (also in `interviews.preparation`).
+  Changing the coding language in Preferences (2026-10-14, the user's call)
+  rewrites the open problem's starter too: POST `language` asks the quick
+  model (`interview_keys::translate_starter`, metered as `language:`) for the
+  same function name in the new language, `interview::relanguage` saves it
+  only if the problem is still what was read, and the code in the editor
+  becomes the new starter; the toast's Undo restores the old language,
+  starter and code exactly (`restore`, no AI). SQL problems never switch;
+  other saved problems keep their own language.
   `interview_code` reads the full bound draft. `interview_code_edit` suggests one
   exact unique fragment per Accept/Decline card in Ask first; in Auto
   (2026-10-14, the user's call) the proposal arrives with `auto: true` and the

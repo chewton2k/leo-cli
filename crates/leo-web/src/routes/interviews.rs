@@ -401,3 +401,109 @@ pub(crate) async fn coverage(
         Err(_) => failed(interview::Error::Storage),
     }
 }
+
+#[derive(serde::Deserialize)]
+pub(crate) struct LanguageBody {
+    challenge: String,
+    language: String,
+    #[serde(default)]
+    restore: Option<Restore>,
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct Restore {
+    from: String,
+    starter: String,
+    answer: String,
+}
+
+pub(crate) async fn language(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<LanguageBody>,
+) -> Response {
+    let language = body.language.trim().to_string();
+    if !crate::interview_keys::valid(&id, &body.challenge)
+        || language.is_empty()
+        || language.chars().count() > 80
+    {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let quick = quick_of(&state);
+    let ticket = match (&body.restore, &quick) {
+        (None, Some(_)) => state.progress.start(
+            format!("language:{id}:{}", body.challenge),
+            progress::LANGUAGE,
+        ),
+        _ => None,
+    };
+    let quick = match (&ticket, quick) {
+        (Some(t), Some(q)) => Some(progress::metered(q, None, std::sync::Arc::clone(&t.meter))),
+        (_, q) => q,
+    };
+    let done = tokio::task::spawn_blocking(move || {
+        let _held = ticket;
+        let item = interview::load(&state.chats, &id)?;
+        let before = item
+            .challenge
+            .clone()
+            .filter(|c| c.id == body.challenge)
+            .ok_or_else(|| interview::Error::Invalid("Open this problem to change its language.".into()))?;
+        let coding = before
+            .coding
+            .clone()
+            .ok_or_else(|| interview::Error::Invalid("Only coding problems have a language.".into()))?;
+        if coding.language.trim().eq_ignore_ascii_case(&language) && body.restore.is_none() {
+            return Ok(serde_json::json!({"item": item, "changed": false}));
+        }
+        let mut after = before.clone();
+        let old_starter = coding.starter.clone();
+        let (starter, answer) = match body.restore {
+            Some(restore) => {
+                if coding.starter != restore.from {
+                    return Err(interview::Error::Conflict);
+                }
+                (restore.starter, Some(restore.answer))
+            }
+            None => {
+                if crate::interview_keys::is_sql(&coding.language) || crate::interview_keys::is_sql(&language) {
+                    return Err(interview::Error::Invalid(format!(
+                        "This problem stays in {}: SQL and other languages are different problems. New problems will use {language}.",
+                        coding.language
+                    )));
+                }
+                let quick = quick.ok_or_else(|| {
+                    interview::Error::Invalid("Choose a writing AI in Settings to change the problem's language.".into())
+                })?;
+                let key = crate::interview_keys::ready(&state.chats, &id, &before.id);
+                let starter = crate::interview_keys::translate_starter(&quick, &before, &language, key.as_ref())
+                    .map_err(|_| {
+                        interview::Error::Invalid(format!(
+                            "The starting code could not be rewritten in {language}. Try again in a moment."
+                        ))
+                    })?;
+                (starter, None)
+            }
+        };
+        if let Some(c) = after.coding.as_mut() {
+            c.language = language.clone();
+            c.starter = starter.clone();
+        }
+        let (item, previous) = interview::relanguage(&state.chats, &id, &before, after, |_| {
+            Some(answer.unwrap_or_else(|| starter.clone()))
+        })?;
+        let replaced = !previous.trim().is_empty() && previous.trim() != old_starter.trim();
+        Ok(serde_json::json!({
+            "item": item,
+            "changed": true,
+            "previous": {"language": coding.language, "starter": old_starter, "answer": previous},
+            "replaced": replaced,
+        }))
+    })
+    .await;
+    match done {
+        Ok(Ok(view)) => Json(view).into_response(),
+        Ok(Err(why)) => failed(why),
+        Err(_) => failed(interview::Error::Storage),
+    }
+}

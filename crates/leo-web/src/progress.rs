@@ -31,6 +31,11 @@ pub const COMBINE: Kind = Kind {
     chars: 6_000.0,
     secs: 60.0,
 };
+pub const LANGUAGE: Kind = Kind {
+    name: "language",
+    chars: 600.0,
+    secs: 6.0,
+};
 pub const COVERAGE: Kind = Kind {
     name: "coverage",
     chars: 500.0,
@@ -163,7 +168,14 @@ impl Board {
 pub fn valid_key(key: &str) -> bool {
     key.len() <= 200
         && key.split_once(':').is_some_and(|(kind, rest)| {
-            [KEY.name, GRADE.name, COVERAGE.name, COMBINE.name].contains(&kind)
+            [
+                KEY.name,
+                GRADE.name,
+                COVERAGE.name,
+                COMBINE.name,
+                LANGUAGE.name,
+            ]
+            .contains(&kind)
                 && !rest.is_empty()
                 && rest
                     .chars()

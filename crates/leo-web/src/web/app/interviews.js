@@ -1661,8 +1661,10 @@ async function saveInterviewForm(el) {
   el.disabled = true;
   const framework = { title: $('#interview-title').value.trim(), track: el.dataset.track, company: $('#interview-company').value.trim(), role: $('#interview-role').value.trim(), language: $('#interview-language').value.trim(), date: $('#interview-date').value, weekly_minutes: Number(el.dataset.minutes) || 120, skills: $('#interview-skills').value.split('\n').map((s) => s.trim()).filter(Boolean), wants: $('#interview-wants').value, style: el.dataset.style };
   try {
-    await api(`/api/interviews/${enc(el.dataset.id)}`, { method: 'PUT', body: { action: 'framework', revision: Number(el.dataset.revision), framework } });
+    const saved = await api(`/api/interviews/${enc(el.dataset.id)}`, { method: 'PUT', body: { action: 'framework', revision: Number(el.dataset.revision), framework } });
     if (Number(el.dataset.revision) === 0) interviewStart = { id: el.dataset.id };
+    const coding = saved?.challenge?.coding;
+    if (framework.track === 'coding' && coding && coding.language.trim().toLowerCase() !== framework.language.toLowerCase()) await switchInterviewLanguage(el, saved, framework.language);
     closeSheet();
     go(`#/interviews/${enc(el.dataset.id)}`);
   } catch (e) {
@@ -1672,6 +1674,40 @@ async function saveInterviewForm(el) {
 }
 
 
+
+async function switchInterviewLanguage(el, item, language) {
+  const challenge = item.challenge.id;
+  const label = `Rewriting the starting code in ${language}`;
+  $('#interview-form-error')?.insertAdjacentHTML('afterend', meterBar('interview-language-meter', label));
+  el.textContent = 'Switching language…';
+  const stop = watchProgress(`language:${item.id}:${challenge}`, (view) => setMeter('interview-language-meter', view));
+  let done;
+  try {
+    done = await api(`/api/interviews/${enc(item.id)}/language`, { method: 'POST', body: { challenge, language } });
+  } catch (e) {
+    toast(e.message, { bad: true });
+    return;
+  } finally {
+    stop();
+    document.getElementById('interview-language-meter')?.remove();
+  }
+  if (!done?.changed) return;
+  interviews.clearDraft(localStorage, item.id, challenge);
+  const now = done.item.challenge.coding.starter;
+  const back = done.previous;
+  toast(done.replaced ? `This problem is now in ${language}. Your ${back.language} code is kept in Undo.` : `This problem is now in ${language}.`, {
+    action: 'Undo',
+    run: async () => {
+      try {
+        await api(`/api/interviews/${enc(item.id)}/language`, { method: 'POST', body: { challenge, language: back.language, restore: { from: now, starter: back.starter, answer: back.answer } } });
+        interviews.clearDraft(localStorage, item.id, challenge);
+        if (location.hash === `#/interviews/${enc(item.id)}`) go(location.hash);
+      } catch (e) {
+        toast(e.message, { bad: true });
+      }
+    },
+  });
+}
 
 async function interviewAction(el) {
   const action = el.dataset.interview;

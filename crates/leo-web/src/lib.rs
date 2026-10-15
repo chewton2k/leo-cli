@@ -742,6 +742,10 @@ fn router(state: AppState) -> Router {
             post(routes::interviews::coverage),
         )
         .route(
+            "/api/interviews/{id}/language",
+            post(routes::interviews::language),
+        )
+        .route(
             "/api/interviews/{id}",
             get(routes::interviews::get)
                 .put(routes::interviews::put)
