@@ -471,7 +471,7 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
         java_fetch: Default::default(),
         rust,
         rust_fetch: Default::default(),
-        progress: Default::default(),
+        progress: Arc::new(progress::Board::kept_in(&chats)),
         warm: Default::default(),
         chat,
         settings,

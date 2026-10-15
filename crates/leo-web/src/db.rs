@@ -104,6 +104,10 @@ CREATE TABLE IF NOT EXISTS graph_meta (
     key TEXT PRIMARY KEY,
     data TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS timings (
+    kind TEXT PRIMARY KEY,
+    data TEXT NOT NULL
+);
 ";
 
 pub struct Db {

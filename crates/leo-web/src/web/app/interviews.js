@@ -920,6 +920,7 @@ async function gradeAndReview(session, attempt, board) {
         const item = await api(`/api/interviews/${enc(id)}/grade`, { method: 'POST', body: { attempt } });
         if (interviewPage === session && session.item.id === id) session.item = { ...session.item, attempts: item.attempts, revision: item.revision };
       });
+      await finishMeter('interview-grade-meter');
     } catch (e) {
       if (e instanceof Locked) throw e;
       session.gradeError = { attempt, message: e.message };
@@ -1025,6 +1026,8 @@ async function loadInterviewKey(session, force = false) {
     const view = await api(`/api/interviews/${enc(session.item.id)}/key?challenge=${enc(c.id)}`);
     if (!interviewHere(session) || session.item.challenge?.id !== c.id) return;
     const changed = session.key?.challenge !== c.id || session.key.status !== view.status || JSON.stringify(session.key.key) !== JSON.stringify(view.key);
+    if (session.key?.challenge === c.id && session.key.status === 'preparing' && view.status !== 'preparing') await finishMeter('interview-key-meter');
+    if (!interviewHere(session) || session.item.challenge?.id !== c.id) return;
     session.key = { challenge: c.id, ...view };
     if (changed) drawInterviewChecks(session);
     else if (view.progress) setMeter('interview-key-meter', view.progress);
@@ -1376,6 +1379,7 @@ async function checkInterviewCoverage(session) {
   const stop = watchProgress(`coverage:${session.item.id}:${c.id}`, (view) => { session.coverProgress = view; setMeter('interview-coverage-meter', view); });
   try {
     const found = await api(`/api/interviews/${enc(session.item.id)}/coverage`, { method: 'POST', body: { challenge: c.id, workspace: interviews.workspace(session.draft) } });
+    await finishMeter('interview-coverage-meter');
     if (interviewHere(session) && session.item.challenge?.id === c.id) session.coverage = { challenge: c.id, ...found };
   } catch (e) {
     if (e instanceof Locked) throw e;
@@ -1684,6 +1688,7 @@ async function switchInterviewLanguage(el, item, language) {
   let done;
   try {
     done = await api(`/api/interviews/${enc(item.id)}/language`, { method: 'POST', body: { challenge, language } });
+    await finishMeter('interview-language-meter');
   } catch (e) {
     toast(e.message, { bad: true });
     return;

@@ -471,9 +471,15 @@ works (plan: `.superpowers/plans/2026-10-12-interview-instant-feedback.md`):
 - Progress (`progress.rs`, 2026-10-14): long AI jobs get a `Meter` on
   `AppState.progress` (`key:`, `grade:`, `coverage:` keys, GET
   `/api/progress/{key}`). It counts streamed characters (keys stream through
-  `Powers.chat`) against the expected size and also moves with time
-  (1 - e^-t/expected), so a thinking model never looks stuck; it stops at 97%
-  until the job ends and learns sizes and durations per kind. The page draws
+  `Powers.chat`) against the expected size, and with time it moves at an even
+  pace to 90% at the expected time, then slows towards 97% (never past) until
+  the job ends; it never curves early, so it does not crawl and then jump.
+  The expected time is the upper quarter of the last 12 finished runs of that
+  kind (the usage monitors' P90 idea; pace per character for sized jobs), kept
+  in leo.db `timings` so it survives restarts; a run that wrote nothing is
+  not learned. The view says about how long is left or "taking longer than
+  usual" (`slow`, past 1.25 x expected). The page glides between polls and
+  `finishMeter` fills the bar to 100% "done" before the result replaces it. The page draws
   `meterBar` (percent, elapsed, about how long). Python's download reports
   bytes on disk. Background panel, upload and recording bars creep within a
   step using the average step time and show elapsed time; Felix's answer in

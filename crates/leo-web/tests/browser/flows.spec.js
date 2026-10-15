@@ -906,10 +906,13 @@ test.describe('Felix', () => {
     for (let i = 0; i < 8; i++) await face.click({ delay: 10 });
     await expect(face).toHaveClass(/\bsweet\b/);
     await expect(face).not.toHaveClass(/\bsweet\b/, { timeout: 5000 });
+    await page.locator('[data-chat="close"]').click();
+    await expect(page.locator('aside.chat')).toBeHidden();
     await page.goto('/#/settings');
     await page.locator('[data-action="felix-pick"][data-felix="cute"]').click();
     await expect(page.locator('html')).not.toHaveAttribute('data-felix', /./);
     expect(await page.evaluate(() => localStorage.getItem('leo-felix'))).toBeNull();
+    await page.locator('#chat-toggle').click();
     const cute = page.locator('#chat-face .felix');
     await expect(cute.locator('.felix-skin')).toHaveCSS('fill', 'rgb(180, 207, 231)');
     await page.waitForTimeout(1600);
@@ -5335,22 +5338,36 @@ for (const [language, starter, answer, tests, passed] of [
   });
 }
 
-test('preparing instant checks shows a moving progress bar with time so far', async ({ page }) => {
+test('preparing instant checks shows a moving progress bar with time left, says when it runs long, and fills before the checks appear', async ({ page }) => {
   const id = 'progress-key-01';
   const challenge = { id: 'progress-key-problem', title: 'Sum a list', question: 'Return the sum.', minutes: 10, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'JavaScript', starter: 'function solve(nums) {\n}', difficulty: 'easy', examples: [{ input: '[1,2]', output: '3' }], constraints: ['n <= 10'] } };
   const workspace = { answer: 'function solve(nums) {\n}', reasoning: '', board: [] };
   const item = { id, revision: 1, framework: { title: 'Progress practice', track: 'coding', company: '', role: '', language: 'JavaScript', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace, problems: [{ challenge, workspace }], attempts: [] };
   let fraction = 0.2;
+  let ready = false;
   await page.route('**/api/interviews', (route) => route.fulfill({ json: [] }));
-  await page.route(`**/api/interviews/${id}/key?*`, (route) => route.fulfill({ json: { status: 'preparing', progress: { fraction, seconds: Math.round(fraction * 60), expected: 45 } } }));
+  await page.route(`**/api/interviews/${id}/key?*`, (route) => route.fulfill({ json: ready ? { status: 'failed', error: 'stopped for the test' } : { status: 'preparing', progress: { fraction, seconds: Math.round(fraction * 60), expected: 45, left: Math.max(0, 45 - Math.round(fraction * 60)), slow: fraction > 0.9 } } }));
   await page.route(`**/api/interviews/${id}`, (route) => route.fulfill({ json: item }));
   await page.goto(`/#/interviews/${id}`);
   const meter = page.locator('#interview-key-meter');
   await expect(meter).toHaveAttribute('role', 'progressbar');
-  await expect(meter).toContainText('Preparing instant checks · 20% · 12 s of about 45 s');
+  await expect(meter).toContainText('Preparing instant checks · 20% · 12 s · about 33 s left');
   fraction = 0.6;
   await expect(meter).toHaveAttribute('aria-valuenow', '60');
-  await expect(meter).toContainText('60% · 36 s');
+  await expect(meter).toContainText('60% · 36 s · about 9 s left');
+  fraction = 0.95;
+  await expect(meter).toContainText('95% · 57 s · taking longer than usual');
+  await page.evaluate(() => {
+    window.meterSeen = [];
+    new MutationObserver(() => {
+      const m = document.getElementById('interview-key-meter');
+      const now = m ? `${m.getAttribute('aria-valuenow')} ${m.querySelector('.meter-text').textContent}` : 'gone';
+      if (window.meterSeen.at(-1) !== now) window.meterSeen.push(now);
+    }).observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true });
+  });
+  ready = true;
+  await expect(meter).toHaveCount(0);
+  expect(await page.evaluate(() => window.meterSeen)).toEqual(['100 Preparing instant checks · done', 'gone']);
 });
 
 test('C++ downloads its compiler once with a progress bar and explains types it cannot fill in', async ({ page }) => {

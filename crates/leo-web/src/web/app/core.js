@@ -854,7 +854,21 @@ function meterText(label, view) {
   const seconds = Number(view?.seconds) || 0;
   const expected = Number(view?.expected) || 0;
   const took = seconds >= 60 ? `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}` : `${seconds} s`;
-  return `${label} · ${meterPercent(view?.fraction)}%${seconds ? ` · ${took}` : ''}${expected && seconds < expected ? ` of about ${expected >= 60 ? `${Math.round(expected / 60)} min` : `${expected} s`}` : ''}`;
+  const left = Number(view?.left ?? Math.max(0, expected - seconds));
+  const rest = view?.slow ? ' · taking longer than usual' : expected && left > 0 ? ` · about ${left >= 60 ? `${Math.round(left / 60)} min` : `${left} s`} left` : '';
+  return `${label} · ${meterPercent(view?.fraction)}%${seconds ? ` · ${took}` : ''}${rest}`;
+}
+
+function finishMeter(id) {
+  const el = document.getElementById(id);
+  if (!el) return Promise.resolve();
+  el.setAttribute('aria-valuenow', '100');
+  el.querySelector('.meter-text').textContent = `${el.dataset.label} · done`;
+  const bar = el.querySelector('i');
+  bar.style.transitionDuration = '.25s';
+  bar.style.width = '100%';
+  const still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  return new Promise((resolve) => setTimeout(resolve, still ? 0 : 300));
 }
 
 function meterBar(id, label, view) {
