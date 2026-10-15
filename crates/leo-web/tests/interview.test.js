@@ -426,7 +426,7 @@ test('problems filter by topic, counting each topic once per problem and keeping
   const p = (...topics) => ({ challenge: { topics } });
   const problems = [p('DFS', 'Graphs'), p('Dynamic programming'), p(), p('dfs'), p('Graphs', 'graphs')];
   const all = I.topicFilter(problems);
-  assert.deepEqual(all.topics, [{ name: 'DFS', count: 2 }, { name: 'Graphs', count: 2 }, { name: 'Dynamic programming', count: 1 }]);
+  assert.deepEqual(all.topics, [{ name: 'DFS', count: 2, solved: 0 }, { name: 'Graphs', count: 2, solved: 0 }, { name: 'Dynamic programming', count: 1, solved: 0 }]);
   assert.equal(all.untagged, 1);
   assert.equal(all.chosen, null);
   assert.deepEqual(all.shown, [0, 1, 2, 3, 4]);
@@ -437,4 +437,26 @@ test('problems filter by topic, counting each topic once per problem and keeping
   assert.deepEqual(gone.shown, [0, 1, 2, 3, 4]);
   assert.equal(I.topicFilter([p('DFS')], I.NO_TOPIC).chosen, null);
   assert.deepEqual(I.topicFilter([]).topics, []);
+});
+
+test('problems that were solved count once per topic in the topic filter', () => {
+  const p = (id, ...topics) => ({ challenge: { id, topics } });
+  const solved = new Set(['a', 'c']);
+  const f = I.topicFilter([p('a', 'Greedy'), p('b', 'Greedy'), p('c'), p('d', 'DFS')], null, solved);
+  assert.deepEqual(f.topics.map((t) => [t.name, t.solved, t.count]), [['Greedy', 1, 2], ['DFS', 0, 1]]);
+  assert.equal(f.solved, 2);
+  assert.equal(f.untaggedSolved, 1);
+});
+
+test('the page and the practice list agree on what passed', () => {
+  const cases = [
+    [{ checks: [{ pass: true }, { pass: true }] }, true],
+    [{ checks: [{ pass: true }, { pass: false }] }, false],
+    [{ grade: { criteria: [{ verdict: 'met' }, { verdict: 'met' }] } }, true],
+    [{ grade: { criteria: [{ verdict: 'met' }, { verdict: 'partly' }] } }, false],
+    [{ feedback: { scores: [{ value: 3 }, { value: 4 }] } }, true],
+    [{ feedback: { scores: [{ value: 2 }, { value: 3 }] } }, false],
+    [{}, false],
+  ];
+  for (const [attempt, passed] of cases) assert.equal(I.attemptStatus(attempt).kind === 'passed', passed, JSON.stringify(attempt));
 });

@@ -455,15 +455,58 @@ pub fn load(path: &Path, id: &str) -> Result<Interview, Error> {
     Ok(item)
 }
 
+pub fn passed(attempt: &serde_json::Value) -> bool {
+    let list = |key: &str| attempt[key].as_array().cloned().unwrap_or_default();
+    let checks = list("checks");
+    if !checks.is_empty() {
+        return checks.iter().all(|c| c["pass"].as_bool() == Some(true));
+    }
+    let verdicts = attempt["grade"]["criteria"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    if !verdicts.is_empty() {
+        return verdicts.iter().all(|v| v["verdict"] == "met");
+    }
+    let scores = attempt["feedback"]["scores"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    !scores.is_empty()
+        && scores
+            .iter()
+            .filter_map(|s| s["value"].as_f64())
+            .sum::<f64>()
+            / scores.len() as f64
+            >= 3.0
+}
+
+fn tally(problems: usize, attempts: &[serde_json::Value]) -> serde_json::Value {
+    let mut submitted = std::collections::BTreeSet::new();
+    let mut solved = std::collections::BTreeSet::new();
+    for attempt in attempts {
+        let Some(id) = attempt["challenge"]["id"].as_str() else {
+            continue;
+        };
+        submitted.insert(id);
+        if passed(attempt) {
+            solved.insert(id);
+        }
+    }
+    serde_json::json!({"problems": problems.max(submitted.len()), "submitted": submitted.len(), "solved": solved.len()})
+}
+
 pub fn list(path: &Path) -> Result<Vec<serde_json::Value>, Error> {
     db::for_chats(path).with(|c| {
-        let mut query = c.prepare("SELECT id, json_extract(data, '$.framework'), updated, json_array_length(data, '$.attempts'), length(CAST(data AS BLOB)) FROM interviews ORDER BY updated DESC LIMIT ?1")?;
-        let rows = query.query_map([MOST_PLANS as i64], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, u32>(3)?, r.get::<_, i64>(4)?)))?;
+        let mut query = c.prepare("SELECT id, json_extract(data, '$.framework'), updated, json_array_length(data, '$.attempts'), length(CAST(data AS BLOB)), coalesce(json_array_length(data, '$.problems'), 0), json_type(data, '$.challenge'), coalesce(json_extract(data, '$.attempts'), '[]') FROM interviews ORDER BY updated DESC LIMIT ?1")?;
+        let rows = query.query_map([MOST_PLANS as i64], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, u32>(3)?, r.get::<_, i64>(4)?, r.get::<_, i64>(5)?, r.get::<_, Option<String>>(6)?, r.get::<_, String>(7)?)))?;
         let mut found = Vec::new();
         for row in rows {
-            let (id, framework, updated, attempts, bytes) = row?;
+            let (id, framework, updated, attempts, bytes, problems, open, history) = row?;
             if let Ok(framework) = serde_json::from_str::<Framework>(&framework) {
-                found.push(serde_json::json!({"id":id,"framework":framework,"updated":updated,"attempts":attempts,"bytes":bytes}));
+                let problems = if problems == 0 && open.as_deref() == Some("object") { 1 } else { problems as usize };
+                let history: Vec<serde_json::Value> = serde_json::from_str(&history).unwrap_or_default();
+                found.push(serde_json::json!({"id":id,"framework":framework,"updated":updated,"attempts":attempts,"bytes":bytes,"tally":tally(problems, &history)}));
             }
         }
         Ok(found)
@@ -1231,6 +1274,53 @@ mod tests {
             constraints: vec!["Two or more values; exactly one pair.".into()],
         });
         c
+    }
+
+    #[test]
+    fn the_practice_list_counts_each_problem_once_however_often_it_was_submitted() {
+        let pass =
+            serde_json::json!({"challenge":{"id":"a"},"checks":[{"pass":true},{"pass":true}]});
+        let fail =
+            serde_json::json!({"challenge":{"id":"a"},"checks":[{"pass":true},{"pass":false}]});
+        let graded = serde_json::json!({"challenge":{"id":"b"},"grade":{"criteria":[{"verdict":"met"},{"verdict":"met"}]}});
+        let partly = serde_json::json!({"challenge":{"id":"c"},"grade":{"criteria":[{"verdict":"met"},{"verdict":"partly"}]}});
+        let solid = serde_json::json!({"challenge":{"id":"d"},"feedback":{"scores":[{"value":3},{"value":4}]}});
+        let weak = serde_json::json!({"challenge":{"id":"e"},"feedback":{"scores":[{"value":2},{"value":3}]}});
+        let waiting = serde_json::json!({"challenge":{"id":"f"}});
+        assert!(
+            passed(&pass)
+                && !passed(&fail)
+                && passed(&graded)
+                && !passed(&partly)
+                && passed(&solid)
+                && !passed(&weak)
+                && !passed(&waiting)
+        );
+        let attempts = [
+            fail.clone(),
+            pass.clone(),
+            pass,
+            fail,
+            graded,
+            partly,
+            solid,
+            weak,
+            waiting,
+        ];
+        assert_eq!(
+            tally(9, &attempts),
+            serde_json::json!({"problems":9,"submitted":6,"solved":3})
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let id = "interview-tally-01";
+        configure(dir.path(), id, 0, framework()).unwrap();
+        set_challenge(dir.path(), id, challenge("challenge-tally-01")).unwrap();
+        set_challenge(dir.path(), id, challenge("challenge-tally-02")).unwrap();
+        let listed = list(dir.path()).unwrap();
+        assert_eq!(
+            listed[0]["tally"],
+            serde_json::json!({"problems":2,"submitted":0,"solved":0})
+        );
     }
 
     #[test]

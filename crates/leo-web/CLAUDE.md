@@ -372,6 +372,11 @@ seer, meaning, web, room).
   its count, No topic; arrow keys, Escape and an outside click close it;
   `interviews.topicFilter`), remembered
   per practice in `leo-interview-topic:<id>`; the question shows its topics.
+  Each topic row says how many of its problems are solved (`2/5 solved`).
+  The practice list shows type · company (or General) · position and
+  problems, submitted and solved, each problem counted once
+  (`interview::list` `tally`; `interview::passed` mirrors
+  `interviews.attemptStatus` passed, and node and Rust tests share cases).
   Problem pictures (2026-10-14, the user's request): the question is Markdown,
   so a ```mermaid or ```svg block in it is drawn like in notes, and each
   coding example may carry a `diagram` (same kind of block, at most

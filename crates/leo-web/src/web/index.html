@@ -1811,6 +1811,9 @@ body.interview-resizing { cursor: col-resize; user-select: none; }
 .interview-track:hover { border-color: var(--accent); }
 .interview-track > svg { position: absolute; width: 18px; height: 18px; right: 14px; top: 24px; color: var(--muted); }
 .interview-plan { display: flex; flex-direction: column; gap: 4px; border: 0; background: none; text-align: left; color: var(--text); padding: 8px 0; font: inherit; cursor: pointer; }
+.interview-plan-tally { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+.interview-plan-tally > span { font-size: 12.5px; font-weight: 600; padding: 2px 9px; border-radius: 999px; background: var(--surface-2); color: var(--muted); font-variant-numeric: tabular-nums; }
+.interview-plan-tally > .solved { background: color-mix(in srgb, var(--good) 16%, transparent); color: var(--text); }
 .interview-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 4px 0 12px; }
 .interview-toolbar .buttons { margin: 0; }
 .interview-toolbar .hint { flex: 1; min-width: 160px; margin: 0; font-size: 13px; }

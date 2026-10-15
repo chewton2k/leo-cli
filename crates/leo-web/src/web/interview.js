@@ -787,19 +787,21 @@ fn leo_tree_json(root: &Option<std::rc::Rc<std::cell::RefCell<TreeNode>>>, out: 
   }
   const NO_TOPIC = '';
 
-  function topicFilter(problems = [], chosen = null) {
+  function topicFilter(problems = [], chosen = null, solved = new Set()) {
     const counts = new Map();
     let untagged = 0;
+    let untaggedSolved = 0;
     for (const p of problems) {
       const topics = p.challenge?.topics || [];
-      if (!topics.length) untagged += 1;
+      const done = solved.has(p.challenge?.id);
+      if (!topics.length) { untagged += 1; if (done) untaggedSolved += 1; }
       const mine = new Set();
       for (const t of topics) {
         const key = t.toLowerCase();
         if (mine.has(key)) continue;
         mine.add(key);
         const had = counts.get(key);
-        counts.set(key, { name: had ? had.name : t, count: (had ? had.count : 0) + 1 });
+        counts.set(key, { name: had ? had.name : t, count: (had ? had.count : 0) + 1, solved: (had ? had.solved : 0) + (done ? 1 : 0) });
       }
     }
     const topics = [...counts.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
@@ -810,7 +812,8 @@ fn leo_tree_json(root: &Option<std::rc::Rc<std::cell::RefCell<TreeNode>>>, out: 
       const topics = problems[i].challenge?.topics || [];
       return pick === NO_TOPIC ? !topics.length : topics.some((t) => t.toLowerCase() === pick.toLowerCase());
     });
-    return { topics, untagged, chosen: pick, shown };
+    const allSolved = problems.filter((p) => solved.has(p.challenge?.id)).length;
+    return { topics, untagged, untaggedSolved, solved: allSolved, chosen: pick, shown };
   }
 
   function attemptStatus(attempt = {}) {

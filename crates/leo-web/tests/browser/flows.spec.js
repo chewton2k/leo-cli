@@ -5309,12 +5309,26 @@ test('an open submission and folded review stay open when Felix answers and the 
   if (await review.count()) await expect(page.locator('#interview-results .interview-review details').first()).toHaveAttribute('open', '');
 });
 
+test('the practice list shows type, company or General, position, and problems submitted and solved', async ({ page }) => {
+  await page.route('**/api/interviews', (route) => route.fulfill({ json: [
+    { id: 'list-tally-01', updated: new Date().toISOString(), attempts: 25, bytes: 1, framework: { title: 'Coding practice', track: 'coding', company: 'Pinterest', role: 'Software Engineering Intern', language: 'Python', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, tally: { problems: 14, submitted: 9, solved: 6 } },
+    { id: 'list-tally-02', updated: new Date().toISOString(), attempts: 1, bytes: 1, framework: { title: 'Quant prep', track: 'quant', company: '', role: 'Trader', language: '', style: 'mock', date: '', weekly_minutes: 120, skills: ['Probability'], wants: '' }, tally: { problems: 1, submitted: 1, solved: 0 } },
+  ] }));
+  await page.goto('/#/interviews');
+  const rows = page.locator('.interview-plan');
+  await expect(rows.nth(0).locator('.hint')).toHaveText('Coding · Pinterest · Software Engineering Intern');
+  await expect(rows.nth(0).locator('.interview-plan-tally > span')).toHaveText(['14 problems', '9 submitted', '6 solved']);
+  await expect(rows.nth(1).locator('.hint')).toHaveText('Quant · General · Trader');
+  await expect(rows.nth(1).locator('.interview-plan-tally > span')).toHaveText(['1 problem', '1 submitted', '0 solved']);
+});
+
 test('problems filter by topic from a dropdown, the choice is remembered, and the question shows its topics', async ({ page }) => {
   const id = 'topic-filter-01';
   const problem = (n, topics) => ({ id: `topic-problem-${n}`, title: `Problem about ${topics[0] || 'anything'} ${n}`, question: 'Solve it.', minutes: 20, skills: ['Approach'], topics, origin: 'generated', sources: [], coding: { language: 'Python', starter: 'def solve():\n    pass', difficulty: 'easy', examples: [{ input: '1', output: '1' }], constraints: ['None.'] } });
   const list = [problem(1, ['DFS']), problem(2, ['Dynamic programming']), problem(3, ['DFS', 'Graphs']), problem(4, [])];
   const workspace = { answer: 'def solve():\n    pass', reasoning: '', board: [] };
-  const item = { id, revision: 1, framework: { title: 'Topics', track: 'coding', company: '', role: '', language: 'Python', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge: list[2], workspace, problems: list.map((challenge) => ({ challenge, workspace })), attempts: [] };
+  const attempt = (n, pass) => ({ id: `topic-attempt-${n}-${pass}`, challenge: list[n - 1], workspace, at: new Date().toISOString(), feedback: null, checks: [{ id: 't1', kind: 'test', label: 'case', pass }] });
+  const item = { id, revision: 1, framework: { title: 'Topics', track: 'coding', company: '', role: '', language: 'Python', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge: list[2], workspace, problems: list.map((challenge) => ({ challenge, workspace })), attempts: [attempt(3, false), attempt(3, true), attempt(3, true), attempt(1, false)] };
   await page.route(`**/api/interviews/${id}`, (route) => route.fulfill({ json: item }));
   await page.goto(`/#/interviews/${id}`);
   const button = page.locator('[data-interview="topic-menu"]');
@@ -5330,7 +5344,7 @@ test('problems filter by topic from a dropdown, the choice is remembered, and th
   await expect(menu).toBeVisible();
   await expect(button).toHaveAttribute('aria-expanded', 'true');
   await expect(rows).toHaveText(['All topics', 'DFS', 'Dynamic programming', 'Graphs', 'No topic']);
-  await expect(menu.locator('[data-interview="topic"] .pick-price')).toHaveText(['4 problems', '2 problems', '1 problem', '1 problem', '1 problem']);
+  await expect(menu.locator('[data-interview="topic"] .pick-price')).toHaveText(['1/4 solved', '1/2 solved', '0/1 solved', '1/1 solved', '0/1 solved']);
   await expect(menu.locator('[data-interview="sort-topics"]')).toContainText('1 without a topic');
   await menu.locator('[data-interview="topic"]', { hasText: 'Dynamic programming' }).click();
   await expect(menu).toBeHidden();
@@ -5342,7 +5356,7 @@ test('problems filter by topic from a dropdown, the choice is remembered, and th
   await button.click();
   await page.keyboard.press('ArrowUp');
   await page.keyboard.press('Enter');
-  await expect(shown).toHaveText(['Problem 1', 'Problem 3']);
+  await expect(shown).toHaveText(['Problem 1 · Submitted', 'Problem 3 · Submitted']);
   await button.click();
   await page.keyboard.press('Escape');
   await expect(menu).toBeHidden();
