@@ -421,3 +421,20 @@ test('Rust tests become a main that resumes after a panic, with LeetCode’s Sol
   assert.equal(broken.compile, 'error[E0425]: cannot find value `y` in this scope\n --> line 3:9');
   assert.equal(I.rustRound('\n@@leo-start a\n\n@@leo {"id":"a","got":[]}\n', '', ['a'], 0).next, null);
 });
+
+test('problems filter by topic, counting each topic once per problem and keeping untagged ones reachable', () => {
+  const p = (...topics) => ({ challenge: { topics } });
+  const problems = [p('DFS', 'Graphs'), p('Dynamic programming'), p(), p('dfs'), p('Graphs', 'graphs')];
+  const all = I.topicFilter(problems);
+  assert.deepEqual(all.topics, [{ name: 'DFS', count: 2 }, { name: 'Graphs', count: 2 }, { name: 'Dynamic programming', count: 1 }]);
+  assert.equal(all.untagged, 1);
+  assert.equal(all.chosen, null);
+  assert.deepEqual(all.shown, [0, 1, 2, 3, 4]);
+  assert.deepEqual(I.topicFilter(problems, 'dfs').shown, [0, 3]);
+  assert.deepEqual(I.topicFilter(problems, I.NO_TOPIC).shown, [2]);
+  const gone = I.topicFilter(problems, 'Random walks');
+  assert.equal(gone.chosen, null, 'a topic no problem has any more falls back to all');
+  assert.deepEqual(gone.shown, [0, 1, 2, 3, 4]);
+  assert.equal(I.topicFilter([p('DFS')], I.NO_TOPIC).chosen, null);
+  assert.deepEqual(I.topicFilter([]).topics, []);
+});

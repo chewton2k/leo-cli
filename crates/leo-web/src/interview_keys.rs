@@ -1217,6 +1217,7 @@ mod tests {
             question: "Find two indices.".into(),
             minutes: 20,
             skills: vec!["Approach".into()],
+            topics: vec![],
             origin: "generated".into(),
             sources: vec![],
             coding: Some(Coding {

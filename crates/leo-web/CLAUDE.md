@@ -355,6 +355,14 @@ seer, meaning, web, room).
   becomes the new starter; the toast's Undo restores the old language,
   starter and code exactly (`restore`, no AI). SQL problems never switch;
   other saved problems keep their own language.
+  Topics (2026-10-15, the user's request): every problem carries 1-3
+  `topics` (any field: DFS, Dynamic programming; Random walks for quant), at
+  most `MOST_TOPICS`, distinct ignoring case. Felix is told to tag every new
+  problem and to reuse `topics_in_use` (in `<interview_material>`) instead of
+  near-duplicates, and retags with `interview_problem_edit`. The practice
+  page shows a filter row above the problem chips (All, each topic with its
+  count, No topic for older problems; `interviews.topicFilter`), remembered
+  per practice in `leo-interview-topic:<id>`; the question shows its topics.
   Problem pictures (2026-10-14, the user's request): the question is Markdown,
   so a ```mermaid or ```svg block in it is drawn like in notes, and each
   coding example may carry a `diagram` (same kind of block, at most

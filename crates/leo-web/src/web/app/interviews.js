@@ -193,7 +193,32 @@ function drawInterviewProblems(session) {
   const item = session.item;
   const problems = item.problems?.length ? item.problems : item.challenge ? [{ challenge: item.challenge }] : [];
   const busy = Boolean(session.preparing || session.submitting || session.switching);
-  box.innerHTML = `${problems.slice(0, interviews.MOST_PROBLEMS).map((p, i) => `<button class="pick-chip${p.challenge.id === item.challenge?.id ? ' on' : ''}" data-interview="problem" data-id="${esc(p.challenge.id)}" aria-pressed="${p.challenge.id === item.challenge?.id}" title="${esc(p.challenge.title)}"${busy ? ' disabled' : ''}>Problem ${i + 1}${item.attempts.some((a) => a.challenge.id === p.challenge.id) ? ' · Submitted' : ''}</button>`).join('')}<button class="btn sm plain" data-interview="next"${busy || problems.length >= interviews.MOST_PROBLEMS ? ' disabled' : ''}>${session.preparing ? 'Preparing…' : '+ Problem'}</button>`;
+  const filter = interviews.topicFilter(problems.slice(0, interviews.MOST_PROBLEMS), interviewTopic(session));
+  const topicChip = (label, attrs, on) => `<button class="pick-chip${on ? ' on' : ''}" data-interview="topic" ${attrs} aria-pressed="${on}">${label}</button>`;
+  const topics = filter.topics.length ? `<div class="interview-topics" role="group" aria-label="Show problems by topic">${topicChip(`All · ${Math.min(problems.length, interviews.MOST_PROBLEMS)}`, 'data-all="1"', filter.chosen === null)}${filter.topics.map((t) => topicChip(`${esc(t.name)} · ${t.count}`, `data-topic="${esc(t.name)}"`, filter.chosen !== null && filter.chosen !== interviews.NO_TOPIC && filter.chosen.toLowerCase() === t.name.toLowerCase())).join('')}${filter.untagged ? topicChip(`No topic · ${filter.untagged}`, 'data-none="1"', filter.chosen === interviews.NO_TOPIC) : ''}</div>` : '';
+  box.innerHTML = `${topics}${problems.slice(0, interviews.MOST_PROBLEMS).map((p, i) => !filter.shown.includes(i) ? '' : `<button class="pick-chip${p.challenge.id === item.challenge?.id ? ' on' : ''}" data-interview="problem" data-id="${esc(p.challenge.id)}" aria-pressed="${p.challenge.id === item.challenge?.id}" title="${esc(p.challenge.title)}"${busy ? ' disabled' : ''}>Problem ${i + 1}${item.attempts.some((a) => a.challenge.id === p.challenge.id) ? ' · Submitted' : ''}</button>`).join('')}<button class="btn sm plain" data-interview="next"${busy || problems.length >= interviews.MOST_PROBLEMS ? ' disabled' : ''}>${session.preparing ? 'Preparing…' : '+ Problem'}</button>`;
+}
+
+function interviewTopic(session) {
+  if (session.topic === undefined) {
+    try {
+      const saved = localStorage.getItem(`leo-interview-topic:${session.item.id}`);
+      session.topic = saved === null ? null : saved === '\u0000' ? interviews.NO_TOPIC : saved;
+    } catch (e) {
+      session.topic = null;
+    }
+  }
+  return session.topic;
+}
+
+function pickInterviewTopic(session, el) {
+  session.topic = el.dataset.all ? null : el.dataset.none ? interviews.NO_TOPIC : el.dataset.topic;
+  try {
+    const key = `leo-interview-topic:${session.item.id}`;
+    if (session.topic === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, session.topic === interviews.NO_TOPIC ? '\u0000' : session.topic);
+  } catch (e) {}
+  drawInterviewProblems(session);
 }
 
 function useInterviewProblem(session, item) {
@@ -304,7 +329,7 @@ function drawInterviewChallenge(session) {
   const c = session.item.challenge;
   const coding = c?.coding;
   const busy = session.preparing;
-  keepOpen($('#interview-pane-question'), c ? `<div class="interview-toolbar"><h2>${esc(c.title)}</h2><div class="buttons">${coding ? `<span class="chip">${esc(coding.difficulty)}</span>` : ''}<span class="chip">${c.minutes} min</span></div></div><p class="hint">${esc(c.origin === 'generated' ? 'Original practice' : c.origin === 'official' ? 'Official preparation' : 'Candidate report · unverified')}</p><div class="prose">${md.render(c.question, { interactive: false })}</div>${coding ? `<h3>Examples</h3>${coding.examples.map((e, i) => `<div class="interview-example"><b>Example ${i + 1}</b><pre>Input: ${esc(e.input)}\nOutput: ${esc(e.output)}</pre>${e.explanation ? `<p class="hint">${esc(e.explanation)}</p>` : ''}${e.diagram ? `<div class="prose interview-example-diagram">${md.render(e.diagram, { interactive: false })}</div>` : ''}</div>`).join('')}<h3>Constraints</h3><ul class="interview-constraints">${coding.constraints.map((s) => `<li>${esc(s)}</li>`).join('')}</ul>` : ''}${c.sources.length ? `<details class="interview-research source-more"><summary>${ICON.chevron}<span>Research & sources</span></summary><p class="hint">Reported questions are unverified. This exercise is labelled separately above.</p><div class="interview-sources">${c.sources.map((s) => `<a class="chip" href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title)} · ${esc(s.kind)}</a>`).join('')}</div></details>` : ''}<button class="btn sm" data-interview="next"${busy ? ' disabled' : ''}>${busy ? 'Preparing…' : 'Next challenge'}</button>` : `<div class="interview-welcome"><p class="eyebrow">${session.item.framework.company ? 'Company preparation' : 'General practice'}</p><h2>${busy ? 'Preparing your first challenge…' : 'Ready when you are'}</h2><p class="hint" role="status">${busy ? session.waiting ? 'Felix is finishing the previous reply. Your practice will start automatically after it.' : session.item.framework.company ? 'Felix is researching the company and role, then preparing an exercise. You can follow along in chat.' : 'Felix is choosing an exercise for your goals. You can follow along in chat.' : 'Start once. Felix will research your company if you have one, then put a challenge and workspace here.'}</p><div class="buttons"><button class="btn sm primary" data-interview="next"${busy ? ' disabled' : ''}>${busy ? 'Preparing…' : 'Start practice'}</button></div></div>`);
+  keepOpen($('#interview-pane-question'), c ? `<div class="interview-toolbar"><h2>${esc(c.title)}</h2><div class="buttons">${(c.topics || []).map((t) => `<span class="chip interview-topic">${esc(t)}</span>`).join('')}${coding ? `<span class="chip">${esc(coding.difficulty)}</span>` : ''}<span class="chip">${c.minutes} min</span></div></div><p class="hint">${esc(c.origin === 'generated' ? 'Original practice' : c.origin === 'official' ? 'Official preparation' : 'Candidate report · unverified')}</p><div class="prose">${md.render(c.question, { interactive: false })}</div>${coding ? `<h3>Examples</h3>${coding.examples.map((e, i) => `<div class="interview-example"><b>Example ${i + 1}</b><pre>Input: ${esc(e.input)}\nOutput: ${esc(e.output)}</pre>${e.explanation ? `<p class="hint">${esc(e.explanation)}</p>` : ''}${e.diagram ? `<div class="prose interview-example-diagram">${md.render(e.diagram, { interactive: false })}</div>` : ''}</div>`).join('')}<h3>Constraints</h3><ul class="interview-constraints">${coding.constraints.map((s) => `<li>${esc(s)}</li>`).join('')}</ul>` : ''}${c.sources.length ? `<details class="interview-research source-more"><summary>${ICON.chevron}<span>Research & sources</span></summary><p class="hint">Reported questions are unverified. This exercise is labelled separately above.</p><div class="interview-sources">${c.sources.map((s) => `<a class="chip" href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title)} · ${esc(s.kind)}</a>`).join('')}</div></details>` : ''}<button class="btn sm" data-interview="next"${busy ? ' disabled' : ''}>${busy ? 'Preparing…' : 'Next challenge'}</button>` : `<div class="interview-welcome"><p class="eyebrow">${session.item.framework.company ? 'Company preparation' : 'General practice'}</p><h2>${busy ? 'Preparing your first challenge…' : 'Ready when you are'}</h2><p class="hint" role="status">${busy ? session.waiting ? 'Felix is finishing the previous reply. Your practice will start automatically after it.' : session.item.framework.company ? 'Felix is researching the company and role, then preparing an exercise. You can follow along in chat.' : 'Felix is choosing an exercise for your goals. You can follow along in chat.' : 'Start once. Felix will research your company if you have one, then put a challenge and workspace here.'}</p><div class="buttons"><button class="btn sm primary" data-interview="next"${busy ? ' disabled' : ''}>${busy ? 'Preparing…' : 'Start practice'}</button></div></div>`);
 }
 
 function interviewChanged(session) {
@@ -1748,6 +1773,7 @@ async function interviewAction(el) {
   if (action === 'chat') return chat.openInterview(session.item.id, () => interviewHere(session));
   if (action === 'next') return prepareInterview(session);
   if (action === 'problem') return selectInterviewProblem(session, el.dataset.id);
+  if (action === 'topic') return pickInterviewTopic(session, el);
   if (action === 'hint') return talkInterview(session, 'Give me a small hint without the solution.', [], 'Give me one small hint for the current interview challenge, without revealing the solution or assessing my draft.');
   if (action === 'submit') return submitInterview(session);
   if (action === 'run') return runInterviewExamples(session);

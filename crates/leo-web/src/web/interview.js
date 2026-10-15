@@ -785,6 +785,34 @@ fn leo_tree_json(root: &Option<std::rc::Rc<std::cell::RefCell<TreeNode>>>, out: 
       return { id: String(c.id), group, name, title, pass: Boolean(c.pass), hidden, input: group === 'test' && !unlabelled ? String(c.label || '') : '', yours: String(c.given || ''), expected: String(c.expected || '') };
     });
   }
+  const NO_TOPIC = '';
+
+  function topicFilter(problems = [], chosen = null) {
+    const counts = new Map();
+    let untagged = 0;
+    for (const p of problems) {
+      const topics = p.challenge?.topics || [];
+      if (!topics.length) untagged += 1;
+      const mine = new Set();
+      for (const t of topics) {
+        const key = t.toLowerCase();
+        if (mine.has(key)) continue;
+        mine.add(key);
+        const had = counts.get(key);
+        counts.set(key, { name: had ? had.name : t, count: (had ? had.count : 0) + 1 });
+      }
+    }
+    const topics = [...counts.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+    const known = chosen === NO_TOPIC ? untagged > 0 : chosen !== null && counts.has(String(chosen).toLowerCase());
+    const pick = known ? chosen : null;
+    const shown = problems.map((p, i) => i).filter((i) => {
+      if (pick === null) return true;
+      const topics = problems[i].challenge?.topics || [];
+      return pick === NO_TOPIC ? !topics.length : topics.some((t) => t.toLowerCase() === pick.toLowerCase());
+    });
+    return { topics, untagged, chosen: pick, shown };
+  }
+
   function attemptStatus(attempt = {}) {
     const checks = attempt.checks || [];
     if (checks.length) {
@@ -1020,5 +1048,5 @@ fn leo_tree_json(root: &Option<std::rc::Rc<std::cell::RefCell<TreeNode>>>, out: 
       storage.setItem('leo-interview-drafts', JSON.stringify(drafts));
     } catch (e) {}
   }
-  root.leoInterview = { PRESETS, preset, framework, preparation, workspace, cleanValues, sameValue, checkSummary, callText, cppDriver, cppResults, cppProblem, goDriver, driverResults, goProblem, javaDriver, javaProblem, rustDriver, rustProblem, rustRound, resultCases, pickCase, attemptStatus, reviewNote, hasWork, codeEdit, point, validBoard, boardSvg, fitBoard, moveShape, shapeBounds, unionBounds, normalRect, shapesWithin, handlesFor, resizeShape, BOARD_LIMIT, progress, keepDraft, readDraft, clearDraft, MOST_SHAPES, MOST_POINTS, MOST_ANSWER, MOST_PROBLEMS };
+  root.leoInterview = { NO_TOPIC, topicFilter, PRESETS, preset, framework, preparation, workspace, cleanValues, sameValue, checkSummary, callText, cppDriver, cppResults, cppProblem, goDriver, driverResults, goProblem, javaDriver, javaProblem, rustDriver, rustProblem, rustRound, resultCases, pickCase, attemptStatus, reviewNote, hasWork, codeEdit, point, validBoard, boardSvg, fitBoard, moveShape, shapeBounds, unionBounds, normalRect, shapesWithin, handlesFor, resizeShape, BOARD_LIMIT, progress, keepDraft, readDraft, clearDraft, MOST_SHAPES, MOST_POINTS, MOST_ANSWER, MOST_PROBLEMS };
 })(typeof window !== 'undefined' ? window : globalThis);

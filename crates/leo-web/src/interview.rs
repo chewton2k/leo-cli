@@ -64,6 +64,8 @@ pub struct Challenge {
     pub question: String,
     pub minutes: u32,
     pub skills: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub topics: Vec<String>,
     pub origin: String,
     pub sources: Vec<Reference>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -186,6 +188,22 @@ pub enum Change {
 }
 
 pub(crate) const MOST_DIAGRAM: usize = 6_000;
+pub(crate) const MOST_TOPICS: usize = 3;
+
+pub fn topics_in_use(item: &Interview) -> Vec<String> {
+    let mut seen: Vec<String> = Vec::new();
+    let all = item
+        .problems
+        .iter()
+        .map(|p| &p.challenge)
+        .chain(item.challenge.as_ref());
+    for topic in all.flat_map(|c| &c.topics) {
+        if !seen.iter().any(|s| s.eq_ignore_ascii_case(topic)) {
+            seen.push(topic.clone());
+        }
+    }
+    seen
+}
 
 fn require(ok: bool, why: &str) -> Result<(), Error> {
     if ok {
@@ -310,6 +328,19 @@ impl Challenge {
         require(chats::valid_id(&self.id) && text(&self.title, 160, true)
             && text(&self.question, 12_000, true) && (5..=180).contains(&self.minutes)
             && skills(&self.skills) && self.skills.iter().all(|s| framework.skills.contains(s)), "Give the challenge a stable 8–64 character ID, title, question, 5–180 minutes and skills from this framework.")?;
+        require(
+            self.topics.len() <= MOST_TOPICS
+                && self
+                    .topics
+                    .iter()
+                    .all(|t| text(t, 40, true) && t.trim() == t)
+                && self
+                    .topics
+                    .iter()
+                    .enumerate()
+                    .all(|(i, t)| !self.topics[..i].iter().any(|p| p.eq_ignore_ascii_case(t))),
+            "Give a problem at most 3 different topics, each a short name under 40 characters.",
+        )?;
         require(["generated", "official", "reported"].contains(&self.origin.as_str())
             && self.sources.len() <= 6 && (self.origin == "generated" || !self.sources.is_empty()), "Label a challenge generated, official or reported; researched challenges need source links.")?;
         for source in &self.sources {
@@ -865,7 +896,7 @@ pub fn context_problem(item: &Interview, wanted: Option<&str>) -> String {
         serde_json::json!({"skill":skill,"observations":values.len(),"latest_scores":values.iter().rev().take(5).collect::<Vec<_>>()})
     }).collect();
     let active_problem = challenge.map(|c| serde_json::json!({"id":c.id,"title":c.title,"number":item.problems.iter().position(|p|p.challenge.id==c.id).map_or(1,|i|i+1)}));
-    let data = serde_json::json!({"active_problem":active_problem,"id":item.id,"revision":item.revision,"framework":item.framework,"challenge":challenge,"draft_answer":crate::chat::clip(&workspace.answer, 8000),"draft_reasoning":workspace.reasoning,"board":board_material(workspace),"latest_attempts":attempts,"assessed_scores":scores,"problems":item.problems.iter().enumerate().map(|(i,p)| serde_json::json!({"number":i+1,"id":p.challenge.id,"title":p.challenge.title,"submitted":item.attempts.iter().any(|a|a.challenge.id==p.challenge.id)})).collect::<Vec<_>>()});
+    let data = serde_json::json!({"active_problem":active_problem,"id":item.id,"revision":item.revision,"framework":item.framework,"challenge":challenge,"draft_answer":crate::chat::clip(&workspace.answer, 8000),"draft_reasoning":workspace.reasoning,"board":board_material(workspace),"latest_attempts":attempts,"assessed_scores":scores,"problems":item.problems.iter().enumerate().map(|(i,p)| serde_json::json!({"number":i+1,"id":p.challenge.id,"title":p.challenge.title,"topics":p.challenge.topics,"submitted":item.attempts.iter().any(|a|a.challenge.id==p.challenge.id)})).collect::<Vec<_>>(),"topics_in_use":topics_in_use(item)});
     format!("<interview_material>\n{}\n</interview_material>\nUse interpretable language. The active_problem is the problem open in the workspace. References like this problem or my code refer to it and its current draft unless the user names a different problem. For full submitted work use interview_attempt with its ID before assessing it.\n", data)
 }
 
@@ -895,6 +926,7 @@ mod tests {
             question: "Find a pair; check duplicates.".into(),
             minutes: 30,
             skills: vec!["Approach".into(), "Testing".into()],
+            topics: vec![],
             origin: "generated".into(),
             sources: vec![],
             coding: None,
@@ -1167,6 +1199,45 @@ mod tests {
             constraints: vec!["Two or more values; exactly one pair.".into()],
         });
         c
+    }
+
+    #[test]
+    fn problems_carry_a_few_distinct_topics_and_felix_sees_the_ones_in_use() {
+        let mut c = challenge("challenge-topics-01");
+        c.topics = vec!["DFS".into(), "Graphs".into()];
+        assert!(c.validate(&framework()).is_ok());
+        for bad in [
+            vec!["DFS".into(), "dfs".into()],
+            vec!["A".into(), "B".into(), "C".into(), "D".into()],
+            vec![" DFS".into()],
+            vec![String::new()],
+            vec!["x".repeat(41)],
+        ] {
+            let mut wrong = c.clone();
+            wrong.topics = bad.clone();
+            assert!(wrong.validate(&framework()).is_err(), "{bad:?}");
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let id = "interview-topics-01";
+        configure(dir.path(), id, 0, framework()).unwrap();
+        set_challenge(dir.path(), id, c).unwrap();
+        let mut next = challenge("challenge-topics-02");
+        next.topics = vec!["graphs".into(), "Dynamic programming".into()];
+        let item = set_challenge(dir.path(), id, next).unwrap();
+        assert_eq!(
+            topics_in_use(&item),
+            ["DFS", "Graphs", "Dynamic programming"]
+        );
+        let context = context_problem(&item, None);
+        assert!(
+            context.contains(r#""topics_in_use":["DFS","Graphs","Dynamic programming"]"#),
+            "{context}"
+        );
+        let plain = serde_json::to_value(challenge("challenge-topics-03")).unwrap();
+        assert!(
+            plain.get("topics").is_none(),
+            "old problems load and store no empty list"
+        );
     }
 
     #[test]

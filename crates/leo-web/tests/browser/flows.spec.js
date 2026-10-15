@@ -5309,6 +5309,33 @@ test('an open submission and folded review stay open when Felix answers and the 
   if (await review.count()) await expect(page.locator('#interview-results .interview-review details').first()).toHaveAttribute('open', '');
 });
 
+test('problems filter by topic, the choice is remembered, and the question shows its topics', async ({ page }) => {
+  const id = 'topic-filter-01';
+  const problem = (n, topics) => ({ id: `topic-problem-${n}`, title: `Problem about ${topics[0] || 'anything'} ${n}`, question: 'Solve it.', minutes: 20, skills: ['Approach'], topics, origin: 'generated', sources: [], coding: { language: 'Python', starter: 'def solve():\n    pass', difficulty: 'easy', examples: [{ input: '1', output: '1' }], constraints: ['None.'] } });
+  const list = [problem(1, ['DFS']), problem(2, ['Dynamic programming']), problem(3, ['DFS', 'Graphs']), problem(4, [])];
+  const workspace = { answer: 'def solve():\n    pass', reasoning: '', board: [] };
+  const item = { id, revision: 1, framework: { title: 'Topics', track: 'coding', company: '', role: '', language: 'Python', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge: list[2], workspace, problems: list.map((challenge) => ({ challenge, workspace })), attempts: [] };
+  await page.route(`**/api/interviews/${id}`, (route) => route.fulfill({ json: item }));
+  await page.goto(`/#/interviews/${id}`);
+  const filters = page.locator('.interview-topics [data-interview="topic"]');
+  await expect(filters).toHaveText(['All · 4', 'DFS · 2', 'Dynamic programming · 1', 'Graphs · 1', 'No topic · 1']);
+  const shown = page.locator('#interview-problems [data-interview="problem"]');
+  await expect(shown).toHaveCount(4);
+  await expect(page.locator('#interview-pane-question .interview-topic')).toHaveText(['DFS', 'Graphs']);
+  await filters.filter({ hasText: 'Dynamic programming' }).click();
+  await expect(shown).toHaveText(['Problem 2']);
+  await expect(filters.filter({ hasText: 'Dynamic programming' })).toHaveAttribute('aria-pressed', 'true');
+  await page.reload();
+  await expect(shown).toHaveText(['Problem 2']);
+  await filters.filter({ hasText: 'DFS' }).click();
+  await expect(shown).toHaveText(['Problem 1', 'Problem 3']);
+  await filters.filter({ hasText: 'No topic' }).click();
+  await expect(shown).toHaveText(['Problem 4']);
+  await filters.filter({ hasText: 'All' }).click();
+  await expect(shown).toHaveCount(4);
+  expect(await page.evaluate((key) => localStorage.getItem(key), `leo-interview-topic:${id}`)).toBeNull();
+});
+
 test('the line numbers run the full height of the tall code editor', async ({ page }) => {
   const id = 'tall-editor-01';
   const code = Array.from({ length: 70 }, (_, i) => `x${i + 1} = ${i + 1}`).join('\n');
