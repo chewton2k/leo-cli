@@ -713,11 +713,11 @@ body.on-map main { padding: 0; max-width: none; }
 .felix .felix-rawr, .felix .felix-hehe, .felix .felix-hi { transform-origin: 0% 100%; }
 .felix .felix-flames rect { transform-origin: 50% 100%; }
 .felix .felix-maw { transform-origin: 50% 0%; }
-:root[data-felix="demon"] .felix .felix-skin, :root[data-felix="demon"] .felix .felix-arm-skin { fill: #7b5ccf; }
-:root[data-felix="demon"] .felix .felix-eyes rect { fill: #ff4d4d; }
-:root[data-felix="demon"] .felix .felix-monster, :root[data-felix="demon"] .felix .felix-claws { opacity: 1; }
-:root[data-felix="demon"] .felix:not(.sweet) .felix-cheeks, :root[data-felix="demon"] .felix:not(.sweet) .felix-heart { opacity: 0 !important; }
-:root[data-felix="demon"] .felix .felix-spark rect { fill: #ff7a1a; }
+:root[data-felix="demon"] .felix:not(.cute-look) .felix-skin, :root[data-felix="demon"] .felix:not(.cute-look) .felix-arm-skin, .felix.demon-look .felix-skin, .felix.demon-look .felix-arm-skin { fill: #7b5ccf; }
+:root[data-felix="demon"] .felix:not(.cute-look) .felix-eyes rect, .felix.demon-look .felix-eyes rect { fill: #ff4d4d; }
+:root[data-felix="demon"] .felix:not(.cute-look) .felix-monster, :root[data-felix="demon"] .felix:not(.cute-look) .felix-claws, .felix.demon-look .felix-monster, .felix.demon-look .felix-claws { opacity: 1; }
+:root[data-felix="demon"] .felix:not(.sweet):not(.cute-look) .felix-cheeks, :root[data-felix="demon"] .felix:not(.sweet):not(.cute-look) .felix-heart, .felix.demon-look .felix-cheeks, .felix.demon-look .felix-heart { opacity: 0 !important; }
+:root[data-felix="demon"] .felix:not(.cute-look) .felix-spark rect, .felix.demon-look .felix-spark rect { fill: #ff7a1a; }
 .felix.rawr .felix-body { animation: felix-lunge .7s cubic-bezier(.3, 1.5, .5, 1) 1; }
 .felix.rawr .felix-maw { animation: felix-chomp .7s ease-out 1; }
 .felix.rawr .felix-rawr { animation: felix-word .9s ease-out 1; }
@@ -1333,7 +1333,14 @@ body.source-resizing iframe { pointer-events: none; }
 .set-status.missing { background: var(--surface-2); color: var(--muted); }
 .set-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
 .set-row.column { flex-direction: column; align-items: stretch; gap: 8px; }
-.set-theme { margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
+.choice-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(86px, 1fr)); gap: 10px; }
+.choice-card { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-height: 100px; padding: 14px 10px 12px; border: 1.5px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--text); font: inherit; font-size: 14px; font-weight: 600; text-align: center; cursor: pointer; }
+.choice-card:hover { border-color: var(--muted); }
+.choice-card.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.choice-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.choice-card > svg:not(.felix) { width: 28px; height: 28px; }
+.choice-card .felix { pointer-events: none; cursor: inherit; }
+.choice-card.felix-choice { min-height: 124px; }
 .set-line { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .set-label { flex: none; width: 118px; font-size: 14px; color: var(--muted); }
 .set-row.column .set-label { width: auto; }
@@ -1848,6 +1855,7 @@ body.interview-resizing { cursor: col-resize; user-select: none; }
 .interview-submitted { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 380px; overflow: auto; font-size: 13px; }
 .chat-workspace { display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 0; background: var(--accent-soft); color: var(--accent); font: inherit; font-size: 12.5px; font-weight: 600; padding: 8px 16px; text-align: left; cursor: pointer; }
 .chat-workspace > svg { width: 16px; height: 16px; flex: none; }
+.chat-workspace:not([hidden]) + .chat-modes { padding-top: 12px; }
 @media (max-width: 600px) {
   .interview-heading { flex-direction: column; }
   .interview-tracks { grid-template-columns: 1fr; }

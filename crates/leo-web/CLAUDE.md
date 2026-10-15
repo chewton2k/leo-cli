@@ -574,7 +574,10 @@ the same idle loop.
 - Settings (`SettingsApi` from `src/cli/web_settings.rs`): one model picker
   per AI with prices and effort chips; keys only on `secure_request`.
 - Theme (2026-10-14, the user's request): Settings → Appearance picks Match
-  this device, Light or Dark, kept per browser in `leo-theme`. `/theme.js`
+  this device, Light or Dark, kept per browser in `leo-theme`. Theme and
+  Felix choices are large `.choice-card`s (icons `device`, `sun`, `moon`;
+  Felix pictures with `felix-preview cute-look` / `demon-look`, which the
+  mood code skips and which look the same whatever mode is on). `/theme.js`
   loads in `<head>` (before any paint, no inline script under the CSP) and
   sets `html[data-theme]`; the dark colours apply under
   `prefers-color-scheme: dark` unless `data-theme="light"`, and always with

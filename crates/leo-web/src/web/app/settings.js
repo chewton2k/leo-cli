@@ -183,13 +183,15 @@ function taskCard(t, secure) {
 }
 
 const THEME_LABELS = { system: 'Match this device', light: 'Light', dark: 'Dark' };
+const THEME_ICONS = { system: 'device', light: 'sun', dark: 'moon' };
 
 function themeCard() {
   const now = window.leoTheme.choice();
+  const felixNow = window.leoTheme.felix();
   return `<section class="set-card">
       <header><h3>Appearance</h3></header>
-      <div class="set-row"><span class="set-label">Theme</span><div class="library-views set-theme" role="group" aria-label="Theme">${window.leoTheme.CHOICES.map((choice) => `<button class="btn sm plain${now === choice ? ' on' : ''}" data-action="theme-pick" data-theme="${choice}" aria-pressed="${now === choice}">${THEME_LABELS[choice]}</button>`).join('')}</div></div>
-      <div class="set-row"><span class="set-label">Felix</span><div class="library-views set-theme" role="group" aria-label="Felix">${[['cute', 'Cute'], ['demon', 'Demon']].map(([kind, label]) => `<button class="btn sm plain${window.leoTheme.felix() === kind ? ' on' : ''}" data-action="felix-pick" data-felix="${kind}" aria-pressed="${window.leoTheme.felix() === kind}">${label}</button>`).join('')}</div></div>
+      <div class="set-row column"><span class="set-label">Theme</span><div class="choice-cards" role="group" aria-label="Theme">${window.leoTheme.CHOICES.map((choice) => `<button class="choice-card${now === choice ? ' on' : ''}" data-action="theme-pick" data-theme="${choice}" aria-pressed="${now === choice}">${ICON[THEME_ICONS[choice]]}<span>${THEME_LABELS[choice]}</span></button>`).join('')}</div></div>
+      <div class="set-row column"><span class="set-label">Felix</span><div class="choice-cards" role="group" aria-label="Felix">${[['cute', 'Cute'], ['demon', 'Demon']].map(([kind, label]) => `<button class="choice-card felix-choice${felixNow === kind ? ' on' : ''}" data-action="felix-pick" data-felix="${kind}" aria-pressed="${felixNow === kind}">${felix.felix(64, `felix-preview ${kind}-look`)}<span>${label}</span></button>`).join('')}</div></div>
       <p class="hint">Kept in this browser, so your phone and computer can each have their own. Demon Felix has scary moves of his own, and tickling either one too much has a surprise.</p>
     </section>`;
 }

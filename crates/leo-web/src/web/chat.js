@@ -620,7 +620,7 @@
       $('[data-chat="attach"]').setAttribute('aria-expanded', String(open));
     }
 
-    const faces = () => [...document.querySelectorAll('.felix')];
+    const faces = () => [...document.querySelectorAll('.felix:not(.felix-preview)')];
     let blinkTimer = 0;
     function blink() {
       clearTimeout(blinkTimer);
