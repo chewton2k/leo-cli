@@ -4165,7 +4165,13 @@ test.describe('beside the note', () => {
     await page.goto('/#/settings');
     await expect(box).toBeVisible();
     const wide = (await box.boundingBox()).width;
-    await box.locator('[data-action="tasks-fold"]').click();
+    const folding = await box.evaluate((el) => {
+      el.querySelector('[data-action="tasks-fold"]').click();
+      return { clips: el.getAnimations().filter((run) => !run.animationName).map((run) => run.effect.getKeyframes().map((k) => k.clipPath)), body: Boolean(el.querySelector('.tasks-body')) };
+    });
+    expect(folding.body).toBe(true);
+    expect(folding.clips[0][0]).toBe('inset(0px round 14px)');
+    expect(folding.clips[0][1]).toMatch(/round 23px/);
     await expect(box.locator('.tasks-body')).toHaveCount(0);
     const pill = box.locator('.tasks-pill');
     await expect(pill).toHaveAttribute('aria-label', /^Show tasks: .*to do$/);
@@ -4176,8 +4182,20 @@ test.describe('beside the note', () => {
     expect(small.width).toBeLessThan(wide / 4);
     await page.reload();
     await expect(page.locator('#dock #tasks-window .tasks-pill')).toBeVisible();
-    await page.locator('#dock #tasks-window .tasks-pill').click();
+    const opening = await box.evaluate((el) => {
+      el.querySelector('.tasks-pill').click();
+      return { runs: el.getAnimations().filter((run) => !run.animationName).length, body: Boolean(el.querySelector('.tasks-body')) };
+    });
+    expect(opening).toEqual({ runs: 1, body: true });
     await expect(page.locator('#dock #tasks-window .tasks-body')).toBeVisible();
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    const still = await box.evaluate((el) => {
+      el.querySelector('[data-action="tasks-fold"]').click();
+      return { runs: el.getAnimations().filter((run) => !run.animationName).length, pill: Boolean(el.querySelector('.tasks-pill')) };
+    });
+    expect(still).toEqual({ runs: 0, pill: true });
+    await box.locator('.tasks-pill').click();
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
     await expect(page.locator('#dock #tasks-window [data-action="tasks-fold"]')).toContainText('Hide');
     await page.goto('/#/calendar');
     await expect(page.locator('#tasks-window')).toBeHidden();

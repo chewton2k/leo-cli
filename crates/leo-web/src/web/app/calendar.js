@@ -766,6 +766,43 @@ function drawTasksWindow() {
     <div class="tasks-foot"><button type="button" class="link-btn" data-action="calendar">Open calendar</button></div>`;
 }
 
+function setTasksFolded(folded) {
+  if (tasksWin.practice) {
+    tasksWin.practiceFolded = folded;
+  } else {
+    tasksWin.folded = folded;
+    try {
+      localStorage.setItem(TASKS_FOLDED, folded ? '1' : '0');
+    } catch (e) {}
+  }
+  drawTasksWindow();
+  tasksBox.querySelector('[data-action="tasks-fold"]')?.focus({ preventScroll: true });
+}
+
+function toggleTasksWindow() {
+  if (tasksBox.dataset.folding) return;
+  for (const run of tasksBox.getAnimations()) if (!run.animationName) run.cancel();
+  const folding = !(tasksWin.practice ? tasksWin.practiceFolded : tasksWin.folded);
+  const before = tasksBox.getBoundingClientRect();
+  if (stillMotion() || tasksBox.hidden || !before.width) {
+    setTasksFolded(folding);
+    return;
+  }
+  const pill = (box) => `inset(${Math.max(0, box.height - 46)}px ${Math.max(0, box.width - 46)}px 0 0 round 23px)`;
+  if (folding) {
+    tasksBox.dataset.folding = '1';
+    const run = tasksBox.animate([{ clipPath: 'inset(0 0 0 0 round 14px)' }, { clipPath: pill(before) }], { duration: MOTION_MS, easing: EASE_OUT });
+    run.onfinish = run.oncancel = () => {
+      delete tasksBox.dataset.folding;
+      setTasksFolded(true);
+    };
+    return;
+  }
+  setTasksFolded(false);
+  const after = tasksBox.getBoundingClientRect();
+  tasksBox.animate([{ clipPath: `inset(${Math.max(0, after.height - before.height)}px ${Math.max(0, after.width - before.width)}px 0 0 round 23px)` }, { clipPath: 'inset(0 0 0 0 round 14px)' }], { duration: MOTION_MS, easing: EASE_OUT });
+}
+
 async function loadTasksWindow() {
   clearTimeout(tasksWin.timer);
   if (state.view === 'locked') return;

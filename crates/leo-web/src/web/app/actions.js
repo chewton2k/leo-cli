@@ -68,22 +68,7 @@ const actions = {
   'task-promote': (el) => promoteTask(el.dataset.line),
   'event-open': (el) => eventSheet(el.dataset.id),
   'note-tasks': () => noteTasksSheet(),
-  'tasks-fold': () => {
-    if (tasksWin.practice) {
-      tasksWin.practiceFolded = !tasksWin.practiceFolded;
-      drawTasksWindow();
-      tasksBox.querySelector('[data-action="tasks-fold"]')?.focus({ preventScroll: true });
-      return;
-    }
-    tasksWin.folded = !tasksWin.folded;
-    try {
-      localStorage.setItem(TASKS_FOLDED, tasksWin.folded ? '1' : '0');
-    } catch (e) {
-      tasksWin.folded = Boolean(tasksWin.folded);
-    }
-    drawTasksWindow();
-    tasksBox.querySelector('[data-action="tasks-fold"]')?.focus({ preventScroll: true });
-  },
+  'tasks-fold': () => toggleTasksWindow(),
   'source-close': () => closeSource(),
   'source-file': (el) => openSource(el.dataset.id, el.dataset.name),
   'set-model': (el) => changeSetting({ set: 'model', task: el.dataset.task, value: el.dataset.model }),

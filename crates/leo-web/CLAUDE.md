@@ -562,7 +562,10 @@ the same idle loop.
 - Tasks panel: in `#dock`, appears when there are open tasks (Overdue / Today /
   Coming up 7 days / No date), folds (`leo-tasks-folded`) to one round icon
   with a count badge (`.tasks-pill`, red when something is overdue) that opens
-  the box again, hidden on the Calendar page and under 600 px.
+  the box again, hidden on the Calendar page and under 600 px. Folding clips
+  the box down into the icon's corner and opening grows it back out
+  (`toggleTasksWindow`, a `MOTION_MS` clip-path; none with Reduce Motion; a
+  second press cancels a running open).
   Active interview practices start with Tasks folded so its expanded rows
   cannot block the workspace. Show still expands it; this local
   practice choice leaves the remembered preference for other pages intact.
