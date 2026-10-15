@@ -3,7 +3,7 @@ let mapPoll = 0;
 let mapSheet = 'peek';
 const leoGraph = window.leoGraph;
 const plural = (n, word, many = `${word}s`) => `${n} ${n === 1 ? word : many}`;
-const darkScheme = () => Boolean(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+const darkScheme = () => window.leoTheme.dark();
 const className = (n) => (n.top ? n.top : 'Unfiled');
 const mapWide = () => window.innerWidth >= 900;
 

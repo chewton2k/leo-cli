@@ -182,11 +182,32 @@ function taskCard(t, secure) {
   </section>`;
 }
 
+const THEME_LABELS = { system: 'Match this device', light: 'Light', dark: 'Dark' };
+
+function themeCard() {
+  const now = window.leoTheme.choice();
+  return `<section class="set-card">
+      <header><h3>Appearance</h3></header>
+      <div class="set-row"><span class="set-label">Theme</span><div class="library-views set-theme" role="group" aria-label="Theme">${window.leoTheme.CHOICES.map((choice) => `<button class="btn sm plain${now === choice ? ' on' : ''}" data-action="theme-pick" data-theme="${choice}" aria-pressed="${now === choice}">${THEME_LABELS[choice]}</button>`).join('')}</div></div>
+      <p class="hint">Kept in this browser, so your phone and computer can each have their own.</p>
+    </section>`;
+}
+
+function pickTheme(el) {
+  window.leoTheme.set(el.dataset.theme);
+  for (const button of document.querySelectorAll('[data-action="theme-pick"]')) {
+    const on = button.dataset.theme === window.leoTheme.choice();
+    button.classList.toggle('on', on);
+    button.setAttribute('aria-pressed', String(on));
+  }
+}
+
 function drawSettings(page) {
   state.settings = page;
   const backup = page.backup;
   app.innerHTML = `<div class="settings">
     <div class="section-title">Settings</div>
+    ${themeCard()}
     ${page.tasks.map((t) => taskCard(t, page.secure)).join('')}
     ${calendarCard(state.calendar, page.secure)}
     <section class="set-card">

@@ -3,7 +3,7 @@ const DIAGRAMS_KEPT = 60;
 const diagrams = { loading: null, seq: 0, scheme: '', drawn: new Map(), timer: 0 };
 
 function diagramScheme() {
-  return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'default';
+  return window.leoTheme.dark() ? 'dark' : 'default';
 }
 
 function diagramTheme(dark) {
@@ -151,15 +151,10 @@ function watchDiagrams() {
 }
 
 new MutationObserver(watchDiagrams).observe(document.body, { childList: true, subtree: true });
-if (window.matchMedia) {
-  const scheme = window.matchMedia('(prefers-color-scheme: dark)');
-  if (scheme.addEventListener) {
-    scheme.addEventListener('change', () => {
-      for (const fig of document.querySelectorAll('figure.diagram[data-drawn]')) {
-        fig.removeAttribute('data-drawn');
-        for (const old of fig.querySelectorAll('.diagram-art, .diagram-error')) old.remove();
-      }
-      watchDiagrams();
-    });
+window.leoTheme.onChange(() => {
+  for (const fig of document.querySelectorAll('figure.diagram[data-drawn]')) {
+    fig.removeAttribute('data-drawn');
+    for (const old of fig.querySelectorAll('.diagram-art, .diagram-error')) old.remove();
   }
-}
+  watchDiagrams();
+});

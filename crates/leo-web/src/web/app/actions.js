@@ -130,6 +130,7 @@ const actions = {
   'open-note': (el) => go(noteHash(el.dataset.id)),
   'pin-card': pinCard,
   'library-view': changeLibraryView,
+  'theme-pick': (el) => pickTheme(el),
   'library-show-all': () => changeLibrary('show', 'all'),
   'tasks-restore-go': () => tasksRestoreGo().catch(fail),
   new: (el) => {

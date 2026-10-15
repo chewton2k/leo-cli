@@ -563,7 +563,7 @@
       const css = getComputedStyle(document.documentElement);
       const v = (name) => css.getPropertyValue(name).trim();
       colors = { text: v('--text'), muted: v('--muted'), faint: v('--faint'), line: v('--line'), accent: v('--accent'), surface: v('--surface'), bg: v('--bg') };
-      dark = Boolean(media && media.matches);
+      dark = root.leoTheme ? root.leoTheme.dark() : Boolean(media && media.matches);
     }
 
     function size() {
@@ -1070,7 +1070,8 @@
     root.addEventListener('resize', resize);
     const watcher = typeof root.ResizeObserver === 'function' ? new root.ResizeObserver(resize) : null;
     if (watcher) watcher.observe(canvas);
-    if (media && media.addEventListener) media.addEventListener('change', scheme);
+    const unwatch = root.leoTheme ? root.leoTheme.onChange(scheme) : null;
+    if (!unwatch && media && media.addEventListener) media.addEventListener('change', scheme);
 
     readColors();
     size();
@@ -1118,7 +1119,8 @@
         canvas.removeEventListener('dblclick', dbl);
         root.removeEventListener('resize', resize);
         if (watcher) watcher.disconnect();
-        if (media && media.removeEventListener) media.removeEventListener('change', scheme);
+        if (unwatch) unwatch();
+        else if (media && media.removeEventListener) media.removeEventListener('change', scheme);
       },
     };
   }

@@ -544,6 +544,15 @@ the same idle loop.
 
 - Settings (`SettingsApi` from `src/cli/web_settings.rs`): one model picker
   per AI with prices and effort chips; keys only on `secure_request`.
+- Theme (2026-10-14, the user's request): Settings → Appearance picks Match
+  this device, Light or Dark, kept per browser in `leo-theme`. `/theme.js`
+  loads in `<head>` (before any paint, no inline script under the CSP) and
+  sets `html[data-theme]`; the dark colours apply under
+  `prefers-color-scheme: dark` unless `data-theme="light"`, and always with
+  `data-theme="dark"`. Anything drawn in JavaScript asks `leoTheme.dark()` and
+  redraws on `leoTheme.onChange` (graph, map dots, Mermaid diagrams), never
+  the media query directly. Print overrides with `:root:root` so a PDF is
+  always light.
 - Storage (`storage.rs`, `storage_saved.rs` + the `Housekeeper`): every area leo keeps, with size,
   items and confirmed actions; signed-in browsers; how long trash and chats
   are kept (`/api/keep`); Export (zip of notes, optional uploads, chats,

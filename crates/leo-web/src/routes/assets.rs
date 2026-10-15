@@ -32,6 +32,7 @@ const SAVING_JS: &str = include_str!("../web/saving.js");
 const DOC_JS: &str = include_str!("../web/doc.js");
 const GRAPH_JS: &str = include_str!("../web/graph.js");
 const SCHEDULE_JS: &str = include_str!("../web/schedule.js");
+const THEME_JS: &str = include_str!("../web/theme.js");
 const RUNNER_HTML: &str = include_str!("../web/runner.html");
 const RUNNER_JS: &str = include_str!("../web/runner.js");
 pub(crate) const RUNNER_POLICY: &str = "default-src 'none'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval' blob:; \
@@ -285,6 +286,10 @@ pub(crate) async fn runner_js() -> Response {
 
 pub(crate) async fn schedule_js() -> Response {
     javascript(SCHEDULE_JS)
+}
+
+pub(crate) async fn theme_js() -> Response {
+    javascript(THEME_JS)
 }
 
 const FAVICON: &str = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"-1 -1 46 34\" shape-rendering=\"crispEdges\">\

@@ -3119,6 +3119,33 @@ test.describe('past chats', () => {
   });
 });
 
+test('Settings chooses light or dark for this browser, or follows the device', async ({ page }) => {
+  const background = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.goto('/#/settings');
+  const pick = (name) => page.locator(`[data-action="theme-pick"][data-theme="${name}"]`);
+  await expect(pick('system')).toHaveAttribute('aria-pressed', 'true');
+  const light = await background();
+  await pick('dark').click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await expect(pick('dark')).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(background).not.toBe(light);
+  const dark = await background();
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  expect(await background()).toBe(dark);
+  await expect(pick('dark')).toHaveAttribute('aria-pressed', 'true');
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await pick('light').click();
+  await expect.poll(background).toBe(light);
+  await pick('system').click();
+  await expect(page.locator('html')).not.toHaveAttribute('data-theme', /./);
+  await expect.poll(background).toBe(dark);
+  expect(await page.evaluate(() => localStorage.getItem('leo-theme'))).toBeNull();
+  await page.emulateMedia({ colorScheme: 'light' });
+  await expect.poll(background).toBe(light);
+});
+
 test('a calendar is connected in Settings by pasting one link, and can be removed', async ({ page }) => {
   let linked = [];
   let posted = null;
