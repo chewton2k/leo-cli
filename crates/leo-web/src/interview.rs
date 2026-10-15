@@ -87,6 +87,8 @@ pub struct Example {
     pub output: String,
     #[serde(default)]
     pub explanation: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub diagram: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -182,6 +184,8 @@ pub enum Change {
         challenge: String,
     },
 }
+
+pub(crate) const MOST_DIAGRAM: usize = 6_000;
 
 fn require(ok: bool, why: &str) -> Result<(), Error> {
     if ok {
@@ -323,10 +327,10 @@ impl Challenge {
                 && text(&coding.language, 80, true) && text(&coding.starter, 8_000, true)
                 && ["easy", "medium", "hard"].contains(&coding.difficulty.as_str())
                 && !coding.examples.is_empty() && coding.examples.len() <= 8
-                && coding.examples.iter().all(|e| text(&e.input, 2_000, true) && text(&e.output, 2_000, true) && text(&e.explanation, 1_000, false))
+                && coding.examples.iter().all(|e| text(&e.input, 2_000, true) && text(&e.output, 2_000, true) && text(&e.explanation, 1_000, false) && text(&e.diagram, MOST_DIAGRAM, false))
                 && !coding.constraints.is_empty() && coding.constraints.len() <= 12
                 && coding.constraints.iter().all(|c| text(c, 400, true)),
-                "For coding, include a language, an unsolved starter under 8,000 characters, easy/medium/hard difficulty, 1–8 input/output examples and 1–12 constraints.")?;
+                "For coding, include a language, an unsolved starter under 8,000 characters, easy/medium/hard difficulty, 1–8 input/output examples (each diagram under 6,000 characters) and 1–12 constraints.")?;
         }
         require(
             self.origin != "official" || self.sources.iter().any(|s| s.kind == "official"),
@@ -1158,10 +1162,30 @@ mod tests {
                 input: "nums=[2,3], target=5".into(),
                 output: "[0,1]".into(),
                 explanation: String::new(),
+                diagram: String::new(),
             }],
             constraints: vec!["Two or more values; exactly one pair.".into()],
         });
         c
+    }
+
+    #[test]
+    fn an_example_can_carry_a_bounded_diagram_and_old_examples_still_load() {
+        let mut c = coding_challenge("challenge-diagram-01");
+        let tree = "```mermaid\nflowchart TD\n  A((3)) --> B((9))\n  A --> C((20))\n```";
+        c.coding.as_mut().unwrap().examples[0].diagram = tree.into();
+        assert!(c.validate(&framework()).is_ok());
+        let saved = serde_json::to_value(&c).unwrap();
+        assert_eq!(saved["coding"]["examples"][0]["diagram"], tree);
+        c.coding.as_mut().unwrap().examples[0].diagram = "x".repeat(MOST_DIAGRAM + 1);
+        assert!(c.validate(&framework()).is_err());
+        let plain = serde_json::to_value(coding_challenge("challenge-diagram-02")).unwrap();
+        assert!(
+            plain["coding"]["examples"][0].get("diagram").is_none(),
+            "no empty field is stored"
+        );
+        let back: Challenge = serde_json::from_value(plain).unwrap();
+        assert!(back.coding.unwrap().examples[0].diagram.is_empty());
     }
 
     #[test]

@@ -3151,6 +3151,28 @@ test.describe('past chats', () => {
   });
 });
 
+test('a problem shows its diagrams in the statement and under an example, in light and dark', async ({ page }) => {
+  const id = 'diagram-problem-ui';
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 40"><title>Array</title><rect width="120" height="40" fill="#fff"/><text x="10" y="26" font-size="14">[2, 7, 11]</text></svg>';
+  const challenge = { id: 'diagram-problem-01', title: 'Tree depth', question: 'Return the depth of the tree.\n\n```mermaid\nflowchart TD\n  A((3)) --> B((9))\n  A --> C((20))\n```', minutes: 20, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'Python', starter: 'def depth(root):\n    pass', difficulty: 'easy', examples: [{ input: '[3,9,20]', output: '2', diagram: '```svg\n' + svg + '\n```' }, { input: '[]', output: '0' }], constraints: ['Up to 10^4 nodes.'] } };
+  const item = { id, revision: 1, framework: { title: 'Pictures', track: 'coding', company: '', role: '', language: 'Python', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace: { answer: challenge.coding.starter, reasoning: '', board: [] }, problems: [{ challenge, workspace: { answer: challenge.coding.starter, reasoning: '', board: [] } }], attempts: [] };
+  await page.route(`**/api/interviews/${id}`, (route) => route.fulfill({ json: item }));
+  for (const scheme of ['light', 'dark']) {
+    await page.emulateMedia({ colorScheme: scheme });
+    await page.goto(`/#/interviews/${id}`);
+    const question = page.locator('#interview-pane-question');
+    await expect(question.locator('.prose figure.diagram .diagram-art svg')).toBeVisible();
+    await expect(question.locator('.prose figure.diagram .diagram-art')).toContainText('20');
+    const examples = question.locator('.interview-example');
+    await expect(examples).toHaveCount(2);
+    const picture = examples.nth(0).locator('.interview-example-diagram figure.drawing img');
+    await expect(picture).toBeVisible();
+    await expect(picture).toHaveAttribute('alt', 'Array');
+    expect(await picture.evaluate((img) => img.naturalWidth > 0)).toBe(true);
+    await expect(examples.nth(1).locator('.interview-example-diagram')).toHaveCount(0);
+  }
+});
+
 test('changing the language in Preferences rewrites the open problem\'s starting code, with Undo', async ({ page }) => {
   const id = 'language-switch-ui';
   const python = 'def pair_sum(nums, target):\n    pass';

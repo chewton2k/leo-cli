@@ -1227,6 +1227,7 @@ mod tests {
                     input: "[2,3], 5".into(),
                     output: "[0,1]".into(),
                     explanation: String::new(),
+                    diagram: String::new(),
                 }],
                 constraints: vec!["One pair".into()],
             }),

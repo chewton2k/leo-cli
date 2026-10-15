@@ -344,6 +344,14 @@ seer, meaning, web, room).
   becomes the new starter; the toast's Undo restores the old language,
   starter and code exactly (`restore`, no AI). SQL problems never switch;
   other saved problems keep their own language.
+  Problem pictures (2026-10-14, the user's request): the question is Markdown,
+  so a ```mermaid or ```svg block in it is drawn like in notes, and each
+  coding example may carry a `diagram` (same kind of block, at most
+  `MOST_DIAGRAM` 6,000 characters) shown under it. Felix is told to put a
+  picture the user asks for on the problem with `interview_problem_edit`
+  (and explain with it in the chat), to add one himself for inputs that are
+  hard to picture (trees, graphs, grids, intervals, systems), and never to
+  draw the approach or the answer.
   `interview_code` reads the full bound draft. `interview_code_edit` suggests one
   exact unique fragment per Accept/Decline card in Ask first; in Auto
   (2026-10-14, the user's call) the proposal arrives with `auto: true` and the
