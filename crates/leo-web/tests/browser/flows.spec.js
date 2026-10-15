@@ -5336,6 +5336,39 @@ test('problems filter by topic, the choice is remembered, and the question shows
   expect(await page.evaluate((key) => localStorage.getItem(key), `leo-interview-topic:${id}`)).toBeNull();
 });
 
+test('older problems get topics from Felix in one card, and the filter appears once saved', async ({ page }) => {
+  const id = 'topic-sort-01';
+  const problem = (n, title) => ({ id: `topic-sort-${n}`, title, question: 'Solve it.', minutes: 20, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'Python', starter: 'def solve():\n    pass', difficulty: 'easy', examples: [{ input: '1', output: '1' }], constraints: ['None.'] } });
+  const list = [problem(1, 'Number of islands'), problem(2, 'Climbing stairs')];
+  const workspace = { answer: 'def solve():\n    pass', reasoning: '', board: [] };
+  const item = { id, revision: 1, framework: { title: 'Sorting', track: 'coding', company: '', role: '', language: 'Python', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge: list[1], workspace, problems: list.map((challenge) => ({ challenge, workspace })), attempts: [] };
+  const changes = [{ challenge: 'topic-sort-1', number: 1, title: 'Number of islands', before: [], after: ['DFS', 'Graphs'] }, { challenge: 'topic-sort-2', number: 2, title: 'Climbing stairs', before: [], after: ['Dynamic programming'] }];
+  const proposal = { kind: 'interview_topics', title: 'Topics for 2 problems', summary: 'Tag the older problems', interview: id, changes };
+  let asked = '';
+  await page.route(`**/api/interviews/${id}`, (route) => route.fulfill({ json: item }));
+  await page.route('**/api/chats/*', (route) => route.request().method() === 'GET' ? route.fulfill({ status: 404, json: { error: 'No chat yet' } }) : route.fulfill({ json: { id, title: 'Sorting', named: true, count: 2, updated_at: new Date().toISOString() } }));
+  await page.route('**/api/chat', (route) => { asked = route.request().postData() || ''; return route.fulfill({ contentType: 'application/x-ndjson', body: [{ proposal }, { t: 'Here are topics for both problems.' }, { done: true }].map((e) => JSON.stringify(e)).join('\n') + '\n' }); });
+  await page.route('**/api/felix/act', (route) => {
+    for (const c of changes) item.problems.find((p) => p.challenge.id === c.challenge).challenge.topics = c.after;
+    item.challenge = item.problems[1].challenge;
+    item.revision++;
+    return route.fulfill({ json: { undo: { ...proposal, summary: 'Undo: Tag the older problems', changes: changes.map((c) => ({ ...c, before: c.after, after: c.before })) } } });
+  });
+  await page.goto(`/#/interviews/${id}`);
+  await expect(page.locator('.interview-topics [data-interview="topic"]')).toHaveCount(0);
+  await page.locator('[data-interview="sort-topics"]').click();
+  await expect.poll(() => asked).toContain('interview_topics');
+  const card = page.locator('.proposal', { hasText: 'Topics for 2 problems' });
+  await expect(card).toContainText('Problem 1 · Number of islands');
+  await expect(card.locator('.proposal-topics-new')).toHaveText(['DFS, Graphs', 'Dynamic programming']);
+  await expect(card.locator('.proposal-topics-old').first()).toHaveText('No topic');
+  await card.getByRole('button', { name: 'Save topics' }).click();
+  await expect(card).toContainText('Saved');
+  await expect(page.locator('.interview-topics [data-interview="topic"]')).toHaveText(['All · 2', 'DFS · 1', 'Dynamic programming · 1', 'Graphs · 1']);
+  await expect(page.locator('[data-interview="sort-topics"]')).toHaveCount(0);
+  await expect(page.locator('#interview-pane-question .interview-topic')).toHaveText(['Dynamic programming']);
+});
+
 test('the line numbers run the full height of the tall code editor', async ({ page }) => {
   const id = 'tall-editor-01';
   const code = Array.from({ length: 70 }, (_, i) => `x${i + 1} = ${i + 1}`).join('\n');

@@ -821,6 +821,38 @@ pub fn relanguage(
     Ok((item, previous))
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TopicChange {
+    pub challenge: String,
+    pub number: usize,
+    pub title: String,
+    pub before: Vec<String>,
+    pub after: Vec<String>,
+}
+
+pub fn set_topics(path: &Path, id: &str, changes: &[TopicChange]) -> Result<Interview, Error> {
+    mutate(path, id, None, |item| {
+        for change in changes {
+            let saved = problem(item, &change.challenge).ok_or_else(|| {
+                Error::Invalid("Choose saved problems from interview_progress.".into())
+            })?;
+            if saved.topics != change.before {
+                return Err(Error::Conflict);
+            }
+            let mut next = saved;
+            next.topics = change.after.clone();
+            next.validate(&item.framework)?;
+            if let Some(open) = item.challenge.as_mut().filter(|c| c.id == next.id) {
+                open.topics = next.topics.clone();
+            }
+            if let Some(found) = item.problems.iter_mut().find(|p| p.challenge.id == next.id) {
+                found.challenge.topics = next.topics;
+            }
+        }
+        Ok(())
+    })
+}
+
 pub fn select_problem(path: &Path, id: &str, challenge: &str) -> Result<Interview, Error> {
     mutate(path, id, None, |item| select(item, challenge))
 }

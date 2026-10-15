@@ -99,7 +99,7 @@ const chat = felix.create({
   onOrganized: (proposal) => {
     if (proposal.kind === 'interview_code_edit') { refreshInterview(proposal.interview).catch(fail); return; }
     if (proposal.kind === 'interview_test') { refreshInterviewTests(proposal.interview, proposal.challenge).catch(fail); return; }
-    if (proposal.kind === 'interview_problem_edit') { refreshInterview(proposal.interview).catch(fail); return; }
+    if (proposal.kind === 'interview_problem_edit' || proposal.kind === 'interview_topics') { refreshInterview(proposal.interview).catch(fail); return; }
     loadSideFolders().catch(() => {});
     if (state.view === 'calendar') loadSchedule(seq);
     loadTasksWindow().catch(() => {});

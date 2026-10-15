@@ -359,7 +359,12 @@ seer, meaning, web, room).
   `topics` (any field: DFS, Dynamic programming; Random walks for quant), at
   most `MOST_TOPICS`, distinct ignoring case. Felix is told to tag every new
   problem and to reuse `topics_in_use` (in `<interview_material>`) instead of
-  near-duplicates, and retags with `interview_problem_edit`. The practice
+  near-duplicates. Older or mistagged problems are retagged together with
+  `interview_topics` (one `Proposal::InterviewTopics` card listing each
+  problem's old and new topics; `interview::set_topics` checks each problem's
+  topics are still what was read; Undo swaps them back; Auto applies, Read
+  only refuses); "Sort into topics with Felix" appears while any problem
+  has none. The practice
   page shows a filter row above the problem chips (All, each topic with its
   count, No topic for older problems; `interviews.topicFilter`), remembered
   per practice in `leo-interview-topic:<id>`; the question shows its topics.

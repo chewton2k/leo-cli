@@ -1634,6 +1634,12 @@ pub enum Proposal {
         before: Box<crate::interview::Challenge>,
         after: Box<crate::interview::Challenge>,
     },
+    InterviewTopics {
+        title: String,
+        summary: String,
+        interview: String,
+        changes: Vec<crate::interview::TopicChange>,
+    },
     InterviewTest {
         title: String,
         summary: String,

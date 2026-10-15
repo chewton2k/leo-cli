@@ -2643,3 +2643,83 @@ fn felix_lists_every_practice_reads_another_and_changes_a_problem_by_access() {
         }
     }
 }
+
+#[test]
+fn felix_tags_older_problems_in_one_change_by_access() {
+    for access in ["ask", "auto", "read"] {
+        let (mut state, _dir, _) = state_with(&[]);
+        let id = "topics-felix-practice";
+        let framework = serde_json::from_value::<crate::interview::Framework>(serde_json::json!({"title":"Coding", "track":"coding", "company":"", "role":"", "language":"Python", "style":"coach", "date":"", "weekly_minutes":120, "skills":["Approach"], "wants":""})).unwrap();
+        crate::interview::configure(&state.chats, id, 0, framework).unwrap();
+        let challenge = |cid: &str, title: &str, topics: &[&str]| {
+            serde_json::from_value::<crate::interview::Challenge>(serde_json::json!({"id":cid, "title":title, "question":"Solve it.", "minutes":30, "skills":["Approach"], "topics":topics, "origin":"generated", "sources":[], "coding":{"language":"Python", "starter":"def solve():\n    pass", "difficulty":"easy", "examples":[{"input":"1","output":"1"}], "constraints":["Small"]}})).unwrap()
+        };
+        for (cid, title, topics) in [
+            ("topics-old-one", "Number of islands", &[][..]),
+            ("topics-old-two", "Climbing stairs", &[][..]),
+            ("topics-new-three", "Course schedule", &["Graphs"][..]),
+        ] {
+            crate::interview::set_challenge(&state.chats, id, challenge(cid, title, topics))
+                .unwrap();
+        }
+        let (chat, _prompts) = scripted(vec![
+            r#"<tool>{"name":"interview_topics","data":"{\"summary\":\"Tag the older problems\",\"problems\":[{\"challenge\":\"topics-old-one\",\"topics\":[\"DFS\",\"Graphs\"]},{\"challenge\":\"topics-old-two\",\"topics\":[\"Dynamic programming\"]},{\"challenge\":\"topics-new-three\",\"topics\":[\"Graphs\"]}]}"}</tool>"#,
+            "Sorted them.",
+        ]);
+        state.chat = Some(chat);
+        let body: chat::ChatBody = serde_json::from_value(serde_json::json!({"chat":id,"mode":"interview","access":access,"messages":[{"role":"user","text":"Sort my problems into topics."}]})).unwrap();
+        let bytes = run(async {
+            let response = chat_reply(State(state.clone()), Json(body)).await;
+            axum::body::to_bytes(response.into_body(), 1_000_000)
+                .await
+                .unwrap()
+        });
+        let lines: Vec<serde_json::Value> = std::str::from_utf8(&bytes)
+            .unwrap()
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        let proposals: Vec<_> = lines.iter().filter_map(|l| l.get("proposal")).collect();
+        let topics = |cid: &str| {
+            crate::interview::problem(&crate::interview::load(&state.chats, id).unwrap(), cid)
+                .unwrap()
+                .topics
+        };
+        match access {
+            "read" => {
+                assert!(proposals.is_empty());
+                assert!(topics("topics-old-one").is_empty());
+            }
+            "ask" => {
+                assert_eq!(proposals.len(), 1, "one card for every problem");
+                assert_eq!(proposals[0]["kind"], "interview_topics");
+                assert_eq!(
+                    proposals[0]["title"], "Topics for 2 problems",
+                    "an unchanged problem is left out"
+                );
+                assert_eq!(proposals[0]["changes"][0]["number"], 1);
+                assert!(topics("topics-old-one").is_empty());
+            }
+            _ => {
+                assert_eq!(proposals[0]["state"], "applied", "{lines:?}");
+                assert_eq!(topics("topics-old-one"), ["DFS", "Graphs"]);
+                assert_eq!(topics("topics-old-two"), ["Dynamic programming"]);
+                let open = crate::interview::load(&state.chats, id).unwrap();
+                assert_eq!(open.challenge.unwrap().topics, ["Graphs"]);
+                let undo: tools::Proposal =
+                    serde_json::from_value(proposals[0]["undo"].clone()).unwrap();
+                let response = run(crate::routes::organize::act_route(
+                    State(state.clone()),
+                    Json(undo.clone()),
+                ));
+                assert_eq!(response.status(), StatusCode::OK);
+                assert!(topics("topics-old-one").is_empty() && topics("topics-old-two").is_empty());
+                let stale = run(crate::routes::organize::act_route(
+                    State(state.clone()),
+                    Json(undo),
+                ));
+                assert_eq!(stale.status(), StatusCode::CONFLICT);
+            }
+        }
+    }
+}

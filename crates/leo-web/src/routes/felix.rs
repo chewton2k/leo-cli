@@ -543,7 +543,10 @@ fn run_tool(
     } else if crate::interview_tools::is_tool(&call.name) {
         if matches!(
             call.name.as_str(),
-            "interview_code_edit" | "interview_test" | "interview_problem_edit"
+            "interview_code_edit"
+                | "interview_test"
+                | "interview_problem_edit"
+                | "interview_topics"
         ) && !access.changes()
         {
             return Ok(tools::Done {

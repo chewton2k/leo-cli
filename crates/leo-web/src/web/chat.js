@@ -1546,13 +1546,19 @@
         const before = p.before || {};
         const after = p.after || {};
         const shown = (v) => (typeof v === 'string' ? v : JSON.stringify(v ?? ''));
-        const fields = [['title', 'Title'], ['question', 'Question'], ['minutes', 'Minutes'], ['skills', 'Skills']].map(([k, label]) => [label, before[k], after[k]])
+        const fields = [['title', 'Title'], ['question', 'Question'], ['topics', 'Topics'], ['minutes', 'Minutes'], ['skills', 'Skills']].map(([k, label]) => [label, before[k], after[k]])
           .concat([['starter', 'Starter'], ['difficulty', 'Difficulty'], ['examples', 'Examples'], ['constraints', 'Constraints'], ['language', 'Language']].map(([k, label]) => [label, (before.coding || {})[k], (after.coding || {})[k]]))
           .filter(([, a, b]) => JSON.stringify(a) !== JSON.stringify(b));
         const clip = (text) => { const t = shown(text); return t.length > 600 ? `${t.slice(0, 600)}…` : t; };
         const changes = fields.map(([label, a, b]) => `<span class="proposal-note">${escape(label)}</span><pre class="proposal-old">${escape(clip(a) || 'Empty')}</pre><pre class="proposal-new">${escape(clip(b) || 'Empty')}</pre>`).join('');
         const actions = p.state === 'applied' ? `<div class="proposal-done">Saved · <button class="msg-act" data-chat="undo" ${where}>Undo</button></div>` : p.state === 'dismissed' ? '<div class="proposal-done">Dismissed</div>' : `<div class="proposal-buttons"><button class="btn primary sm" data-chat="apply" ${where}>Change problem</button><button class="btn plain sm" data-chat="dismiss" ${where}>Dismiss</button></div>`;
         return `<div class="proposal proposal-code"><div class="proposal-title">${escape(p.title || 'Problem')}</div><div class="proposal-why">${escape(p.summary || '')}</div>${changes}${actions}</div>`;
+      }
+      if (p.kind === 'interview_topics') {
+        const list = (topics) => (Array.isArray(topics) && topics.length ? topics.join(', ') : 'No topic');
+        const rows = (Array.isArray(p.changes) ? p.changes : []).map((c) => `<li><b>${escape(`Problem ${c.number} · ${c.title || ''}`)}</b><span class="proposal-topics"><span class="proposal-topics-old">${escape(list(c.before))}</span> → <span class="proposal-topics-new">${escape(list(c.after))}</span></span></li>`).join('');
+        const actions = p.state === 'applied' ? `<div class="proposal-done">Saved · <button class="msg-act" data-chat="undo" ${where}>Undo</button></div>` : p.state === 'dismissed' ? '<div class="proposal-done">Dismissed</div>' : `<div class="proposal-buttons"><button class="btn primary sm" data-chat="apply" ${where}>Save topics</button><button class="btn plain sm" data-chat="dismiss" ${where}>Dismiss</button></div>`;
+        return `<div class="proposal proposal-code"><div class="proposal-title">${escape(p.title || 'Topics')}</div><div class="proposal-why">${escape(p.summary || '')}</div><ul class="proposal-topic-list">${rows}</ul>${actions}</div>`;
       }
       if (p.kind === 'interview_test') {
         const t = p.test || {};
