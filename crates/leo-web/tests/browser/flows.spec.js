@@ -46,8 +46,16 @@ function control(page, action) {
 }
 
 async function dragBetween(page, source, target) {
-  await source.scrollIntoViewIfNeeded();
-  await source.evaluate(el => el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' }));
+  for (let tries = 0; ; tries++) {
+    try {
+      await source.scrollIntoViewIfNeeded();
+      await source.evaluate(el => el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' }));
+      break;
+    } catch (e) {
+      if (tries >= 2 || !/not attached/.test(String(e))) throw e;
+      await page.waitForTimeout(200);
+    }
+  }
   const from = await source.boundingBox();
   expect(from).not.toBeNull();
   const x = from.x + Math.min(16, from.width / 2);
@@ -440,6 +448,7 @@ test.describe('drag and drop', () => {
 
     await dragBetween(page, card, page.locator(`#side [data-action="open-folder"][data-dir="${b}"]`));
     await expect.poll(where).toBe(b);
+    await expect(card).toHaveCount(0);
 
     await dragBetween(page, page.locator(`main .folder[data-dir="${b}"]`), page.locator(`main .folder[data-dir="${a}"]`));
     await expect(page.locator('.toast')).toContainText(`Moved ${b} into ${a}`);
