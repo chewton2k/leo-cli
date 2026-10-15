@@ -63,6 +63,15 @@ test('Felix keeps his colour and shape', () => {
   assert.deepEqual(C.MODES.map((m) => m.id), ['chat', 'study', 'interview']);
 });
 
+test('Demon Felix has his own taps, flames, slashes and words, and cute Felix can still surprise', () => {
+  const svg = C.felix(40, 'idle');
+  for (const part of ['felix-flames', 'felix-slash', 'felix-hehe', 'felix-hi', 'felix-rawr', 'felix-monster']) assert.match(svg, new RegExp(`<g class="${part}">`), part);
+  assert.equal(C.DEMON_TAPS.length, C.TAPS.length);
+  assert.ok(C.DEMON_TAPS.every((tap) => !C.TAPS.includes(tap) && tap !== 'monster' && tap !== 'sweet'));
+  assert.equal(C.MONSTER_ONE_IN, 10);
+  assert.ok(C.TICKLED_TOO_LONG > 3 && C.TICKLED_TOO_LONG <= 10);
+});
+
 test('typing @ starts a note search, but an email address does not', () => {
   assert.deepEqual(C.mentionAt('compare @heap', 13), { start: 8, query: 'heap' });
   assert.deepEqual(C.mentionAt('@', 1), { start: 0, query: '' });

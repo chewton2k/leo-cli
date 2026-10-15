@@ -2,6 +2,7 @@
   'use strict';
 
   const KEY = 'leo-theme';
+  const FELIX_KEY = 'leo-felix';
   const CHOICES = ['system', 'light', 'dark'];
   const COLORS = { light: '#f7f7f5', dark: '#141414' };
   const media = root.matchMedia ? root.matchMedia('(prefers-color-scheme: dark)') : null;
@@ -51,18 +52,43 @@
     tell();
   }
 
+  function felix() {
+    try {
+      return root.localStorage.getItem(FELIX_KEY) === 'demon' ? 'demon' : 'cute';
+    } catch (e) {
+      return 'cute';
+    }
+  }
+
+  function showFelix(kind) {
+    const html = root.document.documentElement;
+    if (kind === 'demon') html.setAttribute('data-felix', 'demon');
+    else html.removeAttribute('data-felix');
+  }
+
+  function setFelix(kind) {
+    const demon = kind === 'demon';
+    showFelix(demon ? 'demon' : 'cute');
+    try {
+      if (demon) root.localStorage.setItem(FELIX_KEY, 'demon');
+      else root.localStorage.removeItem(FELIX_KEY);
+    } catch (e) {}
+  }
+
   function onChange(fn) {
     listeners.add(fn);
     return () => listeners.delete(fn);
   }
 
   apply(stored());
+  showFelix(felix());
   if (media && media.addEventListener) {
     media.addEventListener('change', () => {
       if (current === 'system') tell();
     });
   }
   root.addEventListener('storage', (e) => {
+    if (e.key === FELIX_KEY || e.key === null) showFelix(felix());
     if (e.key !== KEY && e.key !== null) return;
     const was = dark();
     apply(stored());
@@ -72,5 +98,5 @@
     root.document.addEventListener('DOMContentLoaded', () => apply(current), { once: true });
   }
 
-  root.leoTheme = { KEY, CHOICES, choice: () => current, dark, set, onChange };
+  root.leoTheme = { KEY, CHOICES, choice: () => current, dark, set, onChange, felix, setFelix };
 })(window);

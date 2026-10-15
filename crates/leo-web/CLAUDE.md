@@ -96,7 +96,14 @@ seer, meaning, web, room).
   playful exception (the user asked, 2026-10-14): `TAPS` (boop, hop, spin,
   giggle, tickle) and, one tap in `MONSTER_ONE_IN` (10), `monster`: he grows,
   turns purple with horns, fangs, claws and a "RAWR!", then shrinks back
-  (2.8 s; taps during it are ignored).
+  (2.8 s; taps during it are ignored). Demon Felix (2026-10-14, the user's
+  request): Settings → Appearance → Felix, Cute or Demon, kept per browser in
+  `leo-felix` and set early by `/theme.js` as `html[data-felix="demon"]`. He
+  is purple with horns, red eyes, fangs and claws everywhere he appears, and
+  taps play `DEMON_TAPS` (rawr, cackle, blaze, glare, swipe). His surprise is
+  `sweet`: cute Felix, big, with hearts and "hi!!". Either surprise comes one
+  tap in `MONSTER_ONE_IN`, or always after `TICKLED_TOO_LONG` (8) taps each
+  within 1.5 s of the last.
 
 ## Notes, editing and browsing
 

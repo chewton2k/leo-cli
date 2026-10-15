@@ -888,6 +888,35 @@ test.describe('Felix', () => {
     await expect(face.locator('.felix-monster')).toHaveCSS('opacity', '0');
   });
 
+  test('Demon Felix from Settings has scary taps, and tickling either Felix too long swaps them for a moment', async ({ page }) => {
+    await page.goto('/#/settings');
+    await page.locator('[data-action="felix-pick"][data-felix="demon"]').click();
+    await expect(page.locator('html')).toHaveAttribute('data-felix', 'demon');
+    await page.reload();
+    await expect(page.locator('[data-action="felix-pick"][data-felix="demon"]')).toHaveAttribute('aria-pressed', 'true');
+    await page.locator('#chat-toggle').click();
+    const face = page.locator('#chat-face .felix');
+    await expect(face.locator('.felix-skin')).toHaveCSS('fill', 'rgb(123, 92, 207)');
+    await expect(face.locator('.felix-monster')).toHaveCSS('opacity', '1');
+    await page.evaluate(() => { Math.random = () => 0.5; });
+    await face.click();
+    await expect(face).toHaveClass(/\b(rawr|cackle|blaze|glare|swipe)\b/);
+    await expect(face).not.toHaveClass(/\b(boop|hop|spin|giggle|tickle)\b/);
+    await page.waitForTimeout(1600);
+    for (let i = 0; i < 8; i++) await face.click({ delay: 10 });
+    await expect(face).toHaveClass(/\bsweet\b/);
+    await expect(face).not.toHaveClass(/\bsweet\b/, { timeout: 5000 });
+    await page.goto('/#/settings');
+    await page.locator('[data-action="felix-pick"][data-felix="cute"]').click();
+    await expect(page.locator('html')).not.toHaveAttribute('data-felix', /./);
+    expect(await page.evaluate(() => localStorage.getItem('leo-felix'))).toBeNull();
+    const cute = page.locator('#chat-face .felix');
+    await expect(cute.locator('.felix-skin')).toHaveCSS('fill', 'rgb(180, 207, 231)');
+    await page.waitForTimeout(1600);
+    for (let i = 0; i < 8; i++) await cute.click({ delay: 10 });
+    await expect(cute).toHaveClass(/\bmonster\b/);
+  });
+
   test('Felix thinks, talks, reacts to answers and to being tapped', async ({ page }) => {
     let release;
     const hold = new Promise((resolve) => { release = resolve; });

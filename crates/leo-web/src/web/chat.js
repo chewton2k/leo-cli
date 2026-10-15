@@ -45,6 +45,9 @@
       <g class="felix-thought"><rect x="37" y="-1" width="2" height="2"/><rect x="40" y="-4" width="2" height="2"/><rect x="43" y="-7" width="3" height="3"/></g>
       <g class="felix-z"><text x="37" y="-2" font-size="10" font-weight="800" font-family="system-ui, sans-serif">z</text></g>
       <g class="felix-rawr"><text x="38" y="2" font-size="7" font-weight="900" font-family="system-ui, sans-serif">RAWR!</text></g>
+      <g class="felix-hehe"><text x="38" y="2" font-size="6" font-weight="900" font-family="system-ui, sans-serif">heh heh</text></g>
+      <g class="felix-hi"><text x="38" y="2" font-size="7" font-weight="900" font-family="system-ui, sans-serif">hi!!</text></g>
+      <g class="felix-slash"><rect x="41" y="8" width="1" height="2"/><rect x="42" y="10" width="1" height="2"/><rect x="43" y="12" width="1" height="2"/><rect x="43" y="6" width="1" height="2"/><rect x="44" y="8" width="1" height="2"/><rect x="45" y="10" width="1" height="2"/><rect x="45" y="4" width="1" height="2"/><rect x="46" y="6" width="1" height="2"/><rect x="47" y="8" width="1" height="2"/></g>
       <g class="felix-body">
         <g class="felix-arm felix-left"><rect class="felix-arm-skin" x="0" y="18" width="5" height="6"/><g class="felix-claws"><rect x="0" y="24" width="1" height="2"/><rect x="2" y="24" width="1" height="2"/><rect x="4" y="24" width="1" height="2"/></g></g>
         <g class="felix-arm felix-right"><rect class="felix-arm-skin" x="39" y="18" width="5" height="6"/><g class="felix-claws"><rect x="39" y="24" width="1" height="2"/><rect x="41" y="24" width="1" height="2"/><rect x="43" y="24" width="1" height="2"/></g></g>
@@ -57,13 +60,19 @@
         <g class="felix-tool felix-tool-map"><rect class="paper-old" x="30" y="5" width="15" height="11"/><rect class="fold" x="35" y="5" width="1" height="11"/><rect class="fold" x="40" y="5" width="1" height="11"/><rect class="pin" x="32" y="8" width="2" height="2"/><rect class="pin" x="42" y="7" width="2" height="2"/><rect class="pin" x="37" y="12" width="2" height="2"/></g>
         <g class="felix-tool felix-tool-edit"><rect class="paper" x="8" y="21" width="16" height="10"/><rect class="ink" x="10" y="24" width="11" height="1"/><rect class="ink" x="10" y="27" width="8" height="1"/><g class="pen"><rect class="cap" x="29" y="18" width="2" height="2"/><rect class="barrel" x="27" y="20" width="2" height="2"/><rect class="barrel" x="25" y="22" width="2" height="2"/><rect class="tip" x="23" y="24" width="2" height="2"/></g></g>
         <g class="felix-monster"><g class="felix-horns"><rect x="9" y="-1" width="4" height="3"/><rect x="10" y="-3" width="2" height="2"/><rect x="31" y="-1" width="4" height="3"/><rect x="32" y="-3" width="2" height="2"/></g><g class="felix-spikes"><rect x="16" y="0" width="2" height="2"/><rect x="20" y="-1" width="3" height="3"/><rect x="25" y="0" width="2" height="2"/></g><g class="felix-brows"><rect x="9" y="12" width="2" height="1"/><rect x="11" y="13" width="2" height="1"/><rect x="13" y="14" width="2" height="1"/><rect x="25" y="12" width="2" height="1"/><rect x="23" y="13" width="2" height="1"/><rect x="21" y="14" width="2" height="1"/></g><rect class="felix-maw" x="13" y="23" width="12" height="4"/><g class="felix-fangs"><rect x="14" y="23" width="2" height="2"/><rect x="22" y="23" width="2" height="2"/></g></g>
+        <g class="felix-flames"><rect class="hot" x="8" y="-2" width="3" height="4"/><rect class="warm" x="9" y="-5" width="2" height="3"/><rect class="hot" x="15" y="-4" width="3" height="6"/><rect class="warm" x="16" y="-8" width="2" height="4"/><rect class="hot" x="21" y="-3" width="3" height="5"/><rect class="warm" x="22" y="-6" width="2" height="3"/><rect class="hot" x="27" y="-5" width="3" height="7"/><rect class="warm" x="28" y="-9" width="2" height="4"/><rect class="hot" x="33" y="-2" width="3" height="4"/><rect class="warm" x="34" y="-4" width="2" height="2"/></g>
         <g class="felix-tool felix-tool-create"><rect class="wood" x="42" y="5" width="2" height="15"/><rect class="metal" x="38" y="1" width="10" height="5"/><rect class="shine" x="39" y="2" width="2" height="1"/></g>
       </g>
     </svg>`;
   }
 
   const TAPS = ['boop', 'hop', 'spin', 'giggle', 'tickle'];
+  const DEMON_TAPS = ['rawr', 'cackle', 'blaze', 'glare', 'swipe'];
   const MONSTER_ONE_IN = 10;
+  const TICKLED_TOO_LONG = 8;
+  const STREAK_GAP_MS = 1500;
+  const TRANSFORM_MS = 2800;
+  const demonMode = () => typeof document !== 'undefined' && document.documentElement.dataset.felix === 'demon';
   const POSES = { search_notes: 'tool-search', open_note: 'tool-open', connected_notes: 'tool-map', edit_note: 'tool-edit', create_note: 'tool-create', web_search: 'tool-search', open_page: 'tool-open', read_document: 'tool-open', read_transcript: 'tool-open', look_at_picture: 'tool-search', calculate: 'tool-edit' };
   const poseOf = (tool) => POSES[tool] || null;
 
@@ -627,11 +636,12 @@
     }
     function mood(name, ms) {
       for (const f of faces()) {
-        f.classList.remove('dance', 'droop', 'wave', 'cheer', 'nod', 'wake', 'perk', 'monster', 'grow-down', ...TAPS);
+        f.classList.remove('dance', 'droop', 'wave', 'cheer', 'nod', 'wake', 'perk', 'monster', 'sweet', 'grow-down', ...TAPS, ...DEMON_TAPS);
+        const big = name === 'monster' || name === 'sweet';
         const box = f.getBoundingClientRect();
-        if (name === 'monster' && box.top < box.height * 2.5) f.classList.add('grow-down');
+        if (big && box.top < box.height * 2.5) f.classList.add('grow-down');
         f.classList.add(name);
-        setTimeout(() => f.classList.remove(name, ...(name === 'monster' ? ['grow-down'] : [])), ms);
+        setTimeout(() => f.classList.remove(name, ...(big ? ['grow-down'] : [])), ms);
       }
     }
     const working = new WeakMap();
@@ -681,17 +691,25 @@
 
     let lastTap = -1;
     let transformed = 0;
+    let streak = 0;
+    let lastTapAt = 0;
     function tapped() {
-      if (Date.now() < transformed) return;
-      if (Math.random() < 1 / MONSTER_ONE_IN) {
-        transformed = Date.now() + 2800;
-        mood('monster', 2800);
+      const now = Date.now();
+      if (now < transformed) return;
+      streak = now - lastTapAt < STREAK_GAP_MS ? streak + 1 : 1;
+      lastTapAt = now;
+      const demon = demonMode();
+      if (streak >= TICKLED_TOO_LONG || Math.random() < 1 / MONSTER_ONE_IN) {
+        streak = 0;
+        transformed = now + TRANSFORM_MS;
+        mood(demon ? 'sweet' : 'monster', TRANSFORM_MS);
         return;
       }
-      let pick = Math.floor(Math.random() * TAPS.length);
-      if (pick === lastTap) pick = (pick + 1) % TAPS.length;
+      const taps = demon ? DEMON_TAPS : TAPS;
+      let pick = Math.floor(Math.random() * taps.length);
+      if (pick === lastTap) pick = (pick + 1) % taps.length;
       lastTap = pick;
-      mood(TAPS[pick], 900);
+      mood(taps[pick], 900);
     }
 
     function gaze(e) {
@@ -2604,5 +2622,5 @@
     };
   }
 
-  root.leoChat = { timeline, startSession, scoreSession, sessionBody, sessionSummary, linkCitations, answerLines, passageLine, historyText, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS };
+  root.leoChat = { timeline, startSession, scoreSession, sessionBody, sessionSummary, linkCitations, answerLines, passageLine, historyText, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS, TAPS, DEMON_TAPS, MONSTER_ONE_IN, TICKLED_TOO_LONG };
 })(typeof window !== 'undefined' ? window : globalThis);

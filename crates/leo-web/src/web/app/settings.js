@@ -189,7 +189,8 @@ function themeCard() {
   return `<section class="set-card">
       <header><h3>Appearance</h3></header>
       <div class="set-row"><span class="set-label">Theme</span><div class="library-views set-theme" role="group" aria-label="Theme">${window.leoTheme.CHOICES.map((choice) => `<button class="btn sm plain${now === choice ? ' on' : ''}" data-action="theme-pick" data-theme="${choice}" aria-pressed="${now === choice}">${THEME_LABELS[choice]}</button>`).join('')}</div></div>
-      <p class="hint">Kept in this browser, so your phone and computer can each have their own.</p>
+      <div class="set-row"><span class="set-label">Felix</span><div class="library-views set-theme" role="group" aria-label="Felix">${[['cute', 'Cute'], ['demon', 'Demon']].map(([kind, label]) => `<button class="btn sm plain${window.leoTheme.felix() === kind ? ' on' : ''}" data-action="felix-pick" data-felix="${kind}" aria-pressed="${window.leoTheme.felix() === kind}">${label}</button>`).join('')}</div></div>
+      <p class="hint">Kept in this browser, so your phone and computer can each have their own. Demon Felix has scary moves of his own, and tickling either one too much has a surprise.</p>
     </section>`;
 }
 
@@ -197,6 +198,15 @@ function pickTheme(el) {
   window.leoTheme.set(el.dataset.theme);
   for (const button of document.querySelectorAll('[data-action="theme-pick"]')) {
     const on = button.dataset.theme === window.leoTheme.choice();
+    button.classList.toggle('on', on);
+    button.setAttribute('aria-pressed', String(on));
+  }
+}
+
+function pickFelix(el) {
+  window.leoTheme.setFelix(el.dataset.felix);
+  for (const button of document.querySelectorAll('[data-action="felix-pick"]')) {
+    const on = button.dataset.felix === window.leoTheme.felix();
     button.classList.toggle('on', on);
     button.setAttribute('aria-pressed', String(on));
   }
