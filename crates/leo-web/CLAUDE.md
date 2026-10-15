@@ -267,6 +267,9 @@ seer, meaning, web, room).
   (`chat.useInterview`, interview style, a toast names the practice); while
   he is answering elsewhere it does not interrupt and says so.
   All active practices use available width and adapt when Felix opens.
+  The code editor is tall by default (480 px to 960 px, `100dvh - 320px`;
+  written answers 400 px). A browser test keeps buttons at least 8 px from
+  the text and sections around them on the main pages and practice tabs.
   Coding wraps with aligned syntax and line numbers,
   and adapts when Felix opens. Python deletion on blank indented lines uses
   four-column stops and native Undo; there is no Indent code action.

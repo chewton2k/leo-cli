@@ -1155,7 +1155,7 @@ body.on-calendar main { max-width: 1040px; }
 .sched-ahead-day b { font-size: 10.5px; font-weight: 600; text-transform: none; }
 .sched-ahead-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .sched-ahead-title { font-size: 14px; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sched-empty { margin: 18px 0 6px; font-size: 14px; color: var(--muted); }
+.sched-empty { margin: 18px 0 12px; font-size: 14px; color: var(--muted); }
 .sched-done-toggle { flex: none; font-size: 13px; }
 .sched-preview { padding: 10px 12px; border-radius: 10px; background: var(--surface-2); }
 .sched-preview p { margin: 2px 0 10px; }
@@ -1700,7 +1700,7 @@ body.interview-resizing { cursor: col-resize; user-select: none; }
 .interview-line-number { text-align: right; padding: 0 8px; }
 .interview-line-measure { visibility: hidden; white-space: pre-wrap; overflow-wrap: anywhere; padding: 0 12px; }
 .numbered .interview-code-pane { grid-column: 2; grid-row: 1; }
-.numbered #interview-answer { border: 0; border-radius: 0; background: transparent; min-height: 320px; height: clamp(320px, calc(100dvh - 490px), 640px); max-height: 640px; resize: none; padding: 16px 12px; }
+.numbered #interview-answer { border: 0; border-radius: 0; background: transparent; min-height: 480px; height: clamp(480px, calc(100dvh - 320px), 960px); max-height: 960px; resize: none; padding: 16px 12px; }
 .interview-code-pane { position: relative; min-width: 0; }
 .interview-code-pane #interview-answer { width: 100%; display: block; }
 #interview-colors { display: none; position: absolute; inset: 0; margin: 0; border: 0; padding: 16px 12px; overflow: auto; scrollbar-width: none; white-space: pre-wrap; overflow-wrap: anywhere; pointer-events: none; font: 14px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; tab-size: 4; font-variant-ligatures: none; }
@@ -1805,7 +1805,7 @@ body.interview-resizing { cursor: col-resize; user-select: none; }
 .interview-toolbar .hint { flex: 1; min-width: 160px; margin: 0; font-size: 13px; }
 .interview-label { display: block; color: var(--text); font-size: 13.5px; font-weight: 600; margin: 14px 0 6px; }
 .interview-label .hint { font-weight: 400; margin-left: 8px; }
-#interview-answer { min-height: 300px; resize: vertical; padding: 16px; line-height: 1.65; }
+#interview-answer { min-height: 400px; resize: vertical; padding: 16px; line-height: 1.65; }
 #interview-answer.interview-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; line-height: 1.6; tab-size: 4; white-space: pre-wrap; overflow-wrap: anywhere; }
 #interview-board { border: 1px solid var(--line); border-radius: 12px; background: #fff; color: #19191b; touch-action: none; overflow: hidden; aspect-ratio: 10 / 7; cursor: crosshair; }
 #interview-board > svg { display: block; width: 100%; height: 100%; }
@@ -1848,6 +1848,8 @@ body.interview-resizing { cursor: col-resize; user-select: none; }
 .interview-attempt.failed { --tone: var(--danger); }
 .interview-attempt.partly { --tone: var(--hue-amber); }
 .interview-attempt > summary { color: var(--text); font-size: 15px; border-top: 0; padding: 0; flex-wrap: wrap; }
+.interview-attempt[open] > summary { margin-bottom: 12px; }
+.interview-attempt > .btn { margin: 0 0 12px; }
 .interview-attempt > summary > .chip { flex: none; }
 .interview-tally.pending { background: color-mix(in srgb, var(--muted) 14%, transparent); color: var(--muted); }
 .interview-attempt > summary .grow { min-width: 0; overflow-wrap: anywhere; }

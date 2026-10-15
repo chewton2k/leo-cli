@@ -5300,6 +5300,39 @@ test('an open submission and folded review stay open when Felix answers and the 
   if (await review.count()) await expect(page.locator('#interview-results .interview-review details').first()).toHaveAttribute('open', '');
 });
 
+test('buttons keep room from the text and sections around them', async ({ page }) => {
+  test.setTimeout(60000);
+  const cramped = () => {
+    const shown = (el) => { const r = el.getBoundingClientRect(); const s = getComputedStyle(el); return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.position !== 'fixed' && s.position !== 'absolute'; };
+    const out = [];
+    for (const b of document.querySelectorAll('main button, main a.btn, main .link-btn')) {
+      if (!shown(b) || b.matches('.rec-go') || b.getBoundingClientRect().height < 18) continue;
+      const br = b.getBoundingClientRect();
+      for (const dir of [-1, 1]) {
+        let sib = dir < 0 ? b.previousElementSibling : b.nextElementSibling;
+        while (sib && !shown(sib)) sib = dir < 0 ? sib.previousElementSibling : sib.nextElementSibling;
+        if (!sib || sib.matches('button, a, .chip, label') || (sib.tagName === b.tagName && sib.className === b.className)) continue;
+        const sr = sib.getBoundingClientRect();
+        if (Math.min(br.right, sr.right) - Math.max(br.left, sr.left) <= 0) continue;
+        const gap = dir < 0 ? br.top - sr.bottom : sr.top - br.bottom;
+        if (gap >= -1 && gap < 8) out.push(`${b.textContent.trim()} is ${gap.toFixed(0)}px from ${sib.tagName.toLowerCase()} "${sib.textContent.trim().slice(0, 30)}"`);
+      }
+    }
+    return out;
+  };
+  await page.request.post('/api/tasks', { data: { title: 'Spacing task' } });
+  for (const hash of ['/#/', '/#/settings', '/#/calendar', '/#/interviews']) {
+    await page.goto(hash);
+    await page.waitForTimeout(500);
+    expect(await page.evaluate(cramped), hash).toEqual([]);
+  }
+  await practiceWithResults(page, 'spacing-results');
+  expect(await page.evaluate(cramped), 'result').toEqual([]);
+  await page.locator('[data-interview="pane"][data-pane="submissions"]').click();
+  for (const summary of await page.locator('#interview-attempts details.interview-attempt > summary').all()) await summary.click();
+  expect(await page.evaluate(cramped), 'submissions').toEqual([]);
+});
+
 test('Run shows its results in the Test cases tab beside the question', async ({ page }) => {
   const id = 'run-cases-01';
   const challenge = { id: 'run-cases-problem', title: 'Sum a list', question: 'Return the sum of the list.', minutes: 10, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'JavaScript', starter: 'function solve(nums) {\n}', difficulty: 'easy', examples: [{ input: '[1,2]', output: '3' }], constraints: ['n <= 10'] } };
