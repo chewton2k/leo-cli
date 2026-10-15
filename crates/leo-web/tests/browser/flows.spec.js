@@ -5278,6 +5278,28 @@ async function practiceWithResults(page, id) {
   await page.locator('[data-chat="close"]').click();
 }
 
+test('an open submission and folded review stay open when Felix answers and the practice refreshes', async ({ page }) => {
+  await practiceWithResults(page, 'keep-open-01');
+  const review = page.locator('#interview-results .interview-review details').first();
+  if (await review.count()) {
+    await review.locator(':scope > summary').click();
+    await expect(review).toHaveAttribute('open', '');
+  }
+  await page.locator('[data-interview="pane"][data-pane="submissions"]').click();
+  const attempt = page.locator('#interview-attempts details.interview-attempt').first();
+  await attempt.locator(':scope > summary').click();
+  await expect(attempt).toHaveAttribute('open', '');
+  await page.locator('#chat-toggle').click();
+  await page.locator('#chat-input').fill('Why did the hidden test fail?');
+  await page.locator('#chat-input').press('Enter');
+  await expect(page.locator('.msg.leo').last()).toContainText('Here is my review.');
+  await expect(page.locator('.msg.leo')).toHaveCount(2);
+  await page.waitForTimeout(500);
+  await expect(page.locator('#interview-attempts details.interview-attempt').first()).toHaveAttribute('open', '');
+  await expect(page.locator('[data-interview="pane"][data-pane="submissions"]')).toHaveAttribute('aria-selected', 'true');
+  if (await review.count()) await expect(page.locator('#interview-results .interview-review details').first()).toHaveAttribute('open', '');
+});
+
 test('Run shows its results in the Test cases tab beside the question', async ({ page }) => {
   const id = 'run-cases-01';
   const challenge = { id: 'run-cases-problem', title: 'Sum a list', question: 'Return the sum of the list.', minutes: 10, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'JavaScript', starter: 'function solve(nums) {\n}', difficulty: 'easy', examples: [{ input: '[1,2]', output: '3' }], constraints: ['n <= 10'] } };

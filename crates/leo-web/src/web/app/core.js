@@ -282,6 +282,15 @@ function stopSlide(el) {
   el.style.overflow = '';
 }
 
+function keepOpen(box, html) {
+  if (!box) return;
+  const key = (fold) => fold.dataset.keep || fold.querySelector(':scope > summary')?.textContent.trim() || '';
+  const open = new Set([...box.querySelectorAll('details[open]')].map(key));
+  box.innerHTML = html;
+  if (!open.size) return;
+  for (const fold of box.querySelectorAll('details:not([open])')) if (open.has(key(fold))) fold.open = true;
+}
+
 function slideHeight(el, from, to, then) {
   stopSlide(el);
   if (stillMotion() || Math.abs(from - to) < 1) {

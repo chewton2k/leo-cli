@@ -259,6 +259,10 @@ seer, meaning, web, room).
   switching flushes drafts before selecting; model-created problems preserve
   pending edits before switching. The global Felix button opens the active
   practice conversation; Back saves then returns to the practice list.
+  Redraws after Felix answers (refreshInterview) keep every expanded
+  section open: the question, progress, submissions, result and checks are
+  drawn through `keepOpen`, which reopens `<details>` by `data-keep` (each
+  submission's id) or their summary text.
   Opening a practice while Felix is open switches him to that practice's chat
   (`chat.useInterview`, interview style, a toast names the practice); while
   he is answering elsewhere it does not interrupt and says so.
