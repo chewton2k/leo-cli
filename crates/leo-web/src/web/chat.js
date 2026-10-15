@@ -2608,6 +2608,27 @@
         toggle(true);
         return true;
       },
+      async useInterview(id, available = () => true) {
+        if (!available()) return 'gone';
+        if (state.id !== id) {
+          if (state.busy || state.preparingSend) return 'busy';
+          const opened = await resume(id);
+          if (opened === null || !available()) return 'gone';
+          if (!opened) begin(id);
+          state.mode = 'interview';
+          drawModes();
+          draw();
+          persist();
+          return 'switched';
+        }
+        if (state.mode !== 'interview' && !state.busy) {
+          state.mode = 'interview';
+          drawModes();
+          draw();
+          persist();
+        }
+        return 'same';
+      },
       setInterviewContext(context) { state.interview = context; if (state.open) drawContext(); },
       setContext(ctx) {
         const next = ctx && ctx.id ? { id: ctx.id, title: ctx.title, directory: ctx.directory || '' } : null;

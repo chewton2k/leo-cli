@@ -259,6 +259,9 @@ seer, meaning, web, room).
   switching flushes drafts before selecting; model-created problems preserve
   pending edits before switching. The global Felix button opens the active
   practice conversation; Back saves then returns to the practice list.
+  Opening a practice while Felix is open switches him to that practice's chat
+  (`chat.useInterview`, interview style, a toast names the practice); while
+  he is answering elsewhere it does not interrupt and says so.
   All active practices use available width and adapt when Felix opens.
   Coding wraps with aligned syntax and line numbers,
   and adapts when Felix opens. Python deletion on blank indented lines uses

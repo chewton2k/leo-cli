@@ -3151,6 +3151,31 @@ test.describe('past chats', () => {
   });
 });
 
+test('opening a practice while Felix is open switches him to that practice\'s chat', async ({ page }) => {
+  const tag = `${test.info().project.name}-${Date.now().toString(36)}`;
+  const id = `practice-chat-${tag}`;
+  const challenge = { id: 'practice-chat-problem', title: 'Pair sum', question: 'Find two indices.', minutes: 20, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'Python', starter: 'def pair_sum(nums, target):\n    pass', difficulty: 'easy', examples: [{ input: '[2,3], 5', output: '[0,1]' }], constraints: ['One pair.'] } };
+  const item = { id, revision: 1, framework: { title: `Switching practice ${tag}`, track: 'coding', company: '', role: '', language: 'Python', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace: { answer: challenge.coding.starter, reasoning: '', board: [] }, problems: [{ challenge, workspace: { answer: challenge.coding.starter, reasoning: '', board: [] } }], attempts: [] };
+  await page.request.put(`/api/chats/${id}`, { data: { title: `Practice chat ${tag}`, mode: 'interview', messages: [{ role: 'user', text: `Practice question ${tag}` }, { role: 'assistant', text: 'Practice answer' }] } });
+  await page.route(`**/api/interviews/${id}`, (route) => route.fulfill({ json: item }));
+  await page.goto('/');
+  await page.locator('#chat-toggle').click();
+  const panel = page.locator('aside.chat');
+  await expect(panel).toBeVisible();
+  await expect(panel).not.toContainText(`Practice question ${tag}`);
+  await page.evaluate((hash) => { location.hash = hash; }, `#/interviews/${id}`);
+  await expect(panel).toContainText(`Practice question ${tag}`);
+  await expect(panel.locator('.chat-mode.on')).toHaveText('Interview');
+  await expect(page.locator('.toast')).toContainText(`Felix switched to this practice’s chat: Switching practice ${tag}`);
+  await page.evaluate(() => { location.hash = '#/'; document.querySelectorAll('.toast').forEach((t) => t.remove()); });
+  await page.evaluate((hash) => { location.hash = hash; }, `#/interviews/${id}`);
+  await expect(page.locator('.interview-heading h1')).toHaveText(`Switching practice ${tag}`);
+  await expect(panel).toContainText(`Practice question ${tag}`);
+  await page.waitForTimeout(500);
+  await expect(page.locator('.toast', { hasText: 'Felix switched' })).toHaveCount(0);
+  await page.request.delete(`/api/chats/${id}`);
+});
+
 test('a problem shows its diagrams in the statement and under an example, in light and dark', async ({ page }) => {
   const id = 'diagram-problem-ui';
   const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 40"><title>Array</title><rect width="120" height="40" fill="#fff"/><text x="10" y="26" font-size="14">[2, 7, 11]</text></svg>';

@@ -80,6 +80,13 @@ async function showInterviews(id = '') {
     session.error = 'An unsaved draft was recovered on this device. Review it, then save it when you are ready.';
   }
   drawInterview(session);
+  if (chat.isOpen()) {
+    chat.useInterview(id, () => interviewHere(session)).then((found) => {
+      if (!interviewHere(session)) return;
+      if (found === 'switched') toast(`Felix switched to this practice’s chat: ${item.framework.title}`);
+      else if (found === 'busy') toast('Felix is answering in another chat. Press the Felix button here when he finishes to see this practice’s chat.');
+    }).catch(() => {});
+  }
   if (interviewStart?.id === id) {
     interviewStart = null;
     prepareInterview(session).catch(fail);
