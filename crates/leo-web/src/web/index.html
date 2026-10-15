@@ -1694,13 +1694,13 @@ body.interview-resizing { cursor: col-resize; user-select: none; }
 .interview-research { margin: 18px 0; }
 .interview-research .interview-sources { margin-top: 10px; }
 .interview-code-shell { position: relative; }
-.interview-code-shell.numbered { display: grid; grid-template-columns: 42px minmax(0, 1fr); border: 1px solid var(--line); border-radius: 10px; background: var(--bg); overflow: hidden; }
-#interview-lines { grid-column: 1 / -1; grid-row: 1; z-index: 1; margin: 0; padding: 16px 0; color: var(--muted); background: linear-gradient(to right, var(--surface-2) 42px, transparent 42px); overflow: hidden; min-height: 0; height: clamp(320px, calc(100dvh - 490px), 640px); font: 14px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; tab-size: 4; user-select: none; pointer-events: none; }
+.interview-code-shell.numbered { --code-height: clamp(480px, calc(100dvh - 320px), 960px); display: grid; grid-template-columns: 42px minmax(0, 1fr); border: 1px solid var(--line); border-radius: 10px; background: var(--bg); overflow: hidden; }
+#interview-lines { grid-column: 1 / -1; grid-row: 1; z-index: 1; margin: 0; padding: 16px 0; color: var(--muted); background: linear-gradient(to right, var(--surface-2) 42px, transparent 42px); overflow: hidden; min-height: 0; height: var(--code-height); font: 14px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; tab-size: 4; user-select: none; pointer-events: none; }
 .interview-line { display: grid; grid-template-columns: 42px minmax(0, 1fr); padding-right: var(--code-scrollbar, 0px); }
 .interview-line-number { text-align: right; padding: 0 8px; }
 .interview-line-measure { visibility: hidden; white-space: pre-wrap; overflow-wrap: anywhere; padding: 0 12px; }
 .numbered .interview-code-pane { grid-column: 2; grid-row: 1; }
-.numbered #interview-answer { border: 0; border-radius: 0; background: transparent; min-height: 480px; height: clamp(480px, calc(100dvh - 320px), 960px); max-height: 960px; resize: none; padding: 16px 12px; }
+.numbered #interview-answer { border: 0; border-radius: 0; background: transparent; min-height: 480px; height: var(--code-height); max-height: 960px; resize: none; padding: 16px 12px; }
 .interview-code-pane { position: relative; min-width: 0; }
 .interview-code-pane #interview-answer { width: 100%; display: block; }
 #interview-colors { display: none; position: absolute; inset: 0; margin: 0; border: 0; padding: 16px 12px; overflow: auto; scrollbar-width: none; white-space: pre-wrap; overflow-wrap: anywhere; pointer-events: none; font: 14px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; tab-size: 4; font-variant-ligatures: none; }

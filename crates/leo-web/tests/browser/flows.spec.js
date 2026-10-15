@@ -5300,6 +5300,24 @@ test('an open submission and folded review stay open when Felix answers and the 
   if (await review.count()) await expect(page.locator('#interview-results .interview-review details').first()).toHaveAttribute('open', '');
 });
 
+test('the line numbers run the full height of the tall code editor', async ({ page }) => {
+  const id = 'tall-editor-01';
+  const code = Array.from({ length: 70 }, (_, i) => `x${i + 1} = ${i + 1}`).join('\n');
+  const challenge = { id: 'tall-editor-problem', title: 'Long code', question: 'Write a lot.', minutes: 20, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'Python', starter: 'def solve():\n    pass', difficulty: 'easy', examples: [{ input: '1', output: '1' }], constraints: ['None.'] } };
+  const workspace = { answer: code, reasoning: '', board: [] };
+  const item = { id, revision: 1, framework: { title: 'Tall editor', track: 'coding', company: '', role: '', language: 'Python', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace, problems: [{ challenge, workspace }], attempts: [] };
+  await page.route(`**/api/interviews/${id}`, (route) => route.fulfill({ json: item }));
+  await page.goto(`/#/interviews/${id}`);
+  const editor = page.locator('#interview-answer');
+  await expect(editor).toHaveValue(code);
+  const box = await editor.boundingBox();
+  const gutter = await page.locator('#interview-lines').boundingBox();
+  expect(box.height).toBeGreaterThanOrEqual(479);
+  expect(Math.abs(gutter.height - box.height)).toBeLessThanOrEqual(2);
+  const last = await page.locator('#interview-lines .interview-line-number').evaluateAll((numbers, bottom) => numbers.filter((n) => n.getBoundingClientRect().bottom <= bottom).length, box.y + box.height);
+  expect(last).toBeGreaterThan(Math.floor((box.height - 32) / 23));
+});
+
 test('buttons keep room from the text and sections around them', async ({ page }) => {
   test.setTimeout(60000);
   const cramped = () => {
