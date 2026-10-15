@@ -194,9 +194,11 @@ function drawInterviewProblems(session) {
   const problems = item.problems?.length ? item.problems : item.challenge ? [{ challenge: item.challenge }] : [];
   const busy = Boolean(session.preparing || session.submitting || session.switching);
   const filter = interviews.topicFilter(problems.slice(0, interviews.MOST_PROBLEMS), interviewTopic(session));
-  const topicChip = (label, attrs, on) => `<button class="pick-chip${on ? ' on' : ''}" data-interview="topic" ${attrs} aria-pressed="${on}">${label}</button>`;
-  const sort = filter.untagged ? `<button class="link-btn interview-sort-topics" data-interview="sort-topics"${busy ? ' disabled' : ''}>Sort into topics with Felix</button>` : '';
-  const topics = filter.topics.length ? `<div class="interview-topics" role="group" aria-label="Show problems by topic">${topicChip(`All · ${Math.min(problems.length, interviews.MOST_PROBLEMS)}`, 'data-all="1"', filter.chosen === null)}${filter.topics.map((t) => topicChip(`${esc(t.name)} · ${t.count}`, `data-topic="${esc(t.name)}"`, filter.chosen !== null && filter.chosen !== interviews.NO_TOPIC && filter.chosen.toLowerCase() === t.name.toLowerCase())).join('')}${filter.untagged ? topicChip(`No topic · ${filter.untagged}`, 'data-none="1"', filter.chosen === interviews.NO_TOPIC) : ''}${sort}</div>` : sort ? `<div class="interview-topics">${sort}</div>` : '';
+  const count = Math.min(problems.length, interviews.MOST_PROBLEMS);
+  const row = (label, n, attrs, on) => `<button type="button" class="pick-model${on ? ' on' : ''}" role="menuitemradio" aria-checked="${on}" data-interview="topic" ${attrs}><span class="pick-text"><span class="pick-name">${label}</span><span class="pick-price">${n} problem${n === 1 ? '' : 's'}</span></span>${on ? ICON.check : ''}</button>`;
+  const named = filter.chosen === null ? 'All topics' : filter.chosen === interviews.NO_TOPIC ? 'No topic' : esc(filter.topics.find((t) => t.name.toLowerCase() === filter.chosen.toLowerCase())?.name || filter.chosen);
+  const menu = `${row('All topics', count, 'data-all="1"', filter.chosen === null)}${filter.topics.map((t) => row(esc(t.name), t.count, `data-topic="${esc(t.name)}"`, filter.chosen !== null && filter.chosen !== interviews.NO_TOPIC && filter.chosen.toLowerCase() === t.name.toLowerCase())).join('')}${filter.untagged && filter.topics.length ? row('No topic', filter.untagged, 'data-none="1"', filter.chosen === interviews.NO_TOPIC) : ''}${filter.untagged ? `<div class="pick-split"></div><button type="button" class="pick-model interview-sort-topics" role="menuitem" data-interview="sort-topics"${busy ? ' disabled' : ''}><span class="pick-text"><span class="pick-name">Sort into topics with Felix</span><span class="pick-price">${filter.untagged} without a topic</span></span></button>` : ''}`;
+  const topics = count ? `<div class="picker interview-topic-picker"><button type="button" class="picker-button${filter.chosen === null ? '' : ' filtered'}" data-interview="topic-menu" aria-haspopup="menu" aria-expanded="false" aria-label="Filter problems by topic: ${named}">${ICON.filter}<span class="picker-text">${named}</span>${ICON.chevron}</button><div class="picker-menu" role="menu" aria-label="Topics" hidden><div class="pick-head">Show problems about</div>${menu}</div></div>` : '';
   box.innerHTML = `${topics}${problems.slice(0, interviews.MOST_PROBLEMS).map((p, i) => !filter.shown.includes(i) ? '' : `<button class="pick-chip${p.challenge.id === item.challenge?.id ? ' on' : ''}" data-interview="problem" data-id="${esc(p.challenge.id)}" aria-pressed="${p.challenge.id === item.challenge?.id}" title="${esc(p.challenge.title)}"${busy ? ' disabled' : ''}>Problem ${i + 1}${item.attempts.some((a) => a.challenge.id === p.challenge.id) ? ' · Submitted' : ''}</button>`).join('')}<button class="btn sm plain" data-interview="next"${busy || problems.length >= interviews.MOST_PROBLEMS ? ' disabled' : ''}>${session.preparing ? 'Preparing…' : '+ Problem'}</button>`;
 }
 
@@ -212,6 +214,43 @@ function interviewTopic(session) {
   return session.topic;
 }
 
+function interviewTopicMenu(open) {
+  const menu = $('.interview-topic-picker .picker-menu');
+  const button = $('.interview-topic-picker .picker-button');
+  if (!menu || !button) return;
+  const opening = open ?? (menu.hidden || Boolean(menu.dataset.folding));
+  if (opening) {
+    unfold(menu);
+    (menu.querySelector('.pick-model.on') || menu.querySelector('.pick-model'))?.focus({ preventScroll: true });
+  } else {
+    fold(menu);
+  }
+  button.setAttribute('aria-expanded', String(opening));
+}
+
+document.addEventListener('click', (e) => {
+  if (state.view === 'interviews' && !e.target.closest('.interview-topic-picker')) {
+    const menu = $('.interview-topic-picker .picker-menu');
+    if (menu && !menu.hidden) interviewTopicMenu(false);
+  }
+});
+document.addEventListener('keydown', (e) => {
+  const menu = $('.interview-topic-picker .picker-menu');
+  if (!menu || menu.hidden || state.view !== 'interviews') return;
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    e.stopPropagation();
+    interviewTopicMenu(false);
+    $('.interview-topic-picker .picker-button')?.focus();
+    return;
+  }
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+  const items = [...menu.querySelectorAll('.pick-model:not([disabled])')];
+  const at = items.indexOf(document.activeElement);
+  e.preventDefault();
+  items[(at + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
+}, true);
+
 function pickInterviewTopic(session, el) {
   session.topic = el.dataset.all ? null : el.dataset.none ? interviews.NO_TOPIC : el.dataset.topic;
   try {
@@ -220,6 +259,7 @@ function pickInterviewTopic(session, el) {
     else localStorage.setItem(key, session.topic === interviews.NO_TOPIC ? '\u0000' : session.topic);
   } catch (e) {}
   drawInterviewProblems(session);
+  $('.interview-topic-picker .picker-button')?.focus({ preventScroll: true });
 }
 
 function useInterviewProblem(session, item) {
@@ -1774,8 +1814,9 @@ async function interviewAction(el) {
   if (action === 'chat') return chat.openInterview(session.item.id, () => interviewHere(session));
   if (action === 'next') return prepareInterview(session);
   if (action === 'problem') return selectInterviewProblem(session, el.dataset.id);
+  if (action === 'topic-menu') return interviewTopicMenu();
   if (action === 'topic') return pickInterviewTopic(session, el);
-  if (action === 'sort-topics') return talkInterview(session, 'Sort my problems into topics.', [], 'Give every problem in this practice that has no topics 1-3 topics with interview_topics, all in one call, reusing the spelling of topics_in_use. Change nothing else.');
+  if (action === 'sort-topics') { interviewTopicMenu(false); return talkInterview(session, 'Sort my problems into topics.', [], 'Give every problem in this practice that has no topics 1-3 topics with interview_topics, all in one call, reusing the spelling of topics_in_use. Every one of them must get at least one topic: choose the closest fit when unsure, never leave one out. Change nothing else.'); }
   if (action === 'hint') return talkInterview(session, 'Give me a small hint without the solution.', [], 'Give me one small hint for the current interview challenge, without revealing the solution or assessing my draft.');
   if (action === 'submit') return submitInterview(session);
   if (action === 'run') return runInterviewExamples(session);

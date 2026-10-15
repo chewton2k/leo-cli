@@ -359,14 +359,18 @@ seer, meaning, web, room).
   `topics` (any field: DFS, Dynamic programming; Random walks for quant), at
   most `MOST_TOPICS`, distinct ignoring case. Felix is told to tag every new
   problem and to reuse `topics_in_use` (in `<interview_material>`) instead of
-  near-duplicates. Older or mistagged problems are retagged together with
+  near-duplicates; `interview_challenge` refuses a problem with no topics.
+  Older or mistagged problems are retagged together with
   `interview_topics` (one `Proposal::InterviewTopics` card listing each
   problem's old and new topics; `interview::set_topics` checks each problem's
   topics are still what was read; Undo swaps them back; Auto applies, Read
-  only refuses); "Sort into topics with Felix" appears while any problem
-  has none. The practice
-  page shows a filter row above the problem chips (All, each topic with its
-  count, No topic for older problems; `interviews.topicFilter`), remembered
+  only refuses). Every listed problem needs at least one topic, and the tool
+  result names the problems still without one so Felix finishes the job;
+  "Sort into topics with Felix" is in the menu while any problem has none. The practice
+  page has a filter button with a funnel icon before the problem chips that
+  opens a dropdown (the Settings `.picker` menu: All topics, each topic with
+  its count, No topic; arrow keys, Escape and an outside click close it;
+  `interviews.topicFilter`), remembered
   per practice in `leo-interview-topic:<id>`; the question shows its topics.
   Problem pictures (2026-10-14, the user's request): the question is Markdown,
   so a ```mermaid or ```svg block in it is drawn like in notes, and each

@@ -1776,7 +1776,7 @@ fn a_selected_passage_reaches_felix_as_quoted_material() {
 
 #[test]
 fn company_preparation_searches_and_creates_a_seeded_coding_workspace_on_both_protocols() {
-    const CHALLENGE: &str = r#"{"id":"challenge-prep-01","title":"Pair sum","question":"Return the two matching indices.","minutes":25,"skills":["Approach"],"origin":"generated","sources":[{"title":"Public candidate report","url":"https://example.com/interview","kind":"reported"}],"coding":{"language":"Python","starter":"def pair_sum(nums, target):\n    pass","difficulty":"easy","examples":[{"input":"nums=[2,3], target=5","output":"[0,1]"}],"constraints":["Exactly one pair exists."]}}"#;
+    const CHALLENGE: &str = r#"{"id":"challenge-prep-01","title":"Pair sum","question":"Return the two matching indices.","minutes":25,"skills":["Approach"],"topics":["Hash maps"],"origin":"generated","sources":[{"title":"Public candidate report","url":"https://example.com/interview","kind":"reported"}],"coding":{"language":"Python","starter":"def pair_sum(nums, target):\n    pass","difficulty":"easy","examples":[{"input":"nums=[2,3], target=5","output":"[0,1]"}],"constraints":["Exactly one pair exists."]}}"#;
     struct PrepareNative {
         company: bool,
     }
@@ -2103,7 +2103,7 @@ fn felix_renames_pins_restores_and_deletes_folders_only_when_asked_and_finds_old
 
 #[test]
 fn interview_problems_and_calendar_context_work_on_native_and_text_sessions() {
-    const PROBLEM: &str = r#"{"id":"challenge-context-02","title":"Category coverage","question":"Find a shortest covering segment.","minutes":45,"skills":["Approach"],"origin":"generated","sources":[],"coding":{"language":"Python","starter":"def coverage(feed, required):\n    pass","difficulty":"medium","examples":[{"input":"feed=['art'], required=['art']","output":"[0,0]"}],"constraints":["At most 200000 categories."]}}"#;
+    const PROBLEM: &str = r#"{"id":"challenge-context-02","title":"Category coverage","question":"Find a shortest covering segment.","minutes":45,"skills":["Approach"],"topics":["Sliding window"],"origin":"generated","sources":[],"coding":{"language":"Python","starter":"def coverage(feed, required):\n    pass","difficulty":"medium","examples":[{"input":"feed=['art'], required=['art']","output":"[0,0]"}],"constraints":["At most 200000 categories."]}}"#;
     struct ProblemsNative;
     impl chat::Conversation for ProblemsNative {
         fn native(&self) -> bool {
