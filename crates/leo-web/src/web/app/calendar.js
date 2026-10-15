@@ -754,12 +754,16 @@ function drawTasksWindow() {
   </div>`;
   const label = late ? `${late[1].length} overdue · ${open} to do` : `${open} to do`;
   tasksBox.classList.toggle('folded', folded);
+  if (folded) {
+    tasksBox.innerHTML = `<button type="button" class="tasks-pill" data-action="tasks-fold" aria-expanded="false" aria-label="Show tasks: ${esc(label)}" title="Tasks · ${esc(label)}"><span class="tasks-icon${late ? ' late' : ''}">${ICON.check}</span><span class="tasks-badge${late ? ' late' : ''}">${open > 99 ? '99+' : open}</span></button>`;
+    return;
+  }
   tasksBox.innerHTML = `<div class="tasks-head">
-      <button type="button" class="tasks-toggle" data-action="tasks-fold" aria-expanded="${!folded}"><span class="tasks-icon${late ? ' late' : ''}">${ICON.check}</span><span class="grow">Tasks <span class="tasks-count">${esc(label)}</span></span><span class="activity-fold">${folded ? 'Show' : 'Hide'}</span></button>
+      <button type="button" class="tasks-toggle" data-action="tasks-fold" aria-expanded="true"><span class="tasks-icon${late ? ' late' : ''}">${ICON.check}</span><span class="grow">Tasks <span class="tasks-count">${esc(label)}</span></span><span class="activity-fold">Hide</span></button>
       <button type="button" class="icon-btn tasks-new" data-action="task-new" aria-label="New task" title="New task">${ICON.plus}</button>
     </div>
-    ${folded ? '' : `<div class="tasks-body">${groups.map(([name, list]) => `<div class="tasks-group${name === 'Overdue' ? ' late' : ''}">${name}</div>${list.slice(0, name === 'No date' ? 5 : 20).map(row).join('')}`).join('')}</div>
-    <div class="tasks-foot"><button type="button" class="link-btn" data-action="calendar">Open calendar</button></div>`}`;
+    <div class="tasks-body">${groups.map(([name, list]) => `<div class="tasks-group${name === 'Overdue' ? ' late' : ''}">${name}</div>${list.slice(0, name === 'No date' ? 5 : 20).map(row).join('')}`).join('')}</div>
+    <div class="tasks-foot"><button type="button" class="link-btn" data-action="calendar">Open calendar</button></div>`;
 }
 
 async function loadTasksWindow() {

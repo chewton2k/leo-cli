@@ -62,6 +62,11 @@ seer, meaning, web, room).
 - Layout variables on `body`: `--side` (sidebar, 0 under 1000 px), `--right`
   (Felix and/or the original pane), `--mid`. Fixed things (toolbar, select
   bar, toasts, FABs, `#dock`, the map) use them so nothing covers anything.
+  While Felix is open beside the page (chat at least 240 px from the left),
+  the window's own scrollbar is hidden (`html.page-bar-on`) and `.page-bar`
+  (core.js) draws one at the left edge of Felix (and the original pane), so
+  the notes' scrollbar sits beside the notes; the page still scrolls the
+  window, so reading positions and paging are unchanged.
 - Reuse what exists: `set-card`, `set-row`, `set-input`, `btn sm|plain|primary|danger`,
   `chip`/`pick-chip`, `sheet()` (swipe-to-close on phones), toasts with Undo,
   `library-views` segmented control, settings-style `<select>`. Readability:
@@ -526,8 +531,9 @@ the same idle loop.
   (`leo-calendar-hide-done`). Add to Google Calendar opens Google's prefilled
   page (no sign-in).
 - Tasks panel: in `#dock`, appears when there are open tasks (Overdue / Today /
-  Coming up 7 days / No date), folds (`leo-tasks-folded`), hidden on the
-  Calendar page and under 600 px.
+  Coming up 7 days / No date), folds (`leo-tasks-folded`) to one round icon
+  with a count badge (`.tasks-pill`, red when something is overdue) that opens
+  the box again, hidden on the Calendar page and under 600 px.
   Active interview practices start with Tasks folded so its expanded rows
   cannot block the workspace. Show still expands it; this local
   practice choice leaves the remembered preference for other pages intact.

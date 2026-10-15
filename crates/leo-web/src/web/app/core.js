@@ -91,7 +91,7 @@ const chat = felix.create({
     if (open && !saving.unsaved()) showNote(note.id);
     toast(open && saving.unsaved() ? 'Felix changed this note while you were typing; reopen it to see the change.' : `Changed “${note.title}”`, { action: 'Open', run: () => go(noteHash(note.id)) });
   },
-  onToggle: () => drawSide(),
+  onToggle: () => { drawSide(); pageBarLater(); },
   onCodeEdit: action => applyInterviewCodeSuggestion(action),
   onOrganized: (proposal) => {
     if (proposal.kind === 'interview_code_edit') { refreshInterview(proposal.interview).catch(fail); return; }
@@ -120,6 +120,79 @@ $('#back').innerHTML = ICON.back;
 $('#search-toggle').innerHTML = ICON.search;
 $('#menu').innerHTML = ICON.more;
 $('#search-icon').innerHTML = ICON.search;
+
+const pageBar = document.createElement('div');
+pageBar.className = 'page-bar';
+pageBar.hidden = true;
+pageBar.setAttribute('aria-hidden', 'true');
+pageBar.innerHTML = '<div class="page-bar-thumb"></div>';
+document.body.appendChild(pageBar);
+const pageThumb = pageBar.firstChild;
+let pageBarFrame = 0;
+let pageBarSize = { track: 0, thumb: 0, top: 0, room: 0 };
+
+function pageBarRight() {
+  const panel = document.querySelector('aside.chat');
+  if (!document.body.classList.contains('chat-open') || !panel || panel.hidden) return 0;
+  const source = document.querySelector('.source-pane');
+  const left = Math.min(panel.offsetLeft, source && source.getClientRects().length ? source.offsetLeft : Infinity);
+  return left < 240 ? 0 : Math.max(0, document.documentElement.clientWidth - left);
+}
+
+function drawPageBar() {
+  pageBarFrame = 0;
+  const right = pageBarRight();
+  const root = document.documentElement;
+  root.classList.toggle('page-bar-on', right > 0);
+  const room = root.scrollHeight - innerHeight;
+  if (!right || room < 1) {
+    pageBar.hidden = true;
+    return;
+  }
+  pageBar.style.right = `${right}px`;
+  pageBar.hidden = false;
+  const track = pageBar.clientHeight;
+  const thumb = Math.min(track, Math.max(36, track * innerHeight / root.scrollHeight));
+  const top = (track - thumb) * Math.min(1, Math.max(0, scrollY / room));
+  pageThumb.style.height = `${thumb}px`;
+  pageThumb.style.transform = `translateY(${top}px)`;
+  pageBarSize = { track, thumb, top, room };
+}
+
+function pageBarLater() {
+  if (!pageBarFrame) pageBarFrame = requestAnimationFrame(drawPageBar);
+}
+
+pageThumb.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  pageThumb.setPointerCapture(e.pointerId);
+  pageBar.classList.add('dragging');
+  const startY = e.clientY;
+  const startScroll = scrollY;
+  const { track, thumb, room } = pageBarSize;
+  const move = (m) => scrollTo(0, startScroll + (m.clientY - startY) * room / Math.max(1, track - thumb));
+  const stop = () => {
+    pageBar.classList.remove('dragging');
+    pageThumb.removeEventListener('pointermove', move);
+    pageThumb.removeEventListener('pointerup', stop);
+    pageThumb.removeEventListener('pointercancel', stop);
+  };
+  pageThumb.addEventListener('pointermove', move);
+  pageThumb.addEventListener('pointerup', stop);
+  pageThumb.addEventListener('pointercancel', stop);
+});
+pageBar.addEventListener('pointerdown', (e) => {
+  if (e.target !== pageBar || e.button !== 0) return;
+  const y = e.clientY - pageBar.getBoundingClientRect().top;
+  scrollBy(0, (y < pageBarSize.top ? -1 : 1) * innerHeight * 0.9);
+});
+addEventListener('scroll', pageBarLater, { passive: true });
+addEventListener('resize', pageBarLater);
+if (window.ResizeObserver) new ResizeObserver(pageBarLater).observe(document.body);
+new MutationObserver(pageBarLater).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+new MutationObserver(pageBarLater).observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
+document.addEventListener('animationend', pageBarLater, true);
 
 class Offline extends Error {}
 class Locked extends Error {}

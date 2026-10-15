@@ -484,7 +484,7 @@ label.trash-row { cursor: pointer; }
   html { scrollbar-gutter: auto !important; }
   body { --side: 0px !important; --right: 0px !important; --top: 0px !important; --bottom: 0px !important; }
   html, body { background: #fff; color: #1c1c1a; padding: 0 !important; margin: 0; font-size: 11pt; line-height: 1.55; }
-  .side, .bar, #floating, .toast, .toast-gone, .scrim, .scrim-gone, .note-meta, .doc-tail, .doc .blk .placeholder, .chat, .activity, .rec-pill, .chat-resize, .fab, .fabs, .actions, .select-bar, .dock, .tasks-window, .source-pane, .ask-float, .float-act, .map, .interview-split, [data-print-off] { display: none !important; }
+  .side, .bar, #floating, .toast, .toast-gone, .scrim, .scrim-gone, .note-meta, .doc-tail, .doc .blk .placeholder, .chat, .activity, .rec-pill, .chat-resize, .fab, .fabs, .actions, .select-bar, .dock, .tasks-window, .page-bar, .source-pane, .ask-float, .float-act, .map, .interview-split, [data-print-off] { display: none !important; }
   body.files-over main::after { display: none !important; }
   .interview-panes, .store-all { position: static !important; }
   main { max-width: none; width: auto; padding: 0 !important; margin: 0 !important; }
@@ -851,6 +851,12 @@ body.side-mini .side-nav .side-folder { display: none; }
   body.chat-open { --right: var(--chat-w); padding-right: var(--right); }
 }
 .chat-resize { display: none; }
+html.page-bar-on { scrollbar-width: none; scrollbar-gutter: auto; }
+html.page-bar-on::-webkit-scrollbar { display: none; }
+.page-bar { position: fixed; z-index: 40; top: calc(var(--top) + 2px); bottom: 2px; width: 12px; }
+.page-bar[hidden] { display: none; }
+.page-bar-thumb { position: absolute; top: 0; right: 3px; width: 6px; border-radius: 6px; background: color-mix(in srgb, var(--text) 30%, transparent); touch-action: none; }
+.page-bar:hover .page-bar-thumb, .page-bar.dragging .page-bar-thumb { right: 2px; width: 8px; background: color-mix(in srgb, var(--text) 45%, transparent); }
 @media (min-width: 900px) {
   .chat-resize { display: block; position: absolute; z-index: 6; left: -5px; top: 0; bottom: 0; width: 10px; cursor: col-resize; touch-action: none; outline: 0; }
   .chat-resize::after { content: ""; position: absolute; left: 4px; top: 0; bottom: 0; width: 2px; background: var(--accent); opacity: 0; transition: opacity .15s; }
@@ -1137,6 +1143,12 @@ body.on-map .dock { left: calc(var(--side) + 64px); }
 .tasks-title { flex: 1; min-width: 0; border: 0; background: none; padding: 0; font: inherit; font-size: 13.5px; color: var(--text); text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .tasks-when { flex: none; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .tasks-foot { padding: 8px 16px 10px; border-top: 1px solid var(--line); font-size: 13px; }
+.tasks-window.folded { align-self: flex-start; border-radius: 50%; overflow: visible; }
+.tasks-pill { position: relative; display: grid; place-items: center; width: 44px; height: 44px; border: 0; border-radius: 50%; background: none; color: var(--text); cursor: pointer; }
+.tasks-pill .tasks-icon { width: 26px; height: 26px; }
+.tasks-pill .tasks-icon svg { width: 15px; height: 15px; }
+.tasks-badge { position: absolute; top: -4px; right: -4px; min-width: 19px; height: 19px; padding: 0 5px; border-radius: 999px; background: var(--accent); color: var(--accent-text); font-size: 11.5px; font-weight: 700; line-height: 19px; text-align: center; font-variant-numeric: tabular-nums; }
+.tasks-badge.late { background: var(--danger); }
 .source-pane { position: fixed; z-index: 26; top: 0; bottom: 0; right: calc(var(--right) - var(--source-w, 0px)); width: var(--source-w, 480px); display: flex; flex-direction: column; padding-top: var(--top); background: var(--surface); border-left: 1px solid var(--line); }
 .source-pane[hidden] { display: none; }
 .source-grip { position: absolute; left: -4px; top: 0; bottom: 0; width: 8px; cursor: col-resize; touch-action: none; }

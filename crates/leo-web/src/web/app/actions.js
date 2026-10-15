@@ -72,6 +72,7 @@ const actions = {
     if (tasksWin.practice) {
       tasksWin.practiceFolded = !tasksWin.practiceFolded;
       drawTasksWindow();
+      tasksBox.querySelector('[data-action="tasks-fold"]')?.focus({ preventScroll: true });
       return;
     }
     tasksWin.folded = !tasksWin.folded;
@@ -81,6 +82,7 @@ const actions = {
       tasksWin.folded = Boolean(tasksWin.folded);
     }
     drawTasksWindow();
+    tasksBox.querySelector('[data-action="tasks-fold"]')?.focus({ preventScroll: true });
   },
   'source-close': () => closeSource(),
   'source-file': (el) => openSource(el.dataset.id, el.dataset.name),
