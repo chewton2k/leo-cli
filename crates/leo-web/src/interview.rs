@@ -1749,6 +1749,11 @@ mod tests {
             set_challenge(dir.path(), id, coding_challenge("challenge-problems-01")).unwrap();
         assert_eq!(duplicate.workspace, workspace());
         assert_eq!(duplicate.problems.len(), 2);
+        assert_eq!(duplicate.revision, old_revision);
+        let moved = select_problem(dir.path(), id, "challenge-problems-02").unwrap();
+        assert_eq!(moved.revision, old_revision + 1);
+        let restored = select_problem(dir.path(), id, "challenge-problems-01").unwrap();
+        assert_eq!(restored.revision, moved.revision + 1);
         assert!(matches!(
             change(
                 dir.path(),
