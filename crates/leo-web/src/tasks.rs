@@ -514,7 +514,10 @@ fn migrate(chats: &Path) {
             continue;
         };
         if path.exists() {
-            if !read_file(chats, &path).is_some_and(|found| found.id == task.id) {
+            let Some(found) = read_file(chats, &path).filter(|found| found.id == task.id) else {
+                continue;
+            };
+            if found.updated_at < task.updated_at && write_file(chats, &task).is_err() {
                 continue;
             }
         } else if write_file(chats, &task).is_err() {
@@ -851,7 +854,7 @@ mod tests {
                 std::fs::create_dir(&path).unwrap();
             }
             migrate(&chats);
-            let count: usize = db_of(&chats)
+            let count: i64 = db_of(&chats)
                 .with(|c| c.query_row("SELECT count(*) FROM tasks", [], |r| r.get(0)))
                 .unwrap();
             assert_eq!(count, 1);
@@ -861,6 +864,49 @@ mod tests {
                 std::fs::remove_dir(path).unwrap();
             }
             assert_eq!(load(&chats, &task.id), Some(task));
+        }
+    }
+
+    #[test]
+    fn migration_preserves_the_newest_task_in_both_orders_including_deletions() {
+        for database_newer in [false, true] {
+            for deleted in [false, true] {
+                let dir = tempfile::tempdir().unwrap();
+                let chats = dir.path().join("chats");
+                let older = plain("task-0010", "Earlier task", Utc::now());
+                let mut newer = older.clone();
+                newer.title = "Newer task".into();
+                newer.description = "Keep this detail".into();
+                newer.deleted = deleted;
+                newer.updated_at += chrono::Duration::seconds(5);
+                let (database, file) = if database_newer {
+                    (&newer, &older)
+                } else {
+                    (&older, &newer)
+                };
+                write_file(&chats, file).unwrap();
+                db_of(&chats)
+                    .with(|c| {
+                        c.execute(
+                            "INSERT INTO tasks (id, updated, data) VALUES (?1, ?2, ?3)",
+                            rusqlite::params![
+                                database.id,
+                                database.updated_at.to_rfc3339(),
+                                serde_json::to_string(database).unwrap()
+                            ],
+                        )
+                    })
+                    .unwrap();
+                migrate(&chats);
+                assert_eq!(
+                    read_file(&chats, &tasks_dir(&chats).join("task-0010.json")),
+                    Some(newer)
+                );
+                let count: i64 = db_of(&chats)
+                    .with(|c| c.query_row("SELECT count(*) FROM tasks", [], |r| r.get(0)))
+                    .unwrap();
+                assert_eq!(count, 0);
+            }
         }
     }
 

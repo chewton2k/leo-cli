@@ -736,7 +736,7 @@ mod boundaries {
                 .set_read_timeout(Some(Duration::from_secs(2)))
                 .unwrap();
             let mut bytes = [0; 2048];
-            stream.read(&mut bytes).unwrap();
+            assert!(stream.read(&mut bytes).unwrap() > 0);
             stream
                 .write_all(
                     b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nabcdef",
