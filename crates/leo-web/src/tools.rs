@@ -1431,10 +1431,10 @@ fn clip_chars(text: &str, most: usize) -> String {
     text.chars().take(most).collect()
 }
 
-pub const SESSION_DONE: &str = "That did not work: this study session is complete (every idea is covered, or it reached 20 questions). Do not ask another question. Write the recap now in one short paragraph: what went well and what to look at again.";
+pub const SESSION_DONE: &str = "That did not work: this study session is complete (every idea is covered, or it reached 20 questions). Do not ask another question. Write the recap now in one short paragraph: the specific progress the user demonstrated and one priority to practise next. No generic praise or repeated session transcript.";
 pub const PLANNED: &str =
     "Planned. Ask the first question now with quiz, giving its \"idea\" number.";
-pub const ENDED: &str = "Ended. Write the recap in one short paragraph: what went well and what to look at again. Ask nothing more.";
+pub const ENDED: &str = "Ended. Write the recap in one short paragraph: the specific progress the user demonstrated and one priority to practise next. No generic praise or repeated session transcript. Ask nothing more.";
 
 pub fn plan_from(call: &Call) -> Result<Vec<String>, String> {
     let mut ideas: Vec<String> = Vec::new();

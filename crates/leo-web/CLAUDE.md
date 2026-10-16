@@ -692,3 +692,11 @@ outside the store lock, at most once every 20 seconds. Settings Off is respected
 missing remotes and empty queues do nothing. Pushes are noninteractive, limited
 to 60 seconds, never pull/merge, and failures remain visible on the next visit.
 Chats and interview practices remain local; this does not change backup contents.
+
+Felix’s user-facing prose follows chat::REPLY_STYLE across all chat styles,
+interview key/reference writing and quick grading. Inspired by
+https://github.com/ayghri/i-have-adhd, it puts the answer first, teaches one
+manageable step, groups longer material and ends with a next action only when
+needed. Required derivations, assignment parts, evidence, JSON schemas, quiz
+markers and strict assessment remain complete; no diagnosis or fixed word cap.
+Recording/note synthesis and its gap-filling rules are unchanged.

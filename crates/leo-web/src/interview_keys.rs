@@ -693,8 +693,12 @@ pub fn write_key(
     framework: &Framework,
     challenge: &Challenge,
 ) -> Result<Key, String> {
-    let reply = writer(KEY_RULES, &key_prompt(framework, challenge), KEY_TOKENS)
-        .map_err(|e| e.to_string())?;
+    let reply = writer(
+        &format!("{KEY_RULES}\n\n{}", crate::chat::REPLY_STYLE),
+        &key_prompt(framework, challenge),
+        KEY_TOKENS,
+    )
+    .map_err(|e| e.to_string())?;
     let value = crate::graph::json_in(&reply).ok_or("the key was not JSON")?;
     let mut key: Key = serde_json::from_value(value).map_err(|e| e.to_string())?;
     key.validate(challenge)?;
@@ -1034,7 +1038,12 @@ pub fn grade(
         if instant.is_empty() { "none" } else { &instant },
         material(challenge, workspace)
     );
-    let reply = quick(GRADE_RULES, &user, GRADE_TOKENS).map_err(|e| e.to_string())?;
+    let reply = quick(
+        &format!("{GRADE_RULES}\n\n{}", crate::chat::REPLY_STYLE),
+        &user,
+        GRADE_TOKENS,
+    )
+    .map_err(|e| e.to_string())?;
     let value = crate::graph::json_in(&reply).ok_or("the grade was not JSON")?;
     let criteria: Vec<Verdict> = key
         .criteria
@@ -1434,6 +1443,7 @@ mod tests {
         let item = interview::set_challenge(path, id, challenge.clone()).unwrap();
         let writer: Writer = std::sync::Arc::new(|system: &str, user: &str, _| {
             assert!(system.contains("hidden answer key"));
+            assert!(system.contains(crate::chat::REPLY_STYLE));
             assert!(user.contains("challenge-dice-01"));
             Ok(r#"{"asks": [{"id": "a1", "label": "Expected value", "kind": "value", "unit": "", "answer": 3.5, "tolerance": 0.01, "factor": 0}], "criteria": [{"id": "c1", "text": "Uses linearity", "weight": 2, "good": "Sums faces", "misses": []}], "reference": "Average of 1..6 is 3.5."}"#.into())
         });
@@ -1518,6 +1528,7 @@ mod tests {
         };
         let quick: Writer = std::sync::Arc::new(|system: &str, user: &str, _| {
             assert!(system.contains("rubric written before"));
+            assert!(system.contains(crate::chat::REPLY_STYLE));
             assert!(user.contains("Common misses: Nested loops"));
             Ok(r#"Here: {"criteria": [{"id": "c1", "verdict": "partly", "why": "You loop twice."}, {"id": "c9", "verdict": "met", "why": "x"}], "overall": "Good start."}"#.into())
         });
