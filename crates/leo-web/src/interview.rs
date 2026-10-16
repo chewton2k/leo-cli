@@ -498,18 +498,21 @@ fn tally(problems: usize, attempts: &[serde_json::Value]) -> serde_json::Value {
 
 pub fn list(path: &Path) -> Result<Vec<serde_json::Value>, Error> {
     db::for_chats(path).with(|c| {
-        let mut query = c.prepare("SELECT id, json_extract(data, '$.framework'), updated, json_array_length(data, '$.attempts'), length(CAST(data AS BLOB)), coalesce(json_array_length(data, '$.problems'), 0), json_type(data, '$.challenge'), coalesce(json_extract(data, '$.attempts'), '[]') FROM interviews ORDER BY updated DESC LIMIT ?1")?;
-        let rows = query.query_map([MOST_PLANS as i64], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, u32>(3)?, r.get::<_, i64>(4)?, r.get::<_, i64>(5)?, r.get::<_, Option<String>>(6)?, r.get::<_, String>(7)?)))?;
+        let mut query = c.prepare("SELECT i.id, json_extract(i.data, '$.framework'), i.updated, json_array_length(i.data, '$.attempts'), length(CAST(i.data AS BLOB)), coalesce(json_array_length(i.data, '$.problems'), 0), json_type(i.data, '$.challenge'), coalesce(json_extract(i.data, '$.attempts'), '[]'), ch.updated_at FROM interviews i LEFT JOIN chats ch ON ch.id = i.id AND ch.count > 0 ORDER BY i.updated DESC, i.id LIMIT ?1")?;
+        let rows = query.query_map([MOST_PLANS as i64], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, u32>(3)?, r.get::<_, i64>(4)?, r.get::<_, i64>(5)?, r.get::<_, Option<String>>(6)?, r.get::<_, String>(7)?, r.get::<_, Option<String>>(8)?)))?;
+        let when = |text: &str| chrono::DateTime::parse_from_rfc3339(text).map(|t| t.with_timezone(&Utc)).ok();
         let mut found = Vec::new();
         for row in rows {
-            let (id, framework, updated, attempts, bytes, problems, open, history) = row?;
+            let (id, framework, updated, attempts, bytes, problems, open, history, talked) = row?;
             if let Ok(framework) = serde_json::from_str::<Framework>(&framework) {
                 let problems = if problems == 0 && open.as_deref() == Some("object") { 1 } else { problems as usize };
                 let history: Vec<serde_json::Value> = serde_json::from_str(&history).unwrap_or_default();
-                found.push(serde_json::json!({"id":id,"framework":framework,"updated":updated,"attempts":attempts,"bytes":bytes,"tally":tally(problems, &history)}));
+                let active = [when(&updated), talked.as_deref().and_then(when)].into_iter().flatten().max();
+                found.push((active, serde_json::json!({"id":id,"framework":framework,"updated":updated,"attempts":attempts,"bytes":bytes,"tally":tally(problems, &history)})));
             }
         }
-        Ok(found)
+        found.sort_by(|a, b| b.0.cmp(&a.0));
+        Ok(found.into_iter().map(|(_, plan)| plan).collect())
     }).map_err(|_| Error::Storage)
 }
 
@@ -555,11 +558,17 @@ pub fn mutate(
             problem = Some(Error::Conflict);
             return Ok(());
         }
-        if let Err(why) = legacy_problems(&mut item)
-            .and_then(|()| work(&mut item))
-            .and_then(|()| remember(&mut item))
-        {
+        if let Err(why) = legacy_problems(&mut item) {
             problem = Some(why);
+            return Ok(());
+        }
+        let before = item.clone();
+        if let Err(why) = work(&mut item).and_then(|()| remember(&mut item)) {
+            problem = Some(why);
+            return Ok(());
+        }
+        if item == before {
+            changed = Some(item);
             return Ok(());
         }
         item.revision += 1;
@@ -1274,6 +1283,204 @@ mod tests {
             constraints: vec!["Two or more values; exactly one pair.".into()],
         });
         c
+    }
+
+    #[test]
+    fn unchanged_workspaces_and_preferences_preserve_revisions_and_activity() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path();
+        let id = "interview-order-01";
+        let configured = configure(path, id, 0, framework()).unwrap();
+        let same = configure(path, id, configured.revision, configured.framework.clone()).unwrap();
+        assert_eq!(same, configured);
+        let opened = set_challenge(path, id, challenge("challenge-order-01")).unwrap();
+        let unchanged = change(
+            path,
+            id,
+            Change::Workspace {
+                revision: opened.revision,
+                challenge: "challenge-order-01".into(),
+                workspace: opened.workspace.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(unchanged, opened);
+        let selected = change(
+            path,
+            id,
+            Change::Select {
+                revision: opened.revision,
+                challenge: "challenge-order-01".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(selected, opened);
+        let mut draft = opened.workspace.clone();
+        draft.answer = "Use a hash map".into();
+        let saved = change(
+            path,
+            id,
+            Change::Workspace {
+                revision: opened.revision,
+                challenge: "challenge-order-01".into(),
+                workspace: draft.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(saved.revision, opened.revision + 1);
+        assert_eq!(load(path, id).unwrap(), saved);
+        assert!(matches!(
+            change(
+                path,
+                id,
+                Change::Workspace {
+                    revision: opened.revision,
+                    challenge: "challenge-order-01".into(),
+                    workspace: draft,
+                }
+            ),
+            Err(Error::Conflict)
+        ));
+    }
+
+    #[test]
+    fn practice_order_uses_work_and_messages_but_not_reads_or_empty_chats() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path();
+        let ids = [
+            "interview-order-01",
+            "interview-order-02",
+            "interview-order-03",
+        ];
+        for (n, id) in ids.iter().enumerate() {
+            configure(path, id, 0, framework()).unwrap();
+            set_challenge(path, id, challenge("challenge-order-01")).unwrap();
+            let stamp = format!("2000-01-0{}T00:00:00+00:00", n + 1);
+            db::for_chats(path).with(|c| c.execute(
+                "UPDATE interviews SET updated = ?1, data = json_set(data, '$.updated', ?1) WHERE id = ?2",
+                rusqlite::params![stamp, id],
+            )).unwrap();
+        }
+        let order = || {
+            list(path)
+                .unwrap()
+                .iter()
+                .map(|p| p["id"].as_str().unwrap().to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(order(), [ids[2], ids[1], ids[0]]);
+        let opened = load(path, ids[0]).unwrap();
+        change(
+            path,
+            ids[0],
+            Change::Workspace {
+                revision: opened.revision,
+                challenge: "challenge-order-01".into(),
+                workspace: opened.workspace.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(order(), [ids[2], ids[1], ids[0]]);
+        let saving = |messages| chats::Saving {
+            title: String::new(),
+            mode: "interview".into(),
+            refs: vec![],
+            messages,
+        };
+        let when = |s: &str| {
+            chrono::DateTime::parse_from_rfc3339(s)
+                .unwrap()
+                .with_timezone(&Utc)
+        };
+        chats::save(path, ids[0], saving(vec![]), when("2001-01-01T00:00:00Z")).unwrap();
+        assert_eq!(
+            order(),
+            [ids[2], ids[1], ids[0]],
+            "opening an empty chat is not activity"
+        );
+        let messages = vec![serde_json::json!({"role":"user", "text":"Help me with this problem"})];
+        chats::save(
+            path,
+            ids[0],
+            saving(messages.clone()),
+            when("2001-01-02T00:00:00Z"),
+        )
+        .unwrap();
+        assert_eq!(
+            order(),
+            [ids[0], ids[2], ids[1]],
+            "sending a message counts"
+        );
+        let mut draft = load(path, ids[1]).unwrap();
+        draft.workspace.reasoning = "Try a sliding window".into();
+        change(
+            path,
+            ids[1],
+            Change::Workspace {
+                revision: draft.revision,
+                challenge: "challenge-order-01".into(),
+                workspace: draft.workspace,
+            },
+        )
+        .unwrap();
+        assert_eq!(order(), [ids[1], ids[0], ids[2]], "editing counts");
+        chats::save(path, ids[0], saving(messages), Utc::now()).unwrap();
+        assert_eq!(
+            order(),
+            [ids[1], ids[0], ids[2]],
+            "reopening a chat does not count"
+        );
+        let submitted = load(path, ids[2]).unwrap();
+        change(
+            path,
+            ids[2],
+            Change::Submit {
+                revision: submitted.revision,
+                challenge: "challenge-order-01".into(),
+                attempt: "attempt-order-01".into(),
+                workspace: workspace(),
+                tests: vec![],
+            },
+        )
+        .unwrap();
+        assert_eq!(order(), [ids[2], ids[1], ids[0]], "submitting counts");
+    }
+
+    #[test]
+    fn practice_activity_sorts_instants_across_time_zones_with_stable_ties() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path();
+        for id in ["interview-order-01", "interview-order-02"] {
+            configure(path, id, 0, framework()).unwrap();
+        }
+        db::for_chats(path)
+            .with(|c| {
+                c.execute("UPDATE interviews SET updated = '2000-01-01T07:00:00Z'", [])?;
+                Ok(())
+            })
+            .unwrap();
+        let messages = vec![serde_json::json!({"role":"user", "text":"A question"})];
+        chats::save(
+            path,
+            "interview-order-02",
+            chats::Saving {
+                title: String::new(),
+                mode: "interview".into(),
+                refs: vec![],
+                messages,
+            },
+            chrono::DateTime::parse_from_rfc3339("2000-01-01T00:00:00-08:00")
+                .unwrap()
+                .with_timezone(&Utc),
+        )
+        .unwrap();
+        let found = list(path).unwrap();
+        assert_eq!(found[0]["id"], "interview-order-02");
+        assert_eq!(found[1]["id"], "interview-order-01");
+        chats::remove(path, "interview-order-02");
+        let found = list(path).unwrap();
+        assert_eq!(found[0]["id"], "interview-order-01");
+        assert_eq!(found[1]["id"], "interview-order-02");
     }
 
     #[test]

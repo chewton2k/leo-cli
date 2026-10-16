@@ -255,6 +255,9 @@ seer, meaning, web, room).
   within the existing 1 MB practice limit). Legacy attempts become reopenable
   problems. `interview_challenge` appends; `interview_problem` reopens;
   revision-checked Select and workspace saves also handle archived problems.
+  Practice order follows the latest real workspace change or nonempty session
+  chat activity. Reads and identical saves preserve timestamps and revisions;
+  opening an empty chat never moves a practice.
   Submission freezes an attempt and keeps the editor for iteration. Problem
   switching flushes drafts before selecting; model-created problems preserve
   pending edits before switching. The global Felix button opens the active
