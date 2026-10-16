@@ -511,7 +511,7 @@ pub fn list(path: &Path) -> Result<Vec<serde_json::Value>, Error> {
                 found.push((active, serde_json::json!({"id":id,"framework":framework,"updated":updated,"attempts":attempts,"bytes":bytes,"tally":tally(problems, &history)})));
             }
         }
-        found.sort_by(|a, b| b.0.cmp(&a.0));
+        found.sort_by_key(|a| std::cmp::Reverse(a.0));
         Ok(found.into_iter().map(|(_, plan)| plan).collect())
     }).map_err(|_| Error::Storage)
 }
