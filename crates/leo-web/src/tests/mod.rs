@@ -1,4 +1,5 @@
 mod auth;
+mod backup;
 mod calendar;
 mod combine;
 mod felix;
@@ -81,6 +82,7 @@ fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<Strin
         warm: Default::default(),
         chat: None,
         settings: None,
+        backups: Default::default(),
         importer: None,
         imports: Default::default(),
         combines: Default::default(),

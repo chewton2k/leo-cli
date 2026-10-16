@@ -5891,3 +5891,32 @@ test('the question and workspace split can be dragged, nudged, reset and is reme
   await expect(page).toHaveURL(new RegExp(`#/interviews/${id}$`));
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
 });
+
+test('leaving the website queues one backup without sending note contents or pushing on folder navigation', async ({ page, context }) => {
+  const departures = [];
+  context.on('request', (request) => {
+    if (new URL(request.url()).pathname === '/api/backup' && request.method() === 'POST') departures.push(request.postData());
+  });
+  await context.route('**/api/backup', (route) => route.request().method() === 'GET'
+    ? route.fulfill({ json: { state: 'idle', at: 0, message: '' } }) : route.fulfill({ status: 204 }));
+  await page.goto('/#/interviews');
+  await expect(page.locator('.interview-home')).toBeVisible();
+  await page.goto('/#/');
+  await expect(page.locator('.library-tools')).toBeVisible();
+  expect(departures).toEqual([]);
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+    document.dispatchEvent(new Event('visibilitychange'));
+    window.dispatchEvent(new PageTransitionEvent('pagehide'));
+  });
+  await expect.poll(() => departures.length).toBe(1);
+  expect(JSON.parse(departures[0])).toEqual({});
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await context.unroute('**/api/backup');
+  const before = await (await page.request.get('/api/backup')).json();
+  await page.goto('/?leave-test=1');
+  await expect.poll(async () => (await (await page.request.get('/api/backup')).json()).at, { timeout: 10000 }).toBeGreaterThan(before.at);
+});

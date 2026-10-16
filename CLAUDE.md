@@ -350,3 +350,9 @@ Storage scans use a read-only Store snapshot and blocking workers so filesystem
 walks and database compaction do not hold the notes lock. The Housekeeper lists
 both config and data folder settings, the application, Python runtime and other
 model downloads; cache removal refuses symlinks and active partial downloads.
+
+Website backup leaves the browser through an authenticated beacon; the web crate
+queues work and bounds the push, while WebSettings supplies the configured git
+command through SettingsApi::backup. Off, no remote, and no unpushed commits skip
+network work. It commits note/task files first, never pulls, and never creates a
+remote or changes the user’s backup policy.

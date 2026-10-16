@@ -225,6 +225,7 @@ function drawSettings(page) {
     <section class="set-card">
       <header><h3>Backup</h3>${backup.remote ? '<span class="set-status ok">On</span>' : '<span class="set-status missing">Not set up</span>'}</header>
       <p class="hint">${backup.remote ? `Your notes are copied to ${esc(backup.remote)}.` : 'Backup is not set up yet. Run :backup in leo on your computer to keep a copy on GitHub.'}</p>
+      <p class="hint">On quit also backs up notes and tasks when you leave this website. Keep leo serve running until the backup finishes.</p>
       <label class="set-row"><span class="set-label">Push changes</span><span class="select-control"><select data-set="auto_push">${backup.options.map((o) => settingsOption(o.id, o.label, backup.auto_push)).join('')}</select>${ICON.chevron}</span></label>
     </section>
     <section class="set-card">

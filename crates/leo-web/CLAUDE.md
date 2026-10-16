@@ -684,3 +684,11 @@ the final edit is still bounded at 32,000 characters. Attempts and reviews are
 filtered by the selected challenge ID and shown beneath that question. Overall
 practice progress uses all attempts; late reviews cannot appear under another
 problem, even when problem titles match.
+
+Website backup: page hide or moving the site to the background flushes note and
+interview drafts and sends one small authenticated JSON beacon per departure.
+The server coalesces requests, allows saves to settle, and pushes notes and task files
+outside the store lock, at most once every 20 seconds. Settings Off is respected;
+missing remotes and empty queues do nothing. Pushes are noninteractive, limited
+to 60 seconds, never pull/merge, and failures remain visible on the next visit.
+Chats and interview practices remain local; this does not change backup contents.

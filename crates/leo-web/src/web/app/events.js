@@ -50,11 +50,42 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-const unsaved = () => saving.unsaved();
+const unsaved = () => saving.unsaved() || Boolean(interviewPage && interviewHere(interviewPage) && interviewPage.generation !== interviewPage.saved);
+let websiteLeaveSent = false;
+let websiteBackupShown = 0;
+
+function saveWebsiteWork() {
+  saving.retry().catch(() => {});
+  if (interviewPage && interviewHere(interviewPage)) saveInterviewWorkspace(interviewPage).catch(() => {});
+}
+
+function leaveWebsite() {
+  saveWebsiteWork();
+  if (websiteLeaveSent) return;
+  websiteLeaveSent = true;
+  const body = new Blob(['{}'], { type: 'application/json' });
+  try {
+    if (navigator.sendBeacon('/api/backup', body)) return;
+  } catch (_) {}
+  fetch('/api/backup', { method: 'POST', credentials: 'same-origin', body, keepalive: true }).catch(() => {});
+}
+
+async function checkWebsiteBackup() {
+  try {
+    const backup = await api('/api/backup');
+    if (backup.state === 'failed' && backup.at !== websiteBackupShown) {
+      websiteBackupShown = backup.at;
+      toast(backup.message, { bad: true });
+    }
+  } catch (_) {}
+}
+
+window.addEventListener('pagehide', leaveWebsite);
+window.addEventListener('pageshow', () => { websiteLeaveSent = false; });
 
 window.addEventListener('beforeunload', (e) => {
   if (!unsaved()) return;
-  flush().catch(() => {});
+  saveWebsiteWork();
   e.preventDefault();
 });
 
@@ -75,9 +106,11 @@ const busy = () => {
 
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') {
-    if (state.session) flush().catch(() => {});
+    leaveWebsite();
     return;
   }
+  websiteLeaveSent = false;
+  checkWebsiteBackup();
   if (!['folder', 'note', 'search', 'trash'].includes(state.view)) return;
   if (state.view === 'note' && (busy() || !state.session.note.id)) return;
   render().catch(fail);
@@ -247,6 +280,7 @@ window.addEventListener('afterprint', () => {
 });
 route();
 checkActivity();
+checkWebsiteBackup();
 
 document.addEventListener('paste', (e) => {
   if (e.defaultPrevented) return;

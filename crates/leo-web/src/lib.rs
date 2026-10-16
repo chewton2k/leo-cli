@@ -1,3 +1,4 @@
+mod backup;
 mod browse;
 pub mod calc;
 mod calendar;
@@ -87,6 +88,9 @@ pub trait SettingsApi: Send + Sync {
     fn describe(&self, notes_dir: &std::path::Path) -> serde_json::Value;
     fn apply(&self, change: &serde_json::Value, secure: bool) -> Result<String>;
     fn test(&self, task: &str) -> Result<String>;
+    fn backup(&self, _notes_dir: &std::path::Path) -> Result<Option<std::process::Command>> {
+        Ok(None)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -211,6 +215,7 @@ struct AppState {
     warm: Arc<warm::Slot>,
     chat: Option<Streamer>,
     settings: Option<Arc<dyn SettingsApi>>,
+    backups: Arc<backup::Backups>,
     importer: Option<Importer>,
     imports: Arc<Mutex<std::collections::HashMap<String, ImportJob>>>,
     combines: Arc<Mutex<std::collections::HashMap<String, routes::combine::CombineJob>>>,
@@ -475,6 +480,7 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
         warm: Default::default(),
         chat,
         settings,
+        backups: Default::default(),
         importer,
         imports: Default::default(),
         combines: Default::default(),
@@ -603,6 +609,7 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
 fn router(state: AppState) -> Router {
     Router::new()
         .route("/", get(index))
+        .route("/api/backup", get(backup::status).post(backup::leave))
         .route("/api/notes", get(list_notes).post(create_note))
         .route(
             "/api/notes/{id}",
