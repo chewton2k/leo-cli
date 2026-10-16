@@ -101,23 +101,34 @@ async function openNote(page, title) {
   return note;
 }
 
-test('a failed save survives navigation and reload, then saves on reconnection', async ({ page, context }) => {
+test('a failed save survives navigation and reload, then saves on reconnection', async ({ page }) => {
   const note = await openNote(page, 'Draft recovery');
-  await context.route('**/api/notes/*', (route) => route.request().method() === 'PATCH'
-    ? route.fulfill({ status: 500 }) : route.continue());
+  const refuseSaves = () => {
+    const fetch = window.fetch.bind(window);
+    window.__refusedSaves = 0;
+    window.fetch = (input, options) => {
+      const url = new URL(typeof input === 'string' ? input : input.url, location.href);
+      if (!window.__allowNoteSaves && options && options.method === 'PATCH' && url.pathname.startsWith('/api/notes/')) {
+        window.__refusedSaves++;
+        return Promise.resolve(new Response(JSON.stringify({ error: 'The test server cannot save yet.' }), { status: 500, headers: { 'Content-Type': 'application/json' } }));
+      }
+      return fetch(input, options);
+    };
+  };
+  await page.addInitScript(refuseSaves);
+  await page.evaluate(refuseSaves);
   await page.locator('.line-edit').fill('Keep this phone draft');
   await expect(page.locator('#save-state')).toContainText('draft kept');
-  const refused = page.waitForResponse((r) => r.request().method() === 'PATCH' && r.status() === 500);
+  const refused = await page.evaluate(() => window.__refusedSaves);
   await page.locator('#back').click();
-  await refused;
+  await expect.poll(() => page.evaluate(() => window.__refusedSaves)).toBeGreaterThan(refused);
   await page.reload();
   await expect(page.locator('.toast')).toContainText('Saving 1 edit that had not reached leo yet');
   await page.goto(`/#/n/${note.id}`);
   await expect(page.locator('#doc')).toContainText('Keep this phone draft');
   const original = await (await page.request.get(`/api/notes/${note.id}`)).json();
   expect(original.body).toBe('Original sentence');
-  await context.unroute('**/api/notes/*');
-  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await page.evaluate(() => { window.__allowNoteSaves = true; window.dispatchEvent(new Event('online')); });
   await expect(page.locator('#save-state')).toHaveText('Saved');
   const saved = await (await page.request.get(`/api/notes/${note.id}`)).json();
   expect(saved.body).toBe('Keep this phone draft');
