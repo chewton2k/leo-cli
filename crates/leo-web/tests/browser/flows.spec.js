@@ -4986,6 +4986,46 @@ test('Felix tool activity stays between the response passages it belongs to afte
   await ordered();
 });
 
+test('repeated code runs release temporary scripts in the shared runner', async ({ page }) => {
+  await page.evaluate(() => new Promise((resolve) => {
+    const frame = document.createElement('iframe');
+    frame.setAttribute('sandbox', 'allow-scripts');
+    frame.hidden = true;
+    const ready = (event) => {
+      if (event.source !== frame.contentWindow || event.data?.kind !== 'ready') return;
+      window.removeEventListener('message', ready);
+      window.__runnerCleanupFrame = frame;
+      resolve();
+    };
+    window.addEventListener('message', ready);
+    frame.src = '/runner.html';
+    document.body.appendChild(frame);
+  }));
+  const frame = page.frames().find((frame) => frame.url().endsWith('/runner.html'));
+  await frame.evaluate(() => {
+    const create = URL.createObjectURL.bind(URL);
+    const revoke = URL.revokeObjectURL.bind(URL);
+    window.__runnerScriptUrls = new Set();
+    URL.createObjectURL = (blob) => { const url = create(blob); window.__runnerScriptUrls.add(url); return url; };
+    URL.revokeObjectURL = (url) => { window.__runnerScriptUrls.delete(url); return revoke(url); };
+  });
+  for (let run = 0; run < 25; run++) {
+    const result = await page.evaluate((run) => new Promise((resolve) => {
+      const frame = window.__runnerCleanupFrame;
+      const heard = (event) => {
+        if (event.source !== frame.contentWindow || event.data?.run !== run || event.data.kind !== 'done') return;
+        window.removeEventListener('message', heard);
+        resolve(event.data);
+      };
+      window.addEventListener('message', heard);
+      frame.contentWindow.postMessage({ kind: 'run', run, language: 'javascript', code: 'class Solution { twice(x) { return x * 2; } }', entry: 'twice', tests: [{ id: 'one', args: [4] }] }, '*');
+    }), run);
+    expect(result.results[0].got).toBe(8);
+  }
+  expect(await frame.evaluate(() => window.__runnerScriptUrls.size)).toBe(0);
+  await page.evaluate(() => window.__runnerCleanupFrame.remove());
+});
+
 test('the code runner runs only your code in a sandbox, stops endless loops and cannot reach leo', async ({ page }) => {
   const run = (job) => page.evaluate((job) => new Promise((resolve) => {
     const frame = document.createElement('iframe');

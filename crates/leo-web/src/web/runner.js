@@ -3,6 +3,30 @@
   const ENTRY = /^[A-Za-z_$][\w$]{0,79}$/;
   const send = (message) => parent.postMessage(message, '*');
 
+  function startWorker(source) {
+    const url = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
+    let worker;
+    try {
+      worker = new Worker(url);
+    } catch (error) {
+      URL.revokeObjectURL(url);
+      throw error;
+    }
+    let kept = true;
+    const release = () => {
+      if (!kept) return;
+      kept = false;
+      URL.revokeObjectURL(url);
+      worker.removeEventListener('message', release);
+      worker.removeEventListener('error', release);
+    };
+    worker.addEventListener('message', release, { once: true });
+    worker.addEventListener('error', release, { once: true });
+    const terminate = worker.terminate.bind(worker);
+    worker.terminate = () => { release(); terminate(); };
+    return worker;
+  }
+
   function judge() {
     const plain = (value) => {
       const seen = new WeakSet();
@@ -151,7 +175,7 @@ json.dumps(out)
 
   const source = `(${judge.toString()})();`;
 
-  const start = () => new Worker(URL.createObjectURL(new Blob([source], { type: 'text/javascript' })));
+  const start = () => startWorker(source);
   let snake = null;
   let snakeLoaded = false;
 
@@ -382,7 +406,7 @@ self.postMessage({ loaded: true });
     if (!rustWorker) {
       if (typeof job.shim !== 'string' || !job.shim || !job.files) return done({ missing: true, stdout: '' });
       try {
-        rustWorker = new Worker(URL.createObjectURL(new Blob([`${job.shim}\n(${rusty.toString()})();`], { type: 'text/javascript' })));
+        rustWorker = startWorker(`${job.shim}\n(${rusty.toString()})();`);
       } catch (e) {
         return done({ error: 'This browser could not start Rust.', stdout: '' });
       }
@@ -414,7 +438,7 @@ self.postMessage({ loaded: true });
       if (typeof job.runtime !== 'string' || !job.runtime || !job.files) return done({ missing: true, stdout: '' });
       try {
         javaRuntime = teaRuntime(job.runtime);
-        javaWorker = new Worker(URL.createObjectURL(new Blob([`${javaRuntime}\n(${javac.toString()})();`], { type: 'text/javascript' })));
+        javaWorker = startWorker(`${javaRuntime}\n(${javac.toString()})();`);
       } catch (e) {
         return done({ error: 'This browser could not start Java.', stdout: '' });
       }
@@ -434,7 +458,7 @@ self.postMessage({ loaded: true });
       if (!data.wasm) return done({ error: data.error || 'Java could not build this.', stdout: '' });
       let running;
       try {
-        running = new Worker(URL.createObjectURL(new Blob([`${javaRuntime}\n(${javaProgram.toString()})();`], { type: 'text/javascript' })));
+        running = startWorker(`${javaRuntime}\n(${javaProgram.toString()})();`);
       } catch (err) {
         return done({ error: 'This browser could not run the program.', stdout: '' });
       }
@@ -455,7 +479,7 @@ self.postMessage({ loaded: true });
     if (!goWorker) {
       if (typeof job.shim !== 'string' || !job.shim || !job.files) return done({ missing: true, stdout: '' });
       try {
-        goWorker = new Worker(URL.createObjectURL(new Blob([`${job.shim}\n(${gopher.toString()})();`], { type: 'text/javascript' })));
+        goWorker = startWorker(`${job.shim}\n(${gopher.toString()})();`);
       } catch (e) {
         return done({ error: 'This browser could not start Go.', stdout: '' });
       }
@@ -475,7 +499,7 @@ self.postMessage({ loaded: true });
       if (!data.wasm) return done({ error: data.error || 'Go could not build this.', stdout: '' });
       let running;
       try {
-        running = new Worker(URL.createObjectURL(new Blob([programSource], { type: 'text/javascript' })));
+        running = startWorker(programSource);
       } catch (err) {
         return done({ error: 'This browser could not run the program.', stdout: '' });
       }
@@ -496,7 +520,7 @@ self.postMessage({ loaded: true });
     if (!compiler) {
       if (typeof job.bundle !== 'string' || !job.bundle) return done({ error: 'The C++ compiler is not loaded yet. Try Run again.', stdout: '' });
       try {
-        compiler = new Worker(URL.createObjectURL(new Blob([compilerSource(job.bundle, String(job.base || ''))], { type: 'text/javascript' })));
+        compiler = startWorker(compilerSource(job.bundle, String(job.base || '')));
       } catch (e) {
         return done({ error: 'This browser could not start the C++ compiler.', stdout: '' });
       }
@@ -524,7 +548,7 @@ self.postMessage({ loaded: true });
       worker.onerror = null;
       let running;
       try {
-        running = new Worker(URL.createObjectURL(new Blob([programSource], { type: 'text/javascript' })));
+        running = startWorker(programSource);
       } catch (err) {
         return done({ error: 'This browser could not run the program.', stdout: '' });
       }

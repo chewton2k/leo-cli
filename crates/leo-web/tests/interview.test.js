@@ -460,3 +460,72 @@ test('the page and the practice list agree on what passed', () => {
   ];
   for (const [attempt, passed] of cases) assert.equal(I.attemptStatus(attempt).kind === 'passed', passed, JSON.stringify(attempt));
 });
+
+function fakeRunner(throws = false) {
+  const vm = require('node:vm');
+  const source = require('node:fs').readFileSync(require.resolve('../src/web/runner.js'), 'utf8');
+  const urls = new Set();
+  const workers = [];
+  const timers = new Map();
+  const messages = [];
+  let next = 0;
+  let receive;
+  const parent = { postMessage: (data) => messages.push(data) };
+  class Worker {
+    constructor() {
+      if (throws) throw new Error('Worker unavailable');
+      this.listeners = new Map();
+      this.stopped = false;
+      workers.push(this);
+    }
+    addEventListener(name, fn) { this.listeners.set(name, fn); }
+    removeEventListener(name) { this.listeners.delete(name); }
+    postMessage() {}
+    terminate() { this.stopped = true; }
+    fire(name, data) {
+      const event = { data, message: 'Worker failed', preventDefault() {} };
+      this.listeners.get(name)?.(event);
+      this[`on${name}`]?.(event);
+    }
+  }
+  vm.runInNewContext(source, {
+    parent, window: { addEventListener: (_, fn) => { receive = fn; } }, Worker, Blob,
+    URL: { createObjectURL: () => { const url = `blob:${++next}`; urls.add(url); return url; }, revokeObjectURL: (url) => urls.delete(url) },
+    setTimeout: (fn) => { const id = ++next; timers.set(id, fn); return id; }, clearTimeout: (id) => timers.delete(id),
+  });
+  return { urls, workers, timers, messages, run: (language) => receive({ source: parent, data: { kind: 'run', run: `run-${next}`, language, entry: 'twice', files: {}, shim: 'shim', runtime: 'runtime', bundle: 'bundle' } }) };
+}
+
+test('runner script URLs are released after messages, errors, timeouts and failed starts for every language', () => {
+  for (const language of ['javascript', 'typescript', 'sql', 'python', 'cpp', 'go', 'java', 'rust']) {
+    for (const end of ['message', 'error', 'timeout', 'constructor']) {
+      const runner = fakeRunner(end === 'constructor');
+      runner.run(language);
+      if (end !== 'constructor') {
+        const worker = runner.workers[0];
+        assert.ok(worker, `${language} started`);
+        if (end === 'timeout') [...runner.timers.values()][0]();
+        else worker.fire(end, { compile: '', diagnostics: ['sample'], stdout: '', results: [] });
+      }
+      assert.equal(runner.urls.size, 0, `${language}: ${end} must release its script URL`);
+      assert.ok(runner.messages.some((message) => message.kind === 'done'), `${language}: ${end} completes`);
+    }
+  }
+});
+
+test('repeated program workers release their scripts while compiler workers stay reusable', () => {
+  for (const language of ['javascript', 'python', 'cpp', 'go', 'java', 'rust']) {
+    const runner = fakeRunner();
+    for (let turn = 0; turn < 25; turn++) {
+      runner.run(language);
+      const worker = ['cpp', 'go', 'java', 'rust', 'python'].includes(language) ? runner.workers[0] : runner.workers.at(-1);
+      if (['cpp', 'go', 'java'].includes(language)) {
+        worker.fire('message', { wasm: new Uint8Array(4) });
+        runner.workers.at(-1).fire('message', { stdout: '' });
+      } else worker.fire('message', { results: [], stdout: '' });
+      assert.equal(runner.urls.size, 0, `${language}: turn ${turn + 1} retains no script URLs`);
+    }
+    assert.equal(runner.messages.filter((message) => message.kind === 'done').length, 25);
+    if (['cpp', 'go', 'java', 'rust', 'python'].includes(language)) assert.equal(runner.workers[0].stopped, false, `${language} keeps one warm worker`);
+  }
+});

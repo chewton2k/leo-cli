@@ -714,3 +714,9 @@ standalone tasks through the same Ask/Auto/Read and Undo flow. Delete Undo resto
 the original id, description, repeat progress and note link with a fresh timestamp
 so the restore wins over its deletion marker in a backup merge. Conversation history
 and its search results display titles only, with no response preview or tooltip.
+
+Runner workers share startWorker: each temporary script Blob URL is revoked on
+the first worker message/error, termination (including timeout), or constructor
+failure. Program workers still terminate after each run, while one compiler or
+Python worker remains warm for reuse. Revoking the URL frees its Blob reference
+without evicting the warm runtime; repeated runs must retain no script URLs.
