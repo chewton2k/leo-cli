@@ -2723,3 +2723,142 @@ fn felix_tags_older_problems_in_one_change_by_access() {
         }
     }
 }
+
+#[test]
+fn felix_task_descriptions_use_the_same_cards_permissions_and_undo_in_both_protocols() {
+    struct TaskCall(tools::Call);
+    impl chat::Conversation for TaskCall {
+        fn native(&self) -> bool {
+            true
+        }
+        fn say(&mut self, _: &str, exchange: chat::Exchange<'_>) -> anyhow::Result<chat::Reply> {
+            (exchange.call)(&self.0.name, &self.0.args);
+            (exchange.piece)("Ready.");
+            Ok("Ready.".into())
+        }
+    }
+    for native in [false, true] {
+        for access in ["ask", "auto", "read"] {
+            let (mut state, _dir, _) = state_with(&[]);
+            let install = |state: &mut AppState, name: &str, args: serde_json::Value| {
+                let call = tools::Call {
+                    name: name.into(),
+                    args,
+                };
+                if native {
+                    state.converse = Some(Arc::new(
+                        move |_: &chat::Instructions, _: &[chat::ToolSpec]| {
+                            Some(Box::new(TaskCall(call.clone())) as Box<dyn chat::Conversation>)
+                        },
+                    ));
+                    state.chat = Some(scripted(vec!["Ready."]).0);
+                } else {
+                    let mut args = call.args.clone();
+                    args["name"] = serde_json::json!(call.name);
+                    let text = format!("<tool>{args}</tool>");
+                    let replies =
+                        Arc::new(Mutex::new(vec![text, "Ready.".to_string()].into_iter()));
+                    state.chat = Some(Arc::new(
+                        move |_: &str,
+                              _: &str,
+                              _: u32,
+                              piece: &mut dyn FnMut(&str),
+                              _: &mut dyn FnMut()| {
+                            let reply = replies
+                                .lock()
+                                .unwrap()
+                                .next()
+                                .unwrap_or_else(|| "Ready.".into());
+                            piece(&reply);
+                            Ok(reply.into())
+                        },
+                    ));
+                }
+            };
+            let act = |state: &AppState, proposal: &serde_json::Value| {
+                json_of(run(crate::routes::organize::act_route(
+                    State(state.clone()),
+                    Json(serde_json::from_value(proposal.clone()).unwrap()),
+                )))
+            };
+            let settle = |state: &AppState, lines: &[serde_json::Value]| {
+                let proposal = lines.iter().find_map(|line| line.get("proposal"));
+                if access == "read" {
+                    assert!(proposal.is_none());
+                    return None;
+                }
+                let proposal = proposal.unwrap();
+                Some(if access == "ask" {
+                    act(state, proposal)
+                } else {
+                    proposal.clone()
+                })
+            };
+            install(
+                &mut state,
+                "add_task",
+                serde_json::json!({"title": "Read heaps", "description": "Read chapter 3\nBring café notes"}),
+            );
+            let lines =
+                chat_lines_with(&state, "add a study task with these details", Some(access));
+            settle(&state, &lines);
+            if access == "read" {
+                assert!(crate::tasks::load_all(&state.chats).is_empty());
+                continue;
+            }
+            let task = crate::tasks::load_all(&state.chats).remove(0);
+            assert_eq!(task.description, "Read chapter 3\nBring café notes");
+            for value in ["Focus on examples", ""] {
+                install(
+                    &mut state,
+                    "update_task",
+                    serde_json::json!({"task": task.id, "description": value}),
+                );
+                let lines = chat_lines_with(&state, "change the task description", Some(access));
+                let applied = settle(&state, &lines).unwrap();
+                assert_eq!(
+                    crate::tasks::load(&state.chats, &task.id)
+                        .unwrap()
+                        .description,
+                    value
+                );
+                act(&state, &applied["undo"]);
+                assert_eq!(
+                    crate::tasks::load(&state.chats, &task.id)
+                        .unwrap()
+                        .description,
+                    task.description
+                );
+            }
+            install(
+                &mut state,
+                "list_schedule",
+                serde_json::json!({"days": "7"}),
+            );
+            let mut desk = tools::Desk::new(vec![], 8000);
+            let read = crate::routes::organize::run(
+                &state,
+                &mut desk,
+                tools::Access::Read,
+                &tools::Call {
+                    name: "list_schedule".into(),
+                    args: serde_json::json!({"days":"7"}),
+                },
+            );
+            assert!(read.result.contains("Read chapter 3\\nBring café notes"));
+            install(
+                &mut state,
+                "delete_task",
+                serde_json::json!({"task": task.id}),
+            );
+            let lines = chat_lines_with(&state, "delete that study task", Some(access));
+            let deleted = settle(&state, &lines).unwrap();
+            assert!(crate::tasks::load(&state.chats, &task.id).is_none());
+            act(&state, &deleted["undo"]);
+            assert_eq!(
+                crate::tasks::load_all(&state.chats)[0].description,
+                task.description
+            );
+        }
+    }
+}

@@ -4,6 +4,15 @@ const S = require('../src/web/schedule.js');
 const cases = [];
 const test = (name, fn) => cases.push([name, fn]);
 
+test('Calendar links preserve descriptions and safely encode plain text', () => {
+  const base = { id: 'task-one', title: 'Study', date: '2026-10-16' };
+  const details = 'Read chapter 3\nBring café notes; <b>not HTML</b>&x=y';
+  const link = new URL(S.googleLink({ ...base, description: details }));
+  assert.equal(link.searchParams.get('details'), `${details}\n\nFrom leo · leo-task:task-one`);
+  assert.equal(link.searchParams.get('x'), null);
+  assert.equal(new URL(S.googleLink(base)).searchParams.get('details'), 'From leo · leo-task:task-one');
+});
+
 test('a month grid starts on the chosen weekday and always has six weeks', () => {
   const grid = S.monthGrid(2026, 9, 0);
   assert.equal(grid.length, 42);

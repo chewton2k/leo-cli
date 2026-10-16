@@ -9,6 +9,15 @@ use serde::{Deserialize, Serialize};
 
 pub const MOST_TASKS: usize = 10_000;
 pub const MOST_TITLE: usize = 300;
+pub const MOST_DESCRIPTION: usize = 4_000;
+
+pub fn description_of(text: &str) -> Result<String, &'static str> {
+    let text = text.trim();
+    if text.chars().count() > MOST_DESCRIPTION {
+        return Err("Keep the task description within 4,000 characters.");
+    }
+    Ok(text.to_string())
+}
 pub const MOST_LISTED: usize = 500;
 pub const KINDS: [&str; 6] = [
     "assignment",
@@ -23,6 +32,8 @@ pub const KINDS: [&str; 6] = [
 pub struct Task {
     pub id: String,
     pub title: String,
+    #[serde(default)]
+    pub description: String,
     #[serde(default = "other")]
     pub kind: String,
     #[serde(default)]
@@ -82,6 +93,7 @@ pub struct Meta {
     pub id: String,
     pub note: String,
     pub text: String,
+    pub description: String,
     pub before: String,
     pub after: String,
     pub kind: Option<String>,
@@ -152,6 +164,7 @@ pub struct Listed {
     pub id: String,
     pub source: &'static str,
     pub title: String,
+    pub description: String,
     pub kind: String,
     pub done: bool,
     pub date: Option<NaiveDate>,
@@ -214,7 +227,7 @@ pub fn note_tasks(store: &Store, metas: &[Meta]) -> Vec<Listed> {
             let done = at
                 .and_then(|n| checkbox_line(lines[n]))
                 .is_some_and(|c| c.ticked);
-            out.push(listed(
+            let mut task = listed(
                 &meta.id,
                 &text,
                 done,
@@ -224,7 +237,9 @@ pub fn note_tasks(store: &Store, metas: &[Meta]) -> Vec<Listed> {
                 at.is_some(),
                 meta.promoted,
                 meta.sent_at,
-            ));
+            );
+            task.description = meta.description.clone();
+            out.push(task);
         }
         for n in core::action_items(&note.body) {
             if claimed.contains(&n) {
@@ -275,6 +290,7 @@ fn listed(
     Listed {
         id: id.to_string(),
         source: "note",
+        description: String::new(),
         title: text.trim().chars().take(MOST_TITLE).collect(),
         kind: kind.unwrap_or_else(|| kind_of(text)),
         done,
@@ -305,6 +321,7 @@ pub fn standalone(task: &Task, store: Option<&Store>) -> Listed {
         id: task.id.clone(),
         source: "leo",
         title: task.title.clone(),
+        description: task.description.clone(),
         kind: task.kind.clone(),
         done: task.done,
         date: task.date,
@@ -339,7 +356,9 @@ pub fn ics_of(task: &Listed, stamp: DateTime<Utc>) -> String {
         s.replace('\\', "\\\\")
             .replace(';', "\\;")
             .replace(',', "\\,")
-            .replace(['\r', '\n'], " ")
+            .replace("\r\n", "\n")
+            .replace('\r', "\n")
+            .replace('\n', "\\n")
     };
     let mut lines = vec![
         "BEGIN:VCALENDAR".to_string(),
@@ -375,8 +394,13 @@ pub fn ics_of(task: &Listed, stamp: DateTime<Utc>) -> String {
         .as_ref()
         .map(|n| format!(" · {}", escape(&n.title)))
         .unwrap_or_default();
+    let about = if task.description.is_empty() {
+        String::new()
+    } else {
+        format!("{}\\n\\n", escape(&task.description))
+    };
     lines.push(format!(
-        "DESCRIPTION:From leo{from} · leo-task:{}",
+        "DESCRIPTION:{about}From leo{from} · leo-task:{}",
         task.id.chars().take(12).collect::<String>()
     ));
     lines.push("END:VEVENT".into());
@@ -526,12 +550,13 @@ pub fn remove_done(chats: &Path) -> usize {
 pub fn metas(chats: &Path) -> Vec<Meta> {
     db_of(chats)
         .with(|c| {
-            let mut statement = c.prepare("SELECT id, note, text, before, after, kind, promoted, sent_at FROM note_tasks LIMIT ?1")?;
+            let mut statement = c.prepare("SELECT id, note, text, before, after, kind, promoted, sent_at, description FROM note_tasks LIMIT ?1")?;
             let rows = statement.query_map([MOST_TASKS as i64], |r| {
                 Ok(Meta {
                     id: r.get(0)?,
                     note: r.get(1)?,
                     text: r.get(2)?,
+                    description: r.get(8)?,
                     before: r.get(3)?,
                     after: r.get(4)?,
                     kind: r.get::<_, Option<String>>(5)?,
@@ -551,8 +576,8 @@ pub fn put_meta(chats: &Path, meta: &Meta) -> anyhow::Result<()> {
     let sent = meta.sent_at.map(|t| t.to_rfc3339());
     db_of(chats).with(|c| {
         c.execute(
-            "INSERT INTO note_tasks (id, note, text, before, after, kind, promoted, sent_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) ON CONFLICT(id) DO UPDATE SET note = excluded.note, text = excluded.text, before = excluded.before, after = excluded.after, kind = excluded.kind, promoted = excluded.promoted, sent_at = excluded.sent_at",
-            rusqlite::params![meta.id, meta.note, meta.text, meta.before, meta.after, meta.kind, i64::from(meta.promoted), sent],
+            "INSERT INTO note_tasks (id, note, text, before, after, kind, promoted, sent_at, description) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) ON CONFLICT(id) DO UPDATE SET note = excluded.note, text = excluded.text, before = excluded.before, after = excluded.after, kind = excluded.kind, promoted = excluded.promoted, sent_at = excluded.sent_at, description = excluded.description",
+            rusqlite::params![meta.id, meta.note, meta.text, meta.before, meta.after, meta.kind, i64::from(meta.promoted), sent, meta.description],
         )
     })?;
     Ok(())
@@ -611,6 +636,7 @@ mod tests {
             id: note_task_id(&id, "Ask tutor about the exam"),
             note: id.clone(),
             text: "Ask tutor about the exam".into(),
+            description: String::new(),
             before: "Plan".into(),
             after: "End".into(),
             kind: Some("exam".into()),
@@ -637,6 +663,7 @@ mod tests {
                 &Task {
                     id: id.into(),
                     title: id.into(),
+                    description: String::new(),
                     kind: "other".into(),
                     done,
                     date,
@@ -673,6 +700,7 @@ mod tests {
         Task {
             id: id.into(),
             title: title.into(),
+            description: String::new(),
             kind: "other".into(),
             done: false,
             date: None,

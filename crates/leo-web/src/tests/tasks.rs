@@ -181,3 +181,125 @@ fn a_promoted_checkbox_and_a_standalone_task_live_and_leave_cleanly() {
         400
     );
 }
+
+#[test]
+fn descriptions_are_optional_preserved_clearable_and_restored_with_tasks() {
+    let (state, _dir, _) = state_with(&[]);
+    let make = |body| {
+        json_of(run(create_task(
+            State(state.clone()),
+            Json(serde_json::from_value(body).unwrap()),
+        )))
+    };
+    let legacy = make(serde_json::json!({"title": "No details"}));
+    assert_eq!(legacy["description"], "");
+    let details = "Read chapter 3\nBring café notes; <b>not HTML</b>";
+    let task = make(
+        serde_json::json!({"title": "Study", "description": format!("  {details}  "), "date": "2026-10-16", "repeat": [0, 2]}),
+    );
+    let id = task["id"].as_str().unwrap();
+    assert_eq!(task["description"], details);
+    let raw = crate::tasks::load(&state.chats, id).unwrap();
+    assert_eq!(raw.description, details);
+    assert_eq!(
+        json_of(change(
+            &state,
+            id,
+            serde_json::json!({"done": true, "on": "2026-10-19"})
+        ))["description"],
+        details
+    );
+    let ics = run(task_ics(State(state.clone()), Path(id.into())));
+    let bytes = run(axum::body::to_bytes(ics.into_body(), usize::MAX)).unwrap();
+    let ics = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(
+        ics.contains("Read chapter 3\\nBring café notes\\; <b>not HTML</b>"),
+        "{ics}"
+    );
+    let removed = json_of(run(delete_task(State(state.clone()), Path(id.into()))));
+    assert_eq!(removed["description"], details);
+    let imported = run(import_tasks(
+        State(state.clone()),
+        Json(serde_json::from_value(serde_json::json!({"tasks": [removed]})).unwrap()),
+    ));
+    assert_eq!(json_of(imported)["added"], 1);
+    assert_eq!(
+        crate::tasks::load(&state.chats, id).unwrap().description,
+        details
+    );
+    assert_eq!(
+        json_of(change(
+            &state,
+            id,
+            serde_json::json!({"description": "Revised ✨"})
+        ))["description"],
+        "Revised ✨"
+    );
+    assert_eq!(
+        json_of(change(&state, id, serde_json::json!({"description": "  "})))["description"],
+        ""
+    );
+    let long = "界".repeat(crate::tasks::MOST_DESCRIPTION + 1);
+    assert_eq!(
+        change(&state, id, serde_json::json!({"description": long})).status(),
+        400
+    );
+    assert_eq!(
+        crate::tasks::load(&state.chats, id).unwrap().description,
+        ""
+    );
+    assert_eq!(
+        run(create_task(
+            State(state.clone()),
+            Json(
+                serde_json::from_value(
+                    serde_json::json!({"title": "Too much", "description": long})
+                )
+                .unwrap()
+            )
+        ))
+        .status(),
+        400
+    );
+    let at_limit = "界".repeat(crate::tasks::MOST_DESCRIPTION);
+    assert_eq!(
+        json_of(change(
+            &state,
+            id,
+            serde_json::json!({"description": at_limit})
+        ))["description"],
+        at_limit
+    );
+}
+
+#[test]
+fn checkbox_descriptions_are_separate_from_the_note_and_survive_date_and_kind_changes() {
+    let (state, _dir, ids) = state_with(&[("Plan", "")]);
+    {
+        let mut store = state.fresh();
+        store.find_note_mut(&ids[0]).unwrap().body =
+            "## Action items\n- [ ] Read chapter 3\n".into();
+        store.save().unwrap();
+    }
+    let id = listed(&state)[0]["id"].as_str().unwrap().to_string();
+    let before = body_of(&state, &ids[0]);
+    assert_eq!(listed(&state)[0]["description"], "");
+    assert_eq!(
+        json_of(change(
+            &state,
+            &id,
+            serde_json::json!({"description": "Focus on heaps"})
+        ))["description"],
+        "Focus on heaps"
+    );
+    assert_eq!(body_of(&state, &ids[0]), before);
+    change(
+        &state,
+        &id,
+        serde_json::json!({"kind": "assignment", "date": "2026-10-16"}),
+    );
+    assert_eq!(listed(&state)[0]["description"], "Focus on heaps");
+    change(&state, &id, serde_json::json!({"description": ""}));
+    assert_eq!(listed(&state)[0]["description"], "");
+    assert_eq!(listed(&state)[0]["id"], id);
+}

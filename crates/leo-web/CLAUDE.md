@@ -700,3 +700,13 @@ manageable step, groups longer material and ends with a next action only when
 needed. Required derivations, assignment parts, evidence, JSON schemas, quiz
 markers and strict assessment remain complete; no diagnosis or fixed word cap.
 Recording/note synthesis and its gap-filling rules are unchanged.
+
+Task descriptions are optional plain text (4,000 characters), empty by default.
+New task and the task sheet reuse set-input textareas with an empty placeholder;
+saving a description keeps the sheet and caret intact and offers Undo. Standalone
+descriptions travel with task files, restore/export and Calendar links; checkbox
+descriptions live in note_tasks metadata without rewriting note content. Felix's
+list_schedule includes descriptions as quoted data; add_task/update_task preserve
+missing descriptions and an explicit empty update clears one. delete_task removes
+standalone tasks through the same Ask/Auto/Read and Undo flow. Conversation history
+and its search results display titles only, with no response preview or tooltip.

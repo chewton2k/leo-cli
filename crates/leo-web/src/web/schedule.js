@@ -202,7 +202,7 @@
       if (task.kind !== 'meeting') title = `Due: ${task.title}`;
     }
     const from = task.note && task.note.title ? ` · ${task.note.title}` : '';
-    const params = new URLSearchParams({ action: 'TEMPLATE', text: title, dates, details: `From leo${from} · leo-task:${String(task.id).slice(0, 12)}` });
+    const params = new URLSearchParams({ action: 'TEMPLATE', text: title, dates, details: `${task.description ? `${task.description}\n\n` : ''}From leo${from} · leo-task:${String(task.id).slice(0, 12)}` });
     if (zone) params.set('ctz', zone);
     if (repeats(task)) params.set('recur', rrule(task.repeat));
     return `https://calendar.google.com/calendar/render?${params.toString()}`;

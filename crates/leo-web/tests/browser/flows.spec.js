@@ -4086,6 +4086,48 @@ test.describe('reading', () => {
 });
 
 test.describe('calendar', () => {
+  test('task descriptions can be added, edited, cleared and undone without losing focus', async ({ page }) => {
+    const title = `Description ${test.info().project.name} ${Date.now().toString(36)}`;
+    const details = 'Read chapter 3\nBring café notes; <b>plain text</b>';
+    await page.goto('/#/calendar');
+    await page.locator('.sched-head [data-action="task-new"]').click();
+    await page.locator('#task-title').fill(title);
+    const description = page.locator('#task-description');
+    await expect(description).toHaveAttribute('placeholder', 'Add a description…');
+    await description.fill(details);
+    await page.locator('#task-add').click();
+    await expect(page.locator('.toast')).toContainText(`Added “${title}”`);
+    await page.locator('#sched-page .sched-list:visible .sched-main', { hasText: title }).click();
+    await expect(description).toHaveValue(details);
+    await expect(page.locator('#task-description-save')).toBeDisabled();
+    await description.fill('Revised details');
+    await page.locator('#task-description-save').click();
+    await expect(page.locator('.toast')).toContainText('Description saved');
+    await expect(description).toHaveValue('Revised details');
+    await page.locator('.toast button', { hasText: 'Undo' }).click();
+    await expect(description).toHaveValue(details);
+    await description.fill('');
+    await page.locator('#task-description-save').click();
+    await expect(page.locator('#task-description-save')).toBeDisabled();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.sheet')).toHaveCount(0);
+    await page.locator('#sched-page .sched-list:visible .sched-main', { hasText: title }).click();
+    await expect(description).toHaveValue('');
+    await expect(description).toHaveAttribute('placeholder', 'Add a description…');
+    await page.route('**/api/tasks/*', async (route) => {
+      if (route.request().method() !== 'PATCH') return route.continue();
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      await route.continue();
+    });
+    await description.fill('Saving this');
+    await page.locator('#task-description-save').click();
+    await description.fill('Still typing after Save');
+    await expect(description).toBeFocused();
+    await expect(page.locator('#task-description-save')).toBeEnabled();
+    await expect(description).toHaveValue('Still typing after Save');
+    expect(await page.locator('.sheet').evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+  });
+
   test('tasks are added, dated, ticked off and sent to Google Calendar from the Calendar page', async ({ page }) => {
     const tag = `${test.info().project.name}-${Date.now().toString(36)}`;
     await page.addInitScript(() => {

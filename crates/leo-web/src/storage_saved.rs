@@ -102,7 +102,7 @@ pub fn areas(store: &Store, path: &Path) -> Result<Vec<Area>> {
         rows.collect()
     })?;
     let note_tasks: Vec<Item> = db.with(|c| {
-        let mut statement = c.prepare("SELECT note, count(*), sum(length(CAST(text AS BLOB)) + length(CAST(before AS BLOB)) + length(CAST(after AS BLOB)) + coalesce(length(kind), 0)) FROM note_tasks GROUP BY note ORDER BY note LIMIT ?1")?;
+        let mut statement = c.prepare("SELECT note, count(*), sum(length(CAST(text AS BLOB)) + length(CAST(before AS BLOB)) + length(CAST(after AS BLOB)) + coalesce(length(kind), 0) + length(CAST(description AS BLOB))) FROM note_tasks GROUP BY note ORDER BY note LIMIT ?1")?;
         let rows = statement.query_map([MOST_ITEMS as i64], |r| {
             let id: String = r.get(0)?;
             Ok(Item { label: note_title(&id), detail: format!("{} saved task classifications, promotions and calendar send states", r.get::<_, i64>(1)?), bytes: r.get::<_, i64>(2)?.max(0) as u64, when: None, id, locked: false })
@@ -138,7 +138,7 @@ pub fn areas(store: &Store, path: &Path) -> Result<Vec<Area>> {
         area(db.path(), "interviews", "Interview practices", "Your frameworks, saved problems, code and answer drafts, whiteboards, submitted attempts, reviews and practice schedules. Open a practice to inspect it. Export includes these when Chats and interview practices is selected.", practices, "These practices, their workspaces, attempts, schedules and automatic check data are deleted permanently. Notes, standalone tasks and Felix conversations stay."),
         area(db.path(), "interview-checks", "Interview check data", "Automatic tests, grading criteria and reference answers, grouped by practice. Answers stay hidden during practice. Clearing this data keeps your work and reviews; Prepare them in the practice creates it again using your writing AI.", checks, "The automatic checks and reference data are removed. Your problems, code, whiteboards, attempts and saved reviews stay. Preparing checks again uses your writing AI."),
         area(db.path(), "reading", "Reading positions", "The places you left off in your notes, shared between devices connected to this Leo server.", reading, "These notes open at the top next time. The notes themselves stay."),
-        area(db.path(), "note-task-data", "Note task settings", "Saved classifications, promoted tasks and calendar send states for checkboxes in your notes. Dates and the checkboxes themselves remain in the Markdown notes.", note_tasks, "Saved task classifications, promotions and calendar send states are reset. Your notes, checkbox completion and written dates stay."),
+        area(db.path(), "note-task-data", "Note task settings", "Descriptions, saved classifications, promoted tasks and calendar send states for checkboxes in your notes. Dates and the checkboxes themselves remain in the Markdown notes.", note_tasks, "Saved task classifications, promotions and calendar send states are reset. Your notes, checkbox completion and written dates stay."),
         area(db.path(), "calendar-cache", "Cached calendar events", "The latest calendar events read from your connected calendars. Clearing this copy does not disconnect a calendar or change Google Calendar.", calendars, "The local copy of these calendar events is removed. Refresh Calendar to read it again; your connections and Google Calendar events stay."),
     ])
 }
@@ -237,7 +237,7 @@ mod tests {
                 c.execute("INSERT INTO interview_keys VALUES (?1, 'problem-one', 'ready', '2026-10-13T12:00:00Z', ?2)", rusqlite::params![id, r#"{"reference":"hidden reference", "tests":[{"expected":"hidden answer"}]}"#])?;
             }
             c.execute("INSERT INTO reading VALUES (?1, 'café', '2026-10-13T12:00:00Z')", [&note])?;
-            c.execute("INSERT INTO note_tasks VALUES ('task-meta-one', ?1, 'Homework', '', '', 'assignment', 1, NULL)", [&note])?;
+            c.execute("INSERT INTO note_tasks (id, note, text, before, after, kind, promoted, sent_at) VALUES ('task-meta-one', ?1, 'Homework', '', '', 'assignment', 1, NULL)", [&note])?;
             c.execute("INSERT INTO calendar_feeds (feed, tried_at, body) VALUES ('calendar-one', '2026-10-13T12:00:00Z', ?1)", [b"private calendar events".as_slice()])?;
             Ok(())
         }).unwrap();

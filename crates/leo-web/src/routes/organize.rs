@@ -137,6 +137,7 @@ pub(crate) fn run(state: &AppState, desk: &mut tools::Desk, access: Access, call
     let step = match call.name.as_str() {
         "add_task" => "Tried to add a task",
         "update_task" => "Tried to change a task",
+        "delete_task" => "Tried to delete a task",
         "move_note" => "Tried to move a note",
         "make_folder" => "Tried to make a folder",
         "move_folder" => "Tried to move a folder",
@@ -165,6 +166,18 @@ pub(crate) fn run(state: &AppState, desk: &mut tools::Desk, access: Access, call
     let made = match call.name.as_str() {
         "add_task" => add_task(call),
         "update_task" => update_task(state, call),
+        "delete_task" => listed_now(state).and_then(|all| {
+            let task = find_task(&all, &call.text("task"))?;
+            if task.source != "leo" {
+                return Err(
+                    "this task comes from a note; use edit_note to remove its checkbox".into(),
+                );
+            }
+            Ok(Proposal::DeleteTask {
+                summary: format!("Delete the task “{}”", task.title),
+                id: task.id.clone(),
+            })
+        }),
         "move_note" => move_note(state, desk, call),
         "make_folder" => make_folder(state, call),
         "move_folder" => move_folder(state, call),
@@ -501,6 +514,7 @@ fn add_task(call: &Call) -> Result<Proposal, String> {
             }
         ),
         title,
+        description: tasks::description_of(&call.text("description"))?,
         date: date.map(|d| d.to_string()),
         time: time.map(|t| t.format("%H:%M").to_string()),
         task_kind: kind,
@@ -511,6 +525,12 @@ fn add_task(call: &Call) -> Result<Proposal, String> {
 fn update_task(state: &AppState, call: &Call) -> Result<Proposal, String> {
     let all = listed_now(state)?;
     let task = find_task(&all, &call.text("task"))?;
+    let description = call
+        .args
+        .get("description")
+        .and_then(|v| v.as_str())
+        .map(tasks::description_of)
+        .transpose()?;
     let done = match call.text("done").trim().to_lowercase().as_str() {
         "" => None,
         "yes" | "true" | "done" => Some(true),
@@ -526,13 +546,26 @@ fn update_task(state: &AppState, call: &Call) -> Result<Proposal, String> {
     };
     let time = time_of(&call.text("time"))?;
     let kind = kind_of(&call.text("type"))?;
-    if done.is_none() && date.is_none() && !clear_date && time.is_none() && kind.is_none() {
-        return Err("say what to change: done, date, time or type".into());
+    if done.is_none()
+        && date.is_none()
+        && !clear_date
+        && time.is_none()
+        && kind.is_none()
+        && description.is_none()
+    {
+        return Err("say what to change: description, done, date, time or type".into());
     }
     if time.is_some() && date.is_none() && task.date.is_none() {
         return Err("give the task a date along with the time".into());
     }
     let mut parts = Vec::new();
+    if let Some(text) = &description {
+        parts.push(if text.is_empty() {
+            "clear its description".into()
+        } else {
+            "update its description".into()
+        });
+    }
     if let Some(done) = done {
         parts.push(if done {
             "mark it done".to_string()
@@ -565,6 +598,7 @@ fn update_task(state: &AppState, call: &Call) -> Result<Proposal, String> {
     Ok(Proposal::UpdateTask {
         summary: format!("“{}”: {}", task.title, parts.join(", ")),
         id: task.id.clone(),
+        description,
         done,
         date: date.map(|d| d.to_string()),
         clear_date,
@@ -709,7 +743,14 @@ fn schedule(state: &AppState, call: &Call) -> Done {
             t.title,
             if t.done { " · done" } else { "" },
             t.kind
-        )
+        ) + &if t.description.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "\n  Description (data): {}",
+                serde_json::to_string(&t.description).unwrap_or_default()
+            )
+        }
     };
     let mut lines = vec![format!(
         "Today is {}. Tasks and events from {} to {} (YYYY-MM-DD dates below):",
@@ -955,6 +996,7 @@ pub(crate) async fn act(
         }
         Proposal::AddTask {
             title,
+            description,
             date,
             time,
             task_kind,
@@ -964,7 +1006,7 @@ pub(crate) async fn act(
             let made = reply_of(
                 task_routes::create_task(
                     State(state.clone()),
-                    Json(parse(serde_json::json!({ "title": title, "date": date, "time": time, "kind": task_kind.clone().unwrap_or_else(|| "other".into()), "repeat": repeat }))?),
+                    Json(parse(serde_json::json!({ "title": title, "description": description, "date": date, "time": time, "kind": task_kind.clone().unwrap_or_else(|| "other".into()), "repeat": repeat }))?),
                 )
                 .await,
             )
@@ -988,6 +1030,7 @@ pub(crate) async fn act(
                 Proposal::AddTask {
                     summary: format!("Add the task “{title}”"),
                     title,
+                    description: gone["description"].as_str().unwrap_or_default().to_string(),
                     date: gone["date"].as_str().map(str::to_string),
                     time: gone["time"].as_str().map(|t| t.chars().take(5).collect()),
                     task_kind: gone["kind"].as_str().map(str::to_string),
@@ -1004,6 +1047,7 @@ pub(crate) async fn act(
         }
         Proposal::UpdateTask {
             id,
+            description,
             done,
             date,
             clear_date,
@@ -1019,6 +1063,9 @@ pub(crate) async fn act(
                 .cloned()
                 .ok_or("that task is not there any more")?;
             let mut change = serde_json::Map::new();
+            if let Some(description) = description {
+                change.insert("description".into(), serde_json::json!(description));
+            }
             if let Some(done) = done {
                 change.insert("done".into(), serde_json::json!(done));
             }
@@ -1069,6 +1116,7 @@ pub(crate) async fn act(
                 Proposal::UpdateTask {
                     summary: format!("Put “{}” back as it was", before.title),
                     id: id.clone(),
+                    description: description.as_ref().map(|_| before.description.clone()),
                     done: done.map(|_| was_done),
                     date: if dated {
                         before.date.map(|d| d.to_string())

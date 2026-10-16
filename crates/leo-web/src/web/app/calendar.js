@@ -449,6 +449,7 @@ async function saveDate(task, pick, confirm) {
 function newTaskSheet(day = null) {
   const box = sheet(`<h3>New task</h3>
     <input class="set-input task-title" id="task-title" maxlength="300" placeholder="What needs doing? Like Submit lab report" autocomplete="off">
+    <label class="set-row column"><span class="set-label">Description <span class="hint">optional</span></span><textarea class="set-input" id="task-description" rows="3" maxlength="4000" placeholder="Add a description…"></textarea></label>
     <div class="picker-box" id="pick-box"></div>
     <div class="set-row column task-repeat" id="task-repeat"><span class="set-label">Repeat</span>${repeatBubbles([])}<span class="hint repeat-hint">${esc(repeatHint([]))}</span></div>
     <details class="task-more source-more"><summary>${ICON.chevron}<span>Details</span></summary><div class="chips task-kinds" id="task-kinds">${KIND_ORDER.map((k) => `<button type="button" class="chip pick-chip${k === 'other' ? ' on' : ''}" data-kind="${k}" aria-pressed="${k === 'other'}">${esc(KIND_LABEL[k])}</button>`).join('')}</div></details>
@@ -477,7 +478,7 @@ function newTaskSheet(day = null) {
     if (add.disabled) return;
     add.disabled = true;
     try {
-      const made = await api('/api/tasks', { method: 'POST', body: { title: text, date: pick.date, time: pick.time || null, kind, repeat } });
+      const made = await api('/api/tasks', { method: 'POST', body: { title: text, description: $('#task-description', box).value.trim(), date: pick.date, time: pick.time || null, kind, repeat } });
       closeSheet();
       toast(`Added “${made.title}”`);
       loadTasksWindow().catch(() => {});
@@ -519,6 +520,7 @@ function taskSheet(id, on = null) {
   const moved = onGoogle && task.date && !onGoogle.all_day && S.dayKey(new Date(onGoogle.start)) !== task.date && task.time;
   const box = sheet(`<h3 class="task-sheet-title">${esc(task.title)}</h3>
     ${task.found === false ? '<p class="set-note warn">leo could not find this checkbox in the note any more. Open the note to check it.</p>' : ''}
+    <div class="set-row column"><label class="set-label" for="task-description">Description <span class="hint">optional</span></label><textarea class="set-input" id="task-description" rows="3" maxlength="4000" placeholder="Add a description…">${esc(task.description || '')}</textarea><button type="button" class="btn sm" id="task-description-save" disabled>Save description</button></div>
     <div class="set-row"><span class="set-label">${repeating ? 'Starts' : 'Date'}</span><span class="set-value">${esc(when)}<button type="button" class="btn plain sm" data-action="task-date" data-id="${esc(task.id)}">${task.date ? 'Change' : 'Set date'}</button></span></div>
     ${task.source === 'leo' ? `<div class="set-row column task-repeat" id="task-repeat"><span class="set-label">Repeat</span>${repeatBubbles(task.repeat || [])}<span class="hint repeat-hint">${esc(repeatHint(task.repeat || []))}</span></div>` : ''}
     <div class="set-row column"><span class="set-label">Type</span><div class="chips task-kinds" id="task-kinds">${KIND_ORDER.map((k) => `<button type="button" class="chip pick-chip${task.kind === k ? ' on' : ''}" data-kind="${k}" aria-pressed="${task.kind === k}">${esc(KIND_LABEL[k])}</button>`).join('')}</div></div>
@@ -532,6 +534,39 @@ function taskSheet(id, on = null) {
       <button type="button" class="btn plain" data-action="task-done" data-id="${esc(task.id)}"${day ? ` data-on="${esc(day)}"` : ''} data-set="${doneNow ? '0' : '1'}">${doneNow ? (day ? `Not done on ${esc(dayName)}` : 'Not done') : (day ? `Done for ${esc(dayName)}` : 'Done')}</button>
       ${task.source === 'leo' ? `<button type="button" class="btn plain danger" data-action="task-delete" data-id="${esc(task.id)}">Delete</button>` : task.promoted ? `<button type="button" class="btn plain" data-action="task-delete" data-id="${esc(task.id)}">Stop tracking</button>` : ''}
     </div>`);
+  const description = $('#task-description', box);
+  const saveDescription = $('#task-description-save', box);
+  let savingDescription = false;
+  description.addEventListener('input', () => {
+    saveDescription.disabled = savingDescription || description.value.trim() === (task.description || '');
+  });
+  saveDescription.addEventListener('click', async () => {
+    if (savingDescription) return;
+    const before = task.description || '';
+    const text = description.value.trim();
+    savingDescription = true;
+    saveDescription.disabled = true;
+    try {
+      const saved = await api(`/api/tasks/${enc(task.id)}`, { method: 'PATCH', body: { description: text } });
+      task.description = saved.description;
+      toast('Description saved', { action: 'Undo', run: async () => {
+        const undone = await api(`/api/tasks/${enc(task.id)}`, { method: 'PATCH', body: { description: before } });
+        task.description = undone.description;
+        if (box.isConnected && description.value.trim() === text) {
+          description.value = before;
+          saveDescription.disabled = true;
+        }
+        loadTasksWindow().catch(() => {});
+      } });
+      loadTasksWindow().catch(() => {});
+    } catch (err) {
+      if (err instanceof Locked) throw err;
+      toast(err.message, { bad: true });
+    } finally {
+      savingDescription = false;
+      if (box.isConnected) saveDescription.disabled = description.value.trim() === (task.description || '');
+    }
+  });
   const repeatBox = $('#task-repeat', box);
   if (repeatBox) {
     repeatPicker(repeatBox, task.repeat || [], async (days) => {

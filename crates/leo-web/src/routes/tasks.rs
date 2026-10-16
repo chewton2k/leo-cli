@@ -61,6 +61,8 @@ pub(crate) struct NewTask {
     id: Option<String>,
     title: String,
     #[serde(default)]
+    description: String,
+    #[serde(default)]
     kind: Option<String>,
     #[serde(default)]
     date: Option<NaiveDate>,
@@ -80,6 +82,10 @@ pub(crate) async fn create_task(
     State(state): State<AppState>,
     Json(body): Json<NewTask>,
 ) -> Response {
+    let description = match tasks::description_of(&body.description) {
+        Ok(text) => text,
+        Err(message) => return error(StatusCode::BAD_REQUEST, message),
+    };
     let title: String = body.title.trim().chars().take(tasks::MOST_TITLE).collect();
     if title.is_empty() {
         return error(StatusCode::BAD_REQUEST, "Give the task a title.");
@@ -113,6 +119,7 @@ pub(crate) async fn create_task(
     let task = Task {
         id,
         title,
+        description,
         kind: tasks::clean_kind(body.kind.as_deref().unwrap_or("other")),
         done: body.done && repeat.is_empty(),
         date,
@@ -140,6 +147,8 @@ pub(crate) async fn create_task(
 pub(crate) struct Change {
     #[serde(default)]
     title: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
     #[serde(default)]
     kind: Option<String>,
     #[serde(default)]
@@ -176,6 +185,15 @@ pub(crate) async fn change_task(
     ) else {
         return error(StatusCode::BAD_REQUEST, "Write times like 14:30.");
     };
+    let description = match change
+        .description
+        .as_deref()
+        .map(tasks::description_of)
+        .transpose()
+    {
+        Ok(text) => text,
+        Err(message) => return error(StatusCode::BAD_REQUEST, message),
+    };
     let chats = state.chats.clone();
     if let Some(mut task) = tasks::load(&chats, &id) {
         if let Some(title) = change.title {
@@ -184,6 +202,9 @@ pub(crate) async fn change_task(
                 return error(StatusCode::BAD_REQUEST, "Give the task a title.");
             }
             task.title = title;
+        }
+        if let Some(description) = description {
+            task.description = description;
         }
         if let Some(kind) = change.kind {
             task.kind = tasks::clean_kind(&kind);
@@ -247,7 +268,9 @@ pub(crate) async fn change_task(
             let note = store.find_note_mut(&note_id).ok_or(StatusCode::NOT_FOUND)?;
             let line = match core::locate(&note.body, &meta.text, &meta.before, &meta.after) {
                 Located::At(n) => n,
-                _ if change.kind.is_some() || change.sent.is_some() => usize::MAX,
+                _ if change.kind.is_some() || change.sent.is_some() || description.is_some() => {
+                    usize::MAX
+                }
                 _ => return Err(StatusCode::CONFLICT),
             };
             let mut lines: Vec<String> = note.body.lines().map(str::to_string).collect();
@@ -279,6 +302,9 @@ pub(crate) async fn change_task(
             if let Some(preview) = preview {
                 return Ok(Err(preview));
             }
+            if let Some(description) = description {
+                meta.description = description;
+            }
             if let Some(kind) = change.kind {
                 meta.kind = Some(tasks::clean_kind(&kind));
             }
@@ -294,7 +320,8 @@ pub(crate) async fn change_task(
             let wants_meta = meta.promoted
                 || meta.kind.is_some()
                 || meta.sent_at.is_some()
-                || change.date.is_some();
+                || change.date.is_some()
+                || change.description.is_some();
             if wants_meta {
                 tasks::put_meta(&chats, &meta).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
             }
@@ -366,6 +393,7 @@ pub(crate) async fn promote_task(
                 id: tasks::note_task_id(&note.id, found.text),
                 note: note.id.clone(),
                 text: found.text.trim().to_string(),
+                description: String::new(),
                 before,
                 after,
                 kind: None,
@@ -440,6 +468,10 @@ pub(crate) async fn import_tasks(
         if !tasks::valid_id(&task.id) || task.id.starts_with('n') || task.title.trim().is_empty() {
             continue;
         }
+        let Ok(description) = tasks::description_of(&task.description) else {
+            continue;
+        };
+        task.description = description;
         task.title = task.title.trim().chars().take(tasks::MOST_TITLE).collect();
         task.kind = tasks::clean_kind(&task.kind);
         task.repeat = tasks::clean_repeat(&task.repeat);

@@ -432,3 +432,19 @@ test('tool activity follows streamed text without dropping text or splitting Uni
   assert.equal(C.timeline('answer', Array(100).fill('Read')).flatMap((p) => p.steps || []).length, 64);
   assert.deepEqual(C.timeline('old answer', ['Legacy step']).map((p) => p.text || p.steps[0].text), ['Legacy step', 'old answer']);
 });
+
+test('conversation rows display only escaped titles, including search results', () => {
+  const fs = require('node:fs');
+  const vm = require('node:vm');
+  const source = fs.readFileSync(require.resolve('../src/web/chat.js'), 'utf8');
+  const row = source.slice(source.indexOf('    function chatRow(c) {'), source.indexOf('\n    let resumeSeq', source.indexOf('    function chatRow(c) {')));
+  const context = vm.createContext({ state: { id: 'chat-one', doomed: null }, escape: esc });
+  vm.runInContext(row, context);
+  for (const about of ['', 'A response preview that should stay hidden', '<script>bad()</script>']) {
+    const html = context.chatRow({ id: 'chat-one', title: 'Graphs <review>', about });
+    assert.ok(html.includes('Graphs &lt;review&gt;'));
+    assert.ok(!html.includes('chat-history-about'));
+    if (about) assert.ok(!html.includes(about));
+    assert.ok(html.includes('data-chat="resume"') && html.includes('data-chat="forget"'));
+  }
+});

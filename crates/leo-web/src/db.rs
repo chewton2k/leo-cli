@@ -7,7 +7,7 @@ use rusqlite::Connection;
 
 pub const FILE: &str = "leo.db";
 pub const BEFORE: &str = ".before-database";
-const VERSION: i64 = 1;
+const VERSION: i64 = 2;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS interviews (
@@ -121,7 +121,7 @@ impl Db {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("could not make {}", parent.display()))?;
         }
-        let conn =
+        let mut conn =
             Connection::open(path).with_context(|| format!("could not open {}", path.display()))?;
         conn.busy_timeout(std::time::Duration::from_secs(10))?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
@@ -129,7 +129,19 @@ impl Db {
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.pragma_update(None, "auto_vacuum", "INCREMENTAL")?;
         conn.execute_batch(SCHEMA)?;
-        conn.pragma_update(None, "user_version", VERSION)?;
+        let tx = conn.transaction()?;
+        let has_description: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('note_tasks') WHERE name = 'description')",
+            [],
+            |r| r.get(0),
+        )?;
+        if !has_description {
+            tx.execute_batch(
+                "ALTER TABLE note_tasks ADD COLUMN description TEXT NOT NULL DEFAULT '';",
+            )?;
+        }
+        tx.pragma_update(None, "user_version", VERSION)?;
+        tx.commit()?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -327,5 +339,38 @@ mod moving_in {
             1,
             "a second look reads the database, not the files"
         );
+    }
+}
+
+#[cfg(test)]
+mod task_descriptions {
+    use super::*;
+
+    #[test]
+    fn existing_checkbox_settings_gain_empty_descriptions_without_losing_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE);
+        let old = Connection::open(&path).unwrap();
+        old.execute_batch(SCHEMA).unwrap();
+        old.execute(
+            "INSERT INTO note_tasks VALUES ('task-one', 'note-one', 'Read', '', '', NULL, 1, NULL)",
+            [],
+        )
+        .unwrap();
+        old.pragma_update(None, "user_version", 1).unwrap();
+        drop(old);
+        for _ in 0..2 {
+            let db = Db::open(&path).unwrap();
+            db.with(|c| {
+                let row: (String, String, i64) = c.query_row(
+                    "SELECT text, description, promoted FROM note_tasks WHERE id = 'task-one'",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )?;
+                assert_eq!(row, ("Read".into(), "".into(), 1));
+                Ok(())
+            })
+            .unwrap();
+        }
     }
 }
