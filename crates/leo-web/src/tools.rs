@@ -1587,6 +1587,10 @@ pub enum Proposal {
         summary: String,
         id: String,
     },
+    RestoreTask {
+        summary: String,
+        task: crate::tasks::Task,
+    },
     MoveNote {
         summary: String,
         note: String,

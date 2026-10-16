@@ -210,6 +210,7 @@ pub(crate) fn summary_of(p: &Proposal) -> String {
         Proposal::AddTask { summary, .. }
         | Proposal::UpdateTask { summary, .. }
         | Proposal::DeleteTask { summary, .. }
+        | Proposal::RestoreTask { summary, .. }
         | Proposal::MoveNote { summary, .. }
         | Proposal::MakeFolder { summary, .. }
         | Proposal::RemoveFolder { summary, .. }
@@ -1024,24 +1025,38 @@ pub(crate) async fn act(
             let gone =
                 reply_of(task_routes::delete_task(State(state.clone()), Path(id.clone())).await)
                     .await?;
-            let title = gone["title"].as_str().unwrap_or("the task").to_string();
+            let task: tasks::Task = parse(gone)?;
             Ok((
                 serde_json::Value::Null,
-                Proposal::AddTask {
-                    summary: format!("Add the task “{title}”"),
-                    title,
-                    description: gone["description"].as_str().unwrap_or_default().to_string(),
-                    date: gone["date"].as_str().map(str::to_string),
-                    time: gone["time"].as_str().map(|t| t.chars().take(5).collect()),
-                    task_kind: gone["kind"].as_str().map(str::to_string),
-                    repeat: gone["repeat"]
-                        .as_array()
-                        .map(|a| {
-                            a.iter()
-                                .filter_map(|d| d.as_u64().map(|d| d as u8))
-                                .collect()
-                        })
-                        .unwrap_or_default(),
+                Proposal::RestoreTask {
+                    summary: format!("Restore the task “{}”", task.title),
+                    task,
+                },
+            ))
+        }
+        Proposal::RestoreTask { task, .. } => {
+            if tasks::load(&state.chats, &task.id).is_some() {
+                return Err("That task is already there. Open it to check its details.".into());
+            }
+            let mut back = task.clone();
+            back.updated_at = Utc::now();
+            back.deleted = false;
+            let imported = reply_of(
+                task_routes::import_tasks(
+                    State(state.clone()),
+                    Json(parse(serde_json::json!({ "tasks": [back] }))?),
+                )
+                .await,
+            )
+            .await?;
+            if imported["added"] != 1 {
+                return Err("Leo could not restore that task. Check Storage and try again.".into());
+            }
+            Ok((
+                serde_json::json!({ "task": task.id }),
+                Proposal::DeleteTask {
+                    summary: format!("Delete the task “{}”", task.title),
+                    id: task.id.clone(),
                 },
             ))
         }

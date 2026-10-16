@@ -2846,6 +2846,11 @@ fn felix_task_descriptions_use_the_same_cards_permissions_and_undo_in_both_proto
                 },
             );
             assert!(read.result.contains("Read chapter 3\\nBring café notes"));
+            let mut before_delete = crate::tasks::load(&state.chats, &task.id).unwrap();
+            before_delete.repeat = vec![0, 2];
+            before_delete.done_on = vec![chrono::NaiveDate::from_ymd_opt(2026, 10, 19).unwrap()];
+            before_delete.note = Some("note-example".into());
+            crate::tasks::put(&state.chats, &before_delete).unwrap();
             install(
                 &mut state,
                 "delete_task",
@@ -2855,8 +2860,15 @@ fn felix_task_descriptions_use_the_same_cards_permissions_and_undo_in_both_proto
             let deleted = settle(&state, &lines).unwrap();
             assert!(crate::tasks::load(&state.chats, &task.id).is_none());
             act(&state, &deleted["undo"]);
+            let restored = crate::tasks::load(&state.chats, &task.id).unwrap();
+            assert_eq!(restored.repeat, before_delete.repeat);
+            assert_eq!(restored.done_on, before_delete.done_on);
+            assert_eq!(restored.note, before_delete.note);
+            assert!(restored.updated_at > before_delete.updated_at);
             assert_eq!(
-                crate::tasks::load_all(&state.chats)[0].description,
+                crate::tasks::load(&state.chats, &task.id)
+                    .unwrap()
+                    .description,
                 task.description
             );
         }

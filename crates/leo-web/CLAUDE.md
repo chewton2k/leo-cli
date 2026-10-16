@@ -708,5 +708,7 @@ descriptions travel with task files, restore/export and Calendar links; checkbox
 descriptions live in note_tasks metadata without rewriting note content. Felix's
 list_schedule includes descriptions as quoted data; add_task/update_task preserve
 missing descriptions and an explicit empty update clears one. delete_task removes
-standalone tasks through the same Ask/Auto/Read and Undo flow. Conversation history
+standalone tasks through the same Ask/Auto/Read and Undo flow. Delete Undo restores
+the original id, description, repeat progress and note link with a fresh timestamp
+so the restore wins over its deletion marker in a backup merge. Conversation history
 and its search results display titles only, with no response preview or tooltip.
