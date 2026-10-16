@@ -101,9 +101,9 @@ async function openNote(page, title) {
   return note;
 }
 
-test('a failed save survives navigation and reload, then saves on reconnection', async ({ page }) => {
+test('a failed save survives navigation and reload, then saves on reconnection', async ({ page, context }) => {
   const note = await openNote(page, 'Draft recovery');
-  await page.route('**/api/notes/*', (route) => route.request().method() === 'PATCH'
+  await context.route('**/api/notes/*', (route) => route.request().method() === 'PATCH'
     ? route.fulfill({ status: 500 }) : route.continue());
   await page.locator('.line-edit').fill('Keep this phone draft');
   await expect(page.locator('#save-state')).toContainText('draft kept');
@@ -116,7 +116,7 @@ test('a failed save survives navigation and reload, then saves on reconnection',
   await expect(page.locator('#doc')).toContainText('Keep this phone draft');
   const original = await (await page.request.get(`/api/notes/${note.id}`)).json();
   expect(original.body).toBe('Original sentence');
-  await page.unroute('**/api/notes/*');
+  await context.unroute('**/api/notes/*');
   await page.evaluate(() => window.dispatchEvent(new Event('online')));
   await expect(page.locator('#save-state')).toHaveText('Saved');
   const saved = await (await page.request.get(`/api/notes/${note.id}`)).json();

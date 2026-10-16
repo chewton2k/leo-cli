@@ -639,6 +639,8 @@ the same idle loop.
 - Browser suite: `tests/browser/flows.spec.js` (desktop and phone projects;
   CI retries once, `github` reporter). Every test fails on a page error or a
   programmer-error toast (`guard`). Recording is stubbed; the graph is seeded.
+  Lifecycle recovery tests mock save failures on the browser context so the
+  refusal stays in force for requests sent while a page is unloading.
   `visual.spec.js` screenshot baselines are local only (`pnpm visual`,
   `pnpm visual:update` rewrites every image).
 - Per the user (2026-10-11): no local Cargo builds for website work and no
