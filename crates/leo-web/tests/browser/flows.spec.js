@@ -5320,6 +5320,17 @@ test('the practice list shows type, company or General, position, and problems s
   await expect(rows.nth(0).locator('.interview-plan-tally > span')).toHaveText(['14 problems', '9 submitted', '6 solved']);
   await expect(rows.nth(1).locator('.hint')).toHaveText('Quant · General · Trader');
   await expect(rows.nth(1).locator('.interview-plan-tally > span')).toHaveText(['1 problem', '1 submitted', '0 solved']);
+  const hue = (name) => page.evaluate((n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim(), name);
+  const color = async (locator) => locator.evaluate((el) => getComputedStyle(el).color);
+  const rgb = (value) => page.evaluate((v) => { const probe = document.createElement('i'); probe.style.color = v; document.body.append(probe); const c = getComputedStyle(probe).color; probe.remove(); return c; }, value);
+  expect(await color(page.locator('.interview-plan-row').nth(0).locator('.track-icon'))).toBe(await rgb(await hue('--hue-0')));
+  expect(await color(page.locator('.interview-plan-row').nth(1).locator('.track-icon'))).toBe(await rgb(await hue('--hue-2')));
+  expect(await color(page.locator('.interview-track[data-track="systems"] .track-icon'))).toBe(await rgb(await hue('--hue-1')));
+  await expect(page.locator('.interview-track .track-icon svg')).toHaveCount(7);
+  const bar = rows.nth(0).locator('.interview-plan-bar');
+  await expect(bar).toHaveAttribute('aria-label', '6 of 14 problems solved');
+  expect(await bar.locator('i').evaluate((el) => el.style.width)).toBe('43%');
+  expect(await rows.nth(1).locator('.interview-plan-bar i').evaluate((el) => el.style.width)).toBe('0%');
 });
 
 test('problems filter by topic from a dropdown, the choice is remembered, and the question shows its topics', async ({ page }) => {

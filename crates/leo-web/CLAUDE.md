@@ -377,6 +377,11 @@ seer, meaning, web, room).
   problems, submitted and solved, each problem counted once
   (`interview::list` `tally`; `interview::passed` mirrors
   `interviews.attemptStatus` passed, and node and Rust tests share cases).
+  Each track has a colour and icon (`TRACK_LOOK`, from the `--hue-*` tokens:
+  coding blue, systems teal, design violet, marketing orange, business
+  amber, quant green, custom pink) on the track cards, the practice rows
+  (with a bar of solved over problems in that colour) and the practice
+  heading.
   Problem pictures (2026-10-14, the user's request): the question is Markdown,
   so a ```mermaid or ```svg block in it is drawn like in notes, and each
   coding example may carry a `diagram` (same kind of block, at most

@@ -45,6 +45,24 @@ function interviewTypeScript() {
   return interviewTypeScriptLoad;
 }
 
+const TRACK_LOOK = {
+  coding: { hue: '--hue-0', icon: '<path d="M8 8l-4 4 4 4M16 8l4 4-4 4M13.5 5l-3 14"/>' },
+  systems: { hue: '--hue-1', icon: '<rect x="4" y="4" width="16" height="6" rx="1.5"/><rect x="4" y="14" width="16" height="6" rx="1.5"/><path d="M8 7h.01M8 17h.01"/>' },
+  design: { hue: '--hue-6', icon: '<path d="M12 3a9 9 0 100 18c1 0 1.5-.8 1.5-1.6 0-.9-.7-1.4-.7-2.3 0-1 .8-1.6 1.8-1.6H17a4 4 0 004-4c0-4.7-4-8.5-9-8.5z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10" cy="7" r="1"/><circle cx="15" cy="7.5" r="1"/>' },
+  marketing: { hue: '--hue-4', icon: '<path d="M4 10v4h3l6 4V6l-6 4z"/><path d="M16.5 9a4 4 0 010 6"/>' },
+  business: { hue: '--hue-3', icon: '<path d="M5 20V11M11 20V5M17 20v-6M3 20h18"/>' },
+  quant: { hue: '--hue-2', icon: '<path d="M17 5H7l6 7-6 7h10"/>' },
+  custom: { hue: '--hue-5', icon: '<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>' },
+};
+
+function trackLook(track) {
+  return TRACK_LOOK[track] || TRACK_LOOK.custom;
+}
+
+function trackIcon(track) {
+  return `<span class="track-icon" aria-hidden="true">${svg(trackLook(track).icon)}</span>`;
+}
+
 async function showInterviews(id = '') {
   const mine = ++seq;
   state = { view: 'interviews', dir: '' };
@@ -58,8 +76,8 @@ async function showInterviews(id = '') {
     const plans = await api('/api/interviews');
     if (mine !== seq) return;
     app.innerHTML = `<div class="interview-home"><div class="interview-heading"><div><p class="eyebrow">With Felix</p><h1>Interview practice</h1><p class="hint">Think it through, try it yourself, and build on what you learn.</p></div></div>
-      <h2>Start a practice</h2><div class="interview-tracks">${interviews.PRESETS.map((p) => `<button class="set-card interview-track" data-interview="create" data-track="${p.id}"><strong>${esc(p.label)}</strong><span class="hint">${esc(p.about)}</span>${ICON.chevron}</button>`).join('')}</div>
-      ${plans.length ? `<h2>Your practice</h2><div class="set-card">${plans.map((p) => `<div class="set-row"><button class="interview-plan grow" data-interview="open" data-id="${esc(p.id)}"><b>${esc(p.framework.title)}</b><span class="hint">${esc([interviews.preset(p.framework.track).label, p.framework.company || 'General', p.framework.role].filter(Boolean).join(' · '))}</span><span class="interview-plan-tally">${p.tally ? `<span>${p.tally.problems} problem${p.tally.problems === 1 ? '' : 's'}</span><span>${p.tally.submitted} submitted</span><span class="solved">${p.tally.solved} solved</span>` : `<span>${p.attempts} submitted</span>`}</span></button><button class="icon-btn" data-interview="delete" data-id="${esc(p.id)}" aria-label="Delete ${esc(p.framework.title)}">${ICON.trash}</button></div>`).join('')}</div>` : ''}</div>`;
+      <h2>Start a practice</h2><div class="interview-tracks">${interviews.PRESETS.map((p) => `<button class="set-card interview-track" data-interview="create" data-track="${p.id}" style="--track: var(${trackLook(p.id).hue})">${trackIcon(p.id)}<strong>${esc(p.label)}</strong><span class="hint">${esc(p.about)}</span>${ICON.chevron}</button>`).join('')}</div>
+      ${plans.length ? `<h2>Your practice</h2><div class="set-card">${plans.map((p) => `<div class="set-row interview-plan-row" style="--track: var(${trackLook(p.framework.track).hue})">${trackIcon(p.framework.track)}<button class="interview-plan grow" data-interview="open" data-id="${esc(p.id)}"><b>${esc(p.framework.title)}</b><span class="hint">${esc([interviews.preset(p.framework.track).label, p.framework.company || 'General', p.framework.role].filter(Boolean).join(' · '))}</span><span class="interview-plan-tally">${p.tally ? `<span>${p.tally.problems} problem${p.tally.problems === 1 ? '' : 's'}</span><span>${p.tally.submitted} submitted</span><span class="solved">${p.tally.solved} solved</span>` : `<span>${p.attempts} submitted</span>`}</span>${p.tally?.problems ? `<span class="interview-plan-bar" role="img" aria-label="${p.tally.solved} of ${p.tally.problems} problems solved"><i style="width:${Math.round((100 * p.tally.solved) / p.tally.problems)}%"></i></span>` : ''}</button><button class="icon-btn" data-interview="delete" data-id="${esc(p.id)}" aria-label="Delete ${esc(p.framework.title)}">${ICON.trash}</button></div>`).join('')}</div>` : ''}</div>`;
     return;
   }
   let item;
@@ -106,7 +124,7 @@ function drawInterview(session) {
   const item = session.item;
   const coding = item.framework.track === 'coding';
   const tabs = coding ? [['code', 'Code'], ['write', 'Approach'], ['board', 'Whiteboard']] : [['write', 'Write'], ['board', 'Whiteboard']];
-  app.innerHTML = `<div class="interview-home interview-practice${coding ? ' interview-coding' : ''}"><div class="interview-heading"><div><p class="eyebrow">${esc(interviews.preset(item.framework.track).label)} · ${item.framework.style === 'mock' ? 'Mock interview' : 'Coach'}</p><h1>${esc(item.framework.title)}</h1><p class="hint">${esc([item.framework.company || 'General practice', item.framework.role].filter(Boolean).join(' · '))}</p></div><div class="buttons"><button class="btn sm" data-interview="configure">Preferences</button></div></div>
+  app.innerHTML = `<div class="interview-home interview-practice${coding ? ' interview-coding' : ''}"><div class="interview-heading" style="--track: var(${trackLook(item.framework.track).hue})"><div class="interview-heading-main">${trackIcon(item.framework.track)}<div><p class="eyebrow">${esc(interviews.preset(item.framework.track).label)} · ${item.framework.style === 'mock' ? 'Mock interview' : 'Coach'}</p><h1>${esc(item.framework.title)}</h1><p class="hint">${esc([item.framework.company || 'General practice', item.framework.role].filter(Boolean).join(' · '))}</p></div></div><div class="buttons"><button class="btn sm" data-interview="configure">Preferences</button></div></div>
     <div id="interview-problems" class="interview-problems" role="group" aria-label="Practice problems"></div>
     <div class="interview-solve" style="--split: ${interviewSplit()}%"><div class="interview-question"><section id="interview-challenge" class="set-card interview-problem"><div id="interview-panes" class="interview-panes"></div><div id="interview-pane-question" role="tabpanel"></div><div id="interview-pane-cases" role="tabpanel" hidden></div><div id="interview-pane-result" role="tabpanel" hidden><div id="interview-results" class="interview-results" aria-live="polite"></div></div><div id="interview-pane-submissions" role="tabpanel" hidden><section id="interview-attempts"></section><section id="interview-progress"></section></div></section></div>
     ${item.challenge ? `<section class="set-card interview-workspace"><div class="interview-toolbar"><div class="library-views" role="tablist" aria-label="Your answer workspace">${tabs.map(([id, label]) => `<button class="btn sm plain${session.tab === id ? ' on' : ''}" role="tab" aria-selected="${session.tab === id}" data-interview="tab" data-tab="${id}">${label}</button>`).join('')}</div><span id="interview-save" class="hint" role="status"></span></div>
