@@ -215,11 +215,16 @@ fn live_pace() -> Duration {
 }
 
 fn hear(dir: &Path, samples: &[i16], emit: &dyn Fn(Event)) -> Option<String> {
-    let path = dir.join("live.wav");
-    wav::write(&path, samples).ok()?;
-    let result = crate::ai::transcribe_outcome(&path);
-    let _ = std::fs::remove_file(&path);
-    let outcome = result.ok()?;
+    struct TempWav(std::path::PathBuf);
+    impl Drop for TempWav {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+    let path = TempWav(dir.join("live.wav"));
+    wav::write(&path.0, samples).ok()?;
+    let outcome = crate::ai::transcribe_outcome(&path.0).ok()?;
+    drop(path);
     for f in &outcome.fallbacks {
         emit(Event::Fallback {
             from: f.from.clone(),

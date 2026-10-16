@@ -229,7 +229,12 @@ pub(super) fn edit(store: &Store, note: &str, numbering: &[String]) -> Outcome {
         n.tags.join(", "),
         n.body
     );
-    let path = std::env::temp_dir().join(format!("leo-{}.md", &id[..std::cmp::min(8, id.len())]));
+    let prefix: String = id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .take(8)
+        .collect();
+    let path = std::env::temp_dir().join(format!("leo-{prefix}-{}.md", uuid::Uuid::new_v4()));
     Outcome::effect(Effect::Edit(EditRequest {
         path,
         seed,
@@ -376,7 +381,7 @@ pub(super) fn ask(
         .expect("resolve returned a live id");
     n.body = expanded;
     n.updated_at = chrono::Utc::now();
-    let short = n.id[..std::cmp::min(8, n.id.len())].to_string();
+    let short = resolve::short_id(&n.id);
     let title = n.title.clone();
     store.save()?;
     Ok(Outcome {
@@ -648,7 +653,7 @@ pub fn apply_edit(
             }
             let note = store.create_note(title, body, parsed_tags, dir)?;
             let id = note.id.clone();
-            let short = id[..std::cmp::min(8, id.len())].to_string();
+            let short = resolve::short_id(&id);
             store.save()?;
             Ok(Outcome {
                 dirty: true,
@@ -918,7 +923,7 @@ pub fn apply_recording(
         note.updated_at = chrono::Utc::now();
         let title = note.title.clone();
         let id = note.id.clone();
-        let short = id[..std::cmp::min(8, id.len())].to_string();
+        let short = resolve::short_id(&id);
         mark_recording(store, &id, session);
         store.save()?;
         return Ok(Outcome {
@@ -932,7 +937,7 @@ pub fn apply_recording(
     let title = req.title.clone().unwrap_or(ai_title);
     let note = store.create_note(&title, &body, vec!["listen".to_string()], &req.dir)?;
     let id = note.id.clone();
-    let short = id[..std::cmp::min(8, id.len())].to_string();
+    let short = resolve::short_id(&id);
     mark_recording(store, &id, session);
     store.save()?;
     Ok(Outcome {

@@ -168,12 +168,16 @@ impl CmdLine {
     }
 
     fn remember(&mut self, line: &str) {
+        const MOST_HISTORY: usize = 200;
         if line.trim().is_empty() {
             return;
         }
         // Don't stack duplicate consecutive entries.
         if self.history.last().map(|l| l == line).unwrap_or(false) {
             return;
+        }
+        if self.history.len() >= MOST_HISTORY {
+            self.history.remove(0);
         }
         self.history.push(line.to_string());
     }
@@ -273,6 +277,17 @@ mod tests {
             c.insert(ch);
         }
         c
+    }
+
+    #[test]
+    fn command_history_keeps_only_the_latest_two_hundred_entries() {
+        let mut line = CmdLine::default();
+        for n in 0..250 {
+            line.remember(&format!("ask {n}"));
+        }
+        assert_eq!(line.history.len(), 200);
+        assert_eq!(line.history.first().unwrap(), "ask 50");
+        assert_eq!(line.history.last().unwrap(), "ask 249");
     }
 
     #[test]

@@ -175,13 +175,13 @@ seer, meaning, web, room).
   notes. The prompt keeps what changes least first (documents, notes,
   earlier chat, conversation); the `<today>` line (it changes every minute)
   and the interview context go last, before the reply line
-  (`chat::before_reply`), so prefix caches (Codex, OpenAI-compatible APIs)
-  reuse the rest. Claude Code places its own cache breakpoints, so across
+  (`chat::before_reply`), so compatible provider prefix caches reuse the rest. Claude Code places its own cache breakpoints, so across
   answers it reuses only the system prompt (measured: 10.5k of 31.8k tokens). Note bodies are line-numbered; citations `[n2 L14-18]`
   and `[f1 p4]` become chips. Citations never go into notes
   (`tools::linked` → `[[Title]]`).
 - Warm sessions (`warm.rs`, 2026-10-13): one slot for all of leo. After an
-  answer, its Claude Code / Codex / API session is kept (the previous one is
+  answer, its supported native session (Claude Code, isolation-capable Codex,
+  or Ollama) is kept (the previous one is
   stopped), so at most one idle session exists. The next answer continues it
   only when it is the same chat, the history is unchanged except the reply and
   one new message (`Warm::continues`: `seen`, `history_of`), the style, access,
@@ -210,9 +210,10 @@ seer, meaning, web, room).
 - Tools: a text protocol (`<tool>{…}</tool>`) so every provider works, plus
   native sessions where available; generated from `tools::SPECS` (`manual()`,
   every call `check`ed; mistakes answered with the spec). At most
-  `MOST_STEPS` (12) steps and `MOST_PROPOSALS` (8) changes. Codex and Claude
-  Code (through leo-services' MCP bridge) and the APIs get the tools natively;
-  the text protocol is the fallback. A hand-written call that is not valid
+  `MOST_STEPS` (12) steps and `MOST_PROPOSALS` (8) changes. Claude Code
+  (leo-services' MCP bridge), isolation-capable Codex and compatible Ollama
+  models get native tools. AGY/Copilot and unsupported native paths use the
+  text protocol. A hand-written call that is not valid
   JSON is repaired when it can be (`tools::repaired`: raw line breaks, quotes
   that do not end a string, trailing commas, missing closing braces) before it
   is refused; a refused call shows as "Fixed a tool call" with the reason
@@ -574,7 +575,8 @@ the same idle loop.
 ## Calendar and tasks (`calendar.rs`, `ics.rs`, `tasks.rs`, `routes/tasks.rs`, `app/calendar.js`, `schedule.js`)
 
 - Calendars: up to five secret iCal links (Settings → Calendar), kept through
-  `CalendarAccess` (keychain), never sent to the page. Feeds are cached in
+  `CalendarAccess` (`secret::default_store`, private file or optional keychain),
+  never sent to the page. Feeds are cached in
   leo.db with ETag / Last-Modified; `ics::read` expands repeats, EXDATE and
   moved instances, all-day items are dates. GET `/api/schedule?from&to&live`
   (≤43 days); the page refreshes every 2.5 min while visible.
@@ -743,3 +745,27 @@ Detached store checks retain their own admission permits through completion.
 Original bytes stage in private temporary files instead of a second full RAM copy.
 Exports bound traversal, input size and simultaneous builds/streams; owned temporary
 paths and admission permits are released when a stream ends or its client leaves.
+Tunnels run `cloudflared` in an isolated process group. Startup failure and normal
+shutdown signal the group and await reaping with a five-second deadline; Drop and
+cancellation signal directly and use Tokio's child reaper. No external `kill`
+process is spawned. `Awake` kills/reaps `caffeinate` on drop. Graph/idle task guards
+start after fallible setup and abort on every server exit/cancellation. Shared
+worker states use RAII guards to prevent stuck meters/locks on panic; interview
+key preparation has eight permits and retries abandoned generations without
+allowing late workers to replace a newer generation.
+
+Database handles are cached up to 32 paths, migration markers up to 64; filesystem
+checks/open/close occur outside the database cache mutex. Live browser PCM queues
+hold 64 chunks per track; cancellation-aware sends have a ten-second deadline and
+run outside the recording mutex. Failed delivery keeps the journal for recovery
+and stops an incomplete recording from becoming a note. Audio/point workers retain
+their save guard through I/O and in-memory acknowledgement even if the HTTP client
+leaves. Recording warnings retain at most 40 entries of 2,000 Unicode characters.
+Storage validates complete recording selections before deletion and rejects linked
+recording, originals and picture roots. Writing CLI profiles show metadata only;
+confirmed clearing uses the shared private profile lock and requires sign-in again.
+
+Writing Settings offers Ollama, Codex, Claude Code, Google Antigravity and GitHub
+Copilot. The latter two use isolated private profiles and text tools; sign in from
+a terminal with `leo doctor --sign-in agy|copilot`. Speech choices and cloud speech
+keys stay available. Credentials never reach the page or note exports.

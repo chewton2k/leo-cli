@@ -169,8 +169,10 @@ impl Transcriber {
 
 impl Drop for Transcriber {
     fn drop(&mut self) {
-        if self.thread.is_some() {
-            self.cancel();
+        self.cancel();
+        self.recording_ended();
+        if let Some(t) = self.thread.take().filter(|t| t.is_finished()) {
+            let _ = t.join();
         }
     }
 }
@@ -368,6 +370,41 @@ mod tests {
     use super::*;
     use std::sync::atomic::AtomicU32;
     use std::sync::mpsc;
+
+    #[test]
+    fn cancellation_does_not_wait_for_an_in_flight_provider() {
+        let dir = tempfile::tempdir().unwrap();
+        loud(dir.path(), 0);
+        let (started, start) = mpsc::channel();
+        let (events, updates) = mpsc::channel();
+        let worker = Transcriber::start(
+            dir.path(),
+            Arc::new(move |_| {
+                let _ = started.send(());
+                std::thread::sleep(Duration::from_millis(300));
+                Ok("kept transcript".into())
+            }),
+            Policy {
+                workers: 1,
+                ..quick()
+            },
+            true,
+            events,
+        );
+        start.recv_timeout(Duration::from_secs(2)).unwrap();
+        let at = Instant::now();
+        drop(worker);
+        let elapsed = at.elapsed();
+        assert!(matches!(
+            updates.recv_timeout(Duration::from_secs(2)).unwrap(),
+            Update::Done { .. }
+        ));
+        assert!(elapsed < Duration::from_millis(200), "{elapsed:?}");
+        assert_eq!(
+            std::fs::read_to_string(text_path(dir.path(), 0)).unwrap(),
+            "kept transcript"
+        );
+    }
 
     #[test]
     fn persistent_rate_limits_end_after_the_finish_window_and_keep_audio() {

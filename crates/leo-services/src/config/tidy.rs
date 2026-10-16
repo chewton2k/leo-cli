@@ -17,6 +17,8 @@ pub const RETIRED: &[&str] = &[
     "local_whisper_server",
 ];
 
+const RETIRED_CHAT: &[&str] = &["openai", "anthropic", "openrouter", "gemini", "xai"];
+
 const KNOWN_KINDS: &[&str] = &[
     "openai",
     "openai_transcribe",
@@ -26,6 +28,8 @@ const KNOWN_KINDS: &[&str] = &[
     "parakeet",
     "claude_code",
     "codex",
+    "agy",
+    "copilot",
 ];
 
 fn stale(provider: &str, field: &str, value: &toml_edit::Value) -> bool {
@@ -76,7 +80,10 @@ pub fn tidy(doc: &mut DocumentMut) -> bool {
         }
         let mut kept: Vec<String> = before
             .iter()
-            .filter(|n| !RETIRED.contains(&n.as_str()))
+            .filter(|n| {
+                !RETIRED.contains(&n.as_str())
+                    && (task != Task::Chat || !RETIRED_CHAT.contains(&n.as_str()))
+            })
             .cloned()
             .collect();
         if kept != before {
@@ -246,7 +253,7 @@ preset = "mono"
         assert!(tidy(&mut doc));
         let text = doc.to_string();
         assert!(!text.contains("[providers"), "{text}");
-        assert!(text.contains("chain = [\"openrouter\"]"), "{text}");
+        assert!(text.contains("chain = [\"ollama\"]"), "{text}");
         assert!(text.contains("chain = [\"parakeet\"]"), "{text}");
         assert!(text.contains("preset = \"mono\""));
         assert!(text.starts_with("# leo configuration."));
@@ -281,7 +288,7 @@ preset = "mono"
     #[test]
     fn choices_the_user_made_survive() {
         let mut doc = r#"[chat]
-chain = ["anthropic", "mistral"]
+chain = ["codex", "mistral"]
 
 [transcribe]
 chain = ["gemini_speech"]
@@ -307,7 +314,7 @@ model = "house-model"
         .unwrap();
         assert!(tidy(&mut doc));
         let cfg = Config::parse_with_built_ins(&doc.to_string()).unwrap();
-        assert_eq!(cfg.chat.chain, vec!["anthropic"]);
+        assert_eq!(cfg.chat.chain, vec!["codex"]);
         assert_eq!(cfg.transcribe.chain, vec!["gemini_speech"]);
         assert_eq!(
             cfg.provider("anthropic").unwrap().model.as_deref(),
@@ -326,6 +333,33 @@ model = "house-model"
             cfg.provider("mine").unwrap().model.as_deref(),
             Some("house-model")
         );
+    }
+
+    #[test]
+    fn retired_writing_choices_do_not_remove_cloud_speech_or_shared_settings() {
+        let mut doc = r#"[chat]
+chain = ["openai", "agy", "anthropic", "copilot", "gemini", "xai", "openrouter"]
+[transcribe]
+chain = ["openai_whisper", "gemini_speech", "xai_speech"]
+[providers.openai]
+key_from = "shared-speech"
+[providers.agy]
+effort = "high"
+"#
+        .parse::<DocumentMut>()
+        .unwrap();
+        assert!(tidy(&mut doc));
+        assert_eq!(edit::read_chain(&doc, Task::Chat), ["agy", "copilot"]);
+        assert_eq!(
+            edit::read_chain(&doc, Task::Transcribe),
+            ["openai_whisper", "gemini_speech", "xai_speech"]
+        );
+        assert_eq!(
+            doc["providers"]["openai"]["key_from"].as_str(),
+            Some("shared-speech")
+        );
+        assert_eq!(doc["providers"]["agy"]["effort"].as_str(), Some("high"));
+        assert!(!tidy(&mut doc));
     }
 
     #[test]

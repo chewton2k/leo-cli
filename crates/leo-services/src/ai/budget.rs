@@ -49,7 +49,12 @@ const AGENT_OUTPUT_TOKENS: u32 = 32_000;
 fn kind_of(name: &str, provider: &ProviderConfig) -> Budget {
     let model = provider.model.as_deref().unwrap_or("").to_ascii_lowercase();
     match provider.kind {
-        Some(ProviderKind::ClaudeCode | ProviderKind::Codex) => Budget::AGENT,
+        Some(
+            ProviderKind::ClaudeCode
+            | ProviderKind::Codex
+            | ProviderKind::Agy
+            | ProviderKind::Copilot,
+        ) => Budget::AGENT,
         _ if name == "ollama" || provider.base_url.as_deref().is_some_and(local) => Budget::LOCAL,
         _ if model.ends_with(":free") || model == "openrouter/free" => Budget::FREE,
         _ => Budget::CLOUD,
@@ -59,7 +64,12 @@ fn kind_of(name: &str, provider: &ProviderConfig) -> Budget {
 pub fn budget_of(name: &str, provider: &ProviderConfig) -> Budget {
     let kind = kind_of(name, provider);
     let output = match provider.kind {
-        Some(ProviderKind::ClaudeCode | ProviderKind::Codex) => AGENT_OUTPUT_TOKENS,
+        Some(
+            ProviderKind::ClaudeCode
+            | ProviderKind::Codex
+            | ProviderKind::Agy
+            | ProviderKind::Copilot,
+        ) => AGENT_OUTPUT_TOKENS,
         _ => provider.max_tokens.unwrap_or(4_096),
     };
     let reads = note_tokens(window_of(name, provider)) as usize * 3 / 4;
@@ -91,6 +101,8 @@ pub fn window_of(name: &str, provider: &ProviderConfig) -> Window {
     let (tokens, paid) = match provider.kind {
         Some(ProviderKind::ClaudeCode) => (200_000, false),
         Some(ProviderKind::Codex) => (256_000, false),
+        Some(ProviderKind::Agy) => (200_000, false),
+        Some(ProviderKind::Copilot) => (128_000, false),
         _ if name == "ollama" || local(&url) => (8_192, false),
         _ if model.ends_with(":free") || model == "openrouter/free" => (32_000, false),
         _ if model.contains("gemini") => (1_000_000, true),

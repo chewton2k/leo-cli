@@ -846,10 +846,10 @@ pub fn act_on_more(
                     )));
                 }
                 let path = data.join(name);
-                let removed = if path.is_dir() {
-                    std::fs::remove_dir_all(&path).is_ok()
-                } else {
-                    path.is_file() && std::fs::remove_file(&path).is_ok()
+                let removed = match std::fs::symlink_metadata(&path) {
+                    Ok(m) if m.is_dir() => std::fs::remove_dir_all(&path).is_ok(),
+                    Ok(m) if m.is_file() => std::fs::remove_file(&path).is_ok(),
+                    _ => false,
                 };
                 if removed {
                     gone += 1;
@@ -863,6 +863,9 @@ pub fn act_on_more(
 }
 
 fn folder_names(root: &Path) -> Vec<String> {
+    if std::fs::symlink_metadata(root).is_ok_and(|m| !m.is_dir()) {
+        return Vec::new();
+    }
     std::fs::read_dir(root)
         .map(|entries| {
             entries
@@ -870,13 +873,26 @@ fn folder_names(root: &Path) -> Vec<String> {
                 .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
                 .map(|e| e.file_name().to_string_lossy().to_string())
                 .filter(|name| leo_core::recording::valid_id(name))
+                .take(MOST_SIZE_ENTRIES)
                 .collect()
         })
         .unwrap_or_default()
 }
 
 fn remove_kept_folders(root: &Path, ids: &[String], live: Option<&str>) -> Result<usize> {
-    let mut gone = 0;
+    anyhow::ensure!(
+        ids.len() <= MOST_SIZE_ENTRIES,
+        "Choose fewer recordings to delete."
+    );
+    match std::fs::symlink_metadata(root) {
+        Ok(metadata) => anyhow::ensure!(
+            metadata.is_dir(),
+            "Recording folders cannot use symbolic links."
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(error.into()),
+    }
+    let mut dirs = Vec::new();
     for id in ids {
         if !leo_core::recording::valid_id(id) {
             bail!("That is not a recording leo knows.");
@@ -884,13 +900,15 @@ fn remove_kept_folders(root: &Path, ids: &[String], live: Option<&str>) -> Resul
         if live == Some(id.as_str()) {
             bail!("That recording is still going. Stop it first.");
         }
-        let dir = root.join(id);
+        let dir = leo_core::paths::contained_path(root, Path::new(id))?;
         if std::fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir()) {
-            std::fs::remove_dir_all(&dir)?;
-            gone += 1;
+            dirs.push(dir);
         }
     }
-    Ok(gone)
+    for dir in &dirs {
+        std::fs::remove_dir_all(dir)?;
+    }
+    Ok(dirs.len())
 }
 
 fn recording_sources_area(store: &Store) -> Option<Area> {
@@ -1085,7 +1103,7 @@ fn pictures_area(store: &Store) -> Area {
 }
 
 fn remove_pictures(notes_dir: &Path, names: impl Iterator<Item = String>) -> Result<String> {
-    let dir = pictures_dir(notes_dir);
+    let dir = leo_core::paths::contained_path(notes_dir, Path::new(leo_core::attachments::DIR))?;
     let mut gone = 0;
     for name in names {
         let plain = !name.is_empty()
@@ -1097,7 +1115,9 @@ fn remove_pictures(notes_dir: &Path, names: impl Iterator<Item = String>) -> Res
             bail!("That is not a picture leo knows.");
         }
         let path = leo_core::paths::contained_path(&dir, Path::new(&name))?;
-        if path.is_file() && std::fs::remove_file(&path).is_ok() {
+        if std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_file())
+            && std::fs::remove_file(&path).is_ok()
+        {
             gone += 1;
         }
     }
@@ -1109,14 +1129,14 @@ fn plural_deleted(n: usize, what: &str) -> String {
 }
 
 fn remove_originals(notes_dir: &Path, ids: impl Iterator<Item = String>) -> Result<String> {
-    let base = attachments_dir(notes_dir);
+    let base = leo_core::paths::contained_path(&data_dir(notes_dir), Path::new("attachments"))?;
     let mut gone = 0;
     for id in ids {
         if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
             bail!("That is not an upload leo knows.");
         }
-        let dir = base.join(&id);
-        if dir.is_dir() {
+        let dir = leo_core::paths::contained_path(&base, Path::new(&id))?;
+        if std::fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir()) {
             std::fs::remove_dir_all(&dir)?;
             gone += 1;
         }
@@ -1156,6 +1176,56 @@ pub fn describe(mut areas: Vec<Area>) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recording_cleanup_validates_the_whole_selection_before_removing_audio() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("recordings");
+        std::fs::create_dir_all(root.join("safe-recording")).unwrap();
+        std::fs::create_dir_all(root.join("live-recording")).unwrap();
+        for ids in [
+            vec!["safe-recording".into(), "../outside".into()],
+            vec!["safe-recording".into(), "live-recording".into()],
+        ] {
+            assert!(remove_kept_folders(&root, &ids, Some("live-recording")).is_err());
+            assert!(root.join("safe-recording").is_dir());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recording_and_attachment_cleanup_refuse_linked_roots_and_children() {
+        use std::os::unix::fs::symlink;
+        let temp = tempfile::tempdir().unwrap();
+        let notes = temp.path().join("notes");
+        let outside = temp.path().join("outside");
+        std::fs::create_dir_all(&notes).unwrap();
+        std::fs::create_dir_all(outside.join("saved-recording")).unwrap();
+        std::fs::write(outside.join("picture.png"), "keep").unwrap();
+        for name in ["recording-sources", "browser-audio"] {
+            let linked = temp.path().join(name);
+            symlink(&outside, &linked).unwrap();
+            assert!(folder_names(&linked).is_empty());
+            assert!(remove_kept_folders(&linked, &["saved-recording".into()], None).is_err());
+            assert!(outside.join("saved-recording").is_dir());
+        }
+        symlink(&outside, temp.path().join("attachments")).unwrap();
+        assert!(remove_originals(&notes, std::iter::once("saved-recording".into())).is_err());
+        symlink(&outside, pictures_dir(&notes)).unwrap();
+        assert!(remove_pictures(&notes, std::iter::once("picture.png".into())).is_err());
+        assert_eq!(
+            std::fs::read_to_string(outside.join("picture.png")).unwrap(),
+            "keep"
+        );
+        let regular = temp.path().join("regular");
+        std::fs::create_dir(&regular).unwrap();
+        symlink(
+            outside.join("saved-recording"),
+            regular.join("saved-recording"),
+        )
+        .unwrap();
+        assert!(remove_kept_folders(&regular, &["saved-recording".into()], None).is_err());
+    }
 
     fn at(day: u32) -> DateTime<Utc> {
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2026, 10, day, 12, 0, 0).unwrap()

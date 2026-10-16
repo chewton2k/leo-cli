@@ -10,10 +10,12 @@ use crate::ai::error::{ProviderError, ProviderResult};
 use crate::ai::provider::{ChatProvider, ChatRequest, Image, Sink, Spent};
 use crate::config::provider::{ProviderConfig, ProviderKind};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Agent {
     ClaudeCode,
     Codex,
+    Agy,
+    Copilot,
 }
 
 impl Agent {
@@ -21,6 +23,8 @@ impl Agent {
         match cfg.kind {
             Some(ProviderKind::ClaudeCode) => Some(Agent::ClaudeCode),
             Some(ProviderKind::Codex) => Some(Agent::Codex),
+            Some(ProviderKind::Agy) => Some(Agent::Agy),
+            Some(ProviderKind::Copilot) => Some(Agent::Copilot),
             _ => None,
         }
     }
@@ -29,6 +33,8 @@ impl Agent {
         match self {
             Agent::ClaudeCode => "claude",
             Agent::Codex => "codex",
+            Agent::Agy => "agy",
+            Agent::Copilot => "copilot",
         }
     }
 
@@ -36,6 +42,8 @@ impl Agent {
         match self {
             Agent::ClaudeCode => "your Claude plan",
             Agent::Codex => "your ChatGPT plan",
+            Agent::Agy => "your Google Antigravity account",
+            Agent::Copilot => "your GitHub Copilot plan",
         }
     }
 
@@ -43,6 +51,8 @@ impl Agent {
         match self {
             Agent::ClaudeCode => "install Claude Code: https://claude.com/claude-code",
             Agent::Codex => "install Codex: npm install -g @openai/codex",
+            Agent::Agy => "install Antigravity CLI: https://antigravity.google/docs/cli/install",
+            Agent::Copilot => "install GitHub Copilot CLI: npm install -g @github/copilot",
         }
     }
 
@@ -50,6 +60,8 @@ impl Agent {
         match self {
             Agent::ClaudeCode => "run `claude` once and sign in",
             Agent::Codex => "run `codex login`",
+            Agent::Agy => "run `leo doctor --sign-in agy`",
+            Agent::Copilot => "run `leo doctor --sign-in copilot`",
         }
     }
 }
@@ -69,7 +81,7 @@ pub fn locate(bin: &str) -> Option<PathBuf> {
         .find_map(|dir| names.iter().map(|n| dir.join(n)).find(|p| p.is_file()))
 }
 
-const CODEX_OFF: [&str; 17] = [
+const CODEX_OFF: [&str; 18] = [
     "shell_tool",
     "browser_use",
     "browser_use_external",
@@ -87,6 +99,7 @@ const CODEX_OFF: [&str; 17] = [
     "skill_mcp_dependency_install",
     "tool_suggest",
     "hooks",
+    "daemon_auto_start",
 ];
 
 pub fn known_features(listing: &str) -> Vec<String> {
@@ -103,10 +116,15 @@ pub fn known_features(listing: &str) -> Vec<String> {
 
 const PROBE_LIMIT: Duration = Duration::from_secs(5);
 
-fn probe(program: &Path, args: &[&str]) -> ProviderResult<String> {
+pub(crate) fn probe(program: &Path, args: &[&str]) -> ProviderResult<String> {
     let mut command = Command::new(program);
+    command.args(args);
+    super::scoped_cli::clean_environment(&mut command);
+    probe_command(command)
+}
+
+pub(crate) fn probe_command(mut command: Command) -> ProviderResult<String> {
     command
-        .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -114,7 +132,7 @@ fn probe(program: &Path, args: &[&str]) -> ProviderResult<String> {
     std::os::unix::process::CommandExt::process_group(&mut command, 0);
     let mut child = command.spawn().map_err(|_| {
         ProviderError::Retryable(
-            "Codex could not be checked safely. Run `codex --help`, then try again.".into(),
+            "The writing program could not be checked safely. Run its `--help` command, then try again.".into(),
         )
     })?;
     let stdout = child.stdout.take();
@@ -137,14 +155,14 @@ fn probe(program: &Path, args: &[&str]) -> ProviderResult<String> {
         if watch.remaining(PROBE_LIMIT).is_none() {
             child.stop();
             return Err(ProviderError::Retryable(
-                "Codex took too long to check. Run `codex --help`, then try again.".into(),
+                "The writing program took too long to check. Run its `--help` command, then try again.".into(),
             ));
         }
         std::thread::sleep(Duration::from_millis(10));
     };
     if exceeded || !status.success() || watch.stalled.load(Ordering::Relaxed) {
         return Err(ProviderError::Retryable(
-            "Codex could not be checked safely. Run `codex --help`, then try again.".into(),
+            "The writing program could not be checked safely. Run its `--help` command, then try again.".into(),
         ));
     }
     Ok(text)
@@ -152,11 +170,11 @@ fn probe(program: &Path, args: &[&str]) -> ProviderResult<String> {
 
 pub(crate) fn codex_disables(program: &Path) -> ProviderResult<Vec<String>> {
     static KNOWN: std::sync::OnceLock<
-        std::sync::Mutex<std::collections::HashMap<PathBuf, ProviderResult<Vec<String>>>>,
+        std::sync::Mutex<std::collections::HashMap<PathBuf, Vec<String>>>,
     > = std::sync::OnceLock::new();
     let cache = KNOWN.get_or_init(Default::default);
     if let Some(found) = cache.lock().ok().and_then(|c| c.get(program).cloned()) {
-        return found;
+        return Ok(found);
     }
     let found = probe(program, &["features", "list"]).and_then(|listing| {
         let found = known_features(&listing);
@@ -166,11 +184,11 @@ pub(crate) fn codex_disables(program: &Path) -> ProviderResult<Vec<String>> {
             ));
         }
         Ok(found)
-    });
+    })?;
     if let Ok(mut c) = cache.lock() {
         c.insert(program.to_path_buf(), found.clone());
     }
-    found
+    Ok(found)
 }
 
 pub(crate) fn codex_native_isolated(program: &Path) -> bool {
@@ -180,10 +198,11 @@ pub(crate) fn codex_native_isolated(program: &Path) -> bool {
     if let Some(found) = cache.lock().ok().and_then(|c| c.get(program).copied()) {
         return found;
     }
-    let found = probe(program, &["app-server", "--help"]).is_ok_and(|help| {
-        help.split_whitespace().any(|s| s == "--ignore-user-config")
-            && help.split_whitespace().any(|s| s == "--ignore-rules")
-    });
+    let Ok(help) = probe(program, &["app-server", "--help"]) else {
+        return false;
+    };
+    let found = help.split_whitespace().any(|s| s == "--ignore-user-config")
+        && help.split_whitespace().any(|s| s == "--ignore-rules");
     if let Ok(mut c) = cache.lock() {
         c.insert(program.to_path_buf(), found);
     }
@@ -246,6 +265,8 @@ impl AgentCli {
                 match agent {
                     Agent::Codex => "codex",
                     Agent::ClaudeCode => "claude_code",
+                    Agent::Agy => "agy",
+                    Agent::Copilot => "copilot",
                 },
                 cfg.model.as_deref().unwrap_or(""),
                 cfg.effort.as_deref(),
@@ -357,6 +378,16 @@ impl AgentCli {
                     Some(system) => format!("{system}\n\n{}", req.prompt),
                     None => req.prompt.clone(),
                 }
+            }
+            Agent::Agy | Agent::Copilot => {
+                let (scoped, input) = super::scoped_cli::arguments(
+                    self.agent,
+                    req,
+                    self.model.as_deref(),
+                    self.effort.as_deref(),
+                );
+                args = scoped;
+                input
             }
         };
         (args, input)
@@ -614,7 +645,9 @@ impl ClaudeSession {
                         self.name
                     )));
                 }
-                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                Ok(super::mcp::Incoming::Ended)
+                | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    self.child.stop();
                     return Err(ProviderError::Retryable(format!(
                         "{}: claude ended the session. If it is not signed in, {}.",
                         self.name,
@@ -790,13 +823,16 @@ impl AgentCli {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
+        super::scoped_cli::configure(&mut command, self.agent)?;
         #[cfg(unix)]
         std::os::unix::process::CommandExt::process_group(&mut command, 0);
         let mut child = command.spawn().map_err(|e| {
             ProviderError::Retryable(format!("{}: could not run {}: {e}", self.name, self.bin))
         })?;
         let stdin = child.stdin.take();
-        let stdout = child.stdout.take().ok_or_else(|| {
+        let stdout = child.stdout.take();
+        let child = Process::new(child);
+        let stdout = stdout.ok_or_else(|| {
             ProviderError::Retryable(format!("{}: could not read {}", self.name, self.bin))
         })?;
         std::thread::spawn(move || {
@@ -808,7 +844,10 @@ impl AgentCli {
                             break;
                         }
                     }
-                    Ok(None) => break,
+                    Ok(None) => {
+                        let _ = tx.send(super::mcp::Incoming::Ended);
+                        break;
+                    }
                     Err(_) => {
                         let _ = tx.send(super::mcp::Incoming::Failed);
                         break;
@@ -818,7 +857,7 @@ impl AgentCli {
         });
         Ok(ClaudeSession {
             name: self.name.clone(),
-            child: Process::new(child),
+            child,
             stdin,
             lines,
             quiet: self.quiet_limit,
@@ -834,11 +873,24 @@ impl AgentCli {
     fn run(&self, req: &ChatRequest, images: &[Image], sink: Sink<'_>) -> ProviderResult<String> {
         let program =
             locate(&self.bin).ok_or_else(|| ProviderError::Retryable(self.unavailable_reason()))?;
+        if !super::scoped_cli::supported(self.agent, &program) {
+            return Err(ProviderError::Retryable(format!(
+                "{} cannot provide Leo's isolation controls. {}.",
+                self.bin,
+                self.agent.install()
+            )));
+        }
         let disables = match self.agent {
             Agent::Codex => codex_disables(&program)?,
-            Agent::ClaudeCode => Vec::new(),
+            Agent::ClaudeCode | Agent::Agy | Agent::Copilot => Vec::new(),
         };
         let room = self.room()?;
+        let _scoped = super::scoped_cli::prepare(
+            self.agent,
+            room.path(),
+            req.system.as_deref(),
+            !images.is_empty(),
+        )?;
         let files = self.image_files(room.path(), images)?;
         let (args, input) = self.arguments(req, images, &disables, &files);
         match self.spawn(&program, room.path(), &args, input.clone(), sink) {
@@ -854,7 +906,7 @@ impl AgentCli {
     fn note_spent(&self, heard: &Heard, stderr: &str, asked: usize, answer: &str) {
         let (banner_model, banner_effort, banner_tokens) = match self.agent {
             Agent::Codex => codex_banner(stderr),
-            Agent::ClaudeCode => (None, None, None),
+            Agent::ClaudeCode | Agent::Agy | Agent::Copilot => (None, None, None),
         };
         let mut spent = Spent {
             model: heard
@@ -909,6 +961,7 @@ impl AgentCli {
             .stderr(Stdio::piped());
         #[cfg(unix)]
         std::os::unix::process::CommandExt::process_group(&mut command, 0);
+        super::scoped_cli::configure(&mut command, self.agent)?;
         let input_len = input.chars().count();
         let mut child = command.spawn().map_err(|e| {
             ProviderError::Retryable(format!("{}: could not run {}: {e}", self.name, self.bin))
@@ -949,9 +1002,9 @@ impl AgentCli {
             inner,
             last: Arc::clone(&watch.last),
         });
-        let heard = match (self.agent, stdout) {
+        let mut heard = match (self.agent, stdout) {
             (Agent::ClaudeCode, Some(stdout)) => read_stream(BufReader::new(stdout), sink),
-            (Agent::Codex, Some(stdout)) => {
+            (Agent::Codex | Agent::Agy | Agent::Copilot, Some(stdout)) => {
                 let (answer, exceeded) = process::output(stdout);
                 Heard {
                     answer,
@@ -965,30 +1018,38 @@ impl AgentCli {
             child.stop();
         }
         let status = loop {
-            let status = child
+            let waited = child
                 .0
                 .lock()
                 .map_err(|_| {
                     ProviderError::Retryable(format!("{}: {} did not finish", self.name, self.bin))
-                })?
-                .as_mut()
-                .ok_or_else(|| {
-                    ProviderError::Retryable(format!("{}: {} has stopped", self.name, self.bin))
-                })?
-                .try_wait()
-                .map_err(|e| {
-                    ProviderError::Retryable(format!(
-                        "{}: {} did not finish: {e}",
-                        self.name, self.bin
-                    ))
-                })?;
-            if let Some(status) = status {
-                break status;
+                })
+                .and_then(|mut guard| {
+                    guard
+                        .as_mut()
+                        .ok_or_else(|| {
+                            ProviderError::Retryable(format!(
+                                "{}: {} has stopped",
+                                self.name, self.bin
+                            ))
+                        })?
+                        .try_wait()
+                        .map_err(|e| {
+                            ProviderError::Retryable(format!(
+                                "{}: {} did not finish: {e}",
+                                self.name, self.bin
+                            ))
+                        })
+                });
+            match waited {
+                Ok(Some(status)) => break Ok(status),
+                Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+                Err(err) => break Err(err),
             }
-            std::thread::sleep(Duration::from_millis(10));
         };
         let _ = writer.join();
         let (stderr, exceeded) = errors.join().unwrap_or_default();
+        let status = status?;
         if watch.stalled.load(Ordering::Relaxed) {
             return Err(ProviderError::Retryable(self.stalled()));
         }
@@ -1000,6 +1061,9 @@ impl AgentCli {
         }
         if let Some(usage) = heard.usage.clone() {
             crate::usage::save(&self.name, usage);
+        }
+        if matches!(self.agent, Agent::Agy | Agent::Copilot) && status.success() {
+            heard.answer = super::scoped_cli::answer(self.agent, &heard.answer)?;
         }
         let failed_in_result = matches!(heard.result, Some((true, _)));
         if !status.success() || failed_in_result {
@@ -1025,7 +1089,7 @@ impl AgentCli {
         if answer.is_empty() {
             return Err(ProviderError::Retryable(self.no_answer()));
         }
-        if self.agent == Agent::Codex {
+        if self.agent != Agent::ClaudeCode {
             sink(&answer);
         }
         self.note_spent(&heard, &stderr, input_len, &answer);
@@ -1047,7 +1111,7 @@ impl ChatProvider for AgentCli {
     }
 
     fn available(&self) -> bool {
-        locate(&self.bin).is_some()
+        locate(&self.bin).is_some_and(|program| super::scoped_cli::supported(self.agent, &program))
     }
 
     fn name(&self) -> &str {
@@ -1203,10 +1267,10 @@ mod tests {
 
     #[test]
     fn only_features_the_installed_codex_knows_are_switched_off() {
-        let listing = "apps                 stable   true\nshell_tool           stable   true\nbrowser_use          stable   true\nsomething_else       stable   false\n";
+        let listing = "apps                 stable   true\nshell_tool           stable   true\nbrowser_use          stable   true\ndaemon_auto_start    stable   true\nsomething_else       stable   false\n";
         assert_eq!(
             known_features(listing),
-            ["shell_tool", "browser_use", "apps"]
+            ["shell_tool", "browser_use", "apps", "daemon_auto_start"]
         );
         assert!(known_features("").is_empty());
         assert!(known_features("Error: unknown command").is_empty());
@@ -1479,6 +1543,32 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":true,"result":"No
         let mut session = agent.claude_session("Use interpretable language.").unwrap();
         let started = Instant::now();
         assert!(session.say("hello", &mut |_| {}).is_err());
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_claude_reports_an_early_exit_without_waiting_for_the_quiet_limit() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let bin = script(dir.path(), "read -r _line\nexit 1");
+        let cfg = config(ProviderKind::ClaudeCode, &bin, None);
+        let agent = AgentCli::new("claude_code".into(), Agent::ClaudeCode, &cfg)
+            .with_limits(Duration::from_secs(30), Duration::from_secs(30));
+        let tools = vec![super::super::mcp::Tool {
+            name: "search_notes".into(),
+            description: "Search notes.".into(),
+            schema: serde_json::json!({ "type": "object", "properties": {} }),
+        }];
+        let mut session = agent
+            .claude_native("Use interpretable language.", tools)
+            .unwrap();
+        let started = Instant::now();
+        match session.say_with("hello", &mut |_| {}, &mut |_, _| String::new(), &mut || {}) {
+            Err(ProviderError::Retryable(message)) => {
+                assert!(message.contains("ended the session"), "{message}");
+            }
+            other => panic!("expected session-ended error, got {other:?}"),
+        }
         assert!(started.elapsed() < Duration::from_secs(2));
     }
 

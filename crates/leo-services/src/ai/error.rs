@@ -83,9 +83,13 @@ pub fn classify_reqwest(provider: &str, e: &reqwest::Error) -> ProviderError {
 
 fn key_place(provider: &str) -> (String, Option<String>) {
     use crate::config::edit::Task;
-    match crate::config::choice::find(Task::Chat, provider)
-        .or_else(|| crate::config::choice::find(Task::Transcribe, provider))
-    {
+    let speech = match provider {
+        "openai" => "openai_whisper",
+        "gemini" => "gemini_speech",
+        "xai" => "xai_speech",
+        _ => provider,
+    };
+    match crate::config::choice::find(Task::Transcribe, speech) {
         Some(choice) => (
             choice.name.to_string(),
             Some(format!(
@@ -93,7 +97,15 @@ fn key_place(provider: &str) -> (String, Option<String>) {
                 choice.name
             )),
         ),
-        None => (provider.to_string(), None),
+        None => (
+            match provider {
+                "anthropic" => "Anthropic",
+                "openrouter" => "OpenRouter",
+                _ => provider,
+            }
+            .to_string(),
+            None,
+        ),
     }
 }
 
@@ -188,9 +200,9 @@ mod tests {
         );
         assert!(!openrouter.is_retryable());
         assert!(
-            openrouter.message().starts_with(
-                "OpenRouter rejected the key stored in leo (401). To replace it: :settings, then Enter on the OpenRouter key row. It said: "
-            ),
+            openrouter
+                .message()
+                .starts_with("OpenRouter rejected the key stored in leo (401). It said: "),
             "{}",
             openrouter.message()
         );
@@ -217,6 +229,21 @@ mod tests {
         );
         let forbidden = classify_status_with_key(403, "anthropic", "forbidden");
         assert!(forbidden.message().contains("out of credit"));
+        assert!(forbidden.message().starts_with("Anthropic refused"));
+        assert!(!forbidden.message().contains("Anthropic key row"));
+        assert!(!openrouter.message().contains("OpenRouter key row"));
+        for (provider, label) in [
+            ("openai", "OpenAI"),
+            ("openai_whisper", "OpenAI"),
+            ("gemini", "Gemini"),
+            ("gemini_speech", "Gemini"),
+            ("xai", "xAI"),
+            ("xai_speech", "xAI"),
+        ] {
+            let error = classify_status_with_key(401, provider, "bad key");
+            assert!(error.message().starts_with(&format!("{label} rejected")));
+            assert!(error.message().contains(&format!("{label} key row")));
+        }
     }
 
     #[test]

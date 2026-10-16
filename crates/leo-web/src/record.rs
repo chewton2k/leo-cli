@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::mpsc::{Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -24,6 +24,12 @@ pub const AUDIO_BYTES: usize = 4 * 1024 * 1024;
 pub const LEVELS_KEPT: usize = 48;
 const DISCARDS_KEPT: usize = 1000;
 const WAIT_FOR_WRITES: Duration = Duration::from_secs(5);
+const AUDIO_CHUNKS: usize = 64;
+const MOST_WARNINGS: usize = 40;
+const WARNING_CHARS: usize = 2_000;
+const WAIT_FOR_AUDIO: Duration = Duration::from_secs(10);
+const AUDIO_BACKLOG: &str =
+    "Recording is not keeping up. Stop it, then recover its saved audio on the Recording page.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -119,6 +125,17 @@ pub struct RecordView {
 }
 
 impl RecordView {
+    fn warn(&mut self, text: String) {
+        let text: String = text.chars().take(WARNING_CHARS).collect();
+        if self.warnings.last() == Some(&text) {
+            return;
+        }
+        if self.warnings.len() >= MOST_WARNINGS {
+            self.warnings.remove(0);
+        }
+        self.warnings.push(text);
+    }
+
     fn push_level(&mut self, level: f32) {
         self.levels
             .push((level.clamp(0.0, 1.0) * 1000.0).round() / 1000.0);
@@ -133,8 +150,9 @@ pub(crate) struct RecordJob {
     journal: Option<(std::path::PathBuf, crate::record_journal::Journal)>,
     next_seq: u64,
     writing: Arc<AtomicBool>,
-    audio: Option<Sender<Vec<i16>>>,
-    other_audio: Option<Sender<Vec<i16>>>,
+    delivery_failed: Arc<AtomicBool>,
+    audio: Option<SyncSender<Vec<i16>>>,
+    other_audio: Option<SyncSender<Vec<i16>>>,
     stop: Arc<AtomicBool>,
     finish_now: Arc<AtomicBool>,
     pause: Arc<AtomicBool>,
@@ -324,13 +342,13 @@ pub(crate) async fn start(
     let points: Arc<Mutex<Vec<(u64, String)>>> = Default::default();
     let wants: Arc<Mutex<Option<String>>> = Default::default();
     let (sender, audio) = if body.source.fed_by_browser() {
-        let (tx, rx) = std::sync::mpsc::channel();
+        let (tx, rx) = std::sync::mpsc::sync_channel(AUDIO_CHUNKS);
         (Some(tx), Some(rx))
     } else {
         (None, None)
     };
     let (other_sender, other_audio) = if body.source == Source::Call {
-        let (tx, rx) = std::sync::mpsc::channel();
+        let (tx, rx) = std::sync::mpsc::sync_channel(AUDIO_CHUNKS);
         (Some(tx), Some(rx))
     } else {
         (None, None)
@@ -377,6 +395,7 @@ pub(crate) async fn start(
             journal,
             next_seq: 0,
             writing: Default::default(),
+            delivery_failed: Default::default(),
             view: RecordView {
                 next_seq: 0,
                 id: id.clone(),
@@ -444,12 +463,12 @@ fn watch(recordings: Recordings, id: String) {
             if job.view.source.fed_by_browser() {
                 let warning = "The recording page is offline. Its unsent audio is kept on that device; reopen it to reconnect and save.";
                 if !job.view.warnings.iter().any(|w| w == warning) {
-                    job.view.warnings.push(warning.into());
+                    job.view.warn(warning.into());
                 }
                 job.seen = Instant::now();
                 continue;
             }
-            job.view.warnings.push(
+            job.view.warn(
                 "The page that started this recording went away, so it was stopped and saved."
                     .into(),
             );
@@ -467,7 +486,40 @@ fn run(
     directory: String,
     title: Option<String>,
 ) {
+    struct RunGuard {
+        recordings: Recordings,
+        id: String,
+    }
+    impl Drop for RunGuard {
+        fn drop(&mut self) {
+            change(&self.recordings, &self.id, |job| {
+                if job.view.state != "done" && job.view.state != "failed" {
+                    job.stop.store(true, Ordering::Relaxed);
+                    job.audio = None;
+                    job.other_audio = None;
+                    job.view.state = "failed";
+                    job.view.error = Some(
+                        "Recording worker stopped unexpectedly; its audio is available for recovery."
+                            .into(),
+                    );
+                }
+            });
+        }
+    }
     let recordings = Arc::clone(&state.recording);
+    let _guard = RunGuard {
+        recordings: Arc::clone(&recordings),
+        id: id.clone(),
+    };
+    let delivery_failed = recordings
+        .lock()
+        .ok()
+        .and_then(|held| {
+            held.as_ref()
+                .filter(|job| job.view.id == id)
+                .map(|job| Arc::clone(&job.delivery_failed))
+        })
+        .unwrap_or_default();
     let written = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         listener(listening, &mut |heard| {
             change(&recordings, &id, |job| match heard {
@@ -490,9 +542,7 @@ fn run(
                 }
                 Heard::Transcript(text) => job.view.transcript = keep_tail(text),
                 Heard::Warning(text) => {
-                    if job.view.warnings.last() != Some(&text) {
-                        job.view.warnings.push(text);
-                    }
+                    job.view.warn(text);
                 }
             })
         })
@@ -502,6 +552,11 @@ fn run(
             "Recording worker stopped unexpectedly; its audio is available for recovery."
         ))
     });
+    let written = if delivery_failed.load(Ordering::Acquire) {
+        Err(anyhow::anyhow!(AUDIO_BACKLOG))
+    } else {
+        written
+    };
     let recorded = match written {
         Ok(found) => found,
         Err(e) => {
@@ -552,8 +607,10 @@ fn run(
             .id
             .clone();
         if let Some(id) = stable_id {
-            store.find_note_mut(&note).expect("created note").id = id.clone();
-            note = id;
+            if let Some(created) = store.find_note_mut(&note) {
+                created.id = id.clone();
+                note = id;
+            }
         }
         save(store)?;
         Ok((note, store.notes_dir.clone()))
@@ -583,7 +640,7 @@ fn run(
     change(&recordings, &id, |job| match made {
         Ok((note, _)) => {
             if let Some(warning) = warning {
-                job.view.warnings.push(warning);
+                job.view.warn(warning);
             }
             job.view.state = "done";
             job.view.note = Some(note);
@@ -621,15 +678,36 @@ fn audio_tracks(bytes: &[u8], call: bool) -> anyhow::Result<(Vec<i16>, Vec<i16>)
         Ok((samples, Vec::new()))
     }
 }
+fn send_samples(
+    tx: &SyncSender<Vec<i16>>,
+    mut samples: Vec<i16>,
+    stop: &AtomicBool,
+    wait: Duration,
+) -> anyhow::Result<()> {
+    let started = Instant::now();
+    loop {
+        match tx.try_send(samples) {
+            Ok(()) => return Ok(()),
+            Err(TrySendError::Disconnected(_)) => anyhow::bail!(AUDIO_BACKLOG),
+            Err(TrySendError::Full(pending)) => samples = pending,
+        }
+        if stop.load(Ordering::Acquire) || started.elapsed() >= wait {
+            anyhow::bail!(AUDIO_BACKLOG);
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 fn send_audio(
-    tx: &Sender<Vec<i16>>,
-    other: Option<&Sender<Vec<i16>>>,
+    tx: &SyncSender<Vec<i16>>,
+    other: Option<&SyncSender<Vec<i16>>>,
     bytes: &[u8],
+    stop: &AtomicBool,
 ) -> anyhow::Result<()> {
     let (samples, system) = audio_tracks(bytes, other.is_some())?;
-    tx.send(samples)?;
+    send_samples(tx, samples, stop, WAIT_FOR_AUDIO)?;
     if let Some(other) = other {
-        other.send(system)?;
+        send_samples(other, system, stop, WAIT_FOR_AUDIO)?;
     }
     Ok(())
 }
@@ -706,33 +784,45 @@ pub(crate) async fn audio(
             job.next_seq,
             job.audio.clone(),
             job.other_audio.clone(),
+            Arc::clone(&job.stop),
+            Arc::clone(&job.delivery_failed),
         ))
     }) {
         Ok(Ok(upload)) => upload,
         Ok(Err(e)) => return error(StatusCode::CONFLICT, &e.to_string()),
         Err((code, message)) => return error(code, message),
     };
-    let (lease, journal, seq, next, tx, other) = upload;
+    let (lease, journal, seq, next, tx, other, stop, delivery_failed) = upload;
+    let worker = state.clone();
+    let job = id.clone();
     let result = tokio::task::spawn_blocking(move || -> anyhow::Result<u64> {
+        let _lease = lease;
+        let acknowledge = |next| {
+            let _ = with_job(&worker, &job, |job| {
+                job.next_seq = next;
+                job.view.next_seq = next;
+            });
+            next
+        };
         if let Some((notes, meta)) = journal {
             if !crate::record_journal::append(&notes, &meta.id, seq, &bytes)? {
-                return Ok(next.max(seq + 1));
+                return Ok(acknowledge(next.max(seq + 1)));
             }
         } else if seq != next {
             anyhow::bail!("Audio is out of order; retry the pending chunk.");
         }
         if let Some(tx) = tx {
-            send_audio(&tx, other.as_ref(), &bytes)?;
+            if let Err(error) = send_audio(&tx, other.as_ref(), &bytes, &stop) {
+                delivery_failed.store(true, Ordering::Release);
+                stop.store(true, Ordering::Release);
+                return Err(error);
+            }
         }
-        Ok(next.max(seq + 1))
+        Ok(acknowledge(next.max(seq + 1)))
     })
     .await;
-    let response = match result {
+    match result {
         Ok(Ok(next)) => {
-            let _ = with_job(&state, &id, |job| {
-                job.next_seq = next;
-                job.view.next_seq = next;
-            });
             if query.seq.is_some() {
                 Json(serde_json::json!({"next_seq":next})).into_response()
             } else {
@@ -744,9 +834,7 @@ pub(crate) async fn audio(
             StatusCode::INTERNAL_SERVER_ERROR,
             "Audio could not be saved. Retry the pending chunk.",
         ),
-    };
-    drop(lease);
-    response
+    }
 }
 
 const REPLAY_CHUNKS: usize = 4;
@@ -827,6 +915,7 @@ pub(crate) async fn recover(State(state): State<AppState>, Path(id): Path<String
             },
             next_seq: chunks.len() as u64,
             writing: Default::default(),
+            delivery_failed: Default::default(),
             journal: Some((notes, meta.clone())),
             audio: None,
             other_audio: None,
@@ -876,9 +965,7 @@ pub(crate) async fn recover(State(state): State<AppState>, Path(id): Path<String
                 }
                 Err(_) => {
                     change(&state.recording, &id, |j| {
-                        j.view
-                            .warnings
-                            .push("A saved audio chunk could not be read.".into())
+                        j.view.warn("A saved audio chunk could not be read.".into())
                     });
                     break;
                 }
@@ -956,37 +1043,33 @@ async fn append_point(
         Err((code, message)) => return error(code, message),
     };
     let (lease, at, journal) = input;
+    let worker = state.clone();
+    let id = id.to_string();
     let result = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+        let _lease = lease;
         if let Some((notes, meta)) = &journal {
             crate::record_journal::save(notes, meta)?;
         }
-        Ok(journal)
+        with_job(&worker, &id, |job| {
+            job.journal = journal;
+            if let Ok(mut points) = job.points.lock() {
+                points.push((at, text.clone()));
+            }
+            job.view.points.push((at, text));
+            if let Some(warning) = warning {
+                job.view.warn(warning);
+            }
+            job.view.clone()
+        })
+        .map_err(|(_, message)| anyhow::anyhow!(message))
     })
     .await;
-    let journal = match result {
-        Ok(Ok(journal)) => journal,
-        _ => {
-            return error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "The point could not be saved. Check free disk space and retry.",
-            );
-        }
-    };
-    let result = with_job(state, id, |job| {
-        job.journal = journal;
-        if let Ok(mut points) = job.points.lock() {
-            points.push((at, text.clone()));
-        }
-        job.view.points.push((at, text));
-        if let Some(warning) = warning {
-            job.view.warnings.push(warning);
-        }
-        job.view.clone()
-    });
-    drop(lease);
     match result {
-        Ok(view) => Json(view).into_response(),
-        Err((code, message)) => error(code, message),
+        Ok(Ok(view)) => Json(view).into_response(),
+        _ => error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "The point could not be saved. Check free disk space and retry.",
+        ),
     }
 }
 
@@ -1078,6 +1161,43 @@ pub(crate) async fn stop(State(state): State<AppState>, Path(id): Path<String>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn full_audio_queues_wait_for_consumers_and_stop_on_cancel_or_timeout() {
+        let stop = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        tx.send(vec![1]).unwrap();
+        assert!(send_samples(&tx, vec![2], &stop, Duration::ZERO).is_err());
+        assert_eq!(rx.recv().unwrap(), vec![1]);
+        tx.send(vec![3]).unwrap();
+        stop.store(true, Ordering::Release);
+        assert!(send_samples(&tx, vec![4], &stop, Duration::from_secs(1)).is_err());
+        assert_eq!(rx.recv().unwrap(), vec![3]);
+        stop.store(false, Ordering::Release);
+        tx.send(vec![5]).unwrap();
+        let waiting =
+            std::thread::spawn(move || send_samples(&tx, vec![6], &stop, Duration::from_secs(1)));
+        assert_eq!(rx.recv().unwrap(), vec![5]);
+        waiting.join().unwrap().unwrap();
+        assert_eq!(rx.recv().unwrap(), vec![6]);
+    }
+
+    #[test]
+    fn long_recordings_keep_only_a_bounded_tail_of_actionable_warnings() {
+        let mut view = view();
+        for index in 0..MOST_WARNINGS + 5 {
+            view.warn(format!("{index} {}", "文字".repeat(WARNING_CHARS)));
+        }
+        assert_eq!(view.warnings.len(), MOST_WARNINGS);
+        assert!(view
+            .warnings
+            .iter()
+            .all(|text| text.chars().count() <= WARNING_CHARS));
+        let last = view.warnings.last().unwrap().clone();
+        view.warn(last);
+        assert_eq!(view.warnings.len(), MOST_WARNINGS);
+        assert!(view.warnings[0].starts_with("5 "));
+    }
 
     fn view() -> RecordView {
         RecordView {

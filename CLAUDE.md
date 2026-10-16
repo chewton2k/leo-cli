@@ -293,10 +293,11 @@ way.
   tag use that commit. So after any push that releases, `git pull` before the
   next push. HTTPS via rustls.
 - Nothing may print to stdout/stderr while the TUI owns the screen: it scrolls the panes. `diag::is_quiet()` is true then; `sync::print_output`/`connect` check it, `sync::init` and provider logout print nothing, and child processes get `Stdio::null()` unless run inside `App::outside`. Settings keys end with `repaint = true`.
-- AI: eight writing providers (ollama, openai, codex, anthropic, claude_code,
-  gemini, xai, openrouter; codex and claude_code run the user's signed-in CLI) plus speech (parakeet built in via sherpa-onnx, openai_whisper,
-  gemini_speech, xai_speech); see crates/leo-services/CLAUDE.md. Model lists with prices live
-  in `config/choice.rs`, cheapest first.
+- Writing choices: Ollama, Codex, Claude Code, Google Antigravity (`agy`) and
+  GitHub Copilot (`copilot`). The four CLIs use account sign-in; AGY/Copilot
+  use isolated profiles and `leo doctor --sign-in agy|copilot`. Speech choices
+  stay Parakeet, OpenAI, Gemini and xAI, including their stored credentials.
+  See crates/leo-services/CLAUDE.md; models live in `config/choice.rs`.
 - Speech model: Parakeet (4 files, 670 MB) is fetched by install.sh and checked
   by `leo update` (`providers::speech_model_state` over `parakeet::manifest()`:
   Missing/Damaged/Ready by SHA-256; only bad files are re-downloaded; old
@@ -356,3 +357,12 @@ queues work and bounds the push, while WebSettings supplies the configured git
 command through SettingsApi::backup. Off, no remote, and no unpushed commits skip
 network work. It commits note/task files first, never pulls, and never creates a
 remote or changes the user’s backup policy.
+
+Security cleanup: note roots refuse symlinks, folder scans have depth bounds, legacy
+migration uses contained paths and atomic writes, and displayed short IDs use
+Unicode characters. Git children run without credential prompts and are reaped on
+timeout. Credential updates use a bounded writer plus a cross-process private lock;
+use `secret::default_store()` (private file by default, optional keychain), never a
+backend directly. AGY/Copilot profiles contain private sign-in state, stay outside
+notes/exports and have metadata-only Storage controls. `.superpowers/` stays local
+and must never be staged or committed.

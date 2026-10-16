@@ -58,6 +58,15 @@ fn writer() -> Result<&'static mpsc::SyncSender<Change>> {
                     for change in from {
                         let store = FileStore { path: change.path };
                         let result = (|| -> Result<()> {
+                            let parent = store
+                                .path
+                                .parent()
+                                .context("The credentials file needs a private folder")?;
+                            let _lock = crate::private_file::lock(
+                                parent,
+                                ".credentials.lock",
+                                std::time::Duration::from_secs(5),
+                            )?;
                             let mut bundle = store.read()?;
                             let changed = if let Some(secret) = change.secret {
                                 bundle.insert(change.account, secret.to_string());

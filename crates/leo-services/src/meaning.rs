@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 use anyhow::{Context, Result};
 use candle_core::{Device, Tensor};
@@ -117,30 +117,112 @@ impl Model {
 }
 
 static LOADED: OnceLock<Mutex<Loaded>> = OnceLock::new();
+static READY: Condvar = Condvar::new();
 const LOOK_AGAIN: std::time::Duration = std::time::Duration::from_secs(60);
+const IDLE: std::time::Duration = std::time::Duration::from_secs(60);
 
 #[derive(Default)]
 struct Loaded {
     model: Option<Arc<Model>>,
+    last_used: Option<std::time::Instant>,
     missed: Option<std::time::Instant>,
+    watching: bool,
+    loading: bool,
+}
+
+struct Loading<'a> {
+    slot: &'a Mutex<Loaded>,
+    ready: &'a Condvar,
+}
+
+impl Drop for Loading<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut held) = self.slot.lock() {
+            held.loading = false;
+        }
+        self.ready.notify_all();
+    }
+}
+
+fn reserve<'a>(
+    slot: &'a Mutex<Loaded>,
+    ready: &'a Condvar,
+) -> Option<std::sync::MutexGuard<'a, Loaded>> {
+    let held = slot.lock().ok()?;
+    let (held, _) = ready
+        .wait_timeout_while(held, std::time::Duration::from_secs(30), |held| {
+            held.loading
+        })
+        .ok()?;
+    (!held.loading).then_some(held)
+}
+
+fn watch_idle(slot: &'static Mutex<Loaded>, idle: std::time::Duration) {
+    loop {
+        let sleep_for = {
+            let Ok(mut held) = slot.lock() else {
+                return;
+            };
+            let Some(model) = held.model.as_ref() else {
+                held.watching = false;
+                return;
+            };
+            let elapsed = held.last_used.map(|at| at.elapsed()).unwrap_or(idle);
+            if elapsed >= idle && Arc::strong_count(model) == 1 {
+                held.model = None;
+                held.last_used = None;
+                held.watching = false;
+                return;
+            }
+            idle.saturating_sub(elapsed)
+                .max(std::time::Duration::from_secs(1))
+        };
+        std::thread::sleep(sleep_for);
+    }
 }
 
 pub fn model() -> Option<Arc<Model>> {
     let slot = LOADED.get_or_init(|| Mutex::new(Loaded::default()));
-    let mut held = slot.lock().ok()?;
-    if let Some(model) = held.model.as_ref() {
-        return Some(Arc::clone(model));
+    {
+        let mut held = reserve(slot, &READY)?;
+        if let Some(model) = held.model.as_ref().cloned() {
+            held.last_used = Some(std::time::Instant::now());
+            return Some(model);
+        }
+        if held.missed.is_some_and(|at| at.elapsed() < LOOK_AGAIN) {
+            return None;
+        }
+        held.loading = true;
     }
-    if held.missed.is_some_and(|at| at.elapsed() < LOOK_AGAIN) {
-        return None;
-    }
+    let _loading = Loading {
+        slot,
+        ready: &READY,
+    };
     let loaded = (state() == ModelState::Ready)
         .then(|| Model::load(&dir()).ok())
         .flatten()
         .map(Arc::new);
+    let mut held = slot.lock().ok()?;
+    if let Some(existing) = held.model.as_ref().cloned() {
+        held.last_used = Some(std::time::Instant::now());
+        return Some(existing);
+    }
     match loaded {
         Some(model) => {
             held.model = Some(Arc::clone(&model));
+            held.last_used = Some(std::time::Instant::now());
+            if !held.watching {
+                held.watching = true;
+                if std::thread::Builder::new()
+                    .name("leo-meaning".into())
+                    .spawn(move || watch_idle(slot, IDLE))
+                    .is_err()
+                {
+                    held.watching = false;
+                    held.model = None;
+                    held.last_used = None;
+                }
+            }
             Some(model)
         }
         None => {
@@ -163,6 +245,39 @@ pub fn embed(texts: &[String], query: bool) -> Result<Vec<Vec<f32>>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn concurrent_model_loads_wait_for_the_first_and_panics_release_the_reservation() {
+        let slot = Arc::new(Mutex::new(Loaded::default()));
+        let ready = Arc::new(Condvar::new());
+        reserve(&slot, &ready).unwrap().loading = true;
+        let (started, start) = std::sync::mpsc::channel();
+        let (done, finished) = std::sync::mpsc::channel();
+        let (other, notification) = (Arc::clone(&slot), Arc::clone(&ready));
+        let worker = std::thread::spawn(move || {
+            started.send(()).unwrap();
+            let held = reserve(&other, &notification).unwrap();
+            done.send(held.loading).unwrap();
+        });
+        start
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+        assert!(finished
+            .recv_timeout(std::time::Duration::from_millis(30))
+            .is_err());
+        assert!(std::panic::catch_unwind(|| {
+            let _loading = Loading {
+                slot: &slot,
+                ready: &ready,
+            };
+            panic!("fake model load failure");
+        })
+        .is_err());
+        assert!(!finished
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap());
+        worker.join().unwrap();
+    }
 
     #[test]
     fn the_model_is_pinned_to_one_commit_and_every_file_has_a_checksum() {

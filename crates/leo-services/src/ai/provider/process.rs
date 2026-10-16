@@ -46,9 +46,12 @@ impl Process {
     }
 
     pub(crate) fn stop(&self) {
-        if let Ok(mut child) = self.0.lock() {
-            if let Some(child) = child.as_mut() {
-                super::agent_cli::stop_all(child);
+        let child = self.0.lock().ok().and_then(|mut child| child.take());
+        if let Some(mut child) = child {
+            super::agent_cli::stop_all(&mut child);
+            let _ = child.wait();
+            if let Ok(mut held) = self.0.lock() {
+                *held = Some(child);
             }
         }
     }
@@ -217,5 +220,21 @@ mod tests {
             line(&mut std::io::Cursor::new("ok\n")).unwrap(),
             Some("ok\n".into())
         );
+    }
+
+    #[test]
+    fn stopping_a_process_reaps_the_child_without_waiting_for_drop() {
+        let child = child("sleep 30");
+        let process = Process::new(child);
+        process.stop();
+        let status = process
+            .0
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .try_wait()
+            .unwrap();
+        assert!(status.is_some());
     }
 }

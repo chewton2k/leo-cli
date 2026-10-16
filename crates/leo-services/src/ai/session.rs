@@ -321,6 +321,7 @@ pub fn open(
             continue;
         };
         match provider.kind {
+            Some(ProviderKind::Agy | ProviderKind::Copilot) => return None,
             Some(ProviderKind::ClaudeCode) => {
                 let agent = AgentCli::new(name.clone(), Agent::ClaudeCode, &provider);
                 if !agent.available() {

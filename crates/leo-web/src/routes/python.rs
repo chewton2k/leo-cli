@@ -133,19 +133,46 @@ async fn fetch_of(state: AppState, kind: &'static Kind) -> Response {
     let Some(runtime) = runtime else {
         return Json(serde_json::json!({ "status": "unavailable" })).into_response();
     };
+    let ready = Arc::clone(&runtime.ready);
+    let ready = match tokio::task::spawn_blocking(move || ready()).await {
+        Ok(ready) => ready,
+        Err(_) => {
+            return Json(serde_json::json!({"status":"failed", "error":kind.failed}))
+                .into_response()
+        }
+    };
     {
         let mut held = slot.lock().unwrap_or_else(|e| e.into_inner());
-        if held.as_deref() != Some("fetching") && !(runtime.ready)() {
+        if held.as_deref() != Some("fetching") && !ready {
             *held = Some("fetching".into());
             let done = Arc::clone(&slot);
             let started = std::thread::Builder::new()
                 .name("leo-runtime".into())
                 .spawn(move || {
+                    struct FetchGuard {
+                        slot: Arc<Mutex<Option<String>>>,
+                        failed: &'static str,
+                        settled: bool,
+                    }
+                    impl Drop for FetchGuard {
+                        fn drop(&mut self) {
+                            if !self.settled {
+                                *self.slot.lock().unwrap_or_else(|e| e.into_inner()) =
+                                    Some(self.failed.into());
+                            }
+                        }
+                    }
+                    let mut guard = FetchGuard {
+                        slot: Arc::clone(&done),
+                        failed: kind.failed,
+                        settled: false,
+                    };
                     let outcome = (runtime.fetch)();
                     *done.lock().unwrap_or_else(|e| e.into_inner()) = match outcome {
                         Ok(()) => None,
                         Err(_) => Some(kind.failed.into()),
                     };
+                    guard.settled = true;
                 });
             if started.is_err() {
                 *held = None;

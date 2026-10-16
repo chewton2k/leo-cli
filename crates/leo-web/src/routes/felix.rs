@@ -187,6 +187,35 @@ pub(crate) async fn put_chat(
     }
 }
 
+const MOST_BACKGROUND: usize = 8;
+
+struct BusyGuard {
+    set: &'static std::sync::LazyLock<std::sync::Mutex<std::collections::BTreeSet<String>>>,
+    id: String,
+}
+
+impl Drop for BusyGuard {
+    fn drop(&mut self) {
+        if let Ok(mut busy) = self.set.lock() {
+            busy.remove(&self.id);
+        }
+    }
+}
+
+fn claim_busy(
+    set: &'static std::sync::LazyLock<std::sync::Mutex<std::collections::BTreeSet<String>>>,
+    id: &str,
+) -> Option<BusyGuard> {
+    let mut busy = set.lock().ok()?;
+    if busy.len() >= MOST_BACKGROUND || !busy.insert(id.to_string()) {
+        return None;
+    }
+    Some(BusyGuard {
+        set,
+        id: id.to_string(),
+    })
+}
+
 static NAMING: std::sync::LazyLock<std::sync::Mutex<std::collections::BTreeSet<String>>> =
     std::sync::LazyLock::new(Default::default);
 
@@ -195,25 +224,21 @@ pub(crate) fn name_in_background(
     chat: &chats::Chat,
     writer: crate::graph::Writer,
 ) {
-    let id = chat.id.clone();
-    if !NAMING
-        .lock()
-        .is_ok_and(|mut naming| naming.insert(id.clone()))
-    {
+    let Some(guard) = claim_busy(&NAMING, &chat.id) else {
         return;
-    }
+    };
     let (system, user) = chats::name_prompt(chat);
-    std::thread::spawn(move || {
-        if let Some(name) = writer(&system, &user, 40)
-            .ok()
-            .and_then(|reply| chats::clean_name(&reply))
-        {
-            chats::rename(&dir, &id, &name);
-        }
-        if let Ok(mut naming) = NAMING.lock() {
-            naming.remove(&id);
-        }
-    });
+    let _ = std::thread::Builder::new()
+        .name("leo-chat-name".into())
+        .spawn(move || {
+            let lease = guard;
+            if let Some(name) = writer(&system, &user, 40)
+                .ok()
+                .and_then(|reply| chats::clean_name(&reply))
+            {
+                chats::rename(&dir, &lease.id, &name);
+            }
+        });
 }
 
 static REMEMBERING: std::sync::LazyLock<std::sync::Mutex<std::collections::BTreeSet<String>>> =
@@ -227,33 +252,32 @@ pub(crate) fn remember_in_background(
     from: usize,
     writer: crate::graph::Writer,
 ) {
-    if !chats::valid_id(&id)
-        || !REMEMBERING
-            .lock()
-            .is_ok_and(|mut busy| busy.insert(id.clone()))
-    {
+    if !chats::valid_id(&id) {
         return;
     }
-    std::thread::spawn(move || {
-        let (system, user, most) = chat::memory_prompt(old.as_ref(), &upto[from..]);
-        if let Ok(text) = writer(&system, &user, most) {
-            let text = text.trim();
-            if !text.is_empty() {
-                chats::set_memory(
-                    &dir,
-                    &id,
-                    chats::Memory {
-                        upto: upto.len(),
-                        hash: chat::hash_of(&upto),
-                        text: text.to_string(),
-                    },
-                );
+    let Some(guard) = claim_busy(&REMEMBERING, &id) else {
+        return;
+    };
+    let _ = std::thread::Builder::new()
+        .name("leo-chat-memory".into())
+        .spawn(move || {
+            let _guard = guard;
+            let (system, user, most) = chat::memory_prompt(old.as_ref(), &upto[from..]);
+            if let Ok(text) = writer(&system, &user, most) {
+                let text = text.trim();
+                if !text.is_empty() {
+                    chats::set_memory(
+                        &dir,
+                        &id,
+                        chats::Memory {
+                            upto: upto.len(),
+                            hash: chat::hash_of(&upto),
+                            text: text.to_string(),
+                        },
+                    );
+                }
             }
-        }
-        if let Ok(mut busy) = REMEMBERING.lock() {
-            busy.remove(&id);
-        }
-    });
+        });
 }
 
 pub(crate) async fn delete_chat(
@@ -1697,4 +1721,29 @@ pub(crate) async fn chat_reply(
         .headers_mut()
         .insert("x-accel-buffering", HeaderValue::from_static("no"));
     response
+}
+
+#[cfg(test)]
+mod background_guards {
+    use super::*;
+
+    static BUSY: std::sync::LazyLock<std::sync::Mutex<std::collections::BTreeSet<String>>> =
+        std::sync::LazyLock::new(Default::default);
+
+    #[test]
+    fn background_admission_is_bounded_and_released_after_failure() {
+        let held: Vec<_> = (0..MOST_BACKGROUND)
+            .map(|index| claim_busy(&BUSY, &index.to_string()).unwrap())
+            .collect();
+        assert!(claim_busy(&BUSY, "extra").is_none());
+        assert!(claim_busy(&BUSY, "0").is_none());
+        drop(held);
+        assert!(std::panic::catch_unwind(|| {
+            let _guard = claim_busy(&BUSY, "failed").unwrap();
+            panic!("fake background worker panic");
+        })
+        .is_err());
+        assert!(claim_busy(&BUSY, "failed").is_some());
+        assert!(BUSY.lock().unwrap().is_empty());
+    }
 }

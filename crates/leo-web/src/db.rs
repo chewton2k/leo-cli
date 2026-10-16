@@ -179,13 +179,19 @@ impl Db {
     }
 }
 
+const MOST_OPEN: usize = 32;
+
 static OPEN: OnceLock<Mutex<HashMap<PathBuf, Arc<Db>>>> = OnceLock::new();
 
 pub fn at(path: &Path) -> Arc<Db> {
     let key = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
     let all = OPEN.get_or_init(Default::default);
-    let mut held = all.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(db) = held.get(&key) {
+    let cached = all
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&key)
+        .cloned();
+    if let Some(db) = &cached {
         if db.path.exists() {
             return Arc::clone(db);
         }
@@ -194,7 +200,33 @@ pub fn at(path: &Path) -> Arc<Db> {
         Arc::new(Db::open(&key).unwrap_or_else(|e| {
             panic!("leo could not open its database at {}: {e}", key.display())
         }));
-    held.insert(key, Arc::clone(&db));
+    let mut held = all.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(current) = held.get(&key) {
+        if cached.as_ref().is_none_or(|old| !Arc::ptr_eq(old, current)) {
+            return Arc::clone(current);
+        }
+    }
+    let mut removed = Vec::new();
+    if let Some(old) = held.remove(&key) {
+        removed.push(old);
+    }
+    if held.len() >= MOST_OPEN {
+        let unused: Vec<_> = held
+            .iter()
+            .filter(|(_, db)| Arc::strong_count(db) == 1)
+            .map(|(key, _)| key.clone())
+            .collect();
+        for key in unused {
+            if let Some(old) = held.remove(&key) {
+                removed.push(old);
+            }
+        }
+    }
+    if held.len() < MOST_OPEN {
+        held.insert(key, Arc::clone(&db));
+    }
+    drop(held);
+    drop(removed);
     db
 }
 
@@ -220,6 +252,22 @@ pub fn put_aside(path: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn database_cache_is_bounded_while_existing_users_keep_their_handles() {
+        let temp = tempfile::tempdir().unwrap();
+        let first = at(&temp.path().join("first/leo.db"));
+        for index in 0..MOST_OPEN + 5 {
+            let _ = at(&temp.path().join(format!("{index}/leo.db")));
+        }
+        assert!(OPEN.get().unwrap().lock().unwrap().len() <= MOST_OPEN);
+        assert_eq!(
+            first
+                .with(|c| c.query_row("SELECT 1", [], |row| row.get::<_, i32>(0)))
+                .unwrap(),
+            1
+        );
+    }
 
     #[test]
     fn the_database_is_made_once_with_full_text_search_and_shared_by_everyone_who_asks() {

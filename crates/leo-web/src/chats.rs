@@ -247,12 +247,25 @@ fn when(text: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(text).map_or_else(|_| Utc::now(), |t| t.with_timezone(&Utc))
 }
 
+const MOST_MIGRATED: usize = 64;
+
 static MIGRATED: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
 
 pub(crate) fn db_of(dir: &Path) -> std::sync::Arc<crate::db::Db> {
     let db = crate::db::for_chats(dir);
+    let missing: Vec<_> = MIGRATED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+        .into_iter()
+        .filter(|path| !path.exists())
+        .collect();
     let mut done = MIGRATED.lock().unwrap_or_else(|e| e.into_inner());
+    done.retain(|path| !missing.contains(path));
     if !done.iter().any(|d| d == dir) {
+        if done.len() >= MOST_MIGRATED {
+            done.remove(0);
+        }
         done.push(dir.to_path_buf());
         drop(done);
         bring_in_files(dir, &db);

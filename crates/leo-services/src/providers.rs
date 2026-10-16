@@ -299,11 +299,37 @@ pub fn download_verified(
     name: &str,
     quiet: bool,
 ) -> Result<std::path::PathBuf> {
+    anyhow::ensure!(
+        !name.is_empty()
+            && name.len() <= 200
+            && !name.contains(['/', '\\', ':'])
+            && name != "."
+            && name != ".."
+            && !name.chars().any(char::is_control),
+        "the model download needs a safe file name"
+    );
     std::fs::create_dir_all(dir)?;
-    let target = dir.join(name);
-    let partial = dir.join(format!("{name}.part"));
+    anyhow::ensure!(
+        !std::fs::symlink_metadata(dir)?.file_type().is_symlink(),
+        "the model folder cannot be a symbolic link"
+    );
+    let target = leo_core::paths::contained_path(dir, std::path::Path::new(name))?;
+    let partial = tempfile::Builder::new()
+        .prefix(".leo-download-")
+        .suffix(".part")
+        .tempfile_in(dir)?;
     let mut curl = std::process::Command::new("curl");
-    curl.args(["-L", "--fail", "-o"]).arg(&partial).arg(url);
+    curl.args([
+        "-L",
+        "--fail",
+        "--connect-timeout",
+        "15",
+        "--max-time",
+        "600",
+        "-o",
+    ])
+    .arg(partial.path())
+    .arg(url);
     if quiet {
         curl.arg("-sS")
             .stdin(std::process::Stdio::null())
@@ -316,15 +342,13 @@ pub fn download_verified(
         .status()
         .map_err(|e| anyhow::anyhow!("could not run curl: {e}"))?;
     if !status.success() {
-        let _ = std::fs::remove_file(&partial);
         anyhow::bail!("the download failed; try again when online");
     }
-    let actual = sha256_of(&partial)?;
+    let actual = sha256_of(partial.path())?;
     if !actual.eq_ignore_ascii_case(sha256) {
-        let _ = std::fs::remove_file(&partial);
         anyhow::bail!("the download was damaged (checksum mismatch); try again");
     }
-    std::fs::rename(&partial, &target)?;
+    partial.persist(&target).map_err(|e| e.error)?;
     Ok(target)
 }
 
@@ -353,6 +377,33 @@ mod tests {
 
     fn file_url(path: &std::path::Path) -> String {
         format!("file://{}", path.display())
+    }
+
+    #[test]
+    fn model_download_names_stay_inside_the_model_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["../outside", "/outside", "a/b", "a\\b", ".", "..", "a:b"] {
+            assert!(download_verified("file:///unused", "00", dir.path(), name, true).is_err());
+        }
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn model_downloads_do_not_follow_existing_target_or_partial_symlinks() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = dir.path().join("outside");
+        std::fs::write(&outside, "keep").unwrap();
+        let models = dir.path().join("models");
+        std::fs::create_dir(&models).unwrap();
+        let good = sha256_of(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, models.join("weights.part")).unwrap();
+        let saved =
+            download_verified(&file_url(&outside), &good, &models, "weights", true).unwrap();
+        assert_eq!(std::fs::read_to_string(saved).unwrap(), "keep");
+        assert_eq!(std::fs::read_to_string(&outside).unwrap(), "keep");
+        std::os::unix::fs::symlink(&outside, models.join("linked")).unwrap();
+        assert!(download_verified(&file_url(&outside), &good, &models, "linked", true).is_err());
     }
 
     #[test]

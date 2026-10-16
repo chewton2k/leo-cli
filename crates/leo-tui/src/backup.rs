@@ -41,6 +41,32 @@ impl App {
     /// return the prompt and then keep working invisibly, and the user is owed a
     /// line saying whether their notes made it.
     pub(super) fn push_on_quit(&mut self) {
+        if let Some((mut job, _, _)) = self.jobs.pushing.take() {
+            println!("  finishing the existing backup…");
+            let mut success = false;
+            let mut failure = None;
+            let deadline = Instant::now()
+                + leo_core::sync::COMMAND_LIMIT.saturating_mul(2)
+                + Duration::from_secs(5);
+            while !job.is_done() && Instant::now() < deadline {
+                for event in job.drain() {
+                    match event {
+                        TaskEvent::Pushed => success = true,
+                        TaskEvent::Failed(error) => failure = Some(error),
+                        _ => {}
+                    }
+                }
+                if !job.is_done() {
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+            }
+            if !job.is_done() {
+                println!(
+                    "  the existing backup is still finishing; a second push was not started."
+                );
+                return;
+            }
+        }
         let config = leo_services::config::Config::load().sync;
         // Asked fresh: the cached count is from the last change, and a background
         // push may have cleared it since.
@@ -97,6 +123,14 @@ impl App {
                 Kind::Warn,
                 format!("Backup failed: {e}. Try `:backup`, which pulls first."),
             );
+        } else if self
+            .jobs
+            .pushing
+            .as_ref()
+            .is_some_and(|(job, _, _)| job.is_done())
+        {
+            self.jobs.pushing = None;
+            self.jobs.last_push = Some(Instant::now());
         }
     }
 }

@@ -1090,17 +1090,22 @@ impl Serving {
         let port_arg = port.to_string();
         let mut args = vec!["serve", "--port", &port_arg];
         args.extend_from_slice(extra);
-        let mut child = leo
-            .cmd(&args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
+        let mut cmd = leo.cmd(&args);
+        cmd.stdout(Stdio::piped()).stderr(Stdio::null());
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            cmd.process_group(0);
+        }
+        let mut child = cmd.spawn().unwrap();
         let stdout = child.stdout.take().unwrap();
-        let (tx, lines) = std::sync::mpsc::channel();
+        const MOST_SERVER_LINES: usize = 256;
+        let (tx, lines) = std::sync::mpsc::sync_channel(MOST_SERVER_LINES);
         std::thread::spawn(move || {
             for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-                let _ = tx.send(line);
+                if tx.send(line).is_err() {
+                    break;
+                }
             }
         });
         Serving {
@@ -1168,6 +1173,14 @@ impl Serving {
 
 impl Drop for Serving {
     fn drop(&mut self) {
+        #[cfg(unix)]
+        {
+            if let Ok(pid) = i32::try_from(self.child.id()) {
+                unsafe {
+                    libc::kill(-pid, libc::SIGKILL);
+                }
+            }
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -1415,10 +1428,11 @@ fn record_until_the_audio_ends(leo: &Leo, audio: &Path) -> std::process::Output 
     let keep_open = child.stdin.take();
     let started = Instant::now();
     while child.try_wait().unwrap().is_none() {
-        assert!(
-            started.elapsed() < Duration::from_secs(120),
-            "leo record never finished"
-        );
+        if started.elapsed() >= Duration::from_secs(120) {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("leo record never finished");
+        }
         std::thread::sleep(Duration::from_millis(100));
     }
     drop(keep_open);

@@ -135,9 +135,7 @@ pub(crate) async fn start(
                 "The notes could not be combined.",
             );
         };
-        jobs.retain(|_, j| {
-            j.state == "working" || j.started.is_some_and(|t| t.elapsed() < KEPT_FOR)
-        });
+        jobs.retain(|_, j| j.started.is_some_and(|t| t.elapsed() < KEPT_FOR));
         if jobs
             .values()
             .any(|j| j.state == "working" && j.into == job.into && j.with == job.with)
@@ -169,7 +167,30 @@ pub(crate) async fn start(
     let spawned = std::thread::Builder::new()
         .name("leo-combine".into())
         .spawn(move || {
+            struct CombineGuard {
+                jobs:
+                    std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, CombineJob>>>,
+                id: String,
+                done: bool,
+            }
+            impl Drop for CombineGuard {
+                fn drop(&mut self) {
+                    if !self.done {
+                        if let Ok(mut jobs) = self.jobs.lock() {
+                            if let Some(job) = jobs.get_mut(&self.id) {
+                                job.state = "failed";
+                                job.error = "The notes could not be combined.".into();
+                            }
+                        }
+                    }
+                }
+            }
             let _held = ticket;
+            let mut guard = CombineGuard {
+                jobs: std::sync::Arc::clone(&jobs),
+                id: id.clone(),
+                done: false,
+            };
             let done = combined(&writer, &into, &from, &notes_dir);
             if let Ok(mut jobs) = jobs.lock() {
                 if let Some(job) = jobs.get_mut(&id) {
@@ -185,6 +206,7 @@ pub(crate) async fn start(
                     }
                 }
             }
+            guard.done = true;
         });
     if spawned.is_err() {
         if let Ok(mut jobs) = state.combines.lock() {

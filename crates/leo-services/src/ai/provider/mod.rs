@@ -112,7 +112,7 @@ pub trait ChatProvider {
         _images: &[Image],
     ) -> ProviderResult<String> {
         Err(crate::ai::error::ProviderError::Fatal(format!(
-            "{} cannot read images; for photos and scans choose OpenAI, Anthropic, Gemini, xAI, Claude Code or Codex for writing",
+            "{} cannot read images; for photos and scans choose Claude Code or Codex for writing",
             self.name()
         )))
     }
@@ -139,6 +139,7 @@ pub mod mcp;
 pub mod openai;
 pub mod parakeet;
 pub(crate) mod process;
+pub mod scoped_cli;
 pub mod transcriptions;
 pub mod whisper_cpp;
 
@@ -183,7 +184,12 @@ pub fn build_one_chat(
             }
             Some(Box::new(openai::OpenAiChat::new(name.to_string(), pc, key)))
         }
-        Some(ProviderKind::ClaudeCode | ProviderKind::Codex) => {
+        Some(
+            ProviderKind::ClaudeCode
+            | ProviderKind::Codex
+            | ProviderKind::Agy
+            | ProviderKind::Copilot,
+        ) => {
             let agent = agent_cli::Agent::of(pc)?;
             Some(Box::new(agent_cli::AgentCli::new(
                 name.to_string(),

@@ -390,28 +390,54 @@ pub fn search(query: &str) -> Result<Vec<Hit>> {
     }
 }
 
-pub fn readable(html: &str) -> String {
-    let mut text = html.to_string();
-    for tag in [
+fn strip_ignored_blocks(html: &str) -> String {
+    const IGNORED: [&str; 7] = [
         "script", "style", "noscript", "svg", "head", "nav", "footer",
-    ] {
-        loop {
-            let lower = text.to_ascii_lowercase();
-            let open = format!("<{tag}");
-            let Some(start) = lower.match_indices(&open).map(|(i, _)| i).find(|&i| {
-                lower[i + open.len()..]
+    ];
+    let mut out = String::with_capacity(html.len());
+    let mut pos = 0;
+    while let Some(rel) = html[pos..].find('<') {
+        let start = pos + rel;
+        out.push_str(&html[pos..start]);
+        let rest = &html[start + 1..];
+        let matched = IGNORED.into_iter().find(|&tag| {
+            rest.get(..tag.len())
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case(tag))
+                && rest[tag.len()..]
                     .chars()
                     .next()
                     .is_some_and(|c| c == '>' || c.is_whitespace() || c == '/')
-            }) else {
-                break;
+        });
+        if let Some(tag) = matched {
+            out.push(' ');
+            let mut search = start + 1 + tag.len();
+            let close_len = tag.len() + 3;
+            pos = loop {
+                let Some(close_rel) = html[search..].find("</") else {
+                    break html.len();
+                };
+                let close_start = search + close_rel;
+                let after_slash = &html[close_start + 2..];
+                if after_slash
+                    .get(..tag.len())
+                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case(tag))
+                    && after_slash.as_bytes().get(tag.len()) == Some(&b'>')
+                {
+                    break close_start + close_len;
+                }
+                search = close_start + 2;
             };
-            let end = lower[start..]
-                .find(&format!("</{tag}>"))
-                .map_or(text.len(), |e| start + e + tag.len() + 3);
-            text.replace_range(start..end, " ");
+        } else {
+            out.push('<');
+            pos = start + 1;
         }
     }
+    out.push_str(&html[pos..]);
+    out
+}
+
+pub fn readable(html: &str) -> String {
+    let text = strip_ignored_blocks(html);
     let mut lines = Vec::new();
     let mut piece = String::new();
     let mut inside = false;
@@ -795,5 +821,21 @@ mod boundaries {
         assert!(failed.is_err());
         assert!(waiting.is_err());
         assert!(still_held);
+    }
+
+    #[test]
+    fn readable_strips_many_ignored_blocks_in_linear_time() {
+        let mut html = String::with_capacity(200_000);
+        html.push_str("<p>Keep Café</p>");
+        for _ in 0..2_000 {
+            html.push_str("<SCRIPT type=\"text/javascript\">ignored();</SCRIPT><svg><path/></svg>");
+        }
+        html.push_str("<p>Done</p>");
+        let started = std::time::Instant::now();
+        let text = readable(&html);
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert!(text.contains("Keep Café"));
+        assert!(text.contains("Done"));
+        assert!(!text.contains("ignored"));
     }
 }

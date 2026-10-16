@@ -32,20 +32,42 @@ pub fn render(lines: &[Line]) {
     }
 }
 
+struct TempFileGuard(std::path::PathBuf);
+
+impl Drop for TempFileGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+fn write_private_seed(path: &std::path::Path, seed: &str) -> Result<TempFileGuard> {
+    use std::io::Write;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut file = opts.open(path)?;
+    let cleanup = TempFileGuard(path.to_path_buf());
+    file.write_all(seed.as_bytes())?;
+    file.sync_all()?;
+    Ok(cleanup)
+}
+
 /// Spawn `$EDITOR` on the request's temp file, then feed the result back
 /// through [`action::apply_edit`].
 pub fn run_editor(store: &mut Store, req: EditRequest, ai: &dyn Ai) -> Result<Outcome> {
-    std::fs::write(&req.path, &req.seed)?;
+    let _cleanup = write_private_seed(&req.path, &req.seed)?;
 
     let status = leo_core::editor::open(&req.path)?;
 
     if !status.success() {
-        let _ = std::fs::remove_file(&req.path);
         return Ok(Outcome::line(Line::bad("Editor exited with an error.")));
     }
 
     let raw = std::fs::read_to_string(&req.path)?;
-    let _ = std::fs::remove_file(&req.path);
 
     // Expanding prompts blocks on the model, so say so first.
     if matches!(req.target, EditTarget::Existing { .. }) {
@@ -351,5 +373,46 @@ pub fn plural(n: usize) -> &'static str {
         ""
     } else {
         "s"
+    }
+}
+
+#[cfg(test)]
+mod cleanup_tests {
+    use super::*;
+
+    #[test]
+    fn editor_temp_files_are_private_and_removed_on_drop() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("edit.md");
+        let cleanup = write_private_seed(&path, "private note").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "private note");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        assert!(write_private_seed(&path, "replacement").is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "private note");
+        drop(cleanup);
+        assert!(!path.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn editor_temp_files_do_not_replace_or_follow_preexisting_links() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = dir.path().join("outside");
+        let path = dir.path().join("edit.md");
+        std::fs::write(&outside, "keep").unwrap();
+        std::os::unix::fs::symlink(&outside, &path).unwrap();
+        assert!(write_private_seed(&path, "replacement").is_err());
+        assert_eq!(std::fs::read_to_string(outside).unwrap(), "keep");
+        assert!(std::fs::symlink_metadata(path)
+            .unwrap()
+            .file_type()
+            .is_symlink());
     }
 }

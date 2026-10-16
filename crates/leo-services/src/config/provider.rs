@@ -15,6 +15,8 @@ pub enum ProviderKind {
     Parakeet,
     ClaudeCode,
     Codex,
+    Agy,
+    Copilot,
 }
 
 /// One named provider from `[providers.<name>]`.

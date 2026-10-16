@@ -33,7 +33,7 @@ pub fn dir(pack: &Pack) -> PathBuf {
 }
 
 fn listed(dir: &Path, pin: Option<&str>) -> Result<Vec<(String, String)>> {
-    let list = dir.join(LIST);
+    let list = leo_core::paths::contained_path(dir, Path::new(LIST))?;
     if let Some(pin) = pin {
         ensure!(
             crate::providers::sha256_of(&list)?.eq_ignore_ascii_case(pin),
@@ -43,12 +43,14 @@ fn listed(dir: &Path, pin: Option<&str>) -> Result<Vec<(String, String)>> {
     let text = std::fs::read_to_string(&list)?;
     let mut out = Vec::new();
     for line in text.lines() {
+        ensure!(out.len() < MOST_FILES, "the runtime has too many files");
         let Some((sha, name)) = line.split_once("  ") else {
             bail!("the runtime's file list is damaged");
         };
         ensure!(
             sha.len() == 64
                 && !name.starts_with('/')
+                && !name.contains(['\\', ':'])
                 && name
                     .split('/')
                     .all(|part| !part.is_empty() && part != ".." && part != "."),
@@ -71,8 +73,10 @@ fn check_with(dir: &Path, pin: Option<&str>) -> Result<Vec<String>> {
     let files = listed(dir, pin)?;
     for (name, sha) in &files {
         ensure!(
-            crate::providers::model_state(&dir.join(name), sha)
-                == crate::providers::ModelState::Ready,
+            crate::providers::model_state(
+                &leo_core::paths::contained_path(dir, Path::new(name))?,
+                sha
+            ) == crate::providers::ModelState::Ready,
             "{name} is missing or damaged"
         );
     }
@@ -103,18 +107,69 @@ pub fn fetch(pack: &Pack) -> Result<PathBuf> {
     Ok(dir)
 }
 
+const UNPACK_LIMIT: std::time::Duration = std::time::Duration::from_secs(120);
+
+fn unpack(command: &mut std::process::Command, limit: std::time::Duration) -> Result<()> {
+    use crate::ai::provider::process::{Process, Watchdog};
+    command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    let process = Process::new(command.spawn().map_err(|e| {
+        anyhow::anyhow!("the runtime unpacker could not start; check that tar is installed: {e}")
+    })?);
+    let watch = Watchdog::start(&process, None, limit);
+    let status = loop {
+        let result = process
+            .0
+            .lock()
+            .map_err(|_| anyhow::anyhow!("the runtime unpacker stopped unexpectedly; try again"))?
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("the runtime unpacker stopped unexpectedly; try again"))?
+            .try_wait()?;
+        if let Some(status) = result {
+            break status;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+    if watch.stalled.load(std::sync::atomic::Ordering::Relaxed) {
+        bail!("unpacking the runtime took too long; try again");
+    }
+    ensure!(
+        status.success(),
+        "the runtime could not be unpacked; try downloading it again"
+    );
+    Ok(())
+}
+
 pub fn fetch_into(dir: &Path, urls: &[String], pin: Option<&str>) -> Result<()> {
     if check_with(dir, pin).is_ok() {
         return Ok(());
     }
     std::fs::create_dir_all(dir)?;
-    let package = dir.join("runtime.tar.gz.part");
+    let package = tempfile::Builder::new()
+        .prefix(".leo-runtime-")
+        .suffix(".part")
+        .tempfile_in(dir)?;
     let mut last = anyhow::anyhow!("the runtime could not be downloaded; try again when online");
     for url in urls {
-        let _ = std::fs::remove_file(&package);
         let fetched = std::process::Command::new("curl")
-            .args(["-L", "--fail", "-sS", "-o"])
-            .arg(&package)
+            .args([
+                "-L",
+                "--fail",
+                "-sS",
+                "--connect-timeout",
+                "15",
+                "--max-time",
+                "600",
+                "-o",
+            ])
+            .arg(package.path())
             .arg(url)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
@@ -123,18 +178,15 @@ pub fn fetch_into(dir: &Path, urls: &[String], pin: Option<&str>) -> Result<()> 
         if !fetched.is_ok_and(|s| s.success()) {
             continue;
         }
-        let unpacked = std::process::Command::new("tar")
-            .arg("-xzf")
-            .arg(&package)
-            .arg("-C")
-            .arg(dir)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
-        let _ = std::fs::remove_file(&package);
-        if !unpacked.is_ok_and(|s| s.success()) {
-            last = anyhow::anyhow!("the runtime could not be unpacked");
+        if let Err(error) = unpack(
+            std::process::Command::new("tar")
+                .arg("-xzf")
+                .arg(package.path())
+                .arg("-C")
+                .arg(dir),
+            UNPACK_LIMIT,
+        ) {
+            last = error;
             continue;
         }
         match check_with(dir, pin) {
@@ -148,6 +200,31 @@ pub fn fetch_into(dir: &Path, urls: &[String], pin: Option<&str>) -> Result<()> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unpacker_that_hangs_is_killed_and_its_children_stop() {
+        let dir = tempfile::tempdir().unwrap();
+        let late = dir.path().join("late");
+        let at = std::time::Instant::now();
+        let result = unpack(
+            std::process::Command::new("sh")
+                .arg("-c")
+                .arg("(sleep 0.3; touch \"$1\") & sleep 5")
+                .arg("sh")
+                .arg(&late),
+            std::time::Duration::from_millis(50),
+        );
+        assert!(result.unwrap_err().to_string().contains("too long"));
+        assert!(at.elapsed() < std::time::Duration::from_secs(2));
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        assert!(!late.exists());
+        assert!(unpack(
+            std::process::Command::new("sh").args(["-c", "exit 0"]),
+            std::time::Duration::from_secs(1)
+        )
+        .is_ok());
+    }
 
     #[test]
     fn the_pins_match_the_runner_build_scripts() {

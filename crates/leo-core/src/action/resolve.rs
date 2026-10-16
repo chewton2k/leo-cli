@@ -60,6 +60,10 @@ pub fn resolve(input: &str, store: &Store, numbering: &[String]) -> Resolved {
     }
 }
 
+pub(super) fn short_id(id: &str) -> String {
+    id.chars().take(8).collect()
+}
+
 /// Render a failed resolution as output lines.
 pub(super) fn unresolved(input: &str, resolved: Resolved) -> Outcome {
     match resolved {
@@ -70,7 +74,7 @@ pub(super) fn unresolved(input: &str, resolved: Resolved) -> Outcome {
                     Some(i) => format!("{i:>3}"),
                     None => "   ".to_string(),
                 };
-                let short = &b.id[..std::cmp::min(8, b.id.len())];
+                let short = short_id(&b.id);
                 lines.push(Line::plain(format!("{idx} {short} {}", b.title)));
             }
             lines.push(Line::dim("Use a number or ID prefix to pick one."));
@@ -91,3 +95,17 @@ macro_rules! resolve_or_return {
 }
 
 pub(super) use resolve_or_return;
+
+#[cfg(test)]
+mod short_ids {
+    use super::*;
+
+    #[test]
+    fn short_ids_never_split_multibyte_characters() {
+        for id in ["", "short", "aé—中文✓abc", "ééééééééé"] {
+            let shown = short_id(id);
+            assert!(id.starts_with(&shown));
+            assert!(shown.chars().count() <= 8);
+        }
+    }
+}

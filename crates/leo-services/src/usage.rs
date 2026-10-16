@@ -159,12 +159,17 @@ pub fn save_to(path: &Path, provider: &str, usage: Usage) {
     let Ok(text) = serde_json::to_string_pretty(&all) else {
         return;
     };
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
+    let Some(dir) = path.parent() else {
+        return;
+    };
+    if std::fs::create_dir_all(dir).is_err() {
+        return;
     }
-    let temp = path.with_extension("json.new");
-    if std::fs::write(&temp, text).is_ok() {
-        let _ = std::fs::rename(&temp, path);
+    let Ok(mut temp) = tempfile::NamedTempFile::new_in(dir) else {
+        return;
+    };
+    if temp.write_all(text.as_bytes()).is_ok() && temp.as_file().sync_all().is_ok() {
+        let _ = temp.persist(path);
     }
 }
 
@@ -180,9 +185,18 @@ pub fn save(provider: &str, usage: Usage) {
 
 pub fn ask_codex(program: &Path) -> Option<Usage> {
     use crate::ai::provider::agent_cli::{codex_disables, codex_native_isolated};
-    use crate::ai::provider::process::{self, Process, Watchdog, QUEUED_MESSAGES};
+    use crate::ai::provider::process::{self, Process, Watchdog, MOST_OUTPUT, QUEUED_MESSAGES};
     if !codex_native_isolated(program) {
         return None;
+    }
+    let room = tempfile::Builder::new()
+        .prefix("leo-usage-")
+        .tempdir()
+        .ok()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(room.path(), std::fs::Permissions::from_mode(0o700)).ok()?;
     }
     let mut command = Command::new(program);
     command.args(["app-server", "--ignore-user-config", "--ignore-rules"]);
@@ -190,21 +204,27 @@ pub fn ask_codex(program: &Path) -> Option<Usage> {
         command.args(["-c", &format!("features.{feature}=false")]);
     }
     command
-        .current_dir(std::env::temp_dir())
+        .current_dir(room.path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut command, 0);
     let mut child = command.spawn().ok()?;
-    let stdout = child.stdout.take()?;
+    let stdout = child.stdout.take();
     let stdin = child.stdin.take();
     let child = Process::new(child);
+    let stdout = stdout?;
     let _watch = Watchdog::start(&child, None, CODEX_WAIT);
     let (tx, rx) = std::sync::mpsc::sync_channel(QUEUED_MESSAGES);
     std::thread::spawn(move || {
         let mut reader = BufReader::new(stdout);
+        let mut bytes = 0usize;
         while let Ok(Some(line)) = process::line(&mut reader) {
+            bytes = bytes.saturating_add(line.len());
+            if bytes > MOST_OUTPUT {
+                break;
+            }
             let Ok(message) = serde_json::from_str::<Value>(&line) else {
                 continue;
             };

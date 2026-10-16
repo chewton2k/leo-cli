@@ -4,6 +4,8 @@ use std::io::{Read, Write as _};
 use leo_core::attachments;
 
 pub const MOST_FIGURES: usize = 24;
+const MOST_READ_BYTES: usize = 64 * 1024 * 1024;
+const MOST_SLIDES: usize = 300;
 const LEAST_WIDE: u32 = 150;
 const LEAST_TALL: u32 = 100;
 const LEAST_AREA: u64 = 40_000;
@@ -60,17 +62,34 @@ pub fn keep(found: Vec<Figure>) -> Vec<Figure> {
         .collect()
 }
 
-fn zip_bytes(archive: &mut zip::ZipArchive<std::io::Cursor<&[u8]>>, name: &str) -> Option<Vec<u8>> {
+fn zip_bytes(
+    archive: &mut zip::ZipArchive<std::io::Cursor<&[u8]>>,
+    name: &str,
+    read: &mut usize,
+) -> Option<Vec<u8>> {
+    if name.is_empty() || *read >= MOST_READ_BYTES {
+        return None;
+    }
     let file = archive.by_name(name).ok()?;
+    let limit = attachments::MOST_BYTES.min(MOST_READ_BYTES - *read);
+    if file.size() > limit as u64 {
+        return None;
+    }
     let mut bytes = Vec::new();
-    file.take(attachments::MOST_BYTES as u64 + 1)
-        .read_to_end(&mut bytes)
-        .ok()?;
-    (bytes.len() <= attachments::MOST_BYTES).then_some(bytes)
+    file.take(limit as u64 + 1).read_to_end(&mut bytes).ok()?;
+    if bytes.len() > limit {
+        return None;
+    }
+    *read += bytes.len();
+    Some(bytes)
 }
 
-fn zip_text(archive: &mut zip::ZipArchive<std::io::Cursor<&[u8]>>, name: &str) -> Option<String> {
-    String::from_utf8(zip_bytes(archive, name)?).ok()
+fn zip_text(
+    archive: &mut zip::ZipArchive<std::io::Cursor<&[u8]>>,
+    name: &str,
+    read: &mut usize,
+) -> Option<String> {
+    String::from_utf8(zip_bytes(archive, name, read)?).ok()
 }
 
 fn attribute<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
@@ -97,18 +116,27 @@ fn image_links(rels: &str) -> Vec<(String, String)> {
 }
 
 fn joined(base: &str, target: &str) -> String {
-    if let Some(rooted) = target.strip_prefix('/') {
-        return rooted.to_string();
+    if target.contains(['\\', ':', '\0', '?', '#']) {
+        return String::new();
     }
-    let mut parts: Vec<&str> = base.split('/').collect();
+    let mut parts: Vec<&str> = if target.starts_with('/') {
+        Vec::new()
+    } else {
+        base.split('/').filter(|p| !p.is_empty()).collect()
+    };
     for part in target.split('/') {
         match part {
             ".." => {
-                parts.pop();
+                if parts.pop().is_none() {
+                    return String::new();
+                }
             }
             "." | "" => {}
             other => parts.push(other),
         }
+    }
+    if !matches!(parts.first(), Some(&"word" | &"ppt")) {
+        return String::new();
     }
     parts.join("/")
 }
@@ -119,20 +147,27 @@ fn embedded_in(
     rels: &str,
     folder: &str,
     place: &str,
+    read: &mut usize,
 ) -> Vec<Figure> {
     let mut used: Vec<(usize, String)> = image_links(rels)
         .into_iter()
         .filter_map(|(id, target)| {
+            let path = joined(folder, &target);
+            if path.is_empty() {
+                return None;
+            }
             let at = xml
                 .find(&format!("r:embed=\"{id}\""))
                 .or_else(|| xml.find(&format!("r:id=\"{id}\"")))?;
-            Some((at, joined(folder, &target)))
+            Some((at, path))
         })
         .collect();
     used.sort();
+    used.dedup_by(|a, b| a.1 == b.1);
     used.into_iter()
+        .take(MOST_FIGURES * 4)
         .filter_map(|(_, path)| {
-            let bytes = zip_bytes(archive, &path)?;
+            let bytes = zip_bytes(archive, &path, read)?;
             let kind = attachments::kind_of(&bytes)?;
             Some(Figure {
                 mime: attachments::mime_of(kind)?.to_string(),
@@ -151,9 +186,12 @@ pub fn from_pptx(bytes: &[u8]) -> Vec<Figure> {
     let Ok(slides) = crate::import::office::slide_order(bytes) else {
         return Vec::new();
     };
-    let legacy = !archive.file_names().any(|n| n == "ppt/presentation.xml");
+    let legacy = !archive
+        .file_names()
+        .any(|name| name.is_ok_and(|name| name == "ppt/presentation.xml"));
+    let mut read = 0usize;
     let mut out = Vec::new();
-    for (index, name) in slides.into_iter().enumerate() {
+    for (index, name) in slides.into_iter().take(MOST_SLIDES).enumerate() {
         let n = if legacy {
             name.strip_prefix("ppt/slides/slide")
                 .and_then(|s| s.strip_suffix(".xml"))
@@ -165,8 +203,8 @@ pub fn from_pptx(bytes: &[u8]) -> Vec<Figure> {
         let file = name.rsplit('/').next().unwrap_or_default();
         let rels_name = format!("ppt/slides/_rels/{file}.rels");
         let (Some(xml), Some(rels)) = (
-            zip_text(&mut archive, &name),
-            zip_text(&mut archive, &rels_name),
+            zip_text(&mut archive, &name, &mut read),
+            zip_text(&mut archive, &rels_name, &mut read),
         ) else {
             continue;
         };
@@ -176,7 +214,11 @@ pub fn from_pptx(bytes: &[u8]) -> Vec<Figure> {
             &rels,
             "ppt/slides",
             &format!("slide {n}"),
+            &mut read,
         ));
+        if out.len() > MOST_FIGURES * 4 || read >= MOST_READ_BYTES {
+            break;
+        }
     }
     keep(out)
 }
@@ -185,9 +227,10 @@ pub fn from_docx(bytes: &[u8]) -> Vec<Figure> {
     let Ok(mut archive) = zip::ZipArchive::new(std::io::Cursor::new(bytes)) else {
         return Vec::new();
     };
+    let mut read = 0usize;
     let (Some(xml), Some(rels)) = (
-        zip_text(&mut archive, "word/document.xml"),
-        zip_text(&mut archive, "word/_rels/document.xml.rels"),
+        zip_text(&mut archive, "word/document.xml", &mut read),
+        zip_text(&mut archive, "word/_rels/document.xml.rels", &mut read),
     ) else {
         return Vec::new();
     };
@@ -197,6 +240,7 @@ pub fn from_docx(bytes: &[u8]) -> Vec<Figure> {
         &rels,
         "word",
         "the document",
+        &mut read,
     ))
 }
 
@@ -454,6 +498,7 @@ mod tests {
         assert!(from_pptx(b"not a zip").is_empty());
         assert_eq!(joined("ppt/slides", "../media/a.png"), "ppt/media/a.png");
         assert_eq!(joined("word", "media/a.png"), "word/media/a.png");
+        assert_eq!(joined("word", "../../etc/passwd"), "");
     }
 
     #[test]

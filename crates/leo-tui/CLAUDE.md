@@ -153,4 +153,9 @@ aliases. `parse` strips a typed leading `/`.
 
 Recording saves call `apply_recording` with the session ID before committing the
 source archive and cleaning audio. An append retry must not duplicate either the
-body or its retained source.
+body or its retained source. `Job` implements `Drop` to signal worker threads to
+stop (`stop = true`). Command history is bounded at 200 items. Quit waits for an
+existing backup before considering another push; backup commands have deadlines
+and private, bounded output, and Unix process groups are killed and reaped.
+Editor seed files are created exclusively with owner-only permissions and cleaned
+on every exit path; an existing file or link is never removed to make room.

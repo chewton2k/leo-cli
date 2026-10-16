@@ -1,11 +1,104 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Child, Command, Output, Stdio};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 
 use crate::filename;
+
+pub const COMMAND_LIMIT: Duration = Duration::from_secs(90);
+const MOST_COMMAND_BYTES: u64 = 16 * 1024 * 1024;
+
+struct Running(Child);
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        unsafe {
+            libc::kill(-(self.0.id() as i32), libc::SIGKILL);
+        }
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+fn bounded_output(command: &mut Command, limit: Duration) -> Result<Output> {
+    bounded_capture(command, limit, true)
+}
+
+fn bounded_capture(command: &mut Command, limit: Duration, capture: bool) -> Result<Output> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut stdout = tempfile::tempfile()?;
+    let mut stderr = tempfile::tempfile()?;
+    command.stdin(Stdio::null());
+    if capture {
+        command
+            .stdout(stdout.try_clone()?)
+            .stderr(stderr.try_clone()?);
+    } else {
+        command.stdout(Stdio::null()).stderr(Stdio::null());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    let mut child = Running(
+        command
+            .spawn()
+            .context("the backup command could not start; check that git or gh is installed")?,
+    );
+    let deadline = Instant::now() + limit;
+    let status = loop {
+        if stdout.metadata()?.len() > MOST_COMMAND_BYTES
+            || stderr.metadata()?.len() > MOST_COMMAND_BYTES
+        {
+            anyhow::bail!(
+                "the backup command returned too much output; check your git hooks and try again"
+            );
+        }
+        if let Some(status) = child.0.try_wait()? {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            anyhow::bail!("the backup command did not finish within {} seconds; check your connection and try again", limit.as_secs());
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    drop(child);
+    let read = |file: &mut std::fs::File| -> Result<Vec<u8>> {
+        file.seek(SeekFrom::Start(0))?;
+        let mut bytes = Vec::new();
+        file.take(MOST_COMMAND_BYTES + 1).read_to_end(&mut bytes)?;
+        anyhow::ensure!(
+            bytes.len() as u64 <= MOST_COMMAND_BYTES,
+            "the backup command returned too much output; check your git hooks and try again"
+        );
+        Ok(bytes)
+    };
+    Ok(Output {
+        status,
+        stdout: read(&mut stdout)?,
+        stderr: read(&mut stderr)?,
+    })
+}
+
+fn git_output(dir: &Path, args: &[&str], limit: Duration) -> Result<Output> {
+    bounded_output(
+        Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GCM_INTERACTIVE", "Never")
+            .env(
+                "GIT_SSH_COMMAND",
+                "ssh -o BatchMode=yes -o ConnectTimeout=15",
+            ),
+        limit,
+    )
+}
 
 pub fn is_initialized(notes_dir: &Path) -> bool {
     notes_dir.join(".git").exists()
@@ -34,6 +127,10 @@ pub fn init(notes_dir: &Path) -> Result<()> {
 }
 
 pub fn connect(notes_dir: &Path, url: &str) -> Result<()> {
+    let url = url.trim();
+    if url.is_empty() || url.starts_with('-') {
+        anyhow::bail!("that remote URL is not valid");
+    }
     if !is_initialized(notes_dir) {
         init(notes_dir)?;
     }
@@ -50,11 +147,11 @@ pub fn connect(notes_dir: &Path, url: &str) -> Result<()> {
 /// older git — or by anyone whose default is `master` — could not be pushed at
 /// all, and said "src refspec main does not match any" instead of saying so.
 pub fn current_branch(notes_dir: &Path) -> Result<String> {
-    let out = Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .current_dir(notes_dir)
-        .output()
-        .context("failed to run git rev-parse")?;
+    let out = git_output(
+        notes_dir,
+        &["rev-parse", "--abbrev-ref", "HEAD"],
+        COMMAND_LIMIT,
+    )?;
     let branch = String::from_utf8_lossy(&out.stdout).trim().to_string();
     if !out.status.success() || branch.is_empty() || branch == "HEAD" {
         anyhow::bail!("the notes repository has no branch yet — save a note first, then push");
@@ -178,11 +275,7 @@ fn keep_both_notes_with_the_same_name(notes_dir: &Path) -> Result<()> {
 /// Read rather than inferred so the profile page can show where notes actually
 /// go — "sync is set up" is not useful without saying set up to what.
 pub fn remote_url(notes_dir: &Path) -> Option<String> {
-    let out = std::process::Command::new("git")
-        .args(["remote", "get-url", "origin"])
-        .current_dir(notes_dir)
-        .output()
-        .ok()?;
+    let out = git_output(notes_dir, &["remote", "get-url", "origin"], COMMAND_LIMIT).ok()?;
     if !out.status.success() {
         return None;
     }
@@ -195,11 +288,12 @@ pub fn remote_url(notes_dir: &Path) -> Option<String> {
 /// `None` when there is no upstream yet, which is a different state from zero and
 /// should not be reported as "up to date".
 pub fn unpushed(notes_dir: &Path) -> Option<usize> {
-    let out = std::process::Command::new("git")
-        .args(["rev-list", "--count", "@{u}..HEAD"])
-        .current_dir(notes_dir)
-        .output()
-        .ok()?;
+    let out = git_output(
+        notes_dir,
+        &["rev-list", "--count", "@{u}..HEAD"],
+        COMMAND_LIMIT,
+    )
+    .ok()?;
     if !out.status.success() {
         return None;
     }
@@ -209,11 +303,7 @@ pub fn unpushed(notes_dir: &Path) -> Option<usize> {
 /// How many files have changed since the last commit, or `None` when this is
 /// not a repository.
 pub fn uncommitted(notes_dir: &Path) -> Option<usize> {
-    let out = Command::new("git")
-        .args(["status", "--porcelain"])
-        .current_dir(notes_dir)
-        .output()
-        .ok()?;
+    let out = git_output(notes_dir, &["status", "--porcelain"], COMMAND_LIMIT).ok()?;
     out.status
         .success()
         .then(|| String::from_utf8_lossy(&out.stdout).lines().count())
@@ -222,44 +312,22 @@ pub fn uncommitted(notes_dir: &Path) -> Option<usize> {
 /// Whether the remote answers, without changing anything. Never waits on a
 /// password prompt, and gives up after fifteen seconds.
 pub fn remote_reachable(notes_dir: &Path) -> std::result::Result<(), String> {
-    let mut child = Command::new("git")
-        .args(["ls-remote", "--heads", "origin"])
-        .current_dir(notes_dir)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env(
-            "GIT_SSH_COMMAND",
-            "ssh -o BatchMode=yes -o ConnectTimeout=10",
-        )
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("could not run git: {e}"))?;
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) if status.success() => return Ok(()),
-            Ok(Some(_)) => {
-                let mut err = String::new();
-                if let Some(mut stderr) = child.stderr.take() {
-                    use std::io::Read;
-                    let _ = stderr.read_to_string(&mut err);
-                }
-                let first = err
-                    .lines()
-                    .find(|l| !l.trim().is_empty())
-                    .unwrap_or("no answer");
-                return Err(first.trim().to_string());
-            }
-            Ok(None) if std::time::Instant::now() < deadline => {
-                std::thread::sleep(std::time::Duration::from_millis(100));
-            }
-            Ok(None) => {
-                let _ = child.kill();
-                return Err("no answer within 15 seconds".to_string());
-            }
-            Err(e) => return Err(e.to_string()),
-        }
+    let output = git_output(
+        notes_dir,
+        &["ls-remote", "--heads", "origin"],
+        Duration::from_secs(15),
+    )
+    .map_err(|e| e.to_string())?;
+    if output.status.success() {
+        return Ok(());
     }
+    let err = String::from_utf8_lossy(&output.stderr);
+    Err(err
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or("no answer")
+        .trim()
+        .to_string())
 }
 
 /// Back up now: pull what another machine pushed, then push. Says how to set
@@ -292,12 +360,14 @@ or see cli.github.com), sign in with `gh auth login`, then try again. Or make a 
 repository yourself and use `backup connect <url>`.";
 
 pub fn gh_ready() -> bool {
-    Command::new("gh")
-        .args(["auth", "token"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success())
+    bounded_capture(
+        Command::new("gh")
+            .args(["auth", "token"])
+            .env("GH_PROMPT_DISABLED", "1"),
+        Duration::from_secs(3),
+        false,
+    )
+    .is_ok_and(|out| out.status.success())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -324,6 +394,10 @@ impl GitHubBackup {
 }
 
 pub fn github(notes_dir: &Path, name: &str) -> Result<GitHubBackup> {
+    let name = name.trim();
+    if name.is_empty() || name.starts_with('-') {
+        anyhow::bail!("that repository name is not valid");
+    }
     if !gh_ready() {
         anyhow::bail!(GH_MISSING);
     }
@@ -371,10 +445,10 @@ fn gh_repo_url(name: &str) -> Result<String> {
 }
 
 fn gh(args: &[&str]) -> Result<String> {
-    let output = Command::new("gh")
-        .args(args)
-        .output()
-        .context("failed to run gh — is it installed?")?;
+    let output = bounded_output(
+        Command::new("gh").args(args).env("GH_PROMPT_DISABLED", "1"),
+        Duration::from_secs(30),
+    )?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         anyhow::bail!("gh {} failed: {stderr}", args.join(" "));
@@ -409,11 +483,7 @@ pub fn auto_commit(notes_dir: &Path) -> Result<()> {
     run_git(notes_dir, &["add", "."])?;
 
     // Only create a commit if there are staged changes
-    let has_changes = !Command::new("git")
-        .args(["diff", "--cached", "--quiet"])
-        .current_dir(notes_dir)
-        .output()
-        .context("failed to run git diff --cached")?
+    let has_changes = !git_output(notes_dir, &["diff", "--cached", "--quiet"], COMMAND_LIMIT)?
         .status
         .success();
 
@@ -450,13 +520,8 @@ pub fn prepare(notes_dir: &Path) -> Result<()> {
         ],
     )?;
     run_git(notes_dir, &["add", ".gitignore", ".gitattributes"])?;
-    let staged = !Command::new("git")
-        .args(["diff", "--cached", "--quiet"])
-        .current_dir(notes_dir)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()?
+    let staged = !git_output(notes_dir, &["diff", "--cached", "--quiet"], COMMAND_LIMIT)?
+        .status
         .success();
     if staged {
         run_git(
@@ -494,11 +559,7 @@ fn ensure_lines(path: &Path, wanted: &str) -> Result<()> {
 /// changed" chatter printed straight onto the alternate screen. Callers that
 /// want the output show it themselves.
 fn run_git(dir: &Path, args: &[&str]) -> Result<String> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .context("failed to run git — is git installed?")?;
+    let output = git_output(dir, args, COMMAND_LIMIT)?;
 
     if !output.status.success() {
         // git puts failures on stderr; include them so the error is actionable
@@ -520,6 +581,34 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
     use tempfile::TempDir;
+
+    #[cfg(unix)]
+    #[test]
+    fn command_deadlines_reap_the_process_and_stop_children_holding_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let delayed = dir.path().join("late");
+        let at = Instant::now();
+        let result = bounded_output(
+            Command::new("sh")
+                .arg("-c")
+                .arg("(sleep 0.3; touch \"$1\") & sleep 5")
+                .arg("sh")
+                .arg(&delayed),
+            Duration::from_millis(50),
+        );
+        assert!(result.unwrap_err().to_string().contains("did not finish"));
+        assert!(at.elapsed() < Duration::from_secs(2));
+        std::thread::sleep(Duration::from_millis(400));
+        assert!(!delayed.exists());
+        let output = bounded_output(
+            Command::new("sh")
+                .arg("-c")
+                .arg("printf hello; (sleep 5) &"),
+            Duration::from_secs(1),
+        )
+        .unwrap();
+        assert_eq!(output.stdout, b"hello");
+    }
 
     /// Backing up with nothing set up says how to set it up, rather than
     /// failing inside git.

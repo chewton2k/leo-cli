@@ -277,7 +277,7 @@ fn unique_path(wanted: &Path) -> PathBuf {
 
 /// notes directory: ~/Library/Application Support/leo/notes  (macOS)
 fn notes_dir_path() -> Result<PathBuf> {
-    Ok(crate::paths::data_dir()?.join("notes"))
+    crate::paths::contained_path(&crate::paths::data_dir()?, Path::new("notes"))
 }
 
 /// Legacy notes.json path — used only for migration detection.
@@ -301,9 +301,24 @@ fn save_directories(notes_dir: &Path, directories: &[String]) -> Result<()> {
     Ok(())
 }
 
+fn check_notes_root(notes_dir: &Path) -> Result<()> {
+    match fs::symlink_metadata(notes_dir) {
+        Ok(metadata) => anyhow::ensure!(metadata.is_dir() && !metadata.file_type().is_symlink(), "Your notes folder must be a real directory; move it out of the symbolic link and try again"),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+        Err(error) => return Err(error.into()),
+    }
+    Ok(())
+}
+
+const MOST_DEPTH: usize = 64;
+
 /// Collect absolute paths of all .md files under `dir`, skipping hidden dirs.
 fn collect_md_paths(dir: &Path, result: &mut HashSet<PathBuf>) -> Result<()> {
-    if !dir.exists() {
+    collect_md_paths_at(dir, result, 0)
+}
+
+fn collect_md_paths_at(dir: &Path, result: &mut HashSet<PathBuf>, depth: usize) -> Result<()> {
+    if depth > MOST_DEPTH || !dir.exists() {
         return Ok(());
     }
     for entry in fs::read_dir(dir)? {
@@ -315,7 +330,7 @@ fn collect_md_paths(dir: &Path, result: &mut HashSet<PathBuf>) -> Result<()> {
         if path.is_dir() {
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if !name.starts_with('.') {
-                collect_md_paths(&path, result)?;
+                collect_md_paths_at(&path, result, depth + 1)?;
             }
         } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
             result.insert(path);
@@ -388,7 +403,17 @@ fn collect_notes(
     found: &mut Vec<(PathBuf, Note, String, std::time::SystemTime)>,
     unreadable: &mut Vec<(PathBuf, String)>,
 ) -> Result<()> {
-    if !dir.exists() {
+    collect_notes_at(notes_dir, dir, found, unreadable, 0)
+}
+
+fn collect_notes_at(
+    notes_dir: &Path,
+    dir: &Path,
+    found: &mut Vec<(PathBuf, Note, String, std::time::SystemTime)>,
+    unreadable: &mut Vec<(PathBuf, String)>,
+    depth: usize,
+) -> Result<()> {
+    if depth > MOST_DEPTH || !dir.exists() {
         return Ok(());
     }
     for entry in fs::read_dir(dir)? {
@@ -400,7 +425,7 @@ fn collect_notes(
         if path.is_dir() {
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if !name.starts_with('.') {
-                collect_notes(notes_dir, &path, found, unreadable)?;
+                collect_notes_at(notes_dir, &path, found, unreadable, depth + 1)?;
             }
         } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
             let content = fs::read_to_string(&path)?;
@@ -570,6 +595,7 @@ impl Store {
     }
 
     pub fn load_from(notes_dir: &Path) -> Result<Self> {
+        check_notes_root(notes_dir)?;
         fs::create_dir_all(notes_dir)?;
         let mut directories = load_directories(notes_dir)?;
         directories.retain(|dir| crate::paths::validate_directory(dir).is_ok());
@@ -606,6 +632,7 @@ impl Store {
     }
 
     pub fn save_files(&self) -> Result<()> {
+        check_notes_root(&self.notes_dir)?;
         fs::create_dir_all(&self.notes_dir)?;
         for note in &self.notes {
             self.validate_directory(&note.directory)?;
@@ -1449,6 +1476,7 @@ impl Store {
 // ── Migration ───────────────────────────────────────────────────────────────
 
 fn migrate_from_json(old_path: &Path, notes_dir: &Path) -> Result<()> {
+    check_notes_root(notes_dir)?;
     let raw = fs::read_to_string(old_path)
         .with_context(|| format!("failed to read {}", old_path.display()))?;
 
@@ -1471,17 +1499,27 @@ fn migrate_from_json(old_path: &Path, notes_dir: &Path) -> Result<()> {
     fs::create_dir_all(notes_dir)?;
 
     for note in &notes {
+        crate::paths::validate_directory(&note.directory)?;
+        if note.id.is_empty() || note.id.contains(['/', '\\']) || note.id == "." || note.id == ".."
+        {
+            anyhow::bail!("legacy note has an unsafe id");
+        }
         let file_path = if note.directory.is_empty() {
             notes_dir.join(format!("{}.md", note.id))
         } else {
-            let dir = notes_dir.join(&note.directory);
+            let dir = crate::paths::contained_path(notes_dir, Path::new(&note.directory))?;
             fs::create_dir_all(&dir)?;
             dir.join(format!("{}.md", note.id))
         };
-        fs::write(file_path, note_to_markdown(note)?)?;
+        crate::paths::contained_path(notes_dir, file_path.strip_prefix(notes_dir)?)?;
+        write_atomic(&file_path, &note_to_markdown(note)?)?;
     }
 
-    save_directories(notes_dir, &directories)?;
+    let valid_dirs: Vec<String> = directories
+        .into_iter()
+        .filter(|dir| crate::paths::validate_directory(dir).is_ok())
+        .collect();
+    save_directories(notes_dir, &valid_dirs)?;
 
     fs::rename(old_path, old_path.with_extension("json.bak"))?;
 
@@ -1742,6 +1780,25 @@ mod tests {
         };
         store.save().unwrap();
         assert!(notes_dir.join("Test Note.md").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_notes_root_symlink_is_refused_on_read_save_and_migration() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = dir.path().join("outside");
+        fs::create_dir(&outside).unwrap();
+        let linked = dir.path().join("notes");
+        std::os::unix::fs::symlink(&outside, &linked).unwrap();
+        assert!(Store::load_from(&linked).is_err());
+        let mut store = Store::load_from(&dir.path().join("real")).unwrap();
+        store.notes_dir = linked.clone();
+        assert!(store.save_files().is_err());
+        let legacy = dir.path().join("notes.json");
+        fs::write(&legacy, "[]").unwrap();
+        assert!(migrate_from_json(&legacy, &linked).is_err());
+        assert!(legacy.exists());
+        assert_eq!(fs::read_dir(outside).unwrap().count(), 0);
     }
 
     #[test]

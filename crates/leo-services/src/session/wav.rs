@@ -26,17 +26,23 @@ pub fn header(data_bytes: u32) -> [u8; 44] {
 }
 
 pub fn write(path: &Path, samples: &[i16]) -> Result<()> {
-    let mut bytes = Vec::with_capacity(44 + samples.len() * 2);
-    bytes.extend_from_slice(&header((samples.len() * 2) as u32));
-    for s in samples {
-        bytes.extend_from_slice(&s.to_le_bytes());
+    let parent = path.parent().context("the recording needs a folder")?;
+    let bytes = samples
+        .len()
+        .checked_mul(2)
+        .and_then(|n| u32::try_from(n).ok())
+        .context("this audio segment is too large; use shorter segments")?;
+    let mut file = tempfile::NamedTempFile::new_in(parent)?;
+    file.write_all(&header(bytes))?;
+    for chunk in samples.chunks(4096) {
+        let bytes: Vec<u8> = chunk.iter().flat_map(|s| s.to_le_bytes()).collect();
+        file.write_all(&bytes)?;
     }
-    let mut partial = path.as_os_str().to_owned();
-    partial.push(".tmp");
-    let partial = PathBuf::from(partial);
-    std::fs::write(&partial, bytes)
-        .and_then(|()| std::fs::rename(&partial, path))
-        .with_context(|| format!("could not write {}", path.display()))
+    file.as_file().sync_all()?;
+    file.persist(path)
+        .map_err(|e| e.error)
+        .with_context(|| format!("could not write {}", path.display()))?;
+    Ok(())
 }
 
 pub fn read(path: &Path) -> Result<Vec<i16>> {
@@ -224,6 +230,19 @@ mod tests {
 
     fn ramp(from: i16, n: usize) -> Vec<i16> {
         (0..n).map(|i| from.wrapping_add(i as i16)).collect()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_predictable_audio_temp_link_cannot_overwrite_another_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = dir.path().join("outside");
+        let path = dir.path().join("live.wav");
+        std::fs::write(&outside, "keep").unwrap();
+        std::os::unix::fs::symlink(&outside, dir.path().join("live.wav.tmp")).unwrap();
+        write(&path, &[1000]).unwrap();
+        assert_eq!(read(&path).unwrap(), vec![1000]);
+        assert_eq!(std::fs::read_to_string(outside).unwrap(), "keep");
     }
 
     #[test]

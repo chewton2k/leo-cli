@@ -299,6 +299,23 @@ fn build(
     Ok((stream, rate))
 }
 
+const MOST_AUDIO_CHUNKS: usize = 64;
+const AUDIO_WAIT: Duration = Duration::from_millis(10);
+
+fn deliver_audio(out: &SyncSender<Vec<i16>>, mut samples: Vec<i16>, stop: &AtomicBool) -> bool {
+    while !stop.load(Ordering::Relaxed) {
+        match out.try_send(samples) {
+            Ok(()) => return true,
+            Err(TrySendError::Full(waiting)) => {
+                samples = waiting;
+                std::thread::sleep(AUDIO_WAIT);
+            }
+            Err(TrySendError::Disconnected(_)) => return false,
+        }
+    }
+    false
+}
+
 pub struct Mic {
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
@@ -311,7 +328,7 @@ impl Mic {
         if disabled() {
             bail!("the microphone is turned off for leo (LEO_NO_MICROPHONE is set)");
         }
-        let (out_tx, out_rx) = mpsc::channel::<Vec<i16>>();
+        let (out_tx, out_rx) = mpsc::sync_channel::<Vec<i16>>(MOST_AUDIO_CHUNKS);
         let (ready_tx, ready_rx) = mpsc::sync_channel::<Result<()>>(1);
         let stop = Arc::new(AtomicBool::new(false));
         let problem = Arc::new(Mutex::new(None));
@@ -355,7 +372,8 @@ impl Mic {
                                     seen_dropped = lost;
                                 }
                                 resampler.push(&chunk, &mut converted);
-                                if !converted.is_empty() && out_tx.send(converted.clone()).is_err()
+                                if !converted.is_empty()
+                                    && !deliver_audio(&out_tx, converted.clone(), &stop)
                                 {
                                     break;
                                 }
@@ -424,6 +442,33 @@ pub fn listen_for(seconds: f64) -> Result<Vec<i16>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_full_audio_queue_can_be_stopped_without_dropping_the_receiver() {
+        let (tx, _rx) = mpsc::sync_channel(1);
+        tx.send(vec![1]).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&stop);
+        let (done, finished) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let _ = done.send(deliver_audio(&tx, vec![2], &flag));
+        });
+        assert!(finished.recv_timeout(Duration::from_millis(30)).is_err());
+        stop.store(true, Ordering::Relaxed);
+        assert!(!finished.recv_timeout(Duration::from_secs(1)).unwrap());
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn a_full_audio_queue_preserves_the_next_chunk_until_there_is_room() {
+        let (tx, rx) = mpsc::sync_channel(1);
+        tx.send(vec![1]).unwrap();
+        let worker =
+            std::thread::spawn(move || deliver_audio(&tx, vec![2], &AtomicBool::new(false)));
+        assert_eq!(rx.recv_timeout(Duration::from_secs(1)).unwrap(), vec![1]);
+        assert_eq!(rx.recv_timeout(Duration::from_secs(1)).unwrap(), vec![2]);
+        assert!(worker.join().unwrap());
+    }
 
     #[test]
     fn system_audio_needs_macos_14_6() {

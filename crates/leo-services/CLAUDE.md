@@ -97,9 +97,12 @@ turns the device off (tests, e2e, CI).
 
 ### Model configuration
 
-Built-in providers only (`built_in_toml`: six API writers, Claude Code, Codex,
-Parakeet and three cloud speech); `config/tidy.rs` rewrites old files on
-load (`RETIRED` names, fields equal to built-ins or old defaults, empty chain →
+Writing choices are Ollama, Codex, Claude Code, Google Antigravity (`agy`) and
+GitHub Copilot (`copilot`). Speech remains Parakeet and the existing OpenAI,
+Gemini and xAI cloud options. Older API protocol implementations and account names
+remain for compatibility and speech credentials; do not expose them as writing
+choices. `config/tidy.rs` removes retired named cloud writers from saved chat
+chains and rewrites old files on load (`RETIRED` names, fields equal to built-ins or old defaults, empty chain →
 default; a `whisper_cpp` block without its own `bin` → `parakeet`). Speech on
 this computer is NVIDIA Parakeet TDT 0.6B v3 int8 via the `sherpa-onnx` crate
 (static prebuilt libs, CPU; CoreML measured 10× slower) in
@@ -114,9 +117,9 @@ aware), URL pinned to a Hugging Face commit. `whisper_cpp` now only runs an
 external `bin` (e2e fakes). `Transcriptions` kind (`openai_transcribe`, alias `groq`)
 takes `path` (xAI: `stt`).
 
-`config/choice.rs` is the Settings model: `WRITING` (ollama, openai, codex,
-anthropic, claude_code, gemini, xai, openrouter) and `SPEECH` (parakeet,
-openai_whisper, gemini_speech, xai_speech),
+`config/choice.rs` is the Settings model: `WRITING` (ollama, codex,
+claude_code, agy, copilot) and `SPEECH` (parakeet, openai_whisper,
+gemini_speech, xai_speech),
 each with a curated model list (empty = local; `Local` holds installed Ollama
 models from `/api/tags` and `speech_ready`).
 `selection` = first usable chain entry, else the first. `write_choice` makes
@@ -134,14 +137,13 @@ per-task fallback chains. `/settings` then `e` creates and opens it. Providers a
 tried in order; unavailable ones (no key, no binary, closed port) are skipped
 silently, so a chain may list more providers than are installed.
 
-API keys live in the OS keychain, not in files, and all of them share a single
-item holding a JSON object keyed by provider. That is deliberate: macOS asks for
-permission per *item* whenever the requesting binary's signature does not match
-the item's ACL, which it does not after a reinstall — so an item per provider
-turned opening the provider screen into a dialog per provider. `SecretStore::has`
-exists for the same reason: status display needs to know whether a key exists,
-and only a read costs a prompt. Credentials written by an older version are
-folded into the single item once per installation.
+Speech keys and calendar secrets go through `secret::default_store()`: a private
+`credentials.json` beside config by default, or the OS keychain with
+`LEO_USE_KEYCHAIN=1`. The file is unencrypted; owner-only file/directory permissions
+and atomic replacement protect it from other OS accounts, not programs running as
+the same user. The optional keychain holds one JSON item to avoid a permission
+prompt per provider after upgrades. Status checks use `SecretStore::has`; tests use
+fake stores and never access the real keychain.
 
 `leo doctor` (or the key row in `/settings`) stores one; the provider screen shows which
 providers have credentials without revealing them. Keys come only from that
@@ -159,19 +161,34 @@ after, so a cut-off status line still shows the fix.
 `claude_code` and `codex` (kinds `ClaudeCode`/`Codex`, `ai/provider/agent_cli.rs`)
 write through the user's own signed-in CLI and plan: `claude -p --safe-mode
 --tools WebSearch --allowedTools WebSearch --no-session-persistence --system-prompt …` and `codex exec
---ephemeral --ignore-user-config --sandbox read-only -`, material on stdin, run
+--ephemeral --ignore-user-config --ignore-rules --sandbox read-only -`, material on stdin, run
 in a fresh private `leo-writing-*` temp dir (0700, deleted after; a shared fixed folder let other users plant files or links). Claude Code streams (`--output-format stream-json
 --include-partial-messages --verbose`; `read_stream` sinks `text_delta`s and
 treats a `result` with `is_error` as a failure); Codex has no partial text, so
 its stdout is the answer in one piece.
 
+AGY and Copilot use the same bounded text tool protocol, not native sessions, and
+accept text only; scans/photos need a compatible vision writer. `scoped_cli.rs`
+creates private `agent-profiles/agy` and `agent-profiles/copilot` beside config,
+sets provider-specific home directories, removes inherited token/customization
+variables during help probes and real commands, rejects custom MCP/hooks/plugins
+and requires advertised isolation flags before launch. AGY gets a private tool-free `leo` agent with command execution
+off; Copilot disables built-in MCP, custom instructions, remote export and updates,
+with filesystem/shell/memory tools denied. Only the explicitly configured tool
+allowlist is available; these controls are not an OS sandbox for arbitrary CLI
+binaries. Calls use fresh temporary working folders, while private sign-in/cache
+state persists in the profile. `leo doctor --sign-in agy|copilot` signs in there;
+an ordinary global CLI login is separate. A cross-process `.leo-profile.lock`
+protects calls/sign-in/cleanup. Storage exposes sizes and confirmed clearing only,
+refuses an active profile, and never exports authentication contents.
+
 Plan limits (`usage.rs`): `<config>/usage.json` keeps the latest `Usage`
 (5h/7d `Window { used 0..1, resets_at }`, `seen_at`) per provider name. Claude
 Code's come free with every answer (`rate_limit_event` → `from_claude`, saved
 in `AgentCli::run` even when the request failed); never send a request just to
-check. Codex's come from `codex app-server` → `account/rateLimits/read`
-(`ask_codex`, ~1 s, no model call; experimental upstream, so a failure just
-shows nothing). Settings' writing row appends `label` (`5h: 9%, 7d: 93%`, plus
+check. Codex's come from an isolation-capable `codex app-server` →
+`account/rateLimits/read` (`ask_codex`, no model call); unsupported versions
+retain previously saved usage without starting the app-server. Settings' writing row appends `label` (`5h: 9%, 7d: 93%`, plus
 age past `STALE_AFTER`, a window past its reset reads 0%); the TUI re-asks
 Codex every `task::USAGE_EVERY` (60 s) while Settings is open
 (`App.check_usage`, a no-op fn in tests); doctor adds `<name> limits` with
@@ -221,17 +238,11 @@ fail, so only listed ones are passed; cached per program).
 
 ### Part sizes follow the writing provider (`ai/budget.rs`)
 
-`writing_budget(cfg)` = the tightest `Budget { words, at_once }` over the
-`[chat]` chain: Codex / Claude Code `AGENT` (16k words, 3 at once: a 1¾-hour
-lecture is one request; every `exec` has start-up cost and repeats the
-instructions), paid APIs `CLOUD` (10k, 3), free OpenRouter models `FREE` (4k,
-2), Ollama or any localhost URL `LOCAL` (3k, 1: small context, one GPU). Long
-recordings (`long::structure_recording(.., budget)`) and uploads
-(`import::write_note(.., budget)`, text parts of `budget.chars()`, now run
-`at_once` at a time; progress is reported from the calling thread) both use it.
-Transcription is unchanged: Parakeet's 20-25 s cuts are for memory, cloud
-speech is only split past a provider's `max_bytes`, and 5-minute segments are
-transcribed while recording.
+`writing_budget(cfg)` takes the tightest budget over the chat chain. Codex,
+Claude Code, AGY and Copilot use the agent budget (three parts at once); Ollama
+uses the smaller local budget (one part). Context/output limits bound actual part
+sizes. Long recordings and uploads share this calculation and report progress from
+the calling thread. Speech chunking and note synthesis/gap-filling stay unchanged.
 
 ### Claude Code gets leo's tools natively (`ai/provider/mcp.rs`)
 
@@ -304,18 +315,12 @@ price strings (`rates`); agents are "on your plan" and local models free.
 
 ### Context windows (`ai/budget.rs`)
 
-`window_of` knows each provider's context window (Claude Code 200k, Codex
-256k, Claude 200k, GPT-5/6 400k, Gemini 1M, Grok-4 256k, free OpenRouter 32k,
-Ollama/local 8k; a provider's `context` setting overrides it). `note_tokens`
-is 45% of it, capped at 50k tokens for paid APIs (cost) and 120k for plans.
-`felix_room` turns that into Felix's note budget; `budget_of` (recording and
-upload part sizes) is the same reading budget in words, capped by what the
-notes can fill in the provider's output limit (`max_tokens`, 32k for agents).
-
-Effort: `choice::efforts(provider, model)` is the one list of levels; the
-provider's `effort` setting goes to Claude Code as `--effort`, to Codex as the
-turn's `effort` (or `-c model_reasoning_effort`), and to OpenAI-compatible
-APIs as `reasoning_effort`. Codex reports its default effort when none is set.
+`window_of` supplies Claude Code/AGY 200k, Codex 256k, Copilot 128k and
+Ollama/local 8k tokens; a valid `context` setting overrides it. `note_tokens`
+reserves 45%, capped at 120k for plan providers; legacy API accounting keeps its
+50k cost cap. `felix_room` supplies Felix's note budget, while recording/upload
+parts also respect output limits. Effort choices come from `choice::efforts` and
+are passed only in the selected provider's supported format.
 
 ### How notes are shaped (`ai::chat::LEARNING`)
 
@@ -328,33 +333,16 @@ explanations; every note ends with `## Check yourself` questions whose
 answers fold away (only the last part of a long recording or upload writes
 it). Uploads may explain beyond the source; facts stay the source's.
 
-### Native tools and prompt caching for API providers (`ai/session.rs`)
+### Native tools and text fallback (`ai/session.rs`)
 
-`session::open` now gives every API writer a native session (`ApiTalk`), not
-only Codex and Claude Code: OpenAI-compatible endpoints (OpenAI, Gemini, xAI,
-OpenRouter, Ollama) use chat-completions tool calling (`openai::read_round`
-puts streamed `tool_calls` pieces together, by `index` or, for Gemini, by
-`id`), and Anthropic uses the Messages API (`provider/anthropic.rs`), chosen
-by `anthropic::is_anthropic(base_url)`; `build_one_chat` returns the same
-`Anthropic` provider for note writing and pictures. Each round streams text,
-runs the calls through `Turn.call`, and sends results back (`tool` messages,
-or `tool_result` blocks); text shown before a call is taken back with
-`restart`; at `most_calls` the next request forbids tools (`tool_choice`
-none). Unparseable arguments are answered with how to fix them, never run. A
-model that rejects tools fails before showing anything, so Felix falls back to
-the text protocol.
-
-Anthropic requests cache three ways (top-level automatic `cache_control`, the
-system block, the last tool), set `output_config.effort` (low..max; `choice::
-efforts("anthropic", ..)` offers them for Claude 5-era models), and replay
-every content block of an assistant turn, thinking and its `signature`
-included, which tool use requires. `Spent` has `cached` and `cache_written`:
-OpenAI's `prompt_tokens_details.cached_tokens`, Anthropic's
-`cache_read_input_tokens` / `cache_creation_input_tokens`, Codex's
-`cachedInputTokens`. `spend::answered` prices cache reads at
-`cache_read_share` of input (Anthropic 0.1, Opus/Sonnet 5.5 0.05, Fable/Mythos
-5.1 0.025, OpenAI 0.1, Gemini and xAI 0.25, unknown 1.0) and writes at 1.25.
-Tests use local fake servers (`session::tests::serve`); never a paid API.
+Ollama uses OpenAI-compatible native tool calls when its model supports them;
+Claude Code uses the loopback MCP bridge, and Codex native sessions require the
+isolation capability checks below. AGY/Copilot always use text tools. Every call
+goes through Leo's validated `Turn.call`; malformed arguments receive a repair
+message, never execution. A provider that cannot open a native session falls back
+to the shared text protocol. Legacy API parsers/cache accounting remain internal
+compatibility code and are not additional Writing choices. Tests use local fake
+servers, never paid APIs.
 
 ### Finding notes by meaning (`meaning.rs`)
 
@@ -362,7 +350,8 @@ BAAI bge-small-en-v1.5 (384 numbers per text, 134 MB) runs on the CPU through
 candle (`candle-transformers` BERT, `tokenizers` without onig): CLS pooling,
 unit length, queries prefixed with `QUERY`. Files pinned to a Hugging Face
 commit with SHA-256s (`MODEL_MANIFEST`), kept in
-`models_dir()/bge-small-en-v1.5`, loaded once (`model()`). `leo update`
+`models_dir()/bge-small-en-v1.5`, loaded on demand (`model()`) and unloaded
+after 60 seconds idle once callers release their model handles. `leo update`
 fetches it (`ensure_meaning_model`), and `leo serve` fetches it quietly in
 the background when missing (`web_felix::meaning`). `LEO_INSTALL_NO_MODEL`
 or `LEO_NO_MEANING_MODEL` turns that off (e2e and Playwright set them);
@@ -401,15 +390,30 @@ covers stdin, stdout EOF, exit and pipe joins; native queues and output are boun
 Isolated text fallback sacrifices native conversation caching and may add latency.
 Claude's loopback MCP bridge caps active connections at eight, closes registered
 sockets on drop, checks shutdown during pending calls, and bounds writes, batches
-and requests per connection.
+and requests per connection. Request reads preserve partial bodies across polling
+timeouts and check cancellation on Windows as well as Unix.
 
 Credential updates use one bounded writer queue without I/O under a mutex, unique
 synced 0600 temporary files, bounded nofollow regular-file reads and atomic replace.
 Corrupt credential files are reported and preserved; permission repair refuses
-symbolic/hard links. Serialization is in-process, not a cross-process file lock.
+symbolic/hard links. The writer also holds an exclusive `.credentials.lock`
+through read/modify/write, with a five-second lock deadline, so independent Leo
+processes cannot overwrite each other's credential changes.
 
 Public fetch clients disable proxies, check actual resolved addresses, reject
 private IPv4/IPv6 including deprecated site-local addresses, and bound response
 bytes and redirects. HTTPS-only fetches cannot downgrade on redirects. OS DNS
 lookups run outside the HTTP runtime with a deadline and at most four concurrent
 lookup threads; a timed-out OS lookup retains its slot until it actually returns.
+The BGE meaning model unloads after 60s idle once no caller retains it, matching
+Parakeet's idle policy; loading uses a reservation/condition variable and performs
+file/model work outside the cache mutex. `Process::stop` waits/reaps child processes
+after killing their process group to prevent defunct zombies. `CODEX_OFF` disables `daemon_auto_start` to
+prevent orphan background daemon leaks.
+
+Recording capture uses bounded queues; shutdown signals cancellation without
+waiting indefinitely for an active transcription call. Session lock heartbeats
+stop/join on drop, and temporary write-up WAVs are guarded. Verified downloads use
+owned temporary paths, connection/total deadlines and checksum checks; extraction
+has a process deadline. Downloaded models/toolchains remain disk caches until the
+user clears them in Storage; there is no automatic LRU quota.

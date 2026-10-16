@@ -605,18 +605,18 @@ fn slides(package: &mut Package<'_>) -> Result<Vec<String>> {
         }
         return Ok(slides);
     }
-    let mut slides: Vec<(u32, String)> = package
-        .zip
-        .file_names()
-        .filter_map(|name| {
-            let number = name
-                .strip_prefix("ppt/slides/slide")?
-                .strip_suffix(".xml")?
-                .parse()
-                .ok()?;
-            Some((number, name.to_string()))
-        })
-        .collect();
+    let mut slides: Vec<(u32, String)> = Vec::new();
+    for name in package.zip.file_names() {
+        let name = name.context("this Office file has an unreadable file name; export it again")?;
+        let Some(number) = name
+            .strip_prefix("ppt/slides/slide")
+            .and_then(|name| name.strip_suffix(".xml"))
+            .and_then(|name| name.parse().ok())
+        else {
+            continue;
+        };
+        slides.push((number, name.into_owned()));
+    }
     slides.sort();
     Ok(slides.into_iter().map(|(_, name)| name).collect())
 }
@@ -845,7 +845,7 @@ pub(super) fn pptx(bytes: &[u8]) -> Result<String> {
     let legacy = !package
         .zip
         .file_names()
-        .any(|n| n == "ppt/presentation.xml");
+        .any(|name| name.is_ok_and(|name| name == "ppt/presentation.xml"));
     let mut out = String::new();
     for (index, path) in slides.iter().enumerate() {
         let number = if legacy {

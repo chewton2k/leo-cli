@@ -18,55 +18,119 @@ https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do
 and run this again. No Cloudflare account is needed. `leo serve --local` works without it, \
 on this Wi-Fi only.";
 
+struct TunnelChild {
+    child: Child,
+    #[cfg(unix)]
+    group: Option<u32>,
+}
+
+impl TunnelChild {
+    fn stop(&mut self) {
+        #[cfg(unix)]
+        if let Some(group) = self.group.take().and_then(|pid| i32::try_from(pid).ok()) {
+            unsafe {
+                libc::kill(-group, libc::SIGKILL);
+            }
+        }
+        let _ = self.child.start_kill();
+    }
+
+    async fn finish(&mut self) {
+        self.stop();
+        let _ = tokio::time::timeout(Duration::from_secs(5), self.child.wait()).await;
+    }
+}
+
+impl Drop for TunnelChild {
+    fn drop(&mut self) {
+        self.stop();
+        let _ = self.child.try_wait();
+    }
+}
+
 pub struct Tunnel {
     pub url: String,
-    _child: Child,
+    child: TunnelChild,
+    drain: tokio::task::JoinHandle<()>,
+}
+
+impl Tunnel {
+    pub async fn stop(mut self) {
+        self.drain.abort();
+        self.child.finish().await;
+    }
+}
+
+impl Drop for Tunnel {
+    fn drop(&mut self) {
+        self.drain.abort();
+    }
 }
 
 pub async fn start(port: u16) -> Result<Tunnel> {
     if !leo_core::paths::on_path("cloudflared") {
         anyhow::bail!(MISSING);
     }
-    let mut child = Command::new("cloudflared")
-        .args([
-            "tunnel",
-            "--no-autoupdate",
-            "--protocol",
-            "auto",
-            "--loglevel",
-            "info",
-            "--url",
-        ])
-        .arg(format!("http://127.0.0.1:{port}"))
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .context("could not start cloudflared")?;
+    let mut cmd = Command::new("cloudflared");
+    cmd.args([
+        "tunnel",
+        "--no-autoupdate",
+        "--protocol",
+        "auto",
+        "--loglevel",
+        "info",
+        "--url",
+    ])
+    .arg(format!("http://127.0.0.1:{port}"))
+    .stdin(Stdio::null())
+    .stdout(Stdio::null())
+    .stderr(Stdio::piped())
+    .kill_on_drop(true);
+    #[cfg(unix)]
+    cmd.process_group(0);
+    let child = cmd.spawn().context("could not start cloudflared")?;
+    let mut child = TunnelChild {
+        #[cfg(unix)]
+        group: child.id(),
+        child,
+    };
 
-    let stderr = child.stderr.take().context("no output from cloudflared")?;
+    let Some(stderr) = child.child.stderr.take() else {
+        child.finish().await;
+        anyhow::bail!("no output from cloudflared");
+    };
     let mut reader = BufReader::new(stderr);
     eprintln!(
         "  Connecting to Cloudflare (up to {} seconds)…",
         WAIT.as_secs()
     );
-    let found = wait_for(&mut reader, WAIT).await?;
-    if child
-        .try_wait()
-        .context("could not check cloudflared")?
-        .is_some()
-    {
-        anyhow::bail!("Cloudflared stopped before the link was ready. {RETRY}");
+    let found = match wait_for(&mut reader, WAIT).await {
+        Ok(found) => found,
+        Err(e) => {
+            child.finish().await;
+            return Err(e);
+        }
+    };
+    match child.child.try_wait() {
+        Ok(None) => {}
+        Ok(Some(_)) => {
+            child.finish().await;
+            anyhow::bail!("Cloudflared stopped before the link was ready. {RETRY}");
+        }
+        Err(e) => {
+            child.finish().await;
+            return Err(e).context("could not check cloudflared");
+        }
     }
 
-    tokio::spawn(async move {
+    let drain = tokio::spawn(async move {
         let _ = tokio::io::copy(&mut reader, &mut tokio::io::sink()).await;
         eprintln!("  The Cloudflare link stopped. Restart `leo serve` to make a new phone link.");
     });
     Ok(Tunnel {
         url: found,
-        _child: child,
+        child,
+        drain,
     })
 }
 
@@ -172,6 +236,41 @@ fn address_in(line: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn owned_tunnel_children_are_reaped_on_shutdown_and_cancellation() {
+        for cancel in [false, true] {
+            let mut command = Command::new("/bin/sh");
+            command
+                .args(["-c", "sleep 30"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .process_group(0)
+                .kill_on_drop(true);
+            let child = command.spawn().unwrap();
+            let pid = child.id().unwrap();
+            let mut child = TunnelChild {
+                child,
+                group: Some(pid),
+            };
+            if cancel {
+                drop(child);
+            } else {
+                child.finish().await;
+                assert!(child.child.try_wait().unwrap().is_some());
+            }
+            let started = std::time::Instant::now();
+            while unsafe { libc::kill(i32::try_from(pid).unwrap(), 0) } == 0 {
+                assert!(
+                    started.elapsed() < Duration::from_secs(2),
+                    "the tunnel child was not reaped"
+                );
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }
+    }
 
     #[test]
     fn the_address_is_found_in_cloudflareds_box() {

@@ -22,6 +22,7 @@ const WAKE_LIMIT: Duration = Duration::from_millis(250);
 
 pub enum Incoming {
     Line(String),
+    Ended,
     Failed,
     Call {
         name: String,
@@ -177,6 +178,49 @@ struct Served {
     stopped: Arc<AtomicBool>,
 }
 
+struct Interruptible<R> {
+    inner: R,
+    stopped: Arc<AtomicBool>,
+    until: Instant,
+}
+
+impl<R: Read> Read for Interruptible<R> {
+    fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+        if bytes.is_empty() {
+            return Ok(0);
+        }
+        loop {
+            if self.stopped.load(Ordering::SeqCst) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionAborted,
+                    "the answer has finished",
+                ));
+            }
+            if Instant::now() >= self.until {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "the tool request took too long",
+                ));
+            }
+            match self.inner.read(bytes) {
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::TimedOut
+                            | std::io::ErrorKind::WouldBlock
+                            | std::io::ErrorKind::Interrupted
+                    ) =>
+                {
+                    std::thread::sleep(
+                        STOP_POLL.min(self.until.saturating_duration_since(Instant::now())),
+                    );
+                }
+                result => return result,
+            }
+        }
+    }
+}
+
 struct Request {
     method: String,
     path: String,
@@ -185,7 +229,7 @@ struct Request {
     close: bool,
 }
 
-fn read_request(reader: &mut BufReader<TcpStream>) -> Option<Request> {
+fn read_request(reader: &mut impl BufRead) -> Option<Request> {
     let mut head = Vec::new();
     loop {
         let mut line = Vec::new();
@@ -257,13 +301,21 @@ fn respond(stream: &mut TcpStream, status: &str, body: Option<&Value>) -> std::i
 
 impl Served {
     fn connection(&self, stream: TcpStream) {
-        let _ = stream.set_read_timeout(Some(IDLE));
-        let _ = stream.set_write_timeout(Some(WRITE_LIMIT));
+        if stream.set_read_timeout(Some(STOP_POLL)).is_err()
+            || stream.set_write_timeout(Some(WRITE_LIMIT)).is_err()
+        {
+            return;
+        }
         let Ok(mut writer) = stream.try_clone() else {
             return;
         };
-        let mut reader = BufReader::new(stream);
+        let mut reader = BufReader::new(Interruptible {
+            inner: stream,
+            stopped: Arc::clone(&self.stopped),
+            until: Instant::now() + IDLE,
+        });
         for _ in 0..MOST_REQUESTS {
+            reader.get_mut().until = Instant::now() + IDLE;
             if self.stopped.load(Ordering::SeqCst) {
                 return;
             }
@@ -353,16 +405,31 @@ impl Served {
         if self.stopped.load(Ordering::SeqCst) {
             return "That did not work: this answer has already finished.".into();
         }
+        let until = Instant::now() + CALL_LIMIT;
         let (reply, answer) = mpsc::channel();
-        let asked = self.to.try_send(Incoming::Call {
+        let mut pending = Incoming::Call {
             name: name.to_string(),
             args,
             reply,
-        });
-        if asked.is_err() {
-            return "That did not work: this answer has already finished.".into();
+        };
+        loop {
+            if self.stopped.load(Ordering::SeqCst) {
+                return "That did not work: this answer has already finished.".into();
+            }
+            match self.to.try_send(pending) {
+                Ok(()) => break,
+                Err(mpsc::TrySendError::Full(returned)) => {
+                    if Instant::now() >= until {
+                        return "That did not work: leo could not run the tool in time.".into();
+                    }
+                    pending = returned;
+                    std::thread::sleep(STOP_POLL);
+                }
+                Err(mpsc::TrySendError::Disconnected(_)) => {
+                    return "That did not work: this answer has already finished.".into();
+                }
+            }
         }
-        let until = Instant::now() + CALL_LIMIT;
         loop {
             if self.stopped.load(Ordering::SeqCst) {
                 return "That did not work: this answer has already finished.".into();
@@ -449,7 +516,7 @@ mod tests {
             Incoming::Call { name, args, reply } => {
                 reply.send(format!("{name}: {}", args["query"])).unwrap();
             }
-            Incoming::Line(_) | Incoming::Failed => panic!("expected a call"),
+            Incoming::Line(_) | Incoming::Ended | Incoming::Failed => panic!("expected a call"),
         });
         let url = bridge.url.clone();
         let (_, body) = post(
@@ -520,6 +587,76 @@ mod tests {
                 ) => {}
             result => panic!("the bridge left a connection open: {result:?}"),
         }
+    }
+
+    #[test]
+    fn partial_requests_survive_read_poll_timeouts_and_stop_during_a_body() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (stream, _) = listener.accept().unwrap();
+        stream.set_read_timeout(Some(STOP_POLL)).unwrap();
+        let stopped = Arc::new(AtomicBool::new(false));
+        let other = Arc::clone(&stopped);
+        let (result, requests) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let mut reader = BufReader::new(Interruptible {
+                inner: stream,
+                stopped: other,
+                until: Instant::now() + Duration::from_secs(3),
+            });
+            let first = read_request(&mut reader).unwrap();
+            result
+                .send((first.method, first.path, first.body, first.close))
+                .unwrap();
+            let _ = result.send((
+                String::new(),
+                String::new(),
+                Vec::new(),
+                read_request(&mut reader).is_none(),
+            ));
+        });
+        client.write_all(b"POST /mcp/").unwrap();
+        std::thread::sleep(STOP_POLL.saturating_mul(3));
+        client
+            .write_all(b"secret HTTP/1.1\r\nContent-Length: 7\r\n\r\n{\"x\":")
+            .unwrap();
+        std::thread::sleep(STOP_POLL.saturating_mul(3));
+        client.write_all(b"1}").unwrap();
+        assert_eq!(
+            requests.recv_timeout(Duration::from_secs(2)).unwrap(),
+            (
+                "POST".into(),
+                "/mcp/secret".into(),
+                b"{\"x\":1}".to_vec(),
+                false
+            )
+        );
+        client
+            .write_all(b"POST /mcp/secret HTTP/1.1\r\nContent-Length: 10\r\n\r\n{")
+            .unwrap();
+        std::thread::sleep(STOP_POLL.saturating_mul(3));
+        stopped.store(true, Ordering::SeqCst);
+        assert!(requests.recv_timeout(Duration::from_secs(1)).unwrap().3);
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn repeated_short_reads_cannot_extend_the_request_deadline() {
+        struct Waiting;
+        impl Read for Waiting {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::ErrorKind::WouldBlock.into())
+            }
+        }
+        let mut reader = Interruptible {
+            inner: Waiting,
+            stopped: Arc::new(AtomicBool::new(false)),
+            until: Instant::now() + STOP_POLL,
+        };
+        assert_eq!(
+            reader.read(&mut [0]).unwrap_err().kind(),
+            std::io::ErrorKind::TimedOut
+        );
     }
 
     #[test]

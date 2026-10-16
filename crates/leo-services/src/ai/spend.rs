@@ -65,8 +65,14 @@ pub fn answered(cfg: &Config, provider: &str, spent: Spent) -> Answered {
     let kind = pc.and_then(|p| p.kind);
     let choice = WRITING.iter().find(|c| c.provider == provider);
     let plan = match kind {
-        Some(kind) => matches!(kind, ProviderKind::ClaudeCode | ProviderKind::Codex),
-        None => matches!(provider, "claude_code" | "codex"),
+        Some(kind) => matches!(
+            kind,
+            ProviderKind::ClaudeCode
+                | ProviderKind::Codex
+                | ProviderKind::Agy
+                | ProviderKind::Copilot
+        ),
+        None => matches!(provider, "claude_code" | "codex" | "agy" | "copilot"),
     };
     let local = choice.is_some_and(|c| c.local())
         || pc
@@ -138,32 +144,45 @@ mod tests {
     }
 
     #[test]
-    fn a_paid_answer_costs_its_tokens_and_a_plan_or_this_computer_costs_nothing_extra() {
+    fn plans_and_local_answers_keep_their_labels_without_inventing_retired_prices() {
         let cfg = Config::default();
-        let paid = answered(
-            &cfg,
-            "anthropic",
-            spent("claude-sonnet-5-5", 1_000_000, 100_000),
-        );
-        assert_eq!(paid.by, "Anthropic");
-        assert!((paid.cost.unwrap() - 3.0).abs() < 1e-9);
-        assert!(!paid.plan && !paid.local);
-
-        let plan = answered(&cfg, "claude_code", spent("claude-sonnet-5-5", 10, 10));
-        assert_eq!(
-            (plan.by.as_str(), plan.cost, plan.plan),
-            ("Claude Code", None, true)
-        );
-
+        for (provider, model, label) in [
+            ("claude_code", "claude-sonnet-5-5", "Claude Code"),
+            ("codex", "gpt-6-luna", "Codex"),
+            ("agy", "default", "Google Antigravity"),
+            ("copilot", "auto", "GitHub Copilot"),
+        ] {
+            let plan = answered(&cfg, provider, spent(model, 10, 10));
+            assert_eq!(
+                (plan.by.as_str(), plan.cost, plan.plan),
+                (label, None, true)
+            );
+            assert!(!plan.local);
+        }
         let local = answered(&cfg, "ollama", spent("qwen3:8b", 10, 10));
         assert_eq!((local.cost, local.local), (Some(0.0), true));
-
-        let unknown = answered(&cfg, "openai", spent("not-a-listed-model", 10, 10));
-        assert_eq!(unknown.cost, None);
+        for provider in [
+            "openai",
+            "anthropic",
+            "openrouter",
+            "gemini",
+            "xai",
+            "custom",
+        ] {
+            let retired = answered(
+                &cfg,
+                provider,
+                spent("claude-sonnet-5-5", 1_000_000, 100_000),
+            );
+            assert_eq!(retired.by, provider);
+            assert_eq!(retired.cost, None);
+            assert!(!retired.plan && !retired.local);
+            assert_eq!((retired.input, retired.output), (1_000_000, 100_000));
+        }
     }
 
     #[test]
-    fn tokens_read_from_the_cache_cost_a_fraction_and_tokens_written_a_little_more() {
+    fn legacy_cache_usage_stays_visible_without_assuming_an_unlisted_price() {
         let cfg = Config::default();
         let cached = answered(
             &cfg,
@@ -174,18 +193,16 @@ mod tests {
                 ..spent("claude-sonnet-5-5", 1_000_000, 0)
             },
         );
-        assert_eq!(cached.cached, 800_000);
-        let rate = 2.0;
-        let expected = (100_000.0 * rate + 800_000.0 * rate * 0.05 + 100_000.0 * rate * 1.25) / 1e6;
-        assert!(
-            (cached.cost.unwrap() - expected).abs() < 1e-9,
-            "{:?}",
-            cached.cost
-        );
-        assert!((cache_read_share("openai", "gpt-5") - 0.1).abs() < 1e-9);
-        assert!(
-            (cache_read_share("openrouter", "x") - 1.0).abs() < 1e-9,
-            "unknown discounts are not assumed"
-        );
+        assert_eq!((cached.cached, cached.input), (800_000, 1_000_000));
+        assert_eq!(cached.cost, None);
+        for (provider, model, expected) in [
+            ("openai", "gpt-5", 0.1),
+            ("anthropic", "claude-sonnet-5-5", 0.05),
+            ("anthropic", "claude-fable-5-1", 0.025),
+            ("gemini", "gemini-3.8-flash", 0.25),
+            ("openrouter", "x", 1.0),
+        ] {
+            assert!((cache_read_share(provider, model) - expected).abs() < 1e-9);
+        }
     }
 }

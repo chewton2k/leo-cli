@@ -18,6 +18,9 @@ pub const MOST_REFERENCE: usize = 6_000;
 pub const MOST_SOLUTION: usize = 12_000;
 const MOST_VALUE_BYTES: usize = 4_000;
 const KEY_TOKENS: u32 = 6_000;
+const MOST_PREPARING: usize = 8;
+static PREPARING: std::sync::LazyLock<std::sync::Arc<tokio::sync::Semaphore>> =
+    std::sync::LazyLock::new(|| std::sync::Arc::new(tokio::sync::Semaphore::new(MOST_PREPARING)));
 const GRADE_TOKENS: u32 = 1_500;
 const GRADE_ANSWER: usize = 12_000;
 
@@ -653,20 +656,31 @@ fn claim(path: &Path, interview: &str, challenge: &str, again: bool) -> Option<S
     db::for_chats(path)
         .with(|c| {
             let now = Utc::now().to_rfc3339();
+            let stale = (Utc::now() - chrono::Duration::minutes(10)).to_rfc3339();
             let changed = if again {
                 c.execute(
-                    "UPDATE interview_keys SET status = 'preparing', updated = ?3, data = ?4 WHERE interview = ?1 AND challenge = ?2 AND status = 'failed' AND EXISTS (SELECT 1 FROM interviews WHERE id = ?1)",
-                    rusqlite::params![interview, challenge, now, generation],
+                    "UPDATE interview_keys SET status = 'preparing', updated = ?3, data = ?4 WHERE interview = ?1 AND challenge = ?2 AND (status = 'failed' OR (status = 'preparing' AND updated < ?5)) AND EXISTS (SELECT 1 FROM interviews WHERE id = ?1)",
+                    rusqlite::params![interview, challenge, now, generation, stale],
                 )?
             } else {
-                c.execute(
+                let inserted = c.execute(
                     "INSERT OR IGNORE INTO interview_keys (interview, challenge, status, updated, data) SELECT ?1, ?2, 'preparing', ?3, ?4 WHERE EXISTS (SELECT 1 FROM interviews WHERE id = ?1)",
                     rusqlite::params![interview, challenge, now, generation],
-                )?
+                )?;
+                if inserted == 1 {
+                    1
+                } else {
+                    c.execute(
+                        "UPDATE interview_keys SET status = 'preparing', updated = ?3, data = ?4 WHERE interview = ?1 AND challenge = ?2 AND status = 'preparing' AND updated < ?5 AND EXISTS (SELECT 1 FROM interviews WHERE id = ?1)",
+                        rusqlite::params![interview, challenge, now, generation, stale],
+                    )?
+                }
             };
             Ok(changed == 1)
         })
-        .ok().filter(|done| *done).map(|_| generation)
+        .ok()
+        .filter(|done| *done)
+        .map(|_| generation)
 }
 
 pub const KEY_RULES: &str = "You write the hidden answer key for one practice interview exercise, so the user's answer can be checked the moment they submit. Reply with one JSON object only, no prose, with these fields:
@@ -705,22 +719,62 @@ pub fn write_key(
     Ok(key)
 }
 
+struct PrepareGuard {
+    _permit: tokio::sync::OwnedSemaphorePermit,
+    path: std::path::PathBuf,
+    interview: String,
+    challenge: String,
+    generation: String,
+    done: bool,
+}
+
+impl Drop for PrepareGuard {
+    fn drop(&mut self) {
+        if !self.done {
+            finish(
+                &self.path,
+                &self.interview,
+                &self.challenge,
+                &self.generation,
+                Err("the answer key could not be prepared".into()),
+            );
+        }
+    }
+}
+
 pub fn prepare(path: &Path, writer: Option<Writer>, item: &Interview, again: bool) -> bool {
     let (Some(writer), Some(challenge)) = (writer, item.challenge.clone()) else {
+        return false;
+    };
+    let Ok(permit) = std::sync::Arc::clone(&PREPARING).try_acquire_owned() else {
         return false;
     };
     let Some(generation) = claim(path, &item.id, &challenge.id, again) else {
         return false;
     };
-    let path = path.to_path_buf();
+    let guard = PrepareGuard {
+        _permit: permit,
+        path: path.to_path_buf(),
+        interview: item.id.clone(),
+        challenge: challenge.id.clone(),
+        generation,
+        done: false,
+    };
     let framework = item.framework.clone();
-    let interview = item.id.clone();
     std::thread::Builder::new()
         .name("leo-interview-key".into())
         .spawn(move || {
+            let mut guard = guard;
             let made = write_key(&writer, &framework, &challenge)
                 .or_else(|_| write_key(&writer, &framework, &challenge));
-            finish(&path, &interview, &challenge.id, &generation, made);
+            finish(
+                &guard.path,
+                &guard.interview,
+                &guard.challenge,
+                &guard.generation,
+                made,
+            );
+            guard.done = true;
         })
         .is_ok()
 }
@@ -1217,6 +1271,63 @@ mod tests {
             assert!(status(path, "practice-one", "problem-one").is_none());
             assert!(claim(path, "practice-one", "problem-one", false).is_none());
         }
+    }
+
+    #[test]
+    fn abandoned_key_generations_retry_and_panicking_workers_release_their_permit() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path();
+        db::for_chats(path)
+            .with(|c| {
+                c.execute(
+                    "INSERT INTO interviews VALUES ('practice-stale', 'now', '{}')",
+                    [],
+                )
+            })
+            .unwrap();
+        let old = claim(path, "practice-stale", "problem-one", false).unwrap();
+        db::for_chats(path)
+            .with(|c| {
+                c.execute(
+                    "UPDATE interview_keys SET updated = ?1 WHERE interview = 'practice-stale'",
+                    [(Utc::now() - chrono::Duration::minutes(11)).to_rfc3339()],
+                )
+            })
+            .unwrap();
+        let current = claim(path, "practice-stale", "problem-one", false).unwrap();
+        finish(
+            path,
+            "practice-stale",
+            "problem-one",
+            &old,
+            Err("late result".into()),
+        );
+        assert_eq!(
+            status(path, "practice-stale", "problem-one").unwrap().0,
+            "preparing"
+        );
+        let slots = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
+        let guard = PrepareGuard {
+            _permit: std::sync::Arc::clone(&slots).try_acquire_owned().unwrap(),
+            path: path.to_path_buf(),
+            interview: "practice-stale".into(),
+            challenge: "problem-one".into(),
+            generation: current,
+            done: false,
+        };
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+                let _guard = guard;
+                panic!("fake key worker panic");
+            }))
+            .is_err()
+        );
+        assert_eq!(slots.available_permits(), 1);
+        assert_eq!(
+            status(path, "practice-stale", "problem-one").unwrap().0,
+            "failed"
+        );
+        assert!(claim(path, "practice-stale", "problem-one", true).is_some());
     }
 
     fn coding_challenge() -> Challenge {

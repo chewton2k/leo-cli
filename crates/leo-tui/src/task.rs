@@ -78,6 +78,12 @@ pub struct Job {
     points: Arc<std::sync::Mutex<Vec<Jotted>>>,
 }
 
+impl Drop for Job {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
 impl Job {
     /// Ask the job to wind down. It still reports a final result, so a stop is
     /// not a cancel: audio already recorded is transcribed and saved.
@@ -142,6 +148,7 @@ impl Job {
                             | TaskEvent::Structured { .. }
                             | TaskEvent::Answered { .. }
                             | TaskEvent::Checked(_)
+                            | TaskEvent::Pushed
                     ) {
                         self.done = true;
                     }
@@ -607,6 +614,24 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn a_completed_push_is_terminal_and_dropping_a_job_signals_stop() {
+        let (sent, rx) = mpsc::channel();
+        let mut job = Job {
+            rx,
+            stop: Arc::new(AtomicBool::new(false)),
+            pause: Arc::new(AtomicBool::new(false)),
+            done: false,
+            points: Default::default(),
+        };
+        sent.send(TaskEvent::Pushed).unwrap();
+        let stopped = Arc::clone(&job.stop);
+        job.drain();
+        assert!(job.is_done());
+        drop(job);
+        assert!(stopped.load(Ordering::Relaxed));
+    }
 
     /// A job whose worker never starts still drains cleanly and reports done,
     /// rather than blocking the event loop forever.

@@ -4,7 +4,8 @@ use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
 use toml_edit::{DocumentMut, Item, Table};
 
-use crate::ai::provider::agent_cli::{self, Agent};
+use crate::ai::provider::agent_cli::{self, Agent, AgentCli};
+use crate::ai::provider::ChatProvider;
 use crate::config::choice::{self, Local};
 use crate::config::edit::{self, Task};
 use crate::config::secret::{self, SecretStore};
@@ -105,11 +106,14 @@ fn task_view(
     };
     let signin = agent.map(|agent| {
         let bin = pc.and_then(|p| p.bin.as_deref()).unwrap_or(agent.program());
-        let installed = agent_cli::locate(bin).is_some();
+        let located = agent_cli::locate(bin).is_some();
+        let installed = pc.is_some_and(|p| AgentCli::new(provider.clone(), agent, p).available());
         json!({
             "installed": installed,
             "text": if installed {
                 format!("Uses {}, no key needed. If it asks, {}.", agent.plan(), agent.sign_in())
+            } else if located {
+                format!("`{bin}` cannot provide the safety controls Leo needs. Update {} and try again: {}.", chosen.map(|c| c.name).unwrap_or(provider.as_str()), agent.install())
             } else {
                 format!("`{bin}` is not installed: {}.", agent.install())
             },
@@ -344,37 +348,35 @@ mod tests {
     }
 
     #[test]
-    fn the_page_shows_each_task_with_its_choices_models_and_key() {
-        let (_d, path) =
-            setup("[chat]\nchain = [\"openai\"]\n[transcribe]\nchain = [\"openai_whisper\"]\n");
+    fn the_page_only_offers_local_or_signed_in_writers_and_keeps_speech_keys() {
+        let (_d, path) = setup("[chat]\nchain = [\"agy\"]\n[providers.agy]\nbin = \"leo-no-such-agy\"\n[transcribe]\nchain = [\"openai_whisper\"]\n");
         let store = MemoryStore::default();
         store.set("openai", "sk-secret-value").unwrap();
         let page = view(&path, &store);
         let writing = &page["tasks"][0];
         assert_eq!(writing["task"], "writing");
-        assert_eq!(writing["provider"], "openai");
-        assert_eq!(writing["ready"], true);
-        assert!(writing["choices"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|c| c["id"] == "claude_code"));
+        assert_eq!(writing["provider"], "agy");
+        assert_eq!(writing["ready"], false);
+        assert_eq!(
+            writing["choices"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|c| c["id"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["ollama", "codex", "claude_code", "agy", "copilot"]
+        );
         assert!(writing["models"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|m| m["id"] == "gpt-6-luna" && m["price"].as_str().unwrap().contains('$')));
-        assert_eq!(writing["key"]["account"], "openai");
-        assert_eq!(writing["key"]["stored"], true);
-        assert_eq!(writing["key"]["hint"], "sk-…••••••••");
-        assert_eq!(
-            page["tasks"][1]["key"]["account"], "openai",
-            "speech shares the OpenAI key"
-        );
-        assert!(
-            !page.to_string().contains("sk-secret-value"),
-            "a key never leaves the computer"
-        );
+            .any(|m| m["id"] == "gemini-4-argon-high"));
+        assert!(writing["key"].is_null());
+        assert_eq!(writing["signin"]["installed"], false);
+        assert_eq!(page["tasks"][1]["key"]["account"], "openai");
+        assert_eq!(page["tasks"][1]["key"]["stored"], true);
+        assert_eq!(page["tasks"][1]["key"]["hint"], "sk-…••••••••");
+        assert!(!page.to_string().contains("sk-secret-value"));
         assert_eq!(page["backup"]["auto_push"], "on_quit");
         assert_eq!(page["backup"]["options"].as_array().unwrap().len(), 3);
     }
@@ -390,6 +392,29 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("npm install -g @openai/codex"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn another_program_named_copilot_is_not_shown_as_an_available_writer() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("copilot");
+        std::fs::write(
+            &bin,
+            "#!/bin/sh\nprintf '%s\\n' 'AWS Copilot CLI: deploy applications to Amazon ECS'\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let (_d, path) = setup(&format!("[chat]\nchain = [\"copilot\"]\n[providers.copilot]\nbin = {:?}\n[transcribe]\nchain = []\n", bin.display().to_string()));
+        let writing = &view(&path, &MemoryStore::default())["tasks"][0];
+        assert_eq!(writing["signin"]["installed"], false);
+        assert_eq!(writing["ready"], false);
+        assert!(writing["signin"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("safety controls"));
+        assert!(writing["key"].is_null());
     }
 
     #[test]
@@ -438,20 +463,20 @@ mod tests {
 
     #[test]
     fn choosing_a_provider_and_model_writes_the_config() {
-        let (_d, path) = setup("[chat]\nchain = [\"openai\"]\n[transcribe]\nchain = []\n");
+        let (_d, path) = setup("[chat]\nchain = [\"ollama\"]\n[providers.agy]\nbin = \"leo-no-such-agy\"\n[transcribe]\nchain = []\n");
         let store = MemoryStore::default();
         let local = Local::default();
         let said = apply(
-            &json!({"set": "provider", "task": "writing", "value": "anthropic"}),
+            &json!({"set": "provider", "task": "writing", "value": "agy"}),
             &path,
             &store,
             false,
             &local,
         )
         .unwrap();
-        assert_eq!(said, "Writing now uses Anthropic.");
+        assert_eq!(said, "Writing now uses Google Antigravity.");
         let said = apply(
-            &json!({"set": "model", "task": "writing", "value": "claude-opus-5-5"}),
+            &json!({"set": "model", "task": "writing", "value": "gemini-4-argon-high"}),
             &path,
             &store,
             false,
@@ -459,14 +484,14 @@ mod tests {
         )
         .unwrap();
         assert!(
-            said.starts_with("Model set to claude-opus-5-5 ($"),
+            said.starts_with("Model set to gemini-4-argon-high (included in your"),
             "{said}"
         );
         let cfg = Config::load_from(&path);
-        assert_eq!(cfg.chat.chain, ["anthropic"]);
+        assert_eq!(cfg.chat.chain, ["agy"]);
         assert_eq!(
-            cfg.provider("anthropic").unwrap().model.as_deref(),
-            Some("claude-opus-5-5")
+            cfg.provider("agy").unwrap().model.as_deref(),
+            Some("gemini-4-argon-high")
         );
         assert!(apply(
             &json!({"set": "model", "task": "writing", "value": "gpt-made-up"}),
@@ -503,24 +528,52 @@ mod tests {
     }
 
     #[test]
+    fn removed_writing_providers_cannot_be_selected_or_change_stored_keys() {
+        let (_d, path) = setup("[chat]\nchain = [\"ollama\"]\n");
+        let store = MemoryStore::default();
+        store.set("openrouter", "existing-secret").unwrap();
+        for provider in ["openai", "anthropic", "openrouter", "gemini", "xai"] {
+            assert!(apply(
+                &json!({"set": "provider", "task": "writing", "value": provider}),
+                &path,
+                &store,
+                false,
+                &Local::default()
+            )
+            .is_err());
+        }
+        assert!(apply(
+            &json!({"set": "key", "account": "openrouter", "value": "replacement"}),
+            &path,
+            &store,
+            true,
+            &Local::default()
+        )
+        .is_err());
+        assert_eq!(
+            store.get("openrouter").unwrap().unwrap().as_str(),
+            "existing-secret"
+        );
+        assert_eq!(Config::load_from(&path).chat.chain, ["ollama"]);
+    }
+
+    #[test]
     fn keys_are_stored_only_over_a_secure_link_and_can_be_removed() {
-        let (_d, path) = setup("[chat]\nchain = [\"openrouter\"]\n[transcribe]\nchain = []\n");
+        let (_d, path) =
+            setup("[chat]\nchain = [\"ollama\"]\n[transcribe]\nchain = [\"openai_whisper\"]\n");
         let store = MemoryStore::default();
         let local = Local::default();
-        let add = json!({"set": "key", "account": "openrouter", "value": " sk-or-123 "});
+        let add = json!({"set": "key", "account": "openai", "value": " sk-or-123 "});
         let refused = apply(&add, &path, &store, false, &local)
             .unwrap_err()
             .to_string();
         assert!(refused.contains("https"), "{refused}");
-        assert!(!store.has("openrouter"));
+        assert!(!store.has("openai"));
         assert_eq!(
             apply(&add, &path, &store, true, &local).unwrap(),
-            "The OpenRouter key is stored on this computer."
+            "The OpenAI key is stored on this computer."
         );
-        assert_eq!(
-            store.get("openrouter").unwrap().unwrap().as_str(),
-            "sk-or-123"
-        );
+        assert_eq!(store.get("openai").unwrap().unwrap().as_str(), "sk-or-123");
         assert!(apply(
             &json!({"set": "key", "account": "keychain-of-someone-else", "value": "x"}),
             &path,
@@ -530,7 +583,7 @@ mod tests {
         )
         .is_err());
         assert!(apply(
-            &json!({"set": "key", "account": "openrouter", "value": "two words"}),
+            &json!({"set": "key", "account": "openai", "value": "two words"}),
             &path,
             &store,
             true,
@@ -539,16 +592,16 @@ mod tests {
         .is_err());
         assert_eq!(
             apply(
-                &json!({"set": "key", "account": "openrouter", "value": null}),
+                &json!({"set": "key", "account": "openai", "value": null}),
                 &path,
                 &store,
                 false,
                 &local
             )
             .unwrap(),
-            "The OpenRouter key is removed."
+            "The OpenAI key is removed."
         );
-        assert!(!store.has("openrouter"));
+        assert!(!store.has("openai"));
     }
 
     #[test]
@@ -584,7 +637,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("leo/config.toml");
         apply(
-            &json!({"set": "provider", "task": "writing", "value": "gemini"}),
+            &json!({"set": "provider", "task": "writing", "value": "agy"}),
             &path,
             &MemoryStore::default(),
             false,
@@ -593,6 +646,6 @@ mod tests {
         .unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.starts_with("# leo configuration."));
-        assert_eq!(Config::load_from(&path).chat.chain, ["gemini"]);
+        assert_eq!(Config::load_from(&path).chat.chain, ["agy"]);
     }
 }

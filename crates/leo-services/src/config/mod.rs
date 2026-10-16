@@ -89,10 +89,10 @@ impl Config {
 # Keys do NOT belong in this file. Type :settings inside leo and press Enter on
 # the key row, or run `leo doctor`.
 #
-# Type :settings to choose what writes and what listens: this computer (free and
-# private) or OpenAI, Anthropic, Gemini, xAI or OpenRouter with one key, or Claude Code
-# or Codex with the plan you already pay for, and which model each uses. Settings
-# writes these two lines for you.
+# Type :settings to choose writing: Ollama on this computer, or your signed-in
+# Codex, Claude Code, Google Antigravity (AGY), or GitHub Copilot CLI.
+# Speech uses local Parakeet, or OpenAI, Gemini or xAI with a stored key.
+# Settings writes these two lines for you.
 
 [chat]
 chain = [{chat}]
@@ -108,13 +108,11 @@ chain = [{transcribe}]
 #   auto_push = "on_quit"    # off, on_quit, when_idle
 #   idle_secs = 45           # for when_idle: how long the notes must be quiet
 #
-# To add your own provider, or to override one of the above, name it here:
+# To change the Ollama server or writing model, override only those fields:
 #
-#   [providers.my-provider]
-#   kind = "openai"                        # or openai_transcribe
-#   base_url = "https://api.example.com/v1"
-#   model = "some-model-id"
-#   key_env = "EXAMPLE_API_KEY"            # needs a key (store it in :settings); omit for a local server
+#   [providers.ollama]
+#   base_url = "http://localhost:11434/v1"
+#   model = "qwen3:8b"
 "#,
             chat = quoted_list(&DEFAULT_CHAT_CHAIN),
             transcribe = quoted_list(&DEFAULT_TRANSCRIBE_CHAIN),
@@ -174,6 +172,14 @@ model = "claude-sonnet-5-5"
 [providers.codex]
 kind = "codex"
 model = "gpt-6-luna"
+
+[providers.agy]
+kind = "agy"
+model = "default"
+
+[providers.copilot]
+kind = "copilot"
+model = "auto"
 
 [providers.parakeet]
 kind = "parakeet"
@@ -551,7 +557,10 @@ kind = "telepathy"
                     assert!(p.key_from.is_some(), "{name} should share its chat key");
                 }
                 ProviderKind::WhisperCpp => panic!("{name}: no built-in runs an external program"),
-                ProviderKind::ClaudeCode | ProviderKind::Codex => {
+                ProviderKind::ClaudeCode
+                | ProviderKind::Codex
+                | ProviderKind::Agy
+                | ProviderKind::Copilot => {
                     assert!(
                         p.key_env.is_none(),
                         "{name} signs in through its own program"

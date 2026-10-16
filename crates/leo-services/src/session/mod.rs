@@ -179,11 +179,15 @@ pub struct Session {
 pub struct Lock {
     path: PathBuf,
     alive: Arc<AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Drop for Lock {
     fn drop(&mut self) {
         self.alive.store(false, Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
         let _ = std::fs::remove_file(&self.path);
     }
 }
@@ -320,24 +324,49 @@ impl Session {
 
     pub fn lock(&self) -> Result<Lock> {
         let path = self.dir.join("lock");
-        std::fs::write(&path, std::process::id().to_string())?;
+        write_atomic(&path, &std::process::id().to_string())?;
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true).write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+        }
+        let file = options.open(&path)?;
+        anyhow::ensure!(
+            file.metadata()?.is_file(),
+            "the recording lock must be a regular file"
+        );
         let alive = Arc::new(AtomicBool::new(true));
         let beat = Arc::clone(&alive);
-        let target = path.clone();
-        std::thread::spawn(move || {
-            let mut waited = Duration::ZERO;
-            while beat.load(Ordering::Relaxed) {
-                std::thread::sleep(Duration::from_millis(250));
-                waited += Duration::from_millis(250);
-                if waited >= HEARTBEAT {
-                    waited = Duration::ZERO;
-                    if let Ok(file) = std::fs::OpenOptions::new().write(true).open(&target) {
+        let thread = std::thread::Builder::new()
+            .name("leo-session-lock".into())
+            .spawn(move || {
+                let mut waited = Duration::ZERO;
+                while beat.load(Ordering::Relaxed) {
+                    std::thread::sleep(Duration::from_millis(50));
+                    if !beat.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    waited += Duration::from_millis(50);
+                    if waited >= HEARTBEAT {
+                        waited = Duration::ZERO;
                         let _ = file.set_modified(SystemTime::now());
                     }
                 }
+            });
+        let thread = match thread {
+            Ok(thread) => thread,
+            Err(error) => {
+                let _ = std::fs::remove_file(&path);
+                return Err(error).context("the recording heartbeat could not start; close other applications and try again");
             }
-        });
-        Ok(Lock { path, alive })
+        };
+        Ok(Lock {
+            path,
+            alive,
+            thread: Some(thread),
+        })
     }
 
     pub fn unfinished(root: &Path) -> Vec<PathBuf> {
@@ -532,6 +561,29 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let s = Session::create(tmp.path(), Manifest::new(None, None, "", false)).unwrap();
         (s, tmp)
+    }
+
+    #[test]
+    fn dropping_a_recording_lock_stops_its_heartbeat_and_removes_the_file() {
+        let (recording, _dir) = session();
+        let held = recording.lock().unwrap();
+        assert!(recording.dir.join("lock").exists());
+        let start = std::time::Instant::now();
+        drop(held);
+        assert!(start.elapsed() < Duration::from_secs(1));
+        assert!(!recording.dir.join("lock").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_recording_lock_does_not_truncate_a_preexisting_symlink_target() {
+        let (recording, dir) = session();
+        let outside = dir.path().join("outside");
+        std::fs::write(&outside, "keep").unwrap();
+        std::os::unix::fs::symlink(&outside, recording.dir.join("lock")).unwrap();
+        let held = recording.lock().unwrap();
+        assert_eq!(std::fs::read_to_string(&outside).unwrap(), "keep");
+        drop(held);
     }
 
     #[test]

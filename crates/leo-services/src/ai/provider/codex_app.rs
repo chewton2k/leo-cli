@@ -94,10 +94,9 @@ impl CodexThread {
             .spawn()
             .map_err(|e| fail(format!("could not run {}: {e}", agent.bin())))?;
         let stdin = child.stdin.take();
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| fail("could not read codex".into()))?;
+        let stdout = child.stdout.take();
+        let child = Process::new(child);
+        let stdout = stdout.ok_or_else(|| fail("could not read codex".into()))?;
         let (tx, messages) = std::sync::mpsc::sync_channel(QUEUED_MESSAGES);
         std::thread::spawn(move || {
             let mut reader = BufReader::new(stdout);
@@ -120,7 +119,7 @@ impl CodexThread {
         });
         let mut thread = CodexThread {
             name: name.clone(),
-            child: Process::new(child),
+            child,
             stdin,
             messages,
             thread: String::new(),
@@ -268,6 +267,18 @@ impl CodexThread {
     }
 
     pub fn say(&mut self, text: &str, turn: CodexTurn<'_>) -> ProviderResult<(String, Spent)> {
+        for _ in 0..QUEUED_MESSAGES {
+            let Ok(queued) = self.messages.try_recv() else {
+                break;
+            };
+            if queued.is_err() {
+                self.child.stop();
+                return Err(ProviderError::Retryable(format!(
+                    "{}: codex sent unreadable or excessive output. Try a smaller request.",
+                    self.name
+                )));
+            }
+        }
         let watch = Watchdog::start(&self.child, Some(self.quiet), self.total_limit);
         let CodexTurn {
             sink,

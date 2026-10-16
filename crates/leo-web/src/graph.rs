@@ -1278,10 +1278,40 @@ impl Graphs {
             };
         }
         let graphs = Arc::clone(self);
-        std::thread::spawn(move || graphs.run(&sources));
+        if std::thread::Builder::new()
+            .name("leo-graph".into())
+            .spawn(move || graphs.run(&sources))
+            .is_err()
+        {
+            self.set(|job| {
+                job.state = "failed";
+                job.message = Some("Could not start the knowledge graph worker.".to_string());
+            });
+        }
     }
 
     fn run(&self, sources: &[Source]) {
+        struct BuildGuard<'a> {
+            graphs: &'a Graphs,
+            finished: bool,
+        }
+        impl Drop for BuildGuard<'_> {
+            fn drop(&mut self) {
+                if !self.finished {
+                    self.graphs.set(|job| {
+                        job.state = "failed";
+                        job.message = Some(
+                            "The knowledge graph stopped unexpectedly; Update tries again."
+                                .to_string(),
+                        );
+                    });
+                }
+            }
+        }
+        let mut guard = BuildGuard {
+            graphs: self,
+            finished: false,
+        };
         let Some(writer) = self.writer.clone() else {
             return;
         };
@@ -1325,6 +1355,7 @@ impl Graphs {
                 }
             }
         });
+        guard.finished = true;
     }
 }
 

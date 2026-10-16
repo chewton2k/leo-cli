@@ -77,16 +77,27 @@ pub(crate) fn print_qr(link: &str) {
     }
 }
 
-pub(crate) fn keep_awake() -> Option<std::process::Child> {
+pub(crate) struct Awake(std::process::Child);
+
+impl Drop for Awake {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+pub(crate) fn keep_awake() -> Option<Awake> {
     if !cfg!(target_os = "macos") || !leo_core::paths::on_path("caffeinate") {
         return None;
     }
     std::process::Command::new("caffeinate")
         .args(["-i", "-w", &std::process::id().to_string()])
+        .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
         .ok()
+        .map(Awake)
 }
 
 #[cfg(test)]

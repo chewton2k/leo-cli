@@ -7,7 +7,10 @@ use leo_services::config::{self, Config};
 use leo_services::doctor::{self, Probe};
 use leo_services::providers;
 
-pub fn run() -> Result<()> {
+pub fn run(sign_in: Option<String>) -> Result<()> {
+    if let Some(provider) = sign_in {
+        return leo_services::ai::provider::scoped_cli::sign_in(&provider);
+    }
     println!();
     println!("  Checking leo, your notes, the AI, recording and backup.");
     println!("  This sends one small request to each AI in use and listens to the");

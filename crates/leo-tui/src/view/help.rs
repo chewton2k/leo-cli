@@ -284,7 +284,12 @@ pub fn render_help(frame: &mut Frame, area: Rect, scroll: u16) {
 /// A yes/no prompt. Destructive actions route through this rather than acting on
 /// a single key press.
 pub fn render_confirm(frame: &mut Frame, area: Rect, prompt: &str) {
-    let box_area = centered(area, (prompt.len() as u16 + 14).min(area.width), 5);
+    let width = prompt
+        .chars()
+        .count()
+        .saturating_add(14)
+        .min(area.width as usize) as u16;
+    let box_area = centered(area, width, 5);
     frame.render_widget(Clear, box_area);
     frame.render_widget(
         Paragraph::new(vec![

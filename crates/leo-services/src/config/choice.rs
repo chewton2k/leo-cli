@@ -60,21 +60,6 @@ pub const WRITING: &[Choice] = &[
         models: &[],
     },
     Choice {
-        provider: "openai",
-        name: "OpenAI",
-        models: &[
-            m("gpt-5-nano", "$0.05 in, $0.40 out per 1M tokens"),
-            m("gpt-6-luna", "$0.10 in, $0.50 out per 1M tokens"),
-            m("gpt-5.4-nano", "$0.20 in, $1.25 out per 1M tokens"),
-            m("gpt-5-mini", "$0.25 in, $2 out per 1M tokens"),
-            m("gpt-5.4-mini", "$0.75 in, $4.50 out per 1M tokens"),
-            m("gpt-6.1-sol", "$2 in, $10 out per 1M tokens"),
-            m("gpt-5.4", "$2.50 in, $15 out per 1M tokens"),
-            m("gpt-5.5", "$5 in, $30 out per 1M tokens"),
-            m("gpt-6-astra", "$10 in, $50 out per 1M tokens"),
-        ],
-    },
-    Choice {
         provider: "codex",
         name: "Codex",
         models: &[
@@ -82,20 +67,6 @@ pub const WRITING: &[Choice] = &[
             m("gpt-6-sol", "included in your ChatGPT plan"),
             m("gpt-6.1-sol", "included in your ChatGPT plan"),
             m("gpt-6-astra", "included in your ChatGPT plan"),
-        ],
-    },
-    Choice {
-        provider: "anthropic",
-        name: "Anthropic",
-        models: &[
-            m(
-                "claude-haiku-5-5",
-                "$0.10 in, $0.50 out per 1M tokens (more above 100K-token prompts)",
-            ),
-            m("claude-sonnet-5-5", "$2 in, $10 out per 1M tokens"),
-            m("claude-sonnet-5", "$2 in, $10 out per 1M tokens"),
-            m("claude-opus-5-5", "$4 in, $20 out per 1M tokens"),
-            m("claude-opus-5", "$5 in, $25 out per 1M tokens"),
         ],
     },
     Choice {
@@ -112,62 +83,38 @@ pub const WRITING: &[Choice] = &[
         ],
     },
     Choice {
-        provider: "gemini",
-        name: "Gemini",
+        provider: "agy",
+        name: "Google Antigravity",
         models: &[
+            m("default", "included in your Google Antigravity account"),
             m(
-                "gemini-3.1-flash-lite",
-                "free tier, then $0.25 in, $1.50 out per 1M tokens",
+                "gemini-3.8-flash-medium",
+                "included in your Google Antigravity account",
             ),
             m(
-                "gemini-3.5-flash-lite",
-                "free tier, then $0.30 in, $2.50 out per 1M tokens",
+                "gemini-3.8-flash-high",
+                "included in your Google Antigravity account",
             ),
             m(
-                "gemini-3.8-flash",
-                "free tier, then $0.75 in, $3.75 out per 1M tokens",
+                "gemini-4-argon-medium",
+                "included in your Google Antigravity account",
             ),
             m(
-                "gemini-3.5-flash",
-                "free tier, then $1.50 in, $9 out per 1M tokens",
+                "gemini-4-argon-high",
+                "included in your Google Antigravity account",
             ),
-            m("gemini-3.1-pro-preview", "$2 in, $12 out per 1M tokens"),
         ],
     },
     Choice {
-        provider: "xai",
-        name: "xAI",
+        provider: "copilot",
+        name: "GitHub Copilot",
         models: &[
-            m("grok-4.3", "$1.25 in, $2.50 out per 1M tokens"),
-            m("grok-4.5", "$2 in, $6 out per 1M tokens"),
-            m("grok-4.6", "$2 in, $6 out per 1M tokens"),
-            m("grok-4.7", "$2 in, $6 out per 1M tokens"),
-        ],
-    },
-    Choice {
-        provider: "openrouter",
-        name: "OpenRouter",
-        models: &[
-            m("openrouter/free", "free, with daily limits"),
-            m("qwen/qwen3.8-27b:free", "free, with daily limits"),
-            m("google/gemma-4-31b-it:free", "free, with daily limits"),
-            m(
-                "nvidia/nemotron-3-super-120b-a12b:free",
-                "free, with daily limits",
-            ),
-            m(
-                "deepseek/deepseek-v4-flash",
-                "$0.08 in, $0.16 out per 1M tokens",
-            ),
-            m("openai/gpt-6-luna", "$0.10 in, $0.50 out per 1M tokens"),
-            m(
-                "google/gemini-3.1-flash-lite",
-                "$0.25 in, $1.50 out per 1M tokens",
-            ),
-            m(
-                "anthropic/claude-sonnet-5.5",
-                "$2 in, $10 out per 1M tokens",
-            ),
+            m("auto", "included in your GitHub Copilot plan"),
+            m("claude-haiku-5.5", "included in your GitHub Copilot plan"),
+            m("claude-sonnet-5.5", "included in your GitHub Copilot plan"),
+            m("claude-opus-5.5", "included in your GitHub Copilot plan"),
+            m("gpt-5.4", "included in your GitHub Copilot plan"),
+            m("gemini-3.8-flash", "included in your GitHub Copilot plan"),
         ],
     },
 ];
@@ -373,6 +320,8 @@ pub fn efforts(provider: &str, model: &str) -> &'static [&'static str] {
     let model = model.to_ascii_lowercase();
     match provider {
         "claude_code" | "codex" => &["low", "medium", "high", "xhigh"],
+        "agy" => &["low", "medium", "high"],
+        "copilot" => &["low", "medium", "high", "xhigh", "max"],
         "anthropic"
             if model.starts_with("claude-") && !model.contains("-4-5") && !model.contains("-3") =>
         {
@@ -534,7 +483,13 @@ mod tests {
             assert!(
                 matches!(
                     pc.kind,
-                    Some(ProviderKind::Openai | ProviderKind::ClaudeCode | ProviderKind::Codex)
+                    Some(
+                        ProviderKind::Openai
+                            | ProviderKind::ClaudeCode
+                            | ProviderKind::Codex
+                            | ProviderKind::Agy
+                            | ProviderKind::Copilot
+                    )
                 ),
                 "{}",
                 choice.provider
@@ -605,8 +560,8 @@ mod tests {
             }
         }
         assert_eq!(
-            priced(Task::Chat, "anthropic", "claude-opus-5-5"),
-            "claude-opus-5-5 ($4 in, $20 out per 1M tokens)"
+            priced(Task::Chat, "codex", "gpt-6-luna"),
+            "gpt-6-luna (included in your ChatGPT plan)"
         );
         assert_eq!(priced(Task::Chat, "ollama", "qwen3:8b"), "qwen3:8b (free)");
         assert_eq!(priced(Task::Chat, "mine", "house"), "house");
@@ -617,30 +572,26 @@ mod tests {
     }
 
     #[test]
-    fn cheap_and_free_cloud_models_are_offered() {
-        let ids = |p: &str| -> Vec<&str> {
-            find(Task::Chat, p)
-                .unwrap()
-                .models
-                .iter()
-                .map(|m| m.id)
-                .collect()
-        };
-        for cheap in ["gpt-5-nano", "gpt-6-luna", "gpt-5-mini", "gpt-5.4-mini"] {
-            assert!(ids("openai").contains(&cheap), "{cheap}");
-        }
-        assert!(ids("gemini").contains(&"gemini-3.1-flash-lite"));
-        assert!(find(Task::Chat, "gemini")
-            .unwrap()
-            .models
-            .iter()
-            .any(|m| m.price.starts_with("free tier")));
+    fn writing_choices_are_local_or_signed_in_agents_and_speech_keeps_its_keys() {
         assert_eq!(
-            Config::built_in_provider("openai")
-                .unwrap()
-                .model
-                .as_deref(),
-            Some("gpt-6-luna")
+            WRITING.iter().map(|c| c.provider).collect::<Vec<_>>(),
+            ["ollama", "codex", "claude_code", "agy", "copilot"]
+        );
+        assert_eq!(
+            SPEECH.iter().map(|c| c.provider).collect::<Vec<_>>(),
+            ["parakeet", "openai_whisper", "gemini_speech", "xai_speech"]
+        );
+        for retired in ["openai", "anthropic", "openrouter", "gemini", "xai"] {
+            assert!(find(Task::Chat, retired).is_none());
+        }
+        assert_eq!(efforts("agy", "default"), ["low", "medium", "high"]);
+        assert_eq!(
+            efforts("copilot", "auto"),
+            ["low", "medium", "high", "xhigh", "max"]
+        );
+        assert_eq!(
+            effort_for("copilot", "auto", Some("max")).as_deref(),
+            Some("max")
         );
     }
 
@@ -681,16 +632,14 @@ mod tests {
     }
 
     #[test]
-    fn the_anthropic_models_the_user_asked_for_are_offered() {
-        let anthropic = find(Task::Chat, "anthropic").unwrap();
-        for model in [
-            "claude-haiku-5-5",
-            "claude-sonnet-5-5",
-            "claude-opus-5-5",
-            "claude-sonnet-5",
-            "claude-opus-5",
+    fn the_new_agents_offer_defaults_and_explicit_models() {
+        for (provider, default, explicit) in [
+            ("agy", "default", "gemini-4-argon-high"),
+            ("copilot", "auto", "claude-sonnet-5.5"),
         ] {
-            assert!(anthropic.models.iter().any(|m| m.id == model), "{model}");
+            let choice = find(Task::Chat, provider).unwrap();
+            assert_eq!(choice.models[0].id, default);
+            assert!(choice.models.iter().any(|m| m.id == explicit));
         }
     }
 
@@ -711,13 +660,10 @@ mod tests {
             step_choice(Task::Chat, Some("openrouter"), 1).provider,
             "ollama"
         );
-        assert_eq!(
-            step_choice(Task::Chat, Some("ollama"), 1).provider,
-            "openai"
-        );
+        assert_eq!(step_choice(Task::Chat, Some("ollama"), 1).provider, "codex");
         assert_eq!(
             step_choice(Task::Chat, Some("ollama"), -1).provider,
-            "openrouter"
+            "copilot"
         );
         assert_eq!(
             step_choice(Task::Transcribe, Some("xai_speech"), 1).provider,
@@ -728,10 +674,10 @@ mod tests {
     #[test]
     fn choosing_a_provider_makes_it_the_whole_chain() {
         let mut doc = Config::default_toml().parse::<DocumentMut>().unwrap();
-        write_choice(&mut doc, Task::Chat, "anthropic");
+        write_choice(&mut doc, Task::Chat, "agy");
         write_choice(&mut doc, Task::Transcribe, "gemini_speech");
         let cfg = load(&doc.to_string());
-        assert_eq!(cfg.chat.chain, vec!["anthropic"]);
+        assert_eq!(cfg.chat.chain, vec!["agy"]);
         assert_eq!(cfg.transcribe.chain, vec!["gemini_speech"]);
         assert!(doc.to_string().contains("Keys do NOT belong"));
     }
@@ -803,7 +749,7 @@ mod tests {
     }
 
     #[test]
-    fn model_options_are_local_lists_for_local_choices_and_curated_for_cloud() {
+    fn model_options_are_local_lists_for_local_choices_and_curated_for_agents() {
         let local = Local {
             ollama_running: true,
             ollama: vec!["qwen3:8b".to_string()],
@@ -815,36 +761,44 @@ mod tests {
         );
         assert!(model_options(Task::Transcribe, "parakeet", &local).is_empty());
         assert_eq!(
-            model_options(Task::Chat, "openai", &local)
+            model_options(Task::Chat, "agy", &local)
                 .first()
                 .map(String::as_str),
-            Some("gpt-5-nano")
+            Some("default")
         );
         assert!(model_options(Task::Chat, "mine", &local).is_empty());
+        for retired in ["openai", "anthropic", "openrouter", "gemini", "xai"] {
+            assert!(model_options(Task::Chat, retired, &local).is_empty());
+        }
         assert_eq!(
-            model_options(Task::Chat, "openrouter", &local)
+            model_options(Task::Chat, "copilot", &local)
                 .first()
                 .map(String::as_str),
-            Some("openrouter/free")
+            Some("auto")
         );
     }
 
     #[test]
     fn the_selection_is_the_first_usable_provider_else_the_first_named() {
         let store = MemoryStore::default();
-        let cfg = load("[chat]\nchain = [\"anthropic\", \"openai\"]\n[transcribe]\nchain = []\n");
+        let dir = tempfile::tempdir().unwrap();
+        let claude = dir.path().join("missing-claude");
+        let codex = dir.path().join("fake-codex");
+        let mut cfg =
+            load("[chat]\nchain = [\"claude_code\", \"codex\"]\n[transcribe]\nchain = []\n");
+        cfg.providers.get_mut("claude_code").unwrap().bin = Some(claude.display().to_string());
+        cfg.providers.get_mut("codex").unwrap().bin = Some(codex.display().to_string());
         let sel = selection(&cfg, &store, Task::Chat).unwrap();
-        assert_eq!(sel.provider, "anthropic");
+        assert_eq!(sel.provider, "claude_code");
         assert!(!sel.ready);
         assert_eq!(sel.model.as_deref(), Some("claude-sonnet-5-5"));
-        assert_eq!(sel.choice.map(|c| c.name), Some("Anthropic"));
+        assert_eq!(sel.choice.map(|c| c.name), Some("Claude Code"));
 
-        store.set("openai", "k").unwrap();
+        std::fs::write(&codex, "fixture, never executed").unwrap();
         let sel = selection(&cfg, &store, Task::Chat).unwrap();
-        if std::env::var("ANTHROPIC_API_KEY").is_err() {
-            assert_eq!(sel.provider, "openai");
-            assert!(sel.ready);
-        }
+        assert_eq!(sel.provider, "codex");
+        assert!(sel.ready);
+        assert_eq!(sel.choice.map(|c| c.name), Some("Codex"));
         assert!(selection(&cfg, &store, Task::Transcribe).is_none());
     }
 

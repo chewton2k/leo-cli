@@ -225,6 +225,16 @@ impl App {
             return Ok(true);
         }
 
+        if self
+            .jobs
+            .asking
+            .as_ref()
+            .is_some_and(|ask| ask.job.is_done())
+        {
+            self.jobs.asking = None;
+            self.say(Kind::Bad, "The answer stopped unexpectedly.");
+        }
+
         Ok(true)
     }
 
@@ -266,16 +276,14 @@ impl App {
     }
 
     pub(super) fn pump_tasks<B: TuiBackend>(&mut self, terminal: &mut Terminal<B>) -> Result<bool> {
-        if self.pump_ask(terminal)? {
-            return Ok(true);
-        }
+        let asked = self.pump_ask(terminal)?;
         let Some(rec) = self.jobs.recording.as_mut() else {
-            return Ok(false);
+            return Ok(asked);
         };
 
         let events = rec.job.drain();
         if events.is_empty() && !rec.job.is_done() {
-            return Ok(false);
+            return Ok(asked);
         }
 
         let mut finished: Option<(String, Option<std::path::PathBuf>)> = None;

@@ -78,7 +78,8 @@ pub(crate) async fn insert_into_note(
     let request = body
         .request
         .filter(|r| !r.is_empty() && r.len() <= MOST_REQUEST);
-    if let Some(found) = request.as_deref().and_then(|r| remembered(&id, r)) {
+    let key = format!("{id}\u{0}{}", body.base);
+    if let Some(found) = request.as_deref().and_then(|r| remembered(&key, r)) {
         return Json(found).into_response();
     }
     let note_id = id.clone();
@@ -103,7 +104,7 @@ pub(crate) async fn insert_into_note(
         Ok(applied) => {
             let value = serde_json::json!(applied);
             if let Some(request) = request.as_deref() {
-                remember(&id, request, &value);
+                remember(&key, request, &value);
             }
             Json(value).into_response()
         }

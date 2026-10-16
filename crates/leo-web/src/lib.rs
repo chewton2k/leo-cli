@@ -509,9 +509,6 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
         meaning,
         vectors,
     };
-    tokio::spawn(keep_graph_current(state.clone()));
-    tokio::spawn(stop_idle_sessions(Arc::clone(&state.warm)));
-    let app = router(state);
 
     let tunnel = if !options.local {
         println!();
@@ -597,16 +594,38 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
     println!();
     open_on_enter(here);
 
+    struct Background {
+        graph: tokio::task::JoinHandle<()>,
+        idle: tokio::task::JoinHandle<()>,
+        warm: Arc<warm::Slot>,
+    }
+    impl Drop for Background {
+        fn drop(&mut self) {
+            self.graph.abort();
+            self.idle.abort();
+            self.warm.clear();
+        }
+    }
+    let background = Background {
+        graph: tokio::spawn(keep_graph_current(state.clone())),
+        idle: tokio::spawn(stop_idle_sessions(Arc::clone(&state.warm))),
+        warm: Arc::clone(&state.warm),
+    };
+    let app = router(state);
     let _awake = keep_awake();
-    axum::serve(
+    let served = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
     .with_graceful_shutdown(async {
         let _ = tokio::signal::ctrl_c().await;
     })
-    .await?;
-    drop(tunnel);
+    .await;
+    drop(background);
+    if let Some(tunnel) = tunnel {
+        tunnel.stop().await;
+    }
+    served?;
     Ok(())
 }
 

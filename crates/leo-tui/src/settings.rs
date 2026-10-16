@@ -7,6 +7,8 @@
 use anyhow::Result;
 
 use crate::view::settings::{Credential, Row, SettingAction};
+use leo_services::ai::provider::agent_cli::AgentCli;
+use leo_services::ai::provider::ChatProvider;
 use leo_services::config::choice::{self, Local};
 use leo_services::config::edit::{self, Task};
 use leo_services::config::secret::SecretStore;
@@ -133,11 +135,19 @@ fn ai_rows(
     }
     if let Some(agent) = leo_services::ai::provider::agent_cli::Agent::of(pc) {
         let bin = pc.bin.as_deref().unwrap_or(agent.program());
-        let value = if leo_services::ai::provider::agent_cli::locate(bin).is_some() {
+        let located = leo_services::ai::provider::agent_cli::locate(bin).is_some();
+        let installed = AgentCli::new(sel.provider.clone(), agent, pc).available();
+        let value = if installed {
             format!(
                 "uses {}, no key; if asked, {}",
                 agent.plan(),
                 agent.sign_in()
+            )
+        } else if located {
+            format!(
+                "`{bin}` cannot provide the safety controls Leo needs. Update {} and try again: {}",
+                chosen.name,
+                agent.install()
             )
         } else {
             format!("`{bin}` is not installed: {}", agent.install())
@@ -556,24 +566,37 @@ mod tests {
     }
 
     #[test]
-    fn the_simple_page_offers_a_provider_a_model_and_a_key_for_each_task() {
+    fn antigravity_and_copilot_offer_effort_without_a_key() {
+        for (provider, model) in [("agy", "default"), ("copilot", "auto")] {
+            let rows = simple_page(&format!("[chat]\nchain = [\"{provider}\"]\n[providers.{provider}]\nbin = \"leo-no-such-{provider}\"\nmodel = \"{model}\"\neffort = \"high\"\n[transcribe]\nchain = []\n"),
+                &MemoryStore::default(), &Local::default());
+            let effort = row(&rows, "writing effort").unwrap();
+            assert_eq!(
+                (effort.1.as_str(), effort.2.as_str()),
+                ("high", "ChooseEffort")
+            );
+            assert!(!rows.iter().any(|(label, _, _)| label.ends_with(" key")));
+        }
+    }
+
+    #[test]
+    fn the_simple_page_offers_a_signed_in_writer_and_a_key_for_cloud_speech() {
         use super::*;
         let store = MemoryStore::default();
         store.set("openai", "k").unwrap();
         let rows = simple_page(
-            "[chat]\nchain = [\"anthropic\"]\n[transcribe]\nchain = [\"openai_whisper\"]\n",
+            "[chat]\nchain = [\"codex\"]\n[providers.codex]\nbin = \"leo-no-such-codex\"\n[transcribe]\nchain = [\"openai_whisper\"]\n",
             &store,
             &Local::default(),
         );
         let writing = row(&rows, "writing").unwrap();
-        assert_eq!(writing.1, "○ Anthropic");
+        assert_eq!(writing.1, "○ Codex");
         assert_eq!(writing.2, "ChooseProvider(Chat)");
         let model = row(&rows, "writing model").unwrap();
-        assert_eq!(model.1, "claude-sonnet-5-5 ($2 in, $10 out per 1M tokens)");
+        assert_eq!(model.1, "gpt-6-luna (included in your ChatGPT plan)");
         assert_eq!(model.2, "ChooseModel(Chat)");
-        let key = row(&rows, "Anthropic key").unwrap();
-        assert_eq!(key.2, "StoreKey { name: \"anthropic\" }");
-        assert!(key.1.starts_with("none — Enter to add one"), "{}", key.1);
+        assert!(row(&rows, "Codex key").is_none());
+        assert_eq!(row(&rows, "Codex sign-in").unwrap().2, "Fact");
         assert_eq!(row(&rows, "speech").unwrap().1, "● OpenAI");
         assert_eq!(
             row(&rows, "speech model").unwrap().1,
@@ -600,6 +623,18 @@ mod tests {
                 "gpt-6-luna (included in your ChatGPT plan)",
                 "leo-no-such-codex",
             ),
+            (
+                "agy",
+                "Google Antigravity",
+                "default (included in your Google Antigravity account)",
+                "leo-no-such-agy",
+            ),
+            (
+                "copilot",
+                "GitHub Copilot",
+                "auto (included in your GitHub Copilot plan)",
+                "leo-no-such-copilot",
+            ),
         ] {
             let rows = simple_page(
                 &format!(
@@ -622,6 +657,27 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn an_unsupported_program_named_copilot_is_not_presented_as_signed_in() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("copilot");
+        std::fs::write(
+            &bin,
+            "#!/bin/sh\nprintf '%s\\n' 'AWS Copilot CLI: deploy applications to Amazon ECS'\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let rows = simple_page(&format!("[chat]\nchain = [\"copilot\"]\n[providers.copilot]\nbin = {:?}\n[transcribe]\nchain = []\n", bin.display().to_string()),
+            &MemoryStore::default(), &Local::default());
+        assert_eq!(row(&rows, "writing").unwrap().1, "○ GitHub Copilot");
+        let sign_in = row(&rows, "GitHub Copilot sign-in").unwrap();
+        assert!(sign_in.1.contains("safety controls"));
+        assert!(!sign_in.1.contains("uses your GitHub Copilot plan"));
+        assert_eq!(sign_in.2, "Fact");
+    }
+
     #[test]
     fn a_coding_plan_shows_its_latest_limits_next_to_its_name() {
         use super::*;
@@ -639,7 +695,7 @@ mod tests {
         let mut usage = leo_services::usage::Seen::new();
         usage.insert("claude_code".to_string(), seen(0.45, 0.9));
         usage.insert("codex".to_string(), seen(0.02, 0.47));
-        usage.insert("openai".to_string(), seen(0.5, 0.5));
+        usage.insert("ollama".to_string(), seen(0.5, 0.5));
         let page = |chain: &str| {
             simple_page_with(
                 &format!("[chat]\nchain = [\"{chain}\"]\n[transcribe]\nchain = []\n"),
@@ -658,35 +714,36 @@ mod tests {
             .unwrap()
             .1
             .ends_with("Codex (5h: 2%, 7d: 47%)"));
-        let rows = page("openai");
-        assert!(row(&rows, "writing").unwrap().1.ends_with("OpenAI"));
+        let rows = page("ollama");
+        assert!(row(&rows, "writing").unwrap().1.ends_with("(Ollama)"));
+        assert!(!row(&rows, "writing").unwrap().1.contains("5h:"));
     }
 
     #[test]
-    fn a_key_in_the_environment_is_never_used_and_the_row_says_so() {
+    fn a_speech_key_in_the_environment_is_never_used_and_the_row_says_so() {
         use super::*;
-        let config = "[chat]\nchain = [\"openrouter\"]\n[transcribe]\nchain = []\n";
-        std::env::set_var("OPENROUTER_API_KEY", "sk-from-a-shell-profile");
+        let config = "[chat]\nchain = [\"ollama\"]\n[transcribe]\nchain = [\"openai_whisper\"]\n[providers.openai_whisper]\nkey_env = \"LEO_TEST_SPEECH_API_KEY\"\n";
+        std::env::set_var("LEO_TEST_SPEECH_API_KEY", "sk-from-a-shell-profile");
         let rows = simple_page(config, &MemoryStore::default(), &Local::default());
         let store = MemoryStore::default();
-        store.set("openrouter", "k").unwrap();
+        store.set("openai", "k").unwrap();
         let stored = simple_page(config, &store, &Local::default());
-        std::env::remove_var("OPENROUTER_API_KEY");
-        let key = row(&rows, "OpenRouter key").unwrap();
+        std::env::remove_var("LEO_TEST_SPEECH_API_KEY");
+        let key = row(&rows, "OpenAI key").unwrap();
         assert_eq!(
             key.1,
-            "none — Enter to add one (leo does not read $OPENROUTER_API_KEY)"
+            "none — Enter to add one (leo does not read $LEO_TEST_SPEECH_API_KEY)"
         );
-        assert!(row(&rows, "writing").unwrap().1.starts_with('○'));
-        assert_eq!(row(&stored, "OpenRouter key").unwrap().1, "stored");
-        assert!(row(&stored, "writing").unwrap().1.starts_with('●'));
+        assert!(row(&rows, "speech").unwrap().1.starts_with('○'));
+        assert_eq!(row(&stored, "OpenAI key").unwrap().1, "stored");
+        assert!(row(&stored, "speech").unwrap().1.starts_with('●'));
     }
 
     #[test]
-    fn one_cloud_for_both_tasks_asks_for_its_key_once() {
+    fn a_signed_in_writer_and_cloud_speech_only_ask_for_the_speech_key() {
         use super::*;
         let rows = simple_page(
-            "[chat]\nchain = [\"gemini\"]\n[transcribe]\nchain = [\"gemini_speech\"]\n",
+            "[chat]\nchain = [\"agy\"]\n[providers.agy]\nbin = \"leo-no-such-agy\"\n[transcribe]\nchain = [\"gemini_speech\"]\n",
             &MemoryStore::default(),
             &Local::default(),
         );
