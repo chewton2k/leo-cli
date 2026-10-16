@@ -1,12 +1,13 @@
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufReader, Write};
 use std::process::{Command, Stdio};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
+use super::process::{self, Process, Watchdog, MOST_OUTPUT, QUEUED_MESSAGES};
 use crate::ai::error::{ProviderError, ProviderResult};
-use crate::ai::provider::agent_cli::{codex_disables, locate, stop_all, AgentCli, TOTAL_LIMIT};
+use crate::ai::provider::agent_cli::{codex_disables, codex_native_isolated, locate, AgentCli};
 use crate::ai::provider::{Sink, Spent};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -18,12 +19,13 @@ pub struct Tokens {
 
 pub struct CodexThread {
     name: String,
-    child: std::process::Child,
+    child: Process,
     stdin: Option<std::process::ChildStdin>,
-    messages: Receiver<Value>,
+    messages: Receiver<std::io::Result<Value>>,
     thread: String,
     next: u64,
     quiet: Duration,
+    total_limit: Duration,
     model: Option<String>,
     effort: Option<String>,
     total: Tokens,
@@ -72,10 +74,13 @@ impl CodexThread {
         let fail = |what: String| ProviderError::Retryable(format!("{name}: {what}"));
         let program =
             locate(agent.bin()).ok_or_else(|| fail(format!("{} is not installed", agent.bin())))?;
+        if !codex_native_isolated(&program) {
+            return Err(fail("this Codex version cannot isolate native sessions; leo will use its isolated text tools instead".into()));
+        }
         let room = agent.room()?;
         let mut command = Command::new(&program);
-        command.arg("app-server");
-        for feature in codex_disables(&program) {
+        command.args(["app-server", "--ignore-user-config", "--ignore-rules"]);
+        for feature in codex_disables(&program)? {
             command.args(["-c", &format!("features.{feature}=false")]);
         }
         command
@@ -93,11 +98,21 @@ impl CodexThread {
             .stdout
             .take()
             .ok_or_else(|| fail("could not read codex".into()))?;
-        let (tx, messages) = std::sync::mpsc::channel();
+        let (tx, messages) = std::sync::mpsc::sync_channel(QUEUED_MESSAGES);
         std::thread::spawn(move || {
-            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-                if let Ok(message) = serde_json::from_str::<Value>(&line) {
-                    if tx.send(message).is_err() {
+            let mut reader = BufReader::new(stdout);
+            loop {
+                match process::line(&mut reader) {
+                    Ok(Some(line)) => {
+                        if let Ok(message) = serde_json::from_str::<Value>(&line) {
+                            if tx.send(Ok(message)).is_err() {
+                                break;
+                            }
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(e) => {
+                        let _ = tx.send(Err(e));
                         break;
                     }
                 }
@@ -105,12 +120,13 @@ impl CodexThread {
         });
         let mut thread = CodexThread {
             name: name.clone(),
-            child,
+            child: Process::new(child),
             stdin,
             messages,
             thread: String::new(),
             next: 1,
             quiet: agent.quiet_limit(),
+            total_limit: agent.total_limit(),
             model: agent.model().map(str::to_string),
             effort: agent.effort().map(str::to_string),
             total: Tokens::default(),
@@ -167,13 +183,27 @@ impl CodexThread {
     }
 
     fn next_message(&mut self, until: Instant) -> ProviderResult<Value> {
+        if Instant::now() >= until {
+            self.child.stop();
+            return Err(ProviderError::Retryable(format!(
+                "{}: codex stopped answering and was stopped",
+                self.name
+            )));
+        }
         let wait = self
             .quiet
             .min(until.saturating_duration_since(Instant::now()));
         match self.messages.recv_timeout(wait) {
-            Ok(message) => Ok(message),
+            Ok(Ok(message)) => Ok(message),
+            Ok(Err(_)) => {
+                self.child.stop();
+                Err(ProviderError::Retryable(format!(
+                    "{}: codex sent unreadable or excessive output. Try a smaller request.",
+                    self.name
+                )))
+            }
             Err(RecvTimeoutError::Timeout) => {
-                stop_all(&mut self.child);
+                self.child.stop();
                 Err(ProviderError::Retryable(format!(
                     "{}: codex stopped answering and was stopped",
                     self.name
@@ -187,12 +217,23 @@ impl CodexThread {
     }
 
     fn request(&mut self, method: &str, params: Value) -> ProviderResult<Value> {
+        let watch = Watchdog::start(&self.child, Some(self.quiet), self.total_limit);
         let id = self.next;
         self.next += 1;
         self.send(json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }))?;
-        let until = Instant::now() + TOTAL_LIMIT;
+        let until = Instant::now() + self.total_limit;
+        let mut bytes = 0usize;
         loop {
             let message = self.next_message(until)?;
+            watch.touch();
+            bytes = bytes.saturating_add(message.to_string().len());
+            if bytes > MOST_OUTPUT {
+                self.child.stop();
+                return Err(ProviderError::Retryable(format!(
+                    "{}: codex sent too much output. Try a smaller request.",
+                    self.name
+                )));
+            }
             if message["id"] == id && message.get("method").is_none() {
                 if let Some(error) = message.get("error") {
                     return Err(ProviderError::Retryable(format!(
@@ -227,6 +268,7 @@ impl CodexThread {
     }
 
     pub fn say(&mut self, text: &str, turn: CodexTurn<'_>) -> ProviderResult<(String, Spent)> {
+        let watch = Watchdog::start(&self.child, Some(self.quiet), self.total_limit);
         let CodexTurn {
             sink,
             restart,
@@ -243,10 +285,20 @@ impl CodexThread {
         }
         self.send(json!({ "jsonrpc": "2.0", "id": id, "method": "turn/start", "params": params }))?;
         let before = self.total.clone();
-        let until = Instant::now() + TOTAL_LIMIT;
+        let until = Instant::now() + self.total_limit;
         let mut answer = String::new();
+        let mut bytes = 0usize;
         loop {
             let message = self.next_message(until)?;
+            watch.touch();
+            bytes = bytes.saturating_add(message.to_string().len());
+            if bytes > MOST_OUTPUT {
+                self.child.stop();
+                return Err(ProviderError::Retryable(format!(
+                    "{}: codex sent too much output. Try a smaller request.",
+                    self.name
+                )));
+            }
             if message["id"] == id && message.get("method").is_none() {
                 if let Some(error) = message.get("error") {
                     return Err(ProviderError::Retryable(format!(
@@ -291,7 +343,7 @@ impl CodexThread {
                             .as_str()
                             .or_else(|| params["message"].as_str())
                             .unwrap_or("unknown error")
-                    )))
+                    )));
                 }
                 "turn/completed" if params["threadId"] == self.thread.as_str() => {
                     if let Some(error) = params["turn"]["error"]["message"].as_str() {
@@ -337,8 +389,7 @@ impl CodexThread {
 impl Drop for CodexThread {
     fn drop(&mut self) {
         self.stdin.take();
-        stop_all(&mut self.child);
-        let _ = self.child.wait();
+        self.child.stop();
     }
 }
 
@@ -354,7 +405,9 @@ mod tests {
         let path = dir.join("codex");
         let body = format!(
             r##"#!/bin/sh
-if [ "$1" = "features" ]; then exit 0; fi
+if [ "$1" = "features" ]; then echo 'shell_tool stable true'; exit 0; fi
+if [ "$2" = "--help" ]; then echo '--ignore-user-config --ignore-rules'; exit 0; fi
+printf '%s\n' "$@" > "{log}.args"
 while IFS= read -r line; do
   echo "$line" >> "{log}"
   case "$line" in
@@ -444,6 +497,9 @@ done
             (Some("gpt-6.1-sol"), Some("high"), 1200, 50, false)
         );
         let sent = std::fs::read_to_string(dir.path().join("sent.log")).unwrap();
+        let args = std::fs::read_to_string(dir.path().join("sent.log.args")).unwrap();
+        assert!(args.lines().any(|a| a == "--ignore-user-config"));
+        assert!(args.lines().any(|a| a == "--ignore-rules"));
         let lines: Vec<Value> = sent
             .lines()
             .map(|l| serde_json::from_str(l).unwrap())
@@ -468,6 +524,24 @@ done
         );
         let approval = lines.iter().find(|l| l["id"] == 91).unwrap();
         assert_eq!(approval["result"]["decision"], "decline");
+    }
+
+    #[test]
+    fn a_native_cli_without_config_isolation_never_starts_a_session() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::TempDir::new().unwrap();
+        let bin = dir.path().join("codex");
+        let marker = dir.path().join("unsafe-native-started");
+        std::fs::write(&bin, format!("#!/bin/sh\nif [ \"$2\" = --help ]; then echo 'Usage: codex app-server'; exit 0; fi\ntouch '{}'\n", marker.display())).unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let cfg = ProviderConfig {
+            kind: Some(ProviderKind::Codex),
+            bin: Some(bin.to_string_lossy().into_owned()),
+            ..ProviderConfig::default()
+        };
+        let agent = AgentCli::new("codex".into(), Agent::Codex, &cfg);
+        assert!(CodexThread::start(&agent, "Use interpretable language.", &[]).is_err());
+        assert!(!marker.exists());
     }
 
     #[test]

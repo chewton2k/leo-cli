@@ -1,9 +1,10 @@
+use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Sender};
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::mpsc::{self, Sender, SyncSender};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
@@ -12,9 +13,16 @@ const MOST_HEADERS: usize = 32 * 1024;
 const MOST_BODY: usize = 8 * 1024 * 1024;
 const CALL_LIMIT: Duration = Duration::from_secs(15 * 60);
 const IDLE: Duration = Duration::from_secs(20 * 60);
+const MOST_CONNECTIONS: usize = 8;
+const MOST_REQUESTS: usize = 1024;
+const MOST_BATCH: usize = 32;
+const WRITE_LIMIT: Duration = Duration::from_secs(5);
+const STOP_POLL: Duration = Duration::from_millis(50);
+const WAKE_LIMIT: Duration = Duration::from_millis(250);
 
 pub enum Incoming {
     Line(String),
+    Failed,
     Call {
         name: String,
         args: Value,
@@ -33,10 +41,69 @@ pub struct Bridge {
     pub url: String,
     stop: Arc<AtomicBool>,
     port: u16,
+    connections: Arc<Connections>,
+}
+
+#[derive(Default)]
+struct Connections {
+    sockets: Mutex<BTreeMap<usize, TcpStream>>,
+    active: AtomicUsize,
+}
+
+struct Connection {
+    id: usize,
+    connections: Arc<Connections>,
+}
+
+impl Connections {
+    fn register(self: &Arc<Self>, stream: &TcpStream, stopped: &AtomicBool) -> Option<Connection> {
+        let mut socket = Some(stream.try_clone().ok()?);
+        let id = {
+            let mut sockets = self.sockets.lock().ok()?;
+            if stopped.load(Ordering::SeqCst) {
+                None
+            } else {
+                let id = (0..MOST_CONNECTIONS).find(|id| !sockets.contains_key(id));
+                if let Some(id) = id {
+                    sockets.insert(id, socket.take()?);
+                    self.active.fetch_add(1, Ordering::SeqCst);
+                }
+                id
+            }
+        };
+        Some(Connection {
+            id: id?,
+            connections: Arc::clone(self),
+        })
+    }
+
+    fn close(&self) {
+        let sockets = self
+            .sockets
+            .lock()
+            .map(|mut sockets| std::mem::take(&mut *sockets))
+            .unwrap_or_default();
+        for stream in sockets.into_values() {
+            let _ = stream.shutdown(Shutdown::Both);
+        }
+    }
+}
+
+impl Drop for Connection {
+    fn drop(&mut self) {
+        let socket = self
+            .connections
+            .sockets
+            .lock()
+            .ok()
+            .and_then(|mut sockets| sockets.remove(&self.id));
+        drop(socket);
+        self.connections.active.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 impl Bridge {
-    pub fn start(tools: Vec<Tool>, to: Sender<Incoming>) -> std::io::Result<Bridge> {
+    pub fn start(tools: Vec<Tool>, to: SyncSender<Incoming>) -> std::io::Result<Bridge> {
         let listener = TcpListener::bind(("127.0.0.1", 0))?;
         let port = listener.local_addr()?.port();
         let secret = format!(
@@ -46,12 +113,15 @@ impl Bridge {
         );
         let path = format!("/mcp/{secret}");
         let stop = Arc::new(AtomicBool::new(false));
+        let connections = Arc::new(Connections::default());
         let served = Served {
             path: path.clone(),
             tools: Arc::new(tools),
             to,
+            stopped: Arc::clone(&stop),
         };
         let stopped = Arc::clone(&stop);
+        let clients = Arc::clone(&connections);
         std::thread::Builder::new()
             .name("leo-mcp".into())
             .spawn(move || {
@@ -64,17 +134,24 @@ impl Bridge {
                         let _ = stream.shutdown(Shutdown::Both);
                         continue;
                     }
+                    let Some(connection) = clients.register(&stream, &stopped) else {
+                        let _ = stream.shutdown(Shutdown::Both);
+                        continue;
+                    };
                     let served = served.clone();
-                    let stopped = Arc::clone(&stopped);
                     let _ = std::thread::Builder::new()
                         .name("leo-mcp-conn".into())
-                        .spawn(move || served.connection(stream, &stopped));
+                        .spawn(move || {
+                            let _connection = connection;
+                            served.connection(stream);
+                        });
                 }
             })?;
         Ok(Bridge {
             url: format!("http://127.0.0.1:{port}{path}"),
             stop,
             port,
+            connections,
         })
     }
 
@@ -86,7 +163,9 @@ impl Bridge {
 impl Drop for Bridge {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
-        let _ = TcpStream::connect(("127.0.0.1", self.port));
+        self.connections.close();
+        let address = std::net::SocketAddr::from(([127, 0, 0, 1], self.port));
+        let _ = TcpStream::connect_timeout(&address, WAKE_LIMIT);
     }
 }
 
@@ -94,7 +173,8 @@ impl Drop for Bridge {
 struct Served {
     path: String,
     tools: Arc<Vec<Tool>>,
-    to: Sender<Incoming>,
+    to: SyncSender<Incoming>,
+    stopped: Arc<AtomicBool>,
 }
 
 struct Request {
@@ -176,13 +256,17 @@ fn respond(stream: &mut TcpStream, status: &str, body: Option<&Value>) -> std::i
 }
 
 impl Served {
-    fn connection(&self, stream: TcpStream, stopped: &AtomicBool) {
+    fn connection(&self, stream: TcpStream) {
         let _ = stream.set_read_timeout(Some(IDLE));
+        let _ = stream.set_write_timeout(Some(WRITE_LIMIT));
         let Ok(mut writer) = stream.try_clone() else {
             return;
         };
         let mut reader = BufReader::new(stream);
-        while !stopped.load(Ordering::SeqCst) {
+        for _ in 0..MOST_REQUESTS {
+            if self.stopped.load(Ordering::SeqCst) {
+                return;
+            }
             let Some(request) = read_request(&mut reader) else {
                 return;
             };
@@ -193,6 +277,10 @@ impl Served {
             } else {
                 match serde_json::from_slice::<Value>(&request.body) {
                     Ok(Value::Array(batch)) => {
+                        if batch.len() > MOST_BATCH {
+                            let _ = respond(&mut writer, "413 Content Too Large", None);
+                            return;
+                        }
                         let answers: Vec<Value> =
                             batch.iter().filter_map(|m| self.answer(m)).collect();
                         if answers.is_empty() {
@@ -262,8 +350,11 @@ impl Served {
     }
 
     fn call(&self, name: &str, args: Value) -> String {
+        if self.stopped.load(Ordering::SeqCst) {
+            return "That did not work: this answer has already finished.".into();
+        }
         let (reply, answer) = mpsc::channel();
-        let asked = self.to.send(Incoming::Call {
+        let asked = self.to.try_send(Incoming::Call {
             name: name.to_string(),
             args,
             reply,
@@ -271,9 +362,22 @@ impl Served {
         if asked.is_err() {
             return "That did not work: this answer has already finished.".into();
         }
-        answer
-            .recv_timeout(CALL_LIMIT)
-            .unwrap_or_else(|_| "That did not work: leo could not run the tool in time.".into())
+        let until = Instant::now() + CALL_LIMIT;
+        loop {
+            if self.stopped.load(Ordering::SeqCst) {
+                return "That did not work: this answer has already finished.".into();
+            }
+            let Some(remaining) = until.checked_duration_since(Instant::now()) else {
+                return "That did not work: leo could not run the tool in time.".into();
+            };
+            match answer.recv_timeout(remaining.min(STOP_POLL)) {
+                Ok(answer) => return answer,
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return "That did not work: this answer has already finished.".into();
+                }
+            }
+        }
     }
 }
 
@@ -304,7 +408,7 @@ mod tests {
     }
 
     fn bridge() -> (Bridge, mpsc::Receiver<Incoming>) {
-        let (to, from) = mpsc::channel();
+        let (to, from) = mpsc::sync_channel(super::super::process::QUEUED_MESSAGES);
         let tools = vec![Tool {
             name: "search_notes".into(),
             description: "Search the notes".into(),
@@ -345,7 +449,7 @@ mod tests {
             Incoming::Call { name, args, reply } => {
                 reply.send(format!("{name}: {}", args["query"])).unwrap();
             }
-            Incoming::Line(_) => panic!("expected a call"),
+            Incoming::Line(_) | Incoming::Failed => panic!("expected a call"),
         });
         let url = bridge.url.clone();
         let (_, body) = post(
@@ -376,5 +480,105 @@ mod tests {
         assert!(post(&bridge.url, &list, true).0.contains("404"));
         assert!(post(&bridge.url, &list, false).0.contains("200"));
         assert!(bridge.config().contains(&bridge.url));
+    }
+
+    fn address(bridge: &Bridge) -> String {
+        bridge
+            .url
+            .trim_start_matches("http://")
+            .split('/')
+            .next()
+            .unwrap()
+            .to_string()
+    }
+
+    fn wait_for(mut ready: impl FnMut() -> bool) {
+        let until = Instant::now() + Duration::from_secs(2);
+        while !ready() {
+            assert!(
+                Instant::now() < until,
+                "the bridge did not release its connection workers"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn assert_closed(stream: &mut TcpStream) {
+        stream
+            .set_read_timeout(Some(Duration::from_millis(500)))
+            .unwrap();
+        let mut byte = [0];
+        match stream.read(&mut byte) {
+            Ok(0) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::ConnectionReset
+                        | std::io::ErrorKind::ConnectionAborted
+                        | std::io::ErrorKind::NotConnected
+                        | std::io::ErrorKind::BrokenPipe
+                ) => {}
+            result => panic!("the bridge left a connection open: {result:?}"),
+        }
+    }
+
+    #[test]
+    fn idle_connections_are_capped_and_drop_closes_every_worker() {
+        let (bridge, _from) = bridge();
+        let connections = Arc::clone(&bridge.connections);
+        let address = address(&bridge);
+        let mut streams: Vec<TcpStream> = (0..MOST_CONNECTIONS)
+            .map(|_| TcpStream::connect(&address).unwrap())
+            .collect();
+        wait_for(|| connections.active.load(Ordering::SeqCst) == MOST_CONNECTIONS);
+        let mut overflow = TcpStream::connect(&address).unwrap();
+        assert_closed(&mut overflow);
+        assert_eq!(connections.active.load(Ordering::SeqCst), MOST_CONNECTIONS);
+        drop(bridge);
+        for stream in &mut streams {
+            assert_closed(stream);
+        }
+        wait_for(|| connections.active.load(Ordering::SeqCst) == 0);
+    }
+
+    #[test]
+    fn dropping_a_bridge_cancels_a_tool_wait_without_waiting_for_its_reply() {
+        let (bridge, from) = bridge();
+        let connections = Arc::clone(&bridge.connections);
+        let mut stream = TcpStream::connect(address(&bridge)).unwrap();
+        let path = bridge
+            .url
+            .trim_start_matches("http://")
+            .split_once('/')
+            .unwrap()
+            .1;
+        let body = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "search_notes", "arguments": { "query": "fixture" } } }).to_string();
+        write!(
+            stream,
+            "POST /{path} HTTP/1.1\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
+        let pending_reply = match from.recv_timeout(Duration::from_secs(2)).unwrap() {
+            Incoming::Call { reply, .. } => reply,
+            _ => panic!("expected a pending tool call"),
+        };
+        drop(bridge);
+        assert_closed(&mut stream);
+        wait_for(|| connections.active.load(Ordering::SeqCst) == 0);
+        assert!(pending_reply.send("too late".into()).is_err());
+    }
+
+    #[test]
+    fn excessive_batches_are_rejected_before_any_tool_runs() {
+        let (bridge, from) = bridge();
+        let call = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "search_notes", "arguments": {} } });
+        let (status, _) = post(
+            &bridge.url,
+            &Value::Array(vec![call; MOST_BATCH + 1]),
+            false,
+        );
+        assert!(status.contains("413"));
+        assert!(from.try_recv().is_err());
     }
 }

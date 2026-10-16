@@ -21,6 +21,7 @@ cpal.workspace = true
 dirs.workspace = true
 keyring.workspace = true
 reqwest.workspace = true
+tokio.workspace = true
 roxmltree.workspace = true
 quick-xml.workspace = true
 rpassword.workspace = true

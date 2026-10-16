@@ -444,7 +444,7 @@ works (plan: `.superpowers/plans/2026-10-12-interview-instant-feedback.md`):
   (POST `coverage`) says which criteria a draft covers, never judging them.
 - Running code: `/runner.html` + `/runner.js` (public, CSP `RUNNER_POLICY`:
   sandbox allow-scripts, opaque origin, so requests carry no leo cookies) start
-  a blob Worker per JavaScript run and one warm Worker for Python, so an
+  a fresh blob Worker per JavaScript or Python run, so an
   endless loop is stopped by `terminate` without freezing the page (a
   sandboxed frame can share the page's thread). Python is Pyodide 0.28.3,
   fetched once on first use (`leo_services::pyodide`, SHA-256 pinned, about
@@ -717,6 +717,29 @@ and its search results display titles only, with no response preview or tooltip.
 
 Runner workers share startWorker: each temporary script Blob URL is revoked on
 the first worker message/error, termination (including timeout), or constructor
-failure. Program workers still terminate after each run, while one compiler or
-Python worker remains warm for reuse. Revoking the URL frees its Blob reference
-without evicting the warm runtime; repeated runs must retain no script URLs.
+failure. Program workers, including Python, terminate after each run; compiler
+workers stay warm. Revoking the URL frees its Blob reference; repeated runs must
+retain no script URLs.
+
+### Security and cleanup boundaries (2026-10-16)
+
+Sign-in files use unique synced 0600 temporary files and atomic replacement;
+loading rejects symbolic/hard links, nonregular files and oversized data, and
+repairs existing permissions. Session persistence failures refuse authentication.
+Original attachments and standalone tasks check every component inside their data
+root, use nofollow regular-file reads and atomic writes, and refuse symbolic links.
+Legacy task migration removes only rows whose matching task was safely retained.
+
+The code runner serializes at most four page jobs, rejects overlapping iframe
+execution, validates bounded result schemas and cleans up startup listeners/timers
+on every exit. Python workers are fresh and terminated after every reply, including
+forged replies; compiler workers intentionally remain reusable. Browser workers
+provide interruption, not a hard RAM quota. Background recording waveform queues
+remain bounded even when the recording page is closed.
+
+Imports admit two active jobs and two body readers, cap uploads at 20 files/90 MB,
+expire incoming bodies after 30 seconds and retain at most 40 job summaries.
+Detached store checks retain their own admission permits through completion.
+Original bytes stage in private temporary files instead of a second full RAM copy.
+Exports bound traversal, input size and simultaneous builds/streams; owned temporary
+paths and admission permits are released when a stream ends or its client leaves.

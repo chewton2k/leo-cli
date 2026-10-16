@@ -1128,7 +1128,93 @@ async function loadInterviewKey(session, force = false) {
   } catch (e) { if (e instanceof Locked) throw e; }
 }
 
-const runner = { frame: null, ready: null, cppWarm: false, clangBundle: '', goWarm: false, javaWarm: false, rustWarm: false };
+const MOST_RUNNER_JOBS = 4;
+const MOST_RUNNER_RESULTS = 20;
+const MOST_RUNNER_LOGS = 40;
+const MOST_RUNNER_DIAGNOSTICS = 50;
+const MOST_RUNNER_VALUES = 100000;
+const MOST_RUNNER_DEPTH = 64;
+const MOST_RUNNER_OUTPUT = 2300000;
+const runner = { frame: null, ready: null, queue: Promise.resolve(), queued: 0, cppWarm: false, clangBundle: '', goWarm: false, javaWarm: false, rustWarm: false };
+
+function runnerResult(result, job) {
+  const failed = () => ({ error: 'The program returned an unreadable or oversized result. Check its return value and reduce printed output, then try Run again.', results: [], logs: [] });
+  const record = (value) => value !== null && typeof value === 'object' && Object.prototype.toString.call(value) === '[object Object]';
+  let size = 0, values = 0;
+  const text = (value) => typeof value === 'string' && (size += value.length) <= MOST_RUNNER_OUTPUT;
+  const active = new WeakSet();
+  const plain = (value, depth = 0) => {
+    if (++values > MOST_RUNNER_VALUES || depth > MOST_RUNNER_DEPTH) return false;
+    if (value === null || typeof value === 'boolean') return true;
+    if (typeof value === 'number') return Number.isFinite(value);
+    if (typeof value === 'string') return text(value);
+    if ((!Array.isArray(value) && !record(value)) || active.has(value)) return false;
+    active.add(value);
+    if (Array.isArray(value)) {
+      if (value.length > MOST_RUNNER_VALUES) return false;
+      for (const item of value) if (!plain(item, depth + 1)) return false;
+    } else {
+      for (const key in value) if (!Object.hasOwn(value, key) || !text(key) || !plain(value[key], depth + 1)) return false;
+    }
+    active.delete(value);
+    return true;
+  };
+  if (!record(result)) return failed();
+  const out = { results: [], logs: [] };
+  let payload = false;
+  for (const field of ['error', 'stdout', 'stderr', 'compile']) {
+    if (result[field] === undefined) continue;
+    if (!text(result[field])) return failed();
+    out[field] = result[field];
+    payload = true;
+  }
+  for (const field of ['missing', 'stopped']) {
+    if (result[field] === undefined) continue;
+    if (typeof result[field] !== 'boolean') return failed();
+    out[field] = result[field];
+    payload ||= result[field];
+  }
+  if (result.results !== undefined) {
+    if (!Array.isArray(result.results) || result.results.length > MOST_RUNNER_RESULTS) return failed();
+    const ids = new Set(), expected = new Set((job.tests || []).map((test) => test.id));
+    for (const row of result.results) {
+      if (!record(row) || !text(row.id) || !row.id || ids.has(row.id) || !expected.has(row.id)) return failed();
+      ids.add(row.id);
+      const item = { id: row.id };
+      if (row.error !== undefined) {
+        if (!text(row.error)) return failed();
+        item.error = row.error;
+      }
+      if (Object.hasOwn(row, 'got')) {
+        if (!plain(row.got)) return failed();
+        item.got = row.got;
+      } else if (!item.error) return failed();
+      if (row.ms !== undefined) {
+        if (typeof row.ms !== 'number' || !Number.isFinite(row.ms) || row.ms < 0) return failed();
+        item.ms = row.ms;
+      }
+      out.results.push(item);
+    }
+    payload = true;
+  }
+  if (result.logs !== undefined) {
+    if (!Array.isArray(result.logs) || result.logs.length > MOST_RUNNER_LOGS) return failed();
+    for (const line of result.logs) {
+      if (!text(line)) return failed();
+      out.logs.push(line);
+    }
+  }
+  if (result.diagnostics !== undefined) {
+    if (!Array.isArray(result.diagnostics) || result.diagnostics.length > MOST_RUNNER_DIAGNOSTICS) return failed();
+    out.diagnostics = [];
+    for (const row of result.diagnostics) {
+      if (!record(row) || !text(row.severity) || !text(row.message) || !Number.isSafeInteger(row.lineNumber)) return failed();
+      out.diagnostics.push({ severity: row.severity, message: row.message, lineNumber: row.lineNumber });
+    }
+    payload = true;
+  }
+  return payload ? out : failed();
+}
 
 function runnerFrame() {
   if (runner.frame?.isConnected && runner.ready) return runner.ready;
@@ -1142,11 +1228,22 @@ function runnerFrame() {
   frame.title = 'Code runner';
   runner.frame = frame;
   runner.ready = new Promise((resolve) => {
+    const finish = (ready) => {
+      clearTimeout(timer);
+      window.removeEventListener('message', heard);
+      frame.onerror = null;
+      if (!ready) {
+        frame.remove();
+        if (runner.frame === frame) { runner.frame = null; runner.ready = null; }
+      }
+      resolve(ready ? frame : null);
+    };
     const heard = (e) => {
       if (e.source !== frame.contentWindow || e.data?.kind !== 'ready') return;
-      window.removeEventListener('message', heard);
-      resolve(frame);
+      finish(true);
     };
+    const timer = setTimeout(() => finish(false), 10000);
+    frame.onerror = () => finish(false);
     window.addEventListener('message', heard);
   });
   frame.src = '/runner.html';
@@ -1154,17 +1251,28 @@ function runnerFrame() {
   return runner.ready;
 }
 
-async function runInSandbox(job, onProgress = null, transfer = []) {
+function runInSandbox(job, onProgress = null, transfer = []) {
+  if (runner.queued >= MOST_RUNNER_JOBS) return Promise.resolve({ error: 'Several code runs are waiting. Let them finish, then try Run again.', results: [], logs: [] });
+  runner.queued++;
+  const result = runner.queue.then(() => runSandboxJob(job, onProgress, transfer));
+  runner.queue = result.catch(() => {});
+  return result.finally(() => { runner.queued--; });
+}
+
+async function runSandboxJob(job, onProgress, transfer) {
   const limit = job.language === 'python' ? 75000 : ['cpp', 'go', 'java', 'rust'].includes(job.language) ? 270000 : 15000;
-  const frame = await Promise.race([runnerFrame(), new Promise((resolve) => setTimeout(() => resolve(null), 10000))]);
-  if (!frame) { runner.frame?.remove(); runner.frame = null; runner.ready = null; return { error: 'The code runner did not start. Try Run again.', results: [], logs: [] }; }
+  const frame = await runnerFrame();
+  if (!frame) return { error: 'The code runner did not start. Try Run again.', results: [], logs: [] };
   return new Promise((resolve) => {
     const run = felix.newId();
     let timer = 0;
+    let finished = false;
     const finish = (result) => {
+      if (finished) return;
+      finished = true;
       clearTimeout(timer);
       window.removeEventListener('message', heard);
-      resolve(result);
+      resolve(runnerResult(result, job));
     };
     const heard = (e) => {
       if (e.source !== frame.contentWindow || e.data?.run !== run) return;
@@ -1173,7 +1281,11 @@ async function runInSandbox(job, onProgress = null, transfer = []) {
     };
     window.addEventListener('message', heard);
     timer = setTimeout(() => { frame.remove(); runner.frame = null; runner.ready = null; finish({ error: 'The code runner did not answer. Try Run again.', results: [], logs: [] }); }, limit);
-    frame.contentWindow.postMessage({ ...job, kind: 'run', run, base: `${location.origin}/` }, '*', transfer);
+    try {
+      frame.contentWindow.postMessage({ ...job, kind: 'run', run, base: `${location.origin}/` }, '*', transfer);
+    } catch (_) {
+      finish({ error: 'The code runner could not receive this program. Try Run again.', results: [], logs: [] });
+    }
   });
 }
 

@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -118,36 +119,54 @@ impl Sessions {
         }
     }
 
-    pub fn load(path: &Path) -> Sessions {
-        let list: Vec<Session> = std::fs::read_to_string(path)
-            .ok()
-            .and_then(|text| serde_json::from_str(&text).ok())
-            .unwrap_or_default();
-        Sessions {
+    pub fn load(path: &Path) -> Result<Sessions> {
+        let mut list: Vec<Session> = match token::read_private(path).with_context(|| {
+            format!(
+                "could not safely read {}; check its permissions",
+                path.display()
+            )
+        })? {
+            Some(text) => serde_json::from_str(&text).with_context(|| {
+                format!(
+                    "{} is damaged; remove it to sign browsers in again",
+                    path.display()
+                )
+            })?,
+            None => Vec::new(),
+        };
+        list.sort_by_key(|s| std::cmp::Reverse(s.last_seen));
+        list.truncate(MOST);
+        Ok(Sessions {
             path: Some(path.to_path_buf()),
             list: Mutex::new(list),
-        }
+        })
     }
 
-    fn save(&self, list: &[Session]) {
+    fn save(&self, list: &[Session]) -> Result<()> {
         let Some(path) = &self.path else {
-            return;
+            return Ok(());
         };
-        if let Ok(text) = serde_json::to_string_pretty(list) {
-            let _ = token::write_private(path, &text);
-        }
+        let text = serde_json::to_string_pretty(list)?;
+        token::write_private(path, &text).with_context(|| {
+            format!(
+                "could not safely save {}; check its permissions",
+                path.display()
+            )
+        })
     }
 
-    fn change<R>(&self, work: impl FnOnce(&mut Vec<Session>) -> (R, bool)) -> R {
+    fn change<R>(&self, work: impl FnOnce(&mut Vec<Session>) -> (R, bool)) -> Result<R> {
         let mut list = self.list.lock().unwrap_or_else(|e| e.into_inner());
-        let (out, changed) = work(&mut list);
+        let mut updated = list.clone();
+        let (out, changed) = work(&mut updated);
         if changed {
-            self.save(&list);
+            self.save(&updated)?;
+            *list = updated;
         }
-        out
+        Ok(out)
     }
 
-    pub fn start(&self, user_agent: &str, site: &str, now: DateTime<Utc>) -> String {
+    pub fn start(&self, user_agent: &str, site: &str, now: DateTime<Utc>) -> Result<String> {
         let secret = format!(
             "{}{}",
             uuid::Uuid::new_v4().simple(),
@@ -166,8 +185,8 @@ impl Sessions {
             list.sort_by_key(|s| std::cmp::Reverse(s.last_seen));
             list.truncate(MOST);
             ((), true)
-        });
-        secret
+        })?;
+        Ok(secret)
     }
 
     pub fn check(&self, secret: &str, now: DateTime<Utc>) -> bool {
@@ -185,6 +204,7 @@ impl Sessions {
             }
             (true, stale)
         })
+        .unwrap_or(false)
     }
 
     pub fn list(&self, current: Option<&str>, now: DateTime<Utc>) -> Vec<Seen> {
@@ -209,7 +229,7 @@ impl Sessions {
         out
     }
 
-    pub fn end(&self, handle: &str) -> bool {
+    pub fn end(&self, handle: &str) -> Result<bool> {
         self.change(|list| {
             let before = list.len();
             list.retain(|s| handle_of(&s.secret) != handle);
@@ -218,7 +238,7 @@ impl Sessions {
         })
     }
 
-    pub fn end_others(&self, current: &str) -> usize {
+    pub fn end_others(&self, current: &str) -> Result<usize> {
         self.change(|list| {
             let before = list.len();
             list.retain(|s| token::same(&s.secret, current));
@@ -227,7 +247,7 @@ impl Sessions {
         })
     }
 
-    pub fn retire_links(&self, current: Option<&str>) -> usize {
+    pub fn retire_links(&self, current: Option<&str>) -> Result<usize> {
         let current = current.map(site_of);
         self.change(|list| {
             let before = list.len();
@@ -239,7 +259,7 @@ impl Sessions {
         })
     }
 
-    pub fn end_all(&self) -> usize {
+    pub fn end_all(&self) -> Result<usize> {
         self.change(|list| {
             let gone = list.len();
             list.clear();
@@ -321,16 +341,18 @@ mod tests {
     fn each_browser_gets_its_own_session_and_one_can_be_signed_out() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("serve-sessions.json");
-        let sessions = Sessions::load(&path);
+        let sessions = Sessions::load(&path).unwrap();
         let phone = sessions.start(
             "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Version/18.0 Mobile/15E148 Safari/604.1", "127.0.0.1:8742",
             at(0),
-        );
-        let laptop = sessions.start(
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/130.0 Safari/537.36",
-            "127.0.0.1:8742",
-            at(1),
-        );
+        ).unwrap();
+        let laptop = sessions
+            .start(
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/130.0 Safari/537.36",
+                "127.0.0.1:8742",
+                at(1),
+            )
+            .unwrap();
         assert_ne!(phone, laptop);
         assert_eq!(phone.len(), 64);
         assert!(sessions.check(&phone, at(2)));
@@ -348,11 +370,11 @@ mod tests {
             "secrets never leave"
         );
 
-        assert!(sessions.end(&seen[1].handle));
+        assert!(sessions.end(&seen[1].handle).unwrap());
         assert!(!sessions.check(&phone, at(4)));
         assert!(sessions.check(&laptop, at(4)));
 
-        let again = Sessions::load(&path);
+        let again = Sessions::load(&path).unwrap();
         assert!(again.check(&laptop, at(5)), "sessions survive a restart");
         assert!(!again.check(&phone, at(5)));
     }
@@ -360,9 +382,11 @@ mod tests {
     #[test]
     fn signing_out_the_others_keeps_this_browser_and_old_sessions_expire() {
         let sessions = Sessions::in_memory();
-        let mine = sessions.start("Firefox/131.0 (Windows NT 10.0)", "127.0.0.1:8742", at(0));
-        let other = sessions.start("", "127.0.0.1:8742", at(0));
-        assert_eq!(sessions.end_others(&mine), 1);
+        let mine = sessions
+            .start("Firefox/131.0 (Windows NT 10.0)", "127.0.0.1:8742", at(0))
+            .unwrap();
+        let other = sessions.start("", "127.0.0.1:8742", at(0)).unwrap();
+        assert_eq!(sessions.end_others(&mine).unwrap(), 1);
         assert!(!sessions.check(&other, at(1)));
         assert!(sessions.check(&mine, at(1)));
         let month = KEEP_DAYS * 24 * 60;
@@ -370,8 +394,8 @@ mod tests {
             !sessions.check(&mine, at(month + 10)),
             "a session unused for a month expires"
         );
-        let a = sessions.start("", "127.0.0.1:8742", at(0));
-        assert_eq!(sessions.end_all(), 1);
+        let a = sessions.start("", "127.0.0.1:8742", at(0)).unwrap();
+        assert_eq!(sessions.end_all().unwrap(), 1);
         assert!(!sessions.check(&a, at(1)));
     }
 
@@ -379,8 +403,8 @@ mod tests {
     fn last_seen_is_written_at_most_every_few_minutes() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("s.json");
-        let sessions = Sessions::load(&path);
-        let id = sessions.start("", "127.0.0.1:8742", at(0));
+        let sessions = Sessions::load(&path).unwrap();
+        let id = sessions.start("", "127.0.0.1:8742", at(0)).unwrap();
         let written = std::fs::metadata(&path).unwrap().modified().unwrap();
         std::thread::sleep(std::time::Duration::from_millis(20));
         assert!(sessions.check(&id, at(1)));
@@ -390,6 +414,61 @@ mod tests {
         );
         assert!(sessions.check(&id, at(6)));
         assert_eq!(sessions.list(None, at(6))[0].last_seen, at(6));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn existing_session_files_are_private_on_load_and_after_a_change() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("serve-sessions.json");
+        std::fs::write(&path, "[]").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let sessions = Sessions::load(&path).unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let secret = sessions.start("", "localhost", at(0)).unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert!(Sessions::load(&path).unwrap().check(&secret, at(1)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unsafe_session_paths_cannot_load_start_or_refresh_a_sign_in() {
+        use std::os::unix::fs::symlink;
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("serve-sessions.json");
+        let sessions = Sessions::load(&path).unwrap();
+        let secret = sessions.start("", "localhost", at(0)).unwrap();
+        let target = tmp.path().join("example-file");
+        std::fs::write(&target, "[]").unwrap();
+        std::fs::remove_file(&path).unwrap();
+        symlink(&target, &path).unwrap();
+        assert!(Sessions::load(&path).is_err());
+        assert!(sessions.start("", "localhost", at(1)).is_err());
+        assert_eq!(sessions.list(None, at(1)).len(), 1);
+        assert!(!sessions.check(&secret, at(6)));
+        assert!(sessions.end(&handle_of(&secret)).is_err());
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "[]");
+    }
+
+    #[test]
+    fn oversized_or_damaged_session_files_fail_closed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("serve-sessions.json");
+        for text in [
+            "broken".to_string(),
+            " ".repeat(token::AUTH_BYTES as usize + 1),
+        ] {
+            std::fs::write(&path, text).unwrap();
+            assert!(Sessions::load(&path).is_err());
+        }
     }
 
     #[test]
@@ -430,18 +509,26 @@ mod tests {
     #[test]
     fn a_session_says_where_it_signed_in_and_old_links_are_retired() {
         let sessions = Sessions::in_memory();
-        let here = sessions.start(
-            "Chrome/130.0 (Macintosh; Mac OS X)",
-            "127.0.0.1:8742",
-            at(0),
-        );
-        let wifi = sessions.start("(iPhone) Safari/604.1", "192.168.1.20:8742", at(0));
-        sessions.start(
-            "(iPhone) Safari/604.1",
-            "old-words.trycloudflare.com",
-            at(0),
-        );
-        sessions.start("(iPad) Safari/604.1", "new-words.trycloudflare.com", at(0));
+        let here = sessions
+            .start(
+                "Chrome/130.0 (Macintosh; Mac OS X)",
+                "127.0.0.1:8742",
+                at(0),
+            )
+            .unwrap();
+        let wifi = sessions
+            .start("(iPhone) Safari/604.1", "192.168.1.20:8742", at(0))
+            .unwrap();
+        sessions
+            .start(
+                "(iPhone) Safari/604.1",
+                "old-words.trycloudflare.com",
+                at(0),
+            )
+            .unwrap();
+        sessions
+            .start("(iPad) Safari/604.1", "new-words.trycloudflare.com", at(0))
+            .unwrap();
         let places: Vec<String> = sessions
             .list(Some(&here), at(1))
             .into_iter()
@@ -451,12 +538,14 @@ mod tests {
         assert!(places.contains(&"on your Wi-Fi".to_string()));
         assert!(places.contains(&"through the link from any network".to_string()));
         assert_eq!(
-            sessions.retire_links(Some("new-words.trycloudflare.com")),
+            sessions
+                .retire_links(Some("new-words.trycloudflare.com"))
+                .unwrap(),
             1
         );
         assert_eq!(sessions.list(None, at(1)).len(), 3);
         assert_eq!(
-            sessions.retire_links(None),
+            sessions.retire_links(None).unwrap(),
             1,
             "without a link, no link session can be used"
         );

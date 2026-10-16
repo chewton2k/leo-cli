@@ -423,12 +423,47 @@ pub fn tasks_dir(chats: &Path) -> std::path::PathBuf {
 
 const MOST_FILE_BYTES: u64 = 256 * 1024;
 
-fn read_file(path: &Path) -> Option<Task> {
+fn checked_dir(chats: &Path) -> anyhow::Result<std::path::PathBuf> {
+    leo_core::paths::contained_path(
+        chats.parent().unwrap_or(chats),
+        Path::new("notes/.leo/tasks"),
+    )
+}
+
+fn task_path(chats: &Path, name: &str) -> anyhow::Result<std::path::PathBuf> {
+    let dir = checked_dir(chats)?;
+    leo_core::paths::contained_path(&dir, Path::new(name))
+}
+
+fn read_file(chats: &Path, path: &Path) -> Option<Task> {
+    use std::io::Read;
+    let checked = task_path(chats, path.file_name()?.to_str()?).ok()?;
+    if checked != path {
+        return None;
+    }
+
     let meta = std::fs::symlink_metadata(path).ok()?;
     if !meta.is_file() || meta.len() > MOST_FILE_BYTES {
         return None;
     }
-    let text = std::fs::read_to_string(path).ok()?;
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let file = options.open(path).ok()?;
+    if !file.metadata().ok()?.is_file() {
+        return None;
+    }
+    let mut text = String::new();
+    file.take(MOST_FILE_BYTES + 1)
+        .read_to_string(&mut text)
+        .ok()?;
+    if text.len() as u64 > MOST_FILE_BYTES {
+        return None;
+    }
     text.lines()
         .filter_map(|line| serde_json::from_str::<Task>(line.trim()).ok())
         .max_by_key(|t| t.updated_at)
@@ -436,17 +471,26 @@ fn read_file(path: &Path) -> Option<Task> {
 
 fn write_file(chats: &Path, task: &Task) -> anyhow::Result<()> {
     anyhow::ensure!(valid_id(&task.id), "that task id is not valid");
-    let dir = tasks_dir(chats);
+    use std::io::Write;
+    let dir = checked_dir(chats)?;
     std::fs::create_dir_all(&dir)?;
     let line = serde_json::to_string(task)? + "\n";
-    let path = dir.join(format!("{}.json", task.id));
-    let temp = dir.join(format!(".{}.{}.tmp", task.id, std::process::id()));
-    std::fs::write(&temp, line)?;
-    std::fs::rename(&temp, &path)?;
+    anyhow::ensure!(
+        line.len() as u64 <= MOST_FILE_BYTES,
+        "That task is too large. Shorten its details and try again."
+    );
+    let path = task_path(chats, &format!("{}.json", task.id))?;
+    let mut temp = tempfile::NamedTempFile::new_in(&dir)?;
+    temp.write_all(line.as_bytes())?;
+    temp.as_file().sync_all()?;
+    temp.persist(&path).map_err(|e| e.error)?;
     Ok(())
 }
 
 fn migrate(chats: &Path) {
+    if checked_dir(chats).is_err() {
+        return;
+    }
     let db = db_of(chats);
     let old: Vec<String> = db
         .with(|c| {
@@ -458,20 +502,44 @@ fn migrate(chats: &Path) {
     if old.is_empty() {
         return;
     }
+    let mut migrated = Vec::new();
     for text in &old {
-        if let Ok(task) = serde_json::from_str::<Task>(text) {
-            let path = tasks_dir(chats).join(format!("{}.json", task.id));
-            if valid_id(&task.id) && !path.exists() && write_file(chats, &task).is_err() {
-                return;
-            }
+        let Ok(task) = serde_json::from_str::<Task>(text) else {
+            continue;
+        };
+        if !valid_id(&task.id) {
+            continue;
         }
+        let Ok(path) = task_path(chats, &format!("{}.json", task.id)) else {
+            continue;
+        };
+        if path.exists() {
+            if !read_file(chats, &path).is_some_and(|found| found.id == task.id) {
+                continue;
+            }
+        } else if write_file(chats, &task).is_err() {
+            continue;
+        }
+        migrated.push((task.id, text));
     }
-    let _ = db.with(|c| c.execute("DELETE FROM tasks", []));
+    let _ = db.with(|c| -> rusqlite::Result<()> {
+        let tx = c.transaction()?;
+        for (id, data) in migrated {
+            tx.execute(
+                "DELETE FROM tasks WHERE id = ?1 AND data = ?2",
+                rusqlite::params![id, data],
+            )?;
+        }
+        tx.commit()
+    });
 }
 
 fn read_all(chats: &Path) -> Vec<Task> {
     migrate(chats);
-    let Ok(entries) = std::fs::read_dir(tasks_dir(chats)) else {
+    let Ok(dir) = checked_dir(chats) else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
     let mut out: Vec<Task> = entries
@@ -481,7 +549,7 @@ fn read_all(chats: &Path) -> Vec<Task> {
             !name.starts_with('.') && name.ends_with(".json")
         })
         .take(MOST_TASKS * 2)
-        .filter_map(|e| read_file(&e.path()))
+        .filter_map(|e| read_file(chats, &e.path()))
         .filter(|t| valid_id(&t.id))
         .collect();
     out.sort_by_key(|t| std::cmp::Reverse(t.updated_at));
@@ -496,7 +564,7 @@ pub fn erase_deleted(chats: &Path) -> anyhow::Result<usize> {
     let mut gone = 0;
     for task in read_all(chats).into_iter().filter(|t| t.deleted) {
         let path = tasks_dir(chats).join(format!("{}.json", task.id));
-        if read_file(&path).is_some_and(|t| t.deleted && t.updated_at == task.updated_at) {
+        if read_file(chats, &path).is_some_and(|t| t.deleted && t.updated_at == task.updated_at) {
             std::fs::remove_file(path).map_err(|_| anyhow::anyhow!("A deleted task file could not be erased. Check that Leo can write to its notes folder, then try again."))?;
             gone += 1;
         }
@@ -517,7 +585,8 @@ pub fn load(chats: &Path, id: &str) -> Option<Task> {
         return None;
     }
     migrate(chats);
-    read_file(&tasks_dir(chats).join(format!("{id}.json"))).filter(|t| !t.deleted && t.id == id)
+    read_file(chats, &tasks_dir(chats).join(format!("{id}.json")))
+        .filter(|t| !t.deleted && t.id == id)
 }
 
 pub fn count(chats: &Path) -> usize {
@@ -756,6 +825,46 @@ mod tests {
     }
 
     #[test]
+    fn migration_keeps_legacy_tasks_when_existing_files_cannot_be_read() {
+        for corrupt in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let chats = dir.path().join("chats");
+            let task = plain("task-0009", "Keep this", Utc::now());
+            db_of(&chats)
+                .with(|c| {
+                    c.execute(
+                        "INSERT INTO tasks (id, updated, data) VALUES (?1, ?2, ?3)",
+                        rusqlite::params![
+                            task.id,
+                            task.updated_at.to_rfc3339(),
+                            serde_json::to_string(&task).unwrap()
+                        ],
+                    )
+                })
+                .unwrap();
+            let folder = tasks_dir(&chats);
+            std::fs::create_dir_all(&folder).unwrap();
+            let path = folder.join("task-0009.json");
+            if corrupt {
+                std::fs::write(&path, "broken").unwrap();
+            } else {
+                std::fs::create_dir(&path).unwrap();
+            }
+            migrate(&chats);
+            let count: usize = db_of(&chats)
+                .with(|c| c.query_row("SELECT count(*) FROM tasks", [], |r| r.get(0)))
+                .unwrap();
+            assert_eq!(count, 1);
+            if corrupt {
+                std::fs::remove_file(path).unwrap();
+            } else {
+                std::fs::remove_dir(path).unwrap();
+            }
+            assert_eq!(load(&chats, &task.id), Some(task));
+        }
+    }
+
+    #[test]
     fn tasks_kept_in_the_database_move_into_files_once() {
         let dir = tempfile::tempdir().unwrap();
         let chats = dir.path().join("chats");
@@ -799,5 +908,58 @@ mod tests {
             rrule_of(&[0, 4]).as_deref(),
             Some("RRULE:FREQ=WEEKLY;BYDAY=MO,FR")
         );
+    }
+}
+
+#[cfg(all(test, unix))]
+mod file_boundaries {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    #[test]
+    fn tasks_never_read_write_or_erase_through_linked_directories_or_files() {
+        for segment in ["notes", "notes/.leo", "notes/.leo/tasks"] {
+            let dir = tempfile::tempdir().unwrap();
+            let outside = tempfile::tempdir().unwrap();
+            let chats = dir.path().join("chats");
+            let link = dir.path().join(segment);
+            std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+            symlink(outside.path(), &link).unwrap();
+            let task: Task = serde_json::from_value(serde_json::json!({"id":"task-safe-01","title":"Keep inside","created_at":Utc::now(),"updated_at":Utc::now()})).unwrap();
+            assert!(put(&chats, &task).is_err(), "{segment}");
+            assert!(load_all(&chats).is_empty());
+            assert!(std::fs::read_dir(outside.path()).unwrap().next().is_none());
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let chats = dir.path().join("chats");
+        std::fs::create_dir_all(tasks_dir(&chats)).unwrap();
+        let outside = dir.path().join("private.json");
+        let task: Task = serde_json::from_value(serde_json::json!({"id":"task-safe-01","title":"Keep inside","created_at":Utc::now(),"updated_at":Utc::now()})).unwrap();
+        std::fs::write(&outside, serde_json::to_string(&task).unwrap()).unwrap();
+        let file = tasks_dir(&chats).join("task-safe-01.json");
+        symlink(&outside, &file).unwrap();
+        assert!(load(&chats, &task.id).is_none());
+        assert!(load_all(&chats).is_empty());
+        assert!(put(&chats, &task).is_err());
+        assert!(!remove(&chats, &task.id));
+        assert_eq!(
+            std::fs::read_to_string(&outside).unwrap(),
+            serde_json::to_string(&task).unwrap()
+        );
+    }
+
+    #[test]
+    fn planted_legacy_temporary_paths_are_never_opened() {
+        let dir = tempfile::tempdir().unwrap();
+        let chats = dir.path().join("chats");
+        std::fs::create_dir_all(tasks_dir(&chats)).unwrap();
+        let outside = dir.path().join("private.txt");
+        std::fs::write(&outside, "keep").unwrap();
+        let task: Task = serde_json::from_value(serde_json::json!({"id":"task-safe-02","title":"Safe write","created_at":Utc::now(),"updated_at":Utc::now()})).unwrap();
+        let planted = tasks_dir(&chats).join(format!(".{}.{}.tmp", task.id, std::process::id()));
+        symlink(&outside, &planted).unwrap();
+        put(&chats, &task).unwrap();
+        assert_eq!(std::fs::read_to_string(outside).unwrap(), "keep");
+        assert_eq!(load(&chats, &task.id).unwrap(), task);
     }
 }

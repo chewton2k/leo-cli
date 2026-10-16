@@ -138,6 +138,7 @@ pub mod codex_app;
 pub mod mcp;
 pub mod openai;
 pub mod parakeet;
+pub(crate) mod process;
 pub mod transcriptions;
 pub mod whisper_cpp;
 

@@ -176,8 +176,7 @@ json.dumps(out)
   const source = `(${judge.toString()})();`;
 
   const start = () => startWorker(source);
-  let snake = null;
-  let snakeLoaded = false;
+  let busy = false;
 
   function program() {
     let memory = null;
@@ -561,7 +560,13 @@ self.postMessage({ loaded: true });
   }
 
   function run(job) {
-    const done = (result) => send({ kind: 'done', run: job.run, ...result });
+    let finished = false;
+    const done = (result) => {
+      if (finished) return;
+      finished = true;
+      busy = false;
+      send({ ...result, kind: 'done', run: job.run });
+    };
     if (job.language === 'cpp') return runCpp(job, done);
     if (job.language === 'go') return runGo(job, done);
     if (job.language === 'java') return runJava(job, done);
@@ -570,24 +575,25 @@ self.postMessage({ loaded: true });
     const python = job.language === 'python';
     let worker;
     try {
-      worker = python ? (snake = snake || start()) : start();
+      worker = start();
     } catch (e) {
       return done({ error: 'This browser could not start the code runner.', results: [], logs: [] });
     }
     const limit = Math.min(Math.max(Number(job.limit) || 4000, 500), 10000);
     let timer = 0;
+    let loaded = false;
     const stop = (result) => {
       clearTimeout(timer);
-      if (!python || result.stopped) { worker.terminate(); if (python) { snake = null; snakeLoaded = false; } }
+      worker.terminate();
       worker.onmessage = null;
       worker.onerror = null;
       done(result);
     };
     const arm = (ms, message) => { clearTimeout(timer); timer = setTimeout(() => stop({ stopped: true, error: message, results: [], logs: [] }), ms); };
-    if (python && !snakeLoaded) arm(60000, 'Python took too long to start. Try Run again.');
+    if (python) arm(60000, 'Python took too long to start. Try Run again.');
     else arm(limit, `Stopped after ${limit / 1000} seconds. Check for an endless loop.`);
     worker.onmessage = (e) => {
-      if (e.data && e.data.loaded) { snakeLoaded = true; arm(limit, `Stopped after ${limit / 1000} seconds. Check for an endless loop.`); return; }
+      if (python && !loaded && e.data && e.data.loaded) { loaded = true; arm(limit, `Stopped after ${limit / 1000} seconds. Check for an endless loop.`); return; }
       stop(e.data || {});
     };
     worker.onerror = (e) => { stop({ stopped: true, error: `Your code did not run: ${e.message || 'unknown error'}`, results: [], logs: [] }); e.preventDefault(); };
@@ -596,6 +602,8 @@ self.postMessage({ loaded: true });
 
   window.addEventListener('message', (e) => {
     if (e.source !== parent || !e.data || e.data.kind !== 'run') return;
+    if (busy) return send({ kind: 'done', run: e.data.run, error: 'The code runner is finishing another run. Try again in a moment.', results: [], logs: [] });
+    busy = true;
     run(e.data);
   });
   send({ kind: 'ready' });

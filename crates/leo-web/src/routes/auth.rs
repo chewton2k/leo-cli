@@ -111,11 +111,14 @@ pub(crate) async fn auth_middleware(
         if state.gate.token_matches(given) {
             let secret = match &signed_in {
                 Some(secret) => secret.clone(),
-                None => state.gate.sessions.start(
+                None => match state.gate.sessions.start(
                     &user_agent(&request),
                     &site(&state.gate, &request),
                     now,
-                ),
+                ) {
+                    Ok(secret) => secret,
+                    Err(_) => return session_error(),
+                },
             };
             request
                 .extensions_mut()
@@ -138,11 +141,14 @@ pub(crate) async fn auth_middleware(
     let legacy = sessions::cookie_value(&cookies, sessions::LEGACY_COOKIE)
         .is_some_and(|v| state.gate.token_matches(v));
     if legacy {
-        let secret =
-            state
-                .gate
-                .sessions
-                .start(&user_agent(&request), &site(&state.gate, &request), now);
+        let secret = match state.gate.sessions.start(
+            &user_agent(&request),
+            &site(&state.gate, &request),
+            now,
+        ) {
+            Ok(secret) => secret,
+            Err(_) => return session_error(),
+        };
         request
             .extensions_mut()
             .insert(CurrentSession(secret.clone()));
@@ -183,10 +189,20 @@ pub(crate) async fn end_sessions(
     let current = current.map(|axum::Extension(c)| c.0);
     let ended = match (body.others, body.handle, current) {
         (true, _, Some(mine)) => state.gate.sessions.end_others(&mine),
-        (false, Some(handle), _) => usize::from(state.gate.sessions.end(&handle)),
+        (false, Some(handle), _) => state.gate.sessions.end(&handle).map(usize::from),
         _ => return StatusCode::BAD_REQUEST.into_response(),
     };
-    Json(serde_json::json!({ "ended": ended })).into_response()
+    match ended {
+        Ok(ended) => Json(serde_json::json!({ "ended": ended })).into_response(),
+        Err(_) => session_error(),
+    }
+}
+
+fn session_error() -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(serde_json::json!({"error": "Sign-in changes could not be saved. Check Leo's config folder permissions and try again."})),
+    ).into_response()
 }
 
 pub(crate) async fn new_link(

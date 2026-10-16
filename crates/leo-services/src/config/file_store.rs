@@ -19,6 +19,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::{mpsc, OnceLock};
 
 use anyhow::{Context, Result};
 use zeroize::Zeroizing;
@@ -34,6 +35,53 @@ const FILE_MODE: u32 = 0o600;
 /// Permissions for the directory holding it.
 #[cfg(unix)]
 const DIR_MODE: u32 = 0o700;
+const MOST_CREDENTIAL_BYTES: u64 = 1024 * 1024;
+const QUEUED_WRITES: usize = 32;
+const WRITE_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
+struct Change {
+    path: PathBuf,
+    account: String,
+    secret: Option<Zeroizing<String>>,
+    reply: mpsc::Sender<Result<()>>,
+}
+
+fn writer() -> Result<&'static mpsc::SyncSender<Change>> {
+    static WRITER: OnceLock<std::result::Result<mpsc::SyncSender<Change>, String>> =
+        OnceLock::new();
+    WRITER
+        .get_or_init(|| {
+            let (to, from) = mpsc::sync_channel::<Change>(QUEUED_WRITES);
+            std::thread::Builder::new()
+                .name("leo-credentials".into())
+                .spawn(move || {
+                    for change in from {
+                        let store = FileStore { path: change.path };
+                        let result = (|| -> Result<()> {
+                            let mut bundle = store.read()?;
+                            let changed = if let Some(secret) = change.secret {
+                                bundle.insert(change.account, secret.to_string());
+                                true
+                            } else {
+                                bundle.remove(&change.account).is_some()
+                            };
+                            if changed {
+                                store.write(&bundle)
+                            } else {
+                                Ok(())
+                            }
+                        })();
+                        let _ = change.reply.send(result);
+                    }
+                })
+                .map(|_| to)
+                .map_err(|_| {
+                    "the credentials writer could not start; restart leo and try again".into()
+                })
+        })
+        .as_ref()
+        .map_err(|message| anyhow::anyhow!(message.clone()))
+}
 
 pub struct FileStore {
     path: PathBuf,
@@ -56,75 +104,136 @@ impl FileStore {
         &self.path
     }
 
-    fn read(&self) -> Bundle {
-        let Ok(text) = std::fs::read_to_string(&self.path) else {
-            return Bundle::new();
-        };
-        match serde_json::from_str::<Bundle>(&text) {
-            Ok(bundle) => bundle,
-            Err(e) => {
-                // Never silently discard credentials: report and behave as
-                // though none are stored, so a write does not clobber a file
-                // that may be recoverable by hand.
-                leo_core::diag::warn(format!(
-                    "{} could not be read ({e}); treating it as empty",
-                    self.path.display()
+    fn open(&self) -> std::io::Result<std::fs::File> {
+        if std::fs::symlink_metadata(&self.path).is_ok_and(|m| m.file_type().is_symlink()) {
+            return Err(std::io::Error::other(
+                "credentials must be a regular private file, not a symbolic link",
+            ));
+        }
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+        }
+        let file = options.open(&self.path)?;
+        let metadata = file.metadata()?;
+        if !metadata.is_file() {
+            return Err(std::io::Error::other(
+                "credentials must be a regular private file",
+            ));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if metadata.nlink() != 1 {
+                return Err(std::io::Error::other(
+                    "credentials must have no hard links; restore a private copy",
                 ));
-                Bundle::new()
             }
         }
+        Ok(file)
+    }
+
+    fn read(&self) -> Result<Bundle> {
+        use std::io::Read;
+        let file = match self.open() {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Bundle::new()),
+            Err(error) => return Err(error).context("credentials could not be read safely; check that credentials.json is a private regular file"),
+        };
+        anyhow::ensure!(
+            file.metadata()?.len() <= MOST_CREDENTIAL_BYTES,
+            "the credentials file is too large; restore a valid credentials.json backup"
+        );
+        let mut text = String::new();
+        file.take(MOST_CREDENTIAL_BYTES + 1)
+            .read_to_string(&mut text)
+            .context("credentials could not be read; check credentials.json and try again")?;
+        anyhow::ensure!(
+            text.len() as u64 <= MOST_CREDENTIAL_BYTES,
+            "the credentials file is too large; restore a valid credentials.json backup"
+        );
+        serde_json::from_str::<Bundle>(&text).map_err(|_| {
+            anyhow::anyhow!(
+                "credentials.json is damaged; restore a valid backup before changing credentials"
+            )
+        })
     }
 
     fn write(&self, bundle: &Bundle) -> Result<()> {
         if let Some(parent) = self.path.parent() {
+            anyhow::ensure!(
+                !std::fs::symlink_metadata(parent).is_ok_and(|m| m.file_type().is_symlink()),
+                "the credentials folder is a symbolic link; choose a private folder instead"
+            );
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("could not create {}", parent.display()))?;
-            Self::restrict_dir(parent);
+            Self::restrict_dir(parent)
+                .with_context(|| format!("could not make {} private", parent.display()))?;
         }
 
         let json = serde_json::to_string_pretty(bundle)?;
+        anyhow::ensure!(
+            json.len() as u64 <= MOST_CREDENTIAL_BYTES,
+            "the credentials file is too large; remove an unused credential before saving another"
+        );
 
-        // Write to a sibling first so a crash cannot truncate the real file,
-        // and create it with the right mode from the start rather than
-        // loosening it afterwards — a window where the file is world-readable
-        // is the bug this ordering avoids.
-        let tmp = self.path.with_extension("json.new");
-        Self::write_private(&tmp, json.as_bytes())
-            .with_context(|| format!("could not write {}", tmp.display()))?;
-        std::fs::rename(&tmp, &self.path)
+        use std::io::Write;
+        let parent = self
+            .path
+            .parent()
+            .context("the credentials file needs a private folder")?;
+        let mut tmp = tempfile::Builder::new()
+            .prefix(".leo-credentials-")
+            .tempfile_in(parent)
+            .with_context(|| format!("could not write privately in {}", parent.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            tmp.as_file()
+                .set_permissions(std::fs::Permissions::from_mode(FILE_MODE))?;
+        }
+        tmp.write_all(json.as_bytes())?;
+        tmp.as_file().sync_all()?;
+        tmp.persist(&self.path)
             .with_context(|| format!("could not replace {}", self.path.display()))?;
         Ok(())
     }
 
-    #[cfg(unix)]
-    fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-        use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
-
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(FILE_MODE)
-            .open(path)?;
-        file.write_all(bytes)?;
-        file.sync_all()
+    fn update(&self, account: &str, secret: Option<&str>) -> Result<()> {
+        anyhow::ensure!(
+            account.len().saturating_add(secret.map_or(0, str::len)) as u64
+                <= MOST_CREDENTIAL_BYTES,
+            "that credential is too large; paste only the API key and try again"
+        );
+        let (reply, answer) = mpsc::channel();
+        writer()?
+            .try_send(Change {
+                path: self.path.clone(),
+                account: account.to_string(),
+                secret: secret.map(|s| Zeroizing::new(s.to_string())),
+                reply,
+            })
+            .map_err(|_| {
+                anyhow::anyhow!("the credentials writer is busy or unavailable; try again shortly")
+            })?;
+        answer.recv_timeout(WRITE_WAIT).map_err(|_| {
+            anyhow::anyhow!("the credential change was not confirmed; check the stored credential before retrying")
+        })?
     }
 
-    #[cfg(not(unix))]
-    fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-        // Windows inherits the user profile's ACL, which is already per-user.
-        std::fs::write(path, bytes)
-    }
-
     #[cfg(unix)]
-    fn restrict_dir(dir: &Path) {
+    fn restrict_dir(dir: &Path) -> std::io::Result<()> {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(DIR_MODE));
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(DIR_MODE))
     }
 
     #[cfg(not(unix))]
-    fn restrict_dir(_dir: &Path) {}
+    fn restrict_dir(_dir: &Path) -> std::io::Result<()> {
+        Ok(())
+    }
 
     /// Whether the file is readable by anyone but its owner.
     ///
@@ -133,10 +242,11 @@ impl FileStore {
     #[cfg(unix)]
     pub fn is_private(&self) -> bool {
         use std::os::unix::fs::PermissionsExt;
-        match std::fs::metadata(&self.path) {
-            Ok(meta) => meta.permissions().mode() & 0o077 == 0,
-            // A file that does not exist cannot leak.
-            Err(_) => true,
+        match self.open() {
+            Ok(file) => file
+                .metadata()
+                .is_ok_and(|m| m.permissions().mode() & 0o077 == 0),
+            Err(error) => error.kind() == std::io::ErrorKind::NotFound,
         }
     }
 
@@ -149,10 +259,17 @@ impl FileStore {
     #[cfg(unix)]
     pub fn make_private(&self) -> bool {
         use std::os::unix::fs::PermissionsExt;
-        if !self.path.exists() || self.is_private() {
+        let Ok(file) = self.open() else {
+            return false;
+        };
+        if file
+            .metadata()
+            .is_ok_and(|m| m.permissions().mode() & 0o077 == 0)
+        {
             return false;
         }
-        std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(FILE_MODE)).is_ok()
+        file.set_permissions(std::fs::Permissions::from_mode(FILE_MODE))
+            .is_ok()
     }
 
     #[cfg(not(unix))]
@@ -164,27 +281,21 @@ impl FileStore {
 impl SecretStore for FileStore {
     fn get(&self, account: &str) -> Result<Option<Secret>> {
         Ok(self
-            .read()
+            .read()?
             .get(account)
             .map(|s| Secret::new(Zeroizing::new(s.clone()))))
     }
 
     fn has(&self, account: &str) -> bool {
-        self.read().contains_key(account)
+        self.read().is_ok_and(|bundle| bundle.contains_key(account))
     }
 
     fn set(&self, account: &str, secret: &str) -> Result<()> {
-        let mut bundle = self.read();
-        bundle.insert(account.to_string(), secret.to_string());
-        self.write(&bundle)
+        self.update(account, Some(secret))
     }
 
     fn delete(&self, account: &str) -> Result<()> {
-        let mut bundle = self.read();
-        if bundle.remove(account).is_some() {
-            self.write(&bundle)?;
-        }
-        Ok(())
+        self.update(account, None)
     }
 
     fn available(&self) -> bool {
@@ -289,15 +400,86 @@ mod tests {
         assert!(!store.path().with_extension("json.new").exists());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn stale_temporary_links_are_never_followed_or_reused() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let (store, dir) = store();
+        let outside = dir.path().join("public-fixture");
+        std::fs::write(&outside, "keep this fixture").unwrap();
+        std::fs::set_permissions(&outside, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let old = store.path().with_extension("json.new");
+        symlink(&outside, &old).unwrap();
+        store.set("fixture", "dummy-secret").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&outside).unwrap(),
+            "keep this fixture"
+        );
+        assert!(std::fs::symlink_metadata(&old)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(!std::fs::symlink_metadata(store.path())
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(
+            std::fs::metadata(store.path())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_existing_credentials_link_is_not_read_or_written_through() {
+        use std::os::unix::fs::symlink;
+        let (store, dir) = store();
+        let outside = dir.path().join("outside-fixture");
+        let original = r#"{"fixture":"outside-secret"}"#;
+        std::fs::write(&outside, original).unwrap();
+        symlink(&outside, store.path()).unwrap();
+        assert!(store.get("fixture").is_err());
+        assert!(store.set("fixture", "dummy-secret").is_err());
+        assert_eq!(std::fs::read_to_string(&outside).unwrap(), original);
+        assert!(!store.is_private());
+        assert!(!store.make_private());
+    }
+
+    #[test]
+    fn concurrent_key_updates_keep_every_account() {
+        let (store, _dir) = store();
+        std::thread::scope(|threads| {
+            for index in 0..4 {
+                let store = &store;
+                threads.spawn(move || {
+                    store
+                        .set(&format!("fixture-{index}"), "dummy-secret")
+                        .unwrap()
+                });
+            }
+        });
+        for index in 0..4 {
+            assert!(store.has(&format!("fixture-{index}")));
+        }
+    }
+
     #[test]
     fn a_corrupt_file_is_reported_rather_than_silently_replaced() {
         let (store, _d) = store();
         std::fs::create_dir_all(store.path().parent().unwrap()).unwrap();
         std::fs::write(store.path(), "not json at all").unwrap();
 
-        // Reads report nothing rather than panicking.
-        assert!(store.get("groq").unwrap().is_none());
+        assert!(store.get("groq").is_err());
         assert!(!store.has("groq"));
+        assert!(store.set("new", "dummy-secret").is_err());
+        assert_eq!(
+            std::fs::read_to_string(store.path()).unwrap(),
+            "not json at all"
+        );
     }
 
     #[test]

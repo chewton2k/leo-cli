@@ -218,6 +218,8 @@ struct AppState {
     backups: Arc<backup::Backups>,
     importer: Option<Importer>,
     imports: Arc<Mutex<std::collections::HashMap<String, ImportJob>>>,
+    import_slots: Arc<routes::uploads::ImportSlots>,
+    zip_slots: Arc<tokio::sync::Semaphore>,
     combines: Arc<Mutex<std::collections::HashMap<String, routes::combine::CombineJob>>>,
     listener: Option<record::Listener>,
     regenerator: Option<record::Regenerator>,
@@ -451,11 +453,11 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
         token.clone(),
         Some(token_path),
         if options.new_token {
-            let fresh = sessions::Sessions::load(&sessions_path);
-            fresh.end_all();
+            let fresh = sessions::Sessions::load(&sessions_path)?;
+            fresh.end_all()?;
             fresh
         } else {
-            sessions::Sessions::load(&sessions_path)
+            sessions::Sessions::load(&sessions_path)?
         },
     ));
     let state = AppState {
@@ -483,6 +485,8 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
         backups: Default::default(),
         importer,
         imports: Default::default(),
+        import_slots: Default::default(),
+        zip_slots: routes::downloads::zip_slots(),
         combines: Default::default(),
         listener: recorder,
         regenerator: powers.regenerator,
@@ -517,7 +521,7 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
         None
     };
     gate.sessions
-        .retire_links(tunnel.as_ref().and_then(|t| t.url.split("://").nth(1)));
+        .retire_links(tunnel.as_ref().and_then(|t| t.url.split("://").nth(1)))?;
 
     let local_ip = local_ip_address::local_ip()
         .map(|ip| ip.to_string())
@@ -793,7 +797,12 @@ fn router(state: AppState) -> Router {
         .route("/api/settings/test", post(test_setting))
         .route(
             "/api/import",
-            post(start_import).layer(axum::extract::DefaultBodyLimit::max(IMPORT_BYTES)),
+            post(start_import)
+                .layer(axum::extract::DefaultBodyLimit::max(IMPORT_BYTES))
+                .layer(axum::middleware::from_fn_with_state(
+                    state.clone(),
+                    routes::uploads::import_limit,
+                )),
         )
         .route("/api/import/{id}", get(import_status))
         .route("/api/activity", get(activity))

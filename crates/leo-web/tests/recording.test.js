@@ -7,6 +7,22 @@ require('../src/web/recording.js');
 const R = globalThis.leoRecorder;
 const L = globalThis.leoRecording;
 
+test('background recording levels stay bounded without a mounted waveform', () => {
+  const source = require('node:fs').readFileSync(require.resolve('../src/web/recording.js'), 'utf8');
+  const start = source.indexOf('    function feedFromServer(view)');
+  const end = source.indexOf('    function advance(now)', start);
+  const state = { mine: false, queue: [], lastFed: 0, fedUpTo: 0 };
+  const feed = require('node:vm').runInNewContext(`(function(){${source.slice(start, end)} return feedFromServer;})()`, {
+    s: state, freshLevels: L.freshLevels, loudness: L.loudness, spread: L.spread, SERVER_STEP_MS: 250, WAVE_STEP_MS: 60, MOST_LEVEL_QUEUE: 40,
+  });
+  for (let poll = 0; poll < 1000; poll++) {
+    feed({ levels: [0.1, 0.2, 0.3, 0.4], levels_start: poll * 4 });
+    assert.ok(state.queue.length <= 40);
+  }
+  assert.equal(state.queue.length, 40);
+  assert.equal(state.fedUpTo, 4000);
+});
+
 test('every browser capture is pulled through a silent output and call metering hears both tracks', () => {
   for (const call of [false, true]) {
     const edges = [];

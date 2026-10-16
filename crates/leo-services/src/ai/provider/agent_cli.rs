@@ -1,10 +1,11 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use super::process::{self, Process, Watchdog, MOST_OUTPUT, QUEUED_MESSAGES};
 use crate::ai::error::{ProviderError, ProviderResult};
 use crate::ai::provider::{ChatProvider, ChatRequest, Image, Sink, Spent};
 use crate::config::provider::{ProviderConfig, ProviderKind};
@@ -68,7 +69,7 @@ pub fn locate(bin: &str) -> Option<PathBuf> {
         .find_map(|dir| names.iter().map(|n| dir.join(n)).find(|p| p.is_file()))
 }
 
-const CODEX_OFF: [&str; 16] = [
+const CODEX_OFF: [&str; 17] = [
     "shell_tool",
     "browser_use",
     "browser_use_external",
@@ -85,6 +86,7 @@ const CODEX_OFF: [&str; 16] = [
     "skill_search",
     "skill_mcp_dependency_install",
     "tool_suggest",
+    "hooks",
 ];
 
 pub fn known_features(listing: &str) -> Vec<String> {
@@ -99,26 +101,91 @@ pub fn known_features(listing: &str) -> Vec<String> {
         .collect()
 }
 
-pub(crate) fn codex_disables(program: &Path) -> Vec<String> {
+const PROBE_LIMIT: Duration = Duration::from_secs(5);
+
+fn probe(program: &Path, args: &[&str]) -> ProviderResult<String> {
+    let mut command = Command::new(program);
+    command
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut command, 0);
+    let mut child = command.spawn().map_err(|_| {
+        ProviderError::Retryable(
+            "Codex could not be checked safely. Run `codex --help`, then try again.".into(),
+        )
+    })?;
+    let stdout = child.stdout.take();
+    let child = Process::new(child);
+    let watch = Watchdog::start(&child, None, PROBE_LIMIT);
+    let (text, exceeded) = stdout.map(process::output).unwrap_or_default();
+    if exceeded {
+        child.stop();
+    }
+    let status = loop {
+        let status = child
+            .0
+            .lock()
+            .ok()
+            .and_then(|mut c| c.as_mut().and_then(|c| c.try_wait().ok()))
+            .flatten();
+        if let Some(status) = status {
+            break status;
+        }
+        if watch.remaining(PROBE_LIMIT).is_none() {
+            child.stop();
+            return Err(ProviderError::Retryable(
+                "Codex took too long to check. Run `codex --help`, then try again.".into(),
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    if exceeded || !status.success() || watch.stalled.load(Ordering::Relaxed) {
+        return Err(ProviderError::Retryable(
+            "Codex could not be checked safely. Run `codex --help`, then try again.".into(),
+        ));
+    }
+    Ok(text)
+}
+
+pub(crate) fn codex_disables(program: &Path) -> ProviderResult<Vec<String>> {
     static KNOWN: std::sync::OnceLock<
-        std::sync::Mutex<std::collections::HashMap<PathBuf, Vec<String>>>,
+        std::sync::Mutex<std::collections::HashMap<PathBuf, ProviderResult<Vec<String>>>>,
     > = std::sync::OnceLock::new();
     let cache = KNOWN.get_or_init(Default::default);
     if let Some(found) = cache.lock().ok().and_then(|c| c.get(program).cloned()) {
         return found;
     }
-    let listing = Command::new(program)
-        .args(["features", "list"])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-        .unwrap_or_default();
-    let found = known_features(&listing);
+    let found = probe(program, &["features", "list"]).and_then(|listing| {
+        let found = known_features(&listing);
+        if !found.iter().any(|f| f == "shell_tool") {
+            return Err(ProviderError::Retryable(
+                "Codex did not report its safety controls. Update Codex, then try again.".into(),
+            ));
+        }
+        Ok(found)
+    });
     if let Ok(mut c) = cache.lock() {
         c.insert(program.to_path_buf(), found.clone());
+    }
+    found
+}
+
+pub(crate) fn codex_native_isolated(program: &Path) -> bool {
+    static KNOWN: std::sync::OnceLock<Mutex<std::collections::HashMap<PathBuf, bool>>> =
+        std::sync::OnceLock::new();
+    let cache = KNOWN.get_or_init(Default::default);
+    if let Some(found) = cache.lock().ok().and_then(|c| c.get(program).copied()) {
+        return found;
+    }
+    let found = probe(program, &["app-server", "--help"]).is_ok_and(|help| {
+        help.split_whitespace().any(|s| s == "--ignore-user-config")
+            && help.split_whitespace().any(|s| s == "--ignore-rules")
+    });
+    if let Ok(mut c) = cache.lock() {
+        c.insert(program.to_path_buf(), found);
     }
     found
 }
@@ -354,6 +421,7 @@ pub struct Heard {
     pub model: Option<String>,
     pub tokens: Option<(u64, u64)>,
     pub cache: (u64, u64),
+    pub exceeded: bool,
 }
 
 pub fn codex_banner(stderr: &str) -> (Option<String>, Option<String>, Option<u64>) {
@@ -378,10 +446,23 @@ pub fn codex_banner(stderr: &str) -> (Option<String>, Option<String>, Option<u64
     (model, effort, tokens)
 }
 
-pub fn read_stream(lines: impl BufRead, sink: Sink<'_>) -> Heard {
+pub fn read_stream(mut lines: impl BufRead, sink: Sink<'_>) -> Heard {
     let mut heard = Heard::default();
-    for line in lines.lines() {
-        let Ok(line) = line else { break };
+    let mut bytes = 0usize;
+    loop {
+        let line = match process::line(&mut lines) {
+            Ok(Some(line)) => line,
+            Ok(None) => break,
+            Err(_) => {
+                heard.exceeded = true;
+                break;
+            }
+        };
+        bytes = bytes.saturating_add(line.len());
+        if bytes > MOST_OUTPUT {
+            heard.exceeded = true;
+            break;
+        }
         hear(&line, &mut heard, sink);
     }
     heard
@@ -443,10 +524,11 @@ pub fn hear(line: &str, heard: &mut Heard, sink: Sink<'_>) -> bool {
 
 pub struct ClaudeSession {
     name: String,
-    child: std::process::Child,
+    child: Process,
     stdin: Option<std::process::ChildStdin>,
     lines: std::sync::mpsc::Receiver<super::mcp::Incoming>,
     quiet: Duration,
+    total_limit: Duration,
     model: Option<String>,
     effort: Option<String>,
     native: bool,
@@ -475,6 +557,7 @@ impl ClaudeSession {
         call: &mut dyn FnMut(&str, &serde_json::Value) -> String,
         gap: &mut dyn FnMut(),
     ) -> ProviderResult<(String, Spent)> {
+        let watch = Watchdog::start(&self.child, Some(self.quiet), self.total_limit);
         let message = serde_json::json!({
             "type": "user",
             "message": { "role": "user", "content": [{ "type": "text", "text": text }] },
@@ -488,19 +571,44 @@ impl ClaudeSession {
                 ProviderError::Retryable(format!("{}: the session ended: {e}", self.name))
             })?;
         let mut heard = Heard::default();
+        let mut bytes = 0usize;
         loop {
-            match self.lines.recv_timeout(self.quiet) {
+            let Some(wait) = watch.remaining(self.quiet) else {
+                self.child.stop();
+                return Err(ProviderError::Retryable(format!(
+                    "{}: claude stopped answering and was stopped",
+                    self.name
+                )));
+            };
+            match self.lines.recv_timeout(wait) {
                 Ok(super::mcp::Incoming::Line(line)) => {
+                    bytes = bytes.saturating_add(line.len());
+                    if bytes > MOST_OUTPUT {
+                        self.child.stop();
+                        return Err(ProviderError::Retryable(format!(
+                            "{}: claude sent too much output. Try a smaller request.",
+                            self.name
+                        )));
+                    }
+                    watch.touch();
                     if hear(&line, &mut heard, sink) {
                         break;
                     }
                 }
                 Ok(super::mcp::Incoming::Call { name, args, reply }) => {
+                    watch.touch();
                     gap();
                     let _ = reply.send(call(&name, &args));
                 }
+                Ok(super::mcp::Incoming::Failed) => {
+                    self.child.stop();
+                    return Err(ProviderError::Retryable(format!(
+                        "{}: claude sent unreadable or excessive output. Try a smaller request.",
+                        self.name
+                    )));
+                }
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                    stop_all(&mut self.child);
+                    self.child.stop();
                     return Err(ProviderError::Retryable(format!(
                         "{}: claude stopped answering and was stopped",
                         self.name
@@ -527,7 +635,7 @@ impl ClaudeSession {
                     "{}: claude stopped: {}",
                     self.name,
                     last_words(said)
-                )))
+                )));
             }
             Some((false, said)) if heard.answer.trim().is_empty() => said.trim().to_string(),
             _ => heard.answer.trim().to_string(),
@@ -558,8 +666,7 @@ impl ClaudeSession {
 impl Drop for ClaudeSession {
     fn drop(&mut self) {
         self.stdin.take();
-        stop_all(&mut self.child);
-        let _ = self.child.wait();
+        self.child.stop();
     }
 }
 
@@ -586,6 +693,10 @@ impl AgentCli {
 
     pub fn quiet_limit(&self) -> Duration {
         self.quiet_limit
+    }
+
+    pub fn total_limit(&self) -> Duration {
+        self.total_limit
     }
 
     pub fn session_arguments(&self, system: &str) -> Vec<String> {
@@ -664,7 +775,7 @@ impl AgentCli {
             ProviderError::Retryable(format!("{}: {} is not installed", self.name, self.bin))
         })?;
         let room = self.room()?;
-        let (tx, lines) = std::sync::mpsc::channel();
+        let (tx, lines) = std::sync::mpsc::sync_channel(QUEUED_MESSAGES);
         let bridge = if tools.is_empty() {
             None
         } else {
@@ -689,18 +800,29 @@ impl AgentCli {
             ProviderError::Retryable(format!("{}: could not read {}", self.name, self.bin))
         })?;
         std::thread::spawn(move || {
-            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-                if tx.send(super::mcp::Incoming::Line(line)).is_err() {
-                    break;
+            let mut reader = BufReader::new(stdout);
+            loop {
+                match process::line(&mut reader) {
+                    Ok(Some(line)) => {
+                        if tx.send(super::mcp::Incoming::Line(line)).is_err() {
+                            break;
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(_) => {
+                        let _ = tx.send(super::mcp::Incoming::Failed);
+                        break;
+                    }
                 }
             }
         });
         Ok(ClaudeSession {
             name: self.name.clone(),
-            child,
+            child: Process::new(child),
             stdin,
             lines,
             quiet: self.quiet_limit,
+            total_limit: self.total_limit,
             model: self.model.clone(),
             effort: self.effort.clone(),
             native: bridge.is_some(),
@@ -713,7 +835,7 @@ impl AgentCli {
         let program =
             locate(&self.bin).ok_or_else(|| ProviderError::Retryable(self.unavailable_reason()))?;
         let disables = match self.agent {
-            Agent::Codex => codex_disables(&program),
+            Agent::Codex => codex_disables(&program)?,
             Agent::ClaudeCode => Vec::new(),
         };
         let room = self.room()?;
@@ -791,85 +913,91 @@ impl AgentCli {
         let mut child = command.spawn().map_err(|e| {
             ProviderError::Retryable(format!("{}: could not run {}: {e}", self.name, self.bin))
         })?;
-        let started = Instant::now();
-        let last = Arc::new(Mutex::new(started));
         let stdin = child.stdin.take();
+        let stderr = child.stderr.take();
+        let stdout = child.stdout.take();
+        let child = Process::new(child);
+        let watch = Watchdog::start(
+            &child,
+            (self.agent == Agent::ClaudeCode).then_some(self.quiet_limit),
+            self.total_limit,
+        );
         let writer = std::thread::spawn(move || {
             if let Some(mut stdin) = stdin {
                 let _ = stdin.write_all(input.as_bytes());
             }
         });
-        let stderr = child.stderr.take().map(|inner| Watched {
+        let stderr = stderr.map(|inner| Watched {
             inner,
-            last: Arc::clone(&last),
+            last: Arc::clone(&watch.last),
         });
-        let errors = std::thread::spawn(move || {
-            let mut text = String::new();
-            if let Some(mut stderr) = stderr {
-                let _ = stderr.read_to_string(&mut text);
-            }
-            text
-        });
-        let stdout = child.stdout.take().map(|inner| Watched {
-            inner,
-            last: Arc::clone(&last),
-        });
-        let child = Arc::new(Mutex::new(child));
-        let finished = Arc::new(AtomicBool::new(false));
-        let stalled = Arc::new(AtomicBool::new(false));
-        let watchdog = {
-            let (child, finished, stalled, last) = (
-                Arc::clone(&child),
-                Arc::clone(&finished),
-                Arc::clone(&stalled),
-                Arc::clone(&last),
-            );
-            let quiet = (self.agent == Agent::ClaudeCode).then_some(self.quiet_limit);
-            let total = self.total_limit;
+        let errors = {
+            let child = Arc::clone(&child.0);
             std::thread::spawn(move || {
-                while !finished.load(Ordering::Relaxed) {
-                    std::thread::sleep(Duration::from_millis(100));
-                    let silent = last.lock().map(|l| l.elapsed()).unwrap_or_default();
-                    if started.elapsed() > total || quiet.is_some_and(|q| silent > q) {
-                        stalled.store(true, Ordering::Relaxed);
-                        if let Ok(mut child) = child.lock() {
-                            stop_all(&mut child);
+                let result = stderr.map(process::output).unwrap_or_default();
+                if result.1 {
+                    if let Ok(mut child) = child.lock() {
+                        if let Some(child) = child.as_mut() {
+                            stop_all(child);
                         }
-                        return;
                     }
                 }
+                result
             })
         };
+        let stdout = stdout.map(|inner| Watched {
+            inner,
+            last: Arc::clone(&watch.last),
+        });
         let heard = match (self.agent, stdout) {
             (Agent::ClaudeCode, Some(stdout)) => read_stream(BufReader::new(stdout), sink),
-            (Agent::Codex, Some(mut stdout)) => {
-                let mut answer = String::new();
-                let _ = stdout.read_to_string(&mut answer);
+            (Agent::Codex, Some(stdout)) => {
+                let (answer, exceeded) = process::output(stdout);
                 Heard {
                     answer,
+                    exceeded,
                     ..Heard::default()
                 }
             }
             (_, None) => Heard::default(),
         };
-        finished.store(true, Ordering::Relaxed);
-        let _ = watchdog.join();
-        let status = child
-            .lock()
-            .map_err(|_| {
-                ProviderError::Retryable(format!("{}: {} did not finish", self.name, self.bin))
-            })?
-            .wait()
-            .map_err(|e| {
-                ProviderError::Retryable(format!("{}: {} did not finish: {e}", self.name, self.bin))
-            })?;
-        if stalled.load(Ordering::Relaxed) {
-            let _ = writer.join();
-            let _ = errors.join();
+        if heard.exceeded {
+            child.stop();
+        }
+        let status = loop {
+            let status = child
+                .0
+                .lock()
+                .map_err(|_| {
+                    ProviderError::Retryable(format!("{}: {} did not finish", self.name, self.bin))
+                })?
+                .as_mut()
+                .ok_or_else(|| {
+                    ProviderError::Retryable(format!("{}: {} has stopped", self.name, self.bin))
+                })?
+                .try_wait()
+                .map_err(|e| {
+                    ProviderError::Retryable(format!(
+                        "{}: {} did not finish: {e}",
+                        self.name, self.bin
+                    ))
+                })?;
+            if let Some(status) = status {
+                break status;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        let _ = writer.join();
+        let (stderr, exceeded) = errors.join().unwrap_or_default();
+        if watch.stalled.load(Ordering::Relaxed) {
             return Err(ProviderError::Retryable(self.stalled()));
         }
-        let _ = writer.join();
-        let stderr = errors.join().unwrap_or_default();
+        if heard.exceeded || exceeded {
+            return Err(ProviderError::Retryable(format!(
+                "{}: {} sent too much or unreadable output. Try a smaller request.",
+                self.name, self.bin
+            )));
+        }
         if let Some(usage) = heard.usage.clone() {
             crate::usage::save(&self.name, usage);
         }
@@ -1001,6 +1129,7 @@ mod tests {
         assert!(args.windows(2).any(|w| w == ["--sandbox", "read-only"]));
         assert!(args.contains(&"--ephemeral".to_string()));
         assert!(args.contains(&"--ignore-user-config".to_string()));
+        assert!(args.contains(&"--ignore-rules".to_string()));
         assert!(!args.contains(&"--model".to_string()));
         assert_eq!(args.last().unwrap(), "-");
         assert_eq!(input, "You write notes.\n\n<transcript>hello</transcript>");
@@ -1101,7 +1230,7 @@ mod tests {
     fn script(dir: &Path, body: &str) -> String {
         use std::os::unix::fs::PermissionsExt;
         let path = dir.join("fake-agent");
-        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::write(&path, format!("#!/bin/sh\nif [ \"$1\" = features ]; then echo 'shell_tool stable true'; exit 0; fi\n{body}\n")).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         path.to_string_lossy().to_string()
     }
@@ -1321,6 +1450,59 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":true,"result":"No
             .unwrap();
         assert_eq!(answer, "# Notes\nhello");
         assert_eq!(pieces, ["# Notes\nhello"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stdout_eof_does_not_disable_the_exit_watchdog() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let bin = script(dir.path(), "cat >/dev/null\nexec 1>&-\nsleep 30");
+        let cfg = config(ProviderKind::Codex, &bin, None);
+        let agent = AgentCli::new("codex".into(), Agent::Codex, &cfg)
+            .with_limits(Duration::from_secs(1), Duration::from_millis(150));
+        let started = Instant::now();
+        assert!(agent.complete(&request()).is_err());
+        assert!(started.elapsed() < Duration::from_secs(3));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_claude_has_an_absolute_deadline_despite_steady_messages() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let bin = script(
+            dir.path(),
+            "read -r line\nwhile :; do echo '{\"type\":\"heartbeat\"}'; sleep 0.02; done",
+        );
+        let cfg = config(ProviderKind::ClaudeCode, &bin, None);
+        let agent = AgentCli::new("claude_code".into(), Agent::ClaudeCode, &cfg)
+            .with_limits(Duration::from_secs(1), Duration::from_millis(150));
+        let mut session = agent.claude_session("Use interpretable language.").unwrap();
+        let started = Instant::now();
+        assert!(session.say("hello", &mut |_| {}).is_err());
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_feature_discovery_never_launches_a_writing_request() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::TempDir::new().unwrap();
+        let bin = dir.path().join("codex");
+        let marker = dir.path().join("writing-started");
+        std::fs::write(
+            &bin,
+            format!(
+                "#!/bin/sh\nif [ \"$1\" = features ]; then exit 1; fi\ntouch '{}'\n",
+                marker.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let cfg = config(ProviderKind::Codex, bin.to_str().unwrap(), None);
+        assert!(AgentCli::new("codex".into(), Agent::Codex, &cfg)
+            .complete(&request())
+            .is_err());
+        assert!(!marker.exists());
     }
 
     #[cfg(unix)]

@@ -493,7 +493,7 @@ function fakeRunner(throws = false) {
     URL: { createObjectURL: () => { const url = `blob:${++next}`; urls.add(url); return url; }, revokeObjectURL: (url) => urls.delete(url) },
     setTimeout: (fn) => { const id = ++next; timers.set(id, fn); return id; }, clearTimeout: (id) => timers.delete(id),
   });
-  return { urls, workers, timers, messages, run: (language) => receive({ source: parent, data: { kind: 'run', run: `run-${next}`, language, entry: 'twice', files: {}, shim: 'shim', runtime: 'runtime', bundle: 'bundle' } }) };
+  return { urls, workers, timers, messages, run: (language, over = {}) => receive({ source: parent, data: { kind: 'run', run: `run-${next}`, language, entry: 'twice', files: {}, shim: 'shim', runtime: 'runtime', bundle: 'bundle', ...over } }) };
 }
 
 test('runner script URLs are released after messages, errors, timeouts and failed starts for every language', () => {
@@ -518,7 +518,7 @@ test('repeated program workers release their scripts while compiler workers stay
     const runner = fakeRunner();
     for (let turn = 0; turn < 25; turn++) {
       runner.run(language);
-      const worker = ['cpp', 'go', 'java', 'rust', 'python'].includes(language) ? runner.workers[0] : runner.workers.at(-1);
+      const worker = ['cpp', 'go', 'java', 'rust'].includes(language) ? runner.workers[0] : runner.workers.at(-1);
       if (['cpp', 'go', 'java'].includes(language)) {
         worker.fire('message', { wasm: new Uint8Array(4) });
         runner.workers.at(-1).fire('message', { stdout: '' });
@@ -526,6 +526,158 @@ test('repeated program workers release their scripts while compiler workers stay
       assert.equal(runner.urls.size, 0, `${language}: turn ${turn + 1} retains no script URLs`);
     }
     assert.equal(runner.messages.filter((message) => message.kind === 'done').length, 25);
-    if (['cpp', 'go', 'java', 'rust', 'python'].includes(language)) assert.equal(runner.workers[0].stopped, false, `${language} keeps one warm worker`);
+    if (['cpp', 'go', 'java', 'rust'].includes(language)) assert.equal(runner.workers[0].stopped, false, `${language} keeps one warm worker`);
+    else assert.ok(runner.workers.every((worker) => worker.stopped), `${language} terminates every execution worker`);
+  }
+});
+
+test('overlapping runs cannot replace the active worker reply or watchdog', () => {
+  for (const language of ['javascript', 'python', 'cpp', 'go', 'java', 'rust']) {
+    const runner = fakeRunner();
+    runner.run(language, { run: 'first' });
+    runner.run(language, { run: 'second' });
+    assert.equal(runner.workers.length, 1, language);
+    assert.match(runner.messages.find((message) => message.run === 'second').error, /another run/, language);
+    runner.workers[0].fire('message', { compile: 'first result', results: [], stdout: '' });
+    assert.equal(runner.messages.filter((message) => message.run === 'first').length, 1, language);
+    assert.equal(runner.timers.size, 0, language);
+  }
+});
+
+test('Python completion always terminates execution and cannot forge the outer run ticket', () => {
+  for (const result of [{}, { kind: 'ready', run: 'forged' }, { loaded: true }]) {
+    const runner = fakeRunner();
+    runner.run('python', { run: 'actual' });
+    const worker = runner.workers[0];
+    worker.fire('message', { loaded: true });
+    worker.fire('message', result);
+    assert.equal(worker.stopped, true);
+    assert.equal(runner.timers.size, 0);
+    assert.equal(runner.messages.at(-1).kind, 'done');
+    assert.equal(runner.messages.at(-1).run, 'actual');
+    worker.fire('message', {});
+    assert.equal(runner.messages.filter((message) => message.run === 'actual').length, 1);
+  }
+});
+
+function fakeRunnerPage() {
+  const source = require('node:fs').readFileSync(require.resolve('../src/web/app/interviews.js'), 'utf8');
+  const start = source.includes('const MOST_RUNNER_JOBS') ? source.indexOf('const MOST_RUNNER_JOBS') : source.indexOf('const runner =');
+  const end = source.indexOf('async function interviewGoToolchain', start);
+  const listeners = new Set(), timers = new Map(), frames = [], sent = [];
+  let next = 0;
+  const receive = (frame, data) => { for (const listener of [...listeners]) listener({ source: frame.contentWindow, data }); };
+  const page = require('node:vm').runInNewContext(`(function(){${source.slice(start, end)} return { runInSandbox, runner };})()`, {
+    window: { addEventListener: (_, listener) => listeners.add(listener), removeEventListener: (_, listener) => listeners.delete(listener) },
+    document: {
+      createElement: () => {
+        const frame = { isConnected: false, setAttribute() {}, remove() { this.isConnected = false; }, contentWindow: { postMessage: (data) => sent.push({ frame, data }) } };
+        frames.push(frame);
+        return frame;
+      },
+      body: { appendChild(frame) { frame.isConnected = true; } },
+    },
+    felix: { newId: () => String(++next) }, location: { origin: 'http://fixture' },
+    setTimeout: (fn) => { timers.set(++next, fn); return next; }, clearTimeout: (id) => timers.delete(id),
+  });
+  return { ...page, listeners, timers, frames, sent, receive, tick: async () => { for (let turn = 0; turn < 12; turn++) await Promise.resolve(); } };
+}
+
+test('runner startup failures release every frame listener and timer before retrying', async () => {
+  const page = fakeRunnerPage();
+  for (let turn = 0; turn < 5; turn++) {
+    const waiting = page.runInSandbox({ language: 'javascript' });
+    await page.tick();
+    assert.equal(page.listeners.size, 1);
+    [...page.timers.values()][0]();
+    const result = await waiting;
+    assert.match(result.error, /did not start/);
+    assert.equal(page.listeners.size, 0);
+    assert.equal(page.timers.size, 0);
+    assert.equal(page.frames.at(-1).isConnected, false);
+  }
+});
+
+test('the page bounds and serializes queued runs with separate result tickets', async () => {
+  const page = fakeRunnerPage();
+  const jobs = Array.from({ length: 4 }, (_, id) => page.runInSandbox({ language: 'python', code: String(id), tests: [{ id: String(id) }] }));
+  assert.equal(page.runner.queued, 4);
+  assert.match((await page.runInSandbox({ language: 'python' })).error, /Several code runs/);
+  await page.tick();
+  const frame = page.frames[0];
+  page.receive(frame, { kind: 'ready' });
+  for (let id = 0; id < jobs.length; id++) {
+    await page.tick();
+    assert.equal(page.sent.length, id + 1);
+    const current = page.sent.at(-1).data;
+    assert.equal(current.code, String(id));
+    page.receive(frame, { kind: 'done', run: 'forged', value: -1 });
+    page.receive(frame, { kind: 'done', run: current.run, results: [{ id: String(id), got: id }] });
+    assert.equal((await jobs[id]).results[0].got, id);
+  }
+  assert.equal(page.runner.queued, 0);
+  assert.equal(page.listeners.size, 0);
+  assert.equal(page.timers.size, 0);
+});
+
+test('malformed and oversized worker outputs become recoverable errors before rendering', async () => {
+  const cycle = {}; cycle.loop = cycle;
+  let deep = null;
+  for (let level = 0; level < 100; level++) deep = [deep];
+  const cases = [
+    {}, { results: 'broken' }, { logs: {}, results: [] }, { results: [], logs: [null] },
+    { diagnostics: {} }, { diagnostics: [null] }, { diagnostics: [{ severity: 'ERROR', lineNumber: 'one', message: 'bad' }] },
+    { results: [null] }, { results: [{ id: 'case' }] }, { results: [{ id: 1, got: 1 }] },
+    { results: [{ id: 'other', got: 1 }] }, { results: [{ id: 'case', got: 1 }, { id: 'case', got: 2 }] },
+    { results: [{ id: 'case', error: {} }] }, { results: [{ id: 'case', got: 1, ms: -1 }] },
+    { results: [{ id: 'case', got: cycle }] }, { results: [{ id: 'case', got: deep }] },
+    { results: [{ id: 'case', got: new Map([['a', 1]]) }] }, { results: [{ id: 'case', got: Infinity }] },
+    { results: [{ id: 'case', got: Array(150000).fill(1) }] },
+    { stdout: 'x'.repeat(3000000) }, { stdout: {} }, { stopped: 'yes' },
+    { logs: Array(1000).fill('x'), results: [] }, { diagnostics: Array(1000).fill({ severity: 'ERROR', lineNumber: 1, message: 'bad' }) },
+    { results: Array(1000).fill({ id: 'case', got: 1 }) },
+  ];
+  const page = fakeRunnerPage();
+  for (const malformed of cases) {
+    const waiting = page.runInSandbox({ language: 'javascript', tests: [{ id: 'case' }] });
+    await page.tick();
+    const frame = page.frames.at(-1);
+    page.receive(frame, { kind: 'ready' });
+    await page.tick();
+    page.receive(frame, { ...malformed, kind: 'done', run: page.sent.at(-1).data.run });
+    const result = await waiting;
+    assert.match(result.error, /Check its return value/);
+    assert.equal(result.results.length, 0);
+    assert.equal(result.logs.length, 0);
+    assert.equal(page.listeners.size, 0);
+    assert.equal(page.timers.size, 0);
+  }
+});
+
+test('valid worker outputs retain JSON values, compiler errors and diagnostics while foreign tickets are ignored', async () => {
+  const page = fakeRunnerPage();
+  const cases = [
+    { results: [{ id: 'case', got: { nested: [null, false, 1.5, 'hello'] }, ms: 2 }], logs: ['printed'] },
+    { results: [{ id: 'case', error: 'bad input', ms: 0 }], error: 'Try another input.' },
+    { compile: 'line 1: syntax error', stdout: '' },
+    { diagnostics: [{ severity: 'ERROR', lineNumber: -1, message: 'missing entry' }], stdout: '' },
+    { stdout: '@@leo result', stderr: 'panic', stopped: true },
+    { missing: true, stdout: '' },
+  ];
+  for (const valid of cases) {
+    const waiting = page.runInSandbox({ language: 'javascript', tests: [{ id: 'case' }] });
+    await page.tick();
+    const frame = page.frames.at(-1);
+    page.receive(frame, { kind: 'ready' });
+    await page.tick();
+    for (const run of [undefined, null, 123, {}, 'another run']) page.receive(frame, { kind: 'done', run, results: 'broken' });
+    assert.equal(page.listeners.size, 1);
+    page.receive({ contentWindow: {} }, { ...valid, kind: 'done', run: page.sent.at(-1).data.run });
+    assert.equal(page.listeners.size, 1);
+    page.receive(frame, { ...valid, kind: 'done', run: page.sent.at(-1).data.run });
+    const result = await waiting;
+    assert.deepEqual(JSON.parse(JSON.stringify(result)), { results: [], logs: [], ...valid });
+    assert.equal(page.listeners.size, 0);
+    assert.equal(page.timers.size, 0);
   }
 });

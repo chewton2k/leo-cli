@@ -24,5 +24,6 @@ tempfile.workspace = true
 zip.workspace = true
 chrono-tz.workspace = true
 iana-time-zone = "0.1"
+libc.workspace = true
 
 [dev-dependencies]

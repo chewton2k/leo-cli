@@ -85,6 +85,8 @@ fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<Strin
         backups: Default::default(),
         importer: None,
         imports: Default::default(),
+        import_slots: Default::default(),
+        zip_slots: routes::downloads::zip_slots(),
         combines: Default::default(),
         listener: None,
         regenerator: None,

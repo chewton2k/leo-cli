@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -179,19 +179,32 @@ pub fn save(provider: &str, usage: Usage) {
 }
 
 pub fn ask_codex(program: &Path) -> Option<Usage> {
-    let mut child = Command::new(program)
-        .arg("app-server")
+    use crate::ai::provider::agent_cli::{codex_disables, codex_native_isolated};
+    use crate::ai::provider::process::{self, Process, Watchdog, QUEUED_MESSAGES};
+    if !codex_native_isolated(program) {
+        return None;
+    }
+    let mut command = Command::new(program);
+    command.args(["app-server", "--ignore-user-config", "--ignore-rules"]);
+    for feature in codex_disables(program).ok()? {
+        command.args(["-c", &format!("features.{feature}=false")]);
+    }
+    command
         .current_dir(std::env::temp_dir())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
+        .stderr(Stdio::null());
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut command, 0);
+    let mut child = command.spawn().ok()?;
     let stdout = child.stdout.take()?;
-    let (tx, rx) = std::sync::mpsc::channel();
+    let stdin = child.stdin.take();
+    let child = Process::new(child);
+    let _watch = Watchdog::start(&child, None, CODEX_WAIT);
+    let (tx, rx) = std::sync::mpsc::sync_channel(QUEUED_MESSAGES);
     std::thread::spawn(move || {
-        for line in BufReader::new(stdout).lines() {
-            let Ok(line) = line else { break };
+        let mut reader = BufReader::new(stdout);
+        while let Ok(Some(line)) = process::line(&mut reader) {
             let Ok(message) = serde_json::from_str::<Value>(&line) else {
                 continue;
             };
@@ -201,7 +214,7 @@ pub fn ask_codex(program: &Path) -> Option<Usage> {
             }
         }
     });
-    if let Some(mut stdin) = child.stdin.take() {
+    if let Some(mut stdin) = stdin {
         let version = env!("CARGO_PKG_VERSION");
         let _ = writeln!(
             stdin,
@@ -214,12 +227,10 @@ pub fn ask_codex(program: &Path) -> Option<Usage> {
         );
         let answer = rx.recv_timeout(CODEX_WAIT).ok();
         drop(stdin);
-        let _ = child.kill();
-        let _ = child.wait();
+        child.stop();
         return from_codex(&answer?["result"], Utc::now());
     }
-    let _ = child.kill();
-    let _ = child.wait();
+    child.stop();
     None
 }
 
@@ -326,5 +337,18 @@ mod tests {
         assert_eq!(all["codex"].five_hour.unwrap().used, 0.2);
         std::fs::write(&path, "not json").unwrap();
         assert!(load_from(&path).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn usage_polling_skips_a_cli_without_explicit_native_isolation() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let program = dir.path().join("codex");
+        let marker = dir.path().join("unsafe-app-server");
+        std::fs::write(&program, format!("#!/bin/sh\nif [ \"$2\" = --help ]; then echo 'Usage: codex app-server'; exit 0; fi\ntouch '{}'\n", marker.display())).unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(ask_codex(&program).is_none());
+        assert!(!marker.exists());
     }
 }

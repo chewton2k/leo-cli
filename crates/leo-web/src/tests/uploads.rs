@@ -2,6 +2,107 @@ use super::*;
 
 const PICTURE: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\x01\0\0\0\0\xc8\x08\x02\0\0\0";
 
+#[cfg(unix)]
+#[test]
+fn originals_refuse_symlinks_at_every_component_and_exports_omit_linked_files() {
+    use std::os::unix::fs::symlink;
+    for component in ["file", "note", "attachments"] {
+        let (state, home, ids) = state_with(&[("Example", "")]);
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("example.txt"), "FAKE PRIVATE CONTENT").unwrap();
+        let attachments = home.path().join("attachments");
+        let folder = attachments.join(&ids[0]);
+        match component {
+            "file" => {
+                std::fs::create_dir_all(&folder).unwrap();
+                symlink(
+                    outside.path().join("example.txt"),
+                    folder.join("example.txt"),
+                )
+                .unwrap();
+            }
+            "note" => {
+                std::fs::create_dir_all(&attachments).unwrap();
+                symlink(outside.path(), &folder).unwrap();
+            }
+            _ => {
+                std::fs::create_dir_all(outside.path().join(&ids[0])).unwrap();
+                std::fs::write(
+                    outside.path().join(&ids[0]).join("example.txt"),
+                    "FAKE PRIVATE CONTENT",
+                )
+                .unwrap();
+                symlink(outside.path(), &attachments).unwrap();
+            }
+        }
+        let notes = state.fresh().notes_dir.clone();
+        assert!(
+            originals::path_of(&notes, &ids[0], "example.txt").is_none(),
+            "{component}"
+        );
+        assert!(originals::files(&notes, &ids[0]).is_empty(), "{component}");
+        let response = run(get_original(
+            State(state.clone()),
+            Path((ids[0].clone(), "example.txt".into())),
+            Query(OriginalView::default()),
+        ));
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{component}");
+        let listed = run(list_originals(State(state.clone()), Path(ids[0].clone())));
+        if component == "file" {
+            assert_eq!(json_of(listed), serde_json::json!([]));
+        } else {
+            assert_eq!(listed.status(), StatusCode::NOT_FOUND, "{component}");
+        }
+        let archive = run(routes::downloads::originals_zip(
+            State(state),
+            Path(ids[0].clone()),
+        ));
+        if component == "file" {
+            assert_eq!(archive.status(), StatusCode::OK);
+            let bytes = run(axum::body::to_bytes(archive.into_body(), 1024 * 1024)).unwrap();
+            let zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+            assert!(zip.is_empty());
+        } else {
+            assert_eq!(archive.status(), StatusCode::NOT_FOUND, "{component}");
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn an_upload_cannot_write_originals_through_a_linked_attachment_root() {
+    use base64::Engine;
+    let (mut state, home, _) = state_with(&[]);
+    state.importer = Some(Arc::new(
+        |_: Vec<UploadFile>, _: &str, _: &mut dyn FnMut(&str, usize, usize)| {
+            Ok(Made {
+                title: "Example".into(),
+                body: "Example body".into(),
+                figures: vec![],
+            })
+        },
+    ));
+    let outside = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(outside.path(), home.path().join("attachments")).unwrap();
+    let made = json_of(run(start_import(
+        State(state.clone()),
+        Json(ImportBody {
+            directory: String::new(),
+            title: None,
+            wants: String::new(),
+            files: vec![ImportFileBody {
+                name: "example.txt".into(),
+                mime: "text/plain".into(),
+                data: base64::engine::general_purpose::STANDARD.encode("EXAMPLE ORIGINAL"),
+            }],
+        }),
+    )));
+    let job = wait_for(&state, made["id"].as_str().unwrap());
+    assert_eq!(job.state, "failed");
+    assert!(job.error.unwrap().contains("originals"));
+    assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
+}
+
 #[test]
 fn an_upload_becomes_a_note_in_its_folder_and_keeps_the_original() {
     use base64::Engine;
@@ -335,4 +436,59 @@ fn figures_the_ai_did_not_place_are_kept_under_their_own_heading() {
         kept,
         "Intro ![a heap](attachments/page-5.png) and ![x](attachments/old.png)\n![the tree](attachments/page-3.png)"
     );
+}
+
+#[test]
+fn uploads_bound_file_count_and_parallel_imports_before_starting_more_workers() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    let (mut state, _home, _) = state_with(&[]);
+    let released = Arc::new(AtomicBool::new(false));
+    let started = Arc::new(AtomicUsize::new(0));
+    state.importer = Some(Arc::new({
+        let released = Arc::clone(&released);
+        let started = Arc::clone(&started);
+        move |_: Vec<UploadFile>, _: &str, _: &mut dyn FnMut(&str, usize, usize)| {
+            started.fetch_add(1, Ordering::Relaxed);
+            let until = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            while !released.load(Ordering::Relaxed) && std::time::Instant::now() < until {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            Ok(Made {
+                title: "Upload".into(),
+                body: "Body".into(),
+                figures: vec![],
+            })
+        }
+    }));
+    let body = |count| ImportBody {
+        directory: String::new(),
+        title: None,
+        wants: String::new(),
+        files: (0..count)
+            .map(|n| ImportFileBody {
+                name: format!("{n}.txt"),
+                mime: "text/plain".into(),
+                data: "dGVzdA==".into(),
+            })
+            .collect(),
+    };
+    assert_eq!(
+        run(start_import(State(state.clone()), Json(body(21)))).status(),
+        StatusCode::PAYLOAD_TOO_LARGE
+    );
+    assert_eq!(started.load(Ordering::Relaxed), 0);
+    let first = json_of(run(start_import(State(state.clone()), Json(body(1)))));
+    let second = json_of(run(start_import(State(state.clone()), Json(body(1)))));
+    let third = run(start_import(State(state.clone()), Json(body(1))));
+    released.store(true, Ordering::Relaxed);
+    assert_eq!(third.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(
+        wait_for(&state, first["id"].as_str().unwrap()).state,
+        "done"
+    );
+    assert_eq!(
+        wait_for(&state, second["id"].as_str().unwrap()).state,
+        "done"
+    );
+    assert_eq!(started.load(Ordering::Relaxed), 2);
 }

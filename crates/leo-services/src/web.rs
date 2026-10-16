@@ -1,5 +1,5 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
@@ -118,7 +118,7 @@ fn public(ip: IpAddr) -> bool {
             if v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() {
                 return false;
             }
-            if (s[0] & 0xfe00) == 0xfc00 || (s[0] & 0xffc0) == 0xfe80 {
+            if (s[0] & 0xfe00) == 0xfc00 || (s[0] & 0xffc0) == 0xfe80 || (s[0] & 0xffc0) == 0xfec0 {
                 return false;
             }
             if let Some(v4) = v6.to_ipv4() {
@@ -139,11 +139,43 @@ pub fn public_addresses(host: &str) -> Result<Vec<SocketAddr>> {
     let all: Vec<SocketAddr> = (host, 0)
         .to_socket_addrs()
         .with_context(|| format!("could not find {host}"))?
+        .take(MOST_ADDRESSES + 1)
         .collect();
-    if all.is_empty() || !all.iter().all(|a| public(a.ip())) {
+    if all.len() > MOST_ADDRESSES || all.is_empty() || !all.iter().all(|a| public(a.ip())) {
         bail!("{host} is not a public web address");
     }
     Ok(all)
+}
+
+const MOST_DNS: usize = 4;
+const MOST_ADDRESSES: usize = 32;
+static DNS_SLOTS: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
+
+async fn resolve_with(
+    host: String,
+    slots: Arc<tokio::sync::Semaphore>,
+    timeout: Duration,
+    lookup: impl FnOnce(&str) -> Result<Vec<SocketAddr>> + Send + 'static,
+) -> Result<Vec<SocketAddr>> {
+    tokio::time::timeout(timeout, async move {
+        let permit = slots
+            .acquire_owned()
+            .await
+            .context("Web address lookup is unavailable. Try again.")?;
+        let (sender, reply) = tokio::sync::oneshot::channel();
+        std::thread::Builder::new()
+            .name("leo-public-dns".into())
+            .spawn(move || {
+                let _permit = permit;
+                let _ = sender.send(lookup(&host));
+            })
+            .context("Web address lookup could not start. Try again.")?;
+        reply
+            .await
+            .context("Web address lookup stopped. Try again.")?
+    })
+    .await
+    .context("Web address lookup took too long. Try again.")?
 }
 
 struct PublicOnly;
@@ -152,26 +184,55 @@ impl reqwest::dns::Resolve for PublicOnly {
     fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
         let host = name.as_str().to_string();
         Box::pin(async move {
-            public_addresses(&host)
+            let slots = Arc::clone(
+                DNS_SLOTS.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(MOST_DNS))),
+            );
+            resolve_with(host, slots, TIMEOUT, public_addresses)
+                .await
                 .map(|found| Box::new(found.into_iter()) as reqwest::dns::Addrs)
                 .map_err(|e| e.into())
         })
     }
 }
 
-fn client() -> Result<reqwest::blocking::Client> {
-    Ok(reqwest::blocking::Client::builder()
+fn follows(url: &reqwest::Url, previous: usize, https_only: bool) -> bool {
+    previous < 5 && allowed(url) && (!https_only || url.scheme() == "https")
+}
+
+fn protected_client(
+    builder: reqwest::blocking::ClientBuilder,
+    https_only: bool,
+) -> Result<reqwest::blocking::Client> {
+    Ok(builder
+        .no_proxy()
+        .https_only(https_only)
         .timeout(TIMEOUT)
         .user_agent(AGENT)
         .dns_resolver(Arc::new(PublicOnly))
-        .redirect(reqwest::redirect::Policy::custom(|attempt| {
-            if attempt.previous().len() >= 5 || !allowed(attempt.url()) {
+        .redirect(reqwest::redirect::Policy::custom(move |attempt| {
+            if !follows(attempt.url(), attempt.previous().len(), https_only) {
                 attempt.stop()
             } else {
                 attempt.follow()
             }
         }))
         .build()?)
+}
+
+fn client(https_only: bool) -> Result<reqwest::blocking::Client> {
+    protected_client(reqwest::blocking::Client::builder(), https_only)
+}
+
+fn limited(response: reqwest::blocking::Response, most: u64) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(
+        &mut std::io::Read::take(response, most.saturating_add(1)),
+        &mut bytes,
+    )?;
+    if bytes.len() as u64 > most {
+        bail!("that address sent back more than leo will read");
+    }
+    Ok(bytes)
 }
 
 fn text_of(html: &str) -> String {
@@ -289,7 +350,11 @@ pub fn parse_wikipedia(json: &serde_json::Value) -> Vec<Hit> {
 fn duckduckgo(query: &str) -> Result<Vec<Hit>> {
     let mut url = reqwest::Url::parse("https://html.duckduckgo.com/html/")?;
     url.query_pairs_mut().append_pair("q", query);
-    let html = client()?.get(url).send()?.error_for_status()?.text()?;
+    let html = String::from_utf8_lossy(&limited(
+        client(false)?.get(url).send()?.error_for_status()?,
+        MOST_PAGE_BYTES,
+    )?)
+    .into_owned();
     Ok(parse_duckduckgo(&html))
 }
 
@@ -301,7 +366,10 @@ fn wikipedia(query: &str) -> Result<Vec<Hit>> {
         .append_pair("format", "json")
         .append_pair("srlimit", "6")
         .append_pair("srsearch", query);
-    let json: serde_json::Value = client()?.get(url).send()?.error_for_status()?.json()?;
+    let json: serde_json::Value = serde_json::from_slice(&limited(
+        client(false)?.get(url).send()?.error_for_status()?,
+        MOST_PAGE_BYTES,
+    )?)?;
     Ok(parse_wikipedia(&json))
 }
 
@@ -398,13 +466,8 @@ pub fn fetch_public(address: &str, most: u64) -> Result<Vec<u8>> {
     if url.scheme() != "https" || !allowed(&url) {
         bail!("leo only opens public https addresses");
     }
-    let response = client()?.get(url).send()?.error_for_status()?;
-    let mut bytes = Vec::new();
-    std::io::Read::read_to_end(&mut std::io::Read::take(response, most + 1), &mut bytes)?;
-    if bytes.len() as u64 > most {
-        bail!("that address sent back more than leo will read");
-    }
-    Ok(bytes)
+    let response = client(true)?.get(url).send()?.error_for_status()?;
+    limited(response, most)
 }
 
 pub struct Since {
@@ -423,7 +486,7 @@ pub fn fetch_public_since(
     if url.scheme() != "https" || !allowed(&url) {
         bail!("leo only opens public https addresses");
     }
-    let mut request = client()?.get(url);
+    let mut request = client(true)?.get(url);
     if let Some(tag) = etag.filter(|t| t.len() < 512) {
         request = request.header(reqwest::header::IF_NONE_MATCH, tag);
     }
@@ -449,11 +512,7 @@ pub fn fetch_public_since(
     };
     let tag = header(reqwest::header::ETAG);
     let when = header(reqwest::header::LAST_MODIFIED);
-    let mut bytes = Vec::new();
-    std::io::Read::read_to_end(&mut std::io::Read::take(response, most + 1), &mut bytes)?;
-    if bytes.len() as u64 > most {
-        bail!("that address sent back more than leo will read");
-    }
+    let bytes = limited(response, most)?;
     Ok(Since {
         body: Some(bytes),
         etag: tag,
@@ -466,7 +525,7 @@ pub fn page(address: &str) -> Result<String> {
     if !allowed(&url) {
         bail!("leo only opens public web pages");
     }
-    let response = client()?.get(url).send()?.error_for_status()?;
+    let response = client(false)?.get(url).send()?.error_for_status()?;
     let kind = response
         .headers()
         .get(reqwest::header::CONTENT_TYPE)
@@ -476,11 +535,7 @@ pub fn page(address: &str) -> Result<String> {
     if !(kind.starts_with("text/html") || kind.starts_with("text/plain") || kind.is_empty()) {
         bail!("that page is not text ({kind})");
     }
-    let mut bytes = Vec::new();
-    std::io::Read::read_to_end(
-        &mut std::io::Read::take(response, MOST_PAGE_BYTES),
-        &mut bytes,
-    )?;
+    let bytes = limited(response, MOST_PAGE_BYTES)?;
     let body = String::from_utf8_lossy(&bytes);
     Ok(if kind.starts_with("text/plain") {
         body.into_owned()
@@ -625,5 +680,120 @@ mod tests {
         let text = page(&readable_hit.url).unwrap();
         assert!(text.len() > 200);
         println!("{}", text.chars().take(600).collect::<String>());
+    }
+}
+
+#[cfg(test)]
+mod boundaries {
+    use super::*;
+    use std::io::{Read, Write};
+
+    #[test]
+    fn secure_fetches_never_follow_http_or_private_redirects() {
+        let https = reqwest::Url::parse("https://example.com/calendar").unwrap();
+        let http = reqwest::Url::parse("http://example.com/calendar").unwrap();
+        let private = reqwest::Url::parse("https://127.0.0.1/private").unwrap();
+        assert!(follows(&https, 1, true));
+        assert!(!follows(&http, 1, true));
+        assert!(follows(&http, 1, false));
+        assert!(!follows(&private, 1, false));
+        for ip in ["fec0::1", "fed0::1", "feff::1"] {
+            assert!(!allowed(
+                &reqwest::Url::parse(&format!("https://[{ip}]/")).unwrap()
+            ));
+            assert!(!public(ip.parse().unwrap()));
+        }
+        assert!(!follows(&https, 5, true));
+        assert!(protected_client(reqwest::blocking::Client::builder(), true)
+            .unwrap()
+            .get("http://127.0.0.1:9/")
+            .send()
+            .is_err());
+    }
+
+    #[test]
+    fn the_public_fetch_client_ignores_proxies_and_bounds_response_bodies() {
+        let target = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let proxy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        proxy.set_nonblocking(true).unwrap();
+        let address = target.local_addr().unwrap();
+        target.set_nonblocking(true).unwrap();
+        let server = std::thread::spawn(move || {
+            let until = std::time::Instant::now() + Duration::from_secs(2);
+            let mut stream = loop {
+                match target.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::WouldBlock
+                            && std::time::Instant::now() < until =>
+                    {
+                        std::thread::sleep(Duration::from_millis(5))
+                    }
+                    Err(error) => panic!("the fake target did not receive a request: {error}"),
+                }
+            };
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut bytes = [0; 2048];
+            stream.read(&mut bytes).unwrap();
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nabcdef",
+                )
+                .unwrap();
+        });
+        let builder = reqwest::blocking::Client::builder()
+            .proxy(reqwest::Proxy::all(format!("http://{}", proxy.local_addr().unwrap())).unwrap());
+        let response = protected_client(builder, false)
+            .unwrap()
+            .get(format!("http://{address}/"))
+            .send()
+            .unwrap();
+        assert!(limited(response, 4).is_err());
+        assert_eq!(
+            proxy.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn slow_dns_has_a_deadline_and_keeps_its_slot_until_the_lookup_finishes() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let slots = Arc::new(tokio::sync::Semaphore::new(1));
+        let (release, hold) = std::sync::mpsc::channel();
+        let lookup_slots = Arc::clone(&slots);
+        let failed = runtime.block_on(resolve_with(
+            "fake.example".into(),
+            lookup_slots,
+            Duration::from_millis(25),
+            move |_| {
+                let _ = hold.recv_timeout(Duration::from_secs(2));
+                Ok(vec!["8.8.8.8:0".parse().unwrap()])
+            },
+        ));
+        let still_held = slots.available_permits() == 0;
+        let other_slots = Arc::clone(&slots);
+        let waiting = runtime.block_on(resolve_with(
+            "fake.example".into(),
+            other_slots,
+            Duration::from_millis(25),
+            |_| panic!("no second lookup may start while the only slot is held"),
+        ));
+        release.send(()).unwrap();
+        runtime.block_on(async {
+            tokio::time::timeout(Duration::from_secs(2), slots.acquire())
+                .await
+                .unwrap()
+                .unwrap()
+                .forget();
+        });
+        assert!(failed.is_err());
+        assert!(waiting.is_err());
+        assert!(still_held);
     }
 }

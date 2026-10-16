@@ -24,6 +24,11 @@ pub fn files(notes_dir: &Path, note: &str) -> Vec<(String, u64)> {
             entries
                 .flatten()
                 .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+                .filter(|e| {
+                    e.file_name()
+                        .to_str()
+                        .is_some_and(|name| path_of(notes_dir, note, name).is_some())
+                })
                 .map(|e| {
                     (
                         e.file_name().to_string_lossy().to_string(),
@@ -39,11 +44,7 @@ pub fn files(notes_dir: &Path, note: &str) -> Vec<(String, u64)> {
 }
 
 pub fn path_of(notes_dir: &Path, note: &str, name: &str) -> Option<PathBuf> {
-    let folder = crate::routes::uploads::originals_dir(notes_dir, note)?;
-    if name.is_empty() || name.contains(['/', '\\']) || name.starts_with('.') {
-        return None;
-    }
-    let path = folder.join(name);
+    let path = crate::routes::uploads::original_path(notes_dir, note, name)?;
     std::fs::symlink_metadata(&path)
         .is_ok_and(|m| m.is_file())
         .then_some(path)
@@ -69,8 +70,17 @@ fn mime_of(name: &str) -> &'static str {
 
 impl Originals {
     pub fn text(&self, reader: &crate::Reader, path: &Path, name: &str) -> Result<Arc<String>> {
-        let meta = std::fs::metadata(path)?;
-        if meta.len() > MOST_BYTES {
+        use std::io::Read;
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+        }
+        let file = options.open(path)?;
+        let meta = file.metadata()?;
+        if !meta.is_file() || meta.len() > MOST_BYTES {
             bail!("{name} is too big for leo to read");
         }
         let key: Key = (path.to_path_buf(), meta.len(), meta.modified().ok());
@@ -82,11 +92,16 @@ impl Originals {
         {
             return Ok(text);
         }
+        let mut bytes = Vec::new();
+        file.take(MOST_BYTES + 1).read_to_end(&mut bytes)?;
+        if bytes.len() as u64 > MOST_BYTES {
+            bail!("{name} is too big for leo to read");
+        }
         let text = Arc::new(reader(
             crate::UploadFile {
                 name: name.to_string(),
                 mime: mime_of(name).to_string(),
-                bytes: std::fs::read(path)?,
+                bytes,
             },
             &mut |_| {},
         )?);
@@ -204,5 +219,31 @@ mod tests {
         assert_eq!(*originals.text(&reader, &path, "a.txt").unwrap(), "hello");
         assert_eq!(*originals.text(&reader, &path, "a.txt").unwrap(), "hello");
         assert_eq!(reads.load(std::sync::atomic::Ordering::Relaxed), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn original_readers_refuse_links_directories_and_oversized_files_before_conversion() {
+        let dir = tempfile::tempdir().unwrap();
+        let large = dir.path().join("large.txt");
+        std::fs::File::create(&large)
+            .unwrap()
+            .set_len(MOST_BYTES + 1)
+            .unwrap();
+        let target = dir.path().join("example.txt");
+        std::fs::write(&target, "EXAMPLE PRIVATE CONTENT").unwrap();
+        let linked = dir.path().join("linked.txt");
+        std::os::unix::fs::symlink(&target, &linked).unwrap();
+        let reader: crate::Reader = Arc::new(|_: crate::UploadFile, _: &mut dyn FnMut(&str)| {
+            panic!("unsafe files must not reach the converter")
+        });
+        let originals = Originals::default();
+        for path in [large.as_path(), linked.as_path(), dir.path()] {
+            assert!(originals.text(&reader, path, "example.txt").is_err());
+        }
+        assert_eq!(
+            std::fs::read_to_string(target).unwrap(),
+            "EXAMPLE PRIVATE CONTENT"
+        );
     }
 }

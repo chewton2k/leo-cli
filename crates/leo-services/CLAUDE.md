@@ -387,3 +387,29 @@ Browser-fed manifests are recovered through their browser journal, never by the
 terminal startup scan. Simultaneous tracks allocate session folders with exclusive
 `create_dir`; metadata uses unique synced temporary files so track startup cannot
 share a directory or race on a fixed temporary name.
+
+
+### Agent, credential and public-fetch boundaries (2026-10-16)
+
+Native Codex sessions and live usage polling require app-server help to advertise
+both `--ignore-user-config` and `--ignore-rules`, and pass both flags. Unsupported
+versions use the existing isolated text tools and previously saved usage; never
+start an app-server that could load the user's MCP servers, hooks or rules.
+Feature discovery is bounded and fails closed, including the shell control and
+hooks. CLI probes, native turns and text runs share a process-group watchdog that
+covers stdin, stdout EOF, exit and pipe joins; native queues and output are bounded.
+Isolated text fallback sacrifices native conversation caching and may add latency.
+Claude's loopback MCP bridge caps active connections at eight, closes registered
+sockets on drop, checks shutdown during pending calls, and bounds writes, batches
+and requests per connection.
+
+Credential updates use one bounded writer queue without I/O under a mutex, unique
+synced 0600 temporary files, bounded nofollow regular-file reads and atomic replace.
+Corrupt credential files are reported and preserved; permission repair refuses
+symbolic/hard links. Serialization is in-process, not a cross-process file lock.
+
+Public fetch clients disable proxies, check actual resolved addresses, reject
+private IPv4/IPv6 including deprecated site-local addresses, and bound response
+bytes and redirects. HTTPS-only fetches cannot downgrade on redirects. OS DNS
+lookups run outside the HTTP runtime with a deadline and at most four concurrent
+lookup threads; a timed-out OS lookup retains its slot until it actually returns.

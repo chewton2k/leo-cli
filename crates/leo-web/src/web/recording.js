@@ -67,6 +67,7 @@
   const WAVE_STEP_MS = 60;
   const SERVER_STEP_MS = 250;
   const MOST_WAVE = 400;
+  const MOST_LEVEL_QUEUE = 40;
   const BAR = 3;
   const GAP = 2.5;
 
@@ -492,7 +493,7 @@
         for (const v of s.samples) sum += v * v;
         return loudness(Math.sqrt(sum / s.samples.length));
       }
-      if (s.queue.length > 40) s.queue.splice(0, s.queue.length - 40);
+      if (s.queue.length > MOST_LEVEL_QUEUE) s.queue.splice(0, s.queue.length - MOST_LEVEL_QUEUE);
       return s.queue.length ? s.queue.shift() : s.smooth * 0.85;
     }
 
@@ -505,6 +506,7 @@
         s.queue.push(...spread(s.lastFed, level, per));
         s.lastFed = level;
       }
+      if (s.queue.length > MOST_LEVEL_QUEUE) s.queue.splice(0, s.queue.length - MOST_LEVEL_QUEUE);
     }
 
     function advance(now) {
