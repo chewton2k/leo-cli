@@ -1827,8 +1827,8 @@ body.interview-resizing { cursor: col-resize; user-select: none; }
 @container interview (min-width: 900px) { .interview-practice .interview-workspace { position: sticky; top: calc(var(--top) + 72px); } }
 .interview-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
 .interview-heading h1 { margin: 0 0 8px; overflow-wrap: anywhere; }
-.interview-heading h1[contenteditable] { min-height: 1.25em; cursor: text; border-radius: 4px; }
-.interview-heading h1[contenteditable]:focus { outline: 2px solid var(--accent); outline-offset: 4px; }
+.interview-heading [contenteditable] { display: inline-block; max-width: 100%; min-height: 1.25em; cursor: text; border-radius: 4px; }
+.interview-heading [contenteditable]:focus { outline: 2px solid var(--accent); outline-offset: 4px; }
 .interview-heading .hint { margin: 0; }
 .interview-heading .eyebrow { color: var(--muted); font-size: 12px; letter-spacing: .05em; margin: 0 0 10px; }
 .interview-home .buttons { display: flex; gap: 8px; flex-wrap: wrap; }

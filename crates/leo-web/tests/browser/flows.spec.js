@@ -3893,6 +3893,7 @@ test('practice titles rename inline without losing typing, code or newer prefere
   await page.goto(`/#/interviews/${id}`);
   const title = page.getByRole('textbox', { name: 'Practice title', exact: true });
   await expect(title).toHaveText('Coding practice');
+  await expect(page.getByRole('heading', { name: 'Coding practice', exact: true })).toBeVisible();
   hold = true;
   await title.fill('Arrays practice');
   await expect.poll(() => Boolean(release)).toBe(true);
