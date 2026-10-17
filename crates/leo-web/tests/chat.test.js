@@ -488,3 +488,113 @@ test('problem deletion cards can be applied again after Undo with fresh revision
     else assert.deepEqual(sent.filter(v => v.kind === initial).map(v => v.token), ['first-token', 'token-9']);
   }
 });
+
+function chatSendFixture(mode = 'chat', id = 'practice', access = 'ask', before = async () => true) {
+  const fs = require('node:fs');
+  const vm = require('node:vm');
+  const source = fs.readFileSync(require.resolve('../src/web/chat.js'), 'utf8');
+  const send = source.slice(source.indexOf('    async function send('), source.indexOf('    let leaving ='));
+  const drawContext = source.slice(source.indexOf('    function drawContext('), source.indexOf('    const modeName ='));
+  const state = { id, mode, access, interview: { id: 'practice', challenge: 'problem-two', number: 2, title: 'Graphs <review>', tab: 'Code' }, messages: [], refs: [], files: [], sent: [], context: null, selection: null };
+  const requests = [], prepared = [], notices = [];
+  const contextBox = { innerHTML: '' };
+  const input = { value: 'Put the solution in my code area.' };
+  const noop = () => {};
+  const context = vm.createContext({
+    state, input, AbortController, TextDecoder, working: new Map(), MOST_REFS: C.MOST_REFS,
+    historyText: C.historyText, threadRefs: C.threadRefs, recentNotes: C.recentNotes, sessionBody: C.sessionBody, splitLines: C.splitLines, grade: C.grade, scoreSession: C.scoreSession,
+    cardOf: doc => doc, currentSession: () => null, closePick: noop, drawRefs: noop, fit: noop, awake: noop, mood: noop, thinking: noop, draw: noop, remember: noop, react: noop, talking: noop, onInterviewReply: noop,
+    $: () => contextBox, escape: esc,
+    onBeforeSend: async args => { prepared.push(args); return before(args); }, notify: message => notices.push(message),
+    fetch: async (_url, options) => {
+      requests.push(JSON.parse(options.body));
+      let read = false;
+      return { ok: true, status: 200, body: { getReader: () => ({ read: async () => { if (read) return { done: true }; read = true; return { done: false, value: new TextEncoder().encode('{"t":"Ready."}\n{"done":true}\n') }; } }) } };
+    },
+  });
+  vm.runInContext(send + drawContext, context);
+  return { state, input, requests, prepared, notices, contextBox, send: context.send, drawContext: context.drawContext };
+}
+
+test('the active practice context and draft save survive every chat style and access setting', async () => {
+  for (const mode of ['chat', 'study', 'interview']) {
+    for (const access of ['ask', 'auto', 'read']) {
+      const fixture = chatSendFixture(mode, 'practice', access);
+      fixture.drawContext();
+      assert.match(fixture.contextBox.innerHTML, /Problem 2/);
+      assert.match(fixture.contextBox.innerHTML, /Graphs &lt;review&gt;/);
+      await fixture.send(fixture.input.value);
+      assert.equal(fixture.prepared.length, 1, `${mode}: saves before sending`);
+      assert.equal(fixture.prepared[0].challenge, 'problem-two');
+      assert.equal(fixture.prepared[0].mode, mode);
+      assert.equal(fixture.requests.length, 1);
+      const request = fixture.requests[0];
+      assert.equal(request.mode, mode);
+      assert.equal(request.chat, 'practice');
+      assert.equal(request.interview_problem, 'problem-two');
+      assert.equal(request.access, access);
+      assert.equal(request.practice, false);
+      assert.equal(request.mark, false);
+      assert.equal(fixture.state.messages[0].interview.challenge, 'problem-two');
+      assert.deepEqual(fixture.notices, []);
+    }
+  }
+  const quiz = chatSendFixture('study', 'practice', 'read');
+  await quiz.send('My answer', { card: { question: 'Why?', correct: null } });
+  assert.equal(quiz.requests[0].practice, true);
+  assert.equal(quiz.requests[0].mark, true);
+  assert.equal(quiz.requests[0].access, 'read');
+  assert.equal(quiz.requests[0].interview_problem, 'problem-two');
+});
+
+test('a different conversation stays independent of the open practice', async () => {
+  const fixture = chatSendFixture('chat', 'other-chat');
+  fixture.drawContext();
+  assert.doesNotMatch(fixture.contextBox.innerHTML, /Problem 2/);
+  await fixture.send(fixture.input.value);
+  assert.equal(fixture.prepared.length, 0);
+  assert.equal(fixture.requests[0].chat, 'other-chat');
+  assert.equal(fixture.requests[0].interview_problem, null);
+});
+
+test('switching chat style or conversation during a practice save keeps the unsent message', async () => {
+  for (const [from, to] of [['chat', 'study'], ['study', 'chat'], ['interview', 'chat']]) {
+    for (const change of ['mode', 'conversation']) {
+      let finish;
+      const fixture = chatSendFixture(from, 'practice', 'ask', () => new Promise(resolve => { finish = resolve; }));
+      const text = fixture.input.value;
+      const sending = fixture.send(text);
+      assert.equal(typeof finish, 'function');
+      if (change === 'mode') fixture.state.mode = to;
+      else fixture.state.id = 'other-chat';
+      finish(true);
+      await sending;
+      assert.equal(fixture.requests.length, 0);
+      assert.equal(fixture.state.messages.length, 0);
+      assert.equal(fixture.input.value, text);
+      assert.equal(fixture.state.preparingSend, false);
+    }
+  }
+});
+
+
+test('the page saves the matching practice draft in every chat style before sending', async () => {
+  const fs = require('node:fs');
+  const vm = require('node:vm');
+  const source = fs.readFileSync(require.resolve('../src/web/app/core.js'), 'utf8');
+  const hook = source.slice(source.indexOf('onBeforeSend: async ') + 'onBeforeSend: '.length, source.indexOf('  onOpen:'));
+  const body = hook.trim().replace(/,$/, '');
+  for (const mode of ['chat', 'study', 'interview']) {
+    let saves = 0;
+    const session = { item: { id: 'practice', challenge: { id: 'problem-17' } } };
+    const context = { interviewPage: session, interviewHere: s => s === session, saveInterviewWorkspace: async s => { assert.equal(s, session); saves += 1; } };
+    const save = vm.runInNewContext(`(${body})`, context);
+    assert.equal(await save({ id: 'practice', mode, challenge: 'problem-17' }), true);
+    assert.equal(saves, 1);
+    assert.equal(await save({ id: 'other', mode, challenge: 'problem-17' }), true);
+    assert.equal(saves, 1);
+    session.switching = true;
+    await assert.rejects(save({ id: 'practice', mode, challenge: 'problem-17' }), /switching/);
+    assert.equal(saves, 1);
+  }
+});

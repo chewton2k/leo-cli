@@ -65,9 +65,9 @@ const chat = felix.create({
   render: (text) => md.render(text),
   escape: md.escape,
   icons: ICON,
-  onBeforeSend: async ({ id, mode, challenge }) => {
+  onBeforeSend: async ({ id, challenge }) => {
     const session = interviewPage;
-    if (mode !== 'interview' || !session || session.item.id !== id || !interviewHere(session)) return true;
+    if (!session || session.item.id !== id || !interviewHere(session)) return true;
     if (session.switching) throw new Error('The problem is switching. Ask Felix once it finishes.');
     await saveInterviewWorkspace(session);
     return interviewHere(session) && (!challenge || session.item.challenge?.id === challenge);

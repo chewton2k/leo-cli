@@ -802,3 +802,16 @@ recoverable when Undo restores that problem.
 The interview topic picker measures the visible space outside the sticky header,
 flips above its button when needed and caps its own scrolling height. Its controls
 stack above question tabs; scrolling or resizing recomputes the available space.
+
+Interview editor access follows the saved practice conversation, independently of
+Chat, Study or Interview response style. A matching visible workspace is saved
+before sending in every style; another conversation never inherits that scope.
+The viewed problem ID is validated against the practice and refreshed in warm
+sessions. An explicitly empty find initializes only a still-empty editor; stale
+typing is refused and insertion supports the same independent cards and Undo.
+Both native and text replies recover once from an explicit false claim that the
+editor tools are unavailable, only before any tool call and while editing is
+allowed. A bounded 512-character prefix holds that refusal before display; normal
+text streams when the prefix fills or a tool runs. Already shown text is never
+replaced for this check. A repeated refusal keeps the code and shows an actionable
+retry message. Legitimate execution limitations and Read only are not retried.

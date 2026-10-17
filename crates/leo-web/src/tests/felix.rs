@@ -2986,3 +2986,272 @@ fn felix_deletes_the_viewed_problem_with_confirmation_and_private_undo_on_both_p
         }
     }
 }
+
+const CODE_REFUSAL: &str = "I can’t put it in the code area from here because the interview code editing tools aren’t available in this chat. The solution is ready to copy into Problem 17’s code editor.";
+const CODE_CHANGE: &str = r#"<tool>{"name":"interview_code_edit","summary":"Put the requested implementation in the editor","find":"return 0","replace":"return 1"}</tool>"#;
+const CODE_INITIALIZE: &str = r#"<tool>{"name":"interview_code_edit","summary":"Put the requested implementation in the editor","find":"","replace":"def solve():\n    return 1"}</tool>"#;
+
+fn editor_practice(state: &AppState, empty: bool) {
+    let framework = serde_json::from_value(serde_json::json!({"title":"Code review", "track":"coding", "company":"", "role":"", "language":"Python", "style":"coach", "date":"", "weekly_minutes":120, "skills":["Approach"], "wants":""})).unwrap();
+    crate::interview::configure(&state.chats, "editor-chat-0001", 0, framework).unwrap();
+    for id in ["editor-target-01", "editor-other-001"] {
+        let challenge = serde_json::from_value(serde_json::json!({"id":id, "title":"Return value", "question":"Return one", "minutes":30, "skills":["Approach"], "origin":"generated", "sources":[], "coding":{"language":"Python", "starter":"def solve():\n    return 0", "difficulty":"easy", "examples":[{"input":"none","output":"1"}], "constraints":["Return one"]}})).unwrap();
+        crate::interview::set_challenge(&state.chats, "editor-chat-0001", challenge).unwrap();
+    }
+    crate::interview::mutate(&state.chats, "editor-chat-0001", None, |item| {
+        if empty {
+            item.problems[0].workspace.answer.clear();
+        }
+        item.workspace.answer = "Keep the other problem".into();
+        Ok(())
+    })
+    .unwrap();
+}
+
+fn editor_lines(
+    state: &AppState,
+    mode: &str,
+    access: &str,
+    practice: bool,
+) -> Vec<serde_json::Value> {
+    let body = serde_json::from_value(serde_json::json!({"chat":"editor-chat-0001", "mode":mode, "access":access, "interview_problem":"editor-target-01", "practice":practice, "messages":[{"role":"user","text":"yes it is please put the correct code in the code area"}]})).unwrap();
+    let bytes = run(async {
+        let response = chat_reply(State(state.clone()), Json(body)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        axum::body::to_bytes(response.into_body(), 1_000_000)
+            .await
+            .unwrap()
+    });
+    std::str::from_utf8(&bytes)
+        .unwrap()
+        .lines()
+        .map(|s| serde_json::from_str(s).unwrap())
+        .collect()
+}
+
+struct EditorNative {
+    turns: Arc<std::sync::atomic::AtomicUsize>,
+    empty: bool,
+    refuse: bool,
+    persistent: bool,
+}
+
+impl chat::Conversation for EditorNative {
+    fn native(&self) -> bool {
+        true
+    }
+    fn say(&mut self, text: &str, exchange: chat::Exchange<'_>) -> anyhow::Result<chat::Reply> {
+        let turn = self
+            .turns
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if self.refuse && (turn == 0 || self.persistent) {
+            assert!(turn <= 1, "a false refusal is retried at most once");
+            (exchange.piece)(CODE_REFUSAL);
+            return Ok(CODE_REFUSAL.into());
+        }
+        if self.refuse {
+            assert_eq!(text, crate::interview_tools::CODE_RETRY_NATIVE);
+        }
+        let read = (exchange.call)("interview_code", &serde_json::json!({}));
+        let read: serde_json::Value = serde_json::from_str(&read).unwrap();
+        assert_eq!(read["problem"], "editor-target-01");
+        assert_eq!(
+            read["code"],
+            if self.empty {
+                ""
+            } else {
+                "def solve():\n    return 0"
+            }
+        );
+        (exchange.call)(
+            "interview_code_edit",
+            &serde_json::json!({"summary":"Put the requested implementation in the editor", "find":if self.empty { "" } else { "return 0" }, "replace":if self.empty { "def solve():\n    return 1" } else { "return 1" }}),
+        );
+        (exchange.piece)("Review the code change.");
+        Ok("Review the code change.".into())
+    }
+}
+
+#[test]
+fn a_false_editor_refusal_is_recovered_once_in_every_style_with_the_viewed_problem_and_permissions()
+{
+    for native in [false, true] {
+        for mode in ["chat", "study", "interview"] {
+            for empty in [false, true] {
+                for access in ["ask", "auto"] {
+                    let (mut state, _dir, _) = state_with(&[]);
+                    editor_practice(&state, empty);
+                    let (streamer, prompts) = scripted(vec![
+                        CODE_REFUSAL,
+                        r#"<tool>{"name":"interview_code"}</tool>"#,
+                        if empty { CODE_INITIALIZE } else { CODE_CHANGE },
+                        "Review the code change.",
+                    ]);
+                    state.chat = Some(streamer);
+                    if native {
+                        state.converse = Some(Arc::new(move |given, specs| {
+                            assert!(given
+                                .native
+                                .contains(crate::interview_tools::WORKSPACE_RULES));
+                            assert!(specs.iter().any(|s| s.name == "interview_code"));
+                            assert!(specs.iter().any(|s| s.name == "interview_code_edit"));
+                            Some(Box::new(EditorNative {
+                                turns: Default::default(),
+                                empty,
+                                refuse: true,
+                                persistent: false,
+                            })
+                                as Box<dyn chat::Conversation>)
+                        }));
+                    }
+                    let lines = editor_lines(&state, mode, access, false);
+                    assert!(
+                        lines.iter().all(|l| l.get("error").is_none()
+                            && l.get("restart").is_none()
+                            && l.get("reset").is_none()),
+                        "{native} {mode} {access}: {lines:?}"
+                    );
+                    assert_eq!(shown(&lines), "Review the code change.");
+                    if !native {
+                        let prompts = prompts.lock().unwrap();
+                        assert!(prompts[0].contains(crate::interview_tools::WORKSPACE_RULES));
+                        assert!(prompts[1].contains(crate::interview_tools::CODE_RETRY_TEXT));
+                        assert_eq!(prompts.len(), 4);
+                    }
+                    let proposals: Vec<_> =
+                        lines.iter().filter_map(|l| l.get("proposal")).collect();
+                    assert_eq!(proposals.len(), 1);
+                    let proposal = proposals[0];
+                    assert_eq!(proposal["challenge"], "editor-target-01");
+                    assert_eq!(
+                        proposal["auto"].as_bool().unwrap_or(false),
+                        access == "auto"
+                    );
+                    let before = crate::interview::load(&state.chats, "editor-chat-0001").unwrap();
+                    assert_eq!(
+                        before.problems[0].workspace.answer,
+                        if empty {
+                            ""
+                        } else {
+                            "def solve():\n    return 0"
+                        }
+                    );
+                    let done = json_of(run(crate::routes::organize::act_route(
+                        State(state.clone()),
+                        Json(serde_json::from_value(proposal.clone()).unwrap()),
+                    )));
+                    let item = crate::interview::load(&state.chats, "editor-chat-0001").unwrap();
+                    assert_eq!(
+                        item.problems[0].workspace.answer,
+                        "def solve():\n    return 1"
+                    );
+                    assert_eq!(item.workspace.answer, "Keep the other problem");
+                    run(crate::routes::organize::act_route(
+                        State(state.clone()),
+                        Json(serde_json::from_value(done["undo"].clone()).unwrap()),
+                    ));
+                    assert_eq!(
+                        crate::interview::load(&state.chats, "editor-chat-0001")
+                            .unwrap()
+                            .problems[0]
+                            .workspace,
+                        before.problems[0].workspace
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn editor_recovery_is_bounded_and_never_overrides_read_only_or_quiz_marking() {
+    for native in [false, true] {
+        let (mut state, _dir, _) = state_with(&[]);
+        editor_practice(&state, false);
+        let turns = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (streamer, prompts) = scripted(vec![CODE_REFUSAL, CODE_REFUSAL, "unused"]);
+        state.chat = Some(streamer);
+        if native {
+            let turns = Arc::clone(&turns);
+            state.converse = Some(Arc::new(move |_, _| {
+                Some(Box::new(EditorNative {
+                    turns: Arc::clone(&turns),
+                    empty: false,
+                    refuse: true,
+                    persistent: true,
+                }) as Box<dyn chat::Conversation>)
+            }));
+        }
+        let lines = editor_lines(&state, "chat", "ask", false);
+        assert_eq!(shown(&lines), crate::interview_tools::CODE_RETRY_FAILED);
+        assert!(!lines.iter().any(|l| l.get("proposal").is_some()
+            || l.get("restart").is_some()
+            || l.get("reset").is_some()));
+        assert_eq!(
+            if native {
+                turns.load(std::sync::atomic::Ordering::Relaxed)
+            } else {
+                prompts.lock().unwrap().len()
+            },
+            2
+        );
+        for (access, practice) in [("read", false), ("auto", true)] {
+            state.warm.clear();
+            state.chat = Some(
+                scripted(vec![
+                    r#"<tool>{"name":"interview_code"}</tool>"#,
+                    CODE_CHANGE,
+                    "Read only is active. Switch to Ask or Auto to edit.",
+                ])
+                .0,
+            );
+            if native {
+                state.converse = Some(Arc::new(|_, _| {
+                    Some(Box::new(EditorNative {
+                        turns: Default::default(),
+                        empty: false,
+                        refuse: false,
+                        persistent: false,
+                    }) as Box<dyn chat::Conversation>)
+                }));
+            }
+            let lines = editor_lines(&state, "study", access, practice);
+            assert!(!lines.iter().any(|l| l.get("proposal").is_some()));
+            assert_eq!(
+                crate::interview::load(&state.chats, "editor-chat-0001")
+                    .unwrap()
+                    .problems[0]
+                    .workspace
+                    .answer,
+                "def solve():\n    return 0"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_workspace_reference_cannot_bind_a_different_chat_or_a_deleted_problem() {
+    let (mut state, _dir, _) = state_with(&[]);
+    editor_practice(&state, false);
+    state.chat = Some(scripted(vec!["unused"]).0);
+    for (chat, problem) in [
+        ("unrelated-chat-01", "editor-target-01"),
+        ("editor-chat-0001", "deleted-problem-01"),
+    ] {
+        let body = serde_json::from_value(serde_json::json!({"chat":chat,"mode":"chat","interview_problem":problem,"messages":[{"role":"user","text":"put it in the code area"}]})).unwrap();
+        let response = run(chat_reply(State(state.clone()), Json(body)));
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert!(json_of(response)["error"].as_str().is_some());
+    }
+    state.converse = Some(Arc::new(|given, specs| {
+        assert!(!specs.iter().any(|s| s.name == "interview_code_edit"));
+        assert!(!given
+            .native
+            .contains(crate::interview_tools::WORKSPACE_RULES));
+        None
+    }));
+    let body = serde_json::from_value(serde_json::json!({"chat":"unrelated-chat-01","mode":"chat","messages":[{"role":"user","text":"hello"}]})).unwrap();
+    let response = run(chat_reply(State(state.clone()), Json(body)));
+    assert_eq!(response.status(), StatusCode::OK);
+    run(axum::body::to_bytes(response.into_body(), 1_000_000)).unwrap();
+}

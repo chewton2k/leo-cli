@@ -1368,7 +1368,7 @@
     function drawContext() {
       const box = $('#chat-context');
       const ctx = state.context && state.dropped !== state.context.id ? state.context : null;
-      const interview = state.mode === 'interview' && state.interview?.id === state.id ? state.interview : null;
+      const interview = state.interview?.id === state.id ? state.interview : null;
       box.innerHTML = interview ? `<span class="chat-using">Problem ${interview.number} · <b>${escape(interview.title)}</b> · ${escape(interview.tab)}</span>` : ctx
         ? `<span class="chat-using">Also reading <b>${escape(ctx.title || 'Untitled')}</b> and notes connected to it</span><button class="chat-drop" data-chat="drop" aria-label="Stop using this note">×</button>`
         : '<span class="chat-using">Looks through your notes when they help</span>';
@@ -2033,12 +2033,13 @@
     async function send(text, extra = {}) {
       const question = text.trim();
       if (!question || state.busy || state.preparingSend) return;
-      const viewing = state.mode === 'interview' && state.interview?.id === state.id ? state.interview : null;
-      if (state.mode === 'interview') {
+      const mode = state.mode;
+      const viewing = state.interview?.id === state.id ? state.interview : null;
+      if (viewing || mode === 'interview') {
         const id = state.id;
         let prepared = false;
         state.preparingSend = true;
-        try { if (await onBeforeSend({ id, mode: state.mode, challenge: viewing?.challenge }) === false || state.id !== id || state.mode !== 'interview' || state.busy) return; prepared = true; }
+        try { if (await onBeforeSend({ id, mode, challenge: viewing?.challenge }) === false || state.id !== id || state.mode !== mode || state.busy) return; prepared = true; }
         catch (e) { notify(e.message || 'Your practice could not be saved. Try saving it again before asking Felix.'); return; }
         finally { state.preparingSend = false; if (!prepared) onInterviewReply(id); }
       }

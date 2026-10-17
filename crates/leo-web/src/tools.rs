@@ -902,7 +902,8 @@ pub fn check(call: &Call) -> Result<(), String> {
             Some(serde_json::Value::String(text))
                 if param.required
                     && param.name != "body"
-                    && !(call.name == "interview_code_edit" && param.name == "replace")
+                    && !(call.name == "interview_code_edit"
+                        && matches!(param.name, "find" | "replace"))
                     && text.trim().is_empty() =>
             {
                 return Err(format!(
@@ -2788,6 +2789,42 @@ mod tests {
                 "{promise}"
             );
         }
+    }
+
+    #[test]
+    fn code_edits_allow_explicit_empty_fragments_but_require_their_string_fields() {
+        let base = serde_json::json!({"summary":"Initialize the empty editor", "find":"", "replace":"def solve():\n    pass"});
+        let call = |args| Call {
+            name: "interview_code_edit".into(),
+            args,
+        };
+        assert!(check(&call(base.clone())).is_ok());
+        let mut deletion = base.clone();
+        deletion["find"] = "pass".into();
+        deletion["replace"] = "".into();
+        assert!(check(&call(deletion)).is_ok());
+        for field in ["summary", "find", "replace"] {
+            let mut missing = base.clone();
+            missing.as_object_mut().unwrap().remove(field);
+            assert!(check(&call(missing)).is_err(), "missing {field}");
+            for value in [
+                serde_json::Value::Null,
+                serde_json::json!(1),
+                serde_json::json!(false),
+            ] {
+                let mut mistyped = base.clone();
+                mistyped[field] = value;
+                assert!(check(&call(mistyped)).is_err(), "mistyped {field}");
+            }
+        }
+        let mut no_reason = base;
+        no_reason["summary"] = " ".into();
+        assert!(check(&call(no_reason)).is_err());
+        assert!(check(&Call {
+            name: "search_notes".into(),
+            args: serde_json::json!({"query":""}),
+        })
+        .is_err());
     }
 
     #[test]

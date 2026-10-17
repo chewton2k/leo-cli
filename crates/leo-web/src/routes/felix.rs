@@ -1229,6 +1229,7 @@ fn answer(
 }
 
 const FALLBACK_TRIES: usize = 2;
+const CODE_RETRIES: usize = 1;
 
 #[allow(clippy::too_many_arguments)]
 fn native_answer(
@@ -1243,53 +1244,79 @@ fn native_answer(
     let mut calls = 0usize;
     let mut failure: Option<anyhow::Error> = None;
     let gap = std::cell::Cell::new(false);
-    let reply = {
-        let mut piece = |t: &str| {
+    let code_context = desk.interview.is_some();
+    let mut message = conversation.to_string();
+    for attempt in 0..=CODE_RETRIES {
+        let head = std::cell::RefCell::new(crate::code_reply::Head::new(
+            code_context && calls == 0 && desk.current_access().changes(),
+        ));
+        let show = |t: &str| {
             if gap.replace(false) && shown.get() {
                 send(serde_json::json!({ "t": "\n\n" }));
             }
             shown.set(true);
             send(serde_json::json!({ "t": t }));
         };
-        let mut restart = || gap.set(true);
-        let mut call = |name: &str, args: &serde_json::Value| -> String {
-            calls += 1;
-            if calls > tools::MOST_STEPS {
-                return format!("That did not work: {}", tools::NO_MORE_TOOLS);
-            }
-            let mut call = tools::Call {
-                name: name.to_string(),
-                args: args.clone(),
-            };
-            if !call.args.is_object() {
-                call.args = serde_json::json!({});
-            }
-            match run_tool(state, desk, &call, send) {
-                Ok(done) => done.result,
-                Err(e) => {
-                    let said = e.to_string();
-                    failure = Some(e);
-                    format!("That did not work: {said}")
+        let reply = {
+            let mut piece = |t: &str| head.borrow_mut().push(t, &mut |t| show(t));
+            let mut restart = || gap.set(true);
+            let mut call = |name: &str, args: &serde_json::Value| -> String {
+                head.borrow_mut().release(&mut |t| show(t));
+                calls += 1;
+                if calls > tools::MOST_STEPS {
+                    return format!("That did not work: {}", tools::NO_MORE_TOOLS);
                 }
-            }
+                let mut call = tools::Call {
+                    name: name.to_string(),
+                    args: args.clone(),
+                };
+                if !call.args.is_object() {
+                    call.args = serde_json::json!({});
+                }
+                match run_tool(state, desk, &call, send) {
+                    Ok(done) => done.result,
+                    Err(e) => {
+                        let said = e.to_string();
+                        failure = Some(e);
+                        format!("That did not work: {said}")
+                    }
+                }
+            };
+            talk.say(
+                &message,
+                chat::Exchange {
+                    tail: "",
+                    last: false,
+                    max_tokens: chat::REPLY_TOKENS,
+                    most_calls: tools::MOST_STEPS,
+                    piece: &mut piece,
+                    restart: &mut restart,
+                    call: &mut call,
+                },
+            )?
         };
-        talk.say(
-            conversation,
-            chat::Exchange {
-                tail: "",
-                last: false,
-                max_tokens: chat::REPLY_TOKENS,
-                most_calls: tools::MOST_STEPS,
-                piece: &mut piece,
-                restart: &mut restart,
-                call: &mut call,
-            },
-        )?
-    };
-    if let Some(e) = failure.take() {
-        return Err(e);
+        if let Some(e) = failure.take() {
+            return Err(e);
+        }
+        counted(&mut spent, reply.spent);
+        if code_context
+            && calls == 0
+            && head.borrow().pending()
+            && crate::code_reply::missing_tools(&reply.text)
+        {
+            if !desk.current_access().changes() {
+                show("Read only is active. Switch Felix to Ask or Auto to change the code.");
+            } else if attempt < CODE_RETRIES {
+                message = crate::interview_tools::CODE_RETRY_NATIVE.into();
+                continue;
+            } else {
+                show(crate::interview_tools::CODE_RETRY_FAILED);
+            }
+            return Ok(spent);
+        }
+        head.borrow_mut().release(&mut |t| show(t));
+        return Ok(spent);
     }
-    counted(&mut spent, reply.spent);
     Ok(spent)
 }
 
@@ -1304,8 +1331,10 @@ fn text_answer(
     shown: &std::cell::Cell<bool>,
 ) -> Result<Option<chat::Spent>> {
     let mut unstuck = false;
+    let mut calls = 0usize;
     let mut spent: Option<chat::Spent> = None;
     let mut message = conversation.to_string();
+    let code_context = desk.interview.is_some();
     let gap = std::cell::Cell::new(false);
     let shown_once = |t: &str| {
         if gap.replace(false) && shown.get() {
@@ -1317,6 +1346,9 @@ fn text_answer(
     for step in 0..=tools::MOST_STEPS {
         let last = step == tools::MOST_STEPS || desk.asked > 0;
         let gate = std::cell::RefCell::new(tools::Gate::default());
+        let check_code = code_context && calls == 0 && !last && desk.current_access().changes();
+        let head = std::cell::RefCell::new(crate::code_reply::Head::new(check_code));
+        let emit = |t: &str| head.borrow_mut().push(t, &mut |t| shown_once(t));
         let reply = talk.say(
             &message,
             chat::Exchange {
@@ -1328,9 +1360,10 @@ fn text_answer(
                 last,
                 max_tokens: chat::REPLY_TOKENS,
                 most_calls: 0,
-                piece: &mut |piece| gate.borrow_mut().push(piece, &mut |t| shown_once(t)),
+                piece: &mut |piece| gate.borrow_mut().push(piece, &mut |t| emit(t)),
                 restart: &mut || {
                     gate.borrow_mut().reset();
+                    *head.borrow_mut() = crate::code_reply::Head::new(check_code);
                     send(serde_json::json!({ "restart": true }));
                 },
                 call: &mut |_, _| String::new(),
@@ -1340,8 +1373,30 @@ fn text_answer(
         let reply = reply.text;
         let mut gate = gate.into_inner();
         let call = if last { None } else { tools::find_call(&reply) };
+        if call.is_none() {
+            gate.finish(&mut |t| emit(t));
+            if code_context
+                && calls == 0
+                && !last
+                && head.borrow().pending()
+                && crate::code_reply::missing_tools(&reply)
+            {
+                if !desk.current_access().changes() {
+                    shown_once(
+                        "Read only is active. Switch Felix to Ask or Auto to change the code.",
+                    );
+                } else if !unstuck {
+                    unstuck = true;
+                    message = crate::interview_tools::CODE_RETRY_TEXT.into();
+                    continue;
+                } else {
+                    shown_once(crate::interview_tools::CODE_RETRY_FAILED);
+                }
+                return Ok(spent);
+            }
+        }
         let call = match call {
-            None if !last && !unstuck && tools::claims_no_tools(&reply) => {
+            None if !code_context && !last && !unstuck && tools::claims_no_tools(&reply) => {
                 unstuck = true;
                 if gate.shown {
                     send(serde_json::json!({ "restart": true }));
@@ -1350,7 +1405,7 @@ fn text_answer(
                 continue;
             }
             None => {
-                gate.finish(&mut |t| shown_once(t));
+                head.borrow_mut().release(&mut |t| shown_once(t));
                 return Ok(spent);
             }
             Some(Ok(call)) => call,
@@ -1359,9 +1414,11 @@ fn text_answer(
                 args: serde_json::json!({ "problem": problem }),
             },
         };
+        head.borrow_mut().release(&mut |t| shown_once(t));
         if gate.shown {
             gap.set(true);
         }
+        calls += 1;
         let done = run_tool(state, desk, &call, send)?;
         message = tools::result_message(&call.name, &done.result);
     }
@@ -1554,7 +1611,7 @@ pub(crate) async fn chat_reply(
         .as_deref()
         .and_then(|id| chats::load(&state.chats, id))
         .and_then(|c| c.memory);
-    let (system, mut user) = chat::prompt_within(
+    let (mut system, mut user) = chat::prompt_within(
         mode,
         &notes,
         &documents,
@@ -1562,11 +1619,25 @@ pub(crate) async fn chat_reply(
         room,
         memory.as_ref(),
     );
-    let interview = if mode == "interview" {
-        body.chat.clone().filter(|id| chats::valid_id(id))
+    let practice = body.chat.clone().filter(|id| chats::valid_id(id));
+    let saved_practice = if let Some(id) = practice.as_ref() {
+        let path = state.chats.clone();
+        let id = id.clone();
+        tokio::task::spawn_blocking(move || crate::interview::load(&path, &id))
+            .await
+            .ok()
+            .and_then(|item| item.ok())
     } else {
         None
     };
+    let interview = practice.filter(|_| mode == "interview" || saved_practice.is_some());
+    if interview.is_some() {
+        system.push_str("\n\n");
+        system.push_str(crate::interview_tools::WORKSPACE_RULES);
+    }
+    if body.interview_problem.is_some() && saved_practice.is_none() {
+        return (StatusCode::CONFLICT, Json(serde_json::json!({"error":"That practice is no longer here. Reopen Interview practice before asking Felix to change its code."}))).into_response();
+    }
     let interview_problem = body
         .interview_problem
         .clone()
@@ -1611,44 +1682,36 @@ pub(crate) async fn chat_reply(
                 warm,
             }
         });
-    if let Some(id) = &interview {
-        let path = state.chats.clone();
-        let wanted = id.clone();
-        if let Ok(Ok(item)) =
-            tokio::task::spawn_blocking(move || crate::interview::load(&path, &wanted)).await
+    if let Some(item) = saved_practice {
+        if interview_problem.as_ref().is_some_and(|wanted| {
+            !chats::valid_id(wanted) || !item.problems.iter().any(|p| &p.challenge.id == wanted)
+        }) {
+            return (StatusCode::CONFLICT, Json(serde_json::json!({"error":"That practice problem is no longer here. Reopen your practice and choose a saved problem."}))).into_response();
+        }
+        let mut context = crate::interview::context_problem(&item, interview_problem.as_deref());
+        if let Some(active) = interview_problem
+            .clone()
+            .or_else(|| item.challenge.as_ref().map(|c| c.id.clone()))
         {
-            if interview_problem.as_ref().is_some_and(|wanted| {
-                !chats::valid_id(wanted) || !item.problems.iter().any(|p| &p.challenge.id == wanted)
-            }) {
-                return (StatusCode::CONFLICT, Json(serde_json::json!({"error":"That practice problem is no longer here. Reopen your practice and choose a saved problem."}))).into_response();
-            }
-            let mut context =
-                crate::interview::context_problem(&item, interview_problem.as_deref());
-            if let Some(active) = interview_problem
-                .clone()
-                .or_else(|| item.challenge.as_ref().map(|c| c.id.clone()))
+            let path = state.chats.clone();
+            let checks = crate::interview_tools::latest_checks(&item, &active).map(<[_]>::to_vec);
+            let interview_id = item.id.clone();
+            if let Ok(tests) = tokio::task::spawn_blocking(move || {
+                crate::interview_keys::tests_material(
+                    &path,
+                    &interview_id,
+                    &active,
+                    checks.as_deref(),
+                )
+            })
+            .await
             {
-                let path = state.chats.clone();
-                let checks =
-                    crate::interview_tools::latest_checks(&item, &active).map(<[_]>::to_vec);
-                let interview_id = item.id.clone();
-                if let Ok(tests) = tokio::task::spawn_blocking(move || {
-                    crate::interview_keys::tests_material(
-                        &path,
-                        &interview_id,
-                        &active,
-                        checks.as_deref(),
-                    )
-                })
-                .await
-                {
-                    context.push_str(&tests);
-                }
+                context.push_str(&tests);
             }
-            user = chat::before_reply(&user, &context);
-            if let Some(c) = continued.as_mut() {
-                c.text = chat::before_reply(&c.text, &context);
-            }
+        }
+        user = chat::before_reply(&user, &context);
+        if let Some(c) = continued.as_mut() {
+            c.text = chat::before_reply(&c.text, &context);
         }
     }
     if let Some(block) = body.selection.as_ref().and_then(chat::passage_block) {
