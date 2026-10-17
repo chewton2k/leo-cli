@@ -389,7 +389,7 @@ model_path = "~/.leo/models/ggml-base.en.bin"
         std::fs::write(&path, "").unwrap();
         let cfg = Config::load_from(&path);
         assert!(cfg.chat.chain.is_empty());
-        assert_eq!(cfg.providers.len(), 12, "{:?}", cfg.providers.keys());
+        assert_eq!(cfg.providers.len(), 14, "{:?}", cfg.providers.keys());
         assert!(cfg.providers.contains_key("ollama"));
         assert!(cfg.providers.contains_key("parakeet"));
     }
@@ -479,9 +479,11 @@ model = "my-own-model"
         assert_eq!(
             names,
             [
+                "agy",
                 "anthropic",
                 "claude_code",
                 "codex",
+                "copilot",
                 "gemini",
                 "gemini_speech",
                 "ollama",
@@ -658,11 +660,14 @@ kind = "telepathy"
     }
 
     #[test]
-    fn the_shipped_file_explains_how_to_add_a_provider() {
+    fn the_shipped_file_explains_writing_and_cloud_speech_choices() {
         let text = Config::default_toml();
         // The file is the documentation, so these have to be present.
         assert!(text.contains("leo doctor"));
-        assert!(text.contains("kind = \"openai\""));
+        assert!(text.contains("[providers.ollama]"));
+        assert!(text.contains("Google Antigravity (AGY)"));
+        assert!(text.contains("GitHub Copilot CLI"));
+        assert!(text.contains("Speech uses local Parakeet, or OpenAI, Gemini or xAI"));
         assert!(text.contains("[chat]"));
         assert!(text.contains("[transcribe]"));
         // And it must warn that keys do not belong in it.

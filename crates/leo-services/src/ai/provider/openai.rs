@@ -802,7 +802,7 @@ mod tests {
             .unwrap_err();
         let message = error.to_string();
         assert!(
-            message.starts_with("OpenRouter rejected the key stored in leo (401). To replace it: :settings, then Enter on the OpenRouter key row."),
+            message.starts_with("OpenRouter rejected the key stored in leo (401). Choose a supported AI for writing in :settings."),
             "{message}"
         );
         assert!(message.contains("User not found."), "{message}");

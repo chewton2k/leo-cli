@@ -622,7 +622,11 @@ mod tests {
             );
         }
         assert_eq!(
-            delete_recordings(tmp.path(), &["2026-10-07-1".into(), "missing".into()]).unwrap(),
+            delete_recordings(
+                tmp.path(),
+                &["2026-10-07-1".into(), "missing-recording".into()]
+            )
+            .unwrap(),
             "Deleted 1 recording."
         );
         assert!(!tmp.path().join("2026-10-07-1").exists());

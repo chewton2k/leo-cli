@@ -132,6 +132,9 @@ pub fn classify_status_with_key(status: u16, provider: &str, body: &str) -> Prov
     };
     let fix = match place {
         Some(place) => format!(" To replace it: {place}."),
+        None if matches!(provider, "anthropic" | "openrouter") => {
+            " Choose a supported AI for writing in :settings.".into()
+        }
         None => String::new(),
     };
     ProviderError::Fatal(format!("{what}{fix} It said: {}", truncate(body)))

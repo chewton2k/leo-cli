@@ -136,17 +136,17 @@ mod tests {
     #[test]
     fn a_chain_can_name_a_provider_absent_from_the_file() {
         let mut d = doc();
-        write_chain(&mut d, Task::Chat, &["gemini".to_string()]);
+        write_chain(&mut d, Task::Chat, &["agy".to_string()]);
         let text = d.to_string();
         assert!(
-            !text.contains("[providers.gemini]"),
-            "gemini should not need a block"
+            !text.contains("[providers.agy]"),
+            "agy should not need a block"
         );
 
         let cfg = crate::config::Config::load_from(&write_temp(&text));
-        assert_eq!(cfg.chat.chain, vec!["gemini"]);
+        assert_eq!(cfg.chat.chain, vec!["agy"]);
         assert!(
-            cfg.provider("gemini").is_some(),
+            cfg.provider("agy").is_some(),
             "a chained built-in did not resolve"
         );
     }

@@ -2552,25 +2552,22 @@ fn choosing_in_settings_writes_the_choice_and_moves_both_ways() {
     };
     app.on_key(press_code(event::KeyCode::Right), &mut terminal)
         .unwrap();
-    assert!(value(&app, "writing").unwrap().ends_with("OpenAI"));
-    app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
-        .unwrap();
     assert!(value(&app, "writing").unwrap().ends_with("Codex"));
     app.on_key(press_code(event::KeyCode::Enter), &mut terminal)
         .unwrap();
-    assert!(value(&app, "writing").unwrap().ends_with("Anthropic"));
+    assert!(value(&app, "writing").unwrap().ends_with("Claude Code"));
     app.on_key(press('j'), &mut terminal).unwrap();
     app.on_key(press_code(event::KeyCode::Right), &mut terminal)
         .unwrap();
     assert_eq!(
         value(&app, "writing model").unwrap(),
-        "claude-sonnet-5 ($2 in, $10 out per 1M tokens)"
+        "claude-opus-5-5 (included in your Claude plan)"
     );
     app.on_key(press_code(event::KeyCode::Left), &mut terminal)
         .unwrap();
     assert_eq!(
         value(&app, "writing model").unwrap(),
-        "claude-sonnet-5-5 ($2 in, $10 out per 1M tokens)"
+        "claude-sonnet-5-5 (included in your Claude plan)"
     );
     assert!(app
         .settings
@@ -2578,18 +2575,18 @@ fn choosing_in_settings_writes_the_choice_and_moves_both_ways() {
         .unwrap()
         .status
         .as_deref()
-        .is_some_and(|s| s.contains("claude-sonnet-5-5 ($2 in")));
+        .is_some_and(|s| s.contains("claude-sonnet-5-5 (included in your Claude plan")));
     app.on_key(press('k'), &mut terminal).unwrap();
     app.on_key(press_code(event::KeyCode::Left), &mut terminal)
         .unwrap();
     assert!(value(&app, "writing").unwrap().ends_with("Codex"));
     app.on_key(press_code(event::KeyCode::Left), &mut terminal)
         .unwrap();
-    assert!(value(&app, "writing").unwrap().ends_with("OpenAI"));
+    assert!(value(&app, "writing").unwrap().ends_with("Ollama"));
     let cfg = leo_services::config::Config::load();
-    assert_eq!(cfg.chat.chain, vec!["openai"]);
+    assert_eq!(cfg.chat.chain, vec!["ollama"]);
     assert_eq!(
-        cfg.provider("anthropic").unwrap().model.as_deref(),
+        cfg.provider("claude_code").unwrap().model.as_deref(),
         Some("claude-sonnet-5-5")
     );
 }
