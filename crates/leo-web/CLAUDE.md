@@ -815,3 +815,7 @@ allowed. A bounded 512-character prefix holds that refusal before display; norma
 text streams when the prefix fills or a tool runs. Already shown text is never
 replaced for this check. A repeated refusal keeps the code and shows an actionable
 retry message. Legitimate execution limitations and Read only are not retried.
+
+Practice recency follows real saved work and conversation changes. Selecting a saved problem persists its selection/revision without changing activity; filtering stays browser-local. Run advances parent activity atomically with its results without invalidating an editor revision. Background test preparation and verification do not count.
+
+Practice titles use the existing inline plaintext heading style: typing autosaves through the practice queue, Enter finishes, Escape abandons unsaved typing, and empty names restore the saved title. Saves preserve the caret and pending code; Retry reloads current preferences before renaming, and draft flushing includes pending titles.

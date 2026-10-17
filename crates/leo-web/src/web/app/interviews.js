@@ -8,6 +8,7 @@ const TOPIC_MENU_GAP = 6;
 const TOPIC_MENU_HEIGHT = 520;
 const TOPIC_MENU_WIDTH = 300;
 const TOPIC_MENU_LEAST = 160;
+const MOST_PRACTICE_TITLE = 120;
 
 function loadInterviewCode() {
   if (window.leoCode) return Promise.resolve(window.leoCode);
@@ -125,10 +126,20 @@ function drawInterview(session) {
   if (session.boardFrame) { cancelAnimationFrame(session.boardFrame); session.boardFrame = 0; }
   const active = document.activeElement;
   const focus = active && app.contains(active) && (active instanceof HTMLTextAreaElement || (active instanceof HTMLInputElement && active.type === 'text')) ? { id: active.id, from: active.selectionStart, to: active.selectionEnd, scroll: active.scrollTop } : null;
+  let titleFocus = null;
+  const selection = getSelection();
+  if (active?.id === 'interview-name' && selection?.rangeCount && active.contains(selection.anchorNode) && active.contains(selection.focusNode)) {
+    const range = document.createRange();
+    range.selectNodeContents(active);
+    range.setEnd(selection.anchorNode, selection.anchorOffset);
+    const from = range.toString().length;
+    range.setEnd(selection.focusNode, selection.focusOffset);
+    titleFocus = { from, to: range.toString().length };
+  }
   const item = session.item;
   const coding = item.framework.track === 'coding';
   const tabs = coding ? [['code', 'Code'], ['write', 'Approach'], ['board', 'Whiteboard']] : [['write', 'Write'], ['board', 'Whiteboard']];
-  app.innerHTML = `<div class="interview-home interview-practice${coding ? ' interview-coding' : ''}"><div class="interview-heading" style="--track: var(${trackLook(item.framework.track).hue})"><div class="interview-heading-main">${trackIcon(item.framework.track)}<div><p class="eyebrow">${esc(interviews.preset(item.framework.track).label)} · ${item.framework.style === 'mock' ? 'Mock interview' : 'Coach'}</p><h1>${esc(item.framework.title)}</h1><p class="hint">${esc([item.framework.company || 'General practice', item.framework.role].filter(Boolean).join(' · '))}</p></div></div><div class="buttons"><button class="btn sm" data-interview="configure">Preferences</button></div></div>
+  app.innerHTML = `<div class="interview-home interview-practice${coding ? ' interview-coding' : ''}"><div class="interview-heading" style="--track: var(${trackLook(item.framework.track).hue})"><div class="interview-heading-main">${trackIcon(item.framework.track)}<div><p class="eyebrow">${esc(interviews.preset(item.framework.track).label)} · ${item.framework.style === 'mock' ? 'Mock interview' : 'Coach'}</p><h1 id="interview-name" contenteditable="plaintext-only" role="textbox" aria-label="Practice title" aria-multiline="false" spellcheck="true" enterkeyhint="done" title="Rename practice">${esc(session.name ?? item.framework.title)}</h1><p class="hint">${esc([item.framework.company || 'General practice', item.framework.role].filter(Boolean).join(' · '))}</p></div></div><div class="buttons"><button class="btn sm" data-interview="configure">Preferences</button></div></div>
     <div id="interview-problems" class="interview-problems" role="group" aria-label="Practice problems"></div>
     <div class="interview-solve" style="--split: ${interviewSplit()}%"><div class="interview-question"><section id="interview-challenge" class="set-card interview-problem"><div id="interview-panes" class="interview-panes"></div><div id="interview-pane-question" role="tabpanel"></div><div id="interview-pane-cases" role="tabpanel" hidden></div><div id="interview-pane-result" role="tabpanel" hidden><div id="interview-results" class="interview-results" aria-live="polite"></div></div><div id="interview-pane-submissions" role="tabpanel" hidden><section id="interview-attempts"></section><section id="interview-progress"></section></div></section></div>
     ${item.challenge ? `<section class="set-card interview-workspace"><div class="interview-toolbar"><div class="library-views" role="tablist" aria-label="Your answer workspace">${tabs.map(([id, label]) => `<button class="btn sm plain${session.tab === id ? ' on' : ''}" role="tab" aria-selected="${session.tab === id}" data-interview="tab" data-tab="${id}">${label}</button>`).join('')}</div><span id="interview-save" class="hint" role="status"></span></div>
@@ -138,6 +149,7 @@ function drawInterview(session) {
     <div id="interview-checks" class="interview-checks"></div>
     <div id="interview-save-error" class="set-note warn" hidden></div><div class="interview-toolbar interview-submit"><p class="hint" id="interview-submit-hint"></p><div class="buttons"><button class="btn sm" data-interview="reset">Reset</button><button class="btn sm" data-interview="hint">Hint</button><button class="btn sm primary" data-interview="submit">Submit</button></div></div></section><div class="interview-split" role="separator" aria-orientation="vertical" aria-label="Resize the question and workspace" tabindex="0" aria-valuemin="${SPLIT_LEAST}" aria-valuemax="${SPLIT_MOST}" aria-valuenow="${interviewSplit()}" title="Drag to resize · double-click to reset"></div>` : ''}</div>
     </div>`;
+  wireInterviewName(session);
   drawInterviewContext(session);
   drawInterviewProblems(session);
   drawInterviewChallenge(session);
@@ -196,10 +208,79 @@ function drawInterview(session) {
     });
     wireInterviewBoard(session);
   }
+  if (titleFocus != null) {
+    const title = $('#interview-name');
+    title.focus({ preventScroll: true });
+    const text = title.firstChild || title;
+    getSelection().setBaseAndExtent(text, Math.min(titleFocus.from, text.textContent.length), text, Math.min(titleFocus.to, text.textContent.length));
+  }
   if (focus) {
     const again = document.getElementById(focus.id);
     if (again && !again.disabled) { again.focus({ preventScroll: true }); again.setSelectionRange(focus.from, focus.to); again.scrollTop = focus.scroll; syncInterviewCodeScroll(); }
   }
+}
+
+function wireInterviewName(session) {
+  const title = $('#interview-name');
+  title.addEventListener('input', () => {
+    session.name = title.textContent;
+    clearTimeout(session.nameTimer);
+    session.nameTimer = setTimeout(() => saveInterviewName(session).catch(() => {}), 700);
+  });
+  title.addEventListener('beforeinput', e => {
+    if (e.inputType.startsWith('insert') && e.data && [...title.textContent].length + [...e.data].length - [...(getSelection()?.toString() || '')].length > MOST_PRACTICE_TITLE) e.preventDefault();
+  });
+  title.addEventListener('paste', e => {
+    e.preventDefault();
+    const paste = [];
+    for (const char of e.clipboardData.getData('text')) { if (paste.length === MOST_PRACTICE_TITLE) break; paste.push(char); }
+    const text = cleanTitle(paste.join(''));
+    const room = MOST_PRACTICE_TITLE - [...title.textContent].length + [...(getSelection()?.toString() || '')].length;
+    document.execCommand('insertText', false, [...text].slice(0, Math.max(0, room)).join(''));
+  });
+  title.addEventListener('keydown', e => {
+    if (e.isComposing) return;
+    if (e.key === 'Enter') { e.preventDefault(); title.blur(); }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      clearTimeout(session.nameTimer);
+      session.name = null;
+      title.textContent = session.item.framework.title;
+      title.blur();
+    }
+  });
+  title.addEventListener('blur', () => {
+    if (session.name == null || !cleanTitle(title.textContent)) { session.name = null; title.textContent = session.item.framework.title; }
+    saveInterviewName(session).catch(() => {});
+  });
+}
+
+async function saveInterviewName(session) {
+  clearTimeout(session.nameTimer);
+  if (session.name == null) return;
+  return interviewQueue(session, async () => {
+    if (session.name == null) return;
+    const raw = session.name;
+    const title = cleanTitle(raw);
+    if (!title) return;
+    try {
+      if ([...title].length > MOST_PRACTICE_TITLE) throw new Error('Keep the practice title under 120 characters, then try again.');
+      if (title !== session.item.framework.title) session.item = await api(`/api/interviews/${enc(session.item.id)}`, { method: 'PUT', body: { action: 'framework', revision: session.item.revision, framework: { ...session.item.framework, title } } });
+      if (session.name === raw) session.name = null;
+      if (interviewHere(session) && session.name == null && document.activeElement?.id !== 'interview-name') $('#interview-name').textContent = session.item.framework.title;
+    } catch (e) {
+      if (interviewHere(session)) toast(e.message || 'The practice title could not be saved. Try again.', { bad: true, action: 'Retry', run: async () => {
+        await interviewQueue(session, async () => {
+          const latest = await api(`/api/interviews/${enc(session.item.id)}`);
+          if (!interviewHere(session)) return;
+          if (latest.challenge?.id !== session.item.challenge?.id) throw new Error('This practice changed elsewhere. Reopen it before renaming; your draft is kept.');
+          session.item = latest;
+        });
+        if (interviewHere(session)) await saveInterviewName(session);
+      } });
+      throw e;
+    }
+  });
 }
 
 function drawInterviewContext(session) {
@@ -519,6 +600,7 @@ function drawInterviewStatus(session) {
 
 async function saveInterviewWorkspace(session) {
   clearTimeout(session.timer);
+  await saveInterviewName(session);
   return interviewQueue(session, async () => {
     if (session.generation === session.saved || !session.item.challenge) return;
     if (session.blocked) throw new Error('The challenge changed. Copy your draft or reopen this practice before continuing.');
@@ -626,6 +708,7 @@ async function refreshInterview(id) {
       }
     } else {
       session.item = latest;
+      if (session.name == null && document.activeElement?.id !== 'interview-name') $('#interview-name').textContent = latest.framework.title;
       drawInterviewProblems(session);
       drawInterviewChallenge(session);
       drawInterviewProgress(session);

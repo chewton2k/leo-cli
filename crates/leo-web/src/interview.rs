@@ -537,6 +537,12 @@ pub fn remove(path: &Path, id: &str) -> Result<(), Error> {
     Ok(())
 }
 
+fn work_changed(before: &Interview, after: &Interview) -> bool {
+    before.framework != after.framework
+        || before.problems != after.problems
+        || before.attempts != after.attempts
+}
+
 pub fn mutate(
     path: &Path,
     id: &str,
@@ -589,7 +595,9 @@ pub(crate) fn mutate_tx(
             return Ok(());
         }
         item.revision += 1;
-        item.updated = Utc::now().to_rfc3339();
+        if work_changed(&before, &item) {
+            item.updated = Utc::now().to_rfc3339();
+        }
         let Ok(encoded) = serde_json::to_string(&item) else {
             problem = Some(Error::Storage);
             return Ok(());
@@ -1365,6 +1373,57 @@ mod tests {
     }
 
     #[test]
+    fn choosing_different_saved_problems_keeps_activity_and_conflict_checks() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path();
+        let id = "interview-navigation-01";
+        configure(path, id, 0, framework()).unwrap();
+        let first = challenge("problem-navigation-01");
+        let second = challenge("problem-navigation-02");
+        set_challenge(path, id, first.clone()).unwrap();
+        set_challenge(path, id, second.clone()).unwrap();
+        db::for_chats(path).with(|c| c.execute(
+            "UPDATE interviews SET updated = ?1, data = json_set(data, '$.updated', ?1) WHERE id = ?2",
+            rusqlite::params!["2000-01-01T00:00:00Z", id],
+        )).unwrap();
+        let before = load(path, id).unwrap();
+        let picked = change(
+            path,
+            id,
+            Change::Select {
+                revision: before.revision,
+                challenge: first.id.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(picked.updated, before.updated);
+        assert_eq!(picked.revision, before.revision + 1);
+        assert_eq!(picked.challenge.as_ref(), Some(&first));
+        assert_eq!(load(path, id).unwrap(), picked);
+        assert!(matches!(
+            change(
+                path,
+                id,
+                Change::Select {
+                    revision: before.revision,
+                    challenge: second.id.clone(),
+                }
+            ),
+            Err(Error::Conflict)
+        ));
+        let reopened = select_problem(path, id, &second.id).unwrap();
+        assert_eq!(reopened.updated, before.updated);
+        assert_eq!(reopened.revision, picked.revision + 1);
+        let recalled = set_challenge(path, id, first).unwrap();
+        assert_eq!(recalled.updated, before.updated);
+        assert_eq!(recalled.revision, reopened.revision + 1);
+        assert_eq!(
+            set_challenge(path, id, recalled.challenge.clone().unwrap()).unwrap(),
+            recalled
+        );
+    }
+
+    #[test]
     fn practice_order_uses_work_and_messages_but_not_reads_or_empty_chats() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path();
@@ -1376,6 +1435,8 @@ mod tests {
         for (n, id) in ids.iter().enumerate() {
             configure(path, id, 0, framework()).unwrap();
             set_challenge(path, id, challenge("challenge-order-01")).unwrap();
+            set_challenge(path, id, challenge("challenge-order-02")).unwrap();
+            select_problem(path, id, "challenge-order-01").unwrap();
             let stamp = format!("2000-01-0{}T00:00:00+00:00", n + 1);
             db::for_chats(path).with(|c| c.execute(
                 "UPDATE interviews SET updated = ?1, data = json_set(data, '$.updated', ?1) WHERE id = ?2",
@@ -1402,6 +1463,20 @@ mod tests {
         )
         .unwrap();
         assert_eq!(order(), [ids[2], ids[1], ids[0]]);
+        for target in ["challenge-order-02", "challenge-order-01"] {
+            let current = load(path, ids[0]).unwrap();
+            let picked = change(
+                path,
+                ids[0],
+                Change::Select {
+                    revision: current.revision,
+                    challenge: target.into(),
+                },
+            )
+            .unwrap();
+            assert_eq!(picked.updated, current.updated);
+            assert_eq!(order(), [ids[2], ids[1], ids[0]], "navigation is not work");
+        }
         let saving = |messages| chats::Saving {
             title: String::new(),
             mode: "interview".into(),
@@ -1465,6 +1540,69 @@ mod tests {
         )
         .unwrap();
         assert_eq!(order(), [ids[2], ids[1], ids[0]], "submitting counts");
+        let key = crate::interview_keys::Key {
+            entry: "solve".into(),
+            solution: "function solve(x) { return x; }".into(),
+            tests: vec![crate::interview_keys::Test {
+                id: "t1".into(),
+                args: vec![serde_json::json!(1)],
+                expected: serde_json::json!(1),
+                hidden: false,
+                unordered: false,
+            }],
+            ..crate::interview_keys::Key::default()
+        };
+        db::for_chats(path).with(|c| c.execute(
+            "INSERT INTO interview_keys (interview, challenge, status, updated, data) VALUES (?1, ?2, 'ready', ?3, ?4)",
+            rusqlite::params![ids[0], "challenge-order-01", "2000-01-01T00:00:00Z", serde_json::to_string(&key).unwrap()],
+        )).unwrap();
+        let before_run = load(path, ids[0]).unwrap();
+        let report = crate::interview_keys::TestReport {
+            id: "t1".into(),
+            pass: true,
+            got: "1".into(),
+        };
+        let verification =
+            crate::interview_keys::verify_job(path, ids[0], "challenge-order-01").unwrap();
+        crate::interview_keys::verified(
+            path,
+            ids[0],
+            "challenge-order-01",
+            verification["stamp"].as_str().unwrap(),
+            std::slice::from_ref(&report),
+            "",
+        )
+        .unwrap();
+        assert_eq!(
+            load(path, ids[0]).unwrap(),
+            before_run,
+            "background checks are not work"
+        );
+        assert_eq!(order(), [ids[2], ids[1], ids[0]]);
+        crate::interview_keys::save_run(path, ids[0], "challenge-order-01", vec![report], "")
+            .unwrap();
+        assert_eq!(order(), [ids[0], ids[2], ids[1]], "running counts");
+        let after_run = load(path, ids[0]).unwrap();
+        let run = crate::interview_keys::ready(path, ids[0], "challenge-order-01")
+            .unwrap()
+            .last_run
+            .unwrap();
+        assert_eq!(after_run.updated, run.at);
+        assert_eq!(after_run.revision, before_run.revision);
+        assert_eq!(after_run.workspace, before_run.workspace);
+        assert!(crate::interview_keys::save_run(
+            path,
+            ids[1],
+            "challenge-order-01",
+            vec![],
+            "not ready"
+        )
+        .is_err());
+        assert_eq!(
+            order(),
+            [ids[0], ids[2], ids[1]],
+            "an unsaved run is not work"
+        );
     }
 
     #[test]

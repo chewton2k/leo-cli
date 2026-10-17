@@ -402,6 +402,7 @@ fn update<T>(
                 refused = Some("This problem's test cases could not be read.".to_string());
                 return Ok(());
             };
+            let last_run = key.last_run.as_ref().map(|run| run.at.clone());
             match (change.take().expect("one change"))(&mut key) {
                 Ok(value) => {
                     let next = serde_json::to_string(&key).unwrap_or(data);
@@ -409,6 +410,12 @@ fn update<T>(
                         "UPDATE interview_keys SET data = ?3, updated = ?4 WHERE interview = ?1 AND challenge = ?2",
                         rusqlite::params![interview, challenge, next, Utc::now().to_rfc3339()],
                     )?;
+                    if let Some(run) = key.last_run.as_ref().filter(|run| last_run.as_deref() != Some(run.at.as_str())) {
+                        tx.execute(
+                            "UPDATE interviews SET updated = ?2, data = json_set(data, '$.updated', ?2) WHERE id = ?1",
+                            rusqlite::params![interview, run.at],
+                        )?;
+                    }
                     out = Some(value);
                 }
                 Err(why) => refused = Some(why),

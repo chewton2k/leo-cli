@@ -3869,6 +3869,67 @@ test('interview practice starts without a note, keeps its style and has no pract
   await page.request.delete(`/api/interviews/${id}`);
 });
 
+test('practice titles rename inline without losing typing, code or newer preferences', async ({ page }) => {
+  const id = 'practice-rename-01';
+  const challenge = { id: 'rename-problem-01', title: 'Return one', question: 'Return the integer one.', minutes: 15, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'Python', starter: 'def solve():\n    pass', difficulty: 'easy', examples: [{ input: 'solve()', output: '1' }], constraints: ['Return an integer.'] } };
+  const workspace = { answer: 'def solve():\n    return 1', reasoning: 'Keep my approach', board: [] };
+  let item = { id, revision: 1, updated: new Date().toISOString(), framework: { title: 'Coding practice', track: 'coding', company: '', role: '', language: 'Python', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace, problems: [{ challenge, workspace }], attempts: [] };
+  let blocked = false;
+  let release;
+  let hold = false;
+  await page.route('**/api/interviews', route => route.fulfill({ json: [item] }));
+  await page.route(`**/api/interviews/${id}/key?*`, route => route.fulfill({ json: { status: 'missing' } }));
+  await page.route(`**/api/interviews/${id}`, async route => {
+    if (route.request().method() === 'PUT') {
+      if (blocked) return route.fulfill({ status: 409, json: { error: 'This practice changed elsewhere. Retry to keep your new name.' } });
+      const body = route.request().postDataJSON();
+      if (hold) { hold = false; await new Promise(resolve => { release = resolve; }); }
+      expect(body.action).toBe('framework');
+      expect(body.revision).toBe(item.revision);
+      item = { ...item, revision: item.revision + 1, framework: body.framework };
+    }
+    return route.fulfill({ json: item });
+  });
+  await page.goto(`/#/interviews/${id}`);
+  const title = page.getByRole('textbox', { name: 'Practice title', exact: true });
+  await expect(title).toHaveText('Coding practice');
+  hold = true;
+  await title.fill('Arrays practice');
+  await expect.poll(() => Boolean(release)).toBe(true);
+  await title.fill('Arrays and graphs');
+  await title.evaluate(el => { const range = document.createRange(); range.setStart(el.firstChild, 6); range.collapse(true); const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range); });
+  release();
+  await expect.poll(() => item.framework.title).toBe('Arrays and graphs');
+  await expect(title).toBeFocused();
+  expect(await title.evaluate(() => getSelection().anchorOffset)).toBe(6);
+  await title.press('Enter');
+  await expect(title).not.toBeFocused();
+  await page.reload();
+  await expect(title).toHaveText('Arrays and graphs');
+  await title.fill('Cancel this name');
+  await title.press('Escape');
+  await expect(title).toHaveText('Arrays and graphs');
+  blocked = true;
+  await title.fill('Interview preparation');
+  await title.press('Enter');
+  await expect(page.locator('.toast')).toContainText('Retry');
+  await expect(title).toHaveText('Interview preparation');
+  item.framework.company = 'Pinterest';
+  item.revision++;
+  blocked = false;
+  await page.locator('.toast button').click();
+  await expect.poll(() => item.framework.title).toBe('Interview preparation');
+  expect(item.framework.company).toBe('Pinterest');
+  await title.fill('');
+  await title.press('Enter');
+  await expect(title).toHaveText('Interview preparation');
+  await title.fill('Final title');
+  await page.locator('#back').click();
+  await expect(page.locator('.interview-plan b')).toHaveText('Final title');
+  expect(item.workspace).toEqual(workspace);
+  expect(item.problems[0].workspace).toEqual(workspace);
+});
+
 test('interview answers keep their focus and draft through saves, a conflict and reload', async ({ page }) => {
   const id = 'interview-browser-01';
   let item = { id, revision: 1, updated: new Date().toISOString(), framework: { title: 'Coding practice', track: 'coding', company: '', role: '', language: 'Python', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach', 'Testing'], wants: '' }, challenge: { id: 'challenge-browser-01', title: 'Pair sum', question: 'Find two distinct indices whose values sum to a target. Explain duplicates.', minutes: 25, skills: ['Approach', 'Testing'], origin: 'generated', sources: [] }, workspace: { answer: '', board: [] }, attempts: [], schedule: [] };

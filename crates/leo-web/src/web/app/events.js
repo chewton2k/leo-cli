@@ -51,7 +51,7 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-const unsaved = () => saving.unsaved() || Boolean(interviewPage && interviewHere(interviewPage) && interviewPage.generation !== interviewPage.saved);
+const unsaved = () => saving.unsaved() || Boolean(interviewPage && interviewHere(interviewPage) && (interviewPage.generation !== interviewPage.saved || interviewPage.name != null));
 let websiteLeaveSent = false;
 let websiteBackupShown = 0;
 
