@@ -3029,6 +3029,10 @@ fn editor_lines(
         .collect()
 }
 
+fn editor_text(lines: &[serde_json::Value]) -> String {
+    lines.iter().filter_map(|line| line["t"].as_str()).collect()
+}
+
 struct EditorNative {
     turns: Arc<std::sync::atomic::AtomicUsize>,
     empty: bool,
@@ -3111,7 +3115,7 @@ fn a_false_editor_refusal_is_recovered_once_in_every_style_with_the_viewed_probl
                             && l.get("reset").is_none()),
                         "{native} {mode} {access}: {lines:?}"
                     );
-                    assert_eq!(shown(&lines), "Review the code change.");
+                    assert_eq!(editor_text(&lines), "Review the code change.");
                     if !native {
                         let prompts = prompts.lock().unwrap();
                         assert!(prompts[0].contains(crate::interview_tools::WORKSPACE_RULES));
@@ -3183,7 +3187,10 @@ fn editor_recovery_is_bounded_and_never_overrides_read_only_or_quiz_marking() {
             }));
         }
         let lines = editor_lines(&state, "chat", "ask", false);
-        assert_eq!(shown(&lines), crate::interview_tools::CODE_RETRY_FAILED);
+        assert_eq!(
+            editor_text(&lines),
+            crate::interview_tools::CODE_RETRY_FAILED
+        );
         assert!(!lines.iter().any(|l| l.get("proposal").is_some()
             || l.get("restart").is_some()
             || l.get("reset").is_some()));
