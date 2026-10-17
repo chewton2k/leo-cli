@@ -6,6 +6,7 @@ const MOST_BOARD_UNDO = 20;
 const MOST_CODE_HISTORY = 40;
 const TOPIC_MENU_GAP = 6;
 const TOPIC_MENU_HEIGHT = 520;
+const TOPIC_MENU_WIDTH = 300;
 const TOPIC_MENU_LEAST = 160;
 
 function loadInterviewCode() {
@@ -308,6 +309,13 @@ function placeInterviewTopicMenu() {
   const top = Math.max(viewport?.offsetTop || 0, $('#bar')?.getBoundingClientRect().bottom || 0) + TOPIC_MENU_GAP;
   const bottom = (viewport?.offsetTop || 0) + (viewport?.height || innerHeight) - TOPIC_MENU_GAP;
   const anchor = button.getBoundingClientRect();
+  const page = app.getBoundingClientRect();
+  const left = Math.max((viewport?.offsetLeft || 0) + TOPIC_MENU_GAP, page.left);
+  const right = Math.min((viewport?.offsetLeft || 0) + (viewport?.width || innerWidth) - TOPIC_MENU_GAP, page.right);
+  const width = Math.min(TOPIC_MENU_WIDTH, Math.max(0, right - left));
+  menu.style.width = `${width}px`;
+  menu.style.left = `${Math.max(left, Math.min(anchor.left, right - width)) - button.parentElement.getBoundingClientRect().left}px`;
+
   const above = Math.max(0, anchor.top - top - TOPIC_MENU_GAP);
   const below = Math.max(0, bottom - anchor.bottom - TOPIC_MENU_GAP);
   const up = below < TOPIC_MENU_LEAST && above > below;

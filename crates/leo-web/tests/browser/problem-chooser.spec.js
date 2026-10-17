@@ -151,6 +151,15 @@ test('problem titles are searchable and deletion keeps drafts and offers Undo', 
     await expect(chooser).toBeFocused();
     const topicButton = page.locator('[data-interview="topic-menu"]');
     const topicMenu = page.locator('.interview-topic-picker .picker-menu');
+    for (const [width, chatWidth] of [[1280, 0], [1280, 420], [390, 0]]) {
+      await page.setViewportSize({ width, height: 844 });
+      await page.evaluate(chatWidth => { document.body.classList.toggle('chat-open', Boolean(chatWidth)); document.body.style.setProperty('--chat-w', `${chatWidth}px`); }, chatWidth);
+      await topicButton.click();
+      const main = await page.locator('#app').boundingBox();
+      await expect.poll(async () => topicMenu.evaluate(el => el.getBoundingClientRect().right)).toBeLessThanOrEqual(Math.min(width - 6, main.x + main.width));
+      expect(await topicMenu.evaluate(el => el.getBoundingClientRect().left)).toBeGreaterThanOrEqual(Math.max(6, main.x));
+      await page.keyboard.press('Escape');
+    }
     for (const height of [540, 390]) {
       await page.setViewportSize({ width: 390, height });
       await topicButton.click();
