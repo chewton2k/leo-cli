@@ -3038,6 +3038,7 @@ struct EditorNative {
     empty: bool,
     refuse: bool,
     persistent: bool,
+    after_read: bool,
 }
 
 impl chat::Conversation for EditorNative {
@@ -3049,6 +3050,12 @@ impl chat::Conversation for EditorNative {
             .turns
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if self.refuse && (turn == 0 || self.persistent) {
+            if self.after_read {
+                let read = (exchange.call)("interview_code", &serde_json::json!({}));
+                assert!(
+                    serde_json::from_str::<serde_json::Value>(&read).unwrap()["code"].is_string()
+                );
+            }
             assert!(turn <= 1, "a false refusal is retried at most once");
             (exchange.piece)(CODE_REFUSAL);
             return Ok(CODE_REFUSAL.into());
@@ -3104,6 +3111,7 @@ fn a_false_editor_refusal_is_recovered_once_in_every_style_with_the_viewed_probl
                                 empty,
                                 refuse: true,
                                 persistent: false,
+                                after_read: false,
                             })
                                 as Box<dyn chat::Conversation>)
                         }));
@@ -3168,6 +3176,52 @@ fn a_false_editor_refusal_is_recovered_once_in_every_style_with_the_viewed_probl
 }
 
 #[test]
+fn an_editor_refusal_after_reading_code_still_gets_one_bounded_recovery() {
+    for native in [false, true] {
+        for empty in [false, true] {
+            for access in ["ask", "auto"] {
+                let (mut state, _dir, _) = state_with(&[]);
+                editor_practice(&state, empty);
+                let (streamer, prompts) = scripted(vec![
+                    r#"<tool>{"name":"interview_code"}</tool>"#,
+                    "I couldn’t access Leo’s code editor tool, so I haven’t changed the code area.",
+                    if empty { CODE_INITIALIZE } else { CODE_CHANGE },
+                    "Review the code change.",
+                ]);
+                state.chat = Some(streamer);
+                if native {
+                    state.converse = Some(Arc::new(move |_, _| {
+                        Some(Box::new(EditorNative {
+                            turns: Default::default(),
+                            empty,
+                            refuse: true,
+                            persistent: false,
+                            after_read: true,
+                        }) as Box<dyn chat::Conversation>)
+                    }));
+                }
+                let lines = editor_lines(&state, "chat", access, false);
+                assert_eq!(
+                    editor_text(&lines),
+                    "Review the code change.",
+                    "{native} {empty} {access}: {lines:?}"
+                );
+                assert_eq!(
+                    lines.iter().filter(|l| l.get("proposal").is_some()).count(),
+                    1
+                );
+                assert!(!lines
+                    .iter()
+                    .any(|l| l.get("error").is_some() || l.get("restart").is_some()));
+                if !native {
+                    assert_eq!(prompts.lock().unwrap().len(), 4);
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn editor_recovery_is_bounded_and_never_overrides_read_only_or_quiz_marking() {
     for native in [false, true] {
         let (mut state, _dir, _) = state_with(&[]);
@@ -3183,6 +3237,7 @@ fn editor_recovery_is_bounded_and_never_overrides_read_only_or_quiz_marking() {
                     empty: false,
                     refuse: true,
                     persistent: true,
+                    after_read: false,
                 }) as Box<dyn chat::Conversation>)
             }));
         }
@@ -3219,6 +3274,7 @@ fn editor_recovery_is_bounded_and_never_overrides_read_only_or_quiz_marking() {
                         empty: false,
                         refuse: false,
                         persistent: false,
+                        after_read: false,
                     }) as Box<dyn chat::Conversation>)
                 }));
             }

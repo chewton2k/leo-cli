@@ -2195,13 +2195,18 @@
           draw(false);
         }
       } catch (e) {
-        if (e.name !== 'AbortError') answer.error = e.message || "Can't reach leo. Is leo serve still running?";
+        if (e.name === 'AbortError') controller.abort();
+        else answer.error = e.message || "Can't reach leo. Is leo serve still running?";
       }
       answer.pending = false;
+      answer.elapsed_ms = Math.max(0, Date.now() - (working.get(answer) ?? Date.now()));
+      working.delete(answer);
       answer.at = new Date().toISOString();
-      const asking = (answer.asks || []).length || (answer.quizzes || []).length;
-      if (!answer.text && !answer.error && !asking) answer.error = 'Stopped.';
-      const stopped = answer.error === 'Stopped.';
+      const cards = ['asks', 'quizzes', 'proposals'].some((key) => (answer[key] || []).length);
+      const stopped = controller.signal.aborted || answer.error === 'Stopped.';
+      if (stopped) answer.cancelled = true;
+      if (stopped && !answer.error) answer.error = 'Stopped.';
+      if (!answer.text && !answer.error && !cards) answer.error = 'Felix finished without an answer. Try again.';
       if (card) {
         const extras = ['quizzes', 'asks', 'proposals'].filter((key) => (answer[key] || []).length);
         if (extras.length) {

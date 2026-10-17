@@ -15,7 +15,9 @@ pub fn missing_tools(text: &str) -> bool {
         .unwrap_or(text);
     let personal = [
         "i can't ",
+        "i couldn't ",
         "i cannot ",
+        "i could not ",
         "i can not ",
         "i'm unable to ",
         "i am unable to ",
@@ -51,7 +53,9 @@ pub fn missing_tools(text: &str) -> bool {
     }
     let refuses = [
         "can't",
+        "couldn't",
         "cannot",
+        "could not",
         "can not",
         "unable to",
         "don't have",
@@ -89,6 +93,17 @@ pub struct Head {
     blocked: bool,
 }
 
+pub fn read(name: &str) -> bool {
+    matches!(
+        name,
+        "interview_code"
+            | "interview_progress"
+            | "interview_list"
+            | "interview_attempt"
+            | "interview_tests"
+    )
+}
+
 impl Head {
     pub fn new(check: bool) -> Self {
         Self {
@@ -100,6 +115,10 @@ impl Head {
 
     pub fn pending(&self) -> bool {
         !self.released
+    }
+
+    pub fn refused(&self) -> bool {
+        self.pending() && missing_tools(&self.held)
     }
 
     pub fn push(&mut self, piece: &str, show: &mut dyn FnMut(&str)) {
@@ -149,6 +168,7 @@ mod tests {
         for text in [
             "I can’t put it in the code area because the interview code editing tools aren’t available.",
             "I cannot edit your code from here.",
+            "I couldn’t access Leo’s code editor tool, so I haven’t changed the code area.",
             "The interview_code_edit tool is not available.",
         ] {
             assert!(missing_tools(text), "{text}");
@@ -206,5 +226,37 @@ mod tests {
         let mut head = Head::new(false);
         head.push(&refusal, &mut |s| shown.push_str(s));
         assert_eq!(shown, refusal);
+    }
+
+    #[test]
+    fn recovery_can_follow_reads_but_never_a_change_or_user_question() {
+        for name in [
+            "interview_code",
+            "interview_progress",
+            "interview_list",
+            "interview_attempt",
+            "interview_tests",
+        ] {
+            assert!(read(name));
+        }
+        for name in [
+            "interview_code_edit",
+            "interview_challenge",
+            "ask_user",
+            "quiz",
+            "add_task",
+            "edit_note",
+            "unknown",
+        ] {
+            assert!(!read(name));
+        }
+        let mut head = Head::new(true);
+        head.push("I couldn’t access Leo’s code editor tool.", &mut |_| {
+            panic!("a refusal must stay held")
+        });
+        assert!(head.refused());
+        let mut head = Head::new(true);
+        head.push("The empty editor is ready for your solution.", &mut |_| {});
+        assert!(!head.refused());
     }
 }

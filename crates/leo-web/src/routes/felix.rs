@@ -1242,13 +1242,17 @@ fn native_answer(
 ) -> Result<Option<chat::Spent>> {
     let mut spent = None;
     let mut calls = 0usize;
+    let mut reads_only = true;
     let mut failure: Option<anyhow::Error> = None;
     let gap = std::cell::Cell::new(false);
     let code_context = desk.interview.is_some();
     let mut message = conversation.to_string();
     for attempt in 0..=CODE_RETRIES {
         let head = std::cell::RefCell::new(crate::code_reply::Head::new(
-            code_context && calls == 0 && desk.current_access().changes(),
+            code_context
+                && reads_only
+                && calls < tools::MOST_STEPS
+                && desk.current_access().changes(),
         ));
         let show = |t: &str| {
             if gap.replace(false) && shown.get() {
@@ -1257,12 +1261,14 @@ fn native_answer(
             shown.set(true);
             send(serde_json::json!({ "t": t }));
         };
+        let remaining = tools::MOST_STEPS.saturating_sub(calls);
         let reply = {
             let mut piece = |t: &str| head.borrow_mut().push(t, &mut |t| show(t));
             let mut restart = || gap.set(true);
             let mut call = |name: &str, args: &serde_json::Value| -> String {
                 head.borrow_mut().release(&mut |t| show(t));
                 calls += 1;
+                reads_only &= crate::code_reply::read(name);
                 if calls > tools::MOST_STEPS {
                     return format!("That did not work: {}", tools::NO_MORE_TOOLS);
                 }
@@ -1274,7 +1280,13 @@ fn native_answer(
                     call.args = serde_json::json!({});
                 }
                 match run_tool(state, desk, &call, send) {
-                    Ok(done) => done.result,
+                    Ok(done) => {
+                        if code_context && reads_only && calls < tools::MOST_STEPS {
+                            *head.borrow_mut() =
+                                crate::code_reply::Head::new(desk.current_access().changes());
+                        }
+                        done.result
+                    }
                     Err(e) => {
                         let said = e.to_string();
                         failure = Some(e);
@@ -1288,7 +1300,7 @@ fn native_answer(
                     tail: "",
                     last: false,
                     max_tokens: chat::REPLY_TOKENS,
-                    most_calls: tools::MOST_STEPS,
+                    most_calls: remaining,
                     piece: &mut piece,
                     restart: &mut restart,
                     call: &mut call,
@@ -1299,11 +1311,7 @@ fn native_answer(
             return Err(e);
         }
         counted(&mut spent, reply.spent);
-        if code_context
-            && calls == 0
-            && head.borrow().pending()
-            && crate::code_reply::missing_tools(&reply.text)
-        {
+        if code_context && reads_only && calls < tools::MOST_STEPS && head.borrow().refused() {
             if !desk.current_access().changes() {
                 show("Read only is active. Switch Felix to Ask or Auto to change the code.");
             } else if attempt < CODE_RETRIES {
@@ -1331,7 +1339,7 @@ fn text_answer(
     shown: &std::cell::Cell<bool>,
 ) -> Result<Option<chat::Spent>> {
     let mut unstuck = false;
-    let mut calls = 0usize;
+    let mut reads_only = true;
     let mut spent: Option<chat::Spent> = None;
     let mut message = conversation.to_string();
     let code_context = desk.interview.is_some();
@@ -1346,7 +1354,7 @@ fn text_answer(
     for step in 0..=tools::MOST_STEPS {
         let last = step == tools::MOST_STEPS || desk.asked > 0;
         let gate = std::cell::RefCell::new(tools::Gate::default());
-        let check_code = code_context && calls == 0 && !last && desk.current_access().changes();
+        let check_code = code_context && reads_only && !last && desk.current_access().changes();
         let head = std::cell::RefCell::new(crate::code_reply::Head::new(check_code));
         let emit = |t: &str| head.borrow_mut().push(t, &mut |t| shown_once(t));
         let reply = talk.say(
@@ -1375,12 +1383,7 @@ fn text_answer(
         let call = if last { None } else { tools::find_call(&reply) };
         if call.is_none() {
             gate.finish(&mut |t| emit(t));
-            if code_context
-                && calls == 0
-                && !last
-                && head.borrow().pending()
-                && crate::code_reply::missing_tools(&reply)
-            {
+            if code_context && reads_only && !last && head.borrow().refused() {
                 if !desk.current_access().changes() {
                     shown_once(
                         "Read only is active. Switch Felix to Ask or Auto to change the code.",
@@ -1418,7 +1421,7 @@ fn text_answer(
         if gate.shown {
             gap.set(true);
         }
-        calls += 1;
+        reads_only &= crate::code_reply::read(&call.name);
         let done = run_tool(state, desk, &call, send)?;
         message = tools::result_message(&call.name, &done.result);
     }

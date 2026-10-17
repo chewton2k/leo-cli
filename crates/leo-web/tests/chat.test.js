@@ -489,7 +489,7 @@ test('problem deletion cards can be applied again after Undo with fresh revision
   }
 });
 
-function chatSendFixture(mode = 'chat', id = 'practice', access = 'ask', before = async () => true) {
+function chatSendFixture(mode = 'chat', id = 'practice', access = 'ask', before = async () => true, stream = {}) {
   const fs = require('node:fs');
   const vm = require('node:vm');
   const source = fs.readFileSync(require.resolve('../src/web/chat.js'), 'utf8');
@@ -501,20 +501,127 @@ function chatSendFixture(mode = 'chat', id = 'practice', access = 'ask', before 
   const input = { value: 'Put the solution in my code area.' };
   const noop = () => {};
   const context = vm.createContext({
-    state, input, AbortController, TextDecoder, working: new Map(), MOST_REFS: C.MOST_REFS,
+    state, input, AbortController, TextDecoder, Date: class extends Date { static now() { return stream.clock ? stream.clock() : Date.now(); } }, working: new Map(), MOST_REFS: C.MOST_REFS,
     historyText: C.historyText, threadRefs: C.threadRefs, recentNotes: C.recentNotes, sessionBody: C.sessionBody, splitLines: C.splitLines, grade: C.grade, scoreSession: C.scoreSession,
     cardOf: doc => doc, currentSession: () => null, closePick: noop, drawRefs: noop, fit: noop, awake: noop, mood: noop, thinking: noop, draw: noop, remember: noop, react: noop, talking: noop, onInterviewReply: noop,
+    pose: noop, onSaved: noop, onChanged: noop, onOrganized: noop, queueMicrotask, organize: async card => { card.state = 'applied'; },
     $: () => contextBox, escape: esc,
     onBeforeSend: async args => { prepared.push(args); return before(args); }, notify: message => notices.push(message),
     fetch: async (_url, options) => {
       requests.push(JSON.parse(options.body));
+      const reply = stream.replies ? stream.replies[requests.length - 1] || {} : stream;
       let read = false;
-      return { ok: true, status: 200, body: { getReader: () => ({ read: async () => { if (read) return { done: true }; read = true; return { done: false, value: new TextEncoder().encode('{"t":"Ready."}\n{"done":true}\n') }; } }) } };
+      return { ok: true, status: 200, body: { getReader: () => ({ read: async () => {
+        if (read) {
+          if (reply.finish) reply.finish(state);
+          if (reply.error) throw reply.error;
+          return { done: true };
+        }
+        read = true;
+        const events = reply.events || [{ t: 'Ready.' }, { done: true }];
+        return { done: false, value: new TextEncoder().encode(events.map(event => JSON.stringify(event)).join('\n') + '\n') };
+      } }) } };
     },
   });
   vm.runInContext(send + drawContext, context);
   return { state, input, requests, prepared, notices, contextBox, send: context.send, drawContext: context.drawContext };
 }
+
+test('completed and stopped replies retain elapsed time without confusing completion with cancellation', async () => {
+  for (const abort of [false, true]) {
+    let now = 100;
+    const fixture = chatSendFixture('interview', 'practice', 'ask', undefined, {
+      clock: () => now,
+      events: [{ proposal: { kind: 'interview_code_edit', state: 'applied' } }],
+      finish: state => { now = 61250; if (abort) state.busy.abort(); },
+    });
+    await fixture.send('Fix my code.');
+    const answer = fixture.state.messages.at(-1);
+    assert.equal(answer.elapsed_ms, 61150);
+    assert.equal(Boolean(answer.cancelled), abort);
+    assert.equal(answer.error, abort ? 'Stopped.' : undefined);
+  }
+});
+
+test('successful card-only replies finish without a stopped error for every proposal kind and state', async () => {
+  const kinds = ['create', 'edit', 'add_task', 'update_task', 'delete_task', 'restore_task', 'move_note', 'make_folder', 'remove_folder', 'move_folder', 'delete_note', 'restore_note', 'rename_note', 'rename_folder', 'pin_note', 'delete_folder', 'restore_folder', 'interview_code_edit', 'delete_interview_problem', 'restore_interview_problem', 'interview_problem_edit', 'interview_topics', 'interview_test'];
+  for (const kind of kinds) {
+    for (const state of ['new', 'applied']) {
+      const fixture = chatSendFixture('interview', 'practice', 'ask', undefined, { events: [{ proposal: { kind, state, made: 'note' } }, { done: true }] });
+      await fixture.send('Make this change.');
+      const answer = fixture.state.messages.at(-1);
+      assert.equal(answer.error, undefined, `${kind}: ${state}`);
+      assert.equal(answer.pending, false);
+      assert.equal(answer.proposals[0].state, state);
+    }
+  }
+  const events = [{ ask: { question: 'Which approach?', options: ['A', 'B'] } }, ...Object.keys(C.QUIZ_KINDS).map(kind => ({ quiz: { question: 'Why?', kind } })), { proposal: { kind: 'interview_code_edit', auto: true } }];
+  for (const event of events) {
+    for (const extra of [{}, { card: { question: 'Explain?', correct: null } }]) {
+      const fixture = chatSendFixture('interview', 'practice', 'ask', undefined, { events: [event, { done: true }] });
+      await fixture.send('Continue.', extra);
+      assert.equal(fixture.state.messages.at(-1).error, undefined);
+      if (extra.card) assert.equal(extra.card.reply.error, undefined);
+      assert.equal(fixture.state.busy, null);
+    }
+  }
+});
+
+test('a restarted reply counts retained applied cards and reports empty output when pending cards were discarded', async () => {
+  for (const state of ['new', 'applied']) {
+    const fixture = chatSendFixture('interview', 'practice', 'ask', undefined, { events: [{ proposal: { kind: 'interview_code_edit', state } }, { reset: true }, { done: true }] });
+    await fixture.send('Continue.');
+    const answer = fixture.state.messages.at(-1);
+    if (state === 'applied') {
+      assert.equal(answer.error, undefined);
+      assert.equal(answer.proposals.length, 1);
+    } else {
+      assert.match(answer.error, /finished without an answer.*Try again/);
+      assert.equal(answer.proposals.length, 0);
+    }
+  }
+});
+
+test('empty completion, cancellation and provider failures remain distinct even after partial content or cards', async () => {
+  const cases = [
+    { events: [{ done: true }], expected: /finished without an answer.*Try again/ },
+    { events: [{ t: 'A partial answer.' }], finish: state => state.busy.abort(), expected: /^Stopped\.$/ },
+    { events: [{ proposal: { kind: 'interview_code_edit', state: 'applied' } }], finish: state => state.busy.abort(), expected: /^Stopped\.$/ },
+    { events: [], error: { name: 'AbortError' }, expected: /^Stopped\.$/ },
+    { events: [{ t: 'A partial answer.' }], error: { name: 'AbortError' }, expected: /^Stopped\.$/ },
+    { events: [{ error: 'Stopped.' }], expected: /^Stopped\.$/ },
+    { events: [{ proposal: { kind: 'edit' } }], error: new Error('Connection lost. Try again.'), expected: /^Connection lost\. Try again\.$/ },
+    { events: [{ error: 'The provider is unavailable. Try again.' }], expected: /^The provider is unavailable\. Try again\.$/ },
+  ];
+  for (const reply of cases) {
+    const fixture = chatSendFixture('interview', 'practice', 'ask', undefined, reply);
+    await fixture.send('Continue.');
+    const answer = fixture.state.messages.at(-1);
+    assert.match(answer.error, reply.expected);
+    assert.equal(answer.pending, false);
+    assert.equal(fixture.state.busy, null);
+  }
+});
+
+test('proposal-only completion sends waiting follow-ups while cancellation restores them without sending', async () => {
+  for (const abort of [false, true]) {
+    const fixture = chatSendFixture('interview', 'practice', 'ask', undefined, { replies: [{
+      events: [{ proposal: { kind: 'interview_code_edit', state: 'applied' } }],
+      finish: state => {
+        const message = { role: 'user', text: 'Explain its complexity.', steer: 'waiting' };
+        state.messages.push(message);
+        state.busy.waiting.push(message);
+        if (abort) state.busy.abort();
+      },
+    }] });
+    fixture.input.value = '';
+    await fixture.send('Change my code.');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(fixture.requests.length, abort ? 1 : 2);
+    assert.equal(fixture.input.value, abort ? 'Explain its complexity.' : '');
+    assert.equal(fixture.state.busy, null);
+  }
+});
 
 test('the active practice context and draft save survive every chat style and access setting', async () => {
   for (const mode of ['chat', 'study', 'interview']) {
