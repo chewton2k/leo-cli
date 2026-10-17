@@ -291,8 +291,8 @@ fn scripted(replies: Vec<&'static str>) -> (chat::Streamer, Arc<Mutex<Vec<String
               _: &mut dyn FnMut()| {
             seen.lock().unwrap().push(format!("{system}\n{user}"));
             let reply = replies.lock().unwrap().next().unwrap_or("Out of script.");
-            for chunk in reply.as_bytes().chunks(7) {
-                piece(std::str::from_utf8(chunk).unwrap());
+            for chunk in reply.chars().collect::<Vec<_>>().chunks(7) {
+                piece(&chunk.iter().collect::<String>());
             }
             Ok(reply.into())
         },
