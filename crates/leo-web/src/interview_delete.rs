@@ -310,14 +310,14 @@ mod tests {
                     )
                 })
                 .unwrap();
-            let count: usize = db::for_chats(path)
+            let count: i64 = db::for_chats(path)
                 .with(|c| {
                     c.query_row("SELECT count(*) FROM interview_problem_undo", [], |r| {
                         r.get(0)
                     })
                 })
                 .unwrap();
-            assert!(count <= MOST_UNDO, "iteration {index}: {count}");
+            assert!(count <= MOST_UNDO as i64, "iteration {index}: {count}");
         }
         let (after, token) = delete(path, &item.id, item.revision, "problem-delete-0").unwrap();
         db::for_chats(path)
@@ -345,7 +345,7 @@ mod tests {
         .unwrap();
         assert!(restore(path, &after.id, &token).is_err());
         interview::remove(path, &after.id).unwrap();
-        let count: usize = db::for_chats(path)
+        let count: i64 = db::for_chats(path)
             .with(|c| {
                 c.query_row(
                     "SELECT count(*) FROM interview_problem_undo WHERE interview = ?1",
