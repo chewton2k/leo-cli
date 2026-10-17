@@ -238,11 +238,15 @@ fail, so only listed ones are passed; cached per program).
 
 ### Part sizes follow the writing provider (`ai/budget.rs`)
 
-`writing_budget(cfg)` takes the tightest budget over the chat chain. Codex,
-Claude Code, AGY and Copilot use the agent budget (three parts at once); Ollama
-uses the smaller local budget (one part). Context/output limits bound actual part
-sizes. Long recordings and uploads share this calculation and report progress from
-the calling thread. Speech chunking and note synthesis/gap-filling stay unchanged.
+`writing_budget(cfg)` takes the tightest budget over the chat chain. Codex and
+Claude Code use the agent budget (three parts at once); AGY and Copilot keep
+agent context/output limits but process one part at a time because their private
+profiles hold an exclusive cross-process lock for each call. Ollama uses the
+smaller local budget (one part). A fallback chain containing an isolated profile
+also processes one part at a time. Independent concurrent workflows still refuse
+an occupied profile rather than waiting behind an unbounded queue.
+Context/output limits bound actual part sizes. Long recordings and uploads share
+this calculation and report progress from the calling thread. Speech chunking and note synthesis/gap-filling stay unchanged.
 
 ### Claude Code gets leo's tools natively (`ai/provider/mcp.rs`)
 

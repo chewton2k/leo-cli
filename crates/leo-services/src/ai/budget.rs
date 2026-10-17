@@ -49,12 +49,11 @@ const AGENT_OUTPUT_TOKENS: u32 = 32_000;
 fn kind_of(name: &str, provider: &ProviderConfig) -> Budget {
     let model = provider.model.as_deref().unwrap_or("").to_ascii_lowercase();
     match provider.kind {
-        Some(
-            ProviderKind::ClaudeCode
-            | ProviderKind::Codex
-            | ProviderKind::Agy
-            | ProviderKind::Copilot,
-        ) => Budget::AGENT,
+        Some(ProviderKind::ClaudeCode | ProviderKind::Codex) => Budget::AGENT,
+        Some(ProviderKind::Agy | ProviderKind::Copilot) => Budget {
+            at_once: 1,
+            ..Budget::AGENT
+        },
         _ if name == "ollama" || provider.base_url.as_deref().is_some_and(local) => Budget::LOCAL,
         _ if model.ends_with(":free") || model == "openrouter/free" => Budget::FREE,
         _ => Budget::CLOUD,
@@ -224,6 +223,51 @@ mod tests {
                 at_once: 1
             }
         );
+    }
+
+    #[test]
+    fn isolated_profiles_serialize_parts_without_reducing_agent_limits() {
+        for (name, kind, words, at_once) in [
+            ("claude_code", ProviderKind::ClaudeCode, 64_000, 3),
+            ("codex", ProviderKind::Codex, 64_000, 3),
+            ("agy", ProviderKind::Agy, 64_000, 1),
+            ("copilot", ProviderKind::Copilot, 43_200, 1),
+        ] {
+            let mut config = provider(kind, None, None);
+            assert_eq!(budget_of(name, &config), Budget { words, at_once });
+            config.context = Some(256_000);
+            config.max_tokens = Some(4_096);
+            assert_eq!(
+                budget_of(name, &config),
+                Budget {
+                    words: 64_000,
+                    at_once
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn fallback_chains_serialize_an_isolated_profile_in_either_order() {
+        let mut config: Config = toml::from_str("").unwrap();
+        for (isolated, words) in [("agy", 64_000usize), ("copilot", 43_200)] {
+            for (other, other_words) in [
+                ("codex", 64_000),
+                ("claude_code", 64_000),
+                ("ollama", 2_764),
+            ] {
+                for chain in [[isolated, other], [other, isolated]] {
+                    config.chat.chain = chain.map(str::to_string).to_vec();
+                    assert_eq!(
+                        writing_budget(&config),
+                        Budget {
+                            words: words.min(other_words),
+                            at_once: 1
+                        }
+                    );
+                }
+            }
+        }
     }
 
     #[test]
