@@ -1,7 +1,54 @@
 const MOST_PREFIX: usize = 512;
 
 pub fn missing_tools(text: &str) -> bool {
-    let text = text.to_lowercase().replace('’', "'");
+    let text = text
+        .chars()
+        .take(MOST_PREFIX)
+        .collect::<String>()
+        .to_lowercase()
+        .replace('’', "'");
+    let text = text.trim_start().trim_start_matches('*');
+    let text = text.strip_prefix("sorry,").unwrap_or(text).trim_start();
+    let first = text
+        .split(['.', '!', '?', '\n', ';'])
+        .next()
+        .unwrap_or(text);
+    let personal = [
+        "i can't ",
+        "i cannot ",
+        "i can not ",
+        "i'm unable to ",
+        "i am unable to ",
+        "i don't have ",
+        "i do not have ",
+    ]
+    .iter()
+    .any(|s| first.starts_with(s));
+    let named = [
+        "the interview_code",
+        "interview_code",
+        "the `interview_code",
+        "`interview_code",
+        "the code editing tool",
+        "code editing tool",
+        "the code-editing tool",
+        "code-editing tool",
+        "the editor tool",
+        "editor tool",
+    ]
+    .iter()
+    .any(|s| first.starts_with(s));
+    let execution = [
+        "i can't run ",
+        "i cannot run ",
+        "i can't execute ",
+        "i cannot execute ",
+    ]
+    .iter()
+    .any(|s| first.starts_with(s));
+    if execution || (!personal && !named) {
+        return false;
+    }
     let refuses = [
         "can't",
         "cannot",
@@ -16,7 +63,7 @@ pub fn missing_tools(text: &str) -> bool {
         "aren't available",
     ]
     .iter()
-    .any(|s| text.contains(s));
+    .any(|s| first.contains(s));
     let editor = [
         "interview_code",
         "code editing tool",
@@ -24,11 +71,15 @@ pub fn missing_tools(text: &str) -> bool {
         "editor tool",
     ]
     .iter()
-    .any(|s| text.contains(s))
+    .any(|s| first.contains(s))
+        || (personal
+            && ["code area", "code editor"]
+                .iter()
+                .any(|s| first.contains(s)))
         || (["can't edit", "cannot edit", "unable to edit"]
             .iter()
-            .any(|s| text.contains(s))
-            && (text.contains("code") || text.contains("editor")));
+            .any(|s| first.contains(s))
+            && (first.contains("code") || first.contains("editor")));
     refuses && editor
 }
 
@@ -107,6 +158,11 @@ mod tests {
             "I can edit your code; I cannot execute it with my tools.",
             "Read only is active. Switch to Ask or Auto to change the editor.",
             "You can accept the code editing tool's suggestion.",
+            "The previous claim that the code editing tools aren't available was wrong.",
+            "\"I cannot edit your code\" was the incorrect response.",
+            "I cannot run code, but the code editing tools can prepare a change.",
+            "The code editing tools are available; the old reply said they were unavailable.",
+            "I cannot be certain about every edge case; the editor tools can help us review it.",
         ] {
             assert!(!missing_tools(text), "{text}");
         }
