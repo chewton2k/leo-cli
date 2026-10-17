@@ -42,9 +42,13 @@ pub fn missing_tools(text: &str) -> bool {
     .any(|s| first.starts_with(s));
     let execution = [
         "i can't run ",
+        "i couldn't run ",
         "i cannot run ",
+        "i could not run ",
         "i can't execute ",
+        "i couldn't execute ",
         "i cannot execute ",
+        "i could not execute ",
     ]
     .iter()
     .any(|s| first.starts_with(s));
@@ -175,6 +179,8 @@ mod tests {
         }
         for text in [
             "I cannot run code. You can run it in the browser.",
+            "I couldn’t run code, but the editor tools can prepare a change.",
+            "I could not execute code, but I can use the code editor tools.",
             "I can edit your code; I cannot execute it with my tools.",
             "Read only is active. Switch to Ask or Auto to change the editor.",
             "You can accept the code editing tool's suggestion.",
