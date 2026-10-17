@@ -21,6 +21,7 @@ document.addEventListener('keydown', (e) => {
   }
   if (e.key === 'Escape') {
     if ($('.scrim')) return closeSheet();
+    if (source.note && sourcePane.contains(e.target)) return closeSource();
     if (typing) return e.target.blur();
     if ((state.view === 'folder' || state.view === 'trash') && state.selecting) {
       state.selecting = false;

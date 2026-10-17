@@ -562,6 +562,7 @@
 
   const CHAT_LEAVE_MS = 160;
   const PERMISSION_MS = 5000;
+  const HISTORY_SIDE_WIDTH = 560;
   const MOST_INTERVIEW_PROBLEMS = 128;
   const MOST_INTERVIEW_TITLE = 160;
 
@@ -868,15 +869,28 @@
       e.preventDefault();
     });
 
+    const sourceNarrow = () => document.body.classList.contains('with-source') && panel.getBoundingClientRect().width < HISTORY_SIDE_WIDTH;
+    if (typeof root.ResizeObserver === 'function') {
+      const historySize = new root.ResizeObserver(() => {
+        panel.classList.toggle('source-narrow', sourceNarrow());
+        if (state.sidebar !== null || panel.hidden) return;
+        const on = sidebarOpen();
+        const before = panel.classList.contains('with-history');
+        panel.classList.toggle('with-history', on);
+        if (on && !before) loadChats();
+      });
+      historySize.observe(panel);
+    }
+
     function sidebarOpen() {
       if (state.sidebar !== null) return state.sidebar;
       try {
         const kept = storage.getItem(SIDEBAR);
-        if (kept !== null) return kept === '1' && wide();
+        if (kept !== null) return kept === '1' && wide() && !sourceNarrow();
       } catch (e) {
-        return wide();
+        return wide() && !sourceNarrow();
       }
-      return wide();
+      return wide() && !sourceNarrow();
     }
 
     function showSidebar(on) {

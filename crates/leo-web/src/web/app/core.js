@@ -710,7 +710,7 @@ async function showPassage(note, name, at) {
     <div class="source-list passage-list">${lines || '<p class="hint">That part of the file is empty.</p>'}</div>
     <div class="buttons"><button class="btn plain" data-action="close">Close</button>${viewKind(name) ? '<button class="btn primary" id="passage-open">Open the file</button>' : ''}</div>`);
   const open = $('#passage-open', box);
-  if (open) open.addEventListener('click', () => viewOriginal(note, name, found.page).catch(fail));
+  if (open) open.addEventListener('click', () => { closeSheet(true); viewOriginal(note, name, found.page).catch(fail); });
 }
 
 function noteActions(id, recorded = false) {

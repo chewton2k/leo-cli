@@ -858,7 +858,9 @@ async function loadTasksWindow() {
 setTimeout(() => loadTasksWindow().catch(() => {}), 0);
 window.addEventListener('hashchange', () => drawTasksWindow());
 
-const source = { note: null, name: null };
+const source = { note: null, name: null, seq: 0, returnTo: null, stopResize: null };
+const SOURCE_MIN = 260;
+const SOURCE_STEP = 32;
 const SOURCE_KEY = 'leo-source-width';
 
 const sourcePane = document.createElement('aside');
@@ -875,29 +877,56 @@ function sourceWidth() {
   } catch (e) {
     kept = 0;
   }
-  return kept || Math.round(Math.min(640, Math.max(420, window.innerWidth * 0.38)));
+  return Number.isFinite(kept) && kept >= SOURCE_MIN && kept <= 4000
+    ? kept : Math.round(Math.min(640, Math.max(420, window.innerWidth * 0.38)));
 }
 
 function sourceFits() {
-  if (source.note) return true;
-  const style = getComputedStyle(document.body);
-  const side = parseFloat(style.getPropertyValue('--side')) || 0;
-  const right = document.body.classList.contains('chat-open') ? parseFloat(style.getPropertyValue('--right')) || 0 : 0;
-  return window.innerWidth - side - right >= sourceWidth() + 640;
+  return window.matchMedia('(min-width: 1000px)').matches;
+}
+
+function sourceLimit() {
+  const side = parseFloat(getComputedStyle(document.body).getPropertyValue('--side')) || 0;
+  const chat = document.body.classList.contains('chat-open') ? document.querySelector('aside.chat')?.getBoundingClientRect().width || 0 : 0;
+  return Math.max(SOURCE_MIN, Math.floor((window.innerWidth - side - chat) * 0.52));
+}
+
+function sourceSizeLabel() {
+  const grip = sourcePane.querySelector('.source-grip');
+  if (!grip || !sourceFits()) return;
+  grip.setAttribute('aria-valuemin', String(SOURCE_MIN));
+  grip.setAttribute('aria-valuemax', String(sourceLimit()));
+  grip.setAttribute('aria-valuenow', String(Math.round(sourcePane.getBoundingClientRect().width)));
+}
+
+function setSourceWidth(width) {
+  const bounded = Math.round(Math.min(sourceLimit(), Math.max(SOURCE_MIN, width)));
+  document.body.style.setProperty('--source-w', `${bounded}px`);
+  try {
+    localStorage.setItem(SOURCE_KEY, String(bounded));
+  } catch (e) {}
+  sourceSizeLabel();
 }
 
 function closeSource() {
   if (!source.note) return;
+  const restore = sourcePane.contains(document.activeElement) ? source.returnTo : null;
+  source.stopResize?.();
+  source.seq++;
   source.note = null;
   source.name = null;
+  source.returnTo = null;
   sourcePane.hidden = true;
   sourcePane.innerHTML = '';
   document.body.classList.remove('with-source');
+  if (restore?.isConnected) restore.focus({ preventScroll: true });
 }
 
 async function openSource(id, name, page = null) {
   const kind = viewKind(name);
   if (!kind) return;
+  const mine = ++source.seq;
+  if (!source.note) source.returnTo = document.activeElement;
   source.note = id;
   source.name = name;
   document.body.style.setProperty('--source-w', `${sourceWidth()}px`);
@@ -909,7 +938,7 @@ async function openSource(id, name, page = null) {
   } catch (e) {
     if (e instanceof Locked) throw e;
   }
-  if (source.note !== id || source.name !== name) return;
+  if (source.seq !== mine || source.note !== id || source.name !== name) return;
   const picker = files.length > 1
     ? `<span class="source-files">${files.slice(0, 12).map((f) => `<button type="button" class="chip${f.name === name ? ' accent' : ''}" data-action="source-file" data-id="${esc(id)}" data-name="${esc(f.name)}">${esc(f.name)}</button>`).join('')}</span>`
     : `<b class="source-name" title="${esc(name)}">${esc(name)}</b>`;
@@ -922,6 +951,7 @@ async function openSource(id, name, page = null) {
   sourcePane.innerHTML = `<div class="source-grip" role="separator" aria-orientation="vertical" aria-label="Drag to resize the original" tabindex="0"></div>
     <header class="source-head">${picker}<span class="source-tools"><a class="btn sm plain" href="${url}" download="${esc(name)}">Download</a><button type="button" class="icon-btn" data-action="source-close" aria-label="Close the original">${ICON.close}</button></span></header>
     <div class="source-body">${body}</div>`;
+  sourceSizeLabel();
   if (kind === 'text') {
     const box = sourcePane.querySelector('.source-text');
     try {
@@ -936,27 +966,41 @@ async function openSource(id, name, page = null) {
   }
 }
 
+sourcePane.addEventListener('keydown', (e) => {
+  if (!e.target.matches('.source-grip') || !sourceFits()) return;
+  const width = sourcePane.getBoundingClientRect().width;
+  const next = { ArrowLeft: width + SOURCE_STEP, ArrowRight: width - SOURCE_STEP, Home: SOURCE_MIN, End: sourceLimit() }[e.key];
+  if (next === undefined) return;
+  e.preventDefault();
+  setSourceWidth(next);
+});
+
 sourcePane.addEventListener('pointerdown', (e) => {
   const grip = e.target.closest('.source-grip');
-  if (!grip) return;
+  if (!grip || e.button !== 0 || !sourceFits()) return;
   e.preventDefault();
+  source.stopResize?.();
   const startX = e.clientX;
-  const start = sourceWidth();
+  const start = sourcePane.getBoundingClientRect().width;
   document.body.classList.add('source-resizing');
   const move = (ev) => {
-    const width = Math.round(Math.min(window.innerWidth - 600, Math.max(360, start + startX - ev.clientX)));
-    document.body.style.setProperty('--source-w', `${width}px`);
-    try {
-      localStorage.setItem(SOURCE_KEY, String(width));
-    } catch (err) {
-      return;
-    }
+    if (!sourceFits()) return up();
+    setSourceWidth(start + startX - ev.clientX);
   };
   const up = () => {
     document.body.classList.remove('source-resizing');
     window.removeEventListener('pointermove', move);
     window.removeEventListener('pointerup', up);
+    window.removeEventListener('pointercancel', up);
+    window.removeEventListener('blur', up);
+    source.stopResize = null;
   };
+  source.stopResize = up;
   window.addEventListener('pointermove', move);
   window.addEventListener('pointerup', up);
+  window.addEventListener('pointercancel', up);
+  window.addEventListener('blur', up);
 });
+
+const sourceSizer = new ResizeObserver(sourceSizeLabel);
+sourceSizer.observe(sourcePane);

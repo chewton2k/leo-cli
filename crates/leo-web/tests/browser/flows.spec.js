@@ -2147,28 +2147,33 @@ test.describe('advanced settings', () => {
 
     const served = page.waitForResponse((r) => r.url().includes('paper.pdf?view=1'));
     await page.locator('.chip.original', { hasText: 'paper.pdf' }).click();
-    const viewer = page.locator('.sheet.viewer');
-    await expect(viewer.locator('iframe.viewer-frame')).toHaveAttribute('src', /paper\.pdf\?view=1$/);
+    const split = await page.evaluate(() => innerWidth >= 1000);
+    const viewer = page.locator(split ? '#source-pane' : '.sheet.viewer');
+    await expect(viewer.locator('iframe')).toHaveAttribute('src', /paper\.pdf\?view=1$/);
     const pdf = await served;
     expect(pdf.status()).toBe(200);
     expect(pdf.headers()['content-disposition']).toMatch(/^inline/);
     expect(pdf.headers()['x-frame-options']).toBe('SAMEORIGIN');
     await expect(viewer.locator('a[download]')).toHaveText('Download');
-    await page.keyboard.press('Escape');
-    await expect(viewer).toHaveCount(0);
+    if (split) await viewer.locator('[data-action="source-close"]').click();
+    else await page.keyboard.press('Escape');
+    await expect(viewer).toBeHidden();
 
     await page.locator('.chip.original', { hasText: 'board.png' }).click();
-    const img = page.locator('.viewer-img');
+    const img = page.locator(split ? '.source-img' : '.viewer-img');
     await expect.poll(() => img.evaluate((el) => el.naturalWidth)).toBe(2);
-    const before = (await img.boundingBox()).width;
-    await page.locator('[data-action="viewer-zoom"][data-step="1"]').click();
-    await expect.poll(async () => (await img.boundingBox()).width).toBeGreaterThan(before * 1.4);
-    await page.mouse.click(5, 5);
+    if (split) await viewer.locator('[data-action="source-close"]').click();
+    else {
+      const before = (await img.boundingBox()).width;
+      await page.locator('[data-action="viewer-zoom"][data-step="1"]').click();
+      await expect.poll(async () => (await img.boundingBox()).width).toBeGreaterThan(before * 1.4);
+      await page.mouse.click(5, 5);
+    }
     await expect(page.locator('.sheet.viewer')).toHaveCount(0);
 
     await page.locator('.chip.original', { hasText: 'notes.txt' }).click();
-    await expect(page.locator('.viewer-text')).toHaveText('Plain text from the upload.');
-    await page.locator('.sheet.viewer [data-action="close"]').click();
+    await expect(page.locator(split ? '.source-text' : '.viewer-text')).toHaveText('Plain text from the upload.');
+    await viewer.locator(split ? '[data-action="source-close"]' : '[data-action="close"]').click();
     await expect(page.locator('.sheet.viewer')).toHaveCount(0);
     expect(page.url()).toContain(`#/n/${note.id}`);
   });

@@ -544,8 +544,16 @@ works (plan: `.superpowers/plans/2026-10-12-interview-instant-feedback.md`):
   want from it?" goes in `<what_the_user_wants>`. Originals are kept in
   `<data>/attachments/<note-id>/` (never synced); figures from pptx/docx/PDF
   are offered to the AI (`leo_services::figures`). Originals open in
-  `#source-pane` beside the note when there is room (`sourceFits`), else in
-  the viewer sheet (PDF iframe, zoomable pictures, rendered text).
+  `#source-pane` beside the note on desktop (1000px and wider), with Felix
+  always to its right. Both panes share the available width instead of falling
+  back to a popup when chat is open. The original divider supports dragging,
+  Arrow keys and Home/End; resize limits leave room for notes and chat. File
+  switching keeps drafts/carets intact, close releases the iframe and returns
+  focus, and a sequence guard ignores late loads. A narrow Felix pane folds its
+  history into the existing Chats/Back controls without clearing the draft or
+  changing the saved history preference automatically. Phones use the existing viewer
+  sheet above chat (PDF iframe, zoomable pictures, rendered text); an already open
+  desktop pane becomes full width when the window narrows. Chat state is retained.
 - Recording (`record.rs`, `recording.js`, worklet `recorder.js`): one job at a
   time. Browser sources POST 16 kHz PCM each second (`UPLOAD_SAMPLES`
   batches); computer sources need `local_request`. `record_journal.rs`
