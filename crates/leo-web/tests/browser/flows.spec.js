@@ -3938,6 +3938,7 @@ test('interview answers keep their focus and draft through saves, a conflict and
   await page.locator('[data-interview="submit"]').click();
   await expect(page.locator('#interview-progress')).toContainText('1 reviewed attempt');
   await page.locator('[data-chat="close"]').click();
+  await expect(page.locator('#chat')).toBeHidden();
   expect(item.attempts[0].workspace.answer).toBe('Use a hash map. Check duplicates and negatives.');
   expect(item.attempts[0].workspace.board[0].text).toBe('Client → Server');
   await expect(answer).toHaveValue('Use a hash map. Check duplicates and negatives.');
@@ -3948,6 +3949,7 @@ test('interview answers keep their focus and draft through saves, a conflict and
   expect(item.attempts[0].workspace.board).toHaveLength(1);
   expect(item.workspace.board).toHaveLength(2);
   await page.locator('[data-chat="close"]').click();
+  await expect(page.locator('#chat')).toBeHidden();
   expect(files.size).toBe(1);
   expect(uploads).toBe(2);
   refuseImage = true;
@@ -3957,6 +3959,7 @@ test('interview answers keep their focus and draft through saves, a conflict and
   await expect(page.locator('#interview-progress')).toContainText('3 reviewed attempts');
   await expect(page.locator('#chat .msg.user').last()).not.toContainText('interview_feedback');
   await page.locator('[data-chat="close"]').click();
+  await expect(page.locator('#chat')).toBeHidden();
   await page.locator('[data-interview="tab"][data-tab="code"]').click();
 
   holdSave = true;
