@@ -4,6 +4,9 @@ let interviewStart = null;
 let interviewCodeLoad = null;
 const MOST_BOARD_UNDO = 20;
 const MOST_CODE_HISTORY = 40;
+const TOPIC_MENU_GAP = 6;
+const TOPIC_MENU_HEIGHT = 520;
+const TOPIC_MENU_LEAST = 160;
 
 function loadInterviewCode() {
   if (window.leoCode) return Promise.resolve(window.leoCode);
@@ -297,6 +300,26 @@ function interviewTopic(session) {
   return session.topic;
 }
 
+function placeInterviewTopicMenu() {
+  const menu = $('.interview-topic-picker .picker-menu');
+  const button = $('.interview-topic-picker .picker-button');
+  if (!menu || menu.hidden || !button) return;
+  const viewport = window.visualViewport;
+  const top = Math.max(viewport?.offsetTop || 0, $('#bar')?.getBoundingClientRect().bottom || 0) + TOPIC_MENU_GAP;
+  const bottom = (viewport?.offsetTop || 0) + (viewport?.height || innerHeight) - TOPIC_MENU_GAP;
+  const anchor = button.getBoundingClientRect();
+  const above = Math.max(0, anchor.top - top - TOPIC_MENU_GAP);
+  const below = Math.max(0, bottom - anchor.bottom - TOPIC_MENU_GAP);
+  const up = below < TOPIC_MENU_LEAST && above > below;
+  menu.style.top = up ? 'auto' : `calc(100% + ${TOPIC_MENU_GAP}px)`;
+  menu.style.bottom = up ? `calc(100% + ${TOPIC_MENU_GAP}px)` : 'auto';
+  menu.style.maxHeight = `${Math.min(TOPIC_MENU_HEIGHT, up ? above : below)}px`;
+}
+
+window.addEventListener('resize', placeInterviewTopicMenu);
+window.addEventListener('scroll', placeInterviewTopicMenu, { passive: true });
+window.visualViewport?.addEventListener('resize', placeInterviewTopicMenu);
+
 function interviewTopicMenu(open) {
   const menu = $('.interview-topic-picker .picker-menu');
   const button = $('.interview-topic-picker .picker-button');
@@ -304,6 +327,7 @@ function interviewTopicMenu(open) {
   const opening = open ?? (menu.hidden || Boolean(menu.dataset.folding));
   if (opening) {
     unfold(menu);
+    placeInterviewTopicMenu();
     (menu.querySelector('.pick-model.on') || menu.querySelector('.pick-model'))?.focus({ preventScroll: true });
   } else {
     fold(menu);

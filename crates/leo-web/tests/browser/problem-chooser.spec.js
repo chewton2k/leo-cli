@@ -12,9 +12,10 @@ test('problem titles are searchable and deletion keeps drafts and offers Undo', 
   const sheets = fs.readFileSync(path.join(web, 'app/sheets.js'), 'utf8');
   const sheet = sheets.slice(sheets.indexOf('function sheet('), sheets.indexOf('function menu()'));
   const toast = core.slice(core.indexOf('function toast('), core.indexOf('const LEAVE_MS'));
+  const motion = core.slice(core.indexOf('const EASE_OUT'), core.indexOf('function rel('));
   const work = answer => ({ answer, reasoning: '', board: [], values: {} });
   const challenge = (n, title, topics) => ({ id: `chooser-problem-${n}`, title, topics, question: 'Explain your solution.', minutes: 20, skills: ['Approach'], origin: 'generated', sources: [], coding: { language: 'Python', starter: 'def solve():\n    pass', difficulty: 'easy', examples: [{ input: '1', output: '1' }], constraints: ['n < 100'] } });
-  const problems = [challenge(1, 'Shortest Pin Feed', ['Sliding window']), challenge(2, 'Number of islands', ['Graphs']), challenge(3, 'Longest path', ['Graphs']), challenge(4, '<unsafe> 答😀 practice', [])].map((challenge, index) => ({ challenge, workspace: work(`answer ${index + 1}`) }));
+  const problems = [challenge(1, 'Shortest Pin Feed', ['Sliding window']), challenge(2, 'Number of islands', ['DFS', 'Graphs']), challenge(3, 'Longest path', ['DFS', 'Graphs', 'Dynamic programming']), challenge(4, '<unsafe> 答😀 practice', [])].map((challenge, index) => ({ challenge, workspace: work(`answer ${index + 1}`) }));
   let item = { id: 'chooser-practice', revision: 1, framework: { title: 'Interview practice', track: 'coding', company: '', role: '', language: 'Python', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, problems, challenge: problems[0].challenge, workspace: problems[0].workspace, attempts: [{ id: 'chooser-attempt', challenge: problems[1].challenge, workspace: problems[1].workspace, at: new Date().toISOString(), checks: [{ pass: true }], feedback: null }] };
   let removed = null;
   let failDelete = false;
@@ -28,10 +29,9 @@ test('problem titles are searchable and deletion keeps drafts and offers Undo', 
     ${icons}
     const chat = {isOpen: () => false, setInterviewContext: context => window.problemContext = context, isBusy: () => false};
     function chrome() { document.body.classList.add('on-interviews'); }
-    const go = () => {}, fold = el => { el.hidden = true; }, unfold = el => { el.hidden = false; };
+    const go = () => {};
+    ${motion}
     const fail = error => toast(error.message, {bad:true});
-    const stillMotion = () => true;
-    function keepOpen(box, html) { if (box) box.innerHTML = html; }
     async function api(url, options = {}) { const response = await fetch(url, {method:options.method || 'GET',headers:{'Content-Type':'application/json'},body:options.body ? JSON.stringify(options.body) : undefined}); const body = await response.json(); if (!response.ok) throw new Error(body.error); return body; }
     ${sheet}
     ${toast}
@@ -88,10 +88,10 @@ test('problem titles are searchable and deletion keeps drafts and offers Undo', 
     if (request.url === '/code-tools.js') { response.setHeader('Content-Type', 'text/javascript'); return response.end(fs.readFileSync(path.join(web, 'vendor/code-tools.min.js'))); }
     if (request.url === '/style.css') { response.setHeader('Content-Type', 'text/css'); return response.end(style); }
     response.setHeader('Content-Type', 'text/html; charset=utf-8');
-    response.end('<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/style.css"></head><body><main id="app"></main><script src="/interview.js"></script><script src="/fixture.js"></script><script src="/interviews-app.js"></script></body></html>');
+    response.end('<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/style.css"></head><body><header id="bar" class="bar"><div class="bar-row"><span class="crumbs">Interview practice</span><button id="chat-toggle" class="icon-btn chat-btn" aria-label="Ask Felix">Felix</button></div></header><main id="app"></main><script src="/interview.js"></script><script src="/fixture.js"></script><script src="/interviews-app.js"></script></body></html>');
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  const context = await browser.newContext({ reducedMotion: 'reduce' });
+  const context = await browser.newContext({ reducedMotion: 'no-preference' });
   try {
     const page = await context.newPage();
     const errors = [];
@@ -149,6 +149,25 @@ test('problem titles are searchable and deletion keeps drafts and offers Undo', 
     }
     await page.keyboard.press('Escape');
     await expect(chooser).toBeFocused();
+    const topicButton = page.locator('[data-interview="topic-menu"]');
+    const topicMenu = page.locator('.interview-topic-picker .picker-menu');
+    for (const height of [540, 390]) {
+      await page.setViewportSize({ width: 390, height });
+      await topicButton.click();
+      await expect.poll(async () => topicMenu.evaluate(el => el.getBoundingClientRect().bottom)).toBeLessThanOrEqual(height - 6);
+      const header = await page.locator('#bar').boundingBox();
+      await expect.poll(async () => topicMenu.evaluate(el => el.getBoundingClientRect().top)).toBeGreaterThanOrEqual(header.y + header.height + 6);
+      expect(await topicMenu.evaluate(el => el.scrollHeight > el.clientHeight)).toBe(true);
+      if (height === 390) expect(await topicMenu.evaluate(el => el.style.bottom)).not.toBe('auto');
+      await topicMenu.locator('[data-interview="topic"][data-none]').click();
+      await expect(topicButton).toContainText('No topic');
+      await chooser.click();
+      await expect(rows).toHaveCount(1);
+      await page.getByRole('button', { name: 'Close problems', exact: true }).click();
+      await topicButton.click();
+      await topicMenu.locator('[data-interview="topic"][data-all]').click();
+    }
+    await page.setViewportSize({ width: 390, height: 540 });
     const area = page.locator('#interview-answer');
     await area.fill('my evolving solution');
     await area.dispatchEvent('input');

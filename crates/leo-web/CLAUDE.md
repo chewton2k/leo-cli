@@ -798,3 +798,7 @@ focus survives refreshes; closing returns to the current chooser button even if 
 was redrawn. Switching and explicit deletion flush drafts first. A problem removed
 by Felix never gets recreated by a late draft save; newer local work remains
 recoverable when Undo restores that problem.
+
+The interview topic picker measures the visible space outside the sticky header,
+flips above its button when needed and caps its own scrolling height. Its controls
+stack above question tabs; scrolling or resizing recomputes the available space.

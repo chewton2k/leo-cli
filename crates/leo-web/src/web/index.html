@@ -1676,7 +1676,7 @@ textarea.set-input { width: 100%; resize: vertical; line-height: 1.5; }
 body.on-interviews main, body.on-interviews .bar-row, body.on-interviews .search { max-width: 1200px; }
 body.on-interviews main:has(.interview-practice) { max-width: none; }
 .interview-practice { max-width: none; container: interview / inline-size; }
-.interview-problems { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.interview-problems { position: relative; z-index: 4; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
 .interview-problems > .btn { margin-left: auto; }
 .interview-problems > .interview-problem-choice { margin-left: 0; min-width: 0; max-width: 100%; flex: 1 1 260px; text-align: left; gap: 12px; }
 .interview-problem-choice .grow { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 2px; }
@@ -1698,7 +1698,7 @@ body.on-interviews main:has(.interview-practice) { max-width: none; }
 .interview-problem-status svg { width: 14px; height: 14px; color: var(--good); }
 
 .interview-topic-picker { flex: none; justify-content: flex-start; }
-.interview-topic-picker .picker-menu { left: 0; right: auto; width: min(300px, calc(100vw - 32px)); }
+.interview-topic-picker .picker-menu { left: 0; right: auto; overscroll-behavior: contain; scroll-padding-block: 6px; width: min(300px, calc(100vw - 32px)); }
 .interview-topic-picker .picker-button { min-height: 34px; border-radius: 999px; font-size: 13.5px; font-weight: 600; }
 .interview-topic-picker .picker-button > svg:first-child, .interview-topic-picker .picker-button[aria-expanded="true"] > svg:first-child { transform: none; color: currentColor; }
 .interview-topic-picker .picker-button.filtered { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
