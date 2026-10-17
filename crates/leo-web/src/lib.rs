@@ -14,6 +14,7 @@ pub mod export;
 pub mod graph;
 mod ics;
 mod interview;
+mod interview_delete;
 mod interview_keys;
 mod interview_tools;
 mod originals;

@@ -1678,6 +1678,25 @@ body.on-interviews main:has(.interview-practice) { max-width: none; }
 .interview-practice { max-width: none; container: interview / inline-size; }
 .interview-problems { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
 .interview-problems > .btn { margin-left: auto; }
+.interview-problems > .interview-problem-choice { margin-left: 0; min-width: 0; max-width: 100%; flex: 1 1 260px; text-align: left; gap: 12px; }
+.interview-problem-choice .grow { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 2px; }
+.interview-problem-choice b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.interview-problem-choice .hint { font-size: 12px; font-weight: 400; color: var(--muted); }
+.interview-browser-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.interview-browser-head h2 { margin: 0; }
+.interview-browser-filters { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.interview-problem-search { display: flex; align-items: center; flex: 1 1 220px; gap: 8px; min-width: 0; }
+.interview-problem-search > svg { width: 18px; height: 18px; flex: none; color: var(--muted); }
+.interview-problem-search input { width: 100%; }
+.interview-problem-list { max-height: min(55dvh, 520px); overflow-y: auto; overscroll-behavior: contain; }
+.interview-problem-list .interview-problem-row { flex-direction: row; align-items: center; gap: 12px; }
+.interview-problem-row.on { background: var(--accent-soft); }
+.interview-problem-row .hint { color: var(--muted); }
+.interview-problem-row .interview-plan { overflow-wrap: anywhere; }
+.interview-problem-status { display: flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--muted); }
+.interview-problem-status.solved { color: var(--text); }
+.interview-problem-status svg { width: 14px; height: 14px; color: var(--good); }
+
 .interview-topic-picker { flex: none; justify-content: flex-start; }
 .interview-topic-picker .picker-menu { left: 0; right: auto; width: min(300px, calc(100vw - 32px)); }
 .interview-topic-picker .picker-button { min-height: 34px; border-radius: 999px; font-size: 13.5px; font-weight: 600; }

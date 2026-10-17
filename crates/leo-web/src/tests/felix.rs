@@ -2874,3 +2874,115 @@ fn felix_task_descriptions_use_the_same_cards_permissions_and_undo_in_both_proto
         }
     }
 }
+
+#[test]
+fn felix_deletes_the_viewed_problem_with_confirmation_and_private_undo_on_both_protocols() {
+    const ID: &str = "practice-delete-01";
+    const CALL: &str = r#"<tool>{"name":"interview_problem_delete","data":"{\"summary\":\"Delete the problem you are viewing\"}"}</tool>"#;
+    struct DeleteNative;
+    impl chat::Conversation for DeleteNative {
+        fn native(&self) -> bool {
+            true
+        }
+        fn say(&mut self, _: &str, exchange: chat::Exchange<'_>) -> anyhow::Result<chat::Reply> {
+            (exchange.call)(
+                "interview_problem_delete",
+                &serde_json::json!({"data":r#"{"summary":"Delete the problem you are viewing"}"#}),
+            );
+            (exchange.piece)("The deletion follows your permission setting.");
+            Ok("The deletion follows your permission setting.".into())
+        }
+    }
+    for native in [false, true] {
+        for access in ["ask", "auto", "read"] {
+            let (mut state, _dir, _) = state_with(&[]);
+            let framework = serde_json::from_value(serde_json::json!({"title":"Coding", "track":"coding", "company":"", "role":"", "language":"Python", "style":"coach", "date":"", "weekly_minutes":120, "skills":["Approach"], "wants":""})).unwrap();
+            crate::interview::configure(&state.chats, ID, 0, framework).unwrap();
+            for problem in ["problem-first-01", "problem-second-02"] {
+                let challenge = serde_json::from_value(serde_json::json!({"id":problem, "title":"Same title", "question":"Find the pair.", "minutes":30, "skills":["Approach"], "topics":["Arrays"], "origin":"generated", "sources":[]})).unwrap();
+                crate::interview::set_challenge(&state.chats, ID, challenge).unwrap();
+            }
+            state.chat =
+                Some(scripted(vec![CALL, "The deletion follows your permission setting."]).0);
+            if native {
+                state.converse = Some(Arc::new(|_, specs| {
+                    assert!(specs.iter().any(|s| s.name == "interview_problem_delete"));
+                    Some(Box::new(DeleteNative) as Box<dyn chat::Conversation>)
+                }));
+            }
+            let body = serde_json::from_value(serde_json::json!({"chat":ID, "mode":"interview", "access":access, "interview_problem":"problem-first-01", "messages":[{"role":"user", "text":"Delete this problem."}]})).unwrap();
+            let bytes = run(async {
+                let response = chat_reply(State(state.clone()), Json(body)).await;
+                axum::body::to_bytes(response.into_body(), 1_000_000)
+                    .await
+                    .unwrap()
+            });
+            let lines: Vec<serde_json::Value> = std::str::from_utf8(&bytes)
+                .unwrap()
+                .lines()
+                .map(|l| serde_json::from_str(l).unwrap())
+                .collect();
+            assert!(lines.iter().all(|l| l.get("error").is_none()));
+            let item = crate::interview::load(&state.chats, ID).unwrap();
+            let card = lines.iter().find_map(|l| l.get("proposal"));
+            if access == "read" {
+                assert!(card.is_none());
+                assert_eq!(item.problems.len(), 2);
+                continue;
+            }
+            let card = card.unwrap();
+            assert_eq!(card["kind"], "delete_interview_problem");
+            assert_eq!(card["challenge"], "problem-first-01");
+            assert!(!card.to_string().contains("private key"));
+            assert_eq!(item.problems.len(), if access == "auto" { 1 } else { 2 });
+            let applied = if access == "auto" {
+                card.clone()
+            } else if native {
+                json_of(run(crate::routes::organize::act_route(
+                    State(state.clone()),
+                    Json(serde_json::from_value(card.clone()).unwrap()),
+                )))
+            } else {
+                let stale = run(crate::routes::interviews::put(
+                    State(state.clone()),
+                    Path(ID.into()),
+                    Json(crate::interview::Change::DeleteProblem {
+                        revision: item.revision - 1,
+                        challenge: "problem-first-01".into(),
+                    }),
+                ));
+                assert_eq!(stale.status(), StatusCode::CONFLICT);
+                assert!(json_of(stale)["error"].as_str().unwrap().contains("Reload"));
+                let mut response = json_of(run(crate::routes::interviews::put(
+                    State(state.clone()),
+                    Path(ID.into()),
+                    Json(crate::interview::Change::DeleteProblem {
+                        revision: item.revision,
+                        challenge: "problem-first-01".into(),
+                    }),
+                )));
+                assert_eq!(response["item"]["problems"].as_array().unwrap().len(), 1);
+                response["state"] = "applied".into();
+                response
+            };
+            assert_eq!(applied["state"], "applied");
+            let deleted = crate::interview::load(&state.chats, ID).unwrap();
+            assert_eq!(deleted.problems.len(), 1);
+            assert_eq!(deleted.problems[0].challenge.id, "problem-second-02");
+            assert_eq!(deleted.challenge.as_ref().unwrap().id, "problem-second-02");
+            let restored = json_of(run(crate::routes::organize::act_route(
+                State(state.clone()),
+                Json(serde_json::from_value(applied["undo"].clone()).unwrap()),
+            )));
+            assert_eq!(restored["state"], "applied");
+            assert_eq!(restored["undo"]["challenge"], "problem-first-01");
+            assert_eq!(
+                crate::interview::load(&state.chats, ID)
+                    .unwrap()
+                    .problems
+                    .len(),
+                2
+            );
+        }
+    }
+}

@@ -78,6 +78,21 @@ pub fn areas(store: &Store, path: &Path) -> Result<Vec<Area>> {
         })?;
         rows.collect()
     })?;
+    let deleted_problems: Vec<Item> = db.with(|c| {
+        let mut statement = c.prepare("SELECT id, interview, updated, length(CAST(data AS BLOB)), json_extract(data, '$.problem.challenge.title') FROM interview_problem_undo ORDER BY updated DESC, id LIMIT ?1")?;
+        let rows = statement.query_map([MOST_ITEMS as i64], |r| {
+            let practice: String = r.get(1)?;
+            Ok(Item {
+                id: r.get(0)?,
+                label: r.get::<_, Option<String>>(4)?.unwrap_or_else(|| "Deleted problem".into()),
+                detail: format!("{} · private Undo copy, available for up to 24 hours", titles.get(practice.as_str()).copied().unwrap_or("Deleted practice")),
+                bytes: r.get::<_, i64>(3)?.max(0) as u64,
+                when: when(&r.get::<_, String>(2)?),
+                locked: false,
+            })
+        })?;
+        rows.collect()
+    })?;
     let note_title = |id: &str| {
         store
             .find_note(id)
@@ -140,6 +155,7 @@ pub fn areas(store: &Store, path: &Path) -> Result<Vec<Area>> {
         area(db.path(), "reading", "Reading positions", "The places you left off in your notes, shared between devices connected to this Leo server.", reading, "These notes open at the top next time. The notes themselves stay."),
         area(db.path(), "note-task-data", "Note task settings", "Descriptions, saved classifications, promoted tasks and calendar send states for checkboxes in your notes. Dates and the checkboxes themselves remain in the Markdown notes.", note_tasks, "Saved task classifications, promotions and calendar send states are reset. Your notes, checkbox completion and written dates stay."),
         area(db.path(), "calendar-cache", "Cached calendar events", "The latest calendar events read from your connected calendars. Clearing this copy does not disconnect a calendar or change Google Calendar.", calendars, "The local copy of these calendar events is removed. Refresh Calendar to read it again; your connections and Google Calendar events stay."),
+        area(db.path(), "interview-problem-undo", "Deleted problem Undo", "Private recovery copies of recently deleted interview problems, including saved work, reviews and checks. Leo keeps at most 20; Undo is available for 24 hours. These copies are never exported.", deleted_problems, "The selected recovery copies are deleted permanently and their Undo buttons stop working. Your remaining problems stay."),
     ])
 }
 
@@ -163,6 +179,7 @@ pub fn act_on(path: &Path, request: &Request) -> Option<Result<String>> {
     let table = match request.area.as_str() {
         "interviews" => ("interviews", "id"),
         "interview-checks" => ("interview_keys", "interview"),
+        "interview-problem-undo" => ("interview_problem_undo", "id"),
         "reading" => ("reading", "note"),
         "note-task-data" => ("note_tasks", "note"),
         "calendar-cache" => ("calendar_feeds", "feed"),
@@ -187,9 +204,19 @@ pub fn act_on(path: &Path, request: &Request) -> Option<Result<String>> {
         let db = crate::db::for_chats(path);
         let gone = db.with(|c| {
             let tx = c.transaction()?;
+            if request.area == "interview-checks" {
+                if request.action == "all" {
+                    tx.execute("UPDATE interview_problem_undo SET data = json_remove(data, '$.key')", [])?;
+                } else {
+                    for id in &request.items {
+                        tx.execute("UPDATE interview_problem_undo SET data = json_remove(data, '$.key') WHERE interview = ?1", [id])?;
+                    }
+                }
+            }
             let gone = if request.action == "all" {
                 if request.area == "interviews" {
                     tx.execute("DELETE FROM interview_keys", [])?;
+                    tx.execute("DELETE FROM interview_problem_undo", [])?;
                 }
                 tx.execute(&format!("DELETE FROM {}", table.0), [])?
             } else {
@@ -197,6 +224,7 @@ pub fn act_on(path: &Path, request: &Request) -> Option<Result<String>> {
                 for id in &request.items {
                     if request.area == "interviews" {
                         tx.execute("DELETE FROM interview_keys WHERE interview = ?1", [id])?;
+                        tx.execute("DELETE FROM interview_problem_undo WHERE interview = ?1", [id])?;
                     }
                     gone += tx.execute(
                         &format!("DELETE FROM {} WHERE {} = ?1", table.0, table.1),
@@ -273,7 +301,8 @@ mod tests {
                 "interview-checks",
                 "reading",
                 "note-task-data",
-                "calendar-cache"
+                "calendar-cache",
+                "interview-problem-undo"
             ]
         );
         let practice = &list[0].items[0];

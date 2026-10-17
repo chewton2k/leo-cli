@@ -185,6 +185,10 @@ pub enum Change {
         revision: u64,
         challenge: String,
     },
+    DeleteProblem {
+        revision: u64,
+        challenge: String,
+    },
 }
 
 pub(crate) const MOST_DIAGRAM: usize = 6_000;
@@ -522,6 +526,10 @@ pub fn remove(path: &Path, id: &str) -> Result<(), Error> {
         .with(|c| {
             let tx = c.transaction()?;
             tx.execute("DELETE FROM interview_keys WHERE interview = ?1", [id])?;
+            tx.execute(
+                "DELETE FROM interview_problem_undo WHERE interview = ?1",
+                [id],
+            )?;
             tx.execute("DELETE FROM interviews WHERE id = ?1", [id])?;
             tx.commit()
         })
@@ -534,6 +542,15 @@ pub fn mutate(
     id: &str,
     revision: Option<u64>,
     work: impl FnOnce(&mut Interview) -> Result<(), Error>,
+) -> Result<Interview, Error> {
+    mutate_tx(path, id, revision, |item, _| work(item))
+}
+
+pub(crate) fn mutate_tx(
+    path: &Path,
+    id: &str,
+    revision: Option<u64>,
+    work: impl FnOnce(&mut Interview, &rusqlite::Transaction<'_>) -> Result<(), Error>,
 ) -> Result<Interview, Error> {
     require(chats::valid_id(id), "Choose a valid interview practice.")?;
     let db = db::for_chats(path);
@@ -563,7 +580,7 @@ pub fn mutate(
             return Ok(());
         }
         let before = item.clone();
-        if let Err(why) = work(&mut item).and_then(|()| remember(&mut item)) {
+        if let Err(why) = work(&mut item, &tx).and_then(|()| remember(&mut item)) {
             problem = Some(why);
             return Ok(());
         }
@@ -653,6 +670,10 @@ pub fn configure(
 
 pub fn change(path: &Path, id: &str, change: Change) -> Result<Interview, Error> {
     match change {
+        Change::DeleteProblem {
+            revision,
+            challenge,
+        } => crate::interview_delete::delete(path, id, revision, &challenge).map(|(item, _)| item),
         Change::Framework {
             revision,
             framework,

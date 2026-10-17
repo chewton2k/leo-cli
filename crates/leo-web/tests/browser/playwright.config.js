@@ -6,7 +6,7 @@ const path = require('node:path');
 const home = process.env.LEO_BROWSER_HOME || fs.mkdtempSync(path.join(os.tmpdir(), 'leo-browser-'));
 process.env.LEO_BROWSER_HOME = home;
 module.exports = defineConfig({
-  testMatch: ['flows.spec.js', 'runner-lifecycle.spec.js', 'source-layout.spec.js', 'tasks-layout.spec.js'],
+  testMatch: ['flows.spec.js', 'runner-lifecycle.spec.js', 'source-layout.spec.js', 'tasks-layout.spec.js', 'problem-chooser.spec.js'],
   globalTeardown: './teardown.js',
   workers: 1,
   retries: process.env.CI ? 1 : 0,

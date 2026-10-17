@@ -681,3 +681,21 @@ test('valid worker outputs retain JSON values, compiler errors and diagnostics w
     assert.equal(page.timers.size, 0);
   }
 });
+
+
+test('problem search finds titles and topics while retaining stable numbers and review status', () => {
+  const problem = (id, title, topics = []) => ({ challenge: { id, title, topics } });
+  const problems = [problem('a', 'Shortest Pin Feed', ['Sliding window']), problem('b', 'Number of islands', ['Graphs', 'DFS']), problem('c', 'Longest path', ['Graphs']), problem('d', '答😀 practice')];
+  const attempts = [{ challenge: { id: 'a' }, checks: [{ pass: false }] }, { challenge: { id: 'b' }, checks: [{ pass: true }] }, { challenge: { id: 'b' }, checks: [{ pass: false }] }, { challenge: { id: 'c' } }];
+  const rows = I.problemRows(problems, attempts);
+  assert.deepEqual(rows.map(r => [r.number, r.id, r.state]), [[1, 'a', 'needs-work'], [2, 'b', 'solved'], [3, 'c', 'submitted'], [4, 'd', 'unsubmitted']]);
+  assert.deepEqual(I.problemRows(problems, attempts, '  SLIDING pin ').map(r => r.id), ['a']);
+  assert.deepEqual(I.problemRows(problems, attempts, 'graphs', 'solved').map(r => r.id), ['b']);
+  assert.deepEqual(I.problemRows(problems, attempts, '', 'needs-work').map(r => r.id), ['a']);
+  assert.deepEqual(I.problemRows(problems, attempts, '', 'unsubmitted').map(r => r.id), ['d']);
+  assert.deepEqual(I.problemRows(problems, attempts, '答😀').map(r => r.number), [4]);
+  assert.equal(rows[1].attempts, 2);
+  assert.equal(rows[2].label, 'Awaiting review');
+  assert.deepEqual(I.problemRows(problems, attempts, 'missing'), []);
+  assert.equal(I.problemRows(Array.from({ length: I.MOST_PROBLEMS + 2 }, () => problems[0])).length, I.MOST_PROBLEMS);
+});

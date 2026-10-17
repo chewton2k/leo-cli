@@ -1656,6 +1656,19 @@ pub enum Proposal {
         find: String,
         replace: String,
     },
+    DeleteInterviewProblem {
+        title: String,
+        summary: String,
+        interview: String,
+        challenge: String,
+        revision: u64,
+    },
+    RestoreInterviewProblem {
+        title: String,
+        summary: String,
+        interview: String,
+        token: String,
+    },
     InterviewProblemEdit {
         title: String,
         summary: String,

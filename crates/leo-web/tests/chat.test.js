@@ -448,3 +448,43 @@ test('conversation rows display only escaped titles, including search results', 
     assert.ok(html.includes('data-chat="resume"') && html.includes('data-chat="forget"'));
   }
 });
+
+test('problem deletion cards can be applied again after Undo with fresh revisions and tokens', async () => {
+  const fs = require('node:fs');
+  const vm = require('node:vm');
+  const source = fs.readFileSync(require.resolve('../src/web/chat.js'), 'utf8');
+  const organize = source.slice(source.indexOf('    async function organize('), source.indexOf('    async function undo('));
+  for (const initial of ['delete_interview_problem', 'restore_interview_problem']) {
+    let revision = 7;
+    let token = 'first-token';
+    let removed = initial === 'restore_interview_problem';
+    const sent = [], errors = [];
+    const deletion = () => ({ kind: 'delete_interview_problem', interview: 'practice', challenge: 'problem', revision, title: 'Problem', summary: 'Delete problem' });
+    const restoration = () => ({ kind: 'restore_interview_problem', interview: 'practice', token, title: 'Problem', summary: 'Restore problem' });
+    const context = vm.createContext({
+      draw: () => {}, remember: () => {}, onOrganized: () => {}, notify: message => errors.push(message),
+      fetch: async (_url, options) => {
+        const action = JSON.parse(options.body);
+        sent.push(action);
+        const valid = action.kind === 'delete_interview_problem' ? !removed && action.revision === revision : removed && action.token === token;
+        if (!valid) return { ok: false, json: async () => ({ error: 'This change is stale.' }) };
+        removed = action.kind === 'delete_interview_problem';
+        revision++;
+        token = `token-${revision}`;
+        return { ok: true, json: async () => ({ revision, undo: removed ? restoration() : deletion() }) };
+      },
+    });
+    vm.runInContext(organize, context);
+    const card = initial === 'delete_interview_problem' ? deletion() : restoration();
+    await context.organize(card, card, true);
+    assert.equal(card.state, 'applied');
+    await context.organize(card, card.undo, false);
+    assert.equal(card.state, 'new');
+    await context.organize(card, card, true);
+    assert.equal(card.state, 'applied');
+    assert.deepEqual(errors, []);
+    assert.equal(sent.length, 3);
+    if (initial === 'delete_interview_problem') assert.deepEqual(sent.filter(v => v.kind === initial).map(v => v.revision), [7, 9]);
+    else assert.deepEqual(sent.filter(v => v.kind === initial).map(v => v.token), ['first-token', 'token-9']);
+  }
+});

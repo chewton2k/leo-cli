@@ -41,6 +41,18 @@ async function goPlace(page, action) {
   await page.locator(`#side [data-action="${action}"]`).click();
 }
 
+async function chooseProblem(page, number) {
+  await page.locator('[data-interview="problem-menu"]').click();
+  await page.getByRole('button', { name: new RegExp(`^Problem ${number}:`) }).click();
+}
+
+async function shownProblemNumbers(page) {
+  await page.locator('[data-interview="problem-menu"]').click();
+  const labels = await page.locator('#interview-problem-list [data-interview="problem"]').evaluateAll(rows => rows.map(row => Number(row.getAttribute('aria-label').match(/^Problem (\d+):/)[1])));
+  await page.locator('.scrim [aria-label="Close problems"]').click();
+  return labels;
+}
+
 function control(page, action) {
   return page.locator(`.fab[data-action="${action}"]:visible, #side [data-action="${action}"]:visible`).first();
 }
@@ -4730,7 +4742,7 @@ test('coding problems keep separate drafts, wrap long functions and open their o
   await expect(area).toHaveValue(starter + '\n        ');
   const draft = starter.replace('pass', 'return [0, 2]');
   await area.fill(draft);
-  await page.getByRole('button', { name: 'Problem 2', exact: true }).click();
+  await chooseProblem(page, 2);
   await expect(area).toHaveValue(second.workspace.answer);
   expect(item.problems[0].workspace.answer).toBe(draft);
   await page.locator('[data-interview="tab"][data-tab="write"]').click();
@@ -4738,10 +4750,10 @@ test('coding problems keep separate drafts, wrap long functions and open their o
   await page.locator('[data-interview="tab"][data-tab="board"]').click();
   await expect(page.locator('#interview-board')).toContainText('Earlier diagram');
   failSelect = true;
-  await page.getByRole('button', { name: /^Problem 1(?: · Submitted)?$/ }).click();
+  await chooseProblem(page, 1);
   await expect(page.locator('.toast')).toContainText('Reload before switching');
   expect(item.challenge.id).toBe(second.challenge.id);
-  await page.getByRole('button', { name: /^Problem 1(?: · Submitted)?$/ }).click();
+  await chooseProblem(page, 1);
   await page.locator('[data-interview="tab"][data-tab="code"]').click();
   await expect(area).toHaveValue(draft);
   await page.locator('[data-interview="submit"]').click();
@@ -4767,7 +4779,7 @@ test('coding problems keep separate drafts, wrap long functions and open their o
   await expect.poll(() => typeof archiveRelease).toBe('function');
   await expect(area).toHaveJSProperty('readOnly', true);
   archiveRelease();
-  await expect(page.getByRole('button', { name: 'Problem 3', exact: true })).toBeVisible();
+  await expect(page.locator('[data-interview="problem-menu"]')).toContainText('Problem 3 of 3');
   expect(item.problems[0].workspace.answer).toBe(lateDraft);
   await expect(area).toHaveValue(starter);
   expect(requests).toHaveLength(3);
@@ -4775,7 +4787,7 @@ test('coding problems keep separate drafts, wrap long functions and open their o
   expect(requests[0].chat).toBe(id);
   expect(requests.at(-1).messages.at(-1).text).toContain('interview_challenge');
   await page.locator('[data-chat="close"]').click();
-  await page.getByRole('button', { name: /^Problem 1(?: · Submitted)?$/ }).click();
+  await chooseProblem(page, 1);
   await expect(area).toHaveValue(lateDraft);
   await page.reload();
   await expect(area).toHaveValue(lateDraft);
@@ -5202,15 +5214,15 @@ test('interview attempts and late feedback stay under their own problem while pr
   await expect(attempts).not.toContainText('Late feedback for problem 3');
   await expect(attempts.locator('.interview-attempt')).toHaveCount(2);
   await page.locator('#chat [data-chat="close"]').click();
-  await page.getByRole('button',{name:'Problem 1 · Submitted',exact:true}).click();
+  await chooseProblem(page, 1);
   await expect(attempts.locator('.interview-attempt')).toHaveCount(1);
   await expect(attempts).toContainText('Late feedback for problem 3');
   await expect(attempts).not.toContainText('feedback for problem 4');
-  await page.getByRole('button',{name:'Problem 3',exact:true}).click();
+  await chooseProblem(page, 3);
   await expect(attempts.locator('.interview-attempt')).toHaveCount(0);
   await expect(attempts).toContainText('No submissions for this problem yet');
   await expect(page.locator('#interview-progress')).toContainText('3 reviewed attempts');
-  await page.getByRole('button',{name:'Problem 2 · Submitted',exact:true}).click();
+  await chooseProblem(page, 2);
   await expect(attempts.locator('.interview-attempt')).toHaveCount(2);
   await page.reload();
   await expect(attempts.locator('.interview-attempt')).toHaveCount(2);
@@ -5345,11 +5357,11 @@ test('submission results show a compact case strip with one detail panel that ke
   await expect(page.locator('.msg.leo').last()).toContainText('Noted.');
   await page.locator('[data-chat="close"]').click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
-  await page.getByRole('button', { name: 'Problem 2', exact: true }).click();
+  await chooseProblem(page, 2);
   await expect(results.locator('.interview-result')).toHaveCount(0);
   await expect(tabs).toHaveText(['Question', 'Submissions']);
   await expect(page.locator('#interview-pane-question')).toContainText('Return the sum of the list.');
-  await page.getByRole('button', { name: /^Problem 1(?: · Submitted)?$/ }).click();
+  await chooseProblem(page, 1);
   await expect(results.locator('[data-interview="result-case"]')).toHaveCount(12);
   checks = mixed.map((c) => ({ ...c, pass: true }));
   await area.fill('func solve(nums []int) int {\n\treturn 0\n}');
@@ -5451,11 +5463,10 @@ test('problems filter by topic from a dropdown, the choice is remembered, and th
   const button = page.locator('[data-interview="topic-menu"]');
   const menu = page.locator('.interview-topic-picker .picker-menu');
   const rows = menu.locator('[data-interview="topic"] .pick-name');
-  const shown = page.locator('#interview-problems [data-interview="problem"]');
   await expect(button).toHaveText('All topics');
   await expect(button.locator('svg').first()).toBeVisible();
   await expect(menu).toBeHidden();
-  await expect(shown).toHaveCount(4);
+  expect(await shownProblemNumbers(page)).toEqual([1, 2, 3, 4]);
   await expect(page.locator('#interview-pane-question .interview-topic')).toHaveText(['DFS', 'Graphs']);
   await button.click();
   await expect(menu).toBeVisible();
@@ -5467,26 +5478,26 @@ test('problems filter by topic from a dropdown, the choice is remembered, and th
   await expect(menu).toBeHidden();
   await expect(button).toHaveText('Dynamic programming');
   await expect(button).toHaveClass(/filtered/);
-  await expect(shown).toHaveText(['Problem 2']);
+  expect(await shownProblemNumbers(page)).toEqual([2]);
   await page.reload();
-  await expect(shown).toHaveText(['Problem 2']);
+  expect(await shownProblemNumbers(page)).toEqual([2]);
   await button.click();
   await page.keyboard.press('ArrowUp');
   await page.keyboard.press('Enter');
-  await expect(shown).toHaveText(['Problem 1 · Submitted', 'Problem 3 · Submitted']);
+  expect(await shownProblemNumbers(page)).toEqual([1, 3]);
   await button.click();
   await page.keyboard.press('Escape');
   await expect(menu).toBeHidden();
   await expect(button).toBeFocused();
   await button.click();
   await menu.locator('[data-interview="topic"]', { hasText: 'No topic' }).click();
-  await expect(shown).toHaveText(['Problem 4']);
+  expect(await shownProblemNumbers(page)).toEqual([4]);
   await button.click();
   await page.locator('.interview-heading h1').click();
   await expect(menu).toBeHidden();
   await button.click();
   await menu.locator('[data-interview="topic"]', { hasText: 'All topics' }).click();
-  await expect(shown).toHaveCount(4);
+  expect(await shownProblemNumbers(page)).toEqual([1, 2, 3, 4]);
   expect(await page.evaluate((key) => localStorage.getItem(key), `leo-interview-topic:${id}`)).toBeNull();
 });
 

@@ -644,7 +644,7 @@ fn finish(
     };
     let _ = db::for_chats(path).with(|c| {
         c.execute(
-            "UPDATE interview_keys SET status = ?3, updated = ?4, data = ?5 WHERE interview = ?1 AND challenge = ?2 AND status = 'preparing' AND data = ?6 AND EXISTS (SELECT 1 FROM interviews WHERE id = ?1)",
+            "UPDATE interview_keys SET status = ?3, updated = ?4, data = ?5 WHERE interview = ?1 AND challenge = ?2 AND status = 'preparing' AND data = ?6 AND EXISTS (SELECT 1 FROM interviews i WHERE i.id = ?1 AND (json_extract(i.data, '$.challenge.id') = ?2 OR EXISTS (SELECT 1 FROM json_each(i.data, '$.problems') p WHERE json_extract(p.value, '$.challenge.id') = ?2)))",
             rusqlite::params![interview, challenge, status, Utc::now().to_rfc3339(), data, generation],
         )
     });
@@ -659,19 +659,19 @@ fn claim(path: &Path, interview: &str, challenge: &str, again: bool) -> Option<S
             let stale = (Utc::now() - chrono::Duration::minutes(10)).to_rfc3339();
             let changed = if again {
                 c.execute(
-                    "UPDATE interview_keys SET status = 'preparing', updated = ?3, data = ?4 WHERE interview = ?1 AND challenge = ?2 AND (status = 'failed' OR (status = 'preparing' AND updated < ?5)) AND EXISTS (SELECT 1 FROM interviews WHERE id = ?1)",
+                    "UPDATE interview_keys SET status = 'preparing', updated = ?3, data = ?4 WHERE interview = ?1 AND challenge = ?2 AND (status = 'failed' OR (status = 'preparing' AND updated < ?5)) AND EXISTS (SELECT 1 FROM interviews i WHERE i.id = ?1 AND (json_extract(i.data, '$.challenge.id') = ?2 OR EXISTS (SELECT 1 FROM json_each(i.data, '$.problems') p WHERE json_extract(p.value, '$.challenge.id') = ?2)))",
                     rusqlite::params![interview, challenge, now, generation, stale],
                 )?
             } else {
                 let inserted = c.execute(
-                    "INSERT OR IGNORE INTO interview_keys (interview, challenge, status, updated, data) SELECT ?1, ?2, 'preparing', ?3, ?4 WHERE EXISTS (SELECT 1 FROM interviews WHERE id = ?1)",
+                    "INSERT OR IGNORE INTO interview_keys (interview, challenge, status, updated, data) SELECT ?1, ?2, 'preparing', ?3, ?4 WHERE EXISTS (SELECT 1 FROM interviews i WHERE i.id = ?1 AND (json_extract(i.data, '$.challenge.id') = ?2 OR EXISTS (SELECT 1 FROM json_each(i.data, '$.problems') p WHERE json_extract(p.value, '$.challenge.id') = ?2)))",
                     rusqlite::params![interview, challenge, now, generation],
                 )?;
                 if inserted == 1 {
                     1
                 } else {
                     c.execute(
-                        "UPDATE interview_keys SET status = 'preparing', updated = ?3, data = ?4 WHERE interview = ?1 AND challenge = ?2 AND status = 'preparing' AND updated < ?5 AND EXISTS (SELECT 1 FROM interviews WHERE id = ?1)",
+                        "UPDATE interview_keys SET status = 'preparing', updated = ?3, data = ?4 WHERE interview = ?1 AND challenge = ?2 AND status = 'preparing' AND updated < ?5 AND EXISTS (SELECT 1 FROM interviews i WHERE i.id = ?1 AND (json_extract(i.data, '$.challenge.id') = ?2 OR EXISTS (SELECT 1 FROM json_each(i.data, '$.problems') p WHERE json_extract(p.value, '$.challenge.id') = ?2)))",
                         rusqlite::params![interview, challenge, now, generation, stale],
                     )?
                 }
@@ -1230,7 +1230,7 @@ mod tests {
             db::for_chats(path)
                 .with(|c| {
                     c.execute(
-                        "INSERT INTO interviews VALUES ('practice-one', 'now', '{}')",
+                        r#"INSERT INTO interviews VALUES ('practice-one', 'now', '{"challenge":{"id":"problem-one"}}')"#,
                         [],
                     )
                 })
@@ -1274,13 +1274,73 @@ mod tests {
     }
 
     #[test]
+    fn deleted_problems_refuse_late_claims_and_late_generations() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path();
+        db::for_chats(path).with(|c| c.execute(
+            r#"INSERT INTO interviews VALUES ('practice-late', 'now', '{"challenge":{"id":"problem-one"},"problems":[{"challenge":{"id":"problem-two"}}]}')"#, [],
+        )).unwrap();
+        let generation = claim(path, "practice-late", "problem-one", false).unwrap();
+        assert!(claim(path, "practice-late", "problem-two", false).is_some());
+        db::for_chats(path).with(|c| {
+            c.execute(r#"UPDATE interviews SET data = '{"challenge":null,"problems":[]}' WHERE id = 'practice-late'"#, [])?;
+            c.execute("DELETE FROM interview_keys WHERE challenge = 'problem-two'", [])
+        }).unwrap();
+        assert!(claim(path, "practice-late", "problem-two", false).is_none());
+        finish(
+            path,
+            "practice-late",
+            "problem-one",
+            &generation,
+            Ok(Key::default()),
+        );
+        assert_eq!(
+            status(path, "practice-late", "problem-one").unwrap().0,
+            "preparing"
+        );
+    }
+
+    #[test]
+    fn restoring_a_deleted_problem_starts_a_fresh_key_generation() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path();
+        let id = "practice-restore-key";
+        let framework: Framework = serde_json::from_value(serde_json::json!({"title":"Coding", "track":"coding", "company":"", "role":"", "language":"Python", "style":"coach", "date":"", "weekly_minutes":120, "skills":["Approach"], "wants":""})).unwrap();
+        crate::interview::configure(path, id, 0, framework).unwrap();
+        let challenge = coding_challenge();
+        let item = crate::interview::set_challenge(path, id, challenge.clone()).unwrap();
+        let old = claim(path, id, &challenge.id, false).unwrap();
+        let (_, token) =
+            crate::interview_delete::delete(path, id, item.revision, &challenge.id).unwrap();
+        assert!(status(path, id, &challenge.id).is_none());
+        crate::interview_delete::restore(path, id, &token).unwrap();
+        assert!(status(path, id, &challenge.id).is_none());
+        let fresh = claim(path, id, &challenge.id, false).unwrap();
+        assert_ne!(old, fresh);
+        finish(path, id, &challenge.id, &old, Ok(Key::default()));
+        assert_eq!(status(path, id, &challenge.id).unwrap().0, "preparing");
+        let held: String = db::for_chats(path)
+            .with(|c| {
+                c.query_row(
+                    "SELECT data FROM interview_keys WHERE interview = ?1 AND challenge = ?2",
+                    rusqlite::params![id, challenge.id],
+                    |r| r.get(0),
+                )
+            })
+            .unwrap();
+        assert_eq!(held, fresh);
+        finish(path, id, &challenge.id, &fresh, Ok(Key::default()));
+        assert!(ready(path, id, &challenge.id).is_some());
+    }
+
+    #[test]
     fn abandoned_key_generations_retry_and_panicking_workers_release_their_permit() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path();
         db::for_chats(path)
             .with(|c| {
                 c.execute(
-                    "INSERT INTO interviews VALUES ('practice-stale', 'now', '{}')",
+                    r#"INSERT INTO interviews VALUES ('practice-stale', 'now', '{"challenge":{"id":"problem-one"}}')"#,
                     [],
                 )
             })

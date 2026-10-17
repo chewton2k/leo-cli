@@ -224,6 +224,8 @@ pub(crate) fn summary_of(p: &Proposal) -> String {
         | Proposal::InterviewCodeEdit { summary, .. }
         | Proposal::InterviewTest { summary, .. }
         | Proposal::InterviewProblemEdit { summary, .. }
+        | Proposal::DeleteInterviewProblem { summary, .. }
+        | Proposal::RestoreInterviewProblem { summary, .. }
         | Proposal::InterviewTopics { summary, .. }
         | Proposal::RestoreFolder { summary, .. } => summary.clone(),
         Proposal::Edit { title, .. } => format!("Change “{title}”"),
@@ -895,6 +897,58 @@ pub(crate) async fn act(
                     .map_err(|_| "Leo could not apply the code change. Try again.".to_string())?
                     .map_err(|e| e.message())?;
             Ok((serde_json::json!({"revision":item.revision}), undo))
+        }
+        Proposal::DeleteInterviewProblem {
+            title,
+            summary,
+            interview,
+            challenge,
+            revision,
+        } => {
+            let path = state.chats.clone();
+            let (id, problem, revision) = (interview.clone(), challenge.clone(), *revision);
+            let (item, token) = tokio::task::spawn_blocking(move || {
+                crate::interview_delete::delete(&path, &id, revision, &problem)
+            })
+            .await
+            .map_err(|_| "Leo could not delete the problem. Try again.".to_string())?
+            .map_err(|e| e.message())?;
+            let undo = Proposal::RestoreInterviewProblem {
+                title: title.clone(),
+                summary: format!("Undo: {summary}"),
+                interview: interview.clone(),
+                token,
+            };
+            Ok((
+                serde_json::json!({"interview": interview, "revision": item.revision, "item": item}),
+                undo,
+            ))
+        }
+        Proposal::RestoreInterviewProblem {
+            title,
+            summary,
+            interview,
+            token,
+        } => {
+            let path = state.chats.clone();
+            let (id, saved) = (interview.clone(), token.clone());
+            let (item, challenge) = tokio::task::spawn_blocking(move || {
+                crate::interview_delete::restore(&path, &id, &saved)
+            })
+            .await
+            .map_err(|_| "Leo could not restore the problem. Try again.".to_string())?
+            .map_err(|e| e.message())?;
+            let undo = Proposal::DeleteInterviewProblem {
+                title: title.clone(),
+                summary: format!("Undo: {summary}"),
+                interview: interview.clone(),
+                challenge,
+                revision: item.revision,
+            };
+            Ok((
+                serde_json::json!({"interview": interview, "revision": item.revision, "item": item}),
+                undo,
+            ))
         }
         Proposal::InterviewProblemEdit {
             title,

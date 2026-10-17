@@ -24,6 +24,13 @@ CREATE TABLE IF NOT EXISTS interview_keys (
     data TEXT NOT NULL,
     PRIMARY KEY (interview, challenge)
 );
+CREATE TABLE IF NOT EXISTS interview_problem_undo (
+    id TEXT PRIMARY KEY,
+    interview TEXT NOT NULL,
+    updated TEXT NOT NULL,
+    data TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS interview_problem_undo_by_time ON interview_problem_undo(updated);
 CREATE TABLE IF NOT EXISTS chats (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
@@ -130,6 +137,13 @@ impl Db {
         conn.pragma_update(None, "auto_vacuum", "INCREMENTAL")?;
         conn.execute_batch(SCHEMA)?;
         let tx = conn.transaction()?;
+        tx.execute(
+            "DELETE FROM interview_problem_undo WHERE updated < ?1",
+            [
+                (chrono::Utc::now() - chrono::Duration::hours(crate::interview_delete::UNDO_HOURS))
+                    .to_rfc3339(),
+            ],
+        )?;
         let has_description: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM pragma_table_info('note_tasks') WHERE name = 'description')",
             [],

@@ -1568,6 +1568,11 @@
         const actions = p.state === 'applied' ? `<div class="proposal-done">Saved · <button class="msg-act" data-chat="undo" ${where}>Undo</button></div>` : p.state === 'dismissed' ? '<div class="proposal-done">Dismissed</div>' : `<div class="proposal-buttons"><button class="btn primary sm" data-chat="apply" ${where}>Change problem</button><button class="btn plain sm" data-chat="dismiss" ${where}>Dismiss</button></div>`;
         return `<div class="proposal proposal-code"><div class="proposal-title">${escape(p.title || 'Problem')}</div><div class="proposal-why">${escape(p.summary || '')}</div>${changes}${actions}</div>`;
       }
+      if (p.kind === 'delete_interview_problem' || p.kind === 'restore_interview_problem') {
+        const restore = p.kind === 'restore_interview_problem';
+        const actions = p.state === 'applied' ? `<div class="proposal-done">${restore ? 'Restored' : 'Deleted'} · <button class="msg-act" data-chat="undo" ${where}>Undo</button></div>` : p.state === 'dismissed' ? '<div class="proposal-done">Dismissed</div>' : `<div class="proposal-buttons"><button class="btn ${restore ? 'primary' : 'danger'} sm" data-chat="apply" ${where}>${restore ? 'Restore problem' : 'Delete problem'}</button><button class="btn plain sm" data-chat="dismiss" ${where}>Dismiss</button></div>`;
+        return `<div class="proposal organize"><div class="proposal-title">${escape(p.title || 'Interview problem')}</div><div class="proposal-why">${escape(p.summary || '')}</div>${actions}</div>`;
+      }
       if (p.kind === 'interview_topics') {
         const list = (topics) => (Array.isArray(topics) && topics.length ? topics.join(', ') : 'No topic');
         const rows = (Array.isArray(p.changes) ? p.changes : []).map((c) => `<li><b>${escape(`Problem ${c.number} · ${c.title || ''}`)}</b><span class="proposal-topics"><span class="proposal-topics-old">${escape(list(c.before))}</span> → <span class="proposal-topics-new">${escape(list(c.after))}</span></span></li>`).join('');
@@ -1804,6 +1809,7 @@
         p.state = 'applied';
         p.undo = done.undo;
       } else {
+        if (['delete_interview_problem', 'restore_interview_problem'].includes(p.kind) && done.undo?.kind === p.kind) Object.assign(p, done.undo);
         p.state = 'new';
         delete p.undo;
       }

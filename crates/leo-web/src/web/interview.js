@@ -13,6 +13,7 @@
   const MOST_POINTS = 4000;
   const MOST_ANSWER = 32000;
   const MOST_PROBLEMS = 128;
+  const MOST_ATTEMPTS = 100;
   const escape = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const preset = (id) => PRESETS.find((p) => p.id === id) || PRESETS[0];
   const framework = (id) => ({ title: `${preset(id).label} practice`, track: preset(id).id, company: '', role: '', language: id === 'coding' ? 'Python' : '', style: 'coach', date: '', weekly_minutes: 120, skills: [...preset(id).skills], wants: '' });
@@ -816,6 +817,24 @@ fn leo_tree_json(root: &Option<std::rc::Rc<std::cell::RefCell<TreeNode>>>, out: 
     return { topics, untagged, untaggedSolved, solved: allSolved, chosen: pick, shown };
   }
 
+  function problemRows(problems = [], attempts = [], query = '', state = 'all') {
+    const words = String(query).slice(0, 160).trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const grouped = new Map();
+    for (const attempt of attempts.slice(-MOST_ATTEMPTS)) {
+      const id = attempt.challenge?.id;
+      if (!grouped.has(id)) grouped.set(id, []);
+      grouped.get(id).push(attempt);
+    }
+    return problems.slice(0, MOST_PROBLEMS).map((problem, index) => {
+      const c = problem.challenge;
+      const mine = grouped.get(c.id) || [];
+      const latest = mine.length ? attemptStatus(mine[mine.length - 1]) : null;
+      const solved = mine.some(attempt => attemptStatus(attempt).kind === 'passed');
+      const status = solved ? 'solved' : !latest ? 'unsubmitted' : latest.kind === 'pending' ? 'submitted' : 'needs-work';
+      return { id: c.id, number: index + 1, title: c.title, topics: c.topics || [], attempts: mine.length, state: status, label: solved ? 'Solved' : latest?.label || 'Not submitted' };
+    }).filter(row => (state === 'all' || row.state === state) && words.every(word => `${row.title} ${row.topics.join(' ')} ${row.number}`.toLowerCase().includes(word)));
+  }
+
   function attemptStatus(attempt = {}) {
     const checks = attempt.checks || [];
     if (checks.length) {
@@ -1051,5 +1070,5 @@ fn leo_tree_json(root: &Option<std::rc::Rc<std::cell::RefCell<TreeNode>>>, out: 
       storage.setItem('leo-interview-drafts', JSON.stringify(drafts));
     } catch (e) {}
   }
-  root.leoInterview = { NO_TOPIC, topicFilter, PRESETS, preset, framework, preparation, workspace, cleanValues, sameValue, checkSummary, callText, cppDriver, cppResults, cppProblem, goDriver, driverResults, goProblem, javaDriver, javaProblem, rustDriver, rustProblem, rustRound, resultCases, pickCase, attemptStatus, reviewNote, hasWork, codeEdit, point, validBoard, boardSvg, fitBoard, moveShape, shapeBounds, unionBounds, normalRect, shapesWithin, handlesFor, resizeShape, BOARD_LIMIT, progress, keepDraft, readDraft, clearDraft, MOST_SHAPES, MOST_POINTS, MOST_ANSWER, MOST_PROBLEMS };
+  root.leoInterview = { NO_TOPIC, topicFilter, problemRows, PRESETS, preset, framework, preparation, workspace, cleanValues, sameValue, checkSummary, callText, cppDriver, cppResults, cppProblem, goDriver, driverResults, goProblem, javaDriver, javaProblem, rustDriver, rustProblem, rustRound, resultCases, pickCase, attemptStatus, reviewNote, hasWork, codeEdit, point, validBoard, boardSvg, fitBoard, moveShape, shapeBounds, unionBounds, normalRect, shapesWithin, handlesFor, resizeShape, BOARD_LIMIT, progress, keepDraft, readDraft, clearDraft, MOST_SHAPES, MOST_POINTS, MOST_ANSWER, MOST_PROBLEMS };
 })(typeof window !== 'undefined' ? window : globalThis);

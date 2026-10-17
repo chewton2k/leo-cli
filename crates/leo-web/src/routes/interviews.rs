@@ -38,6 +38,36 @@ pub(crate) async fn put(
     Path(id): Path<String>,
     Json(change): Json<interview::Change>,
 ) -> Response {
+    if let interview::Change::DeleteProblem {
+        revision,
+        challenge,
+    } = &change
+    {
+        let (revision, challenge) = (*revision, challenge.clone());
+        return match tokio::task::spawn_blocking(move || {
+            let before = interview::load(&state.chats, &id)?;
+            let title = interview::problem(&before, &challenge)
+                .ok_or_else(|| {
+                    interview::Error::Invalid("Choose a saved problem from this practice.".into())
+                })?
+                .title;
+            let (item, token) =
+                crate::interview_delete::delete(&state.chats, &id, revision, &challenge)?;
+            let undo = crate::tools::Proposal::RestoreInterviewProblem {
+                title,
+                summary: "Restore the deleted problem and its work".into(),
+                interview: id,
+                token,
+            };
+            Ok::<_, interview::Error>(serde_json::json!({"item": item, "undo": undo}))
+        })
+        .await
+        {
+            Ok(Ok(reply)) => Json(reply).into_response(),
+            Ok(Err(why)) => failed(why),
+            Err(_) => failed(interview::Error::Storage),
+        };
+    }
     match tokio::task::spawn_blocking(move || interview::change(&state.chats, &id, change)).await {
         Ok(Ok(item)) => Json(item).into_response(),
         Ok(Err(why)) => failed(why),

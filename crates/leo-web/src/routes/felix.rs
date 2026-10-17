@@ -570,6 +570,7 @@ fn run_tool(
             "interview_code_edit"
                 | "interview_test"
                 | "interview_problem_edit"
+                | "interview_problem_delete"
                 | "interview_topics"
         ) && !access.changes()
         {
@@ -661,6 +662,17 @@ fn run_tool(
             tools::Access::Auto if !matches!(proposal, tools::Proposal::DeleteFolder { .. }) => {
                 match apply_now(state, proposal) {
                     Ok(applied) => {
+                        if let tools::Proposal::DeleteInterviewProblem { interview, .. } = proposal
+                        {
+                            if desk.interview.as_deref() == Some(interview.as_str()) {
+                                desk.interview_problem = applied["item"]["challenge"]["id"]
+                                    .as_str()
+                                    .map(str::to_string);
+                                send(
+                                    serde_json::json!({"interview": {"id": interview, "revision": applied["revision"]}}),
+                                );
+                            }
+                        }
                         done.result = match proposal {
                             tools::Proposal::Edit { .. } => {
                                 "Changed. leo applied it; the user can undo it."

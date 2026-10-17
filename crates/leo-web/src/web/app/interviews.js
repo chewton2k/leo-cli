@@ -218,7 +218,71 @@ function drawInterviewProblems(session) {
   const named = filter.chosen === null ? 'All topics' : filter.chosen === interviews.NO_TOPIC ? 'No topic' : esc(filter.topics.find((t) => t.name.toLowerCase() === filter.chosen.toLowerCase())?.name || filter.chosen);
   const menu = `${row('All topics', count, filter.solved, 'data-all="1"', filter.chosen === null)}${filter.topics.map((t) => row(esc(t.name), t.count, t.solved, `data-topic="${esc(t.name)}"`, filter.chosen !== null && filter.chosen !== interviews.NO_TOPIC && filter.chosen.toLowerCase() === t.name.toLowerCase())).join('')}${filter.untagged && filter.topics.length ? row('No topic', filter.untagged, filter.untaggedSolved, 'data-none="1"', filter.chosen === interviews.NO_TOPIC) : ''}${filter.untagged ? `<div class="pick-split"></div><button type="button" class="pick-model interview-sort-topics" role="menuitem" data-interview="sort-topics"${busy ? ' disabled' : ''}><span class="pick-text"><span class="pick-name">Sort into topics with Felix</span><span class="pick-price">${filter.untagged} without a topic</span></span></button>` : ''}`;
   const topics = count ? `<div class="picker interview-topic-picker"><button type="button" class="picker-button${filter.chosen === null ? '' : ' filtered'}" data-interview="topic-menu" aria-haspopup="menu" aria-expanded="false" aria-label="Filter problems by topic: ${named}">${ICON.filter}<span class="picker-text">${named}</span>${ICON.chevron}</button><div class="picker-menu" role="menu" aria-label="Topics" hidden><div class="pick-head">Show problems about</div>${menu}</div></div>` : '';
-  box.innerHTML = `${topics}${problems.slice(0, interviews.MOST_PROBLEMS).map((p, i) => !filter.shown.includes(i) ? '' : `<button class="pick-chip${p.challenge.id === item.challenge?.id ? ' on' : ''}" data-interview="problem" data-id="${esc(p.challenge.id)}" aria-pressed="${p.challenge.id === item.challenge?.id}" title="${esc(p.challenge.title)}"${busy ? ' disabled' : ''}>Problem ${i + 1}${item.attempts.some((a) => a.challenge.id === p.challenge.id) ? ' · Submitted' : ''}</button>`).join('')}<button class="btn sm plain" data-interview="next"${busy || problems.length >= interviews.MOST_PROBLEMS ? ' disabled' : ''}>${session.preparing ? 'Preparing…' : '+ Problem'}</button>`;
+  const active = problems.findIndex(p => p.challenge.id === item.challenge?.id);
+  const chooser = count ? `<button class="btn sm interview-problem-choice" data-interview="problem-menu" aria-haspopup="dialog"${busy ? ' disabled' : ''}><span class="grow"><b>${esc(item.challenge?.title || 'Choose a problem')}</b><span class="hint">Problem ${active + 1} of ${count} · Browse problems</span></span>${ICON.chevron}</button>` : '';
+  box.innerHTML = `${chooser}${topics}<button class="btn sm plain" data-interview="next"${busy || problems.length >= interviews.MOST_PROBLEMS ? ' disabled' : ''}>${session.preparing ? 'Preparing…' : '+ Problem'}</button>`;
+  drawInterviewProblemRows(session);
+}
+
+function openInterviewProblems(session) {
+  if (!interviewHere(session)) return;
+  interviewTopicMenu(false);
+  const panel = sheet(`<div class="interview-browser-head"><h2>Problems</h2><button class="icon-btn" data-action="close" aria-label="Close problems">${ICON.close}</button></div><div class="interview-browser-filters"><label class="interview-problem-search">${ICON.search}<input id="interview-problem-search" class="set-input" type="search" maxlength="160" aria-label="Search problems" placeholder="Search titles or topics…"></label><label class="library-choice select-control"><select id="interview-problem-status" aria-label="Problem status"><option value="all">All problems</option><option value="unsubmitted">Not submitted</option><option value="needs-work">Needs work</option><option value="solved">Solved</option></select>${ICON.chevron}</label></div><p id="interview-problem-count" class="hint" role="status"></p><div id="interview-problem-list" class="set-card interview-problem-list"></div>`);
+  panel.returnFocus = $('[data-interview="problem-menu"]');
+  panel.querySelector('.sheet').setAttribute('aria-label', 'Browse practice problems');
+  panel.querySelector('#interview-problem-search').addEventListener('input', () => drawInterviewProblemRows(session));
+  panel.querySelector('#interview-problem-status').addEventListener('change', () => drawInterviewProblemRows(session));
+  drawInterviewProblemRows(session);
+  panel.querySelector('#interview-problem-search').focus({ preventScroll: true });
+}
+
+function drawInterviewProblemRows(session) {
+  const box = $('#interview-problem-list');
+  if (!box || !interviewHere(session)) return;
+  box.closest('.scrim').returnFocus = $('[data-interview="problem-menu"]');
+  const item = session.item;
+  const problems = item.problems?.length ? item.problems : item.challenge ? [{ challenge: item.challenge }] : [];
+  const solved = new Set(item.attempts.filter(a => interviews.attemptStatus(a).kind === 'passed').map(a => a.challenge.id));
+  const filter = interviews.topicFilter(problems, interviewTopic(session), solved);
+  const visible = new Set(filter.shown.map(i => problems[i].challenge.id));
+  const rows = interviews.problemRows(problems, item.attempts, $('#interview-problem-search').value, $('#interview-problem-status').value).filter(row => visible.has(row.id));
+  const busy = Boolean(session.preparing || session.submitting || session.switching);
+  $('#interview-problem-count').textContent = `${rows.length} of ${problems.length} problems${filter.chosen === null ? '' : ` · ${filter.chosen === interviews.NO_TOPIC ? 'No topic' : filter.chosen}`}`;
+  box.innerHTML = rows.length ? rows.map(row => `<div class="set-row interview-problem-row${row.id === item.challenge?.id ? ' on' : ''}"><button class="interview-plan grow" data-interview="problem" data-id="${esc(row.id)}" aria-label="Problem ${row.number}: ${esc(row.title)}"${row.id === item.challenge?.id ? ' aria-current="true"' : ''}${busy ? ' disabled' : ''}><b>${esc(row.title)}</b><span class="hint">Problem ${row.number}${row.topics.length ? ` · ${esc(row.topics.join(' · '))}` : ''}</span><span class="interview-problem-status ${row.state}">${row.state === 'solved' ? ICON.check : ''}${esc(row.label)}${row.attempts ? ` · ${row.attempts} submission${row.attempts === 1 ? '' : 's'}` : ''}</span></button><button class="icon-btn" data-interview="delete-problem" data-id="${esc(row.id)}" aria-label="Delete ${esc(row.title)}"${busy ? ' disabled' : ''}>${ICON.trash}</button></div>`).join('') : '<p class="set-note">No matching problems. Try another search or filter.</p>';
+}
+
+async function deleteInterviewProblem(session, id, button) {
+  if (session.switching || session.preparing || session.submitting) return;
+  button.disabled = true;
+  session.switching = true;
+  const dialog = button.closest('.scrim');
+  const fields = [...app.querySelectorAll('#interview-answer, #interview-reasoning')];
+  fields.forEach(field => { field.readOnly = true; });
+  drawInterviewProblems(session);
+  try {
+    await saveInterviewWorkspace(session);
+    await interviewQueue(session, async () => {
+      const done = await api(`/api/interviews/${enc(session.item.id)}`, { method: 'PUT', body: { action: 'delete_problem', revision: session.item.revision, challenge: id } });
+      interviews.clearDraft(localStorage, session.item.id, id);
+      if (dialog?.isConnected) closeSheet();
+      if (interviewHere(session)) {
+        session.switching = false;
+        useInterviewProblem(session, done.item);
+        drawInterview(session);
+      }
+      toast('Problem deleted', { action: 'Undo', run: async () => {
+        try {
+          await api('/api/felix/act', { method: 'POST', body: done.undo });
+          await refreshInterview(session.item.id);
+        } catch (e) { fail(e); }
+      } });
+    });
+  } finally {
+    button.disabled = false;
+    session.switching = false;
+    fields.forEach(field => { field.readOnly = false; });
+    drawInterviewProblems(session);
+  }
 }
 
 function interviewTopic(session) {
@@ -283,6 +347,7 @@ function pickInterviewTopic(session, el) {
 
 function useInterviewProblem(session, item) {
   if (session.item.challenge?.id !== item.challenge?.id) { session.boardUndo = []; session.boardRedo = []; session.selection = []; closeInterviewBoardText(session, false); session.gesture = null; session.stroke = null; }
+  clearTimeout(session.timer);
   session.item = item;
   session.draft = interviews.workspace(item.workspace);
   session.generation = 0;
@@ -505,7 +570,7 @@ async function refreshInterview(id) {
       const fields = [...app.querySelectorAll('#interview-answer, #interview-reasoning')];
       fields.forEach((field) => { field.readOnly = true; });
       try {
-        if (session.generation !== session.saved) {
+        if (session.generation !== session.saved && (latest.problems || []).some(p => p.challenge.id === session.item.challenge?.id)) {
           const challenge = session.item.challenge.id;
           try {
             latest = await api(`/api/interviews/${enc(id)}`, { method: 'PUT', body: { action: 'workspace', revision: latest.revision, challenge, workspace: structuredClone(session.draft) } });
@@ -1944,7 +2009,16 @@ async function interviewAction(el) {
   if (action === 'configure') { await saveInterviewWorkspace(session); return interviewForm(session.item.framework.track, session.item.id, session.item); }
   if (action === 'chat') return chat.openInterview(session.item.id, () => interviewHere(session));
   if (action === 'next') return prepareInterview(session);
-  if (action === 'problem') return selectInterviewProblem(session, el.dataset.id);
+  if (action === 'problem-menu' || action === 'cancel-delete-problem') return openInterviewProblems(session);
+  if (action === 'problem') { closeSheet(); return selectInterviewProblem(session, el.dataset.id); }
+  if (action === 'delete-problem') {
+    const problem = (session.item.problems || []).find(p => p.challenge.id === el.dataset.id);
+    if (!problem) return;
+    const panel = sheet(`<h2>Delete this problem?</h2><p>“${esc(problem.challenge.title)}”, its saved work, submissions and checks will be removed. You can undo this after deleting.</p><div class="buttons"><button class="btn" data-interview="cancel-delete-problem">Cancel</button><button class="btn danger" data-interview="confirm-delete-problem" data-id="${esc(problem.challenge.id)}">Delete problem</button></div>`);
+    panel.returnFocus = $('[data-interview="problem-menu"]');
+    return;
+  }
+  if (action === 'confirm-delete-problem') return deleteInterviewProblem(session, el.dataset.id, el);
   if (action === 'topic-menu') return interviewTopicMenu();
   if (action === 'topic') return pickInterviewTopic(session, el);
   if (action === 'sort-topics') { interviewTopicMenu(false); return talkInterview(session, 'Sort my problems into topics.', [], 'Give every problem in this practice that has no topics 1-3 topics with interview_topics, all in one call, reusing the spelling of topics_in_use. Every one of them must get at least one topic: choose the closest fit when unsure, never leave one out. Change nothing else.'); }

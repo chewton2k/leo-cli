@@ -259,6 +259,14 @@ seer, meaning, web, room).
   Practice order follows the latest real workspace change or nonempty session
   chat activity. Reads and identical saves preserve timestamps and revisions;
   opening an empty chat never moves a practice.
+  Problem deletion is revision-checked and removes only that problem's workspace,
+  attempts and hidden checks in one transaction. Felix uses interview_problem_delete
+  through Ask/Auto/Read and the same proposal/Undo controls. Recovery snapshots stay
+  server-side (20 total, Undo expires after 24 hours), are excluded from exports,
+  and appear in Storage → Deleted problem Undo; clearing a practice removes its
+  snapshots too. Undo restores the original position and selected problem, retains
+  later work on other problems, and never restores an in-flight key generation.
+  Key workers must still find the actual problem before claiming or finishing.
   Submission freezes an attempt and keeps the editor for iteration. Problem
   switching flushes drafts before selecting; model-created problems preserve
   pending edits before switching. The global Felix button opens the active
@@ -781,3 +789,12 @@ Writing Settings offers Ollama, Codex, Claude Code, Google Antigravity and GitHu
 Copilot. The latter two use isolated private profiles and text tools; sign in from
 a terminal with `leo doctor --sign-in agy|copilot`. Speech choices and cloud speech
 keys stay available. Credentials never reach the page or note exports.
+
+Interview problem navigation shows the active title and opens a bounded searchable
+sheet instead of growing numbered chips. Search matches titles, topics and numbers;
+status filters reuse per-challenge attempts and count any passed submission as solved.
+Opening or filtering the chooser changes no workspace, order or timestamp. Search
+focus survives refreshes; closing returns to the current chooser button even if it
+was redrawn. Switching and explicit deletion flush drafts first. A problem removed
+by Felix never gets recreated by a late draft save; newer local work remains
+recoverable when Undo restores that problem.
