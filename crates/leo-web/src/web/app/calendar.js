@@ -52,6 +52,7 @@ async function loadSchedule(mine = seq) {
   if (state.view !== 'calendar') return;
   const { from, to } = calWindow();
   const asked = cal.month.getTime();
+  const taskRevision = tasksWin.revision;
   let data;
   try {
     data = await api(`/api/schedule?from=${enc(from)}&to=${enc(to)}&live=1`);
@@ -64,6 +65,7 @@ async function loadSchedule(mine = seq) {
     return;
   }
   if (mine !== seq || state.view !== 'calendar' || asked !== cal.month.getTime()) return;
+  if (taskRevision !== tasksWin.revision) data.tasks = tasksWin.tasks || cal.data?.tasks || [];
   cal.failed = false;
   cal.data = data;
   tasksWin.tasks = data.tasks || tasksWin.tasks;
@@ -337,7 +339,6 @@ function taskDoneOn(task, on) {
 }
 
 async function setTaskDone(id, done, on = null) {
-  const task = calFind(id);
   try {
     await api(`/api/tasks/${enc(id)}`, { method: 'PATCH', body: on ? { done, on } : { done } });
   } catch (e) {
@@ -345,6 +346,8 @@ async function setTaskDone(id, done, on = null) {
     toast(e.message, { bad: true });
     return loadSchedule(seq);
   }
+  const task = calFind(id);
+  tasksWin.revision++;
   if (task && on) {
     task.done_on = (task.done_on || []).filter((d) => d !== on);
     if (done) task.done_on = [...task.done_on, on].sort();
@@ -715,7 +718,7 @@ async function openTaskAnywhere(id, on = null) {
   taskSheet(id, on);
 }
 
-var tasksWin = { folded: false, practice: '', practiceFolded: true, timer: 0, tasks: null, finished: new Map() };
+var tasksWin = { folded: false, practice: '', practiceFolded: true, timer: 0, tasks: null, finished: new Map(), revision: 0, load: 0 };
 const TASKS_FOLDED = 'leo-tasks-folded';
 const TASKS_AHEAD_DAYS = 7;
 const TASK_DONE_MS = 1200;
@@ -780,17 +783,13 @@ function finishTaskInWindow(id, done, on) {
   if (check && !stillMotion()) check.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.18)' }, { transform: 'scale(1)' }], { duration: MOTION_MS, easing: EASE_OUT });
   entry.timer = setTimeout(() => {
     if (tasksWin.finished.get(id) !== entry) return;
+    tasksWin.finished.delete(id);
     const row = tasksBox.querySelector(`.tasks-row[data-task="${CSS.escape(id)}"]`);
-    const finish = () => {
-      if (tasksWin.finished.get(id) !== entry) return;
-      tasksWin.finished.delete(id);
-      drawTasksWindow();
-    };
     if (row) {
       const height = row.getBoundingClientRect().height;
       row.style.minHeight = '0';
-      slideHeight(row, height, 0, finish);
-    } else finish();
+      slideHeight(row, height, 0, drawTasksWindow);
+    } else drawTasksWindow();
   }, TASK_DONE_MS);
 }
 
@@ -883,13 +882,20 @@ function toggleTasksWindow() {
 async function loadTasksWindow() {
   clearTimeout(tasksWin.timer);
   if (state.view === 'locked') return;
+  const mine = ++tasksWin.load;
+  const revision = tasksWin.revision;
   try {
-    tasksWin.tasks = (await api('/api/tasks')).tasks;
-    if (cal.data) cal.data = { ...cal.data, tasks: tasksWin.tasks };
-    else cal.data = { events: [], tasks: tasksWin.tasks };
+    const tasks = (await api('/api/tasks')).tasks;
+    if (mine !== tasksWin.load) return;
+    if (revision === tasksWin.revision) {
+      tasksWin.tasks = tasks;
+      if (cal.data) cal.data = { ...cal.data, tasks };
+      else cal.data = { events: [], tasks };
+    }
   } catch (e) {
     if (e instanceof Locked) return;
   }
+  if (mine !== tasksWin.load) return;
   drawTasksWindow();
   tasksWin.timer = setTimeout(() => {
     if (document.visibilityState === 'visible') loadTasksWindow().catch(() => {});

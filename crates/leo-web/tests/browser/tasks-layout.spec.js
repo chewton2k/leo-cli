@@ -32,6 +32,7 @@ test('task completion shows its check before hiding and survives refresh, Undo a
     let rows = [];
     let failed = false;
     let gate = null;
+    let readGate = null;
     let undo = null;
     const toast = (message, options = {}) => { undo = options.run || null; document.querySelector('#message').textContent = message; };
     async function api(url, options = {}) {
@@ -43,7 +44,9 @@ test('task completion shows its check before hiding and survives refresh, Undo a
         else task.done = options.body.done;
         return task;
       }
-      return {tasks: structuredClone(rows)};
+      const tasks = structuredClone(rows);
+      if (readGate) await readGate;
+      return {tasks};
     }
     ${motion}
     ${completion}
@@ -59,9 +62,12 @@ test('task completion shows its check before hiding and survives refresh, Undo a
       async seed(tasks) { rows = tasks; await loadTasksWindow(); },
       refresh: loadTasksWindow,
       redraw: drawTasksWindow,
+      saved: () => cal.data.tasks,
       undo: () => undo?.(),
       fail() { failed = true; },
       delay() { gate = new Promise(resolve => window.release = () => { gate = null; resolve(); }); },
+      staleRefresh() { readGate = new Promise(resolve => window.releaseRead = () => { readGate = null; resolve(); }); window.pendingRead = loadTasksWindow(); },
+      async finishRefresh() { releaseRead(); await pendingRead; },
       today: S.dayKey(new Date())
     };`;
   const server = http.createServer((request, response) => {
@@ -84,9 +90,11 @@ test('task completion shows its check before hiding and survives refresh, Undo a
     const check = row.locator('input');
     await page.evaluate(() => audit.delay());
     await check.click();
+    await page.evaluate(() => audit.refresh());
     await page.evaluate(() => release());
     await expect(check).toBeChecked({timeout: 500});
     await expect(row).toHaveClass(/done/);
+    expect(await page.evaluate(() => audit.saved()[0].done)).toBe(true);
     await page.evaluate(() => audit.refresh());
     await expect(check).toBeChecked();
     await page.waitForTimeout(300);
@@ -100,8 +108,11 @@ test('task completion shows its check before hiding and survives refresh, Undo a
     await expect(page.locator('#message')).toHaveText('Could not save the task. Try again.');
     await expect(check).not.toBeChecked();
     await expect(row).not.toHaveClass(/done/);
+    await page.evaluate(() => audit.staleRefresh());
     await check.click();
     await expect(check).toBeChecked({timeout: 500});
+    await page.evaluate(() => audit.finishRefresh());
+    expect(await page.evaluate(() => audit.saved()[0].done)).toBe(true);
     await expect(row).toBeHidden();
     await expect(page.locator('#tasks-window')).toBeHidden();
     await page.emulateMedia({reducedMotion: 'reduce'});
