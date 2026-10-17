@@ -435,3 +435,9 @@ user clears them in Storage; there is no automatic LRU quota.
 Synthetic capture regressions exercise twelve segment rolls and check every
 segment's sample count/overlap using short segment intervals. They avoid processing
 an hour of PCM in an unoptimized, parallel CI run merely to test the same boundaries.
+
+Capability probes combine stdout and stderr into one bounded pipe: AGY 1.4.0
+writes its successful help listing to stderr. The command's parent pipe writers
+are dropped immediately after spawn so EOF remains meaningful; the existing
+output cap and whole-process watchdog cover both streams. A present CLI that
+fails this check reports unverified safety controls, never a missing installation.

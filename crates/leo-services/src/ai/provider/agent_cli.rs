@@ -124,21 +124,21 @@ pub(crate) fn probe(program: &Path, args: &[&str]) -> ProviderResult<String> {
 }
 
 pub(crate) fn probe_command(mut command: Command) -> ProviderResult<String> {
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+    let failed = || {
+        ProviderError::Retryable(
+        "The writing program could not be checked safely. Run its `--help` command, then try again.".into(),
+    )
+    };
+    let (output, writer) = std::io::pipe().map_err(|_| failed())?;
+    let errors = writer.try_clone().map_err(|_| failed())?;
+    command.stdin(Stdio::null()).stdout(writer).stderr(errors);
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut command, 0);
-    let mut child = command.spawn().map_err(|_| {
-        ProviderError::Retryable(
-            "The writing program could not be checked safely. Run its `--help` command, then try again.".into(),
-        )
-    })?;
-    let stdout = child.stdout.take();
+    let child = command.spawn().map_err(|_| failed())?;
+    drop(command);
     let child = Process::new(child);
     let watch = Watchdog::start(&child, None, PROBE_LIMIT);
-    let (text, exceeded) = stdout.map(process::output).unwrap_or_default();
+    let (text, exceeded) = process::output(output);
     if exceeded {
         child.stop();
     }
@@ -1123,6 +1123,16 @@ impl ChatProvider for AgentCli {
     }
 
     fn unavailable_reason(&self) -> String {
+        if let Some(program) = locate(&self.bin) {
+            if !super::scoped_cli::supported(self.agent, &program) {
+                return format!(
+                    "{}: `{}` was found, but Leo could not verify its required safety controls. Update it, then try again: {}",
+                    self.name,
+                    self.bin,
+                    self.agent.install()
+                );
+            }
+        }
         format!(
             "{}: `{}` is not installed; {}",
             self.name,
@@ -1297,6 +1307,55 @@ mod tests {
         std::fs::write(&path, format!("#!/bin/sh\ntest -z \"${{CI+x}}${{ANTHROPIC_API_KEY+x}}${{OPENAI_API_KEY+x}}${{CODEX_API_KEY+x}}${{NODE_OPTIONS+x}}${{BASH_ENV+x}}\" || exit 17\nif [ \"$1\" = features ]; then echo 'shell_tool stable true'; exit 0; fi\n{body}\n")).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         path.to_string_lossy().to_string()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn capability_probes_accept_help_on_either_stream_and_reject_failed_or_oversized_output() {
+        let flags = "--agent --sandbox --disable-slash-commands --input-format --output-format --print-timeout";
+        for stream in [1, 2] {
+            let dir = tempfile::tempdir().unwrap();
+            let bin = script(dir.path(), &format!("printf '%s\\n' '{flags}' >&{stream}"));
+            let cfg = config(ProviderKind::Agy, &bin, None);
+            let agent = AgentCli::new("agy".into(), Agent::Agy, &cfg);
+            assert!(agent.available(), "help on stream {stream}");
+
+            let dir = tempfile::tempdir().unwrap();
+            let bin = script(
+                dir.path(),
+                &format!("head -c {} /dev/zero >&{stream}", MOST_OUTPUT + 1),
+            );
+            assert!(probe(Path::new(&bin), &["--help"]).is_err());
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let bin = script(dir.path(), "printf stdout; printf stderr >&2");
+        let text = probe(Path::new(&bin), &["--help"]).unwrap();
+        assert!(text.contains("stdout") && text.contains("stderr"));
+        let dir = tempfile::tempdir().unwrap();
+        let bin = script(
+            dir.path(),
+            &format!("printf '%s\\n' '{flags} PRIVATE_DIAGNOSTIC' >&2; exit 7"),
+        );
+        let error = probe(Path::new(&bin), &["--help"]).unwrap_err().to_string();
+        assert!(!error.contains("PRIVATE_DIAGNOSTIC"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_installed_cli_without_required_controls_is_not_reported_as_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = script(dir.path(), "printf '%s\\n' 'Unrelated old CLI' >&2");
+        for (kind, name, agent) in [
+            (ProviderKind::Agy, "agy", Agent::Agy),
+            (ProviderKind::Copilot, "copilot", Agent::Copilot),
+        ] {
+            let cfg = config(kind, &bin, None);
+            let provider = AgentCli::new(name.into(), agent, &cfg);
+            assert!(!provider.available());
+            let reason = provider.unavailable_reason();
+            assert!(reason.contains("was found") && reason.contains("safety controls"));
+            assert!(!reason.contains("not installed"));
+        }
     }
 
     #[test]
