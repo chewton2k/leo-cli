@@ -79,6 +79,7 @@ impl CodexThread {
         }
         let room = agent.room()?;
         let mut command = Command::new(&program);
+        super::scoped_cli::plan_environment(&mut command);
         command.args(["app-server", "--ignore-user-config", "--ignore-rules"]);
         for feature in codex_disables(&program)? {
             command.args(["-c", &format!("features.{feature}=false")]);
@@ -416,6 +417,7 @@ mod tests {
         let path = dir.join("codex");
         let body = format!(
             r##"#!/bin/sh
+test -z "${{CI+x}}${{ANTHROPIC_API_KEY+x}}${{OPENAI_API_KEY+x}}${{CODEX_API_KEY+x}}${{NODE_OPTIONS+x}}${{BASH_ENV+x}}" || exit 17
 if [ "$1" = "features" ]; then echo 'shell_tool stable true'; exit 0; fi
 if [ "$2" = "--help" ]; then echo '--ignore-user-config --ignore-rules'; exit 0; fi
 printf '%s\n' "$@" > "{log}.args"

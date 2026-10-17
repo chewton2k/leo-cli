@@ -199,6 +199,7 @@ pub fn ask_codex(program: &Path) -> Option<Usage> {
         std::fs::set_permissions(room.path(), std::fs::Permissions::from_mode(0o700)).ok()?;
     }
     let mut command = Command::new(program);
+    crate::ai::provider::scoped_cli::plan_environment(&mut command);
     command.args(["app-server", "--ignore-user-config", "--ignore-rules"]);
     for feature in codex_disables(program).ok()? {
         command.args(["-c", &format!("features.{feature}=false")]);
@@ -357,6 +358,33 @@ mod tests {
         assert_eq!(all["codex"].five_hour.unwrap().used, 0.2);
         std::fs::write(&path, "not json").unwrap();
         assert!(load_from(&path).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn usage_polling_launches_a_sanitized_native_process() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let program = dir.path().join("codex");
+        std::fs::write(
+            &program,
+            r#"#!/bin/sh
+test -z "${CI+x}${ANTHROPIC_API_KEY+x}${OPENAI_API_KEY+x}${CODEX_API_KEY+x}${NODE_OPTIONS+x}${BASH_ENV+x}" || exit 17
+if [ "$1" = features ]; then echo 'shell_tool stable true'; exit 0; fi
+if [ "$2" = --help ]; then echo '--ignore-user-config --ignore-rules'; exit 0; fi
+while IFS= read -r line; do
+  case "$line" in
+    *'"method":"account/rateLimits/read"'*)
+      printf '%s\n' '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":12,"windowDurationMins":300}}}}'
+      exit 0 ;;
+  esac
+done
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let usage = ask_codex(&program).unwrap();
+        assert_eq!(usage.five_hour.unwrap().used, 0.12);
     }
 
     #[cfg(unix)]

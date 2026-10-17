@@ -182,6 +182,16 @@ an ordinary global CLI login is separate. A cross-process `.leo-profile.lock`
 protects calls/sign-in/cleanup. Storage exposes sizes and confirmed clearing only,
 refuses an active profile, and never exports authentication contents.
 
+All writing CLI launches, native sessions, capability probes and usage polling
+clear inherited credentials, provider/routing overrides and runtime startup hooks.
+Codex and Claude Code retain the user's signed-in HOME, XDG, CODEX_HOME and
+CLAUDE_CONFIG_DIR locations plus OS/PATH, certificate settings and the Linux
+D-Bus session address used by the signed-in keyring; AGY/Copilot continue using
+their private profiles without inheriting the session bus. An ambient API key cannot
+silently replace the intended CLI login. A deliberately stored API-key login is
+still the CLI's own authentication choice; environment cleanup cannot guarantee
+subscription billing in that case.
+
 Plan limits (`usage.rs`): `<config>/usage.json` keeps the latest `Usage`
 (5h/7d `Window { used 0..1, resets_at }`, `seen_at`) per provider name. Claude
 Code's come free with every answer (`rate_limit_event` → `from_claude`, saved

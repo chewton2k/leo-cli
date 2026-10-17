@@ -119,7 +119,7 @@ const PROBE_LIMIT: Duration = Duration::from_secs(5);
 pub(crate) fn probe(program: &Path, args: &[&str]) -> ProviderResult<String> {
     let mut command = Command::new(program);
     command.args(args);
-    super::scoped_cli::clean_environment(&mut command);
+    super::scoped_cli::plan_environment(&mut command);
     probe_command(command)
 }
 
@@ -1294,7 +1294,7 @@ mod tests {
     fn script(dir: &Path, body: &str) -> String {
         use std::os::unix::fs::PermissionsExt;
         let path = dir.join("fake-agent");
-        std::fs::write(&path, format!("#!/bin/sh\nif [ \"$1\" = features ]; then echo 'shell_tool stable true'; exit 0; fi\n{body}\n")).unwrap();
+        std::fs::write(&path, format!("#!/bin/sh\ntest -z \"${{CI+x}}${{ANTHROPIC_API_KEY+x}}${{OPENAI_API_KEY+x}}${{CODEX_API_KEY+x}}${{NODE_OPTIONS+x}}${{BASH_ENV+x}}\" || exit 17\nif [ \"$1\" = features ]; then echo 'shell_tool stable true'; exit 0; fi\n{body}\n")).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         path.to_string_lossy().to_string()
     }
