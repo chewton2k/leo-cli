@@ -205,10 +205,13 @@ mod tests {
         assert!(
             openrouter
                 .message()
-                .starts_with("OpenRouter rejected the key stored in leo (401). It said: "),
+                .starts_with("OpenRouter rejected the key stored in leo (401)."),
             "{}",
             openrouter.message()
         );
+        assert!(openrouter
+            .message()
+            .contains("Choose a supported AI for writing in :settings."));
         let gemini = classify_status_with_key(
             400,
             "gemini_speech",

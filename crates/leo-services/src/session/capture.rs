@@ -465,19 +465,21 @@ mod tests {
     }
 
     #[test]
-    fn a_fast_synthetic_hour_becomes_twelve_segments() {
+    fn fast_synthetic_audio_keeps_every_segment_and_its_overlap() {
+        const SEGMENT_SECS: u64 = 30;
+        const SEGMENTS: usize = 12;
         let dir = tempfile::tempdir().unwrap();
         let capture = Capture::start(
             dir.path(),
             0,
-            300,
+            SEGMENT_SECS,
             Source::Synthetic {
-                secs: 3600,
+                secs: SEGMENT_SECS * SEGMENTS as u64,
                 speed: 36_000.0,
             },
         )
         .unwrap();
-        wait_for(&capture, 3600 * RATE as u64);
+        wait_for(&capture, SEGMENT_SECS * SEGMENTS as u64 * RATE as u64);
         let deadline = std::time::Instant::now() + Duration::from_secs(20);
         while !capture.ended() && std::time::Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(10));
@@ -494,12 +496,24 @@ mod tests {
             .map(|e| e.file_name().to_string_lossy().to_string())
             .collect();
         names.sort();
-        assert_eq!(names.len(), 12, "{names:?}");
+        assert_eq!(names.len(), SEGMENTS, "{names:?}");
         assert!(names
             .iter()
             .all(|n| n.ends_with(".wav") && !n.contains("part")));
+        for (index, name) in names.iter().enumerate() {
+            let samples = std::fs::metadata(dir.path().join(name))
+                .unwrap()
+                .len()
+                .saturating_sub(wav::HEADER)
+                / 2;
+            let expected = SEGMENT_SECS + if index == 0 { 0 } else { OVERLAP_SECS };
+            assert_eq!(samples, expected * RATE as u64, "{name}");
+        }
         let second = wav::read(&dir.path().join("seg-00001.wav")).unwrap();
-        assert_eq!(second.len() as u64, (300 + OVERLAP_SECS) * RATE as u64);
+        assert_eq!(
+            second.len() as u64,
+            (SEGMENT_SECS + OVERLAP_SECS) * RATE as u64
+        );
     }
 
     #[test]

@@ -136,10 +136,10 @@ let pageBarFrame = 0;
 let pageBarSize = { track: 0, thumb: 0, top: 0, room: 0 };
 
 function pageBarRight() {
-  const panel = document.querySelector('aside.chat');
-  if (!document.body.classList.contains('chat-open') || !panel || panel.hidden) return 0;
-  const source = document.querySelector('.source-pane');
-  const left = Math.min(panel.offsetLeft, source && source.getClientRects().length ? source.offsetLeft : Infinity);
+  const panels = [document.querySelector('aside.chat'), document.querySelector('.source-pane')]
+    .filter(panel => panel && !panel.hidden && panel.getClientRects().length);
+  if (!panels.length) return 0;
+  const left = Math.min(...panels.map(panel => panel.offsetLeft));
   return left < 240 ? 0 : Math.max(0, document.documentElement.clientWidth - left);
 }
 

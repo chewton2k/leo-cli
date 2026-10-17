@@ -2582,7 +2582,7 @@ fn choosing_in_settings_writes_the_choice_and_moves_both_ways() {
     assert!(value(&app, "writing").unwrap().ends_with("Codex"));
     app.on_key(press_code(event::KeyCode::Left), &mut terminal)
         .unwrap();
-    assert!(value(&app, "writing").unwrap().ends_with("Ollama"));
+    assert!(value(&app, "writing").unwrap().ends_with("(Ollama)"));
     let cfg = leo_services::config::Config::load();
     assert_eq!(cfg.chat.chain, vec!["ollama"]);
     assert_eq!(

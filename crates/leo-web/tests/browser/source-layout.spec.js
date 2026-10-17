@@ -9,6 +9,8 @@ test('documents split notes and keep Felix at the right without losing drafts', 
   const style = html.match(/<style>([\s\S]*?)<\/style>/)[1];
   const calendar = fs.readFileSync(path.join(web, 'app/calendar.js'), 'utf8');
   const uploads = fs.readFileSync(path.join(web, 'app/uploads.js'), 'utf8');
+  const core = fs.readFileSync(path.join(web, 'app/core.js'), 'utf8');
+  const scrollbar = core.slice(core.indexOf('function pageBarRight()'), core.indexOf('function drawPageBar()'));
   const source = calendar.slice(calendar.indexOf('const source ='));
   const viewer = uploads.slice(uploads.indexOf('function viewKind'));
   const fixture = `const state = {view: 'note', session: {note: {id: 'sample'}}};
@@ -24,6 +26,7 @@ test('documents split notes and keep Felix at the right without losing drafts', 
     const chat = leoChat.create({render: md.render, escape: esc, icons: ICON});
     ${source}
     ${viewer}
+    ${scrollbar}
     document.addEventListener('click', event => {
       const el = event.target.closest('[data-action]'); if (!el) return;
       event.preventDefault();
@@ -32,7 +35,7 @@ test('documents split notes and keep Felix at the right without losing drafts', 
       if (el.dataset.action === 'source-file') openSource('sample', el.dataset.name);
       if (el.dataset.action === 'close') el.closest('.scrim').remove();
     });
-    window.audit = {open: name => viewOriginal('sample', name), close: closeSource, source,
+    window.audit = {scrollbarRight: pageBarRight, open: name => viewOriginal('sample', name), close: closeSource, source,
       chat(open) { chat.toggle(open); },
       wait() { pending = new Promise(resolve => window.release = () => { pending = null; resolve(); }); }};`;
   const server = http.createServer((request, response) => {
@@ -96,11 +99,21 @@ test('documents split notes and keep Felix at the right without losing drafts', 
     await page.keyboard.press('ArrowRight');
     await expect.poll(async () => (await page.locator('#source-pane').boundingBox()).width).toBeLessThan(before - 20);
     await page.evaluate(() => audit.chat(false));
+    expect(await page.evaluate(() => audit.scrollbarRight())).toBeGreaterThan(250);
     await page.evaluate(() => audit.chat(true));
     await expect(page.locator('.source-frame')).toHaveCount(1);
     await page.evaluate(() => audit.open('notes.txt'));
     await expect(page.locator('.source-text')).toHaveText('Original text <must stay escaped>.');
     await expect(page.locator('.source-text must')).toHaveCount(0);
+    const divider = await page.locator('.source-grip').boundingBox();
+    const startWidth = (await page.locator('#source-pane').boundingBox()).width;
+    await page.mouse.move(divider.x + 4, divider.y + 200);
+    await page.mouse.down();
+    await page.mouse.move(divider.x + 36, divider.y + 200);
+    await expect.poll(async () => (await page.locator('#source-pane').boundingBox()).width).toBeLessThan(startWidth - 20);
+    await page.evaluate(() => audit.close());
+    await expect(page.locator('body')).not.toHaveClass(/source-resizing/);
+    await page.mouse.up();
     await page.evaluate(() => { audit.wait(); audit.open('paper.pdf'); audit.close(); release(); });
     await expect(page.locator('#source-pane')).toBeHidden();
     await expect(page.locator('#source-pane iframe')).toHaveCount(0);

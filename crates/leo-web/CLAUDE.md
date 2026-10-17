@@ -62,7 +62,7 @@ seer, meaning, web, room).
 - Layout variables on `body`: `--side` (sidebar, 0 under 1000 px), `--right`
   (Felix and/or the original pane), `--mid`. Fixed things (toolbar, select
   bar, toasts, FABs, `#dock`, the map) use them so nothing covers anything.
-  While Felix is open beside the page (chat at least 240 px from the left),
+  While Felix or an original file is open beside the page (at least 240 px from the left),
   the window's own scrollbar is hidden (`html.page-bar-on`) and `.page-bar`
   (core.js) draws one at the left edge of Felix (and the original pane), so
   the notes' scrollbar sits beside the notes; the page still scrolls the

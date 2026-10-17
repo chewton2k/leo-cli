@@ -1398,36 +1398,43 @@ test.describe('Felix', () => {
 });
 
 test.describe('settings', () => {
-  test('changes the writing AI and stores a key without ever showing it again', async ({ page }) => {
+  test('writing uses account-based choices and speech keys never appear again', async ({ page }) => {
     await page.goto('/');
     await goPlace(page, 'settings');
     await expect(page).toHaveURL(/#\/settings$/);
     const writing = page.locator('[data-task-card="writing"]');
-    await writing.locator('select[data-set="provider"]').selectOption('gemini');
-    await expect(page.locator('.toast')).toContainText('Writing now uses Gemini');
-    await expect(writing.locator('select[data-set="provider"]')).toHaveValue('gemini');
-    const picker = writing.locator('.picker-button');
+    await writing.locator('select[data-set="provider"]').selectOption('agy');
+    await expect(page.locator('.toast')).toContainText('Writing now uses Google Antigravity');
+    await expect(writing.locator('select[data-set="provider"]')).toHaveValue('agy');
+    await expect(writing.locator('[data-key-input]')).toHaveCount(0);
+    await writing.locator('.picker-button').click();
+    await writing.locator('.pick-model[data-model="gemini-4-argon-high"]').click();
+    await expect(page.locator('.toast')).toContainText('Model set to gemini-4-argon-high');
+    const speech = page.locator('[data-task-card="speech"]');
+    await speech.locator('select[data-set="provider"]').selectOption('gemini_speech');
+    await expect(page.locator('.toast')).toContainText('Speech now uses Gemini');
+    const picker = speech.locator('.picker-button');
     await picker.click();
-    await expect(writing.locator('.picker-menu')).toBeVisible();
-    await writing.locator('.pick-model[data-model="gemini-3.1-flash-lite"]').click();
+    await expect(speech.locator('.picker-menu')).toBeVisible();
+    await speech.locator('.pick-model[data-model="gemini-3.1-flash-lite"]').click();
     await expect(page.locator('.toast')).toContainText('Model set to gemini-3.1-flash-lite');
     await expect(picker).toContainText('gemini-3.1-flash-lite');
-    await writing.locator('[data-key-input="gemini"]').fill('gm-fake-key-123');
-    await writing.locator('[data-action="set-key"]').click();
+    await speech.locator('[data-key-input="gemini"]').fill('gm-fake-key-123');
+    await speech.locator('[data-action="set-key"]').click();
     await expect(page.locator('.toast')).toContainText('The Gemini key is stored on this computer');
-    const stored = writing.locator('[data-key-input="gemini"]');
+    const stored = speech.locator('[data-key-input="gemini"]');
     await expect(stored).toHaveValue('');
     await expect(stored).toHaveAttribute('placeholder', 'gm-…••••••••');
     await stored.fill('gm-typed-but-never-saved');
     await page.reload();
-    await expect(writing.locator('[data-key-input="gemini"]'), 'an unsaved key changes nothing').toHaveAttribute('placeholder', 'gm-…••••••••');
-    await expect(writing.locator('[data-key-input="gemini"]')).toHaveValue('');
+    await expect(speech.locator('[data-key-input="gemini"]'), 'an unsaved key changes nothing').toHaveAttribute('placeholder', 'gm-…••••••••');
+    await expect(speech.locator('[data-key-input="gemini"]')).toHaveValue('');
     expect(await (await page.request.get('/api/settings')).text()).not.toContain('gm-fake-key-123');
     expect(await page.content()).not.toContain('gm-fake-key-123');
-    await writing.locator('[data-action="remove-key"]').click();
+    await speech.locator('[data-action="remove-key"]').click();
     await page.locator('[data-action="remove-key-now"]').click();
     await expect(page.locator('.toast')).toContainText('The Gemini key is removed');
-    await expect(writing).toContainText('Not added');
+    await expect(speech).toContainText('Not added');
     const backup = page.locator('select[data-set="auto_push"]');
     await backup.selectOption('when_idle');
     await expect(page.locator('.toast')).toContainText('Backing up when idle');
@@ -1449,7 +1456,8 @@ test.describe('settings', () => {
     await writing.locator('.picker-button').click();
     await writing.locator('.pick-chip[data-effort="medium"]').click();
     await expect(page.locator('.toast')).toContainText('Effort set to medium.');
-    await writing.locator('select[data-set="provider"]').selectOption('gemini');
+    await writing.locator('select[data-set="provider"]').selectOption('ollama');
+    await speech.locator('select[data-set="provider"]').selectOption('parakeet');
   });
 });
 
