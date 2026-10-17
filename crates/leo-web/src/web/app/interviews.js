@@ -273,7 +273,7 @@ async function saveInterviewName(session) {
         await interviewQueue(session, async () => {
           const latest = await api(`/api/interviews/${enc(session.item.id)}`);
           if (!interviewHere(session)) return;
-          if (latest.challenge?.id !== session.item.challenge?.id) throw new Error('This practice changed elsewhere. Reopen it before renaming; your draft is kept.');
+          if (latest.challenge?.id !== session.item.challenge?.id || JSON.stringify(latest.workspace) !== JSON.stringify(session.item.workspace)) throw new Error('Your saved work changed elsewhere. Reopen this practice before renaming; your draft is kept.');
           session.item = latest;
         });
         if (interviewHere(session)) await saveInterviewName(session);

@@ -699,3 +699,52 @@ test('problem search finds titles and topics while retaining stable numbers and 
   assert.deepEqual(I.problemRows(problems, attempts, 'missing'), []);
   assert.equal(I.problemRows(Array.from({ length: I.MOST_PROBLEMS + 2 }, () => problems[0])).length, I.MOST_PROBLEMS);
 });
+
+test('renaming retries preserve code conflicts and newer preferences in either save order', async () => {
+  const fs = require('node:fs');
+  const vm = require('node:vm');
+  const source = fs.readFileSync(require.resolve('../src/web/app/interviews.js'), 'utf8');
+  const save = source.slice(source.indexOf('async function saveInterviewName('), source.indexOf('function drawInterviewContext('));
+  const queue = source.slice(source.indexOf('function interviewQueue('), source.indexOf('function drawInterviewStatus('));
+  for (const before of [false, true]) {
+    for (const changed of ['preferences', 'code', 'problem']) {
+      const original = { id: 'practice', revision: 1, framework: { title: 'Practice', company: 'Old company' }, challenge: { id: 'problem-01' }, workspace: { answer: 'return 0', board: [] } };
+      const session = { item: structuredClone(original), name: 'New name', draft: { answer: 'return 2' }, generation: 1, saved: 0, queue: Promise.resolve() };
+      let server = structuredClone(original), blocked = true, retry;
+      const remote = () => {
+        server.revision++;
+        server.framework.company = 'New company';
+        if (changed === 'code') server.workspace.answer = 'return 1';
+        if (changed === 'problem') server.challenge.id = 'problem-02';
+      };
+      if (before) remote();
+      const context = vm.createContext({
+        clearTimeout, MOST_PRACTICE_TITLE: 120, cleanTitle: value => value.trim(), enc: encodeURIComponent,
+        interviewHere: () => true, document: { activeElement: { id: 'interview-name' } },
+        toast: (_message, options) => { retry = options.run; },
+        api: async (_path, options) => {
+          if (!options) return structuredClone(server);
+          if (blocked || options.body.revision !== server.revision) throw new Error('This practice changed elsewhere.');
+          server.framework = structuredClone(options.body.framework);
+          server.revision++;
+          return structuredClone(server);
+        },
+      });
+      vm.runInContext(queue + save, context);
+      await assert.rejects(context.saveInterviewName(session), /changed elsewhere/);
+      if (!before) remote();
+      blocked = false;
+      if (changed === 'preferences') {
+        await retry();
+        assert.equal(server.framework.title, 'New name');
+        assert.equal(server.framework.company, 'New company');
+      } else {
+        await assert.rejects(retry(), /[Rr]eopen/);
+        assert.equal(session.item.revision, 1, `${changed}: title Retry must not bypass a code conflict`);
+        assert.equal(server.framework.title, 'Practice');
+      }
+      assert.equal(session.draft.answer, 'return 2');
+      assert.equal(server.workspace.answer, changed === 'code' ? 'return 1' : 'return 0');
+    }
+  }
+});

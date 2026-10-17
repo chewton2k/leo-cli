@@ -819,7 +819,7 @@ retry message. Legitimate execution limitations and Read only are not retried.
 
 Practice recency follows real saved work and conversation changes. Selecting a saved problem persists its selection/revision without changing activity; filtering stays browser-local. Run advances parent activity atomically with its results without invalidating an editor revision. Background test preparation and verification do not count.
 
-Practice titles use the existing inline plaintext heading style: typing autosaves through the practice queue, Enter finishes, Escape abandons unsaved typing, and empty names restore the saved title. Saves preserve the caret and pending code; Retry reloads current preferences before renaming, and draft flushing includes pending titles.
+Practice titles use the existing inline plaintext heading style: typing autosaves through the practice queue, Enter finishes, Escape abandons unsaved typing, and empty names restore the saved title. Saves preserve the caret and pending code; Retry reloads current preferences before renaming, refuses a changed remote workspace before advancing the local revision, and draft flushing includes pending titles.
 
 Successful Felix replies may contain only proposal, ask or quiz cards. Stopped
 means cancellation; normal empty completion offers retry guidance. Saved replies
