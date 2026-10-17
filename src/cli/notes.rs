@@ -90,7 +90,7 @@ pub fn run(cmd: Commands) -> Result<()> {
         }),
 
         Commands::Serve { .. }
-        | Commands::Doctor
+        | Commands::Doctor { .. }
         | Commands::Uninstall { .. }
         | Commands::Update { .. }
         | Commands::Backup { .. } => {

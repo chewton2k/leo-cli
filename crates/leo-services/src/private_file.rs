@@ -21,6 +21,13 @@ pub(crate) fn directory(path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn contended(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::WouldBlock
+        || error
+            .raw_os_error()
+            .is_some_and(|code| Some(code) == fs2::lock_contended_error().raw_os_error())
+}
+
 pub(crate) fn lock(parent: &Path, name: &str, wait: Duration) -> Result<File> {
     directory(parent)?;
     let path = leo_core::paths::contained_path(parent, Path::new(name))?;
@@ -54,12 +61,10 @@ pub(crate) fn lock(parent: &Path, name: &str, wait: Duration) -> Result<File> {
     loop {
         match file.try_lock_exclusive() {
             Ok(()) => return Ok(file),
-            Err(error)
-                if error.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < until =>
-            {
+            Err(error) if contended(&error) && Instant::now() < until => {
                 std::thread::sleep(Duration::from_millis(10))
             }
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => anyhow::bail!(
+            Err(error) if contended(&error) => anyhow::bail!(
                 "Another Leo process is using these settings. Let it finish and try again."
             ),
             Err(error) => {
@@ -80,6 +85,21 @@ mod tests {
         assert!(lock(dir.path(), ".lock", Duration::ZERO).is_err());
         drop(held);
         assert!(lock(dir.path(), ".lock", Duration::ZERO).is_ok());
+    }
+
+    #[test]
+    fn platform_lock_contention_retries_but_other_failures_do_not() {
+        assert!(contended(&fs2::lock_contended_error()));
+        assert!(!contended(&std::io::Error::from(
+            std::io::ErrorKind::PermissionDenied
+        )));
+        let dir = tempfile::tempdir().unwrap();
+        let held = lock(dir.path(), ".lock", Duration::ZERO).unwrap();
+        let path = dir.path().to_path_buf();
+        let waiting = std::thread::spawn(move || lock(&path, ".lock", Duration::from_secs(2)));
+        std::thread::sleep(Duration::from_millis(30));
+        drop(held);
+        assert!(waiting.join().unwrap().is_ok());
     }
 
     #[cfg(unix)]

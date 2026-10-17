@@ -5,6 +5,36 @@
 
 use super::*;
 
+#[derive(Default)]
+struct PushResult {
+    success: bool,
+    failure: Option<String>,
+}
+
+impl PushResult {
+    fn absorb(&mut self, events: impl IntoIterator<Item = TaskEvent>) {
+        for event in events {
+            match event {
+                TaskEvent::Pushed => self.success = true,
+                TaskEvent::Failed(error) => self.failure = Some(error),
+                _ => {}
+            }
+        }
+    }
+
+    fn finish(self, done: bool) -> std::result::Result<(), String> {
+        if let Some(error) = self.failure {
+            Err(error)
+        } else if done && self.success {
+            Ok(())
+        } else if done {
+            Err("the backup worker stopped without confirming completion".into())
+        } else {
+            Err("the existing backup is still finishing; a second push was not started".into())
+        }
+    }
+}
+
 impl App {
     /// Record that the notes changed, restarting the quiet period.
     pub(super) fn note_changed(&mut self) {
@@ -43,28 +73,26 @@ impl App {
     pub(super) fn push_on_quit(&mut self) {
         if let Some((mut job, _, _)) = self.jobs.pushing.take() {
             println!("  finishing the existing backup…");
-            let mut success = false;
-            let mut failure = None;
+            let mut result = PushResult::default();
             let deadline = Instant::now()
                 + leo_core::sync::COMMAND_LIMIT.saturating_mul(2)
                 + Duration::from_secs(5);
             while !job.is_done() && Instant::now() < deadline {
-                for event in job.drain() {
-                    match event {
-                        TaskEvent::Pushed => success = true,
-                        TaskEvent::Failed(error) => failure = Some(error),
-                        _ => {}
-                    }
-                }
+                result.absorb(job.drain());
                 if !job.is_done() {
                     std::thread::sleep(Duration::from_millis(50));
                 }
             }
-            if !job.is_done() {
-                println!(
-                    "  the existing backup is still finishing; a second push was not started."
-                );
-                return;
+            result.absorb(job.drain());
+            match result.finish(job.is_done()) {
+                Ok(()) => println!("  backed up."),
+                Err(error) => {
+                    println!("  backup failed: {error}");
+                    println!(
+                        "  your notes are committed locally; `leo backup` checks and retries."
+                    );
+                    return;
+                }
             }
         }
         let config = leo_services::config::Config::load().sync;
@@ -132,5 +160,36 @@ impl App {
             self.jobs.pushing = None;
             self.jobs.last_push = Some(Instant::now());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_confirmed_completed_backup_allows_another_push() {
+        let mut success = PushResult::default();
+        success.absorb([TaskEvent::Pushed]);
+        assert!(success.finish(true).is_ok());
+        let mut failure = PushResult::default();
+        failure.absorb([TaskEvent::Failed("remote rejected the push".into())]);
+        assert_eq!(failure.finish(true), Err("remote rejected the push".into()));
+        assert!(PushResult::default()
+            .finish(true)
+            .unwrap_err()
+            .contains("without confirming"));
+        assert!(PushResult::default()
+            .finish(false)
+            .unwrap_err()
+            .contains("still finishing"));
+    }
+
+    #[test]
+    fn a_final_drain_preserves_failure_and_failure_takes_priority_over_success() {
+        let mut result = PushResult::default();
+        result.absorb([TaskEvent::Pushed]);
+        result.absorb([TaskEvent::Failed("could not save the backup".into())]);
+        assert_eq!(result.finish(true), Err("could not save the backup".into()));
     }
 }
