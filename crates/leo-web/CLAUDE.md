@@ -620,6 +620,10 @@ the same idle loop.
   Active interview practices start with Tasks folded so its expanded rows
   cannot block the workspace. Show still expands it; this local
   practice choice leaves the remembered preference for other pages intact.
+  Completing a panel task shows its checked, struck-through row for 1.2 seconds
+  before a `MOTION_MS` collapse; Reduce Motion skips animation but keeps the
+  confirmation. A bounded occurrence snapshot survives polling until removal,
+  and Undo cancels removal without completing the next repeating occurrence.
 - Export adds `tasks.json`; Storage → Restore tasks takes that file and POSTs
   `/api/tasks/import` (ids dedupe; a newer local copy is kept).
 

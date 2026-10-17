@@ -349,7 +349,7 @@ async function setTaskDone(id, done, on = null) {
     task.done_on = (task.done_on || []).filter((d) => d !== on);
     if (done) task.done_on = [...task.done_on, on].sort();
   } else if (task) task.done = done;
-  setTimeout(drawTasksWindow, done ? 1200 : 0);
+  finishTaskInWindow(id, done, on);
   const rowOf = () => app.querySelector(`.sched-row[data-task="${CSS.escape(id)}"]${on ? `:has(.sched-check[data-on="${CSS.escape(on)}"])` : ''}`);
   const row = rowOf();
   if (row) row.classList.toggle('done', done);
@@ -715,9 +715,11 @@ async function openTaskAnywhere(id, on = null) {
   taskSheet(id, on);
 }
 
-var tasksWin = { folded: false, practice: '', practiceFolded: true, timer: 0, tasks: null };
+var tasksWin = { folded: false, practice: '', practiceFolded: true, timer: 0, tasks: null, finished: new Map() };
 const TASKS_FOLDED = 'leo-tasks-folded';
 const TASKS_AHEAD_DAYS = 7;
+const TASK_DONE_MS = 1200;
+const MOST_TASK_FEEDBACK = 80;
 
 function dock() {
   let box = document.getElementById('dock');
@@ -743,19 +745,53 @@ try {
   tasksWin.folded = false;
 }
 
-function tasksGroups(tasks) {
+function tasksGroups(tasks, finishing = false) {
   const today = S.dayKey(new Date());
   const ahead = S.dayKey(S.addDays(new Date(), TASKS_AHEAD_DAYS));
   const groups = [['Overdue', []], ['Today', []], ['Coming up', []], ['No date', []]];
   for (const task of tasks) {
-    const t = S.repeats(task) ? S.nextOpen(task, today, ahead) : task;
-    if (!t || t.done) continue;
+    const held = finishing && tasksWin.finished.get(task.id);
+    const t = held ? held.task : S.repeats(task) ? S.nextOpen(task, today, ahead) : task;
+    if (!t || (t.done && !held)) continue;
     if (!t.date) groups[3][1].push(t);
     else if (t.date < today) groups[0][1].push(t);
     else if (t.date === today) groups[1][1].push(t);
     else if (t.date <= ahead) groups[2][1].push(t);
   }
   return groups.filter(([, list]) => list.length);
+}
+
+function finishTaskInWindow(id, done, on) {
+  const held = tasksWin.finished.get(id);
+  if (held) clearTimeout(held.timer);
+  tasksWin.finished.delete(id);
+  const task = calFind(id);
+  const row = tasksBox.querySelector(`.tasks-row[data-task="${CSS.escape(id)}"]`);
+  if (!done || !task || !row) { drawTasksWindow(); return; }
+  if (tasksWin.finished.size >= MOST_TASK_FEEDBACK) {
+    const oldest = tasksWin.finished.keys().next().value;
+    clearTimeout(tasksWin.finished.get(oldest).timer);
+    tasksWin.finished.delete(oldest);
+  }
+  const entry = { task: { ...task, done: true, date: on || task.date, on }, timer: 0 };
+  tasksWin.finished.set(id, entry);
+  drawTasksWindow();
+  const check = tasksBox.querySelector(`.sched-check[data-id="${CSS.escape(id)}"]`);
+  if (check && !stillMotion()) check.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.18)' }, { transform: 'scale(1)' }], { duration: MOTION_MS, easing: EASE_OUT });
+  entry.timer = setTimeout(() => {
+    if (tasksWin.finished.get(id) !== entry) return;
+    const row = tasksBox.querySelector(`.tasks-row[data-task="${CSS.escape(id)}"]`);
+    const finish = () => {
+      if (tasksWin.finished.get(id) !== entry) return;
+      tasksWin.finished.delete(id);
+      drawTasksWindow();
+    };
+    if (row) {
+      const height = row.getBoundingClientRect().height;
+      row.style.minHeight = '0';
+      slideHeight(row, height, 0, finish);
+    } else finish();
+  }, TASK_DONE_MS);
 }
 
 function tasksDue() {
@@ -776,14 +812,16 @@ function drawTasksWindow() {
   if (practice !== tasksWin.practice) { tasksWin.practice = practice; tasksWin.practiceFolded = true; }
   const folded = practice ? tasksWin.practiceFolded : tasksWin.folded;
   const tasks = tasksWin.tasks || (cal.data && cal.data.tasks) || [];
-  const groups = tasksGroups(tasks);
+  const groups = tasksGroups(tasks, true);
   const open = groups.reduce((n, [, list]) => n + list.length, 0);
   const here = /^#\/calendar/.test(location.hash);
   tasksBox.hidden = !open || here || state.view === 'locked';
   if (tasksBox.hidden) return;
   const late = groups.find(([name]) => name === 'Overdue');
-  const row = (t) => `<div class="tasks-row" data-task="${esc(t.id)}" style="--tone: var(${toneOfTask(t)})">
-    <input type="checkbox" class="sched-check" data-action="task-done" data-id="${esc(t.id)}"${t.on ? ` data-on="${esc(t.on)}"` : ''} aria-label="Done: ${esc(t.title)}">
+  const active = tasksBox.contains(document.activeElement) ? document.activeElement : null;
+  const focus = active ? {action: active.dataset.action, id: active.dataset.id, on: active.dataset.on} : null;
+  const row = (t) => `<div class="tasks-row${t.done ? ' done' : ''}" data-task="${esc(t.id)}" style="--tone: var(${toneOfTask(t)})">
+    <input type="checkbox" class="sched-check" data-action="task-done" data-id="${esc(t.id)}"${t.on ? ` data-on="${esc(t.on)}"` : ''}${t.done ? ' checked' : ''} aria-label="Done: ${esc(t.title)}">
     <button type="button" class="tasks-title" data-action="task-open-here" data-id="${esc(t.id)}"${t.on ? ` data-on="${esc(t.on)}"` : ''}>${esc(t.title)}</button>
     ${t.date ? `<span class="tasks-when">${esc(t.date === S.dayKey(new Date()) ? (t.time ? S.timeLabel(t.time, calLocale()) : 'Today') : S.fromKey(t.date).toLocaleDateString(calLocale(), { month: 'short', day: 'numeric' }))}</span>` : `<button type="button" class="btn plain sm" data-action="task-date" data-id="${esc(t.id)}">Set date</button>`}
   </div>`;
@@ -799,6 +837,10 @@ function drawTasksWindow() {
     </div>
     <div class="tasks-body">${groups.map(([name, list]) => `<div class="tasks-group${name === 'Overdue' ? ' late' : ''}">${name}</div>${list.slice(0, name === 'No date' ? 5 : 20).map(row).join('')}`).join('')}</div>
     <div class="tasks-foot"><button type="button" class="link-btn" data-action="calendar">Open calendar</button></div>`;
+  if (focus) {
+    const same = [...tasksBox.querySelectorAll('[data-action]')].find(el => el.dataset.action === focus.action && el.dataset.id === focus.id && el.dataset.on === focus.on);
+    (same || tasksBox.querySelector('[data-action="tasks-fold"]'))?.focus({ preventScroll: true });
+  }
 }
 
 function setTasksFolded(folded) {
