@@ -4882,7 +4882,7 @@ test('whiteboards pan, labels drag and typed labels land where clicked while Res
   await reset();
   await expect.poll(() => item.workspace.answer).toBe(starter);
   expect(JSON.stringify(item.workspace.board)).toBe(drawing);
-  await page.locator('[data-interview="problem"][data-id="whiteboard-problem-2"]').click();
+  await chooseProblem(page, 2);
   await expect(page.locator('#interview-answer')).toHaveValue(`${starter}\n# draft 2`);
   await page.locator('#chat-toggle').click();
   await expect(page.locator('#chat-context')).toContainText('Problem 2');
@@ -4899,7 +4899,7 @@ test('whiteboards pan, labels drag and typed labels land where clicked while Res
   expect(item.problems[0].workspace.answer).toBe(starter);
   await page.locator('[data-chat="close"]').click();
   await page.reload();
-  await page.locator('[data-interview="problem"][data-id="whiteboard-problem-1"]').click();
+  await chooseProblem(page, 1);
   await page.locator('[data-interview="tab"][data-tab="board"]').click();
   await expect(board.locator('text')).toHaveText(['Client → Queue', 'Far away label']);
   expect(JSON.stringify(item.workspace.board)).toBe(drawing);
