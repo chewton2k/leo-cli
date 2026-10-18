@@ -1,12 +1,73 @@
 use std::io::{BufRead, Read};
 use std::process::Child;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
 pub(crate) const MOST_OUTPUT: usize = 16 * 1024 * 1024;
 pub(crate) const MOST_LINE: usize = 2 * 1024 * 1024;
 pub(crate) const QUEUED_MESSAGES: usize = 8;
+const MOST_CHILDREN: usize = 64;
+
+type ChildHandle = Mutex<Option<Child>>;
+
+#[derive(Default)]
+struct Children {
+    stopped: AtomicBool,
+    held: Mutex<Vec<Weak<ChildHandle>>>,
+}
+
+fn children() -> &'static Children {
+    static CHILDREN: OnceLock<Children> = OnceLock::new();
+    CHILDREN.get_or_init(Children::default)
+}
+
+pub(crate) fn stopping() -> bool {
+    children().stopped.load(Ordering::SeqCst)
+}
+
+pub(crate) fn stop_writing() {
+    children().stop();
+}
+
+fn signal(child: &Arc<ChildHandle>) {
+    let mut child = child.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(child) = child.as_mut() {
+        super::agent_cli::stop_all(child);
+    }
+}
+
+impl Children {
+    fn track(&self, child: &Arc<ChildHandle>) {
+        let stop = {
+            let mut held = self.held.lock().unwrap_or_else(|e| e.into_inner());
+            held.retain(|child| child.strong_count() > 0);
+            if self.stopped.load(Ordering::SeqCst) || held.len() >= MOST_CHILDREN {
+                true
+            } else {
+                held.push(Arc::downgrade(child));
+                false
+            }
+        };
+        if stop {
+            signal(child);
+        }
+    }
+
+    fn stop(&self) {
+        self.stopped.store(true, Ordering::SeqCst);
+        let held: Vec<_> = self
+            .held
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .filter_map(Weak::upgrade)
+            .collect();
+        for child in held {
+            signal(&child);
+        }
+    }
+}
 
 pub(crate) fn line(reader: &mut impl BufRead) -> std::io::Result<Option<String>> {
     let mut bytes = Vec::new();
@@ -38,28 +99,32 @@ pub(crate) fn output(reader: impl Read) -> (String, bool) {
     )
 }
 
-pub(crate) struct Process(pub(crate) Arc<Mutex<Option<Child>>>);
+pub(crate) struct Process(pub(crate) Arc<ChildHandle>);
 
 impl Process {
     pub(crate) fn new(child: Child) -> Self {
-        Self(Arc::new(Mutex::new(Some(child))))
+        Self::tracked(child, children())
+    }
+
+    fn tracked(child: Child, children: &Children) -> Self {
+        let process = Self(Arc::new(Mutex::new(Some(child))));
+        children.track(&process.0);
+        process
     }
 
     pub(crate) fn stop(&self) {
-        let child = self.0.lock().ok().and_then(|mut child| child.take());
+        let child = self.0.lock().unwrap_or_else(|e| e.into_inner()).take();
         if let Some(mut child) = child {
             super::agent_cli::stop_all(&mut child);
             let _ = child.wait();
-            if let Ok(mut held) = self.0.lock() {
-                *held = Some(child);
-            }
+            *self.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(child);
         }
     }
 }
 
 impl Drop for Process {
     fn drop(&mut self) {
-        let child = self.0.lock().ok().and_then(|mut child| child.take());
+        let child = self.0.lock().unwrap_or_else(|e| e.into_inner()).take();
         if let Some(mut child) = child {
             super::agent_cli::stop_all(&mut child);
             let _ = child.wait();
@@ -92,13 +157,9 @@ impl Watchdog {
             std::thread::spawn(move || {
                 while !finished.load(Ordering::Relaxed) {
                     let silent = last.lock().map(|l| l.elapsed()).unwrap_or_default();
-                    if Instant::now() >= until || quiet.is_some_and(|q| silent >= q) {
+                    if stopping() || Instant::now() >= until || quiet.is_some_and(|q| silent >= q) {
                         stalled.store(true, Ordering::Relaxed);
-                        if let Ok(mut child) = child.lock() {
-                            if let Some(child) = child.as_mut() {
-                                super::agent_cli::stop_all(child);
-                            }
-                        }
+                        signal(&child);
                         return;
                     }
                     std::thread::sleep(Duration::from_millis(25));
@@ -236,5 +297,112 @@ mod tests {
             .try_wait()
             .unwrap();
         assert!(status.is_some());
+    }
+
+    fn wait_for_exit(process: &Process) {
+        let until = Instant::now() + Duration::from_secs(2);
+        while process
+            .0
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .try_wait()
+            .unwrap()
+            .is_none()
+        {
+            assert!(Instant::now() < until, "the writing child did not stop");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn shutdown_stops_only_its_registered_children_and_is_sticky() {
+        let registry = Children::default();
+        let unrelated = Children::default();
+        let writing = Process::tracked(child("sleep 30"), &registry);
+        let other = Process::tracked(child("sleep 30"), &unrelated);
+        let started = Instant::now();
+        registry.stop();
+        assert!(started.elapsed() < Duration::from_secs(1));
+        wait_for_exit(&writing);
+        assert!(other
+            .0
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .try_wait()
+            .unwrap()
+            .is_none());
+        let late = Process::tracked(child("sleep 30"), &registry);
+        wait_for_exit(&late);
+    }
+
+    #[test]
+    fn registration_racing_shutdown_cannot_leave_a_writing_child_alive() {
+        for _ in 0..8 {
+            let registry = Arc::new(Children::default());
+            let barrier = Arc::new(std::sync::Barrier::new(2));
+            let stopping = {
+                let registry = Arc::clone(&registry);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    registry.stop();
+                })
+            };
+            let child = child("sleep 30");
+            barrier.wait();
+            let writing = Process::tracked(child, &registry);
+            stopping.join().unwrap();
+            wait_for_exit(&writing);
+        }
+    }
+
+    #[test]
+    fn a_full_registry_refuses_to_leave_an_untracked_child_running() {
+        let registry = Children::default();
+        let first = Process::tracked(child("sleep 30"), &registry);
+        {
+            let mut held = registry.held.lock().unwrap();
+            while held.len() < MOST_CHILDREN {
+                held.push(Arc::downgrade(&first.0));
+            }
+        }
+        let overflow = Process::tracked(child("sleep 30"), &registry);
+        wait_for_exit(&overflow);
+        assert_eq!(registry.held.lock().unwrap().len(), MOST_CHILDREN);
+    }
+
+    #[test]
+    fn shutdown_recovers_poisoned_child_handles() {
+        let registry = Children::default();
+        let writing = Process::tracked(child("sleep 30"), &registry);
+        let handle = Arc::clone(&writing.0);
+        assert!(std::thread::spawn(move || {
+            let _held = handle.lock().unwrap();
+            panic!("fixture child owner failed");
+        })
+        .join()
+        .is_err());
+        registry.stop();
+        let until = Instant::now() + Duration::from_secs(2);
+        while writing
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_mut()
+            .unwrap()
+            .try_wait()
+            .unwrap()
+            .is_none()
+        {
+            assert!(
+                Instant::now() < until,
+                "the poisoned writing child did not stop"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 }

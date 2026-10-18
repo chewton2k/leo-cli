@@ -825,3 +825,8 @@ Successful Felix replies may contain only proposal, ask or quiz cards. Stopped
 means cancellation; normal empty completion offers retry guidance. Saved replies
 retain client elapsed milliseconds and a cancellation flag, including card-only
 turns, so future slow turns can be distinguished from canceled replies.
+
+Server shutdown drains active requests and streams for at most five seconds; a
+second Ctrl-C skips the drain. Graph/idle tasks stop on the first interrupt.
+Warm-session cleanup and tunnel shutdown share a one-second deadline, with the
+tunnel's Drop guard retaining responsibility for signaling its process group.

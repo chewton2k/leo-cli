@@ -26,6 +26,7 @@ pub mod review;
 mod routes;
 pub mod search;
 pub mod sessions;
+mod shutdown;
 pub mod steer;
 pub mod storage;
 mod storage_saved;
@@ -599,34 +600,59 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
     struct Background {
         graph: tokio::task::JoinHandle<()>,
         idle: tokio::task::JoinHandle<()>,
-        warm: Arc<warm::Slot>,
+    }
+    impl Background {
+        fn stop(&self) {
+            self.graph.abort();
+            self.idle.abort();
+        }
     }
     impl Drop for Background {
         fn drop(&mut self) {
-            self.graph.abort();
-            self.idle.abort();
-            self.warm.clear();
+            self.stop();
         }
     }
+    let warm = Arc::clone(&state.warm);
     let background = Background {
         graph: tokio::spawn(keep_graph_current(state.clone())),
         idle: tokio::spawn(stop_idle_sessions(Arc::clone(&state.warm))),
-        warm: Arc::clone(&state.warm),
     };
     let app = router(state);
     let _awake = keep_awake();
-    let served = axum::serve(
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let server = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
     .with_graceful_shutdown(async {
-        let _ = tokio::signal::ctrl_c().await;
-    })
+        let _ = stopped.await;
+    });
+    let served = shutdown::wait(
+        server,
+        tokio::signal::ctrl_c(),
+        tokio::signal::ctrl_c(),
+        || {
+            eprintln!("  Stopping leo serve… Press Ctrl-C again to stop waiting.");
+            background.stop();
+            let _ = stop.send(());
+        },
+    )
     .await;
     drop(background);
-    if let Some(tunnel) = tunnel {
-        tunnel.stop().await;
-    }
+    let cleanup = tokio::task::spawn_blocking(move || warm.clear());
+    let _ = tokio::time::timeout(shutdown::CLEANUP, async move {
+        tokio::join!(
+            async {
+                let _ = cleanup.await;
+            },
+            async {
+                if let Some(tunnel) = tunnel {
+                    tunnel.stop().await;
+                }
+            }
+        );
+    })
+    .await;
     served?;
     Ok(())
 }

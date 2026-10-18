@@ -28,6 +28,23 @@ fn contended(error: &std::io::Error) -> bool {
             .is_some_and(|code| Some(code) == fs2::lock_contended_error().raw_os_error())
 }
 
+#[derive(Debug)]
+struct LockBusy;
+
+impl std::fmt::Display for LockBusy {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(
+            "These settings are busy. Let the current Leo operation finish and try again.",
+        )
+    }
+}
+
+impl std::error::Error for LockBusy {}
+
+pub(crate) fn busy(error: &anyhow::Error) -> bool {
+    error.is::<LockBusy>()
+}
+
 pub(crate) fn lock(parent: &Path, name: &str, wait: Duration) -> Result<File> {
     directory(parent)?;
     let path = leo_core::paths::contained_path(parent, Path::new(name))?;
@@ -64,9 +81,7 @@ pub(crate) fn lock(parent: &Path, name: &str, wait: Duration) -> Result<File> {
             Err(error) if contended(&error) && Instant::now() < until => {
                 std::thread::sleep(Duration::from_millis(10))
             }
-            Err(error) if contended(&error) => anyhow::bail!(
-                "Another Leo process is using these settings. Let it finish and try again."
-            ),
+            Err(error) if contended(&error) => return Err(LockBusy.into()),
             Err(error) => {
                 return Err(error).context("The private settings lock could not be acquired")
             }
@@ -82,7 +97,12 @@ mod tests {
     fn independent_handles_cannot_modify_private_state_at_the_same_time() {
         let dir = tempfile::tempdir().unwrap();
         let held = lock(dir.path(), ".lock", Duration::ZERO).unwrap();
-        assert!(lock(dir.path(), ".lock", Duration::ZERO).is_err());
+        let contention = lock(dir.path(), ".lock", Duration::ZERO).unwrap_err();
+        assert!(busy(&contention));
+        assert!(!contention.to_string().contains("Another Leo process"));
+        assert!(!busy(&anyhow::Error::new(std::io::Error::from(
+            std::io::ErrorKind::PermissionDenied
+        ))));
         drop(held);
         assert!(lock(dir.path(), ".lock", Duration::ZERO).is_ok());
     }

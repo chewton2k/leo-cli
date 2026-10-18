@@ -19,6 +19,10 @@ use crate::config::Config;
 /// Room for a long lecture's notes, for a provider with no cap of its own.
 pub const STRUCTURE_MAX_TOKENS: u32 = 8192;
 
+pub fn stop_writing() {
+    provider::process::stop_writing();
+}
+
 pub fn writing_budget() -> budget::Budget {
     budget::writing_budget(&crate::config::Config::load())
 }

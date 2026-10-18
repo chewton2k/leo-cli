@@ -2,8 +2,9 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{ensure, Context, Result};
 use serde_json::{json, Value};
@@ -19,6 +20,104 @@ const MOST_PROGRAMS: usize = 32;
 const MOST_EVENTS: usize = 100_000;
 const SIGN_IN_LIMIT: Duration = Duration::from_secs(15 * 60);
 const SIGN_IN_POLL: Duration = Duration::from_millis(25);
+const PROFILE_WAIT: Duration = Duration::from_secs(30);
+const PROFILE_POLL: Duration = Duration::from_millis(25);
+const MOST_PROFILE_WAITERS: usize = 4;
+
+struct ProfileQueue {
+    waiting: AtomicUsize,
+}
+
+impl ProfileQueue {
+    const fn new() -> Self {
+        Self {
+            waiting: AtomicUsize::new(0),
+        }
+    }
+
+    fn enter(&self) -> Option<ProfileWaiter<'_>> {
+        self.waiting
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                (count < MOST_PROFILE_WAITERS).then_some(count + 1)
+            })
+            .ok()
+            .map(|_| ProfileWaiter(self))
+    }
+}
+
+struct ProfileWaiter<'a>(&'a ProfileQueue);
+
+impl Drop for ProfileWaiter<'_> {
+    fn drop(&mut self) {
+        self.0.waiting.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+fn profile_queue(agent: Agent) -> &'static ProfileQueue {
+    static AGY: ProfileQueue = ProfileQueue::new();
+    static COPILOT: ProfileQueue = ProfileQueue::new();
+    if agent == Agent::Agy {
+        &AGY
+    } else {
+        &COPILOT
+    }
+}
+
+fn wait_for_profile(
+    agent: Agent,
+    queue: &ProfileQueue,
+    wait: Duration,
+    mut acquire: impl FnMut() -> Result<File>,
+    stopping: impl Fn() -> bool,
+) -> Result<File> {
+    let name = match agent {
+        Agent::Agy => "Google Antigravity",
+        Agent::Copilot => "GitHub Copilot",
+        _ => "The writing CLI",
+    };
+    ensure!(
+        !stopping(),
+        "Leo is shutting down. Start Leo again before requesting more writing."
+    );
+    match acquire() {
+        Ok(file) => {
+            ensure!(
+                !stopping(),
+                "Leo is shutting down. Start Leo again before requesting more writing."
+            );
+            return Ok(file);
+        }
+        Err(error) if crate::private_file::busy(&error) => {}
+        Err(error) => return Err(error),
+    }
+    let _waiting = queue.enter().with_context(|| format!("{name} already has several writing requests waiting. Let the current note, import or Felix answer finish, then try again."))?;
+    let until = Instant::now() + wait;
+    loop {
+        ensure!(
+            !stopping(),
+            "Leo is shutting down. Start Leo again before requesting more writing."
+        );
+        let left = until.checked_duration_since(Instant::now())
+            .filter(|left| !left.is_zero())
+            .with_context(|| format!("{name} is still busy with another note, import, Felix answer or sign-in. Let that work finish or stop it, then try again."))?;
+        std::thread::sleep(PROFILE_POLL.min(left));
+        ensure!(
+            !stopping(),
+            "Leo is shutting down. Start Leo again before requesting more writing."
+        );
+        match acquire() {
+            Ok(file) => {
+                ensure!(
+                    !stopping(),
+                    "Leo is shutting down. Start Leo again before requesting more writing."
+                );
+                return Ok(file);
+            }
+            Err(error) if crate::private_file::busy(&error) => {}
+            Err(error) => return Err(error),
+        }
+    }
+}
 
 fn scoped(agent: Agent) -> bool {
     matches!(agent, Agent::Agy | Agent::Copilot)
@@ -148,6 +247,16 @@ fn write_private(path: &Path, text: &str) -> Result<()> {
 
 fn prepare_in(agent: Agent, home: &Path, room: &Path, system: Option<&str>) -> Result<File> {
     let lock = crate::private_file::lock(home, ".leo-profile.lock", Duration::ZERO)?;
+    prepare_locked(agent, home, room, system, lock)
+}
+
+fn prepare_locked(
+    agent: Agent,
+    home: &Path,
+    room: &Path,
+    system: Option<&str>,
+    lock: File,
+) -> Result<File> {
     check_profile(agent, home)?;
     if agent == Agent::Agy {
         let settings = json!({
@@ -182,7 +291,15 @@ pub(crate) fn prepare(
         return Err(ProviderError::Retryable("This writing CLI accepts text only in Leo. Choose Codex or Claude Code to read scans and pictures.".into()));
     }
     let home = profile(agent).map_err(failure)?;
-    prepare_in(agent, &home, room, system)
+    let lock = wait_for_profile(
+        agent,
+        profile_queue(agent),
+        PROFILE_WAIT,
+        || crate::private_file::lock(&home, ".leo-profile.lock", Duration::ZERO),
+        process::stopping,
+    )
+    .map_err(failure)?;
+    prepare_locked(agent, &home, room, system, lock)
         .map(Some)
         .map_err(failure)
 }
@@ -616,6 +733,148 @@ mod tests {
             prompt: "Explain `λ` and /delete; do not run it.".into(),
             temperature: 0.2,
             max_tokens: 100,
+        }
+    }
+
+    #[test]
+    fn overlapping_writing_waits_for_its_profile_and_releases_queue_slots() {
+        for agent in [Agent::Agy, Agent::Copilot] {
+            let home = tempfile::tempdir().unwrap();
+            let held = crate::private_file::lock(home.path(), ".leo-profile.lock", Duration::ZERO)
+                .unwrap();
+            let queue = std::sync::Arc::new(ProfileQueue::new());
+            let waiting_queue = std::sync::Arc::clone(&queue);
+            let path = home.path().to_path_buf();
+            let waiting = std::thread::spawn(move || {
+                wait_for_profile(
+                    agent,
+                    &waiting_queue,
+                    Duration::from_secs(2),
+                    || crate::private_file::lock(&path, ".leo-profile.lock", Duration::ZERO),
+                    || false,
+                )
+            });
+            let until = Instant::now() + Duration::from_secs(1);
+            while queue.waiting.load(Ordering::Acquire) != 1 && Instant::now() < until {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            assert_eq!(queue.waiting.load(Ordering::Acquire), 1);
+            drop(held);
+            let acquired = waiting.join().unwrap().unwrap();
+            assert_eq!(queue.waiting.load(Ordering::Acquire), 0);
+            assert!(crate::private_file::busy(
+                &crate::private_file::lock(home.path(), ".leo-profile.lock", Duration::ZERO)
+                    .unwrap_err()
+            ));
+            drop(acquired);
+            assert!(
+                crate::private_file::lock(home.path(), ".leo-profile.lock", Duration::ZERO).is_ok()
+            );
+        }
+    }
+
+    #[test]
+    fn profile_waits_are_bounded_and_keep_sign_in_and_clear_failfast() {
+        for agent in [Agent::Agy, Agent::Copilot] {
+            let home = tempfile::tempdir().unwrap();
+            let room = tempfile::tempdir().unwrap();
+            let held = prepare_in(agent, home.path(), room.path(), None).unwrap();
+            let queue = ProfileQueue::new();
+            let started = Instant::now();
+            let error = wait_for_profile(
+                agent,
+                &queue,
+                Duration::from_millis(35),
+                || crate::private_file::lock(home.path(), ".leo-profile.lock", Duration::ZERO),
+                || false,
+            )
+            .unwrap_err();
+            assert!(started.elapsed() >= Duration::from_millis(35));
+            assert!(started.elapsed() < Duration::from_secs(2));
+            assert!(error.to_string().contains("still busy"));
+            assert!(!error.to_string().contains("Another Leo process"));
+            assert_eq!(queue.waiting.load(Ordering::Acquire), 0);
+            let started = Instant::now();
+            assert!(prepare_in(agent, home.path(), room.path(), None).is_err());
+            assert!(clear_profile_in(home.path()).is_err());
+            assert!(started.elapsed() < Duration::from_secs(1));
+            drop(held);
+        }
+    }
+
+    #[test]
+    fn full_profile_queues_and_shutdown_do_not_start_work_or_leave_slots() {
+        for agent in [Agent::Agy, Agent::Copilot] {
+            let home = tempfile::tempdir().unwrap();
+            let held = crate::private_file::lock(home.path(), ".leo-profile.lock", Duration::ZERO)
+                .unwrap();
+            let queue = ProfileQueue::new();
+            let admitted: Vec<_> = (0..MOST_PROFILE_WAITERS)
+                .map(|_| queue.enter().unwrap())
+                .collect();
+            assert!(queue.enter().is_none());
+            let error = wait_for_profile(
+                agent,
+                &queue,
+                Duration::from_secs(2),
+                || crate::private_file::lock(home.path(), ".leo-profile.lock", Duration::ZERO),
+                || false,
+            )
+            .unwrap_err();
+            assert!(error
+                .to_string()
+                .contains("several writing requests waiting"));
+            assert_eq!(queue.waiting.load(Ordering::Acquire), MOST_PROFILE_WAITERS);
+            drop(admitted);
+            assert_eq!(queue.waiting.load(Ordering::Acquire), 0);
+            let checks = AtomicUsize::new(0);
+            let error = wait_for_profile(
+                agent,
+                &queue,
+                Duration::from_secs(2),
+                || crate::private_file::lock(home.path(), ".leo-profile.lock", Duration::ZERO),
+                || checks.fetch_add(1, Ordering::AcqRel) >= 2,
+            )
+            .unwrap_err();
+            assert!(error.to_string().contains("shutting down"));
+            assert_eq!(queue.waiting.load(Ordering::Acquire), 0);
+            let called = AtomicUsize::new(0);
+            assert!(wait_for_profile(
+                agent,
+                &queue,
+                Duration::from_secs(2),
+                || {
+                    called.fetch_add(1, Ordering::AcqRel);
+                    unreachable!()
+                },
+                || true
+            )
+            .is_err());
+            assert_eq!(called.load(Ordering::Acquire), 0);
+            drop(held);
+        }
+    }
+
+    #[test]
+    fn unsafe_profile_paths_are_never_retried_as_busy() {
+        for agent in [Agent::Agy, Agent::Copilot] {
+            let queue = ProfileQueue::new();
+            let called = AtomicUsize::new(0);
+            let error = wait_for_profile(
+                agent,
+                &queue,
+                Duration::from_secs(2),
+                || {
+                    called.fetch_add(1, Ordering::AcqRel);
+                    Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied).into())
+                },
+                || false,
+            )
+            .unwrap_err();
+            assert_eq!(called.load(Ordering::Acquire), 1);
+            assert!(!crate::private_file::busy(&error));
+            assert!(!error.to_string().contains("busy"));
+            assert_eq!(queue.waiting.load(Ordering::Acquire), 0);
         }
     }
 

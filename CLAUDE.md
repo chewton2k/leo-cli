@@ -44,7 +44,9 @@ Two entry modes share one command vocabulary and one `Store`:
 1. **TUI** (`leo-tui`) — `leo` with no arguments in a TTY. Three panes over a
    `/` command line and a status line. Outside a TTY, bare `leo` exits 1.
 2. **CLI subcommands** (`cli/`) — `Serve` runs on a `tokio` runtime; all others
-   are synchronous. `doctor` is the one command for "what works, fix what does
+   are synchronous. Server exit signals only Leo-owned writing subprocesses and
+   gives blocking workers a five-second runtime shutdown deadline; an occupied
+   writer must not keep Ctrl-C waiting indefinitely. `doctor` is the one command for "what works, fix what does
    not" (`setup` was folded into it; `model`, `config`, `setup` no longer parse).
 
 Both convert their input into an `action::Action` and apply it through the same

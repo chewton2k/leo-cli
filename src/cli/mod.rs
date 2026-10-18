@@ -371,7 +371,7 @@ pub fn run(cli: Cli) -> Result<()> {
                     })
                 },
             );
-            tokio::runtime::Runtime::new()?.block_on(leo_web::serve(
+            serve::run(leo_web::serve(
                 leo_web::ServeOptions {
                     port,
                     local,

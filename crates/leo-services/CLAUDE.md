@@ -253,8 +253,10 @@ Claude Code use the agent budget (three parts at once); AGY and Copilot keep
 agent context/output limits but process one part at a time because their private
 profiles hold an exclusive cross-process lock for each call. Ollama uses the
 smaller local budget (one part). A fallback chain containing an isolated profile
-also processes one part at a time. Independent concurrent workflows still refuse
-an occupied profile rather than waiting behind an unbounded queue.
+also processes one part at a time. Independent workflows admit at most four
+waiting requests per provider and wait up to 30 seconds for its profile lock,
+checking shutdown every 25ms. A full queue or deadline produces an actionable
+busy message; sign-in and Storage cleanup remain failfast.
 Context/output limits bound actual part sizes. Long recordings and uploads share
 this calculation and report progress from the calling thread. Speech chunking and note synthesis/gap-filling stay unchanged.
 
@@ -441,3 +443,11 @@ writes its successful help listing to stderr. The command's parent pipe writers
 are dropped immediately after spawn so EOF remains meaningful; the existing
 output cap and whole-process watchdog cover both streams. A present CLI that
 fails this check reports unverified safety controls, never a missing installation.
+
+AGY and GitHub Copilot writing share one exclusive lock per private profile across
+notes, imports and Felix. Routine overlapping requests admit at most four waiting
+callers per provider and wait up to 30 seconds, checking shutdown every 25ms; only
+typed lock contention is retried. Admission slots and file locks release on every
+return or unwind. Sign-in and Storage cleanup stay failfast so neither can alter
+a profile in use; busy messages describe current Leo work rather than assuming
+a second process. Unsafe paths and other I/O failures are never retried as busy.
