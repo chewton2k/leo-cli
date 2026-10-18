@@ -36,12 +36,22 @@ impl ProfileQueue {
     }
 
     fn enter(&self) -> Option<ProfileWaiter<'_>> {
-        self.waiting
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
-                (count < MOST_PROFILE_WAITERS).then_some(count + 1)
-            })
-            .ok()
-            .map(|_| ProfileWaiter(self))
+        let mut count = self.waiting.load(Ordering::Acquire);
+        for _ in 0..=MOST_PROFILE_WAITERS {
+            if count >= MOST_PROFILE_WAITERS {
+                return None;
+            }
+            match self.waiting.compare_exchange(
+                count,
+                count + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return Some(ProfileWaiter(self)),
+                Err(current) => count = current,
+            }
+        }
+        None
     }
 }
 
