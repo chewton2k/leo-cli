@@ -502,7 +502,7 @@ function chatSendFixture(mode = 'chat', id = 'practice', access = 'ask', before 
   const noop = () => {};
   const context = vm.createContext({
     state, input, AbortController, TextDecoder, Date: class extends Date { static now() { return stream.clock ? stream.clock() : Date.now(); } }, working: new Map(), MOST_REFS: C.MOST_REFS,
-    historyText: C.historyText, threadRefs: C.threadRefs, recentNotes: C.recentNotes, sessionBody: C.sessionBody, splitLines: C.splitLines, grade: C.grade, scoreSession: C.scoreSession,
+    historyText: C.historyText, modelHistory: C.modelHistory, historyRequest: C.historyRequest, threadRefs: C.threadRefs, recentNotes: C.recentNotes, sessionBody: C.sessionBody, splitLines: C.splitLines, grade: C.grade, scoreSession: C.scoreSession,
     cardOf: doc => doc, currentSession: () => null, closePick: noop, drawRefs: noop, fit: noop, awake: noop, mood: noop, thinking: noop, draw: noop, remember: noop, react: noop, talking: noop, onInterviewReply: noop,
     pose: noop, onSaved: noop, onChanged: noop, onOrganized: noop, queueMicrotask, organize: async card => { card.state = 'applied'; },
     $: () => contextBox, escape: esc,
@@ -703,5 +703,100 @@ test('the page saves the matching practice draft in every chat style before send
     session.switching = true;
     await assert.rejects(save({ id: 'practice', mode, challenge: 'problem-17' }), /switching/);
     assert.equal(saves, 1);
+  }
+});
+
+test('model history stays append only across quiz answers, hints, next cards and reloads', () => {
+  for (const mode of ['chat', 'study', 'interview']) {
+    const messages = [{ role: 'user', text: 'Practise this material.', mode }];
+    let quiz = { kind: 'free_response', question: 'Why does the invariant hold?', answer: 'The state preserves the condition.', correct: null };
+    messages.push({ role: 'assistant', text: 'Start here.', mode, quizzes: [quiz] });
+    let prior = C.modelHistory(messages);
+    for (const hint of [true, true, false, false, true, false]) {
+      const request = hint ? C.hintSay(quiz) : C.quizSay(quiz, 'It preserves the state.', null);
+      const pending = { role: 'assistant', text: '', pending: true, request };
+      if (hint) quiz.hints = [...(quiz.hints || []), pending];
+      else { quiz.given = 'It preserves the state.'; quiz.reply = pending; }
+      const asking = [...C.modelHistory(messages), { role: 'user', text: request }];
+      assert.deepEqual(asking.slice(0, prior.length), prior, `${mode}: the prior prefix stays unchanged`);
+      pending.text = hint ? 'Trace the state before and after.' : '[[correct]] The invariant remains true.';
+      pending.pending = false;
+      if (!hint) {
+        quiz.correct = true;
+        quiz = { kind: 'free_response', question: 'Which case comes next?', answer: 'The boundary case.', correct: null };
+        messages.push({ role: 'assistant', text: '', mode, quizzes: [quiz] });
+      }
+      const completed = C.modelHistory(messages);
+      assert.deepEqual(completed.slice(0, asking.length), asking);
+      assert.equal(completed.length, asking.length + 1);
+      assert.equal(completed.at(-1).role, 'assistant');
+      assert.deepEqual(C.modelHistory(JSON.parse(JSON.stringify(messages))), completed);
+      prior = completed;
+    }
+  }
+});
+
+test('legacy quiz replies and hints reconstruct stable request turns without changing the cards', () => {
+  for (const kind of Object.keys(C.QUIZ_KINDS)) {
+    const quiz = { kind, question: 'Choose the invariant.', answer: 'A', options: ['A', 'B'], given: 'A', correct: true, hint: { role: 'assistant', text: 'Look at the boundary.' }, hints: [{ role: 'assistant', text: 'Check the first element.' }], reply: { role: 'assistant', text: '[[correct]] The invariant holds.' } };
+    const messages = [{ role: 'assistant', text: '', quizzes: [quiz] }];
+    const before = JSON.stringify(messages);
+    const history = C.modelHistory(messages);
+    assert.equal(history.length, 7);
+    assert.deepEqual(history.map(m => m.role), ['assistant', 'user', 'assistant', 'user', 'assistant', 'user', 'assistant']);
+    assert.match(history[1].text, /Hint, please/);
+    assert.match(history[3].text, /Hints you already gave me/);
+    assert.match(history[5].text, /Quiz answer/);
+    assert.doesNotMatch(history[0].text, /answered|right|Felix replied/);
+    assert.equal(JSON.stringify(messages), before);
+    quiz.correct = false;
+    assert.deepEqual(C.modelHistory(messages), history);
+  }
+});
+
+test('canonical history preserves notes, actions and ordinary conversation changes while omitting failed or pending turns', () => {
+  const messages = [{ role: 'user', text: 'Change the note.', selection: { title: 'Heaps', text: 'The minimum is first.' } }, { role: 'assistant', text: 'A focused change.', proposals: [{ kind: 'edit', title: 'Heaps', find: 'before', replace: 'after', state: 'new' }] }, { role: 'assistant', text: 'Not sent.', pending: true }, { role: 'assistant', text: 'Failed.', error: 'Stopped.' }, { role: 'user', text: 'Waiting.', steer: 'waiting' }];
+  const before = C.modelHistory(messages);
+  assert.equal(before.length, 2);
+  assert.match(before[0].text, /Selected passage/);
+  assert.match(before[1].text, /waiting for the user/);
+  messages[1].proposals[0].state = 'applied';
+  assert.notDeepEqual(C.modelHistory(messages), before);
+  messages[1].proposals[0].state = 'new';
+  assert.deepEqual(C.modelHistory(messages), before);
+  const long = Array.from({ length: 900 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', text: `Turn ${i}` }));
+  const kept = C.modelHistory(long);
+  assert.ok(kept.length <= 400);
+  assert.equal(kept.at(-1).text, 'Turn 899');
+});
+
+test('actual quiz sends keep the prior model history stable through hints, marking and saved next questions', async () => {
+  for (const mode of ['chat', 'study', 'interview']) {
+    const hints = [true, true, false, false, true, false];
+    const replies = hints.map(hint => ({ events: [{ t: hint ? 'Check the boundary.' : '[[correct]] Your invariant holds.' }, ...(!hint ? [{ quiz: { kind: 'free_response', question: 'What happens next?', answer: 'The next state.', explain: 'Follow the state.' } }] : []), { done: true }] }));
+    const fixture = chatSendFixture(mode, 'practice', 'auto', undefined, { replies });
+    let quiz = { kind: 'free_response', question: 'Why is it preserved?', answer: 'The transition preserves it.', correct: null };
+    fixture.state.messages.push({ role: 'user', text: 'Practise this material.' }, { role: 'assistant', text: '', quizzes: [quiz] });
+    let previous = null;
+    for (const hint of hints) {
+      const text = hint ? C.hintSay(quiz) : 'The transition preserves the state.';
+      const extra = hint ? { card: quiz, hint: true } : { card: quiz, say: C.quizSay(quiz, text, null) };
+      if (!hint) { quiz.given = text; quiz.correct = null; }
+      await fixture.send(text, extra);
+      const request = fixture.requests.at(-1);
+      assert.equal(request.practice, true);
+      assert.equal(request.mark, !hint);
+      if (previous) {
+        assert.deepEqual(request.messages.slice(0, previous.length), previous);
+        assert.equal(request.messages.length, previous.length + 2);
+      }
+      const nested = hint ? quiz.hints.at(-1) : quiz.reply;
+      assert.equal(nested.request, request.messages.at(-1).text);
+      assert.match(nested.request, hint ? /Hint, please/ : /Quiz answer/);
+      assert.deepEqual(C.modelHistory(JSON.parse(JSON.stringify(fixture.state.messages))), C.modelHistory(fixture.state.messages));
+      previous = request.messages;
+      if (!hint) quiz = fixture.state.messages.at(-1).quizzes[0];
+    }
+    assert.match(C.modelHistory(fixture.state.messages).map(m => m.text).join('\n'), /\[\[correct\]\]/);
   }
 });

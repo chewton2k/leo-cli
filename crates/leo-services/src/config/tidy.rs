@@ -4,6 +4,8 @@ use crate::config::edit::{self, Task};
 use crate::config::Config;
 
 pub const RETIRED: &[&str] = &[
+    "agy",
+    "copilot",
     "lmstudio",
     "llamacpp",
     "vllm",
@@ -28,8 +30,6 @@ const KNOWN_KINDS: &[&str] = &[
     "parakeet",
     "claude_code",
     "codex",
-    "agy",
-    "copilot",
 ];
 
 fn stale(provider: &str, field: &str, value: &toml_edit::Value) -> bool {
@@ -66,6 +66,22 @@ fn same(item: &toml_edit::Value, built_in: &toml::Value) -> bool {
 
 pub fn tidy(doc: &mut DocumentMut) -> bool {
     let mut changed = false;
+    let removed: std::collections::BTreeSet<String> = doc
+        .get("providers")
+        .and_then(Item::as_table_like)
+        .map(|providers| {
+            providers
+                .iter()
+                .filter(|(_, block)| {
+                    matches!(
+                        block.get("kind").and_then(Item::as_str),
+                        Some("agy" | "copilot")
+                    )
+                })
+                .map(|(name, _)| name.to_string())
+                .collect()
+        })
+        .unwrap_or_default();
 
     for (task, default) in [
         (Task::Chat, &crate::config::DEFAULT_CHAT_CHAIN[..]),
@@ -82,6 +98,7 @@ pub fn tidy(doc: &mut DocumentMut) -> bool {
             .iter()
             .filter(|n| {
                 !RETIRED.contains(&n.as_str())
+                    && !removed.contains(n)
                     && (task != Task::Chat || !RETIRED_CHAT.contains(&n.as_str()))
             })
             .cloned()
@@ -95,7 +112,7 @@ pub fn tidy(doc: &mut DocumentMut) -> bool {
         }
     }
 
-    let Some(providers) = doc.get_mut("providers").and_then(Item::as_table_mut) else {
+    let Some(providers) = doc.get_mut("providers").and_then(Item::as_table_like_mut) else {
         return replace_old_engine(doc) || changed;
     };
     let names: Vec<String> = providers.iter().map(|(k, _)| k.to_string()).collect();
@@ -349,7 +366,7 @@ effort = "high"
         .parse::<DocumentMut>()
         .unwrap();
         assert!(tidy(&mut doc));
-        assert_eq!(edit::read_chain(&doc, Task::Chat), ["agy", "copilot"]);
+        assert_eq!(edit::read_chain(&doc, Task::Chat), ["ollama"]);
         assert_eq!(
             edit::read_chain(&doc, Task::Transcribe),
             ["openai_whisper", "gemini_speech", "xai_speech"]
@@ -358,8 +375,87 @@ effort = "high"
             doc["providers"]["openai"]["key_from"].as_str(),
             Some("shared-speech")
         );
-        assert_eq!(doc["providers"]["agy"]["effort"].as_str(), Some("high"));
+        assert!(doc["providers"].get("agy").is_none());
         assert!(!tidy(&mut doc));
+    }
+
+    #[test]
+    fn removed_cli_names_and_custom_aliases_migrate_without_deleting_saved_profiles() {
+        for chain in [
+            r#"["agy", "codex", "old-copilot"]"#,
+            r#"["claude_code", "copilot", "old-agy"]"#,
+            r#"["agy", "copilot", "old-agy", "old-copilot"]"#,
+        ] {
+            let home = tempfile::tempdir().unwrap();
+            let profile = home.path().join("agent-profiles/agy");
+            std::fs::create_dir_all(&profile).unwrap();
+            let token = profile.join("token.json");
+            std::fs::write(&token, "fake-private-saved-value").unwrap();
+            let path = home.path().join("config.toml");
+            std::fs::write(
+                &path,
+                format!(
+                    r#"[chat]
+chain = {chain}
+[transcribe]
+chain = ["openai_whisper", "gemini_speech", "xai_speech"]
+[providers.agy]
+kind = "agy"
+[providers.copilot]
+kind = "copilot"
+[providers.old-agy]
+kind = "agy"
+[providers.old-copilot]
+kind = "copilot"
+[providers.openai_whisper]
+model = "gpt-transcribe"
+"#
+                ),
+            )
+            .unwrap();
+            let config = Config::load_from(&path);
+            let expected = if chain.contains("codex") {
+                "codex"
+            } else if chain.contains("claude_code") {
+                "claude_code"
+            } else {
+                "ollama"
+            };
+            assert_eq!(config.chat.chain, [expected]);
+            assert_eq!(
+                config.transcribe.chain,
+                ["openai_whisper", "gemini_speech", "xai_speech"]
+            );
+            for name in ["agy", "copilot", "old-agy", "old-copilot"] {
+                assert!(config.provider(name).is_none());
+            }
+            assert_eq!(
+                std::fs::read_to_string(&token).unwrap(),
+                "fake-private-saved-value"
+            );
+            let rewritten = std::fs::read_to_string(&path).unwrap();
+            assert!(!rewritten.contains("kind = \"agy\""));
+            assert!(!rewritten.contains("kind = \"copilot\""));
+            assert!(!tidy(&mut rewritten.parse::<DocumentMut>().unwrap()));
+        }
+    }
+
+    #[test]
+    fn inline_legacy_aliases_migrate_before_the_provider_kind_is_deserialized() {
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"providers = { old = { kind = "agy" } }
+chat = { chain = ["old", "claude_code"] }
+transcribe = { chain = ["openai_whisper"] }
+"#,
+        )
+        .unwrap();
+        let config = Config::load_from(&path);
+        assert_eq!(config.chat.chain, ["claude_code"]);
+        assert_eq!(config.transcribe.chain, ["openai_whisper"]);
+        assert!(config.provider("old").is_none());
     }
 
     #[test]

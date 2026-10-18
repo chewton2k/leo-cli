@@ -4,11 +4,13 @@ mod calendar;
 mod combine;
 mod felix;
 mod housekeeping;
+mod interview_cost;
 mod notes;
 mod passages;
 mod pictures;
 mod recording;
 mod sources;
+mod study_context;
 mod tasks;
 mod trash;
 mod uploads;
@@ -80,6 +82,7 @@ fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<Strin
         rust_fetch: Default::default(),
         progress: Default::default(),
         warm: Default::default(),
+        work: Default::default(),
         chat: None,
         settings: None,
         backups: Default::default(),

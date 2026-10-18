@@ -40,6 +40,8 @@ impl leo_web::Conversation for Talk {
                 sink: exchange.piece,
                 restart: exchange.restart,
                 call: exchange.call,
+                stopped: exchange.stopped,
+                tools_done: exchange.tools_done,
             },
         )?;
         Ok(leo_web::Reply {

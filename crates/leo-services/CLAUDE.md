@@ -97,8 +97,7 @@ turns the device off (tests, e2e, CI).
 
 ### Model configuration
 
-Writing choices are Ollama, Codex, Claude Code, Google Antigravity (`agy`) and
-GitHub Copilot (`copilot`). Speech remains Parakeet and the existing OpenAI,
+Writing choices are Ollama, Codex and Claude Code. Speech remains Parakeet and the existing OpenAI,
 Gemini and xAI cloud options. Older API protocol implementations and account names
 remain for compatibility and speech credentials; do not expose them as writing
 choices. `config/tidy.rs` removes retired named cloud writers from saved chat
@@ -118,7 +117,7 @@ external `bin` (e2e fakes). `Transcriptions` kind (`openai_transcribe`, alias `g
 takes `path` (xAI: `stt`).
 
 `config/choice.rs` is the Settings model: `WRITING` (ollama, codex,
-claude_code, agy, copilot) and `SPEECH` (parakeet, openai_whisper,
+claude_code) and `SPEECH` (parakeet, openai_whisper,
 gemini_speech, xai_speech),
 each with a curated model list (empty = local; `Local` holds installed Ollama
 models from `/api/tags` and `speech_ready`).
@@ -167,27 +166,17 @@ in a fresh private `leo-writing-*` temp dir (0700, deleted after; a shared fixed
 treats a `result` with `is_error` as a failure); Codex has no partial text, so
 its stdout is the answer in one piece.
 
-AGY and Copilot use the same bounded text tool protocol, not native sessions, and
-accept text only; scans/photos need a compatible vision writer. `scoped_cli.rs`
-creates private `agent-profiles/agy` and `agent-profiles/copilot` beside config,
-sets provider-specific home directories, removes inherited token/customization
-variables during help probes and real commands, rejects custom MCP/hooks/plugins
-and requires advertised isolation flags before launch. AGY gets a private tool-free `leo` agent with command execution
-off; Copilot disables built-in MCP, custom instructions, remote export and updates,
-with filesystem/shell/memory tools denied. Only the explicitly configured tool
-allowlist is available; these controls are not an OS sandbox for arbitrary CLI
-binaries. Calls use fresh temporary working folders, while private sign-in/cache
-state persists in the profile. `leo doctor --sign-in agy|copilot` signs in there;
-an ordinary global CLI login is separate. A cross-process `.leo-profile.lock`
-protects calls/sign-in/cleanup. Storage exposes sizes and confirmed clearing only,
-refuses an active profile, and never exports authentication contents.
+AGY and Copilot support is removed. Loading a saved config removes their named
+entries and custom aliases before deserialization while preserving supported
+choices and cloud speech settings. Existing private profile data is kept; Storage
+shows metadata and explicit clearing only when legacy profiles exist. Cleanup
+retains its cross-process lock and never follows links or exports credentials.
 
 All writing CLI launches, native sessions, capability probes and usage polling
 clear inherited credentials, provider/routing overrides and runtime startup hooks.
 Codex and Claude Code retain the user's signed-in HOME, XDG, CODEX_HOME and
 CLAUDE_CONFIG_DIR locations plus OS/PATH, certificate settings and the Linux
-D-Bus session address used by the signed-in keyring; AGY/Copilot continue using
-their private profiles without inheriting the session bus. An ambient API key cannot
+D-Bus session address used by the signed-in keyring. An ambient API key cannot
 silently replace the intended CLI login. A deliberately stored API-key login is
 still the CLI's own authentication choice; environment cleanup cannot guarantee
 subscription billing in that case.
@@ -249,16 +238,10 @@ fail, so only listed ones are passed; cached per program).
 ### Part sizes follow the writing provider (`ai/budget.rs`)
 
 `writing_budget(cfg)` takes the tightest budget over the chat chain. Codex and
-Claude Code use the agent budget (three parts at once); AGY and Copilot keep
-agent context/output limits but process one part at a time because their private
-profiles hold an exclusive cross-process lock for each call. Ollama uses the
-smaller local budget (one part). A fallback chain containing an isolated profile
-also processes one part at a time. Independent workflows admit at most four
-waiting requests per provider and wait up to 30 seconds for its profile lock,
-checking shutdown every 25ms. A full queue or deadline produces an actionable
-busy message; sign-in and Storage cleanup remain failfast.
-Context/output limits bound actual part sizes. Long recordings and uploads share
-this calculation and report progress from the calling thread. Speech chunking and note synthesis/gap-filling stay unchanged.
+Claude Code use the agent budget (three parts at once); Ollama uses the smaller
+local budget (one part). Context/output limits bound actual part sizes. Long
+recordings and uploads share this calculation and report progress from the
+calling thread. Speech chunking and note synthesis/gap-filling stay unchanged.
 
 ### Claude Code gets leo's tools natively (`ai/provider/mcp.rs`)
 
@@ -322,7 +305,9 @@ effort, input, output, estimated }`); the chain copies it into
 while streaming only from api.openai.com, openrouter.ai and api.x.ai, which are
 known to accept `stream_options`), else estimate 4 characters a token. Claude
 Code gives its model in the `init` event and tokens in `result.usage`; Codex
-prints model, reasoning effort and "tokens used" on stderr (`codex_banner`).
+uses `exec --json` agent messages and `turn.completed.usage`, including cached
+input. Reasoning tokens are already included in exec output tokens and are not
+added twice. Stderr banners remain a legacy fallback.
 An optional provider `effort` (letters and digits only) is passed as
 `--effort` to Claude Code and `-c model_reasoning_effort="…"` to Codex.
 `spend::answered` names the provider and prices tokens from `choice.rs`'s
@@ -331,7 +316,7 @@ price strings (`rates`); agents are "on your plan" and local models free.
 
 ### Context windows (`ai/budget.rs`)
 
-`window_of` supplies Claude Code/AGY 200k, Codex 256k, Copilot 128k and
+`window_of` supplies Claude Code 200k, Codex 256k and
 Ollama/local 8k tokens; a valid `context` setting overrides it. `note_tokens`
 reserves 45%, capped at 120k for plan providers; legacy API accounting keeps its
 50k cost cap. `felix_room` supplies Felix's note budget, while recording/upload
@@ -353,12 +338,22 @@ it). Uploads may explain beyond the source; facts stay the source's.
 
 Ollama uses OpenAI-compatible native tool calls when its model supports them;
 Claude Code uses the loopback MCP bridge, and Codex native sessions require the
-isolation capability checks below. AGY/Copilot always use text tools. Every call
+isolation capability checks below. Every call
 goes through Leo's validated `Turn.call`; malformed arguments receive a repair
 message, never execution. A provider that cannot open a native session falls back
 to the shared text protocol. Legacy API parsers/cache accounting remain internal
 compatibility code and are not additional Writing choices. Tests use local fake
 servers, never paid APIs.
+
+An installed Codex without isolated app-server support retains a bounded in-memory
+text conversation. Its ephemeral exec requests remain isolated and cancellable;
+this is not a persistent remote model session. Trusted instructions go in a unique
+0600 temporary `model_instructions_file`, replacing the default coding prompt,
+while material stays on stdin. The file and private working folder are removed on
+every exit. Native MCP is not assumed usable merely because it initializes.
+Session turns check cancellation before more requests or tools; writing CLI output
+is polled through bounded queues and stopped children are killed and reaped.
+Native tool budgets and a final no-tools request bound models that ignore limits.
 
 ### Finding notes by meaning (`meaning.rs`)
 
@@ -438,16 +433,8 @@ Synthetic capture regressions exercise twelve segment rolls and check every
 segment's sample count/overlap using short segment intervals. They avoid processing
 an hour of PCM in an unoptimized, parallel CI run merely to test the same boundaries.
 
-Capability probes combine stdout and stderr into one bounded pipe: AGY 1.4.0
-writes its successful help listing to stderr. The command's parent pipe writers
+Capability probes combine stdout and stderr into one bounded pipe so CLIs may
+write successful help listings to either stream. The command's parent pipe writers
 are dropped immediately after spawn so EOF remains meaningful; the existing
 output cap and whole-process watchdog cover both streams. A present CLI that
 fails this check reports unverified safety controls, never a missing installation.
-
-AGY and GitHub Copilot writing share one exclusive lock per private profile across
-notes, imports and Felix. Routine overlapping requests admit at most four waiting
-callers per provider and wait up to 30 seconds, checking shutdown every 25ms; only
-typed lock contention is retried. Admission slots and file locks release on every
-return or unwind. Sign-in and Storage cleanup stay failfast so neither can alter
-a profile in use; busy messages describe current Leo work rather than assuming
-a second process. Unsafe paths and other I/O failures are never retried as busy.

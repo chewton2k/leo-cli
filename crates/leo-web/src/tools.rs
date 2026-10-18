@@ -1728,7 +1728,7 @@ pub struct Desk {
     pub session: Option<Session>,
     pub session_over: bool,
     steer: Option<crate::steer::Steer>,
-    reply: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+    reply: Option<crate::reply::Sender>,
     meaning: Option<(
         crate::vectors::Meaning,
         std::sync::Arc<crate::vectors::Vectors>,
@@ -1775,7 +1775,7 @@ impl Desk {
         self
     }
 
-    pub fn with_reply(mut self, reply: tokio::sync::mpsc::UnboundedSender<String>) -> Desk {
+    pub fn with_reply(mut self, reply: crate::reply::Sender) -> Desk {
         self.reply = Some(reply);
         self
     }
@@ -1790,6 +1790,10 @@ impl Desk {
                 .unwrap_or(self.access)
         };
         self.access
+    }
+
+    pub(crate) fn reply_sender(&self) -> Option<crate::reply::Sender> {
+        self.reply.clone()
     }
 
     pub fn reply_closed(&self) -> bool {

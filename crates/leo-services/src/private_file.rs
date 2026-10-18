@@ -41,6 +41,7 @@ impl std::fmt::Display for LockBusy {
 
 impl std::error::Error for LockBusy {}
 
+#[cfg(test)]
 pub(crate) fn busy(error: &anyhow::Error) -> bool {
     error.is::<LockBusy>()
 }

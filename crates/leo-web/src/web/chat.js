@@ -444,7 +444,7 @@
     return `[Selected passage from “${clipped(p.title || 'a note', 80)}”${lines}: “${clipped(p.text, 300)}”]`;
   }
 
-  function historyText(m) {
+  function historyText(m, canonical = false) {
     if (m.role === 'user') return [interviewLine(m.interview), passageLine(m.selection), m.say || m.text].filter(Boolean).join('\n');
     const lines = [];
     const by = m.spent && typeof m.spent.by === 'string' ? [m.spent.by, m.spent.model].filter(Boolean).join(' · ') : '';
@@ -461,16 +461,57 @@
     }
     for (const q of m.quizzes || []) {
       const how = typeof q.given !== 'string' ? 'not answered yet' : q.correct === true ? `answered “${clipped(q.given, 120)}”, right` : q.correct === false ? `answered “${clipped(q.given, 120)}”, wrong` : `answered “${clipped(q.given, 200)}”`;
-      const replied = q.reply && q.reply.text ? `; Felix replied: ${clipped(grade(q.reply.text).text, 400)}` : '';
-      lines.push(`[Practice question (${(QUIZ_KINDS[q.kind] || 'question').toLowerCase()}): ${clipped(q.question, 300)}${(q.options || []).length ? `; choices: ${q.options.join(' | ')}` : ''}; answer: ${clipped(q.answer, 200)}; ${how}${replied}]`);
+      const replied = !canonical && q.reply && q.reply.text ? `; Felix replied: ${clipped(grade(q.reply.text).text, 400)}` : '';
+      lines.push(`[Practice question (${(QUIZ_KINDS[q.kind] || 'question').toLowerCase()}): ${clipped(q.question, 300)}${(q.options || []).length ? `; choices: ${q.options.join(' | ')}` : ''}; answer: ${clipped(q.answer, 200)}${canonical ? '' : `; ${how}${replied}`}]`);
     }
     for (const p of m.proposals || []) {
       const state = p.state === 'applied' ? 'applied' : p.state === 'dismissed' ? 'dismissed by the user' : 'waiting for the user';
       const what = p.kind === 'create' ? `Suggested a new note “${clipped(p.title, 80)}”` : p.kind === 'edit' ? `Suggested a change to “${clipped(p.title, 80)}”: “${clipped(p.find, 80)}” → “${clipped(p.replace, 120)}”` : `Suggested: ${clipped(p.summary, 160)}`;
       lines.push(`[${what}; ${state}]`);
     }
-    lines.push(grade(m.text || '').text || m.text || '');
+    lines.push(canonical ? m.text || '' : grade(m.text || '').text || m.text || '');
     return lines.filter(Boolean).join('\n');
+  }
+
+  const MOST_MODEL_TURNS = 400;
+  const MOST_QUIZ_HISTORY = 32;
+  const MOST_HISTORY_DEPTH = 4;
+  const MOST_NESTED_TURNS = 128;
+  const MOST_HISTORY_REQUEST = 16000;
+
+  function historyRequest(value) {
+    const chars = [];
+    for (const char of String(value || '')) { if (chars.length >= MOST_HISTORY_REQUEST) break; chars.push(char); }
+    return chars.join('');
+  }
+
+  function modelHistory(messages) {
+    const turns = [];
+    const add = (role, text) => {
+      if (!text) return;
+      if (role === 'assistant' && turns.at(-1)?.role === role) turns.at(-1).text += `\n\n${text}`;
+      else turns.push({ role, text });
+      if (turns.length > MOST_MODEL_TURNS) turns.shift();
+    };
+    const visit = (message, depth, left) => {
+      if (!message || depth > MOST_HISTORY_DEPTH || left.count <= 0 || message.pending || message.error || message.steer === 'waiting') return;
+      left.count -= 1;
+      if (!['user', 'assistant'].includes(message.role)) return;
+      add(message.role, historyText(message, true));
+      if (message.role !== 'assistant') return;
+      for (const quiz of (message.quizzes || []).slice(0, MOST_QUIZ_HISTORY)) {
+        const hints = hintsOf(quiz).slice(-MOST_QUIZ_HISTORY);
+        const interaction = (reply, request) => {
+          if (!reply || reply.pending || left.count <= 0) return;
+          add('user', typeof reply.request === 'string' ? historyRequest(reply.request) : historyRequest(request));
+          visit(reply, depth + 1, left);
+        };
+        for (let i = 0; i < hints.length; i += 1) interaction(hints[i], hintSay({ ...quiz, hint: null, hints: hints.slice(0, i) }));
+        if (typeof quiz.given === 'string') interaction(quiz.reply, quizSay(quiz, quiz.given, checkQuiz(quiz, quiz.given)));
+      }
+    };
+    for (const message of messages.slice(-MOST_MODEL_TURNS)) visit(message, 0, { count: MOST_NESTED_TURNS });
+    return turns;
   }
 
   function interviewLine(view) {
@@ -2077,6 +2118,7 @@
       asked.mode = state.mode;
       const answer = { role: 'assistant', text: '', sources: [], pending: true, folder: (state.context && state.context.directory) || '', mode: state.mode };
       working.set(answer, Date.now());
+      if (card) answer.request = historyRequest(historyText(asked));
       if (card && extra.hint) card.hints = [...(Array.isArray(card.hints) ? card.hints : []), answer];
       else if (card) card.reply = answer;
       else {
@@ -2102,8 +2144,8 @@
       asked.cards = asked.cards.filter(Boolean);
       if (!asked.cards.length) delete asked.cards;
       const files = state.sent.map((f) => f.id);
-      const history = state.messages.filter((m) => m !== answer && !m.error && m.steer !== 'waiting').map((m) => ({ role: m.role, text: historyText(m) }));
-      if (card) history.push({ role: 'user', text: historyText(asked) });
+      const history = modelHistory(state.messages.filter((m) => m !== answer));
+      if (card) history.push({ role: 'user', text: answer.request });
       if (passage && history.length) history[history.length - 1] = { role: 'user', text: asked.say || asked.text };
       const sentRefs = threadRefs(thread.messages).map((r) => r.id);
       if (passage && passage.note && !sentRefs.includes(passage.note)) sentRefs.unshift(passage.note);
@@ -2675,5 +2717,5 @@
     };
   }
 
-  root.leoChat = { timeline, startSession, scoreSession, sessionBody, sessionSummary, linkCitations, answerLines, passageLine, historyText, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS, TAPS, DEMON_TAPS, MONSTER_ONE_IN, TICKLED_TOO_LONG };
+  root.leoChat = { timeline, startSession, scoreSession, sessionBody, sessionSummary, linkCitations, answerLines, passageLine, historyText, modelHistory, historyRequest, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS, TAPS, DEMON_TAPS, MONSTER_ONE_IN, TICKLED_TOO_LONG };
 })(typeof window !== 'undefined' ? window : globalThis);

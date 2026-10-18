@@ -82,41 +82,6 @@ pub const WRITING: &[Choice] = &[
             ),
         ],
     },
-    Choice {
-        provider: "agy",
-        name: "Google Antigravity",
-        models: &[
-            m("default", "included in your Google Antigravity account"),
-            m(
-                "gemini-3.8-flash-medium",
-                "included in your Google Antigravity account",
-            ),
-            m(
-                "gemini-3.8-flash-high",
-                "included in your Google Antigravity account",
-            ),
-            m(
-                "gemini-4-argon-medium",
-                "included in your Google Antigravity account",
-            ),
-            m(
-                "gemini-4-argon-high",
-                "included in your Google Antigravity account",
-            ),
-        ],
-    },
-    Choice {
-        provider: "copilot",
-        name: "GitHub Copilot",
-        models: &[
-            m("auto", "included in your GitHub Copilot plan"),
-            m("claude-haiku-5.5", "included in your GitHub Copilot plan"),
-            m("claude-sonnet-5.5", "included in your GitHub Copilot plan"),
-            m("claude-opus-5.5", "included in your GitHub Copilot plan"),
-            m("gpt-5.4", "included in your GitHub Copilot plan"),
-            m("gemini-3.8-flash", "included in your GitHub Copilot plan"),
-        ],
-    },
 ];
 
 pub const SPEECH: &[Choice] = &[
@@ -320,8 +285,6 @@ pub fn efforts(provider: &str, model: &str) -> &'static [&'static str] {
     let model = model.to_ascii_lowercase();
     match provider {
         "claude_code" | "codex" => &["low", "medium", "high", "xhigh"],
-        "agy" => &["low", "medium", "high"],
-        "copilot" => &["low", "medium", "high", "xhigh", "max"],
         "anthropic"
             if model.starts_with("claude-") && !model.contains("-4-5") && !model.contains("-3") =>
         {
@@ -483,13 +446,7 @@ mod tests {
             assert!(
                 matches!(
                     pc.kind,
-                    Some(
-                        ProviderKind::Openai
-                            | ProviderKind::ClaudeCode
-                            | ProviderKind::Codex
-                            | ProviderKind::Agy
-                            | ProviderKind::Copilot
-                    )
+                    Some(ProviderKind::Openai | ProviderKind::ClaudeCode | ProviderKind::Codex)
                 ),
                 "{}",
                 choice.provider
@@ -575,24 +532,25 @@ mod tests {
     fn writing_choices_are_local_or_signed_in_agents_and_speech_keeps_its_keys() {
         assert_eq!(
             WRITING.iter().map(|c| c.provider).collect::<Vec<_>>(),
-            ["ollama", "codex", "claude_code", "agy", "copilot"]
+            ["ollama", "codex", "claude_code"]
         );
         assert_eq!(
             SPEECH.iter().map(|c| c.provider).collect::<Vec<_>>(),
             ["parakeet", "openai_whisper", "gemini_speech", "xai_speech"]
         );
-        for retired in ["openai", "anthropic", "openrouter", "gemini", "xai"] {
+        for retired in [
+            "openai",
+            "anthropic",
+            "openrouter",
+            "gemini",
+            "xai",
+            "agy",
+            "copilot",
+        ] {
             assert!(find(Task::Chat, retired).is_none());
         }
-        assert_eq!(efforts("agy", "default"), ["low", "medium", "high"]);
-        assert_eq!(
-            efforts("copilot", "auto"),
-            ["low", "medium", "high", "xhigh", "max"]
-        );
-        assert_eq!(
-            effort_for("copilot", "auto", Some("max")).as_deref(),
-            Some("max")
-        );
+        assert!(efforts("agy", "default").is_empty());
+        assert!(efforts("copilot", "auto").is_empty());
     }
 
     #[test]
@@ -632,18 +590,6 @@ mod tests {
     }
 
     #[test]
-    fn the_new_agents_offer_defaults_and_explicit_models() {
-        for (provider, default, explicit) in [
-            ("agy", "default", "gemini-4-argon-high"),
-            ("copilot", "auto", "claude-sonnet-5.5"),
-        ] {
-            let choice = find(Task::Chat, provider).unwrap();
-            assert_eq!(choice.models[0].id, default);
-            assert!(choice.models.iter().any(|m| m.id == explicit));
-        }
-    }
-
-    #[test]
     fn stepping_wraps_both_ways_and_starts_from_an_unknown_value() {
         let options: Vec<String> = ["a", "b", "c"].iter().map(|s| s.to_string()).collect();
         assert_eq!(step(&options, Some("a"), 1).unwrap(), "b");
@@ -663,7 +609,7 @@ mod tests {
         assert_eq!(step_choice(Task::Chat, Some("ollama"), 1).provider, "codex");
         assert_eq!(
             step_choice(Task::Chat, Some("ollama"), -1).provider,
-            "copilot"
+            "claude_code"
         );
         assert_eq!(
             step_choice(Task::Transcribe, Some("xai_speech"), 1).provider,
@@ -674,10 +620,10 @@ mod tests {
     #[test]
     fn choosing_a_provider_makes_it_the_whole_chain() {
         let mut doc = Config::default_toml().parse::<DocumentMut>().unwrap();
-        write_choice(&mut doc, Task::Chat, "agy");
+        write_choice(&mut doc, Task::Chat, "codex");
         write_choice(&mut doc, Task::Transcribe, "gemini_speech");
         let cfg = load(&doc.to_string());
-        assert_eq!(cfg.chat.chain, vec!["agy"]);
+        assert_eq!(cfg.chat.chain, vec!["codex"]);
         assert_eq!(cfg.transcribe.chain, vec!["gemini_speech"]);
         assert!(doc.to_string().contains("Keys do NOT belong"));
     }
@@ -761,20 +707,28 @@ mod tests {
         );
         assert!(model_options(Task::Transcribe, "parakeet", &local).is_empty());
         assert_eq!(
-            model_options(Task::Chat, "agy", &local)
+            model_options(Task::Chat, "codex", &local)
                 .first()
                 .map(String::as_str),
-            Some("default")
+            Some("gpt-6-luna")
         );
         assert!(model_options(Task::Chat, "mine", &local).is_empty());
-        for retired in ["openai", "anthropic", "openrouter", "gemini", "xai"] {
+        for retired in [
+            "openai",
+            "anthropic",
+            "openrouter",
+            "gemini",
+            "xai",
+            "agy",
+            "copilot",
+        ] {
             assert!(model_options(Task::Chat, retired, &local).is_empty());
         }
         assert_eq!(
-            model_options(Task::Chat, "copilot", &local)
+            model_options(Task::Chat, "claude_code", &local)
                 .first()
                 .map(String::as_str),
-            Some("auto")
+            Some("claude-haiku-5-5")
         );
     }
 

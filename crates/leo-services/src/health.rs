@@ -309,8 +309,7 @@ pub fn provider_usable(config: &Config, name: &str, store: &dyn SecretStore) -> 
     }
     if let Some(agent) = crate::ai::provider::agent_cli::Agent::of(provider) {
         let bin = provider.bin.as_deref().unwrap_or(agent.program());
-        return crate::ai::provider::agent_cli::locate(bin)
-            .is_some_and(|program| crate::ai::provider::scoped_cli::supported(agent, &program));
+        return crate::ai::provider::agent_cli::locate(bin).is_some();
     }
     if provider.kind == Some(crate::config::provider::ProviderKind::WhisperCpp) {
         let model = crate::ai::provider::audio::expand_tilde(

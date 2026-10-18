@@ -212,7 +212,7 @@ seer, meaning, web, room).
   every call `check`ed; mistakes answered with the spec). At most
   `MOST_STEPS` (12) steps and `MOST_PROPOSALS` (8) changes. Claude Code
   (leo-services' MCP bridge), isolation-capable Codex and compatible Ollama
-  models get native tools. AGY/Copilot and unsupported native paths use the
+  models get native tools. Unsupported native paths use the
   text protocol. A hand-written call that is not valid
   JSON is repaired when it can be (`tools::repaired`: raw line breaks, quotes
   that do not end a string, trailing commas, missing closing braces) before it
@@ -782,13 +782,14 @@ and stops an incomplete recording from becoming a note. Audio/point workers reta
 their save guard through I/O and in-memory acknowledgement even if the HTTP client
 leaves. Recording warnings retain at most 40 entries of 2,000 Unicode characters.
 Storage validates complete recording selections before deletion and rejects linked
-recording, originals and picture roots. Writing CLI profiles show metadata only;
-confirmed clearing uses the shared private profile lock and requires sign-in again.
+recording, originals and picture roots. Legacy writing CLI profiles appear only
+when saved data exists; metadata-only controls offer explicit confirmed cleanup
+without deleting credentials during provider migration.
 
-Writing Settings offers Ollama, Codex, Claude Code, Google Antigravity and GitHub
-Copilot. The latter two use isolated private profiles and text tools; sign in from
-a terminal with `leo doctor --sign-in agy|copilot`. Speech choices and cloud speech
-keys stay available. Credentials never reach the page or note exports.
+Writing Settings offers Ollama, Codex and Claude Code. Removed AGY/Copilot
+choices and sign-in commands are unavailable; legacy saved profiles remain in
+Storage until explicitly cleared. Speech choices and cloud speech keys stay
+available. Credentials never reach the page or note exports.
 
 Interview problem navigation shows the active title and opens a bounded searchable
 sheet instead of growing numbered chips. Search matches titles, topics and numbers;
@@ -825,6 +826,18 @@ Successful Felix replies may contain only proposal, ask or quiz cards. Stopped
 means cancellation; normal empty completion offers retry guidance. Saved replies
 retain client elapsed milliseconds and a cancellation flag, including card-only
 turns, so future slow turns can be distinguished from canceled replies.
+
+Study sends an append-only model history that flattens completed quiz hints and
+answers without mutating earlier question cards; display/storage keep those cards.
+This permits Read-only warm reuse. Quiz documents share the 64k material budget
+(full documents remain readable by tools); ordinary chat/interview history budgets
+stay unchanged. Unchanged practice snapshots are omitted from warm follow-ups;
+changed code, tests, questions, notes and documents refresh their fingerprints.
+Permission changes invalidate reuse. Four foreground answers and bounded reply
+queues prevent unlimited workers or queued chunks; closed replies skip follow-up
+tools, retries and grading. Two identical failed calls end tool use with one final
+answer. Hidden Study grading remains available and its usage is included. Concurrent
+grades of one interview attempt share one worker; distinct attempts remain separate.
 
 Server shutdown drains active requests and streams for at most five seconds; a
 second Ctrl-C skips the drain. Graph/idle tasks stop on the first interrupt.

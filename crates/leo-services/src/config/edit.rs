@@ -56,7 +56,7 @@ pub fn write_chain(doc: &mut DocumentMut, task: Task, chain: &[String]) {
     let table = doc
         .entry(task.table())
         .or_insert(Item::Table(toml_edit::Table::new()));
-    if let Some(table) = table.as_table_mut() {
+    if let Some(table) = table.as_table_like_mut() {
         table.insert("chain", Item::Value(Value::Array(array)));
     }
 }
@@ -111,6 +111,19 @@ mod tests {
         assert_eq!(read_chain(&d, Task::Transcribe), vec!["parakeet"]);
     }
 
+    #[test]
+    fn rewriting_an_inline_chain_preserves_its_other_fields() {
+        let mut doc: DocumentMut = r#"chat = { chain = ["agy"], custom = "keep" }
+transcribe = { chain = ["openai_whisper"] }
+"#
+        .parse()
+        .unwrap();
+        write_chain(&mut doc, Task::Chat, &["codex".to_string()]);
+        assert_eq!(read_chain(&doc, Task::Chat), ["codex"]);
+        assert_eq!(read_chain(&doc, Task::Transcribe), ["openai_whisper"]);
+        assert_eq!(doc["chat"]["custom"].as_str(), Some("keep"));
+    }
+
     /// The whole reason for `toml_edit`: an edit must not cost the user the
     /// comments that explain the file.
     #[test]
@@ -136,17 +149,17 @@ mod tests {
     #[test]
     fn a_chain_can_name_a_provider_absent_from_the_file() {
         let mut d = doc();
-        write_chain(&mut d, Task::Chat, &["agy".to_string()]);
+        write_chain(&mut d, Task::Chat, &["claude_code".to_string()]);
         let text = d.to_string();
         assert!(
-            !text.contains("[providers.agy]"),
-            "agy should not need a block"
+            !text.contains("[providers.claude_code]"),
+            "claude_code should not need a block"
         );
 
         let cfg = crate::config::Config::load_from(&write_temp(&text));
-        assert_eq!(cfg.chat.chain, vec!["agy"]);
+        assert_eq!(cfg.chat.chain, vec!["claude_code"]);
         assert!(
-            cfg.provider("agy").is_some(),
+            cfg.provider("claude_code").is_some(),
             "a chained built-in did not resolve"
         );
     }

@@ -295,9 +295,9 @@ way.
   tag use that commit. So after any push that releases, `git pull` before the
   next push. HTTPS via rustls.
 - Nothing may print to stdout/stderr while the TUI owns the screen: it scrolls the panes. `diag::is_quiet()` is true then; `sync::print_output`/`connect` check it, `sync::init` and provider logout print nothing, and child processes get `Stdio::null()` unless run inside `App::outside`. Settings keys end with `repaint = true`.
-- Writing choices: Ollama, Codex, Claude Code, Google Antigravity (`agy`) and
-  GitHub Copilot (`copilot`). The four CLIs use account sign-in; AGY/Copilot
-  use isolated profiles and `leo doctor --sign-in agy|copilot`. Speech choices
+- Writing choices: Ollama, Codex and Claude Code. The two CLIs use account
+  sign-in; removed AGY/Copilot profiles stay available only for explicit legacy
+  cleanup in Storage. Speech choices
   stay Parakeet, OpenAI, Gemini and xAI, including their stored credentials.
   See crates/leo-services/CLAUDE.md; models live in `config/choice.rs`.
 - Speech model: Parakeet (4 files, 670 MB) is fetched by install.sh and checked
@@ -365,6 +365,6 @@ migration uses contained paths and atomic writes, and displayed short IDs use
 Unicode characters. Git children run without credential prompts and are reaped on
 timeout. Credential updates use a bounded writer plus a cross-process private lock;
 use `secret::default_store()` (private file by default, optional keychain), never a
-backend directly. AGY/Copilot profiles contain private sign-in state, stay outside
+backend directly. Legacy AGY/Copilot profiles contain private sign-in state, stay outside
 notes/exports and have metadata-only Storage controls. `.superpowers/` stays local
 and must never be staged or committed.

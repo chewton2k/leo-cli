@@ -65,14 +65,8 @@ pub fn answered(cfg: &Config, provider: &str, spent: Spent) -> Answered {
     let kind = pc.and_then(|p| p.kind);
     let choice = WRITING.iter().find(|c| c.provider == provider);
     let plan = match kind {
-        Some(kind) => matches!(
-            kind,
-            ProviderKind::ClaudeCode
-                | ProviderKind::Codex
-                | ProviderKind::Agy
-                | ProviderKind::Copilot
-        ),
-        None => matches!(provider, "claude_code" | "codex" | "agy" | "copilot"),
+        Some(kind) => matches!(kind, ProviderKind::ClaudeCode | ProviderKind::Codex),
+        None => matches!(provider, "claude_code" | "codex"),
     };
     let local = choice.is_some_and(|c| c.local())
         || pc
@@ -149,8 +143,6 @@ mod tests {
         for (provider, model, label) in [
             ("claude_code", "claude-sonnet-5-5", "Claude Code"),
             ("codex", "gpt-6-luna", "Codex"),
-            ("agy", "default", "Google Antigravity"),
-            ("copilot", "auto", "GitHub Copilot"),
         ] {
             let plan = answered(&cfg, provider, spent(model, 10, 10));
             assert_eq!(

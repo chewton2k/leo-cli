@@ -324,6 +324,37 @@ pub(crate) async fn grade(
             "Choose a writing AI in Settings to grade answers.".into(),
         ));
     };
+    let Some(job) = state.work.grade(format!("{id}:{}", body.attempt)) else {
+        return (StatusCode::TOO_MANY_REQUESTS, Json(serde_json::json!({"error":"Several answers are being reviewed. Wait for one to finish, then try again."}))).into_response();
+    };
+    if !job.leader {
+        if tokio::time::timeout(std::time::Duration::from_secs(120), job.wait())
+            .await
+            .is_err()
+        {
+            return (StatusCode::REQUEST_TIMEOUT, Json(serde_json::json!({"error":"That answer is still being reviewed. Wait a moment, then try again."}))).into_response();
+        }
+        return match tokio::task::spawn_blocking(move || {
+            let item = interview::load(&state.chats, &id)?;
+            if item
+                .attempts
+                .iter()
+                .any(|a| a.id == body.attempt && a.grade.is_some())
+            {
+                Ok(item)
+            } else {
+                Err(interview::Error::Invalid(
+                    "The review could not finish. Try submitting it for review again.".into(),
+                ))
+            }
+        })
+        .await
+        {
+            Ok(Ok(item)) => Json(item).into_response(),
+            Ok(Err(why)) => failed(why),
+            Err(_) => failed(interview::Error::Storage),
+        };
+    }
     let ticket = state
         .progress
         .start(format!("grade:{}", body.attempt), progress::GRADE);
@@ -332,6 +363,7 @@ pub(crate) async fn grade(
         None => quick,
     };
     let done = tokio::task::spawn_blocking(move || {
+        let _grade = job;
         let _held = ticket;
         let item = interview::load(&state.chats, &id)?;
         let attempt = item

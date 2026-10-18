@@ -90,7 +90,7 @@ impl Config {
 # the key row, or run `leo doctor`.
 #
 # Type :settings to choose writing: Ollama on this computer, or your signed-in
-# Codex, Claude Code, Google Antigravity (AGY), or GitHub Copilot CLI.
+# Codex or Claude Code CLI.
 # Speech uses local Parakeet, or OpenAI, Gemini or xAI with a stored key.
 # Settings writes these two lines for you.
 
@@ -172,14 +172,6 @@ model = "claude-sonnet-5-5"
 [providers.codex]
 kind = "codex"
 model = "gpt-6-luna"
-
-[providers.agy]
-kind = "agy"
-model = "default"
-
-[providers.copilot]
-kind = "copilot"
-model = "auto"
 
 [providers.parakeet]
 kind = "parakeet"
@@ -479,11 +471,9 @@ model = "my-own-model"
         assert_eq!(
             names,
             [
-                "agy",
                 "anthropic",
                 "claude_code",
                 "codex",
-                "copilot",
                 "gemini",
                 "gemini_speech",
                 "ollama",
@@ -559,10 +549,7 @@ kind = "telepathy"
                     assert!(p.key_from.is_some(), "{name} should share its chat key");
                 }
                 ProviderKind::WhisperCpp => panic!("{name}: no built-in runs an external program"),
-                ProviderKind::ClaudeCode
-                | ProviderKind::Codex
-                | ProviderKind::Agy
-                | ProviderKind::Copilot => {
+                ProviderKind::ClaudeCode | ProviderKind::Codex => {
                     assert!(
                         p.key_env.is_none(),
                         "{name} signs in through its own program"
@@ -665,8 +652,8 @@ kind = "telepathy"
         // The file is the documentation, so these have to be present.
         assert!(text.contains("leo doctor"));
         assert!(text.contains("[providers.ollama]"));
-        assert!(text.contains("Google Antigravity (AGY)"));
-        assert!(text.contains("GitHub Copilot CLI"));
+        assert!(!text.contains("Antigravity"));
+        assert!(!text.contains("Copilot"));
         assert!(text.contains("Speech uses local Parakeet, or OpenAI, Gemini or xAI"));
         assert!(text.contains("[chat]"));
         assert!(text.contains("[transcribe]"));

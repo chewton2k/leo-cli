@@ -28,6 +28,8 @@ pub struct Turn<'a> {
     pub sink: Sink<'a>,
     pub restart: &'a mut dyn FnMut(),
     pub call: &'a mut dyn FnMut(&str, &serde_json::Value) -> String,
+    pub stopped: &'a dyn Fn() -> bool,
+    pub tools_done: &'a dyn Fn() -> bool,
 }
 
 pub trait Session: Send {
@@ -59,7 +61,17 @@ impl Session for ClaudeTalk {
         };
         let (answer, spent) = self
             .session
-            .say_with(&message, turn.sink, turn.call, turn.restart)
+            .say_controlled(
+                &message,
+                turn.sink,
+                turn.call,
+                turn.restart,
+                super::provider::agent_cli::Control {
+                    stopped: turn.stopped,
+                    tools_done: turn.tools_done,
+                    most_calls: turn.most_calls,
+                },
+            )
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         Ok((answer, Some(answered(&self.config, &self.provider, spent))))
     }
@@ -69,6 +81,72 @@ struct CodexTalk {
     thread: CodexThread,
     provider: String,
     config: Config,
+}
+
+const MOST_TRANSCRIPT: usize = 2 * 1024 * 1024;
+
+struct CodexTextTalk {
+    agent: AgentCli,
+    config: Config,
+    provider: String,
+    system: String,
+    transcript: String,
+}
+
+impl Session for CodexTextTalk {
+    fn native(&self) -> bool {
+        false
+    }
+
+    fn say(&mut self, text: &str, turn: Turn<'_>) -> Result<(String, Option<Answered>)> {
+        anyhow::ensure!(!(turn.stopped)(), "The answer was stopped.");
+        anyhow::ensure!(
+            self.transcript
+                .len()
+                .saturating_add(text.len())
+                .saturating_add(turn.tail.len())
+                <= MOST_TRANSCRIPT,
+            "This conversation has reached its context limit. Start a new chat to continue."
+        );
+        if !self.transcript.is_empty() {
+            self.transcript.push_str("\n\n");
+        }
+        self.transcript.push_str(text);
+        let prompt = if turn.tail.is_empty() {
+            self.transcript.clone()
+        } else {
+            format!("{}\n\n{}", self.transcript, turn.tail)
+        };
+        let answer = self
+            .agent
+            .controlled(
+                &super::provider::ChatRequest {
+                    system: Some(self.system.clone()),
+                    prompt,
+                    temperature: 0.2,
+                    max_tokens: turn.max_tokens,
+                },
+                turn.sink,
+                turn.stopped,
+            )
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        anyhow::ensure!(
+            self.transcript
+                .len()
+                .saturating_add(answer.len())
+                .saturating_add(32)
+                <= MOST_TRANSCRIPT,
+            "This conversation has reached its context limit. Start a new chat to continue."
+        );
+        self.transcript.push_str("\n\nFelix replied: ");
+        self.transcript.push_str(&answer);
+        Ok((
+            answer,
+            self.agent
+                .spent()
+                .map(|spent| answered(&self.config, &self.provider, spent)),
+        ))
+    }
 }
 
 impl Session for CodexTalk {
@@ -85,6 +163,9 @@ impl Session for CodexTalk {
                     sink: turn.sink,
                     restart: turn.restart,
                     call: turn.call,
+                    stopped: turn.stopped,
+                    tools_done: turn.tools_done,
+                    most_calls: turn.most_calls,
                 },
             )
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
@@ -180,6 +261,8 @@ impl Session for ApiTalk {
             sink,
             restart,
             call,
+            stopped,
+            tools_done,
         } = turn;
         let message = if tail.is_empty() {
             text.to_string()
@@ -202,8 +285,9 @@ impl Session for ApiTalk {
                 .map(|m| m.to_string().len())
                 .sum::<usize>();
         let mut calls = 0usize;
-        loop {
-            let no_tools = calls >= most_calls;
+        for _ in 0..=most_calls {
+            anyhow::ensure!(!stopped(), "The answer was stopped.");
+            let no_tools = calls >= most_calls || tools_done();
             let (answer, asked) = match &self.wire {
                 Wire::OpenAi(chat) => {
                     let body = chat.tool_body(&self.history, &self.tools, max_tokens, no_tools);
@@ -281,6 +365,11 @@ impl Session for ApiTalk {
             }
             let mut results = Vec::new();
             for (id, name, args) in &asked {
+                anyhow::ensure!(!stopped(), "The answer was stopped.");
+                if calls >= most_calls || tools_done() {
+                    results.push((id.clone(), "No more tools are available for this answer. Use the results already returned and answer the user now. Use interpretable language.".to_string()));
+                    continue;
+                }
                 calls += 1;
                 let result = result_for(call, name, args);
                 sent_chars += result.len();
@@ -303,6 +392,10 @@ impl Session for ApiTalk {
                 }
             }
         }
+        anyhow::bail!(
+            "{} kept requesting tools after its limit. Try a smaller request.",
+            self.provider
+        )
     }
 }
 
@@ -321,7 +414,6 @@ pub fn open(
             continue;
         };
         match provider.kind {
-            Some(ProviderKind::Agy | ProviderKind::Copilot) => return None,
             Some(ProviderKind::ClaudeCode) => {
                 let agent = AgentCli::new(name.clone(), Agent::ClaudeCode, &provider);
                 if !agent.available() {
@@ -358,13 +450,20 @@ pub fn open(
                     .iter()
                     .map(|t| (t.name.clone(), t.description.clone(), t.schema.clone()))
                     .collect();
-                let thread =
-                    CodexThread::start(&agent, systems.native, &tool_specs(&specs)).ok()?;
-                return Some(Box::new(CodexTalk {
-                    thread,
-                    provider: name.clone(),
-                    config: config.clone(),
-                }));
+                return match CodexThread::start(&agent, systems.native, &tool_specs(&specs)) {
+                    Ok(thread) => Some(Box::new(CodexTalk {
+                        thread,
+                        provider: name.clone(),
+                        config: config.clone(),
+                    })),
+                    Err(_) => Some(Box::new(CodexTextTalk {
+                        agent,
+                        config: config.clone(),
+                        provider: name.clone(),
+                        system: systems.text.into(),
+                        transcript: String::new(),
+                    })),
+                };
             }
             Some(ProviderKind::Openai) => {
                 let key = match provider.key_env.as_deref() {
@@ -497,6 +596,8 @@ mod tests {
                     tail: "",
                     max_tokens: 16000,
                     most_calls,
+                    stopped: &|| false,
+                    tools_done: &|| false,
                     sink: &mut |t| shown.push_str(t),
                     restart: &mut || restarts += 1,
                     call: &mut |name, args| {
@@ -682,6 +783,129 @@ mod tests {
     }
 
     #[test]
+    fn stopping_after_a_tool_prevents_the_next_model_request() {
+        let (url, seen) = serve(vec![sse(&[
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"search_notes","arguments":"{}"}}]}}]}"#,
+        ])]);
+        let cfg = ProviderConfig {
+            base_url: Some(url),
+            ..ProviderConfig::default()
+        };
+        let mut talk = ApiTalk::new(
+            Wire::OpenAi(OpenAiChat::new("ollama".into(), &cfg, None)),
+            "ollama",
+            &Config::default(),
+            "",
+            &tools(),
+        );
+        let stopped = std::cell::Cell::new(false);
+        let result = talk.say(
+            "Look up heaps.",
+            Turn {
+                tail: "",
+                max_tokens: 100,
+                most_calls: 12,
+                sink: &mut |_| {},
+                restart: &mut || {},
+                call: &mut |_, _| {
+                    stopped.set(true);
+                    "The minimum is at the root.".into()
+                },
+                stopped: &|| stopped.get(),
+                tools_done: &|| false,
+            },
+        );
+        assert!(result.unwrap_err().to_string().contains("stopped"));
+        assert_eq!(seen.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn ignoring_the_no_tools_request_cannot_create_an_unbounded_model_loop() {
+        let response = sse(&[
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"search_notes","arguments":"{}"}}]}}]}"#,
+        ]);
+        let (url, seen) = serve(vec![response.clone(), response]);
+        let cfg = ProviderConfig {
+            base_url: Some(url),
+            ..ProviderConfig::default()
+        };
+        let mut talk = ApiTalk::new(
+            Wire::OpenAi(OpenAiChat::new("ollama".into(), &cfg, None)),
+            "ollama",
+            &Config::default(),
+            "",
+            &tools(),
+        );
+        let mut calls = 0;
+        let result = talk.say(
+            "Look up heaps.",
+            Turn {
+                tail: "",
+                max_tokens: 100,
+                most_calls: 1,
+                sink: &mut |_| {},
+                restart: &mut || {},
+                call: &mut |_, _| {
+                    calls += 1;
+                    "The minimum is at the root.".into()
+                },
+                stopped: &|| false,
+                tools_done: &|| false,
+            },
+        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("kept requesting tools"));
+        assert_eq!(calls, 1);
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        assert_eq!(seen[1].1["tool_choice"], "none");
+    }
+
+    #[test]
+    fn an_exhausted_tool_exchange_gets_one_final_answer_without_more_tools() {
+        let (url, seen) = serve(vec![
+            sse(&[
+                r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"search_notes","arguments":"{}"}}]}}]}"#,
+            ]),
+            sse(&[r#"{"choices":[{"delta":{"content":"Please give me the note title."}}]}"#]),
+        ]);
+        let cfg = ProviderConfig {
+            base_url: Some(url),
+            ..ProviderConfig::default()
+        };
+        let mut talk = ApiTalk::new(
+            Wire::OpenAi(OpenAiChat::new("ollama".into(), &cfg, None)),
+            "ollama",
+            &Config::default(),
+            "",
+            &tools(),
+        );
+        let exhausted = std::cell::Cell::new(false);
+        let result = talk
+            .say(
+                "Look up heaps.",
+                Turn {
+                    tail: "",
+                    max_tokens: 100,
+                    most_calls: 12,
+                    sink: &mut |_| {},
+                    restart: &mut || {},
+                    call: &mut |_, _| {
+                        exhausted.set(true);
+                        "That did not work: give a note title.".into()
+                    },
+                    stopped: &|| false,
+                    tools_done: &|| exhausted.get(),
+                },
+            )
+            .unwrap();
+        assert_eq!(result.0, "Please give me the note title.");
+        assert_eq!(seen.lock().unwrap()[1].1["tool_choice"], "none");
+    }
+
+    #[test]
     fn api_providers_get_native_tool_sessions_and_claude_gets_the_messages_api() {
         let store = MemoryStore::default();
         store.set("anthropic", "sk-ant").unwrap();
@@ -699,5 +923,73 @@ mod tests {
             open(&config, &store, &systems, &tools()).is_none(),
             "no key, no session"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn isolated_codex_text_sessions_keep_context_and_cancel_without_another_process() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("codex");
+        let log = dir.path().join("requests");
+        std::fs::write(&bin, format!(r##"#!/bin/sh
+if [ "$1" = features ]; then echo 'shell_tool stable true'; exit 0; fi
+if [ "$2" = --help ]; then echo 'Usage: codex app-server'; exit 0; fi
+cat >> '{}'
+printf '%s\n' '{{"type":"item.completed","item":{{"type":"agent_message","text":"maple"}}}}'
+printf '%s\n' '{{"type":"turn.completed","usage":{{"input_tokens":100,"cached_input_tokens":80,"output_tokens":10}}}}'
+"##, log.display())).unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut config = Config::default();
+        config.chat.chain = vec!["codex".into()];
+        config.providers.get_mut("codex").unwrap().bin = Some(bin.to_string_lossy().into());
+        let mut talk = open(
+            &config,
+            &MemoryStore::default(),
+            &Systems {
+                native: "Use interpretable language.",
+                text: "Use interpretable language.",
+            },
+            &[],
+        )
+        .unwrap();
+        assert!(!talk.native());
+        for text in ["The sample is maple.", "Remember the sample."] {
+            let (answer, spent) = talk
+                .say(
+                    text,
+                    Turn {
+                        tail: "",
+                        max_tokens: 100,
+                        most_calls: 0,
+                        sink: &mut |_| {},
+                        restart: &mut || {},
+                        call: &mut |_, _| String::new(),
+                        stopped: &|| false,
+                        tools_done: &|| true,
+                    },
+                )
+                .unwrap();
+            assert_eq!(answer, "maple");
+            assert_eq!(spent.unwrap().cached, 80);
+        }
+        let before = std::fs::read_to_string(&log).unwrap();
+        assert_eq!(before.matches("The sample is maple.").count(), 2);
+        assert!(before.contains("Felix replied: maple"));
+        let result = talk.say(
+            "Stop this.",
+            Turn {
+                tail: "",
+                max_tokens: 100,
+                most_calls: 0,
+                sink: &mut |_| {},
+                restart: &mut || {},
+                call: &mut |_, _| String::new(),
+                stopped: &|| true,
+                tools_done: &|| true,
+            },
+        );
+        assert!(result.unwrap_err().to_string().contains("stopped"));
+        assert_eq!(std::fs::read_to_string(log).unwrap(), before);
     }
 }

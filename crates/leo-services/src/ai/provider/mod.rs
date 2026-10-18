@@ -184,12 +184,7 @@ pub fn build_one_chat(
             }
             Some(Box::new(openai::OpenAiChat::new(name.to_string(), pc, key)))
         }
-        Some(
-            ProviderKind::ClaudeCode
-            | ProviderKind::Codex
-            | ProviderKind::Agy
-            | ProviderKind::Copilot,
-        ) => {
+        Some(ProviderKind::ClaudeCode | ProviderKind::Codex) => {
             let agent = agent_cli::Agent::of(pc)?;
             Some(Box::new(agent_cli::AgentCli::new(
                 name.to_string(),

@@ -28,6 +28,8 @@ pub struct Exchange<'a> {
     pub piece: &'a mut dyn FnMut(&str),
     pub restart: &'a mut dyn FnMut(),
     pub call: &'a mut dyn FnMut(&str, &serde_json::Value) -> String,
+    pub stopped: &'a dyn Fn() -> bool,
+    pub tools_done: &'a dyn Fn() -> bool,
 }
 
 pub trait Conversation: Send {
@@ -823,9 +825,21 @@ pub fn prompt_within(
     room: usize,
     memory: Option<&crate::chats::Memory>,
 ) -> (String, String) {
+    prompt_material(mode, notes, documents, messages, room, room, memory)
+}
+
+pub fn prompt_material(
+    mode: &str,
+    notes: &str,
+    documents: &[(String, String)],
+    messages: &[Turn],
+    room: usize,
+    material_room: usize,
+    memory: Option<&crate::chats::Memory>,
+) -> (String, String) {
     let system = format!("{BASE}\n\n{REPLY_STYLE}\n\n{}", style(mode));
     let zone = iana_time_zone::get_timezone().ok();
-    let mut user = documents_within(documents, scaled(DOCS_CHARS, room));
+    let mut user = documents_within(documents, scaled(DOCS_CHARS, material_room));
     if notes.trim().is_empty() {
         user.push_str("<notes>\nNo notes matched this conversation.\n</notes>\n\n");
     } else {

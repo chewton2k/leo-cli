@@ -50,10 +50,6 @@ fn kind_of(name: &str, provider: &ProviderConfig) -> Budget {
     let model = provider.model.as_deref().unwrap_or("").to_ascii_lowercase();
     match provider.kind {
         Some(ProviderKind::ClaudeCode | ProviderKind::Codex) => Budget::AGENT,
-        Some(ProviderKind::Agy | ProviderKind::Copilot) => Budget {
-            at_once: 1,
-            ..Budget::AGENT
-        },
         _ if name == "ollama" || provider.base_url.as_deref().is_some_and(local) => Budget::LOCAL,
         _ if model.ends_with(":free") || model == "openrouter/free" => Budget::FREE,
         _ => Budget::CLOUD,
@@ -63,12 +59,7 @@ fn kind_of(name: &str, provider: &ProviderConfig) -> Budget {
 pub fn budget_of(name: &str, provider: &ProviderConfig) -> Budget {
     let kind = kind_of(name, provider);
     let output = match provider.kind {
-        Some(
-            ProviderKind::ClaudeCode
-            | ProviderKind::Codex
-            | ProviderKind::Agy
-            | ProviderKind::Copilot,
-        ) => AGENT_OUTPUT_TOKENS,
+        Some(ProviderKind::ClaudeCode | ProviderKind::Codex) => AGENT_OUTPUT_TOKENS,
         _ => provider.max_tokens.unwrap_or(4_096),
     };
     let reads = note_tokens(window_of(name, provider)) as usize * 3 / 4;
@@ -100,8 +91,6 @@ pub fn window_of(name: &str, provider: &ProviderConfig) -> Window {
     let (tokens, paid) = match provider.kind {
         Some(ProviderKind::ClaudeCode) => (200_000, false),
         Some(ProviderKind::Codex) => (256_000, false),
-        Some(ProviderKind::Agy) => (200_000, false),
-        Some(ProviderKind::Copilot) => (128_000, false),
         _ if name == "ollama" || local(&url) => (8_192, false),
         _ if model.ends_with(":free") || model == "openrouter/free" => (32_000, false),
         _ if model.contains("gemini") => (1_000_000, true),
@@ -226,12 +215,10 @@ mod tests {
     }
 
     #[test]
-    fn isolated_profiles_serialize_parts_without_reducing_agent_limits() {
+    fn signed_in_writers_keep_agent_limits_and_part_parallelism() {
         for (name, kind, words, at_once) in [
             ("claude_code", ProviderKind::ClaudeCode, 64_000, 3),
             ("codex", ProviderKind::Codex, 64_000, 3),
-            ("agy", ProviderKind::Agy, 64_000, 1),
-            ("copilot", ProviderKind::Copilot, 43_200, 1),
         ] {
             let mut config = provider(kind, None, None);
             assert_eq!(budget_of(name, &config), Budget { words, at_once });
@@ -248,9 +235,9 @@ mod tests {
     }
 
     #[test]
-    fn fallback_chains_serialize_an_isolated_profile_in_either_order() {
+    fn fallback_chains_use_the_tightest_supported_writer_in_either_order() {
         let mut config: Config = toml::from_str("").unwrap();
-        for (isolated, words) in [("agy", 64_000usize), ("copilot", 43_200)] {
+        for (isolated, words) in [("codex", 64_000usize), ("claude_code", 64_000)] {
             for (other, other_words) in [
                 ("codex", 64_000),
                 ("claude_code", 64_000),
@@ -262,7 +249,7 @@ mod tests {
                         writing_budget(&config),
                         Budget {
                             words: words.min(other_words),
-                            at_once: 1
+                            at_once: if other == "ollama" { 1 } else { 3 }
                         }
                     );
                 }

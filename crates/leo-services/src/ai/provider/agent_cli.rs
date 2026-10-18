@@ -14,8 +14,6 @@ use crate::config::provider::{ProviderConfig, ProviderKind};
 pub enum Agent {
     ClaudeCode,
     Codex,
-    Agy,
-    Copilot,
 }
 
 impl Agent {
@@ -23,8 +21,6 @@ impl Agent {
         match cfg.kind {
             Some(ProviderKind::ClaudeCode) => Some(Agent::ClaudeCode),
             Some(ProviderKind::Codex) => Some(Agent::Codex),
-            Some(ProviderKind::Agy) => Some(Agent::Agy),
-            Some(ProviderKind::Copilot) => Some(Agent::Copilot),
             _ => None,
         }
     }
@@ -33,8 +29,6 @@ impl Agent {
         match self {
             Agent::ClaudeCode => "claude",
             Agent::Codex => "codex",
-            Agent::Agy => "agy",
-            Agent::Copilot => "copilot",
         }
     }
 
@@ -42,8 +36,6 @@ impl Agent {
         match self {
             Agent::ClaudeCode => "your Claude plan",
             Agent::Codex => "your ChatGPT plan",
-            Agent::Agy => "your Google Antigravity account",
-            Agent::Copilot => "your GitHub Copilot plan",
         }
     }
 
@@ -51,8 +43,6 @@ impl Agent {
         match self {
             Agent::ClaudeCode => "install Claude Code: https://claude.com/claude-code",
             Agent::Codex => "install Codex: npm install -g @openai/codex",
-            Agent::Agy => "install Antigravity CLI: https://antigravity.google/docs/cli/install",
-            Agent::Copilot => "install GitHub Copilot CLI: npm install -g @github/copilot",
         }
     }
 
@@ -60,8 +50,6 @@ impl Agent {
         match self {
             Agent::ClaudeCode => "run `claude` once and sign in",
             Agent::Codex => "run `codex login`",
-            Agent::Agy => "run `leo doctor --sign-in agy`",
-            Agent::Copilot => "run `leo doctor --sign-in copilot`",
         }
     }
 }
@@ -265,8 +253,6 @@ impl AgentCli {
                 match agent {
                     Agent::Codex => "codex",
                     Agent::ClaudeCode => "claude_code",
-                    Agent::Agy => "agy",
-                    Agent::Copilot => "copilot",
                 },
                 cfg.model.as_deref().unwrap_or(""),
                 cfg.effort.as_deref(),
@@ -355,6 +341,7 @@ impl AgentCli {
                         "read-only",
                         "--color",
                         "never",
+                        "--json",
                     ]
                     .map(String::from),
                 );
@@ -378,16 +365,6 @@ impl AgentCli {
                     Some(system) => format!("{system}\n\n{}", req.prompt),
                     None => req.prompt.clone(),
                 }
-            }
-            Agent::Agy | Agent::Copilot => {
-                let (scoped, input) = super::scoped_cli::arguments(
-                    self.agent,
-                    req,
-                    self.model.as_deref(),
-                    self.effort.as_deref(),
-                );
-                args = scoped;
-                input
             }
         };
         (args, input)
@@ -504,6 +481,39 @@ pub fn hear(line: &str, heard: &mut Heard, sink: Sink<'_>) -> bool {
         return false;
     };
     match event["type"].as_str() {
+        Some("item.completed") if event["item"]["type"] == "agent_message" => {
+            if let Some(text) = event["item"]["text"].as_str() {
+                if !heard.answer.is_empty() {
+                    heard.answer.push_str("\n\n");
+                    sink("\n\n");
+                }
+                heard.answer.push_str(text);
+                sink(text);
+            }
+            false
+        }
+        Some("turn.completed") => {
+            let usage = &event["usage"];
+            if let (Some(input), Some(output)) = (
+                usage["input_tokens"].as_u64(),
+                usage["output_tokens"].as_u64(),
+            ) {
+                heard.tokens = Some((input, output));
+                heard.cache = (
+                    usage["cached_input_tokens"].as_u64().unwrap_or(0),
+                    usage["cache_write_input_tokens"].as_u64().unwrap_or(0),
+                );
+            }
+            true
+        }
+        Some("turn.failed" | "error") => {
+            let message = event["error"]["message"]
+                .as_str()
+                .or_else(|| event["message"].as_str())
+                .unwrap_or("The writing program could not finish. Try again.");
+            heard.result = Some((true, message.into()));
+            true
+        }
         Some("stream_event") => {
             let delta = &event["event"]["delta"];
             if event["event"]["type"] == "content_block_delta" && delta["type"] == "text_delta" {
@@ -567,6 +577,12 @@ pub struct ClaudeSession {
     _room: tempfile::TempDir,
 }
 
+pub struct Control<'a> {
+    pub stopped: &'a dyn Fn() -> bool,
+    pub tools_done: &'a dyn Fn() -> bool,
+    pub most_calls: usize,
+}
+
 impl ClaudeSession {
     pub fn native(&self) -> bool {
         self.native
@@ -588,7 +604,31 @@ impl ClaudeSession {
         call: &mut dyn FnMut(&str, &serde_json::Value) -> String,
         gap: &mut dyn FnMut(),
     ) -> ProviderResult<(String, Spent)> {
+        self.say_controlled(
+            text,
+            sink,
+            call,
+            gap,
+            Control {
+                stopped: &|| false,
+                tools_done: &|| false,
+                most_calls: 12,
+            },
+        )
+    }
+
+    pub fn say_controlled(
+        &mut self,
+        text: &str,
+        sink: Sink<'_>,
+        call: &mut dyn FnMut(&str, &serde_json::Value) -> String,
+        gap: &mut dyn FnMut(),
+        control: Control<'_>,
+    ) -> ProviderResult<(String, Spent)> {
         let watch = Watchdog::start(&self.child, Some(self.quiet), self.total_limit);
+        let mut calls = 0usize;
+        let mut limited = false;
+        let mut idle = Instant::now();
         let message = serde_json::json!({
             "type": "user",
             "message": { "role": "user", "content": [{ "type": "text", "text": text }] },
@@ -604,14 +644,18 @@ impl ClaudeSession {
         let mut heard = Heard::default();
         let mut bytes = 0usize;
         loop {
-            let Some(wait) = watch.remaining(self.quiet) else {
+            if (control.stopped)() {
+                self.child.stop();
+                return Err(ProviderError::Retryable("The answer was stopped.".into()));
+            }
+            let Some(wait) = watch.remaining(self.quiet.saturating_sub(idle.elapsed())) else {
                 self.child.stop();
                 return Err(ProviderError::Retryable(format!(
                     "{}: claude stopped answering and was stopped",
                     self.name
                 )));
             };
-            match self.lines.recv_timeout(wait) {
+            match self.lines.recv_timeout(wait.min(Duration::from_millis(50))) {
                 Ok(super::mcp::Incoming::Line(line)) => {
                     bytes = bytes.saturating_add(line.len());
                     if bytes > MOST_OUTPUT {
@@ -622,14 +666,27 @@ impl ClaudeSession {
                         )));
                     }
                     watch.touch();
+                    idle = Instant::now();
                     if hear(&line, &mut heard, sink) {
                         break;
                     }
                 }
                 Ok(super::mcp::Incoming::Call { name, args, reply }) => {
                     watch.touch();
+                    idle = Instant::now();
+                    if limited {
+                        self.child.stop();
+                        return Err(ProviderError::Retryable("The writing program kept requesting tools after its limit. Try a smaller request.".into()));
+                    }
                     gap();
-                    let _ = reply.send(call(&name, &args));
+                    let result = if calls >= control.most_calls || (control.tools_done)() {
+                        limited = true;
+                        "No more tools are available for this answer. Use the results already returned and answer the user now. Use interpretable language.".to_string()
+                    } else {
+                        calls += 1;
+                        call(&name, &args)
+                    };
+                    let _ = reply.send(result);
                 }
                 Ok(super::mcp::Incoming::Failed) => {
                     self.child.stop();
@@ -639,6 +696,9 @@ impl ClaudeSession {
                     )));
                 }
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    if idle.elapsed() < self.quiet && watch.remaining(self.quiet).is_some() {
+                        continue;
+                    }
                     self.child.stop();
                     return Err(ProviderError::Retryable(format!(
                         "{}: claude stopped answering and was stopped",
@@ -871,33 +931,77 @@ impl AgentCli {
     }
 
     fn run(&self, req: &ChatRequest, images: &[Image], sink: Sink<'_>) -> ProviderResult<String> {
+        self.run_controlled(req, images, sink, &|| false)
+    }
+
+    pub(crate) fn controlled(
+        &self,
+        req: &ChatRequest,
+        sink: Sink<'_>,
+        stopped: &dyn Fn() -> bool,
+    ) -> ProviderResult<String> {
+        self.run_controlled(req, &[], sink, stopped)
+    }
+
+    fn run_controlled(
+        &self,
+        req: &ChatRequest,
+        images: &[Image],
+        sink: Sink<'_>,
+        stopped: &dyn Fn() -> bool,
+    ) -> ProviderResult<String> {
+        if stopped() {
+            return Err(ProviderError::Fatal("The answer was stopped.".into()));
+        }
         let program =
             locate(&self.bin).ok_or_else(|| ProviderError::Retryable(self.unavailable_reason()))?;
-        if !super::scoped_cli::supported(self.agent, &program) {
-            return Err(ProviderError::Retryable(format!(
-                "{} cannot provide Leo's isolation controls. {}.",
-                self.bin,
-                self.agent.install()
-            )));
-        }
         let disables = match self.agent {
             Agent::Codex => codex_disables(&program)?,
-            Agent::ClaudeCode | Agent::Agy | Agent::Copilot => Vec::new(),
+            Agent::ClaudeCode => Vec::new(),
         };
         let room = self.room()?;
-        let _scoped = super::scoped_cli::prepare(
-            self.agent,
-            room.path(),
-            req.system.as_deref(),
-            !images.is_empty(),
-        )?;
         let files = self.image_files(room.path(), images)?;
-        let (args, input) = self.arguments(req, images, &disables, &files);
-        match self.spawn(&program, room.path(), &args, input.clone(), sink) {
+        let instructions = if self.agent == Agent::Codex {
+            req.system.as_ref().map(|system| {
+                let mut file = tempfile::Builder::new().prefix("instructions-").suffix(".md").tempfile_in(room.path())?;
+                file.write_all(system.as_bytes())?;
+                file.as_file().sync_all()?;
+                Ok::<_, std::io::Error>(file)
+            }).transpose().map_err(|_| ProviderError::Retryable("Leo could not prepare private writing instructions. Check free space and try again.".into()))?
+        } else {
+            None
+        };
+        let material = ChatRequest {
+            system: if instructions.is_some() {
+                None
+            } else {
+                req.system.clone()
+            },
+            prompt: req.prompt.clone(),
+            temperature: req.temperature,
+            max_tokens: req.max_tokens,
+        };
+        let (mut args, input) = self.arguments(&material, images, &disables, &files);
+        if let Some(file) = &instructions {
+            args.pop();
+            args.extend([
+                "-c".into(),
+                format!(
+                    "model_instructions_file={}",
+                    serde_json::to_string(&file.path().to_string_lossy()).map_err(|_| {
+                        ProviderError::Retryable(
+                            "Leo could not prepare private writing instructions. Try again.".into(),
+                        )
+                    })?
+                ),
+                "-".into(),
+            ]);
+        }
+        match self.spawn(&program, room.path(), &args, input.clone(), sink, stopped) {
             Err(ProviderError::Retryable(message))
-                if message == self.no_answer() || message == self.stalled() =>
+                if !stopped() && (message == self.no_answer() || message == self.stalled()) =>
             {
-                self.spawn(&program, room.path(), &args, input, sink)
+                self.spawn(&program, room.path(), &args, input, sink, stopped)
             }
             other => other,
         }
@@ -906,7 +1010,7 @@ impl AgentCli {
     fn note_spent(&self, heard: &Heard, stderr: &str, asked: usize, answer: &str) {
         let (banner_model, banner_effort, banner_tokens) = match self.agent {
             Agent::Codex => codex_banner(stderr),
-            Agent::ClaudeCode | Agent::Agy | Agent::Copilot => (None, None, None),
+            Agent::ClaudeCode => (None, None, None),
         };
         let mut spent = Spent {
             model: heard
@@ -951,6 +1055,7 @@ impl AgentCli {
         args: &[String],
         input: String,
         sink: Sink<'_>,
+        stopped: &dyn Fn() -> bool,
     ) -> ProviderResult<String> {
         let mut command = Command::new(program);
         command
@@ -1002,22 +1107,52 @@ impl AgentCli {
             inner,
             last: Arc::clone(&watch.last),
         });
-        let mut heard = match (self.agent, stdout) {
-            (Agent::ClaudeCode, Some(stdout)) => read_stream(BufReader::new(stdout), sink),
-            (Agent::Codex | Agent::Agy | Agent::Copilot, Some(stdout)) => {
-                let (answer, exceeded) = process::output(stdout);
-                Heard {
-                    answer,
-                    exceeded,
-                    ..Heard::default()
+        let (messages, lines) = std::sync::mpsc::sync_channel(QUEUED_MESSAGES);
+        let reader = std::thread::spawn(move || {
+            if let Some(stdout) = stdout {
+                let mut reader = BufReader::new(stdout);
+                loop {
+                    let line = process::line(&mut reader);
+                    let ended = !matches!(&line, Ok(Some(_)));
+                    if messages.send(line).is_err() || ended {
+                        break;
+                    }
                 }
             }
-            (_, None) => Heard::default(),
-        };
+        });
+        let mut heard = Heard::default();
+        let mut bytes = 0usize;
+        loop {
+            if stopped() || watch.stalled.load(Ordering::Relaxed) {
+                child.stop();
+                break;
+            }
+            match lines.recv_timeout(Duration::from_millis(50)) {
+                Ok(Ok(Some(line))) => {
+                    bytes = bytes.saturating_add(line.len());
+                    if bytes > MOST_OUTPUT {
+                        heard.exceeded = true;
+                        break;
+                    }
+                    hear(&line, &mut heard, sink);
+                }
+                Ok(Ok(None)) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                Ok(Err(_)) => {
+                    heard.exceeded = true;
+                    break;
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            }
+        }
+        drop(lines);
         if heard.exceeded {
             child.stop();
         }
         let status = loop {
+            if stopped() {
+                child.stop();
+                break Err(ProviderError::Fatal("The answer was stopped.".into()));
+            }
             let waited = child
                 .0
                 .lock()
@@ -1048,6 +1183,7 @@ impl AgentCli {
             }
         };
         let _ = writer.join();
+        let _ = reader.join();
         let (stderr, exceeded) = errors.join().unwrap_or_default();
         let status = status?;
         if watch.stalled.load(Ordering::Relaxed) {
@@ -1061,9 +1197,6 @@ impl AgentCli {
         }
         if let Some(usage) = heard.usage.clone() {
             crate::usage::save(&self.name, usage);
-        }
-        if matches!(self.agent, Agent::Agy | Agent::Copilot) && status.success() {
-            heard.answer = super::scoped_cli::answer(self.agent, &heard.answer)?;
         }
         let failed_in_result = matches!(heard.result, Some((true, _)));
         if !status.success() || failed_in_result {
@@ -1089,9 +1222,6 @@ impl AgentCli {
         if answer.is_empty() {
             return Err(ProviderError::Retryable(self.no_answer()));
         }
-        if self.agent != Agent::ClaudeCode {
-            sink(&answer);
-        }
         self.note_spent(&heard, &stderr, input_len, &answer);
         Ok(answer)
     }
@@ -1111,7 +1241,7 @@ impl ChatProvider for AgentCli {
     }
 
     fn available(&self) -> bool {
-        locate(&self.bin).is_some_and(|program| super::scoped_cli::supported(self.agent, &program))
+        locate(&self.bin).is_some()
     }
 
     fn name(&self) -> &str {
@@ -1123,16 +1253,6 @@ impl ChatProvider for AgentCli {
     }
 
     fn unavailable_reason(&self) -> String {
-        if let Some(program) = locate(&self.bin) {
-            if !super::scoped_cli::supported(self.agent, &program) {
-                return format!(
-                    "{}: `{}` was found, but Leo could not verify its required safety controls. Update it, then try again: {}",
-                    self.name,
-                    self.bin,
-                    self.agent.install()
-                );
-            }
-        }
         format!(
             "{}: `{}` is not installed; {}",
             self.name,
@@ -1316,9 +1436,11 @@ mod tests {
         for stream in [1, 2] {
             let dir = tempfile::tempdir().unwrap();
             let bin = script(dir.path(), &format!("printf '%s\\n' '{flags}' >&{stream}"));
-            let cfg = config(ProviderKind::Agy, &bin, None);
-            let agent = AgentCli::new("agy".into(), Agent::Agy, &cfg);
-            assert!(agent.available(), "help on stream {stream}");
+            assert_eq!(
+                probe(Path::new(&bin), &["--help"]).unwrap().trim(),
+                flags,
+                "help on stream {stream}"
+            );
 
             let dir = tempfile::tempdir().unwrap();
             let bin = script(
@@ -1338,24 +1460,6 @@ mod tests {
         );
         let error = probe(Path::new(&bin), &["--help"]).unwrap_err().to_string();
         assert!(!error.contains("PRIVATE_DIAGNOSTIC"));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn an_installed_cli_without_required_controls_is_not_reported_as_missing() {
-        let dir = tempfile::tempdir().unwrap();
-        let bin = script(dir.path(), "printf '%s\\n' 'Unrelated old CLI' >&2");
-        for (kind, name, agent) in [
-            (ProviderKind::Agy, "agy", Agent::Agy),
-            (ProviderKind::Copilot, "copilot", Agent::Copilot),
-        ] {
-            let cfg = config(kind, &bin, None);
-            let provider = AgentCli::new(name.into(), agent, &cfg);
-            assert!(!provider.available());
-            let reason = provider.unavailable_reason();
-            assert!(reason.contains("was found") && reason.contains("safety controls"));
-            assert!(!reason.contains("not installed"));
-        }
     }
 
     #[test]
@@ -1564,7 +1668,12 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":true,"result":"No
     #[test]
     fn codex_answers_in_one_piece() {
         let dir = tempfile::TempDir::new().unwrap();
-        let bin = script(dir.path(), "cat >/dev/null\necho '  # Notes'\necho 'hello'");
+        let bin = script(
+            dir.path(),
+            r##"cat >/dev/null
+printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"# Notes\nhello"}}'
+printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1200,"cached_input_tokens":800,"output_tokens":100,"reasoning_output_tokens":70}}'"##,
+        );
         let cfg = config(ProviderKind::Codex, &bin, None);
         let agent = AgentCli::new("codex".into(), Agent::Codex, &cfg);
         let mut pieces = Vec::new();
@@ -1573,6 +1682,68 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":true,"result":"No
             .unwrap();
         assert_eq!(answer, "# Notes\nhello");
         assert_eq!(pieces, ["# Notes\nhello"]);
+        let spent = agent.spent().unwrap();
+        assert_eq!(
+            (spent.input, spent.cached, spent.output, spent.estimated),
+            (1200, 800, 100, false)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn codex_uses_private_system_instructions_instead_of_duplicate_coding_instructions() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let bin = script(
+            dir.path(),
+            r##"test "$(find . -type f -name 'instructions-*.md' | wc -l | tr -d ' ')" = 1 || exit 21
+test "$(cat instructions-*.md)" = 'You write notes.' || exit 22
+test "$(cat)" = '<transcript>hello</transcript>' || exit 23
+printf '%s\n' "$@" | grep '^model_instructions_file=' >/dev/null || exit 24
+printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"Notes ready."}}'
+printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":80,"output_tokens":10}}'"##,
+        );
+        let cfg = config(ProviderKind::Codex, &bin, None);
+        let agent = AgentCli::new("codex".into(), Agent::Codex, &cfg);
+        assert_eq!(agent.complete(&request()).unwrap(), "Notes ready.");
+        assert_eq!(agent.spent().unwrap().cached, 80);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stopping_a_stateless_codex_request_does_not_retry_and_reaps_its_child() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let marker = dir.path().join("started");
+        let bin = script(
+            dir.path(),
+            &format!(
+                "echo started >> '{}'\ncat >/dev/null\nsleep 30",
+                marker.display()
+            ),
+        );
+        let cfg = config(ProviderKind::Codex, &bin, None);
+        let agent = AgentCli::new("codex".into(), Agent::Codex, &cfg)
+            .with_limits(Duration::from_secs(30), Duration::from_secs(30));
+        let began = Instant::now();
+        let result = agent.controlled(&request(), &mut |_| {}, &|| {
+            began.elapsed() >= Duration::from_millis(100)
+        });
+        assert!(result.unwrap_err().to_string().contains("stopped"));
+        assert!(began.elapsed() < Duration::from_secs(2));
+        assert_eq!(std::fs::read_to_string(marker).unwrap().lines().count(), 1);
+    }
+
+    #[test]
+    fn codex_json_reports_partial_failures_without_exposing_internal_events() {
+        let stream = [
+            r#"{"type":"item.completed","item":{"type":"reasoning","text":"private reasoning"}}"#,
+            r#"{"type":"item.completed","item":{"type":"mcp_tool_call","server":"leo","tool":"read_note"}}"#,
+            r#"{"type":"turn.failed","error":{"message":"Try signing in again."}}"#,
+        ].join("\n");
+        let mut pieces = Vec::new();
+        let heard = read_stream(stream.as_bytes(), &mut |text| pieces.push(text.to_string()));
+        assert!(pieces.is_empty());
+        assert!(heard.answer.is_empty());
+        assert_eq!(heard.result, Some((true, "Try signing in again.".into())));
     }
 
     #[cfg(unix)]
@@ -1603,6 +1774,41 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":true,"result":"No
         let started = Instant::now();
         assert!(session.say("hello", &mut |_| {}).is_err());
         assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stopping_a_silent_claude_turn_terminates_its_process_promptly() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let bin = script(dir.path(), "read -r line\nsleep 30");
+        let cfg = config(ProviderKind::ClaudeCode, &bin, None);
+        let agent = AgentCli::new("claude_code".into(), Agent::ClaudeCode, &cfg)
+            .with_limits(Duration::from_secs(30), Duration::from_secs(30));
+        let mut session = agent.claude_session("Use interpretable language.").unwrap();
+        let started = Instant::now();
+        let result = session.say_controlled(
+            "hello",
+            &mut |_| {},
+            &mut |_, _| String::new(),
+            &mut || {},
+            Control {
+                stopped: &|| started.elapsed() >= Duration::from_millis(50),
+                tools_done: &|| false,
+                most_calls: 12,
+            },
+        );
+        assert!(result.unwrap_err().to_string().contains("stopped"));
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(session
+            .child
+            .0
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .try_wait()
+            .unwrap()
+            .is_some());
     }
 
     #[cfg(unix)]
@@ -1718,7 +1924,7 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"x
         let bin = script(
             dir.path(),
             &format!(
-                "[ \"$1\" = features ] && exit 0\ncat >/dev/null\nif [ -f '{0}' ]; then echo hello; else touch '{0}'; fi",
+                "[ \"$1\" = features ] && exit 0\ncat >/dev/null\nif [ -f '{0}' ]; then printf '%s\\n' '{{\"type\":\"item.completed\",\"item\":{{\"type\":\"agent_message\",\"text\":\"hello\"}}}}'; else touch '{0}'; fi",
                 mark.display()
             ),
         );

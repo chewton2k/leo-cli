@@ -304,9 +304,13 @@ fn writing_profiles_at(root: &Path) -> Area {
             Some(Item {
                 id: id.into(),
                 label: label.into(),
-                detail: "Private sign-in state and local CLI caches; clearing requires signing in again.".into(),
+                detail: "Saved private sign-in state and caches from a removed writing provider."
+                    .into(),
                 bytes: size_of(&path),
-                when: metadata.modified().ok().map(chrono::DateTime::<chrono::Utc>::from),
+                when: metadata
+                    .modified()
+                    .ok()
+                    .map(chrono::DateTime::<chrono::Utc>::from),
                 locked: false,
             })
         })
@@ -314,12 +318,12 @@ fn writing_profiles_at(root: &Path) -> Area {
     let bytes = items.iter().map(|item| item.bytes).sum();
     Area {
         id: "writing-profiles".into(),
-        title: "Writing CLI profiles".into(),
-        about: "Isolated sign-in profiles for Google Antigravity and GitHub Copilot. Their contents are private and are never included in exports.".into(),
+        title: "Legacy writing profiles".into(),
+        about: "Saved data from removed Google Antigravity and GitHub Copilot support. Nothing is deleted automatically; private contents are never included in exports.".into(),
         path: root.display().to_string(),
         bytes,
         actions: if items.is_empty() { Vec::new() } else {
-            vec![act("clear", "Clear selected profiles", Some("Sign-in details, conversation history and local caches for the selected writing CLIs are deleted. Sign in again before using them. A profile in use cannot be cleared."), true)]
+            vec![act("clear", "Clear selected profiles", Some("Saved sign-in details, conversation history and local caches for these removed writing providers are deleted. This cannot be undone. A profile in use cannot be cleared."), true)]
         },
         items,
     }
@@ -332,12 +336,12 @@ fn clear_writing_profiles(items: &[String]) -> Result<String> {
             && items
                 .iter()
                 .all(|id| matches!(id.as_str(), "agy" | "copilot")),
-        "Choose an AGY or GitHub Copilot profile shown in Storage."
+        "Choose a legacy writing profile shown in Storage."
     );
     for name in items {
         leo_services::ai::provider::scoped_cli::clear_profile(name)?;
     }
-    Ok("Cleared the selected writing profiles. Sign in again before using them.".into())
+    Ok("Cleared the selected legacy writing profiles.".into())
 }
 
 fn delete_recordings(root: &Path, ids: &[String]) -> Result<String> {
@@ -452,7 +456,10 @@ impl Housekeeper for Housekeeping {
         out.extend(application());
         out.extend(settings());
         if let Ok(root) = leo_services::ai::provider::scoped_cli::profile_root() {
-            out.push(writing_profiles_at(&root));
+            let area = writing_profiles_at(&root);
+            if !area.items.is_empty() {
+                out.push(area);
+            }
         }
         out
     }
@@ -511,7 +518,7 @@ mod tests {
             .confirm
             .as_ref()
             .unwrap()
-            .contains("Sign in again"));
+            .contains("cannot be undone"));
         let rendered = serde_json::to_string(&area).unwrap();
         assert!(!rendered.contains("fake-private-token"));
         assert!(!rendered.contains("fake-private-chat"));

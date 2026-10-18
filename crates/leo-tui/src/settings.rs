@@ -566,20 +566,6 @@ mod tests {
     }
 
     #[test]
-    fn antigravity_and_copilot_offer_effort_without_a_key() {
-        for (provider, model) in [("agy", "default"), ("copilot", "auto")] {
-            let rows = simple_page(&format!("[chat]\nchain = [\"{provider}\"]\n[providers.{provider}]\nbin = \"leo-no-such-{provider}\"\nmodel = \"{model}\"\neffort = \"high\"\n[transcribe]\nchain = []\n"),
-                &MemoryStore::default(), &Local::default());
-            let effort = row(&rows, "writing effort").unwrap();
-            assert_eq!(
-                (effort.1.as_str(), effort.2.as_str()),
-                ("high", "ChooseEffort")
-            );
-            assert!(!rows.iter().any(|(label, _, _)| label.ends_with(" key")));
-        }
-    }
-
-    #[test]
     fn the_simple_page_offers_a_signed_in_writer_and_a_key_for_cloud_speech() {
         use super::*;
         let store = MemoryStore::default();
@@ -623,18 +609,6 @@ mod tests {
                 "gpt-6-luna (included in your ChatGPT plan)",
                 "leo-no-such-codex",
             ),
-            (
-                "agy",
-                "Google Antigravity",
-                "default (included in your Google Antigravity account)",
-                "leo-no-such-agy",
-            ),
-            (
-                "copilot",
-                "GitHub Copilot",
-                "auto (included in your GitHub Copilot plan)",
-                "leo-no-such-copilot",
-            ),
         ] {
             let rows = simple_page(
                 &format!(
@@ -655,27 +629,6 @@ mod tests {
                 "{rows:?}"
             );
         }
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn an_unsupported_program_named_copilot_is_not_presented_as_signed_in() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().unwrap();
-        let bin = dir.path().join("copilot");
-        std::fs::write(
-            &bin,
-            "#!/bin/sh\nprintf '%s\\n' 'AWS Copilot CLI: deploy applications to Amazon ECS'\n",
-        )
-        .unwrap();
-        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
-        let rows = simple_page(&format!("[chat]\nchain = [\"copilot\"]\n[providers.copilot]\nbin = {:?}\n[transcribe]\nchain = []\n", bin.display().to_string()),
-            &MemoryStore::default(), &Local::default());
-        assert_eq!(row(&rows, "writing").unwrap().1, "○ GitHub Copilot");
-        let sign_in = row(&rows, "GitHub Copilot sign-in").unwrap();
-        assert!(sign_in.1.contains("safety controls"));
-        assert!(!sign_in.1.contains("uses your GitHub Copilot plan"));
-        assert_eq!(sign_in.2, "Fact");
     }
 
     #[test]
@@ -743,7 +696,7 @@ mod tests {
     fn a_signed_in_writer_and_cloud_speech_only_ask_for_the_speech_key() {
         use super::*;
         let rows = simple_page(
-            "[chat]\nchain = [\"agy\"]\n[providers.agy]\nbin = \"leo-no-such-agy\"\n[transcribe]\nchain = [\"gemini_speech\"]\n",
+            "[chat]\nchain = [\"claude_code\"]\n[providers.claude_code]\nbin = \"leo-no-such-claude\"\n[transcribe]\nchain = [\"gemini_speech\"]\n",
             &MemoryStore::default(),
             &Local::default(),
         );

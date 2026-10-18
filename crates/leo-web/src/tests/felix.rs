@@ -1201,7 +1201,7 @@ fn permission_updates_validate_access_and_only_change_the_live_answer() {
 
 #[test]
 fn closing_the_reply_prevents_further_automatic_changes() {
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let (tx, rx) = crate::reply::channel();
     let mut desk = tools::Desk::new(vec![], 32000)
         .with_access(tools::Access::Auto)
         .with_reply(tx);
@@ -3333,4 +3333,194 @@ fn a_workspace_reference_cannot_bind_a_different_chat_or_a_deleted_problem() {
     let response = run(chat_reply(State(state.clone()), Json(body)));
     assert_eq!(response.status(), StatusCode::OK);
     run(axum::body::to_bytes(response.into_body(), 1_000_000)).unwrap();
+}
+
+#[test]
+fn repeated_identical_failed_calls_get_one_final_answer_without_exhausting_the_budget() {
+    for broken in [true, false] {
+        let (mut state, _dir, _) = state_with(&[]);
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let called = Arc::clone(&count);
+        state.chat = Some(Arc::new(move |system, _, _, piece, _| {
+            called.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let text = if system.contains(tools::NO_MORE_TOOLS) {
+                "I could not open that note. Choose an existing note and try again."
+            } else if broken {
+                "<tool>{read_note: missing}</tool>"
+            } else {
+                "<tool>{\"name\":\"read_note\",\"note\":\"n999\"}</tool>"
+            };
+            piece(text);
+            Ok(text.to_string().into())
+        }));
+        let lines = chat_lines(&state, "Read the note");
+        assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 3);
+        assert_eq!(lines.iter().filter(|l| l.get("step").is_some()).count(), 2);
+        let shown: String = lines.iter().filter_map(|l| l["t"].as_str()).collect();
+        assert!(shown.contains("Choose an existing note"));
+        assert!(!shown.contains("<tool>"));
+    }
+}
+
+#[test]
+fn hidden_study_grading_is_counted_and_only_runs_when_the_verdict_is_missing() {
+    for marker in [false, true] {
+        for judge in ["correct", "not a verdict"] {
+            let (mut state, _dir, _) = state_with(&[]);
+            let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let called = Arc::clone(&count);
+            state.chat = Some(Arc::new(move |system, _, _, piece, _| {
+                called.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let text = if system == crate::routes::felix::JUDGE {
+                    judge
+                } else if marker {
+                    "[[correct]] A queue is first in, first out."
+                } else {
+                    "A queue is first in, first out."
+                };
+                piece(text);
+                Ok(chat::Reply {
+                    text: text.into(),
+                    spent: Some(chat::Spent {
+                        input: 100,
+                        output: 10,
+                        ..chat::Spent::default()
+                    }),
+                })
+            }));
+            let body = serde_json::from_value(serde_json::json!({"practice":true,"mark":true,"messages":[{"role":"user","text":"A queue is first in, first out."}]})).unwrap();
+            let bytes = run(async {
+                let response = chat_reply(State(state.clone()), Json(body)).await;
+                axum::body::to_bytes(response.into_body(), 1_000_000)
+                    .await
+                    .unwrap()
+            });
+            let lines: Vec<serde_json::Value> = std::str::from_utf8(&bytes)
+                .unwrap()
+                .lines()
+                .map(|l| serde_json::from_str(l).unwrap())
+                .collect();
+            let calls = if marker { 1 } else { 2 };
+            assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), calls);
+            let spent = lines.iter().find_map(|l| l.get("spent")).unwrap();
+            assert_eq!(spent["input"], calls * 100);
+            assert_eq!(spent["output"], calls * 10);
+            assert_eq!(spent["steps"], calls);
+        }
+    }
+}
+
+#[test]
+fn closing_a_reply_stops_follow_up_tools_grading_and_fallbacks() {
+    for failure in [false, true] {
+        let (mut state, _dir, _) = state_with(&[]);
+        let (ready, started) = std::sync::mpsc::sync_channel(1);
+        let (resume, continued) = std::sync::mpsc::sync_channel(1);
+        let continued = Arc::new(Mutex::new(continued));
+        let called = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count = Arc::clone(&called);
+        state.chat = Some(Arc::new(move |_, _, _, piece, _| {
+            count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            ready.send(()).unwrap();
+            continued
+                .lock()
+                .unwrap()
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
+            if failure {
+                anyhow::bail!("fixture failure after stop");
+            }
+            let text = "<tool>{\"name\":\"search_notes\",\"query\":\"queue\"}</tool>";
+            piece(text);
+            Ok(text.to_string().into())
+        }));
+        run(async {
+            let body = serde_json::from_value(serde_json::json!({"practice":true,"mark":true,"messages":[{"role":"user","text":"Check my answer"}]})).unwrap();
+            let response = chat_reply(State(state.clone()), Json(body)).await;
+            let began = tokio::task::spawn_blocking(move || {
+                started.recv_timeout(std::time::Duration::from_secs(5))
+            })
+            .await
+            .unwrap();
+            began.unwrap();
+            drop(response);
+            resume.send(()).unwrap();
+            let wait = std::time::Instant::now();
+            while !state.steering.open_ids().is_empty()
+                && wait.elapsed() < std::time::Duration::from_secs(5)
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            assert!(state.steering.open_ids().is_empty());
+        });
+        assert_eq!(called.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+}
+
+#[test]
+fn native_repeated_failures_finish_without_more_tools_or_a_refusal_retry() {
+    struct Failed {
+        calls: Arc<std::sync::atomic::AtomicUsize>,
+    }
+    impl chat::Conversation for Failed {
+        fn native(&self) -> bool {
+            true
+        }
+        fn say(&mut self, _: &str, exchange: chat::Exchange<'_>) -> anyhow::Result<chat::Reply> {
+            for _ in 0..=tools::MOST_STEPS {
+                if (exchange.stopped)() {
+                    return Ok("".to_string().into());
+                }
+                if (exchange.tools_done)() {
+                    (exchange.piece)("Choose an existing note and try again.");
+                    return Ok("Choose an existing note and try again.".to_string().into());
+                }
+                self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                (exchange.call)("read_note", &serde_json::json!({"note":"n999"}));
+            }
+            anyhow::bail!("fixture exceeded the failed call budget")
+        }
+    }
+    let (mut state, _dir, _) = state_with(&[]);
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let count = Arc::clone(&calls);
+    state.chat = Some(Arc::new(|_, _, _, _, _| {
+        anyhow::bail!("unexpected fallback")
+    }));
+    state.converse = Some(Arc::new(move |_, _| {
+        Some(Box::new(Failed {
+            calls: Arc::clone(&count),
+        }))
+    }));
+    let lines = chat_lines(&state, "Read my note");
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    let shown: String = lines.iter().filter_map(|l| l["t"].as_str()).collect();
+    assert_eq!(shown, "Choose an existing note and try again.");
+    assert!(lines.iter().all(|l| l.get("restart").is_none()
+        && l.get("reset").is_none()
+        && l.get("error").is_none()));
+}
+
+#[test]
+fn foreground_answers_are_bounded_before_context_preparation() {
+    let (mut state, _dir, _) = state_with(&[]);
+    state.chat = Some(Arc::new(|_, _, _, _, _| {
+        anyhow::bail!("busy answers must not reach the model")
+    }));
+    let mut held = Vec::new();
+    while let Some(slot) = state.work.foreground() {
+        held.push(slot);
+    }
+    let body = serde_json::from_value(
+        serde_json::json!({"messages":[{"role":"user","text":"A question"}]}),
+    )
+    .unwrap();
+    let response = run(chat_reply(State(state.clone()), Json(body)));
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert!(json_of(response)["error"]
+        .as_str()
+        .unwrap()
+        .contains("Wait"));
+    drop(held);
+    assert!(state.work.foreground().is_some());
 }

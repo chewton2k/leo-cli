@@ -153,10 +153,7 @@ enum Commands {
     #[command(
         about = "Check that everything works (leo, your notes, the AI, recording, backup) and say how to fix what does not"
     )]
-    Doctor {
-        #[arg(long, value_parser = ["agy", "copilot"], help = "Sign in to an isolated writing CLI profile")]
-        sign_in: Option<String>,
-    },
+    Doctor,
 
     #[command(
         about = "Update leo to the latest release, if there is a newer one, and make sure the speech model is there and intact",
@@ -498,7 +495,7 @@ pub fn run(cli: Cli) -> Result<()> {
                 },
             ))
         }
-        Some(Commands::Doctor { sign_in }) => doctor::run(sign_in),
+        Some(Commands::Doctor) => doctor::run(),
         Some(Commands::Uninstall { yes }) => uninstall::run(yes),
         Some(Commands::Update { force }) => update::run(force),
         Some(Commands::Backup { command }) => backup::run(command),
@@ -523,7 +520,7 @@ mod cli_tests {
     fn doctor_and_bare_backup_parse() {
         assert!(matches!(
             Cli::try_parse_from(["leo", "doctor"]).unwrap().command,
-            Some(Commands::Doctor { sign_in: None })
+            Some(Commands::Doctor)
         ));
         assert!(matches!(
             Cli::try_parse_from(["leo", "backup"]).unwrap().command,
@@ -532,21 +529,8 @@ mod cli_tests {
     }
 
     #[test]
-    fn isolated_writing_sign_in_accepts_only_agy_and_github_copilot() {
-        for provider in ["agy", "copilot"] {
-            assert!(matches!(
-                Cli::try_parse_from(["leo", "doctor", "--sign-in", provider]).unwrap().command,
-                Some(Commands::Doctor { sign_in: Some(name) }) if name == provider
-            ));
-        }
-        for provider in [
-            "openai",
-            "anthropic",
-            "openrouter",
-            "codex",
-            "claude_code",
-            "unknown",
-        ] {
+    fn removed_writing_sign_in_options_are_rejected() {
+        for provider in ["agy", "copilot", "codex", "claude_code"] {
             assert!(Cli::try_parse_from(["leo", "doctor", "--sign-in", provider]).is_err());
         }
         assert!(Cli::try_parse_from(["leo", "doctor", "--sign-in"]).is_err());

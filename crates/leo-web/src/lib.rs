@@ -22,6 +22,7 @@ mod originals;
 mod progress;
 pub mod record;
 mod record_journal;
+pub mod reply;
 pub mod review;
 mod routes;
 pub mod search;
@@ -39,6 +40,7 @@ pub mod tools;
 pub mod tunnel;
 pub mod vectors;
 mod warm;
+mod work;
 
 #[cfg(test)]
 use std::sync::MutexGuard;
@@ -216,6 +218,7 @@ struct AppState {
     rust_fetch: Arc<Mutex<Option<String>>>,
     progress: Arc<progress::Board>,
     warm: Arc<warm::Slot>,
+    work: Arc<work::Work>,
     chat: Option<Streamer>,
     settings: Option<Arc<dyn SettingsApi>>,
     backups: Arc<backup::Backups>,
@@ -483,6 +486,7 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
         rust_fetch: Default::default(),
         progress: Arc::new(progress::Board::kept_in(&chats)),
         warm: Default::default(),
+        work: Default::default(),
         chat,
         settings,
         backups: Default::default(),

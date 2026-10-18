@@ -36,6 +36,9 @@ pub struct CodexTurn<'a> {
     pub sink: Sink<'a>,
     pub restart: &'a mut dyn FnMut(),
     pub call: &'a mut dyn FnMut(&str, &Value) -> String,
+    pub stopped: &'a dyn Fn() -> bool,
+    pub tools_done: &'a dyn Fn() -> bool,
+    pub most_calls: usize,
 }
 
 pub fn tool_specs(tools: &[(String, String, Value)]) -> Vec<Value> {
@@ -182,37 +185,55 @@ impl CodexThread {
         self.send(json!({ "jsonrpc": "2.0", "method": method }))
     }
 
-    fn next_message(&mut self, until: Instant) -> ProviderResult<Value> {
-        if Instant::now() >= until {
-            self.child.stop();
-            return Err(ProviderError::Retryable(format!(
-                "{}: codex stopped answering and was stopped",
-                self.name
-            )));
-        }
-        let wait = self
-            .quiet
-            .min(until.saturating_duration_since(Instant::now()));
-        match self.messages.recv_timeout(wait) {
-            Ok(Ok(message)) => Ok(message),
-            Ok(Err(_)) => {
+    fn next_message(
+        &mut self,
+        until: Instant,
+        stopped: &dyn Fn() -> bool,
+    ) -> ProviderResult<Value> {
+        let idle = Instant::now();
+        loop {
+            if stopped() {
                 self.child.stop();
-                Err(ProviderError::Retryable(format!(
-                    "{}: codex sent unreadable or excessive output. Try a smaller request.",
-                    self.name
-                )))
+                return Err(ProviderError::Retryable("The answer was stopped.".into()));
             }
-            Err(RecvTimeoutError::Timeout) => {
+            if Instant::now() >= until {
                 self.child.stop();
-                Err(ProviderError::Retryable(format!(
+                return Err(ProviderError::Retryable(format!(
                     "{}: codex stopped answering and was stopped",
                     self.name
-                )))
+                )));
             }
-            Err(RecvTimeoutError::Disconnected) => Err(ProviderError::Retryable(format!(
-                "{}: codex ended. If it is not signed in, run `codex login`.",
-                self.name
-            ))),
+            let wait = self
+                .quiet
+                .saturating_sub(idle.elapsed())
+                .min(until.saturating_duration_since(Instant::now()))
+                .min(Duration::from_millis(50));
+            match self.messages.recv_timeout(wait) {
+                Ok(Ok(message)) => return Ok(message),
+                Ok(Err(_)) => {
+                    self.child.stop();
+                    return Err(ProviderError::Retryable(format!(
+                        "{}: codex sent unreadable or excessive output. Try a smaller request.",
+                        self.name
+                    )));
+                }
+                Err(RecvTimeoutError::Timeout) => {
+                    if idle.elapsed() < self.quiet && Instant::now() < until {
+                        continue;
+                    }
+                    self.child.stop();
+                    return Err(ProviderError::Retryable(format!(
+                        "{}: codex stopped answering and was stopped",
+                        self.name
+                    )));
+                }
+                Err(RecvTimeoutError::Disconnected) => {
+                    return Err(ProviderError::Retryable(format!(
+                        "{}: codex ended. If it is not signed in, run `codex login`.",
+                        self.name
+                    )))
+                }
+            }
         }
     }
 
@@ -224,7 +245,7 @@ impl CodexThread {
         let until = Instant::now() + self.total_limit;
         let mut bytes = 0usize;
         loop {
-            let message = self.next_message(until)?;
+            let message = self.next_message(until, &|| false)?;
             watch.touch();
             bytes = bytes.saturating_add(message.to_string().len());
             if bytes > MOST_OUTPUT {
@@ -285,6 +306,9 @@ impl CodexThread {
             sink,
             restart,
             call,
+            stopped,
+            tools_done,
+            most_calls,
         } = turn;
         let id = self.next;
         self.next += 1;
@@ -300,8 +324,10 @@ impl CodexThread {
         let until = Instant::now() + self.total_limit;
         let mut answer = String::new();
         let mut bytes = 0usize;
+        let mut calls = 0usize;
+        let mut limited = false;
         loop {
-            let message = self.next_message(until)?;
+            let message = self.next_message(until, stopped)?;
             watch.touch();
             bytes = bytes.saturating_add(message.to_string().len());
             if bytes > MOST_OUTPUT {
@@ -323,11 +349,23 @@ impl CodexThread {
             }
             if message.get("id").is_some() {
                 let tool = message["method"] == "item/tool/call";
+                if tool && limited {
+                    self.child.stop();
+                    return Err(ProviderError::Retryable("The writing program kept requesting tools after its limit. Try a smaller request.".into()));
+                }
                 if tool && !answer.trim().is_empty() {
                     restart();
                     answer.clear();
                 }
-                self.answer_server(&message, call)?;
+                if tool && (calls >= most_calls || tools_done()) {
+                    limited = true;
+                    self.answer_server(&message, &mut |_, _| "No more tools are available for this answer. Use the results already returned and answer the user now. Use interpretable language.".into())?;
+                } else {
+                    if tool {
+                        calls += 1;
+                    }
+                    self.answer_server(&message, call)?;
+                }
                 continue;
             }
             let params = &message["params"];
@@ -487,6 +525,9 @@ done
             .say(
                 "what is a heap?",
                 CodexTurn {
+                    stopped: &|| false,
+                    tools_done: &|| false,
+                    most_calls: 12,
                     sink: &mut |t| shown.push_str(t),
                     restart: &mut || restarts += 1,
                     call: &mut |name, args| {
@@ -577,6 +618,9 @@ done
             .say(
                 "Use the lookup tool, then tell me the secret word.",
                 CodexTurn {
+                    stopped: &|| false,
+                    tools_done: &|| false,
+                    most_calls: 12,
                     sink: &mut |_| {},
                     restart: &mut || {},
                     call: &mut |_, _| {
@@ -593,6 +637,9 @@ done
             .say(
                 "What was the secret word again? One word.",
                 CodexTurn {
+                    stopped: &|| false,
+                    tools_done: &|| false,
+                    most_calls: 12,
                     sink: &mut |_| {},
                     restart: &mut || {},
                     call: &mut |_, _| "unused".into(),

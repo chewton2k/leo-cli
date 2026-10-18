@@ -305,6 +305,7 @@ struct Remember {
     history: u64,
     notes: std::collections::BTreeMap<String, u64>,
     documents: std::collections::BTreeSet<u64>,
+    material: Option<u64>,
     limit: usize,
 }
 
@@ -342,17 +343,20 @@ pub(crate) fn verdict_in(text: &str) -> Option<&'static str> {
     }
 }
 
-fn judged(streamer: &chat::Streamer, asked: &str) -> Option<&'static str> {
+fn judged(streamer: &chat::Streamer, asked: &str) -> (Option<&'static str>, Option<chat::Spent>) {
     let user = format!("{asked}\n\nReply with one word: correct or incorrect.");
-    let reply = streamer(JUDGE, &user, 20, &mut |_| {}, &mut || {}).ok()?;
+    let Ok(reply) = streamer(JUDGE, &user, 20, &mut |_| {}, &mut || {}) else {
+        return (None, None);
+    };
     let word = reply.text.trim().to_lowercase();
-    if word.starts_with("incorrect") || word.contains("incorrect") {
+    let verdict = if word.contains("incorrect") {
         Some("incorrect")
-    } else if word.starts_with("correct") || word.contains("correct") {
+    } else if word.contains("correct") {
         Some("correct")
     } else {
         None
-    }
+    };
+    (verdict, reply.spent)
 }
 
 #[derive(serde::Deserialize)]
@@ -1018,7 +1022,7 @@ fn answer(
     state: &AppState,
     streamer: &chat::Streamer,
     ask: Ask,
-    tx: &tokio::sync::mpsc::UnboundedSender<String>,
+    tx: &crate::reply::Sender,
 ) -> Result<Option<chat::Spent>> {
     let Ask {
         system,
@@ -1045,10 +1049,15 @@ fn answer(
         }
         let _ = tx.send(ndjson(value));
     };
-    let finished = |spent: Option<chat::Spent>| {
+    let finished = |mut spent: Option<chat::Spent>| {
+        if tx.is_closed() {
+            return spent;
+        }
         if let Some(asked) = &marking {
             if verdict_in(&said.borrow()).is_none() {
-                if let Some(verdict) = judged(streamer, asked) {
+                let (verdict, judged_spent) = judged(streamer, asked);
+                counted(&mut spent, judged_spent);
+                if let Some(verdict) = verdict {
                     let _ = tx.send(ndjson(serde_json::json!({ "verdict": verdict })));
                 }
             }
@@ -1094,8 +1103,13 @@ fn answer(
                 sent: usize,
                 sources: Vec<chat::SourceRef>,
                 notes: std::collections::BTreeMap<String, u64>,
-                documents: std::collections::BTreeSet<u64>| {
-        if let Some(chat) = &remember.chat {
+                documents: std::collections::BTreeSet<u64>,
+                final_access: tools::Access| {
+        if let Some(chat) = remember
+            .chat
+            .as_ref()
+            .filter(|_| !tx.is_closed() && final_access == access)
+        {
             state.warm.keep(crate::warm::Warm {
                 key: remember.key,
                 chat: chat.clone(),
@@ -1104,6 +1118,7 @@ fn answer(
                 sources,
                 notes,
                 documents,
+                material: remember.material,
                 sent,
                 limit: remember.limit,
                 talk,
@@ -1142,7 +1157,15 @@ fn answer(
             Ok(spent) => {
                 documents.extend(remember.documents.iter().copied());
                 let used = sent + follow.len() + said.borrow().len();
-                keep(warm_talk, used, desk.sources.clone(), notes, documents);
+                let final_access = desk.current_access();
+                keep(
+                    warm_talk,
+                    used,
+                    desk.sources.clone(),
+                    notes,
+                    documents,
+                    final_access,
+                );
                 return Ok(finished(spent));
             }
             Err(_) => {
@@ -1153,6 +1176,9 @@ fn answer(
                 send(serde_json::json!({ "sources": sources }));
             }
         }
+    }
+    if tx.is_closed() {
+        return Ok(None);
     }
     let chosen = state.converse.as_ref().and_then(|converse| {
         converse(
@@ -1189,12 +1215,14 @@ fn answer(
         match tried {
             Ok(spent) => {
                 let used = conversation.len() + said.borrow().len();
+                let final_access = desk.current_access();
                 keep(
                     talk,
                     used,
                     desk.sources.clone(),
                     remember.notes.clone(),
                     remember.documents.clone(),
+                    final_access,
                 );
                 return Ok(finished(spent));
             }
@@ -1206,6 +1234,9 @@ fn answer(
     }
     let mut failure = None;
     for attempt in 0..FALLBACK_TRIES {
+        if tx.is_closed() {
+            return Ok(None);
+        }
         if attempt > 0 {
             send(serde_json::json!({ "reset": true }));
             desk.asked = 0;
@@ -1242,12 +1273,23 @@ fn native_answer(
 ) -> Result<Option<chat::Spent>> {
     let mut spent = None;
     let mut calls = 0usize;
+    let mut failures = crate::work::Failures::default();
+    let exhausted = std::cell::Cell::new(false);
     let mut reads_only = true;
     let mut failure: Option<anyhow::Error> = None;
     let gap = std::cell::Cell::new(false);
     let code_context = desk.interview.is_some();
     let mut message = conversation.to_string();
+    let connection = desk.reply_sender();
+    let stopped = || {
+        connection
+            .as_ref()
+            .is_some_and(crate::reply::Sender::is_closed)
+    };
     for attempt in 0..=CODE_RETRIES {
+        if desk.reply_closed() {
+            return Ok(spent);
+        }
         let head = std::cell::RefCell::new(crate::code_reply::Head::new(
             code_context
                 && reads_only
@@ -1266,6 +1308,12 @@ fn native_answer(
             let mut piece = |t: &str| head.borrow_mut().push(t, &mut |t| show(t));
             let mut restart = || gap.set(true);
             let mut call = |name: &str, args: &serde_json::Value| -> String {
+                if desk.reply_closed() {
+                    return "The reply was stopped. Do not call more tools or make changes.".into();
+                }
+                if exhausted.get() {
+                    return tools::NO_MORE_TOOLS.into();
+                }
                 head.borrow_mut().release(&mut |t| show(t));
                 calls += 1;
                 reads_only &= crate::code_reply::read(name);
@@ -1281,11 +1329,16 @@ fn native_answer(
                 }
                 match run_tool(state, desk, &call, send) {
                     Ok(done) => {
+                        exhausted.set(failures.record(name, &call.args.to_string(), &done.result));
                         if code_context && reads_only && calls < tools::MOST_STEPS {
                             *head.borrow_mut() =
                                 crate::code_reply::Head::new(desk.current_access().changes());
                         }
-                        done.result
+                        if exhausted.get() {
+                            format!("{}\n{}", done.result, tools::NO_MORE_TOOLS)
+                        } else {
+                            done.result
+                        }
                     }
                     Err(e) => {
                         let said = e.to_string();
@@ -1301,6 +1354,8 @@ fn native_answer(
                     last: false,
                     max_tokens: chat::REPLY_TOKENS,
                     most_calls: remaining,
+                    stopped: &stopped,
+                    tools_done: &|| exhausted.get(),
                     piece: &mut piece,
                     restart: &mut restart,
                     call: &mut call,
@@ -1311,7 +1366,15 @@ fn native_answer(
             return Err(e);
         }
         counted(&mut spent, reply.spent);
-        if code_context && reads_only && calls < tools::MOST_STEPS && head.borrow().refused() {
+        if desk.reply_closed() {
+            return Ok(spent);
+        }
+        if code_context
+            && reads_only
+            && !exhausted.get()
+            && calls < tools::MOST_STEPS
+            && head.borrow().refused()
+        {
             if !desk.current_access().changes() {
                 show("Read only is active. Switch Felix to Ask or Auto to change the code.");
             } else if attempt < CODE_RETRIES {
@@ -1339,10 +1402,18 @@ fn text_answer(
     shown: &std::cell::Cell<bool>,
 ) -> Result<Option<chat::Spent>> {
     let mut unstuck = false;
+    let mut failures = crate::work::Failures::default();
+    let mut exhausted = false;
     let mut reads_only = true;
     let mut spent: Option<chat::Spent> = None;
     let mut message = conversation.to_string();
     let code_context = desk.interview.is_some();
+    let connection = desk.reply_sender();
+    let stopped = || {
+        connection
+            .as_ref()
+            .is_some_and(crate::reply::Sender::is_closed)
+    };
     let gap = std::cell::Cell::new(false);
     let shown_once = |t: &str| {
         if gap.replace(false) && shown.get() {
@@ -1352,7 +1423,10 @@ fn text_answer(
         send(serde_json::json!({ "t": t }))
     };
     for step in 0..=tools::MOST_STEPS {
-        let last = step == tools::MOST_STEPS || desk.asked > 0;
+        if desk.reply_closed() {
+            return Ok(spent);
+        }
+        let last = step == tools::MOST_STEPS || desk.asked > 0 || exhausted;
         let gate = std::cell::RefCell::new(tools::Gate::default());
         let check_code = code_context && reads_only && !last && desk.current_access().changes();
         let head = std::cell::RefCell::new(crate::code_reply::Head::new(check_code));
@@ -1368,6 +1442,8 @@ fn text_answer(
                 last,
                 max_tokens: chat::REPLY_TOKENS,
                 most_calls: 0,
+                stopped: &stopped,
+                tools_done: &|| last,
                 piece: &mut |piece| gate.borrow_mut().push(piece, &mut |t| emit(t)),
                 restart: &mut || {
                     gate.borrow_mut().reset();
@@ -1378,6 +1454,9 @@ fn text_answer(
             },
         )?;
         counted(&mut spent, reply.spent);
+        if desk.reply_closed() {
+            return Ok(spent);
+        }
         let reply = reply.text;
         let mut gate = gate.into_inner();
         let call = if last { None } else { tools::find_call(&reply) };
@@ -1423,6 +1502,7 @@ fn text_answer(
         }
         reads_only &= crate::code_reply::read(&call.name);
         let done = run_tool(state, desk, &call, send)?;
+        exhausted = failures.record(&call.name, &call.args.to_string(), &done.result);
         message = tools::result_message(&call.name, &done.result);
     }
     Ok(spent)
@@ -1556,6 +1636,13 @@ pub(crate) async fn chat_reply(
     {
         return StatusCode::BAD_REQUEST.into_response();
     }
+    let Some(foreground) = state.work.foreground() else {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(serde_json::json!({"error":"Felix is already working on several answers. Wait for one to finish or stop an answer, then try again."})),
+        )
+            .into_response();
+    };
     let mode = chat::mode_of(body.mode.as_deref());
     let access = if body.practice {
         tools::Access::Read
@@ -1614,12 +1701,14 @@ pub(crate) async fn chat_reply(
         .as_deref()
         .and_then(|id| chats::load(&state.chats, id))
         .and_then(|c| c.memory);
-    let (mut system, mut user) = chat::prompt_within(
+    let documents_room = if body.practice { note_room } else { room };
+    let (mut system, mut user) = chat::prompt_material(
         mode,
         &notes,
         &documents,
         &body.messages,
         room,
+        documents_room,
         memory.as_ref(),
     );
     let practice = body.chat.clone().filter(|id| chats::valid_id(id));
@@ -1650,23 +1739,25 @@ pub(crate) async fn chat_reply(
     let warm_chat = body
         .chat
         .clone()
-        .filter(|id| chats::valid_id(id) && !body.practice && state.converse.is_some());
+        .filter(|id| chats::valid_id(id) && state.converse.is_some());
     let warm_key = crate::warm::hash_of(&(
         mode,
         format!("{access:?}"),
         state.web.as_ref().is_some_and(|w| (w.needed)()),
         interview.is_some(),
+        documents_room,
         crate::warm::config_stamp(),
     ));
     let documents_seen: std::collections::BTreeSet<u64> =
         documents.iter().map(crate::warm::hash_of).collect();
-    let remember = Remember {
+    let mut remember = Remember {
         key: warm_key,
         chat: warm_chat.clone(),
         seen: body.messages.len(),
         history: crate::warm::history_of(&body.messages),
         notes: crate::warm::fingerprints(&notes, &sources),
         documents: documents_seen,
+        material: None,
         limit: (room * 2).min(chat::MOST_ROOM),
     };
     let mut continued = warm_chat
@@ -1681,7 +1772,7 @@ pub(crate) async fn chat_reply(
                 .collect();
             let message = body.messages.last().map_or("", |t| t.text.as_str());
             Continued {
-                text: chat::follow_up(&fresh_documents, &renumbered.text, message, room),
+                text: chat::follow_up(&fresh_documents, &renumbered.text, message, documents_room),
                 sources: renumbered.sources,
                 notes: renumbered.notes,
                 warm,
@@ -1714,9 +1805,13 @@ pub(crate) async fn chat_reply(
                 context.push_str(&tests);
             }
         }
+        let material = crate::warm::hash_of(&context);
+        remember.material = Some(material);
         user = chat::before_reply(&user, &context);
         if let Some(c) = continued.as_mut() {
-            c.text = chat::before_reply(&c.text, &context);
+            if c.warm.material != Some(material) {
+                c.text = chat::before_reply(&c.text, &context);
+            }
         }
     }
     if let Some(block) = body.selection.as_ref().and_then(chat::passage_block) {
@@ -1752,15 +1847,16 @@ pub(crate) async fn chat_reply(
                 .iter()
                 .all(|i| i.chars().count() <= tools::MOST_IDEA_CHARS)
     });
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let (tx, rx) = crate::reply::channel();
     let steer = state.steering.open();
     let _ = state.steering.set_access(steer.id(), access);
-    let _ = tx.send(ndjson(serde_json::json!({ "answer": steer.id() })));
-    let _ = tx.send(ndjson(
+    let _ = tx.try_send(ndjson(serde_json::json!({ "answer": steer.id() })));
+    let _ = tx.try_send(ndjson(
         serde_json::json!({ "sources": continued.as_ref().map_or(&sources, |c| &c.sources) }),
     ));
     let worker = state.clone();
     tokio::task::spawn_blocking(move || {
+        let _foreground = foreground;
         let ask = Ask {
             system,
             conversation: user,
