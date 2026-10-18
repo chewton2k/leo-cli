@@ -830,3 +830,15 @@ Server shutdown drains active requests and streams for at most five seconds; a
 second Ctrl-C skips the drain. Graph/idle tasks stop on the first interrupt.
 Warm-session cleanup and tunnel shutdown share a one-second deadline, with the
 tunnel's Drop guard retaining responsibility for signaling its process group.
+
+Interview instructions distinguish the CLI's read-only filesystem from Leo's
+application editor permissions and state the initial Ask/Auto/Read access, with
+newer permission updates taking precedence. The bounded editor-refusal check
+also recognizes later direct refusal sentences within its 512-character prefix,
+while leaving quoted diagnostics, code fences and execution limits alone.
+
+Editor instructions distinguish Leo's Ask/Auto/Read permissions from the writing
+CLI's read-only filesystem sandbox and defer to permission updates during a reply.
+The existing 512-character refusal check also recognizes later direct editor
+refusals while excluding quoted diagnostics, fenced code and blockquotes. This
+improves recovery; Luna can still refuse an ordinary edit request intermittently.

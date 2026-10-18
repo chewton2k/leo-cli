@@ -3104,6 +3104,11 @@ fn a_false_editor_refusal_is_recovered_once_in_every_style_with_the_viewed_probl
                             assert!(given
                                 .native
                                 .contains(crate::interview_tools::WORKSPACE_RULES));
+                            let permission = crate::interview_tools::workspace_access(
+                                tools::Access::named(access),
+                            );
+                            assert!(given.native.contains(permission));
+                            assert!(given.text.contains(permission));
                             assert!(specs.iter().any(|s| s.name == "interview_code"));
                             assert!(specs.iter().any(|s| s.name == "interview_code_edit"));
                             Some(Box::new(EditorNative {
@@ -3127,6 +3132,11 @@ fn a_false_editor_refusal_is_recovered_once_in_every_style_with_the_viewed_probl
                     if !native {
                         let prompts = prompts.lock().unwrap();
                         assert!(prompts[0].contains(crate::interview_tools::WORKSPACE_RULES));
+                        assert!(
+                            prompts[0].contains(crate::interview_tools::workspace_access(
+                                tools::Access::named(access),
+                            ))
+                        );
                         assert!(prompts[1].contains(crate::interview_tools::CODE_RETRY_TEXT));
                         assert_eq!(prompts.len(), 4);
                     }
@@ -3259,16 +3269,17 @@ fn editor_recovery_is_bounded_and_never_overrides_read_only_or_quiz_marking() {
         );
         for (access, practice) in [("read", false), ("auto", true)] {
             state.warm.clear();
-            state.chat = Some(
-                scripted(vec![
-                    r#"<tool>{"name":"interview_code"}</tool>"#,
-                    CODE_CHANGE,
-                    "Read only is active. Switch to Ask or Auto to edit.",
-                ])
-                .0,
-            );
+            let (streamer, prompts) = scripted(vec![
+                r#"<tool>{"name":"interview_code"}</tool>"#,
+                CODE_CHANGE,
+                "Read only is active. Switch to Ask or Auto to edit.",
+            ]);
+            state.chat = Some(streamer);
             if native {
-                state.converse = Some(Arc::new(|_, _| {
+                state.converse = Some(Arc::new(|given, _| {
+                    let permission = crate::interview_tools::workspace_access(tools::Access::Read);
+                    assert!(given.native.contains(permission));
+                    assert!(given.text.contains(permission));
                     Some(Box::new(EditorNative {
                         turns: Default::default(),
                         empty: false,
@@ -3279,6 +3290,11 @@ fn editor_recovery_is_bounded_and_never_overrides_read_only_or_quiz_marking() {
                 }));
             }
             let lines = editor_lines(&state, "study", access, practice);
+            if !native {
+                assert!(prompts.lock().unwrap()[0].contains(
+                    crate::interview_tools::workspace_access(tools::Access::Read),
+                ));
+            }
             assert!(!lines.iter().any(|l| l.get("proposal").is_some()));
             assert_eq!(
                 crate::interview::load(&state.chats, "editor-chat-0001")

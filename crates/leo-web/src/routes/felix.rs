@@ -1637,6 +1637,8 @@ pub(crate) async fn chat_reply(
     if interview.is_some() {
         system.push_str("\n\n");
         system.push_str(crate::interview_tools::WORKSPACE_RULES);
+        system.push('\n');
+        system.push_str(crate::interview_tools::workspace_access(access));
     }
     if body.interview_problem.is_some() && saved_practice.is_none() {
         return (StatusCode::CONFLICT, Json(serde_json::json!({"error":"That practice is no longer here. Reopen Interview practice before asking Felix to change its code."}))).into_response();

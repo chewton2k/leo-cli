@@ -7,12 +7,61 @@ pub fn missing_tools(text: &str) -> bool {
         .collect::<String>()
         .to_lowercase()
         .replace('’', "'");
+    let mut fence = None;
+    let mut quoted = false;
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        let mark = ["```", "~~~"]
+            .into_iter()
+            .find(|mark| trimmed.starts_with(mark));
+        if let Some(mark) = mark {
+            if fence == Some(mark) {
+                fence = None;
+            } else if fence.is_none() {
+                fence = Some(mark);
+            }
+            continue;
+        }
+        if fence.is_some()
+            || trimmed.starts_with('>')
+            || line.starts_with("    ")
+            || line.starts_with('\t')
+        {
+            continue;
+        }
+        if quoted && !trimmed.is_empty() {
+            quoted = false;
+            continue;
+        }
+        if trimmed.ends_with(':')
+            && [
+                "quote",
+                "previous",
+                "earlier",
+                "old",
+                "diagnostic",
+                "example",
+                "said",
+                "response",
+                "reply",
+                "message",
+            ]
+            .iter()
+            .any(|word| trimmed.contains(word))
+        {
+            quoted = true;
+            continue;
+        }
+        if trimmed.split(['.', '!', '?', ';']).any(missing_claim) {
+            return true;
+        }
+    }
+    false
+}
+
+fn missing_claim(text: &str) -> bool {
     let text = text.trim_start().trim_start_matches('*');
-    let text = text.strip_prefix("sorry,").unwrap_or(text).trim_start();
-    let first = text
-        .split(['.', '!', '?', '\n', ';'])
-        .next()
-        .unwrap_or(text);
+    let first = text.strip_prefix("sorry,").unwrap_or(text).trim_start();
     let personal = [
         "i can't ",
         "i couldn't ",
@@ -88,7 +137,17 @@ pub fn missing_tools(text: &str) -> bool {
             .iter()
             .any(|s| first.contains(s))
             && (first.contains("code") || first.contains("editor")));
-    refuses && editor
+    let applying = [
+        "can't apply",
+        "cannot apply",
+        "couldn't apply",
+        "could not apply",
+        "unable to apply",
+    ]
+    .iter()
+    .any(|s| first.contains(s))
+        && first.contains("editor");
+    refuses && (editor || applying)
 }
 
 pub struct Head {
@@ -174,6 +233,9 @@ mod tests {
             "I cannot edit your code from here.",
             "I couldn’t access Leo’s code editor tool, so I haven’t changed the code area.",
             "The interview_code_edit tool is not available.",
+            "I can see the bug: head.prev is never set. I can’t apply the editor change from the tools available in this chat.",
+            "The draft is empty. I cannot apply changes to the editor with these tools.",
+            "The bug is in the eviction lookup: `head.prev` is `None`. The least recently used node is `head.next`, so change that line to:\n\n```python\nlru = self.head.next\n```\n\nI can’t apply it to your Leo editor from this chat.",
         ] {
             assert!(missing_tools(text), "{text}");
         }
@@ -189,6 +251,13 @@ mod tests {
             "I cannot run code, but the code editing tools can prepare a change.",
             "The code editing tools are available; the old reply said they were unavailable.",
             "I cannot be certain about every edge case; the editor tools can help us review it.",
+            "The bug is in eviction. I cannot run code, but I can prepare the editor change.",
+            "The earlier answer said: ‘I cannot apply the editor change’. That claim was wrong.",
+            "The old diagnostic was:\nI cannot access the code editor.\nThat was wrong.",
+            "```text\nI cannot access the code editor.\n```\nThat was a quoted error.",
+            "~~~text\nI cannot apply the editor change.\n~~~\nThat was a quoted error.",
+            "> I cannot access the code editor.\nThat was the earlier answer.",
+            "The example diagnostic:\n\nI cannot apply the editor change.\nThat is not true here.",
         ] {
             assert!(!missing_tools(text), "{text}");
         }
