@@ -118,7 +118,10 @@ fn clear_profile_in(home: &Path) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn configure(command: &mut Command, _agent: Agent) -> Result<()> {
+pub(crate) fn configure(
+    command: &mut Command,
+    _agent: Agent,
+) -> crate::ai::error::ProviderResult<()> {
     plan_environment(command);
     Ok(())
 }

@@ -98,7 +98,7 @@ pub fn tidy(doc: &mut DocumentMut) -> bool {
             .iter()
             .filter(|n| {
                 !RETIRED.contains(&n.as_str())
-                    && !removed.contains(n)
+                    && !removed.contains(n.as_str())
                     && (task != Task::Chat || !RETIRED_CHAT.contains(&n.as_str()))
             })
             .cloned()
