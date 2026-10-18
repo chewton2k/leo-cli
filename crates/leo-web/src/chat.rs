@@ -34,6 +34,9 @@ pub struct Exchange<'a> {
 
 pub trait Conversation: Send {
     fn native(&self) -> bool;
+    fn context_chars(&self) -> Option<usize> {
+        None
+    }
     fn say(&mut self, text: &str, exchange: Exchange<'_>) -> Result<Reply>;
 }
 

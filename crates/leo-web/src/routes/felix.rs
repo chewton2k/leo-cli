@@ -1105,6 +1105,7 @@ fn answer(
                 notes: std::collections::BTreeMap<String, u64>,
                 documents: std::collections::BTreeSet<u64>,
                 final_access: tools::Access| {
+        let sent = sent.max(talk.context_chars().unwrap_or(0));
         if let Some(chat) = remember
             .chat
             .as_ref()

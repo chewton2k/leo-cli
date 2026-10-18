@@ -34,6 +34,9 @@ pub struct Turn<'a> {
 
 pub trait Session: Send {
     fn native(&self) -> bool;
+    fn context_chars(&self) -> Option<usize> {
+        None
+    }
     fn say(&mut self, text: &str, turn: Turn<'_>) -> Result<(String, Option<Answered>)>;
 }
 
@@ -46,11 +49,16 @@ struct ClaudeTalk {
     session: ClaudeSession,
     provider: String,
     config: Config,
+    sent: usize,
 }
 
 impl Session for ClaudeTalk {
     fn native(&self) -> bool {
         self.session.native()
+    }
+
+    fn context_chars(&self) -> Option<usize> {
+        Some(self.sent)
     }
 
     fn say(&mut self, text: &str, turn: Turn<'_>) -> Result<(String, Option<Answered>)> {
@@ -59,12 +67,21 @@ impl Session for ClaudeTalk {
         } else {
             format!("{text}\n\n{}", turn.tail)
         };
+        let mut results = 0usize;
+        let mut call = |name: &str, args: &Value| {
+            let result = (turn.call)(name, args);
+            results = results
+                .saturating_add(name.len())
+                .saturating_add(args.to_string().len())
+                .saturating_add(result.len());
+            result
+        };
         let (answer, spent) = self
             .session
             .say_controlled(
                 &message,
                 turn.sink,
-                turn.call,
+                &mut call,
                 turn.restart,
                 super::provider::agent_cli::Control {
                     stopped: turn.stopped,
@@ -73,6 +90,11 @@ impl Session for ClaudeTalk {
                 },
             )
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        self.sent = self
+            .sent
+            .saturating_add(message.len())
+            .saturating_add(results)
+            .saturating_add(answer.len());
         Ok((answer, Some(answered(&self.config, &self.provider, spent))))
     }
 }
@@ -81,6 +103,7 @@ struct CodexTalk {
     thread: CodexThread,
     provider: String,
     config: Config,
+    sent: usize,
 }
 
 const MOST_TRANSCRIPT: usize = 2 * 1024 * 1024;
@@ -96,6 +119,10 @@ struct CodexTextTalk {
 impl Session for CodexTextTalk {
     fn native(&self) -> bool {
         false
+    }
+
+    fn context_chars(&self) -> Option<usize> {
+        Some(self.system.len().saturating_add(self.transcript.len()))
     }
 
     fn say(&mut self, text: &str, turn: Turn<'_>) -> Result<(String, Option<Answered>)> {
@@ -154,7 +181,20 @@ impl Session for CodexTalk {
         true
     }
 
+    fn context_chars(&self) -> Option<usize> {
+        Some(self.sent)
+    }
+
     fn say(&mut self, text: &str, turn: Turn<'_>) -> Result<(String, Option<Answered>)> {
+        let mut results = 0usize;
+        let mut call = |name: &str, args: &Value| {
+            let result = (turn.call)(name, args);
+            results = results
+                .saturating_add(name.len())
+                .saturating_add(args.to_string().len())
+                .saturating_add(result.len());
+            result
+        };
         let (answer, spent) = self
             .thread
             .say(
@@ -162,13 +202,18 @@ impl Session for CodexTalk {
                 CodexTurn {
                     sink: turn.sink,
                     restart: turn.restart,
-                    call: turn.call,
+                    call: &mut call,
                     stopped: turn.stopped,
                     tools_done: turn.tools_done,
                     most_calls: turn.most_calls,
                 },
             )
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        self.sent = self
+            .sent
+            .saturating_add(text.len())
+            .saturating_add(results)
+            .saturating_add(answer.len());
         Ok((answer, Some(answered(&self.config, &self.provider, spent))))
     }
 }
@@ -251,6 +296,17 @@ impl ApiTalk {
 impl Session for ApiTalk {
     fn native(&self) -> bool {
         true
+    }
+
+    fn context_chars(&self) -> Option<usize> {
+        Some(
+            self.system.len().saturating_add(
+                self.history
+                    .iter()
+                    .map(|turn| turn.to_string().len())
+                    .sum::<usize>(),
+            ),
+        )
     }
 
     fn say(&mut self, text: &str, turn: Turn<'_>) -> Result<(String, Option<Answered>)> {
@@ -405,6 +461,10 @@ pub fn open(
     systems: &Systems,
     tools: &[ToolDef],
 ) -> Option<Box<dyn Session>> {
+    let schemas = tools
+        .iter()
+        .map(|tool| tool.name.len() + tool.description.len() + tool.schema.to_string().len())
+        .sum::<usize>();
     for name in &config.chat.chain {
         let Some(provider) = config
             .provider(name)
@@ -436,6 +496,12 @@ pub fn open(
                         .ok()?
                 };
                 return Some(Box::new(ClaudeTalk {
+                    sent: schemas
+                        + if session.native() {
+                            systems.native.len()
+                        } else {
+                            systems.text.len()
+                        },
                     session,
                     provider: name.clone(),
                     config: config.clone(),
@@ -452,6 +518,7 @@ pub fn open(
                     .collect();
                 return match CodexThread::start(&agent, systems.native, &tool_specs(&specs)) {
                     Ok(thread) => Some(Box::new(CodexTalk {
+                        sent: schemas + systems.native.len(),
                         thread,
                         provider: name.clone(),
                         config: config.clone(),
@@ -974,6 +1041,9 @@ printf '%s\n' '{{"type":"turn.completed","usage":{{"input_tokens":100,"cached_in
             assert_eq!(spent.unwrap().cached, 80);
         }
         let before = std::fs::read_to_string(&log).unwrap();
+        assert!(
+            talk.context_chars().unwrap() > "The sample is maple.\n\nRemember the sample.".len()
+        );
         assert_eq!(before.matches("The sample is maple.").count(), 2);
         assert!(before.contains("Felix replied: maple"));
         let result = talk.say(

@@ -838,6 +838,10 @@ queues prevent unlimited workers or queued chunks; closed replies skip follow-up
 tools, retries and grading. Two identical failed calls end tool use with one final
 answer. Hidden Study grading remains available and its usage is included. Concurrent
 grades of one interview attempt share one worker; distinct attempts remain separate.
+Retained sessions count instructions, incoming material, tool results and replies
+toward the warm limit; API sessions measure serialized history and native CLIs track
+tool arguments and results. Oversized sessions are dropped promptly
+instead of remaining cached until another request or idle cleanup.
 
 Server shutdown drains active requests and streams for at most five seconds; a
 second Ctrl-C skips the drain. Graph/idle tasks stop on the first interrupt.

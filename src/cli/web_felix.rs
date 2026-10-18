@@ -26,6 +26,10 @@ impl leo_web::Conversation for Talk {
         self.0.native()
     }
 
+    fn context_chars(&self) -> Option<usize> {
+        self.0.context_chars()
+    }
+
     fn say(
         &mut self,
         text: &str,

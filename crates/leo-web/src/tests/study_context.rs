@@ -192,3 +192,43 @@ fn an_unchanged_practice_snapshot_is_not_repeated_but_changed_code_and_questions
         assert!(seen[3].contains("<interview_material>") && seen[3].contains("material-problem-0"));
     }
 }
+
+#[test]
+fn retained_tool_context_counts_toward_the_warm_session_limit() {
+    struct Large;
+    impl chat::Conversation for Large {
+        fn native(&self) -> bool {
+            true
+        }
+        fn context_chars(&self) -> Option<usize> {
+            Some(100_000)
+        }
+        fn say(&mut self, _: &str, exchange: chat::Exchange<'_>) -> anyhow::Result<chat::Reply> {
+            (exchange.piece)("[[correct]] Ready.");
+            Ok("[[correct]] Ready.".into())
+        }
+    }
+    let (mut state, _dir, _) = state_with(&[]);
+    state.room = Some(Arc::new(|| 32_000));
+    state.chat = Some(Arc::new(|_, _, _, _, _| {
+        panic!("the retained session should answer")
+    }));
+    let opened = Arc::new(AtomicUsize::new(0));
+    let count = Arc::clone(&opened);
+    state.converse = Some(Arc::new(move |_, _| {
+        count.fetch_add(1, Ordering::SeqCst);
+        Some(Box::new(Large))
+    }));
+    let mut messages = vec![serde_json::json!({"role":"user","text":"Read my material."})];
+    for turn in 0..2 {
+        if turn > 0 {
+            append(&mut messages, "Continue.");
+        }
+        request(
+            &state,
+            serde_json::json!({"chat":"large-context-0001","messages":messages}),
+        );
+        assert!(!state.warm.holding());
+    }
+    assert_eq!(opened.load(Ordering::SeqCst), 2);
+}

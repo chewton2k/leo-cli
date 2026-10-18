@@ -73,6 +73,10 @@ impl Slot {
     }
 
     pub fn keep(&self, warm: Warm) {
+        if warm.sent >= warm.limit {
+            self.clear();
+            return;
+        }
         let old = self
             .0
             .lock()
@@ -225,6 +229,17 @@ mod tests {
             talk: Box::new(Quiet),
             used: Instant::now(),
         }
+    }
+
+    #[test]
+    fn oversized_sessions_are_released_instead_of_retained_until_the_next_request() {
+        let slot = Slot::default();
+        slot.keep(warm(&[]));
+        assert!(slot.holding());
+        let mut oversized = warm(&[]);
+        oversized.sent = oversized.limit;
+        slot.keep(oversized);
+        assert!(!slot.holding());
     }
 
     #[test]
