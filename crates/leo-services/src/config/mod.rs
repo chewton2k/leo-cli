@@ -381,9 +381,11 @@ model_path = "~/.leo/models/ggml-base.en.bin"
         std::fs::write(&path, "").unwrap();
         let cfg = Config::load_from(&path);
         assert!(cfg.chat.chain.is_empty());
-        assert_eq!(cfg.providers.len(), 14, "{:?}", cfg.providers.keys());
+        assert_eq!(cfg.providers.len(), 12, "{:?}", cfg.providers.keys());
         assert!(cfg.providers.contains_key("ollama"));
         assert!(cfg.providers.contains_key("parakeet"));
+        assert!(!cfg.providers.contains_key("agy"));
+        assert!(!cfg.providers.contains_key("copilot"));
     }
 
     /// The file the user gets must be short enough to read. The inventory of
