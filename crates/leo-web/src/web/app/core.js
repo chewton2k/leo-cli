@@ -474,7 +474,8 @@ function chrome({ dir = '', showBack = false, fab = null, actions = null }) {
   document.title = dir ? `${folderLabel(dir)} · leo` : 'leo';
 }
 
-const newButton = (dir) => `<div class="fabs"><button class="fab ghost" data-action="record" data-dir="${esc(dir)}" aria-label="Record" title="Record a lecture or meeting">${ICON.mic}<span>Record</span></button><button class="fab ghost" data-action="upload" aria-label="Upload a file" title="Make a note from a file or photo">${ICON.upload}<span>Upload</span></button><button class="fab" data-action="new" data-dir="${esc(dir)}">${ICON.plus}<span>New note</span></button></div>`;
+const newButton = (dir, { note = true } = {}) => `<div class="fabs"><button class="fab ghost" data-action="record" data-dir="${esc(dir)}" aria-label="Record" title="Record a lecture or meeting">${ICON.mic}<span>Record</span></button><button class="fab ghost" data-action="upload" aria-label="Upload a file" title="Make a note from a file or photo">${ICON.upload}<span>Upload</span></button>${note ? `<button class="fab" data-action="new" data-dir="${esc(dir)}">${ICON.plus}<span>New note</span></button>` : ''}</div>`;
+const newCard = (dir) => `<button class="card new-card" data-action="new" data-dir="${esc(dir)}" title="New note${dir ? ` in ${esc(folderLabel(dir))}` : ''}"><span class="new-card-icon">${ICON.plus}</span><span class="new-card-label">New note</span></button>`;
 
 async function showFolder(dir) {
   const mine = ++seq;
@@ -589,7 +590,7 @@ function drawFolder() {
   }
   if (notes.length) {
     const total = Math.max(state.listing.total || 0, notes.length);
-    html += `<div class="section-title">${total > notes.length ? `Notes · ${total}` : 'Notes'}</div><div class="cards library-cards ${library.view}${sel ? ' picking' : ''}">${libraryRows(notes)}</div>`;
+    html += `<div class="section-title">${total > notes.length ? `Notes · ${total}` : 'Notes'}</div><div class="cards library-cards ${library.view}${sel ? ' picking' : ''}">${sel ? '' : newCard(dir)}${libraryRows(notes)}</div>`;
     if (total > notes.length) html += '<div class="more-notes" id="more-notes" aria-hidden="true">Loading more notes…</div>';
   } else if (libraryFiltered()) {
     html += `<div class="section-title">Notes</div>${libraryNoMatch()}`;
@@ -605,7 +606,7 @@ function drawFolder() {
         <button class="btn sm danger" data-action="folder-trash"${picked.size ? '' : ' disabled'}>Move to trash</button>
       </div>`;
   } else {
-    chrome({ dir, showBack: Boolean(dir), fab: newButton(dir) });
+    chrome({ dir, showBack: Boolean(dir), fab: newButton(dir, { note: !notes.length }) });
   }
 }
 

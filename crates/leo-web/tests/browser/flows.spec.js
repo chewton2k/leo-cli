@@ -54,7 +54,7 @@ async function shownProblemNumbers(page) {
 }
 
 function control(page, action) {
-  return page.locator(`.fab[data-action="${action}"]:visible, #side [data-action="${action}"]:visible`).first();
+  return page.locator(`.fab[data-action="${action}"]:visible, .new-card[data-action="${action}"]:visible, #side [data-action="${action}"]:visible`).first();
 }
 
 async function dragBetween(page, source, target) {
@@ -1744,7 +1744,7 @@ test.describe('large libraries', () => {
     const listed = await page.request.get(`/api/notes?dir=${dir}&limit=200&brief=true`);
     expect(listed.headers()['x-total']).toBe('230');
     await page.goto(`/#/f/${dir}`);
-    const cards = page.locator('.cards .card');
+    const cards = page.locator('.cards .card[data-id]');
     await expect(cards).toHaveCount(200);
     await expect(page.locator('.section-title', { hasText: 'Notes' })).toHaveText('Notes · 230');
     await expect(cards.first().locator('.chip.progress')).toContainText('1/2');
@@ -3523,7 +3523,7 @@ test('notes come newest edit first, sort and show choices filter the folder and 
   const zebra = await make('Zebra notes', '- [ ] feed the zebra');
   const apple = await make('Apple notes', 'Nothing to do.');
   await page.goto(`/#/f/${encodeURIComponent(dir)}`);
-  const ids = () => page.locator('.library-cards .card').evaluateAll((els) => els.map((el) => el.dataset.id));
+  const ids = () => page.locator('.library-cards .card[data-id]').evaluateAll((els) => els.map((el) => el.dataset.id));
   await expect.poll(ids).toEqual([apple, zebra]);
   await page.locator('select[data-library="sort"]').selectOption('title-desc');
   await expect.poll(ids).toEqual([zebra, apple]);
@@ -5523,6 +5523,28 @@ test('an open submission and folded review stay open when Felix answers and the 
   await expect(page.locator('#interview-attempts details.interview-attempt').first()).toHaveAttribute('open', '');
   await expect(page.locator('[data-interview="pane"][data-pane="submissions"]')).toHaveAttribute('aria-selected', 'true');
   if (await review.count()) await expect(page.locator('#interview-results .interview-review details').first()).toHaveAttribute('open', '');
+});
+
+test('the library starts with a New note card in grid and list, in place of the floating button', async ({ page }) => {
+  const dir = `newcard-${test.info().project.name}-${Date.now().toString(36)}`;
+  await page.request.post('/api/dirs', { data: { path: dir } });
+  await page.goto(`/#/f/${dir}`);
+  const phone = test.info().project.name === 'phone';
+  await expect(page.locator('.new-card')).toHaveCount(0);
+  if (phone) await expect(page.locator('.fab[data-action="new"]')).toBeVisible();
+  const note = await (await page.request.post('/api/notes', { data: { title: `Card ${dir}`, body: 'x', directory: dir } })).json();
+  await page.reload();
+  const tile = page.locator('.library-cards > .new-card');
+  await expect(tile).toBeVisible();
+  expect(await page.locator('.library-cards > *').first().evaluate((el) => el.classList.contains('new-card'))).toBe(true);
+  await expect(page.locator('.fab[data-action="new"]')).toHaveCount(0);
+  if (phone) await expect(page.locator('.fab[data-action="record"]')).toBeVisible();
+  await page.locator('[data-action="library-view"][data-view="list"]').click();
+  await expect(tile).toBeVisible();
+  await page.locator('[data-action="library-view"][data-view="grid"]').click();
+  await tile.click();
+  await expect.poll(() => page.evaluate(() => decodeURIComponent(location.hash))).toContain(`#/new/${dir}`);
+  await page.request.delete(`/api/notes/${note.id}`);
 });
 
 test('notes read wide by default, and Settings can make them comfortable or full width', async ({ page }) => {

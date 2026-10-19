@@ -130,7 +130,9 @@ seer, meaning, web, room).
   images stay links). `interactive: false` makes task boxes read-only.
 - Pictures live in `<notes>/attachments/` (`leo_core::attachments`, sniffed
   PNG/JPEG/GIF/WebP only, ≤20 MB); paste or drop in `doc.js`.
-- Library (`browse.rs`, `app/browse.js`): Grid (default) or List. A folder
+- Library (`browse.rs`, `app/browse.js`): Grid (default) or List. The first
+  card is New note (`newCard`, 2026-10-19, the user's call), so the floating
+  New note button only shows in an empty folder (Record and Upload stay). A folder
   shows only the notes stored directly in it (`dir`, empty = top level).
   **Order and filters** (2026-10-12, the user's call): newest edit first by
   default, pinned always first; Sort = Last edited (`updated`), Oldest edit

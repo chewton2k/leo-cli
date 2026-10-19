@@ -180,6 +180,13 @@ body.on-library main, body.on-library .bar-row, body.on-library .search { max-wi
 .library-cards .card-meta { margin-top: auto; padding-top: 12px; flex-wrap: wrap; }
 .note-thumb { height: 168px; overflow: hidden; border-radius: 9px; border: 1px solid var(--line); background: var(--surface-2); margin-bottom: 14px; }
 .library-cards.list .note-thumb { display: none; }
+.library-cards .new-card { align-items: center; justify-content: center; gap: 10px; border-style: dashed; border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); background: color-mix(in srgb, var(--accent) 5%, var(--surface)); box-shadow: none; color: var(--accent); font: inherit; font-weight: 650; font-size: 15.5px; }
+.library-cards.grid .new-card { min-height: 220px; }
+.library-cards.list .new-card { flex-direction: row; justify-content: flex-start; padding: 12px 16px; }
+.new-card-icon { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; background: var(--accent-soft); }
+.library-cards.list .new-card-icon { width: 30px; height: 30px; border-radius: 9px; }
+.new-card-icon svg { width: 20px; height: 20px; }
+@media (hover: hover) { .library-cards .new-card:hover { border-color: var(--accent); background: var(--accent-soft); } }
 .note-thumb .note-mini { padding: 12px 14px; margin: 0; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
 .note-thumb .note-mini h1, .note-thumb .note-mini h2, .note-thumb .note-mini h3, .note-thumb .note-mini h4 { font-size: 13px; margin: 4px 0 8px; }
 .note-thumb .note-mini p, .note-thumb .note-mini ul, .note-thumb .note-mini ol, .note-thumb .note-mini pre { margin: 0 0 8px; }
