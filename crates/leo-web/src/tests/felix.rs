@@ -3741,9 +3741,8 @@ fn a_study_recap_can_carry_the_last_grade_without_a_hidden_request() {
             .collect();
         assert!(lines.iter().any(|l| l["session_end"] == true));
         assert!(lines.iter().any(|l| l["verdict"] == "incorrect"));
-        assert!(lines
-            .iter()
-            .any(|l| l["t"].as_str().is_some_and(|s| s.contains("oldest"))));
+        let shown: String = lines.iter().filter_map(|line| line["t"].as_str()).collect();
+        assert!(shown.contains("oldest"));
         assert_eq!(prompts.lock().unwrap().len(), if native { 0 } else { 2 });
     }
 }
