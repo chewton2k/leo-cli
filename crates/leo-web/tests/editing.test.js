@@ -5,6 +5,21 @@ const md = require('../src/web/markdown.js');
 const cases = [];
 const test = (name, fn) => cases.push([name, fn]);
 
+test('a picture keeps a width in the Obsidian style and only the chosen one changes', () => {
+  const line = 'Before ![Tree](attachments/tree.png) and ![[graph.png]] and ![Old|120](a.png "Title")';
+  assert.equal(ed.setPictureWidth(line, 0, 400), 'Before ![Tree|400](attachments/tree.png) and ![[graph.png]] and ![Old|120](a.png "Title")');
+  assert.equal(ed.setPictureWidth(line, 1, 250.4), 'Before ![Tree](attachments/tree.png) and ![[graph.png|250]] and ![Old|120](a.png "Title")');
+  assert.equal(ed.setPictureWidth(line, 2, 300), 'Before ![Tree](attachments/tree.png) and ![[graph.png]] and ![Old|300](a.png "Title")');
+  assert.equal(ed.setPictureWidth(line, 2, 0), 'Before ![Tree](attachments/tree.png) and ![[graph.png]] and ![Old](a.png "Title")', 'no width resets it');
+  assert.equal(ed.setPictureWidth(line, 5, 300), line, 'a missing picture changes nothing');
+  assert.equal(ed.setPictureWidth('![[a.png|Caption]]', 0, 200), '![[a.png|200]]');
+  const shown = md.render('![Tree|400](attachments/tree.png)\n\n![[graph.png|250]]\n\n![Plain](x.png)');
+  assert.match(shown, /alt="Tree" loading="lazy" width="400"/);
+  assert.match(shown, /alt="graph.png" loading="lazy" width="250"/);
+  assert.match(shown, /alt="Plain" loading="lazy">/);
+  assert.doesNotMatch(md.render('![Huge|99999](x.png)'), /width=/);
+});
+
 test('a selection becomes its exact Markdown and 1-based lines, either direction', () => {
   const lines = ['# Heaps', '', 'A **min** heap', 'keeps 😀 the root', '$$x^2$$'];
   assert.deepEqual(ed.snapshotOf(lines, 9, 23), { from: 3, to: 3, text: 'A **min** heap' });

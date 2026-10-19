@@ -513,6 +513,119 @@
       return e.clientX < text.getBoundingClientRect().left ? input : null;
     }
 
+    let framed = null;
+
+    function unframe() {
+      if (!framed) return;
+      framed.frame.remove();
+      framed.img.classList.remove('picked');
+      framed = null;
+    }
+
+    function innerWidth(img) {
+      return img.getBoundingClientRect().width;
+    }
+
+    function placeFrame() {
+      if (!framed) return;
+      const box = container.getBoundingClientRect();
+      const r = framed.img.getBoundingClientRect();
+      Object.assign(framed.frame.style, { left: `${r.left - box.left}px`, top: `${r.top - box.top}px`, width: `${r.width}px`, height: `${r.height}px` });
+      framed.frame.querySelector('.pic-size').textContent = `${Math.round(innerWidth(framed.img))} px`;
+    }
+
+    function pictureAt(img) {
+      const blk = img.closest('.blk');
+      if (!blk) return null;
+      const block = blocks[Number(blk.dataset.i)];
+      if (!block) return null;
+      return { start: shifted(block.start), length: block.end - block.start, index: [...blk.querySelectorAll('img.note-img')].indexOf(img) };
+    }
+
+    function frame(img) {
+      unframe();
+      const frameEl = document.createElement('div');
+      frameEl.className = 'pic-frame';
+      frameEl.innerHTML = '<span class="pic-size"></span><button type="button" class="pic-handle" aria-label="Resize picture: drag, or use the arrow keys" title="Drag to resize · double-click to reset"></button>';
+      container.appendChild(frameEl);
+      img.classList.add('picked');
+      framed = { img, frame: frameEl };
+      placeFrame();
+      const handle = frameEl.querySelector('.pic-handle');
+      handle.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        handle.setPointerCapture(e.pointerId);
+        const startX = e.clientX;
+        const startWidth = innerWidth(img);
+        const most = Math.max(48, (img.closest('.blk') || container).clientWidth);
+        let width = startWidth;
+        const move = (m) => {
+          width = Math.round(Math.min(most, Math.max(48, startWidth + m.clientX - startX)));
+          img.style.width = `${width}px`;
+          placeFrame();
+        };
+        const up = () => {
+          handle.removeEventListener('pointermove', move);
+          handle.removeEventListener('pointerup', up);
+          handle.removeEventListener('pointercancel', up);
+          if (Math.abs(width - startWidth) >= 2) resizePicture(img, width);
+        };
+        handle.addEventListener('pointermove', move);
+        handle.addEventListener('pointerup', up);
+        handle.addEventListener('pointercancel', up);
+      });
+      handle.addEventListener('dblclick', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        resizePicture(img, 0);
+      });
+      handle.addEventListener('keydown', (e) => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        e.preventDefault();
+        const now = innerWidth(img);
+        resizePicture(img, Math.max(48, Math.round(now + (e.key === 'ArrowRight' ? 1 : -1) * (e.shiftKey ? 100 : 20))));
+      });
+    }
+
+    function resizePicture(img, width) {
+      const at = pictureAt(img);
+      if (!at || at.index < 0) return;
+      if (editing) stop();
+      const before = lines.slice(at.start, at.start + at.length).join('\n');
+      const after = ed.setPictureWidth(before, at.index, width);
+      if (after === before) return;
+      lines.splice(at.start, at.length, ...after.split('\n'));
+      changed();
+      draw();
+      const blk = container.querySelector(`.blk[data-start="${at.start}"]`);
+      const again = blk && blk.querySelectorAll('img.note-img')[at.index];
+      if (!again) return;
+      const show = () => {
+        frame(again);
+        framed.frame.querySelector('.pic-handle').focus({ preventScroll: true });
+      };
+      if (again.complete) show();
+      else again.addEventListener('load', show, { once: true });
+    }
+
+    container.addEventListener('dblclick', (e) => {
+      const img = e.target.closest('img.note-img');
+      if (!img || img.closest('.editing')) return;
+      const blk = img.closest('.blk');
+      unframe();
+      if (blk) editLine(shifted(Number(blk.dataset.start)), 'end');
+    });
+
+    function onFrameKey(e) {
+      if (e.key !== 'Escape' || !framed || !framed.frame.isConnected) return;
+      e.preventDefault();
+      e.stopPropagation();
+      unframe();
+    }
+    document.addEventListener('keydown', onFrameKey, true);
+    root.addEventListener('resize', placeFrame);
+
     container.addEventListener('click', (e) => {
       pressed = false;
       clearTimeout(release);
@@ -520,6 +633,14 @@
         extended = false;
         return;
       }
+      if (e.target.closest('.pic-frame')) return;
+      const pic = e.target.closest('img.note-img');
+      if (pic && !pic.closest('.editing') && !e.shiftKey) {
+        e.preventDefault();
+        frame(pic);
+        return;
+      }
+      unframe();
       if (!e.target.closest('input[data-box], a') && takeSelection()) {
         e.preventDefault();
         return;
@@ -608,6 +729,9 @@
         clearTimeout(release);
         document.removeEventListener('pointerup', onPointerUp);
         document.removeEventListener('keydown', onDocumentKey);
+        document.removeEventListener('keydown', onFrameKey, true);
+        root.removeEventListener('resize', placeFrame);
+        unframe();
         container.removeEventListener('paste', onPaste);
         container.removeEventListener('drop', onDrop);
       },

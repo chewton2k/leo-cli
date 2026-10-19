@@ -20,12 +20,21 @@
 
   let pictureDir = '';
 
-  function picture(target, alt) {
+  function sized(alt) {
+    const found = /^(.*?)\|\s*(\d{1,4})(?:\s*x\s*\d{1,4})?\s*$/.exec(String(alt || ''));
+    if (!found) return { alt: String(alt || ''), width: 0 };
+    const width = Number(found[2]);
+    return { alt: found[1], width: width >= 16 && width <= 4000 ? width : 0 };
+  }
+
+  function picture(target, label) {
+    const { alt, width } = sized(label);
+    const size = width ? ` width="${width}"` : '';
     const src = String(target || '').trim().replace(/^<(.*)>$/, '$1');
-    if (/^data:image\/svg\+xml[;,][^\s"'<>]*$/i.test(src)) return `<img class="note-img drawing-img" src="${escape(src)}" alt="${escape(alt || '')}">`;
+    if (/^data:image\/svg\+xml[;,][^\s"'<>]*$/i.test(src)) return `<img class="note-img drawing-img" src="${escape(src)}" alt="${escape(alt)}"${size}>`;
     if (!src || /^[a-z][a-z0-9+.-]*:/i.test(src) || src.startsWith('//')) return null;
     const url = `/api/image?path=${encodeURIComponent(src)}&from=${encodeURIComponent(pictureDir)}`;
-    return `<img class="note-img" src="${escape(url)}" alt="${escape(alt || '')}" loading="lazy">`;
+    return `<img class="note-img" src="${escape(url)}" alt="${escape(alt)}" loading="lazy"${size}>`;
   }
 
   const MOST_DRAWING = 200000;
@@ -51,8 +60,8 @@
     s = s.replace(/\\\(([\s\S]+?)\\\)/g, (_, tex) => shown(tex, false));
     s = s.replace(/(^|[^\\])\$\$([^$\n]+?)\$\$/g, (_, lead, tex) => lead + shown(tex, true));
     s = s.replace(/(^|[^\\$])\$(?!\s)([^$\n]+?)(?<!\s)\$(?!\d)/g, (_, lead, tex) => lead + keep(`<span class="math" data-tex="${escape(tex)}">${escape(tex)}</span>`));
-    s = s.replace(/!\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/g, (whole, name) => {
-      const img = picture(name.trim(), name.trim());
+    s = s.replace(/!\[\[([^\]|]+)(?:\|([^\]]*))?\]\]/g, (whole, name, option) => {
+      const img = picture(name.trim(), option && /^\s*\d/.test(option) ? `${name.trim()}|${option}` : name.trim());
       return img ? keep(img) : whole;
     });
     s = s.replace(/(?<!!)\[\[([^\[\]|#]+)(?:#[^\[\]|]*)?(?:\|([^\[\]]+))?\]\]/g, (_, title, label) => {

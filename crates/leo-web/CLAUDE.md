@@ -128,6 +128,14 @@ seer, meaning, web, room).
   `-`/`+` dropdowns), ```mermaid (`diagrams.js`), math (`math.js`), ```svg as
   a sandboxed `<img src="data:…">`, and local pictures (`/api/image`; outside
   images stay links). `interactive: false` makes task boxes read-only.
+- Picture sizes (2026-10-19, the user's request, like Google Docs): a
+  picture's width is kept in the Obsidian style, `![alt|400](path)` or
+  `![[file|400]]` (`markdown.js` `sized`, 16-4000 px, a `width` attribute).
+  Clicking a picture in a note frames it (`doc.js` `frame`) with its width and
+  a corner handle: drag, arrow keys (Shift for 100 px) or double-click to
+  reset; the change is written by `editing.setPictureWidth` and saved like any
+  edit. Double-clicking the picture edits its Markdown; Escape closes only the
+  frame.
 - Pictures live in `<notes>/attachments/` (`leo_core::attachments`, sniffed
   PNG/JPEG/GIF/WebP only, ≤20 MB); paste or drop in `doc.js`.
 - Library (`browse.rs`, `app/browse.js`): Grid (default) or List. The first

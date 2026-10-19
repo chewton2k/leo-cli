@@ -163,7 +163,23 @@
     };
   }
 
-  const api = { splitBlocks, boxesBefore, boxLine, continueLine, toggleBox, indent, outdent, rawOffset, isBox, snapshotOf, lineAtOffset, MOST_PASSAGE };
+  const PICTURE = /!\[\[([^\]|]+)(?:\|([^\]]*))?\]\]|!\[([^\]]*)\]\((<[^>]+>|[^)\s]+)(\s+"[^"]*")?\)/g;
+
+  function setPictureWidth(text, index, width) {
+    let n = -1;
+    const size = width ? `|${Math.round(width)}` : '';
+    return String(text).replace(PICTURE, (whole, name, option, alt, target, title) => {
+      n += 1;
+      if (n !== index) return whole;
+      if (name !== undefined) {
+        const keep = option && !/^\s*\d{1,4}(?:\s*x\s*\d{1,4})?\s*$/.test(option) ? `|${option}` : '';
+        return `![[${name}${size || keep}]]`;
+      }
+      return `![${alt.replace(/\|\s*\d{1,4}(?:\s*x\s*\d{1,4})?\s*$/, '')}${size}](${target}${title || ''})`;
+    });
+  }
+
+  const api = { setPictureWidth, splitBlocks, boxesBefore, boxLine, continueLine, toggleBox, indent, outdent, rawOffset, isBox, snapshotOf, lineAtOffset, MOST_PASSAGE };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.leoEditing = api;
 })(typeof window !== 'undefined' ? window : globalThis);

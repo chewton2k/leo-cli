@@ -5547,6 +5547,41 @@ test('the library starts with a New note card in grid and list, in place of the 
   await page.request.delete(`/api/notes/${note.id}`);
 });
 
+test('a picture in a note can be resized by dragging its corner, and keeps that size', async ({ page }) => {
+  test.skip(test.info().project.name !== 'desktop', 'dragging is for a mouse');
+  const svg = encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="300" height="150"><rect width="300" height="150" fill="#9ab"/></svg>');
+  const note = await (await page.request.post('/api/notes', { data: { title: `Picture ${Date.now().toString(36)}`, body: `Intro line\n\n![Box](data:image/svg+xml;utf8,${svg})\n\nAfter line` } })).json();
+  const body = async () => (await (await page.request.get(`/api/notes/${note.id}`)).json()).body;
+  await page.goto(`/#/n/${note.id}`);
+  const img = page.locator('#doc img.note-img');
+  await expect(img).toBeVisible();
+  await img.click();
+  await expect(img).toHaveClass(/picked/);
+  await expect(page.locator('#doc textarea')).toHaveCount(0);
+  const handle = page.locator('.pic-handle');
+  const shown = Math.round((await img.boundingBox()).width);
+  await expect(page.locator('.pic-size')).toHaveText(`${shown} px`);
+  const at = await handle.boundingBox();
+  await page.mouse.move(at.x + at.width / 2, at.y + at.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(at.x + at.width / 2 - 60, at.y + at.height / 2, { steps: 4 });
+  await page.mouse.move(at.x + at.width / 2 - 120, at.y + at.height / 2, { steps: 4 });
+  await page.mouse.up();
+  const smaller = shown - 120;
+  await expect.poll(body, { timeout: 5000 }).toContain(`![Box|${smaller}](data:image`);
+  await expect(page.locator('#doc img.note-img')).toHaveAttribute('width', String(smaller));
+  await expect(page.locator('.pic-size')).toHaveText(`${smaller} px`);
+  await page.locator('.pic-handle').press('ArrowRight');
+  await expect.poll(body, { timeout: 5000 }).toContain(`![Box|${smaller + 20}](`);
+  await page.locator('.pic-handle').dblclick();
+  await expect.poll(body, { timeout: 5000 }).toMatch(/!\[Box\]\(data:image/);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.pic-frame')).toHaveCount(0);
+  await page.locator('#doc img.note-img').dblclick();
+  await expect(page.locator('#doc textarea')).toHaveValue(/^!\[Box\]\(data:image/);
+  await page.request.delete(`/api/notes/${note.id}`);
+});
+
 test('notes read wide by default, and Settings can make them comfortable or full width', async ({ page }) => {
   test.skip(test.info().project.name !== 'desktop', 'widths matter on a wide screen');
   await page.setViewportSize({ width: 1700, height: 900 });
