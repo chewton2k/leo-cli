@@ -336,6 +336,19 @@ test.describe('editing like Obsidian', () => {
     await expect.poll(saved, { timeout: 5000 }).toBe('');
   });
 
+  test('one Cmd/Ctrl+A while editing a line takes the whole note', async ({ page }) => {
+    test.skip(test.info().project.name !== 'desktop', 'select all is a keyboard shortcut');
+    const saved = await open(page, 'all');
+    await page.locator('#doc .blk').nth(1).click();
+    await expect(page.locator('#doc textarea.line-edit')).toBeFocused();
+    await page.keyboard.press('ControlOrMeta+a');
+    const area = page.locator('#doc textarea.line-edit');
+    expect(await area.evaluate((a) => a.value.slice(a.selectionStart, a.selectionEnd))).toContain('Fourth line');
+    expect(await area.evaluate((a) => a.value.slice(a.selectionStart, a.selectionEnd))).toContain('First line here');
+    await page.keyboard.press('Backspace');
+    await expect.poll(saved, { timeout: 5000 }).toBe('');
+  });
+
   test('Cmd/Ctrl+Z brings back a deleted section and Shift+Cmd+Z takes it away again', async ({ page }) => {
     test.skip(test.info().project.name !== 'desktop', 'undo is a keyboard shortcut');
     const saved = await open(page, 'undo');

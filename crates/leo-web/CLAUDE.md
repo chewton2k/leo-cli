@@ -121,6 +121,8 @@ seer, meaning, web, room).
   `version` (FNV-1a); 409 → "<title> (conflict from phone)". `saving.js`
   keeps edits that did not reach leo and retries them on the next load.
   Undo: up to `MOST_UNDO` snapshots per note (typing grouped by pauses).
+  Cmd/Ctrl+A selects the whole note at once, even from inside one line
+  (2026-10-19; it used to take a second press).
 - `markdown.js` escapes first, numbers checkboxes exactly like
   `Note::toggle_checkbox`, draws `[[Title]]` links, callouts (`> [!type]`,
   `-`/`+` dropdowns), ```mermaid (`diagrams.js`), math (`math.js`), ```svg as

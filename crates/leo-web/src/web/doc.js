@@ -398,7 +398,7 @@
         return;
       }
 
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a' && area.selectionStart === 0 && area.selectionEnd === value.length && (start > 0 || editing.end < lines.length)) {
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'a' && (start > 0 || editing.end < lines.length)) {
         e.preventDefault();
         stop();
         editSpan(0, docLength());
