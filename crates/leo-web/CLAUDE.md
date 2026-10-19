@@ -632,6 +632,13 @@ the same idle loop.
   `MOST_DONE_DAYS`). PATCH `{done, on}` sets one day. Never overdue.
   `schedule.plan(tasks, events, today, {from, to})` expands occurrences; the
   Tasks panel shows the next open one; ICS and Google get a weekly RRULE.
+- Event sheet (2026-10-19): `schedule.eventDetails` splits the event
+  context into place, organiser (a Google group or resource calendar ID reads
+  "A shared calendar"), invited (chips) and description; `schedule.richText`
+  renders the description from its HTML keeping only line breaks, bold,
+  italics, lists, paragraphs and https/mailto links (`noopener`), dropping
+  scripts, styles, images, attributes and other tags, and links bare URLs in
+  plain text.
 - Calendar page: colors follow the event title (`--hue-0..7`) and task kind
   (`TASK_TONES`); month dots, an agenda with a now line, Coming up, Overdue,
   No date. Completed tasks show by default; "Hide completed" is remembered

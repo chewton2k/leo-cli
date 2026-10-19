@@ -4,6 +4,30 @@ const S = require('../src/web/schedule.js');
 const cases = [];
 const test = (name, fn) => cases.push([name, fn]);
 
+test('Calendar descriptions keep their formatting and links but nothing that can run', () => {
+  const google = 'Itinerary: Charlton S<br />Monday, Oct 19, 2026 PDT<br/><br/>1:45PM (PDT) - 2:45PM (PDT): Data/Algos Interview<br/><br/>Hi Charlton<br/><br/>You’re all set!<br/><br/><strong>How to connect:</strong><ul><li>Click "Join with Google Meet" then “Join Now”.</li><li>You may see “ask to join the call”.</';
+  const html = S.richText(google);
+  assert.match(html, /Itinerary: Charlton S<br>Monday, Oct 19, 2026 PDT<br><br>1:45PM/);
+  assert.match(html, /<strong>How to connect:<\/strong><ul><li>Click &quot;Join with Google Meet&quot; then “Join Now”.<\/li><li>You may see/);
+  assert.ok(html.endsWith('</li></ul>'), 'a cut-off description is closed properly');
+  assert.ok(!html.includes('<br />') && !html.includes('</'.repeat(2)));
+  const hostile = S.richText('<script>alert(1)</script><img src=x onerror=alert(1)><a href="javascript:alert(1)">bad</a> <a href="https://meet.google.com/abc-defg" onclick="x()">Join</a> <b onmouseover="x">bold</b>');
+  assert.ok(!/<script|<img|onerror|onclick|onmouseover|javascript:/i.test(hostile), hostile);
+  assert.ok(!hostile.startsWith('alert'), 'a script and its text are dropped');
+  assert.match(hostile, /<a href="https:\/\/meet\.google\.com\/abc-defg" target="_blank" rel="noopener noreferrer">Join<\/a>/);
+  assert.match(hostile, /<strong>bold<\/strong>/);
+  assert.equal(S.richText('Join at https://zoom.us/j/123.\nBring notes & questions'), 'Join at <a href="https://zoom.us/j/123" target="_blank" rel="noopener noreferrer">https://zoom.us/j/123</a>.<br>Bring notes &amp; questions');
+  assert.equal(S.richText('Tom &amp; Jerry &lt;3'), 'Tom &amp; Jerry &lt;3');
+  assert.equal(S.richText('<p>One</p><p>Two</p>'), '<p>One</p><p>Two</p>');
+  assert.equal(S.richText('<a href="mailto:a@b.co">mail</a>'), '<a href="mailto:a@b.co" target="_blank" rel="noopener noreferrer">mail</a>');
+});
+
+test('Calendar event details split into organiser, invited and description', () => {
+  const d = S.eventDetails('Calendar event: Interview\nPlace: Google Meet\nOrganised by: c_c463e763f192@group.calendar.google.com\nInvited: GoodTime Sync, charlton@ucla.edu, room@resource.calendar.google.com\nDescription:\nLine one\nLine two');
+  assert.deepEqual(d, { place: 'Google Meet', organiser: 'A shared calendar', invited: ['GoodTime Sync', 'charlton@ucla.edu'], description: 'Line one\nLine two' });
+  assert.deepEqual(S.eventDetails('Calendar event: Lunch'), { place: '', organiser: '', invited: [], description: '' });
+});
+
 test('Calendar links preserve descriptions and safely encode plain text', () => {
   const base = { id: 'task-one', title: 'Study', date: '2026-10-16' };
   const details = 'Read chapter 3\nBring café notes; <b>not HTML</b>&x=y';

@@ -5564,6 +5564,30 @@ test('notes read wide by default, and Settings can make them comfortable or full
   await page.request.delete(`/api/notes/${note.id}`);
 });
 
+test('a calendar event shows its organiser, guests and formatted description, with nothing that can run', async ({ page }) => {
+  const start = new Date(Date.now() + 2 * 3600000);
+  const end = new Date(start.getTime() + 3600000);
+  const description = 'Itinerary: Charlton S<br />Monday<br/><br/><strong>How to connect:</strong><ul><li>Click "Join with Google Meet" then “Join Now”.</li><li>Wait to be admitted.</li></ul><a href="https://meet.google.com/abc-defg-hij">Join the call</a><img src=x onerror="window.__ran = 1"><script>window.__ran = 2</script>';
+  const event = { id: 'event-rich-1', title: 'Data/Algos Interview', start: start.toISOString(), end: end.toISOString(), all_day: false, location: '', calendar: 'Work', context: `Calendar event: Data/Algos Interview\nOrganised by: c_c463e763f192@group.calendar.google.com\nInvited: GoodTime Sync, charlton@ucla.edu\nDescription:\n${description}` };
+  await page.route('**/api/schedule?*', (route) => route.fulfill({ json: { connected: true, events: [event], tasks: [], warnings: [] } }));
+  await page.goto('/#/calendar');
+  await page.locator('[data-action="event-open"][data-id="event-rich-1"]').first().click();
+  const sheet = page.locator('.sheet');
+  await expect(sheet).toContainText('Organiser');
+  await expect(sheet).toContainText('A shared calendar');
+  await expect(sheet).not.toContainText('group.calendar.google.com');
+  await expect(sheet.locator('.sched-people .chip')).toHaveText(['GoodTime Sync', 'charlton@ucla.edu']);
+  const about = sheet.locator('.sched-about');
+  await expect(about.locator('strong')).toHaveText('How to connect:');
+  await expect(about.locator('li')).toHaveText(['Click "Join with Google Meet" then “Join Now”.', 'Wait to be admitted.']);
+  await expect(about.locator('a')).toHaveAttribute('href', 'https://meet.google.com/abc-defg-hij');
+  await expect(about.locator('a')).toHaveAttribute('rel', 'noopener noreferrer');
+  await expect(about).not.toContainText('<br');
+  await expect(about.locator('img, script')).toHaveCount(0);
+  await expect(about).not.toContainText('__ran');
+  expect(await page.evaluate(() => window.__ran)).toBeUndefined();
+});
+
 test('Back from Settings, Storage or Trash returns to the note you were reading', async ({ page }) => {
   const note = await (await page.request.post('/api/notes', { data: { title: `Back here ${Date.now().toString(36)}`, body: 'Keep my place.' } })).json();
   const visit = (hash) => page.evaluate((h) => { location.hash = h; }, hash);

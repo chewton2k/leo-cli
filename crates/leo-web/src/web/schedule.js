@@ -220,7 +220,84 @@
     return at.toLocaleTimeString(locale || undefined, { hour: 'numeric', minute: '2-digit' });
   }
 
-  const api = { dayKey, fromKey, addDays, weekStart, monthGrid, weekOf, eventDays, plan, quickDates, weekdayOf, repeats, repeatsOn, occurrences, nextOpen, repeatLabel, rrule, googleLink, googleDay, timeLabel, nextWeekday };
+  const TEXT_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+  const escapeText = (text) => String(text).replace(/[&<>"']/g, (c) => TEXT_ESCAPES[c]);
+  const NAMED = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', '#39': "'" };
+  const decode = (text) => String(text).replace(/&(#x[0-9a-f]+|#\d+|[a-z]+|#39);/gi, (all, name) => {
+    const lower = name.toLowerCase();
+    if (NAMED[lower] !== undefined) return NAMED[lower];
+    const code = lower.startsWith('#x') ? parseInt(lower.slice(2), 16) : lower.startsWith('#') ? parseInt(lower.slice(1), 10) : NaN;
+    return Number.isFinite(code) && code > 0 && code < 0x110000 ? String.fromCodePoint(code) : all;
+  });
+  const linkify = (escaped) => escaped.replace(/\bhttps?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]]/g, (url) => `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`);
+  const KEEP = { strong: 'strong', b: 'strong', em: 'em', i: 'em', u: 'u', ul: 'ul', ol: 'ol', li: 'li', p: 'p', h1: 'strong', h2: 'strong', h3: 'strong', h4: 'strong' };
+  const BREAKS = new Set(['br', 'div', 'tr', 'hr']);
+
+  function richText(input) {
+    const raw = String(input || '').replace(/<(script|style|head|title)\b[^>]*>[\s\S]*?(<\/\1\s*>|$)/gi, '');
+    if (!/<\/?[a-z][a-z0-9]*\b[^>]*>/i.test(raw)) return linkify(escapeText(decode(raw))).replace(/\r?\n/g, '<br>');
+    const open = [];
+    let out = '';
+    for (const part of raw.split(/(<[^<>]*>)/)) {
+      if (!part) continue;
+      const tag = /^<\s*(\/?)\s*([a-z][a-z0-9]*)\b([^>]*)>$/i.exec(part);
+      if (!tag) {
+        const text = escapeText(decode(part)).replace(/\r?\n/g, '<br>');
+        out += open.includes('a') ? text : linkify(text);
+        continue;
+      }
+      const closing = tag[1] === '/';
+      const name = tag[2].toLowerCase();
+      if (BREAKS.has(name)) {
+        if (name === 'br' || closing) out += '<br>';
+        continue;
+      }
+      if (name === 'a') {
+        if (closing) {
+          if (open.includes('a')) {
+            while (open.length) { const last = open.pop(); out += `</${last}>`; if (last === 'a') break; }
+          }
+          continue;
+        }
+        const href = /href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(tag[3]);
+        const url = href ? decode(href[1] ?? href[2] ?? href[3] ?? '').trim() : '';
+        if (/^(https?:\/\/|mailto:)/i.test(url) && !open.includes('a')) {
+          out += `<a href="${escapeText(url)}" target="_blank" rel="noopener noreferrer">`;
+          open.push('a');
+        }
+        continue;
+      }
+      const kept = KEEP[name];
+      if (!kept) continue;
+      if (!closing) {
+        out += `<${kept}>`;
+        open.push(kept);
+      } else if (open.includes(kept)) {
+        while (open.length) { const last = open.pop(); out += `</${last}>`; if (last === kept) break; }
+      }
+    }
+    while (open.length) out += `</${open.pop()}>`;
+    return out.replace(/^(?:<br>)+|(?:<br>)+$/g, '').replace(/(?:<br>){3,}/g, '<br><br>');
+  }
+
+  function eventDetails(context) {
+    const lines = String(context || '').split('\n');
+    const details = { place: '', organiser: '', invited: [], description: '' };
+    let at = 1;
+    for (; at < lines.length; at++) {
+      const line = lines[at];
+      if (line.startsWith('Place: ')) details.place = line.slice(7).trim();
+      else if (line.startsWith('Organised by: ')) details.organiser = line.slice(14).trim();
+      else if (line.startsWith('Invited: ')) details.invited = line.slice(9).split(',').map((p) => p.trim()).filter(Boolean);
+      else if (line === 'Description:') { details.description = lines.slice(at + 1).join('\n').trim(); break; }
+      else { details.description = lines.slice(at).join('\n').trim(); break; }
+    }
+    if (/@group\.calendar\.google\.com$|@resource\.calendar\.google\.com$|@import\.calendar\.google\.com$/i.test(details.organiser)) details.organiser = 'A shared calendar';
+    details.invited = details.invited.filter((p) => !/@(group|resource|import)\.calendar\.google\.com$/i.test(p));
+    return details;
+  }
+
+  const api = { richText, eventDetails, dayKey, fromKey, addDays, weekStart, monthGrid, weekOf, eventDays, plan, quickDates, weekdayOf, repeats, repeatsOn, occurrences, nextOpen, repeatLabel, rrule, googleLink, googleDay, timeLabel, nextWeekday };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.leoSchedule = api;
 })(typeof window !== 'undefined' ? window : globalThis);

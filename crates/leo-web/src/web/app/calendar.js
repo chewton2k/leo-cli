@@ -647,12 +647,16 @@ function eventSheet(id) {
     ? S.fromKey(event.date).toLocaleDateString(calLocale(), { weekday: 'long', month: 'long', day: 'numeric' })
     : `${new Date(event.start).toLocaleString(calLocale(), { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} – ${new Date(event.end).toLocaleTimeString(calLocale(), { hour: 'numeric', minute: '2-digit' })}`;
   const soon = !event.all_day && new Date(event.start) - Date.now() < 15 * 60000 && new Date(event.end) > Date.now();
-  const about = String(event.context || '').split('\n').slice(1).join('\n').trim();
+  const about = S.eventDetails(event.context);
+  const where = event.location || about.place;
+  const linked = (text) => (/^https?:\/\/\S+$/i.test(text) ? `<a href="${esc(text)}" target="_blank" rel="noopener noreferrer">${esc(text)}</a>` : esc(text));
   sheet(`<h3>${esc(event.title)}</h3>
     <div class="set-row"><span class="set-label">When</span><span class="set-value">${esc(when)}</span></div>
-    ${event.location ? `<div class="set-row"><span class="set-label">Where</span><span class="set-value">${esc(event.location)}</span></div>` : ''}
+    ${where ? `<div class="set-row"><span class="set-label">Where</span><span class="set-value sched-wrap">${linked(where)}</span></div>` : ''}
     <div class="set-row"><span class="set-label">Calendar</span><span class="set-value">${esc(event.calendar || 'Google')}</span></div>
-    ${about ? `<p class="sched-about">${esc(about.slice(0, 600))}</p>` : ''}
+    ${about.organiser ? `<div class="set-row"><span class="set-label">Organiser</span><span class="set-value sched-wrap">${esc(about.organiser)}</span></div>` : ''}
+    ${about.invited.length ? `<div class="set-row"><span class="set-label">Invited</span><span class="set-value sched-people">${about.invited.map((p) => `<span class="chip">${esc(p)}</span>`).join('')}</span></div>` : ''}
+    ${about.description ? `<div class="sched-about prose">${S.richText(about.description)}</div>` : ''}
     ${event.zone_unknown ? '<p class="set-note warn">This event names a time zone leo does not know, so its time may be off.</p>' : ''}
     <div class="buttons"><button type="button" class="btn plain" data-action="close">Close</button>${soon ? '<button type="button" class="btn primary" data-action="record">Record this meeting</button>' : ''}</div>`);
 }
