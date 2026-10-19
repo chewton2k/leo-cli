@@ -460,6 +460,7 @@ pub fn run(cli: Cli) -> Result<()> {
                     calendar_access: Some(std::sync::Arc::new(web_settings::WebSettings)),
                     housekeeper: Some(std::sync::Arc::new(web_storage::Housekeeping)),
                     room: Some(std::sync::Arc::new(leo_services::ai::felix_room)),
+                    context: Some(std::sync::Arc::new(leo_services::ai::felix_context)),
                     web: Some(leo_web::Web {
                         search: std::sync::Arc::new(|query: &str| {
                             Ok(leo_services::web::search(query)?

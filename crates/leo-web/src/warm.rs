@@ -7,6 +7,12 @@ use crate::chat::{Conversation, SourceRef, Turn};
 
 pub const IDLE: Duration = Duration::from_secs(10 * 60);
 
+pub fn context_limit(room: usize, supported: Option<usize>) -> usize {
+    supported
+        .unwrap_or_else(|| room.saturating_mul(2))
+        .min(crate::chat::MOST_ROOM)
+}
+
 pub struct Warm {
     pub key: u64,
     pub chat: String,
@@ -182,6 +188,15 @@ pub fn fingerprints(text: &str, gathered: &[SourceRef]) -> BTreeMap<String, u64>
 mod tests {
     use super::*;
     use crate::chat::{Exchange, Reply};
+
+    #[test]
+    fn a_small_note_budget_does_not_discard_a_long_supported_conversation() {
+        assert_eq!(context_limit(32_000, Some(480_000)), 480_000);
+        assert_eq!(context_limit(14_744, Some(29_488)), 29_488);
+        assert_eq!(context_limit(32_000, None), 64_000);
+        assert_eq!(context_limit(32_000, Some(usize::MAX)), 480_000);
+        assert_eq!(context_limit(32_000, Some(4_000)), 4_000);
+    }
 
     fn source(n: usize, id: &str) -> SourceRef {
         SourceRef {

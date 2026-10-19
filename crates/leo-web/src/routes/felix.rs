@@ -1759,7 +1759,7 @@ pub(crate) async fn chat_reply(
         notes: crate::warm::fingerprints(&notes, &sources),
         documents: documents_seen,
         material: None,
-        limit: (room * 2).min(chat::MOST_ROOM),
+        limit: crate::warm::context_limit(room, state.context.as_ref().map(|measure| measure())),
     };
     let mut continued = warm_chat
         .as_deref()

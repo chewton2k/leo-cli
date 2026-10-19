@@ -74,6 +74,8 @@ pub const CHARS_PER_TOKEN: usize = 4;
 const NOTES_SHARE: f64 = 0.45;
 const PAID_NOTE_TOKENS: u32 = 50_000;
 const PLAN_NOTE_TOKENS: u32 = 120_000;
+const FELIX_CHARS: usize = 32_000;
+const FELIX_CONTEXT_CHARS: usize = 480_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Window {
@@ -125,10 +127,32 @@ pub fn felix_room(config: &Config) -> usize {
                 .provider(name)
                 .cloned()
                 .or_else(|| Config::built_in_provider(name))?;
-            Some(note_tokens(window_of(name, &provider)) as usize * CHARS_PER_TOKEN)
+            Some(
+                (note_tokens(window_of(name, &provider)) as usize * CHARS_PER_TOKEN)
+                    .min(FELIX_CHARS),
+            )
         })
         .min()
-        .unwrap_or(Budget::FREE.chars())
+        .unwrap_or(FELIX_CHARS)
+}
+
+pub fn felix_context(config: &Config) -> usize {
+    config
+        .chat
+        .chain
+        .iter()
+        .filter_map(|name| {
+            let provider = config
+                .provider(name)
+                .cloned()
+                .or_else(|| Config::built_in_provider(name))?;
+            Some(
+                (note_tokens(window_of(name, &provider)) as usize * CHARS_PER_TOKEN * 2)
+                    .min(FELIX_CONTEXT_CHARS),
+            )
+        })
+        .min()
+        .unwrap_or(FELIX_CHARS * 2)
 }
 
 pub fn writing_budget(config: &Config) -> Budget {
@@ -258,7 +282,7 @@ mod tests {
     }
 
     #[test]
-    fn felix_reads_as_much_as_the_model_holds_but_paid_answers_stay_affordable() {
+    fn note_synthesis_keeps_its_model_sized_budget() {
         let room = |kind, url: Option<&str>, model: Option<&str>| {
             let p = provider(kind, url, model);
             note_tokens(window_of("x", &p)) as usize * CHARS_PER_TOKEN
@@ -312,14 +336,80 @@ mod tests {
     }
 
     #[test]
-    fn felix_reads_what_the_weakest_model_in_the_chain_can_hold() {
+    fn felix_keeps_a_small_budget_while_respecting_the_weakest_model() {
         let mut config: Config = toml::from_str("").unwrap();
-        config.chat.chain = vec!["claude_code".into()];
-        assert_eq!(felix_room(&config), 360_000);
-        config.chat.chain = vec!["claude_code".into(), "ollama".into()];
-        assert_eq!(felix_room(&config), 3_686 * 4);
+        for name in ["claude_code", "codex"] {
+            config.chat.chain = vec![name.into()];
+            assert_eq!(felix_room(&config), FELIX_CHARS);
+            for chain in [[name, "ollama"], ["ollama", name]] {
+                config.chat.chain = chain.map(str::to_string).to_vec();
+                assert_eq!(felix_room(&config), 3_686 * CHARS_PER_TOKEN);
+            }
+        }
         config.chat.chain = vec![];
-        assert_eq!(felix_room(&config), Budget::FREE.chars());
+        assert_eq!(felix_room(&config), FELIX_CHARS);
+        config.chat.chain = vec!["nothing-like-this".into()];
+        assert_eq!(felix_room(&config), FELIX_CHARS);
+    }
+
+    #[test]
+    fn a_larger_context_setting_never_increases_felix_note_spending() {
+        let mut config: Config = toml::from_str("").unwrap();
+        config.chat.chain = vec!["custom".into()];
+        for kind in [
+            ProviderKind::Codex,
+            ProviderKind::ClaudeCode,
+            ProviderKind::Openai,
+        ] {
+            for context in [2_048, 8_192, 256_000, 1_000_000] {
+                let mut custom = provider(kind, None, None);
+                custom.context = Some(context);
+                let room = (note_tokens(window_of("custom", &custom)) as usize * CHARS_PER_TOKEN)
+                    .min(FELIX_CHARS);
+                config.providers.insert("custom".into(), custom);
+                assert_eq!(felix_room(&config), room);
+                assert!(room <= FELIX_CHARS);
+            }
+        }
+    }
+
+    #[test]
+    fn warm_context_is_independent_of_small_automatic_note_retrieval() {
+        let mut config: Config = toml::from_str("").unwrap();
+        for name in ["codex", "claude_code"] {
+            config.chat.chain = vec![name.into()];
+            assert_eq!(felix_room(&config), FELIX_CHARS);
+            assert_eq!(felix_context(&config), FELIX_CONTEXT_CHARS);
+            for chain in [[name, "ollama"], ["ollama", name]] {
+                config.chat.chain = chain.map(str::to_string).to_vec();
+                assert_eq!(felix_context(&config), 3_686 * CHARS_PER_TOKEN * 2);
+            }
+        }
+        config.chat.chain = vec![];
+        assert_eq!(felix_context(&config), FELIX_CHARS * 2);
+        config.chat.chain = vec!["nothing-like-this".into()];
+        assert_eq!(felix_context(&config), FELIX_CHARS * 2);
+    }
+
+    #[test]
+    fn custom_context_limits_keep_warm_sessions_bounded() {
+        let mut config: Config = toml::from_str("").unwrap();
+        config.chat.chain = vec!["custom".into()];
+        for kind in [
+            ProviderKind::Codex,
+            ProviderKind::ClaudeCode,
+            ProviderKind::Openai,
+        ] {
+            for context in [2_048, 8_192, 256_000, 1_000_000] {
+                let mut custom = provider(kind, None, None);
+                custom.context = Some(context);
+                let limit =
+                    (note_tokens(window_of("custom", &custom)) as usize * CHARS_PER_TOKEN * 2)
+                        .min(FELIX_CONTEXT_CHARS);
+                config.providers.insert("custom".into(), custom);
+                assert_eq!(felix_context(&config), limit);
+            }
+        }
     }
 
     #[test]

@@ -38,6 +38,10 @@ pub fn open_session(
 pub fn felix_room() -> usize {
     budget::felix_room(&crate::config::Config::load())
 }
+
+pub fn felix_context() -> usize {
+    budget::felix_context(&crate::config::Config::load())
+}
 /// Token budget for expanding one inline @leo prompt.
 const EXPAND_MAX_TOKENS: u32 = 2000;
 /// An answer drawn from several notes can run longer than one @leo answer.

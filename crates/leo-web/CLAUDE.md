@@ -167,12 +167,14 @@ seer, meaning, web, room).
   `proposal`, `ask`, `quiz`, `plan`, `spent`, `reset`, `done`/`error`). The
   user prompt is `<selected_passage>` (when given), `<documents>`, notes,
   the chat, then `<today>` (date, time and IANA zone, `chat::today_line`).
-- Context (`gather`): attached notes (`refs`, ≤8), notes used earlier in the
-  chat, documents, the open note and its graph neighbours, word matches,
-  meaning matches; budgets scale with the model (`Powers.room`,
-  `chat::scaled`), except interview turns and practice marking, which read the
-  usual share (`chat::notes_room`: at most `ROOM`) since they rarely need many
-  notes. The prompt keeps what changes least first (documents, notes,
+- Context (`gather`): explicitly attached notes (`refs`, ≤8) and the open
+  note come first and share a bounded budget. Automatic retrieval adds at most
+  four notes total across recent chat sources, word matches, meaning matches and
+  graph neighbours. Automatic excerpts are at most 1,500 characters, focus on
+  the matching passage and preserve original line numbers; `open_note` reads
+  more on demand. Gathered notes never exceed 32,000 characters, even for large
+  model windows; smaller provider budgets still apply. Recording/upload synthesis
+  budgets are independent. The prompt keeps what changes least first (documents, notes,
   earlier chat, conversation); the `<today>` line (it changes every minute)
   and the interview context go last, before the reply line
   (`chat::before_reply`), so compatible provider prefix caches reuse the rest. Claude Code places its own cache breakpoints, so across
@@ -853,3 +855,10 @@ writing CLI's read-only filesystem sandbox and defer to updates during a reply.
 The existing 512-character refusal check also recognizes later direct editor
 refusals while excluding quoted diagnostics, fenced code and blockquotes. This
 improves recovery; Luna can still refuse an ordinary edit request intermittently.
+
+Felix keeps automatic note retrieval separate from warm conversation capacity:
+reducing note excerpts must not evict a supported long conversation early.
+Tool manuals omit repeated examples and formatting boilerplate while preserving
+all parameter/return contracts; actionable error recovery retains full examples.
+All permitted tools remain discoverable without keyword-based intent filtering.
+The shared ADHD-inspired `REPLY_STYLE` is unchanged by prompt-size optimization.

@@ -319,8 +319,11 @@ price strings (`rates`); agents are "on your plan" and local models free.
 `window_of` supplies Claude Code 200k, Codex 256k and
 Ollama/local 8k tokens; a valid `context` setting overrides it. `note_tokens`
 reserves 45%, capped at 120k for plan providers; legacy API accounting keeps its
-50k cost cap. `felix_room` supplies Felix's note budget, while recording/upload
-parts also respect output limits. Effort choices come from `choice::efforts` and
+50k cost cap. `felix_room` independently caps Felix's note budget at 32,000
+characters, or the weakest provider's smaller allowance. `felix_context` separately
+bounds warm-session retention by the weakest model window, capped at 480,000
+characters, so smaller retrieval does not force frequent cold starts. Recording/upload
+synthesis and gap-filling retain their larger model-sized budgets and output limits. Effort choices come from `choice::efforts` and
 are passed only in the selected provider's supported format.
 
 ### How notes are shaped (`ai::chat::LEARNING`)
@@ -345,12 +348,19 @@ to the shared text protocol. Legacy API parsers/cache accounting remain internal
 compatibility code and are not additional Writing choices. Tests use local fake
 servers, never paid APIs.
 
-An installed Codex without isolated app-server support retains a bounded in-memory
-text conversation. Its ephemeral exec requests remain isolated and cancellable;
-this is not a persistent remote model session. Trusted instructions go in a unique
-0600 temporary `model_instructions_file`, replacing the default coding prompt,
-while material stays on stdin. The file and private working folder are removed on
-every exit. Native MCP is not assumed usable merely because it initializes.
+Without isolated app-server support, capable Codex versions use `codex_exec`:
+one captured exec UUID, stable private working directory and 0600 instructions,
+with only new material passed to `exec resume`. Every launch retains both ignore
+flags, disabled tools and the read-only sandbox. Personal skill instructions are
+excluded; Leo's shared reply style remains. Cumulative resumed usage is converted
+to per-request deltas. A mismatched/missing thread poisons the session before any
+text is shown. Unsupported CLIs retain the bounded isolated ephemeral fallback.
+The signed-in Codex home is used only by the CLI for authentication and temporary
+rollouts; runtime databases/logs are redirected to the private working directory.
+On Unix, child-only umask 0077 protects rollouts from creation. Drop removes only
+verified files for UUIDs this session created, never another conversation or the
+user's Codex database; an abrupt OS/process kill can leave private rollout files.
+Trusted instructions replace the default coding prompt with `model_instructions_file`.
 Session turns check cancellation before more requests or tools; writing CLI output
 is polled through bounded queues and stopped children are killed and reaped.
 Native tool budgets and a final no-tools request bound models that ignore limits.
@@ -398,7 +408,7 @@ start an app-server that could load the user's MCP servers, hooks or rules.
 Feature discovery is bounded and fails closed, including the shell control and
 hooks. CLI probes, native turns and text runs share a process-group watchdog that
 covers stdin, stdout EOF, exit and pipe joins; native queues and output are bounded.
-Isolated text fallback sacrifices native conversation caching and may add latency.
+Older CLIs without isolated exec resume retain the stateless text fallback, which may add latency.
 Claude's loopback MCP bridge caps active connections at eight, closes registered
 sockets on drop, checks shutdown during pending calls, and bounds writes, batches
 and requests per connection. Request reads preserve partial bodies across polling

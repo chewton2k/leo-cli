@@ -135,6 +135,7 @@ pub mod anthropic;
 pub mod audio;
 pub mod chat_audio;
 pub mod codex_app;
+pub(crate) mod codex_exec;
 pub mod mcp;
 pub mod openai;
 pub mod parakeet;

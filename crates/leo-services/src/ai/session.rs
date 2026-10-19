@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 use crate::ai::provider::agent_cli::{Agent, AgentCli, ClaudeSession};
 use crate::ai::provider::anthropic::{self, Anthropic};
 use crate::ai::provider::codex_app::{tool_specs, CodexThread, CodexTurn};
+use crate::ai::provider::codex_exec::CodexExec;
 use crate::ai::provider::mcp;
 use crate::ai::provider::openai::{self, OpenAiChat};
 use crate::ai::provider::Spent;
@@ -114,6 +115,35 @@ struct CodexTextTalk {
     provider: String,
     system: String,
     transcript: String,
+}
+
+struct CodexExecTalk {
+    exec: CodexExec,
+    config: Config,
+    provider: String,
+}
+
+impl Session for CodexExecTalk {
+    fn native(&self) -> bool {
+        false
+    }
+
+    fn context_chars(&self) -> Option<usize> {
+        Some(self.exec.context_chars())
+    }
+
+    fn say(&mut self, text: &str, turn: Turn<'_>) -> Result<(String, Option<Answered>)> {
+        let message = if turn.tail.is_empty() {
+            text.to_string()
+        } else {
+            format!("{text}\n\n{}", turn.tail)
+        };
+        let (answer, spent) = self
+            .exec
+            .say(&message, turn.sink, turn.stopped)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        Ok((answer, Some(answered(&self.config, &self.provider, spent))))
+    }
 }
 
 impl Session for CodexTextTalk {
@@ -523,13 +553,23 @@ pub fn open(
                         provider: name.clone(),
                         config: config.clone(),
                     })),
-                    Err(_) => Some(Box::new(CodexTextTalk {
-                        agent,
-                        config: config.clone(),
-                        provider: name.clone(),
-                        system: systems.text.into(),
-                        transcript: String::new(),
-                    })),
+                    Err(_) => match CodexExec::start(
+                        AgentCli::new(name.clone(), Agent::Codex, &provider),
+                        systems.text,
+                    ) {
+                        Ok(exec) => Some(Box::new(CodexExecTalk {
+                            exec,
+                            config: config.clone(),
+                            provider: name.clone(),
+                        })),
+                        Err(_) => Some(Box::new(CodexTextTalk {
+                            agent,
+                            config: config.clone(),
+                            provider: name.clone(),
+                            system: systems.text.into(),
+                            transcript: String::new(),
+                        })),
+                    },
                 };
             }
             Some(ProviderKind::Openai) => {

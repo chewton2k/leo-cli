@@ -681,7 +681,7 @@ fn in_auto_felix_changes_and_makes_notes_at_once_and_links_instead_of_citing_its
         )
     );
     let prompts = prompts.lock().unwrap();
-    assert!(prompts[0].contains("leo applies your changes at once"));
+    assert!(prompts[0].contains("Leo applies changes with Undo"));
     assert!(prompts[2].contains("Changed. leo applied it"));
 }
 
@@ -805,7 +805,7 @@ fn a_model_with_native_tools_calls_leos_tools_directly_and_answers() {
     );
     let shown: String = lines.iter().filter_map(|l| l["t"].as_str()).collect();
     assert_eq!(shown, "BFS uses a queue [n1].");
-    assert!(instructions.lock().unwrap().contains("call them as tools"));
+    assert!(instructions.lock().unwrap().contains("Call Leo tools"));
     assert!(!instructions.lock().unwrap().contains("<tool>{"));
 }
 
@@ -1337,8 +1337,7 @@ fn planning_is_in_the_standing_rules_and_never_added_because_of_a_numbered_list(
     let prompts = prompts.lock().unwrap();
     for prompt in prompts.iter() {
         assert!(!prompt.contains("## This is a big request"));
-        assert!(prompt
-            .contains("A long message or a numbered list of questions alone is not such a task"));
+        assert!(prompt.contains("Long messages or numbered questions alone do not need a plan"));
     }
 }
 
@@ -1390,8 +1389,8 @@ fn felix_works_numbers_out_with_the_calculator_instead_of_guessing() {
     assert_eq!(steps, ["Calculated 4 steps"]);
     let prompts = prompts.lock().unwrap();
     assert!(prompts[0].contains("### calculate"));
-    assert!(prompts[0].contains("never estimate a value in your head"));
-    assert!(prompts[0].contains("\"start with question 1\" means do question 1"));
+    assert!(prompts[0].contains("never estimate them mentally"));
+    assert!(prompts[0].contains("\"Start with question 1\" includes every part of question 1"));
     assert!(prompts[1].contains("x = -7.4727"), "{}", prompts[1]);
     assert!(prompts[1].contains("f(1.381966) = 2.66067"));
 }
@@ -1839,14 +1838,16 @@ fn company_preparation_searches_and_creates_a_seeded_coding_workspace_on_both_pr
             replies.push("Your problem is ready in the workspace.".into());
             let replies = Arc::new(Mutex::new(replies.into_iter()));
             state.chat = Some(Arc::new(move |system, _, _, piece, _| {
-                assert!(system.contains("automatically research before creating the challenge"));
+                assert!(system.contains("research then create the challenge in the same turn"));
                 let reply = replies.lock().unwrap().next().unwrap();
                 piece(&reply);
                 Ok(reply.into())
             }));
             if native {
                 state.converse = Some(Arc::new(move |given, specs| {
-                    assert!(given.native.contains("unsolved function/class signature"));
+                    assert!(given
+                        .native
+                        .contains("unsolved function/class or SQL scaffold"));
                     assert!(specs.iter().any(|s| s.name == "web_search"));
                     Some(Box::new(PrepareNative { company }) as Box<dyn chat::Conversation>)
                 }));
@@ -2164,7 +2165,9 @@ fn interview_problems_and_calendar_context_work_on_native_and_text_sessions() {
         ];
         let replies = Arc::new(Mutex::new(replies.into_iter()));
         state.chat = Some(Arc::new(move |system, _, _, piece, _| {
-            assert!(system.contains("give me this problem"));
+            assert!(
+                system.contains("create a new unique-ID numbered problem via interview_challenge")
+            );
             assert!(!system.contains("interview_schedule"));
             let reply = replies.lock().unwrap().next().unwrap();
             piece(&reply);
@@ -2172,7 +2175,9 @@ fn interview_problems_and_calendar_context_work_on_native_and_text_sessions() {
         }));
         if native {
             state.converse = Some(Arc::new(|given, specs| {
-                assert!(given.native.contains("give me this problem"));
+                assert!(given
+                    .native
+                    .contains("create a new unique-ID numbered problem via interview_challenge"));
                 assert!(specs.iter().any(|s| s.name == "interview_problem"));
                 assert!(specs.iter().any(|s| s.name == "list_schedule"));
                 Some(Box::new(ProblemsNative) as Box<dyn chat::Conversation>)

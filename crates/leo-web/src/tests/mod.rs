@@ -102,6 +102,7 @@ fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<Strin
         housekeeper: None,
         reader: None,
         room: None,
+        context: None,
         web: None,
         converse: None,
         seer: None,
