@@ -199,8 +199,18 @@ seer, meaning, web, room).
   result by wrong reasoning is `[[incorrect]]`), asks about the reasoning
   step by step, mostly free response and fill-in, and treats subjective
   material as criteria and trade-offs. Practice cards (`quiz`, `ask_user`)
-  are answered in the card; Felix marks free answers (a `JUDGE` call when the
-  verdict is missing). Study sessions: `study_plan` / `end_session`, quizzes
+  are answered in the card. Marking never waits for a Felix reply
+  (2026-10-19, the user's call: it was slow and used the plan): multiple
+  choice is marked by the page and shows the quiz's `explain` (required for
+  multiple choice: why the right one is right and each other wrong);
+  fill-ins that match an accepted answer are marked by the page; anything
+  else goes to POST `/api/quiz/mark` (the quick model, `MARK`, JSON verdict
+  and feedback). The card then offers Next question and Ask Felix why
+  (`q.held`); Felix is only told the result (`heldSay`, "do not repeat it")
+  when the user goes on, or with their next message. If the quick check is
+  unavailable, Felix marks it as before (a `JUDGE` call when the verdict is
+  missing). `quiz_from` shuffles multiple-choice options and refuses a quiz
+  whose right option is clearly the longest (`gives_itself_away`). Study sessions: `study_plan` / `end_session`, quizzes
   carry `idea`, the page scores ideas and stops at `MOST_SESSION_QUESTIONS`.
   Study review (`review.rs`) brings back missed questions after 20 h.
 - Tools: a text protocol (`<tool>{…}</tool>`) so every provider works, plus

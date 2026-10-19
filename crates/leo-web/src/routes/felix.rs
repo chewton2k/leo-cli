@@ -306,6 +306,77 @@ struct Ask {
     session: Option<tools::Session>,
 }
 
+pub(crate) const MARK: &str = "You mark a student's answer to a practice question against the model answer. Reply with only JSON: {\"correct\": true or false, \"feedback\": \"...\"}. Judge what the answer means, not how it is written: the same value or idea in other words or notation is right (sin x and sin(x), 1/2 and 0.5). A right result reached by wrong or missing reasoning, or an answer too vague to show understanding, is incorrect. When the question has more than one good answer, a well-argued different answer is correct. feedback: two to four short sentences in plain language. If right: why it is right, and any gap a complete answer would add. If wrong: the right answer, where the answer went wrong, and a quick tip for remembering it. Math uses $...$.";
+const MARK_TOKENS: u32 = 600;
+
+#[derive(serde::Deserialize)]
+pub(crate) struct MarkBody {
+    question: String,
+    answer: String,
+    given: String,
+    #[serde(default)]
+    explain: String,
+}
+
+pub(crate) fn mark_with(writer: &crate::graph::Writer, body: &MarkBody) -> Option<(bool, String)> {
+    let user = format!(
+        "<question>\n{}\n</question>\n<model_answer>\n{}\n</model_answer>\n{}<student_answer>\n{}\n</student_answer>",
+        body.question.trim(),
+        body.answer.trim(),
+        if body.explain.trim().is_empty() { String::new() } else { format!("<why>\n{}\n</why>\n", body.explain.trim()) },
+        body.given.trim()
+    );
+    for _ in 0..2 {
+        let Ok(reply) = writer(MARK, &user, MARK_TOKENS) else {
+            continue;
+        };
+        let Some(value) = crate::graph::json_in(&reply) else {
+            continue;
+        };
+        let (Some(correct), Some(feedback)) =
+            (value["correct"].as_bool(), value["feedback"].as_str())
+        else {
+            continue;
+        };
+        let feedback = feedback.trim();
+        if !feedback.is_empty() {
+            return Some((correct, feedback.chars().take(2_000).collect()));
+        }
+    }
+    None
+}
+
+pub(crate) async fn mark_quiz(
+    State(state): State<AppState>,
+    Json(body): Json<MarkBody>,
+) -> Response {
+    let fits = |text: &str, most: usize| text.chars().count() <= most;
+    if body.given.trim().is_empty()
+        || body.question.trim().is_empty()
+        || !fits(&body.question, 12_000)
+        || !fits(&body.answer, 6_000)
+        || !fits(&body.given, 6_000)
+        || !fits(&body.explain, 3_000)
+    {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let Some(writer) = state.quick.clone().or_else(|| state.graphs.writer()) else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Choose a writing AI in Settings to mark answers."})),
+        )
+            .into_response();
+    };
+    match tokio::task::spawn_blocking(move || mark_with(&writer, &body)).await {
+        Ok(Some((correct, feedback))) => Json(serde_json::json!({"correct": correct, "feedback": feedback})).into_response(),
+        _ => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({"error": "The quick check could not finish. Ask Felix instead."})),
+        )
+            .into_response(),
+    }
+}
+
 pub(crate) const JUDGE: &str = "You check a student's answer to a practice question against the model answer given. Reply with exactly one word: correct if the answer gets the main idea right and its reasoning holds, incorrect if it is wrong, misses the main idea, skips a step the question asked for, or reaches the result by wrong reasoning. When the question has more than one good answer, a different answer that makes a defensible case with the relevant principles is correct. Use interpretable language.";
 
 pub(crate) fn verdict_in(text: &str) -> Option<&'static str> {

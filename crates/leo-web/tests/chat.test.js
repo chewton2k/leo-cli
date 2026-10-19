@@ -830,3 +830,14 @@ test('a confirmed Study verdict overrides a conflicting hidden marker without ch
     assert.equal(C.grade(quiz.reply.text).text.trim(), 'Review the queue invariant.');
   }
 });
+
+test('a quiz answer leo already marked tells Felix not to repeat it, and how to go on', () => {
+  const right = C.heldSay({ question: 'What does BFS use?', given: 'a queue', correct: true, answer: 'a queue', kind: 'multiple_choice' }, false);
+  assert.match(right, /leo marked it right/);
+  assert.match(right, /do not repeat or re-mark it/);
+  assert.match(right, /Ask the next question with the quiz tool/);
+  const wrong = C.heldSay({ question: 'Why?', given: 'because', correct: false, answer: 'a queue', feedback: 'Close.', kind: 'free_response' }, true);
+  assert.match(wrong, /wrong; the right answer is a queue/);
+  assert.match(wrong, /explanation and feedback/);
+  assert.match(wrong, /finish it now with end_session/);
+});

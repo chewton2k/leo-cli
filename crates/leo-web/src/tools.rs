@@ -228,7 +228,7 @@ pub const SPECS: [Spec; 29] = [
             Param {
                 name: "options",
                 required: false,
-                about: "multiple_choice: 2-6 choices separated by |",
+                about: "multiple_choice: 2-6 choices separated by |, of similar length, detail and tone (the right one must never stand out as the longest, most qualified or most specific); leo shuffles their order",
             },
             Param {
                 name: "answer",
@@ -238,7 +238,7 @@ pub const SPECS: [Spec; 29] = [
             Param {
                 name: "explain",
                 required: false,
-                about: "one or two sentences shown after they answer, saying why",
+                about: "shown the moment they answer, so they need not wait for you: why the right answer is right; for multiple_choice (required) also briefly why each other choice is wrong",
             },
             Param {
                 name: "idea",
@@ -1494,6 +1494,28 @@ pub fn choices(text: &str, most: usize) -> Vec<String> {
         .collect()
 }
 
+fn gives_itself_away(options: &[String], answer: &str) -> bool {
+    let length = |o: &str| o.chars().count();
+    let right = length(answer);
+    let longest_other = options
+        .iter()
+        .filter(|o| !o.eq_ignore_ascii_case(answer))
+        .map(|o| length(o))
+        .max()
+        .unwrap_or(0);
+    right >= longest_other + 12 && right as f64 >= longest_other as f64 * 1.3
+}
+
+fn shuffled(mut options: Vec<String>) -> Vec<String> {
+    let mut seed = uuid::Uuid::new_v4().as_bytes().to_vec();
+    seed.extend_from_slice(uuid::Uuid::new_v4().as_bytes());
+    for i in (1..options.len()).rev() {
+        let j = seed[i % seed.len()] as usize % (i + 1);
+        options.swap(i, j);
+    }
+    options
+}
+
 pub fn quiz_from(call: &Call) -> Result<Quiz, String> {
     let kind = call
         .text("kind")
@@ -1513,13 +1535,19 @@ pub fn quiz_from(call: &Call) -> Result<Quiz, String> {
         if !options.iter().any(|o| o.eq_ignore_ascii_case(&answer)) {
             return Err("the answer must be one of the options, written the same way".into());
         }
+        if gives_itself_away(&options, &answer) {
+            return Err("the right choice is clearly the longest, which gives it away: rewrite the choices so they have similar length and detail (make the wrong ones as specific as the right one), then ask again".into());
+        }
+        if call.text("explain").trim().is_empty() {
+            return Err("a multiple_choice quiz needs explain: why the right choice is right and, briefly, why each other choice is wrong; it is shown the moment they answer".into());
+        }
     }
     if kind == "fill_blank" && !question.contains("___") {
         return Err("a fill_blank question needs ___ where the missing words go".into());
     }
     Ok(Quiz {
         options: if kind == "multiple_choice" {
-            options
+            shuffled(options)
         } else {
             Vec::new()
         },
@@ -2575,6 +2603,41 @@ pub fn continued(conversation: &str, call: &Call, done: &Done) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn multiple_choice_is_shuffled_explained_and_never_gives_the_answer_away_by_length() {
+        let call = |options: &str, answer: &str, explain: &str| {
+            call_of(&serde_json::json!({"name":"quiz","kind":"multiple_choice","question":"Pick one","options":options,"answer":answer,"explain":explain}).to_string())
+        };
+        let long = quiz_from(&call(
+            "a queue | a stack | a priority queue ordered by the distance found so far",
+            "a priority queue ordered by the distance found so far",
+            "Why.",
+        ));
+        assert!(long.unwrap_err().contains("clearly the longest"));
+        assert!(quiz_from(&call("a queue | a stack", "a queue", ""))
+            .unwrap_err()
+            .contains("needs explain"));
+        let fair = "visit the oldest node first | visit the newest node first | visit the cheapest node first | visit a random node first";
+        let mut firsts = std::collections::BTreeSet::new();
+        for _ in 0..60 {
+            let quiz = quiz_from(&call(
+                fair,
+                "visit the oldest node first",
+                "Oldest first; the others describe DFS, Dijkstra and random walks.",
+            ))
+            .unwrap();
+            let mut sorted = quiz.options.clone();
+            sorted.sort();
+            assert_eq!(sorted.len(), 4);
+            firsts.insert(quiz.options[0].clone());
+        }
+        assert!(
+            firsts.len() >= 3,
+            "the right answer is not always in the same place: {firsts:?}"
+        );
+    }
+
     use super::*;
 
     fn call_of(json: &str) -> Call {

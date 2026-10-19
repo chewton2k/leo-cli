@@ -154,6 +154,15 @@
     return lines.join('\n');
   }
 
+  function heldSay(quiz, ending) {
+    const verdict = quiz.correct === true ? 'right' : `wrong; the right answer is ${accepted(quiz)[0] || quiz.answer}`;
+    const shown = quiz.feedback ? 'the explanation and feedback' : 'the explanation';
+    const then = ending
+      ? 'That was the last question of this study session: finish it now with end_session and a short recap.'
+      : 'Ask the next question with the quiz tool so it appears as a card, with at most one short sentence before it.';
+    return [`Quiz answer. Question: ${quiz.question}`, `My answer: ${quiz.given}`, `leo marked it ${verdict}, and already showed me ${shown}, so do not repeat or re-mark it.`, then].join('\n');
+  }
+
   function hintsOf(quiz) {
     const list = Array.isArray(quiz.hints) ? quiz.hints : [];
     return quiz.hint && typeof quiz.hint === 'object' ? [quiz.hint, ...list] : list;
@@ -1688,7 +1697,7 @@
       const done = typeof q.given === 'string';
       const reply = q.reply && typeof q.reply === 'object' ? q.reply : null;
       const marking = Boolean(reply && reply.pending);
-      const off = done || pending ? ' disabled' : '';
+      const off = done || pending || q.marking ? ' disabled' : '';
       const asked = cite(q.kind === 'fill_blank'
         ? render(String(q.question || '').replace(/_{3,}/g, BLANK)).split(BLANK).join('<span class="quiz-blank" aria-label="blank"></span>')
         : render(String(q.question || '')), sources, escape);
@@ -1704,14 +1713,17 @@
       } else {
         answer = `<div class="quiz-row column"><textarea class="quiz-input" ${where} rows="3" placeholder="Your answer, in your own words"${off}>${draft}</textarea><button type="button" class="btn primary sm" data-chat="quiz-check" ${where}${off}>Submit</button></div>`;
       }
-      const result = marking && !(reply && reply.text) ? '<div class="quiz-result">Felix is reading your answer…</div>' : '';
+      const result = q.marking ? '<div class="quiz-result">Checking your answer…</div>' : marking && !(reply && reply.text) ? '<div class="quiz-result">Felix is reading your answer…</div>' : '';
       const hints = hintsOf(q);
       const hinted = hints
         .map((hint, n) => `<div class="quiz-hint prose">${hints.length > 1 ? `<span class="quiz-hint-n">Hint ${n + 1}</span>` : ''}${grade(hint.text || '').text ? cite(render(grade(hint.text).text), hint.sources || sources, escape, hint.files) : hint.pending ? '<span class="typing"><i></i><i></i><i></i></span>' : ''}</div>`)
         .join('');
       const waiting = hints.some((h) => h.pending);
       const askHint = !done && !pending && !waiting ? `<button type="button" class="quiz-hint-ask" data-chat="quiz-hint" ${where}>${hints.length ? 'Another hint' : 'Get a hint'}</button>` : '';
-      const why = done && q.correct !== null && q.correct !== undefined && q.explain && !reply ? `<div class="quiz-explain">${cite(inline(q.explain), sources, escape)}</div>` : '';
+      const judged = done && q.correct !== null && q.correct !== undefined && !reply;
+      const verdict = judged && q.kind !== 'multiple_choice' ? `<div class="quiz-verdict">${q.correct ? 'Right' : 'Not quite'}</div>` : '';
+      const feedback = judged && q.feedback ? `<div class="quiz-explain prose">${cite(render(q.feedback), sources, escape)}</div>` : '';
+      const why = `${verdict}${feedback}${judged && q.explain && !(q.feedback && q.kind !== 'multiple_choice') ? `<div class="quiz-explain">${cite(inline(q.explain), sources, escape)}</div>` : ''}${q.held && judged ? `<div class="quiz-next"><button type="button" class="btn primary sm" data-chat="quiz-next" ${where}${state.busy ? ' disabled' : ''}>Next question</button><button type="button" class="btn plain sm" data-chat="quiz-why" ${where}${state.busy ? ' disabled' : ''}>Ask Felix ${q.correct ? 'why' : 'to explain'}</button></div>` : ''}`;
       const said = reply
         ? (grade(reply.text || '').text
           ? `<div class="quiz-reply prose">${cite(render(grade(reply.text).text), reply.sources || sources, escape, reply.files)}</div>`
@@ -1735,12 +1747,30 @@
       send(given);
     }
 
-    function answerQuiz(i, k, given) {
+    async function answerQuiz(i, k, given) {
       const m = state.messages[i];
       const q = m && m.quizzes && m.quizzes[k];
       const text = String(given || '').trim();
-      if (!q || typeof q.given === 'string' || state.busy || m.pending || !text) return;
-      const correct = checkQuiz(q, text);
+      if (!q || typeof q.given === 'string' || state.busy || m.pending || !text || q.marking) return;
+      let correct = checkQuiz(q, text);
+      if (correct === null && q.kind === 'fill_blank' && accepted(q).some((a) => plainAnswer(a) === plainAnswer(text))) correct = true;
+      if (correct === null) {
+        q.marking = text;
+        draw();
+        let mark = null;
+        try {
+          const response = await fetch('/api/quiz/mark', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: String(q.question || ''), answer: String(q.answer || ''), given: text, explain: String(q.explain || '') }) });
+          if (response.ok) mark = await response.json();
+        } catch (e) {}
+        delete q.marking;
+        if (mark && typeof mark.correct === 'boolean') {
+          correct = mark.correct;
+          q.feedback = String(mark.feedback || '');
+        } else if (state.busy || m.pending) {
+          draw();
+          return;
+        }
+      }
       q.given = text;
       q.correct = correct;
       scoreSession(currentSession(), q.idea, correct, q.more);
@@ -1753,7 +1783,23 @@
         mood('droop', 1600);
         setTimeout(() => mood('perk', 700), 1650);
       }
-      send(text, { say: quizSay(q, text, correct), quiz: { question: q.question, given: text, correct, kind: q.kind }, card: q });
+      if (correct === null) {
+        send(text, { say: quizSay(q, text, correct), quiz: { question: q.question, given: text, correct, kind: q.kind }, card: q });
+        return;
+      }
+      q.held = true;
+      draw();
+      remember();
+    }
+
+    function continueQuiz(i, k, why) {
+      const m = state.messages[i];
+      const q = m && m.quizzes && m.quizzes[k];
+      if (!q || !q.held || state.busy) return;
+      q.held = false;
+      const quiz = { question: q.question, given: q.given, correct: q.correct, kind: q.kind };
+      if (why) send(q.given, { say: quizSay(q, q.given, q.correct), quiz, card: q, held: true });
+      else send('Next question', { say: heldSay(q, currentSession()?.state === 'finishing'), quiz, held: true });
     }
 
     async function postSteer(work, m) {
@@ -2101,6 +2147,14 @@
         catch (e) { notify(e.message || 'Your practice could not be saved. Try saving it again before asking Felix.'); return; }
         finally { state.preparingSend = false; if (!prepared) onInterviewReply(id); }
       }
+      if (!extra.held) {
+        const held = state.messages.flatMap((m) => (m.quizzes || []).filter((q) => q.held));
+        if (held.length) {
+          for (const q of held) q.held = false;
+          const last = held[held.length - 1];
+          extra = { ...extra, say: [...held.map((q) => heldSay(q, false).split('\n').slice(0, 3).join('\n')), extra.say || question].join('\n'), quiz: extra.quiz || { question: last.question, given: last.given, correct: last.correct, kind: last.kind } };
+        }
+      }
       const card = extra.card || null;
       if (!extra.quiz) {
         const last = [...state.messages].reverse().find((m) => m.role === 'assistant');
@@ -2419,6 +2473,8 @@
         const m = state.messages[Number(el.dataset.i)];
         const q = m && m.quizzes && m.quizzes[Number(el.dataset.k)];
         if (q) answerQuiz(Number(el.dataset.i), Number(el.dataset.k), q.options[Number(el.dataset.o)]);
+      } else if (what === 'quiz-next' || what === 'quiz-why') {
+        continueQuiz(Number(el.dataset.i), Number(el.dataset.k), what === 'quiz-why');
       } else if (what === 'quiz-hint') {
         askHint(Number(el.dataset.i), Number(el.dataset.k));
       } else if (what === 'quiz-check') {
@@ -2742,5 +2798,5 @@
     };
   }
 
-  root.leoChat = { timeline, startSession, scoreSession, sessionBody, sessionSummary, linkCitations, answerLines, passageLine, historyText, modelHistory, historyRequest, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, usageRows, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS, TAPS, DEMON_TAPS, MONSTER_ONE_IN, TICKLED_TOO_LONG };
+  root.leoChat = { timeline, startSession, scoreSession, sessionBody, sessionSummary, linkCitations, answerLines, passageLine, historyText, modelHistory, historyRequest, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, usageRows, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS, TAPS, DEMON_TAPS, MONSTER_ONE_IN, TICKLED_TOO_LONG, heldSay };
 })(typeof window !== 'undefined' ? window : globalThis);

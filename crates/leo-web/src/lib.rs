@@ -826,6 +826,7 @@ fn router(state: AppState) -> Router {
                 .layer(axum::extract::DefaultBodyLimit::max(interview::BODY_BYTES)),
         )
         .route("/api/chat", post(chat_reply))
+        .route("/api/quiz/mark", post(routes::felix::mark_quiz))
         .route("/api/chat/{answer}/steer", post(steer_answer))
         .route("/api/chat/{answer}/access", post(change_answer_access))
         .route("/api/chats", get(list_chats))

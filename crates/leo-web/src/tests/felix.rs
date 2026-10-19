@@ -966,9 +966,17 @@ fn felix_gives_a_practice_question_then_stops_and_waits_for_the_answer() {
     let quizzes: Vec<&serde_json::Value> = lines.iter().filter_map(|l| l.get("quiz")).collect();
     assert_eq!(quizzes.len(), 1, "only the valid quiz is shown: {lines:?}");
     assert_eq!(quizzes[0]["kind"], "multiple_choice");
+    let mut options: Vec<&str> = quizzes[0]["options"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|o| o.as_str())
+        .collect();
+    options.sort();
     assert_eq!(
-        quizzes[0]["options"],
-        serde_json::json!(["a stack", "a queue", "a heap"])
+        options,
+        ["a heap", "a queue", "a stack"],
+        "the same choices, in shuffled order"
     );
     assert_eq!(quizzes[0]["answer"], "a queue");
     assert_eq!(quizzes[0]["explain"], "Oldest first.");
@@ -3804,4 +3812,44 @@ fn conflicting_study_verdicts_are_checked_and_an_invalid_check_does_not_assign_a
             1
         );
     }
+}
+
+#[test]
+fn a_free_answer_is_marked_by_the_quick_model_without_a_full_felix_reply() {
+    let (mut state, _d, _) = state_with(&[]);
+    let mark = |state: &AppState, given: &str| {
+        run(crate::routes::felix::mark_quiz(
+            State(state.clone()),
+            Json(serde_json::from_value(serde_json::json!({"question":"What does BFS use?","answer":"a queue","given":given,"explain":"Oldest first."})).unwrap()),
+        ))
+    };
+    assert_eq!(
+        mark(&state, "a queue").status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    let asked = Arc::new(Mutex::new(Vec::new()));
+    let heard = Arc::clone(&asked);
+    state.quick = Some(Arc::new(move |system: &str, user: &str, most: u32| {
+        heard
+            .lock()
+            .unwrap()
+            .push((system.to_string(), user.to_string(), most));
+        Ok(r#"Sure: {"correct": false, "feedback": "BFS uses a queue, not a stack: it visits the oldest node first."}"#.to_string())
+    }));
+    assert_eq!(mark(&state, "  ").status(), StatusCode::BAD_REQUEST);
+    let marked = json_of(mark(&state, "a stack"));
+    assert_eq!(marked["correct"], false);
+    assert!(marked["feedback"]
+        .as_str()
+        .unwrap()
+        .contains("oldest node first"));
+    let (system, user, most) = asked.lock().unwrap()[0].clone();
+    assert!(system.contains("Reply with only JSON") && most <= 600);
+    assert!(
+        user.contains("<student_answer>\na stack")
+            && user.contains("<model_answer>\na queue")
+            && user.contains("Oldest first.")
+    );
+    state.quick = Some(Arc::new(|_: &str, _: &str, _| Ok("no idea".to_string())));
+    assert_eq!(mark(&state, "a stack").status(), StatusCode::BAD_GATEWAY);
 }

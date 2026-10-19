@@ -2984,14 +2984,19 @@ test.describe('Felix asks, quizzes and listens while he works', () => {
     await expect(card.locator('.quiz-option').first()).toBeEnabled();
     await card.locator('.quiz-option').first().click();
     await expect(card).toHaveClass(/right/);
+    await expect(card.locator('[data-chat="quiz-next"]')).toBeVisible();
+    expect(asked.length, 'a multiple choice answer is marked at once, without Felix').toBe(3);
+    await card.locator('[data-chat="quiz-why"]').click();
     await expect(card.locator('.quiz-reply')).toContainText('Well done!');
     await expect(card.locator('.quiz-hint').first()).toContainText('Set the derivative');
     await expect(card.locator('[data-chat="quiz-hint"]'), 'no more hints once answered').toHaveCount(0);
     expect(asked[3].messages.at(-1).text).toContain('praise me briefly');
   });
 
-  test('a fill in the blank and a free answer are both marked by Felix reading what was meant', async ({ page }) => {
+  test('a fill in the blank and a free answer are marked quickly for what was meant, and Felix explains only when asked', async ({ page }) => {
     const asked = [];
+    const marks = [];
+    await page.route('**/api/quiz/mark', (route) => { marks.push(route.request().postDataJSON()); return route.fulfill({ json: { correct: true, feedback: marks.length === 1 ? 'Yes: the earliest vertex.' : 'Right: level by level.' } }); });
     await page.route('**/api/chat', async (route) => {
       asked.push(route.request().postDataJSON());
       const n = asked.length;
@@ -3009,21 +3014,25 @@ test.describe('Felix asks, quizzes and listens while he works', () => {
     await box.pressSequentially('the earliest one', { delay: 20 });
     await box.press('Enter');
     await expect(blank).toHaveClass(/right/);
-    await expect(blank.locator('.quiz-reply')).toContainText('Yes.');
-    expect(asked[1].mark, 'a blank is marked by Felix reading the answer, not by matching text').toBe(true);
-    expect(asked[1].messages.at(-1).text).toContain('Accepted answers: oldest or earliest.');
+    await expect(blank.locator('.quiz-explain')).toContainText('Yes: the earliest vertex.');
+    expect(marks[0]).toMatchObject({ given: 'the earliest one', answer: 'oldest | earliest' });
+    expect(asked, 'no Felix reply is needed to mark it').toHaveLength(1);
+    await blank.locator('[data-chat="quiz-next"]').click();
     await expect(chat.locator('.quiz-card')).toHaveCount(2);
+    expect(asked[1].messages.at(-1).text).toContain('leo marked it right');
+    expect(asked[1].messages.at(-1).text).toContain('Ask the next question with the quiz tool');
     const free = chat.locator('.quiz-card').nth(1);
     await expect(free.locator('textarea.quiz-input')).toBeEnabled();
     await free.locator('textarea.quiz-input').fill('Because it goes out one level at a time.');
     await free.locator('[data-chat="quiz-check"]').click();
     await expect(free.locator('textarea.quiz-input')).toBeDisabled();
     await expect(free).toHaveClass(/right/);
+    await expect(free.locator('.quiz-verdict')).toHaveText('Right');
+    await expect(free.locator('.quiz-explain')).toContainText('Right: level by level.');
+    expect(asked).toHaveLength(2);
+    await free.locator('[data-chat="quiz-why"]').click();
     await expect(free.locator('.quiz-reply')).toContainText('Right: level by level.');
-    await expect(chat.locator('.msg.user'), 'answers stay in their cards').toHaveCount(1);
-    const told = asked[2].messages.at(-1).text;
-    expect(told).toContain('[[correct]] or [[incorrect]]');
-    expect(told).toContain('It explores level by level.');
+    expect(asked[2].messages.at(-1).text).toContain('leo checked it: right');
   });
 
   test('Felix asks which one, and a tap on a choice answers him', async ({ page }) => {
@@ -3097,6 +3106,7 @@ test.describe('Felix asks, quizzes and listens while he works', () => {
       }
       return route.fulfill(answerWith([{ sources: [] }, { t: 'Close, but you left out the ends.' }, { verdict: 'incorrect' }, { done: true }]));
     });
+    await page.route('**/api/quiz/mark', (route) => route.fulfill({ status: 503, json: { error: 'No quick model in this test.' } }));
     const chat = await openFelix(page);
     await chat.locator('#chat-input').fill('quiz me');
     await chat.locator('#chat-input').press('Enter');

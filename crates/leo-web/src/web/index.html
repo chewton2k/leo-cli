@@ -1046,6 +1046,10 @@ body.chat-resizing iframe, body.chat-resizing canvas { pointer-events: none; }
 .quiz-result.right { color: var(--good); }
 .quiz-result.wrong { color: var(--danger); }
 .quiz-explain { font-size: 13.5px; color: var(--muted); line-height: 1.5; }
+.quiz-card.right .quiz-verdict { color: var(--good); }
+.quiz-card.wrong .quiz-verdict { color: var(--danger); }
+.quiz-verdict { font-size: 14px; font-weight: 700; }
+.quiz-next { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .verdict { display: inline-block; font-size: 12px; font-weight: 700; padding: 2px 9px; border-radius: 999px; margin-bottom: 6px; }
 .verdict.correct { background: color-mix(in srgb, var(--good) 16%, transparent); color: var(--good); }
 .verdict.incorrect { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
