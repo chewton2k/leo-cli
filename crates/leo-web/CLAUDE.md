@@ -57,6 +57,9 @@ seer, meaning, web, room).
   `#/map[/id]`, `#/calendar`, `#/interviews[/chat]`, `#/record[/dir]`,
   `#/settings[/storage]`), `data-action` delegation (`actions.js`). Every
   page bumps `seq`; a slow load whose `seq` changed draws nothing.
+- Back from Settings, Storage or Trash returns to the page before them
+  (`places.before`, kept on `hashchange`; Storage opened from Settings goes
+  back to Settings), so a note you were reading stays where you left it.
 - `api()` treats an empty body as `null`; every success is JSON or a bodiless
   204 (a browser test sweeps the API).
 - Layout variables on `body`: `--side` (sidebar, 0 under 1000 px), `--right`

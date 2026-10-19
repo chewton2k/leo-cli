@@ -426,11 +426,20 @@ function go(hash, { replace = false } = {}) {
 const folderHash = (dir) => (dir ? `#/f/${enc(dir)}` : '#/');
 const noteHash = (id) => `#/n/${enc(id)}`;
 
+const asideHash = (hash) => /^#\/(settings|trash)(\/|$)/.test(hash || '');
+const places = { before: '', from: '', now: location.hash };
+addEventListener('hashchange', () => {
+  if (asideHash(location.hash) && !asideHash(places.now)) places.before = places.now || '#/';
+  places.from = places.now;
+  places.now = location.hash;
+});
+
 function back() {
   const practice = interviewPage;
   if (practice && interviewHere(practice)) return saveInterviewWorkspace(practice).then(() => { if (interviewHere(practice)) go('#/interviews'); }).catch(fail);
   if (state.view === 'map' && state.focus) return go(noteHash(state.focus));
-  if (state.view === 'storage') return go('#/settings');
+  if (state.view === 'storage') return go(/^#\/settings\/?$/.test(places.from) || !places.before ? '#/settings' : places.before);
+  if (asideHash(location.hash) && places.before) return go(places.before);
   if (state.view === 'note') return go(folderHash(state.dir || ''));
   if (state.view === 'folder') return go(folderHash((state.dir || '').split('/').slice(0, -1).join('/')));
   go('#/');

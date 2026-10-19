@@ -5512,6 +5512,34 @@ test('an open submission and folded review stay open when Felix answers and the 
   if (await review.count()) await expect(page.locator('#interview-results .interview-review details').first()).toHaveAttribute('open', '');
 });
 
+test('Back from Settings, Storage or Trash returns to the note you were reading', async ({ page }) => {
+  const note = await (await page.request.post('/api/notes', { data: { title: `Back here ${Date.now().toString(36)}`, body: 'Keep my place.' } })).json();
+  const visit = (hash) => page.evaluate((h) => { location.hash = h; }, hash);
+  const back = async () => { await page.locator('#back').click(); };
+  const at = () => page.evaluate(() => location.hash);
+  await page.goto(`/#/n/${note.id}`);
+  await expect(page.locator('#doc')).toContainText('Keep my place.');
+  await visit('#/settings');
+  await expect(page.locator('.settings')).toBeVisible();
+  await back();
+  await expect.poll(at).toBe(`#/n/${note.id}`);
+  await expect(page.locator('#doc')).toContainText('Keep my place.');
+  await visit('#/settings/storage');
+  await expect(page.locator('#back')).toBeVisible();
+  await back();
+  await expect.poll(at).toBe(`#/n/${note.id}`);
+  await visit('#/settings');
+  await visit('#/settings/storage');
+  await back();
+  await expect.poll(at).toBe('#/settings');
+  await back();
+  await expect.poll(at).toBe(`#/n/${note.id}`);
+  await visit('#/trash');
+  await back();
+  await expect.poll(at).toBe(`#/n/${note.id}`);
+  await page.request.delete(`/api/notes/${note.id}`);
+});
+
 test('the practice list shows type, company or General, position, and problems submitted and solved', async ({ page }) => {
   await page.route('**/api/interviews', (route) => route.fulfill({ json: [
     { id: 'list-tally-01', updated: new Date().toISOString(), attempts: 25, bytes: 1, framework: { title: 'Coding practice', track: 'coding', company: 'Pinterest', role: 'Software Engineering Intern', language: 'Python', style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, tally: { problems: 14, submitted: 9, solved: 6 } },
