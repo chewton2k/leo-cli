@@ -228,7 +228,7 @@ pub const SPECS: [Spec; 29] = [
             Param {
                 name: "options",
                 required: false,
-                about: "multiple_choice: 2-6 choices separated by |, of similar length, detail and tone (the right one must never stand out as the longest, most qualified or most specific); leo shuffles their order",
+                about: "multiple_choice: 2-6 choices separated by |, alike in length (leo shuffles)",
             },
             Param {
                 name: "answer",
@@ -238,7 +238,7 @@ pub const SPECS: [Spec; 29] = [
             Param {
                 name: "explain",
                 required: false,
-                about: "shown the moment they answer, so they need not wait for you: why the right answer is right; for multiple_choice (required) also briefly why each other choice is wrong",
+                about: "shown as they answer: why it is right (multiple_choice needs it, and why each other is wrong)",
             },
             Param {
                 name: "idea",

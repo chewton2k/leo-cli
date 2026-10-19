@@ -2017,7 +2017,7 @@ test.describe('storage', () => {
     expect((await (await page.request.get('/api/trash')).json()).length).toBe(0);
     await expect(page.locator('details.store-area[data-area="notes"] [data-action="storage-act"]')).toHaveCount(0);
     await page.locator('#back').click();
-    await expect(page).toHaveURL(/#\/settings$/);
+    await expect(page, 'Back returns to where Storage was opened from').toHaveURL(/#\/$/);
   });
 });
 
@@ -2918,6 +2918,8 @@ test.describe('Felix asks, quizzes and listens while he works', () => {
     await expect(card).toHaveClass(/wrong/);
     await expect(card.locator('[data-chat="quiz-hint"]'), 'no hint once it is answered').toHaveCount(0);
     await expect(card.locator('.quiz-option').first()).toBeDisabled();
+    expect(asked, 'the answer is marked without waiting for Felix').toHaveLength(1);
+    await card.locator('[data-chat="quiz-why"]').click();
     await expect(card.locator('.quiz-reply')).toContainText('BFS needs the oldest');
     await expect(card.locator('.quiz-reply')).not.toContainText('[[incorrect]]');
     await expect(chat.locator('.msg.user'), 'no message pretends to be the user').toHaveCount(1);
@@ -4167,6 +4169,8 @@ test.describe('study sessions', () => {
     await expect(progress).toContainText('Root');
     await expect(progress).toContainText('0 of 2');
     await chat.locator('.quiz-card button', { hasText: 'the minimum' }).first().click();
+    await expect(progress).toContainText('1 of 2');
+    await chat.locator('.quiz-card [data-chat="quiz-next"]').click();
     await expect.poll(() => asked.length).toBe(2);
     expect(asked[1].session).toEqual({ ideas: ['Root', 'Sift down'], closed: [true, false], asked: 1 });
     await expect(progress).toContainText('1 of 2');

@@ -52,8 +52,7 @@ function drawSide() {
       <button class="icon-btn side-fold" data-action="side-fold" aria-label="${side.mini ? 'Widen the sidebar' : 'Narrow the sidebar'}" title="${side.mini ? 'Widen the sidebar' : 'Narrow the sidebar'}">${ICON.sidebar}</button>
     </div>
     <button class="side-new" data-action="new" data-dir="${esc(dir)}" title="New note${dir ? ` in ${esc(folderLabel(dir))}` : ''}">${ICON.plus}<span class="side-label">New note</span></button>
-    <button class="side-search" data-action="side-search" title="Search every note (${shortcutLabel})">${ICON.search}<span class="side-label">Search</span><kbd class="side-label">${shortcutLabel}</kbd></button>
-    <button class="side-search side-quick" data-action="quick-leo" title="Ask Felix, add a reminder or jot a note (${quickLabel})">${ICON.bolt}<span class="side-label">Quick Leo</span><kbd class="side-label">${quickLabel}</kbd></button>
+    <div class="side-finder"><button class="side-search" data-action="side-search" title="Search every note (${shortcutLabel})">${ICON.search}<span class="side-label">Search</span><kbd class="side-label">${shortcutLabel}</kbd></button><button class="side-search side-quick" data-action="quick-leo" aria-label="Quick Leo: ask Felix, add a reminder or jot a note (${quickLabel})" title="Quick Leo · ask Felix, add a reminder or jot a note (${quickLabel})">${ICON.bolt}</button></div>
     <nav class="side-nav" aria-label="Places">
       ${sideRow('home', ICON.note, 'Notes', { on: here === 'home' })}
       ${sideRow('chat', chat.button(22), 'Ask Felix', { on: chatOpen })}
