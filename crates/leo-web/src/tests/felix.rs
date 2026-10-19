@@ -2456,7 +2456,7 @@ fn a_follow_up_in_the_same_chat_reuses_one_warm_session_and_sends_only_whats_new
     assert_eq!(
         alive(),
         2,
-        "practice marking does not retain its temporary session"
+        "practice marking replaces only its own chat when access changes"
     );
     ask(
         "warm-chat-0002",
@@ -3699,5 +3699,51 @@ fn repeated_note_reads_reuse_only_identical_results_and_fresh_can_repeat_the_bod
             (tools["calls"].as_u64(), tools["reused"].as_u64()),
             (Some(3), Some(1))
         );
+    }
+}
+
+#[test]
+fn a_study_recap_can_carry_the_last_grade_without_a_hidden_request() {
+    struct Recap;
+    impl chat::Conversation for Recap {
+        fn native(&self) -> bool {
+            true
+        }
+        fn say(&mut self, _: &str, exchange: chat::Exchange<'_>) -> anyhow::Result<chat::Reply> {
+            (exchange.call)("end_session", &serde_json::json!({"verdict":"incorrect"}));
+            (exchange.piece)("Review FIFO: the oldest item comes out first.");
+            Ok("Review FIFO: the oldest item comes out first.".into())
+        }
+    }
+    for native in [false, true] {
+        let (mut state, _dir, _) = state_with(&[]);
+        let (streamer, prompts) = scripted(vec![
+            r#"<tool>{"name":"end_session","verdict":"incorrect"}</tool>"#,
+            "Review FIFO: the oldest item comes out first.",
+        ]);
+        state.chat = Some(streamer);
+        if native {
+            state.converse = Some(Arc::new(|_, _| {
+                Some(Box::new(Recap) as Box<dyn chat::Conversation>)
+            }));
+        }
+        let body = serde_json::from_value(serde_json::json!({"mode":"study","practice":true,"mark":true,"session":{"ideas":["FIFO"],"closed":[false],"asked":1},"messages":[{"role":"user","text":"The newest queue item leaves first. Please finish the session after marking this."}]})).unwrap();
+        let bytes = run(async {
+            let response = chat_reply(State(state.clone()), Json(body)).await;
+            axum::body::to_bytes(response.into_body(), 1_000_000)
+                .await
+                .unwrap()
+        });
+        let lines: Vec<serde_json::Value> = std::str::from_utf8(&bytes)
+            .unwrap()
+            .lines()
+            .map(|s| serde_json::from_str(s).unwrap())
+            .collect();
+        assert!(lines.iter().any(|l| l["session_end"] == true));
+        assert!(lines.iter().any(|l| l["verdict"] == "incorrect"));
+        assert!(lines
+            .iter()
+            .any(|l| l["t"].as_str().is_some_and(|s| s.contains("oldest"))));
+        assert_eq!(prompts.lock().unwrap().len(), if native { 0 } else { 2 });
     }
 }

@@ -259,9 +259,14 @@ pub(crate) async fn delete_chat(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> StatusCode {
-    state.warm.forget(&id);
     let dir = state.chats.clone();
-    match tokio::task::spawn_blocking(move || chats::remove(&dir, &id)).await {
+    let warm = Arc::clone(&state.warm);
+    match tokio::task::spawn_blocking(move || {
+        warm.forget(&id);
+        chats::remove(&dir, &id)
+    })
+    .await
+    {
         Ok(true) => StatusCode::NO_CONTENT,
         _ => StatusCode::NOT_FOUND,
     }
@@ -1815,6 +1820,13 @@ pub(crate) async fn chat_reply(
         .interview_problem
         .clone()
         .filter(|_| interview.is_some());
+    if let Some(item) = saved_practice.as_ref() {
+        if interview_problem.as_ref().is_some_and(|wanted| {
+            !chats::valid_id(wanted) || !item.problems.iter().any(|p| &p.challenge.id == wanted)
+        }) {
+            return (StatusCode::CONFLICT, Json(serde_json::json!({"error":"That practice problem is no longer here. Reopen your practice and choose a saved problem."}))).into_response();
+        }
+    }
     let warm_chat = body
         .chat
         .clone()
@@ -1839,30 +1851,32 @@ pub(crate) async fn chat_reply(
         material: None,
         limit: crate::warm::context_limit(room, state.context.as_ref().map(|measure| measure())),
     };
-    let mut continued = warm_chat
-        .as_deref()
-        .and_then(|id| state.warm.take(warm_key, id, &body.messages))
-        .map(|warm| {
-            let renumbered = crate::warm::renumber(&notes, &sources, &warm.sources, &warm.notes);
-            let fresh_documents: Vec<(String, String)> = documents
-                .iter()
-                .filter(|d| !warm.documents.contains(&crate::warm::hash_of(d)))
-                .cloned()
-                .collect();
-            let message = body.messages.last().map_or("", |t| t.text.as_str());
-            Continued {
-                text: chat::follow_up(&fresh_documents, &renumbered.text, message, documents_room),
-                sources: renumbered.sources,
-                notes: renumbered.notes,
-                warm,
-            }
-        });
-    if let Some(item) = saved_practice {
-        if interview_problem.as_ref().is_some_and(|wanted| {
-            !chats::valid_id(wanted) || !item.problems.iter().any(|p| &p.challenge.id == wanted)
-        }) {
-            return (StatusCode::CONFLICT, Json(serde_json::json!({"error":"That practice problem is no longer here. Reopen your practice and choose a saved problem."}))).into_response();
+    let retained = if let Some(id) = warm_chat {
+        let warm = Arc::clone(&state.warm);
+        let messages = body.messages.clone();
+        tokio::task::spawn_blocking(move || warm.take(warm_key, &id, &messages))
+            .await
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
+    let mut continued = retained.map(|warm| {
+        let renumbered = crate::warm::renumber(&notes, &sources, &warm.sources, &warm.notes);
+        let fresh_documents: Vec<(String, String)> = documents
+            .iter()
+            .filter(|d| !warm.documents.contains(&crate::warm::hash_of(d)))
+            .cloned()
+            .collect();
+        let message = body.messages.last().map_or("", |t| t.text.as_str());
+        Continued {
+            text: chat::follow_up(&fresh_documents, &renumbered.text, message, documents_room),
+            sources: renumbered.sources,
+            notes: renumbered.notes,
+            warm,
         }
+    });
+    if let Some(item) = saved_practice {
         let mut context = crate::interview::context_problem(&item, interview_problem.as_deref());
         if let Some(active) = interview_problem
             .clone()

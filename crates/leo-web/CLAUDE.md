@@ -186,9 +186,10 @@ seer, meaning, web, room).
   same-chat history/style/access/config mismatches replace only that chat.
   Settings changes clear all sessions. Sessions expire after ten idle minutes,
   and deletion releases that chat. Eviction and process cleanup happen outside
-  the slot mutex. Only unchanged history plus the last reply/new message can
+  the slot mutex and away from async request workers. Only unchanged history plus the last reply/new message can
   continue; follow-ups carry new/changed material with stable source numbers.
-  Practice marking keeps no session. Failed sessions fall back with a fresh
+  Study marking can reuse a session when its Read only access key matches.
+  Failed sessions fall back with a fresh
   read cache; provider context accounting still bounds each retained session.
 - Long chats: `turns_for(room)` keeps recent turns verbatim, older ones go in
   `<earlier_in_this_chat>` with a background summary (`MEMORY_EVERY`).

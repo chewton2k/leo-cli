@@ -214,6 +214,39 @@ mod tests {
     use crate::chat::{Exchange, Reply};
 
     #[test]
+    fn session_destruction_never_holds_the_cache_mutex() {
+        struct Stop(std::sync::Weak<Slot>);
+        impl Conversation for Stop {
+            fn native(&self) -> bool {
+                true
+            }
+            fn say(&mut self, _: &str, _: Exchange<'_>) -> anyhow::Result<Reply> {
+                unreachable!()
+            }
+        }
+        impl Drop for Stop {
+            fn drop(&mut self) {
+                if let Some(slot) = self.0.upgrade() {
+                    assert!(
+                        slot.0.try_lock().is_ok(),
+                        "session shutdown must happen outside the mutex"
+                    );
+                }
+            }
+        }
+        let slot = std::sync::Arc::new(Slot::default());
+        for n in 0..5 {
+            let mut item = warm(&[]);
+            item.chat = format!("chat-{n:04}");
+            item.talk = Box::new(Stop(std::sync::Arc::downgrade(&slot)));
+            slot.keep(item);
+        }
+        slot.forget("chat-0003");
+        slot.clear();
+        assert!(!slot.holding());
+    }
+
+    #[test]
     fn a_small_note_budget_does_not_discard_a_long_supported_conversation() {
         assert_eq!(context_limit(32_000, Some(480_000)), 480_000);
         assert_eq!(context_limit(14_744, Some(29_488)), 29_488);
