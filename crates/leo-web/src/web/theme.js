@@ -3,6 +3,8 @@
 
   const KEY = 'leo-theme';
   const FELIX_KEY = 'leo-felix';
+  const WIDTH_KEY = 'leo-note-width';
+  const WIDTHS = ['comfortable', 'wide', 'full'];
   const CHOICES = ['system', 'light', 'dark'];
   const COLORS = { light: '#f7f7f5', dark: '#141414' };
   const media = root.matchMedia ? root.matchMedia('(prefers-color-scheme: dark)') : null;
@@ -75,6 +77,28 @@
     } catch (e) {}
   }
 
+  function noteWidth() {
+    try {
+      const value = root.localStorage.getItem(WIDTH_KEY);
+      return WIDTHS.includes(value) ? value : 'wide';
+    } catch (e) {
+      return 'wide';
+    }
+  }
+
+  function showWidth(width) {
+    root.document.documentElement.setAttribute('data-note-width', WIDTHS.includes(width) ? width : 'wide');
+  }
+
+  function setNoteWidth(width) {
+    const chosen = WIDTHS.includes(width) ? width : 'wide';
+    showWidth(chosen);
+    try {
+      if (chosen === 'wide') root.localStorage.removeItem(WIDTH_KEY);
+      else root.localStorage.setItem(WIDTH_KEY, chosen);
+    } catch (e) {}
+  }
+
   function onChange(fn) {
     listeners.add(fn);
     return () => listeners.delete(fn);
@@ -82,6 +106,7 @@
 
   apply(stored());
   showFelix(felix());
+  showWidth(noteWidth());
   if (media && media.addEventListener) {
     media.addEventListener('change', () => {
       if (current === 'system') tell();
@@ -89,6 +114,7 @@
   }
   root.addEventListener('storage', (e) => {
     if (e.key === FELIX_KEY || e.key === null) showFelix(felix());
+    if (e.key === WIDTH_KEY || e.key === null) showWidth(noteWidth());
     if (e.key !== KEY && e.key !== null) return;
     const was = dark();
     apply(stored());
@@ -98,5 +124,5 @@
     root.document.addEventListener('DOMContentLoaded', () => apply(current), { once: true });
   }
 
-  root.leoTheme = { KEY, CHOICES, choice: () => current, dark, set, onChange, felix, setFelix };
+  root.leoTheme = { KEY, CHOICES, choice: () => current, dark, set, onChange, felix, setFelix, WIDTHS, noteWidth, setNoteWidth };
 })(window);

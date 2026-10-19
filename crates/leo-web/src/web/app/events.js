@@ -234,6 +234,7 @@ async function render() {
   const arg = decodeURIComponent(rest);
   stopLibraryArrival();
   document.body.classList.toggle('on-library', !kind || kind === 'f');
+  document.body.classList.toggle('on-note', kind === 'n' || kind === 'new');
   if (library.observer) library.observer.disconnect();
   if (kind !== 'search') closeSearch();
   if (kind !== 'map') leaveMap();

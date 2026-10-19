@@ -5512,6 +5512,23 @@ test('an open submission and folded review stay open when Felix answers and the 
   if (await review.count()) await expect(page.locator('#interview-results .interview-review details').first()).toHaveAttribute('open', '');
 });
 
+test('notes read wide by default, and Settings can make them comfortable or full width', async ({ page }) => {
+  test.skip(test.info().project.name !== 'desktop', 'widths matter on a wide screen');
+  await page.setViewportSize({ width: 1700, height: 900 });
+  const note = await (await page.request.post('/api/notes', { data: { title: `Wide ${Date.now().toString(36)}`, body: 'A line that should have room to breathe.' } })).json();
+  const width = async () => { await page.goto(`/#/n/${note.id}`); await expect(page.locator('#doc')).toContainText('room to breathe'); return (await page.locator('main').boundingBox()).width; };
+  expect(await width()).toBeCloseTo(980, -1);
+  for (const [choice, check] of [['comfortable', (w) => expect(w).toBeCloseTo(760, -1)], ['full', (w) => expect(w).toBeGreaterThan(1200)], ['wide', (w) => expect(w).toBeCloseTo(980, -1)]]) {
+    await page.goto('/#/settings');
+    await page.locator(`[data-action="width-pick"][data-width="${choice}"]`).click();
+    await expect(page.locator(`[data-action="width-pick"][data-width="${choice}"]`)).toHaveAttribute('aria-pressed', 'true');
+    check(await width());
+  }
+  await page.goto('/#/');
+  expect((await page.locator('main').boundingBox()).width, 'the library keeps its own width').toBeLessThanOrEqual(1080);
+  await page.request.delete(`/api/notes/${note.id}`);
+});
+
 test('Back from Settings, Storage or Trash returns to the note you were reading', async ({ page }) => {
   const note = await (await page.request.post('/api/notes', { data: { title: `Back here ${Date.now().toString(36)}`, body: 'Keep my place.' } })).json();
   const visit = (hash) => page.evaluate((h) => { location.hash = h; }, hash);

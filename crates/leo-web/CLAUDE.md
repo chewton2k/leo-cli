@@ -57,6 +57,10 @@ seer, meaning, web, room).
   `#/map[/id]`, `#/calendar`, `#/interviews[/chat]`, `#/record[/dir]`,
   `#/settings[/storage]`), `data-action` delegation (`actions.js`). Every
   page bumps `seq`; a slow load whose `seq` changed draws nothing.
+- Notes read wide (2026-10-19, the user's call): `body.on-note main` uses
+  `--note-width`, 980 px by default; Settings → Appearance → Note width picks
+  Comfortable (760 px), Wide or Full width, kept per browser in
+  `leo-note-width` and set early by `/theme.js` as `html[data-note-width]`.
 - Back from Settings, Storage or Trash returns to the page before them
   (`places.before`, kept on `hashchange`; Storage opened from Settings goes
   back to Settings), so a note you were reading stays where you left it.

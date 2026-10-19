@@ -117,6 +117,7 @@ const actions = {
   'library-view': changeLibraryView,
   'theme-pick': (el) => pickTheme(el),
   'felix-pick': (el) => pickFelix(el),
+  'width-pick': (el) => pickWidth(el),
   'library-show-all': () => changeLibrary('show', 'all'),
   'tasks-restore-go': () => tasksRestoreGo().catch(fail),
   new: (el) => {

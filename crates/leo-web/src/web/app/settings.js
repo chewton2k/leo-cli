@@ -192,6 +192,7 @@ function themeCard() {
       <header><h3>Appearance</h3></header>
       <div class="set-row column"><span class="set-label">Theme</span><div class="choice-cards" role="group" aria-label="Theme">${window.leoTheme.CHOICES.map((choice) => `<button class="choice-card${now === choice ? ' on' : ''}" data-action="theme-pick" data-theme="${choice}" aria-pressed="${now === choice}">${ICON[THEME_ICONS[choice]]}<span>${THEME_LABELS[choice]}</span></button>`).join('')}</div></div>
       <div class="set-row column"><span class="set-label">Felix</span><div class="choice-cards" role="group" aria-label="Felix">${[['cute', 'Cute'], ['demon', 'Demon']].map(([kind, label]) => `<button class="choice-card felix-choice${felixNow === kind ? ' on' : ''}" data-action="felix-pick" data-felix="${kind}" aria-pressed="${felixNow === kind}">${felix.felix(64, `felix-preview ${kind}-look`)}<span>${label}</span></button>`).join('')}</div></div>
+      <div class="set-row column"><span class="set-label">Note width</span><div class="choice-cards" role="group" aria-label="Note width">${window.leoTheme.WIDTHS.map((width) => `<button class="choice-card${window.leoTheme.noteWidth() === width ? ' on' : ''}" data-action="width-pick" data-width="${width}" aria-pressed="${window.leoTheme.noteWidth() === width}">${svg(WIDTH_ICONS[width])}<span>${WIDTH_LABELS[width]}</span></button>`).join('')}</div></div>
       <p class="hint">Kept in this browser, so your phone and computer can each have their own. Demon Felix has scary moves of his own, and tickling either one too much has a surprise.</p>
     </section>`;
 }
@@ -200,6 +201,22 @@ function pickTheme(el) {
   window.leoTheme.set(el.dataset.theme);
   for (const button of document.querySelectorAll('[data-action="theme-pick"]')) {
     const on = button.dataset.theme === window.leoTheme.choice();
+    button.classList.toggle('on', on);
+    button.setAttribute('aria-pressed', String(on));
+  }
+}
+
+const WIDTH_LABELS = { comfortable: 'Comfortable', wide: 'Wide', full: 'Full width' };
+const WIDTH_ICONS = {
+  comfortable: '<rect x="7" y="4" width="10" height="16" rx="1.5"/><path d="M9.5 8.5h5M9.5 12h5M9.5 15.5h3"/>',
+  wide: '<rect x="4" y="4" width="16" height="16" rx="1.5"/><path d="M7 8.5h10M7 12h10M7 15.5h6"/>',
+  full: '<rect x="2" y="4" width="20" height="16" rx="1.5"/><path d="M5 8.5h14M5 12h14M5 15.5h9"/>',
+};
+
+function pickWidth(el) {
+  window.leoTheme.setNoteWidth(el.dataset.width);
+  for (const button of document.querySelectorAll('[data-action="width-pick"]')) {
+    const on = button.dataset.width === window.leoTheme.noteWidth();
     button.classList.toggle('on', on);
     button.setAttribute('aria-pressed', String(on));
   }
