@@ -1660,7 +1660,7 @@ pub(crate) async fn chat_reply(
         .room
         .as_ref()
         .map_or(chat::ROOM, |measure| measure())
-        .clamp(chat::LEAST_ROOM, chat::MOST_ROOM);
+        .min(chat::MOST_ROOM);
     let close = {
         let meaning = state.meaning.clone();
         let vectors = Arc::clone(&state.vectors);

@@ -301,6 +301,44 @@ fn scripted(replies: Vec<&'static str>) -> (chat::Streamer, Arc<Mutex<Vec<String
 }
 
 #[test]
+fn gathered_notes_respect_the_provider_budget_in_every_chat_style() {
+    for mode in ["chat", "study", "interview"] {
+        let (mut state, _dir, ids) = state_with(&[("Queues", "")]);
+        {
+            let mut store = state.fresh();
+            store.find_note_mut(&ids[0]).unwrap().body = "A queue is FIFO.\n".repeat(2_000);
+            store.save().unwrap();
+        }
+        state.room = Some(Arc::new(|| 2_048));
+        let (streamer, prompts) = scripted(vec!["A queue removes the oldest item first."]);
+        state.chat = Some(streamer);
+        let body = serde_json::from_value(serde_json::json!({
+            "mode": mode,
+            "note": ids[0],
+            "messages": [{"role":"user", "text":"Explain queues."}]
+        }))
+        .unwrap();
+        run(async {
+            let response = chat_reply(State(state), Json(body)).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            axum::body::to_bytes(response.into_body(), 1_000_000)
+                .await
+                .unwrap();
+        });
+        let prompts = prompts.lock().unwrap();
+        let notes = prompts[0]
+            .split_once("<notes>\n")
+            .unwrap()
+            .1
+            .split_once("</notes>")
+            .unwrap()
+            .0;
+        assert!(notes.chars().count() <= 2_048, "{mode}");
+        assert!(notes.contains("A queue is FIFO."));
+    }
+}
+
+#[test]
 fn felix_searches_opens_and_suggests_a_change_with_tools_then_answers() {
     let (mut state, _d, ids) = state_with(&[("Graph traversals", "cs130"), ("Calendar", "")]);
     {
