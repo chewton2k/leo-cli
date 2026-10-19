@@ -214,6 +214,18 @@ function pickFelix(el) {
   }
 }
 
+function felixUsageCard(page) {
+  const rows = window.leoChat.usageRows(page.felix_usage);
+  const tools = page.felix_tools || {};
+  const count = (value) => Number.isSafeInteger(value) && value > 0 ? value.toLocaleString() : '0';
+  return `<section class="set-card">
+    <header><h3>Felix activity</h3></header>
+    <p class="hint">Since this Leo server started. Cached input is part of total input; these counts are not your subscription balance. Provider retries may have unreported usage. Timing shows the latest 64 requests of each kind.</p>
+    <div class="set-row column"><span class="set-label">Tools</span><span class="set-note">${count(tools.calls)} calls · ${count(tools.reused)} unchanged reads reused · ${count(tools.failures)} failed calls</span></div>
+    ${rows.length ? `<details class="source-more"><summary>${ICON.chevron}Request breakdown</summary>${rows.map((row) => `<div class="set-row column"><span class="set-label">${esc(row.label)}</span><span class="set-note">${esc(row.detail)}</span></div>`).join('')}</details>` : '<p class="set-note">No AI requests recorded yet.</p>'}
+  </section>`;
+}
+
 function drawSettings(page) {
   state.settings = page;
   const backup = page.backup;
@@ -222,6 +234,7 @@ function drawSettings(page) {
     ${themeCard()}
     ${page.tasks.map((t) => taskCard(t, page.secure)).join('')}
     ${calendarCard(state.calendar, page.secure)}
+    ${felixUsageCard(page)}
     <section class="set-card">
       <header><h3>Backup</h3>${backup.remote ? '<span class="set-status ok">On</span>' : '<span class="set-status missing">Not set up</span>'}</header>
       <p class="hint">${backup.remote ? `Your notes are copied to ${esc(backup.remote)}.` : 'Backup is not set up yet. Run :backup in leo on your computer to keep a copy on GitHub.'}</p>

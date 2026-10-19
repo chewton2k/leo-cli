@@ -160,6 +160,7 @@ pub fn read(name: &str) -> bool {
     matches!(
         name,
         "interview_code"
+            | "interview_workspace"
             | "interview_progress"
             | "interview_list"
             | "interview_attempt"

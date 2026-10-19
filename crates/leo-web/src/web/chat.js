@@ -272,6 +272,23 @@
     return 'under $0.0001';
   }
 
+  function usageRows(rows) {
+    if (!Array.isArray(rows)) return [];
+    const names = { answer: 'Answers', tool_continuation: 'After tool reads', retry: 'Recovery attempts', study_grading: 'Study grading checks', summary: 'Conversation summaries', other_writing: 'Other writing · graph and notes', quick_review: 'Quick interview reviews and preparation' };
+    const count = (value) => Number.isFinite(Number(value)) && Number(value) > 0 ? Math.floor(Number(value)) : 0;
+    const number = (value) => count(value).toLocaleString('en-US');
+    return rows.slice(0, 7).filter((row) => row && Object.hasOwn(names, row.purpose)).map((row) => {
+      const input = count(row.input);
+      const cached = Math.min(input, count(row.cached));
+      const parts = [`${number(row.calls)} requests`, `${number(input)} in${cached ? ` (${number(cached)} cached)` : ''}`, `${number(row.output)} out`];
+      if (count(row.failures)) parts.push(`${number(row.failures)} failed`);
+      if (count(row.unreported)) parts.push(`${number(row.unreported)} without token counts`);
+      if (count(row.estimated)) parts.push(`${number(row.estimated)} estimated`);
+      parts.push(`median ${(count(row.median_ms) / 1000).toFixed(1)} s`, `95% within ${(count(row.p95_ms) / 1000).toFixed(1)} s`);
+      return { label: names[row.purpose], detail: parts.join(' · ') };
+    });
+  }
+
   function spentLabel(spent) {
     if (!spent || typeof spent !== 'object' || typeof spent.by !== 'string') return null;
     const model = typeof spent.model === 'string' && spent.model ? spent.model : '';
@@ -2717,5 +2734,5 @@
     };
   }
 
-  root.leoChat = { timeline, startSession, scoreSession, sessionBody, sessionSummary, linkCitations, answerLines, passageLine, historyText, modelHistory, historyRequest, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS, TAPS, DEMON_TAPS, MONSTER_ONE_IN, TICKLED_TOO_LONG };
+  root.leoChat = { timeline, startSession, scoreSession, sessionBody, sessionSummary, linkCitations, answerLines, passageLine, historyText, modelHistory, historyRequest, checkQuiz, quizSay, hintSay, plainAnswer, QUIZ_KINDS, recentNotes, threadRefs, ACCESS, accessOf, nextAccess, NOTE_DRAG, spentLabel, usageRows, fileKind, fileCard, create, felix, splitLines, grade, cite, cited, load, save, mentionAt, addRef, modeOf, groups, newId, starterWords, splitFiles, asNote, reviewPrompt, pastedNames, poseOf, MODES, MOST_REFS, TAPS, DEMON_TAPS, MONSTER_ONE_IN, TICKLED_TOO_LONG };
 })(typeof window !== 'undefined' ? window : globalThis);

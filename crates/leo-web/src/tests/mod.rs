@@ -70,6 +70,8 @@ fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<Strin
         )),
         graphs,
         quick: None,
+        housekeeping: None,
+        usage: Default::default(),
         python: None,
         python_fetch: Default::default(),
         cpp: None,

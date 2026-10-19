@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use crate::chat::{Conversation, SourceRef, Turn};
 
 pub const IDLE: Duration = Duration::from_secs(10 * 60);
+const MOST_SESSIONS: usize = 3;
 
 pub fn context_limit(room: usize, supported: Option<usize>) -> usize {
     supported
@@ -22,6 +23,7 @@ pub struct Warm {
     pub notes: BTreeMap<String, u64>,
     pub documents: BTreeSet<u64>,
     pub material: Option<u64>,
+    pub reads: crate::read_cache::Reads,
     pub sent: usize,
     pub limit: usize,
     pub talk: Box<dyn Conversation>,
@@ -29,7 +31,7 @@ pub struct Warm {
 }
 
 #[derive(Default)]
-pub struct Slot(Mutex<Option<Warm>>);
+pub struct Slot(Mutex<VecDeque<Warm>>);
 
 pub fn hash_of<T: Hash + ?Sized>(value: &T) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -69,45 +71,67 @@ impl Warm {
 
 impl Slot {
     pub fn take(&self, key: u64, chat: &str, messages: &[Turn]) -> Option<Warm> {
-        let found = self.0.lock().unwrap_or_else(|e| e.into_inner()).take()?;
-        if found.continues(key, chat, messages) {
-            Some(found)
-        } else {
-            drop(found);
-            None
-        }
+        self.tidy();
+        let found = {
+            let mut held = self.0.lock().unwrap_or_else(|e| e.into_inner());
+            let index = held.iter().position(|warm| warm.chat == chat)?;
+            held.remove(index)?
+        };
+        found.continues(key, chat, messages).then_some(found)
     }
 
     pub fn keep(&self, warm: Warm) {
-        if warm.sent >= warm.limit {
-            self.clear();
-            return;
+        let mut removed = Vec::new();
+        {
+            let mut held = self.0.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(index) = held.iter().position(|old| old.chat == warm.chat) {
+                removed.extend(held.remove(index));
+            }
+            if warm.sent < warm.limit && warm.used.elapsed() < IDLE {
+                held.push_back(warm);
+            } else {
+                removed.push(warm);
+            }
+            while held.len() > MOST_SESSIONS
+                || held.iter().map(|warm| warm.sent).sum::<usize>() > crate::chat::MOST_ROOM
+            {
+                removed.extend(held.pop_front());
+            }
         }
-        let old = self
-            .0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .replace(warm);
-        drop(old);
+        drop(removed);
     }
 
     pub fn clear(&self) {
-        let old = self.0.lock().unwrap_or_else(|e| e.into_inner()).take();
+        let old = std::mem::take(&mut *self.0.lock().unwrap_or_else(|e| e.into_inner()));
+        drop(old);
+    }
+
+    pub fn forget(&self, chat: &str) {
+        let old = {
+            let mut held = self.0.lock().unwrap_or_else(|e| e.into_inner());
+            held.iter()
+                .position(|warm| warm.chat == chat)
+                .and_then(|index| held.remove(index))
+        };
         drop(old);
     }
 
     pub fn tidy(&self) {
-        let mut held = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        if held.as_ref().is_some_and(|w| w.used.elapsed() >= IDLE) {
-            let old = held.take();
-            drop(held);
-            drop(old);
+        let mut removed = Vec::new();
+        {
+            let mut held = self.0.lock().unwrap_or_else(|e| e.into_inner());
+            for index in (0..held.len()).rev() {
+                if held[index].used.elapsed() >= IDLE {
+                    removed.extend(held.remove(index));
+                }
+            }
         }
+        drop(removed);
     }
 
     #[cfg(test)]
     pub fn holding(&self) -> bool {
-        self.0.lock().unwrap_or_else(|e| e.into_inner()).is_some()
+        !self.0.lock().unwrap_or_else(|e| e.into_inner()).is_empty()
     }
 }
 
@@ -239,11 +263,56 @@ mod tests {
             notes: BTreeMap::new(),
             documents: BTreeSet::new(),
             material: None,
+            reads: Default::default(),
             sent: 0,
             limit: 1_000,
             talk: Box::new(Quiet),
             used: Instant::now(),
         }
+    }
+
+    #[test]
+    fn switching_chats_keeps_three_recent_sessions_and_invalidates_only_the_changed_chat() {
+        let slot = Slot::default();
+        let next = [turn("assistant", "answer"), turn("user", "next")];
+        for id in ["chat-0001", "chat-0002", "chat-0003"] {
+            let mut item = warm(&[]);
+            item.chat = id.into();
+            slot.keep(item);
+        }
+        let first = slot
+            .take(7, "chat-0001", &next)
+            .expect("first chat survives switching");
+        slot.keep(first);
+        let mut fourth = warm(&[]);
+        fourth.chat = "chat-0004".into();
+        slot.keep(fourth);
+        assert!(slot.take(7, "chat-0002", &next).is_none());
+        assert!(slot.take(8, "chat-0003", &next).is_none());
+        assert!(slot.take(7, "chat-0001", &next).is_some());
+        assert!(slot.take(7, "chat-0004", &next).is_some());
+        assert!(!slot.holding());
+    }
+
+    #[test]
+    fn retention_is_bounded_by_total_context_and_expires_and_forgets_only_owned_chats() {
+        let slot = Slot::default();
+        for id in ["chat-0001", "chat-0002", "chat-0003"] {
+            let mut item = warm(&[]);
+            item.chat = id.into();
+            item.sent = 200_000;
+            item.limit = crate::chat::MOST_ROOM;
+            slot.keep(item);
+        }
+        let next = [turn("assistant", "answer"), turn("user", "next")];
+        assert!(slot.take(7, "chat-0001", &next).is_none());
+        slot.forget("chat-0002");
+        assert!(slot.take(7, "chat-0002", &next).is_none());
+        assert!(slot.take(7, "chat-0003", &next).is_some());
+        let mut old = warm(&[]);
+        old.used = Instant::now() - IDLE;
+        slot.keep(old);
+        assert!(!slot.holding());
     }
 
     #[test]
@@ -316,10 +385,8 @@ mod tests {
         ] {
             slot.keep(warm(&earlier));
             assert!(slot.take(key, chat, &messages).is_none());
-            assert!(
-                !slot.holding(),
-                "a session that does not fit is stopped, never kept beside another"
-            );
+            assert_eq!(slot.holding(), chat != "chat-0001");
+            slot.clear();
         }
         let mut full = warm(&earlier);
         full.sent = 1_000;

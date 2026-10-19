@@ -31,6 +31,8 @@ pub(crate) async fn get_settings(
     match tokio::task::spawn_blocking(move || settings.describe(&notes_dir)).await {
         Ok(mut page) => {
             page["secure"] = serde_json::Value::Bool(secure);
+            page["felix_usage"] = serde_json::json!(state.usage.snapshot());
+            page["felix_tools"] = serde_json::json!(state.usage.tools());
             Json(page).into_response()
         }
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -52,11 +54,14 @@ pub(crate) async fn change_setting(
     };
     let secure = secure_request(&headers, peer);
     let warm = std::sync::Arc::clone(&state.warm);
+    let usage = std::sync::Arc::clone(&state.usage);
     let done = tokio::task::spawn_blocking(move || {
         settings.apply(&change, secure).map(|message| {
             warm.clear();
             let mut page = settings.describe(&notes_dir);
             page["secure"] = serde_json::Value::Bool(secure);
+            page["felix_usage"] = serde_json::json!(usage.snapshot());
+            page["felix_tools"] = serde_json::json!(usage.tools());
             (message, page)
         })
     })

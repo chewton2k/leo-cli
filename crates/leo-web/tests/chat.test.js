@@ -800,3 +800,20 @@ test('actual quiz sends keep the prior model history stable through hints, marki
     assert.match(C.modelHistory(fixture.state.messages).map(m => m.text).join('\n'), /\[\[correct\]\]/);
   }
 });
+
+test('usage breakdown separates cached input, failures and unknown counts without accepting arbitrary labels', () => {
+  const rows = C.usageRows([
+    { purpose: 'answer', calls: 3, input: 12000, cached: 10000, output: 400, median_ms: 3200, p95_ms: 5000 },
+    { purpose: 'retry', calls: 1, failures: 1, unreported: 1, median_ms: 200, p95_ms: 200 },
+    { purpose: '<script>', calls: 1 },
+    { purpose: 'summary', calls: NaN, input: -1, cached: Infinity },
+  ]);
+  assert.equal(rows.length, 3);
+  assert.equal(rows[0].label, 'Answers');
+  assert.ok(rows[0].detail.includes('12,000 in (10,000 cached)'));
+  assert.ok(rows[0].detail.includes('median 3.2 s'));
+  assert.ok(rows[1].detail.includes('1 failed'));
+  assert.ok(rows[1].detail.includes('1 without token counts'));
+  assert.ok(!rows[2].detail.includes('NaN'));
+  assert.deepEqual(C.usageRows(null), []);
+});

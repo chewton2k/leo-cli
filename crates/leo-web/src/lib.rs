@@ -20,6 +20,7 @@ mod interview_keys;
 mod interview_tools;
 mod originals;
 mod progress;
+mod read_cache;
 pub mod record;
 mod record_journal;
 pub mod reply;
@@ -38,6 +39,7 @@ mod tests;
 mod token;
 pub mod tools;
 pub mod tunnel;
+pub mod usage;
 pub mod vectors;
 mod warm;
 mod work;
@@ -180,6 +182,8 @@ pub struct Runtime {
 pub struct Powers {
     pub writer: Option<Writer>,
     pub quick: Option<Writer>,
+    pub housekeeping: Option<Writer>,
+    pub usage: Arc<usage::Usage>,
     pub python: Option<Runtime>,
     pub cpp: Option<Runtime>,
     pub go: Option<Runtime>,
@@ -207,6 +211,8 @@ struct AppState {
     gate: Arc<sessions::Gate>,
     graphs: Arc<graph::Graphs>,
     quick: Option<Writer>,
+    housekeeping: Option<Writer>,
+    usage: Arc<usage::Usage>,
     python: Option<Runtime>,
     python_fetch: Arc<Mutex<Option<String>>>,
     cpp: Option<Runtime>,
@@ -476,6 +482,8 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
         gate: Arc::clone(&gate),
         graphs,
         quick,
+        housekeeping: powers.housekeeping,
+        usage: powers.usage,
         python,
         python_fetch: Default::default(),
         cpp,

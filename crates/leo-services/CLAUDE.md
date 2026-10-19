@@ -448,3 +448,8 @@ write successful help listings to either stream. The command's parent pipe write
 are dropped immediately after spawn so EOF remains meaningful; the existing
 output cap and whole-process watchdog cover both streams. A present CLI that
 fails this check reports unverified safety controls, never a missing installation.
+
+Leo serve also uses the existing quick-model configuration for long-chat memory;
+chat titles are local. The root wiring meters writing/quick/summary outcomes before
+string-only writer callbacks discard token metadata. Foreground Felix turns and
+hidden grading are metered in leo-web, without recording prompt or reply contents.

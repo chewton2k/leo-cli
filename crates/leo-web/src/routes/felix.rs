@@ -173,16 +173,16 @@ pub(crate) async fn put_chat(
         return StatusCode::BAD_REQUEST.into_response();
     }
     let dir = state.chats.clone();
-    let writer = state.graphs.writer();
-    match tokio::task::spawn_blocking(move || chats::save(&dir, &id, body, chrono::Utc::now()))
-        .await
-    {
-        Ok(Ok(chat)) => {
-            if let Some(writer) = writer.filter(|_| chat.wants_name()) {
-                name_in_background(state.chats.clone(), &chat, writer);
-            }
-            Json(chat.summary()).into_response()
+    match tokio::task::spawn_blocking(move || {
+        let mut chat = chats::save(&dir, &id, body, chrono::Utc::now())?;
+        if chat.wants_name() && chats::rename(&dir, &id, &chat.title) {
+            chat.named = true;
         }
+        anyhow::Ok(chat)
+    })
+    .await
+    {
+        Ok(Ok(chat)) => Json(chat.summary()).into_response(),
         _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
@@ -214,31 +214,6 @@ fn claim_busy(
         set,
         id: id.to_string(),
     })
-}
-
-static NAMING: std::sync::LazyLock<std::sync::Mutex<std::collections::BTreeSet<String>>> =
-    std::sync::LazyLock::new(Default::default);
-
-pub(crate) fn name_in_background(
-    dir: std::path::PathBuf,
-    chat: &chats::Chat,
-    writer: crate::graph::Writer,
-) {
-    let Some(guard) = claim_busy(&NAMING, &chat.id) else {
-        return;
-    };
-    let (system, user) = chats::name_prompt(chat);
-    let _ = std::thread::Builder::new()
-        .name("leo-chat-name".into())
-        .spawn(move || {
-            let lease = guard;
-            if let Some(name) = writer(&system, &user, 40)
-                .ok()
-                .and_then(|reply| chats::clean_name(&reply))
-            {
-                chats::rename(&dir, &lease.id, &name);
-            }
-        });
 }
 
 static REMEMBERING: std::sync::LazyLock<std::sync::Mutex<std::collections::BTreeSet<String>>> =
@@ -284,6 +259,7 @@ pub(crate) async fn delete_chat(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> StatusCode {
+    state.warm.forget(&id);
     let dir = state.chats.clone();
     match tokio::task::spawn_blocking(move || chats::remove(&dir, &id)).await {
         Ok(true) => StatusCode::NO_CONTENT,
@@ -349,12 +325,10 @@ fn judged(streamer: &chat::Streamer, asked: &str) -> (Option<&'static str>, Opti
         return (None, None);
     };
     let word = reply.text.trim().to_lowercase();
-    let verdict = if word.contains("incorrect") {
-        Some("incorrect")
-    } else if word.contains("correct") {
-        Some("correct")
-    } else {
-        None
+    let verdict = match word.as_str() {
+        "incorrect" => Some("incorrect"),
+        "correct" => Some("correct"),
+        _ => None,
     };
     (verdict, reply.spent)
 }
@@ -467,6 +441,24 @@ fn interact(
 }
 
 fn run_tool(
+    state: &AppState,
+    desk: &mut tools::Desk,
+    call: &tools::Call,
+    send: &dyn Fn(serde_json::Value),
+) -> Result<tools::Done> {
+    let result = execute_tool(state, desk, call, send);
+    state.usage.tool(
+        result
+            .as_ref()
+            .map_or(true, |done| done.result.starts_with("That did not work:")),
+        result
+            .as_ref()
+            .is_ok_and(|done| done.result.starts_with("Unchanged:")),
+    );
+    result
+}
+
+fn execute_tool(
     state: &AppState,
     desk: &mut tools::Desk,
     call: &tools::Call,
@@ -636,7 +628,29 @@ fn run_tool(
         })
         .map_err(|_| anyhow::anyhow!("leo could not read the notes"))?
     };
+    if desk.marking
+        && matches!(call.name.as_str(), "quiz" | "end_session")
+        && matches!(done.result.as_str(), tools::ASKED | tools::ENDED)
+    {
+        desk.verdict = match call.text("verdict").as_str() {
+            "correct" => Some("correct"),
+            "incorrect" => Some("incorrect"),
+            _ => desk.verdict,
+        };
+    }
     send(serde_json::json!({ "step": done.step, "tool": call.name, "found": done.found }));
+    let mut read_args = call.args.clone();
+    if let Some(args) = read_args.as_object_mut() {
+        args.remove("fresh");
+    }
+    if let Some(reused) = desk
+        .reads
+        .compact(&call.name, &read_args.to_string(), &done.result)
+    {
+        if call.text("fresh") != "yes" {
+            done.result = reused;
+        }
+    }
     let added = desk.take_steering();
     if !added.is_empty() {
         send(serde_json::json!({ "steered": added }));
@@ -1049,13 +1063,26 @@ fn answer(
         }
         let _ = tx.send(ndjson(value));
     };
-    let finished = |mut spent: Option<chat::Spent>| {
+    let finished = |mut spent: Option<chat::Spent>, structured: Option<&'static str>| {
         if tx.is_closed() {
             return spent;
         }
         if let Some(asked) = &marking {
-            if verdict_in(&said.borrow()).is_none() {
-                let (verdict, judged_spent) = judged(streamer, asked);
+            let visible = verdict_in(&said.borrow());
+            if visible.is_none() || structured.is_some_and(|verdict| Some(verdict) != visible) {
+                let (verdict, judged_spent) = if visible.is_none() && structured.is_some() {
+                    (structured, None)
+                } else {
+                    let started = std::time::Instant::now();
+                    let result = judged(streamer, asked);
+                    state.usage.record(
+                        crate::usage::Purpose::StudyGrading,
+                        result.1.as_ref(),
+                        started.elapsed(),
+                        result.0.is_none(),
+                    );
+                    result
+                };
                 counted(&mut spent, judged_spent);
                 if let Some(verdict) = verdict {
                     let _ = tx.send(ndjson(serde_json::json!({ "verdict": verdict })));
@@ -1093,6 +1120,11 @@ fn answer(
     desk.interview = interview.clone();
     desk.interview_problem = interview_problem;
     desk.session = session;
+    desk.marking = marking.is_some();
+    desk.reads = continued
+        .as_ref()
+        .map(|c| c.warm.reads.clone())
+        .unwrap_or_default();
     let mut specs = tools::native_specs(web_on, access);
     if interview.is_some() {
         specs.extend(tools::native_from(
@@ -1104,7 +1136,8 @@ fn answer(
                 sources: Vec<chat::SourceRef>,
                 notes: std::collections::BTreeMap<String, u64>,
                 documents: std::collections::BTreeSet<u64>,
-                final_access: tools::Access| {
+                final_access: tools::Access,
+                reads: crate::read_cache::Reads| {
         let sent = sent.max(talk.context_chars().unwrap_or(0));
         if let Some(chat) = remember
             .chat
@@ -1120,6 +1153,7 @@ fn answer(
                 notes,
                 documents,
                 material: remember.material,
+                reads,
                 sent,
                 limit: remember.limit,
                 talk,
@@ -1166,13 +1200,16 @@ fn answer(
                     notes,
                     documents,
                     final_access,
+                    desk.reads.clone(),
                 );
-                return Ok(finished(spent));
+                return Ok(finished(spent, desk.verdict));
             }
             Err(_) => {
                 drop(warm_talk);
                 send(serde_json::json!({ "reset": true }));
                 desk.asked = 0;
+                desk.verdict = None;
+                desk.reads.clear();
                 desk.sources = sources.clone();
                 send(serde_json::json!({ "sources": sources }));
             }
@@ -1224,12 +1261,15 @@ fn answer(
                     remember.notes.clone(),
                     remember.documents.clone(),
                     final_access,
+                    desk.reads.clone(),
                 );
-                return Ok(finished(spent));
+                return Ok(finished(spent, desk.verdict));
             }
             Err(_) => {
                 send(serde_json::json!({ "reset": true }));
                 desk.asked = 0;
+                desk.verdict = None;
+                desk.reads.clear();
             }
         }
     }
@@ -1242,6 +1282,8 @@ fn answer(
             send(serde_json::json!({ "reset": true }));
             desk.asked = 0;
         }
+        desk.reads.clear();
+        desk.verdict = None;
         let mut restated = chat::Restated::new(Arc::clone(streamer), text.clone(), last.clone());
         let shown = std::cell::Cell::new(false);
         match text_answer(
@@ -1253,7 +1295,7 @@ fn answer(
             &send,
             &shown,
         ) {
-            Ok(spent) => return Ok(finished(spent)),
+            Ok(spent) => return Ok(finished(spent, desk.verdict)),
             Err(e) => failure = Some(e),
         }
     }
@@ -1305,7 +1347,14 @@ fn native_answer(
             send(serde_json::json!({ "t": t }));
         };
         let remaining = tools::MOST_STEPS.saturating_sub(calls);
-        let reply = {
+        let purpose = if desk.requests == 0 {
+            crate::usage::Purpose::Answer
+        } else {
+            crate::usage::Purpose::Retry
+        };
+        desk.requests += 1;
+        let started = std::time::Instant::now();
+        let outcome = {
             let mut piece = |t: &str| head.borrow_mut().push(t, &mut |t| show(t));
             let mut restart = || gap.set(true);
             let mut call = |name: &str, args: &serde_json::Value| -> String {
@@ -1361,8 +1410,15 @@ fn native_answer(
                     restart: &mut restart,
                     call: &mut call,
                 },
-            )?
+            )
         };
+        state.usage.record(
+            purpose,
+            outcome.as_ref().ok().and_then(|reply| reply.spent.as_ref()),
+            started.elapsed(),
+            outcome.is_err(),
+        );
+        let reply = outcome?;
         if let Some(e) = failure.take() {
             return Err(e);
         }
@@ -1405,6 +1461,7 @@ fn text_answer(
     let mut unstuck = false;
     let mut failures = crate::work::Failures::default();
     let mut exhausted = false;
+    let mut repairing = false;
     let mut reads_only = true;
     let mut spent: Option<chat::Spent> = None;
     let mut message = conversation.to_string();
@@ -1432,7 +1489,16 @@ fn text_answer(
         let check_code = code_context && reads_only && !last && desk.current_access().changes();
         let head = std::cell::RefCell::new(crate::code_reply::Head::new(check_code));
         let emit = |t: &str| head.borrow_mut().push(t, &mut |t| shown_once(t));
-        let reply = talk.say(
+        let purpose = if repairing || (step == 0 && desk.requests > 0) {
+            crate::usage::Purpose::Retry
+        } else if step == 0 {
+            crate::usage::Purpose::Answer
+        } else {
+            crate::usage::Purpose::ToolContinuation
+        };
+        desk.requests += 1;
+        let started = std::time::Instant::now();
+        let outcome = talk.say(
             &message,
             chat::Exchange {
                 tail: if last {
@@ -1453,7 +1519,14 @@ fn text_answer(
                 },
                 call: &mut |_, _| String::new(),
             },
-        )?;
+        );
+        state.usage.record(
+            purpose,
+            outcome.as_ref().ok().and_then(|reply| reply.spent.as_ref()),
+            started.elapsed(),
+            outcome.is_err(),
+        );
+        let reply = outcome?;
         counted(&mut spent, reply.spent);
         if desk.reply_closed() {
             return Ok(spent);
@@ -1470,6 +1543,7 @@ fn text_answer(
                     );
                 } else if !unstuck {
                     unstuck = true;
+                    repairing = true;
                     message = crate::interview_tools::CODE_RETRY_TEXT.into();
                     continue;
                 } else {
@@ -1481,6 +1555,7 @@ fn text_answer(
         let call = match call {
             None if !code_context && !last && !unstuck && tools::claims_no_tools(&reply) => {
                 unstuck = true;
+                repairing = true;
                 if gate.shown {
                     send(serde_json::json!({ "restart": true }));
                 }
@@ -1504,6 +1579,7 @@ fn text_answer(
         reads_only &= crate::code_reply::read(&call.name);
         let done = run_tool(state, desk, &call, send)?;
         exhausted = failures.record(&call.name, &call.args.to_string(), &done.result);
+        repairing = done.result.starts_with("That did not work:");
         message = tools::result_message(&call.name, &done.result);
     }
     Ok(spent)
@@ -1712,6 +1788,8 @@ pub(crate) async fn chat_reply(
         documents_room,
         memory.as_ref(),
     );
+    system.push_str("\n\n");
+    system.push_str(tools::MARKING);
     let practice = body.chat.clone().filter(|id| chats::valid_id(id));
     let saved_practice = if let Some(id) = practice.as_ref() {
         let path = state.chats.clone();
@@ -1821,7 +1899,10 @@ pub(crate) async fn chat_reply(
             c.text = format!("{block}\n{}", c.text);
         }
     }
-    if let (Some(id), Some(writer)) = (body.chat.clone(), state.graphs.writer()) {
+    if let (Some(id), Some(writer)) = (
+        body.chat.clone(),
+        state.housekeeping.clone().or_else(|| state.quick.clone()),
+    ) {
         let from = memory
             .as_ref()
             .filter(|m| chat::memory_fits(m, &body.messages, start))

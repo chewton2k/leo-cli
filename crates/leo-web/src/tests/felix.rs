@@ -631,7 +631,7 @@ fn what_every_step_of_an_answer_spent_is_added_up_and_sent_before_done() {
 }
 
 #[test]
-fn once_felix_has_answered_the_writing_ai_names_the_chat_in_the_background() {
+fn chat_titles_are_kept_locally_without_spending_a_model_request() {
     let (mut state, dir, _) = state_with(&[]);
     let asked = Arc::new(Mutex::new(0));
     let count = Arc::clone(&asked);
@@ -667,12 +667,12 @@ fn once_felix_has_answered_the_writing_ai_names_the_chat_in_the_background() {
     let later = put(
         serde_json::json!([{ "role": "user", "text": "help with bfs" }, { "role": "assistant", "text": "BFS uses a queue." }, { "role": "user", "text": "and dfs?" }]),
     );
-    assert_eq!(later["title"], "Queues in breadth-first search");
+    assert_eq!(later["title"], "help with bfs");
     assert!(later["about"]
         .as_str()
         .unwrap()
         .starts_with("BFS uses a queue."));
-    assert_eq!(*asked.lock().unwrap(), 1);
+    assert_eq!(*asked.lock().unwrap(), 0);
 }
 
 #[test]
@@ -1250,7 +1250,7 @@ fn closing_the_reply_prevents_further_automatic_changes() {
 
 #[test]
 fn a_long_chat_is_remembered_in_a_summary_instead_of_forgotten() {
-    let (mut state, dir, _) = state_with(&[]);
+    let (mut state, _dir, _) = state_with(&[]);
     let summaries = Arc::new(Mutex::new(Vec::new()));
     let told = Arc::clone(&summaries);
     let writer: crate::graph::Writer = Arc::new(move |system: &str, user: &str, _: u32| {
@@ -1261,10 +1261,7 @@ fn a_long_chat_is_remembered_in_a_summary_instead_of_forgotten() {
         told.lock().unwrap().push(user.to_string());
         Ok("The student is revising graph search for a Friday exam.".into())
     });
-    state.graphs = Arc::new(crate::graph::Graphs::for_notes(
-        &dir.path().join("notes"),
-        Some(writer),
-    ));
+    state.housekeeping = Some(writer);
     let (streamer, prompts) = scripted(vec!["First.", "Second."]);
     state.chat = Some(streamer);
     let mut messages: Vec<chat::Turn> = (0..31)
@@ -2446,11 +2443,7 @@ fn a_follow_up_in_the_same_chat_reuses_one_warm_session_and_sends_only_whats_new
         .any(|s| s["n"] == 1 && s["title"] == "Heaps"));
     ask("warm-chat-0002", &[("user", "what is a graph?")], false);
     assert_eq!(opened.load(std::sync::atomic::Ordering::SeqCst), 2);
-    assert_eq!(
-        alive(),
-        1,
-        "another chat stops the warm session before starting its own"
-    );
+    assert_eq!(alive(), 2, "another chat retains the first session");
     ask(
         "warm-chat-0002",
         &[
@@ -2460,7 +2453,11 @@ fn a_follow_up_in_the_same_chat_reuses_one_warm_session_and_sends_only_whats_new
         ],
         true,
     );
-    assert_eq!(alive(), 1, "practice marking never keeps a second session");
+    assert_eq!(
+        alive(),
+        2,
+        "practice marking does not retain its temporary session"
+    );
     ask(
         "warm-chat-0002",
         &[
@@ -2472,8 +2469,8 @@ fn a_follow_up_in_the_same_chat_reuses_one_warm_session_and_sends_only_whats_new
     );
     assert_eq!(
         alive(),
-        1,
-        "an edited history starts fresh, still one session"
+        2,
+        "an edited history replaces only its own session"
     );
     assert_eq!(opened.load(std::sync::atomic::Ordering::SeqCst), 4);
 }
@@ -3408,7 +3405,7 @@ fn repeated_identical_failed_calls_get_one_final_answer_without_exhausting_the_b
 #[test]
 fn hidden_study_grading_is_counted_and_only_runs_when_the_verdict_is_missing() {
     for marker in [false, true] {
-        for judge in ["correct", "not a verdict"] {
+        for judge in ["correct", "not a verdict", "not correct"] {
             let (mut state, _dir, _) = state_with(&[]);
             let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
             let called = Arc::clone(&count);
@@ -3566,4 +3563,141 @@ fn foreground_answers_are_bounded_before_context_preparation() {
         .contains("Wait"));
     drop(held);
     assert!(state.work.foreground().is_some());
+}
+
+#[test]
+fn structured_study_verdicts_avoid_hidden_grading_on_both_protocols_and_do_not_mark_hints() {
+    struct Mark {
+        verdict: &'static str,
+    }
+    impl chat::Conversation for Mark {
+        fn native(&self) -> bool {
+            true
+        }
+        fn say(&mut self, _: &str, exchange: chat::Exchange<'_>) -> anyhow::Result<chat::Reply> {
+            (exchange.piece)("A queue takes the oldest item first.");
+            (exchange.call)(
+                "quiz",
+                &serde_json::json!({"kind":"free_response","question":"What is the invariant?","answer":"FIFO","verdict":self.verdict}),
+            );
+            Ok("A queue takes the oldest item first.".into())
+        }
+    }
+    for native in [false, true] {
+        for marking in [false, true] {
+            for verdict in ["correct", "incorrect"] {
+                let (mut state, _dir, _) = state_with(&[]);
+                let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+                let called = Arc::clone(&calls);
+                state.chat = Some(Arc::new(move |system, _, _, piece, _| {
+                    assert_ne!(
+                        system,
+                        crate::routes::felix::JUDGE,
+                        "a structured verdict needs no hidden request"
+                    );
+                    let text = if called.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                        format!("A queue takes the oldest item first.\n<tool>{{\"name\":\"quiz\",\"kind\":\"free_response\",\"question\":\"What is the invariant?\",\"answer\":\"FIFO\",\"verdict\":\"{verdict}\"}}</tool>")
+                    } else {
+                        "Your next question is ready.".into()
+                    };
+                    piece(&text);
+                    Ok(text.into())
+                }));
+                if native {
+                    state.converse = Some(Arc::new(move |_, _| {
+                        Some(Box::new(Mark { verdict }) as Box<dyn chat::Conversation>)
+                    }));
+                }
+                let body = serde_json::from_value(serde_json::json!({"mode":"study","practice":true,"mark":marking,"messages":[{"role":"user","text":"A queue takes the oldest item first."}]})).unwrap();
+                let bytes = run(async {
+                    let response = chat_reply(State(state.clone()), Json(body)).await;
+                    axum::body::to_bytes(response.into_body(), 1_000_000)
+                        .await
+                        .unwrap()
+                });
+                let lines: Vec<serde_json::Value> = std::str::from_utf8(&bytes)
+                    .unwrap()
+                    .lines()
+                    .map(|s| serde_json::from_str(s).unwrap())
+                    .collect();
+                assert!(lines.iter().any(|l| l.get("quiz").is_some()), "{lines:?}");
+                assert_eq!(
+                    lines.iter().find_map(|l| l["verdict"].as_str()),
+                    marking.then_some(verdict)
+                );
+                let usage = serde_json::to_value(state.usage.snapshot()).unwrap();
+                assert!(!usage
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|r| r["purpose"] == "study_grading"));
+                assert_eq!(
+                    calls.load(std::sync::atomic::Ordering::SeqCst),
+                    if native { 0 } else { 2 }
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn repeated_note_reads_reuse_only_identical_results_and_fresh_can_repeat_the_body() {
+    struct Reader;
+    impl chat::Conversation for Reader {
+        fn native(&self) -> bool {
+            true
+        }
+        fn say(&mut self, _: &str, exchange: chat::Exchange<'_>) -> anyhow::Result<chat::Reply> {
+            let first = (exchange.call)("open_note", &serde_json::json!({"note":"n1"}));
+            let second = (exchange.call)("open_note", &serde_json::json!({"note":"n1"}));
+            let fresh =
+                (exchange.call)("open_note", &serde_json::json!({"note":"n1","fresh":"yes"}));
+            assert!(first.contains("Grounded material"));
+            assert!(second.starts_with("Unchanged:"));
+            assert!(fresh.contains("Grounded material"));
+            (exchange.piece)("Read it.");
+            Ok("Read it.".into())
+        }
+    }
+    for native in [false, true] {
+        let (mut state, _dir, ids) = state_with(&[("Graphs", "algorithms")]);
+        {
+            let mut store = state.fresh();
+            store.find_note_mut(&ids[0]).unwrap().body = "Grounded material.\n".repeat(100);
+            store.save().unwrap();
+        }
+        let (streamer, prompts) = scripted(vec![
+            r#"<tool>{"name":"open_note","note":"n1"}</tool>"#,
+            r#"<tool>{"name":"open_note","note":"n1"}</tool>"#,
+            r#"<tool>{"name":"open_note","note":"n1","fresh":"yes"}</tool>"#,
+            "Read it.",
+        ]);
+        state.chat = Some(streamer);
+        if native {
+            state.converse = Some(Arc::new(|_, _| {
+                Some(Box::new(Reader) as Box<dyn chat::Conversation>)
+            }));
+        }
+        let body = serde_json::from_value(serde_json::json!({"note":ids[0],"messages":[{"role":"user","text":"Read this note."}]})).unwrap();
+        let bytes = run(async {
+            let response = chat_reply(State(state.clone()), Json(body)).await;
+            axum::body::to_bytes(response.into_body(), 1_000_000)
+                .await
+                .unwrap()
+        });
+        assert!(!std::str::from_utf8(&bytes).unwrap().contains("\"error\""));
+        if !native {
+            let prompts = prompts.lock().unwrap();
+            assert!(prompts[2].contains("Unchanged: the saved content was rechecked"));
+            assert!(
+                prompts[3].matches("Grounded material").count()
+                    > prompts[2].matches("Grounded material").count()
+            );
+        }
+        let tools = serde_json::to_value(state.usage.tools()).unwrap();
+        assert_eq!(
+            (tools["calls"].as_u64(), tools["reused"].as_u64()),
+            (Some(3), Some(1))
+        );
+    }
 }

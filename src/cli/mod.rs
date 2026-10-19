@@ -336,17 +336,11 @@ pub fn run(cli: Cli) -> Result<()> {
             if !local {
                 serve::ensure_tunnel_tool()?;
             }
-            let writer: leo_web::Writer =
-                std::sync::Arc::new(|system: &str, user: &str, most: u32| {
-                    leo_services::ai::chat_outcome(
-                        leo_services::ai::chat::Prompt {
-                            system: system.to_string(),
-                            user: user.to_string(),
-                        },
-                        most,
-                    )
-                    .map(|outcome| outcome.value)
-                });
+            let usage = std::sync::Arc::new(leo_web::usage::Usage::default());
+            let writer = web_felix::writer(
+                std::sync::Arc::clone(&usage),
+                leo_web::usage::Purpose::OtherWriting,
+            );
             let streamer: leo_web::Streamer = std::sync::Arc::new(
                 |system: &str,
                  user: &str,
@@ -413,18 +407,15 @@ pub fn run(cli: Cli) -> Result<()> {
                         }),
                     }),
                     writer: Some(writer),
-                    quick: Some(std::sync::Arc::new(
-                        |system: &str, user: &str, most: u32| {
-                            leo_services::ai::quick_outcome(
-                                leo_services::ai::chat::Prompt {
-                                    system: system.to_string(),
-                                    user: user.to_string(),
-                                },
-                                most,
-                            )
-                            .map(|outcome| outcome.value)
-                        },
+                    quick: Some(web_felix::writer(
+                        std::sync::Arc::clone(&usage),
+                        leo_web::usage::Purpose::QuickReview,
                     )),
+                    housekeeping: Some(web_felix::writer(
+                        std::sync::Arc::clone(&usage),
+                        leo_web::usage::Purpose::Summary,
+                    )),
+                    usage,
                     chat: Some(streamer),
                     settings: Some(std::sync::Arc::new(web_settings::WebSettings)),
                     importer: Some(std::sync::Arc::new(

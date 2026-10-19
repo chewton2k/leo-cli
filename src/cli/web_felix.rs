@@ -3,6 +3,40 @@ use std::sync::Arc;
 use leo_services::ai::session::{Session, Systems, ToolDef, Turn};
 use leo_services::ai::spend::Answered;
 
+pub fn writer(
+    usage: Arc<leo_web::usage::Usage>,
+    purpose: leo_web::usage::Purpose,
+) -> leo_web::Writer {
+    Arc::new(move |system, user, most| {
+        let started = std::time::Instant::now();
+        let prompt = leo_services::ai::chat::Prompt {
+            system: system.into(),
+            user: user.into(),
+        };
+        let result = if matches!(
+            purpose,
+            leo_web::usage::Purpose::Summary | leo_web::usage::Purpose::QuickReview
+        ) {
+            leo_services::ai::quick_outcome(prompt, most)
+        } else {
+            leo_services::ai::chat_outcome(prompt, most)
+        };
+        let spent = result
+            .as_ref()
+            .ok()
+            .and_then(|outcome| outcome.spent.as_ref())
+            .map(|spent| leo_web::Spent {
+                input: spent.input,
+                output: spent.output,
+                cached: spent.cached,
+                estimated: spent.estimated,
+                ..Default::default()
+            });
+        usage.record(purpose, spent.as_ref(), started.elapsed(), result.is_err());
+        result.map(|outcome| outcome.value)
+    })
+}
+
 pub fn spent_of(answered: Answered) -> leo_web::Spent {
     leo_web::Spent {
         by: answered.by,

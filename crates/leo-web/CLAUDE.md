@@ -181,22 +181,15 @@ seer, meaning, web, room).
   answers it reuses only the system prompt (measured: 10.5k of 31.8k tokens). Note bodies are line-numbered; citations `[n2 L14-18]`
   and `[f1 p4]` become chips. Citations never go into notes
   (`tools::linked` → `[[Title]]`).
-- Warm sessions (`warm.rs`, 2026-10-13): one slot for all of leo. After an
-  answer, its supported native session (Claude Code, isolation-capable Codex,
-  or Ollama) is kept (the previous one is
-  stopped), so at most one idle session exists. The next answer continues it
-  only when it is the same chat, the history is unchanged except the reply and
-  one new message (`Warm::continues`: `seen`, `history_of`), the style, access,
-  web and interview settings match and `config.toml` has not changed
-  (`config_stamp`; Settings changes also `clear` it). A continued answer sends
-  `chat::follow_up`: documents and notes not yet read in this session
-  (`warm::renumber` keeps each note's `n` number, marks changed ones
-  `updated`), the message and `<today>`; the session and its cache hold the
-  rest. A mismatch stops the warm session before a new one starts; a failed
-  warm answer falls back to a fresh one with full context. Practice marking
-  never uses the slot. Idle 10 minutes (`IDLE`, checked every 30 s) or past
-  `limit` (2 x room chars) stops it. Measured with Claude Code: first answer
-  4.7 s, follow-ups 2.4 s with 99% of the prompt cached, one process.
+- Warm sessions (`warm.rs`): up to three recent conversations, sharing a
+  480,000-character context ceiling. Switching chats keeps eligible sessions;
+  same-chat history/style/access/config mismatches replace only that chat.
+  Settings changes clear all sessions. Sessions expire after ten idle minutes,
+  and deletion releases that chat. Eviction and process cleanup happen outside
+  the slot mutex. Only unchanged history plus the last reply/new message can
+  continue; follow-ups carry new/changed material with stable source numbers.
+  Practice marking keeps no session. Failed sessions fall back with a fresh
+  read cache; provider context accounting still bounds each retained session.
 - Long chats: `turns_for(room)` keeps recent turns verbatim, older ones go in
   `<earlier_in_this_chat>` with a background summary (`MEMORY_EVERY`).
   History carries who wrote each answer, what Felix did, cards and passages,
@@ -247,7 +240,7 @@ seer, meaning, web, room).
 - Files for Felix (`chat_files`, ≤10 per chat, text only, deleted with the
   chat), passages (Ask Felix on a selection, ⌘⇧E), Add to note
   (`routes/insert.rs`, version-checked, request ids dedupe double presses),
-  Save as note, chat history (`chats.rs`, background naming), cost line
+  Save as note, chat history (`chats.rs`, local naming), cost line
   (`spent`), drawings (Mermaid for flows and charts, SVG otherwise).
 - Interview practice (2026-10-12): see the root CLAUDE.md and
   `.superpowers/plans/2026-10-12-felix-interviews.md`; `interview.rs`,
@@ -866,3 +859,24 @@ The shared ADHD-inspired `REPLY_STYLE` is unchanged by prompt-size optimization.
 `open_note` exposes bounded `part` reads, reporting total parts and the original
 first line so smaller initial excerpts never make later note content inaccessible.
 Parts preserve every numbered Unicode character, including long single lines.
+
+Felix efficiency (2026-10-18): initial chat titles use the existing first-message
+and attached-note naming locally, without an AI request. Long-chat memory uses
+`Powers.housekeeping` (the writing provider's quick model), keeping note synthesis
+on the selected writing model. `read_cache::Reads` retains at most 16 successful
+large reads and 256 KB per conversation. Every read revalidates current saved data;
+only identical results become short references. Changes, Undo and errors never
+reuse stale content; `fresh: yes` requests the full result. Failed/fresh provider
+sessions clear these references. `interview_workspace` combines the requested
+problem's complete code, reasoning, board, progress and tests without selecting it;
+full frozen submissions still use `interview_attempt` before assessment.
+
+Study's next `quiz` or `end_session` call may carry the previous answer's structured
+`verdict`, used only on a marking turn. A missing text verdict can use that field
+without another call; conflicting verdicts retain the hidden check. Hidden grading
+accepts only the exact verdict words. Permission and interactive-card rules remain.
+`usage::Usage` keeps content-free counts in memory since server startup, separated
+by answer, continuation, recovery, grading, summary, other writing and quick review.
+Settings shows token/cache counts, unreported/estimated usage, tool failures/reused
+reads, and median/p95 timing from at most 64 samples per category. Native agents
+may make additional internal requests; these are not subscription-balance estimates.

@@ -995,6 +995,14 @@ pub fn attempt_material(attempt: &Attempt) -> String {
 }
 
 pub fn context_problem(item: &Interview, wanted: Option<&str>) -> String {
+    context_with_code(item, wanted, false)
+}
+
+pub fn workspace_material(item: &Interview, wanted: Option<&str>) -> String {
+    context_with_code(item, wanted, true)
+}
+
+fn context_with_code(item: &Interview, wanted: Option<&str>, complete: bool) -> String {
     let problem = wanted
         .filter(|id| item.challenge.as_ref().is_none_or(|c| c.id != *id))
         .and_then(|id| item.problems.iter().find(|p| p.challenge.id == id));
@@ -1009,8 +1017,8 @@ pub fn context_problem(item: &Interview, wanted: Option<&str>) -> String {
         serde_json::json!({"skill":skill,"observations":values.len(),"latest_scores":values.iter().rev().take(5).collect::<Vec<_>>()})
     }).collect();
     let active_problem = challenge.map(|c| serde_json::json!({"id":c.id,"title":c.title,"number":item.problems.iter().position(|p|p.challenge.id==c.id).map_or(1,|i|i+1)}));
-    let data = serde_json::json!({"active_problem":active_problem,"id":item.id,"revision":item.revision,"framework":item.framework,"challenge":challenge,"draft_answer":crate::chat::clip(&workspace.answer, 8000),"draft_reasoning":workspace.reasoning,"board":board_material(workspace),"latest_attempts":attempts,"assessed_scores":scores,"problems":item.problems.iter().enumerate().map(|(i,p)| serde_json::json!({"number":i+1,"id":p.challenge.id,"title":p.challenge.title,"topics":p.challenge.topics,"submitted":item.attempts.iter().any(|a|a.challenge.id==p.challenge.id)})).collect::<Vec<_>>(),"topics_in_use":topics_in_use(item)});
-    format!("<interview_material>\n{}\n</interview_material>\nUse interpretable language. The active_problem is the problem open in the workspace. References like this problem or my code refer to it and its current draft unless the user names a different problem. For full submitted work use interview_attempt with its ID before assessing it.\n", data)
+    let data = serde_json::json!({"active_problem":active_problem,"id":item.id,"revision":item.revision,"framework":item.framework,"challenge":challenge,"draft_answer":if complete { workspace.answer.clone() } else { crate::chat::clip(&workspace.answer, 8000) },"draft_reasoning":workspace.reasoning,"board":board_material(workspace),"latest_attempts":attempts,"assessed_scores":scores,"problems":item.problems.iter().enumerate().map(|(i,p)| serde_json::json!({"number":i+1,"id":p.challenge.id,"title":p.challenge.title,"topics":p.challenge.topics,"submitted":item.attempts.iter().any(|a|a.challenge.id==p.challenge.id)})).collect::<Vec<_>>(),"topics_in_use":topics_in_use(item)});
+    format!("<interview_material>\n{}\n</interview_material>\nUse interpretable language. The active_problem is the problem open in the workspace. References like this problem or my code refer to it and its current draft unless the user names a different problem. For full submitted work use interview_attempt with its ID before assessing it.\n", data.to_string().replace('<', "\\u003c"))
 }
 
 #[cfg(test)]
