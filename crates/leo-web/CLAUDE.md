@@ -442,10 +442,12 @@ works (plan: `.superpowers/plans/2026-10-12-interview-instant-feedback.md`):
   Auto, refused in Read only; at least one visible test always stays).
 - Submit: the page runs every test in the sandbox, PUT `submit` carries
   `tests` reports, the server grades asks and sections instantly into
-  `Attempt.checks`; then POST `grade` asks the quick model (`Powers.quick`:
-  the writing AI's cheapest model at low effort, `ai::quick_config`) to mark
-  the criteria into `Attempt.grade`; then Felix's full review runs in the chat
-  without blocking, told the results (`interviews.reviewNote`). Check coverage
+  `Attempt.checks`. No AI runs on Submit (2026-10-19, the user's call): the
+  result offers **Review with Felix** (`review-result`; submissions keep
+  "Ask Felix to review", `review-attempt`), which runs POST `grade` (the quick
+  model, `Powers.quick`: the writing AI's cheapest model at low effort,
+  `ai::quick_config`) into `Attempt.grade`, then Felix's full review in the
+  chat, told the results (`interviews.reviewNote`). Check coverage
   (POST `coverage`) says which criteria a draft covers, never judging them.
 - Running code: `/runner.html` + `/runner.js` (public, CSP `RUNNER_POLICY`:
   sandbox allow-scripts, opaque origin, so requests carry no leo cookies) start

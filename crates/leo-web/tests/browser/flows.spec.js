@@ -3999,6 +3999,7 @@ test('interview answers keep their focus and draft through saves, a conflict and
   await expect(page.locator('#interview-board text')).toHaveText('Client → Server');
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
   await page.locator('[data-interview="submit"]').click();
+  await page.locator('#interview-results [data-interview="review-result"]').click();
   await expect(page.locator('#interview-progress')).toContainText('1 reviewed attempt');
   await page.locator('[data-chat="close"]').click();
   await expect(page.locator('#chat')).toBeHidden();
@@ -4008,6 +4009,7 @@ test('interview answers keep their focus and draft through saves, a conflict and
   await page.locator('[data-interview="tab"][data-tab="board"]').click();
   await boardLabel(page, 'Another drawing', 0.15, 0.45);
   await page.locator('[data-interview="submit"]').click();
+  await page.locator('#interview-results [data-interview="review-result"]').click();
   await expect(page.locator('#interview-progress')).toContainText('2 reviewed attempts');
   expect(item.attempts[0].workspace.board).toHaveLength(1);
   expect(item.workspace.board).toHaveLength(2);
@@ -4019,6 +4021,7 @@ test('interview answers keep their focus and draft through saves, a conflict and
   await page.locator('[data-interview="tab"][data-tab="board"]').click();
   await boardLabel(page, 'A readable label', 0.15, 0.7);
   await page.locator('[data-interview="submit"]').click();
+  await page.locator('#interview-results [data-interview="review-result"]').click();
   await expect(page.locator('#interview-progress')).toContainText('3 reviewed attempts');
   await expect(page.locator('#chat .msg.user').last()).not.toContainText('interview_feedback');
   await page.locator('[data-chat="close"]').click();
@@ -4823,6 +4826,7 @@ test('coding problems keep separate drafts, wrap long functions and open their o
   await page.locator('[data-interview="tab"][data-tab="code"]').click();
   await expect(area).toHaveValue(draft);
   await page.locator('[data-interview="submit"]').click();
+  await page.locator('#interview-results [data-interview="review-result"]').click();
   await expect(page.locator('.msg.leo').last()).toContainText('Keep iterating');
   await expect(area).toHaveValue(draft);
   expect(item.attempts[0].workspace.answer).toBe(draft);
@@ -5401,6 +5405,10 @@ test('submission results show a compact case strip with one detail panel that ke
   await expect(results).toBeVisible();
   await expect(chips.nth(0)).toHaveAttribute('aria-selected', 'true');
   await chips.nth(7).click();
+  await expect(results.locator('.interview-review')).toHaveCount(0);
+  await expect(results.locator('.interview-review-ask')).toContainText('Submitted without an AI review');
+  expect(asked.length).toBe(0);
+  await results.locator('[data-interview="review-result"]').click();
   await expect.poll(() => typeof gradeRelease).toBe('function');
   await expect(results.locator('#interview-grade-meter[role="progressbar"]')).toContainText('Quick review ·');
   gradeRelease();
@@ -5466,6 +5474,7 @@ async function practiceWithResults(page, id) {
   await page.goto(`/#/interviews/${id}`);
   await page.locator('#interview-answer').fill('func twoSum(nums []int, target int) []int {\n\treturn nil\n}');
   await page.locator('[data-interview="submit"]').click();
+  await page.locator('#interview-results [data-interview="review-result"]').click();
   await expect(page.locator('.interview-review')).toBeVisible();
   await expect(page.locator('.msg.leo').last()).toContainText('Here is my review.');
   await page.locator('[data-chat="close"]').click();
@@ -5743,8 +5752,8 @@ test('test cases are checked against a reference solution first, Run is kept for
   await expect(results.locator('#interview-case-t3')).toHaveAttribute('aria-selected', 'true');
   await expect(results).toContainText('solve([])');
   await expect(results).toContainText('hidden test');
-  await expect(page.locator('.msg.leo').last()).toContainText('Noted.');
-  await page.locator('[data-chat="close"]').click();
+  await expect(results.locator('[data-interview="review-result"]')).toBeVisible();
+  await expect(page.locator('.msg.leo')).toHaveCount(0);
   await tabs.nth(1).click();
   await expect(cases.locator('li')).toHaveCount(2);
   await expect(cases.locator('li').nth(1)).toContainText('Hidden');

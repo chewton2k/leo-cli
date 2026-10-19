@@ -1177,7 +1177,16 @@ async function submitInterview(session) {
   } finally { session.submitting = false; session.running = ''; drawInterviewProblems(session); drawInterviewStatus(session); drawInterviewChecks(session); drawInterviewResults(session); }
   if (attempt) showInterviewPane(session, 'result', true);
   if (attempt) loadInterviewKey(session, true).catch(() => {});
-  if (attempt) gradeAndReview(session, attempt, workspace.board).catch(fail);
+
+}
+
+function reviewInterviewAttempt(session, id) {
+  const attempt = session.item.attempts.find((a) => a.id === id);
+  if (!attempt) return;
+  session.reviewing ||= new Set();
+  session.reviewing.add(id);
+  drawInterviewResults(session);
+  return gradeAndReview(session, id, attempt.workspace.board);
 }
 
 async function gradeAndReview(session, attempt, board) {
@@ -1790,7 +1799,7 @@ function paintInterviewChecks(session) {
   const view = session.key?.challenge === c.id ? session.key : null;
   const key = interviewKey(session);
   const runnable = coding && interviewRunnable(session);
-  if (hint) hint.textContent = key ? (coding ? (runnable ? `Run checks the examples in your browser. Submit adds ${key.hidden_tests} hidden test${key.hidden_tests === 1 ? '' : 's'} and a quick review; Felix’s full review follows in the chat.` : `${interviewLanguage(session) || 'This language'} doesn’t run in the browser yet, so Submit gives a quick review and Felix’s full review.`) : 'Submit checks your answers at once, then a quick review; Felix’s full review follows in the chat.') : 'Submit when you’re ready. Felix reviews your work in the chat.';
+  if (hint) hint.textContent = key ? (coding ? (runnable ? `Run checks the examples in your browser. Submit adds ${key.hidden_tests} hidden test${key.hidden_tests === 1 ? '' : 's'}. Ask Felix for a review from the result when you want one.` : `${interviewLanguage(session) || 'This language'} doesn’t run in the browser yet, so Submit saves your attempt; ask Felix to review it from the result.`) : 'Submit checks your answers at once. Ask Felix for a review from the result when you want one.') : 'Submit saves your attempt. Ask Felix to review it from the result when you want feedback.';
   if (!view || view.status === 'none') {
     box.innerHTML = session.item.framework.track ? `<p class="hint interview-checks-status">This problem has no instant checks. <button class="link-btn" data-interview="prepare-key">Prepare them</button></p>` : '';
     return;
@@ -1915,7 +1924,7 @@ function paintInterviewResults(session) {
     <div class="interview-cases" role="tablist" aria-label="Checked cases">${cases.map((x) => { const on = x.id === chosen.id; return `<button class="pick-chip ${x.pass ? 'pass' : 'fail'}${on ? ' on' : ''}" role="tab" id="interview-case-${esc(x.id)}" aria-controls="interview-case" aria-selected="${on}" tabindex="${on ? 0 : -1}" aria-label="${esc(x.name)}, ${x.pass ? 'passed' : 'failed'}" data-interview="result-case" data-check="${esc(x.id)}"><span class="interview-mark">${x.pass ? ICON.check : ICON.close}</span><span>${esc(x.name)}</span></button>`; }).join('')}</div>
     <div class="interview-case" id="interview-case" role="tabpanel" aria-labelledby="interview-case-${esc(chosen.id)}">${interviewCaseDetail(chosen)}</div>` : ''}
     ${review}
-    <p class="hint">Felix’s full review follows in the chat. You can keep working or start the next problem.</p></div>`);
+    ${attempt.feedback || attempt.grade || session.grading === attempt.id || session.reviewing?.has(attempt.id) ? '<p class="hint">Felix’s review is in the chat. You can keep working or start the next problem.</p>' : `<div class="interview-review-ask"><button class="btn sm" data-interview="review-result" data-id="${esc(attempt.id)}">${ICON.chat}<span>Review with Felix</span></button><span class="hint">Submitted without an AI review. Ask whenever you want feedback.</span></div>`}</div>`);
 }
 
 function chooseInterviewCase(session, check, focus = false) {
@@ -2163,10 +2172,7 @@ async function interviewAction(el) {
     if (!check) return;
     return talkInterview(session, `I think this automatic check might be wrong: “${check.label}”${check.expected ? ` expects ${check.expected}` : ''}${check.given ? `, and I gave ${check.given}` : ''}. Can you check it?`, [], `The user disputes one automatic check from their submitted attempt ${attempt.id}: check ${check.id} (${check.kind}) “${check.label}”, expected ${check.expected || 'not given'}, the user gave ${check.given || 'nothing'}. Read the attempt with interview_attempt, work that check out carefully yourself and say plainly whether the expected result was right. The check was written by an AI in advance and can be wrong. Do not reveal the full solution unless asked.`);
   }
-  if (action === 'review-attempt') {
-    const attempt = session.item.attempts.find((a) => a.id === el.dataset.id);
-    if (attempt) return talkInterview(session, `Review my “${attempt.challenge.title}” attempt from ${new Date(attempt.at).toLocaleDateString()}. What did I do well, and what should I practise next?`, attempt.workspace.board, `Review submitted attempt ${attempt.id} using interview_progress and interview_feedback. Explain strengths, gaps and the next practice step without giving a full solution.`);
-  }
+  if (action === 'review-attempt' || action === 'review-result') return reviewInterviewAttempt(session, el.dataset.id);
   if (action === 'retry') return retryInterviewSave(session);
   if (action === 'tab') {
     session.tab = el.dataset.tab;
