@@ -758,6 +758,7 @@ mod boundaries {
                     Err(error) => panic!("the fake target did not receive a request: {error}"),
                 }
             };
+            stream.set_nonblocking(false).unwrap();
             stream
                 .set_read_timeout(Some(Duration::from_secs(2)))
                 .unwrap();

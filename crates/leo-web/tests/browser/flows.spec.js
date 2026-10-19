@@ -5546,6 +5546,8 @@ test('the library starts with a New note card in grid and list, in place of the 
   await page.locator('[data-action="library-view"][data-view="list"]').click();
   await expect(tile).toBeVisible();
   await page.locator('[data-action="library-view"][data-view="grid"]').click();
+  const tasks = page.locator('#tasks-window .tasks-body');
+  if (await tasks.isVisible()) await page.locator('#tasks-window [data-action="tasks-fold"]').click();
   await tile.click();
   await expect.poll(() => page.evaluate(() => decodeURIComponent(location.hash))).toContain(`#/new/${dir}`);
   await page.request.delete(`/api/notes/${note.id}`);
