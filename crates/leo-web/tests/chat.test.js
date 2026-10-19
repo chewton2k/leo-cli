@@ -817,3 +817,16 @@ test('usage breakdown separates cached input, failures and unknown counts withou
   assert.ok(!rows[2].detail.includes('NaN'));
   assert.deepEqual(C.usageRows(null), []);
 });
+
+test('a confirmed Study verdict overrides a conflicting hidden marker without changing the explanation', async () => {
+  for (const verdict of ['correct', 'incorrect', 'ungraded']) {
+    const previous = verdict === 'correct' ? 'incorrect' : 'correct';
+    const fixture = chatSendFixture('study', 'practice', 'ask', undefined, { events: [{ t: `[[${previous}]] Review the queue invariant.` }, { verdict }, { done: true }] });
+    const quiz = { kind: 'free_response', question: 'What leaves first?', answer: 'The oldest item.', correct: null };
+    fixture.state.messages.push({ role: 'user', text: 'Practise queues.' }, { role: 'assistant', text: '', quizzes: [quiz] });
+    await fixture.send('The oldest item.', { card: quiz, say: C.quizSay(quiz, 'The oldest item.', null) });
+    assert.equal(quiz.correct, verdict === 'ungraded' ? null : verdict === 'correct');
+    assert.equal(C.grade(quiz.reply.text).verdict, verdict === 'ungraded' ? null : verdict);
+    assert.equal(C.grade(quiz.reply.text).text.trim(), 'Review the queue invariant.');
+  }
+});

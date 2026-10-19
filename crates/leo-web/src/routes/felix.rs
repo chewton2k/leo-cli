@@ -1091,6 +1091,13 @@ fn answer(
                 counted(&mut spent, judged_spent);
                 if let Some(verdict) = verdict {
                     let _ = tx.send(ndjson(serde_json::json!({ "verdict": verdict })));
+                } else if visible.is_some() && structured.is_some() {
+                    let _ = tx.send(ndjson(serde_json::json!({ "verdict": "ungraded" })));
+                }
+                if visible.is_some() && structured.is_some() {
+                    if let Some(id) = remember.chat.as_deref() {
+                        state.warm.forget(id);
+                    }
                 }
             }
         }

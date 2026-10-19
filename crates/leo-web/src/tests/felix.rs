@@ -3747,3 +3747,62 @@ fn a_study_recap_can_carry_the_last_grade_without_a_hidden_request() {
         assert_eq!(prompts.lock().unwrap().len(), if native { 0 } else { 2 });
     }
 }
+
+#[test]
+fn conflicting_study_verdicts_are_checked_and_an_invalid_check_does_not_assign_a_grade() {
+    struct Conflict;
+    impl chat::Conversation for Conflict {
+        fn native(&self) -> bool {
+            true
+        }
+        fn say(&mut self, _: &str, exchange: chat::Exchange<'_>) -> anyhow::Result<chat::Reply> {
+            (exchange.piece)("[[correct]] Review the queue invariant.");
+            (exchange.call)(
+                "quiz",
+                &serde_json::json!({"kind":"free_response","question":"What leaves first?","answer":"The oldest item.","verdict":"incorrect"}),
+            );
+            Ok("[[correct]] Review the queue invariant.".into())
+        }
+    }
+    for verdict in ["correct", "incorrect", "not correct"] {
+        let (mut state, _dir, _) = state_with(&[]);
+        let (streamer, prompts) = scripted(vec![verdict]);
+        state.chat = Some(streamer);
+        state.converse = Some(Arc::new(|_, _| {
+            Some(Box::new(Conflict) as Box<dyn chat::Conversation>)
+        }));
+        let body = serde_json::from_value(serde_json::json!({"chat":"conflicting-study-01","mode":"study","practice":true,"mark":true,"messages":[{"role":"user","text":"The oldest queue item leaves first."}]})).unwrap();
+        let bytes = run(async {
+            let response = chat_reply(State(state.clone()), Json(body)).await;
+            axum::body::to_bytes(response.into_body(), 1_000_000)
+                .await
+                .unwrap()
+        });
+        let lines: Vec<serde_json::Value> = std::str::from_utf8(&bytes)
+            .unwrap()
+            .lines()
+            .map(|s| serde_json::from_str(s).unwrap())
+            .collect();
+        let expected = if verdict == "not correct" {
+            "ungraded"
+        } else {
+            verdict
+        };
+        assert!(lines.iter().any(|l| l["verdict"] == expected));
+        assert_eq!(prompts.lock().unwrap().len(), 1);
+        assert!(
+            !state.warm.holding(),
+            "the inconsistent provider history must not be reused"
+        );
+        let usage = serde_json::to_value(state.usage.snapshot()).unwrap();
+        assert_eq!(
+            usage
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|r| r["purpose"] == "study_grading")
+                .unwrap()["calls"],
+            1
+        );
+    }
+}

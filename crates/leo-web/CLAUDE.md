@@ -881,3 +881,7 @@ by answer, continuation, recovery, grading, summary, other writing and quick rev
 Settings shows token/cache counts, unreported/estimated usage, tool failures/reused
 reads, and median/p95 timing from at most 64 samples per category. Native agents
 may make additional internal requests; these are not subscription-balance estimates.
+
+A hidden check resolving conflicting Study verdicts is authoritative for the card
+and its hidden history marker; the streamed explanation stays intact. An invalid
+check leaves the answer ungraded, and the inconsistent warm session is released.

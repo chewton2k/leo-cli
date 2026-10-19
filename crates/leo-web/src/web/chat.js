@@ -2228,7 +2228,7 @@
               delete answer.asks;
               answer.proposals = (answer.proposals || []).filter((p) => p.state === 'applied');
             }
-            if (e.verdict === 'correct' || e.verdict === 'incorrect') answer.verdict = e.verdict;
+            if (e.verdict === 'correct' || e.verdict === 'incorrect' || e.verdict === 'ungraded') answer.verdict = e.verdict;
             if (e.sources) answer.sources = e.sources;
             if (Array.isArray(e.files)) answer.files = e.files;
             if (e.restart) answer.text = '';
@@ -2276,8 +2276,16 @@
           }
           thread.messages.push(next);
         }
+        if (answer.verdict && grade(answer.text).verdict) {
+          const match = /\[\[(correct|incorrect)\]\]/i.exec(answer.text);
+          const replacement = answer.verdict === 'ungraded' ? '' : `[[${answer.verdict}]]`;
+          const end = match.index + match[0].length;
+          const delta = replacement.length - match[0].length;
+          answer.text = answer.text.slice(0, match.index) + replacement + answer.text.slice(end);
+          answer.steps = (answer.steps || []).map(step => ({ ...step, at: step.at >= end ? step.at + delta : step.at }));
+        }
         if (card.correct === null || card.correct === undefined) {
-          const verdict = grade(answer.text).verdict || answer.verdict;
+          const verdict = answer.verdict || grade(answer.text).verdict;
           card.correct = verdict === 'correct' ? true : verdict === 'incorrect' ? false : null;
           scoreSession(currentSession(), card.idea, card.correct, card.more);
         }
