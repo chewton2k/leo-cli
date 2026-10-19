@@ -1987,6 +1987,7 @@ function wireInterviewSplit() {
   });
   handle.addEventListener('pointermove', (e) => {
     if (!drag || e.pointerId !== drag.pointer) return;
+    if (!(e.buttons & 1)) return stop(e);
     setInterviewSplit((e.clientX - drag.box.left - 8) / drag.box.width * 100, false);
   });
   const stop = (e) => {
@@ -1997,6 +1998,7 @@ function wireInterviewSplit() {
   };
   handle.addEventListener('pointerup', stop);
   handle.addEventListener('pointercancel', stop);
+  handle.addEventListener('lostpointercapture', stop);
   handle.addEventListener('dblclick', () => setInterviewSplit(SPLIT_DEFAULT));
   handle.addEventListener('keydown', (e) => {
     const now = interviewSplit();

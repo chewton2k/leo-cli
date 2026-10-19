@@ -71,6 +71,10 @@ seer, meaning, web, room).
 - Back from Settings, Storage or Trash returns to the page before them
   (`places.before`, kept on `hashchange`; Storage opened from Settings goes
   back to Settings), so a note you were reading stays where you left it.
+- Drag handles (Felix's edge, the original pane's grip, the interview split,
+  the page bar) end on pointerup, pointercancel, lostpointercapture or a move
+  with no button held, so a release the page never sees (outside the window,
+  a context menu) cannot leave a drag stuck (2026-10-19).
 - `api()` treats an empty body as `null`; every success is JSON or a bodiless
   204 (a browser test sweeps the API).
 - Layout variables on `body`: `--side` (sidebar, 0 under 1000 px), `--right`

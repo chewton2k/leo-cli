@@ -1287,6 +1287,26 @@ test.describe('Felix', () => {
     expect(Math.abs((await chat.boundingBox()).width - before.width)).toBeLessThan(2);
   });
 
+  test('letting go of Felix’s edge outside the page ends the drag', async ({ page }) => {
+    test.skip(test.info().project.name !== 'desktop', 'the panel takes the whole screen on phones');
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/');
+    await page.locator('#chat-toggle').click();
+    const chat = page.locator('#chat');
+    await page.waitForFunction(() => document.getAnimations().every((a) => a.playState !== 'running' || a.effect.getTiming().iterations === Infinity));
+    const handle = await page.locator('.chat-resize').boundingBox();
+    const x = handle.x + handle.width / 2;
+    await page.mouse.move(x, 300);
+    await page.mouse.down();
+    await page.mouse.move(x - 60, 300, { steps: 3 });
+    const held = (await chat.boundingBox()).width;
+    const cdp = await page.context().newCDPSession(page);
+    for (const dx of [80, 120, 160]) await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: x - dx, y: 300, button: 'none', buttons: 0 });
+    await expect(page.locator('body')).not.toHaveClass(/chat-resizing/);
+    expect(Math.abs((await chat.boundingBox()).width - held)).toBeLessThan(2);
+    expect(Math.abs(Number(await page.evaluate(() => localStorage.getItem('leo-chat-width'))) - held)).toBeLessThan(2);
+  });
+
   test('Felix can ask first, change notes himself, or only read, and remembers the choice', async ({ page }) => {
     const note = await (await page.request.post('/api/notes', { data: { title: `Auto target ${test.info().project.name}`, body: 'BFS uses a queue.' } })).json();
     const asked = [];

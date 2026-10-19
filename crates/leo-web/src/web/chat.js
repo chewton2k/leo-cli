@@ -912,20 +912,23 @@
       document.body.classList.add('chat-resizing');
     });
     grip.addEventListener('pointermove', (e) => {
-      if (!dragFrom || !grip.hasPointerCapture(e.pointerId)) return;
+      if (!dragFrom) return;
+      if (!(e.buttons & 1)) return letGo(e);
+      if (!grip.hasPointerCapture(e.pointerId)) return;
       setWidth(dragFrom.width + dragFrom.x - e.clientX, false);
     });
     const letGo = (e) => {
-      if (!dragFrom || !grip.hasPointerCapture(e.pointerId)) return;
-      const tapped = Math.abs(e.clientX - dragFrom.x) < 4;
+      if (!dragFrom) return;
+      const tapped = e.type === 'pointerup' && Math.abs(e.clientX - dragFrom.x) < 4;
       dragFrom = null;
-      grip.releasePointerCapture(e.pointerId);
+      if (grip.hasPointerCapture(e.pointerId)) grip.releasePointerCapture(e.pointerId);
       document.body.classList.remove('chat-resizing');
       gripTap = tapped ? { at: e.timeStamp, x: e.clientX } : null;
       if (!tapped) setWidth(panel.getBoundingClientRect().width, true);
     };
     grip.addEventListener('pointerup', letGo);
     grip.addEventListener('pointercancel', letGo);
+    grip.addEventListener('lostpointercapture', letGo);
     grip.addEventListener('keydown', (e) => {
       const step = e.shiftKey ? 96 : 32;
       const now = panel.getBoundingClientRect().width;

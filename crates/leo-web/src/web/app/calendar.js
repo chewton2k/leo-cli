@@ -1036,7 +1036,7 @@ sourcePane.addEventListener('pointerdown', (e) => {
   const start = sourcePane.getBoundingClientRect().width;
   document.body.classList.add('source-resizing');
   const move = (ev) => {
-    if (!sourceFits()) return up();
+    if (!sourceFits() || !(ev.buttons & 1)) return up();
     setSourceWidth(start + startX - ev.clientX);
   };
   const up = () => {

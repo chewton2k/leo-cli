@@ -176,16 +176,21 @@ pageThumb.addEventListener('pointerdown', (e) => {
   const startY = e.clientY;
   const startScroll = scrollY;
   const { track, thumb, room } = pageBarSize;
-  const move = (m) => scrollTo(0, startScroll + (m.clientY - startY) * room / Math.max(1, track - thumb));
+  const move = (m) => {
+    if (!(m.buttons & 1)) return stop();
+    scrollTo(0, startScroll + (m.clientY - startY) * room / Math.max(1, track - thumb));
+  };
   const stop = () => {
     pageBar.classList.remove('dragging');
     pageThumb.removeEventListener('pointermove', move);
     pageThumb.removeEventListener('pointerup', stop);
     pageThumb.removeEventListener('pointercancel', stop);
+    pageThumb.removeEventListener('lostpointercapture', stop);
   };
   pageThumb.addEventListener('pointermove', move);
   pageThumb.addEventListener('pointerup', stop);
   pageThumb.addEventListener('pointercancel', stop);
+  pageThumb.addEventListener('lostpointercapture', stop);
 });
 pageBar.addEventListener('pointerdown', (e) => {
   if (e.target !== pageBar || e.button !== 0) return;
