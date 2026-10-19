@@ -297,7 +297,60 @@
     return details;
   }
 
-  const api = { richText, eventDetails, dayKey, fromKey, addDays, weekStart, monthGrid, weekOf, eventDays, plan, quickDates, weekdayOf, repeats, repeatsOn, occurrences, nextOpen, repeatLabel, rrule, googleLink, googleDay, timeLabel, nextWeekday };
+  const DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  const ASK = /^(what|why|how|when|who|whom|where|which|whose|can|could|does|do|did|is|are|was|were|should|would|will|explain|summari[sz]e|tell me|help me)\b/i;
+
+  function quickParse(input, now = new Date()) {
+    let text = String(input || '').trim();
+    let kind = '';
+    const strip = (re) => {
+      const before = text;
+      text = text.replace(re, ' ').replace(/\s{2,}/g, ' ').trim();
+      return before !== text;
+    };
+    if (/^note\s*[:\-]\s*/i.test(text)) { kind = 'note'; text = text.replace(/^note\s*[:\-]\s*/i, ''); }
+    else if (/^(remind me( to)?|todo|to do|task)\s*[:\-]?\s+/i.test(text)) { kind = 'task'; text = text.replace(/^(remind me( to)?|todo|to do|task)\s*[:\-]?\s+/i, ''); }
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    let date = null;
+    let time = null;
+    const clock = /(?:\b(?:at|by|@)\s*)?\b(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)(?=\s|$|[.,!?])|(?:\b(?:at|by|@)\s*)(\d{1,2}):(\d{2})\b|\b(\d{1,2}):(\d{2})\b|\b(?:at\s+)?(noon|midnight)\b/i;
+    const t = clock.exec(text);
+    if (t) {
+      let h; let m = 0;
+      if (t[1]) { h = Number(t[1]) % 12; m = Number(t[2] || 0); if (/^p/i.test(t[3])) h += 12; }
+      else if (t[4]) { h = Number(t[4]); m = Number(t[5]); }
+      else if (t[6]) { h = Number(t[6]); m = Number(t[7]); }
+      else { h = /noon/i.test(t[8]) ? 12 : 0; }
+      if (h < 24 && m < 60) {
+        time = `${pad(h)}:${pad(m)}`;
+        text = (text.slice(0, t.index) + ' ' + text.slice(t.index + t[0].length)).replace(/\s{2,}/g, ' ').trim();
+      }
+    }
+    const inDays = /\bin\s+(\d{1,3})\s+days?\b/i.exec(text);
+    if (/\btonight\b/i.test(text)) { date = today; if (!time) time = '20:00'; strip(/\btonight\b/i); }
+    else if (/\btoday\b/i.test(text)) { date = today; strip(/\btoday\b/i); }
+    else if (/\b(tomorrow|tmrw|tmr)\b/i.test(text)) { date = addDays(today, 1); strip(/\b(tomorrow|tmrw|tmr)\b/i); }
+    else if (/\bnext week\b/i.test(text)) { date = nextWeekday(today, 1); strip(/\bnext week\b/i); }
+    else if (inDays) { date = addDays(today, Number(inDays[1])); strip(/\bin\s+\d{1,3}\s+days?\b/i); }
+    else {
+      const day = /\b(?:(on|this|next)\s+)?(sun|mon|tue|tues|wed|thu|thur|thurs|fri|sat)(?:day|nesday|sday|urday|rsday)?\b/i.exec(text);
+      if (day) {
+        const index = DAYS.findIndex((d) => d.startsWith(day[2].toLowerCase().slice(0, 3)));
+        if (index >= 0) {
+          date = nextWeekday(today, index);
+          if (index === today.getDay() && !/next/i.test(day[1] || '')) date = today;
+          if (/next/i.test(day[1] || '') && (date - today) / 86400000 < 7 && index !== today.getDay()) date = addDays(date, 7);
+          text = (text.slice(0, day.index) + ' ' + text.slice(day.index + day[0].length)).replace(/\s{2,}/g, ' ').trim();
+        }
+      }
+    }
+    if (time && !date) date = today;
+    text = text.replace(/\s+(on|at|by|for|due)$/i, '').replace(/^(on|at|by)\s+/i, '').replace(/[\s,]+$/, '').trim();
+    if (!kind) kind = /\?$/.test(String(input).trim()) || ASK.test(String(input).trim()) ? 'ask' : date ? 'task' : 'ask';
+    return { kind, title: kind === 'ask' ? String(input).trim() : text, date: date ? dayKey(date) : null, time };
+  }
+
+  const api = { quickParse, richText, eventDetails, dayKey, fromKey, addDays, weekStart, monthGrid, weekOf, eventDays, plan, quickDates, weekdayOf, repeats, repeatsOn, occurrences, nextOpen, repeatLabel, rrule, googleLink, googleDay, timeLabel, nextWeekday };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.leoSchedule = api;
 })(typeof window !== 'undefined' ? window : globalThis);

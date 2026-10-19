@@ -61,6 +61,13 @@ seer, meaning, web, room).
   `--note-width`, 980 px by default; Settings → Appearance → Note width picks
   Comfortable (760 px), Wide or Full width, kept per browser in
   `leo-note-width` and set early by `/theme.js` as `html[data-note-width]`.
+- Quick Leo (2026-10-19, the user's request): Cmd/Ctrl+J anywhere (Cmd+L
+  belongs to the browser's address bar), the sidebar row under Search, or the
+  phone menu opens one line (`sheets.js` `quickLeo`). `schedule.quickParse`
+  reads it as a question (Ask Felix: a new chat, `chat.askNew`), a reminder
+  ("email Bob tomorrow at 3pm": a task with date and time, Undo) or a note
+  ("note:", first line is the title); Tab or the chips switch. It also lists
+  what is overdue or due today with boxes to tick.
 - Back from Settings, Storage or Trash returns to the page before them
   (`places.before`, kept on `hashchange`; Storage opened from Settings goes
   back to Settings), so a note you were reading stays where you left it.

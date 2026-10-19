@@ -13,6 +13,7 @@ try {
 document.body.classList.toggle('side-mini', side.mini);
 
 const shortcutLabel = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? '⌘K' : 'Ctrl K';
+const quickLabel = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? '⌘J' : 'Ctrl J';
 
 function sideRow(action, icon, label, { on = false, attrs = '', count = '' } = {}) {
   const tail = count === '' ? '' : `<span class="side-count side-label">${esc(String(count))}</span>`;
@@ -52,6 +53,7 @@ function drawSide() {
     </div>
     <button class="side-new" data-action="new" data-dir="${esc(dir)}" title="New note${dir ? ` in ${esc(folderLabel(dir))}` : ''}">${ICON.plus}<span class="side-label">New note</span></button>
     <button class="side-search" data-action="side-search" title="Search every note (${shortcutLabel})">${ICON.search}<span class="side-label">Search</span><kbd class="side-label">${shortcutLabel}</kbd></button>
+    <button class="side-search side-quick" data-action="quick-leo" title="Ask Felix, add a reminder or jot a note (${quickLabel})">${ICON.bolt}<span class="side-label">Quick Leo</span><kbd class="side-label">${quickLabel}</kbd></button>
     <nav class="side-nav" aria-label="Places">
       ${sideRow('home', ICON.note, 'Notes', { on: here === 'home' })}
       ${sideRow('chat', chat.button(22), 'Ask Felix', { on: chatOpen })}

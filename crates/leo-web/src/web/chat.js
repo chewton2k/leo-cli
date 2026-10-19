@@ -2717,6 +2717,18 @@
       },
       isOpen: () => state.open,
       isBusy: () => Boolean(state.busy || state.preparingSend),
+      askNew(text) {
+        const said = String(text || '').trim();
+        if (!said || state.busy || state.preparingSend) return false;
+        begin();
+        if (state.mode !== 'chat') {
+          state.mode = 'chat';
+          drawModes();
+        }
+        toggle(true);
+        send(said);
+        return true;
+      },
       async openSaved(id) {
         if (state.busy || state.preparingSend) return false;
         const opened = await resume(id);

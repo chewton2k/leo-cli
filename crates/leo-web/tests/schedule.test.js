@@ -4,6 +4,23 @@ const S = require('../src/web/schedule.js');
 const cases = [];
 const test = (name, fn) => cases.push([name, fn]);
 
+test('Quick Leo reads a reminder, a question or a note from one line', () => {
+  const now = new Date(2026, 9, 19, 10, 0);
+  assert.deepEqual(S.quickParse('remind me to email Bob tomorrow at 3pm', now), { kind: 'task', title: 'email Bob', date: '2026-10-20', time: '15:00' });
+  assert.deepEqual(S.quickParse('Pay rent on Friday', now), { kind: 'task', title: 'Pay rent', date: '2026-10-23', time: null });
+  assert.deepEqual(S.quickParse('todo: submit form next week', now), { kind: 'task', title: 'submit form', date: '2026-10-26', time: null });
+  assert.deepEqual(S.quickParse('call mom tonight', now), { kind: 'task', title: 'call mom', date: '2026-10-19', time: '20:00' });
+  assert.deepEqual(S.quickParse('standup 9:30', now), { kind: 'task', title: 'standup', date: '2026-10-19', time: '09:30' });
+  assert.deepEqual(S.quickParse('dentist in 3 days', now), { kind: 'task', title: 'dentist', date: '2026-10-22', time: null });
+  assert.equal(S.quickParse('next monday review notes', now).date, '2026-10-26', 'next Monday is the week after the coming one');
+  assert.equal(S.quickParse('gym monday', now).date, '2026-10-19', 'a weekday that is today means today');
+  assert.deepEqual(S.quickParse('What is a heap?', now), { kind: 'ask', title: 'What is a heap?', date: null, time: null });
+  assert.equal(S.quickParse('explain dijkstra', now).kind, 'ask');
+  assert.deepEqual(S.quickParse('note: idea for the essay', now), { kind: 'note', title: 'idea for the essay', date: null, time: null });
+  assert.equal(S.quickParse('remind me to stretch', now).kind, 'task');
+  assert.equal(S.quickParse('remind me to stretch', now).date, null);
+});
+
 test('Calendar descriptions keep their formatting and links but nothing that can run', () => {
   const google = 'Itinerary: Charlton S<br />Monday, Oct 19, 2026 PDT<br/><br/>1:45PM (PDT) - 2:45PM (PDT): Data/Algos Interview<br/><br/>Hi Charlton<br/><br/>You’re all set!<br/><br/><strong>How to connect:</strong><ul><li>Click "Join with Google Meet" then “Join Now”.</li><li>You may see “ask to join the call”.</';
   const html = S.richText(google);

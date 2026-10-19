@@ -118,6 +118,10 @@ const actions = {
   'theme-pick': (el) => pickTheme(el),
   'felix-pick': (el) => pickFelix(el),
   'width-pick': (el) => pickWidth(el),
+  'quick-leo': () => quickLeo(),
+  'quick-kind': (el) => { quick.kind = el.dataset.kind; drawQuick(); $('#quick-input')?.focus(); },
+  'quick-go': () => quickGo(),
+  'quick-done': (el) => quickDone(el),
   'library-show-all': () => changeLibrary('show', 'all'),
   'tasks-restore-go': () => tasksRestoreGo().catch(fail),
   new: (el) => {

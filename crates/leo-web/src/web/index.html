@@ -866,7 +866,20 @@ body.on-map main { padding: 0; max-width: none; }
 .side-search:hover { border-color: var(--accent); }
 .side-search svg { width: 17px; height: 17px; flex: none; }
 .side-search span.side-label { flex: 1; }
+.side-quick { margin-top: -2px; }
 .side-search kbd { flex: none; font: 600 11.5px/1 inherit; color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; }
+.quick-leo { display: flex; flex-direction: column; gap: 12px; }
+.quick-head { display: flex; align-items: center; gap: 10px; }
+.quick-head svg { width: 20px; height: 20px; color: var(--accent); flex: none; }
+.quick-head h3 { margin: 0; flex: 1; }
+.quick-head kbd { font: 600 11.5px/1 inherit; color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; }
+.quick-leo #quick-input { font-size: 16px; padding: 12px 14px; }
+.quick-preview { margin: 0; min-height: 1.4em; }
+.quick-due { border-top: 1px solid var(--line); padding-top: 10px; }
+.quick-due-head { font-size: 12px; font-weight: 650; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-bottom: 4px; }
+.quick-task { display: flex; align-items: center; gap: 10px; min-height: 36px; font-size: 14.5px; }
+.quick-task.late .hint { color: var(--danger); }
+.quick-clear { margin: 0; }
 .side-nav { flex: none; display: flex; flex-direction: column; gap: 2px; margin: 0 -4px; padding: 0 4px; }
 .side-group { flex: none; }
 .side-top { flex: none; }

@@ -5599,6 +5599,48 @@ test('notes read wide by default, and Settings can make them comfortable or full
   await page.request.delete(`/api/notes/${note.id}`);
 });
 
+test('Quick Leo opens anywhere with Cmd/Ctrl+J to ask Felix, add a reminder, jot a note or tick off what is due', async ({ page }) => {
+  const tag = `${test.info().project.name}-${Date.now().toString(36)}`;
+  const today = await page.evaluate(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; });
+  const due = await (await page.request.post('/api/tasks', { data: { title: `Due ${tag}`, date: today } })).json();
+  const asked = [];
+  await page.route('**/api/chat', (route) => { asked.push(route.request().postDataJSON()); return route.fulfill({ contentType: 'application/x-ndjson', body: '{"t":"A heap keeps the smallest on top."}\n{"done":true}\n' }); });
+  await page.goto('/');
+  await page.keyboard.press('ControlOrMeta+j');
+  const box = page.locator('.quick-leo');
+  await expect(box).toBeVisible();
+  const input = page.locator('#quick-input');
+  await expect(input).toBeFocused();
+  await expect(box.locator('.quick-task', { hasText: `Due ${tag}` })).toBeVisible();
+  await box.locator('.quick-task', { hasText: `Due ${tag}` }).locator('input').click();
+  await expect(box.locator('.quick-task', { hasText: `Due ${tag}` })).toHaveCount(0);
+  await expect.poll(async () => (await (await page.request.get('/api/tasks')).json()).tasks.find((t) => t.id === due.id)?.done).toBe(true);
+  await input.fill(`remind me to email Bob ${tag} tomorrow at 3pm`);
+  await expect(page.locator('#quick-preview')).toContainText(`Reminder: “email Bob ${tag}” · Tomorrow, 3`);
+  await expect(page.locator('[data-action="quick-kind"][data-kind="task"]')).toHaveAttribute('aria-checked', 'true');
+  await input.press('Enter');
+  await expect(box).toHaveCount(0);
+  await expect(page.locator('.toast')).toContainText(`Added “email Bob ${tag}”`);
+  const made = (await (await page.request.get('/api/tasks')).json()).tasks.find((t) => t.title === `email Bob ${tag}`);
+  const tomorrow = await page.evaluate(() => { const d = new Date(); d.setDate(d.getDate() + 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; });
+  expect([made.date, String(made.time).slice(0, 5)]).toEqual([tomorrow, '15:00']);
+  await page.keyboard.press('ControlOrMeta+j');
+  await input.fill(`Idea ${tag}\nsecond line`);
+  await input.press('Tab');
+  await input.press('Tab');
+  await expect(page.locator('[data-action="quick-kind"][data-kind="note"]')).toHaveAttribute('aria-checked', 'true');
+  await page.locator('#quick-go').click();
+  await expect(page.locator('.toast')).toContainText(`Saved “Idea ${tag}`);
+  await page.keyboard.press('ControlOrMeta+j');
+  await input.fill('What is a heap?');
+  await expect(page.locator('#quick-go')).toHaveText('Ask Felix');
+  await input.press('Enter');
+  await expect(page.locator('aside.chat')).toBeVisible();
+  await expect(page.locator('.msg.leo').last()).toContainText('A heap keeps the smallest on top.');
+  expect(asked.at(-1).messages.at(-1).text).toContain('What is a heap?');
+  expect(asked.at(-1).messages).toHaveLength(1);
+});
+
 test('a calendar event shows its organiser, guests and formatted description, with nothing that can run', async ({ page }) => {
   const start = new Date(Date.now() + 2 * 3600000);
   const end = new Date(start.getTime() + 3600000);

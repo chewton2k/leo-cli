@@ -14,6 +14,12 @@ document.addEventListener('keydown', (e) => {
     searchEverywhere();
     return;
   }
+  if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'j') {
+    e.preventDefault();
+    if ($('.scrim:not(.scrim-gone) .quick-leo')) closeSheet();
+    else if (state.view !== 'locked') quickLeo();
+    return;
+  }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's' && state.view === 'note') {
     e.preventDefault();
     flush().catch(fail);

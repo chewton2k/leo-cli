@@ -100,9 +100,141 @@ function closeSheet(now = false) {
   if (returnFocus && returnFocus.isConnected) returnFocus.focus({ preventScroll: true });
 }
 
+const QUICK_KINDS = [['ask', 'Ask Felix'], ['task', 'Remind me'], ['note', 'Note']];
+const QUICK_GO = { ask: 'Ask Felix', task: 'Add reminder', note: 'Save note' };
+const quick = { kind: null, due: [] };
+
+function quickLeo() {
+  quick.kind = null;
+  quick.due = [];
+  sheet(`<div class="quick-leo">
+    <div class="quick-head">${ICON.bolt}<h3>Quick Leo</h3><kbd>${quickLabel}</kbd></div>
+    <input id="quick-input" class="set-input" placeholder="Ask Felix, add a reminder, or jot a note…" autocomplete="off" enterkeyhint="go" maxlength="2000" aria-label="Quick Leo">
+    <div class="pick-chips quick-kinds" role="radiogroup" aria-label="What to do">${QUICK_KINDS.map(([id, label]) => `<button type="button" class="pick-chip" role="radio" data-action="quick-kind" data-kind="${id}" aria-checked="false">${label}</button>`).join('')}</div>
+    <p class="hint quick-preview" id="quick-preview" aria-live="polite"></p>
+    <div class="quick-due" id="quick-due"></div>
+    <div class="buttons"><button class="btn plain" data-action="close">Close</button><button class="btn primary" data-action="quick-go" id="quick-go" disabled>Ask Felix</button></div>
+  </div>`);
+  const input = $('#quick-input');
+  input.addEventListener('input', drawQuick);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      quickGo().catch(fail);
+    } else if (e.key === 'Tab' && !e.shiftKey && !e.altKey) {
+      e.preventDefault();
+      const ids = QUICK_KINDS.map(([id]) => id);
+      quick.kind = ids[(ids.indexOf(quickPlan().kind) + 1) % ids.length];
+      drawQuick();
+    }
+  });
+  drawQuick();
+  input.focus();
+  loadQuickDue().catch(() => {});
+}
+
+function quickPlan() {
+  const text = ($('#quick-input')?.value || '').trim();
+  const parsed = S.quickParse(text);
+  return { text, parsed, kind: quick.kind || parsed.kind };
+}
+
+function quickWhen(date, time) {
+  if (!date) return 'no date';
+  const today = S.dayKey(new Date());
+  const day = date === today ? 'Today' : date === S.dayKey(S.addDays(new Date(), 1)) ? 'Tomorrow' : S.fromKey(date).toLocaleDateString(calLocale(), { weekday: 'short', month: 'short', day: 'numeric' });
+  return time ? `${day}, ${S.timeLabel(time, calLocale())}` : day;
+}
+
+function quickTask(plan) {
+  return plan.parsed.kind === 'task' ? plan.parsed : S.quickParse(`remind me to ${plan.text}`);
+}
+
+function drawQuick() {
+  const plan = quickPlan();
+  for (const chip of document.querySelectorAll('[data-action="quick-kind"]')) {
+    const on = chip.dataset.kind === plan.kind;
+    chip.classList.toggle('on', on);
+    chip.setAttribute('aria-checked', String(on));
+  }
+  const preview = $('#quick-preview');
+  const button = $('#quick-go');
+  if (!preview || !button) return;
+  button.textContent = QUICK_GO[plan.kind];
+  button.disabled = !plan.text;
+  if (!plan.text) {
+    preview.textContent = 'Type a question, a reminder like “email Bob tomorrow 3pm”, or a note. Tab switches what happens.';
+    return;
+  }
+  if (plan.kind === 'ask') preview.textContent = 'Felix answers in a new chat.';
+  else if (plan.kind === 'task') {
+    const t = quickTask(plan);
+    preview.textContent = `Reminder: “${t.title || plan.text}” · ${quickWhen(t.date, t.time)}`;
+  } else preview.textContent = `New note: “${(plan.parsed.kind === 'note' ? plan.parsed.title : plan.text).split('\n')[0].slice(0, 80)}”`;
+}
+
+async function loadQuickDue() {
+  const tasks = (await api('/api/tasks')).tasks || [];
+  const groups = tasksGroups(tasks);
+  quick.due = groups.filter(([name]) => name === 'Overdue' || name === 'Today').flatMap(([name, list]) => list.map((t) => ({ ...t, late: name === 'Overdue' }))).slice(0, 6);
+  drawQuickDue();
+}
+
+function drawQuickDue() {
+  const box = $('#quick-due');
+  if (!box) return;
+  box.innerHTML = quick.due.length
+    ? `<div class="quick-due-head">Due today</div>${quick.due.map((t) => `<label class="quick-task${t.late ? ' late' : ''}"><input type="checkbox" class="sched-check" data-action="quick-done" data-id="${esc(t.id)}"${t.on ? ` data-on="${esc(t.on)}"` : ''} aria-label="Done: ${esc(t.title)}"><span class="grow">${esc(t.title)}</span><span class="hint">${esc(t.late ? 'Overdue' : t.time ? S.timeLabel(t.time, calLocale()) : 'Today')}</span></label>`).join('')}`
+    : '<p class="hint quick-clear">Nothing due today.</p>';
+}
+
+async function quickDone(el) {
+  quick.due = quick.due.filter((t) => !(t.id === el.dataset.id && (t.on || null) === (el.dataset.on || null)));
+  drawQuickDue();
+  await setTaskDone(el.dataset.id, true, el.dataset.on || null);
+  loadTasksWindow().catch(() => {});
+}
+
+async function quickGo() {
+  const plan = quickPlan();
+  const button = $('#quick-go');
+  if (!plan.text || !button || button.disabled) return;
+  if (plan.kind === 'ask') {
+    closeSheet();
+    if (!chat.askNew(plan.text)) toast('Felix is finishing another answer. Try again in a moment.', { bad: true });
+    return;
+  }
+  button.disabled = true;
+  try {
+    if (plan.kind === 'task') {
+      const t = quickTask(plan);
+      const made = await api('/api/tasks', { method: 'POST', body: { title: (t.title || plan.text).slice(0, 200), date: t.date, time: t.time } });
+      closeSheet();
+      loadTasksWindow().catch(() => {});
+      toast(`Added “${made.title}” · ${quickWhen(t.date, t.time)}`, {
+        action: 'Undo',
+        run: async () => {
+          await api(`/api/tasks/${enc(made.id)}`, { method: 'DELETE' });
+          loadTasksWindow().catch(() => {});
+        },
+      });
+      return;
+    }
+    const words = plan.parsed.kind === 'note' ? plan.parsed.title : plan.text;
+    const [first, ...rest] = words.split('\n');
+    const note = await api('/api/notes', { method: 'POST', body: { title: first.trim().slice(0, 120) || 'Quick note', body: rest.join('\n').trim() } });
+    closeSheet();
+    toast(`Saved “${note.title}”`, { action: 'Open', run: () => go(noteHash(note.id)) });
+    if (state.view === 'folder') showLatest().catch(() => {});
+  } finally {
+    if (button.isConnected) button.disabled = false;
+  }
+}
+
 function menu() {
   const here = state.view === 'folder' ? state.dir : '';
   sheet(`
+    <button class="list-row" data-action="quick-leo">${ICON.bolt}<span class="grow">Quick Leo</span></button>
     <button class="list-row" data-action="new" data-dir="${esc(here)}">${ICON.plus}<span class="grow">New note</span></button>
     <button class="list-row" data-action="record" data-dir="${esc(here)}">${ICON.mic}<span class="grow">Record a lecture or meeting</span></button>
     <button class="list-row" data-action="upload">${ICON.upload}<span class="grow">Make a note from a file</span></button>
