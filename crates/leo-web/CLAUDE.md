@@ -862,3 +862,7 @@ Tool manuals omit repeated examples and formatting boilerplate while preserving
 all parameter/return contracts; actionable error recovery retains full examples.
 All permitted tools remain discoverable without keyword-based intent filtering.
 The shared ADHD-inspired `REPLY_STYLE` is unchanged by prompt-size optimization.
+
+`open_note` exposes bounded `part` reads, reporting total parts and the original
+first line so smaller initial excerpts never make later note content inaccessible.
+Parts preserve every numbered Unicode character, including long single lines.

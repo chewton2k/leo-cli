@@ -147,9 +147,16 @@ pub const SPECS: [Spec; 29] = [
     },
     Spec {
         name: "open_note",
-        purpose: "Read one full note.",
-        params: &[NOTE],
-        returns: "<note id=\"n3\" title=\"...\" class=\"folder\">the full Markdown text</note>",
+        purpose: "Read needed parts of a note beyond its supplied excerpt.",
+        params: &[
+            NOTE,
+            Param {
+                name: "part",
+                required: false,
+                about: "Part number; default 1",
+            },
+        ],
+        returns: "Numbered Markdown in <note part=\"1\" of=\"N\" first_line=\"L\">. Read later parts with part; a leading fragment continues first_line.",
         example: r#"<tool>{"name": "open_note", "note": "n3"}</tool>"#,
     },
     Spec {
@@ -2335,6 +2342,30 @@ impl Desk {
                     Ok(note) => note,
                     Err(why) => return fail(&format!("Looked for “{}”", clip(&wanted, 60)), why),
                 };
+                let part = call.text("part");
+                let part = match part.trim() {
+                    "" => 1,
+                    value => match value.parse::<usize>() {
+                        Ok(part) if part > 0 => part,
+                        _ => {
+                            return fail(
+                                "Opened a note",
+                                "part must be a whole number starting at 1".into(),
+                            )
+                        }
+                    },
+                };
+                let size = crate::chat::scaled(OPEN_CHARS, self.room)
+                    .min(self.room / 3)
+                    .max(1);
+                let shown = self.shown(store, note);
+                let Some((piece, parts, first_line)) = note_part(&shown, part, size) else {
+                    return fail(
+                        "Opened a note",
+                        "that part is outside the note; open part 1 to see how many parts it has"
+                            .into(),
+                    );
+                };
                 let tag = self.tag(note, "opened by Felix");
                 let folder = if note.directory.is_empty() {
                     "unfiled"
@@ -2344,13 +2375,9 @@ impl Desk {
                 Done {
                     step: format!("Opened “{}”", note.title),
                     result: format!(
-                        "<note id=\"{tag}\" title=\"{}\" class=\"{}\">\n{}\n</note>",
+                        "<note id=\"{tag}\" title=\"{}\" class=\"{}\" part=\"{part}\" of=\"{parts}\" first_line=\"{first_line}\">\n{piece}\n</note>",
                         attribute(&note.title),
                         attribute(folder),
-                        clip(
-                            &crate::chat::numbered(&self.shown(store, note)),
-                            crate::chat::scaled(OPEN_CHARS, self.room).min(self.room / 3)
-                        )
                     ),
                     proposal: None,
                     found: vec![note.title.clone()],
@@ -2493,6 +2520,21 @@ impl Desk {
             ),
         }
     }
+}
+
+fn note_part(body: &str, part: usize, size: usize) -> Option<(String, usize, usize)> {
+    if part == 0 || size == 0 {
+        return None;
+    }
+    let chars: Vec<char> = crate::chat::numbered(body).chars().collect();
+    let parts = chars.len().div_ceil(size).max(1);
+    if part > parts {
+        return None;
+    }
+    let start = (part - 1).checked_mul(size)?;
+    let end = start.saturating_add(size).min(chars.len());
+    let first_line = chars[..start].iter().filter(|c| **c == '\n').count() + 1;
+    Some((chars[start..end].iter().collect(), parts, first_line))
 }
 
 pub fn continued(conversation: &str, call: &Call, done: &Done) -> String {
@@ -3085,6 +3127,69 @@ mod tests {
         Call {
             name: json["name"].as_str().unwrap().to_string(),
             args: json,
+        }
+    }
+
+    #[test]
+    fn every_note_part_is_bounded_and_the_parts_preserve_all_unicode_and_lines() {
+        let body = format!(
+            "First line\n{}\n最后一行",
+            "λ🙂 long paragraph ".repeat(200)
+        );
+        let numbered = crate::chat::numbered(&body);
+        for size in [1, 2, 17, 128, 2_048] {
+            let (_, parts, _) = note_part(&body, 1, size).unwrap();
+            let mut joined = String::new();
+            for part in 1..=parts {
+                let (piece, count, first_line) = note_part(&body, part, size).unwrap();
+                assert_eq!(count, parts);
+                assert_eq!(
+                    first_line,
+                    joined.chars().filter(|c| *c == '\n').count() + 1
+                );
+                assert!(piece.chars().count() <= size);
+                joined.push_str(&piece);
+            }
+            assert_eq!(joined, numbered);
+            assert!(note_part(&body, parts + 1, size).is_none());
+        }
+        assert!(note_part(&body, 0, 10).is_none());
+        assert!(note_part(&body, usize::MAX, 10).is_none());
+        assert!(note_part(&body, 1, 0).is_none());
+        assert_eq!(note_part("", 1, 10), Some((String::new(), 1, 1)));
+    }
+
+    #[test]
+    fn open_note_reads_later_parts_instead_of_repeating_its_first_excerpt() {
+        let body = format!(
+            "{}\nThe final section is still readable.",
+            "λ🙂 line\n".repeat(400)
+        );
+        let (_dir, store, _) = store_with(&[("Long note", &body, "")]);
+        let mut desk = Desk::new(Vec::new(), 2_048);
+        let cache = Cache::default();
+        let (_, parts, _) = note_part(&body, 1, (2_048 / 3).max(1)).unwrap();
+        let last = desk.run(
+            &store,
+            &cache,
+            &call(serde_json::json!({
+                "name":"open_note", "note":"Long note", "part":parts.to_string()
+            })),
+        );
+        assert!(last.result.contains("The final section is still readable."));
+        assert!(last
+            .result
+            .contains(&format!("part=\"{parts}\" of=\"{parts}\"")));
+        assert!(last.result.contains("first_line="));
+        for part in ["0", "bad", "18446744073709551616"] {
+            let result = desk.run(
+                &store,
+                &cache,
+                &call(serde_json::json!({
+                    "name":"open_note", "note":"Long note", "part":part
+                })),
+            );
+            assert!(result.result.starts_with("That did not work:"));
         }
     }
 
