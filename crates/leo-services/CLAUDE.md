@@ -453,3 +453,8 @@ Leo serve also uses the existing quick-model configuration for long-chat memory;
 chat titles are local. The root wiring meters writing/quick/summary outcomes before
 string-only writer callbacks discard token metadata. Foreground Felix turns and
 hidden grading are metered in leo-web, without recording prompt or reply contents.
+
+Stateless cancellation tests wait for the fake CLI's startup marker before
+requesting cancellation, including an intentionally delayed startup. Shutdown
+latency is measured from that signal, and the child PID must be gone afterward;
+runner scheduling time must not be mistaken for a provider-cleanup failure.

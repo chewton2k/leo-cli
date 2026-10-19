@@ -1782,25 +1782,48 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":100,"cached_inpu
     #[cfg(unix)]
     #[test]
     fn stopping_a_stateless_codex_request_does_not_retry_and_reaps_its_child() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let marker = dir.path().join("started");
-        let bin = script(
-            dir.path(),
-            &format!(
-                "echo started >> '{}'\ncat >/dev/null\nsleep 30",
-                marker.display()
-            ),
-        );
-        let cfg = config(ProviderKind::Codex, &bin, None);
-        let agent = AgentCli::new("codex".into(), Agent::Codex, &cfg)
-            .with_limits(Duration::from_secs(30), Duration::from_secs(30));
-        let began = Instant::now();
-        let result = agent.controlled(&request(), &mut |_| {}, &|| {
-            began.elapsed() >= Duration::from_millis(100)
-        });
-        assert!(result.unwrap_err().to_string().contains("stopped"));
-        assert!(began.elapsed() < Duration::from_secs(2));
-        assert_eq!(std::fs::read_to_string(marker).unwrap().lines().count(), 1);
+        for startup in ["", "sleep 0.2\n"] {
+            let dir = tempfile::TempDir::new().unwrap();
+            let marker = dir.path().join("started");
+            let bin = script(
+                dir.path(),
+                &format!(
+                    "{startup}echo $$ >> '{}'\ncat >/dev/null\nsleep 30",
+                    marker.display()
+                ),
+            );
+            let cfg = config(ProviderKind::Codex, &bin, None);
+            let agent = AgentCli::new("codex".into(), Agent::Codex, &cfg)
+                .with_limits(Duration::from_secs(30), Duration::from_secs(30));
+            let began = Instant::now();
+            let stopped = std::cell::Cell::new(None);
+            let result = agent.controlled(&request(), &mut |_| {}, &|| {
+                if marker.exists() {
+                    if stopped.get().is_none() {
+                        stopped.set(Some(Instant::now()));
+                    }
+                    true
+                } else {
+                    began.elapsed() >= Duration::from_secs(5)
+                }
+            });
+            assert!(result.unwrap_err().to_string().contains("stopped"));
+            assert!(
+                stopped
+                    .get()
+                    .expect("the fake CLI must start before cancellation")
+                    .elapsed()
+                    < Duration::from_secs(2)
+            );
+            let started = std::fs::read_to_string(marker).unwrap();
+            assert_eq!(started.lines().count(), 1);
+            let pid: libc::pid_t = started.trim().parse().unwrap();
+            assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(libc::ESRCH)
+            );
+        }
     }
 
     #[test]
