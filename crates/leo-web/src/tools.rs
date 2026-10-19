@@ -3168,7 +3168,7 @@ mod tests {
         let (_dir, store, _) = store_with(&[("Long note", &body, "")]);
         let mut desk = Desk::new(Vec::new(), 2_048);
         let cache = Cache::default();
-        let (_, parts, _) = note_part(&body, 1, (2_048 / 3).max(1)).unwrap();
+        let (_, parts, _) = note_part(&body, 1, 2_048 / 3).unwrap();
         let last = desk.run(
             &store,
             &cache,
