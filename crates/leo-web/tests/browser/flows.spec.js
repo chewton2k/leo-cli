@@ -5784,7 +5784,8 @@ test('on a short screen the Tasks panel waits as its icon, and the last notes ca
 });
 
 test('a calendar event shows its organiser, guests and formatted description, with nothing that can run', async ({ page }) => {
-  const start = new Date(Date.now() + 2 * 3600000);
+  const start = new Date();
+  start.setHours(12, 0, 0, 0);
   const end = new Date(start.getTime() + 3600000);
   const description = 'Itinerary: Charlton S<br />Monday<br/><br/><strong>How to connect:</strong><ul><li>Click "Join with Google Meet" then “Join Now”.</li><li>Wait to be admitted.</li></ul><a href="https://meet.google.com/abc-defg-hij">Join the call</a><img src=x onerror="window.__ran = 1"><script>window.__ran = 2</script>';
   const event = { id: 'event-rich-1', title: 'Data/Algos Interview', start: start.toISOString(), end: end.toISOString(), all_day: false, location: '', calendar: 'Work', context: `Calendar event: Data/Algos Interview\nOrganised by: c_c463e763f192@group.calendar.google.com\nInvited: GoodTime Sync, charlton@ucla.edu\nDescription:\n${description}` };
