@@ -1712,7 +1712,7 @@
       const done = typeof q.given === 'string';
       const reply = q.reply && typeof q.reply === 'object' ? q.reply : null;
       const marking = Boolean(reply && reply.pending);
-      const off = done || pending || q.marking ? ' disabled' : '';
+      const off = done || pending || checking.has(q) ? ' disabled' : '';
       const asked = cite(q.kind === 'fill_blank'
         ? render(String(q.question || '').replace(/_{3,}/g, BLANK)).split(BLANK).join('<span class="quiz-blank" aria-label="blank"></span>')
         : render(String(q.question || '')), sources, escape);
@@ -1728,7 +1728,7 @@
       } else {
         answer = `<div class="quiz-row column"><textarea class="quiz-input" ${where} rows="3" placeholder="Your answer, in your own words"${off}>${draft}</textarea><button type="button" class="btn primary sm" data-chat="quiz-check" ${where}${off}>Submit</button></div>`;
       }
-      const result = q.marking ? '<div class="quiz-result">Checking your answer…</div>' : marking && !(reply && reply.text) ? '<div class="quiz-result">Felix is reading your answer…</div>' : '';
+      const result = checking.has(q) ? '<div class="quiz-result">Checking your answer…</div>' : marking && !(reply && reply.text) ? '<div class="quiz-result">Felix is reading your answer…</div>' : '';
       const hints = hintsOf(q);
       const hinted = hints
         .map((hint, n) => `<div class="quiz-hint prose">${hints.length > 1 ? `<span class="quiz-hint-n">Hint ${n + 1}</span>` : ''}${grade(hint.text || '').text ? cite(render(grade(hint.text).text), hint.sources || sources, escape, hint.files) : hint.pending ? '<span class="typing"><i></i><i></i><i></i></span>' : ''}</div>`)
@@ -1762,22 +1762,26 @@
       send(given);
     }
 
+    const checking = new WeakSet();
+
     async function answerQuiz(i, k, given) {
       const m = state.messages[i];
       const q = m && m.quizzes && m.quizzes[k];
       const text = String(given || '').trim();
-      if (!q || typeof q.given === 'string' || state.busy || m.pending || !text || q.marking) return;
+      if (!q || typeof q.given === 'string' || state.busy || m.pending || !text || checking.has(q)) return;
       let correct = checkQuiz(q, text);
       if (correct === null && q.kind === 'fill_blank' && accepted(q).some((a) => plainAnswer(a) === plainAnswer(text))) correct = true;
       if (correct === null) {
-        q.marking = text;
+        const chatId = state.id;
+        checking.add(q);
         draw();
         let mark = null;
         try {
           const response = await fetch('/api/quiz/mark', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: String(q.question || ''), answer: String(q.answer || ''), given: text, explain: String(q.explain || '') }) });
           if (response.ok) mark = await response.json();
         } catch (e) {}
-        delete q.marking;
+        checking.delete(q);
+        if (state.id !== chatId) return;
         if (mark && typeof mark.correct === 'boolean') {
           correct = mark.correct;
           q.feedback = String(mark.feedback || '');

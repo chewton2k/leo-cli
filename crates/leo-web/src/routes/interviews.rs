@@ -308,7 +308,12 @@ pub(crate) struct GradeBody {
 }
 
 fn quick_of(state: &AppState) -> Option<crate::graph::Writer> {
-    state.quick.clone().or_else(|| state.graphs.writer())
+    let writer = state.quick.clone().or_else(|| state.graphs.writer())?;
+    Some(
+        state
+            .usage
+            .counted(writer, crate::usage::Purpose::QuickReview),
+    )
 }
 
 pub(crate) async fn grade(

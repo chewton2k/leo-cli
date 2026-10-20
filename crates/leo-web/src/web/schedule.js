@@ -333,7 +333,8 @@
     else if (/\bnext week\b/i.test(text)) { date = nextWeekday(today, 1); strip(/\bnext week\b/i); }
     else if (inDays) { date = addDays(today, Number(inDays[1])); strip(/\bin\s+\d{1,3}\s+days?\b/i); }
     else {
-      const day = /\b(?:(on|this|next)\s+)?(sun|mon|tue|tues|wed|thu|thur|thurs|fri|sat)(?:day|nesday|sday|urday|rsday)?\b/i.exec(text);
+      const day = [...text.matchAll(/\b(?:(on|this|next)\s+)?(sun|mon|tue|tues|wed|thu|thur|thurs|fri|sat)(?:day|nesday|sday|urday|rsday)?\b/gi)]
+        .find((d) => d[1] || d[0].length > 3 || !/^(sun|sat)$/i.test(d[2]) || d.index + d[0].length === text.length);
       if (day) {
         const index = DAYS.findIndex((d) => d.startsWith(day[2].toLowerCase().slice(0, 3)));
         if (index >= 0) {

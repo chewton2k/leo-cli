@@ -360,7 +360,12 @@ pub(crate) async fn mark_quiz(
     {
         return StatusCode::BAD_REQUEST.into_response();
     }
-    let Some(writer) = state.quick.clone().or_else(|| state.graphs.writer()) else {
+    let Some(writer) = state
+        .quick
+        .clone()
+        .or_else(|| state.graphs.writer())
+        .map(|w| state.usage.counted(w, crate::usage::Purpose::QuickReview))
+    else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(serde_json::json!({"error": "Choose a writing AI in Settings to mark answers."})),

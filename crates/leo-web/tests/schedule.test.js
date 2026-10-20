@@ -14,6 +14,11 @@ test('Quick Leo reads a reminder, a question or a note from one line', () => {
   assert.deepEqual(S.quickParse('dentist in 3 days', now), { kind: 'task', title: 'dentist', date: '2026-10-22', time: null });
   assert.equal(S.quickParse('next monday review notes', now).date, '2026-10-26', 'next Monday is the week after the coming one');
   assert.equal(S.quickParse('gym monday', now).date, '2026-10-19', 'a weekday that is today means today');
+  assert.equal(S.quickParse('buy sun cream', now).date, null, 'sun and sat mid-sentence are words, not days');
+  assert.equal(S.quickParse('I sat the exam and want to review it', now).date, null);
+  assert.equal(S.quickParse('gym sat', now).date, '2026-10-24');
+  assert.equal(S.quickParse('brunch on sun with Ana', now).date, '2026-10-25');
+  assert.equal(S.quickParse('call mom fri', now).date, '2026-10-23');
   assert.deepEqual(S.quickParse('What is a heap?', now), { kind: 'ask', title: 'What is a heap?', date: null, time: null });
   assert.equal(S.quickParse('explain dijkstra', now).kind, 'ask');
   assert.deepEqual(S.quickParse('note: idea for the essay', now), { kind: 'note', title: 'idea for the essay', date: null, time: null });

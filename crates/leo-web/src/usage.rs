@@ -71,6 +71,20 @@ impl Usage {
         self.tools.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
+    pub(crate) fn counted(
+        self: &std::sync::Arc<Self>,
+        writer: crate::graph::Writer,
+        purpose: Purpose,
+    ) -> crate::graph::Writer {
+        let usage = std::sync::Arc::clone(self);
+        std::sync::Arc::new(move |system, user, most| {
+            let started = std::time::Instant::now();
+            let reply = writer(system, user, most);
+            usage.record(purpose, None, started.elapsed(), reply.is_err());
+            reply
+        })
+    }
+
     pub fn record(&self, purpose: Purpose, spent: Option<&Spent>, elapsed: Duration, failed: bool) {
         let mut held = self.rows.lock().unwrap_or_else(|e| e.into_inner());
         let row = held.entry(purpose).or_default();
@@ -154,5 +168,19 @@ mod tests {
             (rows[1].calls, rows[1].failures, rows[1].unreported),
             (1, 1, 1)
         );
+    }
+
+    #[test]
+    fn quick_model_calls_are_counted_as_quick_review() {
+        let usage = std::sync::Arc::new(Usage::default());
+        let fine: crate::graph::Writer = std::sync::Arc::new(|_, _, _| Ok("ok".into()));
+        let broken: crate::graph::Writer = std::sync::Arc::new(|_, _, _| anyhow::bail!("down"));
+        let fine = usage.counted(fine, Purpose::QuickReview);
+        let broken = usage.counted(broken, Purpose::QuickReview);
+        assert_eq!(fine("s", "u", 10).unwrap(), "ok");
+        assert!(broken("s", "u", 10).is_err());
+        let held = usage.rows.lock().unwrap();
+        let row = &held[&Purpose::QuickReview];
+        assert_eq!((row.calls, row.failures), (2, 1));
     }
 }
