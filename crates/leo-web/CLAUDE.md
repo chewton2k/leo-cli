@@ -63,11 +63,19 @@ seer, meaning, web, room).
   `leo-note-width` and set early by `/theme.js` as `html[data-note-width]`.
 - Quick Leo (2026-10-19, the user's request): Cmd/Ctrl+J anywhere (Cmd+L
   belongs to the browser's address bar), the sidebar row under Search, or the
-  phone menu opens one line (`sheets.js` `quickLeo`). `schedule.quickParse`
-  reads it as a question (Ask Felix: a new chat, `chat.askNew`), a reminder
-  ("email Bob tomorrow at 3pm": a task with date and time, Undo) or a note
-  ("note:", first line is the title); Tab or the chips switch. It also lists
-  what is overdue or due today with boxes to tick.
+  phone menu opens one line (`sheets.js` `quickLeo`). It works like Spotlight
+  (2026-10-19, the user's call): no title, modes or buttons, near the top of
+  the screen on desktop. `schedule.quickRank` infers the top result from what
+  is typed (`quickParse` dates and times: a reminder, Undo; a question: Ask
+  Felix in a new chat, `chat.askNew`; a note title from `/api/search`: open
+  it; a page name in `QUICK_PLACES`: go there; "note:": a new note; anything
+  else asks Felix) and lists the other choices under it; Enter runs the
+  highlighted row, arrow keys move. Empty, it lists what is overdue or due
+  today with boxes to tick. Lookups are scoped to the open sheet
+  (`inQuick`), since a closing one can still be in the page.
+- Felix's chat list: the × turns into Delete on the first press; pressing
+  or focusing anywhere else turns it back (`spare`, in place, so the press
+  still reaches what was clicked).
 - Back from Settings, Storage or Trash returns to the page before them
   (`places.before`, kept on `hashchange`; Storage opened from Settings goes
   back to Settings), so a note you were reading stays where you left it.

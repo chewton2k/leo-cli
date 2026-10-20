@@ -350,7 +350,33 @@
     return { kind, title: kind === 'ask' ? String(input).trim() : text, date: date ? dayKey(date) : null, time };
   }
 
-  const api = { quickParse, richText, eventDetails, dayKey, fromKey, addDays, weekStart, monthGrid, weekOf, eventDays, plan, quickDates, weekdayOf, repeats, repeatsOn, occurrences, nextOpen, repeatLabel, rrule, googleLink, googleDay, timeLabel, nextWeekday };
+  function quickRank(input, { notes = [], places = [] } = {}, now = new Date()) {
+    const text = String(input || '').trim();
+    if (!text) return [];
+    const parsed = quickParse(text, now);
+    const lower = text.toLowerCase();
+    const words = text.split(/\s+/).length;
+    const asked = /\?$/.test(text) || ASK.test(text);
+    const reminder = parsed.kind === 'task' ? parsed : quickParse(`remind me to ${text}`, now);
+    const titled = (n) => String(n.title || '').toLowerCase();
+    const named = notes.filter((n) => titled(n) === lower);
+    const started = notes.filter((n) => titled(n) !== lower && titled(n).startsWith(lower));
+    const opens = [...named, ...started, ...notes.filter((n) => !named.includes(n) && !started.includes(n))].slice(0, 3).map((n) => ({ kind: 'open', id: n.id, title: n.title }));
+    const goes = lower.length >= 2 ? places.filter((p) => p.name.toLowerCase().split(/\s+/).some((w) => w.startsWith(lower)) || p.name.toLowerCase().startsWith(lower)).slice(0, 2).map((p) => ({ kind: 'place', name: p.name, hash: p.hash })) : [];
+    const ask = { kind: 'ask', text };
+    const task = { kind: 'task', title: reminder.title || text, date: reminder.date, time: reminder.time };
+    const note = { kind: 'note', title: parsed.kind === 'note' ? parsed.title : text };
+    let top = ask;
+    if (parsed.kind === 'note') top = note;
+    else if (parsed.kind === 'task') top = task;
+    else if (asked) top = ask;
+    else if (named.length) top = opens[0];
+    else if (goes.length && words <= 2 && lower.length >= 3 && (!started.length || goes[0].name.toLowerCase().startsWith(lower))) top = goes[0];
+    else if (started.length && words <= 4) top = opens[0];
+    return [top, ask, ...opens, ...goes, task, note].filter((row, i, rows) => rows.indexOf(row) === i).slice(0, 7);
+  }
+
+  const api = { quickParse, quickRank, richText, eventDetails, dayKey, fromKey, addDays, weekStart, monthGrid, weekOf, eventDays, plan, quickDates, weekdayOf, repeats, repeatsOn, occurrences, nextOpen, repeatLabel, rrule, googleLink, googleDay, timeLabel, nextWeekday };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.leoSchedule = api;
 })(typeof window !== 'undefined' ? window : globalThis);

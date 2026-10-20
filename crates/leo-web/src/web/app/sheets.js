@@ -100,31 +100,41 @@ function closeSheet(now = false) {
   if (returnFocus && returnFocus.isConnected) returnFocus.focus({ preventScroll: true });
 }
 
-const QUICK_KINDS = [['ask', 'Ask Felix'], ['task', 'Remind me'], ['note', 'Note']];
-const QUICK_GO = { ask: 'Ask Felix', task: 'Add reminder', note: 'Save note' };
-const quick = { kind: null, due: [] };
+const QUICK_PLACES = [
+  { name: 'Notes', hash: '#/', icon: 'note' },
+  { name: 'Calendar', hash: '#/calendar', icon: 'calendar' },
+  { name: 'Interview practice', hash: '#/interviews', icon: 'chat' },
+  { name: 'Knowledge graph', hash: '#/map', icon: 'map' },
+  { name: 'Record', hash: '#/record', icon: 'mic' },
+  { name: 'Trash', hash: '#/trash', icon: 'trash' },
+  { name: 'Storage', hash: '#/settings/storage', icon: 'storage' },
+  { name: 'Settings', hash: '#/settings', icon: 'gear' },
+];
+const QUICK_SEARCH_MS = 120;
+const quick = { due: [], rows: [], at: 0, notes: [], asked: '', timer: 0, seq: 0, busy: false, root: null };
+const inQuick = (sel) => (quick.root && !quick.root.classList.contains('scrim-gone') ? quick.root.querySelector(sel) : null);
 
 function quickLeo() {
-  quick.kind = null;
-  quick.due = [];
-  sheet(`<div class="quick-leo">
-    <div class="quick-head">${ICON.bolt}<h3>Quick Leo</h3><kbd>${quickLabel}</kbd></div>
-    <input id="quick-input" class="set-input" placeholder="Ask Felix, add a reminder, or jot a note…" autocomplete="off" enterkeyhint="go" maxlength="2000" aria-label="Quick Leo">
-    <div class="pick-chips quick-kinds" role="radiogroup" aria-label="What to do">${QUICK_KINDS.map(([id, label]) => `<button type="button" class="pick-chip" role="radio" data-action="quick-kind" data-kind="${id}" aria-checked="false">${label}</button>`).join('')}</div>
-    <p class="hint quick-preview" id="quick-preview" aria-live="polite"></p>
-    <div class="quick-due" id="quick-due"></div>
-    <div class="buttons"><button class="btn plain" data-action="close">Close</button><button class="btn primary" data-action="quick-go" id="quick-go" disabled>Ask Felix</button></div>
+  Object.assign(quick, { due: [], rows: [], at: 0, notes: [], asked: '' });
+  quick.root = sheet(`<div class="quick-leo">
+    <label class="quick-bar">${ICON.bolt}<input id="quick-input" placeholder="Ask, remind, find or jot anything…" autocomplete="off" spellcheck="false" enterkeyhint="go" maxlength="2000" aria-label="Quick Leo" role="combobox" aria-controls="quick-results" aria-expanded="true"><kbd>${quickLabel}</kbd></label>
+    <div class="quick-results" id="quick-results" role="listbox" aria-label="Results"></div>
   </div>`);
-  const input = $('#quick-input');
-  input.addEventListener('input', drawQuick);
+  const input = inQuick('#quick-input');
+  input.addEventListener('input', () => {
+    quick.at = 0;
+    drawQuick();
+    clearTimeout(quick.timer);
+    quick.timer = setTimeout(() => quickSearch().catch(() => {}), QUICK_SEARCH_MS);
+  });
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
-      quickGo().catch(fail);
-    } else if (e.key === 'Tab' && !e.shiftKey && !e.altKey) {
+      quickGo(quick.at).catch(fail);
+    } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (!quick.rows.length) return;
       e.preventDefault();
-      const ids = QUICK_KINDS.map(([id]) => id);
-      quick.kind = ids[(ids.indexOf(quickPlan().kind) + 1) % ids.length];
+      quick.at = (quick.at + (e.key === 'ArrowDown' ? 1 : quick.rows.length - 1)) % quick.rows.length;
       drawQuick();
     }
   });
@@ -133,10 +143,14 @@ function quickLeo() {
   loadQuickDue().catch(() => {});
 }
 
-function quickPlan() {
-  const text = ($('#quick-input')?.value || '').trim();
-  const parsed = S.quickParse(text);
-  return { text, parsed, kind: quick.kind || parsed.kind };
+async function quickSearch() {
+  const text = (inQuick('#quick-input')?.value || '').trim();
+  const mine = ++quick.seq;
+  const found = text.length >= 2 ? await api(`/api/search?q=${enc(text)}&brief=true&limit=4`) : [];
+  if (mine !== quick.seq || !inQuick('#quick-input')) return;
+  quick.notes = (found || []).map((n) => ({ id: n.id, title: n.title }));
+  quick.asked = text;
+  drawQuick();
 }
 
 function quickWhen(date, time) {
@@ -146,31 +160,33 @@ function quickWhen(date, time) {
   return time ? `${day}, ${S.timeLabel(time, calLocale())}` : day;
 }
 
-function quickTask(plan) {
-  return plan.parsed.kind === 'task' ? plan.parsed : S.quickParse(`remind me to ${plan.text}`);
+function quickLook(row) {
+  if (row.kind === 'ask') return { icon: chat.button(20), label: row.text, hint: 'Ask Felix' };
+  if (row.kind === 'task') return { icon: ICON.check, label: row.title, hint: row.date ? `Reminder · ${quickWhen(row.date, row.time)}` : 'Add to tasks' };
+  if (row.kind === 'open') return { icon: ICON.note, label: row.title, hint: 'Open note' };
+  if (row.kind === 'place') return { icon: ICON[QUICK_PLACES.find((p) => p.hash === row.hash)?.icon] || ICON.folder, label: row.name, hint: 'Go to' };
+  return { icon: ICON.plus, label: row.title, hint: 'New note' };
 }
 
 function drawQuick() {
-  const plan = quickPlan();
-  for (const chip of document.querySelectorAll('[data-action="quick-kind"]')) {
-    const on = chip.dataset.kind === plan.kind;
-    chip.classList.toggle('on', on);
-    chip.setAttribute('aria-checked', String(on));
-  }
-  const preview = $('#quick-preview');
-  const button = $('#quick-go');
-  if (!preview || !button) return;
-  button.textContent = QUICK_GO[plan.kind];
-  button.disabled = !plan.text;
-  if (!plan.text) {
-    preview.textContent = 'Type a question, a reminder like “email Bob tomorrow 3pm”, or a note. Tab switches what happens.';
+  const box = inQuick('#quick-results');
+  if (!box) return;
+  const text = (inQuick('#quick-input')?.value || '').trim();
+  const notes = quick.asked && text.toLowerCase().startsWith(quick.asked.toLowerCase()) ? quick.notes : [];
+  quick.rows = S.quickRank(text, { notes, places: QUICK_PLACES });
+  quick.at = Math.min(quick.at, Math.max(0, quick.rows.length - 1));
+  if (!quick.rows.length) {
+    box.innerHTML = '';
+    inQuick('#quick-input')?.removeAttribute('aria-activedescendant');
+    drawQuickDue();
     return;
   }
-  if (plan.kind === 'ask') preview.textContent = 'Felix answers in a new chat.';
-  else if (plan.kind === 'task') {
-    const t = quickTask(plan);
-    preview.textContent = `Reminder: “${t.title || plan.text}” · ${quickWhen(t.date, t.time)}`;
-  } else preview.textContent = `New note: “${(plan.parsed.kind === 'note' ? plan.parsed.title : plan.text).split('\n')[0].slice(0, 80)}”`;
+  box.innerHTML = quick.rows.map((row, i) => {
+    const look = quickLook(row);
+    const on = i === quick.at;
+    return `<button type="button" class="quick-row${on ? ' on' : ''}" id="quick-row-${i}" role="option" aria-selected="${on}" data-action="quick-run" data-at="${i}" tabindex="-1"><span class="quick-icon">${look.icon}</span><span class="quick-label">${esc(look.label)}</span><span class="quick-hint">${esc(look.hint)}</span>${on ? '<kbd>↵</kbd>' : ''}</button>`;
+  }).join('');
+  inQuick('#quick-input')?.setAttribute('aria-activedescendant', `quick-row-${quick.at}`);
 }
 
 async function loadQuickDue() {
@@ -181,11 +197,11 @@ async function loadQuickDue() {
 }
 
 function drawQuickDue() {
-  const box = $('#quick-due');
-  if (!box) return;
+  const box = inQuick('#quick-results');
+  if (!box || quick.rows.length) return;
   box.innerHTML = quick.due.length
     ? `<div class="quick-due-head">Due today</div>${quick.due.map((t) => `<label class="quick-task${t.late ? ' late' : ''}"><input type="checkbox" class="sched-check" data-action="quick-done" data-id="${esc(t.id)}"${t.on ? ` data-on="${esc(t.on)}"` : ''} aria-label="Done: ${esc(t.title)}"><span class="grow">${esc(t.title)}</span><span class="hint">${esc(t.late ? 'Overdue' : t.time ? S.timeLabel(t.time, calLocale()) : 'Today')}</span></label>`).join('')}`
-    : '<p class="hint quick-clear">Nothing due today.</p>';
+    : '';
 }
 
 async function quickDone(el) {
@@ -195,23 +211,26 @@ async function quickDone(el) {
   loadTasksWindow().catch(() => {});
 }
 
-async function quickGo() {
-  const plan = quickPlan();
-  const button = $('#quick-go');
-  if (!plan.text || !button || button.disabled) return;
-  if (plan.kind === 'ask') {
+async function quickGo(at) {
+  const row = quick.rows[at];
+  if (!row || quick.busy) return;
+  if (row.kind === 'ask') {
     closeSheet();
-    if (!chat.askNew(plan.text)) toast('Felix is finishing another answer. Try again in a moment.', { bad: true });
+    if (!chat.askNew(row.text)) toast('Felix is finishing another answer. Try again in a moment.', { bad: true });
     return;
   }
-  button.disabled = true;
+  if (row.kind === 'open' || row.kind === 'place') {
+    closeSheet();
+    go(row.kind === 'open' ? noteHash(row.id) : row.hash);
+    return;
+  }
+  quick.busy = true;
   try {
-    if (plan.kind === 'task') {
-      const t = quickTask(plan);
-      const made = await api('/api/tasks', { method: 'POST', body: { title: (t.title || plan.text).slice(0, 200), date: t.date, time: t.time } });
+    if (row.kind === 'task') {
+      const made = await api('/api/tasks', { method: 'POST', body: { title: row.title.slice(0, 200), date: row.date, time: row.time } });
       closeSheet();
       loadTasksWindow().catch(() => {});
-      toast(`Added “${made.title}” · ${quickWhen(t.date, t.time)}`, {
+      toast(`Added “${made.title}” · ${quickWhen(row.date, row.time)}`, {
         action: 'Undo',
         run: async () => {
           await api(`/api/tasks/${enc(made.id)}`, { method: 'DELETE' });
@@ -220,14 +239,13 @@ async function quickGo() {
       });
       return;
     }
-    const words = plan.parsed.kind === 'note' ? plan.parsed.title : plan.text;
-    const [first, ...rest] = words.split('\n');
+    const [first, ...rest] = row.title.split('\n');
     const note = await api('/api/notes', { method: 'POST', body: { title: first.trim().slice(0, 120) || 'Quick note', body: rest.join('\n').trim() } });
     closeSheet();
     toast(`Saved “${note.title}”`, { action: 'Open', run: () => go(noteHash(note.id)) });
     if (state.view === 'folder') showLatest().catch(() => {});
   } finally {
-    if (button.isConnected) button.disabled = false;
+    quick.busy = false;
   }
 }
 

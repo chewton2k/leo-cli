@@ -870,6 +870,11 @@ test.describe('Felix', () => {
     await openSidebar();
     await second.locator('.chat-history-x').click();
     await expect(second.locator('.chat-history-x')).toHaveText('Delete');
+    const list = await sidebar.locator('#chat-history-list').boundingBox();
+    await page.mouse.click(list.x + list.width / 2, list.y + list.height - 6);
+    await expect(second.locator('.chat-history-x')).toHaveText('×');
+    await second.locator('.chat-history-x').click();
+    await expect(second.locator('.chat-history-x')).toHaveText('Delete');
     await second.locator('.chat-history-x').click();
     await expect(second).toHaveCount(0);
     await expect(chat.locator('.msg')).toHaveCount(0);
@@ -5651,7 +5656,7 @@ test('notes read wide by default, and Settings can make them comfortable or full
   await page.request.delete(`/api/notes/${note.id}`);
 });
 
-test('Quick Leo opens anywhere with Cmd/Ctrl+J to ask Felix, add a reminder, jot a note or tick off what is due', async ({ page }) => {
+test('Quick Leo is one Spotlight-style line that works out what you want: a reminder, a question, a note to open or a new one', async ({ page }) => {
   const tag = `${test.info().project.name}-${Date.now().toString(36)}`;
   const today = await page.evaluate(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; });
   const due = await (await page.request.post('/api/tasks', { data: { title: `Due ${tag}`, date: today } })).json();
@@ -5659,33 +5664,51 @@ test('Quick Leo opens anywhere with Cmd/Ctrl+J to ask Felix, add a reminder, jot
   await page.route('**/api/chat', (route) => { asked.push(route.request().postDataJSON()); return route.fulfill({ contentType: 'application/x-ndjson', body: '{"t":"A heap keeps the smallest on top."}\n{"done":true}\n' }); });
   await page.goto('/');
   await page.keyboard.press('ControlOrMeta+j');
-  const box = page.locator('.quick-leo');
+  const box = page.locator('.scrim:not(.scrim-gone) .quick-leo');
   await expect(box).toBeVisible();
-  const input = page.locator('#quick-input');
+  const input = box.locator('#quick-input');
   await expect(input).toBeFocused();
+  await expect(box.locator('.quick-kinds, #quick-go, h3')).toHaveCount(0);
   await expect(box.locator('.quick-task', { hasText: `Due ${tag}` })).toBeVisible();
   await box.locator('.quick-task', { hasText: `Due ${tag}` }).locator('input').click();
   await expect(box.locator('.quick-task', { hasText: `Due ${tag}` })).toHaveCount(0);
   await expect.poll(async () => (await (await page.request.get('/api/tasks')).json()).tasks.find((t) => t.id === due.id)?.done).toBe(true);
-  await input.fill(`remind me to email Bob ${tag} tomorrow at 3pm`);
-  await expect(page.locator('#quick-preview')).toContainText(`Reminder: “email Bob ${tag}” · Tomorrow, 3`);
-  await expect(page.locator('[data-action="quick-kind"][data-kind="task"]')).toHaveAttribute('aria-checked', 'true');
+  const top = box.locator('.quick-row.on');
+  await input.fill(`email Bob ${tag} tomorrow at 3pm`);
+  await expect(top).toContainText(`email Bob ${tag}`);
+  await expect(top).toContainText('Reminder · Tomorrow, 3');
   await input.press('Enter');
   await expect(box).toHaveCount(0);
   await expect(page.locator('.toast')).toContainText(`Added “email Bob ${tag}”`);
   const made = (await (await page.request.get('/api/tasks')).json()).tasks.find((t) => t.title === `email Bob ${tag}`);
   const tomorrow = await page.evaluate(() => { const d = new Date(); d.setDate(d.getDate() + 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; });
   expect([made.date, String(made.time).slice(0, 5)]).toEqual([tomorrow, '15:00']);
+
   await page.keyboard.press('ControlOrMeta+j');
-  await input.fill(`Idea ${tag}\nsecond line`);
-  await input.press('Tab');
-  await input.press('Tab');
-  await expect(page.locator('[data-action="quick-kind"][data-kind="note"]')).toHaveAttribute('aria-checked', 'true');
-  await page.locator('#quick-go').click();
-  await expect(page.locator('.toast')).toContainText(`Saved “Idea ${tag}`);
+  await input.fill(`Pay rent ${tag}`);
+  await expect(box.locator('.quick-row')).toHaveCount(3);
+  await expect(top).toContainText('Ask Felix');
+  await input.press('ArrowDown');
+  await expect(top).toContainText('Add to tasks');
+  await input.press('Enter');
+  await expect(page.locator('.toast')).toContainText(`Added “Pay rent ${tag}”`);
+
+  await page.keyboard.press('ControlOrMeta+j');
+  await input.fill(`note: Idea ${tag}`);
+  await expect(top).toContainText('New note');
+  await input.press('Enter');
+  await expect(page.locator('.toast')).toContainText(`Saved “Idea ${tag}”`);
+
+  await page.keyboard.press('ControlOrMeta+j');
+  await input.fill(`Idea ${tag}`);
+  await expect(top).toContainText('Open note');
+  await input.press('Enter');
+  await expect.poll(() => page.evaluate(() => location.hash)).toMatch(/^#\/n\//);
+  await expect(page.locator('main h1', { hasText: `Idea ${tag}` })).toBeVisible();
+
   await page.keyboard.press('ControlOrMeta+j');
   await input.fill('What is a heap?');
-  await expect(page.locator('#quick-go')).toHaveText('Ask Felix');
+  await expect(top).toContainText('Ask Felix');
   await input.press('Enter');
   await expect(page.locator('aside.chat')).toBeVisible();
   await expect(page.locator('.msg.leo').last()).toContainText('A heap keeps the smallest on top.');

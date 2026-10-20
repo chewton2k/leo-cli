@@ -1161,6 +1161,18 @@
       else drawChats();
     }
 
+    function spare(e) {
+      if (!state.doomed || e.target.closest?.('.chat-history-x.sure')) return;
+      state.doomed = null;
+      for (const x of panel.querySelectorAll('.chat-history-x.sure')) {
+        x.classList.remove('sure');
+        x.textContent = '×';
+        x.setAttribute('aria-label', x.getAttribute('aria-label').replace(/^Confirm delete/, 'Delete'));
+      }
+    }
+    document.addEventListener('pointerdown', spare, true);
+    document.addEventListener('focusin', spare, true);
+
     function drawRefs() {
       const p = state.selection;
       const passage = p

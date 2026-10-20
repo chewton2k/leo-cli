@@ -21,6 +21,28 @@ test('Quick Leo reads a reminder, a question or a note from one line', () => {
   assert.equal(S.quickParse('remind me to stretch', now).date, null);
 });
 
+test('Quick Leo puts what you most likely want first, like Spotlight', () => {
+  const now = new Date(2026, 9, 19, 10, 0);
+  const notes = [{ id: 'a', title: 'Graph algorithms' }, { id: 'b', title: 'Heaps' }, { id: 'c', title: 'Weekly plan' }];
+  const places = [{ name: 'Calendar', hash: '#/calendar' }, { name: 'Settings', hash: '#/settings' }, { name: 'Interview practice', hash: '#/interviews' }, { name: 'Knowledge graph', hash: '#/map' }];
+  const top = (text, found = notes) => S.quickRank(text, { notes: found, places }, now)[0];
+  assert.deepEqual(top('email Bob tomorrow at 3pm'), { kind: 'task', title: 'email Bob', date: '2026-10-20', time: '15:00' });
+  assert.deepEqual(top('What is a heap?'), { kind: 'ask', text: 'What is a heap?' });
+  assert.deepEqual(top('heaps'), { kind: 'open', id: 'b', title: 'Heaps' });
+  assert.deepEqual(top('graph alg'), { kind: 'open', id: 'a', title: 'Graph algorithms' });
+  assert.deepEqual(top('cal', []), { kind: 'place', name: 'Calendar', hash: '#/calendar' });
+  assert.deepEqual(top('graph', [{ id: 'a', title: 'Graph algorithms' }]), { kind: 'open', id: 'a', title: 'Graph algorithms' }, 'a note named like that beats a page whose later word matches');
+  assert.deepEqual(top('graph', []), { kind: 'place', name: 'Knowledge graph', hash: '#/map' });
+  assert.deepEqual(top('interview', []), { kind: 'place', name: 'Interview practice', hash: '#/interviews' });
+  assert.deepEqual(top('note: idea for the essay'), { kind: 'note', title: 'idea for the essay' });
+  assert.equal(top('dijkstra versus bellman ford for negative edges', []).kind, 'ask');
+  assert.equal(top('how do graph algorithms work').kind, 'ask', 'a question asks even when a note matches');
+  const rows = S.quickRank('Pay rent', { notes: [], places }, now);
+  assert.deepEqual(rows.map((r) => r.kind), ['ask', 'task', 'note'], 'every other choice stays one arrow away');
+  assert.equal(new Set(S.quickRank('heaps', { notes, places }, now)).size, S.quickRank('heaps', { notes, places }, now).length);
+  assert.deepEqual(S.quickRank('   ', { notes, places }, now), []);
+});
+
 test('Calendar descriptions keep their formatting and links but nothing that can run', () => {
   const google = 'Itinerary: Charlton S<br />Monday, Oct 19, 2026 PDT<br/><br/>1:45PM (PDT) - 2:45PM (PDT): Data/Algos Interview<br/><br/>Hi Charlton<br/><br/>You’re all set!<br/><br/><strong>How to connect:</strong><ul><li>Click "Join with Google Meet" then “Join Now”.</li><li>You may see “ask to join the call”.</';
   const html = S.richText(google);
