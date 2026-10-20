@@ -424,7 +424,7 @@ let seq = 0;
 function go(hash, { replace = false } = {}) {
   if (location.hash === hash) return route();
   if (replace) {
-    history.replaceState(null, '', hash);
+    history.replaceState(history.state, '', hash);
     route();
   } else {
     location.hash = hash;
@@ -435,7 +435,8 @@ const folderHash = (dir) => (dir ? `#/f/${enc(dir)}` : '#/');
 const noteHash = (id) => `#/n/${enc(id)}`;
 
 const asideHash = (hash) => /^#\/(settings|trash)(\/|$)/.test(hash || '');
-const places = { before: '', from: '', now: location.hash };
+const entryAt = () => (Number.isInteger(history.state?.leoAt) ? history.state.leoAt : null);
+const places = { before: '', from: '', now: location.hash, at: entryAt() ?? 0, fromAt: -1 };
 addEventListener('hashchange', (e) => {
   try {
     places.now = new URL(e.oldURL).hash;
@@ -443,17 +444,29 @@ addEventListener('hashchange', (e) => {
   if (asideHash(location.hash) && !asideHash(places.now)) places.before = places.now || '#/';
   places.from = places.now;
   places.now = location.hash;
+  let at = entryAt();
+  if (at === null) {
+    at = places.at + 1;
+    try { history.replaceState({ ...(history.state || {}), leoAt: at }, '', location.hash); } catch (err) {}
+  }
+  places.fromAt = places.at;
+  places.at = at;
 });
+
+function goBack(hash) {
+  if (places.from === hash && places.fromAt === places.at - 1 && location.hash !== hash) return history.back();
+  go(hash);
+}
 
 function back() {
   const practice = interviewPage;
-  if (practice && interviewHere(practice)) return saveInterviewWorkspace(practice).then(() => { if (interviewHere(practice)) go('#/interviews'); }).catch(fail);
-  if (state.view === 'map' && state.focus) return go(noteHash(state.focus));
-  if (state.view === 'storage') return go(/^#\/settings\/?$/.test(places.from) || !places.before ? '#/settings' : places.before);
-  if (asideHash(location.hash) && places.before) return go(places.before);
-  if (state.view === 'note') return go(folderHash(state.dir || ''));
-  if (state.view === 'folder') return go(folderHash((state.dir || '').split('/').slice(0, -1).join('/')));
-  go('#/');
+  if (practice && interviewHere(practice)) return saveInterviewWorkspace(practice).then(() => { if (interviewHere(practice)) goBack('#/interviews'); }).catch(fail);
+  if (state.view === 'map' && state.focus) return goBack(noteHash(state.focus));
+  if (state.view === 'storage') return goBack(/^#\/settings\/?$/.test(places.from) ? places.from : places.before || '#/settings');
+  if (asideHash(location.hash) && places.before) return goBack(places.before);
+  if (state.view === 'note') return goBack(folderHash(state.dir || ''));
+  if (state.view === 'folder') return goBack(folderHash((state.dir || '').split('/').slice(0, -1).join('/')));
+  goBack('#/');
 }
 
 const PAGE_NAMES = { '': 'Top level', f: 'Top level', search: 'Search', trash: 'Trash', map: 'Knowledge graph', calendar: 'Calendar', settings: 'Settings', record: 'Record', interviews: 'Interview practice', new: 'New note' };
@@ -691,11 +704,11 @@ const saving = window.leoSaving.create({
     setTimeout(() => saving.retry(), 0);
   },
   created: (s, note) => {
-    if (state.session === s) history.replaceState(null, '', noteHash(note.id));
+    if (state.session === s) history.replaceState(history.state, '', noteHash(note.id));
   },
   conflict: (s, note) => {
     if (state.session === s) {
-      history.replaceState(null, '', noteHash(note.id));
+      history.replaceState(history.state, '', noteHash(note.id));
       s.title.textContent = s.edit.title;
     }
     toast('This note changed elsewhere. Your edits were kept in a separate copy.', { action: 'Open copy', run: () => go(noteHash(note.id)) });

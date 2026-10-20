@@ -512,7 +512,7 @@ $('#search-input').addEventListener('input', (e) => {
   clearTimeout(searchTimer);
   const query = e.target.value;
   searchTimer = setTimeout(() => {
-    if (state.view === 'search') history.replaceState(null, '', `#/search/${enc(query)}`);
+    if (state.view === 'search') history.replaceState(history.state, '', `#/search/${enc(query)}`);
     else history.pushState(null, '', `#/search/${enc(query)}`);
     showSearch(query).catch(fail);
   }, 160);

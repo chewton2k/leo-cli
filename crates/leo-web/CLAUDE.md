@@ -84,6 +84,10 @@ seer, meaning, web, room).
 - Back from Settings, Storage or Trash returns to the page before them
   (`places.before`, kept on `hashchange`; Storage opened from Settings goes
   back to Settings), so a note you were reading stays where you left it.
+  When the page Back goes to is the previous history entry (each entry keeps
+  its position in `history.state.leoAt`; in-place URL rewrites keep it), it
+  steps back with `history.back()` instead of adding an entry, so the
+  browser's or phone's own back does not return to Settings (2026-10-20).
 - Drag handles (Felix's edge, the original pane's grip, the interview split,
   the page bar, a picture's resize corner, the whiteboard and the knowledge
   graph) end on pointerup, pointercancel, lostpointercapture or a move
