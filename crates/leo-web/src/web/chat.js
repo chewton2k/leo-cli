@@ -29,7 +29,7 @@
       { text: 'Quiz me across my classes', needs: 'classes', ask: 'Which classes should the quiz cover?' },
       { text: 'Make me a 3-day review plan', needs: 'classes', ask: 'Which classes should the plan cover?' },
     ] },
-    { id: 'interview', label: 'Interview', hint: 'Practise coding, system design or a role-specific interview with a workspace and feedback', starters: [
+    { id: 'interview', label: 'Interview', hint: 'Practise coding, system design, hardware or a role-specific interview with a workspace and feedback', starters: [
       { text: 'Help me set up interview practice', ask: 'What kind of interview are you preparing for?' },
       { text: 'Research interviews for my target company', ask: 'Which company and role are you preparing for?' },
       { text: 'Plan my interview practice', ask: 'What is your interview date and weekly practice time?' },

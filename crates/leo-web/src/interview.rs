@@ -245,6 +245,7 @@ impl Framework {
             [
                 "coding",
                 "systems",
+                "hardware",
                 "design",
                 "marketing",
                 "business",
@@ -283,7 +284,7 @@ impl Workspace {
             points += shape.points.len();
             labels += shape.text.chars().count();
             require(
-                ["pen", "box", "arrow", "text"].contains(&shape.kind.as_str())
+                BOARD_KINDS.contains(&shape.kind.as_str())
                     && !shape.points.is_empty()
                     && shape.points.len() <= 128
                     && text(&shape.text, 300, false)
@@ -974,9 +975,90 @@ pub fn assess(path: &Path, id: &str, feedback: Feedback) -> Result<Interview, Er
     })
 }
 
+pub const BOARD_KINDS: [&str; 6] = ["pen", "box", "circle", "arrow", "line", "text"];
+
+fn bounds(shape: &Shape) -> [f64; 4] {
+    let xs = shape.points.iter().map(|p| p[0]);
+    let ys = shape.points.iter().map(|p| p[1]);
+    let (left, right) = xs.fold((f64::MAX, f64::MIN), |(a, b), x| (a.min(x), b.max(x)));
+    let (top, bottom) = ys.fold((f64::MAX, f64::MIN), |(a, b), y| (a.min(y), b.max(y)));
+    if shape.kind == "text" {
+        let width = (shape.text.chars().count() as f64 * 12.5).max(24.0);
+        return [left, top - 22.0, left + width, top + 8.0];
+    }
+    [left, top, right, bottom]
+}
+
+fn joins(shape: &Shape) -> bool {
+    shape.kind == "arrow" || shape.kind == "line"
+}
+
+fn shape_name(board: &[Shape], i: usize) -> String {
+    let shape = &board[i];
+    if shape.text.trim().is_empty() {
+        format!("unlabelled {} {}", shape.kind, i + 1)
+    } else {
+        format!("\"{}\"", shape.text.trim())
+    }
+}
+
+fn touching(board: &[Shape], at: [f64; 2]) -> Option<usize> {
+    const NEAR: f64 = 24.0;
+    board
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| !joins(s) && !s.points.is_empty())
+        .map(|(i, s)| (i, bounds(s)))
+        .filter(|(_, [l, t, r, b])| {
+            at[0] >= l - NEAR && at[0] <= r + NEAR && at[1] >= t - NEAR && at[1] <= b + NEAR
+        })
+        .min_by(|(_, a), (_, b)| {
+            let area = |[l, t, r, b]: &[f64; 4]| (r - l) * (b - t);
+            area(a).total_cmp(&area(b))
+        })
+        .map(|(i, _)| i)
+}
+
+fn connection(board: &[Shape], shape: &Shape) -> (Option<String>, Option<String>) {
+    if !joins(shape) {
+        return (None, None);
+    }
+    let end = |p: Option<&[f64; 2]>| {
+        p.and_then(|p| touching(board, *p))
+            .map(|i| shape_name(board, i))
+    };
+    (end(shape.points.first()), end(shape.points.last()))
+}
+
+pub fn board_outline(board: &[Shape]) -> Vec<String> {
+    board
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| s.kind != "pen" || !s.text.is_empty())
+        .map(|(i, shape)| {
+            let (from, to) = connection(board, shape);
+            let mut line = if shape.kind == "text" {
+                format!("label {}", shape_name(board, i))
+            } else if shape.text.trim().is_empty() {
+                shape.kind.clone()
+            } else {
+                format!("{} {}", shape.kind, shape_name(board, i))
+            };
+            if joins(shape) {
+                line += &format!(
+                    " from {} to {}",
+                    from.as_deref().unwrap_or("empty space"),
+                    to.as_deref().unwrap_or("empty space")
+                );
+            }
+            line
+        })
+        .collect()
+}
+
 fn board_material(workspace: &Workspace) -> Vec<serde_json::Value> {
-    workspace
-        .board
+    let board = &workspace.board;
+    board
         .iter()
         .map(|shape| {
             let ends: Vec<_> = shape
@@ -985,7 +1067,15 @@ fn board_material(workspace: &Workspace) -> Vec<serde_json::Value> {
                 .into_iter()
                 .chain(shape.points.last())
                 .collect();
-            serde_json::json!({"kind":shape.kind,"text":shape.text,"ends":ends})
+            let mut out = serde_json::json!({"kind":shape.kind,"text":shape.text,"ends":ends});
+            let (from, to) = connection(board, shape);
+            if let Some(from) = from {
+                out["from"] = from.into();
+            }
+            if let Some(to) = to {
+                out["to"] = to.into();
+            }
+            out
         })
         .collect()
 }
@@ -1248,6 +1338,7 @@ mod tests {
         for track in [
             "coding",
             "systems",
+            "hardware",
             "design",
             "marketing",
             "business",
@@ -1303,6 +1394,57 @@ mod tests {
         let mut w = workspace();
         w.board = vec![w.board[0].clone(); 101];
         assert!(w.validate().is_err());
+    }
+
+    #[test]
+    fn felix_reads_which_shapes_a_wire_or_arrow_joins_so_block_and_state_diagrams_make_sense() {
+        let shape = |kind: &str, points: Vec<[f64; 2]>, text: &str| Shape {
+            kind: kind.into(),
+            points,
+            text: text.into(),
+        };
+        let mut w = workspace();
+        w.board = vec![
+            shape("circle", vec![[0.0, 0.0], [100.0, 100.0]], "S0"),
+            shape("circle", vec![[300.0, 0.0], [400.0, 100.0]], "S1"),
+            shape("arrow", vec![[100.0, 50.0], [300.0, 50.0]], "x=1"),
+            shape("box", vec![[0.0, 300.0], [200.0, 400.0]], "ALU"),
+            shape("box", vec![[50.0, 330.0], [100.0, 370.0]], ""),
+            shape("line", vec![[60.0, 350.0], [600.0, 600.0]], "carry"),
+            shape("pen", vec![[700.0, 700.0], [710.0, 720.0]], ""),
+            shape("text", vec![[500.0, 100.0]], "clk"),
+            shape("arrow", vec![[480.0, 90.0], [380.0, 50.0]], ""),
+        ];
+        assert!(w.validate().is_ok());
+        let material = board_material(&w);
+        assert_eq!(material[2]["from"], "\"S0\"");
+        assert_eq!(material[2]["to"], "\"S1\"");
+        assert_eq!(
+            material[5]["from"], "unlabelled box 5",
+            "the smallest shape under an end wins"
+        );
+        assert!(
+            material[5].get("to").is_none(),
+            "an end in empty space names nothing"
+        );
+        assert!(material[0].get("from").is_none());
+        assert_eq!(material[8]["from"], "\"clk\"");
+        assert_eq!(
+            board_outline(&w.board),
+            [
+                "circle \"S0\"",
+                "circle \"S1\"",
+                "arrow \"x=1\" from \"S0\" to \"S1\"",
+                "box \"ALU\"",
+                "box",
+                "line \"carry\" from unlabelled box 5 to empty space",
+                "label \"clk\"",
+                "arrow from \"clk\" to \"S1\"",
+            ]
+        );
+        let mut bad = workspace();
+        bad.board[0].kind = "script".into();
+        assert!(bad.validate().is_err());
     }
 
     fn coding_challenge(id: &str) -> Challenge {

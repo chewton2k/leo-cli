@@ -41,7 +41,7 @@ test('CodeMirror typing handles indentation and paired delimiters in every suppo
 });
 
 test('every interview track has distinct editable criteria and one shared framework', () => {
-  assert.equal(I.PRESETS.length, 7);
+  assert.equal(I.PRESETS.length, 8);
   for (const p of I.PRESETS) {
     const f = I.framework(p.id);
     assert.equal(f.track, p.id);
@@ -98,7 +98,7 @@ test('drafts survive failed saves, remain isolated by plan and challenge, and st
 });
 
 test('starting practice combines company research and challenge creation, while general practice skips research', () => {
-  for (const track of ['coding', 'systems', 'design', 'marketing', 'business', 'quant']) {
+  for (const track of ['coding', 'systems', 'hardware', 'design', 'marketing', 'business', 'quant']) {
     const f = { ...I.framework(track), company: 'Pinterest', role: 'Intern' };
     const company = I.preparation(f);
     assert.match(company.say, /Search the web before/);
@@ -110,7 +110,40 @@ test('starting practice combines company research and challenge creation, while 
     assert.match(general.say, /Do not ask for a company/);
     assert.doesNotMatch(general.say, /Search the web before/);
     if (track === 'coding') assert.match(company.say, /function signature/);
+    if (track === 'hardware') assert.match(company.say, /```svg[^]*\$…\$[^]*whiteboard/);
+    else assert.doesNotMatch(company.say, /For hardware/);
   }
+});
+
+test('a hardware practice scores diagrams and derivations, and equations in an answer are recognised', () => {
+  assert.equal(I.preset('hardware').label, 'Hardware');
+  assert.deepEqual(I.framework('hardware').skills, ['Fundamentals', 'Diagrams', 'Derivations', 'Trade-offs', 'Communication']);
+  assert.equal(I.framework('hardware').language, '');
+  for (const text of ['$f = 1/T$', 'so\n$$\nP = CV^2f\n$$', '\\(t_{pd}\\)', '\\[x\\]', '\\begin{aligned}a\\end{aligned}']) assert.equal(I.hasMath(text), true, text);
+  for (const text of ['', 'costs $ 5', 'plain words', null]) assert.equal(I.hasMath(text), false, String(text));
+});
+
+test('circles and plain lines draw, resize and select like boxes and arrows, for state machines and wires', () => {
+  const board = [
+    { kind: 'circle', points: [[100, 100], [220, 220]], text: 'S0' },
+    { kind: 'line', points: [[220, 160], [400, 160]], text: 'clk' },
+  ];
+  assert.equal(I.validBoard(board), true);
+  assert.deepEqual(I.BOARD_KINDS, ['pen', 'box', 'circle', 'arrow', 'line', 'text']);
+  const html = I.boardSvg(board);
+  assert.match(html, /<ellipse cx="160" cy="160" rx="60" ry="60"\/>/);
+  assert.match(html, />S0<\/text>/);
+  assert.match(html, /<path d="M220,160 L400,160"\/>/, 'a line has no arrowhead');
+  assert.match(html, />clk<\/text>/);
+  const live = I.boardSvg(board, { view: { x: 0, y: 0, w: 1000, h: 700 }, interactive: true });
+  assert.match(live, /<ellipse [^>]*fill="transparent"\/>/, 'a circle is clickable inside');
+  assert.match(live, /aria-label="circle: S0"/);
+  assert.equal((live.match(/class="board-hit"/g) || []).length, 1, 'a line gets a wide hit area');
+  assert.deepEqual(I.handlesFor(board[0]).map((h) => h[0]), ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']);
+  assert.deepEqual(I.handlesFor(board[1]).map((h) => h[0]), ['start', 'end']);
+  assert.deepEqual(I.resizeShape(board[0], 'se', [300, 260]).points, [[100, 100], [300, 260]]);
+  assert.deepEqual(I.resizeShape(board[1], 'end', [400, 300]).points, [[220, 160], [400, 300]]);
+  assert.deepEqual(I.shapesWithin(board, { x: 90, y: 90, w: 140, h: 140 }), [0]);
 });
 
 test('coding stubs are not answers and separate reasoning and drawings count as work', () => {

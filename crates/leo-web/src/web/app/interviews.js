@@ -56,6 +56,7 @@ const TRACK_LOOK = {
   design: { hue: '--hue-6', icon: '<path d="M12 3a9 9 0 100 18c1 0 1.5-.8 1.5-1.6 0-.9-.7-1.4-.7-2.3 0-1 .8-1.6 1.8-1.6H17a4 4 0 004-4c0-4.7-4-8.5-9-8.5z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10" cy="7" r="1"/><circle cx="15" cy="7.5" r="1"/>' },
   marketing: { hue: '--hue-4', icon: '<path d="M4 10v4h3l6 4V6l-6 4z"/><path d="M16.5 9a4 4 0 010 6"/>' },
   business: { hue: '--hue-3', icon: '<path d="M5 20V11M11 20V5M17 20v-6M3 20h18"/>' },
+  hardware: { hue: '--hue-7', icon: '<rect x="7" y="7" width="10" height="10" rx="1.5"/><path d="M10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4"/>' },
   quant: { hue: '--hue-2', icon: '<path d="M17 5H7l6 7-6 7h10"/>' },
   custom: { hue: '--hue-5', icon: '<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>' },
 };
@@ -143,7 +144,7 @@ function drawInterview(session) {
     <div id="interview-problems" class="interview-problems" role="group" aria-label="Practice problems"></div>
     <div class="interview-solve" style="--split: ${interviewSplit()}%"><div class="interview-question"><section id="interview-challenge" class="set-card interview-problem"><div id="interview-panes" class="interview-panes"></div><div id="interview-pane-question" role="tabpanel"></div><div id="interview-pane-cases" role="tabpanel" hidden></div><div id="interview-pane-result" role="tabpanel" hidden><div id="interview-results" class="interview-results" aria-live="polite"></div></div><div id="interview-pane-submissions" role="tabpanel" hidden><section id="interview-attempts"></section><section id="interview-progress"></section></div></section></div>
     ${item.challenge ? `<section class="set-card interview-workspace"><div class="interview-toolbar"><div class="library-views" role="tablist" aria-label="Your answer workspace">${tabs.map(([id, label]) => `<button class="btn sm plain${session.tab === id ? ' on' : ''}" role="tab" aria-selected="${session.tab === id}" data-interview="tab" data-tab="${id}">${label}</button>`).join('')}</div><span id="interview-save" class="hint" role="status"></span></div>
-    <div id="interview-editor"${session.tab !== (coding ? 'code' : 'write') ? ' hidden' : ''}><div class="interview-toolbar"><label class="interview-label" for="interview-answer">${coding ? esc(item.challenge.coding?.language || item.framework.language || 'Code') : 'Your answer'}</label></div><div class="interview-code-shell${coding ? ' numbered' : ''}">${coding ? '<pre id="interview-lines" aria-hidden="true"></pre>' : ''}<div class="interview-code-pane">${coding ? '<pre id="interview-colors" aria-hidden="true"></pre>' : ''}<textarea id="interview-answer" class="set-input${coding ? ' interview-code' : ''}" maxlength="32000" spellcheck="${!coding}" autocapitalize="off" autocomplete="off" aria-label="${coding ? 'Code editor' : 'Your answer'}" placeholder="${coding ? 'Write your implementation here…' : 'Clarify the problem, outline an approach, and work through it…'}">${esc(session.draft.answer)}</textarea></div></div></div>
+    <div id="interview-editor"${session.tab !== (coding ? 'code' : 'write') ? ' hidden' : ''}><div class="interview-toolbar"><label class="interview-label" for="interview-answer">${coding ? esc(item.challenge.coding?.language || item.framework.language || 'Code') : 'Your answer'}</label></div><div class="interview-code-shell${coding ? ' numbered' : ''}">${coding ? '<pre id="interview-lines" aria-hidden="true"></pre>' : ''}<div class="interview-code-pane">${coding ? '<pre id="interview-colors" aria-hidden="true"></pre>' : ''}<textarea id="interview-answer" class="set-input${coding ? ' interview-code' : ''}" maxlength="32000" spellcheck="${!coding}" autocapitalize="off" autocomplete="off" aria-label="${coding ? 'Code editor' : 'Your answer'}" placeholder="${coding ? 'Write your implementation here…' : 'Clarify the problem, outline an approach, and work through it… Write equations as $…$ or $$…$$.'}">${esc(session.draft.answer)}</textarea></div></div>${coding ? '' : '<div id="interview-math" class="interview-math" hidden><p class="interview-label">Preview</p><div class="prose"></div></div>'}</div>
     ${coding ? `<div id="interview-reasoning-editor"${session.tab !== 'write' ? ' hidden' : ''}><label class="interview-label" for="interview-reasoning">Your approach</label><p class="hint">Explain your idea, complexity, and edge cases. Your code stays in the Code tab.</p><textarea id="interview-reasoning" class="set-input" maxlength="8000" placeholder="What’s your approach?">${esc(session.draft.reasoning)}</textarea></div>` : ''}
     <div id="interview-whiteboard"${session.tab !== 'board' ? ' hidden' : ''}><div class="interview-toolbar board-toolbar"><div class="library-views board-tools" role="toolbar" aria-label="Drawing tools">${BOARD_TOOLS.map(([id, label, icon, key]) => `<button class="btn sm plain${session.tool === id ? ' on' : ''}" aria-pressed="${session.tool === id}" data-interview="tool" data-tool="${id}" aria-label="${label}" title="${label} (${key})">${ICON[icon]}</button>`).join('')}</div><div class="library-views board-tools" role="toolbar" aria-label="Board actions"><button class="btn sm plain" data-interview="undo-board" aria-label="Undo" title="Undo (⌘Z)">${ICON.undo}</button><button class="btn sm plain" data-interview="redo-board" aria-label="Redo" title="Redo (⇧⌘Z)">${ICON.redo}</button><button class="btn sm plain" data-interview="delete-board" aria-label="Delete selected" title="Delete (⌫)">${ICON.trash}</button><button class="btn sm plain" data-interview="zoom-board" data-step="-1" aria-label="Zoom out" title="Zoom out">${ICON.minus}</button><button class="btn sm plain" data-interview="zoom-board" data-step="1" aria-label="Zoom in" title="Zoom in">${ICON.plus}</button><button class="btn sm plain" data-interview="fit-board" aria-label="Fit everything" title="Fit everything">${ICON.fit}</button></div></div><div class="interview-board-frame"><div id="interview-board" tabindex="0" role="group" aria-label="Whiteboard. Click a shape to select it, drag empty space to select several, and double-click to write. Hold Space, scroll or drag with one finger to move around."></div></div><p class="hint">Drag empty space to select several things. Double-click to write or edit text. Hold Space or scroll to move around.</p></div>
     <div id="interview-checks" class="interview-checks"></div>
@@ -522,8 +523,24 @@ function applyInterviewTyping(session, answer, edit) {
   } finally { session.codeApplying = false; }
 }
 
+function drawInterviewMath(session) {
+  const box = $('#interview-math');
+  if (!box) return;
+  const text = session.draft.answer;
+  if (box.hidden && !interviews.hasMath(text)) return;
+  clearTimeout(session.mathTimer);
+  session.mathTimer = setTimeout(() => {
+    if (!interviewHere(session) || !box.isConnected || (session.mathBox === box && session.mathShown === session.draft.answer)) return;
+    session.mathBox = box;
+    session.mathShown = session.draft.answer;
+    box.hidden = !interviews.hasMath(session.draft.answer);
+    box.querySelector('.prose').innerHTML = box.hidden ? '' : md.render(session.draft.answer, { interactive: false });
+  }, box.hidden ? 0 : 250);
+}
+
 function drawInterviewLines(session) {
   if (!interviewHere(session)) return;
+  drawInterviewMath(session);
   const lines = $('#interview-lines');
   if (lines && (session.linesNode !== lines || session.linesValue !== session.draft.answer)) {
     lines.innerHTML = session.draft.answer.split('\n').slice(0, 32001).map((line, i) => `<span class="interview-line"><span class="interview-line-number">${i + 1}</span><span class="interview-line-measure">${esc(line || ' ')}</span></span>`).join('');
@@ -730,7 +747,7 @@ function paintInterviewProgress(session) {
   const scores = interviews.progress(attempts);
   keepOpen($('#interview-progress'), `<h2>What you’re learning</h2><div class="set-card"><p class="hint">${assessed ? `${assessed} reviewed attempt${assessed === 1 ? '' : 's'}. AI feedback is provisional; averages use your last five observations per skill.` : 'Complete an attempt to start seeing strengths and areas to practise. Felix won’t guess from an empty history.'}</p>${scores.map((s) => `<div class="set-row"><div class="grow"><b>${esc(s.skill)}</b><span class="hint">${s.n} observation${s.n === 1 ? '' : 's'}${s.n < 3 ? ' · early signal' : ''}</span></div><span class="chip">${s.value.toFixed(1)} / 4</span></div>`).join('')}</div>`);
   const current = attempts.filter(a => a.challenge.id === session.item.challenge?.id);
-  keepOpen($('#interview-attempts'), current.length ? `<h2>Your attempts for this problem</h2><div class="interview-attempts">${[...current].reverse().map((a) => { const status = interviews.attemptStatus(a); return `<details class="interview-attempt source-more ${status.kind}" data-keep="attempt-${esc(a.id)}"><summary>${ICON.chevron}<span class="chip interview-tally ${status.kind}">${status.kind === 'passed' ? ICON.check : status.kind === 'failed' ? ICON.close : ''}${esc(status.label)}</span><span class="grow"><b>${esc(a.challenge.title)}</b><span class="hint">${new Date(a.at).toLocaleDateString()} · ${[...interviews.checkSummary(a.checks).map((g) => `${g.pass}/${g.total} ${g.name}`), a.grade ? `quick review ${a.grade.criteria.filter((v) => v.verdict === 'met').length}/${a.grade.criteria.length} met` : '', a.feedback ? 'Reviewed' : 'Awaiting feedback'].filter(Boolean).join(' · ')}</span></span></summary>${a.feedback ? `<div class="prose">${md.render(a.feedback.summary, { interactive: false })}</div>${a.feedback.scores.map((s) => `<p><b>${esc(s.skill)} · ${s.value}/4</b><br>${esc(s.evidence)}<br><span class="hint">Next: ${esc(s.next)}</span></p>`).join('')}` : `<button class="btn sm" data-interview="review-attempt" data-id="${esc(a.id)}">Ask Felix to review</button>`}<details class="source-more interview-work"><summary>${ICON.chevron}<span>Your submitted work</span></summary><pre class="interview-submitted">${esc(a.workspace.answer)}</pre>${a.workspace.reasoning ? `<h3>Approach</h3><div class="prose">${md.render(a.workspace.reasoning, { interactive: false })}</div>` : ''}${a.workspace.board.length ? `<div class="interview-board-snapshot">${interviews.boardSvg(a.workspace.board)}</div>` : ''}</details></details>`; }).join('')}</div>` : session.item.challenge ? '<p class="hint">No submissions for this problem yet.</p>' : '');
+  keepOpen($('#interview-attempts'), current.length ? `<h2>Your attempts for this problem</h2><div class="interview-attempts">${[...current].reverse().map((a) => { const status = interviews.attemptStatus(a); return `<details class="interview-attempt source-more ${status.kind}" data-keep="attempt-${esc(a.id)}"><summary>${ICON.chevron}<span class="chip interview-tally ${status.kind}">${status.kind === 'passed' ? ICON.check : status.kind === 'failed' ? ICON.close : ''}${esc(status.label)}</span><span class="grow"><b>${esc(a.challenge.title)}</b><span class="hint">${new Date(a.at).toLocaleDateString()} · ${[...interviews.checkSummary(a.checks).map((g) => `${g.pass}/${g.total} ${g.name}`), a.grade ? `quick review ${a.grade.criteria.filter((v) => v.verdict === 'met').length}/${a.grade.criteria.length} met` : '', a.feedback ? 'Reviewed' : 'Awaiting feedback'].filter(Boolean).join(' · ')}</span></span></summary>${a.feedback ? `<div class="prose">${md.render(a.feedback.summary, { interactive: false })}</div>${a.feedback.scores.map((s) => `<p><b>${esc(s.skill)} · ${s.value}/4</b><br>${esc(s.evidence)}<br><span class="hint">Next: ${esc(s.next)}</span></p>`).join('')}` : `<button class="btn sm" data-interview="review-attempt" data-id="${esc(a.id)}">Ask Felix to review</button>`}<details class="source-more interview-work"><summary>${ICON.chevron}<span>Your submitted work</span></summary>${session.item.framework.track === 'coding' || !interviews.hasMath(a.workspace.answer) ? `<pre class="interview-submitted">${esc(a.workspace.answer)}</pre>` : `<div class="prose interview-submitted-prose">${md.render(a.workspace.answer, { interactive: false })}</div>`}${a.workspace.reasoning ? `<h3>Approach</h3><div class="prose">${md.render(a.workspace.reasoning, { interactive: false })}</div>` : ''}${a.workspace.board.length ? `<div class="interview-board-snapshot">${interviews.boardSvg(a.workspace.board)}</div>` : ''}</details></details>`; }).join('')}</div>` : session.item.challenge ? '<p class="hint">No submissions for this problem yet.</p>' : '');
 }
 
 
@@ -754,8 +771,8 @@ function setInterviewBoardView(session, view) {
   if (svg) svg.setAttribute('viewBox', `${next.x} ${next.y} ${next.w} ${next.h}`);
 }
 
-const BOARD_TOOLS = [['select', 'Select and move', 'pointer', 'V'], ['pen', 'Pen', 'pen', 'P'], ['box', 'Box', 'box', 'R'], ['arrow', 'Arrow', 'arrow', 'A'], ['text', 'Text', 'text', 'T']];
-const BOARD_KEYS = { v: 'select', p: 'pen', r: 'box', a: 'arrow', t: 'text' };
+const BOARD_TOOLS = [['select', 'Select and move', 'pointer', 'V'], ['pen', 'Pen', 'pen', 'P'], ['box', 'Box', 'box', 'R'], ['circle', 'Circle', 'circle', 'O'], ['arrow', 'Arrow', 'arrow', 'A'], ['line', 'Line', 'line', 'L'], ['text', 'Text', 'text', 'T']];
+const BOARD_KEYS = { v: 'select', p: 'pen', r: 'box', o: 'circle', a: 'arrow', l: 'line', t: 'text' };
 const copyBoard = (board) => board.map((s) => ({ ...s, points: s.points.map((p) => [...p]) }));
 
 function rememberInterviewBoard(session, board = session.draft.board, view = false) {
@@ -839,7 +856,7 @@ function editInterviewBoardText(session, index, at = null) {
   if (shape) {
     const b = interviews.shapeBounds(shape);
     if (shape.kind === 'text') anchor = shape.points[0];
-    else if (shape.kind === 'box') { anchor = [b.x + b.w / 2, b.y + b.h / 2]; middle = true; }
+    else if (shape.kind === 'box' || shape.kind === 'circle') { anchor = [b.x + b.w / 2, b.y + b.h / 2]; middle = true; }
     else { anchor = [b.x + b.w / 2, b.y + b.h / 2 - 16]; middle = true; }
   }
   const place = boardScreen(board, anchor);
@@ -933,7 +950,7 @@ function wireInterviewBoard(session) {
       const unit = interviewBoardView(session).w / 1000;
       if (stroke.kind !== 'pen') {
         const a = stroke.points[0], b = stroke.points[1] || a;
-        if (Math.hypot(b[0] - a[0], b[1] - a[1]) < 6 * unit) stroke = { ...stroke, points: [a, interviews.point(a[0] + (stroke.kind === 'box' ? 160 : 140) * unit, a[1] + (stroke.kind === 'box' ? 90 : 0) * unit)] };
+        if (Math.hypot(b[0] - a[0], b[1] - a[1]) < 6 * unit) stroke = { ...stroke, points: [a, interviews.point(a[0] + ({ box: 160, circle: 100 }[stroke.kind] || 140) * unit, a[1] + ({ box: 90, circle: 100 }[stroke.kind] || 0) * unit)] };
       }
       const index = session.draft.board.length;
       session.stroke = null;
@@ -1066,7 +1083,9 @@ function wireInterviewBoard(session) {
 
 async function interviewPicture(board) {
   if (!board.length) return null;
-  const source = await base64(new Blob([interviews.boardSvg(board)], { type: 'image/svg+xml' }));
+  const view = interviews.fitBoard(board);
+  const width = Math.round(Math.max(1000, Math.min(2000, view.w))), height = Math.round(width * 7 / 10);
+  const source = await base64(new Blob([interviews.boardSvg(board, { view }).replace('<svg ', `<svg width="${width}" height="${height}" `)], { type: 'image/svg+xml' }));
   const image = new Image();
   await new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error('The board snapshot could not be made. Try again.')), 3000);
@@ -1075,8 +1094,8 @@ async function interviewPicture(board) {
     image.src = `data:image/svg+xml;base64,${source}`;
   });
   const canvas = document.createElement('canvas');
-  canvas.width = 1000; canvas.height = 700;
-  canvas.getContext('2d').drawImage(image, 0, 0, 1000, 700);
+  canvas.width = width; canvas.height = height;
+  canvas.getContext('2d').drawImage(image, 0, 0, width, height);
   const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
   return blob ? new File([blob], `interview-whiteboard-${felix.newId()}.png`, { type: 'image/png' }) : null;
 }

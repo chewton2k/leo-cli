@@ -696,7 +696,7 @@ pub const KEY_RULES: &str = "You write the hidden answer key for one practice in
 - For coding exercises also: entry: the name of the function the starter defines; tests: 6-14 {id: t1..., args: [the arguments as JSON values, in order], expected: the exact JSON result, hidden: false for 2-4 tests that match the examples and true for the rest, unordered: true only when any order of a list result is right}. Cover edge cases (empty input, duplicates, limits, negative numbers) in hidden tests. Work every expected value out carefully by tracing the solution below; a wrong expected value is worse than none. solution: a correct, plain JavaScript function named exactly like entry that takes the test arguments in order and returns the expected JSON value, with no imports, input or printing; leo runs it in the user's browser sandbox before showing the tests and drops any test it disagrees with. The user never sees it. Use only JSON values (numbers, strings, booleans, null, arrays, objects); represent linked lists and trees as arrays. For typed languages (C++, Go, Java, TypeScript) give each argument exactly the starter's parameter type: whole numbers for int and long, lists for vectors, slices and arrays, one-character strings for char. In Go, Java and Rust, linked lists and binary trees use the LeetCode ListNode and TreeNode types (Rust: Option<Box<ListNode>> and Option<Rc<RefCell<TreeNode>>>) and are written as arrays, trees in level order with null for gaps; Rust functions sit in impl Solution like LeetCode's.
 - For SQL exercises instead: entry: \"sql\"; each test has args: [one string of SQLite statements that create and fill the tables for that case], expected: the result rows as an array of row arrays in column order (numbers as numbers, NULL as null), unordered: true unless the question asks for a specific order; solution: the SQLite query that answers the question. Write SQLite-compatible SQL.
 - For quantitative exercises and estimates also: asks: 1-6 {id: a1..., label: the quantity or question the user should state, kind: value, unit, answer: the number, tolerance: relative error allowed (0.01 for exact maths, 0 means exact), factor: for rough estimates the accepted ratio either way (like 3 for within 3x), else 0} or {id, label, kind: choice, options: 2-6 strings, answer: one of the options}. Only ask for quantities the exercise asks for or that are a natural step towards them.
-- For open-ended exercises (system design, product, design, marketing, business, cases) also: sections: 3-7 {id: s1..., name: a part a strong answer covers, like Requirements or Success metrics, look_for: 1-5 words that show it is there}. System design may add value asks for capacity estimates with a factor.
+- For open-ended exercises (system design, hardware, product, design, marketing, business, cases) also: sections: 3-7 {id: s1..., name: a part a strong answer covers, like Requirements or Success metrics, look_for: 1-5 words that show it is there}. System design may add value asks for capacity estimates with a factor. Hardware should add value asks for the quantities the exercise computes (delay, maximum clock frequency, power, area, throughput, latency in cycles, bandwidth) with their unit and a tolerance, and criteria for the diagram (the blocks, states or signals it must show and how they connect) and for each derivation step.
 Never include anything except the JSON object. Use interpretable language.";
 
 fn key_prompt(framework: &Framework, challenge: &Challenge) -> String {
@@ -1052,18 +1052,12 @@ fn rubric(key: &Key, with_answers: bool) -> String {
 
 fn material(challenge: &Challenge, workspace: &Workspace) -> String {
     format!(
-        "<exercise>\n{}\n\n{}\n</exercise>\n<answer>\n{}\n</answer>\n<approach>\n{}\n</approach>\n<board_labels>\n{}\n</board_labels>\n<values>\n{}\n</values>",
+        "<exercise>\n{}\n\n{}\n</exercise>\n<answer>\n{}\n</answer>\n<approach>\n{}\n</approach>\n<board>\n{}\n</board>\n<values>\n{}\n</values>",
         challenge.title,
         challenge.question,
         crate::chat::clip(&workspace.answer, GRADE_ANSWER),
         crate::chat::clip(&workspace.reasoning, 4_000),
-        workspace
-            .board
-            .iter()
-            .map(|s| s.text.as_str())
-            .filter(|t| !t.is_empty())
-            .collect::<Vec<_>>()
-            .join("\n"),
+        crate::interview::board_outline(&workspace.board).join("\n"),
         workspace
             .values
             .iter()

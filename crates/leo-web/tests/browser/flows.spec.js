@@ -5867,7 +5867,8 @@ test('the practice list shows type, company or General, position, and problems s
   expect(await color(page.locator('.interview-plan-row').nth(0).locator('.track-icon'))).toBe(await rgb(await hue('--hue-0')));
   expect(await color(page.locator('.interview-plan-row').nth(1).locator('.track-icon'))).toBe(await rgb(await hue('--hue-2')));
   expect(await color(page.locator('.interview-track[data-track="systems"] .track-icon'))).toBe(await rgb(await hue('--hue-1')));
-  await expect(page.locator('.interview-track .track-icon svg')).toHaveCount(7);
+  await expect(page.locator('.interview-track .track-icon svg')).toHaveCount(8);
+  expect(await color(page.locator('.interview-track[data-track="hardware"] .track-icon'))).toBe(await rgb(await hue('--hue-7')));
   const bar = rows.nth(0).locator('.interview-plan-bar');
   await expect(bar).toHaveAttribute('aria-label', '6 of 14 problems solved');
   expect(await bar.locator('i').evaluate((el) => el.style.width)).toBe('43%');
@@ -6312,8 +6313,8 @@ test('the whiteboard works like a slide editor: icon tools, selecting inside sha
   const board = page.locator('#interview-board');
   await board.scrollIntoViewIfNeeded();
   const tools = page.locator('[data-interview="tool"]');
-  await expect(tools).toHaveCount(5);
-  expect(await tools.evaluateAll((els) => els.map((el) => [el.dataset.tool, el.textContent.trim(), Boolean(el.querySelector('svg')), el.getAttribute('aria-label')]))).toEqual([['select', '', true, 'Select and move'], ['pen', '', true, 'Pen'], ['box', '', true, 'Box'], ['arrow', '', true, 'Arrow'], ['text', '', true, 'Text']]);
+  await expect(tools).toHaveCount(7);
+  expect(await tools.evaluateAll((els) => els.map((el) => [el.dataset.tool, el.textContent.trim(), Boolean(el.querySelector('svg')), el.getAttribute('aria-label')]))).toEqual([['select', '', true, 'Select and move'], ['pen', '', true, 'Pen'], ['box', '', true, 'Box'], ['circle', '', true, 'Circle'], ['arrow', '', true, 'Arrow'], ['line', '', true, 'Line'], ['text', '', true, 'Text']]);
   await expect(page.locator('[data-interview="tool"][data-tool="pan"]')).toHaveCount(0);
   await expect(tools.first()).toHaveAttribute('aria-pressed', 'true');
   expect(await board.evaluate((el) => [getComputedStyle(el).backgroundColor, getComputedStyle(el.querySelector('svg')).color])).toEqual(['rgb(255, 255, 255)', 'rgb(25, 25, 27)']);
@@ -6380,6 +6381,97 @@ test('the whiteboard works like a slide editor: icon tools, selecting inside sha
   await expect.poll(() => item.workspace.board.at(-1)).toMatchObject({ kind: 'text', text: 'Read replica' });
   await expect(page.locator('[data-interview="tool"][data-tool="select"]')).toHaveAttribute('aria-pressed', 'true');
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+});
+
+test('a hardware practice draws its circuit and equations, previews the maths in an answer, and has circles and wires on the board', async ({ page }) => {
+  const id = 'hardware-board-01';
+  const question = 'Find the fastest clock for this pipeline stage.\n\n$$\nf_{max} = \\frac{1}{t_{cq} + t_{pd} + t_{su}}\n$$\n\n```svg\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 40"><rect x="5" y="5" width="30" height="30" fill="none" stroke="black"/><text x="10" y="25">FF</text></svg>\n```';
+  const challenge = { id: 'hardware-board-problem', title: 'Clock a pipeline stage', question, minutes: 30, skills: ['Diagrams'], origin: 'generated', sources: [] };
+  const workspace = { answer: '', reasoning: '', board: [] };
+  const item = { id, revision: 1, framework: { title: 'Hardware practice', track: 'hardware', company: '', role: '', language: '', style: 'coach', date: '', weekly_minutes: 120, skills: ['Diagrams'], wants: '' }, challenge, workspace, problems: [{ challenge, workspace }], attempts: [] };
+  await page.route('**/api/interviews', (route) => route.fulfill({ json: [] }));
+  await page.route(`**/api/interviews/${id}/key?*`, (route) => route.fulfill({ json: { status: 'none' } }));
+  await page.route(`**/api/interviews/${id}`, (route) => {
+    if (route.request().method() === 'PUT') { item.workspace = route.request().postDataJSON().workspace || item.workspace; item.revision++; }
+    return route.fulfill({ json: item });
+  });
+  await page.goto(`/#/interviews/${id}`);
+  await expect(page.locator('.interview-heading .eyebrow')).toContainText('Hardware');
+  const asked = page.locator('#interview-pane-question');
+  await expect(asked.locator('.math-block .katex')).toHaveCount(1);
+  await expect(asked.locator('figure.drawing img')).toHaveCount(1);
+  const preview = page.locator('#interview-math');
+  await expect(preview).toBeHidden();
+  await page.locator('#interview-answer').fill('The period is $T = t_{cq} + t_{pd} + t_{su}$.');
+  await expect(preview.locator('.katex')).toHaveCount(1);
+  await expect(preview).toBeVisible();
+  await page.locator('#interview-answer').fill('No maths yet');
+  await expect(preview).toBeHidden();
+  await page.locator('[data-interview="tab"][data-tab="board"]').click();
+  const board = page.locator('#interview-board');
+  await board.scrollIntoViewIfNeeded();
+  const at = (x, y) => board.locator('svg').evaluate((svg, [x, y]) => { const p = new DOMPoint(x, y).matrixTransform(svg.getScreenCTM()); return { x: p.x, y: p.y }; }, [x, y]);
+  const drag = async (from, to) => { const a = await at(...from), b = await at(...to); await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 5 }); await page.mouse.up(); };
+  await board.focus();
+  await page.keyboard.press('o');
+  await expect(page.locator('[data-interview="tool"][data-tool="circle"]')).toHaveAttribute('aria-pressed', 'true');
+  await drag([100, 100], [220, 220]);
+  await expect.poll(() => item.workspace.board.map((s) => s.kind)).toEqual(['circle']);
+  await expect(board.locator('ellipse')).toHaveCount(1);
+  const middle = await at(160, 160);
+  await page.mouse.dblclick(middle.x, middle.y);
+  const editor = page.locator('.interview-board-editor');
+  await expect(editor).toBeFocused();
+  await editor.fill('S0');
+  await editor.press('Enter');
+  await expect.poll(() => item.workspace.board[0].text).toBe('S0');
+  await board.focus();
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('l');
+  await expect(page.locator('[data-interview="tool"][data-tool="line"]')).toHaveAttribute('aria-pressed', 'true');
+  await drag([220, 160], [420, 160]);
+  await expect.poll(() => item.workspace.board.map((s) => s.kind)).toEqual(['circle', 'line']);
+  await expect.poll(() => item.workspace.board[1].points).toEqual([[220, 160], [420, 160]]);
+  await expect(page.locator('[data-interview="tool"][data-tool="select"]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(board.locator('[data-board-handle]')).toHaveCount(2);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+});
+
+test('a big hardware diagram reaches Felix as a sharp snapshot and a submitted derivation shows its equations', async ({ page }) => {
+  const id = 'hardware-snapshot-01';
+  const challenge = { id: 'hardware-snapshot-problem', title: 'Draw a datapath', question: 'Draw the datapath.', minutes: 30, skills: ['Diagrams'], origin: 'generated', sources: [] };
+  const board = [
+    { kind: 'box', points: [[0, 0], [300, 160]], text: 'Register file' },
+    { kind: 'circle', points: [[1200, 0], [1400, 200]], text: 'ALU' },
+    { kind: 'line', points: [[300, 80], [1200, 100]], text: 'A' },
+    { kind: 'box', points: [[2300, 0], [2600, 160]], text: 'Memory' },
+  ];
+  const workspace = { answer: 'The critical path is $t_{cq} + t_{ALU} + t_{su}$.', reasoning: '', board };
+  const item = { id, revision: 1, framework: { title: 'Datapaths', track: 'hardware', company: '', role: '', language: '', style: 'coach', date: '', weekly_minutes: 120, skills: ['Diagrams'], wants: '' }, challenge, workspace, problems: [{ challenge, workspace }], attempts: [{ id: 'hardware-attempt-1', challenge, workspace, at: new Date().toISOString(), feedback: null, checks: [] }] };
+  const sent = [];
+  await page.route('**/api/interviews', (route) => route.fulfill({ json: [] }));
+  await page.route(`**/api/interviews/${id}/key?*`, (route) => route.fulfill({ json: { status: 'none' } }));
+  await page.route(`**/api/interviews/${id}`, (route) => route.fulfill({ json: item }));
+  await page.route('**/api/chats/*', (route) => route.request().method() === 'GET' ? route.fulfill({ status: 404, json: { error: 'No conversation yet' } }) : route.fulfill({ json: { id, title: 'Datapaths', updated_at: new Date().toISOString(), count: 2, named: true } }));
+  await page.route(`**/api/chats/${id}/files`, (route) => {
+    if (route.request().method() !== 'POST') return route.fulfill({ json: [] });
+    sent.push(route.request().postDataJSON());
+    return route.fulfill({ status: 201, json: { id: 'doc-board-1', name: sent.at(-1).name, chars: 40, excerpt: 'A datapath.' } });
+  });
+  await page.route('**/api/chat', (route) => route.fulfill({ contentType: 'application/x-ndjson', body: JSON.stringify({ t: 'Here is my review.' }) + '\n' + JSON.stringify({ done: true }) + '\n' }));
+  await page.goto(`/#/interviews/${id}`);
+  await page.locator('[data-interview="pane"][data-pane="submissions"]').click();
+  const attempt = page.locator('#interview-attempts details.interview-attempt').first();
+  await attempt.locator(':scope > summary').click();
+  await attempt.locator('details.interview-work > summary').click();
+  await expect(attempt.locator('.interview-submitted-prose .katex')).toHaveCount(1);
+  await expect(attempt.locator('.interview-board-snapshot ellipse')).toHaveCount(1);
+  await attempt.locator('[data-interview="review-attempt"]').click();
+  await expect.poll(() => sent.length).toBe(1);
+  expect(sent[0].type).toBe('image/jpeg');
+  const size = await page.evaluate((data) => new Promise((resolve) => { const image = new Image(); image.onload = () => resolve([image.naturalWidth, image.naturalHeight]); image.onerror = () => resolve(null); image.src = `data:image/jpeg;base64,${data}`; }), sent[0].data);
+  expect(size).toEqual([2000, 1400]);
+  await expect(page.locator('.msg.leo').last()).toContainText('Here is my review.');
 });
 
 test('the question and workspace split can be dragged, nudged, reset and is remembered', async ({ page }) => {

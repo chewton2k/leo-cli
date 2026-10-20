@@ -440,10 +440,22 @@ seer, meaning, web, room).
   (`interview::list` `tally`; `interview::passed` mirrors
   `interviews.attemptStatus` passed, and node and Rust tests share cases).
   Each track has a colour and icon (`TRACK_LOOK`, from the `--hue-*` tokens:
-  coding blue, systems teal, design violet, marketing orange, business
-  amber, quant green, custom pink) on the track cards, the practice rows
-  (with a bar of solved over problems in that colour) and the practice
+  coding blue, systems teal, hardware cyan, design violet, marketing orange,
+  business amber, quant green, custom pink) on the track cards, the practice
+  rows (with a bar of solved over problems in that colour) and the practice
   heading.
+  Hardware (2026-10-20, the user's request: diagrams and equations matter
+  most): criteria Fundamentals, Diagrams, Derivations, Trade-offs,
+  Communication. Felix puts the circuit, datapath, state machine or waveform
+  in the question as ```svg/```mermaid and writes equations in `$…$`; keys add
+  value asks with units and diagram criteria. The board has Circle (O, state
+  machines) and Line (L, wires) besides Box and Arrow (`BOARD_KINDS` in
+  `interview.js` and `interview.rs`). Felix reads the board as shapes with
+  `from`/`to` naming what each arrow or line joins (`interview::board_outline`,
+  also the quick review's `<board>`); review snapshots scale with the board
+  up to 2000 px wide (uploads cap there) so labels stay readable. A written
+  answer with maths gets a live Preview under it (`interviews.hasMath`) and is
+  rendered in its submission.
   Problem pictures (2026-10-14, the user's request): the question is Markdown,
   so a ```mermaid or ```svg block in it is drawn like in notes, and each
   coding example may carry a `diagram` (same kind of block, at most
