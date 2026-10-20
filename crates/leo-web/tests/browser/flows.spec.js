@@ -5750,10 +5750,14 @@ test('on a short screen the Tasks panel waits as its icon, and the last notes ca
   for (let n = 0; n < 9; n += 1) notes.push(await (await page.request.post('/api/notes', { data: { title: `Short ${n} ${tag}`, body: 'x', directory: dir } })).json());
   const task = await (await page.request.post('/api/tasks', { data: { title: `Short task ${tag}` } })).json();
   await page.evaluate(() => localStorage.setItem('leo-tasks-folded', '0'));
-  await page.setViewportSize({ width: 1280, height: 600 });
+  const panel = page.locator('#tasks-window');
+  await page.setViewportSize({ width: 1800, height: 600 });
   await page.goto(`/#/f/${dir}`);
   await page.reload();
-  const panel = page.locator('#tasks-window');
+  await expect(panel.locator('.tasks-pill')).toBeVisible();
+  await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+  await expect(panel).toHaveClass(/folded/);
+  await page.setViewportSize({ width: 1280, height: 600 });
   await expect(panel.locator('.tasks-pill')).toBeVisible();
   expect(await page.evaluate(() => localStorage.getItem('leo-tasks-folded'))).toBe('0');
   await panel.locator('.tasks-pill').click();
