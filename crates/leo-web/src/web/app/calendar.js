@@ -858,7 +858,7 @@ function fitTasksWindow() {
   const first = app.querySelector('.library-cards > .card:not(.new-card)') || app.querySelector('.library-cards > .card');
   const box = tasksBox.hidden ? null : dock().getBoundingClientRect();
   const card = first && box && box.width ? first.getBoundingClientRect() : null;
-  const over = Boolean(card && card.left < box.right);
+  const over = Boolean(card && card.left < box.right && card.top + scrollY < box.bottom);
   const room = over ? Math.floor(box.bottom - card.bottom - scrollY - 12) : 0;
   if (over) {
     tasksBox.style.setProperty('--tasks-room', `${Math.max(TASKS_LEAST_ROOM, room)}px`);

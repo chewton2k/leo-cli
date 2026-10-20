@@ -4390,6 +4390,7 @@ test.describe('beside the note', () => {
     test.skip(test.info().project.name !== 'desktop', 'the panel is for wider screens');
     const tag = `${test.info().project.name}-${Date.now().toString(36)}`;
     await page.request.post('/api/tasks', { data: { title: `Panel task ${tag}` } });
+    await page.setViewportSize({ width: 1280, height: 1000 });
     await page.goto('/');
     const box = page.locator('#dock #tasks-window');
     await expect(box).toBeVisible();
@@ -5771,6 +5772,12 @@ test('on a short screen the Tasks panel waits as its icon, and the last notes ca
   const last = await page.locator('.library-cards > .card').last().boundingBox();
   const dock = await page.locator('#dock').boundingBox();
   expect(last.y + last.height).toBeLessThanOrEqual(dock.y);
+  for (let n = 0; n < 40; n += 1) await page.request.post('/api/dirs', { data: { path: `${dir}/Shelf ${n}` } });
+  await page.setViewportSize({ width: 1280, height: 600 });
+  await page.reload();
+  await expect(page.locator('.library-cards > .card').first()).toBeAttached();
+  expect((await page.locator('.library-cards > .card:not(.new-card)').first().boundingBox()).y).toBeGreaterThan(600);
+  await expect(panel.locator('.tasks-body')).toBeVisible();
   await page.request.delete(`/api/tasks/${task.id}`);
   for (const note of notes) await page.request.delete(`/api/notes/${note.id}`);
 });
