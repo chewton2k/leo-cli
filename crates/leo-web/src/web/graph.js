@@ -897,12 +897,19 @@
       gesture = { kind: node ? 'drag' : 'pan', node, start: at, last: at, moved: false };
     }
 
+    function letGo(e) {
+      if (!pointers.has(e.pointerId)) return;
+      if (gesture) gesture.moved = true;
+      up(e);
+    }
+
     function move(e) {
       const at = local(e);
       if (!pointers.has(e.pointerId)) {
         if (e.pointerType === 'mouse') hover(at);
         return;
       }
+      if (e.pointerType === 'mouse' && !e.buttons) return letGo(e);
       pointers.set(e.pointerId, at);
       if (!gesture) return;
       if (gesture.kind === 'pinch' && pointers.size === 2) {
@@ -1064,6 +1071,7 @@
     canvas.addEventListener('pointermove', move);
     canvas.addEventListener('pointerup', up);
     canvas.addEventListener('pointercancel', up);
+    canvas.addEventListener('lostpointercapture', letGo);
     canvas.addEventListener('pointerleave', leave);
     canvas.addEventListener('wheel', wheel, { passive: false });
     canvas.addEventListener('dblclick', dbl);
@@ -1114,6 +1122,7 @@
         canvas.removeEventListener('pointermove', move);
         canvas.removeEventListener('pointerup', up);
         canvas.removeEventListener('pointercancel', up);
+        canvas.removeEventListener('lostpointercapture', letGo);
         canvas.removeEventListener('pointerleave', leave);
         canvas.removeEventListener('wheel', wheel);
         canvas.removeEventListener('dblclick', dbl);

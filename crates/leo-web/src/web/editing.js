@@ -165,10 +165,17 @@
 
   const PICTURE = /!\[\[([^\]|]+)(?:\|([^\]]*))?\]\]|!\[([^\]]*)\]\((<[^>]+>|[^)\s]+)(\s+"[^"]*")?\)/g;
 
+  const outside = (target) => {
+    const src = String(target || '').trim().replace(/^<(.*)>$/, '$1');
+    return !/^data:image\/svg\+xml[;,]/i.test(src) && (/^[a-z][a-z0-9+.-]*:/i.test(src) || src.startsWith('//'));
+  };
+
   function setPictureWidth(text, index, width) {
     let n = -1;
     const size = width ? `|${Math.round(width)}` : '';
-    return String(text).replace(PICTURE, (whole, name, option, alt, target, title) => {
+    const code = [...String(text).matchAll(/`[^`]+`/g)].map((m) => [m.index, m.index + m[0].length]);
+    return String(text).replace(PICTURE, (whole, name, option, alt, target, title, at) => {
+      if (code.some(([from, to]) => at >= from && at < to) || outside(name ?? target)) return whole;
       n += 1;
       if (n !== index) return whole;
       if (name !== undefined) {

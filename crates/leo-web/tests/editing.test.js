@@ -5,6 +5,15 @@ const md = require('../src/web/markdown.js');
 const cases = [];
 const test = (name, fn) => cases.push([name, fn]);
 
+test('resizing counts only the pictures the page draws, so outside images and code never take the size', () => {
+  const line = '`![code](a.png)` ![Logo](https://example.com/logo.png) ![[https://x.org/y.png]] ![Mine](attachments/me.png) ![Sketch](data:image/svg+xml,%3Csvg%2F%3E)';
+  const drawn = md.render(line).match(/class="note-img/g).length;
+  assert.equal(drawn, 2);
+  assert.equal(ed.setPictureWidth(line, 0, 300), line.replace('![Mine](', '![Mine|300]('));
+  assert.equal(ed.setPictureWidth(line, 1, 200), line.replace('![Sketch](', '![Sketch|200]('));
+  assert.equal(ed.setPictureWidth(line, 2, 200), line, 'there is no third drawn picture');
+});
+
 test('a picture keeps a width in the Obsidian style and only the chosen one changes', () => {
   const line = 'Before ![Tree](attachments/tree.png) and ![[graph.png]] and ![Old|120](a.png "Title")';
   assert.equal(ed.setPictureWidth(line, 0, 400), 'Before ![Tree|400](attachments/tree.png) and ![[graph.png]] and ![Old|120](a.png "Title")');

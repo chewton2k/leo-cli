@@ -85,9 +85,11 @@ seer, meaning, web, room).
   (`places.before`, kept on `hashchange`; Storage opened from Settings goes
   back to Settings), so a note you were reading stays where you left it.
 - Drag handles (Felix's edge, the original pane's grip, the interview split,
-  the page bar) end on pointerup, pointercancel, lostpointercapture or a move
+  the page bar, a picture's resize corner, the whiteboard and the knowledge
+  graph) end on pointerup, pointercancel, lostpointercapture or a move
   with no button held, so a release the page never sees (outside the window,
-  a context menu) cannot leave a drag stuck (2026-10-19).
+  a context menu) cannot leave a drag stuck (2026-10-19). A whiteboard shape
+  drawn or moved when that happens is kept, not thrown away (2026-10-20).
 - `api()` treats an empty body as `null`; every success is JSON or a bodiless
   204 (a browser test sweeps the API).
 - Layout variables on `body`: `--side` (sidebar, 0 under 1000 px), `--right`
@@ -158,7 +160,8 @@ seer, meaning, web, room).
   Clicking a picture in a note frames it (`doc.js` `frame`) with its width and
   a corner handle: drag, arrow keys (Shift for 100 px) or double-click to
   reset; the change is written by `editing.setPictureWidth` and saved like any
-  edit. Double-clicking the picture edits its Markdown; Escape closes only the
+  edit. It counts only pictures the page draws (not outside links or
+  `code`), so the size lands on the picture that was framed. Double-clicking the picture edits its Markdown; Escape closes only the
   frame.
 - Pictures live in `<notes>/attachments/` (`leo_core::attachments`, sniffed
   PNG/JPEG/GIF/WebP only, ≤20 MB); paste or drop in `doc.js`.

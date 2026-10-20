@@ -5605,6 +5605,28 @@ test('the open Tasks panel stays below the first row of notes', async ({ page })
   for (const note of notes) await page.request.delete(`/api/notes/${note.id}`);
 });
 
+test('letting go of a picture’s corner outside the page ends the resize and keeps the size', async ({ page }) => {
+  test.skip(test.info().project.name !== 'desktop', 'dragging is for a mouse');
+  const svg = encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="300" height="150"><rect width="300" height="150" fill="#9ab"/></svg>');
+  const note = await (await page.request.post('/api/notes', { data: { title: `Picture out ${Date.now().toString(36)}`, body: `Intro line\n\n![Box](data:image/svg+xml;utf8,${svg})\n\nAfter line` } })).json();
+  const body = async () => (await (await page.request.get(`/api/notes/${note.id}`)).json()).body;
+  await page.goto(`/#/n/${note.id}`);
+  const img = page.locator('#doc img.note-img');
+  await expect(img).toBeVisible();
+  await img.click();
+  const shown = Math.round((await img.boundingBox()).width);
+  const at = await page.locator('.pic-handle').boundingBox();
+  const x = at.x + at.width / 2, y = at.y + at.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x - 100, y, { steps: 4 });
+  const cdp = await page.context().newCDPSession(page);
+  for (const dx of [140, 180, 220]) await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: x - dx, y, button: 'none', buttons: 0 });
+  await expect.poll(body, { timeout: 5000 }).toContain(`![Box|${shown - 100}](data:image`);
+  await expect(page.locator('#doc img.note-img')).toHaveAttribute('width', String(shown - 100));
+  await page.request.delete(`/api/notes/${note.id}`);
+});
+
 test('a picture in a note can be resized by dragging its corner, and keeps that size', async ({ page }) => {
   test.skip(test.info().project.name !== 'desktop', 'dragging is for a mouse');
   const svg = encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="300" height="150"><rect width="300" height="150" fill="#9ab"/></svg>');
@@ -6435,6 +6457,18 @@ test('a hardware practice draws its circuit and equations, previews the maths in
   await expect.poll(() => item.workspace.board[1].points).toEqual([[220, 160], [420, 160]]);
   await expect(page.locator('[data-interview="tool"][data-tool="select"]')).toHaveAttribute('aria-pressed', 'true');
   await expect(board.locator('[data-board-handle]')).toHaveCount(2);
+  if (test.info().project.name === 'desktop') {
+    await page.locator('[data-interview="tool"][data-tool="box"]').click();
+    const a = await at(500, 60), b = await at(640, 200);
+    await page.mouse.move(a.x, a.y);
+    await page.mouse.down();
+    await page.mouse.move(b.x, b.y, { steps: 4 });
+    const cdp = await page.context().newCDPSession(page);
+    for (const d of [20, 60]) await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: b.x + d, y: b.y + d, button: 'none', buttons: 0 });
+    await expect.poll(() => item.workspace.board.map((s) => s.kind)).toEqual(['circle', 'line', 'box']);
+    await expect.poll(() => item.workspace.board[2].points).toEqual([[500, 60], [640, 200]]);
+    await page.mouse.up();
+  }
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
 });
 

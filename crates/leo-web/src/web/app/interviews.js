@@ -1009,6 +1009,7 @@ function wireInterviewBoard(session) {
   board.addEventListener('pointermove', (e) => {
     const gesture = session.gesture;
     if (!gesture || e.pointerId !== gesture.pointer) return;
+    if (e.pointerType === 'mouse' && !e.buttons) { finish(); return; }
     if (gesture.kind === 'pan') {
       const rect = board.getBoundingClientRect(), v = gesture.view;
       setInterviewBoardView(session, { ...v, x: v.x - (e.clientX - gesture.x) / rect.width * v.w, y: v.y - (e.clientY - gesture.y) / rect.height * v.h });
@@ -1029,7 +1030,7 @@ function wireInterviewBoard(session) {
   });
   board.addEventListener('pointerup', e => { if (e.pointerId === session.gesture?.pointer) finish(); });
   board.addEventListener('pointercancel', e => { if (e.pointerId === session.gesture?.pointer) finish(true); });
-  board.addEventListener('lostpointercapture', () => finish(true));
+  board.addEventListener('lostpointercapture', e => { if (e.pointerId === session.gesture?.pointer) finish(); });
   board.addEventListener('wheel', e => {
     if (session.gesture) return;
     e.preventDefault();

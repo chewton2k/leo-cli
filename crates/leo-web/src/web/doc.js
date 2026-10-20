@@ -561,19 +561,26 @@
         const most = Math.max(48, (img.closest('.blk') || container).clientWidth);
         let width = startWidth;
         const move = (m) => {
+          if (!(m.buttons & 1)) return up();
           width = Math.round(Math.min(most, Math.max(48, startWidth + m.clientX - startX)));
           img.style.width = `${width}px`;
           placeFrame();
         };
+        let done = false;
         const up = () => {
+          if (done) return;
+          done = true;
           handle.removeEventListener('pointermove', move);
           handle.removeEventListener('pointerup', up);
           handle.removeEventListener('pointercancel', up);
+          handle.removeEventListener('lostpointercapture', up);
+          if (handle.hasPointerCapture(e.pointerId)) handle.releasePointerCapture(e.pointerId);
           if (Math.abs(width - startWidth) >= 2) resizePicture(img, width);
         };
         handle.addEventListener('pointermove', move);
         handle.addEventListener('pointerup', up);
         handle.addEventListener('pointercancel', up);
+        handle.addEventListener('lostpointercapture', up);
       });
       handle.addEventListener('dblclick', (e) => {
         e.preventDefault();
