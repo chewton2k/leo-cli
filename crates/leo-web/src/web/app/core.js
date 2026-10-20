@@ -434,7 +434,10 @@ const noteHash = (id) => `#/n/${enc(id)}`;
 
 const asideHash = (hash) => /^#\/(settings|trash)(\/|$)/.test(hash || '');
 const places = { before: '', from: '', now: location.hash };
-addEventListener('hashchange', () => {
+addEventListener('hashchange', (e) => {
+  try {
+    places.now = new URL(e.oldURL).hash;
+  } catch (err) {}
   if (asideHash(location.hash) && !asideHash(places.now)) places.before = places.now || '#/';
   places.from = places.now;
   places.now = location.hash;

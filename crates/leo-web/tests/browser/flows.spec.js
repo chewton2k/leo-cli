@@ -5833,6 +5833,21 @@ test('Back from Settings, Storage or Trash returns to the note you were reading'
   await back();
   await expect.poll(at).toBe(`#/n/${note.id}`);
   await page.request.delete(`/api/notes/${note.id}`);
+
+  const title = `Fresh ${test.info().project.name} ${Date.now().toString(36)}`;
+  await visit('#/new');
+  await page.locator('#title').click();
+  await page.keyboard.type(title);
+  await expect.poll(at, { timeout: 10000 }).toMatch(/^#\/n\//);
+  const made = await at();
+  await visit('#/settings');
+  await expect(page.locator('.settings')).toBeVisible();
+  await back();
+  await expect.poll(at).toBe(made);
+  await expect(page.locator('#title')).toHaveText(title);
+  const all = await (await page.request.get('/api/notes?limit=500')).json();
+  expect((Array.isArray(all) ? all : all.notes || []).filter((n) => !n.title || n.title === 'Untitled').length).toBe(0);
+  await page.request.delete(`/api/notes/${made.slice(4)}`);
 });
 
 test('the practice list shows type, company or General, position, and problems submitted and solved', async ({ page }) => {
