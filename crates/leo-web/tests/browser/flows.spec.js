@@ -5566,11 +5566,37 @@ test('the library starts with a New note card in grid and list, in place of the 
   await page.locator('[data-action="library-view"][data-view="list"]').click();
   await expect(tile).toBeVisible();
   await page.locator('[data-action="library-view"][data-view="grid"]').click();
-  const tasks = page.locator('#tasks-window .tasks-body');
-  if (await tasks.isVisible()) await page.locator('#tasks-window [data-action="tasks-fold"]').click();
+  const small = await tile.boundingBox();
+  expect(small.height).toBeLessThan(48);
+  expect(small.width).toBeLessThan(200);
   await tile.click();
   await expect.poll(() => page.evaluate(() => decodeURIComponent(location.hash))).toContain(`#/new/${dir}`);
   await page.request.delete(`/api/notes/${note.id}`);
+});
+
+test('the open Tasks panel stays below the first row of notes', async ({ page }) => {
+  test.skip(test.info().project.name !== 'desktop', 'phones have no Tasks panel');
+  const tag = Date.now().toString(36);
+  const dir = `room-${tag}`;
+  await page.request.post('/api/dirs', { data: { path: dir } });
+  const notes = [];
+  for (const n of [1, 2, 3]) notes.push(await (await page.request.post('/api/notes', { data: { title: `Room ${n} ${tag}`, body: 'x', directory: dir } })).json());
+  const tasks = [];
+  for (let n = 0; n < 14; n += 1) tasks.push(await (await page.request.post('/api/tasks', { data: { title: `Room task ${n} ${tag}` } })).json());
+  await page.evaluate(() => localStorage.setItem('leo-tasks-folded', '0'));
+  for (const view of ['grid', 'list']) {
+    await page.goto(`/#/f/${dir}`);
+    await page.reload();
+    await page.locator(`[data-action="library-view"][data-view="${view}"]`).click();
+    const panel = page.locator('#tasks-window');
+    await expect(panel.locator('.tasks-body')).toBeVisible();
+    const first = page.locator('.library-cards > .card:not(.new-card)').first();
+    await expect.poll(async () => (await panel.boundingBox()).y - ((await first.boundingBox()).y + (await first.boundingBox()).height)).toBeGreaterThanOrEqual(0);
+    await first.click();
+    await expect.poll(() => page.evaluate(() => location.hash)).toMatch(/^#\/n\//);
+  }
+  for (const task of tasks) await page.request.delete(`/api/tasks/${task.id}`);
+  for (const note of notes) await page.request.delete(`/api/notes/${note.id}`);
 });
 
 test('a picture in a note can be resized by dragging its corner, and keeps that size', async ({ page }) => {

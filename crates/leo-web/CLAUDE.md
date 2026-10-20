@@ -150,7 +150,8 @@ seer, meaning, web, room).
 - Pictures live in `<notes>/attachments/` (`leo_core::attachments`, sniffed
   PNG/JPEG/GIF/WebP only, ≤20 MB); paste or drop in `doc.js`.
 - Library (`browse.rs`, `app/browse.js`): Grid (default) or List. The first
-  card is New note (`newCard`, 2026-10-19, the user's call), so the floating
+  card is New note (`newCard`, 2026-10-19, the user's call; a small dashed
+  button on its own row, not a full tile), so the floating
   New note button only shows in an empty folder (Record and Upload stay). A folder
   shows only the notes stored directly in it (`dir`, empty = top level).
   **Order and filters** (2026-10-12, the user's call): newest edit first by
@@ -670,6 +671,9 @@ the same idle loop.
   the box down into the icon's corner and opening grows it back out
   (`toggleTasksWindow`, a `MOTION_MS` clip-path; none with Reduce Motion; a
   second press cancels a running open).
+  On the library its height leaves the first row of notes clear
+  (`fitTasksWindow` sets `--tasks-room`, at least `TASKS_LEAST_ROOM`, on page
+  redraws and resizes).
   Active interview practices start with Tasks folded so its expanded rows
   cannot block the workspace. Show still expands it; this local
   practice choice leaves the remembered preference for other pages intact.

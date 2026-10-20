@@ -726,6 +726,7 @@ var tasksWin = { folded: false, practice: '', practiceFolded: true, timer: 0, ta
 const TASKS_FOLDED = 'leo-tasks-folded';
 const TASKS_AHEAD_DAYS = 7;
 const TASK_DONE_MS = 1200;
+const TASKS_LEAST_ROOM = 150;
 const MOST_TASK_FEEDBACK = 80;
 
 function dock() {
@@ -844,7 +845,19 @@ function drawTasksWindow() {
     const same = [...tasksBox.querySelectorAll('[data-action]')].find(el => el.dataset.action === focus.action && el.dataset.id === focus.id && el.dataset.on === focus.on);
     (same || tasksBox.querySelector('[data-action="tasks-fold"]'))?.focus({ preventScroll: true });
   }
+  fitTasksWindow();
 }
+
+function fitTasksWindow() {
+  const first = app.querySelector('.library-cards > .card:not(.new-card)') || app.querySelector('.library-cards > .card');
+  const box = tasksBox.hidden ? null : tasksBox.getBoundingClientRect();
+  const card = first && box && box.width ? first.getBoundingClientRect() : null;
+  if (card && card.left < box.right) tasksBox.style.setProperty('--tasks-room', `${Math.max(TASKS_LEAST_ROOM, Math.floor(box.bottom - card.bottom - scrollY - 12))}px`);
+  else tasksBox.style.removeProperty('--tasks-room');
+}
+
+new MutationObserver(fitTasksWindow).observe(app, { childList: true });
+window.addEventListener('resize', fitTasksWindow);
 
 function setTasksFolded(folded) {
   if (tasksWin.practice) {
