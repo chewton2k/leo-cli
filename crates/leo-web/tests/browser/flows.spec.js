@@ -5776,6 +5776,7 @@ test('on a short screen the Tasks panel waits as its icon, and the last notes ca
   await page.setViewportSize({ width: 1280, height: 600 });
   await page.reload();
   await expect(page.locator('.library-cards > .card').first()).toBeAttached();
+  await page.evaluate(() => window.scrollTo(0, 0));
   expect((await page.locator('.library-cards > .card:not(.new-card)').first().boundingBox()).y).toBeGreaterThan(600);
   await expect(panel.locator('.tasks-body')).toBeVisible();
   await page.request.delete(`/api/tasks/${task.id}`);
