@@ -300,6 +300,8 @@
   const DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
   const ASK = /^(what|why|how|when|who|whom|where|which|whose|can|could|does|do|did|is|are|was|were|should|would|will|explain|summari[sz]e|tell me|help me)\b/i;
 
+  const NUDGE = /\b(?:(?:can|could|would) you\s+|please\s+)?(?:remind me(?:\s+to)?|don'?t forget to|do not forget to)\b\s*[:\-]?/i;
+
   function quickParse(input, now = new Date()) {
     let text = String(input || '').trim();
     let kind = '';
@@ -310,6 +312,7 @@
     };
     if (/^note\s*[:\-]\s*/i.test(text)) { kind = 'note'; text = text.replace(/^note\s*[:\-]\s*/i, ''); }
     else if (/^(remind me( to)?|todo|to do|task)\s*[:\-]?\s+/i.test(text)) { kind = 'task'; text = text.replace(/^(remind me( to)?|todo|to do|task)\s*[:\-]?\s+/i, ''); }
+    else if (NUDGE.test(text)) { kind = 'task'; strip(NUDGE); }
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     let date = null;
     let time = null;
@@ -333,8 +336,8 @@
     else if (/\bnext week\b/i.test(text)) { date = nextWeekday(today, 1); strip(/\bnext week\b/i); }
     else if (inDays) { date = addDays(today, Number(inDays[1])); strip(/\bin\s+\d{1,3}\s+days?\b/i); }
     else {
-      const day = [...text.matchAll(/\b(?:(on|this|next)\s+)?(sun|mon|tue|tues|wed|thu|thur|thurs|fri|sat)(?:day|nesday|sday|urday|rsday)?\b/gi)]
-        .find((d) => d[1] || d[0].length > 3 || !/^(sun|sat)$/i.test(d[2]) || d.index + d[0].length === text.length);
+      const day = [...text.matchAll(/\b(?:(on|this|next|for|by|until|till)\s+)?(sun|mon|tue|tues|wed|thu|thur|thurs|fri|sat)(?:day|nesday|sday|urday|rsday)?\b/gi)]
+        .find((d) => d[1] || d[0].length > 3 || !/^(sun|sat)$/i.test(d[2]) || /^\s*([,.;!?]|$)/.test(text.slice(d.index + d[0].length)));
       if (day) {
         const index = DAYS.findIndex((d) => d.startsWith(day[2].toLowerCase().slice(0, 3)));
         if (index >= 0) {
@@ -346,7 +349,7 @@
       }
     }
     if (time && !date) date = today;
-    text = text.replace(/\s+(on|at|by|for|due)$/i, '').replace(/^(on|at|by)\s+/i, '').replace(/[\s,]+$/, '').trim();
+    text = text.replace(/^[\s,.;:!?-]+/, '').replace(/\s+(on|at|by|for|due)$/i, '').replace(/^(on|at|by|for|to)\s+/i, '').replace(/[\s,.;:!?]+$/, '').trim();
     if (!kind) kind = /\?$/.test(String(input).trim()) || ASK.test(String(input).trim()) ? 'ask' : date ? 'task' : 'ask';
     return { kind, title: kind === 'ask' ? String(input).trim() : text, date: date ? dayKey(date) : null, time };
   }

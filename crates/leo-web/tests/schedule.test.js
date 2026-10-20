@@ -19,6 +19,11 @@ test('Quick Leo reads a reminder, a question or a note from one line', () => {
   assert.equal(S.quickParse('gym sat', now).date, '2026-10-24');
   assert.equal(S.quickParse('brunch on sun with Ana', now).date, '2026-10-25');
   assert.equal(S.quickParse('call mom fri', now).date, '2026-10-23');
+  assert.deepEqual(S.quickParse('for sun, remind me to go buy sunscreen', now), { kind: 'task', title: 'go buy sunscreen', date: '2026-10-25', time: null });
+  assert.deepEqual(S.quickParse('can you remind me to call mom tomorrow?', now), { kind: 'task', title: 'call mom', date: '2026-10-20', time: null });
+  assert.deepEqual(S.quickParse("don't forget to pay rent by fri", now), { kind: 'task', title: 'pay rent', date: '2026-10-23', time: null });
+  assert.deepEqual(S.quickParse('sat. pick up the cake', now), { kind: 'task', title: 'pick up the cake', date: '2026-10-24', time: null });
+  assert.deepEqual(S.quickParse('remind me on sun to buy sun cream', now), { kind: 'task', title: 'buy sun cream', date: '2026-10-25', time: null });
   assert.deepEqual(S.quickParse('What is a heap?', now), { kind: 'ask', title: 'What is a heap?', date: null, time: null });
   assert.equal(S.quickParse('explain dijkstra', now).kind, 'ask');
   assert.deepEqual(S.quickParse('note: idea for the essay', now), { kind: 'note', title: 'idea for the essay', date: null, time: null });
