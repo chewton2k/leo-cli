@@ -161,6 +161,7 @@ body.on-note main, body.on-note .bar-row { max-width: var(--note-width); }
 
 .cards { display: flex; flex-direction: column; gap: 10px; }
 body.on-library main, body.on-library .bar-row, body.on-library .search { max-width: 1080px; }
+body.on-library main { padding-bottom: max(calc(var(--bottom) + 110px), var(--dock-room, 0px)); }
 .library-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0 4px; }
 .library-views { display: flex; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
 .library-views .btn { border: 0; }

@@ -68,9 +68,14 @@ seer, meaning, web, room).
   the screen on desktop. `schedule.quickRank` infers the top result from what
   is typed (`quickParse` dates and times: a reminder, Undo; a question: Ask
   Felix in a new chat, `chat.askNew`; a note title from `/api/search`: open
-  it; a page name in `QUICK_PLACES`: go there; "note:": a new note; anything
-  else asks Felix) and lists the other choices under it; Enter runs the
-  highlighted row, arrow keys move. Empty, it lists what is overdue or due
+  it; a folder name from `/api/folders`: open it; a page name in
+  `QUICK_PLACES`: go there; a short line starting with a doing word (`TODO`:
+  "buy milk"): a task; "note:": a new note; anything else goes to Felix, who
+  works out what was meant and can add tasks or notes himself; no AI runs
+  while typing) and lists the other choices under it, with matching past
+  chats (`/api/chats?q`, `chat.openSaved`); Enter runs the highlighted row
+  (on the top row it first waits up to `QUICK_WAIT_MS` for the lookup of what
+  was typed, so a fast Enter still opens the note), arrow keys move. Empty, it lists what is overdue or due
   today with boxes to tick. Lookups are scoped to the open sheet
   (`inQuick`), since a closing one can still be in the page.
 - Felix's chat list: the × turns into Delete on the first press; pressing
@@ -681,7 +686,10 @@ the same idle loop.
   second press cancels a running open).
   On the library its height leaves the first row of notes clear
   (`fitTasksWindow` sets `--tasks-room`, at least `TASKS_LEAST_ROOM`, on page
-  redraws and resizes).
+  redraws and resizes). With less room than that it waits as its icon
+  (`tasksWin.cramped`; opening it then is not remembered), and the library
+  pads its bottom by the dock's height (`--dock-room`) so the last notes can
+  scroll clear of it.
   Active interview practices start with Tasks folded so its expanded rows
   cannot block the workspace. Show still expands it; this local
   practice choice leaves the remembered preference for other pages intact.

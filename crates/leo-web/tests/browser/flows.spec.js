@@ -5687,8 +5687,10 @@ test('Quick Leo is one Spotlight-style line that works out what you want: a remi
   await page.keyboard.press('ControlOrMeta+j');
   await input.fill(`Pay rent ${tag}`);
   await expect(box.locator('.quick-row')).toHaveCount(3);
-  await expect(top).toContainText('Ask Felix');
+  await expect(top).toContainText('Add to tasks');
   await input.press('ArrowDown');
+  await expect(top).toContainText('Ask Felix');
+  await input.press('ArrowUp');
   await expect(top).toContainText('Add to tasks');
   await input.press('Enter');
   await expect(page.locator('.toast')).toContainText(`Added “Pay rent ${tag}”`);
@@ -5701,7 +5703,6 @@ test('Quick Leo is one Spotlight-style line that works out what you want: a remi
 
   await page.keyboard.press('ControlOrMeta+j');
   await input.fill(`Idea ${tag}`);
-  await expect(top).toContainText('Open note');
   await input.press('Enter');
   await expect.poll(() => page.evaluate(() => location.hash)).toMatch(/^#\/n\//);
   await expect(page.locator('main h1', { hasText: `Idea ${tag}` })).toBeVisible();
@@ -5714,6 +5715,60 @@ test('Quick Leo is one Spotlight-style line that works out what you want: a remi
   await expect(page.locator('.msg.leo').last()).toContainText('A heap keeps the smallest on top.');
   expect(asked.at(-1).messages.at(-1).text).toContain('What is a heap?');
   expect(asked.at(-1).messages).toHaveLength(1);
+});
+
+test('Quick Leo finds folders and past chats and opens them', async ({ page }) => {
+  const tag = `${test.info().project.name}-${Date.now().toString(36)}`;
+  const folder = `Shelf ${tag}`;
+  await page.request.post('/api/dirs', { data: { path: `Classes/${folder}` } });
+  await page.request.put(`/api/chats/quick-${tag}`, { data: { title: `Heap talk ${tag}`, mode: 'chat', messages: [{ role: 'user', text: `Heap talk ${tag}` }, { role: 'assistant', text: 'A heap keeps the smallest on top.' }] } });
+  await page.goto('/');
+  await page.keyboard.press('ControlOrMeta+j');
+  const box = page.locator('.scrim:not(.scrim-gone) .quick-leo');
+  const input = box.locator('#quick-input');
+  await input.fill(folder);
+  const top = box.locator('.quick-row.on');
+  await expect(top).toContainText('Folder in Classes');
+  await input.press('Enter');
+  await expect.poll(() => page.evaluate(() => decodeURIComponent(location.hash))).toBe(`#/f/Classes/${folder}`);
+  await expect(page.locator('main h1, .crumbs')).toContainText(folder);
+  await page.keyboard.press('ControlOrMeta+j');
+  await input.fill(`Heap talk ${tag}`);
+  const talk = box.locator('.quick-row', { hasText: 'Past chat' });
+  await expect(talk).toContainText(`Heap talk ${tag}`);
+  await talk.click();
+  await expect(page.locator('aside.chat')).toBeVisible();
+  await expect(page.locator('.msg.leo').last()).toContainText('A heap keeps the smallest on top.');
+});
+
+test('on a short screen the Tasks panel waits as its icon, and the last notes can scroll clear of it', async ({ page }) => {
+  test.skip(test.info().project.name !== 'desktop', 'phones have no Tasks panel');
+  const tag = Date.now().toString(36);
+  const dir = `short-${tag}`;
+  await page.request.post('/api/dirs', { data: { path: dir } });
+  const notes = [];
+  for (let n = 0; n < 9; n += 1) notes.push(await (await page.request.post('/api/notes', { data: { title: `Short ${n} ${tag}`, body: 'x', directory: dir } })).json());
+  const task = await (await page.request.post('/api/tasks', { data: { title: `Short task ${tag}` } })).json();
+  await page.evaluate(() => localStorage.setItem('leo-tasks-folded', '0'));
+  await page.setViewportSize({ width: 1280, height: 600 });
+  await page.goto(`/#/f/${dir}`);
+  await page.reload();
+  const panel = page.locator('#tasks-window');
+  await expect(panel.locator('.tasks-pill')).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem('leo-tasks-folded'))).toBe('0');
+  await panel.locator('.tasks-pill').click();
+  await expect(panel.locator('.tasks-body')).toBeVisible();
+  await panel.locator('[data-action="tasks-fold"]').first().click();
+  await expect(panel.locator('.tasks-pill')).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem('leo-tasks-folded'))).toBe('0');
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect(panel.locator('.tasks-body')).toBeVisible();
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  const last = await page.locator('.library-cards > .card').last().boundingBox();
+  const dock = await page.locator('#dock').boundingBox();
+  expect(last.y + last.height).toBeLessThanOrEqual(dock.y);
+  await page.request.delete(`/api/tasks/${task.id}`);
+  for (const note of notes) await page.request.delete(`/api/notes/${note.id}`);
 });
 
 test('a calendar event shows its organiser, guests and formatted description, with nothing that can run', async ({ page }) => {

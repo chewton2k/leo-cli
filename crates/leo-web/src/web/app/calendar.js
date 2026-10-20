@@ -814,13 +814,13 @@ function tasksDueBadge() {
 function drawTasksWindow() {
   const practice = /^#\/interviews\/([a-zA-Z0-9-]{8,64})$/.exec(location.hash)?.[1] || '';
   if (practice !== tasksWin.practice) { tasksWin.practice = practice; tasksWin.practiceFolded = true; }
-  const folded = practice ? tasksWin.practiceFolded : tasksWin.folded;
+  const folded = tasksFolded();
   const tasks = tasksWin.tasks || (cal.data && cal.data.tasks) || [];
   const groups = tasksGroups(tasks, true);
   const open = groups.reduce((n, [, list]) => n + list.length, 0);
   const here = /^#\/calendar/.test(location.hash);
   tasksBox.hidden = !open || here || state.view === 'locked';
-  if (tasksBox.hidden) return;
+  if (tasksBox.hidden) { fitTasksWindow(); return; }
   const late = groups.find(([name]) => name === 'Overdue');
   const active = tasksBox.contains(document.activeElement) ? document.activeElement : null;
   const focus = active ? {action: active.dataset.action, id: active.dataset.id, on: active.dataset.on} : null;
@@ -833,6 +833,7 @@ function drawTasksWindow() {
   tasksBox.classList.toggle('folded', folded);
   if (folded) {
     tasksBox.innerHTML = `<button type="button" class="tasks-pill" data-action="tasks-fold" aria-expanded="false" aria-label="Show tasks: ${esc(label)}" title="Tasks · ${esc(label)}"><span class="tasks-icon${late ? ' late' : ''}">${ICON.check}</span><span class="tasks-badge${late ? ' late' : ''}">${open > 99 ? '99+' : open}</span></button>`;
+    fitTasksWindow();
     return;
   }
   tasksBox.innerHTML = `<div class="tasks-head">
@@ -848,12 +849,29 @@ function drawTasksWindow() {
   fitTasksWindow();
 }
 
+function tasksFolded() {
+  if (tasksWin.practice) return tasksWin.practiceFolded;
+  return tasksWin.folded || (tasksWin.cramped && !tasksWin.opened);
+}
+
 function fitTasksWindow() {
   const first = app.querySelector('.library-cards > .card:not(.new-card)') || app.querySelector('.library-cards > .card');
   const box = tasksBox.hidden ? null : tasksBox.getBoundingClientRect();
   const card = first && box && box.width ? first.getBoundingClientRect() : null;
-  if (card && card.left < box.right) tasksBox.style.setProperty('--tasks-room', `${Math.max(TASKS_LEAST_ROOM, Math.floor(box.bottom - card.bottom - scrollY - 12))}px`);
-  else tasksBox.style.removeProperty('--tasks-room');
+  const over = Boolean(card && card.left < box.right);
+  const room = over ? Math.floor(box.bottom - card.bottom - scrollY - 12) : 0;
+  if (over) {
+    tasksBox.style.setProperty('--tasks-room', `${Math.max(TASKS_LEAST_ROOM, room)}px`);
+    document.body.style.setProperty('--dock-room', `${Math.ceil(innerHeight - dock().getBoundingClientRect().top + 16)}px`);
+  } else {
+    tasksBox.style.removeProperty('--tasks-room');
+    document.body.style.removeProperty('--dock-room');
+  }
+  const cramped = over && room < TASKS_LEAST_ROOM;
+  if (cramped !== Boolean(tasksWin.cramped)) {
+    tasksWin.cramped = cramped;
+    if (!tasksWin.practice) drawTasksWindow();
+  }
 }
 
 new MutationObserver(fitTasksWindow).observe(app, { childList: true });
@@ -863,10 +881,13 @@ function setTasksFolded(folded) {
   if (tasksWin.practice) {
     tasksWin.practiceFolded = folded;
   } else {
-    tasksWin.folded = folded;
-    try {
-      localStorage.setItem(TASKS_FOLDED, folded ? '1' : '0');
-    } catch (e) {}
+    tasksWin.opened = !folded;
+    if (!(folded && tasksWin.cramped && !tasksWin.folded)) {
+      tasksWin.folded = folded;
+      try {
+        localStorage.setItem(TASKS_FOLDED, folded ? '1' : '0');
+      } catch (e) {}
+    }
   }
   drawTasksWindow();
   tasksBox.querySelector('[data-action="tasks-fold"]')?.focus({ preventScroll: true });
@@ -875,7 +896,7 @@ function setTasksFolded(folded) {
 function toggleTasksWindow() {
   if (tasksBox.dataset.folding) return;
   for (const run of tasksBox.getAnimations()) if (!run.animationName) run.cancel();
-  const folding = !(tasksWin.practice ? tasksWin.practiceFolded : tasksWin.folded);
+  const folding = !tasksFolded();
   const before = tasksBox.getBoundingClientRect();
   if (stillMotion() || tasksBox.hidden || !before.width) {
     setTasksFolded(folding);
@@ -921,7 +942,7 @@ async function loadTasksWindow() {
 }
 
 setTimeout(() => loadTasksWindow().catch(() => {}), 0);
-window.addEventListener('hashchange', () => drawTasksWindow());
+window.addEventListener('hashchange', () => { tasksWin.opened = false; drawTasksWindow(); });
 
 const source = { note: null, name: null, seq: 0, returnTo: null, stopResize: null };
 const SOURCE_MIN = 260;

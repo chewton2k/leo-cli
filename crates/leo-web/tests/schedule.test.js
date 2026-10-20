@@ -38,7 +38,16 @@ test('Quick Leo puts what you most likely want first, like Spotlight', () => {
   assert.equal(top('dijkstra versus bellman ford for negative edges', []).kind, 'ask');
   assert.equal(top('how do graph algorithms work').kind, 'ask', 'a question asks even when a note matches');
   const rows = S.quickRank('Pay rent', { notes: [], places }, now);
-  assert.deepEqual(rows.map((r) => r.kind), ['ask', 'task', 'note'], 'every other choice stays one arrow away');
+  assert.deepEqual(rows.map((r) => r.kind), ['task', 'ask', 'note'], 'every other choice stays one arrow away');
+  assert.deepEqual(top('buy milk', []), { kind: 'task', title: 'buy milk', date: null, time: null }, 'a short thing to do is a task');
+  assert.equal(top('pick up John from the airport', []).kind, 'task');
+  assert.equal(top('I keep mixing up the two proofs and want to get them straight before Friday somehow', []).kind, 'task', 'a date still means a reminder');
+  assert.equal(top('so I was thinking about the project and how the parts fit together overall', []).kind, 'ask', 'Felix works out anything longer');
+  const folders = ['Classes/CS 161', 'Work'];
+  const chats = [{ id: 'k1', title: 'Heap questions' }];
+  assert.deepEqual(S.quickRank('cs 161', { folders, places }, now)[0], { kind: 'folder', path: 'Classes/CS 161' });
+  assert.ok(S.quickRank('cs', { folders, places }, now).some((r) => r.kind === 'folder' && r.path === 'Classes/CS 161'));
+  assert.ok(S.quickRank('heap', { chats, places }, now).some((r) => r.kind === 'chat' && r.id === 'k1'), 'past chats that match are listed');
   assert.equal(new Set(S.quickRank('heaps', { notes, places }, now)).size, S.quickRank('heaps', { notes, places }, now).length);
   assert.deepEqual(S.quickRank('   ', { notes, places }, now), []);
 });

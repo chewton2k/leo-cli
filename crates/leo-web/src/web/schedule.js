@@ -350,7 +350,9 @@
     return { kind, title: kind === 'ask' ? String(input).trim() : text, date: date ? dayKey(date) : null, time };
   }
 
-  function quickRank(input, { notes = [], places = [] } = {}, now = new Date()) {
+  const TODO = /^(buy|get|grab|pick up|pick|drop off|bring|order|return|pay|book|call|phone|ring|email|e-mail|text|message|reply to|reply|respond to|follow up|send|ask|tell|remind|invite|meet|visit|finish|submit|file|sign|apply|register|renew|cancel|schedule|reschedule|plan|prepare|prep|pack|print|clean|wash|tidy|cook|water|feed|walk|fix|repair|install|update|back up|backup|charge|study|practice|practise|review|revise|read|write|draft|edit|work on|look into|research|check|move|sell|donate|shop for|go to|take|make|post|upload|download|watch|listen to|learn)\b/i;
+
+  function quickRank(input, { notes = [], places = [], folders = [], chats = [] } = {}, now = new Date()) {
     const text = String(input || '').trim();
     if (!text) return [];
     const parsed = quickParse(text, now);
@@ -362,6 +364,10 @@
     const named = notes.filter((n) => titled(n) === lower);
     const started = notes.filter((n) => titled(n) !== lower && titled(n).startsWith(lower));
     const opens = [...named, ...started, ...notes.filter((n) => !named.includes(n) && !started.includes(n))].slice(0, 3).map((n) => ({ kind: 'open', id: n.id, title: n.title }));
+    const leaf = (path) => String(path).split('/').pop().toLowerCase();
+    const shelf = lower.length >= 2 ? folders.filter((f) => leaf(f).startsWith(lower) || leaf(f).split(/[\s_-]+/).some((w) => w.startsWith(lower))) : [];
+    const shelves = [...shelf.filter((f) => leaf(f) === lower), ...shelf.filter((f) => leaf(f) !== lower)].slice(0, 2).map((path) => ({ kind: 'folder', path }));
+    const talks = chats.slice(0, 2).map((c) => ({ kind: 'chat', id: c.id, title: c.title }));
     const goes = lower.length >= 2 ? places.filter((p) => p.name.toLowerCase().split(/\s+/).some((w) => w.startsWith(lower)) || p.name.toLowerCase().startsWith(lower)).slice(0, 2).map((p) => ({ kind: 'place', name: p.name, hash: p.hash })) : [];
     const ask = { kind: 'ask', text };
     const task = { kind: 'task', title: reminder.title || text, date: reminder.date, time: reminder.time };
@@ -371,10 +377,13 @@
     else if (parsed.kind === 'task') top = task;
     else if (asked) top = ask;
     else if (named.length) top = opens[0];
+    else if (shelves.length && leaf(shelves[0].path) === lower) top = shelves[0];
     else if (goes.length && words <= 2 && lower.length >= 3 && (!started.length || goes[0].name.toLowerCase().startsWith(lower))) top = goes[0];
     else if (started.length && words <= 4) top = opens[0];
-    return [top, ask, ...opens, ...goes, task, note].filter((row, i, rows) => rows.indexOf(row) === i).slice(0, 7);
+    else if (TODO.test(text) && words >= 2 && words <= 12) top = task;
+    return [top, ask, ...opens, ...shelves, ...talks, ...goes, task, note].filter((row, i, rows) => rows.indexOf(row) === i).slice(0, 8);
   }
+
 
   const api = { quickParse, quickRank, richText, eventDetails, dayKey, fromKey, addDays, weekStart, monthGrid, weekOf, eventDays, plan, quickDates, weekdayOf, repeats, repeatsOn, occurrences, nextOpen, repeatLabel, rrule, googleLink, googleDay, timeLabel, nextWeekday };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
