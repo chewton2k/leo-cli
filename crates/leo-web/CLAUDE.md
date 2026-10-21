@@ -251,9 +251,11 @@ seer, meaning, web, room).
   and Felix's newest reply up to `LAST_REPLY_CHARS` (12,000); both reach full
   size at `FULL_ROOM` (32,000, the most `felix_room` gives) and shrink with a
   smaller room, never below `TURN_CHARS` (4,000, every other turn). Warm
-  follow-ups and messages sent while Felix works (`steer::MOST_CHARS`) use the
+  follow-ups (sized by the room, documents by their own share, as in a cold
+  prompt) and messages sent while Felix works (`steer::MOST_CHARS`) use the
   same cap (2026-10-21: a pasted homework spec lost its question at 4,000).
-  `clip_turn` closes a code fence it cut through, says how many characters
+  `clip_turn` closes a code fence it cut through (``` or ~~~, with the
+  opening fence's own length), says how many characters
   are left out and tells Felix to ask for the rest as a file.
 - Styles (`MODES`): chat, study, interview. Study marks critically (a right
   result by wrong reasoning is `[[incorrect]]`), asks about the reasoning

@@ -1968,7 +1968,13 @@ pub(crate) async fn chat_reply(
             .collect();
         let message = body.messages.last().map_or("", |t| t.text.as_str());
         Continued {
-            text: chat::follow_up(&fresh_documents, &renumbered.text, message, documents_room),
+            text: chat::follow_up(
+                &fresh_documents,
+                &renumbered.text,
+                message,
+                room,
+                documents_room,
+            ),
             sources: renumbered.sources,
             notes: renumbered.notes,
             warm,

@@ -269,18 +269,35 @@ pub(crate) fn clip_turn(text: &str, most: usize) -> String {
         return text.to_string();
     }
     let mut out: String = text.chars().take(most).collect();
-    let fences = out
-        .lines()
-        .filter(|line| line.trim_start().starts_with("```"))
-        .count();
-    if fences % 2 == 1 {
-        out.push_str("\n```");
+    if let Some(fence) = open_fence(&out) {
+        out.push('\n');
+        out.push_str(&fence);
     }
     out.push_str(&format!(
         "\n[…{} more characters of this message are left out; tell the user the end did not arrive and ask them to attach it as a file]",
         total - most
     ));
     out
+}
+
+fn open_fence(text: &str) -> Option<String> {
+    let mut open: Option<(char, usize)> = None;
+    for line in text.lines() {
+        let line = line.trim_start();
+        let Some(mark) = line.chars().next().filter(|c| *c == '`' || *c == '~') else {
+            continue;
+        };
+        let run = line.chars().take_while(|c| *c == mark).count();
+        if run < 3 {
+            continue;
+        }
+        match open {
+            None => open = Some((mark, run)),
+            Some((m, n)) if m == mark && run >= n && line[run..].trim().is_empty() => open = None,
+            Some(_) => {}
+        }
+    }
+    open.map(|(mark, run)| mark.to_string().repeat(run))
 }
 
 fn turn_room(room: usize, at_default: usize) -> usize {
@@ -982,9 +999,10 @@ pub fn follow_up(
     notes: &str,
     message: &str,
     room: usize,
+    material_room: usize,
 ) -> String {
     let zone = iana_time_zone::get_timezone().ok();
-    let mut user = documents_within(documents, scaled(DOCS_CHARS, room));
+    let mut user = documents_within(documents, scaled(DOCS_CHARS, material_room));
     if !notes.trim().is_empty() {
         user.push_str("<more_notes>\nNotes for this message that you have not read yet in this chat. Notes given earlier in this chat still apply.\n");
         user.push_str(notes);
@@ -1663,7 +1681,7 @@ mod tests {
         for room in [FULL_ROOM, ROOM] {
             let (_, user) = prompt_within("chat", "", &[], &[said("user", &pasted)], room, None);
             assert!(user.contains("QUESTION: what does this print?"), "{room}");
-            let user = follow_up(&[], "", &pasted, room);
+            let user = follow_up(&[], "", &pasted, room, room);
             assert!(user.contains("QUESTION: what does this print?"), "{room}");
         }
     }
@@ -1704,7 +1722,7 @@ mod tests {
         let pasted = "\u{2200}".repeat(40_000);
         let most = turn_room(LEAST_ROOM, MESSAGE_CHARS);
         assert!(most < MESSAGE_CHARS / 2);
-        let user = follow_up(&[], "", &pasted, LEAST_ROOM);
+        let user = follow_up(&[], "", &pasted, LEAST_ROOM, LEAST_ROOM);
         let kept = user.matches('\u{2200}').count();
         assert!(kept <= most + 2, "{kept} > {most}");
         assert!(kept >= TURN_CHARS);
@@ -1726,5 +1744,29 @@ mod tests {
         ];
         let (_, user) = prompt_within("chat", "", &[], &turns, FULL_ROOM, None);
         assert!(user.contains("PART C: prove it terminates."));
+    }
+
+    #[test]
+    fn a_cut_closes_tilde_and_longer_fences_with_their_own_marks() {
+        let tilde = format!("~~~ocaml\n{}", "let x = 1\n".repeat(300));
+        let cut = clip_turn(&tilde, 500);
+        assert!(cut.contains("\n~~~\n[…"), "{cut}");
+        let outer = format!("````md\n```ocaml\nlet x = 1\n```\n{}", "text\n".repeat(300));
+        let cut = clip_turn(&outer, 500);
+        assert!(cut.contains("\n````\n[…"), "{cut}");
+        let closed = format!("```\ncode\n```\n{}", "prose ".repeat(300));
+        let cut = clip_turn(&closed, 500);
+        assert_eq!(
+            cut.lines().filter(|l| l.starts_with("```")).count(),
+            2,
+            "{cut}"
+        );
+    }
+
+    #[test]
+    fn a_warm_follow_up_sizes_the_message_by_the_room_not_the_documents_share() {
+        let pasted = format!("{}QUESTION?", "spec line\n".repeat(2_000));
+        let user = follow_up(&[], "", &pasted, FULL_ROOM, LEAST_ROOM);
+        assert!(user.contains("QUESTION?"));
     }
 }

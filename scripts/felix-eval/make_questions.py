@@ -1,4 +1,5 @@
 import json
+import pathlib
 
 intro = """Homework 2. Naive parsing of context-free grammars
 
@@ -85,5 +86,5 @@ questions = [
     {"id": "long-paste", "prompt": long_paste, "must": ["convert_grammar returns (start, fun nt -> list of rhs for nt in order)", "uses List.filter/List.map or fold over the rule list", "keeps rule order", "no imperative features", "shows Expr maps to [[N Term; N Binop; N Expr]; [N Term]]"]},
  {"id": "big-paste", "prompt": big_paste, "must": ["convert_grammar returns (start, fun nt -> list of rhs for nt in order)", "uses List.filter/List.map or fold over the rule list", "keeps rule order", "no imperative features", "shows Expr maps to [[N Term; N Binop; N Expr]; [N Term]]"]},
 ]
-json.dump(questions, open("questions.json", "w"), indent=1)
+json.dump(questions, open(pathlib.Path(__file__).resolve().parent / "questions.json", "w"), indent=1)
 print(len(long_paste), len(big_paste))
