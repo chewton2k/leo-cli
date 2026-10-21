@@ -173,6 +173,7 @@ const DOCS_CHARS: usize = 60_000;
 const TURN_CHARS: usize = 4_000;
 const MESSAGE_CHARS: usize = 32_000;
 const LAST_REPLY_CHARS: usize = 12_000;
+const FULL_ROOM: usize = 32_000;
 pub const REPLY_TOKENS: u32 = 16_000;
 
 pub const MODES: [&str; 3] = ["chat", "study", "interview"];
@@ -262,7 +263,7 @@ pub(crate) fn studied(note: &Note) -> bool {
     !(note.title == leo_core::manual::MANUAL_TITLE && note.tags.iter().any(|t| t == "manual"))
 }
 
-fn clip_turn(text: &str, most: usize) -> String {
+pub(crate) fn clip_turn(text: &str, most: usize) -> String {
     let total = text.chars().count();
     if total <= most {
         return text.to_string();
@@ -276,14 +277,14 @@ fn clip_turn(text: &str, most: usize) -> String {
         out.push_str("\n```");
     }
     out.push_str(&format!(
-        "\n[…{} more characters of this message are left out]",
+        "\n[…{} more characters of this message are left out; tell the user the end did not arrive and ask them to attach it as a file]",
         total - most
     ));
     out
 }
 
 fn turn_room(room: usize, at_default: usize) -> usize {
-    scaled(at_default, room).max(TURN_CHARS)
+    (at_default * room.clamp(LEAST_ROOM, FULL_ROOM) / FULL_ROOM).max(TURN_CHARS)
 }
 
 pub(crate) fn clip(text: &str, most: usize) -> String {
@@ -954,9 +955,12 @@ pub fn prompt_material(
     user.push_str("<conversation>\n");
     let kept = &messages[start..];
     let newest_reply = kept.iter().rposition(|turn| turn.role != "user");
+    let newest_paste = kept[..kept.len().saturating_sub(1)]
+        .iter()
+        .rposition(|turn| turn.role == "user" && turn.text.chars().count() > TURN_CHARS);
     for (at, turn) in kept.iter().enumerate() {
         let who = if turn.role == "user" { "User" } else { "Felix" };
-        let most = if turn.role == "user" && at + 1 == kept.len() {
+        let most = if turn.role == "user" && at + 1 == kept.len() || Some(at) == newest_paste {
             turn_room(room, MESSAGE_CHARS)
         } else if Some(at) == newest_reply {
             turn_room(room, LAST_REPLY_CHARS)
@@ -1656,10 +1660,12 @@ mod tests {
             "let x = 1 in x;\n".repeat(1_250)
         );
         assert!(pasted.chars().count() > 20_000);
-        let (_, user) = prompt_within("chat", "", &[], &[said("user", &pasted)], ROOM, None);
-        assert!(user.contains("QUESTION: what does this print?"));
-        let user = follow_up(&[], "", &pasted, ROOM);
-        assert!(user.contains("QUESTION: what does this print?"));
+        for room in [FULL_ROOM, ROOM] {
+            let (_, user) = prompt_within("chat", "", &[], &[said("user", &pasted)], room, None);
+            assert!(user.contains("QUESTION: what does this print?"), "{room}");
+            let user = follow_up(&[], "", &pasted, room);
+            assert!(user.contains("QUESTION: what does this print?"), "{room}");
+        }
     }
 
     #[test]
@@ -1671,7 +1677,7 @@ mod tests {
             said("assistant", &reply),
             said("user", "why line 30?"),
         ];
-        let (_, user) = prompt_within("chat", "", &[], &turns, ROOM, None);
+        let (_, user) = prompt_within("chat", "", &[], &turns, FULL_ROOM, None);
         assert!(user.contains("let answer = 42"));
     }
 
@@ -1685,9 +1691,10 @@ mod tests {
             .count();
         assert_eq!(fences % 2, 0, "{cut}");
         assert!(
-            cut.ends_with("more characters of this message are left out]"),
+            cut.contains("more characters of this message are left out"),
             "{cut}"
         );
+        assert!(cut.ends_with("ask them to attach it as a file]"), "{cut}");
         assert!(!cut.contains("note"));
         assert_eq!(clip_turn("short", 1_000), "short");
     }
@@ -1695,12 +1702,29 @@ mod tests {
     #[test]
     fn a_small_room_still_bounds_the_message() {
         let pasted = "\u{2200}".repeat(40_000);
-        let most = scaled(MESSAGE_CHARS, LEAST_ROOM).max(TURN_CHARS);
+        let most = turn_room(LEAST_ROOM, MESSAGE_CHARS);
+        assert!(most < MESSAGE_CHARS / 2);
         let user = follow_up(&[], "", &pasted, LEAST_ROOM);
         let kept = user.matches('\u{2200}').count();
         assert!(kept <= most + 2, "{kept} > {most}");
         assert!(kept >= TURN_CHARS);
         let (_, user) = prompt_within("chat", "", &[], &[said("user", &pasted)], LEAST_ROOM, None);
         assert!(user.matches('\u{2200}').count() <= most + 2);
+    }
+
+    #[test]
+    fn a_pasted_assignment_stays_whole_when_the_chat_is_rebuilt_later() {
+        let pasted = format!(
+            "{}PART C: prove it terminates.",
+            "Rule: no refs.\n".repeat(800)
+        );
+        assert!(pasted.chars().count() > 11_000);
+        let turns = [
+            said("user", &pasted),
+            said("assistant", "Here are parts a and b."),
+            said("user", "now do part c"),
+        ];
+        let (_, user) = prompt_within("chat", "", &[], &turns, FULL_ROOM, None);
+        assert!(user.contains("PART C: prove it terminates."));
     }
 }

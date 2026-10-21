@@ -1863,7 +1863,7 @@
 
     function steered(work, texts) {
       for (const text of texts) {
-        const m = work.waiting.find((w) => w.steer === 'waiting' && w.text.slice(0, 4000) === text);
+        const m = work.waiting.find((w) => w.steer === 'waiting' && text.startsWith(w.text.trim().slice(0, 32000)));
         if (!m) continue;
         m.steer = 'read';
         const list = work.thread.messages;

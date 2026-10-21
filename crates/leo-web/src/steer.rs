@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 pub const MOST_WAITING: usize = 8;
-pub const MOST_CHARS: usize = 4000;
+pub const MOST_CHARS: usize = 32_000;
 
 #[derive(Clone, Default)]
 pub struct Steering(Arc<Mutex<HashMap<String, Waiting>>>);
@@ -44,7 +44,7 @@ impl Steering {
         if waiting.texts.len() >= MOST_WAITING {
             return Err("full");
         }
-        waiting.texts.push(text.chars().take(MOST_CHARS).collect());
+        waiting.texts.push(crate::chat::clip_turn(text, MOST_CHARS));
         Ok(waiting.texts.len())
     }
 
@@ -117,6 +117,18 @@ pub fn added(texts: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_long_message_sent_while_felix_works_keeps_its_end_or_says_what_is_missing() {
+        let steering = Steering::default();
+        let steer = steering.open();
+        let pasted = format!("{}QUESTION?", "spec line\n".repeat(2_000));
+        steering.add(steer.id(), &pasted).unwrap();
+        assert!(steer.take()[0].ends_with("QUESTION?"));
+        let huge = "x".repeat(MOST_CHARS + 10);
+        steering.add(steer.id(), &huge).unwrap();
+        assert!(steer.take()[0].contains("10 more characters of this message are left out"));
+    }
 
     #[test]
     fn messages_wait_for_the_answer_they_were_sent_to_and_go_with_it() {

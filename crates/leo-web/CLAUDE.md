@@ -246,12 +246,15 @@ seer, meaning, web, room).
   `<earlier_in_this_chat>` with a background summary (`MEMORY_EVERY`).
   History carries who wrote each answer, what Felix did, cards and passages,
   so switching models mid-chat loses nothing.
-  The message being answered is kept up to `MESSAGE_CHARS` (32,000) and
-  Felix's newest reply up to `LAST_REPLY_CHARS` (12,000), both scaled by the
-  model's room and never below `TURN_CHARS` (4,000, every other turn); a warm
-  follow-up uses the same cap (2026-10-21: a pasted homework spec lost its
-  question at 4,000). `clip_turn` closes a code fence it cut through and says
-  how many characters of the message are left out.
+  The message being answered, and the newest earlier message longer than
+  `TURN_CHARS` (a pasted assignment), are kept up to `MESSAGE_CHARS` (32,000),
+  and Felix's newest reply up to `LAST_REPLY_CHARS` (12,000); both reach full
+  size at `FULL_ROOM` (32,000, the most `felix_room` gives) and shrink with a
+  smaller room, never below `TURN_CHARS` (4,000, every other turn). Warm
+  follow-ups and messages sent while Felix works (`steer::MOST_CHARS`) use the
+  same cap (2026-10-21: a pasted homework spec lost its question at 4,000).
+  `clip_turn` closes a code fence it cut through, says how many characters
+  are left out and tells Felix to ask for the rest as a file.
 - Styles (`MODES`): chat, study, interview. Study marks critically (a right
   result by wrong reasoning is `[[incorrect]]`), asks about the reasoning
   step by step, mostly free response and fill-in, and treats subjective

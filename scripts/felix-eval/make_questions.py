@@ -69,6 +69,8 @@ Submission. Submit hw2.ml and hw2test.ml, plus a short after-action report (plai
 My question (this is the part I actually need help with): Problem 1 says to write a function convert_grammar gram1 that returns a Homework 2 style grammar (a production function) that is equivalent to the Homework 1 style grammar gram1 (a rule list). Write convert_grammar in OCaml following all the rules above, explain how it works, and show what it returns for the start symbol Expr when given the awkish rules as a rule list."""
 
 long_paste = intro + "\n".join(tests) + outro
+more = [t.replace("let test_", "let extra_") for t in tests] * 2
+big_paste = intro + "\n".join(tests + more) + outro
 
 questions = [
     {"id": "ocaml-infer", "prompt": "CS131 practice: what type does OCaml infer for `let rec f g = function [] -> [] | x :: xs -> g x :: f g xs`? Walk through the inference.", "must": ["('a -> 'b) -> 'a list -> 'b list", "f is map", "unify g's argument with list element type", "result list type from g's return type", "explains recursion forces f's type consistent"]},
@@ -81,6 +83,7 @@ questions = [
     {"id": "scoping", "prompt": "Given `x = 1; def f(): return x; def g(): x = 2; return f()` in a language with this syntax, what does g() return under static scoping vs dynamic scoping? Explain how each resolves x.", "must": ["static: 1", "dynamic: 2", "static uses definition environment", "dynamic uses call stack most recent binding", "mentions which real languages use which"]},
     {"id": "tail-rec", "prompt": "Write a tail-recursive OCaml function to sum a list of ints and explain why it's tail recursive and why that matters. Compare it to the naive version.", "must": ["accumulator helper", "recursive call in tail position", "constant stack space / no stack overflow", "naive version does work after recursive call", "code compiles"]},
     {"id": "long-paste", "prompt": long_paste, "must": ["convert_grammar returns (start, fun nt -> list of rhs for nt in order)", "uses List.filter/List.map or fold over the rule list", "keeps rule order", "no imperative features", "shows Expr maps to [[N Term; N Binop; N Expr]; [N Term]]"]},
+ {"id": "big-paste", "prompt": big_paste, "must": ["convert_grammar returns (start, fun nt -> list of rhs for nt in order)", "uses List.filter/List.map or fold over the rule list", "keeps rule order", "no imperative features", "shows Expr maps to [[N Term; N Binop; N Expr]; [N Term]]"]},
 ]
 json.dump(questions, open("questions.json", "w"), indent=1)
-print(len(long_paste))
+print(len(long_paste), len(big_paste))
