@@ -82,6 +82,11 @@ function drawPicked() {
     .join('');
   $('#upload-go').disabled = !picked.length;
   $('#upload-pick-label').textContent = picked.length ? 'Add more files' : 'Choose files, or take photos';
+  const several = picked.length > 1;
+  $('#upload-together-row').hidden = !several;
+  const together = !several || $('#upload-together').checked;
+  $('#upload-title').closest('.field').hidden = !together;
+  $('#upload-go').textContent = together ? 'Make the note' : `Make ${picked.length} notes`;
 }
 
 async function uploadSheet(files, into) {
@@ -98,11 +103,13 @@ async function uploadSheet(files, into) {
     <p>Slides, handouts, papers or worksheets as PDF, Word, PowerPoint or text, or photos and scans of pages. Your AI reads them and writes study notes.</p>
     <label class="upload-drop" id="upload-zone">${ICON.upload}<span id="upload-pick-label">Choose files, or take photos</span><input type="file" id="upload-input" multiple accept="${UPLOAD_ACCEPT}"></label>
     <div class="upload-list" id="upload-list"></div>
+    <label class="source-keep" id="upload-together-row" hidden><input type="checkbox" id="upload-together"> Make one note from all of them</label>
     <label class="field">${ICON.folder}<span class="select-control"><select id="upload-dir" aria-label="Folder">${options}</select>${ICON.chevron}</span></label>
     <label class="field">${ICON.note}<input id="upload-title" placeholder="Title (optional; the AI names it otherwise)" autocomplete="off"></label>
     <label class="field upload-wants"><textarea id="upload-wants" rows="2" maxlength="2000" placeholder="What do you want from it? (optional) e.g. the interview problem, then the code, explained step by step"></textarea></label>
     <p class="hint upload-hint">You can also paste a picture here. Photos stay in the note, and pictures and diagrams in slides and documents are kept beside the text. Reading photos and scans needs an AI that can see images: OpenAI, Anthropic, Gemini, xAI, Claude Code or Codex.</p>
     <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn primary" id="upload-go" data-action="upload-go" disabled>Make the note</button></div>`);
+  $('#upload-together').addEventListener('change', drawPicked);
   $('#upload-input').addEventListener('change', (e) => {
     picked.push(...e.target.files);
     e.target.value = '';
@@ -145,10 +152,11 @@ function uploadProgress(text, done, total) {
 async function uploadGo() {
   if (!picked.length) return;
   const dir = $('#upload-dir').value;
-  const title = $('#upload-title').value.trim();
+  const each = picked.length > 1 && !$('#upload-together').checked;
+  const title = each ? '' : $('#upload-title').value.trim();
   const wants = $('#upload-wants').value.trim();
   const names = picked.map((f) => f.name);
-  sheet(`<div class="upload-working">${felix.felix(72, 'idle think')}<h3>Making your note</h3><p>${esc(names.length === 1 ? names[0] : `${names.length} files`)}</p><div id="upload-progress"></div><p class="hint">This can take a minute for long files. You can close this; the note appears in the folder when it is ready.</p></div>`);
+  sheet(`<div class="upload-working">${felix.felix(72, 'idle think')}<h3>${each ? `Making ${names.length} notes` : 'Making your note'}</h3><p>${esc(names.length === 1 ? names[0] : `${names.length} files`)}</p><div id="upload-progress"></div><p class="hint">This can take a minute for long files. You can close this; the note appears in the folder when it is ready.</p></div>`);
   Object.assign(uploadClock, { since: Date.now(), step: '', stepSince: Date.now(), steps: [] });
   uploadProgress('Preparing the files', 0, 0);
   const files = [];
@@ -165,7 +173,7 @@ async function uploadGo() {
   uploadProgress('Uploading', 0, 0);
   let started;
   try {
-    started = await api('/api/import', { method: 'POST', body: { directory: dir, title: title || null, wants, files } });
+    started = await api('/api/import', { method: 'POST', body: { directory: dir, title: title || null, wants, files, each } });
   } catch (e) {
     closeSheet();
     throw e;
@@ -197,13 +205,17 @@ function watchUpload(id, dir) {
       }
       return;
     }
+    const many = (job.notes || []).length > 1;
+    if (job.error) toast(`Some files could not be made into notes. ${job.error}`, { bad: true });
     if (open) {
       closeSheet();
-      go(noteHash(job.note));
+      go(many ? folderHash(dir) : noteHash(job.note));
     } else {
       await showLatest().catch(() => {});
-      toast('Your note from the upload is ready.', { action: 'Open', run: () => go(noteHash(job.note)) });
+      if (many) toast(`Your ${job.notes.length} notes from the upload are ready.`, { action: 'Open folder', run: () => go(folderHash(dir)) });
+      else toast('Your note from the upload is ready.', { action: 'Open', run: () => go(noteHash(job.note)) });
     }
+    if (many && open && state.view === 'folder' && (state.dir || '') === dir) await showLatest().catch(() => {});
   }, 900);
 }
 

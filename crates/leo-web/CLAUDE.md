@@ -620,7 +620,13 @@ works (plan: `.superpowers/plans/2026-10-12-interview-instant-feedback.md`):
 ## Uploads, originals, recording
 
 - Uploads: POST `/api/import` runs the `Importer` on a thread; "What do you
-  want from it?" goes in `<what_the_user_wants>`. Originals are kept in
+  want from it?" goes in `<what_the_user_wants>`. Several files make a note
+  each by default (2026-10-20, the user's call: one note per file is what
+  people expect): `each` runs them one after another in one job
+  (`run_each`), each named from its own file, with its own original; a file
+  that fails is listed in the job's `error` and the rest are still made
+  (`notes` lists them, the page opens the folder). "Make one note from all of
+  them" sends them together as before and shows the title field again. Originals are kept in
   `<data>/attachments/<note-id>/` (never synced); figures from pptx/docx/PDF
   are offered to the AI (`leo_services::figures`). Originals open in
   `#source-pane` beside the note on desktop (1000px and wider), with Felix
@@ -706,7 +712,9 @@ the same idle loop.
   On the library its height leaves the first row of notes clear
   (`fitTasksWindow` sets `--tasks-room`, at least `TASKS_LEAST_ROOM`, on page
   redraws and resizes). With less room than that it waits as its icon
-  (`tasksWin.cramped`; opening it then is not remembered), and the library
+  (`tasksWin.cramped`; opening it then is not remembered; `tasksFolded` is
+  always true or false, since `classList.toggle` with undefined flips the
+  class: that left the open list drawn as a wide oval), and the library
   pads its bottom by the dock's height (`--dock-room`) so the last notes can
   scroll clear of it.
   Active interview practices start with Tasks folded so its expanded rows

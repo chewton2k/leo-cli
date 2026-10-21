@@ -2281,6 +2281,44 @@ test.describe('uploads', () => {
     expect(Buffer.from(sent.files[0].data, 'base64').toString()).toBe('Merge sort splits the list in half.');
   });
 
+  test('several files make a note each unless asked for one note, and the folder opens', async ({ page }) => {
+    const dir = `each-${test.info().project.name}-${Date.now().toString(36)}`;
+    await page.request.post('/api/dirs', { data: { path: dir } });
+    const notes = [];
+    for (const n of [1, 2]) notes.push(await (await page.request.post('/api/notes', { data: { title: `Lecture ${n}`, body: 'x', directory: dir } })).json());
+    const sent = [];
+    await page.route('**/api/import', async (route) => {
+      sent.push(route.request().postDataJSON());
+      await route.fulfill({ status: 202, json: { id: 'job-each' } });
+    });
+    await page.route('**/api/import/job-each', (route) => route.fulfill({ json: { state: 'done', step: '', done: 2, total: 2, note: notes[0].id, notes: notes.map((n) => n.id) } }));
+    await page.goto(`/#/f/${dir}`);
+    await control(page, 'upload').click();
+    const input = page.locator('#upload-input');
+    await input.setInputFiles({ name: 'lecture 1.txt', mimeType: 'text/plain', buffer: Buffer.from('One') });
+    await expect(page.locator('#upload-together-row')).toBeHidden();
+    await expect(page.locator('#upload-title')).toBeVisible();
+    await expect(page.locator('#upload-go')).toHaveText('Make the note');
+    await input.setInputFiles({ name: 'lecture 2.txt', mimeType: 'text/plain', buffer: Buffer.from('Two') });
+    await expect(page.locator('#upload-together-row')).toBeVisible();
+    await expect(page.locator('#upload-together')).not.toBeChecked();
+    await expect(page.locator('#upload-title')).toBeHidden();
+    await expect(page.locator('#upload-go')).toHaveText('Make 2 notes');
+    await page.locator('#upload-together').check();
+    await expect(page.locator('#upload-title')).toBeVisible();
+    await expect(page.locator('#upload-go')).toHaveText('Make the note');
+    await page.locator('#upload-together').uncheck();
+    await page.locator('#upload-go').click();
+    await expect.poll(() => sent.length).toBe(1);
+    await expect(page.locator('.upload-working')).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => decodeURIComponent(location.hash))).toBe(`#/f/${dir}`);
+    await expect(page.locator('.card', { hasText: 'Lecture 2' })).toBeVisible();
+    expect(sent[0].each).toBe(true);
+    expect(sent[0].title).toBe(null);
+    expect(sent[0].files.map((f) => f.name)).toEqual(['lecture 1.txt', 'lecture 2.txt']);
+    for (const n of notes) await page.request.delete(`/api/notes/${n.id}`);
+  });
+
   test('a finished upload shows up in the folder that is open, without a refresh', async ({ page }) => {
     const title = `Uploaded later ${test.info().project.name}`;
     let polls = 0;
@@ -5577,6 +5615,32 @@ test('the library starts with a New note card in grid and list, in place of the 
   expect(small.width).toBeLessThan(200);
   await tile.click();
   await expect.poll(() => page.evaluate(() => decodeURIComponent(location.hash))).toContain(`#/new/${dir}`);
+  await page.request.delete(`/api/notes/${note.id}`);
+});
+
+test('the open Tasks panel stays open and its own size through page changes and refreshes', async ({ page }) => {
+  test.skip(test.info().project.name !== 'desktop', 'phones have no Tasks panel');
+  await page.setViewportSize({ width: 1400, height: 1000 });
+  const tag = Date.now().toString(36);
+  const tasks = [];
+  for (let n = 0; n < 3; n++) tasks.push(await (await page.request.post('/api/tasks', { data: { title: `Steady ${tag} ${n}: attempt section ${n} before reading its solutions on Piazza, it is practice and is not graded` } })).json());
+  const note = await (await page.request.post('/api/notes', { data: { title: `Steady note ${tag}`, body: 'x' } })).json();
+  await page.evaluate(() => localStorage.setItem('leo-tasks-folded', '0'));
+  const panel = page.locator('#tasks-window');
+  const steady = async () => {
+    await expect(panel.locator('.tasks-head')).toBeVisible();
+    await expect(panel).not.toHaveClass(/folded/);
+    expect((await panel.boundingBox()).width).toBeLessThanOrEqual(340);
+  };
+  await page.goto(`/#/n/${note.id}`);
+  await page.reload();
+  await steady();
+  for (const hash of ['#/settings', `#/n/${note.id}`, '#/search/steady', `#/n/${note.id}`]) {
+    await page.evaluate((h) => { location.hash = h; }, hash);
+    await page.waitForTimeout(150);
+    await steady();
+  }
+  for (const task of tasks) await page.request.delete(`/api/tasks/${task.id}`);
   await page.request.delete(`/api/notes/${note.id}`);
 });
 

@@ -17,6 +17,8 @@ pub(crate) struct ImportJob {
     pub(crate) done: usize,
     pub(crate) total: usize,
     pub(crate) note: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) notes: Vec<String>,
     pub(crate) error: Option<String>,
 }
 
@@ -98,6 +100,8 @@ pub(crate) struct ImportBody {
     #[serde(default)]
     pub(crate) wants: String,
     pub(crate) files: Vec<ImportFileBody>,
+    #[serde(default)]
+    pub(crate) each: bool,
 }
 
 pub(crate) const MOST_WANTS: usize = 2_000;
@@ -285,47 +289,36 @@ pub(crate) fn settle_figures(
     body
 }
 
-fn run_import(
-    state: AppState,
-    id: String,
-    importer: Importer,
-    dir: String,
+struct Missed {
+    note: Option<String>,
+    error: String,
+}
+
+fn write_upload(
+    state: &AppState,
+    importer: &Importer,
+    dir: &str,
     title: Option<String>,
-    wants: String,
+    wants: &str,
     files: Vec<UploadFile>,
-) {
-    let names: Vec<String> = files.iter().map(|f| f.name.clone()).collect();
-    let mut originals = match stage_originals(&files) {
-        Ok(originals) => originals,
-        Err(_) => {
-            set_job(&state, &id, |job| {
-                job.state = "failed";
-                job.error = Some("The originals could not be kept. Check that there is free disk space and try again.".into());
-            });
-            return;
-        }
+    step: &mut dyn FnMut(&str, usize, usize),
+) -> Result<String, Missed> {
+    let missed = |note: Option<String>, error: &str| Missed {
+        note,
+        error: error.to_string(),
     };
-    let written = importer(files, &wants, &mut |step, done, total| {
-        set_job(&state, &id, |job| {
-            job.step = step.to_string();
-            job.done = done;
-            job.total = total;
-        })
-    });
+    let names: Vec<String> = files.iter().map(|f| f.name.clone()).collect();
+    let mut originals = stage_originals(&files).map_err(|_| {
+        missed(
+            None,
+            "The originals could not be kept. Check that there is free disk space and try again.",
+        )
+    })?;
     let Made {
         title: made_title,
         body,
         figures,
-    } = match written {
-        Ok(found) => found,
-        Err(e) => {
-            set_job(&state, &id, |job| {
-                job.state = "failed";
-                job.error = Some(e.to_string());
-            });
-            return;
-        }
-    };
+    } = importer(files, wants, step).map_err(|e| missed(None, &e.to_string()))?;
     let title = title
         .map(|t| t.trim().to_string())
         .filter(|t| !t.is_empty())
@@ -340,9 +333,9 @@ fn run_import(
         .first()
         .and_then(|n| n.rsplit_once('.').map(|(s, _)| s.to_string()))
         .unwrap_or_else(|| "upload".into());
-    let made = store_now(&state, |store| {
-        if !store.dir_exists(&dir) {
-            store.create_dir(&dir);
+    let made = store_now(state, |store| {
+        if !store.dir_exists(dir) {
+            store.create_dir(dir);
         }
         let notes_dir = store.notes_dir.clone();
         let body = settle_figures(&body, &figures, &mut |figure| {
@@ -359,37 +352,91 @@ fn run_import(
             attachments::save(&notes_dir, &name, &figure.bytes).ok()
         });
         let note = store
-            .create_note(title, format!("{}{footer}", body.trim()), vec![], &dir)
+            .create_note(title, format!("{}{footer}", body.trim()), vec![], dir)
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
             .id
             .clone();
         save(store)?;
         Ok((note, store.notes_dir.clone()))
     });
-    match made {
-        Ok((note, notes_dir)) => {
-            if originals
-                .iter_mut()
-                .any(|(name, staged)| save_original(&notes_dir, &note, name, staged).is_err())
-            {
-                set_job(&state, &id, |job| {
-                    job.state = "failed";
-                    job.note = Some(note);
-                    job.error = Some("The note was saved, but its originals could not be kept. Check the attachments folder permissions and try again.".into());
-                });
-                return;
-            }
-            set_job(&state, &id, |job| {
-                job.state = "done";
-                job.done = job.total.max(1);
-                job.note = Some(note);
-            });
-        }
-        Err(_) => set_job(&state, &id, |job| {
-            job.state = "failed";
-            job.error = Some("The note could not be saved.".into());
-        }),
+    let (note, notes_dir) = made.map_err(|_| missed(None, "The note could not be saved."))?;
+    if originals
+        .iter_mut()
+        .any(|(name, staged)| save_original(&notes_dir, &note, name, staged).is_err())
+    {
+        return Err(missed(Some(note), "The note was saved, but its originals could not be kept. Check the attachments folder permissions and try again."));
     }
+    Ok(note)
+}
+
+fn run_import(
+    state: AppState,
+    id: String,
+    importer: Importer,
+    dir: String,
+    title: Option<String>,
+    wants: String,
+    files: Vec<UploadFile>,
+) {
+    let mut step = |text: &str, done: usize, total: usize| {
+        set_job(&state, &id, |job| {
+            job.step = text.to_string();
+            job.done = done;
+            job.total = total;
+        })
+    };
+    let made = write_upload(&state, &importer, &dir, title, &wants, files, &mut step);
+    set_job(&state, &id, |job| match made {
+        Ok(note) => {
+            job.state = "done";
+            job.done = job.total.max(1);
+            job.notes = vec![note.clone()];
+            job.note = Some(note);
+        }
+        Err(missed) => {
+            job.state = "failed";
+            job.note = missed.note;
+            job.error = Some(missed.error);
+        }
+    });
+}
+
+fn run_each(
+    state: AppState,
+    id: String,
+    importer: Importer,
+    dir: String,
+    wants: String,
+    files: Vec<UploadFile>,
+) {
+    let count = files.len();
+    let mut notes = Vec::new();
+    let mut problems = Vec::new();
+    for (i, file) in files.into_iter().enumerate() {
+        let name = file.name.clone();
+        let mut step = |text: &str, _: usize, _: usize| {
+            set_job(&state, &id, |job| {
+                job.step = format!("{text} · {name} ({} of {count})", i + 1);
+                job.done = i;
+                job.total = count;
+            })
+        };
+        match write_upload(&state, &importer, &dir, None, &wants, vec![file], &mut step) {
+            Ok(note) => notes.push(note),
+            Err(missed) => {
+                notes.extend(missed.note);
+                problems.push(format!("{name}: {}", missed.error));
+            }
+        }
+    }
+    set_job(&state, &id, |job| {
+        job.done = count;
+        job.total = count;
+        job.state = if notes.is_empty() { "failed" } else { "done" };
+        job.note = notes.first().cloned();
+        job.notes = notes;
+        job.error = (!problems.is_empty()).then(|| problems.join("\n"));
+    });
 }
 
 pub(crate) async fn start_import(
@@ -456,6 +503,7 @@ pub(crate) async fn start_import(
                     done: 0,
                     total: 1,
                     note: None,
+                    notes: Vec::new(),
                     error: None,
                 },
             )
@@ -500,7 +548,14 @@ pub(crate) async fn start_import(
             return (code, Json(serde_json::json!({ "error": error }))).into_response();
         }
     };
-    set_job(&state, &id, |job| job.label = upload_label(&files));
+    let each = body.each && files.len() > 1;
+    set_job(&state, &id, |job| {
+        job.label = if each {
+            format!("Making {} notes, one from each file", files.len())
+        } else {
+            upload_label(&files)
+        }
+    });
     let worker = state.clone();
     let job = id.clone();
     let wants: String = body.wants.chars().take(MOST_WANTS).collect();
@@ -508,15 +563,19 @@ pub(crate) async fn start_import(
         .name("leo-import".into())
         .spawn(move || {
             let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                run_import(
-                    worker.clone(),
-                    job.clone(),
-                    importer,
-                    dir,
-                    body.title,
-                    wants,
-                    files,
-                )
+                if each {
+                    run_each(worker.clone(), job.clone(), importer, dir, wants, files)
+                } else {
+                    run_import(
+                        worker.clone(),
+                        job.clone(),
+                        importer,
+                        dir,
+                        body.title,
+                        wants,
+                        files,
+                    )
+                }
             }));
             if outcome.is_err() {
                 set_job(&worker, &job, |job| {
@@ -684,6 +743,7 @@ mod admission_tests {
             done: 0,
             total: 1,
             note: None,
+            notes: Vec::new(),
             error: None,
         }
     }

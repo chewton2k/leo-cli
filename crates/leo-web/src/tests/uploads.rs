@@ -95,12 +95,89 @@ fn an_upload_cannot_write_originals_through_a_linked_attachment_root() {
                 mime: "text/plain".into(),
                 data: base64::engine::general_purpose::STANDARD.encode("EXAMPLE ORIGINAL"),
             }],
+            each: false,
         }),
     )));
     let job = wait_for(&state, made["id"].as_str().unwrap());
     assert_eq!(job.state, "failed");
     assert!(job.error.unwrap().contains("originals"));
     assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn several_files_make_a_note_each_named_from_its_own_file_and_one_failure_spares_the_rest() {
+    use base64::Engine;
+    let (mut state, _d, _ids) = state_with(&[]);
+    state.importer = Some(Arc::new(
+        |files: Vec<UploadFile>, wants: &str, progress: &mut dyn FnMut(&str, usize, usize)| {
+            assert_eq!(files.len(), 1, "each file is read on its own");
+            assert_eq!(wants, "just the proofs");
+            progress("Writing the note", 0, 1);
+            let name = files[0].name.clone();
+            if name == "broken.pdf" {
+                anyhow::bail!("there is no text in broken.pdf");
+            }
+            Ok(Made {
+                title: name.trim_end_matches(".pdf").to_string(),
+                body: format!("## From {name}"),
+                figures: vec![],
+            })
+        },
+    ));
+    let file = |name: &str| ImportFileBody {
+        name: name.into(),
+        mime: "application/pdf".into(),
+        data: base64::engine::general_purpose::STANDARD.encode(name.as_bytes()),
+    };
+    let body = ImportBody {
+        directory: "ma161".into(),
+        title: Some("Ignored for separate notes".into()),
+        wants: "just the proofs".into(),
+        files: vec![
+            file("lecture 1.pdf"),
+            file("broken.pdf"),
+            file("lecture 2.pdf"),
+        ],
+        each: true,
+    };
+    let made = json_of(run(start_import(State(state.clone()), Json(body))));
+    let job = wait_for(&state, made["id"].as_str().unwrap());
+    assert_eq!(job.state, "done", "{job:?}");
+    assert_eq!(job.label, "Making 3 notes, one from each file");
+    assert_eq!(job.notes.len(), 2);
+    assert_eq!(job.note.as_ref(), job.notes.first());
+    assert_eq!(
+        job.error.as_deref(),
+        Some("broken.pdf: there is no text in broken.pdf")
+    );
+    let store = state.fresh();
+    let made: Vec<(String, String, String)> = job
+        .notes
+        .iter()
+        .map(|id| {
+            let n = store.find_note(id).unwrap();
+            (n.title.clone(), n.directory.clone(), n.body.clone())
+        })
+        .collect();
+    assert_eq!(made[0].0, "lecture 1");
+    assert_eq!(made[1].0, "lecture 2");
+    assert!(made.iter().all(|(_, dir, _)| dir == "ma161"));
+    assert!(made[0].2.contains("*From lecture 1.pdf, uploaded"));
+    assert!(made[1].2.contains("*From lecture 2.pdf, uploaded"));
+    drop(store);
+    let one = json_of(run(start_import(
+        State(state.clone()),
+        Json(ImportBody {
+            directory: String::new(),
+            title: None,
+            wants: String::new(),
+            files: vec![file("broken.pdf"), file("broken.pdf")],
+            each: true,
+        }),
+    )));
+    let failed = wait_for(&state, one["id"].as_str().unwrap());
+    assert_eq!(failed.state, "failed");
+    assert!(failed.notes.is_empty() && failed.note.is_none());
 }
 
 #[test]
@@ -139,6 +216,7 @@ fn an_upload_becomes_a_note_in_its_folder_and_keeps_the_original() {
             mime: "application/pdf".into(),
             data: base64::engine::general_purpose::STANDARD.encode(b"%PDF fake"),
         }],
+        each: false,
     };
     let response = run(start_import(State(state.clone()), Json(body)));
     assert_eq!(response.status(), StatusCode::ACCEPTED);
@@ -251,6 +329,7 @@ fn a_failed_upload_says_why_and_bad_requests_are_refused() {
             title: None,
             wants: String::new(),
             files: vec![file()],
+            each: false,
         }),
     ));
     assert_eq!(none.status(), StatusCode::SERVICE_UNAVAILABLE);
@@ -266,6 +345,7 @@ fn a_failed_upload_says_why_and_bad_requests_are_refused() {
             title: None,
             wants: String::new(),
             files: vec![file()],
+            each: false,
         }),
     ));
     let bytes = run(axum::body::to_bytes(response.into_body(), usize::MAX)).unwrap();
@@ -283,6 +363,7 @@ fn a_failed_upload_says_why_and_bad_requests_are_refused() {
             title: None,
             wants: String::new(),
             files: vec![file()],
+            each: false,
         }),
     ));
     assert_eq!(outside.status(), StatusCode::BAD_REQUEST);
@@ -293,6 +374,7 @@ fn a_failed_upload_says_why_and_bad_requests_are_refused() {
             title: None,
             wants: String::new(),
             files: vec![],
+            each: false,
         }),
     ));
     assert_eq!(empty.status(), StatusCode::BAD_REQUEST);
@@ -307,6 +389,7 @@ fn a_failed_upload_says_why_and_bad_requests_are_refused() {
                 mime: String::new(),
                 data: "%%%".into(),
             }],
+            each: false,
         }),
     ));
     assert_eq!(garbled.status(), StatusCode::BAD_REQUEST);
@@ -356,6 +439,7 @@ fn background_work_is_listed_until_it_is_done() {
         done: 1,
         total: 3,
         note: None,
+        notes: Vec::new(),
         error: None,
     };
     let mut imports = std::collections::HashMap::new();
@@ -471,6 +555,7 @@ fn uploads_bound_file_count_and_parallel_imports_before_starting_more_workers() 
                 data: "dGVzdA==".into(),
             })
             .collect(),
+        each: false,
     };
     assert_eq!(
         run(start_import(State(state.clone()), Json(body(21)))).status(),

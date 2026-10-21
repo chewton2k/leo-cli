@@ -850,8 +850,8 @@ function drawTasksWindow() {
 }
 
 function tasksFolded() {
-  if (tasksWin.practice) return tasksWin.practiceFolded;
-  return tasksWin.folded || (tasksWin.cramped && !tasksWin.opened);
+  if (tasksWin.practice) return Boolean(tasksWin.practiceFolded);
+  return Boolean(tasksWin.folded || (tasksWin.cramped && !tasksWin.opened));
 }
 
 function fitTasksWindow() {
