@@ -273,8 +273,13 @@ seer, meaning, web, room).
   text protocol. A hand-written call that is not valid
   JSON is repaired when it can be (`tools::repaired`: raw line breaks, quotes
   that do not end a string, trailing commas, missing closing braces) before it
-  is refused; a refused call shows as "Fixed a tool call" with the reason
-  (`why_it_failed`) when expanded. Text written
+  is refused; a refused call shows as "Retried open note: <reason>" (or
+  "Rewrote a tool call: <reason>" when it was not readable), the reason
+  inline (`why_it_failed`). Steps say what was read ("Read part 2 of 5 of
+  “X” (lines 40–80)"), a read the cache found unchanged says "again
+  (unchanged)", and the same step several times in a row shows once with
+  ×N (`stepRuns`; 2026-10-20, the user found six identical "Opened" lines
+  unclear). Text written
   before a tool call is kept (a paragraph break, not a restart). A broken
   agent session sends `{"reset"}` and is redone through the text protocol
   (`FALLBACK_TRIES`). Web tools only for AIs without their own web

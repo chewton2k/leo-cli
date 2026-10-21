@@ -1255,9 +1255,10 @@ fn repaired(json: &str) -> String {
 }
 
 pub fn why_it_failed(problem: &str) -> String {
-    let first = problem.lines().next().unwrap_or_default().trim();
+    let line = problem.lines().next().unwrap_or_default().trim();
+    let first = line.split(" How to call it").next().unwrap_or(line).trim();
     let plain = if first.contains("not valid JSON") {
-        "The call was not valid JSON, so Felix was asked to write it again".to_string()
+        "It was not valid JSON".to_string()
     } else {
         let mut chars = first.chars();
         chars.next().map_or_else(String::new, |c| {
@@ -2402,7 +2403,10 @@ impl Desk {
                         Ok(part) if part > 0 => part,
                         _ => {
                             return fail(
-                                "Opened a note",
+                                &format!(
+                                    "Asked for a part of “{}” that does not exist",
+                                    note.title
+                                ),
                                 "part must be a whole number starting at 1".into(),
                             )
                         }
@@ -2414,7 +2418,7 @@ impl Desk {
                 let shown = self.shown(store, note);
                 let Some((piece, parts, first_line)) = note_part(&shown, part, size) else {
                     return fail(
-                        "Opened a note",
+                        &format!("Asked for a part of “{}” that does not exist", note.title),
                         "that part is outside the note; open part 1 to see how many parts it has"
                             .into(),
                     );
@@ -2425,8 +2429,16 @@ impl Desk {
                 } else {
                     &note.directory
                 };
+                let last_line = first_line + piece.lines().count().saturating_sub(1);
                 Done {
-                    step: format!("Opened “{}”", note.title),
+                    step: if parts > 1 {
+                        format!(
+                            "Read part {part} of {parts} of “{}” (lines {first_line}–{last_line})",
+                            note.title
+                        )
+                    } else {
+                        format!("Read “{}”", note.title)
+                    },
                     result: format!(
                         "<note id=\"{tag}\" title=\"{}\" class=\"{}\" part=\"{part}\" of=\"{parts}\" first_line=\"{first_line}\">\n{piece}\n</note>",
                         attribute(&note.title),
@@ -3269,6 +3281,27 @@ mod tests {
             .result
             .contains(&format!("part=\"{parts}\" of=\"{parts}\"")));
         assert!(last.result.contains("first_line="));
+        let first_line: usize = last
+            .result
+            .split("first_line=\"")
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert_eq!(
+            last.step,
+            format!("Read part {parts} of {parts} of “Long note” (lines {first_line}–402)")
+        );
+        let (_s, short, _) = store_with(&[("Short note", "one line", "")]);
+        let whole = desk.run(
+            &short,
+            &cache,
+            &call(serde_json::json!({ "name":"open_note", "note":"Short note" })),
+        );
+        assert_eq!(whole.step, "Read “Short note”");
         for part in ["0", "bad", "18446744073709551616"] {
             let result = desk.run(
                 &store,

@@ -1516,7 +1516,7 @@
       const removed = verdict ? m.text.length - shown.length : 0;
       const parts = timeline(shown, (Array.isArray(m.steps) ? m.steps : []).slice(0, MOST_REPLY_STEPS).map((s) => typeof s === 'string' || !s ? s : { ...s, at: Number.isInteger(s.at) ? s.at - removed : 0 }));
       const body = parts.length ? parts.map((part, k) => part.steps
-        ? `<div class="msg-steps">${part.steps.map((step, j) => stepLine(step, m.pending && k === parts.length - 1 && j === part.steps.length - 1)).join('')}</div>`
+        ? `<div class="msg-steps">${stepRuns(part.steps).map((run, j, all) => stepLine(run.step, m.pending && k === parts.length - 1 && j === all.length - 1, run.times)).join('')}</div>`
         : `<div class="prose">${cite(render(part.text), m.sources, escape, m.files).replace(/<input /g, '<input disabled ')}</div>`).join('') : `<div class="prose">${html}</div>`;
       const offers = (m.proposals || []).map((p, j) => proposalCard(p, i, j)).join('');
       const asks = (m.asks || []).map((a, k) => askCard(a, i, k, m.pending)).join('');
@@ -1623,10 +1623,21 @@
       quiz: '<path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/>',
     };
 
-    function stepLine(step, working) {
+    function stepRuns(steps) {
+      const runs = [];
+      for (const step of steps) {
+        const item = typeof step === 'string' ? { text: step, tool: '', found: [] } : step;
+        const last = runs.at(-1);
+        if (last && item && last.step.text === item.text && !(item.found || []).length && !(last.step.found || []).length) last.times += 1;
+        else runs.push({ step: item, times: 1 });
+      }
+      return runs;
+    }
+
+    function stepLine(step, working, times = 1) {
       const item = typeof step === 'string' ? { text: step, tool: '', found: [] } : step;
       const icon = `<svg class="msg-step-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${TOOL_ICONS[item.tool] || '<circle cx="12" cy="12" r="3"/>'}</svg>`;
-      const label = `${icon}<span>${escape(item.text || '')}</span>${working ? '<span class="msg-step-busy" aria-label="working"></span>' : ''}`;
+      const label = `${icon}<span>${escape(item.text || '')}</span>${times > 1 ? `<span class="msg-step-times" aria-label="${times} times">×${times}</span>` : ''}${working ? '<span class="msg-step-busy" aria-label="working"></span>' : ''}`;
       const found = (item.found || []).filter((f) => f && f !== item.text);
       if (!found.length || item.tool === 'open_note') return `<div class="msg-step">${label}</div>`;
       return `<details class="msg-step"><summary>${label}<span class="msg-step-count">${found.length}</span>${stepChevron}</summary><ul>${found.map((f) => `<li>${escape(f)}</li>`).join('')}</ul></details>`;

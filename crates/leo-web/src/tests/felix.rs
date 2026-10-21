@@ -339,6 +339,39 @@ fn gathered_notes_respect_the_provider_budget_in_every_chat_style() {
 }
 
 #[test]
+fn the_steps_say_which_note_was_read_when_it_was_read_again_and_what_a_retried_call_got_wrong() {
+    let (mut state, _d, ids) = state_with(&[("Pipelining", "cs152")]);
+    {
+        let mut store = state.fresh();
+        store.find_note_mut(&ids[0]).unwrap().body =
+            "A five stage pipeline overlaps instructions.\n".repeat(30);
+        store.save().unwrap();
+    }
+    let (streamer, _prompts) = scripted(vec![
+        "<tool>{\"name\": \"open_note\", \"note\": \"Pipelining\"}</tool>",
+        "<tool>{\"name\": \"open_note\", \"note\": \"Pipelining\"}</tool>",
+        "<tool>{\"name\": \"open_note\", \"note\": \"Pipelining\", \"part\": \"zero\"}</tool>",
+        "<tool>{\"name\": \"open_note\"}</tool>",
+        "Done.",
+    ]);
+    state.chat = Some(streamer);
+    let lines = chat_lines(&state, "what does my pipelining note say?");
+    let steps: Vec<&str> = lines.iter().filter_map(|l| l["step"].as_str()).collect();
+    assert_eq!(steps[0], "Read “Pipelining”");
+    assert_eq!(steps[1], "Read “Pipelining” again (unchanged)");
+    assert_eq!(
+        steps[2],
+        "Asked for a part of “Pipelining” that does not exist"
+    );
+    assert_eq!(steps[3], "Retried open note: \"note\" is missing.");
+    assert!(steps.iter().all(|s| !s.contains("Fixed a tool call")));
+    assert!(lines
+        .iter()
+        .filter(|l| l["step"].as_str().is_some_and(|s| s.starts_with("Retried")))
+        .all(|l| l["found"].as_array().is_some_and(|f| f.is_empty())));
+}
+
+#[test]
 fn felix_searches_opens_and_suggests_a_change_with_tools_then_answers() {
     let (mut state, _d, ids) = state_with(&[("Graph traversals", "cs130"), ("Calendar", "")]);
     {

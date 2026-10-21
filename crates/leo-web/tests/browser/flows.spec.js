@@ -5618,6 +5618,22 @@ test('the library starts with a New note card in grid and list, in place of the 
   await page.request.delete(`/api/notes/${note.id}`);
 });
 
+test('the same step repeated in a row shows once with how many times', async ({ page }) => {
+  const step = (text, tool = 'open_note') => JSON.stringify({ step: text, tool, found: [] });
+  await page.route('**/api/chat', (route) => route.fulfill({ contentType: 'application/x-ndjson', body: [step('Read “Pipelining”'), step('Read “Pipelining” again (unchanged)'), step('Read “Pipelining” again (unchanged)'), step('Read “Pipelining” again (unchanged)'), step('Retried open note: "note" is missing.', 'open_note'), JSON.stringify({ t: 'It overlaps instructions.' }), JSON.stringify({ done: true })].join('\n') + '\n' }));
+  await page.goto('/');
+  await page.locator('#chat-toggle').click();
+  await page.locator('#chat-input').fill('what does my pipelining note say?');
+  await page.locator('#chat-input').press('Enter');
+  await expect(page.locator('.msg.leo').last()).toContainText('It overlaps instructions.');
+  const steps = page.locator('.msg.leo').last().locator('.msg-step');
+  await expect(steps).toHaveCount(3);
+  await expect(steps.nth(1)).toContainText('Read “Pipelining” again (unchanged)');
+  await expect(steps.nth(1).locator('.msg-step-times')).toHaveText('×3');
+  await expect(steps.nth(0).locator('.msg-step-times')).toHaveCount(0);
+  await expect(steps.nth(2)).toContainText('Retried open note: "note" is missing.');
+});
+
 test('the open Tasks panel stays open and its own size through page changes and refreshes', async ({ page }) => {
   test.skip(test.info().project.name !== 'desktop', 'phones have no Tasks panel');
   await page.setViewportSize({ width: 1400, height: 1000 });

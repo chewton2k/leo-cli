@@ -539,6 +539,13 @@ fn run_tool(
     result
 }
 
+fn lowered(text: &str) -> String {
+    let mut chars = text.chars();
+    chars.next().map_or_else(String::new, |c| {
+        c.to_lowercase().collect::<String>() + chars.as_str()
+    })
+}
+
 fn execute_tool(
     state: &AppState,
     desk: &mut tools::Desk,
@@ -558,20 +565,27 @@ fn execute_tool(
     let files_before = desk.files.len();
     let mut done = if call.name == "invalid" {
         tools::Done {
-            step: "Fixed a tool call".into(),
+            step: format!(
+                "Rewrote a tool call: {}",
+                lowered(&tools::why_it_failed(&call.text("problem")))
+            ),
             result: format!(
                 "That did not work: {}. Write the call as one line: <tool>{{\"name\": \"search_notes\", \"query\": \"...\"}}</tool>. Inside a JSON string write a line break as \\n and a quote as \\\".",
                 call.text("problem")
             ),
             proposal: None,
-            found: vec![tools::why_it_failed(&call.text("problem"))],
+            found: Vec::new(),
         }
     } else if let Err(problem) = tools::check(call) {
         tools::Done {
-            step: "Fixed a tool call".into(),
+            step: format!(
+                "Retried {}: {}",
+                call.name.replace('_', " "),
+                lowered(&tools::why_it_failed(&problem))
+            ),
             result: format!("That did not work: {problem}"),
             proposal: None,
-            found: vec![tools::why_it_failed(&problem)],
+            found: Vec::new(),
         }
     } else if tools::is_interaction(&call.name) {
         interact(desk, call, send)
@@ -719,7 +733,6 @@ fn execute_tool(
             _ => desk.verdict,
         };
     }
-    send(serde_json::json!({ "step": done.step, "tool": call.name, "found": done.found }));
     let mut read_args = call.args.clone();
     if let Some(args) = read_args.as_object_mut() {
         args.remove("fresh");
@@ -730,8 +743,10 @@ fn execute_tool(
     {
         if call.text("fresh") != "yes" {
             done.result = reused;
+            done.step = format!("{} again (unchanged)", done.step);
         }
     }
+    send(serde_json::json!({ "step": done.step, "tool": call.name, "found": done.found }));
     let added = desk.take_steering();
     if !added.is_empty() {
         send(serde_json::json!({ "steered": added }));
