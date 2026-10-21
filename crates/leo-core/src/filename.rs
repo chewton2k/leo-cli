@@ -67,9 +67,181 @@ pub fn matches_title(stem: &str, title: &str) -> bool {
     stem == base || strip_number(stem) == Some(base.as_str())
 }
 
+const GENERIC: [&str; 31] = [
+    "img",
+    "image",
+    "dsc",
+    "dscn",
+    "pxl",
+    "photo",
+    "pic",
+    "screenshot",
+    "screen",
+    "scan",
+    "scanned",
+    "document",
+    "doc",
+    "untitled",
+    "download",
+    "file",
+    "upload",
+    "new",
+    "copy",
+    "whatsapp",
+    "signal",
+    "telegram",
+    "camscanner",
+    "recording",
+    "audio",
+    "video",
+    "vid",
+    "mov",
+    "export",
+    "attachment",
+    "tmp",
+];
+const DATE_WORDS: [&str; 16] = [
+    "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec",
+    "am", "pm", "at",
+];
+
+fn squashed(text: &str) -> String {
+    text.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+pub fn tracking_label(text: &str) -> Option<String> {
+    let label = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let words: Vec<String> = label
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_lowercase)
+        .collect();
+    if words.is_empty() || words.len() > 8 || label.chars().count() > 60 {
+        return None;
+    }
+    let lettered: Vec<&String> = words
+        .iter()
+        .filter(|w| w.chars().any(char::is_alphabetic))
+        .collect();
+    let numbered = words.iter().any(|w| w.chars().any(|c| c.is_ascii_digit()));
+    let hashed = words.iter().any(|w| {
+        w.len() >= 12
+            && w.chars().all(|c| c.is_ascii_hexdigit())
+            && w.chars().any(|c| c.is_ascii_digit())
+    });
+    let generic = GENERIC.iter().any(|g| {
+        words[0] == *g
+            || words[0]
+                .strip_prefix(g)
+                .is_some_and(|rest| rest.chars().all(|c| c.is_ascii_digit()))
+    });
+    let dated = lettered.iter().all(|w| {
+        DATE_WORDS
+            .iter()
+            .any(|d| w.trim_end_matches(|c: char| c.is_ascii_digit()) == *d)
+    });
+    (numbered && !lettered.is_empty() && !hashed && !generic && !dated).then_some(label)
+}
+
+pub fn file_label(name: &str) -> Option<String> {
+    let base = name.rsplit(['/', '\\']).next().unwrap_or(name).trim();
+    let stem = match base.rsplit_once('.') {
+        Some((stem, ext))
+            if !stem.trim().is_empty()
+                && ext.len() <= 5
+                && ext.chars().all(|c| c.is_ascii_alphanumeric())
+                && ext.chars().any(|c| c.is_ascii_alphabetic()) =>
+        {
+            stem
+        }
+        _ => base,
+    };
+    tracking_label(stem)
+}
+
+pub fn with_label(title: &str, label: Option<&str>) -> String {
+    let title = title.trim();
+    let Some(label) = label.map(str::trim).filter(|l| !l.is_empty()) else {
+        return title.to_string();
+    };
+    let (have, want) = (squashed(title), squashed(label));
+    if have.contains(&want) {
+        title.to_string()
+    } else if have.is_empty() || want.contains(&have) {
+        label.to_string()
+    } else {
+        format!("{label} – {title}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn course_and_assignment_names_are_kept_and_camera_or_date_names_are_not() {
+        for (name, label) in [
+            ("ma161_hw3.pdf", "ma161_hw3"),
+            ("CS 61B Project 2 Spec.docx", "CS 61B Project 2 Spec"),
+            ("Lecture 5 - Heaps.pptx", "Lecture 5 - Heaps"),
+            ("week3-notes.md", "week3-notes"),
+            (
+                "folder/econ101 midterm review.pdf",
+                "econ101 midterm review",
+            ),
+            ("Lec 3.2", "Lec 3.2"),
+        ] {
+            assert_eq!(file_label(name).as_deref(), Some(label), "{name}");
+        }
+        for name in [
+            "IMG_2034.jpg",
+            "Screenshot 2026-10-20 at 3.14.15 PM.png",
+            "PXL_20261020_141522.jpg",
+            "20261020_141522.jpg",
+            "Scan 3.pdf",
+            "Document1.docx",
+            "WhatsApp Image 2026-10-20 at 09.12.33.jpeg",
+            "Oct 20 2026.pdf",
+            "syllabus.pdf",
+            "3f2a9c41d8e07b6a5c4d.pdf",
+            "the complete set of answers to every question in the twelfth chapter 12.pdf",
+            ".pdf",
+        ] {
+            assert_eq!(file_label(name), None, "{name}");
+        }
+        assert_eq!(
+            tracking_label("MA161  Lecture 12").as_deref(),
+            Some("MA161 Lecture 12")
+        );
+        assert_eq!(tracking_label("Data/Algos Interview"), None);
+    }
+
+    #[test]
+    fn a_title_keeps_its_label_once() {
+        let label = Some("ma161_hw3");
+        assert_eq!(
+            with_label("Eigenvalues and diagonalisation", label),
+            "ma161_hw3 – Eigenvalues and diagonalisation"
+        );
+        assert_eq!(
+            with_label("MA161 HW3: Eigenvalues", label),
+            "MA161 HW3: Eigenvalues"
+        );
+        assert_eq!(
+            with_label("ma161_hw3 – Eigenvalues", label),
+            "ma161_hw3 – Eigenvalues"
+        );
+        assert_eq!(with_label("", label), "ma161_hw3");
+        assert_eq!(with_label("  ", label), "ma161_hw3");
+        assert_eq!(
+            with_label("Heaps", Some("Lecture 5 - Heaps")),
+            "Lecture 5 - Heaps"
+        );
+        assert_eq!(with_label(" Heaps ", None), "Heaps");
+    }
 
     #[test]
     fn a_plain_title_is_its_own_file_name() {

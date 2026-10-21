@@ -226,7 +226,14 @@ or RGB/gray PNG scan images. A page number must not hide a scan, and text on
 another page must not suppress it. Photos and scans still require `ai::see`;
 local OCR is not included. Text and Markdown remain direct reads. One request for short
 material, otherwise ~24k-char text parts and 6-page image batches, then
-`build_summary_prompt` for title and summary. Vision: `ChatProvider::
+`build_summary_prompt` for title and summary. A single upload whose file name is a
+tracking name (`leo_core::filename::file_label`: letters and a number, like
+`ma161_hw3`, never camera, scan, screenshot or date names) keeps it: the
+prompt asks for it first and `filename::with_label` puts it in front of any
+title without it (2026-10-20, the user's request). A recording made for a
+calendar event with such a name (`tracking_label`) keeps it the same way.
+Action items, in recordings and uploads, are the fewest that matter: one per
+deliverable or date, never sub-steps, readings or study advice. Vision: `ChatProvider::
 complete_with_images` (default: a clear "cannot read images" error);
 `OpenAiChat` sends `image_url` data URLs, Claude Code gets the image inside a
 stream-json user message with only `WebSearch` allowed (its Read tool is not confined, so

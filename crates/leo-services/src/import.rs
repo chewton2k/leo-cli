@@ -380,7 +380,7 @@ You turn material a student uploaded (lecture slides, a handout, a paper, a work
 - Leave out page furniture: headers, footers, page numbers, repeated slide titles, copyright lines.
 - Organise with ## headings and bullet points (- ); bold a term where it is defined; write math in LaTeX ($...$ inside a sentence, $$...$$ on lines of their own) and code in fenced code blocks.
 - Unlike the rest, explanations, examples, diagrams and the Check yourself questions may go beyond the source to help the reader learn, as long as they are accurate.
-- Put tasks or deadlines that the material states in a final \"## Action items\" section as checkboxes (- [ ] ); leave the section out otherwise.
+- Put tasks or deadlines that the material states in a final \"## Action items\" section as checkboxes (- [ ] ); leave the section out otherwise. Keep only the fewest that matter: one checkbox per deliverable or date (a homework, an exam, a meeting), never its sub-steps, suggested readings or general advice like \"review the slides\".
 - Do not add facts that are not in the source, except to explain. If something is unreadable, write [unreadable] rather than guessing.";
 
 const WANTS: &str = "\
@@ -498,6 +498,13 @@ pub fn image_prompt(
     }
 }
 
+fn named(mut prompt: Prompt, label: Option<&str>) -> Prompt {
+    if let Some(label) = label {
+        prompt.user.push_str(&format!(" The file is named \"{label}\", the name the user files it under: start the title with that name as written, then a few words on the topic."));
+    }
+    prompt
+}
+
 pub type Write<'a> = &'a (dyn Fn(Prompt, u32) -> Result<String> + Sync);
 pub type See<'a> = &'a (dyn Fn(Prompt, &[Image], u32) -> Result<String> + Sync);
 
@@ -550,9 +557,11 @@ pub fn read_for_chat(
     Ok(clip_document(&text))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn write_note(
     material: &Material,
     name: &str,
+    label: Option<&str>,
     wants: &str,
     write: Write<'_>,
     see: See<'_>,
@@ -573,18 +582,21 @@ pub fn write_note(
     if jobs == 1 {
         progress("Writing the note", 0, 1);
         let reply = if let Some(text) = texts.first() {
-            write(text_prompt(text, name, None, &figures, wants), NOTE_TOKENS)?
+            write(
+                named(text_prompt(text, name, None, &figures, wants), label),
+                NOTE_TOKENS,
+            )?
         } else {
             let n = material.images.len();
             see(
-                image_prompt(name, None, (1, n, n), wants),
+                named(image_prompt(name, None, (1, n, n), wants), label),
                 looks[0],
                 NOTE_TOKENS,
             )?
         };
         progress("Writing the note", 1, 1);
         let (title, body) = chat::split_title_body(&chat::clean_reply(&reply));
-        return Ok((title, body));
+        return Ok((leo_core::filename::with_label(&title, label), body));
     }
     let total = jobs + 1;
     let n = material.images.len();
@@ -664,7 +676,7 @@ pub fn write_note(
     } else {
         format!("{}\n\n{joined}", summary.trim())
     };
-    Ok((title, body))
+    Ok((leo_core::filename::with_label(&title, label), body))
 }
 
 pub fn import(
@@ -680,7 +692,20 @@ pub fn import(
     };
     let see = |prompt: Prompt, images: &[Image], most: u32| crate::ai::see(prompt, images, most);
     let budget = crate::ai::writing_budget();
-    let (title, body) = write_note(&material, name, wants, &write, &see, progress, budget)?;
+    let label = match uploads {
+        [one] => leo_core::filename::file_label(&one.name),
+        _ => None,
+    };
+    let (title, body) = write_note(
+        &material,
+        name,
+        label.as_deref(),
+        wants,
+        &write,
+        &see,
+        progress,
+        budget,
+    )?;
     Ok(Imported {
         title,
         body,
@@ -700,6 +725,9 @@ mod tests {
     #[test]
     fn notes_from_uploads_tell_a_story_and_follow_what_the_user_wants() {
         let plain = text_prompt("x", "interview.pdf", None, "", "");
+        assert!(plain
+            .system
+            .contains("one checkbox per deliverable or date"));
         assert!(plain.system.contains("## Check yourself") && plain.system.contains("[!example]-"));
         assert!(plain.system.contains("break the problem down"));
         assert!(!plain.user.contains("what_the_user_wants"));
@@ -1149,6 +1177,7 @@ mod tests {
         let (title, body) = write_note(
             &material,
             "heaps.docx",
+            None,
             "",
             &write,
             &never,
@@ -1225,6 +1254,72 @@ mod tests {
     }
 
     #[test]
+    fn a_file_named_like_ma161_hw3_keeps_that_name_in_its_title_short_or_long() {
+        let users = Mutex::new(Vec::new());
+        let write = |p: Prompt, _: u32| -> Result<String> {
+            users.lock().unwrap().push(p.user.clone());
+            if p.system.contains("name and summarize") {
+                Ok("Eigenvalues and diagonalisation\n\nA problem set.".into())
+            } else if p.system.contains("This is part") {
+                Ok("## A section\n- point".into())
+            } else {
+                Ok("Eigenvalues\n\nFind them.\n\n## Problem 1\n- det".into())
+            }
+        };
+        let short = Material {
+            text: "Find the eigenvalues of A.".into(),
+            ..Material::default()
+        };
+        let (title, _) = write_note(
+            &short,
+            "ma161_hw3.pdf",
+            Some("ma161_hw3"),
+            "",
+            &write,
+            &never,
+            &mut |_, _, _| {},
+            Budget::FREE,
+        )
+        .unwrap();
+        assert_eq!(title, "ma161_hw3 – Eigenvalues");
+        assert!(users.lock().unwrap()[0].contains("The file is named \"ma161_hw3\""));
+        let long = Material {
+            text: vec!["word ".repeat(1000); 10].join("\n\n"),
+            ..Material::default()
+        };
+        let (title, _) = write_note(
+            &long,
+            "ma161_hw3.pdf",
+            Some("ma161_hw3"),
+            "",
+            &write,
+            &never,
+            &mut |_, _, _| {},
+            Budget::FREE,
+        )
+        .unwrap();
+        assert_eq!(title, "ma161_hw3 – Eigenvalues and diagonalisation");
+        let (title, _) = write_note(
+            &short,
+            "IMG_2034.jpg",
+            None,
+            "",
+            &write,
+            &never,
+            &mut |_, _, _| {},
+            Budget::FREE,
+        )
+        .unwrap();
+        assert_eq!(title, "Eigenvalues");
+        assert!(!users
+            .lock()
+            .unwrap()
+            .last()
+            .unwrap()
+            .contains("The file is named"));
+    }
+
+    #[test]
     fn a_short_file_is_one_request_and_a_long_one_is_written_in_parts_then_named() {
         let asked = Mutex::new(Vec::new());
         let write = |p: Prompt, _: u32| -> Result<String> {
@@ -1251,6 +1346,7 @@ mod tests {
         let (title, body) = write_note(
             &short,
             "heaps.txt",
+            None,
             "",
             &write,
             &see,
@@ -1277,6 +1373,7 @@ mod tests {
         let (title, body) = write_note(
             &long,
             "handout.pdf",
+            None,
             "",
             &write,
             &see,
@@ -1337,6 +1434,7 @@ mod tests {
         let (_, body) = write_note(
             &material,
             "a.pdf",
+            None,
             "",
             &write,
             &see,
@@ -1372,6 +1470,7 @@ mod tests {
         let err = write_note(
             &material,
             "a.pdf",
+            None,
             "",
             &failing,
             &see,

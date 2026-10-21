@@ -672,8 +672,16 @@ pub fn write_up(
     } else {
         format!("{notice}\n\n{}", structured.body)
     };
+    let label = session
+        .manifest
+        .profile
+        .context
+        .lines()
+        .next()
+        .and_then(|line| line.strip_prefix("Calendar event:"))
+        .and_then(leo_core::filename::tracking_label);
     let written = Written {
-        title: structured.title,
+        title: leo_core::filename::with_label(&structured.title, label.as_deref()),
         body,
         problems: structured.problems,
     };
