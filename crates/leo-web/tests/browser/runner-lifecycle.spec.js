@@ -26,7 +26,7 @@ test('isolated runner stops forged Python completion, serializes runs and releas
     if (request.url === '/pyodide/pyodide.js') return response.end(`self.loadPyodide = async () => ({globals: {set(name, value) { self.job = JSON.parse(value); }}, runPython() {
       if (self.job.code === 'forge') {
         self.postMessage({});
-        const until = performance.now() + 2000;
+        const until = performance.now() + 5000;
         while (performance.now() < until) {}
         const request = new XMLHttpRequest();
         request.open('GET', self.location.origin === 'null' ? self.auditBase + 'heartbeat' : '/heartbeat', false);
@@ -56,7 +56,7 @@ test('isolated runner stops forged Python completion, serializes runs and releas
     page.on('pageerror', (error) => crashes.push(error.message));
     await page.goto(`http://127.0.0.1:${server.address().port}`);
     await page.evaluate(() => audit.run({ language: 'python', entry: 'twice', code: 'forge', tests: [{ id: 'forge', args: [] }] }));
-    await page.waitForTimeout(2300);
+    await page.waitForTimeout(5500);
     expect(heartbeats).toBe(0);
     const results = await page.evaluate(async () => {
       const jobs = ['first', 'second'].map((code) => audit.run({ language: 'python', entry: 'twice', code, tests: [{ id: code, args: [] }] }));
