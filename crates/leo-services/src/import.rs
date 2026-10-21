@@ -500,7 +500,7 @@ pub fn image_prompt(
 
 fn named(mut prompt: Prompt, label: Option<&str>) -> Prompt {
     if let Some(label) = label {
-        prompt.user.push_str(&format!(" The file is named \"{label}\", the name the user files it under: start the title with that name as written, then a few words on the topic."));
+        prompt.user.push_str(&format!(" This is \"{label}\", the name the user files it under: start the title with that name as written, then a few words on the topic."));
     }
     prompt
 }
@@ -679,6 +679,16 @@ pub fn write_note(
     Ok((leo_core::filename::with_label(&title, label), body))
 }
 
+fn label_for(uploads: &[Upload], material: &Material) -> Option<String> {
+    use leo_core::filename::{file_label, series_label};
+    match uploads {
+        [one] => file_label(&one.name)
+            .or_else(|| series_label(&one.name))
+            .or_else(|| series_label(&material.text)),
+        _ => None,
+    }
+}
+
 pub fn import(
     uploads: &[Upload],
     wants: &str,
@@ -692,10 +702,7 @@ pub fn import(
     };
     let see = |prompt: Prompt, images: &[Image], most: u32| crate::ai::see(prompt, images, most);
     let budget = crate::ai::writing_budget();
-    let label = match uploads {
-        [one] => leo_core::filename::file_label(&one.name),
-        _ => None,
-    };
+    let label = label_for(uploads, &material);
     let (title, body) = write_note(
         &material,
         name,
@@ -1254,6 +1261,40 @@ mod tests {
     }
 
     #[test]
+    fn the_name_comes_from_the_file_then_a_lecture_or_week_number_in_it_or_on_its_first_page() {
+        let upload = |name: &str| Upload {
+            name: name.into(),
+            mime: String::new(),
+            bytes: vec![],
+        };
+        let text = |t: &str| Material {
+            text: t.into(),
+            ..Material::default()
+        };
+        let slides = text("# Lecture 1\nIntroduction to proofs");
+        assert_eq!(
+            label_for(&[upload("ma161_hw3.pdf")], &slides).as_deref(),
+            Some("ma161_hw3")
+        );
+        assert_eq!(
+            label_for(&[upload("Scan of Lecture 4.pdf")], &slides).as_deref(),
+            Some("Lecture 4")
+        );
+        assert_eq!(
+            label_for(&[upload("IMG_2034.jpg")], &slides).as_deref(),
+            Some("Lecture 1")
+        );
+        assert_eq!(
+            label_for(&[upload("slides.pdf")], &text("Graphs and trees")),
+            None
+        );
+        assert_eq!(
+            label_for(&[upload("a.pdf"), upload("b.pdf")], &slides),
+            None
+        );
+    }
+
+    #[test]
     fn a_file_named_like_ma161_hw3_keeps_that_name_in_its_title_short_or_long() {
         let users = Mutex::new(Vec::new());
         let write = |p: Prompt, _: u32| -> Result<String> {
@@ -1282,7 +1323,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(title, "ma161_hw3 – Eigenvalues");
-        assert!(users.lock().unwrap()[0].contains("The file is named \"ma161_hw3\""));
+        assert!(users.lock().unwrap()[0]
+            .contains("This is \"ma161_hw3\", the name the user files it under"));
         let long = Material {
             text: vec!["word ".repeat(1000); 10].join("\n\n"),
             ..Material::default()
@@ -1316,7 +1358,7 @@ mod tests {
             .unwrap()
             .last()
             .unwrap()
-            .contains("The file is named"));
+            .contains("the name the user files it under"));
     }
 
     #[test]

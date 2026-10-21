@@ -162,6 +162,125 @@ pub fn file_label(name: &str) -> Option<String> {
     tracking_label(stem)
 }
 
+const SERIES: [&str; 22] = [
+    "lecture",
+    "lec",
+    "week",
+    "chapter",
+    "unit",
+    "module",
+    "lab",
+    "homework",
+    "hw",
+    "assignment",
+    "pset",
+    "set",
+    "quiz",
+    "exam",
+    "midterm",
+    "discussion",
+    "tutorial",
+    "recitation",
+    "worksheet",
+    "project",
+    "lesson",
+    "session",
+];
+const SERIES_LOOK: usize = 2_000;
+
+fn numberish(word: &str) -> bool {
+    let digits = word.trim_end_matches(|c: char| c.is_ascii_alphabetic());
+    !digits.is_empty()
+        && digits.len() <= 3
+        && word.len() - digits.len() <= 1
+        && digits.chars().all(|c| c.is_ascii_digit())
+}
+
+fn course_code(text: &str, words: &[(usize, usize, &str)], at: usize) -> Option<usize> {
+    let code = |w: &str| {
+        let letters =
+            w.trim_end_matches(|c: char| c.is_ascii_alphanumeric() && !c.is_ascii_uppercase());
+        let rest = &w[letters.len()..];
+        (2..=5).contains(&letters.len())
+            && letters.chars().all(|c| c.is_ascii_uppercase())
+            && numberish(rest)
+    };
+    let shout = |w: &str| (2..=5).contains(&w.len()) && w.chars().all(|c| c.is_ascii_uppercase());
+    let before = at.checked_sub(1)?;
+    if text[words[before].1..words[at].0].chars().count() > 3 {
+        return None;
+    }
+    if code(words[before].2) {
+        return Some(words[before].0);
+    }
+    let first = before.checked_sub(1)?;
+    (numberish(words[before].2) && shout(words[first].2)).then_some(words[first].0)
+}
+
+pub fn series_label(text: &str) -> Option<String> {
+    let end = text
+        .char_indices()
+        .nth(SERIES_LOOK)
+        .map_or(text.len(), |(i, _)| i);
+    let text = &text[..end];
+    let mut words = Vec::new();
+    let mut start = None;
+    for (i, c) in text
+        .char_indices()
+        .chain(std::iter::once((text.len(), ' ')))
+    {
+        match (c.is_alphanumeric(), start) {
+            (true, None) => start = Some(i),
+            (false, Some(from)) => {
+                words.push((from, i, &text[from..i]));
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    for (at, &(from, to, word)) in words.iter().enumerate() {
+        let lower = word.to_lowercase();
+        let glued = SERIES.iter().find_map(|k| {
+            lower
+                .strip_prefix(k)
+                .filter(|rest| numberish(rest))
+                .map(|_| to)
+        });
+        let next = words.get(at + 1).filter(|(n_from, _, n)| {
+            SERIES.contains(&lower.as_str())
+                && numberish(n)
+                && text[to..*n_from]
+                    .chars()
+                    .all(|c| c == ' ' || c == '#' || c == '.' || c == ':')
+                && text[to..*n_from].chars().count() <= 3
+        });
+        let Some(until) = glued.or(next.map(|n| n.1)) else {
+            continue;
+        };
+        if lower == "set"
+            && !words[..at]
+                .last()
+                .is_some_and(|w| w.2.eq_ignore_ascii_case("problem"))
+        {
+            continue;
+        }
+        let begin = if lower == "set" {
+            words[at - 1].0
+        } else {
+            from
+        };
+        let begin =
+            course_code(text, &words, if lower == "set" { at - 1 } else { at }).unwrap_or(begin);
+        return Some(
+            text[begin..until]
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
+    }
+    None
+}
+
 pub fn with_label(title: &str, label: Option<&str>) -> String {
     let title = title.trim();
     let Some(label) = label.map(str::trim).filter(|l| !l.is_empty()) else {
@@ -217,6 +336,37 @@ mod tests {
             Some("MA161 Lecture 12")
         );
         assert_eq!(tracking_label("Data/Algos Interview"), None);
+    }
+
+    #[test]
+    fn lecture_week_and_homework_numbers_are_found_with_their_course_code() {
+        for (text, label) in [
+            ("Lecture 1\nIntroduction to proofs", "Lecture 1"),
+            ("# CS 61B Lecture 3: Linked lists", "CS 61B Lecture 3"),
+            ("MA161 Homework #4\nDue Friday", "MA161 Homework #4"),
+            ("Welcome to week 2 of the course", "week 2"),
+            ("Problem Set 5", "Problem Set 5"),
+            ("ECON 101 — Chapter 7: Elasticity", "ECON 101 — Chapter 7"),
+            ("CS 61B notes. Chapter 2", "Chapter 2"),
+            ("hw3 solutions", "hw3"),
+            ("Lab 2a: circuits", "Lab 2a"),
+        ] {
+            assert_eq!(series_label(text).as_deref(), Some(label), "{text}");
+        }
+        for text in [
+            "Introduction to proofs",
+            "We set 3 goals",
+            "The lecture covered 2024 results",
+            "",
+        ] {
+            assert_eq!(series_label(text), None, "{text}");
+        }
+        let late = format!("{} Lecture 9", "word ".repeat(1_000));
+        assert_eq!(
+            series_label(&late),
+            None,
+            "only the start of the material counts"
+        );
     }
 
     #[test]

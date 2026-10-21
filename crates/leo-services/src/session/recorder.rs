@@ -679,7 +679,10 @@ pub fn write_up(
         .lines()
         .next()
         .and_then(|line| line.strip_prefix("Calendar event:"))
-        .and_then(leo_core::filename::tracking_label);
+        .and_then(|event| {
+            leo_core::filename::tracking_label(event)
+                .or_else(|| leo_core::filename::series_label(event))
+        });
     let written = Written {
         title: leo_core::filename::with_label(&structured.title, label.as_deref()),
         body,

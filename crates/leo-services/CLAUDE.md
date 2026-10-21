@@ -232,6 +232,10 @@ tracking name (`leo_core::filename::file_label`: letters and a number, like
 prompt asks for it first and `filename::with_label` puts it in front of any
 title without it (2026-10-20, the user's request). A recording made for a
 calendar event with such a name (`tracking_label`) keeps it the same way.
+Otherwise `series_label` looks for a numbered lecture, week, chapter,
+homework, lab or problem set ("Lecture 1", "CS 61B Lecture 3", "hw3") in
+the file name, then in the first 2,000 characters of the material (its title
+slide), or in the event's name.
 Action items, in recordings and uploads, are the fewest that matter: one per
 deliverable or date, never sub-steps, readings or study advice. Vision: `ChatProvider::
 complete_with_images` (default: a clear "cannot read images" error);
