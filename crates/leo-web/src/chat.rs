@@ -171,6 +171,8 @@ const MATCHES: usize = 2;
 const TURNS: usize = 14;
 const DOCS_CHARS: usize = 60_000;
 const TURN_CHARS: usize = 4_000;
+const MESSAGE_CHARS: usize = 32_000;
+const LAST_REPLY_CHARS: usize = 12_000;
 pub const REPLY_TOKENS: u32 = 16_000;
 
 pub const MODES: [&str; 3] = ["chat", "study", "interview"];
@@ -258,6 +260,30 @@ struct Picked<'a> {
 
 pub(crate) fn studied(note: &Note) -> bool {
     !(note.title == leo_core::manual::MANUAL_TITLE && note.tags.iter().any(|t| t == "manual"))
+}
+
+fn clip_turn(text: &str, most: usize) -> String {
+    let total = text.chars().count();
+    if total <= most {
+        return text.to_string();
+    }
+    let mut out: String = text.chars().take(most).collect();
+    let fences = out
+        .lines()
+        .filter(|line| line.trim_start().starts_with("```"))
+        .count();
+    if fences % 2 == 1 {
+        out.push_str("\n```");
+    }
+    out.push_str(&format!(
+        "\n[…{} more characters of this message are left out]",
+        total - most
+    ));
+    out
+}
+
+fn turn_room(room: usize, at_default: usize) -> usize {
+    scaled(at_default, room).max(TURN_CHARS)
 }
 
 pub(crate) fn clip(text: &str, most: usize) -> String {
@@ -926,12 +952,18 @@ pub fn prompt_material(
         ));
     }
     user.push_str("<conversation>\n");
-    for turn in &messages[start..] {
+    let kept = &messages[start..];
+    let newest_reply = kept.iter().rposition(|turn| turn.role != "user");
+    for (at, turn) in kept.iter().enumerate() {
         let who = if turn.role == "user" { "User" } else { "Felix" };
-        user.push_str(&format!(
-            "{who}: {}\n\n",
-            clip(turn.text.trim(), TURN_CHARS)
-        ));
+        let most = if turn.role == "user" && at + 1 == kept.len() {
+            turn_room(room, MESSAGE_CHARS)
+        } else if Some(at) == newest_reply {
+            turn_room(room, LAST_REPLY_CHARS)
+        } else {
+            TURN_CHARS
+        };
+        user.push_str(&format!("{who}: {}\n\n", clip_turn(turn.text.trim(), most)));
     }
     user.push_str("</conversation>\n\n");
     user.push_str(&today_line(chrono::Local::now(), zone.as_deref()));
@@ -954,7 +986,10 @@ pub fn follow_up(
         user.push_str(notes);
         user.push_str("</more_notes>\n\n");
     }
-    user.push_str(&format!("User: {}\n\n", clip(message.trim(), TURN_CHARS)));
+    user.push_str(&format!(
+        "User: {}\n\n",
+        clip_turn(message.trim(), turn_room(room, MESSAGE_CHARS))
+    ));
     user.push_str(&today_line(chrono::Local::now(), zone.as_deref()));
     user.push_str(REPLY_LINE);
     user
@@ -1605,5 +1640,67 @@ mod tests {
             assert!(text.chars().count() <= room.min(32_000));
             assert!(text.contains("read more with open_note"));
         }
+    }
+
+    fn said(role: &str, text: &str) -> Turn {
+        Turn {
+            role: role.into(),
+            text: text.into(),
+        }
+    }
+
+    #[test]
+    fn a_long_pasted_message_reaches_felix_whole() {
+        let pasted = format!(
+            "{}QUESTION: what does this print?",
+            "let x = 1 in x;\n".repeat(1_250)
+        );
+        assert!(pasted.chars().count() > 20_000);
+        let (_, user) = prompt_within("chat", "", &[], &[said("user", &pasted)], ROOM, None);
+        assert!(user.contains("QUESTION: what does this print?"));
+        let user = follow_up(&[], "", &pasted, ROOM);
+        assert!(user.contains("QUESTION: what does this print?"));
+    }
+
+    #[test]
+    fn felix_keeps_his_last_long_reply_for_the_follow_up() {
+        let reply = format!("{}let answer = 42", "let step = 1\n".repeat(800));
+        assert!(reply.chars().count() > 10_000);
+        let turns = [
+            said("user", "Write hw2."),
+            said("assistant", &reply),
+            said("user", "why line 30?"),
+        ];
+        let (_, user) = prompt_within("chat", "", &[], &turns, ROOM, None);
+        assert!(user.contains("let answer = 42"));
+    }
+
+    #[test]
+    fn a_cut_inside_code_closes_the_fence_and_says_how_much_is_left() {
+        let text = format!("Here:\n```ocaml\n{}", "let f = \u{2200} x\n".repeat(400));
+        let cut = clip_turn(&text, 1_000);
+        let fences = cut
+            .lines()
+            .filter(|l| l.trim_start().starts_with("```"))
+            .count();
+        assert_eq!(fences % 2, 0, "{cut}");
+        assert!(
+            cut.ends_with("more characters of this message are left out]"),
+            "{cut}"
+        );
+        assert!(!cut.contains("note"));
+        assert_eq!(clip_turn("short", 1_000), "short");
+    }
+
+    #[test]
+    fn a_small_room_still_bounds_the_message() {
+        let pasted = "\u{2200}".repeat(40_000);
+        let most = scaled(MESSAGE_CHARS, LEAST_ROOM).max(TURN_CHARS);
+        let user = follow_up(&[], "", &pasted, LEAST_ROOM);
+        let kept = user.matches('\u{2200}').count();
+        assert!(kept <= most + 2, "{kept} > {most}");
+        assert!(kept >= TURN_CHARS);
+        let (_, user) = prompt_within("chat", "", &[], &[said("user", &pasted)], LEAST_ROOM, None);
+        assert!(user.matches('\u{2200}').count() <= most + 2);
     }
 }
