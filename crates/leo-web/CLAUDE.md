@@ -997,3 +997,20 @@ may make additional internal requests; these are not subscription-balance estima
 A hidden check resolving conflicting Study verdicts is authoritative for the card
 and its hidden history marker; the streamed explanation stays intact. An invalid
 check leaves the answer ungraded, and the inconsistent warm session is released.
+
+Note combining sizes source parts by the writing provider’s graph context budget
+(at most 20,000 characters per source and 40,000 per request), up to 480,000
+input characters and 128 requests. Fenced code and display maths
+stay whole; oversized protected sections pass through verbatim. Parts are joined
+without a growing full-note remerge, and every part uses the existing preservation
+checks. Two combines may run at once, with a 15-minute between-request deadline;
+any failed part leaves both source notes unchanged. Review, version checks,
+transcript copies and Undo still apply. Saving admits bounded Unicode JSON bodies.
+
+Notes with Markdown headings have an On this page outline, generated locally from
+editable line blocks (up to 300 headings, excluding code, maths, quotes and tables).
+It uses source-more controls and theme tokens, shows a sticky left rail when the
+note has 900 px of room, and folds above the note in a narrow pane or on a phone.
+Heading jumps keep the URL and reading-position flow; typing refreshes only the
+outline after a pause, preserving the editor and caret. Scroll/resize observers,
+frames and timers are released with the document. The outline never prints.

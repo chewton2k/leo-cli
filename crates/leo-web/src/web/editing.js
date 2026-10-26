@@ -62,6 +62,21 @@
     return blocks;
   }
 
+  const MOST_HEADINGS = 300;
+
+  function headings(lines) {
+    const out = [];
+    for (const block of splitBlocks(lines)) {
+      if (block.kind !== 'line') continue;
+      const found = lines[block.start].match(/^\s*(#{1,6})\s+(.+?)\s*$/);
+      if (!found) continue;
+      const text = found[2].replace(/\s+#+\s*$/, '').trim();
+      if (text) out.push({ line: block.start, level: found[1].length, text });
+      if (out.length === MOST_HEADINGS) break;
+    }
+    return out;
+  }
+
   function boxesBefore(lines, index) {
     let count = 0;
     for (let i = 0; i < index && i < lines.length; i++) if (isBox(lines[i])) count++;
@@ -186,7 +201,7 @@
     });
   }
 
-  const api = { setPictureWidth, splitBlocks, boxesBefore, boxLine, continueLine, toggleBox, indent, outdent, rawOffset, isBox, snapshotOf, lineAtOffset, MOST_PASSAGE };
+  const api = { headings, setPictureWidth, splitBlocks, boxesBefore, boxLine, continueLine, toggleBox, indent, outdent, rawOffset, isBox, snapshotOf, lineAtOffset, MOST_PASSAGE };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.leoEditing = api;
 })(typeof window !== 'undefined' ? window : globalThis);

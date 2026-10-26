@@ -137,3 +137,96 @@ test('documents split notes and keep Felix at the right without losing drafts', 
     await new Promise(resolve => server.close(resolve));
   }
 });
+
+test('note headings navigate without losing edits and adapt beside Felix in both themes', async ({ browser }) => {
+  const web = path.resolve(__dirname, '../../src/web');
+  const html = fs.readFileSync(path.join(web, 'index.html'), 'utf8');
+  const style = html.match(/<style>([\s\S]*?)<\/style>/)[1];
+  const core = fs.readFileSync(path.join(web, 'app/core.js'), 'utf8');
+  const icons = core.slice(core.indexOf('const svg ='), core.indexOf('const recorder ='));
+  const show = core.slice(core.indexOf('function noteActions('), core.indexOf('function newNote('));
+  const body = '# Introduction\n\nFirst paragraph.\n\n' + 'Reading material.\n\n'.repeat(80) + '## **Sounds**\n\nCompare vowels.\n\n```md\n# Ignore code\n```\n\n## Sounds\n\nLast paragraph.';
+  const fixture = `const md = window.leoMarkdown, leoDoc = window.leoDoc;
+    const $ = (q, root = document) => root.querySelector(q), app = $('#app');
+    const esc = md.escape, enc = encodeURIComponent;
+    let seq = 0, state = {}, saved = '', citedLines = null;
+    const source = {}, chat = {setContext() {}};
+    const saving = {open(note) {return {note, edit: {...note, tags: []}}}};
+    const chrome = () => {}, drawOriginals = () => {}, hideAskFloat = () => {}, restoreReading = () => {}, drawRelated = () => {}, placeAskFloat = () => {};
+    const cleanTitle = text => text.trim(), folderLabel = () => 'Top level', rel = () => 'now';
+    function changed(s) {saved = s.doc.source();}
+    ${icons}
+    ${show}
+    const note = ${JSON.stringify({id:'outline-note', title:'Heading navigation', body, directory:'', updated_at:'2026-10-25'})};
+    window.audit = {saved: () => saved, remove: () => {state.session.doc.destroy(); app.innerHTML = '';}};
+    showNote(note.id, {fresh:note});`;
+  const server = http.createServer((req, res) => {
+    if (req.url === '/fixture.js') { res.setHeader('Content-Type', 'text/javascript'); return res.end(fixture); }
+    const file = {'/markdown.js':'markdown.js', '/editing.js':'editing.js', '/doc.js':'doc.js'}[req.url];
+    if (file) { res.setHeader('Content-Type', 'text/javascript'); return res.end(fs.readFileSync(path.join(web, file))); }
+    res.setHeader('Content-Type', 'text/html');
+    res.end(`<!doctype html><html><head><meta name="viewport" content="width=device-width"><style>${style}</style></head><body class="on-note"><header id="bar" class="bar"><div class="bar-row">Leo</div></header><main id="app"></main><aside class="chat" hidden><textarea id="chat-input" aria-label="Felix message"></textarea></aside><script src="/markdown.js"></script><script src="/editing.js"></script><script src="/doc.js"></script><script src="/fixture.js"></script></body></html>`);
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const context = await browser.newContext({reducedMotion:'reduce'});
+  try {
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', e => errors.push(e.message));
+    await page.setViewportSize({width:1600, height:900});
+    await page.goto(`http://127.0.0.1:${server.address().port}`);
+    const nav = page.getByRole('navigation', {name:'Headings'});
+    await expect(nav.getByRole('button')).toHaveCount(3);
+    await expect(nav.getByRole('button', {name:'Ignore code'})).toHaveCount(0);
+    await expect(page.locator('.note-outline details')).toHaveAttribute('open', '');
+    await nav.getByRole('button', {name:'Sounds', exact:true}).nth(1).click();
+    await expect(page.locator('#doc .blk:focus')).toContainText('Sounds');
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(1000);
+    await expect(nav.locator('[aria-current]')).toHaveAttribute('data-line', String(body.split('\n').lastIndexOf('## Sounds')));
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.locator('#doc .blk').filter({hasText:'First paragraph.'}).click();
+    const editor = page.locator('#doc textarea');
+    await editor.fill('## Newly typed heading');
+    await expect(nav.getByRole('button', {name:'Newly typed heading'})).toBeVisible();
+    await expect(editor).toBeFocused();
+    expect(await page.evaluate(() => audit.saved())).toContain('## Newly typed heading');
+    for (const theme of ['light','dark']) {
+      for (const width of [1600, 1100, 390]) {
+        await page.setViewportSize({width, height:900});
+        await page.evaluate(theme => {
+          document.documentElement.dataset.theme = theme;
+          document.body.classList.toggle('chat-open', innerWidth >= 1000);
+          document.querySelector('.chat').hidden = innerWidth < 1000;
+          document.querySelector('.chat').classList.toggle('open', innerWidth >= 1000);
+          document.body.style.setProperty('--chat-w', '400px');
+        }, theme);
+        await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
+        if (width >= 1200) {
+          const edges = await page.evaluate(() => ({note:document.querySelector('.note').getBoundingClientRect().right, chat:document.querySelector('.chat').getBoundingClientRect().left}));
+          expect(edges.note).toBeLessThanOrEqual(edges.chat + 1);
+        }
+        if (width === 390) await expect(page.locator('.note-outline details')).not.toHaveAttribute('open', '');
+        const contrast = await page.locator('.note-outline summary').evaluate(el => {
+          const rgb = value => value.match(/[\d.]+/g).slice(0,3).map(Number).map(n => {n /= 255; return n <= .04045 ? n/12.92 : ((n+.055)/1.055)**2.4;}).reduce((n,c,i) => n+c*[.2126,.7152,.0722][i],0);
+          const a = rgb(getComputedStyle(el).color), b = rgb(getComputedStyle(document.body).backgroundColor);
+          return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);
+        });
+        expect(contrast).toBeGreaterThanOrEqual(3);
+      }
+    }
+    await page.locator('.note-outline summary').click();
+    await expect(nav.getByRole('button', {name:'Newly typed heading'})).toBeVisible();
+    await nav.getByRole('button', {name:'Newly typed heading'}).focus();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('#doc .blk:focus')).toContainText('Newly typed heading');
+    await page.emulateMedia({media:'print'});
+    await expect(page.locator('.note-outline')).toBeHidden();
+    await page.emulateMedia({media:'screen'});
+    await page.evaluate(() => audit.remove());
+    await page.evaluate(() => window.dispatchEvent(new Event('scroll')));
+    expect(errors).toEqual([]);
+  } finally {
+    await context.close();
+    await new Promise(resolve => server.close(resolve));
+  }
+});

@@ -698,7 +698,12 @@ fn router(state: AppState) -> Router {
         )
         .route("/api/notes/{id}/move", post(move_note))
         .route("/api/notes/{id}/combine", post(routes::combine::start))
-        .route("/api/notes/{id}/combined", post(routes::combine::keep))
+        .route(
+            "/api/notes/{id}/combined",
+            post(routes::combine::keep).layer(axum::extract::DefaultBodyLimit::max(
+                combine::MOST_CHARS * 8 + 65_536,
+            )),
+        )
         .route(
             "/api/notes/{id}/uncombine",
             post(routes::combine::uncombine),

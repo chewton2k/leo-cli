@@ -214,3 +214,94 @@ fn combining_needs_an_ai_and_two_different_notes_and_a_failed_ai_changes_nothing
         .contains("Nothing was changed"));
     assert!(state.fresh().find_note(&ids[1]).is_some());
 }
+
+#[test]
+fn long_notes_combine_in_bounded_chunks_and_can_be_saved() {
+    let (mut state, _d, ids) = state_with(&[("First", ""), ("Second", "")]);
+    let a = (0..2500)
+        .map(|i| format!("First fact {i}: café 😀 stays here.\n"))
+        .collect::<String>();
+    let b = (0..2500)
+        .map(|i| format!("Second fact {i}: details stay here.\n"))
+        .collect::<String>();
+    assert!(a.chars().count() + b.chars().count() > 120_000);
+    bodies(&state, &ids, [&a, &b]);
+    let asked = Arc::new(Mutex::new(Vec::new()));
+    let heard = Arc::clone(&asked);
+    let notes = state.fresh().notes_dir.clone();
+    state.graphs = Arc::new(graph::Graphs::for_notes(
+        &notes,
+        Some(Arc::new(move |_, user: &str, _| {
+            heard.lock().unwrap().push(user.to_string());
+            let bodies = user
+                .split("<note title=")
+                .skip(1)
+                .map(|part| {
+                    part.split_once('\n')
+                        .unwrap()
+                        .1
+                        .split_once("\n</note>")
+                        .unwrap()
+                        .0
+                })
+                .collect::<Vec<_>>();
+            Ok(bodies.join("\n\n"))
+        })),
+    ));
+    let response = started(&state, &ids[0], &ids[1]);
+    assert_eq!(response.status(), StatusCode::OK);
+    let job = json_of(response);
+    let done = finished(&state, job["id"].as_str().unwrap());
+    assert_eq!(done["state"], "ready", "{done}");
+    let page = &done["result"];
+    let body = page["body"].as_str().unwrap();
+    for line in a.lines().chain(b.lines()) {
+        assert!(body.contains(line), "{line}");
+    }
+    let calls = asked.lock().unwrap();
+    assert!(calls.len() > 1 && calls.len() <= 128);
+    assert!(calls.iter().all(|call| call.chars().count() < 42_000));
+    drop(calls);
+    let saved = keep(
+        &state,
+        &ids[0],
+        serde_json::json!({ "with": ids[1], "body": body, "base": page["base"], "with_base": page["with_base"] }),
+    );
+    assert_eq!(saved.status(), StatusCode::OK);
+}
+
+#[test]
+fn a_later_chunk_failure_and_the_total_limit_leave_both_notes_untouched() {
+    let (mut state, _d, ids) = state_with(&[("First", ""), ("Second", "")]);
+    let text = "A fact that stays.\n".repeat(8000);
+    bodies(&state, &ids, [&text, "Second fact"]);
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let count = Arc::clone(&calls);
+    let notes = state.fresh().notes_dir.clone();
+    state.graphs = Arc::new(graph::Graphs::for_notes(
+        &notes,
+        Some(Arc::new(move |_, _, _| {
+            if count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                Ok("First section".into())
+            } else {
+                Err(anyhow::anyhow!("offline"))
+            }
+        })),
+    ));
+    let job = json_of(started(&state, &ids[0], &ids[1]));
+    let done = finished(&state, job["id"].as_str().unwrap());
+    assert_eq!(done["state"], "failed");
+    assert!(done["result"].is_null());
+    assert_eq!(state.fresh().find_note(&ids[0]).unwrap().body, text);
+    assert!(state.fresh().find_note(&ids[1]).is_some());
+    bodies(
+        &state,
+        &ids,
+        [&"x".repeat(crate::combine::MOST_CHARS + 1), "other"],
+    );
+    assert_eq!(
+        started(&state, &ids[0], &ids[1]).status(),
+        StatusCode::PAYLOAD_TOO_LARGE
+    );
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+}

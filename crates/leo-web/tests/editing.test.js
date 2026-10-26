@@ -5,6 +5,17 @@ const md = require('../src/web/markdown.js');
 const cases = [];
 const test = (name, fn) => cases.push([name, fn]);
 
+test('the outline finds headings at every level but excludes code, maths, quotes and tables', () => {
+  const lines = ['# Intro', '## **Sounds**', '```md', '# Not a heading', '```', '> ## Quoted', '$$', '# Formula', '$$', '| Name |', '|---|', '# Table row |', '### Phrase [structure](https://example.com)', '###### Deep 😀', '## Again', '## Again', '####### Too deep', 'no # heading'];
+  assert.deepEqual(ed.headings(lines), [
+    { line: 0, level: 1, text: 'Intro' }, { line: 1, level: 2, text: '**Sounds**' },
+    { line: 12, level: 3, text: 'Phrase [structure](https://example.com)' },
+    { line: 13, level: 6, text: 'Deep 😀' }, { line: 14, level: 2, text: 'Again' }, { line: 15, level: 2, text: 'Again' },
+  ]);
+  assert.deepEqual(ed.headings(['##', '###    ', '  ## Indented ###']), [{ line: 2, level: 2, text: 'Indented' }]);
+  assert.equal(ed.headings(Array(500).fill('# Section')).length, 300);
+});
+
 test('resizing counts only the pictures the page draws, so outside images and code never take the size', () => {
   const line = '`![code](a.png)` ![Logo](https://example.com/logo.png) ![[https://x.org/y.png]] ![Mine](attachments/me.png) ![Sketch](data:image/svg+xml,%3Csvg%2F%3E)';
   const drawn = md.render(line).match(/class="note-img/g).length;

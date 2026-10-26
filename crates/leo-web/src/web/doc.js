@@ -4,7 +4,7 @@
   const md = root.leoMarkdown;
   const ed = root.leoEditing;
 
-  function mount(container, { source, onChange, placeholder, dir = '', onPictures = null, onSelection = null }) {
+  function mount(container, { source, onChange, placeholder, dir = '', onPictures = null, onSelection = null, outline = null }) {
     let lines = String(source || '').replace(/\r\n?/g, '\n').split('\n');
     let blocks = [];
     let editing = null;
@@ -34,6 +34,7 @@
         current = next;
       }
       onChange(next);
+      outlineLater();
     }
 
     function restore(text) {
@@ -43,6 +44,7 @@
       current = text;
       lines = text.split('\n');
       onChange(text);
+      outlineLater();
       draw();
       let from = 0;
       while (from < before.length && from < text.length && before[from] === text[from]) from++;
@@ -112,6 +114,97 @@
             return `<div class="blk blk-${block.kind}" data-start="${block.start}" data-i="${i}"${style}>${renderBlock(block)}</div>`;
           })
           .join('') + '<div class="doc-tail" data-tail="1"></div>';
+      outlineScroll();
+    }
+
+    let outlineTimer = 0;
+    let outlineFrame = 0;
+    let outlineKey = '';
+    let outlineWide = null;
+    let outlineRows = [];
+    const outlineNav = outline && outline.querySelector('nav');
+    const outlineDetails = outline && outline.querySelector('details');
+    const OUTLINE_PAUSE = 300;
+    const OUTLINE_WIDE = 900;
+
+    function outlineTop() {
+      const bar = document.getElementById('bar');
+      return (bar ? bar.getBoundingClientRect().bottom : 0) + 12;
+    }
+
+    function outlineActive() {
+      outlineFrame = 0;
+      if (!outline || !outline.isConnected || outline.hidden) return;
+      const top = outlineTop();
+      outline.style.setProperty('--outline-top', `${top}px`);
+      let current = outlineRows[0];
+      const bottom = root.scrollY > 0 && root.scrollY + root.innerHeight >= document.documentElement.scrollHeight - 2;
+      for (const row of outlineRows) {
+        const block = container.querySelector(`.blk[data-start="${row.line}"]`);
+        if (block && block.getBoundingClientRect().top <= (bottom ? root.innerHeight : top + 24)) current = row;
+      }
+      for (const button of outlineNav.querySelectorAll('button')) {
+        if (current && Number(button.dataset.line) === current.line) button.setAttribute('aria-current', 'location');
+        else button.removeAttribute('aria-current');
+      }
+    }
+
+    function outlineScroll() {
+      if (outline && !outlineFrame) outlineFrame = requestAnimationFrame(outlineActive);
+    }
+
+    function outlineDraw() {
+      if (!outlineNav || !container.isConnected) return;
+      outlineRows = ed.headings(lines);
+      outline.hidden = !outlineRows.length;
+      const key = JSON.stringify(outlineRows);
+      if (key !== outlineKey) {
+        const focused = outlineNav.contains(document.activeElement) ? document.activeElement.dataset.line : null;
+        outlineKey = key;
+        const least = Math.min(...outlineRows.map((row) => row.level));
+        outlineNav.innerHTML = outlineRows.map((row) => `<button type="button" data-line="${row.line}" class="outline-level-${row.level - least}" title="${md.escape(md.plain(row.text))}">${md.escape(md.plain(row.text))}</button>`).join('');
+        if (focused !== null) {
+          const button = outlineNav.querySelector(`[data-line="${focused}"]`) || outlineNav.querySelector('button');
+          if (button) button.focus({ preventScroll: true });
+        }
+      }
+      outlineScroll();
+    }
+
+    function outlineLater() {
+      if (!outline) return;
+      clearTimeout(outlineTimer);
+      outlineTimer = setTimeout(outlineDraw, OUTLINE_PAUSE);
+    }
+
+    function outlineGo(e) {
+      const button = e.target.closest('button[data-line]');
+      if (!button || !outlineNav.contains(button)) return;
+      stop();
+      const block = container.querySelector(`.blk[data-start="${button.dataset.line}"]`);
+      if (!block) return;
+      block.tabIndex = -1;
+      block.focus({ preventScroll: true });
+      if (!outlineWide) outlineDetails.open = false;
+      const inset = outlineWide ? 0 : outlineDetails.querySelector('summary').getBoundingClientRect().height + 8;
+      root.scrollTo({ top: Math.max(0, root.scrollY + block.getBoundingClientRect().top - outlineTop() - inset), behavior: 'instant' });
+      outlineScroll();
+    }
+
+    const outlineResize = outline && root.ResizeObserver ? new ResizeObserver((entries) => {
+      const wide = entries[0].contentRect.width >= OUTLINE_WIDE;
+      if (wide !== outlineWide) {
+        outlineWide = wide;
+        outlineDetails.open = wide;
+      }
+      outlineScroll();
+    }) : null;
+    if (outlineNav) {
+      outlineNav.addEventListener('click', outlineGo);
+      root.addEventListener('scroll', outlineScroll, { passive: true });
+      root.addEventListener('resize', outlineScroll);
+      if (outlineResize) outlineResize.observe(outline.closest('.note-layout'));
+      outlineDraw();
     }
 
     function blockAtLine(line) {
@@ -732,6 +825,12 @@
     return {
       destroy: () => {
         stop();
+        clearTimeout(outlineTimer);
+        cancelAnimationFrame(outlineFrame);
+        if (outlineResize) outlineResize.disconnect();
+        if (outlineNav) outlineNav.removeEventListener('click', outlineGo);
+        root.removeEventListener('scroll', outlineScroll);
+        root.removeEventListener('resize', outlineScroll);
         document.removeEventListener('selectionchange', onSelectionChange);
         clearTimeout(release);
         document.removeEventListener('pointerup', onPointerUp);

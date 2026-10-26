@@ -13,6 +13,7 @@ use super::notes::{save, version_of, NoteResponse};
 use crate::{combine, progress, AppState};
 
 const MOST_JOBS: usize = 20;
+const MOST_WORKING: usize = 2;
 const KEPT_FOR: Duration = Duration::from_secs(6 * 60 * 60);
 
 fn error(code: StatusCode, message: &str) -> Response {
@@ -67,7 +68,7 @@ async fn notes_for(
     if into.body.chars().count() + from.body.chars().count() > combine::MOST_CHARS {
         return Err((
             StatusCode::PAYLOAD_TOO_LARGE,
-            "These notes are too long to combine with the AI in one go. Move the parts you want by hand.",
+            "These notes exceed the combine limit. Combine fewer sections at a time.",
         ));
     }
     Ok((into, from, notes_dir))
@@ -78,17 +79,9 @@ fn combined(
     into: &Note,
     from: &Note,
     notes_dir: &std::path::Path,
+    request_chars: usize,
 ) -> Result<serde_json::Value, &'static str> {
-    let reply = writer(
-        combine::SYSTEM,
-        &combine::prompt(into, from),
-        combine::reply_tokens(into, from),
-    )
-    .map_err(|_| "The AI could not combine these notes. Nothing was changed; try again.")?;
-    if reply.trim().is_empty() {
-        return Err("The AI sent back nothing. Nothing was changed; try again.");
-    }
-    let made = combine::settle(notes_dir, into, from, &reply);
+    let made = combine::write(writer, notes_dir, into, from, request_chars)?;
     Ok(serde_json::json!({
         "title": into.title,
         "with_title": from.title,
@@ -145,6 +138,12 @@ pub(crate) async fn start(
                 "These notes are already being combined.",
             );
         }
+        if jobs.values().filter(|job| job.state == "working").count() >= MOST_WORKING {
+            return error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "Two combines are already running. Let one finish, then try again.",
+            );
+        }
         if jobs.len() >= MOST_JOBS {
             return error(
                 StatusCode::TOO_MANY_REQUESTS,
@@ -163,6 +162,7 @@ pub(crate) async fn start(
         Some(t) => progress::metered(writer, state.chat.clone(), std::sync::Arc::clone(&t.meter)),
         None => writer,
     };
+    let request_chars = state.graphs.scale().batch_chars;
     let jobs = std::sync::Arc::clone(&state.combines);
     let spawned = std::thread::Builder::new()
         .name("leo-combine".into())
@@ -191,7 +191,7 @@ pub(crate) async fn start(
                 id: id.clone(),
                 done: false,
             };
-            let done = combined(&writer, &into, &from, &notes_dir);
+            let done = combined(&writer, &into, &from, &notes_dir, request_chars);
             if let Ok(mut jobs) = jobs.lock() {
                 if let Some(job) = jobs.get_mut(&id) {
                     match done {
