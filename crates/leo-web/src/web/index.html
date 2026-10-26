@@ -146,25 +146,33 @@ main { max-width: 760px; margin: 0 auto; padding: 8px 16px calc(var(--bottom) + 
 :root[data-note-width="comfortable"] { --note-width: 760px; }
 :root[data-note-width="full"] { --note-width: 100%; }
 body.on-note main, body.on-note .bar-row { max-width: var(--note-width); }
-body.on-note main:has(.note-outline:not([hidden])) { max-width: calc(var(--note-width) + 208px); }
+body.on-note main:has(.note-outline:not([hidden])) { max-width: none; margin-inline: 0; }
 .note-layout { container: note / inline-size; }
 .note-columns { min-width: 0; }
-.note-columns > .note { min-width: 0; }
-.note-outline { position: sticky; top: var(--outline-top, 76px); align-self: start; z-index: 12; background: var(--bg); border-radius: 10px; margin-bottom: 12px; }
+.note-columns > .note { min-width: 0; width: 100%; max-width: var(--note-width); margin-inline: auto; }
+.note-outline { position: sticky; top: var(--outline-top, 76px); align-self: start; z-index: 12; margin-bottom: 12px; }
 .note-outline .source-more { margin: 0; border: 0; padding: 0; }
-.note-outline .source-more > summary { display: flex; gap: 8px; padding: 10px 8px; color: var(--muted); }
+.note-outline .source-more > summary { display: flex; gap: 8px; padding: 10px 8px; border: 0; color: var(--muted); }
 .note-outline summary span { flex: 1; }
 .note-outline summary .outline-icon { flex: none; display: flex; }
 .note-outline summary svg { flex: none; width: 18px; height: 18px; }
 .note-outline nav { max-height: min(50dvh, calc(100dvh - var(--outline-top, 76px) - 70px)); overflow-y: auto; overscroll-behavior: contain; padding: 4px; }
-.note-outline nav button { display: block; width: 100%; border: 0; border-left: 2px solid var(--line); border-radius: 0 8px 8px 0; background: transparent; color: var(--muted); text-align: left; font-size: 13px; padding: 8px 10px; overflow-wrap: anywhere; }
+.note-outline nav button { display: block; width: 100%; border: 0; border-radius: 6px; background: transparent; color: var(--muted); text-align: left; font-size: 13px; padding: 8px 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .note-outline nav button:hover { background: var(--surface-2); color: var(--text); }
-.note-outline nav button[aria-current] { border-left-color: var(--accent); color: var(--accent); background: var(--accent-soft); font-weight: 600; }
-.note-outline .outline-level-1 { padding-left: 20px; }
-.note-outline .outline-level-2 { padding-left: 30px; }
-.note-outline .outline-level-3, .note-outline .outline-level-4, .note-outline .outline-level-5 { padding-left: 40px; }
+.note-outline nav button[aria-current] { color: var(--accent); font-weight: 600; }
+.note-outline nav ul { list-style: none; margin: 0; padding: 0; }
+.note-outline nav ul ul { padding-left: 12px; }
+.note-outline .outline-row { display: flex; align-items: center; min-width: 0; }
+.note-outline .outline-row > button[data-line] { flex: 1; min-width: 0; }
+.note-outline nav .outline-toggle { width: 24px; height: 32px; flex: none; display: grid; place-items: center; padding: 4px; }
+.note-outline .outline-toggle svg { width: 16px; height: 16px; }
+.note-outline .outline-toggle[aria-expanded="true"] svg { transform: rotate(90deg); }
+.note-outline .outline-spacer { flex: none; width: 24px; }
+@container note (max-width: 899px) {
+  .note-outline { background: var(--bg); }
+}
 @container note (min-width: 900px) {
-  .note-columns:has(.note-outline:not([hidden])) { display: grid; grid-template-columns: 184px minmax(0, 1fr); gap: 24px; }
+  .note-columns:has(.note-outline:not([hidden])) { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 56px; }
   .note-outline nav { max-height: calc(100dvh - var(--outline-top, 76px) - 130px); }
 }
 .section-title { font-size: 13px; font-weight: 650; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 18px 4px 8px; }

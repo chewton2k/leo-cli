@@ -122,6 +122,8 @@
     let outlineKey = '';
     let outlineWide = null;
     let outlineRows = [];
+    const outlineFolded = new Set();
+    const outlineChevron = outline && outline.querySelector('summary > svg') ? outline.querySelector('summary > svg').outerHTML : '';
     const outlineNav = outline && outline.querySelector('nav');
     const outlineDetails = outline && outline.querySelector('details');
     const OUTLINE_PAUSE = 300;
@@ -143,8 +145,14 @@
         const block = container.querySelector(`.blk[data-start="${row.line}"]`);
         if (block && block.getBoundingClientRect().top <= (bottom ? root.innerHeight : top + 24)) current = row;
       }
-      for (const button of outlineNav.querySelectorAll('button')) {
-        if (current && Number(button.dataset.line) === current.line) button.setAttribute('aria-current', 'location');
+      let selected = current && outlineNav.querySelector(`button[data-line="${current.line}"]`);
+      let hidden = selected && selected.closest('ul[hidden]');
+      while (hidden) {
+        selected = outlineNav.querySelector(`button[data-line="${hidden.dataset.parent}"]`);
+        hidden = selected && selected.closest('ul[hidden]');
+      }
+      for (const button of outlineNav.querySelectorAll('button[data-line]')) {
+        if (button === selected) button.setAttribute('aria-current', 'location');
         else button.removeAttribute('aria-current');
       }
     }
@@ -153,18 +161,38 @@
       if (outline && !outlineFrame) outlineFrame = requestAnimationFrame(outlineActive);
     }
 
-    function outlineDraw() {
+    function outlineList(rows, parent = null) {
+      const folded = parent && outlineFolded.has(parent.key);
+      const group = parent ? ` id="outline-group-${parent.line}" data-parent="${parent.line}"${folded ? ' hidden' : ''}` : '';
+      return `<ul${group}>${rows.map((row) => {
+        const text = md.escape(md.plain(row.text));
+        const children = row.children.length > 0;
+        const toggle = children ? `<button type="button" class="outline-toggle" data-fold="${row.line}" aria-label="Subheadings of ${text}" aria-expanded="${!outlineFolded.has(row.key)}" aria-controls="outline-group-${row.line}">${outlineChevron}</button>` : '<span class="outline-spacer" aria-hidden="true"></span>';
+        return `<li><div class="outline-row">${toggle}<button type="button" data-line="${row.line}" title="${text}">${text}</button></div>${children ? outlineList(row.children, row) : ''}</li>`;
+      }).join('')}</ul>`;
+    }
+
+    function outlineDraw(force = false) {
       if (!outlineNav || !container.isConnected) return;
       outlineRows = ed.headings(lines);
+      const repeats = new Map();
+      for (const row of outlineRows) {
+        const label = JSON.stringify([row.level, row.text]);
+        const occurrence = repeats.get(label) || 0;
+        repeats.set(label, occurrence + 1);
+        row.key = JSON.stringify([label, occurrence]);
+      }
+      const keys = new Set(outlineRows.map((row) => row.key));
+      for (const key of outlineFolded) if (!keys.has(key)) outlineFolded.delete(key);
       outline.hidden = !outlineRows.length;
       const key = JSON.stringify(outlineRows);
-      if (key !== outlineKey) {
-        const focused = outlineNav.contains(document.activeElement) ? document.activeElement.dataset.line : null;
+      if (force || key !== outlineKey) {
+        const active = outlineNav.contains(document.activeElement) ? document.activeElement : null;
+        const focused = active ? { type: active.hasAttribute('data-fold') ? 'fold' : 'line', line: active.dataset.fold || active.dataset.line } : null;
         outlineKey = key;
-        const least = Math.min(...outlineRows.map((row) => row.level));
-        outlineNav.innerHTML = outlineRows.map((row) => `<button type="button" data-line="${row.line}" class="outline-level-${row.level - least}" title="${md.escape(md.plain(row.text))}">${md.escape(md.plain(row.text))}</button>`).join('');
-        if (focused !== null) {
-          const button = outlineNav.querySelector(`[data-line="${focused}"]`) || outlineNav.querySelector('button');
+        outlineNav.innerHTML = outlineList(ed.headingTree(outlineRows));
+        if (focused) {
+          const button = outlineNav.querySelector(`[data-${focused.type}="${focused.line}"]`) || outlineNav.querySelector('button[data-line]');
           if (button) button.focus({ preventScroll: true });
         }
       }
@@ -174,10 +202,20 @@
     function outlineLater() {
       if (!outline) return;
       clearTimeout(outlineTimer);
-      outlineTimer = setTimeout(outlineDraw, OUTLINE_PAUSE);
+      outlineTimer = setTimeout(() => outlineDraw(), OUTLINE_PAUSE);
     }
 
     function outlineGo(e) {
+      const toggle = e.target.closest('button[data-fold]');
+      if (toggle && outlineNav.contains(toggle)) {
+        const row = outlineRows.find((row) => row.line === Number(toggle.dataset.fold));
+        if (row) {
+          if (outlineFolded.has(row.key)) outlineFolded.delete(row.key);
+          else outlineFolded.add(row.key);
+          outlineDraw(true);
+        }
+        return;
+      }
       const button = e.target.closest('button[data-line]');
       if (!button || !outlineNav.contains(button)) return;
       stop();

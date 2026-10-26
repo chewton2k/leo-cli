@@ -77,6 +77,20 @@
     return out;
   }
 
+  function headingTree(rows) {
+    const tree = [];
+    const stack = [];
+    for (const row of rows.slice(0, MOST_HEADINGS)) {
+      if (!Number.isInteger(row.level) || row.level < 1 || row.level > 6) continue;
+      const node = { ...row, children: [] };
+      while (stack.length && stack[stack.length - 1].level >= row.level) stack.pop();
+      if (stack.length) stack[stack.length - 1].children.push(node);
+      else tree.push(node);
+      stack.push(node);
+    }
+    return tree;
+  }
+
   function boxesBefore(lines, index) {
     let count = 0;
     for (let i = 0; i < index && i < lines.length; i++) if (isBox(lines[i])) count++;
@@ -201,7 +215,7 @@
     });
   }
 
-  const api = { headings, setPictureWidth, splitBlocks, boxesBefore, boxLine, continueLine, toggleBox, indent, outdent, rawOffset, isBox, snapshotOf, lineAtOffset, MOST_PASSAGE };
+  const api = { headingTree, headings, setPictureWidth, splitBlocks, boxesBefore, boxLine, continueLine, toggleBox, indent, outdent, rawOffset, isBox, snapshotOf, lineAtOffset, MOST_PASSAGE };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.leoEditing = api;
 })(typeof window !== 'undefined' ? window : globalThis);

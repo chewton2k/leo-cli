@@ -16,6 +16,17 @@ test('the outline finds headings at every level but excludes code, maths, quotes
   assert.equal(ed.headings(Array(500).fill('# Section')).length, 300);
 });
 
+test('outline groups follow heading levels, including skipped levels and repeated titles', () => {
+  const rows = ed.headings(['# First', '### Nested', '##### Deep', '## Sibling', '# Next', '## Nested', '# Last']);
+  const tree = ed.headingTree(rows);
+  assert.deepEqual(tree.map(row => row.text), ['First', 'Next', 'Last']);
+  assert.deepEqual(tree[0].children.map(row => row.text), ['Nested', 'Sibling']);
+  assert.equal(tree[0].children[0].children[0].text, 'Deep');
+  assert.equal(tree[1].children[0].line, 5);
+  assert.deepEqual(tree[2].children, []);
+  assert.deepEqual(ed.headingTree([]), []);
+});
+
 test('resizing counts only the pictures the page draws, so outside images and code never take the size', () => {
   const line = '`![code](a.png)` ![Logo](https://example.com/logo.png) ![[https://x.org/y.png]] ![Mine](attachments/me.png) ![Sketch](data:image/svg+xml,%3Csvg%2F%3E)';
   const drawn = md.render(line).match(/class="note-img/g).length;

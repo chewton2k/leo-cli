@@ -1009,8 +1009,11 @@ transcript copies and Undo still apply. Saving admits bounded Unicode JSON bodie
 
 Notes with Markdown headings have an On this page outline, generated locally from
 editable line blocks (up to 300 headings, excluding code, maths, quotes and tables).
-It uses source-more controls and theme tokens, shows a sticky left rail when the
-note has 900 px of room, and folds above the note in a narrow pane or on a phone.
+It uses source-more controls and theme tokens. With 900 px of room, the borderless
+320 px rail sits beside the app sidebar, separated from the note by 56 px; note
+width preferences still cap the reading column. Headings stay on one line with
+ellipsis and their full title on hover. It folds above the note in a narrow pane
+or on a phone.
 Heading jumps keep the URL and reading-position flow; typing refreshes only the
 outline after a pause, preserving the editor and caret. Scroll/resize observers,
 frames and timers are released with the document. The outline never prints.
@@ -1019,3 +1022,9 @@ Combine’s chunker and dropped-content recovery share fence recognition: a clos
 line needs the opener’s character and at least its full length, with no trailing
 text. Shorter fences inside a longer block stay literal code, and following prose
 is never misclassified as a second code block.
+
+Outline headings with children have separate chevrons with aria-expanded and
+aria-controls. Folding hides only descendants; the heading itself still jumps to
+its section. Folds survive typing by heading text/occurrence, and a collapsed parent
+gets the current-section highlight when reading inside it. Groups follow real
+heading levels, including skipped levels, and stay bounded by the 300-heading cap.

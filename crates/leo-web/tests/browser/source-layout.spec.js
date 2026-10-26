@@ -138,14 +138,14 @@ test('documents split notes and keep Felix at the right without losing drafts', 
   }
 });
 
-test('note headings navigate without losing edits and adapt beside Felix in both themes', async ({ browser }) => {
+test('note headings navigate without losing edits and adapt beside Felix in both themes', async ({ browser }, testInfo) => {
   const web = path.resolve(__dirname, '../../src/web');
   const html = fs.readFileSync(path.join(web, 'index.html'), 'utf8');
   const style = html.match(/<style>([\s\S]*?)<\/style>/)[1];
   const core = fs.readFileSync(path.join(web, 'app/core.js'), 'utf8');
   const icons = core.slice(core.indexOf('const svg ='), core.indexOf('const recorder ='));
   const show = core.slice(core.indexOf('function noteActions('), core.indexOf('function newNote('));
-  const body = '# Introduction\n\nFirst paragraph.\n\n' + 'Reading material.\n\n'.repeat(80) + '## **Sounds**\n\nCompare vowels.\n\n```md\n# Ignore code\n```\n\n## Sounds\n\nLast paragraph.';
+  const body = '# Introduction to planetary environments\n\nFirst paragraph.\n\n' + 'Reading material.\n\n'.repeat(80) + '## **Sounds**\n\nCompare vowels.\n\n### Vowel examples\n\n' + 'Examples to compare.\n\n'.repeat(30) + '```md\n# Ignore code\n```\n\n## Sounds\n\nLast paragraph.';
   const fixture = `const md = window.leoMarkdown, leoDoc = window.leoDoc;
     const $ = (q, root = document) => root.querySelector(q), app = $('#app');
     const esc = md.escape, enc = encodeURIComponent;
@@ -176,9 +176,43 @@ test('note headings navigate without losing edits and adapt beside Felix in both
     await page.setViewportSize({width:1600, height:900});
     await page.goto(`http://127.0.0.1:${server.address().port}`);
     const nav = page.getByRole('navigation', {name:'Headings'});
-    await expect(nav.getByRole('button')).toHaveCount(3);
+    await expect(nav.locator('button[data-line]')).toHaveCount(4);
     await expect(nav.getByRole('button', {name:'Ignore code'})).toHaveCount(0);
     await expect(page.locator('.note-outline details')).toHaveAttribute('open', '');
+    const rail = await page.locator('.note-outline').evaluate(el => {
+      const box = el.getBoundingClientRect(), note = document.querySelector('.note').getBoundingClientRect();
+      const style = getComputedStyle(el);
+      return {left:box.left, width:box.width, gap:note.left-box.right, side:parseFloat(getComputedStyle(document.body).getPropertyValue('--side')) || 0, border:style.borderWidth, shadow:style.boxShadow, background:style.backgroundColor};
+    });
+    expect(rail.width).toBeGreaterThanOrEqual(280);
+    expect(rail.left - rail.side).toBeLessThanOrEqual(20);
+    expect(rail.gap).toBeGreaterThanOrEqual(48);
+    expect(rail.border).toBe('0px');
+    expect(rail.shadow).toBe('none');
+    expect(rail.background).toBe('rgba(0, 0, 0, 0)');
+    const heading = nav.locator('button[data-line]').first();
+    expect(await heading.evaluate(el => getComputedStyle(el).whiteSpace)).toBe('nowrap');
+    expect((await heading.boundingBox()).height).toBeLessThan(40);
+    const screenshot = testInfo.outputPath('outline-desktop.png');
+    await page.screenshot({path:screenshot});
+    await testInfo.attach('outline-desktop', {path:screenshot, contentType:'image/png'});
+    const parent = nav.getByRole('button', {name:'Subheadings of Introduction to planetary environments', exact:true});
+    await parent.click();
+    await expect(parent).toHaveAttribute('aria-expanded', 'false');
+    await expect(nav.getByRole('button', {name:'Sounds', exact:true})).toHaveCount(0);
+    await expect(heading).toBeVisible();
+    await expect(parent).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(parent).toHaveAttribute('aria-expanded', 'true');
+    const nested = nav.getByRole('button', {name:'Subheadings of Sounds', exact:true});
+    await nested.click();
+    await expect(nested).toHaveAttribute('aria-expanded', 'false');
+    await expect(nav.getByRole('button', {name:'Vowel examples', exact:true})).toHaveCount(0);
+    await page.locator('#doc .blk').filter({hasText:'Vowel examples'}).evaluate(el => window.scrollTo(0, window.scrollY + el.getBoundingClientRect().top - 80));
+    await expect(nav.getByRole('button', {name:'Sounds', exact:true}).first()).toHaveAttribute('aria-current', 'location');
+
+
+
     await nav.getByRole('button', {name:'Sounds', exact:true}).nth(1).click();
     await expect(page.locator('#doc .blk:focus')).toContainText('Sounds');
     await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(1000);
@@ -189,6 +223,7 @@ test('note headings navigate without losing edits and adapt beside Felix in both
     await editor.fill('## Newly typed heading');
     await expect(nav.getByRole('button', {name:'Newly typed heading'})).toBeVisible();
     await expect(editor).toBeFocused();
+    await expect(nested).toHaveAttribute('aria-expanded', 'false');
     expect(await page.evaluate(() => audit.saved())).toContain('## Newly typed heading');
     for (const theme of ['light','dark']) {
       for (const width of [1600, 1100, 390]) {
