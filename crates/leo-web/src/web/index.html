@@ -156,7 +156,8 @@ body.on-note main:has(.note-outline:not([hidden])) { max-width: none; margin-inl
 .note-outline summary span { flex: 1; }
 .note-outline summary .outline-icon { flex: none; display: flex; }
 .note-outline summary svg { flex: none; width: 18px; height: 18px; }
-.note-outline nav { max-height: min(50dvh, calc(100dvh - var(--outline-top, 76px) - 70px)); overflow-y: auto; overscroll-behavior: contain; padding: 4px; }
+.note-outline nav { max-height: min(50dvh, calc(100dvh - var(--outline-top, 76px) - 70px)); overflow-y: auto; overscroll-behavior: contain; padding: 4px; scrollbar-width: none; }
+.note-outline nav::-webkit-scrollbar { display: none; }
 .note-outline nav button { display: block; width: 100%; border: 0; border-radius: 6px; background: transparent; color: var(--muted); text-align: left; font-size: 13px; padding: 8px 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .note-outline nav button:hover { background: var(--surface-2); color: var(--text); }
 .note-outline nav button[aria-current] { color: var(--accent); font-weight: 600; }

@@ -1012,7 +1012,8 @@ editable line blocks (up to 300 headings, excluding code, maths, quotes and tabl
 It uses source-more controls and theme tokens. With 900 px of room, the borderless
 320 px rail sits beside the app sidebar, separated from the note by 56 px; note
 width preferences still cap the reading column. Headings stay on one line with
-ellipsis and their full title on hover. It folds above the note in a narrow pane
+ellipsis and their full title on hover. The outline hides its scrollbar while
+keeping wheel, touch and keyboard scrolling available. It folds above the note in a narrow pane
 or on a phone.
 Heading jumps keep the URL and reading-position flow; typing refreshes only the
 outline after a pause, preserving the editor and caret. Scroll/resize observers,

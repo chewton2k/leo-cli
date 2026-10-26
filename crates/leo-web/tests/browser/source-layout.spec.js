@@ -190,6 +190,13 @@ test('note headings navigate without losing edits and adapt beside Felix in both
     expect(rail.border).toBe('0px');
     expect(rail.shadow).toBe('none');
     expect(rail.background).toBe('rgba(0, 0, 0, 0)');
+    expect(await nav.evaluate(el => getComputedStyle(el).scrollbarWidth)).toBe('none');
+    await nav.evaluate(el => { el.style.maxHeight = '64px'; });
+    expect(await nav.evaluate(el => el.scrollHeight > el.clientHeight)).toBe(true);
+    await nav.hover();
+    await page.mouse.wheel(0, 100);
+    await expect.poll(() => nav.evaluate(el => el.scrollTop)).toBeGreaterThan(0);
+    await nav.evaluate(el => { el.style.removeProperty('max-height'); el.scrollTop = 0; });
     const heading = nav.locator('button[data-line]').first();
     expect(await heading.evaluate(el => getComputedStyle(el).whiteSpace)).toBe('nowrap');
     expect((await heading.boundingBox()).height).toBeLessThan(40);
