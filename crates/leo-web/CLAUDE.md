@@ -167,6 +167,10 @@ seer, meaning, web, room).
   edit. It counts only pictures the page draws (not outside links or
   `code`), so the size lands on the picture that was framed. Double-clicking the picture edits its Markdown; Escape closes only the
   frame.
+- Upload names (`safe_file_name`) drop trailing dots and spaces and dash
+  Windows device names (`CON-.pdf`); originals already stored under older rules
+  still open (`stored_file_name`). The page labels shortcuts with `ON_MAC`
+  (Ctrl on Windows) and monospace falls back to Consolas.
 - Pictures live in `<notes>/attachments/` (`leo_core::attachments`, sniffed
   PNG/JPEG/GIF/WebP only, ≤20 MB); paste or drop in `doc.js`.
 - Library (`browse.rs`, `app/browse.js`): Grid (default) or List. The first

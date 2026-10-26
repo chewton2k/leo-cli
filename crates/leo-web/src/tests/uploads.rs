@@ -396,6 +396,10 @@ fn a_failed_upload_says_why_and_bad_requests_are_refused() {
     assert_eq!(safe_file_name("../../etc/passwd"), "passwd");
     assert_eq!(safe_file_name("C:\\x\\notes?.pdf"), "notes-.pdf");
     assert_eq!(safe_file_name(".."), "upload");
+    assert_eq!(safe_file_name("CON.pdf"), "CON-.pdf");
+    assert_eq!(safe_file_name("aux"), "aux-");
+    assert_eq!(safe_file_name("draft. "), "draft");
+    assert_eq!(safe_file_name("Console.pdf"), "Console.pdf");
 }
 
 #[test]

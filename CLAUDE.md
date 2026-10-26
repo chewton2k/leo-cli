@@ -10,7 +10,7 @@ the compiler enforces it — do not add an upward dependency:
 
 | Crate | Holds | Depends on |
 |-------|-------|------------|
-| `crates/leo-core` | `notes`, `store` (+ undo), `sync` (git), `filename`, `open` (opens a link with the system), `diag`, `manual`, `action/` (vocabulary, parser, handlers, resolution, frontmatter) | — |
+| `crates/leo-core` | `notes`, `store` (+ undo), `sync` (git), `filename`, `open` (opens a link with the system), `children` (stops a process tree: group kill on Unix, `taskkill /T` on Windows), `diag`, `manual`, `action/` (vocabulary, parser, handlers, resolution, frontmatter) | — |
 | `crates/leo-services` | `ai/` (chains, prompts, `RealAi`, live transcription), `config/` (providers, credentials, theme data, sync policy), `listen`, `health`, `providers` | core |
 | `crates/leo-tui` | The full-screen app (`lib.rs` = `App`), its views, and `shell` (terminal effect performers shared with the CLI) | core, services |
 | `crates/leo-web` | `leo serve`: `lib.rs` (state, `serve`, router), `routes/` (handlers by area), `terminal.rs`, `token.rs`, `tunnel.rs`, and the page in `src/web/` (`index.html`, `app/*.js` served as `/app.js`, `markdown.js`, …) | core |
@@ -237,8 +237,11 @@ way.
   ignore list so old backups pick it up. `/trash`, `trash restore <n|title>`,
   `trash empty` (asks: `ConfirmedAction::EmptyTrash`); `leo trash` in a shell.
 - Backup: pulls merge (`--no-rebase --allow-unrelated-histories`), notes merge
-  by union (.gitattributes), directories.json is not tracked (rebuilt on load).
-- Editor: `leo_core::editor` (EDITOR, VISUAL, then nano, then vi; flags split).
+  by union and stay LF (`text eol=lf`, beating Git for Windows' autocrlf) in
+  .gitattributes, git runs with `core.longpaths=true` on Windows, directories.json is not tracked (rebuilt on load).
+- Editor: `leo_core::editor` (EDITOR, VISUAL, then nano, then vi; flags split,
+  quotes kept together, a setting that is an existing file is one program; on
+  Windows the program is found through `paths::find`, so `code.cmd` runs).
 - GitHub backup: `sync::github(notes_dir, name)` uses `gh` (`gh_ready` =
   `gh auth token` succeeds, no network): `repo view` else `repo create
   --private`, URL by `gh config get git_protocol` (https + `gh auth setup-git`
@@ -256,7 +259,10 @@ way.
   new binary into place: cp onto a running binary gets it killed on macOS.
 - Note files are `<title>.md` (`filename::file_name`: FS-illegal chars to
   `-`, ≤100 chars and ≤200 bytes; same title in a folder → `Title (2).md`,
-  oldest first, compared case-insensitively; `Store::assign_paths`). Old
+  oldest first, compared case-insensitively; `Store::assign_paths`). Windows
+  device names get a dash (`CON-.md`, `filename::reserved_on_windows`) on every
+  platform, since notes sync to Windows; new folders must pass
+  `filename::portable_folder`. Old
   `<id>.md` files are renamed on the next save. A file name that is neither an
   id nor its title's name becomes the title on load (Obsidian rename).
 - Headerless `.md` files load as notes: title = stem, id = `stable_id(path)`

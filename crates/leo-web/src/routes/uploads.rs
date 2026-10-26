@@ -107,6 +107,19 @@ pub(crate) struct ImportBody {
 pub(crate) const MOST_WANTS: usize = 2_000;
 
 pub fn safe_file_name(name: &str) -> String {
+    let cleaned = stored_file_name(name);
+    let cleaned = cleaned.trim_end_matches(['.', ' ']);
+    if cleaned.is_empty() {
+        "upload".to_string()
+    } else if leo_core::filename::reserved_on_windows(cleaned) {
+        let (stem, rest) = cleaned.split_at(cleaned.find('.').unwrap_or(cleaned.len()));
+        format!("{stem}-{rest}")
+    } else {
+        cleaned.to_string()
+    }
+}
+
+fn stored_file_name(name: &str) -> String {
     let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
     let cleaned: String = base
         .chars()
@@ -140,7 +153,7 @@ pub(crate) fn original_path(
     note: &str,
     name: &str,
 ) -> Option<std::path::PathBuf> {
-    if name.is_empty() || name != safe_file_name(name) {
+    if name.is_empty() || name != stored_file_name(name) {
         return None;
     }
     originals_dir(notes_dir, note)?;

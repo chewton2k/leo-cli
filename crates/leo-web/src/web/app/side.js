@@ -12,8 +12,8 @@ try {
 } catch (e) {}
 document.body.classList.toggle('side-mini', side.mini);
 
-const shortcutLabel = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? '⌘K' : 'Ctrl K';
-const quickLabel = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? '⌘J' : 'Ctrl J';
+const shortcutLabel = ON_MAC ? '⌘K' : 'Ctrl K';
+const quickLabel = ON_MAC ? '⌘J' : 'Ctrl J';
 
 function sideRow(action, icon, label, { on = false, attrs = '', count = '' } = {}) {
   const tail = count === '' ? '' : `<span class="side-count side-label">${esc(String(count))}</span>`;

@@ -15,11 +15,7 @@ struct Running(Child);
 
 impl Drop for Running {
     fn drop(&mut self) {
-        #[cfg(unix)]
-        unsafe {
-            libc::kill(-(self.0.id() as i32), libc::SIGKILL);
-        }
-        let _ = self.0.kill();
+        crate::children::stop_tree(&mut self.0);
         let _ = self.0.wait();
     }
 }
@@ -85,9 +81,16 @@ fn bounded_capture(command: &mut Command, limit: Duration, capture: bool) -> Res
     })
 }
 
+const LONG_PATHS: &[&str] = if cfg!(windows) {
+    &["-c", "core.longpaths=true"]
+} else {
+    &[]
+};
+
 fn git_output(dir: &Path, args: &[&str], limit: Duration) -> Result<Output> {
     bounded_output(
         Command::new("git")
+            .args(LONG_PATHS)
             .args(args)
             .current_dir(dir)
             .env("GIT_TERMINAL_PROMPT", "0")
@@ -500,7 +503,7 @@ const GITIGNORE: &str =
 
 /// A note edited on two computers keeps both sides' lines rather than one
 /// side's edit being lost; the user tidies it, instead of it vanishing.
-const GITATTRIBUTES: &str = "*.md merge=union\n.leo/tasks/*.json merge=union\n";
+const GITATTRIBUTES: &str = "*.md merge=union\n.leo/tasks/*.json merge=union\n*.md text eol=lf\n.leo/tasks/*.json text eol=lf\n";
 
 /// Bring the repository's own files up to date: the ignore list, the merge
 /// rule for notes, and — for a repository made by an earlier version — no
@@ -757,6 +760,34 @@ mod tests {
     }
 
     #[test]
+    fn notes_keep_unix_line_endings_on_a_computer_that_converts_them() {
+        let tmp = TempDir::new().unwrap();
+        let remote = tmp.path().join("remote.git");
+        assert!(Command::new("git")
+            .args(["init", "--bare", "-q"])
+            .arg(&remote)
+            .status()
+            .unwrap()
+            .success());
+        let url = remote.to_str().unwrap();
+        let first = tmp.path().join("first");
+        init(&first).unwrap();
+        std::fs::write(first.join("Week 1.md"), "---\ntitle: Week 1\n---\n\nline\n").unwrap();
+        auto_commit(&first).unwrap();
+        connect(&first, url).unwrap();
+        now(&first).unwrap();
+        let second = tmp.path().join("second");
+        assert!(Command::new("git")
+            .args(["-c", "core.autocrlf=true", "clone", "-q", "-b", "main", url])
+            .arg(&second)
+            .status()
+            .unwrap()
+            .success());
+        let text = std::fs::read_to_string(second.join("Week 1.md")).unwrap();
+        assert!(!text.contains('\r'), "{text:?}");
+    }
+
+    #[test]
     fn a_task_changed_on_two_computers_keeps_both_versions_to_pick_the_newest() {
         let tmp = TempDir::new().unwrap();
         let remote = tmp.path().join("remote.git");
@@ -807,6 +838,7 @@ mod tests {
         assert!(ignore.lines().any(|l| l == "directories.json"), "{ignore}");
         let attributes = std::fs::read_to_string(tmp.path().join(".gitattributes")).unwrap();
         assert!(attributes.contains("*.md merge=union"), "{attributes}");
+        assert!(attributes.contains("*.md text eol=lf"), "{attributes}");
     }
 
     /// A repository set up by an earlier version tracked the directory list;

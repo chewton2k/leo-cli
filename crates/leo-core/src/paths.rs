@@ -39,15 +39,21 @@ fn choose(home: Option<PathBuf>, platform: Option<PathBuf>, what: &str) -> Resul
 /// Whether `binary` is on the PATH. A plain scan with no subprocess, cheap
 /// enough to call on every startup.
 pub fn on_path(binary: &str) -> bool {
-    let Some(paths) = std::env::var_os("PATH") else {
-        return false;
+    find(binary).is_some()
+}
+
+pub fn find(binary: &str) -> Option<PathBuf> {
+    let names: Vec<String> = if cfg!(windows) {
+        [".exe", ".cmd", ".bat", ".com", ""]
+            .iter()
+            .map(|ext| format!("{binary}{ext}"))
+            .collect()
+    } else {
+        vec![binary.to_string()]
     };
-    std::env::split_paths(&paths).any(|dir| {
-        dir.join(binary).is_file()
-            // Windows resolves a bare name through PATHEXT; `.exe` covers the
-            // common case without reading the full list.
-            || (cfg!(windows) && dir.join(format!("{binary}.exe")).is_file())
-    })
+    let paths = std::env::var_os("PATH")?;
+    std::env::split_paths(&paths)
+        .find_map(|dir| names.iter().map(|n| dir.join(n)).find(|p| p.is_file()))
 }
 
 pub fn validate_directory(directory: &str) -> Result<()> {

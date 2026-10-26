@@ -14,19 +14,60 @@ pub fn command() -> String {
 /// Open `path` in the editor and wait for it to close.
 pub fn open(path: &std::path::Path) -> std::io::Result<std::process::ExitStatus> {
     let argv = argv(&command(), path);
-    std::process::Command::new(&argv[0])
+    std::process::Command::new(program(&argv[0]))
         .args(&argv[1..])
         .status()
 }
 
+fn program(name: &str) -> std::path::PathBuf {
+    if cfg!(windows) && !name.contains(['/', '\\']) {
+        if let Some(found) = crate::paths::find(name) {
+            return found;
+        }
+    }
+    std::path::PathBuf::from(name)
+}
+
 /// The editor setting split into a program and its flags, then the file.
 fn argv(command: &str, path: &std::path::Path) -> Vec<String> {
-    let mut argv: Vec<String> = command.split_whitespace().map(str::to_string).collect();
+    let mut argv = words(command);
     if argv.is_empty() {
         argv.push("vi".to_string());
     }
     argv.push(path.to_string_lossy().into_owned());
     argv
+}
+
+fn words(command: &str) -> Vec<String> {
+    let command = command.trim();
+    if std::path::Path::new(command).is_file() {
+        return vec![command.to_string()];
+    }
+    let mut words = Vec::new();
+    let mut word = String::new();
+    let mut quote = None;
+    let mut started = false;
+    for c in command.chars() {
+        match (quote, c) {
+            (Some(q), c) if c == q => quote = None,
+            (Some(_), c) => word.push(c),
+            (None, '"' | '\'') => {
+                quote = Some(c);
+                started = true;
+            }
+            (None, c) if c.is_whitespace() => {
+                if started || !word.is_empty() {
+                    words.push(std::mem::take(&mut word));
+                }
+                started = false;
+            }
+            (None, c) => word.push(c),
+        }
+    }
+    if started || !word.is_empty() {
+        words.push(word);
+    }
+    words
 }
 
 fn choose(editor: Option<String>, visual: Option<String>, has_nano: bool) -> String {
@@ -74,6 +115,33 @@ mod tests {
         let path = std::path::Path::new("/tmp/note.md");
         assert_eq!(argv("code -w", path), vec!["code", "-w", "/tmp/note.md"]);
         assert_eq!(argv("nano", path), vec!["nano", "/tmp/note.md"]);
+    }
+
+    #[test]
+    fn a_quoted_editor_path_with_spaces_stays_one_program() {
+        let path = std::path::Path::new("/tmp/note.md");
+        assert_eq!(
+            argv(
+                r#""C:\Program Files\Notepad++\notepad++.exe" -multiInst"#,
+                path
+            ),
+            vec![
+                r"C:\Program Files\Notepad++\notepad++.exe",
+                "-multiInst",
+                "/tmp/note.md"
+            ]
+        );
+        assert_eq!(words("subl -n -w"), vec!["subl", "-n", "-w"]);
+        assert_eq!(words("'my editor' --wait"), vec!["my editor", "--wait"]);
+    }
+
+    #[test]
+    fn an_editor_file_path_with_spaces_needs_no_quotes() {
+        let dir = tempfile::tempdir().unwrap();
+        let program = dir.path().join("my editor");
+        std::fs::write(&program, "").unwrap();
+        let program = program.to_string_lossy().into_owned();
+        assert_eq!(words(&program), vec![program.clone()]);
     }
 
     /// An empty variable is as good as unset.

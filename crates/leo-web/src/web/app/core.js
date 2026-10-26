@@ -6,6 +6,7 @@ const enc = encodeURIComponent;
 const $ = (selector, root = document) => root.querySelector(selector);
 const app = $('#app');
 const floating = $('#floating');
+const ON_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
 const svg = (paths) =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
@@ -751,7 +752,7 @@ function noteActions(id, recorded = false) {
   return `<nav class="actions" aria-label="Note">
       ${id ? `<button data-action="note-map" data-id="${esc(id)}">${ICON.map}<span>Graph</span></button>` : ''}
       ${id && recorded ? `<button data-action="note-sources">${ICON.mic}<span>Transcript</span></button>` : ''}
-      ${id ? `<button data-action="ask-selection" data-keep-selection title="Ask Felix about the selected text (${navigator.platform && /Mac/.test(navigator.platform) ? '⌘⇧E' : 'Ctrl+Shift+E'})">${ICON.chat}<span>Ask</span></button>` : ''}
+      ${id ? `<button data-action="ask-selection" data-keep-selection title="Ask Felix about the selected text (${ON_MAC ? '⌘⇧E' : 'Ctrl+Shift+E'})">${ICON.chat}<span>Ask</span></button>` : ''}
       ${id ? `<button data-action="note-tasks">${ICON.calendar}<span>Tasks</span></button>` : ''}
       <button data-action="note-picture">${ICON.image}<span>Picture</span></button>
       <button data-action="move">${ICON.move}<span>Move</span></button>

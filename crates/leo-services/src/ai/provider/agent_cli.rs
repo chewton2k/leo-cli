@@ -59,14 +59,7 @@ pub fn locate(bin: &str) -> Option<PathBuf> {
     if given.components().count() > 1 {
         return given.is_file().then(|| given.to_path_buf());
     }
-    let names: Vec<String> = if cfg!(windows) {
-        vec![format!("{bin}.exe"), format!("{bin}.cmd"), bin.to_string()]
-    } else {
-        vec![bin.to_string()]
-    };
-    let paths = std::env::var_os("PATH")?;
-    std::env::split_paths(&paths)
-        .find_map(|dir| names.iter().map(|n| dir.join(n)).find(|p| p.is_file()))
+    leo_core::paths::find(bin)
 }
 
 const CODEX_OFF: [&str; 18] = [
@@ -198,13 +191,7 @@ pub(crate) fn codex_native_isolated(program: &Path) -> bool {
 }
 
 pub(crate) fn stop_all(child: &mut std::process::Child) {
-    #[cfg(unix)]
-    if let Ok(group) = libc::pid_t::try_from(child.id()) {
-        unsafe {
-            libc::kill(-group, libc::SIGKILL);
-        }
-    }
-    let _ = child.kill();
+    leo_core::children::stop_tree(child);
 }
 
 pub const QUIET_LIMIT: Duration = Duration::from_secs(180);

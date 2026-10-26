@@ -1223,6 +1223,10 @@ impl Store {
         }
         let mut created = false;
         let parts: Vec<&str> = path.split('/').collect();
+        let fresh = |i: usize| !self.directories.contains(&parts[..=i].join("/"));
+        if (0..parts.len()).any(|i| fresh(i) && !crate::filename::portable_folder(parts[i])) {
+            return false;
+        }
         for i in 0..parts.len() {
             let dir = parts[..=i].join("/");
             if !self.directories.contains(&dir) {
@@ -1399,6 +1403,7 @@ impl Store {
             || name.chars().count() > MOST_FOLDER_NAME_CHARS
             || name.len() > MOST_FOLDER_NAME_BYTES
             || name.contains(['/', '\\'])
+            || !crate::filename::portable_folder(name)
             || self.validate_directory(from).is_err()
         {
             return None;

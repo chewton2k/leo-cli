@@ -4,6 +4,7 @@
 
 pub mod action;
 pub mod attachments;
+pub mod children;
 pub mod diag;
 pub mod editor;
 pub mod filename;

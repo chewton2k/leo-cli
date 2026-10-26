@@ -43,9 +43,40 @@ pub fn file_name(title: &str) -> String {
     let name = cut.trim_matches(is_edge);
     if name.is_empty() {
         "Untitled".to_string()
+    } else if reserved_on_windows(name) {
+        let (stem, rest) = name.split_at(name.find('.').unwrap_or(name.len()));
+        format!("{stem}-{rest}")
     } else {
         name.to_string()
     }
+}
+
+pub fn reserved_on_windows(name: &str) -> bool {
+    let stem = name
+        .split('.')
+        .next()
+        .unwrap_or(name)
+        .trim_end_matches(' ')
+        .to_ascii_uppercase();
+    if matches!(
+        stem.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) {
+        return true;
+    }
+    let number = stem
+        .strip_prefix("COM")
+        .or_else(|| stem.strip_prefix("LPT"));
+    matches!(
+        number,
+        Some("0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³")
+    )
+}
+
+pub fn portable_folder(name: &str) -> bool {
+    !name.ends_with(['.', ' '])
+        && !name.contains(['*', '?', '"', '<', '>', '|'])
+        && !reserved_on_windows(name)
 }
 
 pub fn numbered(stem: &str, n: usize) -> String {
@@ -299,6 +330,28 @@ pub fn with_label(title: &str, label: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn names_windows_keeps_for_devices_get_a_dash() {
+        assert_eq!(file_name("CON"), "CON-");
+        assert_eq!(file_name("aux"), "aux-");
+        assert_eq!(file_name("nul.backup"), "nul-.backup");
+        assert_eq!(file_name("COM1"), "COM1-");
+        assert_eq!(file_name("lpt²"), "lpt²-");
+        assert_eq!(file_name("Console"), "Console");
+        assert_eq!(file_name("COM10"), "COM10");
+        assert!(matches_title("CON-", "CON"));
+        assert!(matches_title("CON- (2)", "CON"));
+    }
+
+    #[test]
+    fn folders_must_open_on_windows_too() {
+        assert!(portable_folder("Week 1"));
+        assert!(!portable_folder("aux"));
+        assert!(!portable_folder("notes."));
+        assert!(!portable_folder("notes "));
+        assert!(!portable_folder("why?"));
+    }
 
     #[test]
     fn course_and_assignment_names_are_kept_and_camera_or_date_names_are_not() {
