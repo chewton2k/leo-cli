@@ -14,7 +14,6 @@ const PAGES_PER_LOOK: usize = 6;
 const MOST_IMAGES: usize = 40;
 const NOTE_TOKENS: u32 = 8_000;
 const MOST_PDF_PAGES: usize = 2_048;
-const MOST_SCAN_PIXELS: i64 = 16_000_000;
 const MOST_SOURCE_BYTES: usize = 90 * 1024 * 1024;
 const MOST_PDF_CONTENT_BYTES: usize = 16 * 1024 * 1024;
 const MOST_PDF_OPERATIONS: usize = 300_000;
@@ -222,6 +221,8 @@ fn pdf(bytes: &[u8]) -> Result<Material> {
     }
     let mut text = String::new();
     let mut images = Vec::new();
+    let mut prepared = std::collections::HashMap::new();
+    let mut image_bytes = 0;
     for (&number, &page) in &pages {
         let extracted = match doc.extract_text_with_limit(&[number], MOST_PDF_CONTENT_BYTES) {
             Err(lopdf::Error::Decompress(lopdf::DecompressError::MemoryLimitExceeded {
@@ -251,27 +252,25 @@ fn pdf(bytes: &[u8]) -> Result<Material> {
             if image
                 .width
                 .checked_mul(image.height)
-                .is_none_or(|area| area > MOST_SCAN_PIXELS)
+                .is_none_or(|area| area > figures::MOST_PDF_PIXELS as i64)
             {
-                bail!("a scanned page is too large; export the PDF at a lower resolution");
+                bail!("page {number} contains a scan beyond the safe image limit; export that page at a lower resolution, then try again");
             }
-            if let Some(bytes) = figures::pdf_figure(&doc, &image) {
-                let mime = if image
-                    .filters
-                    .as_ref()
-                    .is_some_and(|filters| filters.len() == 1 && filters[0] == "DCTDecode")
-                {
-                    "image/jpeg"
-                } else {
-                    "image/png"
-                };
-                images.push(Image {
-                    mime: mime.into(),
-                    bytes,
-                });
-                if images.len() > MOST_IMAGES {
-                    bail!("this PDF has too many scanned images; upload it in smaller groups");
-                }
+            let bytes = figures::pdf_figure(&doc, &image).with_context(|| format!("page {number} contains a scanned image leo could not read safely; export that page as a standard JPEG or PNG, then try again"))?;
+            if bytes.len() > MOST_SOURCE_BYTES - image_bytes {
+                bail!("the PDF's reading images use too much memory; upload it in smaller page groups");
+            }
+            image_bytes += bytes.len();
+            let mime = leo_core::attachments::kind_of(&bytes)
+                .and_then(leo_core::attachments::mime_of)
+                .unwrap_or("image/png");
+            images.push(Image {
+                mime: mime.into(),
+                bytes: bytes.clone(),
+            });
+            prepared.insert(image.id, bytes);
+            if images.len() > MOST_IMAGES {
+                bail!("this PDF has too many scanned images; upload it in smaller groups");
             }
         }
     }
@@ -281,7 +280,7 @@ fn pdf(bytes: &[u8]) -> Result<Material> {
     Ok(Material {
         text: text.trim().to_string(),
         images,
-        figures: figures::from_pdf(&doc),
+        figures: figures::from_pdf_prepared(&doc, &mut prepared),
     })
 }
 
@@ -1194,6 +1193,103 @@ mod tests {
         .unwrap();
         assert_eq!((title.as_str(), body.as_str()), ("Heaps", "Polished notes"));
         assert_eq!(*calls.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn high_resolution_scans_are_resized_without_rejecting_the_pdf() {
+        use lopdf::dictionary;
+        use std::io::Write;
+        for predictor in [1, 15, 0] {
+            let source = pdf_with(None, Some(&[0xff, 0xd8, 0xff, 1]));
+            let mut doc = lopdf::Document::load_mem(&source).unwrap();
+            let image = doc
+                .objects
+                .values_mut()
+                .find_map(|o| {
+                    o.as_stream_mut().ok().filter(|s| {
+                        s.dict
+                            .get(b"Subtype")
+                            .is_ok_and(|v| v.as_name().is_ok_and(|n| n == b"Image"))
+                    })
+                })
+                .unwrap();
+            let (width, height) = (5000usize, 3600usize);
+            let channels = if predictor == 15 { 3 } else { 1 };
+            let raw = vec![160u8; width * height * channels];
+            image.dict.set("Width", width as i64);
+            image.dict.set("Height", height as i64);
+            image.dict.set(
+                "ColorSpace",
+                if channels == 3 {
+                    "DeviceRGB"
+                } else {
+                    "DeviceGray"
+                },
+            );
+            image.dict.set("Filter", "FlateDecode");
+            image.content = if predictor == 0 {
+                image.dict.set("Filter", "DCTDecode");
+                let mut jpeg = Vec::new();
+                image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 85)
+                    .encode(
+                        &raw,
+                        width as u32,
+                        height as u32,
+                        image::ExtendedColorType::L8,
+                    )
+                    .unwrap();
+                jpeg
+            } else if predictor == 15 {
+                image.dict.set("DecodeParms", dictionary! { "Predictor" => 15, "Colors" => channels as i64, "BitsPerComponent" => 8, "Columns" => width as i64 });
+                figures::filtered_rows(&raw, width, height, channels).unwrap()
+            } else {
+                let mut encoder =
+                    flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+                encoder.write_all(&raw).unwrap();
+                encoder.finish().unwrap()
+            };
+            drop(raw);
+            let mut bytes = Vec::new();
+            doc.save_to(&mut bytes).unwrap();
+            let original = bytes.clone();
+            let material = extract(&upload("large-scan.pdf", "application/pdf", bytes)).unwrap();
+            assert_eq!(material.images.len(), 1, "predictor {predictor}");
+            let (w, h) = leo_core::attachments::dimensions(&material.images[0].bytes).unwrap();
+            assert!(w <= 4096 && h <= 4096 && w < width as u32 && h < height as u32);
+            assert!((f64::from(w) / f64::from(h) - width as f64 / height as f64).abs() < 0.001);
+            assert_eq!(
+                lopdf::Document::load_mem(&original)
+                    .unwrap()
+                    .get_page_images(*doc.get_pages().values().next().unwrap())
+                    .unwrap()[0]
+                    .width,
+                width as i64
+            );
+            assert_eq!(material.images[0].mime, "image/png");
+            let decoded = image::load_from_memory(&material.images[0].bytes).unwrap();
+            assert_eq!(
+                image::GenericImageView::get_pixel(&decoded, w / 2, h / 2).0,
+                [160, 160, 160, 255]
+            );
+            drop(decoded);
+            assert!(material
+                .figures
+                .iter()
+                .all(|figure| figure.bytes == material.images[0].bytes));
+            let file = upload("large-scan.pdf", "application/pdf", original);
+            let read = read_for_chat(
+                &file,
+                &|_, images, _| {
+                    assert_eq!(images.len(), 1);
+                    let (w, h) = leo_core::attachments::dimensions(&images[0].bytes).unwrap();
+                    assert!(w <= 4000 && h <= 4000);
+                    Ok("Text from the attached high-resolution PDF".into())
+                },
+                &mut |_| {},
+            )
+            .unwrap();
+            assert_eq!(read, "Text from the attached high-resolution PDF");
+        }
     }
 
     #[test]

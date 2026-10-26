@@ -223,7 +223,17 @@ Relationships stay inside the ZIP; external links are never fetched.
 PDF text uses `lopdf::extract_text_with_limit` per page: short digital text stays
 local, while empty pages or sparse text over a nearly full-page image use JPEG
 or RGB/gray PNG scan images. A page number must not hide a scan, and text on
-another page must not suppress it. Photos and scans still require `ai::see`;
+another page must not suppress it. PDF image decoding lives in `figures/pdf.rs`.
+JPEG and RGB/gray Flate scans above 16 million pixels get an aspect-preserving
+reading copy with a 4,000 px longest edge; the original PDF is never rewritten.
+Source images remain capped at 64 million pixels, 32,768 px per side and 20 MB
+encoded; image decoding uses a 192 MiB allocation limit and output uses a bounded
+writer. Unpredicted Flate data is processed row by row rather than copied into
+multiple full decoded buffers. Prepared scan figures are reused, reading images
+share a 90 MB budget, and optional figures share 64 MB. An unreadable scan fails
+with its page number instead of silently leaving only that page's sparse text.
+The same extractor serves new-note imports and documents attached to existing
+Felix/note conversations. Photos and scans still require `ai::see`;
 local OCR is not included. Text and Markdown remain direct reads. One request for short
 material, otherwise ~24k-char text parts and 6-page image batches, then
 `build_summary_prompt` for title and summary. A single upload whose file name is a

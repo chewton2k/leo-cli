@@ -1,3 +1,7 @@
+mod pdf;
+
+pub(crate) use pdf::{figure as pdf_figure, MOST_PIXELS as MOST_PDF_PIXELS};
+
 use std::collections::HashMap;
 use std::io::{Read, Write as _};
 
@@ -12,7 +16,6 @@ const LEAST_AREA: u64 = 40_000;
 const LEAST_BYTES: usize = 3_000;
 const MOST_STRETCH: u32 = 6;
 const REPEATED_FROM: usize = 3;
-const MOST_PDF_PIXELS: u64 = 16_000_000;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Figure {
@@ -281,113 +284,31 @@ pub fn filtered_rows(raw: &[u8], width: usize, height: usize, channels: usize) -
     encoder.finish().ok()
 }
 
-fn channels_of(doc: &lopdf::Document, dict: &lopdf::Dictionary) -> Option<usize> {
-    let space = dict.get(b"ColorSpace").ok()?;
-    let space = match space {
-        lopdf::Object::Reference(id) => doc.get_object(*id).ok()?,
-        other => other,
-    };
-    match space {
-        lopdf::Object::Name(name) => match name.as_slice() {
-            b"DeviceRGB" | b"CalRGB" => Some(3),
-            b"DeviceGray" | b"CalGray" => Some(1),
-            _ => None,
-        },
-        lopdf::Object::Array(parts) => {
-            let kind = parts.first()?.as_name().ok()?;
-            match kind {
-                b"ICCBased" => {
-                    let id = parts.get(1)?.as_reference().ok()?;
-                    let n = doc
-                        .get_object(id)
-                        .ok()?
-                        .as_stream()
-                        .ok()?
-                        .dict
-                        .get(b"N")
-                        .ok()?
-                        .as_i64()
-                        .ok()?;
-                    matches!(n, 1 | 3).then_some(n as usize)
-                }
-                b"CalRGB" => Some(3),
-                b"CalGray" => Some(1),
-                _ => None,
-            }
-        }
-        _ => None,
-    }
-}
-
-fn number(dict: &lopdf::Dictionary, key: &[u8]) -> Option<i64> {
-    dict.get(key).ok()?.as_i64().ok()
-}
-
-pub(crate) fn pdf_figure(
-    doc: &lopdf::Document,
-    image: &lopdf::xobject::PdfImage,
-) -> Option<Vec<u8>> {
-    let filters = image.filters.as_deref().unwrap_or(&[]);
-    let (width, height) = (
-        u32::try_from(image.width).ok()?,
-        u32::try_from(image.height).ok()?,
-    );
-    if width == 0
-        || height == 0
-        || u64::from(width) * u64::from(height) > MOST_PDF_PIXELS
-        || image.content.len() > attachments::MOST_BYTES
-    {
-        return None;
-    }
-    if filters == ["DCTDecode"] {
-        let shown = matches!(
-            image.color_space.as_deref(),
-            None | Some("DeviceRGB" | "DeviceGray" | "CalRGB" | "CalGray")
-        ) || channels_of(doc, image.origin_dict).is_some();
-        return shown.then(|| image.content.to_vec());
-    }
-    if filters != ["FlateDecode"] || image.bits_per_component != Some(8) {
-        return None;
-    }
-    let channels = channels_of(doc, image.origin_dict)?;
-    let parms = match image.origin_dict.get(b"DecodeParms") {
-        Ok(lopdf::Object::Dictionary(d)) => Some(d.clone()),
-        Ok(lopdf::Object::Reference(id)) => doc.get_dictionary(*id).ok().cloned(),
-        _ => None,
-    };
-    let predictor = parms
-        .as_ref()
-        .and_then(|p| number(p, b"Predictor"))
-        .unwrap_or(1);
-    if predictor >= 10 {
-        let p = parms?;
-        let fits = number(&p, b"Colors").unwrap_or(1) == channels as i64
-            && number(&p, b"BitsPerComponent").unwrap_or(8) == 8
-            && number(&p, b"Columns").unwrap_or(1) == i64::from(width);
-        return fits.then(|| png(width, height, channels as u8, image.content));
-    }
-    if predictor != 1 {
-        return None;
-    }
-    let mut raw = Vec::new();
-    flate2::read::ZlibDecoder::new(image.content)
-        .take(width as u64 * height as u64 * channels as u64 + 1)
-        .read_to_end(&mut raw)
-        .ok()?;
-    let idat = filtered_rows(&raw, width as usize, height as usize, channels)?;
-    Some(png(width, height, channels as u8, &idat))
-}
-
 pub fn from_pdf(doc: &lopdf::Document) -> Vec<Figure> {
+    from_pdf_prepared(doc, &mut HashMap::new())
+}
+
+pub(crate) fn from_pdf_prepared(
+    doc: &lopdf::Document,
+    prepared: &mut HashMap<lopdf::ObjectId, Vec<u8>>,
+) -> Vec<Figure> {
+    let mut bytes_read = 0;
     let mut out = Vec::new();
     for (number, page) in doc.get_pages() {
         for image in doc.get_page_images(page).unwrap_or_default() {
             if image.width < i64::from(LEAST_TALL) || image.height < i64::from(LEAST_TALL) {
                 continue;
             }
-            let Some(bytes) = pdf_figure(doc, &image) else {
+            let Some(bytes) = prepared
+                .remove(&image.id)
+                .or_else(|| pdf_figure(doc, &image))
+            else {
                 continue;
             };
+            if bytes.len() > MOST_READ_BYTES - bytes_read {
+                return keep(out);
+            }
+            bytes_read += bytes.len();
             let Some(kind) = attachments::kind_of(&bytes) else {
                 continue;
             };
