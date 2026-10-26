@@ -2466,7 +2466,7 @@ checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
 
 [[package]]
 name = "leo"
-version = "0.3.88"
+version = "0.3.89"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2486,7 +2486,7 @@ dependencies = [
 
 [[package]]
 name = "leo-core"
-version = "0.3.88"
+version = "0.3.89"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2503,7 +2503,7 @@ dependencies = [
 
 [[package]]
 name = "leo-services"
-version = "0.3.88"
+version = "0.3.89"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2544,7 +2544,7 @@ dependencies = [
 
 [[package]]
 name = "leo-tui"
-version = "0.3.88"
+version = "0.3.89"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2563,7 +2563,7 @@ dependencies = [
 
 [[package]]
 name = "leo-web"
-version = "0.3.88"
+version = "0.3.89"
 dependencies = [
  "anyhow",
  "axum",
