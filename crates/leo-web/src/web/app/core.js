@@ -6,10 +6,10 @@ const enc = encodeURIComponent;
 const $ = (selector, root = document) => root.querySelector(selector);
 const app = $('#app');
 const floating = $('#floating');
-const ON_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
 const svg = (paths) =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+const ON_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 const FOLDER = '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>';
 const ICON = {
   back: svg('<path d="M15 18l-6-6 6-6"/>'),
