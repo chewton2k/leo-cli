@@ -3314,3 +3314,59 @@ fn the_tour_shows_start_and_skip_on_a_small_terminal() {
     assert!(text.contains("Enter: start"));
     assert!(text.contains("Esc: skip"));
 }
+
+fn pressed(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
+    KeyEvent::new(code, modifiers)
+}
+
+fn typed(text: &str) -> Vec<KeyEvent> {
+    text.chars()
+        .map(|c| match c {
+            '\n' => pressed(KeyCode::Enter, KeyModifiers::NONE),
+            c if c.is_uppercase() => pressed(KeyCode::Char(c), KeyModifiers::SHIFT),
+            c => pressed(KeyCode::Char(c), KeyModifiers::NONE),
+        })
+        .collect()
+}
+
+#[test]
+fn keys_that_arrive_together_on_windows_are_a_paste() {
+    assert_eq!(
+        pasted(&typed("Week 3\nread ch 4")).as_deref(),
+        Some("Week 3\nread ch 4")
+    );
+    let mut at = typed("me");
+    at.push(pressed(
+        KeyCode::Char('@'),
+        KeyModifiers::CONTROL | KeyModifiers::ALT,
+    ));
+    assert_eq!(pasted(&at).as_deref(), Some("me@"));
+}
+
+#[test]
+fn held_or_quickly_typed_keys_are_not_a_paste() {
+    assert_eq!(pasted(&typed("jjjjj")), None);
+    assert_eq!(pasted(&typed("jk")), None);
+    assert_eq!(pasted(&typed("q")), None);
+    assert_eq!(pasted(&typed("q\n")), None);
+    let mut chord = typed("ab");
+    chord.push(pressed(KeyCode::Char('s'), KeyModifiers::CONTROL));
+    assert_eq!(pasted(&chord), None);
+    let mut moved = typed("ab");
+    moved.push(pressed(KeyCode::Down, KeyModifiers::NONE));
+    assert_eq!(pasted(&moved), None);
+}
+
+#[test]
+fn pointer_motion_never_reaches_the_app() {
+    let at = |kind| MouseEvent {
+        kind,
+        column: 1,
+        row: 1,
+        modifiers: KeyModifiers::NONE,
+    };
+    assert!(!wanted(&at(MouseEventKind::Moved)));
+    assert!(!wanted(&at(MouseEventKind::Drag(MouseButton::Left))));
+    assert!(wanted(&at(MouseEventKind::Down(MouseButton::Left))));
+    assert!(wanted(&at(MouseEventKind::ScrollDown)));
+}

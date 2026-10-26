@@ -303,9 +303,6 @@ impl AgentCli {
                 if let Some(effort) = &self.effort {
                     args.extend(["--effort".to_string(), effort.clone()]);
                 }
-                if let Some(system) = &req.system {
-                    args.extend(["--system-prompt".to_string(), system.clone()]);
-                }
                 if images.is_empty() {
                     req.prompt.clone()
                 } else {
@@ -411,6 +408,26 @@ impl AgentCli {
             ))
         })
     }
+}
+
+fn instructions_failed() -> ProviderError {
+    ProviderError::Retryable(
+        "Leo could not prepare private writing instructions. Check free space and try again."
+            .into(),
+    )
+}
+
+fn instructions_file(room: &Path, system: &str) -> ProviderResult<tempfile::NamedTempFile> {
+    let write = || {
+        let mut file = tempfile::Builder::new()
+            .prefix("instructions-")
+            .suffix(".md")
+            .tempfile_in(room)?;
+        file.write_all(system.as_bytes())?;
+        file.as_file().sync_all()?;
+        Ok::<_, std::io::Error>(file)
+    };
+    write().map_err(|_| instructions_failed())
 }
 
 fn last_words(text: &str) -> String {
@@ -816,13 +833,13 @@ impl AgentCli {
         self.total_limit
     }
 
-    pub fn session_arguments(&self, system: &str) -> Vec<String> {
-        self.session_arguments_with(system, None)
+    pub fn session_arguments(&self, system_file: &Path) -> Vec<String> {
+        self.session_arguments_with(system_file, None)
     }
 
     fn session_arguments_with(
         &self,
-        system: &str,
+        system_file: &Path,
         bridge: Option<&super::mcp::Bridge>,
     ) -> Vec<String> {
         let allowed = match bridge {
@@ -867,7 +884,10 @@ impl AgentCli {
                 "--strict-mcp-config".to_string(),
             ]);
         }
-        args.extend(["--system-prompt".to_string(), system.to_string()]);
+        args.extend([
+            "--system-prompt-file".to_string(),
+            system_file.display().to_string(),
+        ]);
         args
     }
 
@@ -892,6 +912,10 @@ impl AgentCli {
             ProviderError::Retryable(format!("{}: {} is not installed", self.name, self.bin))
         })?;
         let room = self.room()?;
+        let system_file = instructions_file(room.path(), system)?
+            .keep()
+            .map_err(|_| instructions_failed())?
+            .1;
         let (tx, lines) = std::sync::mpsc::sync_channel(QUEUED_MESSAGES);
         let bridge = if tools.is_empty() {
             None
@@ -902,7 +926,7 @@ impl AgentCli {
         };
         let mut command = Command::new(program);
         command
-            .args(self.session_arguments_with(system, bridge.as_ref()))
+            .args(self.session_arguments_with(&system_file, bridge.as_ref()))
             .current_dir(room.path())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -985,16 +1009,11 @@ impl AgentCli {
         };
         let room = self.room()?;
         let files = self.image_files(room.path(), images)?;
-        let instructions = if self.agent == Agent::Codex {
-            req.system.as_ref().map(|system| {
-                let mut file = tempfile::Builder::new().prefix("instructions-").suffix(".md").tempfile_in(room.path())?;
-                file.write_all(system.as_bytes())?;
-                file.as_file().sync_all()?;
-                Ok::<_, std::io::Error>(file)
-            }).transpose().map_err(|_| ProviderError::Retryable("Leo could not prepare private writing instructions. Check free space and try again.".into()))?
-        } else {
-            None
-        };
+        let instructions = req
+            .system
+            .as_ref()
+            .map(|system| instructions_file(room.path(), system))
+            .transpose()?;
         let material = ChatRequest {
             system: if instructions.is_some() {
                 None
@@ -1007,19 +1026,30 @@ impl AgentCli {
         };
         let (mut args, input) = self.arguments(&material, images, &disables, &files);
         if let Some(file) = &instructions {
-            args.pop();
-            args.extend([
-                "-c".into(),
-                format!(
-                    "model_instructions_file={}",
-                    serde_json::to_string(&file.path().to_string_lossy()).map_err(|_| {
-                        ProviderError::Retryable(
-                            "Leo could not prepare private writing instructions. Try again.".into(),
-                        )
-                    })?
-                ),
-                "-".into(),
-            ]);
+            match self.agent {
+                Agent::Codex => {
+                    args.pop();
+                    args.extend([
+                        "-c".into(),
+                        format!(
+                            "model_instructions_file={}",
+                            serde_json::to_string(&file.path().to_string_lossy()).map_err(
+                                |_| {
+                                    ProviderError::Retryable(
+                                        "Leo could not prepare private writing instructions. Try again."
+                                            .into(),
+                                    )
+                                }
+                            )?
+                        ),
+                        "-".into(),
+                    ]);
+                }
+                Agent::ClaudeCode => args.extend([
+                    "--system-prompt-file".into(),
+                    file.path().display().to_string(),
+                ]),
+            }
         }
         match self.spawn(&program, room.path(), &args, input.clone(), sink, stopped) {
             Err(ProviderError::Retryable(message))
@@ -1349,9 +1379,7 @@ mod tests {
         assert!(args
             .windows(2)
             .any(|w| w == ["--model", "claude-sonnet-5-5"]));
-        assert!(args
-            .windows(2)
-            .any(|w| w == ["--system-prompt", "You write notes."]));
+        assert!(!args.iter().any(|a| a.contains("You write notes.")));
         assert_eq!(input, "<transcript>hello</transcript>");
     }
 
@@ -1588,6 +1616,40 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"#
 
     #[cfg(unix)]
     #[test]
+    fn claude_code_reads_long_instructions_from_a_private_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let log = dir.path().join("heard");
+        let bin = script(
+            dir.path(),
+            &format!(
+                r##"cat >/dev/null
+echo "$@" > "{log}.args"
+while [ $# -gt 0 ]; do
+  if [ "$1" = --system-prompt-file ]; then cat "$2" > "{log}.system"; fi
+  shift
+done
+printf '%s\n' '{{"type":"result","subtype":"success","is_error":false,"result":"done"}}'"##,
+                log = log.display()
+            ),
+        );
+        let cfg = config(ProviderKind::ClaudeCode, &bin, None);
+        let agent = AgentCli::new("claude_code".into(), Agent::ClaudeCode, &cfg);
+        let system = "You write notes.\nKeep every point.\r\n%PATH% \"quoted\"";
+        let req = ChatRequest {
+            system: Some(system.to_string()),
+            ..request()
+        };
+        assert_eq!(agent.complete(&req).unwrap(), "done");
+        let args = std::fs::read_to_string(format!("{}.args", log.display())).unwrap();
+        assert!(!args.contains("Keep every point."));
+        assert_eq!(
+            std::fs::read_to_string(format!("{}.system", log.display())).unwrap(),
+            system
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn a_claude_session_stays_open_and_answers_each_message_in_turn() {
         let dir = tempfile::TempDir::new().unwrap();
         let log = dir.path().join("heard.log");
@@ -1595,6 +1657,11 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"#
             dir.path(),
             &format!(
                 r##"echo "$@" > "{log}.args"
+for a in "$@"; do
+  if [ "$take" = 1 ]; then cat "$a" > "{log}.system"; fi
+  take=0
+  if [ "$a" = --system-prompt-file ]; then take=1; fi
+done
 printf '%s\n' '{{"type":"system","subtype":"init","model":"claude-sonnet-5-5"}}'
 n=0
 while IFS= read -r line; do
@@ -1644,7 +1711,11 @@ done"##,
         );
         let args = std::fs::read_to_string(format!("{}.args", log.display())).unwrap();
         assert!(args.contains("--input-format stream-json") && args.contains("--effort high"));
-        assert!(args.contains("--system-prompt You are Felix."));
+        assert!(args.contains("--system-prompt-file") && !args.contains("You are Felix."));
+        assert_eq!(
+            std::fs::read_to_string(format!("{}.system", log.display())).unwrap(),
+            "You are Felix."
+        );
     }
 
     #[test]

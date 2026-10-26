@@ -159,7 +159,7 @@ after, so a cut-off status line still shows the fix.
 
 `claude_code` and `codex` (kinds `ClaudeCode`/`Codex`, `ai/provider/agent_cli.rs`)
 write through the user's own signed-in CLI and plan: `claude -p --safe-mode
---tools WebSearch --allowedTools WebSearch --no-session-persistence --system-prompt …` and `codex exec
+--tools WebSearch --allowedTools WebSearch --no-session-persistence --system-prompt-file <private file>` (a file, not an argument: Windows refuses line breaks in arguments to npm's `claude.cmd`, and cmd.exe caps a command line at 8,191 characters) and `codex exec
 --ephemeral --ignore-user-config --ignore-rules --sandbox read-only -`, material on stdin, run
 in a fresh private `leo-writing-*` temp dir (0700, deleted after; a shared fixed folder let other users plant files or links). Claude Code streams (`--output-format stream-json
 --include-partial-messages --verbose`; `read_stream` sinks `text_delta`s and

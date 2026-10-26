@@ -35,8 +35,8 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use ratatui::backend::Backend;
 use ratatui::crossterm::event::{
-    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyEventKind, MouseButton,
-    MouseEvent, MouseEventKind,
+    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
@@ -463,6 +463,10 @@ const MOUSE_OFF: &str = "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l";
 
 fn disable_mouse() {
     use std::io::Write;
+    if cfg!(windows) {
+        let _ = execute!(std::io::stdout(), DisableMouseCapture);
+        return;
+    }
     let mut out = std::io::stdout();
     let _ = out.write_all(MOUSE_OFF.as_bytes());
     let _ = out.flush();
@@ -475,11 +479,14 @@ fn is_main_thread(name: Option<&str>) -> bool {
 static HUSHING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static SAVED_STDERR: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
 
+#[cfg(any(unix, windows))]
+const NULL_DEVICE: &std::ffi::CStr = if cfg!(windows) { c"NUL" } else { c"/dev/null" };
+
 fn hush_stderr() {
     if !HUSHING.load(std::sync::atomic::Ordering::SeqCst) {
         return;
     }
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     unsafe {
         if SAVED_STDERR.load(std::sync::atomic::Ordering::SeqCst) >= 0 {
             return;
@@ -488,7 +495,7 @@ fn hush_stderr() {
         if saved < 0 {
             return;
         }
-        let null = libc::open(c"/dev/null".as_ptr(), libc::O_WRONLY);
+        let null = libc::open(NULL_DEVICE.as_ptr(), libc::O_WRONLY);
         if null < 0 {
             libc::close(saved);
             return;
@@ -500,7 +507,7 @@ fn hush_stderr() {
 }
 
 fn unhush_stderr() {
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     unsafe {
         let saved = SAVED_STDERR.swap(-1, std::sync::atomic::Ordering::SeqCst);
         if saved >= 0 {
@@ -525,6 +532,9 @@ fn install_panic_hook() {
 
 fn enable_mouse() -> std::io::Result<()> {
     use std::io::Write;
+    if cfg!(windows) {
+        return execute!(std::io::stdout(), EnableMouseCapture);
+    }
     let mut out = std::io::stdout();
     out.write_all(MOUSE_ON.as_bytes())?;
     out.flush()
@@ -582,6 +592,45 @@ pub fn run() -> Result<()> {
     result
 }
 
+const MOST_BURST: usize = 65_536;
+
+fn burst(first: KeyEvent) -> std::io::Result<(Vec<KeyEvent>, Option<Event>)> {
+    let mut keys = vec![first];
+    while keys.len() < MOST_BURST && event::poll(Duration::ZERO)? {
+        match event::read()? {
+            Event::Key(key) if key.kind == KeyEventKind::Press => keys.push(key),
+            Event::Key(_) => {}
+            other => return Ok((keys, Some(other))),
+        }
+    }
+    Ok((keys, None))
+}
+
+fn pasted(keys: &[KeyEvent]) -> Option<String> {
+    let text: String = keys
+        .iter()
+        .map(|key| match key.code {
+            KeyCode::Char(c)
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    || key.modifiers.contains(KeyModifiers::ALT) =>
+            {
+                Some(c)
+            }
+            KeyCode::Enter => Some('\n'),
+            KeyCode::Tab => Some('\t'),
+            _ => None,
+        })
+        .collect::<Option<_>>()?;
+    let mut chars = text.chars();
+    let first = chars.next()?;
+    let mixed = chars.any(|c| c != first);
+    (mixed && keys.len() >= 3).then_some(text)
+}
+
+fn wanted(mouse: &MouseEvent) -> bool {
+    !matches!(mouse.kind, MouseEventKind::Moved | MouseEventKind::Drag(_))
+}
+
 fn event_loop<B: TuiBackend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> {
     while !app.quit {
         if std::mem::take(&mut app.repaint) {
@@ -614,10 +663,26 @@ fn event_loop<B: TuiBackend>(terminal: &mut Terminal<B>, app: &mut App) -> Resul
         }
         match event::read()? {
             // Only key *presses*: on Windows a release would double every key.
+            Event::Key(key) if key.kind == KeyEventKind::Press && cfg!(windows) => {
+                let (keys, after) = burst(key)?;
+                match pasted(&keys) {
+                    Some(text) => app.on_paste(&text),
+                    None => {
+                        for key in keys {
+                            app.on_key(key, terminal)?;
+                        }
+                    }
+                }
+                match after {
+                    Some(Event::Mouse(mouse)) if wanted(&mouse) => app.on_mouse(mouse, terminal)?,
+                    Some(Event::Resize(width, height)) => app.on_resize(width, height),
+                    _ => {}
+                }
+            }
             Event::Key(key) if key.kind == KeyEventKind::Press => {
                 app.on_key(key, terminal)?;
             }
-            Event::Mouse(mouse) => app.on_mouse(mouse, terminal)?,
+            Event::Mouse(mouse) if wanted(&mouse) => app.on_mouse(mouse, terminal)?,
             Event::Paste(text) => app.on_paste(&text),
             // A resize can take away the pane that had focus, leaving j and k
             // moving a selection the user cannot see.

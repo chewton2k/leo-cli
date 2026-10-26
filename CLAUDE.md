@@ -279,7 +279,11 @@ way.
 - Crash-proofing: worker threads run through `task::spawn_guarded` (a panic
   becomes `TaskEvent::Failed`), live rolls are `caught`, the panic hook only
   restores the terminal for main-thread panics. Mouse reporting is
-  clicks+wheel only (`MOUSE_ON`/`MOUSE_OFF`). Esc twice stops a recording
+  clicks+wheel only (`MOUSE_ON`/`MOUSE_OFF`; Windows needs crossterm's
+  `EnableMouseCapture`, and motion/drag events are dropped). Windows has no
+  bracketed paste: three or more mixed keys already queued are one paste
+  (`burst`, `pasted`). Stderr is pointed at `/dev/null` or `NUL` while the
+  TUI owns the screen. Esc twice stops a recording
   (`STOP_CONFIRM_WITHIN`). Never slice strings by byte offsets computed from
   lengths: use char indices or `str::get`.
 - Live transcript scroll-back: `view::livescroll::LiveScroll` (↑↓ PgUp PgDn
