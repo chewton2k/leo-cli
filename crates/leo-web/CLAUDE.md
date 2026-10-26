@@ -1014,3 +1014,8 @@ note has 900 px of room, and folds above the note in a narrow pane or on a phone
 Heading jumps keep the URL and reading-position flow; typing refreshes only the
 outline after a pause, preserving the editor and caret. Scroll/resize observers,
 frames and timers are released with the document. The outline never prints.
+
+Combine’s chunker and dropped-content recovery share fence recognition: a closing
+line needs the opener’s character and at least its full length, with no trailing
+text. Shorter fences inside a longer block stay literal code, and following prose
+is never misclassified as a second code block.

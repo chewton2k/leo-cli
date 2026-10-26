@@ -104,9 +104,7 @@ fn parts(body: &str, limit: usize) -> Vec<String> {
         let trimmed = line.trim();
         if let Some((mark, count)) = fence {
             protected.push_str(line);
-            if trimmed.chars().take_while(|c| *c == mark).count() >= count
-                && trimmed.trim_matches(mark).trim().is_empty()
-            {
+            if closes_fence(trimmed, mark, count) {
                 fence = None;
                 push_part(limit, &mut out, &mut current, &mut size, &protected, true);
                 protected.clear();
@@ -122,13 +120,10 @@ fn parts(body: &str, limit: usize) -> Vec<String> {
             }
             continue;
         }
-        if let Some(mark @ ('`' | '~')) = trimmed.chars().next() {
-            let count = trimmed.chars().take_while(|c| *c == mark).count();
-            if count >= 3 {
-                fence = Some((mark, count));
-                protected.push_str(line);
-                continue;
-            }
+        if let Some(open) = opens_fence(trimmed) {
+            fence = Some(open);
+            protected.push_str(line);
+            continue;
         }
         let end = if trimmed.starts_with("$$") && !(trimmed.len() > 4 && trimmed.ends_with("$$")) {
             Some("$$".to_string())
@@ -263,6 +258,20 @@ fn flat(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+fn opens_fence(line: &str) -> Option<(char, usize)> {
+    let mark = line.chars().next()?;
+    if !matches!(mark, '`' | '~') {
+        return None;
+    }
+    let count = line.chars().take_while(|c| *c == mark).count();
+    (count >= 3).then_some((mark, count))
+}
+
+fn closes_fence(line: &str, mark: char, count: usize) -> bool {
+    line.chars().take_while(|c| *c == mark).count() >= count
+        && line.trim_start_matches(mark).trim().is_empty()
+}
+
 pub fn pieces(body: &str) -> Vec<String> {
     let mut out = Vec::new();
     let lines: Vec<&str> = body.lines().collect();
@@ -270,10 +279,9 @@ pub fn pieces(body: &str) -> Vec<String> {
     while i < lines.len() {
         let line = lines[i];
         let trimmed = line.trim_start();
-        let fence = ["```", "~~~"].into_iter().find(|f| trimmed.starts_with(f));
-        if let Some(fence) = fence {
+        if let Some((mark, count)) = opens_fence(trimmed) {
             let end = (i + 1..lines.len())
-                .find(|&j| lines[j].trim_start().starts_with(fence))
+                .find(|&j| closes_fence(lines[j].trim(), mark, count))
                 .unwrap_or(lines.len() - 1);
             out.push(lines[i..=end].join("\n"));
             i = end + 1;
@@ -408,6 +416,25 @@ mod tests {
         let mut n = store.create_note(title, body, vec![], "").unwrap().clone();
         n.directory = dir.into();
         n
+    }
+
+    #[test]
+    fn protected_fences_require_their_own_mark_length_and_a_clean_closing_line() {
+        for mark in ["````", "~~~~~"] {
+            let shorter: String = mark.chars().take(3).collect();
+            let block =
+                format!("{mark}md\nalpha\n{shorter}\nbeta\n{mark} not a closer\n{mark} {mark}\ngamma\n{mark}");
+            let body = format!("{block}\nordinary prose");
+            assert_eq!(pieces(&body), vec![block.clone()]);
+            assert!(parts(&body, 8).iter().any(|part| part.contains(&block)));
+            let missing = settle(
+                Path::new("/nowhere"),
+                &note("A", "", &body),
+                &note("B", "", ""),
+                "ordinary prose",
+            );
+            assert_eq!(missing.added, vec![block]);
+        }
     }
 
     #[test]
