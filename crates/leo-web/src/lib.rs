@@ -312,27 +312,38 @@ const PICTURES_PER_TICK: usize = 4;
 
 async fn keep_graph_current(state: AppState) {
     let mut tick = tokio::time::interval(GRAPH_CHECK);
+    let mut read_at = None;
+    let mut graphed_at = None;
     loop {
         tick.tick().await;
-        if let Some(meaning) = state.meaning.clone().filter(|m| m(&[], false).is_ok()) {
-            let vectors = Arc::clone(&state.vectors);
-            let listed = Arc::clone(&vectors);
-            if let Ok(work) = state
-                .with_store(move |store| {
-                    let work = listed.stale(store, vectors::PIECES_PER_TICK);
-                    listed.forget_gone(store);
-                    Ok(work)
-                })
-                .await
-            {
-                let _ = tokio::task::spawn_blocking(move || {
-                    vectors::read_in(&vectors, &meaning, &work)
-                })
-                .await;
+        let Ok(seen) = state.with_store(|store| Ok(store.fingerprint())).await else {
+            continue;
+        };
+        if read_at != Some(seen) {
+            if let Some(meaning) = state.meaning.clone().filter(|m| m(&[], false).is_ok()) {
+                let vectors = Arc::clone(&state.vectors);
+                let listed = Arc::clone(&vectors);
+                if let Ok(work) = state
+                    .with_store(move |store| {
+                        let work = listed.stale(store, vectors::PIECES_PER_TICK);
+                        listed.forget_gone(store);
+                        Ok(work)
+                    })
+                    .await
+                {
+                    if work.is_empty() {
+                        read_at = Some(seen);
+                    } else {
+                        let _ = tokio::task::spawn_blocking(move || {
+                            vectors::read_in(&vectors, &meaning, &work)
+                        })
+                        .await;
+                    }
+                }
             }
         }
         let idle = state.activity.idle();
-        if idle < graph::UPDATE_WHEN_IDLE {
+        if idle < graph::UPDATE_WHEN_IDLE || graphed_at == Some(seen) {
             continue;
         }
         let Ok(sources) = state
@@ -342,7 +353,13 @@ async fn keep_graph_current(state: AppState) {
             continue;
         };
         let graphs = Arc::clone(&state.graphs);
-        let _ = tokio::task::spawn_blocking(move || graphs.update_if_due(sources, idle)).await;
+        let Ok(mut settled) = tokio::task::spawn_blocking(move || {
+            !graphs.update_if_due(sources.clone(), idle) && graphs.settled(&sources)
+        })
+        .await
+        else {
+            continue;
+        };
         if let Some(seer) = state.seer.clone() {
             let captions = Arc::clone(&state.captions);
             let listed = Arc::clone(&captions);
@@ -355,11 +372,15 @@ async fn keep_graph_current(state: AppState) {
                 continue;
             };
             if !paths.is_empty() {
+                settled = false;
                 let _ = tokio::task::spawn_blocking(move || {
                     captions::caption_paths(&paths, &captions, &seer)
                 })
                 .await;
             }
+        }
+        if settled {
+            graphed_at = Some(seen);
         }
     }
 }

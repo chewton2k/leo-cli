@@ -1236,6 +1236,14 @@ impl Graphs {
         }
     }
 
+    pub fn settled(&self, sources: &[Source]) -> bool {
+        if self.writer.is_none() {
+            return true;
+        }
+        let status = self.status(sources);
+        status.state != "building" && (status.built_at.is_none() || status.requests == 0)
+    }
+
     pub fn update_if_due(
         self: &Arc<Self>,
         sources: Vec<Source>,
@@ -1567,13 +1575,19 @@ mod tests {
             !graphs.update_if_due(notes.to_vec(), idle),
             "never built yet"
         );
+        assert!(
+            graphs.settled(&notes),
+            "nothing to do before the first build"
+        );
         let cache = Cache {
             built_at: Some("2026-10-09T00:00:00Z".into()),
             ..Cache::default()
         };
         std::fs::write(graphs.path(), serde_json::to_string(&cache).unwrap()).unwrap();
+        assert!(!graphs.settled(&notes), "an unread note is waiting");
         assert!(graphs.update_if_due(notes.to_vec(), idle));
         assert!(!graphs.update_if_due(notes.to_vec(), idle), "one at a time");
+        assert!(!graphs.settled(&notes), "still building");
         let waited = std::time::Instant::now();
         while graphs.status(&notes).state == "building" {
             assert!(waited.elapsed().as_secs() < 5);

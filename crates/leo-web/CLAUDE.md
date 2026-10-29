@@ -681,7 +681,11 @@ works (plan: `.superpowers/plans/2026-10-12-interview-instant-feedback.md`):
 Summaries and concepts per note, links between note groups (only group pairs
 with meaning neighbours), cached in leo.db; builds follow the model's room
 (`Scale::for_room`, parallel requests) and keep themselves current when idle
-(`keep_graph_current`: 2 min idle, retry after 10 min). Canvas view styled on
+(`keep_graph_current`: 2 min idle, retry after 10 min). A tick whose note
+fingerprint (`Store::fingerprint`) matches one where meaning vectors, the graph
+(`Graphs::settled`) and captions had nothing left to do skips that stage, and
+the "is the meaning model there?" probe (`embed(&[])`) checks files without
+loading it, so the model can unload after 60 s. Canvas view styled on
 Obsidian's graph; Tidy up reduces crossings. Pictures get one-time captions in
 the same idle loop.
 

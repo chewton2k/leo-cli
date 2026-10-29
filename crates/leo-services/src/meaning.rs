@@ -232,7 +232,15 @@ pub fn model() -> Option<Arc<Model>> {
     }
 }
 
+fn present(dir: &Path) -> bool {
+    manifest().iter().all(|(name, _)| dir.join(name).is_file())
+}
+
 pub fn embed(texts: &[String], query: bool) -> Result<Vec<Vec<f32>>> {
+    if texts.is_empty() {
+        anyhow::ensure!(present(&dir()), "the meaning model is not downloaded yet");
+        return Ok(Vec::new());
+    }
     let model = model().context("the meaning model is not downloaded yet")?;
     if query {
         let asked: Vec<String> = texts.iter().map(|t| format!("{QUERY}{t}")).collect();
@@ -245,6 +253,16 @@ pub fn embed(texts: &[String], query: bool) -> Result<Vec<Vec<f32>>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn asking_whether_the_model_is_there_looks_for_its_files_without_loading_it() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!present(dir.path()));
+        for (name, _) in manifest() {
+            std::fs::write(dir.path().join(name), b"").unwrap();
+        }
+        assert!(present(dir.path()));
+    }
 
     #[test]
     fn concurrent_model_loads_wait_for_the_first_and_panics_release_the_reservation() {

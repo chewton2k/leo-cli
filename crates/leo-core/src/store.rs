@@ -717,6 +717,10 @@ impl Store {
         fingerprint_of(&self.notes_dir) != self.fingerprint.get()
     }
 
+    pub fn fingerprint(&self) -> u64 {
+        self.fingerprint.get()
+    }
+
     pub fn refresh(&mut self) -> Result<()> {
         let undo = std::mem::take(&mut self.undo);
         *self = Store::load_from(&self.notes_dir.clone())?;

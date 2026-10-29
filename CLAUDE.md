@@ -275,8 +275,9 @@ way.
   doctor) instead of overwriting; deleted notes are trashed only if their file
   is still what leo saw. Writes are temp-file + rename.
 - `Store::changed_on_disk`/`refresh` (fingerprint of paths, sizes, mtimes;
-  refresh keeps undo); `App::maybe_reload_from_disk` every 2 s while idle and
-  nothing is being typed/recorded/asked; Ctrl-R uses refresh too.
+  refresh keeps undo); `App::maybe_reload_from_disk` while idle and nothing
+  is being typed/recorded/asked: after a `leo_core::watch` event (at most every
+  2 s) or every 60 s, every 2 s without a watcher; Ctrl-R uses refresh too.
 - `sync::pull` = auto_commit, fetch, `keep_both_notes_with_the_same_name`
   (a `.md` both sides added with different ids → local renamed to
   `Name (2).md` and committed), then merge. git's union driver otherwise glues

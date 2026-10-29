@@ -14,9 +14,12 @@ clicks back (`hit`); `view/when.rs` formats edit times. `keys.rs` is the whole k
 (`hints.rs` is the bottom line's per-pane key hints, `menu.rs` the `/` menu).
 Tests live in `tests.rs`.
 
-The event loop polls for input with a 120ms timeout and drains the worker
-channel each tick, so a redraw happens promptly on either input or task
-progress. `ratatui::init()` installs a panic hook that restores the terminal, so
+The event loop polls for input with a 120ms timeout while something runs
+(`Jobs::moving`: asking, recording, pushing, checking, busy, model download)
+and a 1s timeout otherwise, so an idle app wakes once a second instead of eight
+times; input still returns at once. Disk reloads follow `leo_core::watch`
+(filesystem events, hidden folders ignored): with a working watcher the tree is
+fingerprinted only after an event or every 60s, without one every 2s. `ratatui::init()` installs a panic hook that restores the terminal, so
 a panic cannot leave the user in raw mode. Suspending for `$EDITOR` toggles raw
 mode and the alternate screen on the existing terminal rather than building a
 new one, and resuming resets both frame buffers instead of calling

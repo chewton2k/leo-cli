@@ -50,6 +50,18 @@ pub(super) struct Jobs {
     pub(super) last_push: Option<Instant>,
     pub(super) unpushed: Option<usize>,
     pub(super) busy: Option<(view::progress::Progress, Instant)>,
+    pub(super) watch: Option<leo_core::watch::Watch>,
+}
+
+impl Jobs {
+    pub(super) fn moving(&self) -> bool {
+        self.asking.is_some()
+            || self.recording.is_some()
+            || self.pushing.is_some()
+            || self.checking.is_some()
+            || self.busy.is_some()
+            || self.model_download.is_some()
+    }
 }
 
 impl Default for Jobs {
@@ -68,6 +80,7 @@ impl Default for Jobs {
             last_push: None,
             unpushed: None,
             busy: None,
+            watch: None,
         }
     }
 }

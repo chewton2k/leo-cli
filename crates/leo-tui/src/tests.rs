@@ -2326,6 +2326,21 @@ fn a_note_written_by_another_program_appears_without_pressing_anything() {
 }
 
 #[test]
+fn the_loop_wakes_once_a_second_when_idle_and_quickly_while_something_runs() {
+    let (mut app, _d) = temp_app();
+    assert_eq!(tick(&app.jobs), IDLE_TICK);
+
+    app.jobs.busy = Some((
+        view::progress::Progress::spinner("Structuring notes"),
+        Instant::now(),
+    ));
+    assert_eq!(tick(&app.jobs), TICK);
+
+    app.jobs.busy = None;
+    assert_eq!(tick(&app.jobs), IDLE_TICK);
+}
+
+#[test]
 fn nothing_reloads_while_typing_or_when_nothing_changed() {
     let (mut app, _d) = temp_app();
     std::fs::write(app.store.notes_dir.join("From Obsidian.md"), "hello").unwrap();

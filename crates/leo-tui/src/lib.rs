@@ -77,6 +77,15 @@ const MESSAGE_TTL: Duration = Duration::from_secs(6);
 /// Event-poll timeout. Short enough that a background task's progress appears
 /// promptly, long enough not to spin the CPU.
 const TICK: Duration = Duration::from_millis(120);
+const IDLE_TICK: Duration = Duration::from_secs(1);
+
+fn tick(jobs: &state::Jobs) -> Duration {
+    if jobs.moving() {
+        TICK
+    } else {
+        IDLE_TICK
+    }
+}
 
 /// Which input surface is active.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -569,6 +578,7 @@ pub fn run() -> Result<()> {
     app.greet(installed_manual);
     app.resume_interrupted();
     app.jobs.update = Some(task::start_update_check());
+    app.jobs.watch = leo_core::watch::Watch::start(&app.store.notes_dir);
     app.fetch_speech_model();
     app.offer_tour();
     let result = event_loop(&mut terminal, &mut app);
@@ -644,7 +654,7 @@ fn event_loop<B: TuiBackend>(terminal: &mut Terminal<B>, app: &mut App) -> Resul
         }
         terminal.draw(|frame| app.draw(frame))?;
 
-        if !event::poll(TICK)? {
+        if !event::poll(tick(&app.jobs))? {
             // No input: give the worker a chance to report progress, and pick up
             // anything the lower layers queued.
             app.pump_editor();
