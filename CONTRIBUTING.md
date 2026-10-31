@@ -5,8 +5,8 @@ is laid out, and what a change needs before it can be merged.
 
 ## Getting set up
 
-You need Rust 1.88 or newer ([rustup.rs](https://rustup.rs)) and git. SoX
-(`brew install sox`, `apt install sox`) is optional: without it the audio tests
+You need Rust 1.90 or newer on macOS or Windows ([rustup.rs](https://rustup.rs)) and git. SoX
+(`brew install sox` on macOS) is optional: without it the audio tests
 skip themselves.
 
 ```sh
@@ -19,8 +19,7 @@ To try your changes without touching your real notes, point leo at a scratch
 directory. `LEO_HOME` keeps notes, settings and keys all in one place:
 
 ```sh
-LEO_HOME=/tmp/leo-dev cargo run
-LEO_HOME=/tmp/leo-dev cargo run -- doctor
+LEO_HOME=/tmp/leo-dev pnpm --dir crates/leo-desktop tauri dev
 ```
 
 ## How the code is organised
@@ -40,17 +39,12 @@ reaching upward:
 
 A few ideas run through all of it:
 
-- **One vocabulary.** The `:` command line, the keys and the CLI all turn input into an
-  `action::Action`, and the same handlers apply it. Add a command once, in
-  `crates/leo-core/src/action/`, not separately in each front end.
-- **Handlers don't touch the terminal.** When a step needs the terminal or the
-  network — an editor, a confirmation, a recording, an AI call — the handler
-  returns an `Effect` and the front end performs it. That is what keeps the
-  handlers testable.
-- **One source for commands.** `VERBS` in `action/parse.rs` holds each command's
-  name, usage and summary; help, the `:` menu, completion and usage errors are
-  all generated from it. A command that is removed goes in `RETIRED`, with what
-  replaced it, so typing the old name explains itself.
+- **One engine.** The app starts leo-web on loopback and supplies native powers
+  through traits. The page stays plain JS and the web crate depends only on core.
+- **One local speech model.** Recording and dictation share the catalog selection
+  and supervised worker. Dictation goes first; recording pins the loaded model.
+- **One terminal entry point.** The small bundled command opens the app, updates
+  it or uninstalls it. Setup and diagnostics live in Settings.
 
 ## Tests
 

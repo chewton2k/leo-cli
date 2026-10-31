@@ -78,11 +78,11 @@ clap.workspace = true
 colored.workspace = true
 dirs.workspace = true
 dotenvy.workspace = true
+tempfile.workspace = true
 
 [dev-dependencies]
 libc.workspace = true
 leo-services = { workspace = true, features = ["test-support"] }
-tempfile.workspace = true
 serde_json.workspace = true
 
 [profile.release]

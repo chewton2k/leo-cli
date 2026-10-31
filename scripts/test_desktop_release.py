@@ -73,6 +73,60 @@ class ReleaseTests(unittest.TestCase):
         self.assertIn('desktop_release.py manifest', workflow)
         self.assertIn('secrets: inherit', (ROOT / '.github/workflows/ci.yml').read_text())
 
+    def test_linux_installer_exits_without_modifying_home(self):
+        import tempfile
+        import subprocess
+        import os
+        if os.name == 'nt':
+            self.skipTest('The shell installer runs on macOS; Windows checks PowerShell instead.')
+        with tempfile.TemporaryDirectory() as folder:
+            folder = pathlib.Path(folder)
+            fake = folder / 'tools'
+            fake.mkdir()
+            uname = fake / 'uname'
+            uname.write_text('#!/bin/sh\ncase "$1" in -s) printf Linux;; *) printf x86_64;; esac\n')
+            uname.chmod(0o755)
+            home = folder / 'home'
+            result = subprocess.run(['sh', str(ROOT / 'scripts/install-app.sh')], env={**os.environ, 'PATH':str(fake)+':/usr/bin:/bin','HOME':str(home)}, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('macOS and Windows only', result.stderr)
+            self.assertFalse(home.exists())
+
+    def test_installer_activation_requires_a_complete_published_app_release(self):
+        import activate_app_installers
+        import desktop_release
+        manifest = {'version':'1.2.3', 'platforms':{}}
+        names = {'latest.json', 'install.sh', 'install.ps1'}
+        for target, (platform, suffix) in desktop_release.TARGETS.items():
+            name = 'leo-' + target + suffix
+            names.update([name, name+'.sig', name+'.sha256'])
+            manifest['platforms'][platform] = {'signature':'signed','url':'https://github.com/chewton2k/leo-cli/releases/download/v1.2.3/'+name}
+            if target.endswith('apple-darwin'):
+                names.update(['leo-'+target+'.dmg', 'leo-'+target+'.dmg.sha256'])
+        release = {'tag_name':'v1.2.3', 'draft':False, 'prerelease':False, 'assets':[{'name':name,'size':1} for name in names]}
+        activate_app_installers.validate(release, manifest, '1.2.3')
+        release['assets'] = [asset for asset in release['assets'] if not asset['name'].endswith('.app.tar.gz')]
+        with self.assertRaises(ValueError):
+            activate_app_installers.validate(release, manifest, '1.2.3')
+
+    def test_activation_leaves_main_installers_untouched_before_release(self):
+        import tempfile
+        import subprocess
+        with tempfile.TemporaryDirectory() as folder:
+            root = pathlib.Path(folder)
+            (root / 'install.sh').write_text('existing installer')
+            dist = root / 'dist'
+            dist.mkdir()
+            (dist / 'install.sh').write_text('new app installer')
+            (dist / 'install.ps1').write_text('new Windows installer')
+            (dist / 'latest.json').write_text(json.dumps({'version':'1.2.3','platforms':{}}))
+            release = root / 'release.json'
+            release.write_text(json.dumps({'tag_name':'v1.2.3','assets':[]}))
+            result = subprocess.run([__import__('sys').executable, str(ROOT / 'scripts/activate_app_installers.py'), str(release), str(dist), '1.2.3'], cwd=root, capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual((root / 'install.sh').read_text(), 'existing installer')
+            self.assertFalse((root / 'install.ps1').exists())
+
 
 if __name__ == '__main__':
     unittest.main()

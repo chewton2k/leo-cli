@@ -1,28 +1,54 @@
 # leo
 
-Local notes, recording, and interview practice, with Felix to help you study.
-Your notes stay as Markdown files on your computer. Use leo in your browser or
-terminal, with AI powered by your signed-in Claude Code or Codex plan, a local
-model, or your own API key.
+Leo is a desktop note app for macOS and Windows, with local recording and
+dictation, interview practice, and Felix to help you study. Your notes stay as
+Markdown files on your computer. Writing AI uses your signed-in Claude Code or
+Codex plan, or a local Ollama model.
 
 ## Install
 
-**macOS / Linux**
+The desktop release is being prepared. Once published, download the macOS disk
+image or Windows installer from [Releases](https://github.com/chewton2k/leo-cli/releases).
+Choose Apple Silicon or Intel on macOS; Windows uses the x64 installer.
+Linux is not supported.
+
+On macOS, drag Leo into Applications. For browser downloads on macOS 15, open
+System Settings → Privacy & Security and choose **Open Anyway** after the first
+attempt to open Leo. The app uses a stable self-signed certificate; it is not
+notarized. Windows browser downloads may show a SmartScreen prompt.
+
+The app installers are also available from the release:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/chewton2k/leo-cli/main/install.sh | bash
+curl -fsSL https://github.com/chewton2k/leo-cli/releases/latest/download/install.sh | sh
 ```
 
-**Windows** (64-bit Intel / AMD, PowerShell)
+On Windows, in PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/chewton2k/leo-cli/main/install.ps1 | iex
+irm https://github.com/chewton2k/leo-cli/releases/latest/download/install.ps1 | iex
 ```
 
-The installer checks the download, adds leo to your PATH, and downloads the
-speech model for local transcription. Open leo like any other app, or run `leo`
-in a terminal to open it. Choose your AI in Settings when you need it, and run
-`leo update` to get updates.
+These commands become available with the first desktop release. The existing
+main-branch installers switch over automatically only after all app assets are
+published, so older Leo installations can update safely.
+
+The macOS installer puts Leo in `/Applications`; Windows uses
+`%LOCALAPPDATA%\Leo`. The terminal command points into the app, so app updates
+update it too. `LEO_INSTALL_DIR` chooses the terminal command's folder;
+`LEO_INSTALL_SKIP_PATH=1` leaves your shell or user PATH unchanged.
+
+Open Leo like any other app, or type `leo` in a terminal. First launch offers
+three skippable steps: microphone, Accessibility, and a local speech model.
+Dictation defaults to Option+Space on macOS and Ctrl+Space on Windows; rebind it
+in Settings. Models and speech stay on this computer. Choose Writing AI when
+you need it; dictation never uses writing AI.
+
+Settings → Health has setup checks and fixes. Updates & about checks for app
+updates, shows what changed, and installs when you quit by default. Updates wait
+for recording and dictation to finish. `leo update` uses the same app download;
+quit Leo before using the terminal installer. `leo uninstall` removes the app,
+its login item and its local settings/models while keeping your notes.
 
 ## What you can do
 
@@ -41,16 +67,14 @@ interviews, track your progress, or study your notes with questions and feedback
 
 ![Interview practice categories and progress alongside a study conversation with Felix](public/interview-practice.png)
 
-**Stay in your terminal.** Write and search Markdown notes, record lectures or
-meetings, and ask questions without leaving the keyboard.
-
-![Leo's terminal interface with folders, notes, and a Markdown note](public/terminal-notes.png)
+**Dictate into other apps.** Hold or tap your global shortcut, speak, and Leo
+pastes your words back. Custom words, filler removal, local history and popup
+appearance are in Settings.
 
 [Contributing](CONTRIBUTING.md) · [Developer guide](DEVELOPER.md)
 
 ## License
 
-MIT. Local speech recognition uses NVIDIA's
-[Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)
-([CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/)), converted to ONNX and
-run by [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (Apache-2.0).
+MIT. Speech models have their own licenses, listed in the vendored
+[model catalog](crates/leo-services/src/speech/catalog.json).
+See [NOTICE](NOTICE) for third-party attribution.

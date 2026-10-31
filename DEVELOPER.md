@@ -12,12 +12,11 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all --check
 ```
 
-CI (`.github/workflows/ci.yml`) runs the same checks on Linux, macOS and
-Windows, plus `cargo check` on Rust 1.88, and the browser suite as two parallel
-jobs (desktop and phone), each building leo and starting its own server. It
+CI (`.github/workflows/ci.yml`) runs the same checks on macOS and Windows, plus `cargo check` on Rust 1.88, and the browser suite as two parallel
+jobs (Chromium and WebKit), each building leo and starting its own server. It
 tests only what a push can affect: `scripts/ci-scope.sh` compares with the last
 release tag (a pull request with its base), so changes to the page alone run
-`cargo test -p leo-web` on Linux and the browser jobs, Rust that the web server
+`cargo test -p leo-web` on macOS and the browser jobs, Rust that the web server
 never runs (the app shell in `crates/leo-desktop`, root `tests/`, install scripts) skips the browser jobs, and
 docs alone run only lint. Comparing with the last release rather than the
 previous push means a cancelled or failed run's changes are still tested. A
@@ -78,7 +77,7 @@ it reaches users as soon as it is pushed, not when a release is made.
 ```sh
 cargo test --no-run                       # rebuilds target/debug/leo, which the tests serve
 cd crates/leo-web/tests/browser
-./node_modules/.bin/playwright test       # flows (CI runs these), desktop and phone
+./node_modules/.bin/playwright test       # flows (CI runs these), Chromium and WebKit
 pnpm visual                               # screenshots compared with the saved ones (local only)
 pnpm visual:update                        # after a deliberate look change; check the new PNGs
 ```

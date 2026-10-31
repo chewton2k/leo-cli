@@ -32,9 +32,9 @@ pub fn available() -> Option<String> {
 
 pub fn install_command() -> String {
     if cfg!(windows) {
-        format!("irm https://raw.githubusercontent.com/{REPO}/main/install.ps1 | iex")
+        format!("$ErrorActionPreference='Stop'; $script=Join-Path ([IO.Path]::GetTempPath()) ('leo-update-'+[Guid]::NewGuid().ToString('N')+'.ps1'); try {{ & curl.exe --fail --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 30 --max-filesize 1048576 --output $script https://github.com/{REPO}/releases/latest/download/install.ps1; if($LASTEXITCODE -ne 0){{throw 'The installer download failed. Check your connection and try again.'}}; & $script }} finally {{ Remove-Item -LiteralPath $script -Force -ErrorAction SilentlyContinue }}")
     } else {
-        format!("curl -fsSL https://raw.githubusercontent.com/{REPO}/main/install.sh | sh")
+        format!("set -eu; script=$(mktemp); trap 'rm -f \"$script\"' EXIT; curl --fail --silent --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 30 --max-filesize 1048576 --output \"$script\" https://github.com/{REPO}/releases/latest/download/install.sh; sh \"$script\"")
     }
 }
 

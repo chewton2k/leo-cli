@@ -22,8 +22,7 @@ is outside `default-members`) and `cargo clippy --workspace --all-targets`. Do n
 run `cargo build`, `cargo install` or `cargo tauri build` unless asked; the one local
 build allowed is `pnpm --dir crates/leo-desktop tauri dev` to try the real app by
 hand (2026-10-31, the user's call). CI tests and lints `leo-desktop` on macOS and
-Windows only; Linux rows `--exclude leo-desktop` (it needs Rust 1.90; the rest
-stays on 1.88).
+Windows only (the app needs Rust 1.90; services/core retain their 1.88 check).
 
 Never run the full test suites on the developer's machine (no
 workspace-wide `cargo test`, no full Playwright run; the user's call,
@@ -133,7 +132,7 @@ the notes remote.
 
 - `leo_services::doctor::scan` (sections leo/notes/AI/recording/backup;
   network/mic probes behind `Probe`), formatted once by `doctor::report`; plan 4
-  shows it in Settings → Health.
+  is shown in Settings → Health.
 - Recording loop: `leo_services::session::recorder` (`record`, `resume`,
   `finish`, `write_up`, `Event`); `Capture` takes native microphone/screen audio; browser-fed audio remains for
   old recovery journals. Pauses are cut by `listen::cut_pauses` before
@@ -154,14 +153,16 @@ the notes remote.
   `gh auth token` succeeds, no network): `repo view` else `repo create
   --private`, URL by `gh config get git_protocol` (https + `gh auth setup-git`
   by default), then connect + `now`. Setting backup up from the app arrives
-  with plan 4's Settings.
+  in Settings → Backup.
 - Updates: `leo_services::update::available()` reads the latest tag from the
   `releases/latest` redirect (not the API: rate limits), cached a day in
   `<config>/update-check.json`, failures cached too; `LEO_NO_UPDATE_CHECK=1`
   disables (e2e sets it). Doctor: `Probe.update`. `leo update` runs
-  install.sh with `LEO_INSTALL_DIR`=its own dir and `LEO_INSTALL_SKIP_PATH=1`
-  (`LEO_UPDATE_SCRIPT` = local installer, for tests). install.sh renames the
-  new binary into place: cp onto a running binary gets it killed on macOS.
+  the release's app installer with a bounded checked download; script-download
+  failures cannot become successful empty shell pipelines. `LEO_INSTALL_DIR`
+  comes from private atomic `app-cli-dir` outside the app, preserving a custom
+  shim directory across in-app updates. `LEO_UPDATE_SCRIPT` injects a local
+  installer in tests. Windows defers installation until the CLI exits.
 - Note files are `<title>.md` (`filename::file_name`: FS-illegal chars to
   `-`, ≤100 chars and ≤200 bytes; same title in a folder → `Title (2).md`,
   oldest first, compared case-insensitively; `Store::assign_paths`). Windows
@@ -278,3 +279,19 @@ Health and signed updates; web depends only on core. Core's activity gate holds
 recording, dictation and clipboard restoration leases and excludes installation.
 Backup setup is explicit, preserves an existing remote and runs outside the store
 lock. Health uses local doctor checks without microphone or AI requests.
+
+Desktop releases contain macOS arm64/x64 DMGs and signed app archives, Windows
+x64 NSIS and a signed latest.json. `scripts/desktop_release.py` validates asset
+sets and builds the updater manifest. `scripts/activate_app_installers.py` refuses
+to replace main installers until a complete published app release exists; the
+publish job then commits that cutover. Prepared installers live in
+`scripts/install-app.{sh,ps1}`. Linux exits before writes. No installer downloads
+models: first-launch setup owns that choice.
+
+The CLI is bundled with the app; macOS links to it, Windows uses a UTF-8 cmd shim
+that preserves its caller's code page. Uninstall validates bundle identity, refuses
+active apps, removes owned login entries and links, keeps notes and unrelated
+files, and defers locked Windows removal. Shell-profile edits are atomic and
+retain permissions. Tests use scratch bundles and ad-hoc signatures, never the
+real signing keychain. Four persistent signing secrets gate release before bump;
+private values are generated outside the repository and added by the user.

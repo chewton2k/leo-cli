@@ -17,6 +17,12 @@ const KNOWN: &[&str] = &[
     "app-sessions.json",
     "app-port",
     "app-launched",
+    "app-cli-dir",
+    "app-settings.json",
+    "dictation.json",
+    "speech-model.json",
+    ".speech.lock",
+    ".dictation.lock",
     "update-check.json",
     "recent.json",
     ".env",
@@ -104,7 +110,7 @@ fn remove(path: &Path) -> std::io::Result<()> {
 
 pub fn run(yes: bool) -> Result<()> {
     let exe = std::env::current_exe().context("could not tell where leo is installed")?;
-    let dirs: Vec<PathBuf> = [
+    let mut dirs: Vec<PathBuf> = [
         exe.parent(),
         exe.canonicalize().ok().as_deref().and_then(Path::parent),
     ]
@@ -117,6 +123,24 @@ pub fn run(yes: bool) -> Result<()> {
         .or_else(dirs::home_dir)
         .unwrap_or_default();
     let notes = Store::notes_dir()?;
+    let bundle = super::installation::installed_bundle(&exe)?;
+    let fallback = if cfg!(windows) {
+        home.join("AppData/Local/Leo/bin")
+    } else {
+        home.join(".local/bin")
+    };
+    let command_dir = super::installation::cli_dir(
+        &exe,
+        &leo_core::paths::config_dir()?.join("app-cli-dir"),
+        &fallback,
+    )?;
+    if !dirs.contains(&command_dir) {
+        dirs.push(command_dir.clone());
+    }
+    if let Some(bundle) = &bundle {
+        anyhow::ensure!(!notes.starts_with(bundle), "Your notes are inside the app folder. Move them in Settings before uninstalling; nothing was removed.");
+        super::installation::verify_installed_bundle(bundle)?;
+    }
     let doomed = plan(&notes, &home);
 
     if !yes {
@@ -128,6 +152,9 @@ pub fn run(yes: bool) -> Result<()> {
         println!("    {}", pretty(&exe, &home));
         for path in &doomed {
             println!("    {}", pretty(path, &home));
+        }
+        if let Some(bundle) = &bundle {
+            println!("    {} and its login item", pretty(bundle, &home));
         }
         println!("    the PATH line the installer added, and any API keys leo stored");
         println!();
@@ -141,7 +168,19 @@ pub fn run(yes: bool) -> Result<()> {
 
     let providers: Vec<String> = Config::load().providers.keys().cloned().collect();
 
-    remove_program(&exe)?;
+    if let Some(bundle) = &bundle {
+        super::installation::remove_login_item(&home, bundle)?;
+        super::installation::remove_bundle(bundle)?;
+        let link = command_dir.join(if cfg!(windows) { "leo.cmd" } else { "leo" });
+        if super::installation::is_cli_link(&link, bundle) {
+            remove(&link)?;
+        }
+        if !exe.starts_with(bundle) {
+            remove_program(&exe)?;
+        }
+    } else {
+        remove_program(&exe)?;
+    }
     println!();
     println!("  Removed {}", pretty(&exe, &home));
 
@@ -181,6 +220,9 @@ pub fn run(yes: bool) -> Result<()> {
         ".config/fish/config.fish",
     ] {
         let path = home.join(rc);
+        if path.is_symlink() {
+            continue;
+        }
         let Ok(text) = std::fs::read_to_string(&path) else {
             continue;
         };
@@ -188,7 +230,13 @@ pub fn run(yes: bool) -> Result<()> {
             .iter()
             .find_map(|dir| without_installer_lines(&text, dir))
         {
-            std::fs::write(&path, kept)?;
+            use std::io::Write;
+            let mut temp = tempfile::NamedTempFile::new_in(path.parent().unwrap())?;
+            temp.as_file()
+                .set_permissions(std::fs::metadata(&path)?.permissions())?;
+            temp.write_all(kept.as_bytes())?;
+            temp.as_file().sync_all()?;
+            temp.persist(&path).map_err(|error| error.error)?;
             println!("  Removed the PATH line from {}", pretty(&path, &home));
         }
     }
@@ -210,19 +258,19 @@ fn remove_program(exe: &Path) -> Result<()> {
     let parked = exe.with_extension("exe.old");
     let _ = std::fs::remove_file(&parked);
     std::fs::rename(exe, &parked).with_context(|| format!("could not remove {}", exe.display()))?;
-    let _ = std::process::Command::new("cmd")
-        .args([
-            "/C",
-            &format!(
-                "ping -n 3 127.0.0.1 >nul & del /F /Q \"{}\"",
-                parked.display()
-            ),
-        ])
+    let _ = deferred_remove_command(&parked)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn();
     Ok(())
+}
+
+fn deferred_remove_command(path: &Path) -> std::process::Command {
+    let mut command = leo_core::children::quiet_command("powershell");
+    command.args(["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; Wait-Process -Id ([int]$env:LEO_REMOVE_PARENT) -Timeout 30 -ErrorAction SilentlyContinue; if(-not (Get-Process -Id ([int]$env:LEO_REMOVE_PARENT) -ErrorAction SilentlyContinue)){Remove-Item -LiteralPath $env:LEO_REMOVE_PROGRAM -Force}"])
+        .env("LEO_REMOVE_PARENT", std::process::id().to_string()).env("LEO_REMOVE_PROGRAM", path);
+    command
 }
 
 pub fn windows_path_without(path: &str, dir: &str) -> Option<String> {
@@ -245,7 +293,7 @@ pub fn windows_path_without(path: &str, dir: &str) -> Option<String> {
 }
 
 fn remove_from_windows_path(dir: &Path) -> bool {
-    let read = std::process::Command::new("powershell")
+    let read = leo_core::children::quiet_command("powershell")
         .args([
             "-NoProfile",
             "-Command",
@@ -259,7 +307,7 @@ fn remove_from_windows_path(dir: &Path) -> bool {
     let Some(kept) = windows_path_without(&current, &dir.to_string_lossy()) else {
         return false;
     };
-    std::process::Command::new("powershell")
+    leo_core::children::quiet_command("powershell")
         .args([
             "-NoProfile",
             "-Command",
@@ -274,6 +322,7 @@ fn remove_from_windows_path(dir: &Path) -> bool {
 
 fn without_installer_lines(text: &str, dir: &Path) -> Option<String> {
     let dir = dir.to_string_lossy();
+    let quoted = dir.replace('\'', "'\\''");
     let lines: Vec<&str> = text.split_inclusive('\n').collect();
     let mut kept: Vec<&str> = Vec::with_capacity(lines.len());
     let mut changed = false;
@@ -282,7 +331,7 @@ fn without_installer_lines(text: &str, dir: &Path) -> Option<String> {
         let is_block = lines[i].trim_end() == MARKER
             && lines
                 .get(i + 1)
-                .is_some_and(|next| next.contains(dir.as_ref()));
+                .is_some_and(|next| next.contains(dir.as_ref()) || next.contains(&quoted));
         if is_block {
             if kept.last().is_some_and(|l| l.trim().is_empty()) {
                 kept.pop();
@@ -308,6 +357,26 @@ fn pretty(path: &Path, home: &Path) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn deferred_windows_removal_treats_the_executable_path_as_data() {
+        let path = Path::new(r"C:\Leo & another command\leo.exe.old");
+        let command = super::deferred_remove_command(path);
+        assert!(!command
+            .get_args()
+            .any(|arg| arg.to_string_lossy().contains("another command")));
+        assert!(command
+            .get_envs()
+            .any(|(key, value)| key == "LEO_REMOVE_PROGRAM" && value == Some(path.as_os_str())));
+    }
+    #[test]
+    fn quoted_installer_blocks_are_removed_without_touching_other_shell_code() {
+        let dir = Path::new("/home/me/bin with 'quote' and $dollar");
+        let text = "keep\n# Added by the leo installer\nexport PATH='/home/me/bin with '\\''quote'\\'' and $dollar':\"$PATH\"\nafter\n";
+        assert_eq!(
+            without_installer_lines(text, dir).as_deref(),
+            Some("keep\nafter\n")
+        );
+    }
     #[test]
     fn a_windows_path_loses_only_leos_folder() {
         let path = r"C:\Windows;C:\Users\me\AppData\Local\Programs\leo\;C:\Tools";

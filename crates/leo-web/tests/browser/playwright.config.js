@@ -1,4 +1,4 @@
-const { defineConfig, devices } = require('@playwright/test');
+const { defineConfig } = require('@playwright/test');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -20,7 +20,7 @@ module.exports = defineConfig({
   },
   projects: [
     { name: 'desktop', use: { browserName: 'chromium' } },
-    { name: 'phone', use: { ...devices['Pixel 7'] } },
+    { name: 'webkit', use: { browserName: 'webkit' }, testMatch: ['settings.spec.js', 'speech-models.spec.js', 'dictation.spec.js'] },
   ],
   webServer: {
     command: 'node server.js',

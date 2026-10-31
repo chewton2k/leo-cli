@@ -1,3 +1,4 @@
+mod installation;
 mod open_app;
 mod prompt;
 mod uninstall;

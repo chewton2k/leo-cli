@@ -4,6 +4,10 @@ on:
   workflow_call:
   workflow_dispatch:
 
+concurrency:
+  group: desktop-release
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
@@ -133,6 +137,32 @@ jobs:
           codesign -d --verbose=4 "$app/Contents/MacOS/leo" 2>&1 | grep -F 'Authority=Leo Desktop Signing'
       - name: Package release assets
         run: python3 scripts/desktop_release.py package target/${{ matrix.target }}/release/bundle release-assets ${{ matrix.target }}
+      - name: Try the macOS app installer in a throwaway home
+        if: runner.os == 'macOS' && matrix.target == 'aarch64-apple-darwin'
+        shell: bash
+        run: |
+          work="$RUNNER_TEMP/leo-installer-check"
+          export HOME="$work/home"
+          export LEO_HOME="$work/data"
+          export LEO_APPLICATIONS_DIR="$work/Applications"
+          export LEO_INSTALL_DIR="$work/bin"
+          export LEO_INSTALL_SKIP_PATH=1
+          export LEO_INSTALL_ARCHIVE="$PWD/release-assets/leo-${{ matrix.target }}.app.tar.gz"
+          sh scripts/install-app.sh
+          "$LEO_INSTALL_DIR/leo" --version
+      - name: Try the Windows app installer in a throwaway home
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $work = Join-Path $env:RUNNER_TEMP 'leo-installer-check'
+          $env:LEO_HOME = Join-Path $work 'data'
+          $env:LEO_WINDOWS_APP_DIR = Join-Path $work 'app with spaces'
+          $env:LEO_INSTALL_DIR = Join-Path $work 'bin with spaces'
+          $env:LEO_INSTALL_SKIP_PATH = '1'
+          $env:LEO_INSTALL_ARCHIVE = Join-Path $PWD 'release-assets/leo-${{ matrix.target }}-setup.exe'
+          ./scripts/install-app.ps1
+          & (Join-Path $env:LEO_INSTALL_DIR 'leo.cmd') --version
+          if ($LASTEXITCODE) { throw 'The installed command did not run.' }
       - name: Remove the temporary signing keychain
         if: always() && runner.os == 'macOS'
         shell: bash
@@ -242,6 +272,10 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      - name: Include the app installers
+        run: |
+          cp scripts/install-app.sh dist/install.sh
+          cp scripts/install-app.ps1 dist/install.ps1
       - name: Create the updater manifest
         run: python3 scripts/desktop_release.py manifest dist '${{ needs.version.outputs.version }}' notes.md
       - uses: softprops/action-gh-release@v3
@@ -253,5 +287,21 @@ jobs:
           make_latest: true
           files: |
             dist/*
-            install.sh
-            install.ps1
+
+      - name: Enable main-branch app installers after publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api repos/${{ github.repository }}/releases/latest > "$RUNNER_TEMP/leo-published-release.json"
+          git fetch origin main
+          git checkout -B main origin/main
+          python3 scripts/activate_app_installers.py "$RUNNER_TEMP/leo-published-release.json" dist '${{ needs.version.outputs.version }}'
+          if git diff --quiet -- install.sh install.ps1; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add install.sh install.ps1
+          git commit -m "release: enable desktop app installers"
+          git pull --rebase origin main
+          git push origin HEAD:main

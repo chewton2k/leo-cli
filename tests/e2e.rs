@@ -208,47 +208,6 @@ fn update_installs_when_a_newer_version_is_out_or_when_forced() {
     assert!(ran.exists(), "--force did not reinstall");
 }
 
-#[test]
-fn update_reinstalls_in_place() {
-    let leo = Leo::new();
-    let exe = leo.installed();
-    let staging = leo.home.path().join("staging");
-    std::fs::create_dir_all(&staging).unwrap();
-    std::fs::copy(env!("CARGO_BIN_EXE_leo"), staging.join("leo")).unwrap();
-    let tarball = leo.home.path().join("leo.tar.gz");
-    assert!(Command::new("tar")
-        .arg("-czf")
-        .arg(&tarball)
-        .arg("-C")
-        .arg(&staging)
-        .arg("leo")
-        .status()
-        .unwrap()
-        .success());
-
-    let out = leo
-        .cmd_at(&exe, &["update", "--force"])
-        .env("SHELL", "/bin/zsh")
-        .env(
-            "LEO_UPDATE_SCRIPT",
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("install.sh"),
-        )
-        .env("LEO_INSTALL_ARCHIVE", &tarball)
-        .output_retrying();
-    let said = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "{}", describe(&out));
-    assert!(said.contains("already up to date"), "{said}");
-    assert!(
-        said.contains("~/.local/bin/leo"),
-        "not updated in place:\n{said}"
-    );
-    assert!(exe.exists());
-    assert!(
-        !leo.home.path().join(".zshrc").exists(),
-        "an update edited the shell's startup file"
-    );
-}
-
 fn sha256_of(path: &Path) -> String {
     let run = |program: &str, args: &[&str]| {
         Command::new(program)
@@ -269,77 +228,6 @@ fn sha256_of(path: &Path) -> String {
 }
 
 #[test]
-fn update_downloads_the_speech_model_first_when_it_is_missing() {
-    let leo = Leo::new();
-    let exe = leo.installed();
-    let (script, ran) = tripwire(&leo);
-    let source = leo.home.path().join("fake-model");
-    std::fs::create_dir_all(&source).unwrap();
-    std::fs::write(
-        source.join("encoder.int8.onnx"),
-        b"a small stand-in encoder",
-    )
-    .unwrap();
-    std::fs::write(source.join("tokens.txt"), b"a b c").unwrap();
-    let url = format!("file://{}", source.display());
-    let manifest = |encoder: &str| {
-        format!(
-            "encoder.int8.onnx={encoder} tokens.txt={}",
-            sha256_of(&source.join("tokens.txt"))
-        )
-    };
-    let update = |url: &str, manifest: &str| {
-        leo.cmd_at(&exe, &["update"])
-            .env_remove("LEO_INSTALL_NO_MODEL")
-            .env("LEO_INSTALL_MODEL_URL", url)
-            .env("LEO_INSTALL_MODEL_MANIFEST", manifest)
-            .env("LEO_UPDATE_SCRIPT", &script)
-            .env("LEO_LATEST_RELEASE", env!("CARGO_PKG_VERSION"))
-            .output_retrying()
-    };
-    let dir = leo.home.path().join("models/parakeet-tdt-0.6b-v3-int8");
-    let encoder = dir.join("encoder.int8.onnx");
-    let old = leo.home.path().join("models/ggml-base.en.bin");
-    std::fs::create_dir_all(old.parent().unwrap()).unwrap();
-    std::fs::write(&old, b"the old whisper model").unwrap();
-
-    let out = update(&url, &manifest(&"0".repeat(64)));
-    assert!(out.status.success(), "{}", describe(&out));
-    let said = String::from_utf8_lossy(&out.stdout);
-    assert!(said.contains("speech model"), "{said}");
-    assert!(
-        said.contains("damaged"),
-        "a wrong checksum was accepted:\n{said}"
-    );
-    assert!(!encoder.exists());
-    assert!(!old.exists(), "the unused base.en was kept");
-    assert!(!ran.exists());
-
-    let real = manifest(&sha256_of(&source.join("encoder.int8.onnx")));
-    let out = update(&url, &real);
-    assert!(out.status.success(), "{}", describe(&out));
-    assert_eq!(
-        std::fs::read(&encoder).unwrap(),
-        b"a small stand-in encoder"
-    );
-    assert!(dir.join("tokens.txt").is_file());
-    assert!(!old.exists(), "the old whisper model was left behind");
-
-    let again = update("file:///nonexistent", &real);
-    let said = String::from_utf8_lossy(&again.stdout);
-    assert!(!said.contains("speech model"), "downloaded twice:\n{said}");
-
-    std::fs::write(&encoder, b"a small stand-in").unwrap();
-    let repaired = update(&url, &real);
-    let said = String::from_utf8_lossy(&repaired.stdout);
-    assert!(said.contains("damaged"), "{said}");
-    assert_eq!(
-        std::fs::read(&encoder).unwrap(),
-        b"a small stand-in encoder"
-    );
-}
-
-#[test]
 fn update_fetches_the_model_that_finds_notes_by_meaning_once() {
     let leo = Leo::new();
     let exe = leo.installed();
@@ -348,11 +236,15 @@ fn update_fetches_the_model_that_finds_notes_by_meaning_once() {
     std::fs::create_dir_all(&source).unwrap();
     std::fs::write(source.join("config.json"), b"{}").unwrap();
     let manifest = format!("config.json={}", sha256_of(&source.join("config.json")));
+    std::fs::write(
+        leo.home.path().join("speech-model.json"),
+        r#"{"id":"fixture-unknown-model","language":"auto"}"#,
+    )
+    .unwrap();
     let update = || {
         leo.cmd_at(&exe, &["update"])
             .env_remove("LEO_NO_MEANING_MODEL")
             .env_remove("LEO_INSTALL_NO_MODEL")
-            .env("LEO_INSTALL_MODEL_URL", "file:///nonexistent")
             .env("LEO_MEANING_URL", format!("file://{}", source.display()))
             .env("LEO_MEANING_MANIFEST", &manifest)
             .env("LEO_UPDATE_SCRIPT", &script)
@@ -469,4 +361,20 @@ fn uninstall_asks_first() {
         "{}",
         describe(&out)
     );
+}
+
+#[test]
+fn a_failed_installer_download_cannot_report_a_successful_update() {
+    let leo = Leo::new();
+    let exe = leo.installed();
+    let curl = leo.bin.join("curl");
+    std::fs::write(&curl, "#!/bin/sh\nexit 7\n").unwrap();
+    make_executable(&curl);
+    let out = leo.cmd_at(&exe, &["update", "--force"]).output_retrying();
+    assert!(
+        !out.status.success(),
+        "a failed download reported success: {}",
+        describe(&out)
+    );
+    assert!(exe.exists());
 }

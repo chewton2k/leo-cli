@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use anyhow::{Context, Result};
 use colored::Colorize;
 
@@ -8,7 +6,8 @@ fn ensure_speech_model() {
         return;
     }
     use leo_services::providers::ModelState;
-    match leo_services::providers::speech_model_state() {
+    let state = leo_services::providers::speech_model_state();
+    match state {
         ModelState::Ready => return,
         ModelState::Missing => {
             println!();
@@ -19,13 +18,24 @@ fn ensure_speech_model() {
             println!("  The selected local speech model is damaged. Downloading it again…");
         }
     }
-    match leo_services::providers::download_speech_model() {
-        Ok(path) => println!("  Saved {}", path.display()),
-        Err(e) => println!(
-            "  {}",
-            format!("Could not download it ({e}). Try again in Settings → Speech models.").dimmed()
-        ),
+    if let Some(message) = model_check(state, leo_services::providers::download_speech_model) {
+        println!("  {message}");
     }
+}
+
+fn model_check(
+    state: leo_services::providers::ModelState,
+    download: impl FnOnce() -> Result<std::path::PathBuf>,
+) -> Option<String> {
+    if state == leo_services::providers::ModelState::Ready {
+        return None;
+    }
+    Some(match download() {
+        Ok(path) => format!("Saved {}", path.display()),
+        Err(error) => {
+            format!("Could not download it ({error}). Try again in Settings → Speech models.")
+        }
+    })
 }
 
 fn ensure_meaning_model() {
@@ -75,43 +85,80 @@ pub fn run(force: bool) -> Result<()> {
         }
     }
     let exe = std::env::current_exe().context("could not tell where leo is installed")?;
-    let dir = exe.parent().unwrap_or(Path::new("."));
+    let fallback = if cfg!(windows) {
+        std::env::var_os("LOCALAPPDATA")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_default()
+            .join("Leo/bin")
+    } else {
+        dirs::home_dir().unwrap_or_default().join(".local/bin")
+    };
+    let dir = super::installation::cli_dir(
+        &exe,
+        &leo_core::paths::config_dir()?.join("app-cli-dir"),
+        &fallback,
+    )?;
 
     let mut cmd = match (std::env::var_os("LEO_UPDATE_SCRIPT"), cfg!(windows)) {
         (Some(script), false) => {
-            let mut cmd = std::process::Command::new("sh");
+            let mut cmd = leo_core::children::quiet_command("sh");
             cmd.arg(script);
             cmd
         }
         (None, false) => {
-            let mut cmd = std::process::Command::new("sh");
+            let mut cmd = leo_core::children::quiet_command("sh");
             cmd.arg("-c").arg(leo_services::update::install_command());
             cmd
         }
         (Some(script), true) => {
-            let mut cmd = std::process::Command::new("powershell");
+            let mut cmd = leo_core::children::quiet_command("powershell");
             cmd.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
                 .arg(script);
             cmd
         }
         (None, true) => {
-            let mut cmd = std::process::Command::new("powershell");
+            let mut cmd = leo_core::children::quiet_command("powershell");
             cmd.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command"])
                 .arg(leo_services::update::install_command());
             cmd
         }
     };
-    let status = cmd
-        .env("LEO_INSTALL_DIR", dir)
-        .env("LEO_INSTALL_SKIP_PATH", "1")
-        .status()
-        .context(if cfg!(windows) {
-            "could not run the installer (is PowerShell available?)"
-        } else {
-            "could not run the installer (is curl installed?)"
-        })?;
+    cmd.env("LEO_INSTALL_DIR", &dir)
+        .env("LEO_INSTALL_SKIP_PATH", "1");
+    #[cfg(windows)]
+    if std::env::var_os("LEO_UPDATE_SCRIPT").is_none() {
+        cmd.env("LEO_UPDATE_PARENT_PID", std::process::id().to_string())
+            .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn()
+            .context("The updater could not start. Download the Windows installer from Leo’s releases page.")?;
+        println!("  The Leo installer will run after this command exits. Quit the Leo app first if it is open.");
+        return Ok(());
+    }
+    let status = cmd.status().context(if cfg!(windows) {
+        "could not run the installer (is PowerShell available?)"
+    } else {
+        "could not run the installer (is curl installed?)"
+    })?;
     if !status.success() {
         anyhow::bail!("the update did not finish; leo was left as it was");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use leo_services::providers::ModelState;
+    #[test]
+    fn catalog_model_check_skips_ready_and_reports_missing_damaged_and_failed_downloads() {
+        assert!(
+            super::model_check(ModelState::Ready, || panic!("must not download twice")).is_none()
+        );
+        for state in [ModelState::Missing, ModelState::Damaged] {
+            let output =
+                super::model_check(state, || Ok(std::path::PathBuf::from("local/model.gguf")))
+                    .unwrap();
+            assert!(output.contains("model.gguf"));
+            let error = super::model_check(state, || anyhow::bail!("checksum mismatch")).unwrap();
+            assert!(error.contains("Speech models") && error.contains("checksum mismatch"));
+        }
+    }
 }

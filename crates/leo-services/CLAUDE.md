@@ -508,3 +508,8 @@ reaps the current worker without closing the actor, so a failed app update can
 resume transcription. Native recording holds a core activity lease until finished.
 The model library lists damaged catalog files and uncatalogued regular GGUF files
 with disk totals; deletion stays contained and never follows links.
+
+The terminal update command fetches the published release installer with HTTPS,
+time/size limits and explicit failure handling before executing it. It never
+pipes a failed curl into an empty successful shell. Model checking still goes
+through the shared catalog library; legacy ONNX installer fixtures are retired.

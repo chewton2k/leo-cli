@@ -109,3 +109,9 @@ committed updater key is public only. Stable private signing files live outside
 this repository; release requires four repository Actions secrets. Microphone
 entitlements accompany hardened runtime. Config omits version; workspace version
 and scripts/set-version.sh remain authoritative.
+
+Release assets are macOS arm64/x64 app archives and DMGs plus Windows x64 NSIS.
+CI uses one stable self-signed identity and verifies both bundle and CLI signatures;
+updater signatures cover the same app archive or NSIS used by terminal installation.
+No Linux release/test rows remain. Chromium and targeted WebKit browser jobs run
+on macOS. Main installer cutover happens only after published assets validate.
