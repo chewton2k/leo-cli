@@ -1,0 +1,18 @@
+[package]
+name = "leo-host"
+description = "Gives leo's built-in engine its AI, speech, settings and storage powers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+leo-core.workspace = true
+leo-services.workspace = true
+leo-web.workspace = true
+anyhow.workspace = true
+chrono.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+leo-services = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true

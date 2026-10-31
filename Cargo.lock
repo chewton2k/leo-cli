@@ -2515,6 +2515,7 @@ dependencies = [
  "dirs",
  "dotenvy",
  "leo-core",
+ "leo-host",
  "leo-services",
  "leo-tui",
  "leo-web",
@@ -2540,6 +2541,19 @@ dependencies = [
  "serde_yaml",
  "tempfile",
  "uuid",
+]
+
+[[package]]
+name = "leo-host"
+version = "0.3.91"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "leo-core",
+ "leo-services",
+ "leo-web",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
