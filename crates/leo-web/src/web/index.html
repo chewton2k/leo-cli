@@ -889,6 +889,11 @@ body.on-map main { padding: 0; max-width: none; }
 }
 .side-head { display: flex; align-items: center; justify-content: space-between; min-height: 40px; margin-bottom: 6px; }
 .side-head .brand { padding-left: 8px; }
+html[data-app="mac"] .side-head { justify-content: flex-end; }
+html[data-app="mac"] .side-head .brand { display: none; }
+html[data-app="mac"] body.side-mini .side { padding-top: 44px; }
+html[data-app="mac"] body.side-mini .side-head { justify-content: center; }
+@media (max-width: 999px) { html[data-app="mac"] .bar { padding-left: 84px; } }
 .side-fold svg { width: 19px; height: 19px; color: var(--muted); }
 .side-search {
   display: flex; align-items: center; gap: 10px; height: 38px; padding: 0 10px; margin-bottom: 8px;
@@ -2014,7 +2019,7 @@ body.interview-resizing { cursor: col-resize; user-select: none; }
 </head>
 <body>
 <aside class="side" id="side" aria-label="leo"></aside>
-<header class="bar" id="bar">
+<header class="bar" id="bar" data-tauri-drag-region="deep">
   <div class="bar-row">
     <button class="icon-btn" id="back" data-action="back" aria-label="Back" hidden></button>
     <button class="brand" data-action="home">leo</button>

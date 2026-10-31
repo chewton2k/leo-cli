@@ -107,6 +107,7 @@
   apply(stored());
   showFelix(felix());
   showWidth(noteWidth());
+  if (root.__LEO_APP__ === 'mac') root.document.documentElement.setAttribute('data-app', 'mac');
   if (media && media.addEventListener) {
     media.addEventListener('change', () => {
       if (current === 'system') tell();

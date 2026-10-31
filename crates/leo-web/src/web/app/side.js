@@ -47,7 +47,7 @@ function drawSide() {
   const scrolled = box.querySelector('.side-tree');
   const kept = scrolled ? scrolled.scrollTop : 0;
   box.innerHTML = `
-    <div class="side-head">
+    <div class="side-head" data-tauri-drag-region="deep">
       <button class="brand side-label" data-action="home">leo</button>
       <button class="icon-btn side-fold" data-action="side-fold" aria-label="${side.mini ? 'Widen the sidebar' : 'Narrow the sidebar'}" title="${side.mini ? 'Widen the sidebar' : 'Narrow the sidebar'}">${ICON.sidebar}</button>
     </div>

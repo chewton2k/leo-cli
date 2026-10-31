@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>leo</title>
+<style>
+:root { --bg: #f7f7f5; --text: #1c1c1a; --muted: #6f6e69; --danger: #d0342c; }
+@media (prefers-color-scheme: dark) { :root { --bg: #141414; --text: #ecebe7; --muted: #a3a29c; } }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+main { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 0 24px; text-align: center; }
+p { margin: 0; color: var(--muted); max-width: 520px; }
+h1 { font-size: 18px; margin: 0; font-weight: 600; }
+</style>
+</head>
+<body>
+<main>
+<h1 id="title">Starting leo…</h1>
+<p id="detail"></p>
+</main>
+<script>
+const problem = new URLSearchParams(location.search).get('problem');
+if (problem) {
+  document.getElementById('title').textContent = "leo couldn't start";
+  document.getElementById('detail').textContent = problem + ' Quit leo and open it again.';
+}
+</script>
+</body>
+</html>
