@@ -1,3 +1,4 @@
+mod links;
 mod port;
 mod shell_path;
 mod tray;
@@ -28,6 +29,7 @@ pub fn run() {
         },
         leo_host::powers(),
     ));
+    let port = started.as_ref().map(|r| r.port()).unwrap_or(0);
     let address = match &started {
         Ok(running) => {
             if let Some(config) = &config {
@@ -54,12 +56,50 @@ pub fn run() {
             Some(vec![HIDDEN]),
         ))
         .manage(Engine(Mutex::new(started.ok())))
+        .invoke_handler(tauri::generate_handler![print_page])
         .setup(move |app| {
             let builder = WebviewWindowBuilder::new(app, MAIN, address)
                 .title("leo")
                 .inner_size(1200.0, 800.0)
                 .min_inner_size(480.0, 480.0)
-                .visible(!hidden);
+                .visible(!hidden)
+                .initialization_script(PRINT)
+                .on_navigation(move |url| {
+                    if links::stays_inside(url, port) {
+                        return true;
+                    }
+                    let _ = leo_core::open::link(url.as_str());
+                    false
+                })
+                .on_new_window(move |url, _| {
+                    if !links::stays_inside(&url, port) {
+                        let _ = leo_core::open::link(url.as_str());
+                    }
+                    tauri::webview::NewWindowResponse::Deny
+                })
+                .on_download(|_, event| {
+                    match event {
+                        tauri::webview::DownloadEvent::Requested { url, destination } => {
+                            let suggested = destination
+                                .file_name()
+                                .map(|n| n.to_string_lossy().into_owned())
+                                .or_else(|| {
+                                    url.path_segments()
+                                        .and_then(|mut s| s.next_back().map(str::to_string))
+                                })
+                                .unwrap_or_default();
+                            if let Some(folder) = downloads_folder() {
+                                *destination = links::download_path(&folder, &suggested);
+                                remember_download(destination.clone());
+                            }
+                        }
+                        tauri::webview::DownloadEvent::Finished { success: true, .. } => {
+                            reveal_last_download();
+                        }
+                        _ => {}
+                    }
+                    true
+                });
             #[cfg(target_os = "macos")]
             let builder = builder
                 .title_bar_style(tauri::TitleBarStyle::Overlay)
@@ -72,6 +112,7 @@ pub fn run() {
                 if let WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
                     let _ = handle.hide();
+                    back_up(handle.app_handle());
                 }
             });
             tray::build(app.handle())?;
@@ -86,6 +127,51 @@ pub fn run() {
         RunEvent::Exit => stop_engine(app),
         _ => {}
     });
+}
+
+const PRINT: &str = "window.print = () => window.__TAURI_INTERNALS__.invoke('print_page');";
+
+#[tauri::command]
+fn print_page(window: tauri::WebviewWindow) -> Result<(), String> {
+    window.print().map_err(|e| e.to_string())
+}
+
+static LAST_DOWNLOAD: Mutex<Option<std::path::PathBuf>> = Mutex::new(None);
+
+fn downloads_folder() -> Option<std::path::PathBuf> {
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
+    let folder = std::path::PathBuf::from(home).join("Downloads");
+    folder.is_dir().then_some(folder)
+}
+
+fn remember_download(path: std::path::PathBuf) {
+    if let Ok(mut last) = LAST_DOWNLOAD.lock() {
+        *last = Some(path);
+    }
+}
+
+fn reveal_last_download() {
+    let path = LAST_DOWNLOAD.lock().ok().and_then(|mut last| last.take());
+    let Some(path) = path else {
+        return;
+    };
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open")
+        .arg("-R")
+        .arg(&path)
+        .spawn();
+    #[cfg(windows)]
+    let _ = std::process::Command::new("explorer")
+        .arg(format!("/select,{}", path.display()))
+        .spawn();
+}
+
+fn back_up(app: &AppHandle) {
+    if let Ok(held) = app.state::<Engine>().0.lock() {
+        if let Some(running) = held.as_ref() {
+            running.back_up();
+        }
+    }
 }
 
 pub(crate) fn show(app: &AppHandle) {
