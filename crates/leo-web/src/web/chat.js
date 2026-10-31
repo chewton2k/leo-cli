@@ -1936,7 +1936,7 @@
         }
       } catch (e) {
         p.state = previous; draw(false);
-        notify(e.message || "Can't reach leo. Is leo serve still running?");
+        notify(e.message || "Can't reach leo. Quit leo and open it again.");
         return;
       }
       if (forward) {
@@ -1972,7 +1972,7 @@
       try {
         response = await fetch(url, { method, credentials: 'same-origin', headers: body ? { 'Content-Type': 'application/json' } : {}, body });
       } catch (e) {
-        notify("Can't reach leo. Is leo serve still running?");
+        notify("Can't reach leo. Quit leo and open it again.");
         return;
       }
       if (response.status === 409) {
@@ -2259,7 +2259,7 @@
           body: JSON.stringify({ messages: history, mode: thread.mode, note: ctx, refs: sentRefs.slice(0, MOST_REFS), recent: recentNotes(thread.messages.filter((m) => m !== answer)), chat: thread.id, interview_problem: viewing?.challenge || null, files, access, practice: Boolean(card), mark: Boolean(card && !extra.hint && card.correct === null), selection: passage ? { title: passage.title, from: passage.from, to: passage.to, text: passage.text } : null, session: sessionBody(currentSession()) }),
           signal: controller.signal,
         });
-        if (response.status === 401) throw new Error('This page needs its link again. Open the link leo serve printed.');
+        if (response.status === 401) throw new Error('leo needs to sign in again. Quit leo and open it again.');
         if (!response.ok || !response.body) {
           let said = '';
           try {
@@ -2339,7 +2339,7 @@
         }
       } catch (e) {
         if (e.name === 'AbortError') controller.abort();
-        else answer.error = e.message || "Can't reach leo. Is leo serve still running?";
+        else answer.error = e.message || "Can't reach leo. Quit leo and open it again.";
       }
       answer.pending = false;
       answer.elapsed_ms = Math.max(0, Date.now() - (working.get(answer) ?? Date.now()));

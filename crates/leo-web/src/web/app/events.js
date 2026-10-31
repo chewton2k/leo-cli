@@ -266,7 +266,7 @@ async function render() {
       toast('That note is not there any more.', { bad: true });
       go('#/', { replace: true });
     } else if (e instanceof Offline) {
-      app.innerHTML = empty(ICON.cloud, "Can't reach leo", 'Check that `leo serve` is still running on your computer, then pull down or tap Refresh in the menu.');
+      app.innerHTML = empty(ICON.cloud, "Can't reach leo", 'Quit leo and open it again.');
     } else {
       fail(e);
     }

@@ -247,18 +247,6 @@ impl Sessions {
         })
     }
 
-    pub fn retire_links(&self, current: Option<&str>) -> Result<usize> {
-        let current = current.map(site_of);
-        self.change(|list| {
-            let before = list.len();
-            list.retain(|s| {
-                !s.site.ends_with(LINK_DOMAIN) || current.as_deref() == Some(s.site.as_str())
-            });
-            let gone = before - list.len();
-            (gone, gone > 0)
-        })
-    }
-
     pub fn end_all(&self) -> Result<usize> {
         self.change(|list| {
             let gone = list.len();
@@ -270,7 +258,6 @@ impl Sessions {
 
 pub struct Gate {
     token: std::sync::RwLock<String>,
-    token_path: Option<PathBuf>,
     pub sessions: Sessions,
     link: std::sync::RwLock<Option<String>>,
 }
@@ -279,10 +266,9 @@ pub const ON_THIS_COMPUTER: &str = "localhost";
 pub const ON_THE_NETWORK: &str = "lan";
 
 impl Gate {
-    pub fn new(token: String, token_path: Option<PathBuf>, sessions: Sessions) -> Gate {
+    pub fn new(token: String, sessions: Sessions) -> Gate {
         Gate {
             token: std::sync::RwLock::new(token),
-            token_path,
             sessions,
             link: std::sync::RwLock::new(None),
         }
@@ -308,15 +294,6 @@ impl Gate {
     pub fn token_matches(&self, given: &str) -> bool {
         let token = self.token.read().unwrap_or_else(|e| e.into_inner());
         token::same(given, &token)
-    }
-
-    pub fn new_link_code(&self) -> anyhow::Result<String> {
-        let fresh = match &self.token_path {
-            Some(path) => token::load_or_create(path, true)?,
-            None => uuid::Uuid::new_v4().simple().to_string(),
-        };
-        *self.token.write().unwrap_or_else(|e| e.into_inner()) = fresh.clone();
-        Ok(fresh)
     }
 }
 
@@ -486,91 +463,10 @@ mod tests {
     }
 
     #[test]
-    fn a_new_link_code_retires_the_old_one_and_is_saved() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("serve-token");
-        let first = token::load_or_create(&path, false).unwrap();
-        let gate = Gate::new(first.clone(), Some(path.clone()), Sessions::in_memory());
-        assert!(gate.token_matches(&first));
-        let second = gate.new_link_code().unwrap();
-        assert!(!gate.token_matches(&first));
-        assert!(gate.token_matches(&second));
-        assert_eq!(token::load_or_create(&path, false).unwrap(), second);
-    }
-
-    #[test]
     fn cookies_are_read_by_exact_name() {
         let header = "leo_token=old; leo_session=abc; other=1";
         assert_eq!(cookie_value(header, COOKIE), Some("abc"));
         assert_eq!(cookie_value(header, LEGACY_COOKIE), Some("old"));
         assert_eq!(cookie_value("xleo_session=bad", COOKIE), None);
-    }
-
-    #[test]
-    fn a_session_says_where_it_signed_in_and_old_links_are_retired() {
-        let sessions = Sessions::in_memory();
-        let here = sessions
-            .start(
-                "Chrome/130.0 (Macintosh; Mac OS X)",
-                "127.0.0.1:8742",
-                at(0),
-            )
-            .unwrap();
-        let wifi = sessions
-            .start("(iPhone) Safari/604.1", "192.168.1.20:8742", at(0))
-            .unwrap();
-        sessions
-            .start(
-                "(iPhone) Safari/604.1",
-                "old-words.trycloudflare.com",
-                at(0),
-            )
-            .unwrap();
-        sessions
-            .start("(iPad) Safari/604.1", "new-words.trycloudflare.com", at(0))
-            .unwrap();
-        let places: Vec<String> = sessions
-            .list(Some(&here), at(1))
-            .into_iter()
-            .map(|s| s.place)
-            .collect();
-        assert!(places.contains(&"on this computer".to_string()));
-        assert!(places.contains(&"on your Wi-Fi".to_string()));
-        assert!(places.contains(&"through the link from any network".to_string()));
-        assert_eq!(
-            sessions
-                .retire_links(Some("new-words.trycloudflare.com"))
-                .unwrap(),
-            1
-        );
-        assert_eq!(sessions.list(None, at(1)).len(), 3);
-        assert_eq!(
-            sessions.retire_links(None).unwrap(),
-            1,
-            "without a link, no link session can be used"
-        );
-        assert!(sessions.check(&here, at(2)) && sessions.check(&wifi, at(2)));
-        assert_eq!(site_of("[::1]:8742"), "[::1]");
-        assert_eq!(site_of("ABC.trycloudflare.com"), "abc.trycloudflare.com");
-        assert_eq!(place_of(""), "");
-        let gate = Gate::new(
-            "0123456789abcdef0123456789abcdef".into(),
-            None,
-            Sessions::in_memory(),
-        );
-        assert_eq!(
-            gate.site_for(false, true),
-            ON_THE_NETWORK,
-            "only a connection from this computer can be the link"
-        );
-        assert_eq!(
-            gate.site_for(true, true),
-            ON_THIS_COMPUTER,
-            "no link is open"
-        );
-        gate.set_link(Some("words.trycloudflare.com"));
-        assert_eq!(gate.site_for(true, true), "words.trycloudflare.com");
-        assert_eq!(gate.site_for(true, false), ON_THIS_COMPUTER);
-        assert_eq!(place_of(ON_THE_NETWORK), "on your Wi-Fi");
     }
 }

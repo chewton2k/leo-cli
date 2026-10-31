@@ -8,11 +8,9 @@ fn feed() -> String {
     format!("BEGIN:VCALENDAR\nX-WR-CALNAME:Classes\nBEGIN:VEVENT\nUID:a\nSUMMARY:Algorithms lecture\nDTSTART:{start}\nDURATION:PT1H\nDESCRIPTION:Shortest paths\nEND:VEVENT\nEND:VCALENDAR\n")
 }
 
-fn add(state: &AppState, link: &str, at: &str) -> Response {
+fn add(state: &AppState, link: &str) -> Response {
     run(crate::calendar::add(
         State(state.clone()),
-        Extension(peer_at(at)),
-        host(at),
         Json(serde_json::from_value(serde_json::json!({ "link": link })).unwrap()),
     ))
 }
@@ -24,26 +22,14 @@ fn a_pasted_calendar_link_shows_upcoming_events_and_is_never_sent_back() {
     fake.pages.lock().unwrap().insert(LINK.into(), feed());
     state.calendar_access = Some(fake.clone());
 
-    assert_eq!(
-        add(&state, LINK, "192.168.1.5").status(),
-        StatusCode::FORBIDDEN
-    );
-    let wrong = add(
-        &state,
-        "https://example.com/not-a-calendar.ics",
-        "127.0.0.1",
-    );
+    let wrong = add(&state, "https://example.com/not-a-calendar.ics");
     assert_eq!(wrong.status(), StatusCode::BAD_REQUEST);
     assert!(json_of(wrong)["error"]
         .as_str()
         .unwrap()
         .contains("could not open"));
 
-    let page = json_of(add(
-        &state,
-        &LINK.replace("https://", "webcal://"),
-        "127.0.0.1",
-    ));
+    let page = json_of(add(&state, &LINK.replace("https://", "webcal://")));
     assert_eq!(page["connected"], true);
     assert_eq!(page["calendars"][0]["name"], "Classes");
     assert_eq!(page["events"][0]["title"], "Algorithms lecture");
@@ -88,7 +74,7 @@ fn the_schedule_shows_a_month_of_events_with_all_day_items_and_tasks_linked_by_m
     let feed = format!("BEGIN:VCALENDAR\nX-WR-CALNAME:Classes\nBEGIN:VEVENT\nUID:final\nSUMMARY:Biology final\nDTSTART;VALUE=DATE:20261216\nEND:VEVENT\nBEGIN:VEVENT\nUID:lab\nSUMMARY:Due: Submit lab\nDTSTART:20261204T073000Z\nDURATION:PT30M\nDESCRIPTION:From leo · leo-task:{marker}\nEND:VEVENT\nEND:VCALENDAR\n");
     fake.pages.lock().unwrap().insert(LINK.into(), feed);
     state.calendar_access = Some(fake.clone());
-    assert_eq!(add(&state, LINK, "127.0.0.1").status(), StatusCode::OK);
+    assert_eq!(add(&state, LINK).status(), StatusCode::OK);
     let window = |from: &str, to: &str| {
         run(crate::calendar::schedule(
             State(state.clone()),

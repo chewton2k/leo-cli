@@ -60,9 +60,7 @@ use crate::routes::assets::{
     app_js, chat_js, doc_js, editing_js, favicon, graph_js, index, markdown_js, recorder_js,
     recording_js, saving_js,
 };
-use crate::routes::auth::{
-    auth_middleware, end_sessions, list_sessions, new_link, note_peer, security_headers,
-};
+use crate::routes::auth::{auth_middleware, note_peer, same_host, security_headers};
 use crate::routes::downloads::{export_zip, originals_zip};
 use crate::routes::felix::{
     add_chat_file, apply_suggestion, change_answer_access, chat_reply, delete_chat, get_chat,
@@ -90,7 +88,7 @@ pub use vectors::Meaning;
 
 pub trait SettingsApi: Send + Sync {
     fn describe(&self, notes_dir: &std::path::Path) -> serde_json::Value;
-    fn apply(&self, change: &serde_json::Value, secure: bool) -> Result<String>;
+    fn apply(&self, change: &serde_json::Value) -> Result<String>;
     fn test(&self, task: &str) -> Result<String>;
     fn backup(&self, _notes_dir: &std::path::Path) -> Result<Option<std::process::Command>> {
         Ok(None)
@@ -569,7 +567,6 @@ pub(crate) async fn start_in(
     let (listener, port) = bind(options.port).await?;
     let gate = Arc::new(sessions::Gate::new(
         options.token.clone(),
-        None,
         sessions::Sessions::load(&places.sessions)?,
     ));
     let state = AppState {
@@ -630,7 +627,11 @@ pub(crate) async fn start_in(
         graph: tokio::spawn(keep_graph_current(state.clone())),
         idle: tokio::spawn(stop_idle_sessions(Arc::clone(&state.warm))),
     };
-    let app = router(state.clone());
+    let app = router(state.clone()).layer(axum::middleware::from_fn(
+        move |request: axum::extract::Request, next: axum::middleware::Next| {
+            same_host(port, request, next)
+        },
+    ));
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
     let server = tokio::spawn(
         axum::serve(
@@ -851,9 +852,6 @@ fn router(state: AppState) -> Router {
         )
         .route("/api/storage", get(get_storage).post(change_storage))
         .route("/api/keep", get(get_keep).post(set_keep))
-        .route("/api/sessions", get(list_sessions))
-        .route("/api/sessions/end", post(end_sessions))
-        .route("/api/sessions/new-link", post(new_link))
         .route("/api/export", get(export_zip))
         .route(
             "/api/chats/{id}",

@@ -1,10 +1,8 @@
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Extension;
 use axum::Json;
 
-use crate::routes::auth::{secure_request, Peer};
 use crate::AppState;
 
 fn no_settings() -> Response {
@@ -15,11 +13,7 @@ fn no_settings() -> Response {
         .into_response()
 }
 
-pub(crate) async fn get_settings(
-    State(state): State<AppState>,
-    Extension(peer): Extension<Peer>,
-    headers: axum::http::HeaderMap,
-) -> Response {
+pub(crate) async fn get_settings(State(state): State<AppState>) -> Response {
     let Some(settings) = state.settings.clone() else {
         return no_settings();
     };
@@ -27,10 +21,8 @@ pub(crate) async fn get_settings(
         Ok(dir) => dir,
         Err(code) => return code.into_response(),
     };
-    let secure = secure_request(&headers, peer);
     match tokio::task::spawn_blocking(move || settings.describe(&notes_dir)).await {
         Ok(mut page) => {
-            page["secure"] = serde_json::Value::Bool(secure);
             page["felix_usage"] = serde_json::json!(state.usage.snapshot());
             page["felix_tools"] = serde_json::json!(state.usage.tools());
             Json(page).into_response()
@@ -41,8 +33,6 @@ pub(crate) async fn get_settings(
 
 pub(crate) async fn change_setting(
     State(state): State<AppState>,
-    Extension(peer): Extension<Peer>,
-    headers: axum::http::HeaderMap,
     Json(change): Json<serde_json::Value>,
 ) -> Response {
     let Some(settings) = state.settings.clone() else {
@@ -52,14 +42,12 @@ pub(crate) async fn change_setting(
         Ok(dir) => dir,
         Err(code) => return code.into_response(),
     };
-    let secure = secure_request(&headers, peer);
     let warm = std::sync::Arc::clone(&state.warm);
     let usage = std::sync::Arc::clone(&state.usage);
     let done = tokio::task::spawn_blocking(move || {
-        settings.apply(&change, secure).map(|message| {
+        settings.apply(&change).map(|message| {
             warm.clear();
             let mut page = settings.describe(&notes_dir);
-            page["secure"] = serde_json::Value::Bool(secure);
             page["felix_usage"] = serde_json::json!(usage.snapshot());
             page["felix_tools"] = serde_json::json!(usage.tools());
             (message, page)

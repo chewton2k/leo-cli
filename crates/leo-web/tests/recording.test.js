@@ -94,7 +94,7 @@ test('the microphone needs a secure page, and each refusal says what to do', () 
   assert.equal(L.micReady(ok), 'ok');
   assert.equal(L.micReady({ ...ok, isSecureContext: false }), 'insecure');
   assert.equal(L.micReady({ ...ok, mediaDevices: undefined }), 'unsupported');
-  assert.match(L.micProblem('insecure'), /https link/);
+  assert.match(L.micProblem('insecure'), /this computer/);
   assert.match(L.micProblem({ name: 'NotAllowedError' }), /Allow it/);
   assert.match(L.micProblem({ name: 'NotFoundError' }), /No microphone/);
   assert.match(L.micProblem({ name: 'Weird', message: 'boom' }), /boom/);

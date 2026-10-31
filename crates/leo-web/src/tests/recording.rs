@@ -43,11 +43,9 @@ fn hearing() -> record::Listener {
     )
 }
 
-fn start_recording(state: &AppState, source: record::Source, at: &str) -> Response {
+fn start_recording(state: &AppState, source: record::Source) -> Response {
     run(record::start(
         State(state.clone()),
-        Extension(peer_at(at)),
-        host(at),
         Json(
             serde_json::from_value(serde_json::json!({
                 "directory": "cs130",
@@ -80,11 +78,7 @@ fn recording_until(state: &AppState, done: impl Fn(&str) -> bool) -> record::Rec
 fn a_recording_from_the_browser_hears_every_chunk_and_becomes_a_note() {
     let (mut state, _d, _ids) = state_with(&[]);
     state.listener = Some(hearing());
-    let started = start_recording(
-        &state,
-        record::Source::Browser,
-        "my-laptop.trycloudflare.com",
-    );
+    let started = start_recording(&state, record::Source::Browser);
     assert_eq!(started.status(), StatusCode::ACCEPTED);
     let id = json_of(started)["id"].as_str().unwrap().to_string();
     recording_until(&state, |s| s == "recording");
@@ -113,7 +107,7 @@ fn a_recording_from_the_browser_hears_every_chunk_and_becomes_a_note() {
     assert_eq!(json_of(paused)["state"], "paused");
     recording_until(&state, |s| s == "paused");
 
-    let busy = start_recording(&state, record::Source::Browser, "localhost:4000");
+    let busy = start_recording(&state, record::Source::Browser);
     assert_eq!(busy.status(), StatusCode::CONFLICT);
 
     let stopped = run(record::stop(State(state.clone()), Path(id.clone())));
@@ -145,7 +139,7 @@ fn a_recording_from_the_browser_hears_every_chunk_and_becomes_a_note() {
 
     let gone = run(record::status(State(state.clone()), Path("nope".into())));
     assert_eq!(gone.status(), StatusCode::NOT_FOUND);
-    let again = start_recording(&state, record::Source::Browser, "localhost");
+    let again = start_recording(&state, record::Source::Browser);
     assert_eq!(again.status(), StatusCode::ACCEPTED);
     let id = json_of(again)["id"].as_str().unwrap().to_string();
     run(record::stop(State(state.clone()), Path(id)));
@@ -153,32 +147,14 @@ fn a_recording_from_the_browser_hears_every_chunk_and_becomes_a_note() {
 }
 
 #[test]
-fn the_computers_own_microphone_only_answers_a_page_on_that_computer() {
+fn the_computers_own_microphone_and_sound_can_be_recorded() {
     let (mut state, _d, _ids) = state_with(&[]);
     state.listener = Some(Arc::new(
         |_: record::Listening, _: &mut dyn FnMut(record::Heard)| {
             Err(anyhow::anyhow!("No sound was recorded."))
         },
     ));
-    for (source, at) in [
-        (record::Source::Microphone, "my-laptop.trycloudflare.com"),
-        (record::Source::Screen, "192.168.1.20:4000"),
-    ] {
-        let refused = start_recording(&state, source, at);
-        assert_eq!(refused.status(), StatusCode::FORBIDDEN, "{at}");
-        assert!(state.recording.lock().unwrap().is_none());
-    }
-    let mut tunnelled = host("localhost");
-    tunnelled.insert("x-forwarded-proto", HeaderValue::from_static("https"));
-    assert!(!local_request(&tunnelled, HERE));
-    assert!(local_request(&host("127.0.0.1:4000"), HERE));
-    assert!(local_request(&host("[::1]:4000"), HERE));
-    assert!(
-        !local_request(&host("127.0.0.1:4000"), ELSEWHERE),
-        "a device on the network that claims to be this computer is not"
-    );
-
-    let allowed = start_recording(&state, record::Source::Screen, "127.0.0.1:4000");
+    let allowed = start_recording(&state, record::Source::Screen);
     assert_eq!(allowed.status(), StatusCode::ACCEPTED);
     let view = recording_until(&state, |s| s == "failed" || s == "done");
     assert_eq!(view.state, "failed");
@@ -201,7 +177,7 @@ fn a_tabs_sound_is_recorded_from_any_browser_as_screen_audio() {
             })
         },
     ));
-    let started = start_recording(&state, record::Source::Tab, "my-laptop.trycloudflare.com");
+    let started = start_recording(&state, record::Source::Tab);
     assert_eq!(started.status(), StatusCode::ACCEPTED);
     let view = recording_until(&state, |s| s == "done" || s == "failed");
     assert_eq!(view.state, "done", "{view:?}");
@@ -218,13 +194,11 @@ fn a_tabs_sound_is_recorded_from_any_browser_as_screen_audio() {
 #[test]
 fn recording_is_refused_without_a_recorder_or_into_a_folder_outside_the_notes() {
     let (mut state, _d, _ids) = state_with(&[]);
-    let none = start_recording(&state, record::Source::Browser, "localhost");
+    let none = start_recording(&state, record::Source::Browser);
     assert_eq!(none.status(), StatusCode::SERVICE_UNAVAILABLE);
     state.listener = Some(hearing());
     let outside = run(record::start(
         State(state.clone()),
-        Extension(HERE),
-        host("localhost"),
         Json(
             serde_json::from_value(serde_json::json!({
                 "directory": "../outside",
@@ -246,11 +220,7 @@ fn audio_arrives_as_little_endian_samples_and_an_odd_byte_is_ignored() {
 fn retried_sequences_are_durable_and_never_counted_twice() {
     let (mut state, _d, _ids) = state_with(&[]);
     state.listener = Some(hearing());
-    let id = json_of(start_recording(
-        &state,
-        record::Source::Browser,
-        "127.0.0.1",
-    ))["id"]
+    let id = json_of(start_recording(&state, record::Source::Browser))["id"]
         .as_str()
         .unwrap()
         .to_string();
@@ -294,11 +264,7 @@ fn retried_sequences_are_durable_and_never_counted_twice() {
 fn a_point_or_stop_during_an_audio_save_waits_for_it_instead_of_failing() {
     let (mut state, _d, _ids) = state_with(&[]);
     state.listener = Some(hearing());
-    let id = json_of(start_recording(
-        &state,
-        record::Source::Browser,
-        "127.0.0.1",
-    ))["id"]
+    let id = json_of(start_recording(&state, record::Source::Browser))["id"]
         .as_str()
         .unwrap()
         .to_string();
@@ -332,11 +298,7 @@ fn a_point_or_stop_during_an_audio_save_waits_for_it_instead_of_failing() {
 fn a_panicking_listener_keeps_its_audio_journal_for_recovery() {
     let (mut state, _d, _ids) = state_with(&[]);
     state.listener = Some(Arc::new(|_, _| panic!("simulated failure")));
-    let id = json_of(start_recording(
-        &state,
-        record::Source::Browser,
-        "127.0.0.1",
-    ))["id"]
+    let id = json_of(start_recording(&state, record::Source::Browser))["id"]
         .as_str()
         .unwrap()
         .to_string();
@@ -389,11 +351,7 @@ fn source_commit_runs_after_the_note_is_visible_on_disk_and_recovery_uses_the_sa
             })),
         })
     }));
-    let id = json_of(start_recording(
-        &state,
-        record::Source::Browser,
-        "127.0.0.1",
-    ))["id"]
+    let id = json_of(start_recording(&state, record::Source::Browser))["id"]
         .as_str()
         .unwrap()
         .to_string();
@@ -417,7 +375,7 @@ fn call_pcm_is_split_into_two_independent_tracks() {
             ..Default::default()
         })
     }));
-    let id = json_of(start_recording(&state, record::Source::Call, "127.0.0.1"))["id"]
+    let id = json_of(start_recording(&state, record::Source::Call))["id"]
         .as_str()
         .unwrap()
         .to_string();
@@ -519,7 +477,7 @@ fn recovery_stays_in_saving_state_and_delivers_every_persisted_chunk() {
 fn a_failed_recording_can_be_deleted_without_deleting_notes_or_other_audio() {
     let (mut state, _d, ids) = state_with(&[("Keep this note", "")]);
     state.listener = Some(Arc::new(|_, _| anyhow::bail!("No sound was recorded.")));
-    let id = json_of(start_recording(&state, record::Source::Call, "127.0.0.1"))["id"]
+    let id = json_of(start_recording(&state, record::Source::Call))["id"]
         .as_str()
         .unwrap()
         .to_string();
@@ -562,11 +520,7 @@ fn a_failed_recording_can_be_deleted_without_deleting_notes_or_other_audio() {
 fn an_active_recording_cannot_be_deleted_from_its_error_panel() {
     let (mut state, _d, _) = state_with(&[]);
     state.listener = Some(hearing());
-    let id = json_of(start_recording(
-        &state,
-        record::Source::Browser,
-        "127.0.0.1",
-    ))["id"]
+    let id = json_of(start_recording(&state, record::Source::Browser))["id"]
         .as_str()
         .unwrap()
         .to_string();

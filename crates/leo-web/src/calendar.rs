@@ -6,15 +6,14 @@ use std::sync::{Arc, Mutex};
 use anyhow::{bail, Result};
 use axum::{
     extract::{Path as UrlPath, Query, State},
-    http::{HeaderMap, StatusCode},
+    http::StatusCode,
     response::{IntoResponse, Response},
-    Extension, Json,
+    Json,
 };
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::ics::{self, Event};
-use crate::routes::auth::{secure_request, Peer};
 use crate::AppState;
 
 pub const MOST_BYTES: u64 = 5_000_000;
@@ -400,18 +399,7 @@ pub(crate) struct Add {
     name: String,
 }
 
-pub(crate) async fn add(
-    State(state): State<AppState>,
-    Extension(peer): Extension<Peer>,
-    headers: HeaderMap,
-    Json(body): Json<Add>,
-) -> Response {
-    if !secure_request(&headers, peer) {
-        return error(
-            StatusCode::FORBIDDEN,
-            "A calendar link is private, so add it on leo's own computer or through the https link.",
-        );
-    }
+pub(crate) async fn add(State(state): State<AppState>, Json(body): Json<Add>) -> Response {
     let Some(access) = state.calendar_access.clone() else {
         return error(
             StatusCode::SERVICE_UNAVAILABLE,

@@ -148,12 +148,6 @@ const actions = {
   'storage-more': storageMore,
   'storage-open-chat': storageOpenChat,
   'storage-go': () => storageGo().catch(fail),
-  'session-end': sessionAsk,
-  'session-end-others': sessionAsk,
-  'session-end-now': () => sessionEndNow().catch(fail),
-  'session-new-link': newLinkAsk,
-  'session-new-link-now': () => newLinkNow().catch(fail),
-  'copy-link': () => copyLink(),
   'keep-now': () => {
     const next = state.keepPending;
     state.keepPending = null;

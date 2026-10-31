@@ -7,10 +7,9 @@ async function showStorage() {
   $('#crumbs').innerHTML = '<span class="sep">/</span><button data-action="settings">Settings</button><span class="sep">/</span><button>Storage</button>';
   document.title = 'Storage · leo';
   app.innerHTML = skeleton(4);
-  const [page, keep, sessions] = await Promise.all([api('/api/storage'), api('/api/keep'), api('/api/sessions')]);
+  const [page, keep] = await Promise.all([api('/api/storage'), api('/api/keep')]);
   if (mine !== seq) return;
   state.keep = keep;
-  state.sessions = sessions.sessions;
   drawStorage(page);
   loadBrowserStorage(mine).catch(() => {});
 }
@@ -29,72 +28,6 @@ function keepCard() {
       <label class="set-row"><span class="set-label">Chats with Felix</span>${select('chat_days', keep.chat_choices)}</label>
       <p class="set-note">Anything older is deleted on its own, along with the documents given to Felix in those chats.</p>
     </section>`;
-}
-
-function sessionsCard() {
-  const list = state.sessions || [];
-  const rows = list
-    .map((b) => `<div class="set-row session-row"><span class="grow"><b>${esc(b.device)}</b>${b.current ? ' <span class="chip accent">This browser</span>' : ''}<span class="sub">Signed in ${rel(b.created_at)}${b.place ? ` ${esc(b.place)}` : ''} · last used ${rel(b.last_seen)}</span></span>${b.current ? '' : `<button class="btn sm plain danger-text" data-action="session-end" data-handle="${esc(b.handle)}" data-device="${esc(b.device)}">Sign out</button>`}</div>`)
-    .join('');
-  const others = list.filter((b) => !b.current).length;
-  return `<section class="set-card store-sessions">
-      <header><h3>Signed-in browsers</h3></header>
-      <p class="hint">Every browser that opened your leo serve link. Signing one out means it needs the link again.</p>
-      ${rows || '<p class="set-note">No browsers yet.</p>'}
-      <div class="store-actions">${others ? `<button class="btn sm plain danger-text" data-action="session-end-others">Sign out ${others === 1 ? 'the other browser' : `the other ${others} browsers`}</button>` : ''}<button class="btn sm plain" data-action="session-new-link">Make a new link</button></div>
-    </section>`;
-}
-
-async function refreshSessions() {
-  state.sessions = (await api('/api/sessions')).sessions;
-  if (state.view === 'storage' && state.storage) drawStorage(state.storage);
-}
-
-function sessionAsk(el) {
-  state.sessionPending = el.dataset.handle ? { handle: el.dataset.handle } : { others: true };
-  const what = el.dataset.handle ? esc(el.dataset.device) : 'every other browser';
-  sheet(`<h3>Sign out ${what}?</h3>
-    <p>It needs your leo serve link to sign in again.</p>
-    <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn danger" data-action="session-end-now">Sign out</button></div>`);
-}
-
-async function sessionEndNow() {
-  const body = state.sessionPending;
-  closeSheet();
-  if (!body) return;
-  state.sessionPending = null;
-  const done = await api('/api/sessions/end', { method: 'POST', body });
-  toast(done.ended === 1 ? 'Signed out 1 browser' : `Signed out ${done.ended} browsers`);
-  await refreshSessions();
-}
-
-function newLinkAsk() {
-  sheet(`<h3>Make a new link?</h3>
-    <p>The old link stops working for browsers that are not signed in yet. Browsers already signed in stay signed in; sign them out above if you want them to need the new link.</p>
-    <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn primary" data-action="session-new-link-now">Make a new link</button></div>`);
-}
-
-async function newLinkNow() {
-  closeSheet();
-  const made = await api('/api/sessions/new-link', { method: 'POST' });
-  sheet(`<h3>Your new link</h3>
-    <p>Open it on each device you want to use. It is also printed in the terminal running leo serve.</p>
-    <input class="new-link" id="new-link" readonly value="${esc(made.link)}">
-    <div class="buttons"><button class="btn plain" data-action="close">Done</button><button class="btn primary" data-action="copy-link">Copy</button></div>`);
-  const field = $('#new-link');
-  if (field) field.select();
-}
-
-async function copyLink() {
-  const field = $('#new-link');
-  if (!field) return;
-  try {
-    await navigator.clipboard.writeText(field.value);
-    toast('Copied the new link');
-  } catch (e) {
-    field.select();
-    toast('Select the link and copy it');
-  }
 }
 
 async function changeKeep(el) {
@@ -152,7 +85,6 @@ function drawStorage(page) {
     ${areas}
     <div id="browser-storage">${browserStorageCard()}</div>
     ${keepCard()}
-    ${sessionsCard()}
     <section class="set-card store-export">
       <header><h3>Export everything</h3></header>
       <p class="hint">A zip of your notes, standalone tasks and the selected data below. Interview practices include frameworks, code, answers, whiteboards, submitted attempts, reviews and schedules. Settings, private calendar links, automatic answer keys and API keys are never included.</p>

@@ -4,8 +4,8 @@ function showLocked() {
   chrome({});
   app.innerHTML = empty(
     ICON.lock,
-    'This page needs its link',
-    'Open the link `leo serve` printed on your computer, or scan its QR code again. If the link was renewed with --new-token, older links stop working.'
+    'leo needs to sign in again',
+    'Quit leo and open it again.'
   );
 }
 

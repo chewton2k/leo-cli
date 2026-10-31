@@ -7,13 +7,12 @@ use anyhow::Result;
 use axum::{
     body::Bytes,
     extract::{Path, Query, State},
-    http::{HeaderMap, StatusCode},
+    http::StatusCode,
     response::{IntoResponse, Response},
-    Extension, Json,
+    Json,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::routes::auth::{local_request, Peer};
 use crate::routes::notes::{directory as valid_directory, save};
 use crate::{store_now, AppState};
 
@@ -257,11 +256,7 @@ fn keep_tail(text: String) -> String {
     text.chars().skip(count - MOST_TRANSCRIPT_CHARS).collect()
 }
 
-pub(crate) async fn overview(
-    State(state): State<AppState>,
-    Extension(peer): Extension<Peer>,
-    headers: HeaderMap,
-) -> Response {
+pub(crate) async fn overview(State(state): State<AppState>) -> Response {
     let pending = match state.with_store(|store| Ok(store.notes_dir.clone())).await {
         Ok(notes) => tokio::task::spawn_blocking(move || crate::record_journal::pending(&notes))
             .await
@@ -277,7 +272,7 @@ pub(crate) async fn overview(
         .and_then(|held| held.as_ref().map(|j| j.view.clone()));
     Json(serde_json::json!({
         "available": state.listener.is_some(),
-        "local": local_request(&headers, peer),
+        "local": true,
         "job": job,
         "pending": pending,
     }))
@@ -295,24 +290,13 @@ pub(crate) struct StartBody {
     profile: Option<leo_core::recording::Profile>,
 }
 
-pub(crate) async fn start(
-    State(state): State<AppState>,
-    Extension(peer): Extension<Peer>,
-    headers: HeaderMap,
-    Json(body): Json<StartBody>,
-) -> Response {
+pub(crate) async fn start(State(state): State<AppState>, Json(body): Json<StartBody>) -> Response {
     let Some(listener) = state.listener.clone() else {
         return error(
             StatusCode::SERVICE_UNAVAILABLE,
-            "leo serve was started without recording.",
+            "Recording is not available in this copy of leo.",
         );
     };
-    if body.source.on_this_computer() && !local_request(&headers, peer) {
-        return error(
-            StatusCode::FORBIDDEN,
-            "The computer's own microphone and sound can only be recorded from a page open on that computer.",
-        );
-    }
     let directory = body.directory.trim().trim_matches('/').to_string();
     let checked = state
         .with_store({

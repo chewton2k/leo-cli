@@ -21,14 +21,10 @@ use std::sync::{Arc, Mutex};
 use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderValue};
 use axum::response::Response;
-use axum::{Extension, Json};
+use axum::Json;
 use leo_core::store::Store;
 
 use crate::routes::activity::activity_tasks;
-use crate::routes::auth::{
-    end_sessions, list_sessions, local_request, new_link, peer_of, secure_request, CurrentSession,
-    EndSessions, Peer,
-};
 use crate::routes::downloads::attachment_header;
 use crate::routes::felix::{
     add_chat_file, apply_suggestion, chat_reply, list_chat_files, remove_chat_file, steer_answer,
@@ -66,7 +62,6 @@ fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<Strin
         })),
         gate: Arc::new(sessions::Gate::new(
             "0123456789abcdef0123456789abcdef".into(),
-            None,
             sessions::Sessions::in_memory(),
         )),
         graphs,
@@ -136,21 +131,6 @@ fn wait_for(state: &AppState, id: &str) -> ImportJob {
         );
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-}
-
-const HERE: Peer = Peer { loopback: true };
-const ELSEWHERE: Peer = Peer { loopback: false };
-
-fn peer_at(host: &str) -> Peer {
-    Peer {
-        loopback: !host.starts_with("192.168."),
-    }
-}
-
-fn host(name: &str) -> axum::http::HeaderMap {
-    let mut headers = axum::http::HeaderMap::new();
-    headers.insert(header::HOST, HeaderValue::from_str(name).unwrap());
-    headers
 }
 
 fn json_of(response: Response) -> serde_json::Value {

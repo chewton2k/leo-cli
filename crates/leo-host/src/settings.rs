@@ -21,12 +21,12 @@ impl leo_web::SettingsApi for WebSettings {
         leo_services::web_settings::describe(&cfg, store.as_ref(), &local, &usage, Some(notes_dir))
     }
 
-    fn apply(&self, change: &Value, secure: bool) -> Result<String> {
+    fn apply(&self, change: &Value) -> Result<String> {
         let path = Config::config_path()?;
         let cfg = Config::load();
         let store = default_store();
         let local = choice::local_models(&cfg);
-        leo_services::web_settings::apply(change, &path, store.as_ref(), secure, &local)
+        leo_services::web_settings::apply(change, &path, store.as_ref(), &local)
     }
 
     fn backup(&self, notes_dir: &Path) -> Result<Option<std::process::Command>> {

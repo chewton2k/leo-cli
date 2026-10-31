@@ -19,7 +19,7 @@ async function showSettings() {
 
 const GOOGLE_CALENDAR_SETTINGS = 'https://calendar.google.com/calendar/r/settings';
 
-function calendarCard(cal, secure) {
+function calendarCard(cal) {
   if (!cal) return '';
   const linked = cal.calendars || [];
   const count = linked.length;
@@ -37,9 +37,7 @@ function calendarCard(cal, secure) {
     ? `<div class="set-row"><span class="set-label">Next up</span><span class="grow cal-next">${next ? `${esc(next.title)} <span class="cal-sub">· ${esc(when(next))}</span>` : '<span class="cal-sub">Nothing in the next week</span>'}</span><button class="btn plain sm" data-action="calendar-refresh"${cal.refreshing ? ' disabled' : ''}>${cal.refreshing ? 'Checking…' : 'Check now'}</button></div>`
     : '';
   const open = !count || state.calendarAdding;
-  const form = !secure
-    ? '<p class="set-note warn">Calendar links are private, so add one on the computer running leo, or through its https link.</p>'
-    : `<ol class="cal-steps">
+  const form = `<ol class="cal-steps">
         <li>Open <a href="${GOOGLE_CALENDAR_SETTINGS}" target="_blank" rel="noopener noreferrer">Google Calendar settings</a>.</li>
         <li>Under <b>Settings for my calendars</b>, pick the calendar.</li>
         <li>In <b>Integrate calendar</b>, copy <b>Secret address in iCal format</b>.</li>
@@ -153,7 +151,7 @@ document.addEventListener('keydown', (e) => {
   }
 }, true);
 
-function taskCard(t, secure) {
+function taskCard(t) {
   const status = t.ready ? '<span class="set-status ok">Ready</span>' : '<span class="set-status missing">Not set up</span>';
   const providers = t.choices.map((c) => settingsOption(c.id, c.label, t.provider)).join('') + (t.custom ? settingsOption(t.provider, `${t.provider} (from config.toml)`, t.provider) : '');
   let model = '';
@@ -165,9 +163,7 @@ function taskCard(t, secure) {
   let key = '';
   if (t.key) {
     const has = t.key.stored;
-    const form = secure
-      ? `<div class="set-key-form"><input type="password" autocomplete="off" spellcheck="false"${has ? ` class="has-key" placeholder="${esc(t.key.hint || '••••••••')}" aria-label="${esc(t.key.name)} key is stored; type a new one to replace it"` : ` placeholder="Paste your ${esc(t.key.name)} API key"`} data-key-input="${esc(t.key.account)}"><button class="btn primary sm" data-action="set-key" data-account="${esc(t.key.account)}">${has ? 'Save' : 'Save key'}</button></div>`
-      : '<p class="hint">To add a key, open the https link leo serve printed (not the Wi-Fi one), or use this page on your computer. Keys never cross Wi-Fi unencrypted.</p>';
+    const form = `<div class="set-key-form"><input type="password" autocomplete="off" spellcheck="false"${has ? ` class="has-key" placeholder="${esc(t.key.hint || '••••••••')}" aria-label="${esc(t.key.name)} key is stored; type a new one to replace it"` : ` placeholder="Paste your ${esc(t.key.name)} API key"`} data-key-input="${esc(t.key.account)}"><button class="btn primary sm" data-action="set-key" data-account="${esc(t.key.account)}">${has ? 'Save' : 'Save key'}</button></div>`;
     key = `<div class="set-row column"><div class="set-line"><span class="set-label">${esc(t.key.name)} key</span><span class="set-value">${has ? '' : '<span class="set-status missing">Not added</span>'}${has ? `<button class="btn plain sm" data-action="remove-key" data-account="${esc(t.key.account)}" data-name="${esc(t.key.name)}">Remove</button>` : ''}</span></div>${form}${t.key.ignored ? `<p class="hint">leo does not read $${esc(t.key.ignored)}; add the key here instead.</p>` : ''}</div>`;
   }
   const signin = t.signin ? `<p class="set-note${t.signin.installed ? '' : ' warn'}">${esc(t.signin.text)}</p>` : '';
@@ -193,7 +189,7 @@ function themeCard() {
       <div class="set-row column"><span class="set-label">Theme</span><div class="choice-cards" role="group" aria-label="Theme">${window.leoTheme.CHOICES.map((choice) => `<button class="choice-card${now === choice ? ' on' : ''}" data-action="theme-pick" data-theme="${choice}" aria-pressed="${now === choice}">${ICON[THEME_ICONS[choice]]}<span>${THEME_LABELS[choice]}</span></button>`).join('')}</div></div>
       <div class="set-row column"><span class="set-label">Felix</span><div class="choice-cards" role="group" aria-label="Felix">${[['cute', 'Cute'], ['demon', 'Demon']].map(([kind, label]) => `<button class="choice-card felix-choice${felixNow === kind ? ' on' : ''}" data-action="felix-pick" data-felix="${kind}" aria-pressed="${felixNow === kind}">${felix.felix(64, `felix-preview ${kind}-look`)}<span>${label}</span></button>`).join('')}</div></div>
       <div class="set-row column"><span class="set-label">Note width</span><div class="choice-cards" role="group" aria-label="Note width">${window.leoTheme.WIDTHS.map((width) => `<button class="choice-card${window.leoTheme.noteWidth() === width ? ' on' : ''}" data-action="width-pick" data-width="${width}" aria-pressed="${window.leoTheme.noteWidth() === width}">${svg(WIDTH_ICONS[width])}<span>${WIDTH_LABELS[width]}</span></button>`).join('')}</div></div>
-      <p class="hint">Kept in this browser, so your phone and computer can each have their own. Demon Felix has scary moves of his own, and tickling either one too much has a surprise.</p>
+      <p class="hint">Kept on this computer. Demon Felix has scary moves of his own, and tickling either one too much has a surprise.</p>
     </section>`;
 }
 
@@ -249,13 +245,13 @@ function drawSettings(page) {
   app.innerHTML = `<div class="settings">
     <div class="section-title">Settings</div>
     ${themeCard()}
-    ${page.tasks.map((t) => taskCard(t, page.secure)).join('')}
-    ${calendarCard(state.calendar, page.secure)}
+    ${page.tasks.map((t) => taskCard(t)).join('')}
+    ${calendarCard(state.calendar)}
     ${felixUsageCard(page)}
     <section class="set-card">
       <header><h3>Backup</h3>${backup.remote ? '<span class="set-status ok">On</span>' : '<span class="set-status missing">Not set up</span>'}</header>
       <p class="hint">${backup.remote ? `Your notes are copied to ${esc(backup.remote)}.` : 'Backup is not set up yet. Run :backup in leo on your computer to keep a copy on GitHub.'}</p>
-      <p class="hint">On quit also backs up notes and tasks when you leave this website. Keep leo serve running until the backup finishes.</p>
+      <p class="hint">On quit also backs up notes and tasks when you close the leo window or quit leo.</p>
       <label class="set-row"><span class="set-label">Push changes</span><span class="select-control"><select data-set="auto_push">${backup.options.map((o) => settingsOption(o.id, o.label, backup.auto_push)).join('')}</select>${ICON.chevron}</span></label>
     </section>
     <section class="set-card">

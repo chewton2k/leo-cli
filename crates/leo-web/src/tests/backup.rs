@@ -11,7 +11,7 @@ impl SettingsApi for Backing {
         serde_json::json!({})
     }
 
-    fn apply(&self, _: &serde_json::Value, _: bool) -> anyhow::Result<String> {
+    fn apply(&self, _: &serde_json::Value) -> anyhow::Result<String> {
         anyhow::bail!("Not used")
     }
 

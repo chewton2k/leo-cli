@@ -206,7 +206,6 @@ pub fn apply(
     change: &Value,
     config_path: &Path,
     store: &dyn SecretStore,
-    secure: bool,
     local: &Local,
 ) -> Result<String> {
     match text(change, "set")? {
@@ -263,9 +262,6 @@ pub fn apply(
                     Ok(format!("The {name} key is removed."))
                 }
                 Some(key) => {
-                    if !secure {
-                        bail!("keys can only be added over the https link or on this computer, so they never cross Wi-Fi unencrypted");
-                    }
                     if key.len() > 512 || key.chars().any(char::is_whitespace) {
                         bail!("that does not look like an API key");
                     }
@@ -404,7 +400,6 @@ mod tests {
                 &json!({"set": "effort", "value": value}),
                 &path,
                 &store,
-                false,
                 &local,
             )
         };
@@ -431,7 +426,6 @@ mod tests {
             &json!({"set": "effort", "value": "high"}),
             &other,
             &store,
-            false,
             &local
         )
         .is_err());
@@ -447,7 +441,6 @@ mod tests {
             &json!({"set": "provider", "task": "writing", "value": "claude_code"}),
             &path,
             &store,
-            false,
             &local,
         )
         .unwrap();
@@ -456,7 +449,6 @@ mod tests {
             &json!({"set": "model", "task": "writing", "value": "claude-sonnet-5-5"}),
             &path,
             &store,
-            false,
             &local,
         )
         .unwrap();
@@ -474,7 +466,6 @@ mod tests {
             &json!({"set": "model", "task": "writing", "value": "gpt-made-up"}),
             &path,
             &store,
-            false,
             &local
         )
         .is_err());
@@ -483,7 +474,6 @@ mod tests {
                 &json!({"set": "provider", "task": "writing", "value": "parakeet"}),
                 &path,
                 &store,
-                false,
                 &local
             )
             .is_err(),
@@ -493,7 +483,6 @@ mod tests {
             &json!({"set": "provider", "task": "cooking", "value": "openai"}),
             &path,
             &store,
-            false,
             &local
         )
         .is_err());
@@ -522,7 +511,6 @@ mod tests {
                 &json!({"set": "provider", "task": "writing", "value": provider}),
                 &path,
                 &store,
-                false,
                 &Local::default()
             )
             .is_err());
@@ -531,7 +519,6 @@ mod tests {
             &json!({"set": "key", "account": "openrouter", "value": "replacement"}),
             &path,
             &store,
-            true,
             &Local::default()
         )
         .is_err());
@@ -543,19 +530,14 @@ mod tests {
     }
 
     #[test]
-    fn keys_are_stored_only_over_a_secure_link_and_can_be_removed() {
+    fn keys_are_stored_and_can_be_removed() {
         let (_d, path) =
             setup("[chat]\nchain = [\"ollama\"]\n[transcribe]\nchain = [\"openai_whisper\"]\n");
         let store = MemoryStore::default();
         let local = Local::default();
         let add = json!({"set": "key", "account": "openai", "value": " sk-or-123 "});
-        let refused = apply(&add, &path, &store, false, &local)
-            .unwrap_err()
-            .to_string();
-        assert!(refused.contains("https"), "{refused}");
-        assert!(!store.has("openai"));
         assert_eq!(
-            apply(&add, &path, &store, true, &local).unwrap(),
+            apply(&add, &path, &store, &local).unwrap(),
             "The OpenAI key is stored on this computer."
         );
         assert_eq!(store.get("openai").unwrap().unwrap().as_str(), "sk-or-123");
@@ -563,7 +545,6 @@ mod tests {
             &json!({"set": "key", "account": "keychain-of-someone-else", "value": "x"}),
             &path,
             &store,
-            true,
             &local
         )
         .is_err());
@@ -571,7 +552,6 @@ mod tests {
             &json!({"set": "key", "account": "openai", "value": "two words"}),
             &path,
             &store,
-            true,
             &local
         )
         .is_err());
@@ -580,7 +560,6 @@ mod tests {
                 &json!({"set": "key", "account": "openai", "value": null}),
                 &path,
                 &store,
-                false,
                 &local
             )
             .unwrap(),
@@ -599,7 +578,6 @@ mod tests {
                 &json!({"set": "auto_push", "value": "when_idle"}),
                 &path,
                 &store,
-                false,
                 &local
             )
             .unwrap(),
@@ -610,11 +588,10 @@ mod tests {
             &json!({"set": "auto_push", "value": "hourly"}),
             &path,
             &store,
-            false,
             &local
         )
         .is_err());
-        assert!(apply(&json!({"set": "theme"}), &path, &store, false, &local).is_err());
+        assert!(apply(&json!({"set": "theme"}), &path, &store, &local).is_err());
     }
 
     #[test]
@@ -625,7 +602,6 @@ mod tests {
             &json!({"set": "provider", "task": "writing", "value": "claude_code"}),
             &path,
             &MemoryStore::default(),
-            false,
             &Local::default(),
         )
         .unwrap();

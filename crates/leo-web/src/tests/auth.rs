@@ -1,132 +1,105 @@
-use super::*;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-#[test]
-fn keys_count_as_safe_only_over_https_or_on_this_computer() {
-    let with = |pairs: &[(&'static str, &'static str)]| {
-        let mut headers = axum::http::HeaderMap::new();
-        for (k, v) in pairs {
-            headers.insert(*k, HeaderValue::from_static(v));
-        }
-        secure_request(&headers, HERE)
+use crate::{start_in, Places, Powers, Running, StartOptions};
+
+async fn running() -> (Running, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let places = Places {
+        store: leo_core::store::Store::load_from(&dir.path().join("notes")).unwrap(),
+        sessions: dir.path().join("sessions.json"),
     };
-    assert!(with(&[
-        ("host", "abc.trycloudflare.com"),
-        ("x-forwarded-proto", "https")
-    ]));
-    assert!(with(&[("host", "127.0.0.1:8742")]));
-    assert!(with(&[("host", "localhost:8742")]));
-    assert!(with(&[("host", "[::1]:8742")]));
-    assert!(!with(&[("host", "192.168.1.50:8742")]));
-    assert!(!with(&[("host", "localhost.evil.example")]));
-    assert!(!with(&[]));
+    let running = start_in(
+        places,
+        StartOptions {
+            port: 0,
+            token: "0123456789abcdef0123456789abcdef".into(),
+        },
+        Powers::default(),
+    )
+    .await
+    .unwrap();
+    (running, dir)
 }
 
-#[test]
-fn browsers_are_listed_and_signed_out_one_by_one_or_all_but_this_one() {
-    let (state, _d, _ids) = state_with(&[]);
-    let now = chrono::Utc::now();
-    let mine = state
-        .gate
-        .sessions
-        .start("Chrome/130.0 (Macintosh; Mac OS X)", "127.0.0.1:8742", now)
-        .unwrap();
-    let phone = state
-        .gate
-        .sessions
-        .start("(iPhone) Safari/604.1", "abc.trycloudflare.com", now)
-        .unwrap();
-    let tablet = state
-        .gate
-        .sessions
-        .start("(iPad) Safari/604.1", "192.168.1.20:8742", now)
-        .unwrap();
-    let me = || Some(axum::Extension(CurrentSession(mine.clone())));
-
-    let listed = run(list_sessions(State(state.clone()), me())).0;
-    let list = listed["sessions"].as_array().unwrap();
-    assert_eq!(list.len(), 3);
-    assert_eq!(list[0]["current"], true);
-    assert_eq!(list[0]["device"], "Chrome on Mac");
-    assert!(
-        !listed.to_string().contains(&mine),
-        "secrets never reach the page"
-    );
-
-    let phone_handle = sessions::handle_of(&phone);
-    let one = run(end_sessions(
-        State(state.clone()),
-        me(),
-        Json(EndSessions {
-            handle: Some(phone_handle),
-            others: false,
-        }),
-    ));
-    assert_eq!(json_of(one)["ended"], 1);
-    assert!(!state.gate.sessions.check(&phone, now));
-    assert!(state.gate.sessions.check(&tablet, now));
-
-    let rest = run(end_sessions(
-        State(state.clone()),
-        me(),
-        Json(EndSessions {
-            handle: None,
-            others: true,
-        }),
-    ));
-    assert_eq!(json_of(rest)["ended"], 1);
-    assert!(!state.gate.sessions.check(&tablet, now));
-    assert!(state.gate.sessions.check(&mine, now));
-
-    let unclear = run(end_sessions(
-        State(state.clone()),
-        None,
-        Json(EndSessions {
-            handle: None,
-            others: true,
-        }),
-    ));
-    assert_eq!(unclear.status(), StatusCode::BAD_REQUEST);
+async fn ask(port: u16, path: &str, host: &str) -> String {
+    ask_with(port, path, host, "").await
 }
 
-#[test]
-fn a_new_link_is_built_for_the_address_in_use_and_the_old_code_stops_working() {
-    let (state, _d, _ids) = state_with(&[]);
-    let old = "0123456789abcdef0123456789abcdef";
-    assert!(state.gate.token_matches(old));
-    let mut headers = host("abc.trycloudflare.com");
-    headers.insert("x-forwarded-proto", HeaderValue::from_static("https"));
-    let made = json_of(run(new_link(State(state.clone()), headers)));
-    let link = made["link"].as_str().unwrap();
-    assert!(
-        link.starts_with("https://abc.trycloudflare.com/?token="),
-        "{link}"
-    );
-    let code = link.rsplit('=').next().unwrap();
-    assert!(state.gate.token_matches(code));
-    assert!(!state.gate.token_matches(old));
-    let local = json_of(run(new_link(State(state.clone()), host("127.0.0.1:3131"))));
-    assert!(local["link"]
-        .as_str()
+async fn ask_with(port: u16, path: &str, host: &str, cookie: &str) -> String {
+    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    stream
+        .write_all(format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nCookie: {cookie}\r\nConnection: close\r\n\r\n").as_bytes())
+        .await
+        .unwrap();
+    let mut reply = String::new();
+    stream.read_to_string(&mut reply).await.unwrap();
+    reply
+}
+
+#[tokio::test]
+async fn a_foreign_host_is_refused() {
+    let (running, _dir) = running().await;
+    let port = running.port();
+    let reply = ask(
+        port,
+        "/?token=0123456789abcdef0123456789abcdef",
+        &format!("evil.example:{port}"),
+    )
+    .await;
+    assert!(reply.starts_with("HTTP/1.1 421"), "{reply}");
+    let other_port = ask(port, "/", &format!("127.0.0.1:{}", port.wrapping_add(1))).await;
+    assert!(other_port.starts_with("HTTP/1.1 421"), "{other_port}");
+    running.stop().await;
+}
+
+#[tokio::test]
+async fn the_window_signs_in_with_a_strict_cookie() {
+    let (running, _dir) = running().await;
+    let port = running.port();
+    let reply = ask(
+        port,
+        "/?token=0123456789abcdef0123456789abcdef",
+        &format!("127.0.0.1:{port}"),
+    )
+    .await;
+    assert!(reply.starts_with("HTTP/1.1 303"), "{reply}");
+    let cookie = reply
+        .lines()
+        .find(|line| {
+            line.to_ascii_lowercase()
+                .starts_with("set-cookie: leo_session=")
+        })
+        .unwrap_or_default();
+    assert!(cookie.contains("SameSite=Strict"), "{cookie}");
+    assert!(!cookie.contains("Secure"), "{cookie}");
+    let localhost = ask(port, "/", &format!("localhost:{port}")).await;
+    assert!(localhost.starts_with("HTTP/1.1 401"), "{localhost}");
+    running.stop().await;
+}
+
+#[tokio::test]
+async fn the_signed_in_browsers_list_is_gone() {
+    let (running, _dir) = running().await;
+    let port = running.port();
+    let here = format!("127.0.0.1:{port}");
+    let signed_in = ask(port, "/?token=0123456789abcdef0123456789abcdef", &here).await;
+    let cookie = signed_in
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("set-cookie: ")
+                .or_else(|| line.strip_prefix("Set-Cookie: "))
+        })
+        .and_then(|value| value.split(';').next())
         .unwrap()
-        .starts_with("http://127.0.0.1:3131/?token="));
-}
-
-#[test]
-fn only_a_connection_from_this_computer_counts_as_this_computer() {
-    use axum::extract::ConnectInfo;
-    let from = |addr: &str| peer_of(Some(&ConnectInfo(addr.parse().unwrap())));
-    assert_eq!(from("127.0.0.1:50000"), HERE);
-    assert_eq!(from("[::1]:50000"), HERE);
-    assert_eq!(from("192.168.1.20:50000"), ELSEWHERE);
-    assert_eq!(peer_of(None), ELSEWHERE, "an unknown peer is not trusted");
-
-    let mut spoofed = host("127.0.0.1:8742");
-    assert!(!secure_request(&spoofed, ELSEWHERE));
-    assert!(!local_request(&spoofed, ELSEWHERE));
-    spoofed.insert("x-forwarded-proto", HeaderValue::from_static("https"));
+        .to_string();
+    let notes = ask_with(port, "/api/notes", &here, &cookie).await;
+    assert!(notes.starts_with("HTTP/1.1 200"), "{notes}");
+    let reply = ask_with(port, "/api/sessions", &here, &cookie).await;
     assert!(
-        !secure_request(&spoofed, ELSEWHERE),
-        "a forwarded https header counts only from the tunnel on this computer"
+        reply.starts_with("HTTP/1.1 404") || reply.starts_with("HTTP/1.1 405"),
+        "{reply}"
     );
-    assert!(secure_request(&spoofed, HERE));
+    running.stop().await;
 }

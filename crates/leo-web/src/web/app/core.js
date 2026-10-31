@@ -246,7 +246,7 @@ async function api(path, { method = 'GET', body, total = false } = {}) {
 
 function fail(error) {
   if (error instanceof Locked) return showLocked();
-  if (error instanceof Offline) return toast("Can't reach leo. Is `leo serve` still running on your computer?", { bad: true });
+  if (error instanceof Offline) return toast("Can't reach leo. Quit leo and open it again.", { bad: true });
   toast(error.message || String(error), { bad: true });
 }
 

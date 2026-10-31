@@ -53,7 +53,7 @@
 
   function micProblem(reason) {
     const name = typeof reason === 'string' ? reason : reason && reason.name;
-    if (name === 'insecure') return 'A browser only lends its microphone to a secure page. Open the https link leo serve prints (not the --local one), or open http://127.0.0.1 on the computer itself.';
+    if (name === 'insecure') return 'The microphone is not available to this window. Record from this computer instead.';
     if (name === 'unsupported') return 'This browser cannot record here. Try a current Safari, Chrome, Edge or Firefox.';
     if (name === 'NotAllowedError' || name === 'SecurityError') return 'The browser was not allowed to use the microphone. Allow it for this site (the icon by the address), then try again.';
     if (name === 'NotFoundError' || name === 'OverconstrainedError') return 'No microphone was found on this device.';

@@ -557,21 +557,6 @@ test('search finds a note named after a command', async ({ page }) => {
 });
 
 
-test.describe('plain HTTP access', () => {
-  test('a new note can be created without secure-context browser APIs', async ({ page }) => {
-    const token = fs.readFileSync(path.join(process.env.LEO_BROWSER_HOME, 'serve-token'), 'utf8').trim();
-    await page.goto(`http://leo-http.test:31831/?token=${token}`);
-    expect(await page.evaluate(() => window.isSecureContext)).toBe(false);
-    expect(await page.evaluate(() => typeof crypto.randomUUID)).toBe('undefined');
-    await control(page, 'new').click();
-    await expect(page.locator('#title')).toBeVisible();
-    await page.locator('#title').fill('Created over plain HTTP');
-    await expect(page.locator('#save-state')).toHaveText('Saved');
-    const saved = await page.evaluate(async () => (await fetch('/api/notes')).json());
-    expect(saved.some((note) => note.title === 'Created over plain HTTP')).toBe(true);
-  });
-});
-
 test.describe('knowledge graph', () => {
   async function seed(page) {
     const made = {};
@@ -2046,22 +2031,6 @@ test.describe('storage', () => {
   });
 });
 
-test.describe('signed-in browsers', () => {
-  test('opening the link again in the same browser does not add another sign-in', async ({ page }) => {
-    const token = fs.readFileSync(path.join(process.env.LEO_BROWSER_HOME, 'serve-token'), 'utf8').trim();
-    const count = async () => (await (await page.request.get('/api/sessions')).json()).sessions.length;
-    const before = await count();
-    for (let i = 0; i < 3; i++) {
-      await page.goto(`/?token=${token}`);
-      await expect(page.locator('#app')).not.toBeEmpty();
-    }
-    expect(await count()).toBe(before);
-    await page.goto('/#/settings/storage');
-    const mine = page.locator('.session-row', { hasText: 'This browser' });
-    await expect(mine).toContainText('on this computer');
-  });
-});
-
 test.describe('storage of pictures', () => {
   test('pictures are listed with the notes that use them, and unused ones can be deleted', async ({ page }) => {
     const tag = test.info().project.name;
@@ -2125,38 +2094,6 @@ test.describe('export and this browser', () => {
 });
 
 test.describe('advanced settings', () => {
-  test('lists signed-in browsers, signs one out, and makes a new link', async ({ page, browser }) => {
-    const token = fs.readFileSync(path.join(process.env.LEO_BROWSER_HOME, 'serve-token'), 'utf8').trim();
-    const other = await browser.newContext({ userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Version/18.0 Mobile/15E148 Safari/604.1' });
-    const phone = await other.newPage();
-    await phone.goto(`/?token=${token}`);
-    await expect(phone.locator('#app')).not.toBeEmpty();
-    expect((await phone.request.get('/api/notes')).status()).toBe(200);
-
-    await page.goto('/#/settings/storage');
-    const card = page.locator('.store-sessions');
-    await expect(card.locator('.session-row').first()).toContainText('This browser');
-    const iphone = card.locator('.session-row', { hasText: 'Safari on iPhone' }).first();
-    await iphone.locator('[data-action="session-end"]').click();
-    await expect(page.locator('.sheet h3')).toHaveText('Sign out Safari on iPhone?');
-    await page.locator('[data-action="session-end-now"]').click();
-    await expect(page.locator('.toast')).toContainText('Signed out 1 browser');
-    expect((await phone.request.get('/api/notes')).status()).toBe(401);
-
-    await card.locator('[data-action="session-new-link"]').click();
-    await page.locator('[data-action="session-new-link-now"]').click();
-    const link = await page.locator('#new-link').inputValue();
-    expect(link).toMatch(/^http:\/\/127\.0\.0\.1:31831\/\?token=[0-9a-f]{32}$/);
-    expect(link).not.toContain(token);
-    await page.locator('[data-action="close"]').click();
-    expect((await page.request.get('/api/notes')).status()).toBe(200);
-    await phone.goto(`/?token=${token}`);
-    await expect(phone.locator('body')).toContainText('This page needs its link');
-    await phone.goto(link.replace('http://127.0.0.1:31831', ''));
-    expect((await phone.request.get('/api/notes')).status()).toBe(200);
-    await other.close();
-  });
-
   test('chooses how long the trash and chats are kept, asking before deleting sooner', async ({ page }) => {
     await page.goto('/#/settings/storage');
     const trash = page.locator('select[data-keep="trash_days"]');
