@@ -40,7 +40,7 @@ pub fn fetch_into(dir: &Path, url: &str, sha: &str, manifest: &[(String, String)
         return Ok(());
     }
     let package = download_verified(url, sha, dir, PACKAGE, true)?;
-    let unpacked = std::process::Command::new("tar")
+    let unpacked = leo_core::children::quiet_command("tar")
         .arg("-xzf")
         .arg(&package)
         .arg("-C")

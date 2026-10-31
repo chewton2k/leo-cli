@@ -1,4 +1,4 @@
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use anyhow::{Context, Result};
 
@@ -44,7 +44,7 @@ pub fn link(uri: &str) -> Result<()> {
     } else {
         ("xdg-open", vec![trimmed])
     };
-    let status = Command::new(opener)
+    let status = crate::children::quiet_command(opener)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())

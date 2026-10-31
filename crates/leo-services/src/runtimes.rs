@@ -158,7 +158,7 @@ pub fn fetch_into(dir: &Path, urls: &[String], pin: Option<&str>) -> Result<()> 
         .tempfile_in(dir)?;
     let mut last = anyhow::anyhow!("the runtime could not be downloaded; try again when online");
     for url in urls {
-        let fetched = std::process::Command::new("curl")
+        let fetched = leo_core::children::quiet_command("curl")
             .args([
                 "-L",
                 "--fail",
@@ -179,7 +179,7 @@ pub fn fetch_into(dir: &Path, urls: &[String], pin: Option<&str>) -> Result<()> 
             continue;
         }
         if let Err(error) = unpack(
-            std::process::Command::new("tar")
+            leo_core::children::quiet_command("tar")
                 .arg("-xzf")
                 .arg(package.path())
                 .arg("-C")

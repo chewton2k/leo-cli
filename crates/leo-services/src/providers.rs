@@ -184,7 +184,7 @@ pub fn get_local_model(task: crate::config::edit::Task) -> Result<String> {
     use crate::config::edit::Task;
     match task {
         Task::Chat => {
-            let status = std::process::Command::new("ollama")
+            let status = leo_core::children::quiet_command("ollama")
                 .args(["pull", choice::OLLAMA_STARTER])
                 .status()
                 .map_err(|e| anyhow::anyhow!("could not run ollama: {e}"))?;
@@ -318,7 +318,7 @@ pub fn download_verified(
         .prefix(".leo-download-")
         .suffix(".part")
         .tempfile_in(dir)?;
-    let mut curl = std::process::Command::new("curl");
+    let mut curl = leo_core::children::quiet_command("curl");
     curl.args([
         "-L",
         "--fail",

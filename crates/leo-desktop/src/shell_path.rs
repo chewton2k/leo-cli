@@ -5,7 +5,7 @@ use std::time::Duration;
 const MARK: &str = "__LEO_PATH__";
 
 pub fn login_path(shell: &Path, timeout: Duration) -> Option<String> {
-    let mut command = std::process::Command::new(shell);
+    let mut command = leo_core::children::quiet_command(shell);
     command
         .args([
             "-l",

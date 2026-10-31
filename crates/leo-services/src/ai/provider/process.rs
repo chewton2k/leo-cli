@@ -203,10 +203,10 @@ impl Drop for Watchdog {
 mod tests {
     use super::*;
     use std::io::Write;
-    use std::process::{Command, Stdio};
+    use std::process::Stdio;
 
     fn child(script: &str) -> Child {
-        let mut command = Command::new("sh");
+        let mut command = leo_core::children::quiet_command("sh");
         command
             .args(["-c", script])
             .stdin(Stdio::piped())

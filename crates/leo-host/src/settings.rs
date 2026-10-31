@@ -55,7 +55,7 @@ fn backup_command(
         return Ok(None);
     }
     let branch = leo_core::sync::current_branch(notes_dir)?;
-    let mut command = std::process::Command::new("git");
+    let mut command = leo_core::children::quiet_command("git");
     command
         .args(["push", "origin", &branch])
         .current_dir(notes_dir)

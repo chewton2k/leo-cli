@@ -1,5 +1,5 @@
 use std::io::{BufReader, Write};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
@@ -81,7 +81,7 @@ impl CodexThread {
             return Err(fail("this Codex version cannot isolate native sessions; leo will use its isolated text tools instead".into()));
         }
         let room = agent.room()?;
-        let mut command = Command::new(&program);
+        let mut command = leo_core::children::quiet_command(&program);
         super::scoped_cli::plan_environment(&mut command);
         command.args(["app-server", "--ignore-user-config", "--ignore-rules"]);
         for feature in codex_disables(&program)? {

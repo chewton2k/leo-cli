@@ -206,7 +206,7 @@ fn remove_program(exe: &Path) -> Result<()> {
     let parked = exe.with_extension("exe.old");
     let _ = std::fs::remove_file(&parked);
     std::fs::rename(exe, &parked).with_context(|| format!("could not remove {}", exe.display()))?;
-    let _ = std::process::Command::new("cmd")
+    let _ = leo_core::children::quiet_command("cmd")
         .args([
             "/C",
             &format!(
@@ -241,7 +241,7 @@ pub fn windows_path_without(path: &str, dir: &str) -> Option<String> {
 }
 
 fn remove_from_windows_path(dir: &Path) -> bool {
-    let read = std::process::Command::new("powershell")
+    let read = leo_core::children::quiet_command("powershell")
         .args([
             "-NoProfile",
             "-Command",
@@ -255,7 +255,7 @@ fn remove_from_windows_path(dir: &Path) -> bool {
     let Some(kept) = windows_path_without(&current, &dir.to_string_lossy()) else {
         return false;
     };
-    std::process::Command::new("powershell")
+    leo_core::children::quiet_command("powershell")
         .args([
             "-NoProfile",
             "-Command",

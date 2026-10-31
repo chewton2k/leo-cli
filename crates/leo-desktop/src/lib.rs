@@ -156,12 +156,12 @@ fn reveal_last_download() {
         return;
     };
     #[cfg(target_os = "macos")]
-    let _ = std::process::Command::new("open")
+    let _ = leo_core::children::quiet_command("open")
         .arg("-R")
         .arg(&path)
         .spawn();
     #[cfg(windows)]
-    let _ = std::process::Command::new("explorer")
+    let _ = leo_core::children::quiet_command("explorer")
         .arg(format!("/select,{}", path.display()))
         .spawn();
 }

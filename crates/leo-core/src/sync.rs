@@ -89,7 +89,7 @@ const LONG_PATHS: &[&str] = if cfg!(windows) {
 
 fn git_output(dir: &Path, args: &[&str], limit: Duration) -> Result<Output> {
     bounded_output(
-        Command::new("git")
+        crate::children::quiet_command("git")
             .args(LONG_PATHS)
             .args(args)
             .current_dir(dir)
@@ -361,7 +361,7 @@ repository yourself and use `backup connect <url>`.";
 
 pub fn gh_ready() -> bool {
     bounded_capture(
-        Command::new("gh")
+        crate::children::quiet_command("gh")
             .args(["auth", "token"])
             .env("GH_PROMPT_DISABLED", "1"),
         Duration::from_secs(3),
@@ -446,7 +446,9 @@ fn gh_repo_url(name: &str) -> Result<String> {
 
 fn gh(args: &[&str]) -> Result<String> {
     let output = bounded_output(
-        Command::new("gh").args(args).env("GH_PROMPT_DISABLED", "1"),
+        crate::children::quiet_command("gh")
+            .args(args)
+            .env("GH_PROMPT_DISABLED", "1"),
         Duration::from_secs(30),
     )?;
     if !output.status.success() {

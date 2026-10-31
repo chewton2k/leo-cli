@@ -1,5 +1,4 @@
 use std::path::Path;
-use std::process::Command;
 
 use anyhow::{Context, Result};
 use colored::Colorize;
@@ -81,23 +80,23 @@ pub fn run(force: bool) -> Result<()> {
 
     let mut cmd = match (std::env::var_os("LEO_UPDATE_SCRIPT"), cfg!(windows)) {
         (Some(script), false) => {
-            let mut cmd = Command::new("sh");
+            let mut cmd = leo_core::children::quiet_command("sh");
             cmd.arg(script);
             cmd
         }
         (None, false) => {
-            let mut cmd = Command::new("sh");
+            let mut cmd = leo_core::children::quiet_command("sh");
             cmd.arg("-c").arg(leo_services::update::install_command());
             cmd
         }
         (Some(script), true) => {
-            let mut cmd = Command::new("powershell");
+            let mut cmd = leo_core::children::quiet_command("powershell");
             cmd.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
                 .arg(script);
             cmd
         }
         (None, true) => {
-            let mut cmd = Command::new("powershell");
+            let mut cmd = leo_core::children::quiet_command("powershell");
             cmd.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command"])
                 .arg(leo_services::update::install_command());
             cmd

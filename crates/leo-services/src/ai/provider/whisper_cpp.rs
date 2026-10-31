@@ -1,5 +1,4 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use crate::ai::error::{ProviderError, ProviderResult};
 use crate::ai::provider::audio::expand_tilde;
@@ -40,7 +39,7 @@ impl WhisperCppTranscribe {
 
 impl TranscribeProvider for WhisperCppTranscribe {
     fn transcribe(&self, audio_path: &Path) -> ProviderResult<String> {
-        let output = Command::new(&self.bin)
+        let output = leo_core::children::quiet_command(&self.bin)
             .arg("-m")
             .arg(&self.model_path)
             .arg("-f")

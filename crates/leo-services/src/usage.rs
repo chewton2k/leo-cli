@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::Duration;
 
 use chrono::{DateTime, Local, TimeZone, Utc};
@@ -198,7 +198,7 @@ pub fn ask_codex(program: &Path) -> Option<Usage> {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(room.path(), std::fs::Permissions::from_mode(0o700)).ok()?;
     }
-    let mut command = Command::new(program);
+    let mut command = leo_core::children::quiet_command(program);
     crate::ai::provider::scoped_cli::plan_environment(&mut command);
     command.args(["app-server", "--ignore-user-config", "--ignore-rules"]);
     for feature in codex_disables(program).ok()? {

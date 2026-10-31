@@ -98,7 +98,7 @@ pub fn known_features(listing: &str) -> Vec<String> {
 const PROBE_LIMIT: Duration = Duration::from_secs(5);
 
 pub(crate) fn probe(program: &Path, args: &[&str]) -> ProviderResult<String> {
-    let mut command = Command::new(program);
+    let mut command = leo_core::children::quiet_command(program);
     command.args(args);
     super::scoped_cli::plan_environment(&mut command);
     probe_command(command)
@@ -911,7 +911,7 @@ impl AgentCli {
                 ProviderError::Retryable(format!("{}: could not offer leo's tools: {e}", self.name))
             })?)
         };
-        let mut command = Command::new(program);
+        let mut command = leo_core::children::quiet_command(program);
         command
             .args(self.session_arguments_with(&system_file, bridge.as_ref()))
             .current_dir(room.path())
@@ -1101,7 +1101,7 @@ impl AgentCli {
         if let Ok(mut thread) = self.thread.lock() {
             *thread = None;
         }
-        let mut command = Command::new(program);
+        let mut command = leo_core::children::quiet_command(program);
         command
             .args(args)
             .current_dir(room)
