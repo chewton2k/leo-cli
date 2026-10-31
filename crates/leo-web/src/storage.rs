@@ -508,8 +508,8 @@ pub struct Kept<'a> {
 
 pub const CONFIG_FILES: [(&str, &str); 8] = [
     ("config.toml", "Your settings"),
-    ("serve-token", "The code in the leo serve link"),
-    ("serve-sessions.json", "Browsers signed in to leo serve"),
+    ("serve-token", "An old sign-in code"),
+    ("serve-sessions.json", "The leo window's sign-in"),
     (
         "usage.json",
         "Plan usage last seen for Claude Code and Codex",

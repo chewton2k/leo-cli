@@ -107,7 +107,7 @@ fn installs_leo_and_puts_it_on_the_path_once() {
     assert!(leo.is_file(), "leo was not installed:\n{said}");
     let version = Command::new(&leo).arg("--version").output().unwrap();
     assert!(version.status.success(), "the installed leo does not run");
-    assert!(said.contains("leo doctor"), "no next step:\n{said}");
+    assert!(said.contains("open your notes"), "no next step:\n{said}");
     let model = home.join(MODEL).join("encoder.int8.onnx");
     assert_eq!(
         std::fs::read(&model).unwrap(),
@@ -178,7 +178,6 @@ fn the_installer_ends_with_thanks_and_how_to_start() {
         "Installed to ~/.local/bin/leo",
         &format!("leo {version} is installed"),
         "Thank you",
-        "leo doctor",
         "open your notes",
         "https://github.com/chewton2k/leo-cli",
     ] {

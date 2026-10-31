@@ -65,7 +65,10 @@ async fn leaving_coalesces_backup_requests_runs_without_the_store_lock_and_repor
         assert_eq!(backing.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
         assert!(!view.to_string().contains("private configuration"));
         if outcome == 2 {
-            assert!(view["message"].as_str().unwrap().contains("leo backup"));
+            assert!(view["message"]
+                .as_str()
+                .unwrap()
+                .contains("next time you close the window"));
         }
     }
 }

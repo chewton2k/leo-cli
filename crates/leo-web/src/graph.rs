@@ -1275,7 +1275,7 @@ impl Graphs {
             }
             let Some(_) = self.writer else {
                 job.state = "failed";
-                job.message = Some("leo serve was started without AI.".to_string());
+                job.message = Some("This copy of leo has no AI for writing.".to_string());
                 return;
             };
             *job = Job {

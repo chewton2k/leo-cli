@@ -134,7 +134,7 @@ pub fn model(command: ModelAction) -> Result<()> {
                     "  {} no [providers.{name}] block in your config — storing the key anyway.",
                     "note".yellow()
                 );
-                println!("  Type :settings in leo to add it, or run `leo doctor` to see what is configured.");
+                println!("  Add it in Settings in leo.");
             }
             let key_env = cfg.provider(&name).and_then(|p| p.key_env.clone());
 

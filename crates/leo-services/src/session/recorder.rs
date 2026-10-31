@@ -13,8 +13,8 @@ use crate::session::{self, wav, Manifest, Point, Session};
 const POLL: Duration = Duration::from_millis(250);
 
 pub const SILENT_RECORDING: &str = "No sound was recorded. macOS may not be letting \
-     this terminal use the microphone: System Settings > Privacy & Security > \
-     Microphone, then restart the terminal. :doctor re-checks it.";
+     leo use the microphone: System Settings > Privacy & Security > \
+     Microphone, then quit and reopen leo.";
 
 pub const SILENT_BROWSER: &str = "No sound was recorded. Check that the browser may use \
      the microphone and that the right one is chosen, then try again.";

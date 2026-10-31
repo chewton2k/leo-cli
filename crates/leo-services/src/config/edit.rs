@@ -138,7 +138,7 @@ transcribe = { chain = ["openai_whisper"] }
         assert!(after.contains("chain = [\"xai\"]"), "{after}");
         // Comments survive.
         assert!(after.contains("Keys do NOT belong in this file"));
-        assert!(after.contains("Type :settings"), "{after}");
+        assert!(after.contains("Open Settings in leo"), "{after}");
         // And the transcribe chain is untouched.
         assert_eq!(read_chain(&d, Task::Transcribe), vec!["parakeet"]);
     }

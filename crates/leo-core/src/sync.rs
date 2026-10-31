@@ -338,14 +338,11 @@ pub fn remote_reachable(notes_dir: &Path) -> std::result::Result<(), String> {
 pub fn now(notes_dir: &Path) -> Result<()> {
     if !is_initialized(notes_dir) {
         anyhow::bail!(
-            "Backup is not set up. With GitHub's gh tool, `backup github` does it in one step; \
-             or run `leo backup` in a shell, or type :settings."
+            "Backup is not set up. With GitHub's gh tool, set it up in Settings, Backup."
         );
     }
     if remote_url(notes_dir).is_none() {
-        anyhow::bail!(
-            "No remote to back up to. Run `leo backup connect <url>`, or type :settings."
-        );
+        anyhow::bail!("No remote to back up to. Connect one in Settings, Backup.");
     }
     prepare(notes_dir)?;
     auto_commit(notes_dir)?;
@@ -862,7 +859,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let err = now(tmp.path()).unwrap_err().to_string();
         assert!(
-            err.contains("leo backup") && err.contains(":settings"),
+            err.contains("Settings, Backup"),
             "{err}"
         );
     }

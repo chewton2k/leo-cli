@@ -42,7 +42,7 @@ pub(crate) async fn add_chat_file(
     let Some(reader) = state.reader.clone() else {
         return refuse(
             StatusCode::SERVICE_UNAVAILABLE,
-            "leo serve was started without a way to read files.".into(),
+            "This copy of leo cannot read files.".into(),
         );
     };
     let bytes = {
@@ -1805,7 +1805,7 @@ pub(crate) async fn chat_reply(
     let Some(streamer) = state.chat.clone() else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({ "error": "leo serve was started without AI." })),
+            Json(serde_json::json!({ "error": "This copy of leo has no AI for writing." })),
         )
             .into_response();
     };

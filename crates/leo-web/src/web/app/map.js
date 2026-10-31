@@ -255,7 +255,7 @@ async function mapBuild(confirmed) {
   const status = state.status || {};
   if (!confirmed && status.read === 0) {
     sheet(`<h3>Connect your notes</h3>
-      <p>leo sends your notes to the AI you chose for writing (with :settings in leo on your computer). It reads what each note teaches, then connects the notes worth studying together, especially across classes, and says why. That is about ${plural(status.requests || 1, 'request')}. After that, only notes you change are read again.</p>
+      <p>leo sends your notes to the AI you chose for writing (in Settings). It reads what each note teaches, then connects the notes worth studying together, especially across classes, and says why. That is about ${plural(status.requests || 1, 'request')}. After that, only notes you change are read again.</p>
       <div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn primary" data-action="map-build-now">Connect notes</button></div>`);
     return;
   }

@@ -92,10 +92,7 @@ fn key_place(provider: &str) -> (String, Option<String>) {
     match crate::config::choice::find(Task::Transcribe, speech) {
         Some(choice) => (
             choice.name.to_string(),
-            Some(format!(
-                ":settings, then Enter on the {} key row",
-                choice.name
-            )),
+            Some(format!("Settings, then the {} key row", choice.name)),
         ),
         None => (
             match provider {
@@ -133,7 +130,7 @@ pub fn classify_status_with_key(status: u16, provider: &str, body: &str) -> Prov
     let fix = match place {
         Some(place) => format!(" To replace it: {place}."),
         None if matches!(provider, "anthropic" | "openrouter") => {
-            " Choose a supported AI for writing in :settings.".into()
+            " Choose a supported AI for writing in Settings.".into()
         }
         None => String::new(),
     };
@@ -211,7 +208,7 @@ mod tests {
         );
         assert!(openrouter
             .message()
-            .contains("Choose a supported AI for writing in :settings."));
+            .contains("Choose a supported AI for writing in Settings."));
         let gemini = classify_status_with_key(
             400,
             "gemini_speech",

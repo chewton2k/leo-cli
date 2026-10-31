@@ -202,7 +202,7 @@ if [ -z "${LEO_INSTALL_NO_MODEL:-}" ]; then
         model_ready=1
         step "Speech model ready in $(pretty "$model_dir")"
     elif ! command -v curl >/dev/null 2>&1; then
-        say "  ${yellow}!${reset} No curl, so the speech model was not downloaded; :settings in leo can fetch it"
+        say "  ${yellow}!${reset} No curl, so the speech model was not downloaded; leo fetches it when it opens"
     else
         if [ -n "$damaged" ]; then
             doing "The speech model is damaged; downloading it again"
@@ -232,7 +232,7 @@ if [ -z "${LEO_INSTALL_NO_MODEL:-}" ]; then
         if [ -n "$model_ready" ]; then
             step "Speech model saved to $(pretty "$model_dir")"
         else
-            say "  ${yellow}!${reset} Could not download the speech model; :settings in leo can fetch it later"
+            say "  ${yellow}!${reset} Could not download the speech model; leo fetches it when it opens"
         fi
     fi
     rm -f "$models/ggml-base.en.bin"
@@ -281,7 +281,6 @@ fi
 say ""
 say "  ${bold}Get started${reset}"
 say "    ${cyan}leo${reset}            open your notes"
-say "    ${cyan}leo doctor${reset}     check AI, recording and backup, and store an API key"
 say ""
 say "  ${dim}Guide: https://github.com/$REPO#readme${reset}"
 case ":$PATH:" in

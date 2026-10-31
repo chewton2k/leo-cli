@@ -20,14 +20,9 @@ irm https://raw.githubusercontent.com/chewton2k/leo-cli/main/install.ps1 | iex
 ```
 
 The installer checks the download, adds leo to your PATH, and downloads the
-speech model for local transcription. Open a new terminal, then start the website:
-
-```sh
-leo serve
-```
-
-Or run `leo` for the terminal interface. Choose your AI in Settings when you need
-it. Run `leo doctor` if something needs setup, and `leo update` to get updates.
+speech model for local transcription. Open leo like any other app, or run `leo`
+in a terminal to open it. Choose your AI in Settings when you need it, and run
+`leo update` to get updates.
 
 ## What you can do
 

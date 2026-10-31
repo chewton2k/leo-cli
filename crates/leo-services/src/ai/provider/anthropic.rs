@@ -163,7 +163,7 @@ impl Anthropic {
         let round = self.stream(&body, sink)?;
         if round.stop == "max_tokens" {
             leo_core::diag::warn(format!(
-                "{}: the answer hit its {}-token limit and is cut off; raise max_tokens for {} in config.toml (:settings, then e)",
+                "{}: the answer hit its {}-token limit and is cut off; raise max_tokens for {} in config.toml",
                 self.name, req.max_tokens, self.name
             ));
         }
@@ -354,10 +354,7 @@ impl ChatProvider for Anthropic {
     }
 
     fn unavailable_reason(&self) -> String {
-        format!(
-            "{}: no API key (run `leo doctor`, or type :settings in leo)",
-            self.name
-        )
+        format!("{}: no API key (add it in Settings in leo)", self.name)
     }
 
     fn max_tokens(&self) -> Option<u32> {

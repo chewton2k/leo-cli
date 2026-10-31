@@ -163,7 +163,7 @@ fn leo_checks(config_path: &Path, newer: Option<String>) -> Vec<Check> {
                     "config file",
                     "providers and settings",
                     &format!(
-                        "fix it (:settings, then e), or move it aside to start again:\n{}",
+                        "fix it, or move it aside to start again:\n{}",
                         config_path.display()
                     ),
                 );
@@ -178,14 +178,14 @@ fn leo_checks(config_path: &Path, newer: Option<String>) -> Vec<Check> {
 fn meaning_check(state: crate::providers::ModelState) -> Check {
     use crate::providers::ModelState;
     let what = "finding notes by meaning";
-    let needed_for = "Felix and search in leo serve";
+    let needed_for = "Felix and search in leo";
     match state {
         ModelState::Ready => Check::ready(what, needed_for, Some("bge-small, every file checked".into())),
         ModelState::Missing => warn(
             what,
             needed_for,
             format!(
-                "the model ({} MB) downloads on the next `leo serve` or `leo update`; until then search matches words only",
+                "the model ({} MB) downloads the next time leo opens, or with `leo update`; until then search matches words only",
                 crate::meaning::MODEL_MB
             ),
         ),
@@ -373,7 +373,7 @@ fn ai_checks(config: &Config, secrets: &dyn SecretStore, probe: Probe) -> Vec<Ch
                         .and_then(crate::ai::provider::agent_cli::Agent::of)
                     {
                         Some(agent) => agent.sign_in().to_string(),
-                        None => "check its key in :settings, or that the service is up".to_string(),
+                        None => "check its key in Settings, or that the service is up".to_string(),
                     };
                     let mut c = Check::missing(&what, &needed_for, &fix);
                     c.detail = Some(e.to_string());
@@ -428,7 +428,7 @@ fn backup_checks(config: &Config, notes_dir: &Path, probe: Probe) -> Vec<Check> 
         checks.push(warn(
             "backup",
             "keeping a copy on GitHub",
-            "off — `leo backup` sets it up".to_string(),
+            "off — set it up in Settings, Backup".to_string(),
         ));
         return checks;
     }
@@ -442,7 +442,7 @@ fn backup_checks(config: &Config, notes_dir: &Path, probe: Probe) -> Vec<Check> 
         None => checks.push(warn(
             "GitHub remote",
             "keeping a copy on GitHub",
-            "none connected — `leo backup` connects one".to_string(),
+            "none connected — connect one in Settings, Backup".to_string(),
         )),
         Some(url) if probe.remote => checks.push(match sync::remote_reachable(notes_dir) {
             Ok(()) => Check::ready("GitHub remote", "keeping a copy on GitHub", Some(url)),
@@ -477,7 +477,7 @@ fn backup_checks(config: &Config, notes_dir: &Path, probe: Probe) -> Vec<Check> 
                 "pushed",
                 "keeping a copy on GitHub",
                 format!(
-                    "{waiting} change{} not on GitHub yet — `leo backup` pushes {}",
+                    "{waiting} change{} not on GitHub yet — the next backup pushes {}",
                     if waiting == 1 { "" } else { "s" },
                     if waiting == 1 { "it" } else { "them" }
                 ),
@@ -493,7 +493,7 @@ fn backup_checks(config: &Config, notes_dir: &Path, probe: Probe) -> Vec<Check> 
                 "uncommitted changes",
                 "keeping a copy on GitHub",
                 format!(
-                    "{changed} file{} changed outside leo; the next save or `leo backup` commits {}",
+                    "{changed} file{} changed outside leo; the next save or backup commits {}",
                     if changed == 1 { "" } else { "s" },
                     if changed == 1 { "it" } else { "them" }
                 ),
@@ -763,7 +763,7 @@ mod tests {
         );
         let b = check(section(&sections, "backup"), "backup");
         match &b.state {
-            State::Warn { note } => assert!(note.contains("leo backup"), "{note}"),
+            State::Warn { note } => assert!(note.contains("Settings, Backup"), "{note}"),
             other => panic!("expected a note, got {other:?}"),
         }
     }

@@ -164,7 +164,6 @@ if (-not $previous) {
 Say ''
 Say '  Get started'
 Say '    leo            open your notes'
-Say '    leo doctor     check AI, recording and backup, and store an API key'
 Say ''
 Say "  Guide: https://github.com/$Repo#readme"
 if (-not $env:LEO_INSTALL_SKIP_PATH) {

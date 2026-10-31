@@ -86,10 +86,9 @@ impl Config {
         format!(
             r#"# leo configuration.
 #
-# Keys do NOT belong in this file. Type :settings inside leo and press Enter on
-# the key row, or run `leo doctor`.
+# Keys do NOT belong in this file. Add them in Settings inside leo.
 #
-# Type :settings to choose writing: Ollama on this computer, or your signed-in
+# Open Settings in leo to choose writing: Ollama on this computer, or your signed-in
 # Codex or Claude Code CLI.
 # Speech uses local Parakeet, or OpenAI, Gemini or xAI with a stored key.
 # Settings writes these two lines for you.
@@ -101,7 +100,7 @@ chain = [{chat}]
 chain = [{transcribe}]
 
 #
-# Backing up to git happens on every save once `leo backup` has set it up. Pushing is
+# Backing up to git happens on every save once backup is set up in Settings. Pushing is
 # separate, because it needs the network:
 #
 #   [sync]
@@ -652,7 +651,7 @@ kind = "telepathy"
     fn the_shipped_file_explains_writing_and_cloud_speech_choices() {
         let text = Config::default_toml();
         // The file is the documentation, so these have to be present.
-        assert!(text.contains("leo doctor"));
+        assert!(text.contains("Settings inside leo"));
         assert!(text.contains("[providers.ollama]"));
         assert!(!text.contains("Antigravity"));
         assert!(!text.contains("Copilot"));

@@ -111,7 +111,7 @@ fn meaning_model() -> Area {
             vec![act(
                 "remove",
                 "Remove the meaning model",
-                Some("Search and Felix find notes by their words only until leo downloads the model again (about 134 MB) with `leo update` or the next `leo serve`."),
+                Some("Search and Felix find notes by their words only until leo downloads the model again (about 134 MB) the next time leo opens, or with `leo update`."),
                 false,
             )]
         } else {

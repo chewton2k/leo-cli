@@ -76,8 +76,8 @@ impl Backups {
                     if success {
                         Self::set(&status, "done", "Notes and tasks backed up.");
                     } else {
-                        Self::set(&status, "failed", "Backup could not finish. Your saved work stays on this computer. Run leo backup on your computer to retry.");
-                        leo_core::diag::warn("Website backup could not finish. Saved work stays on this computer; run leo backup to retry.");
+                        Self::set(&status, "failed", "Backup could not finish. Your saved work stays on this computer. It tries again the next time you close the window.");
+                        leo_core::diag::warn("Website backup could not finish. Saved work stays on this computer; it retries on the next close.");
                     }
                 }
             });

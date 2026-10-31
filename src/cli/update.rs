@@ -42,7 +42,7 @@ fn ensure_meaning_model() {
         Ok(path) => println!("  Saved {}", path.display()),
         Err(e) => println!(
             "  {}",
-            format!("Could not download it ({e}). leo serve will try again.").dimmed()
+            format!("Could not download it ({e}). leo will try again when it opens.").dimmed()
         ),
     }
 }

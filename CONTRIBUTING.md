@@ -33,9 +33,10 @@ reaching upward:
 |-------|-------|
 | `crates/leo-core` | Notes, the on-disk store and undo, git backup, and the command vocabulary (`action/`): parsing, handlers, note resolution. No terminal and no network. |
 | `crates/leo-services` | AI providers and their fallback chains, prompts, config and credentials, recording, and health checks. |
-| `crates/leo-tui` | The full-screen app: navigation, input, effects and grouped state. |
-| `crates/leo-web` | `leo serve`. |
-| root `leo` | `main.rs` and `src/cli/`, the command-line subcommands. |
+| `crates/leo-web` | leo's pages and the engine behind them. |
+| `crates/leo-host` | Gives the engine its AI, speech, settings and storage powers; the Playwright test server. |
+| `crates/leo-desktop` | The leo app: window, menu bar icon, single instance, open at login. |
+| root `leo` | `leo` (opens the app), `leo update`, `leo uninstall`. |
 
 A few ideas run through all of it:
 
@@ -78,8 +79,8 @@ What each part covers:
   renderer (run by `cargo test` through Node; skipped if Node is missing).
 - **`crates/leo-web/tests/saving.test.js`** checks durable drafts, failed saves,
   concurrent edits, and conflict recovery (also run by `cargo test`).
-- **Browser flows** run against the real `leo serve` with isolated notes. After
-  `cargo build`, run `pnpm --dir crates/leo-web/tests/browser install`,
+- **Browser flows** run against leo's real engine (`leo-test-server`) with isolated notes. After
+  `cargo build -p leo-host --bin leo-test-server`, run `pnpm --dir crates/leo-web/tests/browser install`,
   `pnpm --dir crates/leo-web/tests/browser exec playwright install chromium`,
   then `pnpm --dir crates/leo-web/tests/browser test`. CI runs them on Linux.
 - **`tests/wording.rs`** fails if any text a user can see names a command that no
@@ -140,6 +141,6 @@ is used instead. `scripts/next-version.sh` holds the rule and
 
 ## Reporting bugs
 
-Open an issue with what you did, what you expected, and what happened. The
-output of `leo doctor` helps a lot. It checks leo, the notes, the AI, recording
-and backup, and never includes your API keys.
+Open an issue with what you did, what you expected, and what happened. Settings, Health in
+leo helps a lot. It checks leo, the notes, the AI, recording and backup, and
+never includes your API keys.

@@ -10,73 +10,32 @@ use std::path::{Path, PathBuf};
 
 /// What users must no longer be told to type, and what replaced it.
 const STALE: &[(&str, &str)] = &[
-    ("leo model", "leo doctor, or :settings"),
-    ("leo config path", ":settings, then e"),
-    ("`leo config`", ":settings, then e"),
-    ("leo env", "leo doctor"),
-    ("leo model login", "leo doctor, or :settings"),
-    ("leo model list", "leo doctor"),
-    ("leo setup", "leo doctor"),
-    ("/setup", ":doctor"),
-    ("leo config edit", ":settings, then e"),
-    ("leo sync", "leo backup"),
-    ("serve --anywhere", "leo serve"),
-    ("/sync", ":backup"),
-    ("leo listen", "leo record"),
-    ("/listen", ":record"),
-    ("sync github", "backup github"),
-    ("sync connect", "backup connect"),
-    ("the t key", "/ then #tag"),
-    ("the f key", "/"),
-    ("press a", ":ask"),
-    ("leo remind", "(removed)"),
-    ("leo export", "(removed)"),
-    (":sync init", "leo backup, or :settings"),
-    (":sync connect", "leo backup, or :settings"),
-    (":sync push", ":backup"),
-    (":sync pull", ":backup"),
-    (":search", "/"),
-    (":find", "/"),
-    (":view", "j and k"),
-    (":list", "the notes pane"),
-    (":ls", "the notes pane"),
-    (":tags", "/ then #tag"),
-    (":remind", "(removed)"),
-    (":export", "(removed)"),
-    (":check", "x"),
-    (":rmdir", "D in the directories pane"),
-    (":pwd", "the status bar"),
-    (":clear", "Esc"),
-    (":model", ":settings"),
-    (":config", ":settings"),
-    ("Ctrl-P  fuzzy", "/"),
-    ("Ctrl-S", ":settings"),
-    ("press l", "press Enter"),
-    ("t for raw", "(the live transcript is always shown)"),
-    ("Tab for raw", "(the live transcript is always shown)"),
-    ("raw text", "(the live transcript is always shown)"),
-    ("live notes", "live transcript"),
-    ("search -f", "search"),
-    ("/settings", ":settings"),
-    ("/record", ":record"),
-    ("/backup", ":backup"),
-    ("/doctor", ":doctor"),
-    ("/new", ":new"),
-    ("/edit", ":edit"),
-    ("/delete", ":delete"),
-    ("/rename", ":rename"),
-    ("/undo", ":undo"),
-    ("/ask", ":ask"),
-    ("/mkdir", ":mkdir"),
-    ("/cd", ":cd"),
-    ("/mv", ":mv"),
-    ("/help", ":help"),
-    ("/quit", ":quit"),
-    ("/tutorial", ":tutorial"),
-    ("/trash", ":trash"),
-    ("/pin", ":pin"),
-    ("Ctrl-P  fuzzy", "f, or Ctrl-F"),
-    ("Ctrl-P the same as", "Ctrl-F"),
+    ("leo serve", "open the leo app"),
+    ("--new-token", "(removed)"),
+    ("QR code", "(removed)"),
+    ("leo doctor", "Settings, Health"),
+    ("leo new", "the leo app"),
+    ("leo list", "the leo app"),
+    ("leo search", "the leo app"),
+    ("leo edit", "the leo app"),
+    ("leo view", "the leo app"),
+    ("leo record", "Record in the leo app"),
+    ("leo ask", "Ask Felix in the leo app"),
+    ("leo pin", "the leo app"),
+    ("leo sync", "Settings, Backup"),
+    ("leo backup", "Settings, Backup"),
+    ("leo trash", "Trash in the leo app"),
+    ("leo help", "leo --help"),
+    (":backup", "Settings, Backup"),
+    (":settings", "Settings"),
+    (":doctor", "Settings, Health"),
+    (":record", "Record"),
+    (":ask", "Ask Felix"),
+    ("/settings", "Settings"),
+    ("/doctor", "Settings, Health"),
+    ("/record", "Record"),
+    ("/backup", "Settings, Backup"),
+    ("/ask", "Ask Felix"),
 ];
 
 fn root() -> PathBuf {
@@ -149,19 +108,18 @@ fn nothing_shown_to_a_user_names_a_command_that_is_gone() {
 
     let mut found = Vec::new();
     for file in &files {
-        // The retired-word table names old words by design.
-        if file.ends_with("action/parse.rs") {
-            continue;
-        }
         stale_in(&shipped_lines(file), file, &mut found);
     }
-    let page_parts = std::fs::read_dir(root().join("crates/leo-web/src/web/app"))
-        .unwrap()
-        .map(|entry| entry.unwrap().path());
+    let page_parts = ["crates/leo-web/src/web/app", "crates/leo-web/src/web"]
+        .into_iter()
+        .flat_map(|dir| std::fs::read_dir(root().join(dir)).unwrap())
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|e| e == "js"));
     let docs = [
         "README.md",
         "CONTRIBUTING.md",
         "install.sh",
+        "install.ps1",
         "crates/leo-web/src/web/index.html",
     ]
     .map(|doc| root().join(doc));
@@ -186,6 +144,6 @@ fn nothing_shown_to_a_user_names_a_command_that_is_gone() {
 fn command_instructions_are_distinguished_from_routes_and_links() {
     assert!(mentions("type /settings", "/settings"));
     assert!(!mentions("https://obsidian.md", "/obsidian"));
-    assert!(!mentions("go('#/new')", "/new"));
+    assert!(!mentions("go('#/settings')", "/settings"));
     assert!(!mentions("type :settings", "/settings"));
 }
