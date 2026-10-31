@@ -4,25 +4,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Architecture
 
-`leo` is a terminal note manager written in Rust, laid out as a Cargo
-workspace. Each crate may depend only on the ones above it in this table, and
+`leo` is a desktop note app (Tauri, macOS and Windows) written in Rust, laid
+out as a Cargo workspace. Each crate may depend only on the ones above it in this table, and
 the compiler enforces it — do not add an upward dependency:
 
 | Crate | Holds | Depends on |
 |-------|-------|------------|
-| `crates/leo-core` | `notes`, `store` (+ undo), `sync` (git), `filename`, `open` (opens a link with the system), `children` (stops a process tree: group kill on Unix, `taskkill /T` on Windows), `diag`, `manual`, `action/` (vocabulary, parser, handlers, resolution, frontmatter) | — |
-| `crates/leo-services` | `ai/` (chains, prompts, `RealAi`, live transcription), `config/` (providers, credentials, theme data, sync policy), `listen`, `health`, `providers` | core |
-| `crates/leo-tui` | The full-screen app (`lib.rs` = `App`), its views, and `shell` (terminal effect performers shared with the CLI) | core, services |
-| `crates/leo-web` | `leo serve`: `lib.rs` (state, `serve`, router), `routes/` (handlers by area), `terminal.rs`, `token.rs`, `tunnel.rs`, and the page in `src/web/` (`index.html`, `app/*.js` served as `/app.js`, `markdown.js`, …) | core |
-| root `leo` | `main.rs` (28 lines) and `cli/` (clap surface; `notes`, `doctor`, `sync` subcommands) | all |
+| `crates/leo-core` | `notes`, `store` (+ undo), `sync` (git), `filename`, `open` (opens a link with the system), `children` (stops a process tree; `quiet_command` starts every helper program without a console window on Windows), `diag`, `manual`, `action/` (`Line`/`Kind` output lines and front matter) | — |
+| `crates/leo-services` | `ai/` (chains, prompts, live transcription), `config/` (providers, credentials, theme data, sync policy), `listen`, `health`, `providers` | core |
+| `crates/leo-web` | leo's engine and pages: `lib.rs` (`start` → `Running`, router), `routes/` (handlers by area), `token.rs`, and the page in `src/web/` (`index.html`, `app/*.js` served as `/app.js`, `markdown.js`, …) | core |
+| `crates/leo-host` | `powers()` (the AI, speech, settings, storage and import powers handed to the engine) and `leo-test-server` (Playwright's engine) | core, services, web |
+| `crates/leo-desktop` | The Tauri app `leo-app`: window, menu bar icon, single instance, open at login, PATH from the login shell, links/downloads/print | core, host, web |
+| root `leo` | `main.rs` and `cli/`: `leo` opens the app, `leo update`, `leo uninstall`, `--version` | core, services |
 
-Verify with `cargo test` at the root (runs every crate) and
-`cargo clippy --workspace --all-targets`. Do not run `cargo build` or
-`cargo install` unless asked.
-
-The e2e server fixture follows the port in Leo's printed link when the requested
-port is occupied; a forced-busy-port case keeps the 401/401/200 authentication
-checks intact.
+Verify with `cargo test` at the root (runs every crate but `leo-desktop`, which
+is outside `default-members`) and `cargo clippy --workspace --all-targets`. Do not
+run `cargo build`, `cargo install` or `cargo tauri build` unless asked; the one local
+build allowed is `pnpm --dir crates/leo-desktop tauri dev` to try the real app by
+hand (2026-10-31, the user's call). CI tests and lints `leo-desktop` on macOS and
+Windows only; Linux rows `--exclude leo-desktop` (it needs Rust 1.90; the rest
+stays on 1.88).
 
 Never run the full test suites on the developer's machine (no
 workspace-wide `cargo test`, no full Playwright run; the user's call,
@@ -39,44 +40,18 @@ JavaScript checks and manual checks with fakes are allowed. Reuse the website's
 existing components, controls, spacing and themes; new features should look like
 the rest of leo, including folder controls and note browsing.
 
-Two entry modes share one command vocabulary and one `Store`:
+Leo is one app (2026-10-31, the user's call: "a normal app users click"). The
+window shows the website, served by leo-web's engine started inside the app on
+127.0.0.1 (`leo_web::start`, a remembered port, a per-launch token the window
+signs in with). Nothing else can reach it: a Host check refuses any other host
+(421) and the cookie is `SameSite=Strict`. There is no `leo serve`, no tunnel,
+no phone or other-browser access, and no terminal interface; the terminal keeps
+`leo` (opens the app), `leo update`, `leo uninstall` and `--version`. Plans and
+the design live in `docs/superpowers/` (gitignored, local).
 
-1. **TUI** (`leo-tui`) — `leo` with no arguments in a TTY. Three panes over a
-   `/` command line and a status line. Outside a TTY, bare `leo` exits 1.
-2. **CLI subcommands** (`cli/`) — `Serve` runs on a `tokio` runtime; all others
-   are synchronous. Server exit signals only Leo-owned writing subprocesses and
-   gives blocking workers a five-second runtime shutdown deadline; an occupied
-   writer must not keep Ctrl-C waiting indefinitely. `doctor` is the one command for "what works, fix what does
-   not" (`setup` was folded into it; `model`, `config`, `setup` no longer parse).
-
-Both convert their input into an `action::Action` and apply it through the same
-handlers, so `leo edit 1` and `:edit 1` cannot drift apart.
-
-
-Subsystem notes load only when working in that crate: `crates/leo-tui/CLAUDE.md`,
-`crates/leo-services/CLAUDE.md`, `crates/leo-web/CLAUDE.md`.
-
-### The Action vocabulary
-
-`leo_core::action` is the single command vocabulary. `parse.rs` holds `VERBS`
-— one row per verb with its aliases, usage and summary — and help, the `/` menu
-and usage errors are all generated from it. `RETIRED` maps every removed word
-to its replacement (a command, a key, or a place on screen) and a reason.
-
-Handlers take `&mut Store` and a `Ctx` and return an `Outcome`, which carries
-output lines, a new numbering, a new directory, and an `Effect`. Handlers
-contain no terminal code: when a step needs the terminal — `$EDITOR`, a
-confirmation, recording — the handler returns an `Effect` and the shell
-performs it, then feeds the result back through a second-phase handler
-(`apply_edit`, `apply_confirmed`, `apply_transcript`).
-
-A command that names no note means the marked notes if any, otherwise the
-selected note: `fill_selected` does that once, from `Ctx.selected` and
-`Ctx.marked`, for both `apply` and the TUI's `run_action`.
-
-AI calls go through the `action::Ai` trait; `leo_services::ai::RealAi` is the
-real one, so core never depends on the provider chains and handler tests use a
-double.
+Subsystem notes load only when working in that crate:
+`crates/leo-services/CLAUDE.md`, `crates/leo-web/CLAUDE.md`,
+`crates/leo-desktop/CLAUDE.md`.
 
 ### Undo lives in the store
 
@@ -113,9 +88,9 @@ refspec rather than saying so.
 
 ### Capability checks
 
-`health.rs` answers "can leo do X here?" in one place, so `leo doctor`, the
-first-run greeting, and the pre-flight before recording all agree, and every gap
-arrives with the command that fixes it rather than as a failure discovered mid-use.
+`health.rs` answers "can leo do X here?" in one place, so the doctor scan and
+the pre-flight before recording agree, and every gap arrives with what fixes it
+rather than as a failure discovered mid-use.
 
 Two rules there, both learned from tests that hung:
 
@@ -129,50 +104,15 @@ Two rules there, both learned from tests that hung:
 Checks must stay cheap enough to run on startup: a key presence check, a PATH
 scan, or a loopback connect with a 300 ms timeout. Never a real request.
 
-### One name per command
-
-`action::VERBS` holds 17 verbs: new, edit, delete, rename, undo, record, ask,
-pin, mkdir, cd, mv, backup, trash, settings, doctor, help, quit. `obsidian` was
-removed (2026-10-08, the user's call) and is retired: it says the notes are
-Markdown files any app can open. Reading files other editors write (no front
-matter, renamed files, unknown properties, `.obsidian/` not backed up) stays.
-`/settings` (Action::Settings → Effect::Settings) opens settings; Ctrl-S no
-longer does (it only saves while writing), and tests/wording.rs rejects it. `record screen`
-(first word; `--screen` still parses) records what the computer plays. `listen` and
-`sync` were renamed and removed outright (not retired), in the CLI too.
-`ask <words>` is always a question (`AskNotes`); only an exact note id means
-that note's `@leo` lines. Delete, marked delete and `rmdir -r` apply at once
-and set `Outcome.undoable` (TUI appends "u brings it back"; the CLI names
-`leo trash restore`); only `trash empty` confirms. Anything the panes already do (list, view,
-tags, search, pwd, clear, check, rmdir) and anything removed (remind, export)
-is retired. An alias stays only when it is shell muscle memory (`rm`, `exit`,
-`q`) or the key that does the same thing (`e`, `u`, `?`); `action::RETIRED` maps every dropped name to
-its replacement so `parse` can answer with `Parsed::Retired` instead of "unknown
-command", which reads like a typo. Adding an alias back should have to clear that
-bar — a test caps the total at eight.
-
 ### The manual note
 
-`manual.rs` creates one note on first run: a one-screen quickstart. It is a real
-note, so it is searchable, editable, and deletable like any other — which is the
-point: the app explains itself in the pane the user is already looking at.
-
-It is deliberately **not** a full reference. It used to be, and at 220 lines it
-was the largest note most users owned, sitting permanently at the top of their
-list and duplicating a help screen one keypress away. `?` is the sole full
-reference now, which is why `help.rs` has the test that every verb appears there
-and that no retired name does.
-
-Installation is recorded in a `.manual-installed` marker inside the notes
-directory, carrying `MANUAL_VERSION`. Presence of the note is deliberately not
-the signal: deleting the manual is a legitimate choice and must survive the next
-launch. Bumping the version offers an updated manual without resurrecting a
-deleted one.
-
-Tests keep it honest from both directions: the manual must stay under 60 lines,
-must point at `?`, `/settings` and `/doctor`, and must name no retired command;
-`help.rs` must mention every live verb. Bumping `MANUAL_VERSION` rewrites the
-note the user already has rather than leaving two side by side.
+`manual.rs` creates one note on first run: a one-screen quickstart for the app
+(Getting around, Recording, Felix, Writing, Finding, Where things live). It is a
+real note, so it is searchable, editable and deletable. Installation is recorded
+in a `.manual-installed` marker carrying `MANUAL_VERSION` (18); deleting the
+manual survives the next launch, and a version bump rewrites the user's note.
+Tests: under 60 lines, names Settings, Felix, Record and ⌘J, and names no
+terminal command.
 
 ### Data model
 
@@ -189,53 +129,21 @@ directories. A legacy `notes.json` is migrated automatically on first read
 above it, in `<config_dir>/leo/`, so machine-local settings are never pushed to
 the notes remote.
 
-### Note resolution
-
-`action::resolve` is the one implementation, used by both front ends (priority
-order):
-1. **Numeric index** — 1-based position in the current numbering: the notes pane
-   in the TUI, or the default sorted list for CLI subcommands
-2. **ID prefix** — any unique prefix of the UUID
-3. **Title match** — case-insensitive substring, only if exactly one match
-
-It always returns a note's full ID rather than the prefix the user typed: an
-`Outcome` can outlive the store state it was built from, and a prefix that is
-unique today can become ambiguous after the next `sync pull`. An ambiguous title
-returns every candidate so each front end can render the disambiguation its own
-way.
-
 ### Recent additions worth knowing
 
-- `leo doctor` and `/doctor` = `leo_services::doctor::scan` (sections leo/notes/
-  AI/recording/backup; network/mic probes behind `Probe`), formatted once by
-  `doctor::report`. The CLI then offers to store a missing key; the TUI runs the
-  scan on a worker (`task::start_doctor`, `App.checking`) and pins the report in
-  the preview. `App.probe` is `Probe::default()` in tests: no network, no mic.
-- Setup is just in time: first run only greets on the status line.
-  `set_up_first(Need::Recording | Need::Writing)` opens `welcome` with the
-  missing `health::setup_steps` before R / ask; `/backup` with no remote runs
-  `offer_backup_setup`. `App.setup_steps` is a fn field (tests inject).
-- Hints: at most `hints::MOST` (5) per place. `leo --help` shows 7 commands;
-  `leo help --all` (`wants_everything`) unhides the rest.
-- Notes list rows end with `when::short(updated_at)`; titles carry
-  `when::long`. Outside edits do not move `updated_at` (git pull resets mtimes).
-- Manual is version 15: five keys, the commands that matter most (/settings, /record, /record screen, /ask, /doctor, /backup, leo serve), recording, writing, finding, where things live.
-- `/ask <question>` that names no note → `Effect::AskNotes`; notes chosen by
-  `Store::relevant`; answer shown via `App.answer` until Esc.
-- Recording loop: `leo_services::session::recorder` (`record`, `resume`, `finish`,
-  `write_up`, `Event`) is shared by the TUI (`task::start_listen` forwards events)
-  and the website; `Capture::fed` takes browser audio from a channel and drains it
-  on stop.
-- Recording pause: Ctrl-P → `Job::set_paused`; worker records pause spans and
-  `listen::cut_pauses` removes them before the final transcription.
-- `Outcome.select` makes the TUI jump to a note just created or recorded.
+- `leo_services::doctor::scan` (sections leo/notes/AI/recording/backup;
+  network/mic probes behind `Probe`), formatted once by `doctor::report`; plan 4
+  shows it in Settings → Health.
+- Recording loop: `leo_services::session::recorder` (`record`, `resume`,
+  `finish`, `write_up`, `Event`); `Capture::fed` takes browser audio from a
+  channel and drains it on stop. Pauses are cut by `listen::cut_pauses` before
+  the final transcription.
 - `Store::unreadable`: files that failed to parse; `save` never deletes them.
 - Trash: `save` moves any note file that vanished (and was not just moved:
   its id is not live) to `<notes>/.trash/<same relative path>`, mtime = when
   deleted. `tidy_trash` (load and save) drops live ids and ones past
   `TRASH_DAYS` (30). `.trash/` is gitignored, and `auto_commit` refreshes the
-  ignore list so old backups pick it up. `/trash`, `trash restore <n|title>`,
-  `trash empty` (asks: `ConfirmedAction::EmptyTrash`); `leo trash` in a shell.
+  ignore list so old backups pick it up. The Trash page restores and empties.
 - Backup: pulls merge (`--no-rebase --allow-unrelated-histories`), notes merge
   by union and stay LF (`text eol=lf`, beating Git for Windows' autocrlf) in
   .gitattributes, git runs with `core.longpaths=true` on Windows, directories.json is not tracked (rebuilt on load).
@@ -245,15 +153,12 @@ way.
 - GitHub backup: `sync::github(notes_dir, name)` uses `gh` (`gh_ready` =
   `gh auth token` succeeds, no network): `repo view` else `repo create
   --private`, URL by `gh config get git_protocol` (https + `gh auth setup-git`
-  by default), then connect + `now`. `SyncAction::GitHub`, `leo sync github
-  [name]`; bare `leo sync` offers it when gh is ready; the app's backup steps
-  go through `App::offer_backup_setup` (`App.gh_ready` is a fn, `|| false` in
-  tests). e2e uses a fake `gh` over local bare repos.
+  by default), then connect + `now`. Setting backup up from the app arrives
+  with plan 4's Settings.
 - Updates: `leo_services::update::available()` reads the latest tag from the
   `releases/latest` redirect (not the API: rate limits), cached a day in
   `<config>/update-check.json`, failures cached too; `LEO_NO_UPDATE_CHECK=1`
-  disables (e2e sets it). TUI: `task::start_update_check` → `App.update` →
-  `pump_update` status message. Doctor: `Probe.update`. `leo update` runs
+  disables (e2e sets it). Doctor: `Probe.update`. `leo update` runs
   install.sh with `LEO_INSTALL_DIR`=its own dir and `LEO_INSTALL_SKIP_PATH=1`
   (`LEO_UPDATE_SCRIPT` = local installer, for tests). install.sh renames the
   new binary into place: cp onto a running binary gets it killed on macOS.
@@ -275,26 +180,14 @@ way.
   doctor) instead of overwriting; deleted notes are trashed only if their file
   is still what leo saw. Writes are temp-file + rename.
 - `Store::changed_on_disk`/`refresh` (fingerprint of paths, sizes, mtimes;
-  refresh keeps undo); `App::maybe_reload_from_disk` while idle and nothing
-  is being typed/recorded/asked: after a `leo_core::watch` event (at most every
-  2 s) or every 60 s, every 2 s without a watcher; Ctrl-R uses refresh too.
+  refresh keeps undo); the engine reloads the store from disk on every request.
 - `sync::pull` = auto_commit, fetch, `keep_both_notes_with_the_same_name`
   (a `.md` both sides added with different ids → local renamed to
   `Name (2).md` and committed), then merge. git's union driver otherwise glues
   add/add files together. `sync::now` commits before pushing. `.obsidian/` is
   gitignored.
-- Crash-proofing: worker threads run through `task::spawn_guarded` (a panic
-  becomes `TaskEvent::Failed`), live rolls are `caught`, the panic hook only
-  restores the terminal for main-thread panics. Mouse reporting is
-  clicks+wheel only (`MOUSE_ON`/`MOUSE_OFF`; Windows needs crossterm's
-  `EnableMouseCapture`, and motion/drag events are dropped). Windows has no
-  bracketed paste: three or more mixed keys already queued are one paste
-  (`burst`, `pasted`). Stderr is pointed at `/dev/null` or `NUL` while the
-  TUI owns the screen. Esc twice stops a recording
-  (`STOP_CONFIRM_WITHIN`). Never slice strings by byte offsets computed from
-  lengths: use char indices or `str::get`.
-- Live transcript scroll-back: `view::livescroll::LiveScroll` (↑↓ PgUp PgDn
-  Home End, wheel), resumes following 10 s after the last scroll.
+- Never slice strings by byte offsets computed from lengths: use char indices
+  or `str::get`.
 - `listen::microphone_peak` has a deadline (3 s past the sample); tests must
   never call the probe (`recording(.., false)`).
 - Install: `install.sh` downloads the latest GitHub release. Releases are
@@ -305,7 +198,6 @@ way.
   commits `release: vX.Y.Z` to main as github-actions[bot], and the build and
   tag use that commit. So after any push that releases, `git pull` before the
   next push. HTTPS via rustls.
-- Nothing may print to stdout/stderr while the TUI owns the screen: it scrolls the panes. `diag::is_quiet()` is true then; `sync::print_output`/`connect` check it, `sync::init` and provider logout print nothing, and child processes get `Stdio::null()` unless run inside `App::outside`. Settings keys end with `repaint = true`.
 - Writing choices: Ollama, Codex and Claude Code. The two CLIs use account
   sign-in; removed AGY/Copilot profiles stay available only for explicit legacy
   cleanup in Storage. Speech choices
@@ -325,7 +217,7 @@ way.
   MT). CI tests on windows-latest (`--no-fail-fast`) and smoke-tests
   install.ps1; e2e is `cfg(unix)`. Folder names are always `/`-joined, even
   when read from disk; TOML paths in tests use literal `'...'` strings.
-- Knowledge graph (code and routes still say `map`): `leo serve` only (web), see crates/leo-web/CLAUDE.md.
+- Knowledge graph (code and routes still say `map`): see crates/leo-web/CLAUDE.md.
 - Tasks made on the website live in `<notes>/.leo/tasks/<id>.json` (one JSON
   line each, tombstones for deletes), so the git backup carries them;
   `sync::GITATTRIBUTES` merges them by union and leo-web reads the newest line.

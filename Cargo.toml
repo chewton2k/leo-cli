@@ -1,6 +1,6 @@
 [workspace]
 members = ["crates/*"]
-default-members = [".", "crates/*"]
+default-members = [".", "crates/leo-core", "crates/leo-services", "crates/leo-web", "crates/leo-host"]
 resolver = "2"
 
 [workspace.package]

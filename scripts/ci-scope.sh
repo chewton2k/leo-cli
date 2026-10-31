@@ -20,7 +20,7 @@ outside() {
 
 docs='\.md$|^docs/|^LICENSE$'
 page='^crates/leo-web/src/web/|^crates/leo-web/tests/browser/|^crates/leo-web/tests/[^/]*\.test\.js$'
-not_served='^crates/leo-tui/|^scripts/|^install\.(sh|ps1)$|^tests/|^crates/leo-web/tests/[^/]*\.test\.js$|^\.github/workflows/release\.yml$'
+not_served='^crates/leo-desktop/|^scripts/|^install\.(sh|ps1)$|^tests/|^crates/leo-web/tests/[^/]*\.test\.js$|^\.github/workflows/release\.yml$'
 
 rust=false
 outside "$docs|$page" && rust=true

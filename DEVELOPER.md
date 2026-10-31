@@ -18,7 +18,7 @@ jobs (desktop and phone), each building leo and starting its own server. It
 tests only what a push can affect: `scripts/ci-scope.sh` compares with the last
 release tag (a pull request with its base), so changes to the page alone run
 `cargo test -p leo-web` on Linux and the browser jobs, Rust that the web server
-never runs (the TUI, root `tests/`, install scripts) skips the browser jobs, and
+never runs (the app shell in `crates/leo-desktop`, root `tests/`, install scripts) skips the browser jobs, and
 docs alone run only lint. Comparing with the last release rather than the
 previous push means a cancelled or failed run's changes are still tested. A
 newer push cancels the older run's jobs, but never a release in progress.
@@ -125,18 +125,10 @@ the file at real-time pace instead of recording from the microphone.
 - With the lid closed, a MacBook's built-in microphone is off, so recording hears
   nothing. Use an external mic.
 
-Never run against GitHub or Cloudflare in CI; do these by hand after a
-release that touches them (`brew install gh cloudflared`, `gh auth login`):
-
-- `LEO_HOME=/tmp/leo-dev leo sync github leo-notes-test`: makes a private
-  repo on your account (delete it after), and running it again from a second
-  `LEO_HOME` joins it.
-- `leo serve --anywhere`: open the trycloudflare link on mobile data. Check
-  the address bar loses `?token=`, and `leo serve --new-token` locks out the
-  old link.
-
-The e2e suite covers both with stand-ins: a fake `gh` over local bare repos,
-and a fake `cloudflared` that prints a trycloudflare address.
+Never run against GitHub in CI. The app itself is tried by hand with
+`pnpm --dir crates/leo-desktop tauri dev` (a throwaway `LEO_HOME` keeps your
+notes out of it): the window opens signed in, closing leaves the menu bar icon,
+a second launch focuses the first, Felix answers, Quit exits within seconds.
 
 ## Pitfalls learned the hard way
 
@@ -165,10 +157,10 @@ and a fake `cloudflared` that prints a trycloudflare address.
 - **A provider's `max_tokens` in config.toml replaces what leo asks for**, it
   does not cap it. Raising leo's own constants does nothing for a provider with
   its own setting.
-- **The command line is `/`, search is `f`.** Anything user-facing that names
-  a command must name a real one, or `tests/wording.rs` fails.
-- **Two programs, one notes folder.** The app, `leo serve` and a shell can all
-  write at once. `Store.known` keeps a save from trashing notes it never had,
+- **Anything user-facing that names a command must name a real one**, or
+  `tests/wording.rs` fails.
+- **Two programs, one notes folder.** The app, another editor (Obsidian) and git
+  can all write at once. `Store.known` keeps a save from trashing notes it never had,
   and the web server reloads from disk per request. Keep both if you touch
   saving or the server.
 - **Don't `cp` over a running binary on macOS**: the new copy gets killed.

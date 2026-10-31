@@ -85,8 +85,7 @@ sessions are resumed by the TUI at start (`App::resume_interrupted`,
 `session/stress.rs` simulates 3 h and (ignored) 24 h with a flaky provider and
 a crash copy.
 
-The TUI worker (`leo-tui/src/task.rs` `start_listen`) shows finished segment
-texts plus a live tail: every `ROLL_INTERVAL` (3 s local, `CLOUD_ROLL_INTERVAL`
+The live transcript shows finished segment texts plus a live tail: every `ROLL_INTERVAL` (3 s local, `CLOUD_ROLL_INTERVAL`
 8 s cloud) it re-transcribes from `settled_at`, at most `LIVE_MOST_SECS` (20 s),
 and once that is `SETTLE_AFTER_SECS` (12) long it settles at `live::quietest`
 between 6 s and end − 2 s, so the unsettled end is rewritten rather than glued.
@@ -206,8 +205,7 @@ directory (a project's `.env` could otherwise redirect `LEO_HOME`).
 choices, model list with prices, key account and whether it is stored, sign-in
 or plan usage for agents, notes such as Ollama not running) never includes a
 key; `apply` validates every change against `choice`, writes through
-`toml_edit` (creating the commented default file when missing), and refuses to
-store a key unless the request was secure.
+`toml_edit` (creating the commented default file when missing).
 
 `import.rs` turns uploads into a note: native Markdown extraction precedes AI
 study-note writing. `import/office.rs` preserves Word headings (including

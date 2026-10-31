@@ -1,9 +1,9 @@
-# leo-web: `leo serve` and the page
+# leo-web: leo's engine and the page
 
 leo-web depends only on leo-core. Everything that needs services (AI, speech,
-settings, import, storage housekeeping) arrives as a `Powers` field handed in
-from `src/cli/` (writer, chat streamer, settings, importer, listener, reader,
-seer, meaning, web, room).
+settings, import, storage housekeeping) arrives as a `Powers` field built by
+`leo_host::powers()` (writer, chat streamer, settings, importer, listener,
+reader, seer, meaning, web, room).
 
 ## Layout
 
@@ -29,21 +29,18 @@ seer, meaning, web, room).
 
 ## Serving and security
 
-- Sign-in: a code in `<config>/serve-token` (0600, `--new-token` rotates and
-  signs everyone out); `?token=` on GET `/` → 303 + a per-browser
-  `leo_session` cookie (30 days, `Secure` behind https) kept in
-  `serve-sessions.json` (`sessions::Sessions`). A browser that already has a
-  valid session reuses it. Constant-time compare, no CORS, strict headers,
-  the store reloaded from disk on every request.
-- "This computer" is the TCP peer (`Peer { loopback }` from
-  `into_make_service_with_connect_info`), never a header. `local_request`
-  (computer recording sources) and `secure_request` (keys, calendar links)
-  require it; a forwarded `https` counts only from loopback (cloudflared).
-- The tunnel is the default (`tunnel::start`, cloudflared quick tunnel,
-  `--protocol auto`, bounded startup and log reading); `--local` is Wi-Fi
-  only. `serve` opens the local link itself in a terminal; `LEO_NO_OPEN`
-  skips it (e2e and Playwright set it). On start, sessions made through old
-  trycloudflare hosts are retired.
+- `start(StartOptions { port, token }, powers) -> Running` binds `127.0.0.1`
+  only (the requested port, else the next free of 19), spawns the graph and
+  idle tasks and the server; `Running::{port, sign_in_url, back_up, stop}`.
+  `stop` drains requests for at most `shutdown::GRACE` (5 s) and clears warm
+  sessions within `CLEANUP`. Tests use `start_in(Places { store, sessions })`.
+  The app passes `fresh_token()`; `leo-test-server` (Playwright) uses
+  `saved_token()`, the `<config>/serve-token` file the specs read.
+- Only the app's window talks to the engine (2026-10-31, the user's call):
+  `same_host` refuses any Host but `127.0.0.1:<port>`/`localhost:<port>` (421),
+  `?token=` on GET `/` → 303 + a `leo_session` cookie (`SameSite=Strict`, 30
+  days, `serve-sessions.json`). No tunnel, Wi-Fi bind, QR, signed-in browsers
+  list or link rotation; keys and calendar links are accepted from the window.
 - Page CSP: no inline JS (`script-src 'self'`), `data:` images, `frame-src
   'self'` (original viewer), `font-src 'self'` (KaTeX). Mermaid 11.4.1, KaTeX
   0.16.11 and CodeMirror parsers are vendored under `web/vendor/` (checked
@@ -661,7 +658,7 @@ works (plan: `.superpowers/plans/2026-10-12-interview-instant-feedback.md`):
   desktop pane becomes full width when the window narrows. Chat state is retained.
 - Recording (`record.rs`, `recording.js`, worklet `recorder.js`): one job at a
   time. Browser sources POST 16 kHz PCM each second (`UPLOAD_SAMPLES`
-  batches); computer sources need `local_request`. `record_journal.rs`
+  batches); computer sources are always allowed (only the app's window can reach the engine). `record_journal.rs`
   persists before acknowledging; the page spools unacknowledged chunks in
   IndexedDB (`audio-queue.js`). Recovery replays through bounded channels.
   Failed recordings can be dismissed (audio kept) or deleted. The live page
@@ -753,8 +750,8 @@ the same idle loop.
 
 ## Settings, Storage, export
 
-- Settings (`SettingsApi` from `src/cli/web_settings.rs`): one model picker
-  per AI with prices and effort chips; keys only on `secure_request`.
+- Settings (`SettingsApi`, `leo_host::WebSettings`): one model picker
+  per AI with prices and effort chips.
 - Theme (2026-10-14, the user's request): Settings → Appearance picks Match
   this device, Light or Dark, kept per browser in `leo-theme`. Theme and
   Felix choices are large `.choice-card`s (icons `device`, `sun`, `moon`;
@@ -881,10 +878,7 @@ Detached store checks retain their own admission permits through completion.
 Original bytes stage in private temporary files instead of a second full RAM copy.
 Exports bound traversal, input size and simultaneous builds/streams; owned temporary
 paths and admission permits are released when a stream ends or its client leaves.
-Tunnels run `cloudflared` in an isolated process group. Startup failure and normal
-shutdown signal the group and await reaping with a five-second deadline; Drop and
-cancellation signal directly and use Tokio's child reaper. No external `kill`
-process is spawned. `Awake` kills/reaps `caffeinate` on drop. Graph/idle task guards
+Graph/idle task guards
 start after fallible setup and abort on every server exit/cancellation. Shared
 worker states use RAII guards to prevent stuck meters/locks on panic; interview
 key preparation has eight permits and retries abandoned generations without
@@ -959,10 +953,9 @@ toward the warm limit; API sessions measure serialized history and native CLIs t
 tool arguments and results. Oversized sessions are dropped promptly
 instead of remaining cached until another request or idle cleanup.
 
-Server shutdown drains active requests and streams for at most five seconds; a
-second Ctrl-C skips the drain. Graph/idle tasks stop on the first interrupt.
-Warm-session cleanup and tunnel shutdown share a one-second deadline, with the
-tunnel's Drop guard retaining responsibility for signaling its process group.
+`Running::stop` drains active requests and streams for at most five seconds,
+then aborts the server task; graph/idle tasks stop first, and warm-session
+cleanup has a one-second deadline.
 
 Editor instructions distinguish Leo's initial Ask/Auto/Read permissions from the
 writing CLI's read-only filesystem sandbox and defer to updates during a reply.
