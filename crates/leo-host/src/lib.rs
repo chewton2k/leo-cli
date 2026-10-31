@@ -2,6 +2,7 @@ mod felix;
 mod powers;
 mod record;
 mod settings;
+mod speech;
 mod storage;
 
 pub use powers::powers;

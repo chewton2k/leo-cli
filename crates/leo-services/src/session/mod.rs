@@ -1,3 +1,4 @@
+pub mod awake;
 pub mod capture;
 pub mod mic;
 pub mod recorder;

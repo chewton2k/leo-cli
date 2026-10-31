@@ -206,6 +206,13 @@ impl Live {
     }
 }
 
+fn live_model_ready() -> bool {
+    !crate::speech::engine::engine().dictating()
+        && crate::speech::library::library()
+            .and_then(|l| l.selected())
+            .is_ok_and(|m| m.live)
+}
+
 fn live_pace() -> Duration {
     if crate::ai::parallel_transcriptions() == 1 {
         live::ROLL_INTERVAL
@@ -223,18 +230,17 @@ fn hear(dir: &Path, samples: &[i16], emit: &dyn Fn(Event)) -> Option<String> {
     }
     let path = TempWav(dir.join("live.wav"));
     wav::write(&path.0, samples).ok()?;
-    let outcome = crate::ai::transcribe_outcome(&path.0).ok()?;
+    let selected = crate::speech::library::library().ok()?.selected().ok()?;
+    let pcm = samples.iter().map(|s| *s as f32 / 32768.0).collect();
+    let text = crate::speech::engine::engine()
+        .transcribe(selected, pcm, crate::speech::engine::Priority::Live)
+        .ok()?;
     drop(path);
-    for f in &outcome.fallbacks {
-        emit(Event::Fallback {
-            from: f.from.clone(),
-            to: f.to.clone(),
-        });
-    }
-    Some(if live::is_silence_artifact(&outcome.value) {
+    let _ = emit;
+    Some(if live::is_silence_artifact(&text) {
         String::new()
     } else {
-        outcome.value
+        text
     })
 }
 
@@ -370,6 +376,11 @@ pub fn finish(
 }
 
 pub fn resume(dir: &Path, emit: &dyn Fn(Event)) {
+    resume_with_controls(dir, &Controls::default(), emit)
+}
+
+pub fn resume_with_controls(dir: &Path, controls: &Controls, emit: &dyn Fn(Event)) {
+    let _model = crate::speech::engine::engine().pin();
     let session = match Session::open(dir) {
         Ok(s) => s,
         Err(e) => return emit(Event::Failed(e.to_string())),
@@ -406,7 +417,7 @@ pub fn resume(dir: &Path, emit: &dyn Fn(Event)) {
         &mut state,
         emit,
         SILENT_RECORDING,
-        &AtomicBool::new(false),
+        &controls.finish_now,
     );
 }
 
@@ -422,6 +433,8 @@ fn take_wants(session: &mut Session, controls: &Controls) -> bool {
 }
 
 pub fn record(request: Request, controls: &Controls, emit: &dyn Fn(Event)) {
+    let _awake = super::awake::Awake::recording();
+    let _model = crate::speech::engine::engine().pin();
     let Request {
         id,
         profile,
@@ -487,12 +500,11 @@ pub fn record(request: Request, controls: &Controls, emit: &dyn Fn(Event)) {
         std::thread::sleep(POLL);
         capture.set_paused(controls.pause.load(Ordering::Relaxed));
 
-        if let Ok(points) = controls.points.lock() {
-            if points.len() != saved_points {
-                saved_points = points.len();
-                session.manifest.points = points_of(&points);
-                let _ = session.save();
-            }
+        let latest_points = controls.points.lock().ok().map(|points| points_of(&points));
+        if let Some(points) = latest_points.filter(|points| points.len() != saved_points) {
+            saved_points = points.len();
+            session.manifest.points = points;
+            let _ = session.save();
         }
         if take_wants(&mut session, controls) {
             let _ = session.save();
@@ -537,7 +549,11 @@ pub fn record(request: Request, controls: &Controls, emit: &dyn Fn(Event)) {
         });
         emit(Event::Progress { label, steps: None });
 
-        if !capture.paused() && backlog <= 1 && last_roll.elapsed() >= state.interval {
+        if !capture.paused()
+            && backlog <= 1
+            && last_roll.elapsed() >= state.interval
+            && live_model_ready()
+        {
             last_roll = Instant::now();
             let dir = session.dir.clone();
             if let Err(message) = caught(|| roll(&capture, &dir, &mut state, emit, fed)) {
@@ -564,14 +580,7 @@ pub fn record(request: Request, controls: &Controls, emit: &dyn Fn(Event)) {
             "{problem} What was recorded is being saved."
         )));
     }
-    if let Ok(points) = controls.points.lock() {
-        session.manifest.points = points_of(&points);
-    }
-    take_wants(&mut session, controls);
-    emit(Event::Progress {
-        label: "Transcribing the recording".to_string(),
-        steps: None,
-    });
+    final_points(&mut session, controls, emit);
     match capture.stop_with_stats() {
         Ok((samples, _)) => {
             session.manifest.duration_secs = Some(samples.div_ceil(wav::RATE as u64))
@@ -592,6 +601,17 @@ pub fn record(request: Request, controls: &Controls, emit: &dyn Fn(Event)) {
         silent,
         &controls.finish_now,
     );
+}
+
+fn final_points(session: &mut Session, controls: &Controls, emit: &dyn Fn(Event)) {
+    emit(Event::Progress {
+        label: "Transcribing the recording".to_string(),
+        steps: None,
+    });
+    if let Ok(points) = controls.points.lock() {
+        session.manifest.points = points_of(&points);
+    }
+    take_wants(session, controls);
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -700,4 +720,26 @@ pub fn write_up(
         "Generated result saved; waiting for note persistence",
     );
     Ok(written)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn points_arriving_with_stop_are_mirrored_before_the_final_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut session =
+            Session::create(dir.path(), Manifest::new(None, None, "", false)).unwrap();
+        let controls = Controls::default();
+        final_points(&mut session, &controls, &|event| {
+            if matches!(event, Event::Progress { .. }) {
+                controls.points.lock().unwrap().push(Jotted {
+                    at_secs: 4,
+                    text: "The pasted slide".into(),
+                });
+            }
+        });
+        assert_eq!(session.manifest.points.len(), 1);
+        assert_eq!(session.manifest.points[0].text, "The pasted slide");
+    }
 }

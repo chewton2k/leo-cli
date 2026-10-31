@@ -37,7 +37,6 @@ zip.workspace = true
 tempfile.workspace = true
 toml.workspace = true
 toml_edit.workspace = true
-sherpa-onnx.workspace = true
 candle-core.workspace = true
 candle-nn.workspace = true
 candle-transformers.workspace = true
@@ -45,6 +44,21 @@ tokenizers.workspace = true
 libc.workspace = true
 zeroize.workspace = true
 fs2 = "0.4"
+log = "0.4"
+regex = "1"
+earshot = "1.2.2"
+transcribe-cpp = { version = "=0.4.0", default-features = false, features = ["serde"] }
+transcribe-cpp-sys = { version = "=0.4.0", default-features = false }
+
+[target.'cfg(unix)'.dependencies]
+signal-hook = "0.3"
+
+[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
+transcribe-cpp = { version = "=0.4.0", default-features = false, features = ["metal"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSProcessInfo", "NSString", "NSObject"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_System_Threading"] }

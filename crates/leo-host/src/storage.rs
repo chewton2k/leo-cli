@@ -80,20 +80,11 @@ fn speech_model() -> Area {
     Area {
         id: "speech".into(),
         title: "Speech model".into(),
-        about: "Parakeet, the built-in speech recognizer that turns recordings into text on this computer.".into(),
+        about: "Local speech models used for dictation and recording. Manage individual models in Settings → Speech models.".into(),
         path: dir.display().to_string(),
         bytes,
         items: Vec::new(),
-        actions: if bytes > 0 {
-            vec![act(
-                "remove",
-                "Remove the speech model",
-                Some("Recording with the built-in speech model stops working until `leo update` downloads it again (about 670 MB). Recording with OpenAI, Gemini or xAI keeps working."),
-                false,
-            )]
-        } else {
-            Vec::new()
-        },
+        actions: Vec::new(),
     }
 }
 
@@ -443,6 +434,9 @@ fn discard_recording(root: &Path, id: &str) -> Result<()> {
 }
 
 impl Housekeeper for Housekeeping {
+    fn pending_recordings(&self) -> Result<Vec<leo_web::record::Pending>> {
+        crate::record::pending()
+    }
     fn discard_recording(&self, id: &str) -> Result<()> {
         discard_recording(&session::root()?, id)
     }
@@ -476,10 +470,9 @@ impl Housekeeper for Housekeeping {
                 &leo_services::meaning::dir(),
                 "the meaning model",
             )),
-            ("speech", "remove") => Some(remove_cached_dir(
-                &leo_services::providers::speech_model_dir(),
-                "the speech model",
-            )),
+            ("speech", "remove") => Some(Err(anyhow!(
+                "Manage downloaded models in Settings → Speech models."
+            ))),
             ("python-runtime", "remove") => Some(remove_cached_dir(
                 &leo_services::pyodide::dir(),
                 "the Python runtime",

@@ -14,7 +14,7 @@ the compiler enforces it — do not add an upward dependency:
 | `crates/leo-services` | `ai/` (chains, prompts, live transcription), `config/` (providers, credentials, theme data, sync policy), `listen`, `health`, `providers` | core |
 | `crates/leo-web` | leo's engine and pages: `lib.rs` (`start` → `Running`, router), `routes/` (handlers by area), `token.rs`, and the page in `src/web/` (`index.html`, `app/*.js` served as `/app.js`, `markdown.js`, …) | core |
 | `crates/leo-host` | `powers()` (the AI, speech, settings, storage and import powers handed to the engine) and `leo-test-server` (Playwright's engine) | core, services, web |
-| `crates/leo-desktop` | The Tauri app `leo-app`: window, menu bar icon, single instance, open at login, PATH from the login shell, links/downloads/print | core, host, web |
+| `crates/leo-desktop` | The Tauri app `leo-app`: window, menu bar icon, single instance, open at login, PATH from the login shell, links/downloads/print | core, services, host, web |
 | root `leo` | `main.rs` and `cli/`: `leo` opens the app, `leo update`, `leo uninstall`, `--version` | core, services |
 
 Verify with `cargo test` at the root (runs every crate but `leo-desktop`, which
@@ -135,8 +135,8 @@ the notes remote.
   network/mic probes behind `Probe`), formatted once by `doctor::report`; plan 4
   shows it in Settings → Health.
 - Recording loop: `leo_services::session::recorder` (`record`, `resume`,
-  `finish`, `write_up`, `Event`); `Capture::fed` takes browser audio from a
-  channel and drains it on stop. Pauses are cut by `listen::cut_pauses` before
+  `finish`, `write_up`, `Event`); `Capture` takes native microphone/screen audio; browser-fed audio remains for
+  old recovery journals. Pauses are cut by `listen::cut_pauses` before
   the final transcription.
 - `Store::unreadable`: files that failed to parse; `save` never deletes them.
 - Trash: `save` moves any note file that vanished (and was not just moved:
@@ -198,25 +198,21 @@ the notes remote.
   commits `release: vX.Y.Z` to main as github-actions[bot], and the build and
   tag use that commit. So after any push that releases, `git pull` before the
   next push. HTTPS via rustls.
-- Writing choices: Ollama, Codex and Claude Code. The two CLIs use account
-  sign-in; removed AGY/Copilot profiles stay available only for explicit legacy
-  cleanup in Storage. Speech choices
-  stay Parakeet, OpenAI, Gemini and xAI, including their stored credentials.
-  See crates/leo-services/CLAUDE.md; models live in `config/choice.rs`.
-- Speech model: Parakeet (4 files, 670 MB) is fetched by install.sh and checked
-  by `leo update` (`providers::speech_model_state` over `parakeet::manifest()`:
-  Missing/Damaged/Ready by SHA-256; only bad files are re-downloaded; old
-  `ggml-base.en.bin` removed once it is ready); tests use
-  `LEO_INSTALL_MODEL_URL` (base) + `LEO_INSTALL_MODEL_MANIFEST` with file://
-  and e2e sets `LEO_INSTALL_NO_MODEL`. Uninstall removes `~/.leo` and
-  `LEO_HOME/models`.
-- Windows: `install.ps1` (zip + .sha256, `%LOCALAPPDATA%\Programs\leo`, user
-  PATH, same Parakeet manifest); `leo update` runs it through powershell,
-  `leo uninstall` parks the running exe as `.exe.old` and deletes it later.
-  Release target `x86_64-pc-windows-msvc` with `+crt-static` (sherpa libs are
-  MT). CI tests on windows-latest (`--no-fail-fast`) and smoke-tests
-  install.ps1; e2e is `cfg(unix)`. Folder names are always `/`-joined, even
-  when read from disk; TOML paths in tests use literal `'...'` strings.
+- Writing choices: Ollama, Codex and Claude Code. Their credentials stay with
+  their own programs. Speech is local only: a shared catalog model and language
+  under `models_dir()/speech`, selected in `<config>/speech-model.json`.
+  `leo-services::speech` verifies downloads, isolates native transcribe-cpp
+  0.4.0 in a supervised child, prioritizes dictation and pins the model during
+  recording. Cloud speech configurations/aliases migrate locally and their
+  stored keys are retired through SecretStore; calendar/writing data stays.
+- Recording is captured in Rust, including two native tracks for calls; hiding
+  the window cannot stop it. App Nap is held while recording. Missing models
+  leave audio pending and recoverable; the app can resume native sessions.
+  Screenshots are pasted into the Record page with their timestamp.
+- Windows child programs stay quiet. Model and toolchain caches stay under the
+  existing models directory. Platform installers and release bundles are
+  described by their scripts and workflow; updates check the selected catalog
+  speech model, and uninstall retains the existing data-removal controls.
 - Knowledge graph (code and routes still say `map`): see crates/leo-web/CLAUDE.md.
 - Tasks made on the website live in `<notes>/.leo/tasks/<id>.json` (one JSON
   line each, tombstones for deletes), so the git backup carries them;

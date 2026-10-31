@@ -18,7 +18,7 @@ one here streamed the answer to the screen and then discarded it on save.
 ### AI pipeline
 
 `record` → `session::mic` (cpal, built in) captures 16 kHz mono →
-`ai::transcribe()` runs the `[transcribe]` chain (default Parakeet on this
+`ai::transcribe()` runs the `[transcribe]` chain (the selected local model on this
 computer), chunking only for providers that declare a `max_bytes()` limit the
 file exceeds → `ai::structure_notes()` runs the `[chat]` chain (whatever
 /settings chose) → note saved.
@@ -85,7 +85,7 @@ sessions are resumed by the TUI at start (`App::resume_interrupted`,
 `session/stress.rs` simulates 3 h and (ignored) 24 h with a flaky provider and
 a crash copy.
 
-The live transcript shows finished segment texts plus a live tail: every `ROLL_INTERVAL` (3 s local, `CLOUD_ROLL_INTERVAL`
+The live transcript, for catalog models marked fast enough, shows finished segment texts plus a live tail: every `ROLL_INTERVAL` (3 s local, `CLOUD_ROLL_INTERVAL`
 8 s cloud) it re-transcribes from `settled_at`, at most `LIVE_MOST_SECS` (20 s),
 and once that is `SETTLE_AFTER_SECS` (12) long it settles at `live::quietest`
 between 6 s and end − 2 s, so the unsettled end is rewritten rather than glued.
@@ -96,65 +96,52 @@ turns the device off (tests, e2e, CI).
 
 ### Model configuration
 
-Writing choices are Ollama, Codex and Claude Code. Speech remains Parakeet and the existing OpenAI,
-Gemini and xAI cloud options. Older API protocol implementations and account names
-remain for compatibility and speech credentials; do not expose them as writing
-choices. `config/tidy.rs` removes retired named cloud writers from saved chat
-chains and rewrites old files on load (`RETIRED` names, fields equal to built-ins or old defaults, empty chain →
-default; a `whisper_cpp` block without its own `bin` → `parakeet`). Speech on
-this computer is NVIDIA Parakeet TDT 0.6B v3 int8 via the `sherpa-onnx` crate
-(static prebuilt libs, CPU; CoreML measured 10× slower) in
-`ai/provider/parakeet.rs`: one `leo-speech` engine thread owns the recognizer,
-decodes one job at a time with `threads()` = half the cores, at most 4,
-process nice 10 + utility QoS, unloads after `IDLE` (60 s), and cuts audio at
-the quietest 0.1 s between 20 and 25 s (`cuts`) to keep memory ~1.5 GB. Files
-are verified against `MODEL_MANIFEST` before loading (`verify`, cached by size
-+ mtime): sherpa calls exit() on a bad model. Model dir
-`models_dir()/parakeet-tdt-0.6b-v3-int8` (`audio::models_dir`, LEO_HOME
-aware), URL pinned to a Hugging Face commit. `whisper_cpp` now only runs an
-external `bin` (e2e fakes). `Transcriptions` kind (`openai_transcribe`, alias `groq`)
-takes `path` (xAI: `stt`).
+Writing choices are Ollama, Codex and Claude Code. Speech is local only. The
+legacy `parakeet` provider name now calls `ai/provider/local_speech.rs`; old
+cloud speech names and custom aliases migrate to it before deserialization.
+The old speech implementations and sherpa-onnx are absent. Literal legacy
+provider kinds remain parseable for migration, never construct a cloud
+transcriber. An explicit `whisper_cpp` binary remains for existing test fakes.
 
-`config/choice.rs` is the Settings model: `WRITING` (ollama, codex,
-claude_code) and `SPEECH` (parakeet, openai_whisper,
-gemini_speech, xai_speech),
-each with a curated model list (empty = local; `Local` holds installed Ollama
-models from `/api/tags` and `speech_ready`).
-`selection` = first usable chain entry, else the first. `write_choice` makes
-the chain that one provider; `write_model` writes only `model` (or
-`model_path`) — built-ins fill the rest field by field (`fill_from`, skipped if
-the user's `kind` differs). `key_from` shares a stored key (openai_whisper →
-openai, gemini_speech → gemini); always look keys up by `pc.account(name)`.
-`reasoning = true` sends `max_completion_tokens` and no temperature (OpenAI,
-Anthropic's OpenAI-compatible endpoint). `ChatAudio` kind transcribes via chat
-completions with base64 `input_audio` (Gemini; 14 MB cap).
+`speech/catalog.json` is the pinned catalog; `catalog.rs` exposes its 29 curated
+ASR models, languages, checksums, benchmark speeds and accuracy. The selected
+model and language live in `<config>/speech-model.json`; files live in
+`models_dir()/speech`. `Library` verifies exact size and SHA-256, caches verified
+size/mtime stamps, downloads at most two models into owned temporary files,
+checks cancellation while awaiting the network, and promotes atomically.
+Linked paths and hard-linked models are refused. Selection/deletion/promotion
+use a private file lock. The previous ONNX folder is removed after a
+verified download or activation. An empty selected ID means the user deleted
+the current model.
 
-`<config_dir>/leo/config.toml` (`~/Library/Application Support/leo/config.toml`
-on macOS, `~/.config/leo/config.toml` on Linux) defines named providers and
-per-task fallback chains. `/settings` then `e` creates and opens it. Providers are
-tried in order; unavailable ones (no key, no binary, closed port) are skipped
-silently, so a chain may list more providers than are installed.
+`speech/engine.rs` admits eight jobs, gives dictation priority between audio
+chunks, and pauses lower-priority work during a dictation reservation. One
+actor owns the supervisor and model. Recording pins it; otherwise idle unload
+is 60 seconds. Model deletion waits behind inference, unloads the worker first,
+and refuses deletion of an active recording/dictation model. Long audio uses
+30-second target / 40-second maximum cuts at VAD pauses, then smoothed Earshot
+VAD with onset, pre-roll and hangover. Slow catalog models skip live passes.
 
-Speech keys and calendar secrets go through `secret::default_store()`: a private
-`credentials.json` beside config by default, or the OS keychain with
-`LEO_USE_KEYCHAIN=1`. The file is unencrypted; owner-only file/directory permissions
-and atomic replacement protect it from other OS accounts, not programs running as
-the same user. The optional keychain holds one JSON item to avoid a permission
-prompt per provider after upgrades. Status checks use `SecretStore::has`; tests use
-fake stores and never access the real keychain.
+`speech/supervisor.rs` owns a crash-isolated worker, re-executing the current
+binary with `--leo-speech-worker` before normal app/CLI startup. Only the worker
+initializes native backends, loads a model or runs inference. Framed JSON/PCM,
+queues, stderr and deadlines are bounded; crashes/hangs are reaped and retried
+once (CPU after GPU failure). Apple Silicon uses Metal; Intel macOS and Windows
+use CPU. The Rust binding and native sys crate are both pinned to exactly
+0.4.0: pre-1.0 native patch versions are not ABI-compatible. The outer actor
+keeps filesystem/native work outside application mutexes.
 
-`leo doctor` (or the key row in `/settings`) stores one; the provider screen shows which
-providers have credentials without revealing them. Keys come only from that
-store (`secret::resolve(account, store)`): an env var named by `key_env` is
-never used (the user asked; a friend's stale `OPENROUTER_API_KEY` silently beat
-his stored key). `key_env` now only means "needs a key"; settings shows
-`Credential::Ignored` ("leo does not read $VAR") when one is set but nothing is
-stored, and `leo doctor`'s key prompt still offers to import it, with consent. A
-refused key (401; 403; 400 whose body mentions an API key, which is how Gemini
-and xAI answer) goes through `error::classify_status_with_key` when a stored
-key was sent: it leads with "<Name> rejected the key stored in leo (401). To
-replace it: /settings, then Enter on the <Name> key row." and quotes the body
-after, so a cut-off status line still shows the fix.
+`config/speech_migration.rs` retires cloud speech accounts through the supplied
+SecretStore before old provider blocks are rewritten; unrelated calendar and
+custom writing accounts remain. `Config::load` uses `secret::default_store()`;
+`load_from` stays free of credential access for tests. Settings offers no speech
+key controls. Calendar secrets still use the private credentials file by default
+or the optional keychain with `LEO_USE_KEYCHAIN=1`; tests use MemoryStore.
+
+`config/choice.rs` keeps writing model/effort choices and the single local
+speech entry. The full speech catalog reaches the page through `SpeechApi`,
+implemented in leo-host. `web_settings.rs` still owns writing and backup
+settings, validates changes against `choice`, and writes through `toml_edit`.
 
 `claude_code` and `codex` (kinds `ClaudeCode`/`Codex`, `ai/provider/agent_cli.rs`)
 write through the user's own signed-in CLI and plan: `claude -p --safe-mode
@@ -167,7 +154,7 @@ its stdout is the answer in one piece.
 
 AGY and Copilot support is removed. Loading a saved config removes their named
 entries and custom aliases before deserialization while preserving supported
-choices and cloud speech settings. Existing private profile data is kept; Storage
+writing choices. Existing private profile data is kept; Storage
 shows metadata and explicit clearing only when legacy profiles exist. Cleanup
 retains its cross-process lock and never follows links or exports credentials.
 
@@ -446,7 +433,7 @@ bytes and redirects. HTTPS-only fetches cannot downgrade on redirects. OS DNS
 lookups run outside the HTTP runtime with a deadline and at most four concurrent
 lookup threads; a timed-out OS lookup retains its slot until it actually returns.
 The BGE meaning model unloads after 60s idle once no caller retains it, matching
-Parakeet's idle policy; loading uses a reservation/condition variable and performs
+the speech worker's idle policy; loading uses a reservation/condition variable and performs
 file/model work outside the cache mutex. `Process::stop` waits/reaps child processes
 after killing their process group to prevent defunct zombies. `CODEX_OFF` disables `daemon_auto_start` to
 prevent orphan background daemon leaks.
@@ -477,3 +464,16 @@ Stateless cancellation tests wait for the fake CLI's startup marker before
 requesting cancellation, including an intentionally delayed startup. Shutdown
 latency is measured from that signal, and the child PID must be gone afterward;
 runner scheduling time must not be mistaken for a provider-cleanup failure.
+
+Native app recording uses `Source::Microphone` / `Source::Screen`; calls capture
+both tracks in Rust. `session::awake::Awake` holds an App Nap/process activity
+exception through recording. Capture opens only when requested, never because
+the page is visible. A missing/damaged model leaves stopped segments pending
+without `.err` files; a model becoming ready retries them, and Finish available
+still cancels waiting work. Transcription attempts and filesystem traversal are
+snapshotted outside their mutexes before disk I/O.
+
+`recorder::resume_with_controls` exposes the same finish control during native
+recovery. leo-host groups retained call tracks by recording ID, forwards recovery
+progress, and refuses to write a note when recovery failed. Audio is committed
+only after the caller durably saves the note and archive.

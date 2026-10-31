@@ -38,6 +38,9 @@ pub struct Area {
 }
 
 pub trait Housekeeper: Send + Sync {
+    fn pending_recordings(&self) -> Result<Vec<crate::record::Pending>> {
+        Ok(Vec::new())
+    }
     fn discard_recording(&self, _id: &str) -> Result<()> {
         Ok(())
     }

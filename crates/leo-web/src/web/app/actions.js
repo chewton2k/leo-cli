@@ -1,4 +1,6 @@
 const actions = {
+  'speech-model': changeSpeechModel,
+  'speech-delete': (el) => { closeSheet(); return speechChange({ action: 'delete', id: el.dataset.model }); },
   back,
   home: () => go('#/'),
   interviews: () => go('#/interviews'),
@@ -105,7 +107,6 @@ const actions = {
   'source-back': () => drawRecordingSources(),
   'source-apply': () => applyGenerated().catch(fail),
   'rec-finish': () => recorder.finishAvailable().catch(fail),
-  'rec-snapshot': () => recorder.snapshot().catch(fail),
   'rec-recover': (el) => recorder.recover(el.dataset.id).catch(fail),
   close: closeSheet,
   'open-folder': (el) => {

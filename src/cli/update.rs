@@ -8,23 +8,22 @@ fn ensure_speech_model() {
         return;
     }
     use leo_services::providers::ModelState;
-    leo_services::providers::remove_old_models();
     match leo_services::providers::speech_model_state() {
         ModelState::Ready => return,
         ModelState::Missing => {
             println!();
-            println!("  The speech model is missing. Downloading Parakeet (670 MB, once)…");
+            println!("  The selected local speech model is missing. Downloading it from the model library…");
         }
         ModelState::Damaged => {
             println!();
-            println!("  The speech model is damaged. Downloading the damaged parts again…");
+            println!("  The selected local speech model is damaged. Downloading it again…");
         }
     }
     match leo_services::providers::download_speech_model() {
         Ok(path) => println!("  Saved {}", path.display()),
         Err(e) => println!(
             "  {}",
-            format!("Could not download it ({e}). leo will try again when it starts.").dimmed()
+            format!("Could not download it ({e}). Try again in Settings → Speech models.").dimmed()
         ),
     }
 }

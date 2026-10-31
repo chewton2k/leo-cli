@@ -84,41 +84,11 @@ pub const WRITING: &[Choice] = &[
     },
 ];
 
-pub const SPEECH: &[Choice] = &[
-    Choice {
-        provider: "parakeet",
-        name: "Parakeet",
-        models: &[],
-    },
-    Choice {
-        provider: "openai_whisper",
-        name: "OpenAI",
-        models: &[
-            m("gpt-4o-mini-transcribe", "$0.18 per hour"),
-            m("gpt-transcribe", "$0.27 per hour"),
-            m("whisper-1", "$0.36 per hour"),
-        ],
-    },
-    Choice {
-        provider: "gemini_speech",
-        name: "Gemini",
-        models: &[
-            m("gemini-3.8-flash", "free tier"),
-            m(
-                "gemini-3.1-flash-lite",
-                "free tier, then about $0.06 per hour",
-            ),
-        ],
-    },
-    Choice {
-        provider: "xai_speech",
-        name: "xAI",
-        models: &[
-            m("grok-voice-transcribe-2.0", "$0.10 per hour"),
-            m("grok-voice-transcribe-1.0", "$0.10 per hour"),
-        ],
-    },
-];
+pub const SPEECH: &[Choice] = &[Choice {
+    provider: "parakeet",
+    name: "Local speech",
+    models: &[],
+}];
 
 pub fn priced(task: Task, provider: &str, model: &str) -> String {
     match find(task, provider).and_then(|c| c.price(model)) {
@@ -160,10 +130,7 @@ pub fn local_models(cfg: &Config) -> Local {
     Local {
         ollama_running,
         ollama,
-        speech_ready: cfg
-            .provider("parakeet")
-            .map(crate::ai::provider::parakeet::model_dir)
-            .is_some_and(|dir| crate::ai::provider::parakeet::present(&dir)),
+        speech_ready: crate::speech::library::library().is_ok_and(|l| l.selected().is_ok()),
     }
 }
 
@@ -231,7 +198,10 @@ pub fn selection(cfg: &Config, store: &dyn SecretStore, task: Task) -> Option<Se
     let provider = usable.or(chain.first())?.clone();
     let model = cfg.provider(&provider).and_then(|p| {
         if p.kind == Some(ProviderKind::Parakeet) {
-            Some(crate::ai::provider::parakeet::MODEL_NAME.to_string())
+            crate::speech::library::library()
+                .ok()
+                .and_then(|l| l.selection().ok())
+                .map(|s| s.id)
         } else {
             p.model.clone()
         }
@@ -524,19 +494,19 @@ mod tests {
         assert_eq!(priced(Task::Chat, "mine", "house"), "house");
         assert_eq!(
             priced(Task::Transcribe, "openai_whisper", "gpt-transcribe"),
-            "gpt-transcribe ($0.27 per hour)"
+            "gpt-transcribe"
         );
     }
 
     #[test]
-    fn writing_choices_are_local_or_signed_in_agents_and_speech_keeps_its_keys() {
+    fn writing_choices_are_local_or_signed_in_agents_and_speech_is_local() {
         assert_eq!(
             WRITING.iter().map(|c| c.provider).collect::<Vec<_>>(),
             ["ollama", "codex", "claude_code"]
         );
         assert_eq!(
             SPEECH.iter().map(|c| c.provider).collect::<Vec<_>>(),
-            ["parakeet", "openai_whisper", "gemini_speech", "xai_speech"]
+            ["parakeet"]
         );
         for retired in [
             "openai",
@@ -554,16 +524,16 @@ mod tests {
     }
 
     #[test]
-    fn one_key_serves_writing_and_speech_for_each_cloud() {
-        for (chat, speech) in [
-            ("openai", "openai_whisper"),
-            ("gemini", "gemini_speech"),
-            ("xai", "xai_speech"),
-        ] {
-            let a = Config::built_in_provider(chat).unwrap();
-            let b = Config::built_in_provider(speech).unwrap();
-            assert_eq!(a.account(chat), b.account(speech));
-            assert_eq!(a.key_env, b.key_env);
+    fn speech_offers_only_the_local_model_and_needs_no_key() {
+        assert_eq!(SPEECH.len(), 1);
+        assert_eq!(SPEECH[0].provider, "parakeet");
+        assert!(Config::built_in_provider("parakeet")
+            .unwrap()
+            .key_env
+            .is_none());
+        for name in ["openai_whisper", "gemini_speech", "xai_speech"] {
+            assert!(Config::built_in_provider(name).is_none());
+            assert!(find(Task::Transcribe, name).is_none());
         }
     }
 
@@ -621,10 +591,10 @@ mod tests {
     fn choosing_a_provider_makes_it_the_whole_chain() {
         let mut doc = Config::default_toml().parse::<DocumentMut>().unwrap();
         write_choice(&mut doc, Task::Chat, "codex");
-        write_choice(&mut doc, Task::Transcribe, "gemini_speech");
+        write_choice(&mut doc, Task::Transcribe, "parakeet");
         let cfg = load(&doc.to_string());
         assert_eq!(cfg.chat.chain, vec!["codex"]);
-        assert_eq!(cfg.transcribe.chain, vec!["gemini_speech"]);
+        assert_eq!(cfg.transcribe.chain, vec!["parakeet"]);
         assert!(doc.to_string().contains("Keys do NOT belong"));
     }
 
@@ -757,15 +727,11 @@ mod tests {
     }
 
     #[test]
-    fn a_stored_openai_key_makes_openai_speech_usable_too() {
+    fn old_cloud_speech_keys_cannot_create_a_speech_provider() {
         let store = MemoryStore::default();
-        store.set("openai", "k").unwrap();
+        store.set("openai", "fake-key").unwrap();
         let cfg = load("[transcribe]\nchain = [\"openai_whisper\"]\n");
-        if std::env::var("OPENAI_API_KEY").is_err() {
-            let sel = selection(&cfg, &store, Task::Transcribe).unwrap();
-            assert!(sel.ready);
-        }
         let chain = crate::ai::provider::build_transcribe_chain(&cfg, &store);
-        assert!(chain[0].available());
+        assert!(chain.is_empty());
     }
 }

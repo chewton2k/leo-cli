@@ -11,10 +11,12 @@ async function showSettings() {
   $('#crumbs').innerHTML = '<span class="sep">/</span><button>Settings</button>';
   document.title = 'Settings · leo';
   app.innerHTML = skeleton(3);
-  const [page, calendar] = await Promise.all([api('/api/settings'), api('/api/calendar').catch(() => null)]);
+  const [page, calendar, speech] = await Promise.all([api('/api/settings'), api('/api/calendar').catch(() => null), api('/api/speech').catch(() => null)]);
   if (mine !== seq) return;
   state.calendar = calendar;
+  state.speech = speech;
   drawSettings(page);
+  startSpeechPolling(mine);
 }
 
 const GOOGLE_CALENDAR_SETTINGS = 'https://calendar.google.com/calendar/r/settings';
@@ -245,7 +247,8 @@ function drawSettings(page) {
   app.innerHTML = `<div class="settings">
     <div class="section-title">Settings</div>
     ${themeCard()}
-    ${page.tasks.map((t) => taskCard(t)).join('')}
+    ${page.tasks.filter((t) => t.task === 'writing').map((t) => taskCard(t)).join('')}
+    <div id="speech-library">${speechCards(state.speech)}</div>
     ${calendarCard(state.calendar)}
     ${felixUsageCard(page)}
     <section class="set-card">
@@ -320,3 +323,69 @@ async function testAi(el) {
     el.disabled = false;
   }
 }
+
+function speechCards(view) {
+  if (!view) return '';
+  const selected = view.selected || {};
+  const rows = view.models.map((model) => {
+    const progress = model.progress;
+    const downloading = progress && progress.state === 'downloading';
+    const percent = downloading ? Math.min(100, Math.floor(progress.bytes * 100 / progress.total)) : 0;
+    const action = (verb, label) => `<button class="btn plain sm" data-action="speech-model" data-model="${esc(model.id)}" data-verb="${verb}">${label}</button>`;
+    const controls = downloading ? `<span class="hint">${percent}%</span>${action('cancel', 'Cancel')}` : model.verified
+      ? `${model.in_use ? '<span class="chip">In use</span>' : action('use', 'Use')}${action('delete', 'Delete')}`
+      : `${action('download', model.downloaded ? 'Download again' : 'Download')}${model.downloaded ? action('delete', 'Delete') : ''}`;
+    return `<div class="set-row column"><div class="set-line"><span class="set-label">${esc(model.name)}</span><span class="set-value">${controls}</span></div>
+      <span class="hint">${esc(model.languages.length === 1 ? model.languages[0] : `${model.languages.length} languages`)} · ${Math.ceil(model.size / 1048576)} MB · ${model.live ? 'Live lecture transcripts' : 'Transcript after recording'}</span>
+      ${progress && progress.error && progress.state !== 'cancelled' ? `<span class="set-note warn">${esc(progress.error)}</span>` : ''}</div>`;
+  }).join('');
+  const current = view.models.find((model) => model.id === selected.id);
+  const languages = current && current.languages.length > 1 ? `<label class="set-row"><span class="set-label">Language</span><span class="select-control"><select id="speech-language" data-speech-language="${esc(current.id)}">${settingsOption('auto', 'Detect language', selected.language)}${current.languages.map((language) => settingsOption(language, language, selected.language)).join('')}</select>${ICON.chevron}</span></label>` : '';
+  return `<section class="set-card"><header><h3>Speech models</h3><span class="set-status ${view.ready ? 'ok' : 'missing'}">${view.ready ? 'Ready' : 'Choose a model'}</span></header>
+    <p class="hint">Dictation and recording use one local model. Audio stays on this computer.</p>${languages}${rows}</section>`;
+}
+
+let speechPollGeneration = 0;
+function startSpeechPolling(mine) { pollSpeech(mine, ++speechPollGeneration); }
+
+async function pollSpeech(mine, generation) {
+  if (generation !== speechPollGeneration || mine !== seq || state.view !== 'settings') return;
+  if (!(state.speech && state.speech.models.some((m) => m.progress && m.progress.state === 'downloading'))) return;
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  if (generation !== speechPollGeneration || mine !== seq || state.view !== 'settings') return;
+  try {
+    const view = await api('/api/speech');
+    if (generation !== speechPollGeneration || mine !== seq || state.view !== 'settings') return;
+    state.speech = view;
+    const box = $('#speech-library');
+    if (box && !box.contains(document.activeElement)) box.innerHTML = speechCards(view);
+  } catch (e) { if (mine !== seq) return; }
+  pollSpeech(mine, generation);
+}
+
+async function speechChange(change) {
+  const mine = seq;
+  const generation = ++speechPollGeneration;
+  const view = await api('/api/speech', { method: 'POST', body: change });
+  if (generation !== speechPollGeneration || mine !== seq || state.view !== 'settings') return;
+  state.speech = view;
+  const box = $('#speech-library');
+  if (box) box.innerHTML = speechCards(view);
+  pollSpeech(mine, generation);
+}
+
+function changeSpeechModel(el) {
+  const model = state.speech.models.find((m) => m.id === el.dataset.model);
+  if (!model) return;
+  const change = { action: el.dataset.verb, id: model.id, language: model.languages.length === 1 ? model.languages[0] : 'auto' };
+  if (change.action === 'delete') {
+    sheet(`<h3>Delete ${esc(model.name)}?</h3><p>The download is removed from this computer. Your notes stay.</p><div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn danger" data-action="speech-delete" data-model="${esc(model.id)}">Delete</button></div>`);
+    return;
+  }
+  return speechChange(change);
+}
+
+app.addEventListener('change', (event) => {
+  const language = event.target.closest('[data-speech-language]');
+  if (language) speechChange({ action: 'use', id: language.dataset.speechLanguage, language: language.value }).catch(fail);
+});

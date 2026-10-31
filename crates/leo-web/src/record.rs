@@ -26,6 +26,7 @@ const WAIT_FOR_WRITES: Duration = Duration::from_secs(5);
 const AUDIO_CHUNKS: usize = 64;
 const MOST_WARNINGS: usize = 40;
 const WARNING_CHARS: usize = 2_000;
+const SLIDE_TEXT_CHARS: usize = 6500;
 const WAIT_FOR_AUDIO: Duration = Duration::from_secs(10);
 const AUDIO_BACKLOG: &str =
     "Recording is not keeping up. Stop it, then recover its saved audio on the Recording page.";
@@ -36,6 +37,7 @@ pub enum Source {
     Browser,
     Tab,
     Call,
+    Nativecall,
     Microphone,
     Screen,
 }
@@ -46,7 +48,10 @@ impl Source {
     }
 
     pub fn on_this_computer(self) -> bool {
-        matches!(self, Source::Microphone | Source::Screen)
+        matches!(
+            self,
+            Source::Microphone | Source::Screen | Source::Nativecall
+        )
     }
 
     pub fn is_sound(self) -> bool {
@@ -54,7 +59,17 @@ impl Source {
     }
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Pending {
+    pub id: String,
+    pub title: Option<String>,
+    pub directory: String,
+    pub source: Source,
+    pub profile: leo_core::recording::Profile,
+}
+
 pub struct Listening {
+    pub recover: Option<String>,
     pub id: String,
     pub profile: leo_core::recording::Profile,
     pub audio: Option<Receiver<Vec<i16>>>,
@@ -257,7 +272,7 @@ fn keep_tail(text: String) -> String {
 }
 
 pub(crate) async fn overview(State(state): State<AppState>) -> Response {
-    let pending = match state.with_store(|store| Ok(store.notes_dir.clone())).await {
+    let mut pending = match state.with_store(|store| Ok(store.notes_dir.clone())).await {
         Ok(notes) => tokio::task::spawn_blocking(move || crate::record_journal::pending(&notes))
             .await
             .ok()
@@ -265,6 +280,21 @@ pub(crate) async fn overview(State(state): State<AppState>) -> Response {
             .unwrap_or_default(),
         Err(_) => Vec::new(),
     };
+    let mut pending = pending
+        .drain(..)
+        .map(|p| serde_json::to_value(p).unwrap_or_default())
+        .collect::<Vec<_>>();
+    if let Some(housekeeper) = state.housekeeper.clone() {
+        if let Ok(Ok(saved)) =
+            tokio::task::spawn_blocking(move || housekeeper.pending_recordings()).await
+        {
+            pending.extend(
+                saved
+                    .into_iter()
+                    .map(|p| serde_json::to_value(p).unwrap_or_default()),
+            );
+        }
+    }
     let job = state
         .recording
         .lock()
@@ -281,6 +311,8 @@ pub(crate) async fn overview(State(state): State<AppState>) -> Response {
 
 #[derive(Serialize, Deserialize)]
 pub(crate) struct StartBody {
+    #[serde(default)]
+    recover: Option<String>,
     #[serde(default)]
     directory: String,
     #[serde(default)]
@@ -384,9 +416,18 @@ pub(crate) async fn start(State(state): State<AppState>, Json(body): Json<StartB
                 next_seq: 0,
                 id: id.clone(),
                 source: body.source,
-                state: "starting",
+                state: if body.recover.is_some() {
+                    "writing"
+                } else {
+                    "starting"
+                },
                 secs: 0,
-                step: "Starting".into(),
+                step: if body.recover.is_some() {
+                    "Recovering saved audio"
+                } else {
+                    "Starting"
+                }
+                .into(),
                 steps: None,
                 transcript: String::new(),
                 warnings: Vec::new(),
@@ -408,11 +449,12 @@ pub(crate) async fn start(State(state): State<AppState>, Json(body): Json<StartB
         });
     }
     let listening = Listening {
+        recover: body.recover,
         id: id.clone(),
         profile,
         audio,
         other_audio,
-        call: body.source == Source::Call,
+        call: matches!(body.source, Source::Call | Source::Nativecall),
         screen: body.source.is_sound(),
         directory: directory.clone(),
         title: title.clone(),
@@ -443,21 +485,13 @@ fn watch(recordings: Recordings, id: String) {
         if !job.live() {
             return;
         }
-        if job.seen.elapsed() >= FORGOTTEN_AFTER {
-            if job.view.source.fed_by_browser() {
-                let warning = "The recording page is offline. Its unsent audio is kept on that device; reopen it to reconnect and save.";
-                if !job.view.warnings.iter().any(|w| w == warning) {
-                    job.view.warn(warning.into());
-                }
-                job.seen = Instant::now();
-                continue;
+        if job.seen.elapsed() >= FORGOTTEN_AFTER && job.view.source.fed_by_browser() {
+            let warning = "The recording page is offline. Its unsent audio is kept on that device; reopen it to reconnect and save.";
+            if !job.view.warnings.iter().any(|w| w == warning) {
+                job.view.warn(warning.into());
             }
-            job.view.warn(
-                "The page that started this recording went away, so it was stopped and saved."
-                    .into(),
-            );
-            job.end();
-            return;
+            job.seen = Instant::now();
+            continue;
         }
     }
 }
@@ -824,6 +858,24 @@ pub(crate) async fn audio(
 const REPLAY_CHUNKS: usize = 4;
 
 pub(crate) async fn recover(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    if let Some(housekeeper) = state.housekeeper.clone() {
+        let pending = tokio::task::spawn_blocking(move || housekeeper.pending_recordings()).await;
+        if let Ok(Ok(pending)) = pending {
+            if let Some(saved) = pending.into_iter().find(|p| p.id == id) {
+                return start(
+                    State(state),
+                    Json(StartBody {
+                        recover: Some(saved.id),
+                        directory: saved.directory,
+                        title: saved.title,
+                        source: saved.source,
+                        profile: Some(saved.profile),
+                    }),
+                )
+                .await;
+            }
+        }
+    }
     let Some(listener) = state.listener.clone() else {
         return error(StatusCode::SERVICE_UNAVAILABLE, "Recording is unavailable.");
     };
@@ -912,6 +964,7 @@ pub(crate) async fn recover(State(state): State<AppState>, Path(id): Path<String
         });
     }
     let listening = Listening {
+        recover: None,
         id: id.clone(),
         profile: meta.profile,
         audio: Some(rx),
@@ -1016,10 +1069,7 @@ async fn append_point(
         }
         let lease = Writing::take(job)?;
         let at = at.unwrap_or(job.view.secs).min(job.view.secs);
-        let mut journal = job.journal.clone();
-        if let Some((_, meta)) = &mut journal {
-            meta.points.push((at, text.clone()));
-        }
+        let journal = job.journal.clone();
         Ok((lease, at, journal))
     }) {
         Ok(Ok(input)) => input,
@@ -1031,21 +1081,7 @@ async fn append_point(
     let id = id.to_string();
     let result = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
         let _lease = lease;
-        if let Some((notes, meta)) = &journal {
-            crate::record_journal::save(notes, meta)?;
-        }
-        with_job(&worker, &id, |job| {
-            job.journal = journal;
-            if let Ok(mut points) = job.points.lock() {
-                points.push((at, text.clone()));
-            }
-            job.view.points.push((at, text));
-            if let Some(warning) = warning {
-                job.view.warn(warning);
-            }
-            job.view.clone()
-        })
-        .map_err(|(_, message)| anyhow::anyhow!(message))
+        persist_point(&worker, &id, text, at, journal, warning)
     })
     .await;
     match result {
@@ -1060,6 +1096,32 @@ async fn append_point(
 #[derive(Deserialize)]
 pub(crate) struct WantsBody {
     text: String,
+}
+
+fn persist_point(
+    state: &AppState,
+    id: &str,
+    text: String,
+    at: u64,
+    mut journal: Option<(std::path::PathBuf, crate::record_journal::Journal)>,
+    warning: Option<String>,
+) -> Result<RecordView> {
+    if let Some((notes, meta)) = &mut journal {
+        meta.points.push((at, text.clone()));
+        crate::record_journal::save(notes, meta)?;
+    }
+    with_job(state, id, |job| {
+        job.journal = journal;
+        if let Ok(mut points) = job.points.lock() {
+            points.push((at, text.clone()));
+        }
+        job.view.points.push((at, text));
+        if let Some(warning) = warning {
+            job.view.warn(warning);
+        }
+        job.view.clone()
+    })
+    .map_err(|(_, message)| anyhow::anyhow!(message))
 }
 
 pub(crate) async fn wants(
@@ -1229,62 +1291,75 @@ pub(crate) async fn snapshot(
     Json(body): Json<Snapshot>,
 ) -> Response {
     use base64::Engine;
-    let directory = match with_job(&state, &id, |job| {
-        job.live().then(|| {
-            job.journal
-                .as_ref()
-                .map(|(_, m)| m.directory.clone())
-                .unwrap_or_default()
-        })
-    }) {
-        Ok(Some(dir)) => dir,
-        _ => {
+    writes_done(&state, &id).await;
+    let notes = match state.with_store(|store| Ok(store.notes_dir.clone())).await {
+        Ok(notes) => notes,
+        Err(code) => {
             return error(
-                StatusCode::CONFLICT,
-                "Start a recording before capturing a slide.",
-            );
-        }
-    };
-    let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(&body.data) else {
-        return error(StatusCode::BAD_REQUEST, "The picture did not arrive whole.");
-    };
-    let saved = state
-        .with_store({
-            let bytes = bytes.clone();
-            move |store| {
-                leo_core::attachments::save(&store.notes_dir, "slide.png", &bytes)
-                    .map_err(|_| StatusCode::BAD_REQUEST)
-            }
-        })
-        .await;
-    let path = match saved {
-        Ok(p) => p,
-        Err(code) => return error(code, "The picture could not be saved."),
-    };
-    let mut point = format!("Slide at {}\n![Captured slide]({path})", body.at);
-    let mut warning = None;
-    if let Some(reader) = state.reader.clone() {
-        let read = tokio::task::spawn_blocking(move || {
-            reader(
-                crate::UploadFile {
-                    name: "slide.png".into(),
-                    mime: "image/png".into(),
-                    bytes,
-                },
-                &mut |_| {},
+                code,
+                "The screenshot folder could not be opened. Try again.",
             )
-        })
-        .await;
-        match read {
-            Ok(Ok(text)) => {
-                point.push('\n');
-                point.extend(text.chars().take(6500));
-            }
-            _ => warning = Some("The slide image is kept; its text could not be read.".to_string()),
         }
+    };
+    let input = with_job(&state, &id, |job| -> anyhow::Result<_> {
+        anyhow::ensure!(
+            job.live() && job.view.points.len() < MOST_POINTS,
+            "Start a recording before pasting a screenshot."
+        );
+        Ok((
+            Writing::take(job)?,
+            job.journal.clone(),
+            body.at.min(job.view.secs),
+        ))
+    });
+    let (lease, journal, at) = match input {
+        Ok(Ok(input)) => input,
+        Ok(Err(problem)) => return error(StatusCode::CONFLICT, &problem.to_string()),
+        Err((status, problem)) => return error(status, problem),
+    };
+    let saved = tokio::task::spawn_blocking(move || -> Result<RecordView> {
+        let _lease = lease;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(&body.data)
+            .map_err(|_| {
+                anyhow::anyhow!("The screenshot did not arrive whole. Try pasting it again.")
+            })?;
+        let kind = leo_core::attachments::kind_of(&bytes)
+            .ok_or_else(|| anyhow::anyhow!("Paste a PNG, JPEG, GIF or WebP screenshot."))?;
+        let mime = leo_core::attachments::mime_of(kind).unwrap_or("image/png");
+        let path = leo_core::attachments::save(&notes, "slide.png", &bytes)?;
+        let mut point = format!("Slide at {at}\n![Captured slide]({path})");
+        let mut warning = None;
+        if let Some(reader) = state.reader.clone() {
+            let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                reader(
+                    crate::UploadFile {
+                        name: format!("slide.{kind}"),
+                        mime: mime.into(),
+                        bytes,
+                    },
+                    &mut |_| {},
+                )
+            }));
+            match read {
+                Ok(Ok(text)) => {
+                    point.push('\n');
+                    point.extend(text.chars().take(SLIDE_TEXT_CHARS));
+                }
+                _ => warning = Some("The slide image is kept; its text could not be read.".into()),
+            }
+        }
+        persist_point(&state, &id, point, at, journal, warning)
+    })
+    .await;
+    match saved {
+        Ok(Ok(view)) => Json(view).into_response(),
+        Ok(Err(problem)) => error(StatusCode::BAD_REQUEST, &problem.to_string()),
+        Err(_) => error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "The screenshot could not be kept. Try pasting it again.",
+        ),
     }
-    let _ = directory;
-    append_point(&state, &id, point, Some(body.at), warning).await
 }
 
 pub(crate) async fn finish_available(

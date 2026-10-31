@@ -72,10 +72,13 @@ pub fn tidy(doc: &mut DocumentMut) -> bool {
         .map(|providers| {
             providers
                 .iter()
-                .filter(|(_, block)| {
+                .filter(|(name, block)| {
                     matches!(
                         block.get("kind").and_then(Item::as_str),
                         Some("agy" | "copilot")
+                    ) || super::speech_migration::retired(
+                        name,
+                        block.get("kind").and_then(Item::as_str),
                     )
                 })
                 .map(|(name, _)| name.to_string())
@@ -99,6 +102,7 @@ pub fn tidy(doc: &mut DocumentMut) -> bool {
             .filter(|n| {
                 !RETIRED.contains(&n.as_str())
                     && !removed.contains(n.as_str())
+                    && !super::speech_migration::retired(n, None)
                     && (task != Task::Chat || !RETIRED_CHAT.contains(&n.as_str()))
             })
             .cloned()
@@ -131,7 +135,11 @@ pub fn tidy(doc: &mut DocumentMut) -> bool {
         let old_engine = (kind.as_deref() == Some("whisper_cpp")
             || (kind.is_none() && name == "whisper_cpp"))
             && !own_program;
-        if RETIRED.contains(&name.as_str()) || unusable_kind || old_engine {
+        if RETIRED.contains(&name.as_str())
+            || unusable_kind
+            || old_engine
+            || super::speech_migration::retired(&name, kind.as_deref())
+        {
             providers.remove(&name);
             changed = true;
             continue;
@@ -332,7 +340,7 @@ model = "house-model"
         assert!(tidy(&mut doc));
         let cfg = Config::parse_with_built_ins(&doc.to_string()).unwrap();
         assert_eq!(cfg.chat.chain, vec!["codex"]);
-        assert_eq!(cfg.transcribe.chain, vec!["gemini_speech"]);
+        assert_eq!(cfg.transcribe.chain, vec!["parakeet"]);
         assert_eq!(
             cfg.provider("anthropic").unwrap().model.as_deref(),
             Some("claude-opus-5-5")
@@ -353,7 +361,7 @@ model = "house-model"
     }
 
     #[test]
-    fn retired_writing_choices_do_not_remove_cloud_speech_or_shared_settings() {
+    fn retired_cloud_choices_fall_back_to_local_speech_and_keep_writer_settings() {
         let mut doc = r#"[chat]
 chain = ["openai", "agy", "anthropic", "copilot", "gemini", "xai", "openrouter"]
 [transcribe]
@@ -367,10 +375,7 @@ effort = "high"
         .unwrap();
         assert!(tidy(&mut doc));
         assert_eq!(edit::read_chain(&doc, Task::Chat), ["ollama"]);
-        assert_eq!(
-            edit::read_chain(&doc, Task::Transcribe),
-            ["openai_whisper", "gemini_speech", "xai_speech"]
-        );
+        assert_eq!(edit::read_chain(&doc, Task::Transcribe), ["parakeet"]);
         assert_eq!(
             doc["providers"]["openai"]["key_from"].as_str(),
             Some("shared-speech")
@@ -422,10 +427,7 @@ model = "gpt-transcribe"
                 "ollama"
             };
             assert_eq!(config.chat.chain, [expected]);
-            assert_eq!(
-                config.transcribe.chain,
-                ["openai_whisper", "gemini_speech", "xai_speech"]
-            );
+            assert_eq!(config.transcribe.chain, ["parakeet"]);
             for name in ["agy", "copilot", "old-agy", "old-copilot"] {
                 assert!(config.provider(name).is_none());
             }
@@ -454,7 +456,7 @@ transcribe = { chain = ["openai_whisper"] }
         .unwrap();
         let config = Config::load_from(&path);
         assert_eq!(config.chat.chain, ["claude_code"]);
-        assert_eq!(config.transcribe.chain, ["openai_whisper"]);
+        assert_eq!(config.transcribe.chain, ["parakeet"]);
         assert!(config.provider("old").is_none());
     }
 

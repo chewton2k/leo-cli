@@ -133,15 +133,13 @@ pub trait TranscribeProvider {
 pub mod agent_cli;
 pub mod anthropic;
 pub mod audio;
-pub mod chat_audio;
 pub mod codex_app;
 pub(crate) mod codex_exec;
+pub mod local_speech;
 pub mod mcp;
 pub mod openai;
-pub mod parakeet;
 pub(crate) mod process;
 pub mod scoped_cli;
-pub mod transcriptions;
 pub mod whisper_cpp;
 
 use crate::config::provider::ProviderKind;
@@ -207,7 +205,7 @@ pub fn build_one_chat(
 /// reason (the default transcribe chain alone would print up to three).
 pub fn build_transcribe_chain(
     cfg: &Config,
-    store: &dyn SecretStore,
+    _store: &dyn SecretStore,
 ) -> Vec<Box<dyn TranscribeProvider>> {
     let mut out: Vec<Box<dyn TranscribeProvider>> = Vec::new();
     for name in &cfg.transcribe.chain {
@@ -215,29 +213,12 @@ pub fn build_transcribe_chain(
             continue;
         };
         match pc.kind {
-            Some(ProviderKind::Transcriptions) => {
-                let key = resolve(pc.account(name), store);
-                out.push(Box::new(transcriptions::Transcriptions::new(
-                    name.clone(),
-                    pc,
-                    key,
-                )))
-            }
-            Some(ProviderKind::ChatAudio) => {
-                let key = resolve(pc.account(name), store);
-                out.push(Box::new(chat_audio::ChatAudioTranscribe::new(
-                    name.clone(),
-                    pc,
-                    key,
-                )))
-            }
             Some(ProviderKind::WhisperCpp) => out.push(Box::new(
                 whisper_cpp::WhisperCppTranscribe::new(name.clone(), pc),
             )),
-            Some(ProviderKind::Parakeet) => out.push(Box::new(parakeet::ParakeetTranscribe::new(
-                name.clone(),
-                pc,
-            ))),
+            Some(ProviderKind::Parakeet) => {
+                out.push(Box::new(local_speech::LocalSpeech::new(name.clone(), pc)))
+            }
             _ => continue,
         }
     }

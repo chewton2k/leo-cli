@@ -39,3 +39,9 @@ a test, or leave it unset to see the user's own data.
 - `window.print` calls the `print_page` command (the webview's own print).
 - Capability `default`: remote `http://127.0.0.1:*`/`localhost:*`, core
   defaults, window dragging and double-click maximize.
+
+The `leo-app` entry checks `speech::is_worker_invocation` before Tauri and
+single-instance startup; native speech runs only in that child process.
+Info.plist declares microphone and computer-audio capture uses. Recording
+capture and its process activity guard live in services and continue when
+`main` is hidden; the webview only controls and displays the job.

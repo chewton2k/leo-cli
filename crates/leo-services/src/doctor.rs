@@ -293,49 +293,19 @@ fn notes_checks(notes_dir: &Path) -> Vec<Check> {
 }
 
 fn speech_model_check(config: &Config, secrets: &dyn SecretStore) -> Option<Check> {
-    use crate::ai::provider::parakeet;
-    use crate::providers::ModelState;
-    let name = config
-        .transcribe
-        .chain
-        .iter()
-        .find(|n| health::provider_usable(config, n, secrets))?;
-    let pc = config.provider(name)?;
-    if pc.kind != Some(crate::config::provider::ProviderKind::Parakeet) {
-        return None;
-    }
-    let dir = parakeet::model_dir(pc);
+    let _ = (config, secrets);
+    Some(speech_result(
+        crate::speech::library::library().and_then(|l| l.selected()),
+    ))
+}
+
+fn speech_result(selected: anyhow::Result<crate::speech::library::Selected>) -> Check {
     let what = "speech model";
     let needed_for = "turning speech into text on this computer";
-    Some(
-        match crate::providers::files_state(&dir, &parakeet::manifest()) {
-            ModelState::Ready => Check::ready(
-                what,
-                needed_for,
-                Some(format!(
-                    "Parakeet, every file checked ({} MB)",
-                    parakeet::MODEL_MB
-                )),
-            ),
-            ModelState::Missing => Check::missing(
-                what,
-                needed_for,
-                "leo update   (downloads the missing files)",
-            ),
-            ModelState::Damaged => {
-                let mut c = Check::missing(
-                    what,
-                    needed_for,
-                    "leo update   (downloads the damaged files again)",
-                );
-                c.detail = Some(format!(
-                    "a file in {} does not match its checksum",
-                    dir.display()
-                ));
-                c
-            }
-        },
-    )
+    match selected {
+        Ok(selected) => Check::ready(what, needed_for, Some(selected.id)),
+        Err(error) => Check::missing(what, needed_for, &error.to_string()),
+    }
 }
 
 fn ai_checks(config: &Config, secrets: &dyn SecretStore, probe: Probe) -> Vec<Check> {
@@ -513,44 +483,18 @@ fn backup_checks(config: &Config, notes_dir: &Path, probe: Probe) -> Vec<Check> 
 mod tests {
     use super::*;
 
-    fn parakeet_at(dir: &std::path::Path) -> Config {
-        Config::parse_with_built_ins(&format!(
-            "[transcribe]\nchain = [\"parakeet\"]\n[providers.parakeet]\nmodel_path = '{}'\n",
-            dir.display()
-        ))
-        .unwrap()
-    }
-
     #[test]
-    fn a_damaged_speech_model_is_a_problem_with_its_fix() {
+    fn a_missing_speech_model_has_a_settings_fix_without_a_microphone_probe() {
         let dir = TempDir::new().unwrap();
-        for f in [
-            "encoder.int8.onnx",
-            "decoder.int8.onnx",
-            "joiner.int8.onnx",
-            "tokens.txt",
-        ] {
-            std::fs::write(dir.path().join(f), b"not the model").unwrap();
-        }
-        let store = crate::config::secret::MemoryStore::default();
-        let check = speech_model_check(&parakeet_at(dir.path()), &store).expect("a check");
+        let library = crate::speech::library::Library::new(
+            dir.path().join("models"),
+            dir.path().join("config"),
+        );
+        let check = speech_result(library.selected());
         assert!(!check.state.is_ready());
-        let text = format!("{check:?}");
-        assert!(text.contains("leo update"), "{text}");
-        assert!(text.contains("checksum"), "{text}");
+        assert!(format!("{check:?}").contains("Settings → Speech models"));
     }
 
-    #[test]
-    fn a_missing_speech_model_is_left_to_the_transcription_check() {
-        let dir = TempDir::new().unwrap();
-        let store = crate::config::secret::MemoryStore::default();
-        let config = parakeet_at(dir.path());
-        assert!(speech_model_check(&config, &store).is_none());
-        let checks = ai_checks(&config, &store, Probe::default());
-        let text = format!("{checks:?}");
-        assert!(text.contains("leo update"), "{text}");
-        assert!(!text.contains("answers"), "{text}");
-    }
     use crate::config::secret::MemoryStore;
     use tempfile::TempDir;
 

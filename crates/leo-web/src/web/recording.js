@@ -87,10 +87,8 @@
     return { fresh: levels.slice(from - start), fedUpTo: end };
   }
 
-  function sourceFor(kind, { local, canShare }) {
-    if (kind === 'microphone') return 'browser';
-    if (local) return 'screen';
-    return canShare ? 'tab' : null;
+  function sourceFor(kind) {
+    return kind === 'microphone' ? 'microphone' : kind === 'call' ? 'nativecall' : 'screen';
   }
 
   function loudness(rms) {
@@ -188,8 +186,24 @@
     };
   }
 
+  function pastedScreenshot(clipboard) {
+    const item = Array.from((clipboard && clipboard.items) || []).find((item) => item.kind === 'file' && /^image\/(png|jpeg|gif|webp)$/.test(item.type));
+    return item ? item.getAsFile() : null;
+  }
+
+  async function saveScreenshot(view, file, encode, api, current) {
+    if (!live(view)) return null;
+    if (!file || !/^image\/(png|jpeg|gif|webp)$/.test(file.type) || file.size > 20 * 1024 * 1024) throw new Error('Paste a PNG, JPEG, GIF or WebP screenshot under 20 MB.');
+    const id = view.id;
+    const at = view.secs;
+    const data = await encode(file);
+    if (!live(current()) || current().id !== id) return null;
+    const saved = await api(`/api/record/${id}/snapshot`, { method: 'POST', body: { data, at } });
+    return live(current()) && current().id === id ? saved : null;
+  }
+
   function create(deps) {
-    const { api, esc, toast, go, noteHash, felix, icons, noteReady } = deps;
+    const { api, esc, toast, go, noteHash, felix, icons, noteReady, encodePicture } = deps;
     const s = {
       view: null,
       dismissed: (() => { try { return root.sessionStorage.getItem('leo-record-dismissed'); } catch (e) { return null; } })(),
@@ -240,67 +254,8 @@
     const env = () => ({ isSecureContext: root.isSecureContext, mediaDevices: root.navigator && root.navigator.mediaDevices, AudioWorkletNode: root.AudioWorkletNode });
     const shown = (message) => Object.assign(new Error(message), { shown: true });
 
-    async function microphone() {
-      const ready = micReady(env());
-      if (ready !== 'ok') throw shown(micProblem(ready));
-      try {
-        return await root.navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
-      } catch (e) {
-        throw shown(micProblem(e));
-      }
-    }
-
-    async function shareSound() {
-      if (!canShareSound(env())) throw shown(sharingProblem('unsupported'));
-      let stream;
-      try {
-        stream = await root.navigator.mediaDevices.getDisplayMedia({
-          video: true,
-          audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-          systemAudio: 'include',
-          selfBrowserSurface: 'exclude',
-        });
-      } catch (e) {
-        throw shown(sharingProblem(e));
-      }
-      if (!stream.getAudioTracks().length) {
-        stream.getTracks().forEach((t) => t.stop());
-        throw shown(sharingProblem('no-audio'));
-      }
-      return stream;
-    }
-
-    async function openMic(kind = 'browser') {
-      try {
-        s.stream = kind === 'tab' || kind === 'call' ? await shareSound() : await microphone();
-        if (kind === 'call') s.micStream = await microphone();
-        s.context = new root.AudioContext({ sinkId: { type: 'none' } });
-        await s.context.audioWorklet.addModule('/recorder.js');
-        s.node = new root.AudioWorkletNode(s.context, 'leo-recorder', { channelCount: kind === 'call' ? 2 : 1, channelCountMode:'explicit', processorOptions:{dual:kind === 'call'} });
-        s.analyser = connectCapture(s.context, s.stream, s.micStream, s.node);
-        s.samples = new Float32Array(s.analyser.fftSize);
-        s.node.port.onmessage = (event) => {
-          if (s.view && s.view.state === 'paused') return;
-          if (event.data.samples instanceof ArrayBuffer) s.held.push(new Int16Array(event.data.samples));
-        };
-        if (s.context.state === 'suspended') await s.context.resume();
-        s.deviceLost=false;
-        if (s.micStream) s.micStream.getAudioTracks().forEach((track) => { track.onended=() => { s.deviceLost=true; note('The microphone disconnected. Reconnect it to keep capturing your side of the call.'); }; });
-        s.stream.getTracks().forEach((track) => {
-          track.onended = () => {
-            if (!live(s.view) || !s.mine) return;
-            if (kind === 'tab' || kind === 'call') {
-              note('Sharing stopped, so the recording stopped and is being saved.');
-              stop().catch(() => {});
-            } else if (track.kind === 'audio') {
-              s.deviceLost=true; note('The microphone was disconnected. What was recorded is kept; stop to save it.');
-            }
-          };
-        });
-      } catch (error) {
-        closeMic();
-        throw error.shown ? error : shown('Audio capture could not start. Close other recording tabs, then try again.');
-      }
+    async function openMic() {
+      throw shown('This older recording has saved recovery audio. Recover it, then start a new recording to use Leo’s microphone.');
     }
 
     function closeMic() {
@@ -576,21 +531,18 @@
 
     const KINDS = {
       microphone: { title: 'Microphone', about: 'A lecture, a meeting, or your own voice' },
-      call: { title: 'Call', about: 'Your microphone and the shared tab, on separate tracks' },
+      call: { title: 'Call', about: 'Your microphone and computer sound, on separate tracks' },
       screen: { title: 'Screen', about: 'A video, a call, or anything playing' },
     };
 
-    function screenNote(local) {
-      if (local) return 'Records what this computer plays';
-      return canShareSound(env()) ? 'Pick the tab or screen and turn on “Share tab audio”' : 'Needs Chrome or Edge on a computer';
-    }
+    function screenNote() { return 'Records what this computer plays'; }
 
     function kindChoices(local) {
       const canShare = canShareSound(env());
       const icon = { microphone: icons.mic, screen: icons.screen, call: icons.call || icons.mic };
       return `<div class="rec-kinds" role="radiogroup" aria-label="What to record">${['microphone', 'screen', 'call']
         .map((kind, i) => {
-          const off = kind === 'call' ? !canShare : !sourceFor(kind, { local, canShare });
+          const off = false;
           return `<label class="rec-kind${off ? ' off' : ''}"><input type="radio" name="rec-kind" value="${kind}"${i === 0 ? ' checked' : ''}${off ? ' disabled' : ''}>
             <span class="rec-kind-body"><span class="rec-kind-icon">${icon[kind]}</span><b>${KINDS[kind].title}</b><span class="sub">${esc(kind === 'screen' ? screenNote(local) : KINDS[kind].about)}</span></span></label>`;
         })
@@ -604,7 +556,7 @@
       const picked = s.event !== null ? upcoming[s.event] : null;
       const pending = ov.pending || [];
       const ready = micReady(env());
-      const insecure = ready !== 'ok' && !ov.local ? `<p class="set-note warn">${esc(micProblem(ready))}</p>` : '';
+      const insecure = false ? `<p class="set-note warn">${esc(micProblem(ready))}</p>` : '';
       const event = upcoming.length
         ? `<label class="set-row"><span class="set-label">Calendar event</span><span class="select-control"><select id="rec-event"><option value="">None</option>${upcoming.map((e, i) => `<option value="${i}"${i === s.event ? ' selected' : ''}>${esc(whenOf(e))} · ${esc(e.title)}</option>`).join('')}</select>${icons.chevron}</span></label>
           ${picked ? '<p class="set-note rec-event-note">The AI gets this event’s description, place and who was invited.</p>' : ''}`
@@ -631,7 +583,7 @@
             <span class="rec-start-label">Start recording</span>
           </div>
         </section>
-        <p class="hint rec-tip">On a phone, keep this page open while it records; the screen stays on.</p>
+        <p class="hint rec-tip">Recording continues when you close the window. Open Leo from the menu bar to return.</p>
       </div>`;
     }
 
@@ -642,7 +594,7 @@
       const transcript = v.transcript ? esc(v.transcript) : `<span class="hint">${paused ? 'Paused.' : 'Listening… words appear here after a few seconds.'}</span>`;
       const points = v.points.length ? `<ul class="rec-points">${v.points.map(([at, text]) => `<li><span class="rec-at">${clock(at)}</span><span class="rec-point-said">${esc(text)}</span></li>`).join('')}</ul>` : '';
       const warnings = v.warnings.map((w) => `<p class="set-note warn">${esc(w)}</p>`).join('') + (s.lost ? `<p class="set-note warn">${clock(s.lost / RATE)} of audio could not reach leo and was dropped.</p>` : '');
-      const kind = v.source === 'call' ? 'Call · You + Others' : v.source === 'browser' || v.source === 'microphone' ? 'Microphone' : 'Screen';
+      const kind = (v.source === 'call' || v.source === 'nativecall') ? 'Call · You + Others' : v.source === 'browser' || v.source === 'microphone' ? 'Microphone' : 'Screen';
       const controls = orphan
         ? `<p class="set-note warn">This recording lost its microphone when the page reloaded.</p><div class="rec-controls"><button class="btn plain" data-action="rec-rejoin">Keep recording here</button><button class="btn primary" data-action="rec-stop">Stop and save</button></div>`
         : `<div class="rec-buttons">
@@ -661,7 +613,7 @@
           ${s.pending ? `<p class="hint">${s.pending === 1 ? 'A second' : `${s.pending} seconds`} of audio kept on this device, waiting to reach leo.</p>` : ''}
         </section>
         <section class="set-card rec-notepad">
-          <header><h3>Your notes</h3><button class="btn plain sm" data-action="rec-snapshot">Capture a slide</button></header>
+          <header><h3>Your notes</h3></header><p class="hint">Take a screenshot and paste it here to keep it with this recording.</p>
           <p class="hint">Your words go into the note exactly as you type them; leo fills in the rest from the recording.</p>
           ${points}
           <div class="rec-point rec-compose"><textarea id="rec-point-text" class="set-input" rows="3" placeholder="Type a point and press Enter"></textarea><div class="rec-compose-foot"><span class="cal-sub">Shift + Enter starts a new line</span><button class="btn primary sm" data-action="rec-point">Add</button></div></div>
@@ -712,7 +664,7 @@
         <div class="section-title">Recording</div>
         <section class="set-card rec-done-card rec-failed-card">${felix.felix(64, 'droop')}<h3>${esc(failure.title)}</h3>
           <p class="hint">${esc(failure.message)}</p>
-          <div class="rec-failed-context">${icons.mic}<span>${esc(clock(v.secs))} recorded · ${v.source === 'call' ? 'Call' : 'Recording'}</span></div>
+          <div class="rec-failed-context">${icons.mic}<span>${esc(clock(v.secs))} recorded · ${(v.source === 'call' || v.source === 'nativecall') ? 'Call' : 'Recording'}</span></div>
           ${failure.details.length ? `<details class="rec-error-details source-more"><summary>${icons.chevron}<span>Error details</span></summary>${failure.details.map((w) => `<p>${esc(w)}</p>`).join('')}</details>` : ''}
           <div class="buttons"><button class="btn primary sm" data-action="rec-again">Record again</button><button class="btn sm plain danger" data-action="rec-discard" data-id="${esc(v.id)}">Delete recording</button></div>
           <button class="btn plain sm" data-action="rec-dismiss">Dismiss warning</button>
@@ -902,6 +854,20 @@
       }
     }
 
+    let pasting = false;
+    root.document.addEventListener('paste', (event) => {
+      if (!s.container || !s.container.isConnected || !live(s.view) || !(s.container.contains(event.target) || event.target === root.document.body)) return;
+      const file = pastedScreenshot(event.clipboardData);
+      if (!file) return;
+      event.preventDefault();
+      if (pasting) return toast('A screenshot is still being added. Try again in a moment.');
+      pasting = true;
+      saveScreenshot(s.view, file, encodePicture, api, () => s.view).then((view) => {
+        if (view) { accept(view); toast('Screenshot added to this recording.'); }
+      }).catch((error) => toast(error.message || 'The screenshot could not be added. Try pasting it again.', { bad: true }))
+        .finally(() => { pasting = false; });
+    });
+
     root.addEventListener('beforeunload', (e) => {
       if (s.mine && live(s.view)) {
         e.preventDefault();
@@ -937,7 +903,7 @@
         const box = s.container;
         const picked = box.querySelector('input[name="rec-kind"]:checked');
         const kind = picked ? picked.value : 'microphone';
-        const source = kind === 'call' ? 'call' : sourceFor(kind, { local: Boolean(s.overview && s.overview.local), canShare: canShareSound(env()) });
+        const source = sourceFor(kind);
         if (!source) throw Object.assign(new Error(sharingProblem('unsupported')), { shown: true });
         const button = box.querySelector('[data-action="rec-start"]');
         if (button) button.disabled = true;
@@ -958,21 +924,7 @@
         if (audioQueue) await root.leoAudioQueue.drain(audioQueue,id,sendChunk);
         await api(`/api/record/${id}/recover`,{method:'POST'}); await refresh();
       },
-      async snapshot() {
-        if (!s.view || !live(s.view)) return;
-        let stream=s.stream && s.stream.getVideoTracks().length ? s.stream : null;
-        const temporary=!stream;
-        if (!stream) stream=await root.navigator.mediaDevices.getDisplayMedia({video:true,audio:false});
-        const at=s.view.secs;
-        try {
-          const video=root.document.createElement('video'); video.srcObject=stream; video.muted=true; await video.play();
-          const canvas=root.document.createElement('canvas');
-          const scale=Math.min(1,1600/video.videoWidth); canvas.width=video.videoWidth*scale; canvas.height=video.videoHeight*scale;
-          canvas.getContext('2d').drawImage(video,0,0,canvas.width,canvas.height);
-          const data=canvas.toDataURL('image/png').split(',')[1];
-          accept(await api(`/api/record/${s.view.id}/snapshot`,{method:'POST',body:{data,at}}));
-        } finally { if (temporary) stream.getTracks().forEach((t) => t.stop()); }
-      },
+
       point: submitPoint,
       dismiss() {
         if (!s.view || s.view.state !== 'failed') return;
@@ -1011,5 +963,5 @@
     };
   }
 
-  root.leoRecording = { eventNow, whenOf, MEETING_WANTS, ease, spread, freshLevels, sourceFor, create, clock, join, bytesOf, trimHeld, micReady, micProblem, stateWord, canShareSound, sharingProblem, connectCapture, failureOf, fedByBrowser, loudness, hearing, hearingWords, QUIET };
+  root.leoRecording = { pastedScreenshot, saveScreenshot, eventNow, whenOf, MEETING_WANTS, ease, spread, freshLevels, sourceFor, create, clock, join, bytesOf, trimHeld, micReady, micProblem, stateWord, canShareSound, sharingProblem, connectCapture, failureOf, fedByBrowser, loudness, hearing, hearingWords, QUIET };
 })(typeof window !== 'undefined' ? window : globalThis);

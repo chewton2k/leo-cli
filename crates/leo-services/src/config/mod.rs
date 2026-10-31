@@ -3,6 +3,7 @@ pub mod edit;
 pub mod file_store;
 pub mod provider;
 pub mod secret;
+pub mod speech_migration;
 pub mod sync;
 pub mod theme;
 pub mod tidy;
@@ -90,7 +91,7 @@ impl Config {
 #
 # Open Settings in leo to choose writing: Ollama on this computer, or your signed-in
 # Codex or Claude Code CLI.
-# Speech uses local Parakeet, or OpenAI, Gemini or xAI with a stored key.
+# Speech uses the local model chosen in Settings → Speech models.
 # Settings writes these two lines for you.
 
 [chat]
@@ -175,27 +176,6 @@ model = "gpt-6-luna"
 [providers.parakeet]
 kind = "parakeet"
 
-[providers.openai_whisper]
-kind = "openai_transcribe"
-base_url = "https://api.openai.com/v1"
-model = "gpt-transcribe"
-key_env = "OPENAI_API_KEY"
-key_from = "openai"
-
-[providers.gemini_speech]
-kind = "chat_audio"
-base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
-model = "gemini-3.8-flash"
-key_env = "GEMINI_API_KEY"
-key_from = "gemini"
-
-[providers.xai_speech]
-kind = "openai_transcribe"
-base_url = "https://api.x.ai/v1"
-path = "stt"
-model = "grok-voice-transcribe-2.0"
-key_env = "XAI_API_KEY"
-key_from = "xai"
 "#
         .to_string()
     }
@@ -211,7 +191,18 @@ key_from = "xai"
     /// falls back to built-in defaults so the app always starts.
     pub fn load() -> Config {
         match Config::config_path() {
-            Ok(path) => Config::load_from(&path),
+            Ok(path) => {
+                if let Ok(text) = std::fs::read_to_string(&path) {
+                    if let Err(error) =
+                        speech_migration::retire_speech_keys(&text, &secret::default_store())
+                    {
+                        leo_core::diag::warn(format!(
+                            "Old speech credentials could not be removed: {error}"
+                        ));
+                    }
+                }
+                Config::load_from(&path)
+            }
             Err(e) => {
                 leo_core::diag::warn(format!("config: {e}; using defaults"));
                 let mut cfg = Config::default();
@@ -380,7 +371,7 @@ model_path = "~/.leo/models/ggml-base.en.bin"
         std::fs::write(&path, "").unwrap();
         let cfg = Config::load_from(&path);
         assert!(cfg.chat.chain.is_empty());
-        assert_eq!(cfg.providers.len(), 12, "{:?}", cfg.providers.keys());
+        assert_eq!(cfg.providers.len(), 9, "{:?}", cfg.providers.keys());
         assert!(cfg.providers.contains_key("ollama"));
         assert!(cfg.providers.contains_key("parakeet"));
         assert!(!cfg.providers.contains_key("agy"));
@@ -476,14 +467,11 @@ model = "my-own-model"
                 "claude_code",
                 "codex",
                 "gemini",
-                "gemini_speech",
                 "ollama",
                 "openai",
-                "openai_whisper",
                 "openrouter",
                 "parakeet",
                 "xai",
-                "xai_speech"
             ]
         );
     }
@@ -586,15 +574,7 @@ kind = "telepathy"
     #[test]
     fn no_paid_provider_is_enabled_by_default() {
         let cfg = Config::default();
-        for paid in [
-            "openai",
-            "anthropic",
-            "gemini",
-            "xai",
-            "openai_whisper",
-            "gemini_speech",
-            "xai_speech",
-        ] {
+        for paid in ["openai", "anthropic", "gemini", "xai"] {
             assert!(
                 cfg.providers.contains_key(paid),
                 "{paid} should be offered in the file"
@@ -648,14 +628,14 @@ kind = "telepathy"
     }
 
     #[test]
-    fn the_shipped_file_explains_writing_and_cloud_speech_choices() {
+    fn the_shipped_file_explains_local_speech_and_writing_choices() {
         let text = Config::default_toml();
         // The file is the documentation, so these have to be present.
         assert!(text.contains("Settings inside leo"));
         assert!(text.contains("[providers.ollama]"));
         assert!(!text.contains("Antigravity"));
         assert!(!text.contains("Copilot"));
-        assert!(text.contains("Speech uses local Parakeet, or OpenAI, Gemini or xAI"));
+        assert!(text.contains("Speech uses the local model chosen in Settings → Speech models"));
         assert!(text.contains("[chat]"));
         assert!(text.contains("[transcribe]"));
         // And it must warn that keys do not belong in it.

@@ -82,28 +82,18 @@ pub fn classify_reqwest(provider: &str, e: &reqwest::Error) -> ProviderError {
 }
 
 fn key_place(provider: &str) -> (String, Option<String>) {
-    use crate::config::edit::Task;
-    let speech = match provider {
-        "openai" => "openai_whisper",
-        "gemini" => "gemini_speech",
-        "xai" => "xai_speech",
-        _ => provider,
-    };
-    match crate::config::choice::find(Task::Transcribe, speech) {
-        Some(choice) => (
-            choice.name.to_string(),
-            Some(format!("Settings, then the {} key row", choice.name)),
-        ),
-        None => (
-            match provider {
-                "anthropic" => "Anthropic",
-                "openrouter" => "OpenRouter",
-                _ => provider,
-            }
-            .to_string(),
-            None,
-        ),
-    }
+    (
+        match provider {
+            "openai" => "OpenAI",
+            "gemini" => "Gemini",
+            "xai" => "xAI",
+            "anthropic" => "Anthropic",
+            "openrouter" => "OpenRouter",
+            _ => provider,
+        }
+        .to_string(),
+        None,
+    )
 }
 
 fn about_the_key(status: u16, body: &str) -> bool {
@@ -129,7 +119,11 @@ pub fn classify_status_with_key(status: u16, provider: &str, body: &str) -> Prov
     };
     let fix = match place {
         Some(place) => format!(" To replace it: {place}."),
-        None if matches!(provider, "anthropic" | "openrouter") => {
+        None if matches!(
+            provider,
+            "openai" | "gemini" | "xai" | "anthropic" | "openrouter"
+        ) =>
+        {
             " Choose a supported AI for writing in Settings.".into()
         }
         None => String::new(),
@@ -192,60 +186,14 @@ mod tests {
     }
 
     #[test]
-    fn a_rejected_key_says_where_to_replace_it() {
-        let openrouter = classify_status_with_key(
-            401,
-            "openrouter",
-            r#"{"error":{"message":"Missing Authentication header","code":401}}"#,
-        );
-        assert!(!openrouter.is_retryable());
-        assert!(
-            openrouter
+    fn a_rejected_legacy_key_points_to_supported_writing_settings() {
+        for name in ["openai", "gemini", "xai", "anthropic", "openrouter"] {
+            let error = classify_status_with_key(401, name, "Invalid API key");
+            assert!(!error.is_retryable());
+            assert!(error
                 .message()
-                .starts_with("OpenRouter rejected the key stored in leo (401)."),
-            "{}",
-            openrouter.message()
-        );
-        assert!(openrouter
-            .message()
-            .contains("Choose a supported AI for writing in Settings."));
-        let gemini = classify_status_with_key(
-            400,
-            "gemini_speech",
-            r#"{"error":{"code":400,"message":"Please pass a valid API key","status":"INVALID_ARGUMENT"}}"#,
-        );
-        assert!(gemini
-            .message()
-            .starts_with("Gemini rejected the key stored in leo (400)."));
-        assert!(gemini.message().contains("Gemini key row"));
-        let xai = classify_status_with_key(
-            400,
-            "xai",
-            r#"{"code":"invalid-argument","error":"Incorrect API key provided."}"#,
-        );
-        assert!(xai.message().starts_with("xAI rejected the key"));
-        let whisper = classify_status_with_key(401, "openai_whisper", "Incorrect API key provided");
-        assert!(
-            whisper.message().contains("OpenAI key row"),
-            "{}",
-            whisper.message()
-        );
-        let forbidden = classify_status_with_key(403, "anthropic", "forbidden");
-        assert!(forbidden.message().contains("out of credit"));
-        assert!(forbidden.message().starts_with("Anthropic refused"));
-        assert!(!forbidden.message().contains("Anthropic key row"));
-        assert!(!openrouter.message().contains("OpenRouter key row"));
-        for (provider, label) in [
-            ("openai", "OpenAI"),
-            ("openai_whisper", "OpenAI"),
-            ("gemini", "Gemini"),
-            ("gemini_speech", "Gemini"),
-            ("xai", "xAI"),
-            ("xai_speech", "xAI"),
-        ] {
-            let error = classify_status_with_key(401, provider, "bad key");
-            assert!(error.message().starts_with(&format!("{label} rejected")));
-            assert!(error.message().contains(&format!("{label} key row")));
+                .contains("Choose a supported AI for writing in Settings."));
+            assert!(!error.message().contains("key row"));
         }
     }
 

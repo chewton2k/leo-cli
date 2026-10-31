@@ -16,6 +16,7 @@ pub mod providers;
 pub mod pyodide;
 pub mod runtimes;
 pub mod session;
+pub mod speech;
 pub mod update;
 pub mod usage;
 pub mod web;

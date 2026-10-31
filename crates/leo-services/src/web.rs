@@ -219,6 +219,25 @@ fn protected_client(
         .build()?)
 }
 
+#[cfg(not(test))]
+pub(crate) fn model_client(timeout: Duration) -> Result<reqwest::Client> {
+    Ok(reqwest::Client::builder()
+        .no_proxy()
+        .https_only(true)
+        .connect_timeout(Duration::from_secs(15))
+        .timeout(timeout)
+        .user_agent(AGENT)
+        .dns_resolver(Arc::new(PublicOnly))
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if follows(attempt.url(), attempt.previous().len(), true) {
+                attempt.follow()
+            } else {
+                attempt.stop()
+            }
+        }))
+        .build()?)
+}
+
 fn client(https_only: bool) -> Result<reqwest::blocking::Client> {
     protected_client(reqwest::blocking::Client::builder(), https_only)
 }

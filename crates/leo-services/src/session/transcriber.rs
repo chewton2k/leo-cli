@@ -74,6 +74,14 @@ pub fn rate_limited(error: &str) -> bool {
         || e.contains("too many requests")
 }
 
+pub fn waiting_for_model(error: &str) -> bool {
+    error.contains("Settings → Speech models")
+        && (error.contains("Download")
+            || error.contains("download")
+            || error.contains("incomplete")
+            || error.contains("damaged"))
+}
+
 pub fn waiting(dir: &Path) -> Vec<u32> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
@@ -104,7 +112,16 @@ fn recording_now(dir: &Path) -> bool {
     })
 }
 
+#[cfg(test)]
+thread_local! { static BEFORE_WRITE: std::cell::RefCell<Option<Box<dyn Fn()>>> = Default::default(); }
+
 fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
+    #[cfg(test)]
+    BEFORE_WRITE.with(|hook| {
+        if let Some(hook) = hook.borrow().as_ref() {
+            hook();
+        }
+    });
     use std::io::Write;
     let parent = path
         .parent()
@@ -188,18 +205,22 @@ struct Work {
 
 impl Work {
     fn pending(&self, dir: &Path) -> Vec<u32> {
-        let terminal = self.terminal.lock().unwrap_or_else(|e| e.into_inner());
+        let terminal = self
+            .terminal
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         waiting(dir)
             .into_iter()
             .filter(|i| !terminal.contains(i))
             .collect()
     }
     fn claim(&self, dir: &Path) -> Option<u32> {
+        let pending = self.pending(dir);
         let mut busy = self.busy.lock().ok()?;
         let attempts = self.attempts.lock().ok()?;
         let now = Instant::now();
-        let index = self
-            .pending(dir)
+        let index = pending
             .into_iter()
             .find(|i| !busy.contains(i) && attempts.get(i).is_none_or(|(_, next)| now >= *next))?;
         busy.insert(index);
@@ -292,9 +313,6 @@ fn settle(
         }),
         Err(e) => Err(e.to_string()),
     };
-    let Ok(mut attempts) = work.attempts.lock() else {
-        return;
-    };
     match result {
         Ok(text) => {
             if let Err(e) = write_atomic(&text_path(dir, index), &text) {
@@ -314,7 +332,10 @@ fn settle(
                     });
                     return;
                 }
-                attempts.insert(index, (0, Instant::now() + policy.idle));
+                work.attempts
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(index, (0, Instant::now() + policy.idle));
                 let _ = events.send(Update::Retrying {
                     index,
                     attempt: 0,
@@ -324,11 +345,19 @@ fn settle(
                 return;
             }
             let _ = std::fs::remove_file(&path);
-            attempts.remove(&index);
+            work.attempts
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&index);
             let _ = events.send(Update::Done { index, text });
         }
         Err(error) => {
-            let attempt = attempts.get(&index).map_or(1, |(n, _)| n + 1);
+            let attempt = work
+                .attempts
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&index)
+                .map_or(1, |(n, _)| n + 1);
             let finishing = !recording.load(Ordering::Relaxed);
             let expired = work
                 .stopped_at
@@ -337,6 +366,7 @@ fn settle(
                 .and_then(|v| *v)
                 .is_some_and(|at| at.elapsed() >= policy.finish_limit);
             if finishing
+                && !waiting_for_model(&error)
                 && (expired || (attempt >= policy.attempts_after_stop && !rate_limited(&error)))
             {
                 if write_atomic(&dir.join(format!("seg-{index:05}.err")), &error).is_err() {
@@ -344,16 +374,26 @@ fn settle(
                         terminal.insert(index);
                     }
                 }
-                attempts.remove(&index);
+                work.attempts
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&index);
                 let _ = events.send(Update::Failed { index, error });
             } else {
-                let mut wait = policy.wait(attempt);
-                if finishing {
+                let mut wait = if waiting_for_model(&error) {
+                    policy.first_wait.min(Duration::from_secs(2))
+                } else {
+                    policy.wait(attempt)
+                };
+                if finishing && !waiting_for_model(&error) {
                     if let Some(at) = work.stopped_at.lock().ok().and_then(|v| *v) {
                         wait = wait.min(policy.finish_limit.saturating_sub(at.elapsed()));
                     }
                 }
-                attempts.insert(index, (attempt, Instant::now() + wait));
+                work.attempts
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(index, (attempt, Instant::now() + wait));
                 let _ = events.send(Update::Retrying {
                     index,
                     attempt,
@@ -661,5 +701,86 @@ mod tests {
         assert_eq!(p.wait(2), Duration::from_secs(10));
         assert_eq!(p.wait(4), Duration::from_secs(40));
         assert_eq!(p.wait(30), Duration::from_secs(300));
+    }
+}
+
+#[cfg(test)]
+mod model_wait_tests {
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+
+    #[test]
+    fn a_stopped_segment_waits_for_a_model_then_retries_without_an_error_file() {
+        let dir = tempfile::tempdir().unwrap();
+        wav::write(&dir.path().join(wav::done_name(0)), &vec![12000; 1600]).unwrap();
+        let tries = Arc::new(AtomicUsize::new(0));
+        let count = tries.clone();
+        let (send, updates) = std::sync::mpsc::channel();
+        let worker = Transcriber::start(
+            dir.path(),
+            Arc::new(move |_| {
+                if count.fetch_add(1, Ordering::SeqCst) == 0 {
+                    Err("Download a model in Settings → Speech models. Your recorded audio is kept until one is ready.".into())
+                } else {
+                    Ok("the lecture".into())
+                }
+            }),
+            Policy {
+                first_wait: Duration::from_millis(1),
+                most_wait: Duration::from_millis(2),
+                attempts_after_stop: 1,
+                idle: Duration::from_millis(1),
+                workers: 1,
+                finish_limit: Duration::from_millis(50),
+            },
+            false,
+            send,
+        );
+        worker.wait();
+        assert!(updates.try_iter().any(|u| matches!(u, Update::Done { .. })));
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("seg-00000.txt")).unwrap(),
+            "the lecture"
+        );
+        assert!(!dir.path().join("seg-00000.err").exists());
+    }
+}
+
+#[cfg(test)]
+mod lock_tests {
+    use super::*;
+    #[test]
+    fn saving_a_transcript_does_not_hold_the_attempts_mutex() {
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                BEFORE_WRITE.with(|hook| hook.borrow_mut().take());
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        wav::write(&dir.path().join(wav::done_name(0)), &vec![12000; 1600]).unwrap();
+        let work = Arc::new(Work::default());
+        let observed = work.clone();
+        BEFORE_WRITE.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move || {
+                assert!(
+                    observed.attempts.try_lock().is_ok(),
+                    "disk writes must happen outside the attempts mutex"
+                );
+            }))
+        });
+        let _reset = Reset;
+        let (send, updates) = std::sync::mpsc::channel();
+        let transcribe: TranscribeFn = Arc::new(|_| Ok("speech".into()));
+        settle(
+            dir.path(),
+            0,
+            &transcribe,
+            Policy::default(),
+            &AtomicBool::new(false),
+            &send,
+            &work,
+        );
+        assert!(matches!(updates.recv().unwrap(), Update::Done { .. }));
     }
 }

@@ -13,10 +13,14 @@ pub fn listener() -> Listener {
 }
 
 fn listen(listening: Listening, heard: &mut dyn FnMut(Heard)) -> Result<Recorded> {
+    if listening.recover.is_some() {
+        return recover(listening, heard);
+    }
     if listening.call {
         return listen_call(listening, heard);
     }
     let Listening {
+        recover: _,
         id,
         profile,
         other_audio: _,
@@ -216,15 +220,15 @@ fn listen_call(listening: Listening, heard: &mut dyn FnMut(Heard)) -> Result<Rec
         wants,
         ..
     } = listening;
-    let mut profile = profile;
     let tracks = [("You", audio), ("Others", other_audio)];
     let (tx, rx) = std::sync::mpsc::channel();
     let mut dirs = Vec::new();
     let mut warnings = Vec::new();
     std::thread::scope(|scope| {
         for (speaker, audio) in tracks {
-            let Some(audio) = audio else {
-                continue;
+            let input = match audio {
+                Some(audio) => Input::Fed(audio),
+                None => Input::Device(Source::from_env(speaker == "Others")),
             };
             let tx = tx.clone();
             let id = id.clone();
@@ -248,7 +252,7 @@ fn listen_call(listening: Listening, heard: &mut dyn FnMut(Heard)) -> Result<Rec
                         append_to: None,
                         dir: directory,
                         screen: speaker == "Others",
-                        input: Input::Fed(audio),
+                        input,
                     },
                     &controls,
                     &|event| {
@@ -294,6 +298,17 @@ fn listen_call(listening: Listening, heard: &mut dyn FnMut(Heard)) -> Result<Rec
             }
         }
     });
+    finish_tracks(dirs, warnings, id, profile, wants, heard)
+}
+
+fn finish_tracks(
+    dirs: Vec<(&'static str, std::path::PathBuf)>,
+    warnings: Vec<String>,
+    id: String,
+    mut profile: leo_core::recording::Profile,
+    wants: Arc<std::sync::Mutex<Option<String>>>,
+    heard: &mut dyn FnMut(Heard),
+) -> Result<Recorded> {
     if dirs.is_empty() {
         anyhow::bail!(warnings.join("; "));
     }
@@ -344,4 +359,134 @@ fn listen_call(listening: Listening, heard: &mut dyn FnMut(Heard)) -> Result<Rec
             Ok(())
         })),
     })
+}
+
+fn saved_sessions() -> Result<Vec<(String, std::path::PathBuf)>> {
+    let root = leo_services::session::root()?;
+    if !root.exists() {
+        return Ok(Vec::new());
+    }
+    anyhow::ensure!(
+        std::fs::symlink_metadata(&root)?.is_dir(),
+        "Recording recovery cannot use a symbolic link."
+    );
+    Ok(leo_services::session::Session::unfinished(&root)
+        .into_iter()
+        .filter_map(|dir| {
+            let session = leo_services::session::Session::open(&dir).ok()?;
+            let id = session.manifest.id;
+            Some((id, dir))
+        })
+        .collect())
+}
+
+fn recording_id(id: &str) -> &str {
+    id.strip_suffix("-you")
+        .or_else(|| id.strip_suffix("-others"))
+        .unwrap_or(id)
+}
+
+pub fn pending() -> Result<Vec<leo_web::record::Pending>> {
+    let mut grouped = std::collections::BTreeMap::new();
+    for (id, dir) in saved_sessions()? {
+        let session = leo_services::session::Session::open(&dir)?;
+        let call = id.ends_with("-you") || id.ends_with("-others");
+        let id = recording_id(&id).to_owned();
+        grouped
+            .entry(id.clone())
+            .or_insert(leo_web::record::Pending {
+                id,
+                title: session.manifest.title,
+                directory: session.manifest.dir,
+                profile: session.manifest.profile,
+                source: if call {
+                    leo_web::record::Source::Nativecall
+                } else if session.manifest.screen {
+                    leo_web::record::Source::Screen
+                } else {
+                    leo_web::record::Source::Microphone
+                },
+            });
+    }
+    Ok(grouped.into_values().collect())
+}
+
+fn recover(listening: Listening, heard: &mut dyn FnMut(Heard)) -> Result<Recorded> {
+    let id = listening
+        .recover
+        .as_deref()
+        .ok_or_else(|| anyhow!("Choose an interrupted recording."))?;
+    let selected: Vec<_> = saved_sessions()?
+        .into_iter()
+        .filter(|(saved, _)| recording_id(saved) == id)
+        .collect();
+    anyhow::ensure!(
+        !selected.is_empty() && selected.len() <= 2,
+        "This recording cannot be recovered. Check Recording audio in Storage."
+    );
+    let mut dirs = Vec::new();
+    let warnings = Vec::new();
+    for (saved, dir) in selected {
+        let speaker = if saved.ends_with("-you") {
+            "You"
+        } else if saved.ends_with("-others") {
+            "Others"
+        } else {
+            ""
+        };
+        let controls = Controls {
+            finish_now: listening.finish_now.clone(),
+            stop: listening.stop.clone(),
+            pause: listening.pause.clone(),
+            points: Default::default(),
+            wants: listening.wants.clone(),
+        };
+        resume_retained(&dir, &controls, heard)?;
+        dirs.push((speaker, dir));
+    }
+    finish_tracks(
+        dirs,
+        warnings,
+        id.to_owned(),
+        listening.profile,
+        listening.wants,
+        heard,
+    )
+}
+
+fn resume_retained(
+    dir: &std::path::Path,
+    controls: &Controls,
+    heard: &mut dyn FnMut(Heard),
+) -> Result<()> {
+    let failed = RefCell::new(None);
+    let finished = std::cell::Cell::new(false);
+    let heard = RefCell::new(heard);
+    leo_services::session::recorder::resume_with_controls(dir, controls, &|event| match event {
+        Event::Progress { label, steps } => heard.borrow_mut()(Heard::Step { label, steps }),
+        Event::Transcript(text) => heard.borrow_mut()(Heard::Transcript(text)),
+        Event::Warning(text) => heard.borrow_mut()(Heard::Warning(text)),
+        Event::Failed(text) => *failed.borrow_mut() = Some(text),
+        Event::Finished { .. } => finished.set(true),
+        _ => {}
+    });
+    if let Some(problem) = failed.into_inner() {
+        anyhow::bail!("This recording could not be recovered: {problem}. Its available audio is kept in Recording audio in Storage.");
+    }
+    anyhow::ensure!(finished.get(), "This recording is still incomplete. Check Recording audio in Storage and try recovering it again.");
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn unreadable_recovery_audio_is_an_error_before_any_note_is_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = super::resume_retained(
+            dir.path(),
+            &leo_services::session::recorder::Controls::default(),
+            &mut |_| {},
+        );
+        assert!(result.is_err());
+    }
 }

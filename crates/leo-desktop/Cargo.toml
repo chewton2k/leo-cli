@@ -15,6 +15,7 @@ tauri-build = { version = "2.7", features = [] }
 [dependencies]
 leo-core.workspace = true
 leo-host.workspace = true
+leo-services.workspace = true
 leo-web.workspace = true
 anyhow.workspace = true
 tokio.workspace = true

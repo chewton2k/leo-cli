@@ -136,7 +136,7 @@ pub fn microphone() -> Check {
             needed_for: "recording audio".to_string(),
             state: State::Missing {
                 fix: "System Settings > Privacy & Security > Microphone — allow \
-                      your terminal, then restart it"
+                      Leo, then try recording again"
                     .to_string(),
             },
             detail: Some("recorded silence; the mic is not being heard".to_string()),
@@ -302,9 +302,7 @@ pub fn provider_usable(config: &Config, name: &str, store: &dyn SecretStore) -> 
     let _: &ProviderConfig = provider;
 
     if provider.kind == Some(crate::config::provider::ProviderKind::Parakeet) {
-        return crate::ai::provider::parakeet::present(&crate::ai::provider::parakeet::model_dir(
-            provider,
-        ));
+        return crate::speech::library::library().is_ok_and(|l| l.selected().is_ok());
     }
     if let Some(agent) = crate::ai::provider::agent_cli::Agent::of(provider) {
         let bin = provider.bin.as_deref().unwrap_or(agent.program());
@@ -478,27 +476,19 @@ mod tests {
 
     fn speech_model() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
-        for f in [
-            "encoder.int8.onnx",
-            "decoder.int8.onnx",
-            "joiner.int8.onnx",
-            "tokens.txt",
-        ] {
-            std::fs::write(dir.path().join(f), b"x").unwrap();
-        }
+        std::fs::write(dir.path().join("fake-model"), "model").unwrap();
         dir
     }
 
     fn built_in(dir: &std::path::Path) -> ProviderConfig {
-        ProviderConfig {
-            kind: Some(crate::config::provider::ProviderKind::Parakeet),
-            model_path: Some(dir.to_string_lossy().to_string()),
-            ..Default::default()
-        }
+        whisper(
+            &dir.join("fake-model"),
+            Some(if cfg!(windows) { "cmd.exe" } else { "sh" }),
+        )
     }
 
     #[test]
-    fn the_built_in_speech_engine_needs_only_its_model_files() {
+    fn the_fake_transcription_binary_needs_its_model_file() {
         let model = speech_model();
         let empty = tempfile::tempdir().unwrap();
         let config = config_with(

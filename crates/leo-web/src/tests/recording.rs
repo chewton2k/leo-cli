@@ -532,3 +532,154 @@ fn an_active_recording_cannot_be_deleted_from_its_error_panel() {
     run(record::stop(State(state.clone()), Path(id)));
     recording_until(&state, |s| s == "done");
 }
+
+#[test]
+fn native_recordings_can_be_recovered_without_reopening_capture() {
+    struct Kept;
+    impl crate::storage::Housekeeper for Kept {
+        fn pending_recordings(&self) -> anyhow::Result<Vec<record::Pending>> {
+            Ok(vec![record::Pending {
+                id: "native-saved".into(),
+                title: Some("Kept lecture".into()),
+                directory: "cs130".into(),
+                source: record::Source::Microphone,
+                profile: Default::default(),
+            }])
+        }
+        fn areas(&self) -> Vec<crate::storage::Area> {
+            vec![]
+        }
+        fn act(&self, _: &str, _: &str, _: &[String]) -> Option<anyhow::Result<String>> {
+            None
+        }
+    }
+    let (mut state, _dir, _) = state_with(&[]);
+    state.housekeeper = Some(Arc::new(Kept));
+    state.listener = Some(Arc::new(|listening, _| {
+        assert_eq!(listening.recover.as_deref(), Some("native-saved"));
+        assert!(listening.audio.is_none());
+        Ok(record::Recorded {
+            title: "Kept lecture".into(),
+            body: "Saved speech".into(),
+            ..Default::default()
+        })
+    }));
+    let overview = json_of(run(record::overview(State(state.clone()))));
+    assert_eq!(overview["pending"][0]["id"], "native-saved");
+    let recovered = run(record::recover(
+        State(state.clone()),
+        Path("native-saved".into()),
+    ));
+    assert_eq!(recovered.status(), StatusCode::ACCEPTED);
+    let view = recording_until(&state, |s| s == "done" || s == "failed");
+    assert_eq!(view.state, "done");
+    assert_eq!(state.fresh().notes[0].body, "Saved speech");
+}
+
+#[test]
+fn recovering_native_audio_reports_writing_and_can_finish_while_waiting_for_a_model() {
+    struct Kept;
+    impl crate::storage::Housekeeper for Kept {
+        fn pending_recordings(&self) -> anyhow::Result<Vec<record::Pending>> {
+            Ok(vec![record::Pending {
+                id: "waiting-native".into(),
+                title: None,
+                directory: "cs130".into(),
+                source: record::Source::Microphone,
+                profile: Default::default(),
+            }])
+        }
+        fn areas(&self) -> Vec<crate::storage::Area> {
+            vec![]
+        }
+        fn act(&self, _: &str, _: &str, _: &[String]) -> Option<anyhow::Result<String>> {
+            None
+        }
+    }
+    let (mut state, _dir, _) = state_with(&[]);
+    state.housekeeper = Some(Arc::new(Kept));
+    state.listener = Some(Arc::new(|listening, _| {
+        let start = std::time::Instant::now();
+        while !listening
+            .finish_now
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            if start.elapsed() > std::time::Duration::from_secs(2) {
+                return Err(anyhow::anyhow!("Finish was not offered"));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        Ok(record::Recorded {
+            title: "Kept lecture".into(),
+            body: "Available speech".into(),
+            ..Default::default()
+        })
+    }));
+    let recovered = run(record::recover(
+        State(state.clone()),
+        Path("waiting-native".into()),
+    ));
+    let id = json_of(recovered)["id"].as_str().unwrap().to_owned();
+    let response = run(record::finish_available(State(state.clone()), Path(id)));
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    assert_eq!(
+        recording_until(&state, |s| s == "done" || s == "failed").state,
+        "done"
+    );
+}
+
+#[test]
+fn stopping_waits_until_a_pasted_screenshot_is_kept_with_its_recording() {
+    let (mut state, _dir, _) = state_with(&[]);
+    state.listener = Some(hearing());
+    let (entered, started) = std::sync::mpsc::channel();
+    let (release, wait) = std::sync::mpsc::channel();
+    let wait = Arc::new(Mutex::new(Some(wait)));
+    state.reader = Some(Arc::new(move |_, _| {
+        let wait = wait.lock().unwrap().take().unwrap();
+        entered.send(()).unwrap();
+        wait.recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        Ok("A diagram of a queue".into())
+    }));
+    let started_recording = start_recording(&state, record::Source::Browser);
+    let id = json_of(started_recording)["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    recording_until(&state, |s| s == "recording");
+    let copied = state.clone();
+    let saved_id = id.clone();
+    let snapshot = std::thread::spawn(move || {
+        run(record::snapshot(
+            State(copied),
+            Path(saved_id),
+            Json(
+                serde_json::from_value(serde_json::json!({ "at":0, "data":"iVBORw0KGgo=" }))
+                    .unwrap(),
+            ),
+        ))
+    });
+    started
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .unwrap();
+    let stopped_early = run(async {
+        tokio::time::timeout(
+            std::time::Duration::from_millis(50),
+            record::stop(State(state.clone()), Path(id.clone())),
+        )
+        .await
+    });
+    assert!(stopped_early.is_err());
+    release.send(()).unwrap();
+    assert_eq!(snapshot.join().unwrap().status(), StatusCode::OK);
+    assert_eq!(
+        run(record::stop(State(state.clone()), Path(id))).status(),
+        StatusCode::OK
+    );
+    let view = recording_until(&state, |s| s == "done" || s == "failed");
+    assert_eq!(view.state, "done");
+    let notes = state.fresh();
+    assert!(notes.notes[0].body.contains("Captured slide"));
+    assert!(notes.notes[0].body.contains("diagram of a queue"));
+}

@@ -9,7 +9,7 @@ use colored::Colorize;
 use crate::ai;
 use crate::config::{
     self,
-    secret::{redact, resolve, SecretStore},
+    secret::{redact, SecretStore},
     Config,
 };
 
@@ -32,29 +32,15 @@ pub enum ConfigAction {
 pub fn build_one_transcriber(
     name: &str,
     pc: &config::provider::ProviderConfig,
-    store: &dyn SecretStore,
+    _store: &dyn SecretStore,
 ) -> Option<Box<dyn ai::provider::TranscribeProvider>> {
     use config::provider::ProviderKind;
     match pc.kind {
-        Some(ProviderKind::Transcriptions) => {
-            Some(Box::new(ai::provider::transcriptions::Transcriptions::new(
-                name.to_string(),
-                pc,
-                resolve(pc.account(name), store),
-            )))
-        }
-        Some(ProviderKind::ChatAudio) => Some(Box::new(
-            ai::provider::chat_audio::ChatAudioTranscribe::new(
-                name.to_string(),
-                pc,
-                resolve(pc.account(name), store),
-            ),
-        )),
         Some(ProviderKind::WhisperCpp) => Some(Box::new(
             ai::provider::whisper_cpp::WhisperCppTranscribe::new(name.to_string(), pc),
         )),
         Some(ProviderKind::Parakeet) => Some(Box::new(
-            ai::provider::parakeet::ParakeetTranscribe::new(name.to_string(), pc),
+            ai::provider::local_speech::LocalSpeech::new(name.to_string(), pc),
         )),
         _ => None,
     }
@@ -205,7 +191,7 @@ pub enum ModelState {
 }
 
 pub fn speech_model_dir() -> std::path::PathBuf {
-    crate::ai::provider::parakeet::default_dir()
+    crate::config::choice::models_dir().join("speech")
 }
 
 pub fn model_state(path: &std::path::Path, sha256: &str) -> ModelState {
@@ -233,10 +219,10 @@ pub fn files_state(dir: &std::path::Path, manifest: &[(String, String)]) -> Mode
 }
 
 pub fn speech_model_state() -> ModelState {
-    files_state(
-        &speech_model_dir(),
-        &crate::ai::provider::parakeet::manifest(),
-    )
+    match crate::speech::library::library().and_then(|l| l.selected()) {
+        Ok(_) => ModelState::Ready,
+        Err(_) => ModelState::Missing,
+    }
 }
 
 pub fn sha256_of(path: &std::path::Path) -> Result<String> {
@@ -260,36 +246,22 @@ pub fn download_speech_model_quietly() -> Result<std::path::PathBuf> {
 }
 
 fn fetch_speech_model(quiet: bool) -> Result<std::path::PathBuf> {
-    let base = std::env::var("LEO_INSTALL_MODEL_URL")
-        .unwrap_or_else(|_| crate::ai::provider::parakeet::MODEL_URL.to_string());
-    let dir = speech_model_dir();
-    remove_old_models();
-    for (name, sha) in crate::ai::provider::parakeet::manifest() {
-        if model_state(&dir.join(&name), &sha) == ModelState::Ready {
-            continue;
-        }
-        if !quiet {
-            println!("  {name}");
-        }
-        download_verified(&format!("{base}/{name}"), &sha, &dir, &name, quiet)?;
-    }
-    Ok(dir)
+    let _ = quiet;
+    let library = crate::speech::library::library()?;
+    let selection = library.selection()?;
+    let model = crate::speech::catalog::catalog().get(&selection.id)?;
+    library.fetch(
+        &selection.id,
+        &model.url(),
+        &std::sync::atomic::AtomicBool::new(false),
+        &|_, _| {},
+    )?;
+    library.use_model(&selection.id, &selection.language)?;
+    Ok(library.selected()?.path)
 }
 
-pub fn speech_model_wanted(cfg: &Config) -> bool {
-    if std::env::var_os("LEO_INSTALL_NO_MODEL").is_some() {
-        return false;
-    }
-    let uses_it = cfg.transcribe.chain.iter().any(|name| {
-        cfg.provider(name).and_then(|p| p.kind)
-            == Some(crate::config::provider::ProviderKind::Parakeet)
-    });
-    uses_it
-        && !crate::ai::provider::parakeet::present(&crate::ai::provider::parakeet::default_dir())
-}
-
-pub fn remove_old_models() {
-    let _ = std::fs::remove_file(crate::config::choice::models_dir().join("ggml-base.en.bin"));
+pub fn speech_model_wanted(_cfg: &Config) -> bool {
+    std::env::var_os("LEO_INSTALL_NO_MODEL").is_none() && speech_model_state() != ModelState::Ready
 }
 
 pub fn download_verified(

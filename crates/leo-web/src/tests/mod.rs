@@ -10,6 +10,7 @@ mod passages;
 mod pictures;
 mod recording;
 mod sources;
+mod speech;
 mod start;
 mod study_context;
 mod tasks;
@@ -83,6 +84,7 @@ fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<Strin
         work: Default::default(),
         chat: None,
         settings: None,
+        speech: None,
         backups: Default::default(),
         importer: None,
         imports: Default::default(),

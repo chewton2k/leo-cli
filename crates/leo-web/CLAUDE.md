@@ -3,7 +3,7 @@
 leo-web depends only on leo-core. Everything that needs services (AI, speech,
 settings, import, storage housekeeping) arrives as a `Powers` field built by
 `leo_host::powers()` (writer, chat streamer, settings, importer, listener,
-reader, seer, meaning, web, room).
+reader, seer, meaning, web, room, speech).
 
 ## Layout
 
@@ -656,14 +656,19 @@ works (plan: `.superpowers/plans/2026-10-12-interview-instant-feedback.md`):
   changing the saved history preference automatically. Phones use the existing viewer
   sheet above chat (PDF iframe, zoomable pictures, rendered text); an already open
   desktop pane becomes full width when the window narrows. Chat state is retained.
-- Recording (`record.rs`, `recording.js`, worklet `recorder.js`): one job at a
-  time. Browser sources POST 16 kHz PCM each second (`UPLOAD_SAMPLES`
-  batches); computer sources are always allowed (only the app's window can reach the engine). `record_journal.rs`
-  persists before acknowledging; the page spools unacknowledged chunks in
-  IndexedDB (`audio-queue.js`). Recovery replays through bounded channels.
-  Failed recordings can be dismissed (audio kept) or deleted. The live page
-  is notepad first; the transcript is folded. Calendar events now (or within
-  15 min) are preselected and sent as `profile.context`.
+- Recording (`record.rs`, `recording.js`): new microphone/screen/call captures
+  run in Rust through the listener. `nativecall` is the native dual-track
+  source; old browser/tab/call sources and journals remain readable for
+  recovery. The page starts/stops/pauses and shows levels/transcripts; it never
+  opens a browser microphone or screen-audio picker. Native jobs have no page
+  heartbeat lifetime. Housekeeper's `pending_recordings` supplies retained
+  native sessions; recovery starts in Writing state and supports Finish available.
+  Browser recovery still replays IndexedDB/journal audio through bounded channels.
+- Screenshots (the user's call): paste a PNG/JPEG/GIF/WebP into Your notes while
+  recording instead of a browser screen picker. The existing snapshot endpoint
+  timestamps and retains it, derives MIME from bytes and optionally reads its
+  text through the writer. Late encoding/responses cannot attach to another
+  recording; ordinary text paste stays normal.
 - PDF export (Share → PDF, or the browser's print): print CSS hides every
   fixed overlay (dock, tasks, source pane, toasts, chat, FABs…), zeroes the
   layout variables and the scrollbar gutter, and uses fixed `@page` margins
@@ -898,8 +903,7 @@ without deleting credentials during provider migration.
 
 Writing Settings offers Ollama, Codex and Claude Code. Removed AGY/Copilot
 choices and sign-in commands are unavailable; legacy saved profiles remain in
-Storage until explicitly cleared. Speech choices and cloud speech keys stay
-available. Credentials never reach the page or note exports.
+Storage until explicitly cleared. Speech choices are local only; speech key controls are absent. Credentials never reach the page or note exports.
 
 Interview problem navigation shows the active title and opens a bounded searchable
 sheet instead of growing numbered chips. Search matches titles, topics and numbers;
@@ -1030,3 +1034,11 @@ aria-controls. Folding hides only descendants; the heading itself still jumps to
 its section. Folds survive typing by heading text/occurrence, and a collapsed parent
 gets the current-section highlight when reading inside it. Groups follow real
 heading levels, including skipped levels, and stay bounded by the 300-heading cap.
+
+`Powers.speech` implements service-free `SpeechApi::{view,change}` over
+GET/POST `/api/speech`, behind the session gate with bounded JSON input.
+Handlers run model work outside async/store locks and return JSON for every
+success and actionable errors. The initial model card uses existing settings
+components; progress refreshes only that card, leaving other settings fields
+and their carets intact. `native-recording.test.js` covers native source choice
+and clipboard screenshots; it runs with the recording node tests.

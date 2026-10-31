@@ -123,3 +123,12 @@ async fn the_page_lets_the_app_window_talk_to_the_app() {
     );
     running.stop().await;
 }
+
+#[tokio::test]
+async fn the_model_library_requires_the_app_session() {
+    let (running, _dir) = running().await;
+    let port = running.port();
+    let reply = ask(port, "/api/speech", &format!("127.0.0.1:{port}")).await;
+    assert!(reply.starts_with("HTTP/1.1 401"), "{reply}");
+    running.stop().await;
+}

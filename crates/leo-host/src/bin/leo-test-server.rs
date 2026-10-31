@@ -8,6 +8,9 @@ fn port_from(args: &[String]) -> Result<u16> {
 }
 
 fn main() -> Result<()> {
+    if leo_services::speech::is_worker_invocation() {
+        std::process::exit(leo_services::speech::run_worker());
+    }
     let args: Vec<String> = std::env::args().skip(1).collect();
     let port = port_from(&args)?;
     tokio::runtime::Runtime::new()?.block_on(async {

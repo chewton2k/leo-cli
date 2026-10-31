@@ -3,6 +3,9 @@ mod cli;
 use anyhow::Result;
 
 fn main() -> Result<()> {
+    if leo_services::speech::is_worker_invocation() {
+        std::process::exit(leo_services::speech::run_worker());
+    }
     #[cfg(windows)]
     let _ = colored::control::set_virtual_terminal(true);
     // Load .env from the leo data directory only, never the current one: a

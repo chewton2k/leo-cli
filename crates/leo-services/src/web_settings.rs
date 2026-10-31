@@ -120,13 +120,19 @@ fn task_view(
         })
     });
     let note = match (task, provider.as_str()) {
-        (Task::Chat, "ollama") if !local.ollama_running => Some(if crate::health::on_path("ollama") {
-            "Ollama is not running: open the Ollama app on this computer."
-        } else {
-            "Ollama is not installed on this computer."
-        }),
-        (Task::Chat, "ollama") if local.ollama.is_empty() => Some("Ollama has no models yet: run `ollama pull qwen3:8b` on this computer."),
-        (Task::Transcribe, "parakeet") if !local.speech_ready => Some("The speech model is not downloaded yet: leo downloads it when the app starts, or run `leo update`."),
+        (Task::Chat, "ollama") if !local.ollama_running => {
+            Some(if crate::health::on_path("ollama") {
+                "Ollama is not running: open the Ollama app on this computer."
+            } else {
+                "Ollama is not installed on this computer."
+            })
+        }
+        (Task::Chat, "ollama") if local.ollama.is_empty() => {
+            Some("Ollama has no models yet: run `ollama pull qwen3:8b` on this computer.")
+        }
+        (Task::Transcribe, "parakeet") if !local.speech_ready => {
+            Some("Download a local model in Settings → Speech models.")
+        }
         _ => None,
     };
     let usage = usage
@@ -344,37 +350,15 @@ mod tests {
     }
 
     #[test]
-    fn the_page_only_offers_local_or_signed_in_writers_and_keeps_speech_keys() {
-        let (_d, path) = setup("[chat]\nchain = [\"claude_code\"]\n[providers.claude_code]\nbin = \"leo-no-such-claude\"\n[transcribe]\nchain = [\"openai_whisper\"]\n");
+    fn the_page_offers_local_or_signed_in_writers_and_only_local_speech() {
+        let (_dir, path) = setup("");
         let store = MemoryStore::default();
-        store.set("openai", "sk-secret-value").unwrap();
+        store.set("openai", "old-private-key").unwrap();
         let page = view(&path, &store);
-        let writing = &page["tasks"][0];
-        assert_eq!(writing["task"], "writing");
-        assert_eq!(writing["provider"], "claude_code");
-        assert_eq!(writing["ready"], false);
-        assert_eq!(
-            writing["choices"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|c| c["id"].as_str().unwrap())
-                .collect::<Vec<_>>(),
-            ["ollama", "codex", "claude_code"]
-        );
-        assert!(writing["models"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|m| m["id"] == "claude-sonnet-5-5"));
-        assert!(writing["key"].is_null());
-        assert_eq!(writing["signin"]["installed"], false);
-        assert_eq!(page["tasks"][1]["key"]["account"], "openai");
-        assert_eq!(page["tasks"][1]["key"]["stored"], true);
-        assert_eq!(page["tasks"][1]["key"]["hint"], "sk-…••••••••");
-        assert!(!page.to_string().contains("sk-secret-value"));
-        assert_eq!(page["backup"]["auto_push"], "on_quit");
-        assert_eq!(page["backup"]["options"].as_array().unwrap().len(), 3);
+        assert_eq!(page["tasks"][0]["choices"].as_array().unwrap().len(), 3);
+        assert_eq!(page["tasks"][1]["choices"].as_array().unwrap().len(), 1);
+        assert!(page["tasks"][1]["key"].is_null());
+        assert!(!page.to_string().contains("old-private-key"));
     }
 
     #[test]
@@ -530,42 +514,28 @@ mod tests {
     }
 
     #[test]
-    fn keys_are_stored_and_can_be_removed() {
-        let (_d, path) =
-            setup("[chat]\nchain = [\"ollama\"]\n[transcribe]\nchain = [\"openai_whisper\"]\n");
+    fn cloud_speech_keys_cannot_be_added_or_changed_from_the_page() {
+        let (_dir, path) = setup("");
         let store = MemoryStore::default();
-        let local = Local::default();
-        let add = json!({"set": "key", "account": "openai", "value": " sk-or-123 "});
-        assert_eq!(
-            apply(&add, &path, &store, &local).unwrap(),
-            "The OpenAI key is stored on this computer."
-        );
-        assert_eq!(store.get("openai").unwrap().unwrap().as_str(), "sk-or-123");
-        assert!(apply(
-            &json!({"set": "key", "account": "keychain-of-someone-else", "value": "x"}),
-            &path,
-            &store,
-            &local
-        )
-        .is_err());
-        assert!(apply(
-            &json!({"set": "key", "account": "openai", "value": "two words"}),
-            &path,
-            &store,
-            &local
-        )
-        .is_err());
-        assert_eq!(
-            apply(
-                &json!({"set": "key", "account": "openai", "value": null}),
-                &path,
-                &store,
-                &local
-            )
-            .unwrap(),
-            "The OpenAI key is removed."
-        );
-        assert!(!store.has("openai"));
+        for account in [
+            "openai",
+            "gemini",
+            "xai",
+            "openai_whisper",
+            "gemini_speech",
+            "xai_speech",
+        ] {
+            for value in [json!("fake-key"), serde_json::Value::Null] {
+                assert!(apply(
+                    &json!({"set":"key", "account":account, "value":value}),
+                    &path,
+                    &store,
+                    &Local::default()
+                )
+                .is_err());
+            }
+            assert!(!store.has(account));
+        }
     }
 
     #[test]

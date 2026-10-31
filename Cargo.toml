@@ -49,7 +49,6 @@ tokio = { version = "1", features = ["full"] }
 toml = "1"
 toml_edit = "0.25.13"
 unicode-width = "0.2"
-sherpa-onnx = "1.13.8"
 candle-core = "0.11"
 rusqlite = { version = "0.40", features = ["bundled"] }
 candle-nn = "0.11"

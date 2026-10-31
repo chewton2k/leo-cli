@@ -164,11 +164,11 @@ test('levels from the computer are spread into smooth steps and never repeated',
 });
 
 test('two choices: the microphone here, or the screen, wherever that can work', () => {
-  assert.equal(L.sourceFor('microphone', { local: true, canShare: true }), 'browser');
-  assert.equal(L.sourceFor('microphone', { local: false, canShare: false }), 'browser');
+  assert.equal(L.sourceFor('microphone', { local: true, canShare: true }), 'microphone');
+  assert.equal(L.sourceFor('microphone', { local: false, canShare: false }), 'microphone');
   assert.equal(L.sourceFor('screen', { local: true, canShare: false }), 'screen', 'on the computer: everything it plays');
-  assert.equal(L.sourceFor('screen', { local: false, canShare: true }), 'tab', 'elsewhere: share a tab or screen');
-  assert.equal(L.sourceFor('screen', { local: false, canShare: false }), null, 'a phone cannot record its screen');
+  assert.equal(L.sourceFor('screen', { local: false, canShare: true }), 'screen', 'elsewhere: share a tab or screen');
+  assert.equal(L.sourceFor('screen', { local: false, canShare: false }), 'screen', 'a phone cannot record its screen');
 });
 
 test('call worklet keeps microphone and system tracks separate and flushes a short tail', () => {

@@ -29,6 +29,7 @@ mod routes;
 pub mod search;
 pub mod sessions;
 mod shutdown;
+pub mod speech;
 pub mod steer;
 pub mod storage;
 mod storage_saved;
@@ -186,6 +187,7 @@ pub struct Powers {
     pub rust: Option<Runtime>,
     pub chat: Option<Streamer>,
     pub settings: Option<Arc<dyn SettingsApi>>,
+    pub speech: Option<Arc<dyn speech::SpeechApi>>,
     pub importer: Option<Importer>,
     pub listener: Option<record::Listener>,
     pub regenerator: Option<record::Regenerator>,
@@ -223,6 +225,7 @@ struct AppState {
     work: Arc<work::Work>,
     chat: Option<Streamer>,
     settings: Option<Arc<dyn SettingsApi>>,
+    speech: Option<Arc<dyn speech::SpeechApi>>,
     backups: Arc<backup::Backups>,
     importer: Option<Importer>,
     imports: Arc<Mutex<std::collections::HashMap<String, ImportJob>>>,
@@ -602,6 +605,7 @@ pub(crate) async fn start_in(
         work: Default::default(),
         chat,
         settings,
+        speech: powers.speech,
         backups: Default::default(),
         importer,
         imports: Default::default(),
@@ -895,6 +899,12 @@ fn router(state: AppState) -> Router {
         .route(
             "/api/images",
             post(add_picture).layer(axum::extract::DefaultBodyLimit::max(PICTURE_BYTES)),
+        )
+        .route(
+            "/api/speech",
+            get(speech::get)
+                .post(speech::change)
+                .layer(axum::extract::DefaultBodyLimit::max(4096)),
         )
         .route("/api/record", get(record::overview).post(record::start))
         .route(
