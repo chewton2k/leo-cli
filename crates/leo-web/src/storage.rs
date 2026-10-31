@@ -506,10 +506,11 @@ pub struct Kept<'a> {
     pub recording: Option<String>,
 }
 
-pub const CONFIG_FILES: [(&str, &str); 8] = [
+pub const CONFIG_FILES: [(&str, &str); 9] = [
     ("config.toml", "Your settings"),
     ("serve-token", "An old sign-in code"),
-    ("serve-sessions.json", "The leo window's sign-in"),
+    ("serve-sessions.json", "Old browser sign-ins"),
+    ("app-sessions.json", "The leo window's sign-in"),
     (
         "usage.json",
         "Plan usage last seen for Claude Code and Codex",

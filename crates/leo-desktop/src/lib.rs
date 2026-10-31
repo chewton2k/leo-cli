@@ -17,35 +17,6 @@ struct Engine(Mutex<Option<leo_web::Running>>);
 
 pub fn run() {
     fix_path();
-    let config = leo_core::paths::config_dir().ok();
-    let wanted = config
-        .as_deref()
-        .map(port::remembered)
-        .unwrap_or(port::DEFAULT_PORT);
-    let started = tauri::async_runtime::block_on(leo_web::start(
-        leo_web::StartOptions {
-            port: wanted,
-            token: leo_web::fresh_token(),
-        },
-        leo_host::powers(),
-    ));
-    let port = started.as_ref().map(|r| r.port()).unwrap_or(0);
-    let address = match &started {
-        Ok(running) => {
-            if let Some(config) = &config {
-                let _ = port::remember(config, running.port());
-            }
-            WebviewUrl::External(
-                running
-                    .sign_in_url()
-                    .parse()
-                    .expect("the sign-in address is a URL"),
-            )
-        }
-        Err(e) => {
-            WebviewUrl::App(format!("index.html?problem={}", url_text(&format!("{e:#}"))).into())
-        }
-    };
     let hidden = std::env::args().any(|a| a == HIDDEN);
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -55,9 +26,38 @@ pub fn run() {
             MacosLauncher::LaunchAgent,
             Some(vec![HIDDEN]),
         ))
-        .manage(Engine(Mutex::new(started.ok())))
         .invoke_handler(tauri::generate_handler![print_page])
         .setup(move |app| {
+            let config = leo_core::paths::config_dir().ok();
+            let wanted = config
+                .as_deref()
+                .map(port::remembered)
+                .unwrap_or(port::DEFAULT_PORT);
+            let started = tauri::async_runtime::block_on(leo_web::start(
+                leo_web::StartOptions {
+                    port: wanted,
+                    token: leo_web::fresh_token(),
+                },
+                leo_host::powers(),
+            ));
+            let port = started.as_ref().map(|r| r.port()).unwrap_or(0);
+            let address = match &started {
+                Ok(running) => {
+                    if let Some(config) = &config {
+                        let _ = port::remember(config, running.port());
+                    }
+                    WebviewUrl::External(
+                        running
+                            .sign_in_url()
+                            .parse()
+                            .expect("the sign-in address is a URL"),
+                    )
+                }
+                Err(e) => WebviewUrl::App(
+                    format!("index.html?problem={}", url_text(&format!("{e:#}"))).into(),
+                ),
+            };
+            app.manage(Engine(Mutex::new(started.ok())));
             let builder = WebviewWindowBuilder::new(app, MAIN, address)
                 .title("leo")
                 .inner_size(1200.0, 800.0)
@@ -189,8 +189,8 @@ fn stop_engine(app: &AppHandle) {
         .lock()
         .ok()
         .and_then(|mut held| held.take());
+    leo_host::stop_writing();
     if let Some(running) = running {
-        running.back_up();
         tauri::async_runtime::block_on(async {
             let _ = tokio::time::timeout(Duration::from_secs(6), running.stop()).await;
         });

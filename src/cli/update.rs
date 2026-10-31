@@ -80,23 +80,23 @@ pub fn run(force: bool) -> Result<()> {
 
     let mut cmd = match (std::env::var_os("LEO_UPDATE_SCRIPT"), cfg!(windows)) {
         (Some(script), false) => {
-            let mut cmd = leo_core::children::quiet_command("sh");
+            let mut cmd = std::process::Command::new("sh");
             cmd.arg(script);
             cmd
         }
         (None, false) => {
-            let mut cmd = leo_core::children::quiet_command("sh");
+            let mut cmd = std::process::Command::new("sh");
             cmd.arg("-c").arg(leo_services::update::install_command());
             cmd
         }
         (Some(script), true) => {
-            let mut cmd = leo_core::children::quiet_command("powershell");
+            let mut cmd = std::process::Command::new("powershell");
             cmd.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
                 .arg(script);
             cmd
         }
         (None, true) => {
-            let mut cmd = leo_core::children::quiet_command("powershell");
+            let mut cmd = std::process::Command::new("powershell");
             cmd.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command"])
                 .arg(leo_services::update::install_command());
             cmd

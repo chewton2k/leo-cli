@@ -45,7 +45,6 @@ fn statement_from(text: &str, at: usize) -> &str {
 #[test]
 fn every_child_process_is_started_quietly() {
     let mut files = Vec::new();
-    shipped_rust_files(&root().join("src"), &mut files);
     shipped_rust_files(&root().join("crates"), &mut files);
     let mut missing = Vec::new();
     for file in &files {

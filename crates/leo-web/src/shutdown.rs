@@ -2,6 +2,7 @@ use std::time::Duration;
 
 pub(crate) const GRACE: Duration = Duration::from_secs(5);
 pub(crate) const CLEANUP: Duration = Duration::from_secs(1);
+pub(crate) const LAST_BACKUP: Duration = Duration::from_secs(3);
 
 pub(crate) async fn drain(grace: Duration, server: tokio::task::JoinHandle<std::io::Result<()>>) {
     let abort = server.abort_handle();

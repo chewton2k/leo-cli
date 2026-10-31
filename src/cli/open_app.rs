@@ -7,7 +7,7 @@ const NOT_INSTALLED: &str = "leo isn't installed as an app yet. Install it from 
 pub fn open_command() -> Option<std::process::Command> {
     #[cfg(target_os = "macos")]
     {
-        let mut command = leo_core::children::quiet_command("open");
+        let mut command = std::process::Command::new("open");
         command.args(["-b", BUNDLE_ID]);
         Some(command)
     }
@@ -16,8 +16,7 @@ pub fn open_command() -> Option<std::process::Command> {
         let app = std::path::PathBuf::from(std::env::var_os("LOCALAPPDATA")?)
             .join("Leo")
             .join("leo-app.exe");
-        app.is_file()
-            .then(|| leo_core::children::quiet_command(app))
+        app.is_file().then(|| std::process::Command::new(app))
     }
     #[cfg(not(any(target_os = "macos", windows)))]
     {

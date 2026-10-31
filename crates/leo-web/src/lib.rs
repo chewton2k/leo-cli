@@ -450,6 +450,8 @@ pub(crate) struct Places {
 pub struct Running {
     port: u16,
     token: String,
+    notes: std::path::PathBuf,
+    runtime: tokio::runtime::Handle,
     state: AppState,
     stop: tokio::sync::oneshot::Sender<()>,
     server: tokio::task::JoinHandle<std::io::Result<()>>,
@@ -487,25 +489,20 @@ impl Running {
         let Some(settings) = self.state.settings.clone() else {
             return;
         };
-        let Ok(notes) = self
-            .state
-            .store
-            .lock()
-            .map(|storage| storage.store.notes_dir.clone())
-        else {
-            return;
-        };
-        let _ = self.state.backups.queue(settings, notes);
+        let _entered = self.runtime.enter();
+        let _ = self.state.backups.queue(settings, self.notes.clone());
     }
 
     pub async fn stop(self) {
         let Running {
+            notes,
             state,
             stop,
             server,
             background,
             ..
         } = self;
+        let settings = state.settings.clone();
         background.stop();
         let _ = stop.send(());
         shutdown::drain(shutdown::GRACE, server).await;
@@ -514,6 +511,16 @@ impl Running {
         drop(state);
         let cleanup = tokio::task::spawn_blocking(move || warm.clear());
         let _ = tokio::time::timeout(shutdown::CLEANUP, cleanup).await;
+        if let Some(settings) = settings {
+            let prepared = tokio::time::timeout(
+                shutdown::LAST_BACKUP,
+                tokio::task::spawn_blocking(move || settings.backup(&notes)),
+            )
+            .await;
+            if let Ok(Ok(Ok(Some(mut command)))) = prepared {
+                let _ = leo_core::children::quiet(&mut command).spawn();
+            }
+        }
     }
 }
 
@@ -528,7 +535,7 @@ pub fn saved_token() -> Result<String> {
 pub async fn start(options: StartOptions, powers: Powers) -> Result<Running> {
     let places = Places {
         store: Store::load()?,
-        sessions: leo_core::paths::config_dir()?.join("serve-sessions.json"),
+        sessions: leo_core::paths::config_dir()?.join("app-sessions.json"),
     };
     start_in(places, options, powers).await
 }
@@ -539,6 +546,7 @@ pub(crate) async fn start_in(
     powers: Powers,
 ) -> Result<Running> {
     let store = places.store;
+    let notes = store.notes_dir.clone();
     let vectors = Arc::new(vectors::Vectors::for_notes(&store.notes_dir));
     let graphs = Arc::new(
         graph::Graphs::for_notes(&store.notes_dir, powers.writer)
@@ -646,6 +654,8 @@ pub(crate) async fn start_in(
     Ok(Running {
         port,
         token: options.token,
+        notes,
+        runtime: tokio::runtime::Handle::current(),
         state,
         stop,
         server,
