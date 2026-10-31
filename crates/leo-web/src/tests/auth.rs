@@ -103,3 +103,23 @@ async fn the_signed_in_browsers_list_is_gone() {
     );
     running.stop().await;
 }
+
+#[tokio::test]
+async fn the_page_lets_the_app_window_talk_to_the_app() {
+    let (running, _dir) = running().await;
+    let port = running.port();
+    let reply = ask(port, "/", &format!("127.0.0.1:{port}")).await;
+    let policy = reply
+        .lines()
+        .find(|line| {
+            line.to_ascii_lowercase()
+                .starts_with("content-security-policy:")
+        })
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        policy.contains("connect-src 'self' ipc: http://ipc.localhost"),
+        "{policy}"
+    );
+    running.stop().await;
+}

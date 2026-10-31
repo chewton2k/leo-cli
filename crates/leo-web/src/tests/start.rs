@@ -56,7 +56,8 @@ async fn start_takes_the_next_port_when_one_is_busy() {
 }
 
 #[tokio::test]
-async fn stop_returns_within_the_drain_deadline() {
+async fn stop_returns_within_the_drain_deadline_while_a_request_is_still_arriving() {
+    use tokio::io::AsyncReadExt;
     let (places, _dir) = places();
     let running = start_in(
         places,
@@ -68,15 +69,63 @@ async fn stop_returns_within_the_drain_deadline() {
     )
     .await
     .unwrap();
-    let mut open = tokio::net::TcpStream::connect(("127.0.0.1", running.port()))
+    let port = running.port();
+    let mut signing_in = tokio::net::TcpStream::connect(("127.0.0.1", port))
         .await
         .unwrap();
-    open.write_all(b"GET /api/notes HTTP/1.1\r\nHost: 127.0.0.1\r\n")
+    signing_in
+        .write_all(
+            format!(
+                "GET /?token=t HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+            )
+            .as_bytes(),
+        )
         .await
         .unwrap();
+    let mut reply = String::new();
+    signing_in.read_to_string(&mut reply).await.unwrap();
+    let cookie = reply
+        .lines()
+        .find_map(|line| line.strip_prefix("set-cookie: "))
+        .and_then(|value| value.split(';').next())
+        .unwrap()
+        .to_string();
+    let mut slow = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    slow.write_all(
+        format!("POST /api/notes HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nCookie: {cookie}\r\nContent-Type: application/json\r\nContent-Length: 100000\r\n\r\n{{\"title\": \"").as_bytes(),
+    )
+    .await
+    .unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
     let began = Instant::now();
     running.stop().await;
-    assert!(began.elapsed() < Duration::from_secs(7));
+    let took = began.elapsed();
+    assert!(
+        took >= Duration::from_secs(4),
+        "nothing was in flight ({took:?})"
+    );
+    assert!(took < Duration::from_secs(7), "quitting hung ({took:?})");
+}
+
+#[tokio::test]
+async fn a_program_listening_on_every_address_keeps_its_port() {
+    let held = std::net::TcpListener::bind("0.0.0.0:0").unwrap();
+    let busy = held.local_addr().unwrap().port();
+    let (places, _dir) = places();
+    let running = start_in(
+        places,
+        StartOptions {
+            port: busy,
+            token: "t".into(),
+        },
+        Powers::default(),
+    )
+    .await
+    .unwrap();
+    assert_ne!(running.port(), busy);
+    running.stop().await;
 }
 
 #[tokio::test]

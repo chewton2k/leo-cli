@@ -666,6 +666,14 @@ pub(crate) async fn start_in(
 async fn bind(wanted: u16) -> Result<(tokio::net::TcpListener, u16)> {
     let mut last = None;
     for port in wanted..wanted.saturating_add(20) {
+        if port != 0 {
+            if let Err(e) = std::net::TcpListener::bind(("0.0.0.0", port)) {
+                if e.kind() == std::io::ErrorKind::AddrInUse {
+                    last = Some(e);
+                    continue;
+                }
+            }
+        }
         match tokio::net::TcpListener::bind(std::net::SocketAddr::from(([127, 0, 0, 1], port)))
             .await
         {

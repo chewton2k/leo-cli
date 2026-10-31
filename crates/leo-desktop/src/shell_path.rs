@@ -22,9 +22,20 @@ pub fn login_path(shell: &Path, timeout: Duration) -> Option<String> {
     let mut stdout = child.stdout.take()?;
     let (sender, received) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let mut text = String::new();
-        let _ = stdout.read_to_string(&mut text);
-        let _ = sender.send(text);
+        let mut text = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            match stdout.read(&mut chunk) {
+                Ok(0) | Err(_) => break,
+                Ok(read) => {
+                    text.extend_from_slice(&chunk[..read]);
+                    if String::from_utf8_lossy(&text).matches(MARK).count() >= 2 {
+                        break;
+                    }
+                }
+            }
+        }
+        let _ = sender.send(String::from_utf8_lossy(&text).into_owned());
     });
     let text = match received.recv_timeout(timeout) {
         Ok(text) => text,
@@ -34,6 +45,7 @@ pub fn login_path(shell: &Path, timeout: Duration) -> Option<String> {
             return None;
         }
     };
+    leo_core::children::stop_tree(&mut child);
     let _ = child.wait();
     let (_, rest) = text.split_once(MARK)?;
     let (path, _) = rest.split_once(MARK)?;
@@ -105,6 +117,22 @@ mod tests {
         let shell = fake_shell(dir.path(), "sleep 30");
         let began = Instant::now();
         assert_eq!(login_path(&shell, Duration::from_millis(300)), None);
+        assert!(began.elapsed() < Duration::from_secs(2));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_background_process_left_by_the_shell_does_not_hide_its_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let shell = fake_shell(
+            dir.path(),
+            "printf '__LEO_PATH__/opt/homebrew/bin__LEO_PATH__'; sleep 30 &",
+        );
+        let began = Instant::now();
+        assert_eq!(
+            login_path(&shell, Duration::from_secs(3)).as_deref(),
+            Some("/opt/homebrew/bin")
+        );
         assert!(began.elapsed() < Duration::from_secs(2));
     }
 
