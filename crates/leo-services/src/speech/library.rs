@@ -287,13 +287,12 @@ impl Library {
         let mut models = Vec::new();
         for model in self.catalog.curated() {
             let path = self.model_path(&model.id)?;
-            let bytes = std::fs::symlink_metadata(&path)
+            let metadata = std::fs::symlink_metadata(&path)
                 .ok()
-                .filter(|m| m.is_file())
-                .map(|m| m.len())
-                .unwrap_or(0);
+                .filter(|m| m.is_file());
+            let bytes = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
             disk_bytes += bytes;
-            let downloaded = bytes > 0;
+            let downloaded = metadata.is_some();
             let verified = downloaded && self.verify(&model.id).is_ok();
             let job = jobs.get(&model.id);
             models.push(json!({ "id": model.id, "name": model.name, "description": model.description,
@@ -303,8 +302,31 @@ impl Library {
                 "speed": self.catalog.speed(&model.id), "accuracy": self.catalog.accuracy(&model.id),
                 "progress": job.map(|j| json!({ "bytes": j.bytes, "total": j.total, "state": j.state, "error": j.error })) }));
         }
+        let mut extra_files = Vec::new();
+        if self.models.exists() {
+            safe_root(&self.models)?;
+            for (index, entry) in std::fs::read_dir(&self.models)?.enumerate() {
+                ensure!(index<256,"There are too many files in the speech model folder. Move older files elsewhere, then reopen Speech models.");
+                let entry = entry?;
+                let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                    continue;
+                };
+                if !Self::extra_name(&name)
+                    || self.catalog.curated().any(|m| m.file().filename == name)
+                {
+                    continue;
+                }
+                let metadata = std::fs::symlink_metadata(entry.path())?;
+                if !metadata.is_file() {
+                    continue;
+                }
+                disk_bytes += metadata.len();
+                extra_files.push(json!({"name":name,"bytes":metadata.len()}));
+            }
+            extra_files.sort_by_key(|v| v["name"].as_str().unwrap_or_default().to_owned());
+        }
         Ok(
-            json!({ "selected": selection, "ready": self.selected().is_ok(), "models": models, "disk_bytes": disk_bytes }),
+            json!({ "selected": selection, "ready": self.selected().is_ok(), "models": models, "extra_files":extra_files,"disk_bytes": disk_bytes }),
         )
     }
 
@@ -428,9 +450,51 @@ impl Library {
         Ok(())
     }
 
+    fn extra_name(name: &str) -> bool {
+        !name.is_empty()
+            && name.len() <= 255
+            && !name.contains(['/', '\\'])
+            && !name.chars().any(char::is_control)
+            && name.to_ascii_lowercase().ends_with(".gguf")
+            && std::path::Path::new(name).components().count() == 1
+    }
+    fn delete_extra(&self, name: &str) -> Result<()> {
+        ensure!(
+            Self::extra_name(name),
+            "Choose a downloaded model file from the list."
+        );
+        ensure!(
+            !self.catalog.curated().any(|m| m.file().filename == name),
+            "Use the model’s Delete button instead."
+        );
+        self.folders()?;
+        let _lock = crate::private_file::lock(&self.config, ".speech.lock", LOCK_WAIT)?;
+        let path = leo_core::paths::contained_path(&self.models, Path::new(name))?;
+        let metadata = std::fs::symlink_metadata(&path)?;
+        ensure!(
+            metadata.is_file(),
+            "This is not a regular model file. Remove the link from the model folder instead."
+        );
+        std::fs::remove_file(path)?;
+        Ok(())
+    }
+
     pub fn change(&self, change: &Value) -> Result<Value> {
         let id = change["id"].as_str().context("Choose a speech model.")?;
         match change["action"].as_str() {
+            Some("delete_file") => {
+                ensure!(
+                    Self::extra_name(id),
+                    "Choose a downloaded model file from the list."
+                );
+                let path = leo_core::paths::contained_path(&self.models, Path::new(id))?;
+                let library = self.clone();
+                let name = id.to_owned();
+                return super::engine::engine().edit_model(path, false, move || {
+                    library.delete_extra(&name)?;
+                    library.view()
+                });
+            }
             Some("download") => self.download(id)?,
             Some("cancel") => self.cancel(id)?,
             Some("use") => self.use_model(id, change["language"].as_str().unwrap_or("auto"))?,

@@ -14,7 +14,7 @@ use anyhow::Result;
 use crate::store::Store;
 
 /// Bump when the manual's content changes enough to be worth re-offering.
-const MANUAL_VERSION: u32 = 19;
+const MANUAL_VERSION: u32 = 20;
 const MARKER: &str = ".manual-installed";
 pub const MANUAL_TITLE: &str = "leo manual";
 
@@ -101,7 +101,7 @@ New note  top of the sidebar, or the first card in a folder
 Settings  bottom of the sidebar
 ```
 
-On Windows, use Ctrl instead of ⌘.
+On Windows, use Ctrl instead of ⌘. Settings → Health checks setup and shows fixes.
 
 ## Recording
 
@@ -277,6 +277,7 @@ mod tests {
             "Record",
             "⌘J",
             "Dictation",
+            "Health",
             "Option+Space",
             "Ctrl+Space",
         ] {

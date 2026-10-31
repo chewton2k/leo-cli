@@ -4,21 +4,25 @@ const TASK_USE = {
   speech: 'Turns what was said into text while you record.',
 };
 
-async function showSettings() {
+async function showSettings(section) {
+  section = settingsSection(section);
+  try { localStorage.setItem('leo-settings-section', section); } catch (e) {}
+  if (section === 'storage') return showStorage();
   const mine = ++seq;
-  state = { view: 'settings', dir: '' };
+  state = { view: 'settings', dir: '', section };
   chrome({ showBack: true });
   $('#crumbs').innerHTML = '<span class="sep">/</span><button>Settings</button>';
   document.title = 'Settings · leo';
-  app.innerHTML = skeleton(3);
+  app.innerHTML = settingsFrame(section, skeleton(3));
   const [page, calendar, speech, dictation] = await Promise.all([api('/api/settings'), api('/api/calendar').catch(() => null), api('/api/speech').catch(() => null), api('/api/dictation').catch(() => null)]);
   if (mine !== seq) return;
   state.calendar = calendar;
   state.speech = speech;
   state.dictation = dictation;
   drawSettings(page);
+  if (section === 'health') loadHealth().catch(fail);
   startSpeechPolling(mine);
-  pollDictation(mine, ++dictationGeneration);
+  if (section === 'dictation') pollDictation(mine, ++dictationGeneration);
 }
 
 const GOOGLE_CALENDAR_SETTINGS = 'https://calendar.google.com/calendar/r/settings';
@@ -243,39 +247,43 @@ function felixUsageCard(page) {
   </section>`;
 }
 
-function drawSettings(page) {
-  state.settings = page;
-  const backup = page.backup;
-  app.innerHTML = `<div class="settings">
-    <div class="section-title">Settings</div>
-    ${themeCard()}
-    <div id="dictation-library">${dictationCards(state.dictation)}</div>
-    ${page.tasks.filter((t) => t.task === 'writing').map((t) => taskCard(t)).join('')}
-    <div id="speech-library">${speechCards(state.speech)}</div>
-    ${calendarCard(state.calendar)}
-    ${felixUsageCard(page)}
-    <section class="set-card">
+function backupCard(backup) {
+  return `    <section class="set-card">
       <header><h3>Backup</h3>${backup.remote ? '<span class="set-status ok">On</span>' : '<span class="set-status missing">Not set up</span>'}</header>
       <p class="hint">${backup.remote ? `Your notes are copied to ${esc(backup.remote)}.` : 'Backup is not set up yet.'}</p>
+      ${!backup.remote ? '<div class="set-row"><input class="set-input grow" id="backup-repository" value="leo-notes" aria-label="GitHub repository name"><button class="btn primary sm" data-action="backup-setup">Set up Backup</button></div><p class="set-note">Uses GitHub CLI. If needed, install gh from <a href="https://cli.github.com" target="_blank" rel="noopener noreferrer">cli.github.com</a> and sign in once with gh auth login.</p>' : ''}
       <p class="hint">On quit also backs up notes and tasks when you close the leo window or quit leo.</p>
       <label class="set-row"><span class="set-label">Push changes</span><span class="select-control"><select data-set="auto_push">${backup.options.map((o) => settingsOption(o.id, o.label, backup.auto_push)).join('')}</select>${ICON.chevron}</span></label>
     </section>
-    <section class="set-card">
-      <header><h3>Where things are</h3></header>
-      <div class="set-row column"><span class="set-label">Notes</span><code class="set-path">${esc(page.paths.notes || '')}</code></div>
-      <div class="set-row column"><span class="set-label">Settings file</span><code class="set-path">${esc(page.paths.config || '')}</code></div>
-      <p class="hint">Changes here save straight away. Keys are kept in a file only your account can read, and are never shown again.</p>
-    </section>
-  </div>`;
+`;
+}
+function drawSettings(page) {
+  const fields = keepSettingsFields();
+  state.settings = page;
+  const section = state.section || 'general';
+  let content = '';
+  if (section === 'general') content = themeCard() + `<div id="app-general">${nativeGeneralCard(desktopApp)}</div>`;
+  else if (section === 'dictation') content = `<div id="dictation-library">${dictationCards(state.dictation) || '<section class="set-card">Open the Leo app to set up dictation.</section>'}</div>`;
+  else if (section === 'models') content = `<div id="speech-library">${speechCards(state.speech)}</div>`;
+  else if (section === 'writing') content = page.tasks.filter((task) => task.task === 'writing').map(taskCard).join('') + felixUsageCard(page);
+  else if (section === 'calendar') content = calendarCard(state.calendar);
+  else if (section === 'backup') content = backupCard(page.backup);
+  else if (section === 'health') content = `<div id="app-health">${healthCards(state.health)}</div>`;
+  else if (section === 'updates') content = `<div id="app-updates">${updatesCard(desktopApp)}</div>`;
+  else content = '';
+  app.innerHTML = settingsFrame(section, `<div class="settings"><div class="section-title">${esc(settingsTitle(section))}</div>${content}</div>`);
+  restoreSettingsFields(fields);
 }
 
 async function changeSetting(change) {
+  const mine = seq;
   try {
     const done = await api('/api/settings', { method: 'POST', body: change });
+    if (mine !== seq || state.view !== 'settings') return;
     drawSettings(done.settings);
     toast(done.message);
   } catch (e) {
-    if (state.settings) drawSettings(state.settings);
+    if (mine === seq && state.view === 'settings' && state.settings) drawSettings(state.settings);
     throw e;
   }
 }
@@ -328,24 +336,50 @@ async function testAi(el) {
 }
 
 function speechCards(view) {
-  if (!view) return '';
+  if (!view) return '<section class="set-card"><p class="hint">Speech models could not be opened. Reopen Leo and try again.</p></section>';
   const selected = view.selected || {};
-  const rows = view.models.map((model) => {
-    const progress = model.progress;
-    const downloading = progress && progress.state === 'downloading';
-    const percent = downloading ? Math.min(100, Math.floor(progress.bytes * 100 / progress.total)) : 0;
-    const action = (verb, label) => `<button class="btn plain sm" data-action="speech-model" data-model="${esc(model.id)}" data-verb="${verb}">${label}</button>`;
-    const controls = downloading ? `<span class="hint">${percent}%</span>${action('cancel', 'Cancel')}` : model.verified
-      ? `${model.in_use ? '<span class="chip">In use</span>' : action('use', 'Use')}${action('delete', 'Delete')}`
-      : `${action('download', model.downloaded ? 'Download again' : 'Download')}${model.downloaded ? action('delete', 'Delete') : ''}`;
-    return `<div class="set-row column"><div class="set-line"><span class="set-label">${esc(model.name)}</span><span class="set-value">${controls}</span></div>
-      <span class="hint">${esc(model.languages.length === 1 ? model.languages[0] : `${model.languages.length} languages`)} · ${Math.ceil(model.size / 1048576)} MB · ${model.live ? 'Live lecture transcripts' : 'Transcript after recording'}</span>
-      ${progress && progress.error && progress.state !== 'cancelled' ? `<span class="set-note warn">${esc(progress.error)}</span>` : ''}</div>`;
-  }).join('');
   const current = view.models.find((model) => model.id === selected.id);
-  const languages = current && current.languages.length > 1 ? `<label class="set-row"><span class="set-label">Language</span><span class="select-control"><select id="speech-language" data-speech-language="${esc(current.id)}">${settingsOption('auto', 'Detect language', selected.language)}${current.languages.map((language) => settingsOption(language, language, selected.language)).join('')}</select>${ICON.chevron}</span></label>` : '';
-  return `<section class="set-card"><header><h3>Speech models</h3><span class="set-status ${view.ready ? 'ok' : 'missing'}">${view.ready ? 'Ready' : 'Choose a model'}</span></header>
-    <p class="hint">Dictation and recording use one local model. Audio stays on this computer.</p>${languages}${rows}</section>`;
+  const language = current && view.ready && current.languages.length > 1 ? `<label class="set-row"><span class="set-label">Language</span><span class="select-control"><select id="speech-language" data-speech-language="${esc(current.id)}">${settingsOption('auto', 'Detect language', selected.language)}${current.languages.map((code) => settingsOption(code, speechLanguage(code), selected.language)).join('')}</select>${ICON.chevron}</span></label>` : '';
+  const downloaded = view.models.filter((model) => model.downloaded);
+  const extras = view.extra_files || [];
+  const filter = state.speechFilter || 'recommended';
+  const filters = [['recommended', 'Recommended'], ['english', 'English'], ['many', 'Many languages'], ['downloaded', 'Downloaded'], ['all', `All ${view.models.length}`]];
+  const rows = speechFiltered(view.models, filter).map(speechModelRow).join('');
+  return `<section class="set-card"><header><h3>In use</h3><span class="set-status ${view.ready ? 'ok' : 'missing'}">${view.ready ? 'Ready' : 'Choose a model'}</span></header><p class="hint">${view.ready && current ? esc(current.name) : 'Download a model below, then choose Use.'}</p><p class="set-note">Dictation and recording share this model. Audio stays on this computer.</p>${language}</section>
+    <section class="set-card" data-models-downloaded><header><h3>Downloaded</h3><span class="hint">${downloaded.length + extras.length} models · ${speechBytes(view.disk_bytes)} on this computer</span></header>
+      ${downloaded.map(speechModelRow).join('')}${extras.map((file) => `<div class="set-row"><span class="grow"><span>${esc(file.name)}</span><span class="set-note">${speechBytes(file.bytes)} · Not in the current catalog</span></span><button class="btn plain sm" data-action="speech-model" data-model="${esc(file.name)}" data-verb="delete_file">Delete</button></div>`).join('')}${!downloaded.length && !extras.length ? '<p class="set-note">No models downloaded yet.</p>' : ''}</section>
+    <section class="set-card" data-models-all><header><h3>All models</h3></header><p class="hint">Choose a local model. Larger models use more memory.</p><div class="library-views model-filters" role="group" aria-label="Filter models">${filters.map(([id, label]) => `<button class="btn plain sm${filter === id ? ' on' : ''}" data-action="speech-filter" data-filter="${id}" aria-pressed="${filter === id}">${label}</button>`).join('')}</div>${rows || '<p class="set-note">No models match this filter.</p>'}<p class="set-note">Speed and accuracy come from model benchmarks; your computer may differ.</p></section>`;
+}
+function speechBytes(bytes) {
+  bytes = Math.max(0, Number(bytes) || 0);
+  return bytes >= 1073741824 ? (bytes / 1073741824).toFixed(1) + ' GB' : bytes >= 1048576 ? Math.ceil(bytes / 1048576) + ' MB' : bytes + ' B';
+}
+function speechLanguage(code) {
+  try { return new Intl.DisplayNames(['en'], { type: 'language' }).of(code) || code; } catch (e) { return code; }
+}
+function speechFiltered(models, filter) {
+  return models.filter((model) => filter === 'all' || filter === 'recommended' && model.recommended || filter === 'english' && model.languages.includes('en') || filter === 'many' && model.languages.length > 1 || filter === 'downloaded' && model.downloaded);
+}
+function speechDots(value, thresholds) {
+  const score = Number(value) || 0;
+  if (!score) return '<span class="hint">Not measured</span>';
+  const filled = Math.min(5, Math.max(1, thresholds.filter((threshold) => score >= threshold).length));
+  return `<span class="model-dots" aria-label="${filled} out of 5">${'●'.repeat(filled)}${'○'.repeat(5 - filled)}</span>`;
+}
+function speechModelRow(model) {
+  const progress = model.progress;
+  const downloading = progress && progress.state === 'downloading';
+  const percent = downloading ? Math.min(100, Math.floor(progress.bytes * 100 / Math.max(1, progress.total))) : 0;
+  const action = (verb, label) => `<button class="btn plain sm" data-action="speech-model" data-model="${esc(model.id)}" data-verb="${verb}">${label}</button>`;
+  const controls = downloading ? `<span class="hint">${percent}%</span><progress value="${percent}" max="100" aria-label="Downloading ${esc(model.name)}"></progress>${action('cancel', 'Cancel')}` : model.verified ? `${model.in_use ? '<span class="chip">In use</span>' : action('use', 'Use')}${action('delete', 'Delete')}` : `${model.downloaded ? '<span class="chip">Check failed</span>' : ''}${action('download', model.downloaded ? 'Download again' : 'Download')}${model.downloaded ? action('delete', 'Delete') : ''}`;
+  const names = model.languages.map(speechLanguage);
+  return `<div class="set-row column" data-model-row="${esc(model.id)}"><div class="set-line"><span class="set-label">${esc(model.name)}${model.recommended ? ' <span class="chip">Recommended</span>' : ''}</span><span class="set-value">${controls}</span></div><span class="hint" title="${esc(names.join(', '))}">${esc(names.length === 1 ? names[0] : names.length + ' languages')} · ${speechBytes(model.size)} · ${model.streaming ? 'Live dictation text' : 'Text after you speak'} · ${model.live ? 'Live lecture transcripts' : 'Lecture transcript after recording'}</span><span class="hint">Speed ${speechDots(model.speed, [0, 1, 2, 5, 10])} <span title="${esc(model.accuracy || 0)}% benchmark">Accuracy ${speechDots(model.accuracy, [0, 80, 90, 95, 98])}</span></span>${progress && progress.error && progress.state !== 'cancelled' ? `<span class="set-note warn">${esc(progress.error)}</span>` : ''}</div>`;
+}
+function filterSpeech(el) {
+  state.speechFilter = el.dataset.filter;
+  const box = $('#speech-library');
+  if (box) box.innerHTML = speechCards(state.speech);
+  box?.querySelector(`[data-filter="${CSS.escape(state.speechFilter)}"]`)?.focus({ preventScroll: true });
 }
 
 let speechPollGeneration = 0;
@@ -378,6 +412,12 @@ async function speechChange(change) {
 }
 
 function changeSpeechModel(el) {
+  if (el.dataset.verb === 'delete_file') {
+    const file = (state.speech.extra_files || []).find((file) => file.name === el.dataset.model);
+    if (!file) return;
+    sheet(`<h3>Delete ${esc(file.name)}?</h3><p>This removes the model file from this computer.</p><div class="buttons"><button class="btn plain" data-action="close">Cancel</button><button class="btn danger" data-action="speech-delete" data-model="${esc(file.name)}" data-verb="delete_file">Delete</button></div>`);
+    return;
+  }
   const model = state.speech.models.find((m) => m.id === el.dataset.model);
   if (!model) return;
   const change = { action: el.dataset.verb, id: model.id, language: model.languages.length === 1 ? model.languages[0] : 'auto' };

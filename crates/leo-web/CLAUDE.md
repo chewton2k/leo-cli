@@ -1052,3 +1052,16 @@ resolves a stored ID and discards page-supplied text; Clear removes local rows.
 Nothing becomes a note or sync file. Card polling updates shortcut status and
 history only; fields, drafts, focus and caret survive. Local popup rendering
 and settings helpers have node tests in `dictation.test.js`.
+
+Settings uses Layout A's grouped left navigation at `#/settings/<section>`;
+Storage keeps its controller inside the same frame. Redraws retain field drafts,
+focus and selection, including textareas. App polling updates native status and a
+ready-update banner without replacing focused controls. First-launch sheets have
+three independent skips; late responses cannot dismiss another sheet or page.
+Speech models show In use, every Downloaded file and filtered All models cards.
+
+`Powers.app_settings` supplies session-gated bounded JSON `/api/app` and
+`/api/health`; blocking native work runs off async tasks and outside the store
+lock. Explicit `/api/backup/setup` has a single-operation semaphore. Recording
+reserves `capture_activity` before creating a job; its lease prevents updater
+installation through the durable save, including browser-journal recovery.

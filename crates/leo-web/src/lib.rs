@@ -3,6 +3,7 @@ mod browse;
 pub mod calc;
 mod calendar;
 pub const CALENDAR_BYTES: u64 = calendar::MOST_BYTES;
+pub mod app_settings;
 pub mod captions;
 pub mod chat;
 pub mod chat_files;
@@ -92,6 +93,9 @@ pub trait SettingsApi: Send + Sync {
     fn describe(&self, notes_dir: &std::path::Path) -> serde_json::Value;
     fn apply(&self, change: &serde_json::Value) -> Result<String>;
     fn test(&self, task: &str) -> Result<String>;
+    fn setup_backup(&self, _notes: &std::path::Path, _name: &str) -> Result<String> {
+        anyhow::bail!("Backup setup is unavailable. Reopen Leo and try again.")
+    }
     fn backup(&self, _notes_dir: &std::path::Path) -> Result<Option<std::process::Command>> {
         Ok(None)
     }
@@ -190,6 +194,7 @@ pub struct Powers {
     pub settings: Option<Arc<dyn SettingsApi>>,
     pub speech: Option<Arc<dyn speech::SpeechApi>>,
     pub dictation: Option<Arc<dyn dictation::DictationApi>>,
+    pub app_settings: Option<Arc<dyn app_settings::AppApi>>,
     pub importer: Option<Importer>,
     pub listener: Option<record::Listener>,
     pub regenerator: Option<record::Regenerator>,
@@ -229,7 +234,9 @@ struct AppState {
     settings: Option<Arc<dyn SettingsApi>>,
     speech: Option<Arc<dyn speech::SpeechApi>>,
     dictation: Option<Arc<dyn dictation::DictationApi>>,
+    app_settings: Option<Arc<dyn app_settings::AppApi>>,
     backups: Arc<backup::Backups>,
+    backup_setups: Arc<tokio::sync::Semaphore>,
     importer: Option<Importer>,
     imports: Arc<Mutex<std::collections::HashMap<String, ImportJob>>>,
     import_slots: Arc<routes::uploads::ImportSlots>,
@@ -239,6 +246,7 @@ struct AppState {
     regenerator: Option<record::Regenerator>,
     calendar_access: Option<Arc<dyn CalendarAccess>>,
     recording: record::Recordings,
+    capture_activity: leo_core::activity::Gate,
     discarded_recordings: Arc<Mutex<std::collections::VecDeque<String>>>,
     calendar: Arc<calendar::Calendar>,
     source_writing: Arc<std::sync::atomic::AtomicBool>,
@@ -610,7 +618,9 @@ pub(crate) async fn start_in(
         settings,
         speech: powers.speech,
         dictation: powers.dictation,
+        app_settings: powers.app_settings,
         backups: Default::default(),
+        backup_setups: Arc::new(tokio::sync::Semaphore::new(1)),
         importer,
         imports: Default::default(),
         import_slots: Default::default(),
@@ -620,6 +630,7 @@ pub(crate) async fn start_in(
         regenerator: powers.regenerator,
         calendar_access: powers.calendar_access,
         recording: Default::default(),
+        capture_activity: leo_core::activity::global().clone(),
         discarded_recordings: Default::default(),
         calendar: Default::default(),
         source_writing: Default::default(),
@@ -704,6 +715,11 @@ fn router(state: AppState) -> Router {
     Router::new()
         .route("/", get(index))
         .route("/api/backup", get(backup::status).post(backup::leave))
+        .route(
+            "/api/backup/setup",
+            axum::routing::post(routes::settings::setup_backup)
+                .layer(axum::extract::DefaultBodyLimit::max(4096)),
+        )
         .route("/api/notes", get(list_notes).post(create_note))
         .route(
             "/api/notes/{id}",
@@ -904,6 +920,13 @@ fn router(state: AppState) -> Router {
             "/api/images",
             post(add_picture).layer(axum::extract::DefaultBodyLimit::max(PICTURE_BYTES)),
         )
+        .route(
+            "/api/app",
+            get(app_settings::get)
+                .post(app_settings::change)
+                .layer(axum::extract::DefaultBodyLimit::max(16_384)),
+        )
+        .route("/api/health", get(app_settings::health))
         .route(
             "/api/dictation",
             get(dictation::get)

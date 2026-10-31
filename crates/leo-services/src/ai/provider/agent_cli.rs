@@ -104,7 +104,15 @@ pub(crate) fn probe(program: &Path, args: &[&str]) -> ProviderResult<String> {
     probe_command(command)
 }
 
-pub(crate) fn probe_command(mut command: Command) -> ProviderResult<String> {
+pub(crate) fn probe_command(command: Command) -> ProviderResult<String> {
+    let (success, text) = probe_status(command)?;
+    if success {
+        Ok(text)
+    } else {
+        Err(ProviderError::Retryable("The writing program could not be checked safely. Run its --help command, then try again.".into()))
+    }
+}
+fn probe_status(mut command: Command) -> ProviderResult<(bool, String)> {
     let failed = || {
         ProviderError::Retryable(
         "The writing program could not be checked safely. Run its `--help` command, then try again.".into(),
@@ -141,12 +149,12 @@ pub(crate) fn probe_command(mut command: Command) -> ProviderResult<String> {
         }
         std::thread::sleep(Duration::from_millis(10));
     };
-    if exceeded || !status.success() || watch.stalled.load(Ordering::Relaxed) {
+    if exceeded || watch.stalled.load(Ordering::Relaxed) {
         return Err(ProviderError::Retryable(
             "The writing program could not be checked safely. Run its `--help` command, then try again.".into(),
         ));
     }
-    Ok(text)
+    Ok((status.success(), text))
 }
 
 pub(crate) fn codex_disables(program: &Path) -> ProviderResult<Vec<String>> {
@@ -1320,6 +1328,49 @@ impl ChatProvider for AgentCli {
     }
 }
 
+pub fn signed_in(agent: Agent, bin: &str) -> Option<bool> {
+    let mut command = leo_core::children::quiet_command(locate(bin)?);
+    command.args(match agent {
+        Agent::Codex => vec!["login", "status"],
+        Agent::ClaudeCode => vec!["auth", "status", "--json"],
+    });
+    command
+        .current_dir(std::env::temp_dir())
+        .env("NO_COLOR", "1");
+    probe_status(command).ok().and_then(|(success, text)| {
+        let evidence = sign_in_evidence(agent, &text);
+        if evidence == Some(true) && !success {
+            None
+        } else {
+            evidence
+        }
+    })
+}
+fn sign_in_evidence(agent: Agent, text: &str) -> Option<bool> {
+    if text.len() > 64 * 1024 {
+        return None;
+    }
+    match agent {
+        Agent::Codex => {
+            let text = text.to_ascii_lowercase();
+            if text.contains("not logged in") {
+                Some(false)
+            } else if text.contains("logged in using") {
+                Some(true)
+            } else {
+                None
+            }
+        }
+        Agent::ClaudeCode => serde_json::from_str::<serde_json::Value>(text)
+            .ok()
+            .and_then(|value| {
+                value["loggedIn"]
+                    .as_bool()
+                    .or_else(|| value["logged_in"].as_bool())
+            }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2179,5 +2230,54 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"x
             .windows(2)
             .any(|w| w == ["-c", "model_reasoning_effort=\"medium\""]));
         assert!(!args.iter().any(|a| a.contains("rm")));
+    }
+}
+
+#[cfg(test)]
+mod sign_in_tests {
+    #[test]
+    #[cfg(unix)]
+    fn signed_out_commands_are_missing_instead_of_unknown() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fake");
+        std::fs::write(&path, "#!/bin/sh\nprintf 'Not logged in\\n' >&2\nexit 1\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(
+            super::signed_in(super::Agent::Codex, path.to_str().unwrap()),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn sign_in_evidence_never_treats_unknown_or_missing_auth_as_ready() {
+        use super::Agent;
+        assert_eq!(
+            super::sign_in_evidence(Agent::Codex, "Logged in using ChatGPT"),
+            Some(true)
+        );
+        assert_eq!(
+            super::sign_in_evidence(Agent::Codex, "Not logged in"),
+            Some(false)
+        );
+        assert_eq!(
+            super::sign_in_evidence(Agent::Codex, "Unknown command"),
+            None
+        );
+        assert_eq!(
+            super::sign_in_evidence(
+                Agent::ClaudeCode,
+                r#"{"loggedIn":true,"email":"private@example.invalid"}"#
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            super::sign_in_evidence(Agent::ClaudeCode, r#"{"loggedIn":false}"#),
+            Some(false)
+        );
+        assert_eq!(
+            super::sign_in_evidence(Agent::ClaudeCode, r#"{"token":"SECRET_SENTINEL"}"#),
+            None
+        );
     }
 }

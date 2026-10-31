@@ -500,3 +500,11 @@ and prevents new sounds until that recording ends. It does no I/O under a mutex.
 The engine actor owns streaming dictation too; bounded feeds fall back to the
 retained batch PCM when streaming fails or falls behind. A reservation pauses
 segment/live passes; recording's pin retains the worker through dictation.
+
+Health checks use owned temporary files for notes writability, preserving any
+existing `.leo-doctor-probe`. Agent sign-in probes accept only recognized status
+output, honor exit status and share the bounded process watchdog. `Engine::unload_worker`
+reaps the current worker without closing the actor, so a failed app update can
+resume transcription. Native recording holds a core activity lease until finished.
+The model library lists damaged catalog files and uncatalogued regular GGUF files
+with disk totals; deletion stays contained and never follows links.

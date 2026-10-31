@@ -38,6 +38,11 @@ fn recording_in_the_browser_passes_its_tests() {
     run_node_tests("recording.test.js");
     run_node_tests("native-recording.test.js");
     run_node_tests("dictation.test.js");
+    run_node_tests("settings-navigation.test.js");
+    run_node_tests("model-library.test.js");
+    run_node_tests("onboarding.test.js");
+    run_node_tests("app-settings.test.js");
+    run_node_tests("settings-lifecycle.test.js");
     run_node_tests("audio-queue.test.js");
 }
 

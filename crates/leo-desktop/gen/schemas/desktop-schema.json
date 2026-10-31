@@ -2413,6 +2413,210 @@
           "type": "string",
           "const": "global-shortcut:deny-unregister-all",
           "markdownDescription": "Denies the unregister_all command without any pre-configured scope."
+        },
+        {
+          "description": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-check-accessibility-permission`\n- `allow-request-accessibility-permission`\n- `allow-check-full-disk-access-permission`\n- `allow-request-full-disk-access-permission`\n- `allow-check-screen-recording-permission`\n- `allow-request-screen-recording-permission`\n- `allow-check-microphone-permission`\n- `allow-request-microphone-permission`\n- `allow-check-camera-permission`\n- `allow-request-camera-permission`\n- `allow-check-input-monitoring-permission`\n- `allow-request-input-monitoring-permission`",
+          "type": "string",
+          "const": "macos-permissions:default",
+          "markdownDescription": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-check-accessibility-permission`\n- `allow-request-accessibility-permission`\n- `allow-check-full-disk-access-permission`\n- `allow-request-full-disk-access-permission`\n- `allow-check-screen-recording-permission`\n- `allow-request-screen-recording-permission`\n- `allow-check-microphone-permission`\n- `allow-request-microphone-permission`\n- `allow-check-camera-permission`\n- `allow-request-camera-permission`\n- `allow-check-input-monitoring-permission`\n- `allow-request-input-monitoring-permission`"
+        },
+        {
+          "description": "Enables the check_accessibility_permission command without any pre-configured scope.",
+          "type": "string",
+          "const": "macos-permissions:allow-check-accessibility-permission",
+          "markdownDescription": "Enables the check_accessibility_permission command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the check_camera_permission command without any pre-configured scope.",
+          "type": "string",
+          "const": "macos-permissions:allow-check-camera-permission",
+          "markdownDescription": "Enables the check_camera_permission command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the check_full_disk_access_permission command without any pre-configured scope.",
+          "type": "string",
+          "const": "macos-permissions:allow-check-full-disk-access-permission",
+          "markdownDescription": "Enables the check_full_disk_access_permission command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the check_input_monitoring_permission command without any pre-configured scope.",
+          "type": "string",
+          "const": "macos-permissions:allow-check-input-monitoring-permission",
+          "markdownDescription": "Enables the check_input_monitoring_permission command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the check_microphone_permission command without any pre-configured scope.",
+          "type": "string",
+          "const": "macos-permissions:allow-check-microphone-permission",
+          "markdownDescription": "Enables the check_microphone_permission command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the check_screen_recording_permission command without any pre-configured scope.",
+          "type": "string",
+          "const": "macos-permissions:allow-check-screen-recording-permission",
+          "markdownDescription": "Enables the check_screen_recording_permission command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the request_accessibility_permission command without any pre-configured scope.",
+          "type": "string",
+          "const": "macos-permissions:allow-request-accessibility-permission",
+          "markdownDescription": "Enables the request_accessibility_permission command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the request_camera_permission command without any pre-configured scope.",
+          "type": "string",
+          "const": "macos-permissions:allow-request-camera-permission",
+          "markdownDescription": "Enables the request_camera_permission command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the request_full_disk_access_permission command without any pre-configured scope.",
+          "type": "string",
+          "const": "macos-permissions:allow-request-full-disk-access-permission",
+          "markdownDescription": "Enables the request_full_disk_access_permission command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the request_input_monitoring_permission command without any pre-configured scope.",
+          "type": "string",
+          "const": "macos-permissions:allow-request-input-monitoring-permission",
+          "markdownDescription": "Enables the request_input_monitoring_permission command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the request_microphone_permission command without any pre-configured scope.",
+          "type": "string",
+          "const": "macos-permissions:allow-request-microphone-permission",
+          "markdownDescription": "Enables the request_microphone_permission command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the request_screen_recording_permission command without any pre-configured scope.",
+          "type": "string",
+          "const": "macos-permissions:allow-request-screen-recording-permission",
+          "markdownDescription": "Enables the request_screen_recording_permission command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the check_accessibility_permission command without any pre-configured scope.",
+          "type": "string",
+          "const": "macos-permissions:deny-check-accessibility-permission",
+          "markdownDescription": "Denies the check_accessibility_permission command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the check_camera_permission command without any pre-configured scope.",
+          "type": "string",
+          "const": "macos-permissions:deny-check-camera-permission",
+          "markdownDescription": "Denies the check_camera_permission command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the check_full_disk_access_permission command without any pre-configured scope.",
+          "type": "string",
+          "const": "macos-permissions:deny-check-full-disk-access-permission",
+          "markdownDescription": "Denies the check_full_disk_access_permission command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the check_input_monitoring_permission command without any pre-configured scope.",
+          "type": "string",
+          "const": "macos-permissions:deny-check-input-monitoring-permission",
+          "markdownDescription": "Denies the check_input_monitoring_permission command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the check_microphone_permission command without any pre-configured scope.",
+          "type": "string",
+          "const": "macos-permissions:deny-check-microphone-permission",
+          "markdownDescription": "Denies the check_microphone_permission command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the check_screen_recording_permission command without any pre-configured scope.",
+          "type": "string",
+          "const": "macos-permissions:deny-check-screen-recording-permission",
+          "markdownDescription": "Denies the check_screen_recording_permission command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the request_accessibility_permission command without any pre-configured scope.",
+          "type": "string",
+          "const": "macos-permissions:deny-request-accessibility-permission",
+          "markdownDescription": "Denies the request_accessibility_permission command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the request_camera_permission command without any pre-configured scope.",
+          "type": "string",
+          "const": "macos-permissions:deny-request-camera-permission",
+          "markdownDescription": "Denies the request_camera_permission command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the request_full_disk_access_permission command without any pre-configured scope.",
+          "type": "string",
+          "const": "macos-permissions:deny-request-full-disk-access-permission",
+          "markdownDescription": "Denies the request_full_disk_access_permission command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the request_input_monitoring_permission command without any pre-configured scope.",
+          "type": "string",
+          "const": "macos-permissions:deny-request-input-monitoring-permission",
+          "markdownDescription": "Denies the request_input_monitoring_permission command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the request_microphone_permission command without any pre-configured scope.",
+          "type": "string",
+          "const": "macos-permissions:deny-request-microphone-permission",
+          "markdownDescription": "Denies the request_microphone_permission command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the request_screen_recording_permission command without any pre-configured scope.",
+          "type": "string",
+          "const": "macos-permissions:deny-request-screen-recording-permission",
+          "markdownDescription": "Denies the request_screen_recording_permission command without any pre-configured scope."
+        },
+        {
+          "description": "This permission set configures which kind of\nupdater functions are exposed to the frontend.\n\n#### Granted Permissions\n\nThe full workflow from checking for updates to installing them\nis enabled.\n\n\n#### This default permission set includes:\n\n- `allow-check`\n- `allow-download`\n- `allow-install`\n- `allow-download-and-install`",
+          "type": "string",
+          "const": "updater:default",
+          "markdownDescription": "This permission set configures which kind of\nupdater functions are exposed to the frontend.\n\n#### Granted Permissions\n\nThe full workflow from checking for updates to installing them\nis enabled.\n\n\n#### This default permission set includes:\n\n- `allow-check`\n- `allow-download`\n- `allow-install`\n- `allow-download-and-install`"
+        },
+        {
+          "description": "Enables the check command without any pre-configured scope.",
+          "type": "string",
+          "const": "updater:allow-check",
+          "markdownDescription": "Enables the check command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the download command without any pre-configured scope.",
+          "type": "string",
+          "const": "updater:allow-download",
+          "markdownDescription": "Enables the download command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the download_and_install command without any pre-configured scope.",
+          "type": "string",
+          "const": "updater:allow-download-and-install",
+          "markdownDescription": "Enables the download_and_install command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the install command without any pre-configured scope.",
+          "type": "string",
+          "const": "updater:allow-install",
+          "markdownDescription": "Enables the install command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the check command without any pre-configured scope.",
+          "type": "string",
+          "const": "updater:deny-check",
+          "markdownDescription": "Denies the check command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the download command without any pre-configured scope.",
+          "type": "string",
+          "const": "updater:deny-download",
+          "markdownDescription": "Denies the download command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the download_and_install command without any pre-configured scope.",
+          "type": "string",
+          "const": "updater:deny-download-and-install",
+          "markdownDescription": "Denies the download_and_install command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the install command without any pre-configured scope.",
+          "type": "string",
+          "const": "updater:deny-install",
+          "markdownDescription": "Denies the install command without any pre-configured scope."
         }
       ]
     },

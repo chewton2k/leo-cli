@@ -82,6 +82,7 @@ impl Drop for SavedData {
 pub(super) struct WinTxShared {
     state: Mutex<TxState>,
     text: String,
+    _activity: leo_core::activity::Lease,
     current: Arc<dyn Fn() -> bool + Send + Sync>,
     snapshot: Mutex<Vec<SavedFormat>>,
     sequence: Mutex<u32>,
@@ -667,6 +668,9 @@ pub(super) fn run(
     let shared = Arc::new(WinTxShared {
         state: Mutex::new(TxState::new()),
         text: text.to_string(),
+        _activity: leo_core::activity::global()
+            .begin()
+            .map_err(|e| e.to_string())?,
         current,
         snapshot: Mutex::new(Vec::new()),
         sequence: Mutex::new(0),

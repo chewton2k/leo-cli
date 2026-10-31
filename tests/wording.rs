@@ -77,6 +77,22 @@ fn shipped_lines(path: &Path) -> Vec<(usize, String)> {
 /// Whether `line` mentions `word` as a whole word: `:list` is not in
 /// `:listen`, and `:config` is not in the Rust path `leo::config`.
 fn mentions(line: &str, word: &str) -> bool {
+    if word.starts_with(':') && line.contains(word) {
+        let all_json_keys = line.match_indices(word).all(|(i, _)| {
+            let Some(prefix) = line.get(..i).and_then(|s| s.strip_suffix('"')) else {
+                return false;
+            };
+            let Some((before, key)) = prefix.rsplit_once('"') else {
+                return false;
+            };
+            !key.is_empty()
+                && key.chars().all(|c| c.is_alphanumeric() || c == '_')
+                && before.trim_end().ends_with(['{', ','])
+        });
+        if all_json_keys {
+            return false;
+        }
+    }
     let is_word =
         |c: char| c.is_alphanumeric() || c == '_' || c == ':' || c == '/' || c == '#' || c == '\\';
     line.match_indices(word).any(|(i, _)| {
@@ -146,4 +162,21 @@ fn command_instructions_are_distinguished_from_routes_and_links() {
     assert!(!mentions("https://obsidian.md", "/obsidian"));
     assert!(!mentions("go('#/settings')", "/settings"));
     assert!(!mentions("type :settings", "/settings"));
+}
+
+#[test]
+fn json_keys_are_not_commands_but_command_values_still_are() {
+    assert!(!mentions(
+        r#"json!({"settings":settings,"runtime":runtime})"#,
+        ":settings"
+    ));
+    assert!(mentions(
+        r#"json!({"instruction":":settings"})"#,
+        ":settings"
+    ));
+    assert!(mentions(r#"Use ":settings" to open it"#, ":settings"));
+    assert!(mentions(
+        r#"json!({"settings":settings,"message":":settings"})"#,
+        ":settings"
+    ));
 }

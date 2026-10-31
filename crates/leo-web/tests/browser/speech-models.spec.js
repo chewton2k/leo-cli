@@ -11,7 +11,7 @@ test('speech model downloads keep drafts and ignore late progress after cancel',
   const css = fs.readFileSync(path.join(web, 'index.html'), 'utf8').match(/<style>([\s\S]*?)<\/style>/)[1];
   const initial = () => ({ selected: { id: 'local', language: 'en' }, ready: true, disk_bytes: 5,
     models: [{ id: 'local', name: 'Local <b>speech</b>', languages: ['en', 'es'], size: 5, bytes: 5, downloaded: true, verified: true, in_use: true, live: true, progress: null },
-      { id: 'next', name: 'Another model', languages: ['en'], size: 100, bytes: 0, downloaded: false, verified: false, in_use: false, live: false, progress: null }] });
+      { id: 'next', name: 'Another model', recommended: true, languages: ['en'], size: 100, bytes: 0, downloaded: false, verified: false, in_use: false, live: false, progress: null }] });
   let view = initial();
   let held = null;
   let oldView = null;
@@ -54,7 +54,7 @@ test('speech model downloads keep drafts and ignore late progress after cancel',
       oldView = null;
       const page = await browser.newPage({ colorScheme: theme });
       await page.goto(`http://127.0.0.1:${server.address().port}`);
-      await expect(page.getByText('Local <b>speech</b>', { exact: true })).toBeVisible();
+      await expect(page.getByText('Local <b>speech</b>', { exact: true }).first()).toBeVisible();
       expect(await page.locator('#speech-library b').count()).toBe(0);
       await page.getByRole('button', { name: 'Download', exact: true }).click();
       await expect(page.getByText('20%', { exact: true })).toBeVisible();

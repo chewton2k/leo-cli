@@ -1,0 +1,392 @@
+use crate::app_settings::{AppSettings, UpdateApi};
+use anyhow::{ensure, Context, Result};
+use serde_json::{json, Value};
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc, Mutex, Weak,
+    },
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
+use tauri::AppHandle;
+use tauri_plugin_updater::{Update, UpdaterExt};
+const CHECK_GAP: Duration = Duration::from_secs(60 * 60);
+const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+const MOST_UPDATE_BYTES: u64 = 1024 * 1024 * 1024;
+const ENDPOINT: &str = "https://github.com/chewton2k/leo-cli/releases/latest/download/latest.json";
+struct PublicDns;
+impl reqwest_updater::dns::Resolve for PublicDns {
+    fn resolve(&self, name: reqwest_updater::dns::Name) -> reqwest_updater::dns::Resolving {
+        let host = name.as_str().to_owned();
+        Box::pin(async move {
+            leo_services::web::public_dns(host)
+                .await
+                .map(|found| Box::new(found.into_iter()) as reqwest_updater::dns::Addrs)
+                .map_err(|e| e.into())
+        })
+    }
+}
+enum Command {
+    Check,
+    Download,
+    Install {
+        restart: bool,
+        lease: leo_core::activity::Lease,
+    },
+    Stop,
+}
+struct Pending {
+    update: Update,
+    bytes: Option<Vec<u8>>,
+}
+pub struct Updates {
+    app: AppHandle,
+    preferences: Weak<AppSettings>,
+    tx: mpsc::SyncSender<Command>,
+    state: Mutex<Value>,
+    ready: AtomicBool,
+    operating: AtomicBool,
+    installed: AtomicBool,
+    installed_lease: Mutex<Option<leo_core::activity::Lease>>,
+}
+impl Updates {
+    pub fn start(app: AppHandle, preferences: &Arc<AppSettings>) -> Arc<Self> {
+        let (tx, rx) = mpsc::sync_channel(4);
+        let this = Arc::new(Self {
+            app,
+            preferences: Arc::downgrade(preferences),
+            tx,
+            state: Mutex::new(json!({"state":"idle","last_checked":null})),
+            ready: AtomicBool::new(false),
+            operating: AtomicBool::new(false),
+            installed: AtomicBool::new(false),
+            installed_lease: Mutex::new(None),
+        });
+        let worker = this.clone();
+        std::thread::spawn(move || worker.run(rx));
+        if !cfg!(debug_assertions)
+            && std::env::var_os("LEO_NO_UPDATE_CHECK").is_none()
+            && this.preferences().is_some_and(|p| p.automatic_updates)
+        {
+            let _ = this.change("check_updates");
+        }
+        this
+    }
+    fn preferences(&self) -> Option<crate::app_settings::Preferences> {
+        self.preferences.upgrade().map(|p| p.preferences())
+    }
+    fn set(&self, key: &str, value: impl Into<Value>) {
+        self.state.lock().unwrap_or_else(|e| e.into_inner())[key] = value.into();
+    }
+    fn failed(&self, message: &str) {
+        self.set("error", message);
+        self.set(
+            "state",
+            if self.ready.load(Ordering::Acquire) {
+                "ready"
+            } else {
+                "error"
+            },
+        );
+    }
+    fn enqueue(&self, command: Command) -> Result<()> {
+        ensure!(
+            self.operating
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok(),
+            "An update check or download is already running. Let it finish, then try again."
+        );
+        if self.tx.try_send(command).is_err() {
+            self.operating.store(false, Ordering::Release);
+            anyhow::bail!("Updates are busy. Try again in a moment.");
+        }
+        Ok(())
+    }
+    fn request_install(&self, restart: bool) -> Result<()> {
+        ensure!(
+            self.ready.load(Ordering::Acquire),
+            "Download the update first, then restart Leo."
+        );
+        ensure!(
+            self.operating
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok(),
+            "An update check or download is already running. Let it finish, then try again."
+        );
+        let lease = match leo_core::activity::global().install() {
+            Ok(lease) => lease,
+            Err(error) => {
+                self.operating.store(false, Ordering::Release);
+                return Err(error);
+            }
+        };
+        if self
+            .tx
+            .try_send(Command::Install { restart, lease })
+            .is_err()
+        {
+            self.operating.store(false, Ordering::Release);
+            anyhow::bail!("Updates are busy. Try again in a moment.");
+        }
+        Ok(())
+    }
+    pub fn on_quit(&self) -> bool {
+        if self.installed.load(Ordering::Acquire) {
+            return false;
+        }
+        if hold_quit(false, leo_core::activity::global()) {
+            return true;
+        }
+        if quit_install(
+            self.preferences().is_some_and(|p| p.install_on_quit),
+            self.ready.load(Ordering::Acquire),
+            leo_core::activity::global().busy(),
+        ) {
+            return self.request_install(false).is_ok();
+        }
+        false
+    }
+    pub fn stop(&self) {
+        let _ = self.tx.try_send(Command::Stop);
+    }
+    fn run(self: Arc<Self>, rx: mpsc::Receiver<Command>) {
+        let mut pending: Option<Pending> = None;
+        loop {
+            let command = match rx.recv_timeout(CHECK_GAP) {
+                Ok(command) => command,
+                Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    if self.preferences().is_some_and(|p| p.automatic_updates)
+                        && std::env::var_os("LEO_NO_UPDATE_CHECK").is_none()
+                        && self
+                            .operating
+                            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                            .is_ok()
+                    {
+                        Command::Check
+                    } else {
+                        continue;
+                    }
+                }
+            };
+            self.set("error", Value::Null);
+            match command {
+                Command::Check => {
+                    self.set("state", "checking");
+                    let checked = tauri::async_runtime::block_on(self.check());
+                    self.set(
+                        "last_checked",
+                        SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs(),
+                    );
+                    match checked {
+                        Ok(Some(update))=> {
+                            let same=pending.as_ref().is_some_and(|p|p.update.version==update.version && p.update.signature==update.signature);
+                            self.set("version",update.version.clone()); self.set("notes",update.body.as_deref().unwrap_or_default().chars().take(8192).collect::<String>());
+                            if !same { pending=Some(Pending{update,bytes:None}); self.ready.store(false,Ordering::Release); }
+                            if self.ready.load(Ordering::Acquire) { self.set("state","ready"); }
+                            else if self.preferences().is_some_and(|p|p.install_on_quit) { if let Some(pending)=pending.as_mut() { self.download(pending); } }
+                            else { self.set("state","available"); }
+                        }
+                        Ok(None)=> { pending=None; self.ready.store(false,Ordering::Release); self.set("state","current"); self.set("version",Value::Null); }
+                        Err(_)=>self.failed("Leo could not check for updates. Check your connection and try Check now again."),
+                    }
+                }
+                Command::Download => {
+                    if let Some(pending) = pending.as_mut() {
+                        self.download(pending);
+                    } else {
+                        self.failed("Check for updates first, then download the new version.");
+                    }
+                }
+                Command::Install { restart, lease } => {
+                    if let Some(pending) = pending.as_ref().filter(|p| p.bytes.is_some()) {
+                        self.set("state", "installing");
+                        let result = apply(
+                            lease,
+                            || leo_services::speech::engine::engine().unload_worker(),
+                            || {
+                                pending
+                                    .update
+                                    .install(pending.bytes.as_ref().unwrap())
+                                    .map_err(anyhow::Error::from)
+                            },
+                        );
+                        match result {
+                            Ok(lease)=> { *self.installed_lease.lock().unwrap_or_else(|e|e.into_inner())=Some(lease); self.installed.store(true,Ordering::Release); if restart { self.app.restart(); } else { self.app.exit(0); } }
+                            Err(_)=>self.failed("The update could not be installed. Quit and reopen Leo, then try Restart to update again."),
+                        }
+                    } else {
+                        drop(lease);
+                        self.failed("Check and download the update again before restarting.");
+                    }
+                }
+                Command::Stop => return,
+            }
+            self.operating.store(false, Ordering::Release);
+        }
+    }
+    async fn check(&self) -> Result<Option<Update>> {
+        let key = include_str!("../updater-public-key.txt").trim();
+        ensure!(!key.is_empty(), "Updates are not configured yet.");
+        let app = self.app.clone();
+        let updater = self
+            .app
+            .updater_builder()
+            .pubkey(key)
+            .endpoints(vec![ENDPOINT.parse()?])?
+            .timeout(DOWNLOAD_TIMEOUT)
+            .configure_client(|client| {
+                client
+                    .no_proxy()
+                    .https_only(true)
+                    .connect_timeout(Duration::from_secs(15))
+                    .dns_resolver(Arc::new(PublicDns))
+                    .redirect(reqwest_updater::redirect::Policy::custom(|attempt| {
+                        if attempt.previous().len() < 5
+                            && leo_services::web::public_https(attempt.url().as_str())
+                        {
+                            attempt.follow()
+                        } else {
+                            attempt.stop()
+                        }
+                    }))
+            })
+            .on_before_exit(move || crate::stop_engine(&app))
+            .build()?;
+        let update = tokio::time::timeout(CHECK_TIMEOUT, updater.check())
+            .await
+            .context("Update check timed out.")??;
+        if let Some(update) = &update {
+            ensure!(
+                leo_services::web::public_https(update.download_url.as_str()),
+                "The update download address is unsafe. Try again after the release is repaired."
+            );
+        }
+        Ok(update)
+    }
+    fn download(&self, pending: &mut Pending) {
+        self.set("state", "downloading");
+        self.set("bytes", 0u64);
+        self.set("total", Value::Null);
+        let result = tauri::async_runtime::block_on(async {
+            let exceeded = Arc::new(tokio::sync::Notify::new());
+            let limit = exceeded.clone();
+            let mut received = 0u64;
+            let downloading = pending.update.download(
+                |chunk, total| {
+                    received = received.saturating_add(chunk as u64);
+                    if received > MOST_UPDATE_BYTES || total.is_some_and(|n| n > MOST_UPDATE_BYTES)
+                    {
+                        limit.notify_one();
+                    }
+                    self.set("bytes", received);
+                    self.set("total", json!(total));
+                },
+                || {},
+            );
+            tokio::select! {
+                result=tokio::time::timeout(DOWNLOAD_TIMEOUT,downloading)=>Ok(result.context("Update download timed out.")??),
+                _=exceeded.notified()=>Err(anyhow::anyhow!("The update download is too large.")),
+            }
+        });
+        match result {
+            Ok(bytes)=> { pending.bytes=Some(bytes); self.ready.store(true,Ordering::Release); self.set("state","ready"); }
+            Err(_)=>self.failed("The update download could not be verified or completed. Check your connection and try Download again."),
+        }
+    }
+}
+impl UpdateApi for Updates {
+    fn view(&self) -> Value {
+        let mut view = self.state.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        view["busy"] = json!(leo_core::activity::global().busy());
+        view
+    }
+    fn change(&self, action: &str) -> Result<()> {
+        match action {
+            "check_updates" => self.enqueue(Command::Check),
+            "download_update" => self.enqueue(Command::Download),
+            "restart_update" => self.request_install(true),
+            _ => anyhow::bail!("Choose Check now, Download or Restart to update."),
+        }
+    }
+}
+fn hold_quit(installed: bool, gate: &leo_core::activity::Gate) -> bool {
+    !installed && gate.installing()
+}
+fn quit_install(enabled: bool, ready: bool, busy: bool) -> bool {
+    enabled && ready && !busy
+}
+fn apply(
+    lease: leo_core::activity::Lease,
+    stop: impl FnOnce() -> Result<()>,
+    install: impl FnOnce() -> Result<()>,
+) -> Result<leo_core::activity::Lease> {
+    stop()?;
+    install()?;
+    Ok(lease)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn repeated_quit_waits_for_an_installation_but_recording_can_quit_normally() {
+        let gate = leo_core::activity::Gate::default();
+        let recording = gate.begin().unwrap();
+        assert!(!super::hold_quit(false, &gate));
+        drop(recording);
+        let install = gate.install().unwrap();
+        assert!(super::hold_quit(false, &gate));
+        assert!(!super::hold_quit(true, &gate));
+        drop(install);
+        assert!(!super::hold_quit(false, &gate));
+    }
+    #[test]
+    fn quit_installation_requires_ready_enabled_and_idle_in_every_order() {
+        for enabled in [false, true] {
+            for ready in [false, true] {
+                for busy in [false, true] {
+                    assert_eq!(
+                        super::quit_install(enabled, ready, busy),
+                        enabled && ready && !busy
+                    );
+                }
+            }
+        }
+    }
+    #[test]
+    fn installation_stops_the_worker_first_and_excludes_new_capture() {
+        let gate = leo_core::activity::Gate::default();
+        let lease = gate.install().unwrap();
+        let order = std::cell::RefCell::new(Vec::new());
+        let completion = super::apply(
+            lease,
+            || {
+                assert!(gate.begin().is_err());
+                order.borrow_mut().push("stop");
+                Ok(())
+            },
+            || {
+                assert!(gate.begin().is_err());
+                order.borrow_mut().push("install");
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(*order.borrow(), vec!["stop", "install"]);
+        assert!(gate.begin().is_err());
+        drop(completion);
+        assert!(!gate.busy());
+        let lease = gate.install().unwrap();
+        assert!(super::apply(
+            lease,
+            || anyhow::bail!("worker did not stop"),
+            || panic!("must not install")
+        )
+        .is_err());
+        assert!(!gate.busy());
+    }
+}

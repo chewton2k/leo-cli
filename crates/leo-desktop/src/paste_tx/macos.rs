@@ -68,6 +68,7 @@ impl LeoPasteProvider {
 
 struct MacPending {
     state: Arc<Mutex<TxState>>,
+    activity: Option<leo_core::activity::Lease>,
     current: Arc<dyn Fn() -> bool + Send + Sync>,
     snapshot: super::Snapshot,
     change_count: NSInteger,
@@ -95,6 +96,7 @@ fn settle(
     }
     p.settled = true;
 
+    let activity = p.activity.take();
     let current = p.current.clone();
     let state = p.state.clone();
     let snapshot = std::mem::take(&mut p.snapshot.0);
@@ -153,6 +155,7 @@ fn settle(
     }
 
     drop(provider);
+    drop(activity);
 }
 
 fn flush_pending(app_handle: &AppHandle, enigo: &mut enigo::Enigo) {
@@ -239,6 +242,9 @@ pub(super) fn run(
     let clipboard_handling = ClipboardHandling::Restore;
 
     flush_pending(app_handle, enigo);
+    let activity = leo_core::activity::global()
+        .begin()
+        .map_err(|e| e.to_string())?;
 
     let pasteboard = NSPasteboard::generalPasteboard();
     let before = pasteboard.changeCount();
@@ -312,6 +318,7 @@ pub(super) fn run(
 
     let pending = Arc::new(Mutex::new(MacPending {
         state,
+        activity: Some(activity),
         current,
         snapshot,
         change_count,

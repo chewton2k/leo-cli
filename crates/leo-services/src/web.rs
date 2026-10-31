@@ -178,6 +178,15 @@ async fn resolve_with(
     .context("Web address lookup took too long. Try again.")?
 }
 
+pub async fn public_dns(host: String) -> Result<Vec<std::net::SocketAddr>> {
+    let slots =
+        Arc::clone(DNS_SLOTS.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(MOST_DNS))));
+    resolve_with(host, slots, TIMEOUT, public_addresses).await
+}
+pub fn public_https(address: &str) -> bool {
+    reqwest::Url::parse(address).is_ok_and(|url| url.scheme() == "https" && allowed(&url))
+}
+
 struct PublicOnly;
 
 impl reqwest::dns::Resolve for PublicOnly {

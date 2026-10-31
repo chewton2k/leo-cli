@@ -233,6 +233,7 @@ async function render() {
   interviewPage?.codeResize?.disconnect();
   clearTimeout(cal.timer);
   if (!/^#\/n\//.test(location.hash)) closeSource();
+  document.body.classList.toggle('on-settings', /^#\/settings(?:\/|$)/.test(location.hash));
   document.body.classList.toggle('on-calendar', /^#\/calendar/.test(location.hash));
   document.body.classList.toggle('on-interviews', /^#\/interviews(?:\/|$)/.test(location.hash));
   const hash = decodeURI(location.hash || '#/');
@@ -257,7 +258,7 @@ async function render() {
     else if (kind === 'map') await showMap(arg);
     else if (kind === 'calendar') await showCalendar();
     else if (kind === 'interviews') await showInterviews(arg);
-    else if (kind === 'settings') await (arg === 'storage' ? showStorage() : showSettings());
+    else if (kind === 'settings') await showSettings(arg);
     else if (kind === 'record') await showRecord(arg);
     else await showFolder('');
     loadSideFolders();

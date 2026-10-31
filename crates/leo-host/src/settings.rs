@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde_json::Value;
 
 use leo_services::config::choice;
@@ -29,6 +29,13 @@ impl leo_web::SettingsApi for WebSettings {
         leo_services::web_settings::apply(change, &path, store.as_ref(), &local)
     }
 
+    fn setup_backup(&self, notes_dir: &Path, name: &str) -> Result<String> {
+        let remote = leo_core::sync::remote_url(notes_dir);
+        setup_backup_with(name, remote.as_deref(), || {
+            leo_core::sync::github(notes_dir,name).map(|backup|backup.describe()).context("Backup setup could not finish. Install GitHub CLI and sign in with gh auth login, then try again.")
+        })
+    }
+
     fn backup(&self, notes_dir: &Path) -> Result<Option<std::process::Command>> {
         backup_command(notes_dir, &Config::load().sync)
     }
@@ -39,6 +46,29 @@ impl leo_web::SettingsApi for WebSettings {
     }
 }
 
+fn setup_backup_with(
+    name: &str,
+    remote: Option<&str>,
+    setup: impl FnOnce() -> Result<String>,
+) -> Result<String> {
+    let parts: Vec<&str> = name.split('/').collect();
+    anyhow::ensure!(
+        (1..=2).contains(&parts.len())
+            && parts.iter().all(|part| !part.is_empty()
+                && part.len() <= 100
+                && !part.starts_with(['-', '.'])
+                && !part.ends_with('.')
+                && part
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))),
+        "Use a GitHub repository name such as leo-notes or your-name/leo-notes."
+    );
+    anyhow::ensure!(
+        remote.is_none(),
+        "Backup is already connected. Its existing remote has been kept."
+    );
+    setup()
+}
 fn backup_command(
     notes_dir: &Path,
     config: &leo_services::config::sync::SyncConfig,
@@ -177,6 +207,28 @@ mod tests {
         assert_eq!(
             git(&remote, &["show", "main:.leo/tasks/task-test.json"]),
             "{\"title\":\"Study\"}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod backup_setup_tests {
+    #[test]
+    fn setup_validates_before_writing_and_never_replaces_an_existing_remote() {
+        for name in ["", "--public", "../notes", "owner/repo/extra", "repo name"] {
+            assert!(
+                super::setup_backup_with(name, None, || panic!("must not contact GitHub")).is_err()
+            );
+        }
+        assert!(super::setup_backup_with(
+            "leo-notes",
+            Some("https://github.com/me/existing"),
+            || panic!("must not contact GitHub")
+        )
+        .is_err());
+        assert_eq!(
+            super::setup_backup_with("owner/leo-notes", None, || Ok("connected".into())).unwrap(),
+            "connected"
         );
     }
 }

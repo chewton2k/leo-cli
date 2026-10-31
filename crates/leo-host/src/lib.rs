@@ -1,4 +1,5 @@
 mod felix;
+pub mod health;
 mod powers;
 mod record;
 mod settings;

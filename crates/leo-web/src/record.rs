@@ -351,6 +351,10 @@ pub(crate) async fn start(State(state): State<AppState>, Json(body): Json<StartB
         .title
         .map(|t| t.trim().to_string())
         .filter(|t| !t.is_empty());
+    let activity = match state.capture_activity.begin() {
+        Ok(lease) => lease,
+        Err(e) => return error(StatusCode::CONFLICT, &e.to_string()),
+    };
     let id = uuid::Uuid::new_v4().simple().to_string();
     let stop = Arc::new(AtomicBool::new(false));
     let pause = Arc::new(AtomicBool::new(false));
@@ -466,7 +470,10 @@ pub(crate) async fn start(State(state): State<AppState>, Json(body): Json<StartB
     };
     let worker = state.clone();
     let job = id.clone();
-    std::thread::spawn(move || run(worker, job, listener, listening, directory, title));
+    std::thread::spawn(move || {
+        let _activity = activity;
+        run(worker, job, listener, listening, directory, title)
+    });
     let watched = Arc::clone(&state.recording);
     let job = id.clone();
     std::thread::spawn(move || watch(watched, job));
@@ -858,6 +865,10 @@ pub(crate) async fn audio(
 const REPLAY_CHUNKS: usize = 4;
 
 pub(crate) async fn recover(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    let activity = match state.capture_activity.begin() {
+        Ok(lease) => lease,
+        Err(e) => return error(StatusCode::CONFLICT, &e.to_string()),
+    };
     if let Some(housekeeper) = state.housekeeper.clone() {
         let pending = tokio::task::spawn_blocking(move || housekeeper.pending_recordings()).await;
         if let Ok(Ok(pending)) = pending {
@@ -981,7 +992,10 @@ pub(crate) async fn recover(State(state): State<AppState>, Path(id): Path<String
     };
     let worker = state.clone();
     let job = id.clone();
-    std::thread::spawn(move || run(worker, job, listener, listening, meta.directory, meta.title));
+    std::thread::spawn(move || {
+        let _activity = activity;
+        run(worker, job, listener, listening, meta.directory, meta.title)
+    });
     let replay_id = id.clone();
     std::thread::spawn(move || {
         let id = replay_id;

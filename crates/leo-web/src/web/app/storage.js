@@ -6,7 +6,7 @@ async function showStorage() {
   chrome({ showBack: true });
   $('#crumbs').innerHTML = '<span class="sep">/</span><button data-action="settings">Settings</button><span class="sep">/</span><button>Storage</button>';
   document.title = 'Storage · leo';
-  app.innerHTML = skeleton(4);
+  app.innerHTML = settingsFrame('storage', skeleton(4));
   const [page, keep] = await Promise.all([api('/api/storage'), api('/api/keep')]);
   if (mine !== seq) return;
   state.keep = keep;
@@ -73,7 +73,7 @@ function drawStorage(page) {
   const bar = shown.map((a) => `<i data-area="${esc(a.id)}" data-name="${esc(a.title)}" data-size="${esc(a.size)}" style="width:${Math.max(0.6, (a.bytes / total) * 100)}%;background:${STORE_COLORS[page.areas.indexOf(a) % STORE_COLORS.length]}"></i>`).join('');
   const legend = page.areas.map((a, i) => `<span class="store-key" data-area="${esc(a.id)}"><b style="background:${STORE_COLORS[i % STORE_COLORS.length]}"></b>${esc(a.title)} <span class="store-key-size">${esc(a.size)}</span></span>`).join('');
   const areas = storageAreas(page.areas, open);
-  app.innerHTML = `<div class="settings storage">
+  app.innerHTML = settingsFrame('storage', `<div class="settings storage">
     <div class="section-title">Storage and data</div>
     <section class="set-card store-total">
       <div class="store-big">${esc(page.total_label)}</div>
@@ -101,7 +101,7 @@ function drawStorage(page) {
       <p class="hint">Bring back tasks from an export: pick the <b>tasks.json</b> inside the zip. Tasks you already have are kept when they are newer.</p>
       <label class="btn plain sm">Choose tasks.json<input type="file" id="tasks-restore" accept=".json,application/json" hidden></label>
     </section>
-  </div>`;
+  </div>`);
   for (const [area, id] of selected) { const box = app.querySelector(`input[data-store-item="${CSS.escape(area)}"][value="${CSS.escape(id)}"]:not(:disabled)`); if (box) box.checked = true; }
   if (focused) app.querySelector(`input[data-store-item="${CSS.escape(focused[0])}"][value="${CSS.escape(focused[1])}"]`)?.focus({ preventScroll: true });
   window.scrollTo({left:pageX, top:pageY, behavior:'instant'});

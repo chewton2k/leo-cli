@@ -683,3 +683,16 @@ fn stopping_waits_until_a_pasted_screenshot_is_kept_with_its_recording() {
     assert!(notes.notes[0].body.contains("Captured slide"));
     assert!(notes.notes[0].body.contains("diagram of a queue"));
 }
+
+#[test]
+fn an_installation_fence_refuses_recording_before_creating_a_job() {
+    let (mut state, _dir, _) = state_with(&[("Test", "cs130")]);
+    state.listener = Some(Arc::new(|_, _| {
+        panic!("capture must not start during installation")
+    }));
+    let installing = state.capture_activity.install().unwrap();
+    let response = start_recording(&state, record::Source::Microphone);
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert!(state.recording.lock().unwrap().is_none());
+    drop(installing);
+}

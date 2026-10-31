@@ -85,3 +85,19 @@ the main page sends Light/Dark/Match changes. Queued shows and updates check the
 current generation. The popup's IPC is limited to its own window label.
 Shutdown cancels dictation/shortcuts and stops the speech worker before the
 loopback engine finishes.
+
+## Settings and updates
+
+`app_settings.rs` serializes atomic private app preferences through a bounded
+actor; native login/tray failures restore the previous file and cached state.
+First-launch microphone, Accessibility and model steps persist independently.
+Permission status checks never open the microphone; requests are explicit.
+Health combines host doctor checks with native permission, model and shortcut
+checks. macOS helper output is bounded, nonblocking and timed out by process group.
+
+`updates.rs` owns updater checks, verified downloads and installation on one actor.
+Automatic checks and install-on-quit default on; debug startup checks stay off.
+Downloads use public HTTPS resolution, deadlines and a one-GiB cap. Signed bytes
+stay in memory. Core activity leases cover capture through clipboard restoration;
+installation takes an exclusive lease, unloads/reaps the speech worker, and keeps
+the lease until exit. Failed installation leaves the engine actor usable.

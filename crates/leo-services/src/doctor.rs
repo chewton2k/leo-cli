@@ -200,10 +200,8 @@ fn meaning_check(state: crate::providers::ModelState) -> Check {
 fn notes_checks(notes_dir: &Path) -> Vec<Check> {
     let mut checks = Vec::new();
 
-    let probe_file = notes_dir.join(".leo-doctor-probe");
     let writable = std::fs::create_dir_all(notes_dir).is_ok()
-        && std::fs::write(&probe_file, b"").is_ok()
-        && std::fs::remove_file(&probe_file).is_ok();
+        && tempfile::NamedTempFile::new_in(notes_dir).is_ok();
     checks.push(if writable {
         Check::ready(
             "notes directory",
@@ -776,5 +774,17 @@ mod tests {
             }
             other => panic!("expected a note, got {other:?}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod safe_probe_tests {
+    #[test]
+    fn a_health_scan_never_truncates_an_existing_probe_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".leo-doctor-probe");
+        std::fs::write(&path, b"keep this file").unwrap();
+        super::notes_checks(dir.path());
+        assert_eq!(std::fs::read(path).unwrap(), b"keep this file");
     }
 }

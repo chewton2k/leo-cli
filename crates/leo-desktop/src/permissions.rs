@@ -131,3 +131,128 @@ pub fn focused_point() -> Option<(f64, f64)> {
         None
     }
 }
+
+pub fn microphone() -> &'static str {
+    if leo_services::session::mic::disabled() {
+        return "unavailable";
+    }
+    #[cfg(target_os = "macos")]
+    unsafe {
+        use objc2_av_foundation::{AVAuthorizationStatus, AVCaptureDevice, AVMediaTypeAudio};
+        let Some(media) = AVMediaTypeAudio else {
+            return "unknown";
+        };
+        let status = AVCaptureDevice::authorizationStatusForMediaType(media);
+        if status == AVAuthorizationStatus::Authorized {
+            "allowed"
+        } else if status == AVAuthorizationStatus::NotDetermined {
+            "not_requested"
+        } else {
+            "denied"
+        }
+    }
+    #[cfg(windows)]
+    unsafe {
+        use windows::{
+            Devices::Enumeration::{DeviceAccessInformation, DeviceAccessStatus, DeviceClass},
+            Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED},
+        };
+        let initialized = CoInitializeEx(None, COINIT_MULTITHREADED).is_ok();
+        let status = DeviceAccessInformation::CreateFromDeviceClass(DeviceClass::AudioCapture)
+            .and_then(|info| info.CurrentStatus());
+        if initialized {
+            CoUninitialize();
+        }
+        match status {
+            Ok(DeviceAccessStatus::Allowed) => "allowed",
+            Ok(DeviceAccessStatus::DeniedByUser | DeviceAccessStatus::DeniedBySystem) => "denied",
+            _ => "unknown",
+        }
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        "unknown"
+    }
+}
+pub fn request_microphone(app: &tauri::AppHandle) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !leo_services::session::mic::disabled(),
+        "Microphone capture is disabled in this session."
+    );
+    #[cfg(target_os = "macos")]
+    app.run_on_main_thread(|| unsafe {
+        use objc2_av_foundation::{AVCaptureDevice, AVMediaTypeAudio};
+        if let Some(media) = AVMediaTypeAudio {
+            let callback = block2::RcBlock::new(|_: objc2::runtime::Bool| {});
+            AVCaptureDevice::requestAccessForMediaType_completionHandler(media, &callback);
+        }
+    })?;
+    #[cfg(windows)]
+    {
+        let _ = app;
+        open_privacy("ms-settings:privacy-microphone")?;
+    }
+    Ok(())
+}
+pub fn request_accessibility(_app: &tauri::AppHandle) -> anyhow::Result<()> {
+    #[cfg(target_os = "macos")]
+    tauri::async_runtime::block_on(
+        tauri_plugin_macos_permissions::request_accessibility_permission(),
+    );
+    Ok(())
+}
+#[cfg(windows)]
+fn open_privacy(uri: &str) -> anyhow::Result<()> {
+    use windows::{
+        core::PCWSTR,
+        Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL},
+    };
+    let uri: Vec<u16> = uri.encode_utf16().chain(std::iter::once(0)).collect();
+    let result = unsafe {
+        ShellExecuteW(
+            None,
+            PCWSTR::null(),
+            PCWSTR(uri.as_ptr()),
+            PCWSTR::null(),
+            PCWSTR::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+    anyhow::ensure!(result.0 as usize>32,"Windows privacy settings could not be opened. Open Settings → Privacy & security → Microphone.");
+    Ok(())
+}
+
+pub fn shortcut_clash(shortcut: &str) -> bool {
+    let value = shortcut.to_ascii_lowercase();
+    #[cfg(target_os = "macos")]
+    {
+        use std::ffi::OsStr;
+        if !["option+space", "alt+space", "opt+space"].contains(&value.as_str()) {
+            return false;
+        }
+        crate::helpers::capture(
+            "pgrep",
+            &[OsStr::new("-f"), OsStr::new("/Alfred[^/]*\\.app/")],
+            std::time::Duration::from_secs(1),
+        )
+        .is_ok_and(|output| output.status.success())
+    }
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::UI::{
+            Input::KeyboardAndMouse::GetKeyboardLayout,
+            WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId},
+        };
+        if !["ctrl+space", "control+space"].contains(&value.as_str()) {
+            return false;
+        }
+        let thread = GetWindowThreadProcessId(GetForegroundWindow(), None);
+        let language = (GetKeyboardLayout(thread).0 as usize) & 0x3ff;
+        matches!(language, 4 | 17 | 18)
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        let _ = value;
+        false
+    }
+}

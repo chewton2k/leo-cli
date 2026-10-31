@@ -200,6 +200,7 @@ impl Dictation {
         }
     }
     fn begin(self: &Arc<Self>) -> u64 {
+        let activity = leo_core::activity::global().begin();
         let id = self.generation.next();
         let settings = self.preferences();
         let stop = Arc::new(AtomicBool::new(false));
@@ -212,7 +213,7 @@ impl Dictation {
         self.show(id, &settings);
         let this = self.clone();
         std::thread::spawn(move || {
-            let result = this.capture(id, &settings, &stop);
+            let result = activity.and_then(|_activity| this.capture(id, &settings, &stop));
             if this.generation.current(id) {
                 match result {
                     Ok(Some(message)) => {

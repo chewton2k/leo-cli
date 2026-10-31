@@ -297,3 +297,22 @@ fn the_old_onnx_folder_is_kept_until_a_verified_download_is_ready() {
     server.join().unwrap();
     assert!(!old.exists());
 }
+
+#[test]
+fn downloaded_models_include_empty_and_uncatalogued_files() {
+    let (dir, library) = fixture();
+    std::fs::create_dir_all(dir.path().join("models")).unwrap();
+    std::fs::write(library.model_path("parakeet-tdt-0.6b-v3").unwrap(), b"").unwrap();
+    std::fs::write(dir.path().join("models/older.gguf"), b"old model").unwrap();
+    let view = library.view().unwrap();
+    assert_eq!(view["models"][0]["downloaded"], true);
+    assert_eq!(view["extra_files"][0]["name"], "older.gguf");
+    assert_eq!(view["disk_bytes"], 9);
+    assert!(library
+        .change(&serde_json::json!({"action":"delete_file","id":"../older.gguf"}))
+        .is_err());
+    library
+        .change(&serde_json::json!({"action":"delete_file","id":"older.gguf"}))
+        .unwrap();
+    assert!(!dir.path().join("models/older.gguf").exists());
+}

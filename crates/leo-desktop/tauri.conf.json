@@ -32,5 +32,13 @@
     "macOS": {
       "infoPlist": "Info.plist"
     }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "",
+      "endpoints": [
+        "https://github.com/chewton2k/leo-cli/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

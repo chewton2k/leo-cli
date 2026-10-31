@@ -109,7 +109,7 @@ scan, or a loopback connect with a 300 ms timeout. Never a real request.
 `manual.rs` creates one note on first run: a one-screen quickstart for the app
 (Getting around, Recording, Felix, Writing, Finding, Where things live). It is a
 real note, so it is searchable, editable and deletable. Installation is recorded
-in a `.manual-installed` marker carrying `MANUAL_VERSION` (18); deleting the
+in a `.manual-installed` marker carrying `MANUAL_VERSION` (20); deleting the
 manual survives the next launch, and a version bump rewrites the user's note.
 Tests: under 60 lines, names Settings, Felix, Record and ⌘J, and names no
 terminal command.
@@ -271,3 +271,10 @@ use `secret::default_store()` (private file by default, optional keychain), neve
 backend directly. Legacy AGY/Copilot profiles contain private sign-in state, stay outside
 notes/exports and have metadata-only Storage controls. `.superpowers/` stays local
 and must never be staged or committed.
+
+Settings uses grouped `#/settings/<section>` routes, preserving Storage's route.
+`leo_web::app_settings::AppApi` bridges native preferences, permission requests,
+Health and signed updates; web depends only on core. Core's activity gate holds
+recording, dictation and clipboard restoration leases and excludes installation.
+Backup setup is explicit, preserves an existing remote and runs outside the store
+lock. Health uses local doctor checks without microphone or AI requests.

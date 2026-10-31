@@ -1,7 +1,10 @@
+mod app_settings;
 mod audio_feedback;
 mod clamshell;
 mod clipboard;
 mod dictation;
+#[cfg(target_os = "macos")]
+mod helpers;
 mod input;
 mod links;
 mod overlay;
@@ -13,6 +16,7 @@ mod settings;
 mod shell_path;
 mod shortcut;
 mod tray;
+mod updates;
 
 use std::sync::Mutex;
 use std::time::Duration;
@@ -30,6 +34,7 @@ pub fn run() {
     fix_path();
     let hidden = std::env::args().any(|a| a == HIDDEN);
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -45,8 +50,15 @@ pub fn run() {
             app.handle().plugin(tauri_nspanel::init())?;
             overlay::create(app.handle())?;
             let dictation = dictation::Dictation::new(app.handle().clone())?;
+            let app_settings =
+                app_settings::AppSettings::new(app.handle().clone(), dictation.clone())?;
             let mut powers = leo_host::powers();
             powers.dictation = Some(dictation.clone());
+            powers.app_settings = Some(app_settings.clone());
+            let updates = updates::Updates::start(app.handle().clone(), &app_settings);
+            let _ = app_settings.updates.set(updates.clone());
+            app.manage(updates);
+            app.manage(app_settings.clone());
             app.manage(dictation);
             let config = leo_core::paths::config_dir().ok();
             let wanted = config
@@ -137,6 +149,7 @@ pub fn run() {
             });
             tray::build(app.handle())?;
             open_at_login_once(app.handle(), config.as_deref());
+            app_settings.apply_startup()?;
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -144,6 +157,14 @@ pub fn run() {
     app.run(|app, event| match event {
         #[cfg(target_os = "macos")]
         RunEvent::Reopen { .. } => show(app),
+        RunEvent::ExitRequested { api, .. } => {
+            if app
+                .try_state::<std::sync::Arc<updates::Updates>>()
+                .is_some_and(|updates| updates.on_quit())
+            {
+                api.prevent_exit();
+            }
+        }
         RunEvent::Exit => stop_engine(app),
         _ => {}
     });
@@ -203,6 +224,9 @@ pub(crate) fn show(app: &AppHandle) {
 }
 
 fn stop_engine(app: &AppHandle) {
+    if let Some(updates) = app.try_state::<std::sync::Arc<updates::Updates>>() {
+        updates.stop();
+    }
     if let Some(dictation) = app.try_state::<std::sync::Arc<dictation::Dictation>>() {
         dictation.shutdown();
     }

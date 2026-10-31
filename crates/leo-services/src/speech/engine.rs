@@ -44,6 +44,7 @@ enum Message {
         reply: mpsc::SyncSender<Result<String>>,
     },
     Stop(mpsc::SyncSender<()>),
+    Unload(mpsc::SyncSender<()>),
     Edit {
         path: std::path::PathBuf,
         current: bool,
@@ -185,6 +186,15 @@ impl Engine {
         answer
             .recv_timeout(ANSWER_LIMIT)
             .context("The model is still in use. Stop recording or dictation and try again.")?
+    }
+
+    pub fn unload_worker(&self) -> Result<()> {
+        self.supervisor.cancel();
+        let (done, finished) = mpsc::sync_channel(1);
+        self.requests.try_send(Message::Unload(done)).map_err(|_|anyhow::anyhow!("The speech engine is busy. Finish recording or dictation, then try updating again."))?;
+        finished
+            .recv_timeout(Duration::from_secs(5))
+            .context("The speech worker did not stop. Try updating again in a moment.")
     }
 
     pub fn stop(&self) -> Result<()> {
@@ -343,6 +353,11 @@ fn run(
                     });
                     let _ = reply.send(work());
                 }
+                Message::Unload(done) => {
+                    supervisor.unload().wait();
+                    model = None;
+                    let _ = done.send(());
+                }
                 Message::Stop(done) => {
                     supervisor.unload().wait();
                     for job in pending {
@@ -461,6 +476,25 @@ mod edit_tests {
             .is_err());
         assert!(!changed.load(Ordering::Acquire));
         drop(pin);
+        engine.stop().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod update_tests {
+    #[test]
+    fn unloading_for_an_update_keeps_the_engine_usable_if_installation_fails() {
+        let engine = super::Engine::new();
+        engine.unload_worker().unwrap();
+        assert!(!engine.loaded());
+        assert_eq!(
+            engine
+                .edit_model("unused".into(), false, || Ok(
+                    serde_json::json!({"alive":true})
+                ))
+                .unwrap()["alive"],
+            true
+        );
         engine.stop().unwrap();
     }
 }
