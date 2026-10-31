@@ -37,6 +37,12 @@ struct Job {
 
 enum Message {
     Run(Job),
+    Stream {
+        selected: Selected,
+        audio: mpsc::Receiver<Option<Vec<f32>>>,
+        text: Box<dyn FnMut(String) + Send>,
+        reply: mpsc::SyncSender<Result<String>>,
+    },
     Stop(mpsc::SyncSender<()>),
     Edit {
         path: std::path::PathBuf,
@@ -139,6 +145,28 @@ impl Engine {
         )?
     }
 
+    pub fn stream(
+        &self,
+        selected: Selected,
+        text: impl FnMut(String) + Send + 'static,
+    ) -> Result<DictationStream> {
+        ensure!(
+            !self.stopped.load(Ordering::Acquire),
+            "The speech engine is stopping. Reopen Leo."
+        );
+        let (feed, audio) = mpsc::sync_channel(128);
+        let (reply, answer) = mpsc::sync_channel(1);
+        self.requests
+            .try_send(Message::Stream {
+                selected,
+                audio,
+                text: Box::new(text),
+                reply,
+            })
+            .map_err(|_| anyhow::anyhow!("The speech engine is busy. Try again."))?;
+        Ok(DictationStream { feed, answer })
+    }
+
     pub fn edit_model(
         &self,
         path: std::path::PathBuf,
@@ -169,6 +197,24 @@ impl Engine {
         stopped
             .recv_timeout(Duration::from_secs(5))
             .context("The speech engine has not stopped yet. Try again in a moment.")
+    }
+}
+
+pub struct DictationStream {
+    feed: mpsc::SyncSender<Option<Vec<f32>>>,
+    answer: mpsc::Receiver<Result<String>>,
+}
+impl DictationStream {
+    pub fn feed(&self, pcm: Vec<f32>) -> bool {
+        self.feed.try_send(Some(pcm)).is_ok()
+    }
+    pub fn finish(self) -> Result<String> {
+        self.feed.try_send(None).map_err(|_| {
+            anyhow::anyhow!("Live transcription fell behind. Finishing from the recorded audio.")
+        })?;
+        self.answer
+            .recv_timeout(ANSWER_LIMIT)
+            .context("Live transcription did not finish. Try a smaller model.")?
     }
 }
 
@@ -211,6 +257,65 @@ fn run(
         for message in &mut incoming {
             match message {
                 Message::Run(job) => pending.push(job),
+                Message::Stream {
+                    selected,
+                    audio,
+                    mut text,
+                    reply,
+                } => {
+                    let result = (|| -> Result<String> {
+                        if model.as_ref() != Some(&selected.path) || supervisor.loaded().is_none() {
+                            supervisor.load(LoadSpec {
+                                path: selected.path.clone(),
+                                backend: Backend::Auto,
+                                device: DeviceSelector::Auto,
+                            })?;
+                            model = Some(selected.path.clone());
+                        }
+                        let stream = supervisor.start_stream(
+                            RunOptions {
+                                language: (selected.language != "auto")
+                                    .then_some(selected.language),
+                                ..Default::default()
+                            },
+                            Default::default(),
+                            move |progress| {
+                                if let Some(snapshot) = progress.text {
+                                    text(snapshot.display());
+                                }
+                            },
+                        )?;
+                        let started = Instant::now();
+                        let mut samples = 0usize;
+                        loop {
+                            ensure!(
+                                started.elapsed() < Duration::from_secs(310),
+                                "Dictation reached five minutes. Start another dictation."
+                            );
+                            match audio.recv_timeout(Duration::from_millis(100)) {
+                                Ok(Some(pcm)) => {
+                                    samples = samples.saturating_add(pcm.len());
+                                    ensure!(
+                                        samples <= 300 * 16_000
+                                            && pcm.len() <= 16_000
+                                            && pcm.iter().all(|n| n.is_finite()),
+                                        "Dictation audio is too long. Start another dictation."
+                                    );
+                                    ensure!(stream.feed(pcm), "Live transcription fell behind. Finishing from recorded audio.");
+                                }
+                                Ok(None) => break,
+                                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                                Err(_) => anyhow::bail!("Dictation cancelled."),
+                            }
+                        }
+                        Ok(stream
+                            .finalize(false)?
+                            .map(|f| f.text.full)
+                            .unwrap_or_default())
+                    })();
+                    let _ = reply.send(result);
+                    last_work = Instant::now();
+                }
                 Message::Edit {
                     path,
                     current,

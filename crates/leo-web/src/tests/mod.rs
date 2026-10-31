@@ -2,6 +2,7 @@ mod auth;
 mod backup;
 mod calendar;
 mod combine;
+mod dictation;
 mod felix;
 mod housekeeping;
 mod interview_cost;
@@ -85,6 +86,7 @@ fn state_with(notes: &[(&str, &str)]) -> (AppState, tempfile::TempDir, Vec<Strin
         chat: None,
         settings: None,
         speech: None,
+        dictation: None,
         backups: Default::default(),
         importer: None,
         imports: Default::default(),

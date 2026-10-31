@@ -1,6 +1,17 @@
+mod audio_feedback;
+mod clamshell;
+mod clipboard;
+mod dictation;
+mod input;
 mod links;
+mod overlay;
+mod paste_tx;
+mod permissions;
 mod port;
+mod secure_input;
+mod settings;
 mod shell_path;
+mod shortcut;
 mod tray;
 
 use std::sync::Mutex;
@@ -19,6 +30,8 @@ pub fn run() {
     fix_path();
     let hidden = std::env::args().any(|a| a == HIDDEN);
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show(app);
         }))
@@ -26,8 +39,15 @@ pub fn run() {
             MacosLauncher::LaunchAgent,
             Some(vec![HIDDEN]),
         ))
-        .invoke_handler(tauri::generate_handler![print_page])
+        .invoke_handler(tauri::generate_handler![print_page, dictation_popup])
         .setup(move |app| {
+            #[cfg(target_os = "macos")]
+            app.handle().plugin(tauri_nspanel::init())?;
+            overlay::create(app.handle())?;
+            let dictation = dictation::Dictation::new(app.handle().clone())?;
+            let mut powers = leo_host::powers();
+            powers.dictation = Some(dictation.clone());
+            app.manage(dictation);
             let config = leo_core::paths::config_dir().ok();
             let wanted = config
                 .as_deref()
@@ -38,7 +58,7 @@ pub fn run() {
                     port: wanted,
                     token: leo_web::fresh_token(),
                 },
-                leo_host::powers(),
+                powers,
             ));
             let port = started.as_ref().map(|r| r.port()).unwrap_or(0);
             let address = match &started {
@@ -183,6 +203,10 @@ pub(crate) fn show(app: &AppHandle) {
 }
 
 fn stop_engine(app: &AppHandle) {
+    if let Some(dictation) = app.try_state::<std::sync::Arc<dictation::Dictation>>() {
+        dictation.shutdown();
+    }
+    let _ = leo_services::speech::engine::engine().stop();
     let running = app
         .state::<Engine>()
         .0
@@ -230,4 +254,27 @@ fn fix_path() {
 
 fn url_text(text: &str) -> String {
     url::form_urlencoded::byte_serialize(text.as_bytes()).collect()
+}
+
+#[tauri::command]
+fn dictation_popup(
+    window: tauri::WebviewWindow,
+    action: &str,
+    state: tauri::State<'_, std::sync::Arc<dictation::Dictation>>,
+) -> Result<serde_json::Value, String> {
+    if window.label() != "dictation" {
+        return Err("Open Dictation settings to control dictation.".into());
+    }
+    match action {
+        "state" => {
+            let mut view = state.popup();
+            view["tokens"] = serde_json::json!(overlay::tokens());
+            Ok(view)
+        }
+        "cancel" => {
+            state.cancel();
+            Ok(serde_json::json!({"ok":true}))
+        }
+        _ => Err("Choose an action on the dictation popup.".into()),
+    }
 }

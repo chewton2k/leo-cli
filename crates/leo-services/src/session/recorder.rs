@@ -433,6 +433,10 @@ fn take_wants(session: &mut Session, controls: &Controls) -> bool {
 }
 
 pub fn record(request: Request, controls: &Controls, emit: &dyn Fn(Event)) {
+    let _audio = match crate::dictation::audio_gate::gate().recording() {
+        Ok(guard) => guard,
+        Err(e) => return emit(Event::Failed(e.to_string())),
+    };
     let _awake = super::awake::Awake::recording();
     let _model = crate::speech::engine::engine().pin();
     let Request {

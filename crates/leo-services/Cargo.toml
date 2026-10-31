@@ -46,6 +46,9 @@ zeroize.workspace = true
 fs2 = "0.4"
 log = "0.4"
 regex = "1"
+natural = "0.5"
+once_cell = "1"
+strsim = "0.11"
 earshot = "1.2.2"
 transcribe-cpp = { version = "=0.4.0", default-features = false, features = ["serde"] }
 transcribe-cpp-sys = { version = "=0.4.0", default-features = false }

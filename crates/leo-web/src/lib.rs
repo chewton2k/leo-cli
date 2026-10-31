@@ -11,6 +11,7 @@ mod code_edits;
 mod code_reply;
 mod combine;
 pub mod db;
+pub mod dictation;
 pub mod export;
 pub mod graph;
 mod ics;
@@ -188,6 +189,7 @@ pub struct Powers {
     pub chat: Option<Streamer>,
     pub settings: Option<Arc<dyn SettingsApi>>,
     pub speech: Option<Arc<dyn speech::SpeechApi>>,
+    pub dictation: Option<Arc<dyn dictation::DictationApi>>,
     pub importer: Option<Importer>,
     pub listener: Option<record::Listener>,
     pub regenerator: Option<record::Regenerator>,
@@ -226,6 +228,7 @@ struct AppState {
     chat: Option<Streamer>,
     settings: Option<Arc<dyn SettingsApi>>,
     speech: Option<Arc<dyn speech::SpeechApi>>,
+    dictation: Option<Arc<dyn dictation::DictationApi>>,
     backups: Arc<backup::Backups>,
     importer: Option<Importer>,
     imports: Arc<Mutex<std::collections::HashMap<String, ImportJob>>>,
@@ -606,6 +609,7 @@ pub(crate) async fn start_in(
         chat,
         settings,
         speech: powers.speech,
+        dictation: powers.dictation,
         backups: Default::default(),
         importer,
         imports: Default::default(),
@@ -899,6 +903,12 @@ fn router(state: AppState) -> Router {
         .route(
             "/api/images",
             post(add_picture).layer(axum::extract::DefaultBodyLimit::max(PICTURE_BYTES)),
+        )
+        .route(
+            "/api/dictation",
+            get(dictation::get)
+                .post(dictation::change)
+                .layer(axum::extract::DefaultBodyLimit::max(200_000)),
         )
         .route(
             "/api/speech",

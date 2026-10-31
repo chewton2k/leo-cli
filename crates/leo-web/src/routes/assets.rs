@@ -9,6 +9,7 @@ const APP_JS: &str = concat!(
     include_str!("../web/app/trash.js"),
     include_str!("../web/app/map.js"),
     include_str!("../web/app/settings.js"),
+    include_str!("../web/app/dictation.js"),
     include_str!("../web/app/storage.js"),
     include_str!("../web/app/uploads.js"),
     include_str!("../web/app/sheets.js"),

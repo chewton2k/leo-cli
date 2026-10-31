@@ -410,8 +410,10 @@ pub struct StreamHandle {
 }
 
 impl StreamHandle {
-    pub fn feed(&self, pcm: Vec<f32>) {
-        let _ = self.commands.try_send(Command::Feed { id: self.id, pcm });
+    pub fn feed(&self, pcm: Vec<f32>) -> bool {
+        self.commands
+            .try_send(Command::Feed { id: self.id, pcm })
+            .is_ok()
     }
 
     pub fn finalize(mut self, want_language: bool) -> Result<Option<Finalized>, EngineError> {

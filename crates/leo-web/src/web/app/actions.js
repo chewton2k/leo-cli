@@ -1,4 +1,10 @@
 const actions = {
+  'dictation-save': saveDictation,
+  'dictation-record': () => dictationChange({action:'record_shortcut'}),
+  'dictation-resume': () => dictationChange({action:'resume_shortcut'}),
+  'dictation-use-shortcut': useDictationShortcut,
+  'dictation-clear': () => dictationChange({action:'clear'}),
+  'dictation-copy': (el) => dictationChange({action:'copy',id:Number(el.dataset.id)}),
   'speech-model': changeSpeechModel,
   'speech-delete': (el) => { closeSheet(); return speechChange({ action: 'delete', id: el.dataset.model }); },
   back,

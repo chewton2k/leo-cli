@@ -10,6 +10,11 @@ pub const BEFORE: &str = ".before-database";
 const VERSION: i64 = 2;
 
 const SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS dictations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    at TEXT NOT NULL,
+    text TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS interviews (
     id TEXT PRIMARY KEY,
     updated TEXT NOT NULL,

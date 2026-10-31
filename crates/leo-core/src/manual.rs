@@ -14,7 +14,7 @@ use anyhow::Result;
 use crate::store::Store;
 
 /// Bump when the manual's content changes enough to be worth re-offering.
-const MANUAL_VERSION: u32 = 18;
+const MANUAL_VERSION: u32 = 19;
 const MARKER: &str = ".manual-installed";
 pub const MANUAL_TITLE: &str = "leo manual";
 
@@ -108,6 +108,11 @@ On Windows, use Ctrl instead of ⌘.
 Record, in the sidebar, turns a lecture or meeting into a note. Pick the
 microphone, or what the computer plays for a video or a call. While it runs,
 type the points that matter; they are woven into the finished note.
+
+## Dictation
+
+Hold or tap Option+Space on Mac or Ctrl+Space on Windows to speak into any app.
+Choose a model, shortcut, microphone and word rules in Settings → Dictation.
 
 ## Felix
 
@@ -266,7 +271,15 @@ mod tests {
     #[test]
     fn the_manual_speaks_about_the_app() {
         let body = manual_body();
-        for word in ["Settings", "Felix", "Record", "⌘J"] {
+        for word in [
+            "Settings",
+            "Felix",
+            "Record",
+            "⌘J",
+            "Dictation",
+            "Option+Space",
+            "Ctrl+Space",
+        ] {
             assert!(body.contains(word), "the manual never mentions {word}");
         }
         for gone in [

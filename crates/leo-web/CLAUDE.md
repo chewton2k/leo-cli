@@ -1042,3 +1042,13 @@ success and actionable errors. The initial model card uses existing settings
 components; progress refreshes only that card, leaving other settings fields
 and their carets intact. `native-recording.test.js` covers native source choice
 and clipboard screenshots; it runs with the recording node tests.
+
+
+`Powers.dictation` implements `DictationApi::{view,change}` over session-gated
+GET/POST `/api/dictation` (200 KB input, blocking work off async tasks). Desktop
+provides settings, devices and native actions. The existing database owns the
+`dictations` table: insert and twenty-row eviction share a transaction; Copy
+resolves a stored ID and discards page-supplied text; Clear removes local rows.
+Nothing becomes a note or sync file. Card polling updates shortcut status and
+history only; fields, drafts, focus and caret survive. Local popup rendering
+and settings helpers have node tests in `dictation.test.js`.

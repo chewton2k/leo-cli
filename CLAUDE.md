@@ -205,6 +205,10 @@ the notes remote.
   0.4.0 in a supervised child, prioritizes dictation and pins the model during
   recording. Cloud speech configurations/aliases migrate locally and their
   stored keys are retired through SecretStore; calendar/writing data stays.
+- Dictation preferences/text rules live in `leo-services::dictation`; desktop
+  owns global shortcuts, permissions, in-memory capture, transactional paste
+  and a bundled nonactivating popup. No writing AI runs on dictations. Recent
+  results are twenty local rows in `leo.db`, never notes or sync data.
 - Recording is captured in Rust, including two native tracks for calls; hiding
   the window cannot stop it. App Nap is held while recording. Missing models
   leave audio pending and recoverable; the app can resume native sessions.

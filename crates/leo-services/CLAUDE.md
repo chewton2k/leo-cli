@@ -477,3 +477,26 @@ snapshotted outside their mutexes before disk I/O.
 recovery. leo-host groups retained call tracks by recording ID, forwards recovery
 progress, and refuses to write a note when recovery failed. Audio is committed
 only after the caller durably saves the note and archive.
+
+
+## Dictation
+
+`dictation/settings.rs` validates bounded preferences in private atomic
+`<config>/dictation.json`; failed live rebinds restore the previous file.
+Malformed settings fall back without overwriting the damaged file, leaving a
+repair message for Settings. `activation.rs` implements hold, tap and the
+300 ms hold-or-tap decision, ignoring repeats. `generation.rs` gates completion
+and state updates after acquiring their state lock, so cancel wins stale work.
+
+`dictation/text.rs` applies custom-word fuzzy/phonetic matching at 0.18 before
+language-aware filler rules (on by default), with Unicode-safe punctuation and
+capitalization. There is no writing-AI step. `capture.rs` bounds dictation to
+300 seconds, closes the input before draining its final queued audio and before
+transcription. `Mic::open_named` opens only the selected input; `microphones`
+enumerates without opening. Desktop chooses the lid-closed alternative.
+
+`AudioGate` makes lecture capture wait for an already-playing feedback sound
+and prevents new sounds until that recording ends. It does no I/O under a mutex.
+The engine actor owns streaming dictation too; bounded feeds fall back to the
+retained batch PCM when streaming fails or falls behind. A reservation pauses
+segment/live passes; recording's pin retains the worker through dictation.

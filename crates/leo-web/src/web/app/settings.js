@@ -11,12 +11,14 @@ async function showSettings() {
   $('#crumbs').innerHTML = '<span class="sep">/</span><button>Settings</button>';
   document.title = 'Settings · leo';
   app.innerHTML = skeleton(3);
-  const [page, calendar, speech] = await Promise.all([api('/api/settings'), api('/api/calendar').catch(() => null), api('/api/speech').catch(() => null)]);
+  const [page, calendar, speech, dictation] = await Promise.all([api('/api/settings'), api('/api/calendar').catch(() => null), api('/api/speech').catch(() => null), api('/api/dictation').catch(() => null)]);
   if (mine !== seq) return;
   state.calendar = calendar;
   state.speech = speech;
+  state.dictation = dictation;
   drawSettings(page);
   startSpeechPolling(mine);
+  pollDictation(mine, ++dictationGeneration);
 }
 
 const GOOGLE_CALENDAR_SETTINGS = 'https://calendar.google.com/calendar/r/settings';
@@ -247,6 +249,7 @@ function drawSettings(page) {
   app.innerHTML = `<div class="settings">
     <div class="section-title">Settings</div>
     ${themeCard()}
+    <div id="dictation-library">${dictationCards(state.dictation)}</div>
     ${page.tasks.filter((t) => t.task === 'writing').map((t) => taskCard(t)).join('')}
     <div id="speech-library">${speechCards(state.speech)}</div>
     ${calendarCard(state.calendar)}

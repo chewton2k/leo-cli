@@ -74,6 +74,7 @@ pub fn powers() -> leo_web::Powers {
         )),
         usage,
         chat: Some(streamer),
+        dictation: None,
         settings: Some(std::sync::Arc::new(crate::settings::WebSettings)),
         importer: Some(std::sync::Arc::new(
             |files: Vec<leo_web::UploadFile>,

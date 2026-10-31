@@ -1,0 +1,60 @@
+const { test, expect } = require('@playwright/test');
+const fs = require('node:fs');
+const path = require('node:path');
+const http = require('node:http');
+
+test('dictation preferences keep drafts and caret while shortcut and history update', async ({ browser }) => {
+  const web = path.resolve(__dirname, '../../src/web');
+  const source = fs.readFileSync(path.join(web, 'app/dictation.js'), 'utf8');
+  const css = fs.readFileSync(path.join(web, 'index.html'), 'utf8').match(/<style>([\s\S]*?)<\/style>/)[1];
+  const initial = () => ({ settings: { shortcut: 'option+space', mode: 'both', custom_words: ['Initial'], fillers: true, popup: 'live', top: false }, microphones: ['External microphone'], shortcut: {}, recent: [{ id: 1, text: '<img src=x onerror=bad()>' }] });
+  let view = initial();
+  const script = `const app=document.querySelector('#app'),$=s=>document.querySelector(s); let seq=1,state={view:'settings',dictation:${JSON.stringify(view)}};
+    const ICON={chevron:''}; const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    function settingsOption(value,label,current){return '<option value="'+esc(value)+'"'+(value===current?' selected':'')+'>'+esc(label)+'</option>';}
+    async function api(url,options={}){const response=await fetch(url,{method:options.method||'GET',headers:{'Content-Type':'application/json'},body:options.body?JSON.stringify(options.body):undefined});return response.json();}
+    ${source}
+    app.innerHTML=dictationCards(state.dictation);
+    app.addEventListener('click',e=>{const b=e.target.closest('[data-action]');if(!b)return;const actions={'dictation-record':()=>dictationChange({action:'record_shortcut'}),'dictation-save':saveDictation,'dictation-clear':()=>dictationChange({action:'clear'}),'dictation-use-shortcut':useDictationShortcut};if(actions[b.dataset.action])actions[b.dataset.action]();});
+    pollDictation(seq,++dictationGeneration);`;
+  const server = http.createServer(async (request, response) => {
+    if (request.url === '/api/dictation') {
+      response.setHeader('Content-Type', 'application/json');
+      if (request.method === 'POST') {
+        let body = ''; for await (const part of request) body += part;
+        const change = JSON.parse(body);
+        if (change.action === 'save') { view.settings = change.settings; view.shortcut = {}; }
+        if (change.action === 'record_shortcut') view.shortcut = { recording: true, candidate: 'fn' };
+        if (change.action === 'clear') view.recent = [];
+      }
+      response.end(JSON.stringify(view)); return;
+    }
+    if (request.url === '/fixture.js') { response.setHeader('Content-Type', 'text/javascript'); response.end(script); return; }
+    response.setHeader('Content-Type', 'text/html'); response.end(`<html><head><style>${css}</style></head><body><main id="app"></main><script src="/fixture.js"></script></body></html>`);
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    for (const colorScheme of ['light', 'dark']) {
+      view = initial();
+      const context = await browser.newContext({ colorScheme });
+      const page = await context.newPage();
+      await page.goto(`http://127.0.0.1:${server.address().port}`);
+      const words = page.locator('[data-dictation="custom_words"]');
+      await words.fill('Charlton\n東京');
+      await words.evaluate(el => { el.focus(); el.setSelectionRange(3, 3); });
+      await page.waitForTimeout(1400);
+      await expect(words).toBeFocused();
+      await expect(words).toHaveValue('Charlton\n東京');
+      expect(await words.evaluate(el => el.selectionStart)).toBe(3);
+      await expect(page.locator('#dictation-recent img')).toHaveCount(0);
+      await page.getByRole('button', { name: 'Record shortcut', exact: true }).click();
+      await expect(page.locator('#dictation-shortcut-status')).toHaveText('fn');
+      await page.getByRole('button', { name: 'Use shortcut', exact: true }).click();
+      await expect(page.locator('[data-dictation="shortcut"]')).toHaveValue('fn');
+      await expect(words).toHaveValue('Charlton\n東京');
+      await page.getByRole('button', { name: 'Clear', exact: true }).click();
+      await expect(page.locator('#dictation-recent')).toContainText('Your dictations will appear here.');
+      await context.close();
+    }
+  } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
+});

@@ -45,3 +45,43 @@ single-instance startup; native speech runs only in that child process.
 Info.plist declares microphone and computer-audio capture uses. Recording
 capture and its process activity guard live in services and continue when
 `main` is hidden; the webview only controls and displays the job.
+
+
+## Dictation
+
+`Dictation` is managed as an Arc before the loopback engine starts and supplies
+`Powers.dictation`. A bounded coordinator serializes shortcut inputs, handles
+hold/tap and remembered input during decoding, and rejects stale completion by
+generation. It opens the selected microphone only for capture, choosing the
+lid-closed alternative through a bounded IORegistry query. Capture releases
+its input before local VAD/transcription, word rules, local history and paste.
+Start/stop WAVs are optional and excluded from lecture recordings by AudioGate.
+Debug-only replay/output controls require `LEO_DICTATION_TEST`; normal builds
+never expose the test actions or write a test paste file.
+
+`shortcut.rs` owns handy-keys on a dedicated thread, re-creating it after
+Accessibility changes. Recording a binding pauses global registration, supports
+modifier-only/Fn and expires after 30 s. Secure Input uses the Carbon fallback
+for representable chords (side-specific modifiers widen); modifier-only events
+stay on handy-keys. Escape registers only during capture, including fallback,
+and is reserved from being the dictation binding. Status exposes missing
+permissions, unavailable registration and uncovered Secure Input chords.
+
+`paste_tx` publishes lazy clipboard data, waits for post-injection reads and a
+200 ms quiet period, with an 8 s cap. Restoration checks ownership again; a newer
+copy wins, Enter requires a confirmed receipt and an uncanceled generation.
+macOS snapshots every pasteboard item/type. Windows retains memory formats and
+copies bitmap, metafile and palette handles; a format it cannot preserve causes
+an error before publishing. Total snapshot bytes/items/types are bounded.
+Enigo is taken out of its state slot for native I/O; layout-aware Cmd+V resolves
+on the main thread. Without Accessibility or with an elevated Windows target,
+text remains on the clipboard with a manual-paste instruction.
+
+`overlay.rs` creates a bundled `dist/dictation.html` popup: a nonactivating NSPanel
+on macOS, nonfocusable always-on-top window on Windows. It uses the focused
+window's monitor, with cursor/primary fallbacks, and supports top/bottom and
+Live/Minimal/Off. Its CSS token block comes directly from the web page's theme;
+the main page sends Light/Dark/Match changes. Queued shows and updates check the
+current generation. The popup's IPC is limited to its own window label.
+Shutdown cancels dictation/shortcuts and stops the speech worker before the
+loopback engine finishes.

@@ -325,6 +325,12 @@ pub struct Mic {
 
 impl Mic {
     pub fn open(screen: bool) -> Result<(Mic, Receiver<Vec<i16>>)> {
+        Self::open_device(screen, None)
+    }
+    pub fn open_named(name: Option<String>) -> Result<(Mic, Receiver<Vec<i16>>)> {
+        Self::open_device(false, name)
+    }
+    fn open_device(screen: bool, name: Option<String>) -> Result<(Mic, Receiver<Vec<i16>>)> {
         if disabled() {
             bail!("the microphone is turned off for leo (LEO_NO_MICROPHONE is set)");
         }
@@ -343,7 +349,9 @@ impl Mic {
                 .name("leo-mic".into())
                 .spawn(move || {
                     let (raw_tx, raw_rx) = mpsc::sync_channel::<Vec<f32>>(4096);
-                    let opened = find_device(screen).and_then(|device| {
+                    let opened = (if let Some(name) = name {
+                        cpal::default_host().input_devices().map_err(anyhow::Error::from).and_then(|mut devices| devices.find(|d| device_name(d) == name).ok_or_else(|| anyhow!("The chosen microphone is unavailable. Choose another in Dictation settings.")))
+                    } else { find_device(screen) }).and_then(|device| {
                         build(&device, raw_tx, Arc::clone(&problem), Arc::clone(&dropped))
                     });
                     let (stream, rate) = match opened {
@@ -437,6 +445,16 @@ pub fn listen_for(seconds: f64) -> Result<Vec<i16>> {
     }
     heard.truncate(wanted);
     Ok(heard)
+}
+
+pub fn microphones() -> Vec<String> {
+    if disabled() {
+        return Vec::new();
+    }
+    cpal::default_host()
+        .input_devices()
+        .map(|devices| devices.take(128).map(|d| device_name(&d)).collect())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
