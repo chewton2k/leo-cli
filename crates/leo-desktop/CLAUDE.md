@@ -101,3 +101,11 @@ Downloads use public HTTPS resolution, deadlines and a one-GiB cap. Signed bytes
 stay in memory. Core activity leases cover capture through clipboard restoration;
 installation takes an exclusive lease, unloads/reaps the speech worker, and keeps
 the lease until exit. Failed installation leaves the engine actor usable.
+
+Release-only `tauri.release.conf.json` includes the root CLI as `binaries/leo`,
+so ordinary checks/dev need no prebuilt sidecar. CI builds that command first,
+then Tauri bundles/signs it with the app and produces updater artifacts. The
+committed updater key is public only. Stable private signing files live outside
+this repository; release requires four repository Actions secrets. Microphone
+entitlements accompany hardened runtime. Config omits version; workspace version
+and scripts/set-version.sh remain authoritative.

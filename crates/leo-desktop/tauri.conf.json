@@ -30,12 +30,20 @@
     "category": "Productivity",
     "shortDescription": "Notes, recordings and dictation",
     "macOS": {
-      "infoPlist": "Info.plist"
+      "infoPlist": "Info.plist",
+      "entitlements": "Entitlements.plist",
+      "hardenedRuntime": true
+    },
+    "createUpdaterArtifacts": true,
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
     }
   },
   "plugins": {
     "updater": {
-      "pubkey": "",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI1QTZFMzU1QUQwNEZDMjEKUldRaC9BU3RWZU9tSlI3MW5ObGVvSUIyQ2NtbllWdzB4QzQ0bVJNbjM1aUtGblEwa2x6RFI1TUIK",
       "endpoints": [
         "https://github.com/chewton2k/leo-cli/releases/latest/download/latest.json"
       ]

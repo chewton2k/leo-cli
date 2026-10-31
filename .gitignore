@@ -14,3 +14,6 @@ scripts/go-runner/out/
 scripts/java-runner/out/
 scripts/rust-runner/out/
 .superpowers/
+
+crates/leo-desktop/binaries/
+__pycache__/

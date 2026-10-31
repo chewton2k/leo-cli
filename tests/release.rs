@@ -176,7 +176,7 @@ fn set_version_changes_the_workspace_and_its_lock_entries_only() {
     };
     assert_eq!(changed(&toml, &new_toml), ["version = \"7.8.9\""]);
     let lock_changes = changed(&lock, &new_lock);
-    assert_eq!(lock_changes.len(), 5, "{lock_changes:?}");
+    assert_eq!(lock_changes.len(), 6, "{lock_changes:?}");
     assert!(lock_changes.iter().all(|l| l == "version = \"7.8.9\""));
     assert_eq!(lock.lines().count(), new_lock.lines().count());
 }
