@@ -1,52 +1,19 @@
-use std::future::{Future, IntoFuture};
 use std::time::Duration;
 
-const GRACE: Duration = Duration::from_secs(5);
+pub(crate) const GRACE: Duration = Duration::from_secs(5);
 pub(crate) const CLEANUP: Duration = Duration::from_secs(1);
 
-pub(crate) async fn wait<S, F, Q>(
-    server: S,
-    first: F,
-    second: Q,
-    stop: impl FnOnce(),
-) -> std::io::Result<()>
-where
-    S: IntoFuture<Output = std::io::Result<()>>,
-    F: Future,
-    Q: Future,
-{
-    wait_for(GRACE, server, first, second, stop).await
-}
-
-async fn wait_for<S, F, Q>(
-    grace: Duration,
-    server: S,
-    first: F,
-    second: Q,
-    stop: impl FnOnce(),
-) -> std::io::Result<()>
-where
-    S: IntoFuture<Output = std::io::Result<()>>,
-    F: Future,
-    Q: Future,
-{
-    let server = server.into_future();
-    tokio::pin!(server, first, second);
-    tokio::select! {
-        result = &mut server => return result,
-        _ = &mut first => {},
-    }
-    stop();
-    tokio::select! {
-        result = &mut server => result,
-        _ = &mut second => Ok(()),
-        _ = tokio::time::sleep(grace) => Ok(()),
+pub(crate) async fn drain(grace: Duration, server: tokio::task::JoinHandle<std::io::Result<()>>) {
+    let abort = server.abort_handle();
+    if tokio::time::timeout(grace, server).await.is_err() {
+        abort.abort();
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::future::IntoFuture;
     use std::sync::Arc;
     use tokio::io::AsyncWriteExt;
 
@@ -75,20 +42,14 @@ mod tests {
                 .await
                 .unwrap();
             let address = listener.local_addr().unwrap();
-            let (first, interrupted) = tokio::sync::oneshot::channel::<()>();
             let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
-            let server = axum::serve(listener, app).with_graceful_shutdown(async {
-                let _ = stopped.await;
-            });
-            let serving = tokio::spawn(wait_for(
-                Duration::from_millis(50),
-                server,
-                interrupted,
-                std::future::pending::<()>(),
-                move || {
-                    let _ = stop.send(());
-                },
-            ));
+            let server = tokio::spawn(
+                axum::serve(listener, app)
+                    .with_graceful_shutdown(async {
+                        let _ = stopped.await;
+                    })
+                    .into_future(),
+            );
             let mut client = tokio::net::TcpStream::connect(address).await.unwrap();
             client
                 .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
@@ -97,49 +58,24 @@ mod tests {
             tokio::time::timeout(Duration::from_secs(1), started.notified())
                 .await
                 .unwrap();
-            first.send(()).unwrap();
-            tokio::time::timeout(Duration::from_secs(1), serving)
-                .await
-                .unwrap()
-                .unwrap()
-                .unwrap();
+            stop.send(()).unwrap();
+            tokio::time::timeout(
+                Duration::from_secs(1),
+                drain(Duration::from_millis(50), server),
+            )
+            .await
+            .unwrap();
         }
     }
 
     #[tokio::test]
-    async fn a_second_interrupt_skips_the_grace_period() {
-        let (first, interrupted) = tokio::sync::oneshot::channel::<()>();
-        let (second, forced) = tokio::sync::oneshot::channel::<()>();
-        let (began, stopping) = tokio::sync::oneshot::channel::<()>();
-        let serving = tokio::spawn(wait_for(
-            Duration::from_secs(60),
-            std::future::pending::<std::io::Result<()>>(),
-            interrupted,
-            forced,
-            move || {
-                let _ = began.send(());
-            },
-        ));
-        first.send(()).unwrap();
-        stopping.await.unwrap();
-        second.send(()).unwrap();
-        tokio::time::timeout(Duration::from_secs(1), serving)
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap();
-    }
-
-    #[tokio::test]
-    async fn server_failures_return_without_waiting_for_a_signal() {
-        let result = wait_for(
-            Duration::from_secs(60),
-            async { Err(std::io::Error::other("fixture server failure")) },
-            std::future::pending::<()>(),
-            std::future::pending::<()>(),
-            || panic!("shutdown did not start"),
+    async fn a_finished_server_returns_at_once() {
+        let server = tokio::spawn(async { Err(std::io::Error::other("fixture server failure")) });
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            drain(Duration::from_secs(60), server),
         )
-        .await;
-        assert_eq!(result.unwrap_err().to_string(), "fixture server failure");
+        .await
+        .unwrap();
     }
 }

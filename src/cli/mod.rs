@@ -6,7 +6,6 @@ mod backup;
 mod doctor;
 mod notes;
 mod prompt;
-mod serve;
 mod uninstall;
 mod update;
 
@@ -128,24 +127,6 @@ enum Commands {
     },
 
     /// Your notes on your phone, from any network
-    Serve {
-        /// Port to listen on
-        #[arg(short, long, default_value_t = 3131)]
-        port: u16,
-
-        #[arg(
-            long,
-            help = "Only on this Wi-Fi, without the link that works from anywhere (needs no cloudflared)"
-        )]
-        local: bool,
-
-        #[arg(long, hide = true)]
-        anywhere: bool,
-
-        #[arg(long, help = "Make a new link, so every old one stops working")]
-        new_token: bool,
-    },
-
     #[command(
         about = "Check that everything works (leo, your notes, the AI, recording, backup) and say how to fix what does not"
     )]
@@ -323,24 +304,6 @@ pub fn parse() -> Cli {
 /// Run whatever the command line asked for.
 pub fn run(cli: Cli) -> Result<()> {
     match cli.command {
-        Some(Commands::Serve {
-            port,
-            local,
-            anywhere: _,
-            new_token,
-        }) => {
-            if !local {
-                serve::ensure_tunnel_tool()?;
-            }
-            serve::run(leo_web::serve(
-                leo_web::ServeOptions {
-                    port,
-                    local,
-                    new_token,
-                },
-                leo_host::powers(),
-            ))
-        }
         Some(Commands::Doctor) => doctor::run(),
         Some(Commands::Uninstall { yes }) => uninstall::run(yes),
         Some(Commands::Update { force }) => update::run(force),

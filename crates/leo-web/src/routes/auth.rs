@@ -6,10 +6,8 @@ use axum::http::{header, HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::Json;
-use colored::Colorize;
 use serde::Deserialize;
 
-use crate::terminal::clickable;
 use crate::{sessions, AppState};
 
 const COOKIE_DAYS: u32 = 30;
@@ -227,15 +225,6 @@ pub(crate) async fn new_link(
     match tokio::task::spawn_blocking(move || gate.new_link_code()).await {
         Ok(Ok(code)) => {
             let link = format!("{scheme}://{host}/?token={code}");
-            if !leo_core::diag::is_quiet() {
-                println!();
-                println!("  {}", "A new link was made from the website:".bold());
-                println!("    {}", clickable(&link));
-                println!(
-                    "  {}",
-                    "Older links stop working for browsers that are not signed in yet.".dimmed()
-                );
-            }
             Json(serde_json::json!({ "link": link })).into_response()
         }
         _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),

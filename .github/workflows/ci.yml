@@ -149,8 +149,8 @@ jobs:
           done
       - name: ALSA headers
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
-      - name: Build leo
-        run: cargo build --locked --bin leo
+      - name: Build the test server
+        run: cargo build --locked -p leo-host --bin leo-test-server
       - uses: actions/setup-node@v5
         with:
           node-version: '24'

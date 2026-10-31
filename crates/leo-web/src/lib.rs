@@ -33,17 +33,16 @@ pub mod steer;
 pub mod storage;
 mod storage_saved;
 mod tasks;
-mod terminal;
 #[cfg(test)]
 mod tests;
 mod token;
 pub mod tools;
-pub mod tunnel;
 pub mod usage;
 pub mod vectors;
 mod warm;
 mod work;
 
+use std::future::IntoFuture;
 #[cfg(test)]
 use std::sync::MutexGuard;
 use std::sync::{Arc, Mutex};
@@ -54,7 +53,6 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use colored::Colorize;
 use leo_core::store::Store;
 
 use crate::routes::activity::activity;
@@ -85,7 +83,6 @@ use crate::routes::trash::{
 use crate::routes::uploads::{
     get_original, import_status, list_originals, start_import, ImportJob, IMPORT_BYTES,
 };
-use crate::terminal::{bind, clickable, keep_awake, open_on_enter, print_qr, should_open};
 
 pub use chat::{Conversation, Converser, Exchange, Instructions, Reply, Spent, Streamer, ToolSpec};
 pub use graph::Writer;
@@ -441,15 +438,109 @@ impl AppState {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct ServeOptions {
+#[derive(Debug, Clone)]
+pub struct StartOptions {
     pub port: u16,
-    pub local: bool,
-    pub new_token: bool,
+    pub token: String,
 }
 
-pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
-    let store = Store::load()?;
+pub(crate) struct Places {
+    pub(crate) store: Store,
+    pub(crate) sessions: std::path::PathBuf,
+}
+
+pub struct Running {
+    port: u16,
+    token: String,
+    state: AppState,
+    stop: tokio::sync::oneshot::Sender<()>,
+    server: tokio::task::JoinHandle<std::io::Result<()>>,
+    background: Background,
+}
+
+struct Background {
+    graph: tokio::task::JoinHandle<()>,
+    idle: tokio::task::JoinHandle<()>,
+}
+
+impl Background {
+    fn stop(&self) {
+        self.graph.abort();
+        self.idle.abort();
+    }
+}
+
+impl Drop for Background {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+impl Running {
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
+    pub fn sign_in_url(&self) -> String {
+        format!("http://127.0.0.1:{}/?token={}", self.port, self.token)
+    }
+
+    pub fn back_up(&self) {
+        let Some(settings) = self.state.settings.clone() else {
+            return;
+        };
+        let Ok(notes) = self
+            .state
+            .store
+            .lock()
+            .map(|storage| storage.store.notes_dir.clone())
+        else {
+            return;
+        };
+        let _ = self.state.backups.queue(settings, notes);
+    }
+
+    pub async fn stop(self) {
+        let Running {
+            state,
+            stop,
+            server,
+            background,
+            ..
+        } = self;
+        background.stop();
+        let _ = stop.send(());
+        shutdown::drain(shutdown::GRACE, server).await;
+        drop(background);
+        let warm = Arc::clone(&state.warm);
+        drop(state);
+        let cleanup = tokio::task::spawn_blocking(move || warm.clear());
+        let _ = tokio::time::timeout(shutdown::CLEANUP, cleanup).await;
+    }
+}
+
+pub fn fresh_token() -> String {
+    uuid::Uuid::new_v4().simple().to_string()
+}
+
+pub fn saved_token() -> Result<String> {
+    token::load_or_create(&leo_core::paths::config_dir()?.join("serve-token"), false)
+}
+
+pub async fn start(options: StartOptions, powers: Powers) -> Result<Running> {
+    let places = Places {
+        store: Store::load()?,
+        sessions: leo_core::paths::config_dir()?.join("serve-sessions.json"),
+    };
+    start_in(places, options, powers).await
+}
+
+pub(crate) async fn start_in(
+    places: Places,
+    options: StartOptions,
+    powers: Powers,
+) -> Result<Running> {
+    let store = places.store;
     let vectors = Arc::new(vectors::Vectors::for_notes(&store.notes_dir));
     let graphs = Arc::new(
         graph::Graphs::for_notes(&store.notes_dir, powers.writer)
@@ -475,25 +566,11 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
     let seer = powers.seer;
     let meaning = powers.meaning;
     let captions = Arc::new(captions::Captions::for_notes(&store.notes_dir));
-    let count = store.notes.len();
-    let token_path = leo_core::paths::config_dir()?.join("serve-token");
-    let sessions_path = leo_core::paths::config_dir()?.join("serve-sessions.json");
-    let token = token::load_or_create(&token_path, options.new_token)?;
-    if !options.local && !leo_core::paths::on_path("cloudflared") {
-        anyhow::bail!(tunnel::MISSING);
-    }
-
     let (listener, port) = bind(options.port).await?;
     let gate = Arc::new(sessions::Gate::new(
-        token.clone(),
-        Some(token_path),
-        if options.new_token {
-            let fresh = sessions::Sessions::load(&sessions_path)?;
-            fresh.end_all()?;
-            fresh
-        } else {
-            sessions::Sessions::load(&sessions_path)?
-        },
+        options.token.clone(),
+        None,
+        sessions::Sessions::load(&places.sessions)?,
     ));
     let state = AppState {
         store: Arc::new(Mutex::new(Storage {
@@ -549,148 +626,51 @@ pub async fn serve(options: ServeOptions, powers: Powers) -> Result<()> {
         vectors,
     };
 
-    let tunnel = if !options.local {
-        println!();
-        println!("  {}", "Opening a link that works from anywhere…".dimmed());
-        Some(tunnel::start(port).await?)
-    } else {
-        None
-    };
-    gate.sessions
-        .retire_links(tunnel.as_ref().and_then(|t| t.url.split("://").nth(1)))?;
-
-    let local_ip = local_ip_address::local_ip()
-        .map(|ip| ip.to_string())
-        .unwrap_or_else(|_| "127.0.0.1".to_string());
-    let wifi = format!("http://{local_ip}:{port}/?token={token}");
-
-    println!();
-    println!(
-        "  {} {}",
-        "leo serve".bold(),
-        format!("· {count} note{}", if count == 1 { "" } else { "s" }).dimmed()
-    );
-    if port != options.port {
-        println!(
-            "  {}",
-            format!("Port {} was busy, so this uses {port}.", options.port).dimmed()
-        );
-    }
-    println!();
-    match &tunnel {
-        Some(tunnel) => {
-            let anywhere = format!("{}/?token={token}", tunnel.url);
-            println!("  {}", "Your link, from any network".bold());
-            println!("    {}", clickable(&anywhere));
-            print_qr(&anywhere);
-            println!(
-                "  {} anyone with the whole link can read and edit your notes. Keep it",
-                "Careful:".yellow().bold()
-            );
-            println!("  to yourself; `leo serve --new-token` retires every old link.");
-        }
-        None => {
-            println!("  {}", "On this Wi-Fi".bold());
-            println!("    {}", clickable(&wifi));
-            print_qr(&wifi);
-            println!(
-                "  {}",
-                "Away from this Wi-Fi? `leo serve` without --local gives a link that works on any network."
-                    .dimmed()
-            );
-            println!(
-                "  {} {} {}",
-                "iPhone:".bold(),
-                "if Safari refuses the page, turn off Settings > Apps > Safari >".dimmed(),
-                "HTTPS Upgrade".dimmed()
-            );
-        }
-    }
-    println!();
-    let here = format!("http://127.0.0.1:{port}/?token={token}");
-    let opened = should_open(
-        std::io::IsTerminal::is_terminal(&std::io::stdin()),
-        std::io::IsTerminal::is_terminal(&std::io::stdout()),
-        std::env::var_os("LEO_NO_OPEN").is_some(),
-    ) && leo_core::open::link(&here).is_ok();
-    if opened {
-        println!(
-            "  {} {}",
-            "Opened in your browser.".bold(),
-            "Press Enter to open it again.".dimmed()
-        );
-    } else if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-        println!(
-            "  {} {}",
-            "Press Enter".bold(),
-            "to open it in a browser on this computer.".dimmed()
-        );
-    }
-    println!(
-        "  {}",
-        "Scan the code with your phone's camera. Keep this window open; Ctrl-C stops.".dimmed()
-    );
-    println!();
-    open_on_enter(here);
-
-    struct Background {
-        graph: tokio::task::JoinHandle<()>,
-        idle: tokio::task::JoinHandle<()>,
-    }
-    impl Background {
-        fn stop(&self) {
-            self.graph.abort();
-            self.idle.abort();
-        }
-    }
-    impl Drop for Background {
-        fn drop(&mut self) {
-            self.stop();
-        }
-    }
-    let warm = Arc::clone(&state.warm);
     let background = Background {
         graph: tokio::spawn(keep_graph_current(state.clone())),
         idle: tokio::spawn(stop_idle_sessions(Arc::clone(&state.warm))),
     };
-    let app = router(state);
-    let _awake = keep_awake();
+    let app = router(state.clone());
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
-    let server = axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-    )
-    .with_graceful_shutdown(async {
-        let _ = stopped.await;
-    });
-    let served = shutdown::wait(
+    let server = tokio::spawn(
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .with_graceful_shutdown(async {
+            let _ = stopped.await;
+        })
+        .into_future(),
+    );
+    Ok(Running {
+        port,
+        token: options.token,
+        state,
+        stop,
         server,
-        tokio::signal::ctrl_c(),
-        tokio::signal::ctrl_c(),
-        || {
-            eprintln!("  Stopping leo serve… Press Ctrl-C again to stop waiting.");
-            background.stop();
-            let _ = stop.send(());
-        },
-    )
-    .await;
-    drop(background);
-    let cleanup = tokio::task::spawn_blocking(move || warm.clear());
-    let _ = tokio::time::timeout(shutdown::CLEANUP, async move {
-        tokio::join!(
-            async {
-                let _ = cleanup.await;
-            },
-            async {
-                if let Some(tunnel) = tunnel {
-                    tunnel.stop().await;
-                }
-            }
-        );
+        background,
     })
-    .await;
-    served?;
-    Ok(())
+}
+
+async fn bind(wanted: u16) -> Result<(tokio::net::TcpListener, u16)> {
+    let mut last = None;
+    for port in wanted..wanted.saturating_add(20) {
+        match tokio::net::TcpListener::bind(std::net::SocketAddr::from(([127, 0, 0, 1], port)))
+            .await
+        {
+            Ok(listener) => {
+                let port = listener.local_addr()?.port();
+                return Ok((listener, port));
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => last = Some(e),
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Err(anyhow::anyhow!(
+        "ports {wanted} to {} are all in use ({})",
+        wanted.saturating_add(19),
+        last.map(|e| e.to_string()).unwrap_or_default()
+    ))
 }
 
 fn router(state: AppState) -> Router {

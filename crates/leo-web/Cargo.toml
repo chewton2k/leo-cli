@@ -1,6 +1,6 @@
 [package]
 name = "leo-web"
-description = "The phone and browser interface served by `leo serve`"
+description = "Leo's pages and the engine behind them, started inside the app"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,9 +10,6 @@ leo-core.workspace = true
 anyhow.workspace = true
 axum.workspace = true
 chrono.workspace = true
-colored.workspace = true
-local-ip-address.workspace = true
-qrcode.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 base64.workspace = true

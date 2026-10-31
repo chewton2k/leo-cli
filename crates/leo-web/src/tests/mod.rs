@@ -10,6 +10,7 @@ mod passages;
 mod pictures;
 mod recording;
 mod sources;
+mod start;
 mod study_context;
 mod tasks;
 mod trash;

@@ -12,6 +12,7 @@ leo-web.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
 serde_json.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 leo-services = { workspace = true, features = ["test-support"] }

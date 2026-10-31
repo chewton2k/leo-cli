@@ -37,7 +37,11 @@ impl Backups {
         }
     }
 
-    fn queue(&self, settings: Arc<dyn SettingsApi>, notes: std::path::PathBuf) -> Result<(), ()> {
+    pub(crate) fn queue(
+        &self,
+        settings: Arc<dyn SettingsApi>,
+        notes: std::path::PathBuf,
+    ) -> Result<(), ()> {
         let mut sender = self.sender.lock().map_err(|_| ())?;
         if sender.as_ref().is_none_or(|s| s.is_closed()) {
             let (tx, mut rx) = mpsc::channel(1);
