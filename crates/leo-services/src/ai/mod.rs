@@ -327,21 +327,6 @@ pub fn expand_prompt(
     Ok(chat::clean_reply(&outcome.value))
 }
 
-/// The real [`leo_core::action::Ai`], running the provider chains.
-pub struct RealAi;
-
-impl leo_core::action::Ai for RealAi {
-    fn expand_prompts(&self, body: &str, title: &str) -> Result<(String, usize)> {
-        expand_leo_prompts(body, title)
-    }
-    fn structure(&self, transcript: &str) -> Result<(String, String)> {
-        structure_notes(transcript)
-    }
-    fn structure_append(&self, transcript: &str, existing: &str) -> Result<String> {
-        structure_notes_append(transcript, existing)
-    }
-}
-
 /// Answer every `@leo` line in a note, giving each one the lines around it plus
 /// the whole note for background.
 pub fn expand_leo_prompts(body: &str, title: &str) -> Result<(String, usize)> {

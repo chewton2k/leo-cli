@@ -858,10 +858,7 @@ mod tests {
     fn backing_up_before_setup_says_what_to_do() {
         let tmp = TempDir::new().unwrap();
         let err = now(tmp.path()).unwrap_err().to_string();
-        assert!(
-            err.contains("Settings, Backup"),
-            "{err}"
-        );
+        assert!(err.contains("Settings, Backup"), "{err}");
     }
 
     #[test]

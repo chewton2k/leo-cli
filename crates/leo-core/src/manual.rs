@@ -14,7 +14,7 @@ use anyhow::Result;
 use crate::store::Store;
 
 /// Bump when the manual's content changes enough to be worth re-offering.
-const MANUAL_VERSION: u32 = 17;
+const MANUAL_VERSION: u32 = 18;
 const MARKER: &str = ".manual-installed";
 pub const MANUAL_TITLE: &str = "leo manual";
 
@@ -87,12 +87,6 @@ pub fn install_if_absent(store: &mut Store) -> Result<Option<String>> {
     Ok(Some(id))
 }
 
-/// The manual itself: one screen, then a pointer to the rest.
-///
-/// Deliberately not a full reference. `?` already holds every key and every
-/// command, grouped and scrollable, and duplicating it here made the largest
-/// note most users own — permanently sitting at the top of their list. This
-/// answers "what do I do now" and says where the rest is.
 pub fn manual_body() -> String {
     format!(
         r#"This note is the manual. It is an ordinary note, so you can search it,
@@ -101,60 +95,42 @@ edit it, or delete it — it will not come back.
 ## Getting around
 
 ```
-Enter   write in the selected note (Esc when done; it saves itself)
-n       a new note: type a title, then Enter
-/       search notes (command words are searched too)
-:       commands, with a menu and Tab completion
-F2      Actions: New, Search, Record, Settings and Quick tour
-D       delete (u brings it back)
-?       every key and command
+⌘J        Quick Leo: ask, remind, find or jot anything
+⌘K        search every note
+New note  top of the sidebar, or the first card in a folder
+Settings  bottom of the sidebar
 ```
 
-The bottom line shows the keys that work where you are; `?` shows them all.
-
-## The commands that matter most
-
-```
-:settings          choose the AI that writes and listens
-:record            record your voice; it becomes a note
-:record screen     record what the computer plays: a video, a call
-:ask what is due?  an answer from your notes
-:doctor            check that everything works, and how to fix it
-:backup            keep a copy of your notes on GitHub
-```
-
-Settings offers this computer, a cloud API key, or your Claude Code or Codex plan.
-
-`leo serve`: your notes, a map of how they connect, and Felix to study with.
+On Windows, use Ctrl instead of ⌘.
 
 ## Recording
 
-`R` (or `:record`) records and turns what was said into a note. While it runs,
-type the points that matter and press `Enter` after each; they are woven into
-the finished note. `Ctrl-P` pauses, `Esc` twice stops.
+Record, in the sidebar, turns a lecture or meeting into a note. Pick the
+microphone, or what the computer plays for a video or a call. While it runs,
+type the points that matter; they are woven into the finished note.
+
+## Felix
+
+Ask Felix about your notes, have him quiz you, or practise for an interview.
+He can add tasks and notes, and asks first unless you let him act on his own.
 
 ## Writing
 
-Every line shows formatted, and the line with the cursor shows its Markdown.
-`Enter` continues a list, `Tab` indents, `Ctrl-Z` undoes. Write `@leo` and a
-question on a line: press `Esc` and the answer appears under it. `e` opens the
-note in your own editor instead.
+Tap a line to edit it; everything else stays formatted. Write `@leo` and a
+question on a line, and the answer appears under it.
 
 ## Finding and organising
 
-Type at `/` to search every note, bodies included; `Esc` clears it.
-
-```
-:new cs130/Lecture 4 #exam   a note in cs130, tagged exam
-:mkdir cs130                 a folder
-:mv cs130                    move the selected note there
-```
+Search finds words and meaning. Drag notes onto folders to move them, or drop
+one note on another to combine them. The knowledge graph shows how notes
+connect.
 
 ## Where things live
 
 Notes are plain Markdown files in `{notes_dir}`. Settings live in
 `{config_path}`. API keys never do; they are kept in a store
-only your account can read.
+only your account can read. Settings chooses the AI that writes, and backup
+keeps a copy on GitHub.
 "#,
         notes_dir = "<data dir>/leo/notes/",
         config_path = "<config dir>/leo/config.toml",
@@ -287,61 +263,26 @@ mod tests {
         assert!(lines <= 60, "the manual grew back to {lines} lines");
     }
 
-    /// Short is only acceptable if the full reference is discoverable from it.
     #[test]
-    fn the_manual_points_at_the_full_reference() {
+    fn the_manual_speaks_about_the_app() {
         let body = manual_body();
-        assert!(body.contains("`?`"), "never mentions the help key");
-        assert!(
-            body.contains(":settings"),
-            "never mentions the provider screen"
-        );
-        assert!(body.contains(":doctor"), "never mentions the health check");
-    }
-
-    /// The handful of things a first-time user needs on day one must be here,
-    /// even though the exhaustive list is not.
-    #[test]
-    fn the_manual_covers_the_day_one_commands() {
-        let body = manual_body();
-        for verb in [
-            "new",
-            "/",
-            "mkdir",
-            "mv",
-            "ask",
-            "backup",
-            "records",
-            ":settings",
-            ":record screen",
+        for word in ["Settings", "Felix", "Record", "⌘J"] {
+            assert!(body.contains(word), "the manual never mentions {word}");
+        }
+        for gone in [
             "leo serve",
+            "/settings",
+            "/doctor",
+            "leo doctor",
+            "TUI",
+            "terminal",
+            "`?`",
         ] {
-            assert!(body.contains(verb), "the manual never mentions `{verb}`");
-        }
-        // And the keys someone needs before they find the help screen.
-        for key in ["Enter", "Esc", "Tab", "n", "e", "D", "u", "R"] {
-            assert!(
-                body.contains(key),
-                "the manual never mentions the {key} key"
-            );
-        }
-    }
-
-    /// No stale instructions: a command the manual names must still exist.
-    #[test]
-    fn the_manual_names_no_retired_command() {
-        let body = manual_body();
-        for (alias, _, _) in crate::action::RETIRED {
-            // Checked as a `/` command, since short aliases like `e` and `x`
-            // appear as prose elsewhere.
-            assert!(
-                !body.contains(&format!(":{alias} ")) && !body.contains(&format!(":{alias}\n")),
-                "the manual still tells the user to run `:{alias}`"
-            );
+            assert!(!body.contains(gone), "the manual still says {gone}");
         }
         assert!(
-            !body.contains("leo env"),
-            "the manual still mentions leo env"
+            !body.lines().any(|line| line.starts_with(':')),
+            "the manual still lists : commands"
         );
     }
 
