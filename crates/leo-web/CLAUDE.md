@@ -1069,3 +1069,8 @@ Back returns to the previous note; only the explicit Storage route selects Stora
 lock. Explicit `/api/backup/setup` has a single-operation semaphore. Recording
 reserves `capture_activity` before creating a job; its lease prevents updater
 installation through the durable save, including browser-journal recovery.
+
+Tasks-panel fitting includes the entire interview track grid, using the same
+height reservation and automatic folding as the library so every start button
+remains clickable. Interview home reserves scroll room; practice panes keep
+their own fixed layout.

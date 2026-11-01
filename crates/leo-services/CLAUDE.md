@@ -375,6 +375,9 @@ Native tool budgets and a final no-tools request bound models that ignore limits
 
 ### Finding notes by meaning (`meaning.rs`)
 
+All three Candle crates pin 0.10.0: 0.11 uses ARM FP16 types unavailable on
+the workspace's Rust 1.88 floor. The model, tokenizer and pooling stay unchanged.
+
 BAAI bge-small-en-v1.5 (384 numbers per text, 134 MB) runs on the CPU through
 candle (`candle-transformers` BERT, `tokenizers` without onig): CLS pooling,
 unit length, queries prefixed with `QUERY`. Files pinned to a Hugging Face

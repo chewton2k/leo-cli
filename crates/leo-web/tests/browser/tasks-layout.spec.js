@@ -60,6 +60,7 @@ test('task completion shows its check before hiding and survives refresh, Undo a
     });
     window.audit = {
       async seed(tasks) { rows = tasks; await loadTasksWindow(); },
+      interviews() { state = {view: "interviews"}; document.body.classList.add("on-interviews"); document.body.style.setProperty("--side", "0px"); app.innerHTML = '<div style="padding-top:260px"><div class="interview-tracks">' + ["coding", "design", "behavior"].map(kind => '<button class="set-card interview-track" style="min-height:300px">' + kind + '</button>').join('') + '</div></div>'; drawTasksWindow(); },
       refresh: loadTasksWindow,
       redraw: drawTasksWindow,
       saved: () => cal.data.tasks,
@@ -126,6 +127,13 @@ test('task completion shows its check before hiding and survives refresh, Undo a
     await expect(check).not.toBeChecked();
     expect(await check.getAttribute('data-on')).not.toBe(occurrence);
     expect(await row.evaluate(el => el.getAnimations().length)).toBe(0);
+    await page.setViewportSize({width:1280,height:720});
+    await page.evaluate(task => audit.seed(Array.from({length:30}, (_,i) => ({...task,id:"layout-"+i}))), task);
+    await expect(page.locator(".tasks-toggle")).toHaveAttribute("aria-expanded", "true");
+    await page.evaluate(() => audit.interviews());
+    for (const button of await page.locator(".interview-track").all()) await button.click({trial:true,timeout:1500});
+    await page.setViewportSize({width:620,height:600});
+    for (const button of await page.locator(".interview-track").all()) await button.click({trial:true,timeout:1500});
     expect(errors).toEqual([]);
   } finally {
     await context.close();

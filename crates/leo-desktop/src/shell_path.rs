@@ -139,14 +139,21 @@ mod tests {
 
     #[test]
     fn merged_keeps_login_first_without_duplicates() {
+        let path = |items: &[&str]| {
+            std::env::join_paths(items)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        };
         let got = merged(
-            "/usr/bin:/bin",
-            Some("/opt/homebrew/bin:/usr/bin"),
-            &[
-                PathBuf::from("/opt/homebrew/bin"),
-                PathBuf::from("/usr/local/bin"),
-            ],
+            &path(&["system", "base"]),
+            Some(&path(&["tools", "system"])),
+            &[PathBuf::from("tools"), PathBuf::from("extra")],
         );
-        assert_eq!(got, "/opt/homebrew/bin:/usr/bin:/bin:/usr/local/bin");
+        assert_eq!(got, path(&["tools", "system", "base", "extra"]));
+        assert_eq!(
+            merged(&path(&["system", "base"]), None, &[]),
+            path(&["system", "base"])
+        );
     }
 }

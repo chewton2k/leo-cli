@@ -696,15 +696,14 @@ dependencies = [
 
 [[package]]
 name = "candle-core"
-version = "0.11.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ecb245093b0f791b89d3420c3df9c6d49c60ab63ba54db896bf8a3baf486706"
+checksum = "2d145a51597dd375bbd5d0bb314cba58b5d2c08abb6ea414880ffc81b1978a22"
 dependencies = [
  "byteorder",
  "float8",
  "gemm",
  "half",
- "libc",
  "libm",
  "memmap2",
  "num-traits",
@@ -716,15 +715,14 @@ dependencies = [
  "thiserror 2.0.19",
  "tokenizers",
  "yoke",
- "zerocopy",
- "zip 8.6.0",
+ "zip 7.4.0",
 ]
 
 [[package]]
 name = "candle-nn"
-version = "0.11.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eaa10b6ccc365b33210ce404fbf45e60d3e0bdac1004463cf1052e6ee1c1739a"
+checksum = "1b338dbd3c5e538fbfc6cd25547f159c47071b7af55779a9a7d9166257136338"
 dependencies = [
  "candle-core",
  "half",
@@ -738,14 +736,14 @@ dependencies = [
 
 [[package]]
 name = "candle-transformers"
-version = "0.11.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3bcbbf7ff00ff6fe2af22b93600195917fe90e90ff48424a140d1a926c44b1c1"
+checksum = "03932a6d57c01f8156a1f1f126b28b11c642503471137b7fd7225079fb7c2f48"
 dependencies = [
  "byteorder",
  "candle-core",
  "candle-nn",
- "fancy-regex 0.18.0",
+ "fancy-regex 0.17.0",
  "num-traits",
  "rand 0.9.5",
  "rayon",
@@ -1861,9 +1859,9 @@ dependencies = [
 
 [[package]]
 name = "fancy-regex"
-version = "0.18.0"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1e1dacd0d2082dfcf1351c4bdd566bbe89a2b263235a2b50058f1e130a47277"
+checksum = "72cf461f865c862bb7dc573f643dd6a2b6842f7c30b07882b56bd148cc2761b8"
 dependencies = [
  "bit-set",
  "regex-automata",
@@ -5021,7 +5019,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5518,15 +5516,13 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
 name = "safetensors"
-version = "0.8.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "79b079b829cb27a1c3c374341345ed2e8b2c0c839034522cee576c140bd7f846"
+checksum = "675656c1eabb620b921efea4f9199f97fc86e36dd6ffd1fbbe48d0f59a4987f5"
 dependencies = [
  "hashbrown 0.16.1",
- "libc",
  "serde",
  "serde_json",
- "tempfile",
 ]
 
 [[package]]
@@ -8661,9 +8657,9 @@ dependencies = [
 
 [[package]]
 name = "zip"
-version = "8.6.0"
+version = "7.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d04a6b5381502aa6087c94c669499eb1602eb9c5e8198e534de571f7154809b"
+checksum = "cc12baa6db2b15a140161ce53d72209dacea594230798c24774139b54ecaa980"
 dependencies = [
  "crc32fast",
  "indexmap 2.14.2",

@@ -41,6 +41,10 @@ async function goPlace(page, action) {
   await page.locator(`#side [data-action="${action}"]`).click();
 }
 
+async function fillTaskPanel(page) {
+  await page.route('**/api/tasks', route => route.fulfill({ json: { tasks: Array.from({ length: 30 }, (_, index) => ({ id: `interview-task-${index}`, title: `Unfinished task ${index}`, source: 'leo', kind: 'other', done: false, date: '2020-01-01' })) } }));
+}
+
 async function chooseProblem(page, number) {
   await page.locator('[data-interview="problem-menu"]').click();
   await page.getByRole('button', { name: new RegExp(`^Problem ${number}:`) }).click();
@@ -4407,6 +4411,7 @@ test.describe('beside the note', () => {
 
 for (const company of ['Pinterest', '']) {
   test(`interview start prepares a coding problem in one action for ${company || 'general practice'}`, async ({ page }) => {
+    await fillTaskPanel(page);
     const requests = [];
     let item;
     let ready;
@@ -4542,6 +4547,7 @@ test('Felix code suggestions accept and decline independently, merge current typ
 });
 
 test('coding typing pairs brackets, preserves scroll and Undo across every supported language with a default language dropdown', async ({ page }) => {
+  await fillTaskPanel(page);
   const languages = ['Python', 'C++', 'Rust', 'Java', 'SQL', 'TypeScript', 'JavaScript', 'Go'];
   const id = 'typing-languages-01';
   let item;
