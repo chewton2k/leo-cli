@@ -7,12 +7,13 @@ Codex plan, or a local Ollama model.
 
 ## Install
 
-The desktop release has not been published yet. [Releases](https://github.com/chewton2k/leo-cli/releases)
-and the install commands below currently provide the previous terminal version.
-Once the desktop release is published, download its macOS disk image or Windows
-installer from Releases.
-Choose Apple Silicon or Intel on macOS; Windows uses the x64 installer.
-Linux is not supported.
+Download Leo from [Releases](https://github.com/chewton2k/leo-cli/releases).
+Choose a macOS disk image (`.dmg`) for Apple Silicon or Intel, or the Windows x64
+installer (`-setup.exe`). Linux is not supported by the desktop app.
+
+During the desktop transition, check that the release includes those app assets.
+Older releases contain the terminal version; until the first desktop release is
+published, the install commands below still provide that version.
 
 On macOS, drag Leo into Applications. For browser downloads on macOS 15, open
 System Settings → Privacy & Security and choose **Open Anyway** after the first
