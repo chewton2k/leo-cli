@@ -295,3 +295,6 @@ files, and defers locked Windows removal. Shell-profile edits are atomic and
 retain permissions. Tests use scratch bundles and ad-hoc signatures, never the
 real signing keychain. Four persistent signing secrets gate release before bump;
 private values are generated outside the repository and added by the user.
+
+Windows speech and Rust binaries share the dynamic CRT; desktop release bundles
+include the required Visual C++ runtime beside the executables.

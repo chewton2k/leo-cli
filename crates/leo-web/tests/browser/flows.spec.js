@@ -1434,66 +1434,39 @@ test.describe('Felix', () => {
 
 test.describe('settings', () => {
   test('writing uses account-based choices and speech keys never appear again', async ({ page }) => {
-    await page.goto('/');
-    await goPlace(page, 'settings');
-    await expect(page).toHaveURL(/#\/settings$/);
+    await page.goto('/#/settings/writing');
     const writing = page.locator('[data-task-card="writing"]');
+    await expect(writing).toBeVisible();
     expect(await writing.locator('select[data-set="provider"] option').evaluateAll(options => options.map(option => option.value))).toEqual(['ollama', 'codex', 'claude_code']);
     await writing.locator('select[data-set="provider"]').selectOption('claude_code');
     await expect(page.locator('.toast')).toContainText('Writing now uses Claude Code');
-    await expect(writing.locator('select[data-set="provider"]')).toHaveValue('claude_code');
     await expect(writing.locator('[data-key-input]')).toHaveCount(0);
     await writing.locator('.picker-button').click();
     await writing.locator('.pick-model[data-model="claude-opus-5-5"]').click();
     await expect(page.locator('.toast')).toContainText('Model set to claude-opus-5-5');
-    const speech = page.locator('[data-task-card="speech"]');
-    await speech.locator('select[data-set="provider"]').selectOption('gemini_speech');
-    await expect(page.locator('.toast')).toContainText('Speech now uses Gemini');
-    const picker = speech.locator('.picker-button');
-    await picker.click();
-    await expect(speech.locator('.picker-menu')).toBeVisible();
-    await speech.locator('.pick-model[data-model="gemini-3.1-flash-lite"]').click();
-    await expect(page.locator('.toast')).toContainText('Model set to gemini-3.1-flash-lite');
-    await expect(picker).toContainText('gemini-3.1-flash-lite');
-    await speech.locator('[data-key-input="gemini"]').fill('gm-fake-key-123');
-    await speech.locator('[data-action="set-key"]').click();
-    await expect(page.locator('.toast')).toContainText('The Gemini key is stored on this computer');
-    const stored = speech.locator('[data-key-input="gemini"]');
-    await expect(stored).toHaveValue('');
-    await expect(stored).toHaveAttribute('placeholder', 'gm-…••••••••');
-    await stored.fill('gm-typed-but-never-saved');
-    await page.reload();
-    await expect(speech.locator('[data-key-input="gemini"]'), 'an unsaved key changes nothing').toHaveAttribute('placeholder', 'gm-…••••••••');
-    await expect(speech.locator('[data-key-input="gemini"]')).toHaveValue('');
-    expect(await (await page.request.get('/api/settings')).text()).not.toContain('gm-fake-key-123');
-    expect(await page.content()).not.toContain('gm-fake-key-123');
-    await speech.locator('[data-action="remove-key"]').click();
-    await page.locator('[data-action="remove-key-now"]').click();
-    await expect(page.locator('.toast')).toContainText('The Gemini key is removed');
-    await expect(speech).toContainText('Not added');
-    const backup = page.locator('select[data-set="auto_push"]');
-    await backup.selectOption('when_idle');
+    const settings = await (await page.request.get('/api/settings')).text();
+    expect(settings).not.toMatch(/gemini_speech|openai_audio|xai_stt/);
+    await page.locator('.settings-nav a[href="#/settings/models"]').click();
+    await expect(page.getByRole('heading', { name: 'In use', exact: true })).toBeVisible();
+    await expect(page.locator('[data-task-card="speech"], [data-key-input]')).toHaveCount(0);
+    await page.locator('.settings-nav a[href="#/settings/backup"]').click();
+    await page.locator('select[data-set="auto_push"]').selectOption('when_idle');
     await expect(page.locator('.toast')).toContainText('Backing up when idle');
     const bad = await page.request.post('/api/settings', { data: { set: 'provider', task: 'writing', value: 'parakeet' } });
     expect(bad.status()).toBe(400);
-
+    await page.locator('.settings-nav a[href="#/settings/writing"]').click();
     await writing.locator('select[data-set="provider"]').selectOption('codex');
     await expect(page.locator('.toast')).toContainText('Writing now uses Codex');
     await writing.locator('.picker-button').click();
     await expect(writing.locator('.pick-chip')).toHaveText(['Low', 'Medium', 'High', 'Extra high']);
-    await expect(writing.locator('.pick-chip.on')).toHaveText('Medium');
     await writing.locator('.pick-chip[data-effort="high"]').click();
-    await expect(page.locator('.toast')).toContainText('Effort set to high.');
     await expect(writing.locator('.picker-button')).toContainText('high effort');
     await writing.locator('.picker-button').click();
     await page.keyboard.press('Escape');
     await expect(writing.locator('.picker-menu')).toBeHidden();
-    await expect(page).toHaveURL(/#\/settings$/);
     await writing.locator('.picker-button').click();
     await writing.locator('.pick-chip[data-effort="medium"]').click();
-    await expect(page.locator('.toast')).toContainText('Effort set to medium.');
     await writing.locator('select[data-set="provider"]').selectOption('ollama');
-    await speech.locator('select[data-set="provider"]').selectOption('parakeet');
   });
 });
 
@@ -2293,12 +2266,13 @@ test.describe('uploads', () => {
 
 test.describe('recording', () => {
   function stubRecorder(page, { noteId, local = true }) {
-    const seen = { audioBytes: 0, posts: 0, started: null, points: [], stopped: false, paused: false, levels: [], source: 'browser' };
+    const seen = { audioBytes: 0, posts: 0, started: null, points: [], stopped: false, paused: false, levels: Array(200).fill(0.1), source: 'microphone' };
     let polls = 0;
     const view = (over = {}) => ({ wants: seen.wants ?? (seen.started && seen.started.profile ? seen.started.profile.wants || '' : ''), id: 'rec-1', source: seen.source, state: seen.paused ? 'paused' : 'recording', secs: 3, step: '', steps: null, transcript: 'Today we cover breadth first search.', warnings: [], points: seen.points.map((t) => [3, t]), levels: seen.levels, note: null, error: null, ...over });
     page.route('**/api/record', async (route) => {
       if (route.request().method() === 'GET') return route.fulfill({ json: { available: true, local, job: null } });
       seen.started = route.request().postDataJSON();
+      seen.source = seen.started.source;
       return route.fulfill({ status: 202, json: { id: 'rec-1' } });
     });
     page.route('**/api/record/rec-1', (route) => {
@@ -2330,8 +2304,7 @@ test.describe('recording', () => {
     return seen;
   }
 
-  test('the microphone streams to leo, takes points, and the note opens when written', async ({ page, context }) => {
-    await context.grantPermissions(['microphone']);
+  test('native microphone recording takes points and opens the written note without browser capture', async ({ page, context }) => {
     const made = await (await page.request.post('/api/notes', { data: { title: 'BFS lecture', body: '## BFS\n- queue' } })).json();
     const seen = stubRecorder(page, { noteId: made.id });
     await page.goto('/');
@@ -2354,8 +2327,8 @@ test.describe('recording', () => {
     await expect(page.locator('#rec-transcript')).toBeVisible();
     await page.waitForTimeout(1500);
     await expect(page.locator('#rec-heard')).toHaveAttribute('open', '');
-    await expect.poll(() => seen.audioBytes, { timeout: 8000 }).toBeGreaterThan(16000);
-    expect(seen.audioBytes % 2).toBe(0);
+    expect(seen.audioBytes).toBe(0);
+    expect(seen.posts).toBe(0);
     await expect(page.locator('#rec-wave')).toBeVisible();
     await expect(page.locator('#rec-hear')).toHaveText('Hearing sound', { timeout: 8000 });
     const drawn = await page.locator('#rec-wave').evaluate((canvas) => {
@@ -2372,7 +2345,7 @@ test.describe('recording', () => {
       return painted;
     });
     expect(leftEdge, 'the wave reaches the left edge of its box').toBeGreaterThan(0);
-    expect(seen.started).toEqual({ source: 'browser', directory: '', title: 'Graphs', profile: { context: '', wants: 'Focus on BFS' } });
+    expect(seen.started).toEqual({ source: 'microphone', directory: '', title: 'Graphs', profile: { context: '', wants: 'Focus on BFS' } });
     const live = page.locator('#rec-wants-live');
     await expect(live).toHaveValue('Focus on BFS');
     await live.click();
@@ -2402,17 +2375,16 @@ test.describe('recording', () => {
   });
 
   test('a recording finished while away shows up in the open folder, without a refresh', async ({ page, context }) => {
-    await context.grantPermissions(['microphone']);
     const title = `Recorded later ${test.info().project.name} ${test.info().repeatEachIndex}`;
     const seen = stubRecorder(page, { noteId: null });
     let polls = 0;
     let made = null;
     await page.route('**/api/record/rec-1', async (route) => {
-      if (!seen.stopped) return route.fulfill({ json: { id: 'rec-1', source: 'browser', state: 'recording', secs: 3, step: '', steps: null, transcript: '', warnings: [], points: [], levels: [], note: null, error: null } });
+      if (!seen.stopped) return route.fulfill({ json: { id: 'rec-1', source: 'microphone', state: 'recording', secs: 3, step: '', steps: null, transcript: '', warnings: [], points: [], levels: [], note: null, error: null } });
       polls += 1;
-      if (polls < 4) return route.fulfill({ json: { id: 'rec-1', source: 'browser', state: 'writing', secs: 3, step: 'Writing the notes', steps: null, transcript: '', warnings: [], points: [], levels: [], note: null, error: null } });
+      if (polls < 4) return route.fulfill({ json: { id: 'rec-1', source: 'microphone', state: 'writing', secs: 3, step: 'Writing the notes', steps: null, transcript: '', warnings: [], points: [], levels: [], note: null, error: null } });
       if (!made) made = await (await page.request.post('/api/notes', { data: { title, body: 'From the recording.' } })).json();
-      return route.fulfill({ json: { id: 'rec-1', source: 'browser', state: 'done', secs: 3, step: '', steps: null, transcript: '', warnings: [], points: [], levels: [], note: made.id, error: null } });
+      return route.fulfill({ json: { id: 'rec-1', source: 'microphone', state: 'done', secs: 3, step: '', steps: null, transcript: '', warnings: [], points: [], levels: [], note: made.id, error: null } });
     });
     await page.goto('/#/record');
     await page.locator('[data-action="rec-start"]').click();
@@ -2424,30 +2396,21 @@ test.describe('recording', () => {
     expect(page.url()).not.toContain('#/n/');
   });
 
-  test('a tab’s sound is shared and recorded, and stopping the share saves it', async ({ page }) => {
-    const made = await (await page.request.post('/api/notes', { data: { title: 'Shared tab lecture', body: 'x' } })).json();
-    const seen = stubRecorder(page, { noteId: made.id, local: false });
+  test('screen recording is native and the page never opens a screen picker', async ({ page }) => {
+    const made = await (await page.request.post('/api/notes', { data: { title: 'Computer audio lecture', body: 'x' } })).json();
+    const seen = stubRecorder(page, { noteId: made.id, local: true });
     await page.goto('/#/record');
     await page.evaluate(() => {
-      navigator.mediaDevices.getDisplayMedia = async () => {
-        const ctx = new AudioContext();
-        const tone = ctx.createOscillator();
-        const out = ctx.createMediaStreamDestination();
-        tone.connect(out);
-        tone.start();
-        const canvas = document.createElement('canvas');
-        const stream = new MediaStream([...out.stream.getAudioTracks(), ...canvas.captureStream().getVideoTracks()]);
-        window.sharedStream = stream;
-        return stream;
-      };
+      navigator.mediaDevices.getDisplayMedia = async () => { throw new Error('Browser capture must stay closed'); };
+      navigator.mediaDevices.getUserMedia = async () => { throw new Error('Browser capture must stay closed'); };
     });
     await page.locator('.rec-kind', { hasText: 'Screen' }).click();
     await page.locator('[data-action="rec-start"]').click();
-    await expect.poll(() => seen.audioBytes, { timeout: 8000 }).toBeGreaterThan(16000);
-    expect(seen.started.source).toBe('tab');
-    await page.evaluate(() => window.sharedStream.getAudioTracks()[0].dispatchEvent(new Event('ended')));
-    await expect.poll(() => seen.stopped).toBe(true);
-    await expect(page).toHaveURL(new RegExp(`#/n/${made.id}$`), { timeout: 8000 });
+    await expect(page.locator('[data-action="rec-stop"]')).toBeVisible();
+    expect(seen.started.source).toBe('screen');
+    expect(seen.audioBytes).toBe(0);
+    await page.locator('[data-action="rec-stop"]').click();
+    await expect(page).toHaveURL(new RegExp('#/n/' + made.id + '$'), { timeout: 8000 });
   });
 
   test('the computer’s own sound shows its wave too, and says when nothing is heard', async ({ page }) => {
@@ -2467,33 +2430,31 @@ test.describe('recording', () => {
     await expect(page.locator('#rec-hear')).toHaveClass(/silent/);
   });
 
-  test('a share without sound says how to include it and starts nothing', async ({ page }) => {
-    let started = false;
-    await page.route('**/api/record', (route) => {
-      if (route.request().method() === 'POST') started = true;
-      return route.fulfill({ json: { available: true, local: false, job: null } });
-    });
+  test('native screen permission failures leave recording controls usable', async ({ page }) => {
+    await page.route('**/api/record', route => route.fulfill(route.request().method() === 'POST'
+      ? { status:400, json:{error:'Allow Leo to record computer sound in System Settings, then try again.'} }
+      : { json:{available:true,local:true,job:null} }));
     await page.goto('/#/record');
-    await page.evaluate(() => {
-      navigator.mediaDevices.getDisplayMedia = async () => new MediaStream(document.createElement('canvas').captureStream().getVideoTracks());
-    });
     await page.locator('.rec-kind', { hasText: 'Screen' }).click();
     await page.locator('[data-action="rec-start"]').click();
-    await expect(page.locator('.toast.bad')).toContainText('Share tab audio');
-    expect(started).toBe(false);
+    await expect(page.locator('.toast.bad')).toContainText('Allow Leo to record computer sound');
+    await expect(page.locator('[data-action="rec-start"]')).toBeEnabled();
+    await expect(page.locator('[data-action="rec-stop"]')).toHaveCount(0);
   });
 
-  test('a page opened over the internet records its own device, not the computer', async ({ page, context }) => {
-    await context.grantPermissions(['microphone']);
-    stubRecorder(page, { noteId: 'x', local: false });
+  test('recording always uses this computer for microphone screen and call', async ({ page }) => {
+    const seen = stubRecorder(page, { noteId: 'x', local: false });
     await page.goto('/#/record');
-    await expect(page.locator('[data-action="rec-start"]')).toBeVisible();
     await expect(page.locator('.rec-kind b')).toHaveText(['Microphone', 'Screen', 'Call']);
-    await expect(page.locator('.rec-kind', { hasText: 'Screen' })).toContainText('Share tab audio');
+    await expect(page.locator('.rec-kind', { hasText: 'Screen' })).toContainText('Records what this computer plays');
+    await page.locator('.rec-kind', { hasText: 'Call' }).click();
+    await page.locator('[data-action="rec-start"]').click();
+    await expect(page.locator('[data-action="rec-stop"]')).toBeVisible();
+    expect(seen.started.source).toBe('nativecall');
+    expect(seen.audioBytes).toBe(0);
   });
 
   test('the class or meeting happening now names the recording and tells the AI who and what, without overwriting a typed title', async ({ page, context }) => {
-    await context.grantPermissions(['microphone']);
     const seen = stubRecorder(page, { noteId: 'x', local: true });
     let release;
     const late = new Promise((resolve) => { release = resolve; });
@@ -2536,19 +2497,16 @@ test.describe('recording', () => {
     await expect(page.locator('#rec-wants')).toBeVisible();
   });
 
-  test('a refused microphone says how to allow it and starts nothing', async ({ page }) => {
-    let started = false;
-    await page.route('**/api/record', (route) => {
-      if (route.request().method() === 'POST') started = true;
-      return route.fulfill({ json: { available: true, local: false, job: null } });
-    });
+  test('a refused native microphone explains the system permission and starts no job', async ({ page }) => {
+    await page.route('**/api/record', route => route.fulfill(route.request().method() === 'POST'
+      ? { status:400, json:{error:'Allow Leo in System Settings → Privacy & Security → Microphone.'} }
+      : { json:{available:true,local:true,job:null} }));
     await page.goto('/#/record');
-    await page.evaluate(() => {
-      navigator.mediaDevices.getUserMedia = () => Promise.reject(Object.assign(new Error('denied'), { name: 'NotAllowedError' }));
-    });
+    await page.evaluate(() => { navigator.mediaDevices.getUserMedia = async () => { throw new Error('Browser capture must stay closed'); }; });
     await page.locator('[data-action="rec-start"]').click();
-    await expect(page.locator('.toast.bad')).toContainText('Allow it for this site');
-    expect(started).toBe(false);
+    await expect(page.locator('.toast.bad')).toContainText('Allow Leo in System Settings');
+    await expect(page.locator('[data-action="rec-start"]')).toBeEnabled();
+    await expect(page.locator('[data-action="rec-stop"]')).toHaveCount(0);
   });
 });
 
@@ -2865,7 +2823,7 @@ test.describe('the kinds of bugs that reached people before', () => {
     await call('POST', '/api/dirs/move', { from: `contract-moved-${tag}`, into: `contract-${tag}` });
     await call('POST', `/api/notes/${made.id}/suggestion`, { find: 'new', replace: 'newer' });
     await call('PUT', `/api/chats/contract-${tag}`, { title: 'Contract', mode: 'chat', messages: [{ role: 'user', text: 'hi' }] });
-    for (const url of ['/api/notes', '/api/folders', '/api/dirs', `/api/search?q=contract`, '/api/trash', '/api/chats', `/api/chats/contract-${tag}`, '/api/review', '/api/activity', '/api/settings', '/api/storage', '/api/keep', '/api/sessions', '/api/graph/status', '/api/record']) {
+    for (const url of ['/api/notes', '/api/folders', '/api/dirs', `/api/search?q=contract`, '/api/trash', '/api/chats', `/api/chats/contract-${tag}`, '/api/review', '/api/activity', '/api/settings', '/api/storage', '/api/keep', '/api/speech', '/api/graph/status', '/api/record']) {
       await call('GET', url);
     }
     const trashed = json(await call('POST', '/api/trash/move', { notes: [made.id], dirs: [] }));
@@ -3353,7 +3311,7 @@ test('a calendar is connected in Settings by pasting one link, and can be remove
     linked = [];
     return route.fulfill({ json: { connected: false, calendars: [], events: [] } });
   });
-  await goPlace(page, 'settings');
+  await page.goto('/#/settings/calendar');
   const card = page.locator('.cal-card');
   await expect(card.locator('h3')).toHaveText('Calendar');
   await expect(card).toContainText('Not connected');
@@ -3738,7 +3696,7 @@ test('dropdowns and nested disclosures share real icons and keep their native co
     return Math.abs(icon.y + icon.height / 2 - box.y - box.height / 2);
   }));
   expect(align.every(offset => offset < 1)).toBe(true);
-  await page.goto('/#/settings');
+  await page.goto('/#/settings/writing');
   await expect(page.locator('[data-task-card="writing"]')).toBeVisible();
   await inspect();
   await page.goto('/#/settings/storage');

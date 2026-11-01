@@ -17,3 +17,4 @@ scripts/rust-runner/out/
 
 crates/leo-desktop/binaries/
 __pycache__/
+crates/leo-desktop/windows-runtime/

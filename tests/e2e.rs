@@ -378,3 +378,32 @@ fn a_failed_installer_download_cannot_report_a_successful_update() {
     );
     assert!(exe.exists());
 }
+
+#[test]
+fn a_debug_worker_segv_fault_is_a_signal_without_undefined_rust_operations() {
+    use std::os::unix::process::ExitStatusExt;
+    let leo = Leo::new();
+    let mut child = leo
+        .cmd_at(
+            Path::new(env!("CARGO_BIN_EXE_leo")),
+            &["--leo-speech-worker", "--cpu-only"],
+        )
+        .env("LEO_WORKER_FAULT", "segv@init")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let input = child.stdin.take().unwrap();
+    for _ in 0..200 {
+        if let Some(status) = child.try_wait().unwrap() {
+            drop(input);
+            assert_eq!(status.signal(), Some(libc::SIGSEGV));
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    panic!("faulted worker did not terminate");
+}

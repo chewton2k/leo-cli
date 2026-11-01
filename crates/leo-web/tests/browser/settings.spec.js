@@ -35,9 +35,9 @@ test('Settings sections keep drafts and selections across redraws in both themes
     window.addEventListener('hashchange',route); route();
     window.audit={redraw:()=>drawSettings(state.settings)};`;
   const server=http.createServer((req,res)=>{
-    if(req.url==='/fixture.js') {res.setHeader('Content-Type','text/javascript');return res.end(fixture);}
-    if(req.url==='/style.css') {res.setHeader('Content-Type','text/css');return res.end(css);}
-    res.setHeader('Content-Type','text/html');res.end('<!doctype html><html><head><link rel="stylesheet" href="/style.css"></head><body class="on-settings"><div id="crumbs"></div><div id="app-update-banner" hidden></div><main id="app"></main><script src="/fixture.js"></script></body></html>');
+    if(req.url==='/fixture.js') {res.setHeader('Content-Type','text/javascript; charset=utf-8');return res.end(fixture);}
+    if(req.url==='/style.css') {res.setHeader('Content-Type','text/css; charset=utf-8');return res.end(css);}
+    res.setHeader('Content-Type','text/html; charset=utf-8');res.end('<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/style.css"></head><body class="on-settings"><div id="crumbs"></div><div id="app-update-banner" hidden></div><main id="app"></main><script src="/fixture.js"></script></body></html>');
   });
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   try {

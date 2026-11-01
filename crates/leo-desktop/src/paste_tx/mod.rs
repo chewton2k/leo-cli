@@ -121,7 +121,9 @@ pub(crate) fn try_reliable_paste(
     platform::run(text, app_handle, enigo, auto_submit, current)
 }
 
+#[cfg(any(target_os = "macos", test))]
 pub(crate) struct Snapshot(pub Vec<Vec<(String, Vec<u8>)>>);
+#[cfg(any(target_os = "macos", test))]
 impl Snapshot {
     pub fn new(items: Vec<Vec<(String, Vec<u8>)>>) -> Result<Self, String> {
         if items.len() > 256

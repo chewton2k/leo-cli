@@ -82,12 +82,15 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-latest
             bundles: app,dmg
+            config: tauri.release.conf.json
           - target: x86_64-apple-darwin
             os: macos-latest
             bundles: app,dmg
+            config: tauri.release.conf.json
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             bundles: nsis
+            config: tauri.release.windows.conf.json
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -121,11 +124,15 @@ jobs:
           ext=''
           [ "$RUNNER_OS" != Windows ] || ext=.exe
           cp "target/${{ matrix.target }}/release/leo$ext" "crates/leo-desktop/binaries/leo-${{ matrix.target }}$ext"
+      - name: Stage the app-local Visual C++ runtime
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/stage_windows_runtime.ps1
       - name: Build the app and signed updater artifacts
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: pnpm --dir crates/leo-desktop tauri build --ci --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config tauri.release.conf.json
+        run: pnpm --dir crates/leo-desktop tauri build --ci --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config ${{ matrix.config }}
       - name: Verify macOS signatures
         if: runner.os == 'macOS'
         shell: bash
@@ -161,6 +168,9 @@ jobs:
           $env:LEO_INSTALL_SKIP_PATH = '1'
           $env:LEO_INSTALL_ARCHIVE = Join-Path $PWD 'release-assets/leo-${{ matrix.target }}-setup.exe'
           ./scripts/install-app.ps1
+          foreach ($dll in @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')) {
+            if (-not (Test-Path (Join-Path $env:LEO_WINDOWS_APP_DIR $dll))) { throw "The installed app is missing $dll." }
+          }
           & (Join-Path $env:LEO_INSTALL_DIR 'leo.cmd') --version
           if ($LASTEXITCODE) { throw 'The installed command did not run.' }
       - name: Remove the temporary signing keychain

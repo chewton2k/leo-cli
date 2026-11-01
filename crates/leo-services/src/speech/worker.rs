@@ -313,9 +313,9 @@ fn inject_fault(stage: &str, on_gpu: bool) {
     match kind {
         "abort" => std::process::abort(),
         "segv" => unsafe {
-            #[cfg(unix)]
             libc::signal(libc::SIGSEGV, libc::SIG_DFL);
-            std::ptr::write_volatile(std::ptr::null_mut::<u32>(), 1);
+            libc::raise(libc::SIGSEGV);
+            std::process::abort();
         },
         "hang" => loop {
             std::thread::sleep(std::time::Duration::from_secs(3600));

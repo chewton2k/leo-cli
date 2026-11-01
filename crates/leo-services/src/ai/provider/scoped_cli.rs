@@ -142,6 +142,7 @@ pub fn clear_profile(name: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use super::super::agent_cli::probe_command;
     use super::*;
     use std::collections::HashMap;

@@ -127,6 +127,18 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual((root / 'install.sh').read_text(), 'existing installer')
             self.assertFalse((root / 'install.ps1').exists())
 
+    def test_windows_cpp_and_rust_use_the_same_dynamic_crt_as_the_reference(self):
+        config = (ROOT / '.cargo/config.toml').read_text()
+        self.assertNotIn('target-feature=+crt-static', config)
+
+    def test_windows_release_bundles_the_vc_runtime_next_to_the_executable(self):
+        config = json.loads((ROOT / 'crates/leo-desktop/tauri.release.windows.conf.json').read_text())
+        self.assertEqual(config['bundle']['externalBin'], ['binaries/leo'])
+        self.assertEqual(config['bundle']['resources']['windows-runtime/*.dll'], '.')
+        workflow = (ROOT / '.github/workflows/release.yml').read_text()
+        self.assertIn('stage_windows_runtime.ps1', workflow)
+        self.assertIn('vcruntime140.dll', workflow)
+
 
 if __name__ == '__main__':
     unittest.main()

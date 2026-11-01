@@ -24,7 +24,7 @@ function sidePlace() {
   const view = state.view;
   if (view === 'folder' && !state.dir) return 'home';
   if (view === 'folder' || view === 'note' || view === 'new') return `dir:${state.dir || ''}`;
-  if (view === 'storage') return 'storage';
+  if (view === 'storage') return /^#\/settings\/storage(?:\/|$)/.test(location.hash) ? 'storage' : 'settings';
   return view;
 }
 

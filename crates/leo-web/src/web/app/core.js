@@ -463,7 +463,7 @@ function back() {
   const practice = interviewPage;
   if (practice && interviewHere(practice)) return saveInterviewWorkspace(practice).then(() => { if (interviewHere(practice)) goBack('#/interviews'); }).catch(fail);
   if (state.view === 'map' && state.focus) return goBack(noteHash(state.focus));
-  if (state.view === 'storage') return goBack(/^#\/settings(?:\/[^/]+)?\/?$/.test(places.from) ? places.from : places.before || '#/settings');
+  if (state.view === 'storage' && /^#\/settings\/storage(?:\/|$)/.test(location.hash)) return goBack(/^#\/settings(?:\/[^/]+)?\/?$/.test(places.from) ? places.from : places.before || '#/settings');
   if (asideHash(location.hash) && places.before) return goBack(places.before);
   if (state.view === 'note') return goBack(folderHash(state.dir || ''));
   if (state.view === 'folder') return goBack(folderHash((state.dir || '').split('/').slice(0, -1).join('/')));

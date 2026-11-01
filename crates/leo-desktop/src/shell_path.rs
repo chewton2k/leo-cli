@@ -85,6 +85,7 @@ pub fn usual_folders(home: Option<&Path>) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::time::Instant;
 
     #[cfg(unix)]

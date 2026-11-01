@@ -1,0 +1,10 @@
+{
+  "bundle": {
+    "externalBin": [
+      "binaries/leo"
+    ],
+    "resources": {
+      "windows-runtime/*.dll": "."
+    }
+  }
+}

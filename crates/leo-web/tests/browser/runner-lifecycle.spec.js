@@ -13,13 +13,13 @@ test('isolated runner stops forged Python completion, serializes runs and releas
   const policy = assets.match(/const RUNNER_POLICY: &str = "([\s\S]*?)";/)[1].replace(/\\\n\s*/g, '');
   let heartbeats = 0, failStartup = false;
   const server = http.createServer((request, response) => {
-    response.setHeader('Content-Type', 'text/javascript');
+    response.setHeader('Content-Type', 'text/javascript; charset=utf-8');
     if (request.url === '/runner.js') {
       response.setHeader('Content-Security-Policy', policy);
       return response.end(runner);
     }
     if (request.url === '/runner.html') {
-      response.setHeader('Content-Type', 'text/html');
+      response.setHeader('Content-Type', 'text/html; charset=utf-8');
       response.setHeader('Content-Security-Policy', policy);
       return response.end(failStartup ? '<title>Unavailable fixture</title>' : '<script src="/runner.js"></script>');
     }
@@ -45,7 +45,7 @@ test('isolated runner stops forged Python completion, serializes runs and releas
       window.setTimeout = (fn, ms) => timeout(fn, ms === 10000 ? 200 : ms);
       ${parent}
       window.audit = { run: runInSandbox, runner, listeners };`);
-    response.setHeader('Content-Type', 'text/html');
+    response.setHeader('Content-Type', 'text/html; charset=utf-8');
     response.end('<!doctype html><title>Isolated runner fixture</title><script src="/fixture.js"></script>');
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));

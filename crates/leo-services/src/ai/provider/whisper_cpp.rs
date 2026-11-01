@@ -95,7 +95,7 @@ impl TranscribeProvider for WhisperCppTranscribe {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 

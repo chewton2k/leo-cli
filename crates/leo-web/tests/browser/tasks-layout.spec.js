@@ -71,11 +71,11 @@ test('task completion shows its check before hiding and survives refresh, Undo a
       today: S.dayKey(new Date())
     };`;
   const server = http.createServer((request, response) => {
-    if (request.url === '/fixture.js') { response.setHeader('Content-Type', 'text/javascript'); return response.end(fixture); }
-    if (request.url === '/schedule.js') { response.setHeader('Content-Type', 'text/javascript'); return response.end(fs.readFileSync(path.join(web, 'schedule.js'))); }
-    if (request.url === '/style.css') { response.setHeader('Content-Type', 'text/css'); return response.end(styles); }
-    response.setHeader('Content-Type', 'text/html');
-    response.end('<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/style.css"></head><body><main></main><p id="message" role="status"></p><script src="/schedule.js"></script><script src="/fixture.js"></script></body></html>');
+    if (request.url === '/fixture.js') { response.setHeader('Content-Type', 'text/javascript; charset=utf-8'); return response.end(fixture); }
+    if (request.url === '/schedule.js') { response.setHeader('Content-Type', 'text/javascript; charset=utf-8'); return response.end(fs.readFileSync(path.join(web, 'schedule.js'))); }
+    if (request.url === '/style.css') { response.setHeader('Content-Type', 'text/css; charset=utf-8'); return response.end(styles); }
+    response.setHeader('Content-Type', 'text/html; charset=utf-8');
+    response.end('<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/style.css"></head><body><main></main><p id="message" role="status"></p><script src="/schedule.js"></script><script src="/fixture.js"></script></body></html>');
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const context = await browser.newContext({viewport: {width: 1280, height: 900}});

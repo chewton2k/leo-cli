@@ -29,8 +29,8 @@ test('dictation preferences keep drafts and caret while shortcut and history upd
       }
       response.end(JSON.stringify(view)); return;
     }
-    if (request.url === '/fixture.js') { response.setHeader('Content-Type', 'text/javascript'); response.end(script); return; }
-    response.setHeader('Content-Type', 'text/html'); response.end(`<html><head><style>${css}</style></head><body><main id="app"></main><script src="/fixture.js"></script></body></html>`);
+    if (request.url === '/fixture.js') { response.setHeader('Content-Type', 'text/javascript; charset=utf-8'); response.end(script); return; }
+    response.setHeader('Content-Type', 'text/html; charset=utf-8'); response.end(`<html><head><style>${css}</style></head><body><main id="app"></main><script src="/fixture.js"></script></body></html>`);
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   try {
