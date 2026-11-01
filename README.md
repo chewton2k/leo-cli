@@ -7,8 +7,10 @@ Codex plan, or a local Ollama model.
 
 ## Install
 
-The desktop release is being prepared. Once published, download the macOS disk
-image or Windows installer from [Releases](https://github.com/chewton2k/leo-cli/releases).
+The desktop release has not been published yet. [Releases](https://github.com/chewton2k/leo-cli/releases)
+and the install commands below currently provide the previous terminal version.
+Once the desktop release is published, download its macOS disk image or Windows
+installer from Releases.
 Choose Apple Silicon or Intel on macOS; Windows uses the x64 installer.
 Linux is not supported.
 
@@ -17,7 +19,7 @@ System Settings → Privacy & Security and choose **Open Anyway** after the firs
 attempt to open Leo. The app uses a stable self-signed certificate; it is not
 notarized. Windows browser downloads may show a SmartScreen prompt.
 
-The app installers are also available from the release:
+After the first desktop release, these commands install the app too:
 
 ```sh
 curl -fsSL https://github.com/chewton2k/leo-cli/releases/latest/download/install.sh | sh
@@ -29,9 +31,8 @@ On Windows, in PowerShell:
 irm https://github.com/chewton2k/leo-cli/releases/latest/download/install.ps1 | iex
 ```
 
-These commands become available with the first desktop release. The existing
-main-branch installers switch over automatically only after all app assets are
-published, so older Leo installations can update safely.
+The existing main-branch installers switch over only after every desktop app
+asset is published. Before that switch, they keep installing the terminal version.
 
 The macOS installer puts Leo in `/Applications`; Windows uses
 `%LOCALAPPDATA%\Leo`. The terminal command points into the app, so app updates
@@ -49,6 +50,38 @@ updates, shows what changed, and installs when you quit by default. Updates wait
 for recording and dictation to finish. `leo update` uses the same app download;
 quit Leo before using the terminal installer. `leo uninstall` removes the app,
 its login item and its local settings/models while keeping your notes.
+
+## Moving from the terminal version
+
+After the desktop release is published, macOS users with a standard installation
+can quit their old Leo session, run `leo update`, then open Leo in Applications.
+The installer replaces the terminal command with the app launcher, so typing
+`leo` opens the app. The terminal interface and browser-server workflow are
+replaced by the desktop window.
+
+Your notes stay in the same folder. Leo reads the existing database, writing
+settings and backup repository; there is no export/import step. Keep the same
+operating-system account and data location when switching.
+
+On first launch, allow microphone access for recording and Accessibility access
+for pasting dictation into other apps. Download a speech model in Settings →
+Speech models. The previous speech model cannot be reused; Leo removes its old
+folder after a new model is verified and ready. Previous cloud speech choices
+fall back to local speech, and their stored speech keys are removed. Writing AI
+and calendar credentials are kept.
+
+Two migration cases are not automatic yet:
+
+- **Windows:** the old `leo update` command keeps its executable running while
+  the installer tries to replace it. Use the downloaded Windows installer after
+  quitting old Leo, then open the app from Start. An existing terminal command
+  may still point to the old version; automatic command migration is not ready.
+- **Custom `LEO_HOME`:** a value set only in your shell is not remembered by an
+  app opened from Finder or Start. That launch may show a different notes folder.
+  Keep your existing setup until custom-location migration is supported.
+
+Linux users can keep their existing terminal installation and notes; the desktop
+app supports macOS and Windows only.
 
 ## What you can do
 
@@ -68,8 +101,12 @@ interviews, track your progress, or study your notes with questions and feedback
 ![Interview practice categories and progress alongside a study conversation with Felix](public/interview-practice.png)
 
 **Dictate into other apps.** Hold or tap your global shortcut, speak, and Leo
-pastes your words back. Custom words, filler removal, local history and popup
-appearance are in Settings.
+pastes your words back. Custom words, filler removal, the last 20 dictations and
+popup appearance are in Settings. Speech stays local, with no AI cleanup.
+
+**Choose your speech model.** Dictation and recording share one local model.
+Settings → Speech models shows downloaded models, language and streaming support,
+size, accuracy and speed, with download progress and cancellation.
 
 [Contributing](CONTRIBUTING.md) · [Developer guide](DEVELOPER.md)
 
