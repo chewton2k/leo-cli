@@ -88,7 +88,7 @@ test('problem titles are searchable and deletion keeps drafts and offers Undo', 
     if (request.url === '/code-tools.js') { response.setHeader('Content-Type', 'text/javascript; charset=utf-8'); return response.end(fs.readFileSync(path.join(web, 'vendor/code-tools.min.js'))); }
     if (request.url === '/style.css') { response.setHeader('Content-Type', 'text/css; charset=utf-8'); return response.end(style); }
     response.setHeader('Content-Type', 'text/html; charset=utf-8');
-    response.end('<!doctype html><html><head><meta charset="utf-8"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/style.css"></head><body><header id="bar" class="bar"><div class="bar-row"><span class="crumbs">Interview practice</span><button id="chat-toggle" class="icon-btn chat-btn" aria-label="Ask Felix">Felix</button></div></header><main id="app"></main><script src="/interview.js"></script><script src="/fixture.js"></script><script src="/interviews-app.js"></script></body></html>');
+    response.end('<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/style.css"></head><body><header id="bar" class="bar"><div class="bar-row"><span class="crumbs">Interview practice</span><button id="chat-toggle" class="icon-btn chat-btn" aria-label="Ask Felix">Felix</button></div></header><main id="app"></main><script src="/interview.js"></script><script src="/fixture.js"></script><script src="/interviews-app.js"></script></body></html>');
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const context = await browser.newContext({ reducedMotion: 'no-preference' });
@@ -98,6 +98,16 @@ test('problem titles are searchable and deletion keeps drafts and offers Undo', 
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(`http://127.0.0.1:${server.address().port}`);
     await page.evaluate(() => audit.open());
+    const reopened = await page.evaluate(() => {
+      interviewTopicMenu(true);
+      interviewTopicMenu(false);
+      interviewTopicMenu(true);
+      const menu = document.querySelector('.interview-topic-picker .picker-menu');
+      return {hidden:menu.hidden,folding:Boolean(menu.dataset.folding)};
+    });
+    expect(reopened).toEqual({hidden:false,folding:false});
+    await page.evaluate(() => interviewTopicMenu(false));
+    await expect(page.locator('.interview-topic-picker .picker-menu')).toBeHidden();
     const chooser = page.locator('[data-interview="problem-menu"]');
     const search = page.getByRole('searchbox', { name: 'Search problems' });
     const rows = page.locator('#interview-problem-list [data-interview="problem"]');

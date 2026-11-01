@@ -228,7 +228,9 @@ document.addEventListener('click', (e) => {
   }
 });
 
+let renderGeneration = 0;
 async function render() {
+  const generation = ++renderGeneration;
   hideAskFloat();
   interviewPage?.codeResize?.disconnect();
   clearTimeout(cal.timer);
@@ -261,8 +263,10 @@ async function render() {
     else if (kind === 'settings') await showSettings(arg);
     else if (kind === 'record') await showRecord(arg);
     else await showFolder('');
+    if (generation !== renderGeneration || hash !== decodeURI(location.hash || '#/')) return;
     loadSideFolders();
   } catch (e) {
+    if (generation !== renderGeneration || hash !== decodeURI(location.hash || '#/')) return;
     if (e.status === 404 && hash.startsWith('#/n/')) {
       toast('That note is not there any more.', { bad: true });
       go('#/', { replace: true });

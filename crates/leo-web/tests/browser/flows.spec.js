@@ -5811,6 +5811,26 @@ test('a calendar event shows its organiser, guests and formatted description, wi
   expect(await page.evaluate(() => window.__ran)).toBeUndefined();
 });
 
+test('a late missing note response keeps a new draft open', async ({ page }) => {
+  let release;
+  const held = new Promise(resolve => { release = resolve; });
+  await page.route('**/api/notes/late-route-note', async route => {
+    await held;
+    await route.fulfill({status:404,json:{error:'That note is no longer there.'}});
+  });
+  await page.goto('/#/n/late-route-note');
+  await page.evaluate(() => { location.hash = '#/new'; });
+  const title = `Kept draft ${Date.now().toString(36)}`;
+  await page.locator('#title').fill(title);
+  const saved = page.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/notes');
+  release();
+  const note = await (await saved).json();
+  await expect(page.locator('#title')).toHaveText(title);
+  await expect.poll(() => page.evaluate(() => location.hash)).toBe(`#/n/${note.id}`);
+  await expect(page.locator('.toast.bad')).toHaveCount(0);
+  await page.request.delete(`/api/notes/${note.id}`);
+});
+
 test('Back from Settings, Storage or Trash returns to the note you were reading', async ({ page }) => {
   const note = await (await page.request.post('/api/notes', { data: { title: `Back here ${Date.now().toString(36)}`, body: 'Keep my place.' } })).json();
   const visit = (hash) => page.evaluate((h) => { location.hash = h; }, hash);

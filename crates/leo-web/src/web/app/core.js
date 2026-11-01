@@ -284,10 +284,12 @@ function stillMotion() {
 }
 
 function stopSlide(el) {
+  delete el.dataset.folding;
   const run = moving.get(el);
   if (!run) return;
   moving.delete(el);
   run.onfinish = null;
+  run.oncancel = null;
   run.cancel();
   el.style.overflow = '';
 }

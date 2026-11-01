@@ -1074,3 +1074,9 @@ Tasks-panel fitting includes the entire interview track grid, using the same
 height reservation and automatic folding as the library so every start button
 remains clickable. Interview home reserves scroll room; practice panes keep
 their own fixed layout.
+
+Router completion and error handling check a render generation and the current
+hash. Late missing-note/offline failures cannot redirect, toast or overwrite a
+newer page, including a return to the same route. Cancelling a menu animation
+clears closing state synchronously and detaches its old cancellation callback
+before a new animation can own that state.
