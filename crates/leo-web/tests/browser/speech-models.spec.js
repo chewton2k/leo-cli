@@ -10,7 +10,7 @@ test('speech model downloads keep drafts and ignore late progress after cancel',
   const option = source.slice(source.indexOf('function settingsOption('), source.indexOf('const effortName'));
   const css = fs.readFileSync(path.join(web, 'index.html'), 'utf8').match(/<style>([\s\S]*?)<\/style>/)[1];
   const initial = () => ({ selected: { id: 'local', language: 'en' }, ready: true, disk_bytes: 5,
-    models: [{ id: 'local', name: 'Local <b>speech</b>', languages: ['en', 'es'], size: 5, bytes: 5, downloaded: true, verified: true, in_use: true, live: true, progress: null },
+    models: [{ id: 'local', name: 'Local <b>speech</b>', description: 'Fast, accurate <live> English transcription', streaming: true, speed: 13.955, accuracy: 96.01, accuracy_measured: true, benchmark_language: 'en', languages: ['en'], size: 731357568, bytes: 5, downloaded: true, verified: true, in_use: true, live: true, progress: null },
       { id: 'next', name: 'Another model', recommended: true, languages: ['en'], size: 100, bytes: 0, downloaded: false, verified: false, in_use: false, live: false, progress: null }] });
   let view = initial();
   let held = null;
@@ -41,10 +41,10 @@ test('speech model downloads keep drafts and ignore late progress after cancel',
       oldView = JSON.stringify(view);
       return;
     }
-    if (request.url === '/fixture.js') { response.setHeader('Content-Type', 'text/javascript'); return response.end(fixture); }
-    if (request.url === '/style.css') { response.setHeader('Content-Type', 'text/css'); return response.end(css); }
-    response.setHeader('Content-Type', 'text/html');
-    response.end('<!doctype html><html><head><link rel="stylesheet" href="/style.css"></head><body><main id="app"><div class="settings"><label>Draft<input id="draft" class="set-input"></label><div id="speech-library"></div></div></main><script src="/fixture.js"></script></body></html>');
+    if (request.url === '/fixture.js') { response.setHeader('Content-Type', 'text/javascript; charset=utf-8'); return response.end(fixture); }
+    if (request.url === '/style.css') { response.setHeader('Content-Type', 'text/css; charset=utf-8'); return response.end(css); }
+    response.setHeader('Content-Type', 'text/html; charset=utf-8');
+    response.end('<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/style.css"></head><body><main id="app"><div class="settings"><label>Draft<input id="draft" class="set-input"></label><div id="speech-library"></div></div></main><script src="/fixture.js"></script></body></html>');
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   try {
@@ -56,6 +56,10 @@ test('speech model downloads keep drafts and ignore late progress after cancel',
       await page.goto(`http://127.0.0.1:${server.address().port}`);
       await expect(page.getByText('Local <b>speech</b>', { exact: true }).first()).toBeVisible();
       expect(await page.locator('#speech-library b').count()).toBe(0);
+      const local = page.locator('[data-model-row="local"]');
+      for (const detail of ['Fast, accurate <live> English transcription', 'English only', 'Streaming', '697 MB', '96.0%', '14.0× real time']) await expect(local).toContainText(detail);
+      await expect(local.getByRole('meter', {name:'Accuracy 96.0%'})).toHaveAttribute('value', '96.01');
+      if (process.env.LEO_MODEL_PREVIEW) await page.screenshot({path:process.env.LEO_MODEL_PREVIEW+'-'+theme+'.png',fullPage:true});
       await page.getByRole('button', { name: 'Download', exact: true }).click();
       await expect(page.getByText('20%', { exact: true })).toBeVisible();
       await page.locator('#draft').fill('Keep typing 文字');

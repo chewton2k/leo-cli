@@ -316,3 +316,20 @@ fn downloaded_models_include_empty_and_uncatalogued_files() {
         .unwrap();
     assert!(!dir.path().join("models/older.gguf").exists());
 }
+
+#[test]
+fn catalog_ratings_use_language_accuracy_and_the_reference_geometric_mean() {
+    let mut c = catalog().clone();
+    let id = "parakeet-tdt-0.6b-v3";
+    c.results.insert(id.into(), serde_json::json!({"accuracy":{"en":{"error":4.0},"es":{"error":16.0}},"performance":{"cpu":10.0,"accelerated":20.0}}));
+    assert!((c.accuracy_for(id, "auto").unwrap() - 92.0).abs() < 0.00001);
+    assert_eq!(c.accuracy_for(id, "en"), Some(96.0));
+    assert_eq!(c.accuracy_for(id, "es"), Some(84.0));
+    assert_eq!(c.accuracy_for(id, "ja"), None);
+    assert_eq!(c.accuracy_for("missing", "auto"), None);
+    c.results.insert(
+        "negative".into(),
+        serde_json::json!({"accuracy":{"en":{"error":-1.0}}}),
+    );
+    assert_eq!(c.accuracy_for("negative", "en"), None);
+}

@@ -1059,6 +1059,10 @@ focus and selection, including textareas. App polling updates native status and 
 ready-update banner without replacing focused controls. First-launch sheets have
 three independent skips; late responses cannot dismiss another sheet or page.
 Speech models show In use, every Downloaded file and filtered All models cards.
+Rows show escaped catalog descriptions, languages, size, streaming support and
+measured accuracy/speed with themed meters; unknown scores stay unmeasured.
+A remembered Storage section at the Settings root keeps Settings selected and
+Back returns to the previous note; only the explicit Storage route selects Storage.
 
 `Powers.app_settings` supplies session-gated bounded JSON `/api/app` and
 `/api/health`; blocking native work runs off async tasks and outside the store

@@ -102,24 +102,26 @@ impl Catalog {
             .unwrap_or(0.0)
     }
 
-    pub fn accuracy(&self, id: &str) -> f64 {
-        let Some(scores) = self
-            .results
-            .get(id)
-            .and_then(|r| r.get("accuracy"))
-            .and_then(Value::as_object)
-        else {
-            return 0.0;
-        };
-        let errors: Vec<f64> = scores
-            .values()
-            .filter_map(|s| s.get("error").and_then(Value::as_f64))
-            .collect();
-        if errors.is_empty() {
-            0.0
+    pub fn accuracy_for(&self, id: &str, language: &str) -> Option<f64> {
+        let scores = self.results.get(id)?.get("accuracy")?.as_object()?;
+        let error = if language != "auto" {
+            scores.get(language)?.get("error")?.as_f64()?
         } else {
-            (100.0 - errors.iter().sum::<f64>() / errors.len() as f64).max(0.0)
-        }
+            let errors: Vec<f64> = scores
+                .values()
+                .filter_map(|score| score.get("error")?.as_f64())
+                .filter(|error| error.is_finite() && *error >= 0.0)
+                .collect();
+            if errors.is_empty() {
+                return None;
+            }
+            if errors.contains(&0.0) {
+                0.0
+            } else {
+                (errors.iter().map(|error| error.ln()).sum::<f64>() / errors.len() as f64).exp()
+            }
+        };
+        (error.is_finite() && error >= 0.0).then_some((100.0 - error).clamp(0.0, 100.0))
     }
 
     pub fn live(&self, id: &str) -> bool {

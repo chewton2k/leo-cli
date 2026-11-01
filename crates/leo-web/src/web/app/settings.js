@@ -348,11 +348,11 @@ function speechCards(view) {
   return `<section class="set-card"><header><h3>In use</h3><span class="set-status ${view.ready ? 'ok' : 'missing'}">${view.ready ? 'Ready' : 'Choose a model'}</span></header><p class="hint">${view.ready && current ? esc(current.name) : 'Download a model below, then choose Use.'}</p><p class="set-note">Dictation and recording share this model. Audio stays on this computer.</p>${language}</section>
     <section class="set-card" data-models-downloaded><header><h3>Downloaded</h3><span class="hint">${downloaded.length + extras.length} models · ${speechBytes(view.disk_bytes)} on this computer</span></header>
       ${downloaded.map(speechModelRow).join('')}${extras.map((file) => `<div class="set-row"><span class="grow"><span>${esc(file.name)}</span><span class="set-note">${speechBytes(file.bytes)} · Not in the current catalog</span></span><button class="btn plain sm" data-action="speech-model" data-model="${esc(file.name)}" data-verb="delete_file">Delete</button></div>`).join('')}${!downloaded.length && !extras.length ? '<p class="set-note">No models downloaded yet.</p>' : ''}</section>
-    <section class="set-card" data-models-all><header><h3>All models</h3></header><p class="hint">Choose a local model. Larger models use more memory.</p><div class="library-views model-filters" role="group" aria-label="Filter models">${filters.map(([id, label]) => `<button class="btn plain sm${filter === id ? ' on' : ''}" data-action="speech-filter" data-filter="${id}" aria-pressed="${filter === id}">${label}</button>`).join('')}</div>${rows || '<p class="set-note">No models match this filter.</p>'}<p class="set-note">Speed and accuracy come from model benchmarks; your computer may differ.</p></section>`;
+    <section class="set-card" data-models-all><header><h3>All models</h3></header><p class="hint">Choose a local model. Larger models use more memory.</p><div class="library-views model-filters" role="group" aria-label="Filter models">${filters.map(([id, label]) => `<button class="btn plain sm${filter === id ? ' on' : ''}" data-action="speech-filter" data-filter="${id}" aria-pressed="${filter === id}">${label}</button>`).join('')}</div>${rows || '<p class="set-note">No models match this filter.</p>'}<p class="set-note">Accuracy uses the chosen language, or combines measured languages with Detect language. Benchmark speed may differ on your computer.</p></section>`;
 }
 function speechBytes(bytes) {
   bytes = Math.max(0, Number(bytes) || 0);
-  return bytes >= 1073741824 ? (bytes / 1073741824).toFixed(1) + ' GB' : bytes >= 1048576 ? Math.ceil(bytes / 1048576) + ' MB' : bytes + ' B';
+  return bytes >= 1073741824 ? (bytes / 1073741824).toFixed(1) + ' GB' : bytes >= 1048576 ? Math.round(bytes / 1048576) + ' MB' : bytes + ' B';
 }
 function speechLanguage(code) {
   try { return new Intl.DisplayNames(['en'], { type: 'language' }).of(code) || code; } catch (e) { return code; }
@@ -360,11 +360,16 @@ function speechLanguage(code) {
 function speechFiltered(models, filter) {
   return models.filter((model) => filter === 'all' || filter === 'recommended' && model.recommended || filter === 'english' && model.languages.includes('en') || filter === 'many' && model.languages.length > 1 || filter === 'downloaded' && model.downloaded);
 }
-function speechDots(value, thresholds) {
-  const score = Number(value) || 0;
-  if (!score) return '<span class="hint">Not measured</span>';
-  const filled = Math.min(5, Math.max(1, thresholds.filter((threshold) => score >= threshold).length));
-  return `<span class="model-dots" aria-label="${filled} out of 5">${'●'.repeat(filled)}${'○'.repeat(5 - filled)}</span>`;
+function speechRatings(model) {
+  const speed = Math.max(0, Number(model.speed) || 0);
+  const accuracy = Math.max(0, Math.min(100, Number(model.accuracy) || 0));
+  const measured = model.accuracy_measured ?? (accuracy > 0);
+  const language = model.benchmark_language && model.benchmark_language !== 'auto' ? speechLanguage(model.benchmark_language) : 'Measured languages';
+  const wait = speed > 0 ? 30 / speed : null;
+  const level = wait === null ? 0 : [2, 3.5, 7.5, 20].filter(cutoff => wait < cutoff).length;
+  const speedLabel = speed > 0 ? speed.toFixed(1) + '× real time' : 'Not measured';
+  const accuracyLabel = measured ? accuracy.toFixed(1) + '%' : 'Not measured';
+  return `<div class="model-ratings"><span class="model-rating" title="${esc(language)} benchmark"><span>Accuracy</span>${measured ? `<meter class="model-meter" min="0" max="100" value="${accuracy}" aria-label="Accuracy ${esc(accuracyLabel)}"></meter>` : ''}<span class="hint">${esc(accuracyLabel)}</span></span><span class="model-rating" title="${wait === null ? 'No speed benchmark' : 'Estimated wait after 30 seconds of speech: ' + wait.toFixed(1) + ' seconds'}"><span>Speed</span>${speed > 0 ? `<meter class="model-meter" min="0" max="4" value="${level}" aria-label="Speed ${esc(speedLabel)}"></meter>` : ''}<span class="hint">${esc(speedLabel)}</span></span></div>`;
 }
 function speechModelRow(model) {
   const progress = model.progress;
@@ -373,7 +378,7 @@ function speechModelRow(model) {
   const action = (verb, label) => `<button class="btn plain sm" data-action="speech-model" data-model="${esc(model.id)}" data-verb="${verb}">${label}</button>`;
   const controls = downloading ? `<span class="hint">${percent}%</span><progress value="${percent}" max="100" aria-label="Downloading ${esc(model.name)}"></progress>${action('cancel', 'Cancel')}` : model.verified ? `${model.in_use ? '<span class="chip">In use</span>' : action('use', 'Use')}${action('delete', 'Delete')}` : `${model.downloaded ? '<span class="chip">Check failed</span>' : ''}${action('download', model.downloaded ? 'Download again' : 'Download')}${model.downloaded ? action('delete', 'Delete') : ''}`;
   const names = model.languages.map(speechLanguage);
-  return `<div class="set-row column" data-model-row="${esc(model.id)}"><div class="set-line"><span class="set-label">${esc(model.name)}${model.recommended ? ' <span class="chip">Recommended</span>' : ''}</span><span class="set-value">${controls}</span></div><span class="hint" title="${esc(names.join(', '))}">${esc(names.length === 1 ? names[0] : names.length + ' languages')} · ${speechBytes(model.size)} · ${model.streaming ? 'Live dictation text' : 'Text after you speak'} · ${model.live ? 'Live lecture transcripts' : 'Lecture transcript after recording'}</span><span class="hint">Speed ${speechDots(model.speed, [0, 1, 2, 5, 10])} <span title="${esc(model.accuracy || 0)}% benchmark">Accuracy ${speechDots(model.accuracy, [0, 80, 90, 95, 98])}</span></span>${progress && progress.error && progress.state !== 'cancelled' ? `<span class="set-note warn">${esc(progress.error)}</span>` : ''}</div>`;
+  return `<div class="set-row column" data-model-row="${esc(model.id)}"><div class="set-line"><span class="set-label">${esc(model.name)}${model.recommended ? ' <span class="chip">Recommended</span>' : ''}</span><span class="set-value">${controls}</span></div>${model.description ? `<p class="hint">${esc(model.description)}</p>` : ''}<span class="hint" title="${esc(names.join(', '))}">${esc(names.length === 1 ? names[0] + ' only' : names.length + ' languages')} · ${speechBytes(model.size)} · ${model.streaming ? 'Streaming' : 'Text after you speak'} · ${model.live ? 'Live lecture transcripts' : 'Lecture transcript after recording'}</span>${speechRatings(model)}${progress && progress.error && progress.state !== 'cancelled' ? `<span class="set-note warn">${esc(progress.error)}</span>` : ''}</div>`;
 }
 function filterSpeech(el) {
   state.speechFilter = el.dataset.filter;

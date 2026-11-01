@@ -295,11 +295,12 @@ impl Library {
             let downloaded = metadata.is_some();
             let verified = downloaded && self.verify(&model.id).is_ok();
             let job = jobs.get(&model.id);
+            let accuracy = self.catalog.accuracy_for(&model.id, &selection.language);
             models.push(json!({ "id": model.id, "name": model.name, "description": model.description,
                 "languages": model.languages, "size": model.file().size, "bytes": bytes, "downloaded": downloaded, "verified": verified,
                 "in_use": verified && selection.id == model.id, "streaming": model.capabilities["streaming"],
                 "live": self.catalog.live(&model.id), "recommended": model.recommended(), "license": model.license,
-                "speed": self.catalog.speed(&model.id), "accuracy": self.catalog.accuracy(&model.id),
+                "speed": self.catalog.speed(&model.id), "accuracy": accuracy.unwrap_or(0.0), "accuracy_measured": accuracy.is_some(), "benchmark_language": selection.language,
                 "progress": job.map(|j| json!({ "bytes": j.bytes, "total": j.total, "state": j.state, "error": j.error })) }));
         }
         let mut extra_files = Vec::new();

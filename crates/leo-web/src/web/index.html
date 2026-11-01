@@ -1440,7 +1440,12 @@ body.on-settings main, body.on-settings .bar-row { max-width: 1080px; }
 .settings-section .set-input { max-width: 100%; }
 @media (max-width: 760px) { .settings-layout { grid-template-columns: 120px minmax(0,1fr); gap: 12px; } .settings-nav .btn { padding: 7px 8px; font-size: 13px; } .settings-section .set-card { padding: 14px; } }
 .model-filters { flex-wrap: wrap; margin: 12px 0; }
-.model-dots { letter-spacing: 2px; color: var(--muted); white-space: nowrap; }
+.model-ratings { display: flex; flex-wrap: wrap; gap: 8px 24px; font-size: 12px; }
+.model-rating { display: inline-flex; align-items: center; gap: 8px; }
+.model-meter { width: 60px; height: 6px; border: 0; border-radius: 3px; background: var(--line); }
+.model-meter::-webkit-meter-bar { height: 6px; border: 0; border-radius: 3px; background: var(--line); }
+.model-meter::-webkit-meter-optimum-value { background: var(--accent); border-radius: 3px; }
+.model-meter::-moz-meter-bar { background: var(--accent); border-radius: 3px; }
 .set-value progress { width: 90px; height: 6px; accent-color: var(--accent); }
 .settings { display: flex; flex-direction: column; gap: 14px; }
 .set-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px 18px; }

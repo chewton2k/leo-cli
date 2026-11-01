@@ -104,7 +104,9 @@ provider kinds remain parseable for migration, never construct a cloud
 transcriber. An explicit `whisper_cpp` binary remains for existing test fakes.
 
 `speech/catalog.json` is the pinned catalog; `catalog.rs` exposes its 29 curated
-ASR models, languages, checksums, benchmark speeds and accuracy. The selected
+ASR models, languages, checksums, benchmark speeds and accuracy. Accuracy uses
+the chosen language, or the geometric mean of measured word error rates for
+auto detection; missing or invalid measurements remain unknown. The selected
 model and language live in `<config>/speech-model.json`; files live in
 `models_dir()/speech`. `Library` verifies exact size and SHA-256, caches verified
 size/mtime stamps, downloads at most two models into owned temporary files,
