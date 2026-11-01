@@ -431,6 +431,8 @@ Corrupt credential files are reported and preserved; permission repair refuses
 symbolic/hard links. The writer also holds an exclusive `.credentials.lock`
 through read/modify/write, with a five-second lock deadline, so independent Leo
 processes cannot overwrite each other's credential changes.
+Private-file guards explicitly unlock before closing, so a handle inherited by
+a concurrently starting child cannot keep completed settings operations locked.
 
 Public fetch clients disable proxies, check actual resolved addresses, reject
 private IPv4/IPv6 including deprecated site-local addresses, and bound response

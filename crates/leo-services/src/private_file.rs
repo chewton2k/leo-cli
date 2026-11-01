@@ -46,7 +46,16 @@ pub(crate) fn busy(error: &anyhow::Error) -> bool {
     error.is::<LockBusy>()
 }
 
-pub(crate) fn lock(parent: &Path, name: &str, wait: Duration) -> Result<File> {
+#[derive(Debug)]
+pub(crate) struct Lock(File);
+
+impl Drop for Lock {
+    fn drop(&mut self) {
+        let _ = FileExt::unlock(&self.0);
+    }
+}
+
+pub(crate) fn lock(parent: &Path, name: &str, wait: Duration) -> Result<Lock> {
     directory(parent)?;
     let path = leo_core::paths::contained_path(parent, Path::new(name))?;
     let mut options = std::fs::OpenOptions::new();
@@ -78,7 +87,7 @@ pub(crate) fn lock(parent: &Path, name: &str, wait: Duration) -> Result<File> {
     let until = Instant::now() + wait;
     loop {
         match file.try_lock_exclusive() {
-            Ok(()) => return Ok(file),
+            Ok(()) => return Ok(Lock(file)),
             Err(error) if contended(&error) && Instant::now() < until => {
                 std::thread::sleep(Duration::from_millis(10))
             }
@@ -93,6 +102,25 @@ pub(crate) fn lock(parent: &Path, name: &str, wait: Duration) -> Result<File> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn dropping_a_lock_releases_it_even_while_a_duplicate_handle_survives() {
+        let dir = tempfile::tempdir().unwrap();
+        let held = lock(dir.path(), ".lock", Duration::ZERO).unwrap();
+        let inherited = held.0.try_clone().unwrap();
+        assert!(busy(
+            &lock(dir.path(), ".lock", Duration::ZERO).unwrap_err()
+        ));
+        drop(held);
+        let next = lock(dir.path(), ".lock", Duration::ZERO).unwrap();
+        drop(inherited);
+        assert!(busy(
+            &lock(dir.path(), ".lock", Duration::ZERO).unwrap_err()
+        ));
+        drop(next);
+        assert!(lock(dir.path(), ".lock", Duration::ZERO).is_ok());
+    }
 
     #[test]
     fn independent_handles_cannot_modify_private_state_at_the_same_time() {
