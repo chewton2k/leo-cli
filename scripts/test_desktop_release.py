@@ -54,6 +54,11 @@ class ReleaseTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 desktop_release.package(source, output, 'aarch64-apple-darwin')
 
+    def test_macos_target_covers_the_native_cpp_filesystem_requirement(self):
+        config = json.loads((ROOT / 'crates/leo-desktop/tauri.conf.json').read_text())
+        minimum = config['bundle']['macOS'].get('minimumSystemVersion', '10.13')
+        self.assertGreaterEqual(tuple(map(int, minimum.split('.'))), (10, 15))
+
     def test_release_configuration_ships_cli_and_signed_updater_artifacts(self):
         config = json.loads((ROOT / 'crates/leo-desktop/tauri.conf.json').read_text())
         release = json.loads((ROOT / 'crates/leo-desktop/tauri.release.conf.json').read_text())

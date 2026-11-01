@@ -117,3 +117,9 @@ Windows uses the dynamic CRT to match transcribe-cpp; its release-only config
 bundles the Visual C++ runtime DLLs next to the executables.
 No Linux release/test rows remain. Chromium and targeted WebKit browser jobs run
 on macOS. Main installer cutover happens only after published assets validate.
+
+The bundle minimum is macOS 10.15, matching the native C++ filesystem floor.
+The macOS build script links clang_rt.osx for Metal availability checks and
+weak-links CoreAudio so older supported systems can load the app. Compiler
+runtime discovery uses quiet_command with an 8 KiB output bound and five-second
+deadlines; leo-core is a build dependency for the same child-process rules.

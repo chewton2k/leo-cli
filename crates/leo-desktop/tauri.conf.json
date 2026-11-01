@@ -32,7 +32,8 @@
     "macOS": {
       "infoPlist": "Info.plist",
       "entitlements": "Entitlements.plist",
-      "hardenedRuntime": true
+      "hardenedRuntime": true,
+      "minimumSystemVersion": "10.15"
     },
     "createUpdaterArtifacts": true,
     "windows": {
