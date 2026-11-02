@@ -262,18 +262,20 @@ test('columns are renamed, added, reordered and deleted, and boards are made and
 test('a redraw keeps half-typed names and new cards, a failed delete says so, and queued cards keep their board', async ({ browser }) => {
   await boardsFixture(browser, async page => {
     const name = page.locator('[data-kanban-name="kdoing0001"]');
-    await name.click();
-    await name.press('End');
-    await name.pressSequentially(' soon');
+    // End does not move the caret in a field on macOS (WebKit), so put it at the end directly.
+    const typeAtEnd = async (text) => {
+      await name.click();
+      await name.evaluate(el => el.setSelectionRange(el.value.length, el.value.length));
+      await name.pressSequentially(text);
+    };
+    await typeAtEnd(' soon');
     await page.locator('[data-action="kanban-add-card"][data-col="ktodo00001"]').click();
     await page.locator('.kanban-composer textarea').fill('Half typed');
     await page.evaluate(() => kanbanRefresh());
     await settled(page);
     await expect(page.locator('.kanban-composer textarea')).toHaveValue('Half typed');
     await expect(page.locator('.kanban-composer textarea')).toBeFocused();
-    await name.click();
-    await name.press('End');
-    await name.pressSequentially(' now');
+    await typeAtEnd(' now');
     await page.evaluate(() => kanbanRefresh());
     await settled(page);
     await expect(name).toHaveValue('In progress soon now');
