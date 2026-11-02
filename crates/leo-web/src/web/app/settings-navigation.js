@@ -4,7 +4,7 @@ const SETTINGS_SECTIONS = [
     ['general', 'General', 'sliders', 'Appearance, and how Leo starts with your computer.'],
     ['dictation', 'Dictation', 'keyboard', 'Speak into any app with a shortcut. Speech stays on this computer.'],
     ['models', 'Speech models', 'wave', 'The local model that turns speech into text.'],
-    ['writing', 'Writing AI', 'sparkle', 'The AI that writes your notes and powers Felix.'],
+    ['writing', 'Writing AI', 'pen', 'The AI that writes your notes and powers Felix.'],
   ] },
   { group: 'Your notes', items: [
     ['calendar', 'Calendar', 'calendar', 'Name recordings after the class or meeting you are in.'],
@@ -23,7 +23,7 @@ const SETTINGS_ICON_PATHS = {
   sliders: '<path d="M4 6h10M4 12h4M12 12h8M4 18h12"/><circle cx="16.5" cy="6" r="2.2"/><circle cx="10" cy="12" r="2.2"/><circle cx="18.5" cy="18" r="2.2"/>',
   keyboard: '<rect x="2.5" y="6" width="19" height="12" rx="2.5"/><path d="M6.5 10h.01M10 10h.01M14 10h.01M17.5 10h.01M7.5 14h9"/>',
   wave: '<path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 10.5v3"/>',
-  sparkle: '<path d="M11 3.5l1.7 4.8 4.8 1.7-4.8 1.7L11 16.5l-1.7-4.8L4.5 10l4.8-1.7z"/><path d="M18 14.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/>',
+  pen: '<path d="M4 20h4L18.5 9.5a2.8 2.8 0 0 0-4-4L4 16v4z"/><path d="M13 7l4 4"/>',
   backup: '<path d="M7 18.5a4.5 4.5 0 0 1-.5-9 6 6 0 0 1 11.3 1.5 3.8 3.8 0 0 1-.3 7.5"/><path d="M12 12.5v7M9 15.5l3-3 3 3"/>',
   pulse: '<path d="M3 12h4l2.5-6 5 12 2.5-6h4"/>',
   update: '<circle cx="12" cy="12" r="9"/><path d="M12 7.5v8M8.5 12.5l3.5 3.5 3.5-3.5"/>',
@@ -45,7 +45,7 @@ function settingsFrame(section, content) {
   // Callers assign the frame to the page right away; once they have, bring the current
   // section into view in the phone strip, where the list scrolls sideways.
   if (typeof queueMicrotask === 'function') queueMicrotask(revealSettingsLink);
-  return `<div class="settings-layout"><nav class="settings-nav" aria-label="Settings sections"><div class="settings-nav-title">Settings</div>${nav}</nav><div class="settings-section" data-settings-section="${esc(section)}"><header class="settings-head"><h1>${esc(title)}</h1><p>${esc(about)}</p></header>${content}</div></div>`;
+  return `<div class="settings-layout"><nav class="settings-nav" aria-label="Settings sections">${nav}</nav><div class="settings-section" data-settings-section="${esc(section)}"><header class="settings-head"><h1>${esc(title)}</h1><p>${esc(about)}</p></header>${content}</div></div>`;
 }
 
 function revealSettingsLink() {

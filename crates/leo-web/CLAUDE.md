@@ -1137,6 +1137,12 @@ Nothing becomes a note or sync file. Card polling updates shortcut status and
 history only; fields, drafts, focus and caret survive. Local popup rendering
 and settings helpers have node tests in `dictation.test.js`.
 
+Settings look (2026-11-02, the user's call, stageshow's craft rules): group labels
+in sentence case, no "Settings" title in the section list (the bar says it),
+no card title repeating the page title, flat cards (border, no shadow), labels
+on one line with controls hugging their content at the right edge; a card under
+500 px stacks segmented rows (container query), and switch rows stay inline on
+phones. Writing AI uses a pen icon, never a sparkle.
 Settings (2026-11-02, the user's call) is a full-height sidebar pinned to the
 left of the content (sticky under the bar, its own scroll), grouped Leo / Your
 notes / Data / This app, each section with an icon and a page heading with a

@@ -1501,13 +1501,12 @@ body.on-settings .bar { border-bottom-color: var(--line); }
 body.on-settings .app-update-banner { max-width: none; margin: 0; border-radius: 0; padding-inline: 20px; }
 [data-model-row] .set-label { width: auto; flex: 1; min-width: min(180px, 100%); }
 .settings-layout { --bar-h: calc(var(--top) + 61px); display: grid; grid-template-columns: 240px minmax(0, 1fr); align-items: start; min-height: calc(100vh - var(--bar-h)); }
-.settings-nav { position: sticky; top: var(--bar-h); height: calc(100vh - var(--bar-h)); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding: 18px 10px 24px; background: var(--surface); border-right: 1px solid var(--line); }
-.settings-nav-title { padding: 0 10px 14px; font-size: 17px; font-weight: 720; letter-spacing: -.015em; }
-.settings-group + .settings-group { margin-top: 16px; }
-.settings-group-title { padding: 0 10px 6px; font-size: 11.5px; font-weight: 650; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.settings-nav { position: sticky; top: var(--bar-h); height: calc(100vh - var(--bar-h)); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding: 30px 10px 24px; background: var(--surface); border-right: 1px solid var(--line); }
+.settings-group + .settings-group { margin-top: 20px; }
+.settings-group-title { padding: 0 10px 6px; font-size: 12.5px; font-weight: 600; color: var(--faint); }
 .settings-link { display: flex; align-items: center; gap: 11px; min-height: 36px; padding: 0 10px; border-radius: 9px; color: var(--muted); font-size: 14.5px; text-decoration: none; white-space: nowrap; }
 .settings-link + .settings-link { margin-top: 2px; }
-.settings-link svg { width: 18px; height: 18px; flex: none; }
+.settings-link svg { width: 16px; height: 16px; flex: none; }
 .settings-link span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .settings-link:hover { background: var(--surface-2); color: var(--text); }
 .settings-link.on { background: var(--accent-soft); color: var(--text); font-weight: 600; }
@@ -1522,11 +1521,39 @@ body.on-settings .app-update-banner { max-width: none; margin: 0; border-radius:
 .settings-section .set-input { max-width: 100%; }
 .settings-section .trash-head .section-title { margin: 0; }
 .set-row > .grow { flex: 1; min-width: 0; font-size: 14px; }
+.settings-section .set-card { container-type: inline-size; box-shadow: none; padding: 18px 20px; }
+.settings-section .set-card > header { margin-bottom: 8px; }
+.settings-section .set-card > header:has(+ .hint) { margin-bottom: 4px; }
+.settings-section .set-card > header + .hint { margin: 0 0 10px; }
+.settings-section .set-note:empty { display: none; }
+.settings-section .set-row { padding: 12px 0; }
+@media (min-width: 521px) {
+  .settings-section .set-label { flex: 1 0 auto; width: auto; white-space: nowrap; }
+  .settings-section .set-row:has(> .segmented, > .select-control, > .set-value > .select-control:only-child) > .set-label { flex-basis: 0; }
+  .settings-section .set-value:has(> .select-control:only-child) { flex: 0 1 320px; }
+  .settings-section .set-row:has(> .segmented, > .select-control, > .set-value > .select-control:only-child) { flex-wrap: nowrap; }
+  .settings-section .set-row > .select-control { flex: 0 1 320px; margin-left: auto; }
+  .settings-section .segmented { flex: 0 1 auto; min-width: 0; grid-auto-columns: 1fr; }
+  .settings-section .segment { padding: 0 14px; }
+}
+.settings-section .set-row.column > .btn { align-self: flex-start; }
+.settings-section .btn { white-space: nowrap; }
+.set-shortcut { flex-wrap: wrap; }
+.set-shortcut .set-input { flex: 0 1 200px; min-width: 120px; }
+.set-shortcut .btn { flex: none; white-space: nowrap; }
+#dictation-shortcut-status:empty { display: none; }
+.health-intro { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.health-intro .btn { flex: none; white-space: nowrap; }
+.settings-section a.btn { text-decoration: none; }
+@container (max-width: 500px) {
+  .settings-section .set-row:has(> .segmented) { flex-direction: column; align-items: stretch; gap: 8px; }
+  .settings-section .set-row:has(> .segmented) > .segmented { flex: none; max-width: none; margin-left: 0; }
+}
 @media (max-width: 759px) {
   .settings-layout { display: block; min-height: 0; }
   .settings-nav { z-index: 5; height: auto; display: flex; gap: 6px; overflow-x: auto; overflow-y: hidden; padding: 10px 16px; border-right: 0; border-bottom: 1px solid var(--line); background: var(--bg); scrollbar-width: none; }
   .settings-nav::-webkit-scrollbar { display: none; }
-  .settings-nav-title, .settings-group-title { display: none; }
+  .settings-group-title { display: none; }
   .settings-group { display: contents; }
   .settings-link, .settings-link + .settings-link { flex: none; min-height: 34px; margin: 0; padding: 0 12px; gap: 7px; border: 1px solid var(--line); border-radius: 999px; font-size: 13.5px; }
   .settings-link.on { border-color: transparent; }
@@ -1567,7 +1594,7 @@ body.on-settings .app-update-banner { max-width: none; margin: 0; border-radius:
 .model-meter::-webkit-meter-optimum-value { background: var(--accent); border-radius: 3px; }
 .model-meter::-moz-meter-bar { background: var(--accent); border-radius: 3px; }
 .set-value progress { width: 90px; height: 6px; accent-color: var(--accent); }
-.settings { display: flex; flex-direction: column; gap: 14px; }
+.settings { display: flex; flex-direction: column; gap: 16px; }
 .set-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px 18px; }
 .set-card header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .set-card h3 { margin: 0; font-size: 17px; }
@@ -1689,7 +1716,7 @@ body.on-settings .app-update-banner { max-width: none; margin: 0; border-radius:
 .store-export-parts { display: flex; flex-direction: column; margin: 4px 0 12px; font-size: 14px; }
 .store-export .btn { display: inline-block; text-decoration: none; }
 .set-path { font: 12.5px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, "Cascadia Mono", monospace; background: var(--code-bg); padding: 6px 8px; border-radius: 8px; overflow-wrap: anywhere; }
-@media (max-width: 520px) { .set-row:not(.column) { flex-direction: column; align-items: stretch; gap: 6px; } .set-label { width: auto; } }
+@media (max-width: 520px) { .set-row:not(.column) { flex-direction: column; align-items: stretch; gap: 6px; } .set-label { width: auto; } .set-row:not(.column):has(> .switch) { flex-direction: row; align-items: center; } .set-row > .segmented { flex: none; max-width: none; margin-left: 0; } .set-line:has(> .set-shortcut) { flex-direction: column; align-items: stretch; } .set-shortcut { justify-content: flex-start; } .set-shortcut .set-input { flex: 1 1 160px; } }
 .fabs { position: fixed; right: calc(var(--right) + max(20px, (100% - var(--side) - var(--right)) / 2 - 360px)); bottom: calc(var(--bottom) + 22px); z-index: 25; display: flex; gap: 10px; }
 .fabs .fab { position: static; }
 .fab.ghost { background: var(--surface); color: var(--text); border: 1px solid var(--line); box-shadow: var(--shadow); padding: 0 18px 0 14px; }

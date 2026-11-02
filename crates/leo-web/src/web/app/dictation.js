@@ -6,10 +6,10 @@ function dictationCards(view) {
   const toggle = (name, label) => `<label class="set-row"><span class="grow">${label}</span>${settingsSwitch(`data-dictation="${name}"`, s[name])}</label>`;
   const choice = (name, label, choices) => `<div class="set-row"><span class="set-label">${label}</span>${segmented({ label, choices, current: String(s[name] == null ? choices[0][0] : s[name]), field: `data-dictation="${name}"` })}</div>`;
   const microphones = [['', 'System default']].concat((view.microphones || []).map((name) => [name, name]));
-  return `<section class="set-card" id="dictation-preferences"><header><h3>Dictation</h3><span class="set-status">Local</span></header>
+  return `<section class="set-card" id="dictation-preferences"><header><h3>Preferences</h3><span class="set-status">Local</span></header>
     ${view.problem ? `<p class="set-note warn">${esc(view.problem)}</p>` : ''}
-    <p class="hint">Speak into any app. Speech stays on this computer; custom words and filler rules run without writing AI.</p>
-    <div class="set-row column"><label class="set-line"><span class="set-label">Shortcut</span><input class="set-input" data-dictation="shortcut" value="${esc(s.shortcut || '')}" readonly aria-label="Dictation shortcut"></label><div class="set-line"><button class="btn plain sm" data-action="dictation-record">Record shortcut</button><span id="dictation-shortcut-status" class="hint">${esc(keys.problem || '')}</span><button class="btn plain sm" data-action="dictation-use-shortcut" hidden>Use shortcut</button><button class="btn plain sm" data-action="dictation-resume" hidden>Cancel</button></div></div>
+    <p class="hint">Custom words and filler rules run on this computer, without writing AI.</p>
+    <div class="set-row column"><div class="set-line"><span class="set-label">Shortcut</span><span class="set-value set-shortcut"><input class="set-input" data-dictation="shortcut" value="${esc(s.shortcut || '')}" readonly aria-label="Dictation shortcut"><button class="btn plain sm" data-action="dictation-record">Record shortcut</button><button class="btn plain sm" data-action="dictation-use-shortcut" hidden>Use shortcut</button><button class="btn plain sm" data-action="dictation-resume" hidden>Cancel</button></span></div><span id="dictation-shortcut-status" class="hint">${esc(keys.problem || '')}</span></div>
     ${choice('mode', 'Activation', [['both', 'Hold or tap'], ['hold', 'Hold'], ['tap', 'Tap']])}
     ${row('Microphone', select('microphone', microphones))}
     ${row('Lid closed microphone', select('closed_microphone', [['', 'Use regular microphone']].concat(microphones.slice(1))))}

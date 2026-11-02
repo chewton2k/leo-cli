@@ -262,7 +262,7 @@ function felixUsageCard(page) {
 
 function backupCard(backup) {
   return `    <section class="set-card">
-      <header><h3>Backup</h3>${backup.remote ? '<span class="set-status ok">On</span>' : '<span class="set-status missing">Not set up</span>'}</header>
+      <header><h3>GitHub</h3>${backup.remote ? '<span class="set-status ok">On</span>' : '<span class="set-status missing">Not set up</span>'}</header>
       <p class="hint">${backup.remote ? `Your notes are copied to ${esc(backup.remote)}.` : 'Backup is not set up yet.'}</p>
       ${!backup.remote ? '<div class="set-row"><input class="set-input grow" id="backup-repository" value="leo-notes" aria-label="GitHub repository name"><button class="btn primary sm" data-action="backup-setup">Set up Backup</button></div><p class="set-note">Uses GitHub CLI. If needed, install gh from <a href="https://cli.github.com" target="_blank" rel="noopener noreferrer">cli.github.com</a> and sign in once with gh auth login.</p>' : ''}
       <p class="hint">On quit also backs up notes and tasks when you close the leo window or quit leo.</p>
