@@ -508,7 +508,10 @@ prompt that treats the dictation as text, never instructions. Replies are only
 unwrapped (code fence, `<dictation>` tags), never run through `clean_reply`,
 which would drop dictated "Sure…" or "Let me know…" lines. A reply must keep
 70% of the dictation's words (characters for unspaced scripts) and add at most
-half new ones, so an answer is refused. The call goes through
+half new ones, so an answer is refused, and must keep the same number of
+negations (`not`, `n't`, `never`, `ne`/`pas`, `nicht`…), so a meaning flip is
+refused. Failures are logged without the provider's error text, which can
+contain the dictation. The call goes through
 `ChatProvider::complete_until`, so a cancel or the deadline stops an agent CLI
 instead of leaving it running. Every fallback returns a reason the popup shows. `capture.rs` bounds dictation to
 300 seconds, closes the input before draining its final queued audio and before

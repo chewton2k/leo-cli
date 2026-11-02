@@ -63,7 +63,24 @@ fn tokens(text: &str, words: bool) -> HashSet<String> {
     }
 }
 
+const NEGATIONS: &[&str] = &[
+    "not", "no", "never", "nothing", "nobody", "none", "nowhere", "neither", "nor", "cannot", "ne",
+    "pas", "jamais", "nicht", "kein", "keine", "nie", "nunca", "nada", "nem", "não", "non", "niet",
+    "geen", "nej", "inte", "ikke",
+];
+
+fn negations(text: &str) -> usize {
+    text.split(|c: char| !(c.is_alphanumeric() || c == '\'' || c == '’'))
+        .filter(|w| !w.is_empty())
+        .map(str::to_lowercase)
+        .filter(|w| NEGATIONS.contains(&w.as_str()) || w.ends_with("n't") || w.ends_with("n’t"))
+        .count()
+}
+
 fn same_meaning(original: &str, reply: &str) -> bool {
+    if negations(original) != negations(reply) {
+        return false;
+    }
     let words = original.split_whitespace().count() >= 3;
     let before = tokens(original, words);
     let after = tokens(reply, words);
@@ -111,8 +128,8 @@ pub fn polish_with(
     loop {
         match rx.recv_timeout(Duration::from_millis(50)) {
             Ok(Ok(reply)) if !cancelled() => return accept(text, &reply),
-            Ok(Err(error)) if !cancelled() && Instant::now() < until => {
-                log::warn!("Dictation writing failed: {error:#}");
+            Ok(Err(_)) if !cancelled() && Instant::now() < until => {
+                log::warn!("Dictation writing failed; the unpolished text was used.");
                 return Err(NO_ANSWER);
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => return Err(NO_ANSWER),
@@ -222,6 +239,27 @@ mod tests {
         );
         assert_eq!(accept("今天天气很好", "我是一个人工智能助手"), Err(CHANGED));
         assert_eq!(accept("ok", &"ok ".repeat(40)), Err(CHANGED));
+        assert_eq!(
+            accept("I do not want to go", "I do want to go."),
+            Err(CHANGED)
+        );
+        assert_eq!(
+            accept("i don't want to go", "I do want to go."),
+            Err(CHANGED)
+        );
+        assert_eq!(accept("i want to go", "I don’t want to go."), Err(CHANGED));
+        assert_eq!(
+            accept("je ne veux pas partir", "Je veux partir."),
+            Err(CHANGED)
+        );
+        assert_eq!(
+            accept("i don't want to go", "I don’t want to go.").as_deref(),
+            Ok("I don’t want to go.")
+        );
+        assert_eq!(
+            accept("i do not want to go", "I do not want to go.").as_deref(),
+            Ok("I do not want to go.")
+        );
     }
 
     #[test]

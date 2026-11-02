@@ -6,7 +6,7 @@ function dictationCards(view) {
   const toggle = (name, label) => `<label class="set-row"><span class="grow">${label}</span>${settingsSwitch(`data-dictation="${name}"`, s[name])}</label>`;
   const choice = (name, label, choices) => `<div class="set-row"><span class="set-label">${label}</span>${segmented({ label, choices, current: String(s[name] == null ? choices[0][0] : s[name]), field: `data-dictation="${name}"` })}</div>`;
   const microphones = [['', 'System default']].concat((view.microphones || []).map((name) => [name, name]));
-  return `<section class="set-card" id="dictation-preferences"><header><h3>Dictation</h3><span class="set-status">${s.writing && s.writing !== 'off' ? 'Uses writing AI' : 'Local'}</span></header>
+  return `<section class="set-card" id="dictation-preferences"><header><h3>Dictation</h3><span class="set-status" id="dictation-badge">${dictationBadge(s)}</span></header>
     ${view.problem ? `<p class="set-note warn">${esc(view.problem)}</p>` : ''}
     <p class="hint">Speak into any app. Speech stays on this computer; custom words and filler rules run without writing AI unless you turn on AI writing below.</p>
     <div class="set-row column"><label class="set-line"><span class="set-label">Shortcut</span><input class="set-input" data-dictation="shortcut" value="${esc(s.shortcut || '')}" readonly aria-label="Dictation shortcut"></label><div class="set-line"><button class="btn plain sm" data-action="dictation-record">Record shortcut</button><span id="dictation-shortcut-status" class="hint">${esc(keys.problem || '')}</span><button class="btn plain sm" data-action="dictation-use-shortcut" hidden>Use shortcut</button><button class="btn plain sm" data-action="dictation-resume" hidden>Cancel</button></div></div>
@@ -45,7 +45,12 @@ async function dictationChange(change) {
   if (result && change.action === 'save') result.textContent = 'Saved';
   pollDictation(mine, generation);
 }
+function dictationBadge(settings) {
+  return settings && settings.writing && settings.writing !== 'off' ? 'Uses writing AI' : 'Local';
+}
 function updateDictationStatus(view) {
+  const badge = $('#dictation-badge');
+  if (badge && view.settings) badge.textContent = dictationBadge(view.settings);
   const shortcut = view.shortcut || {};
   const status = $('#dictation-shortcut-status');
   if (status) status.textContent = shortcut.recording ? shortcut.candidate || 'Press your shortcut. Modifier-only and Fn work too.' : shortcut.problem || '';

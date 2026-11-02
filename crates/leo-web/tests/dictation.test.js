@@ -26,6 +26,12 @@ test('dictation controls escape history and preserve explicit text settings', ()
   const unready = context.dictationCards({ settings: { writing: 'quick' }, writing_ready: false, recent: [], shortcut: {} });
   assert.ok(unready.includes('No writing AI is set up'));
   assert.ok(unready.includes('Uses writing AI'));
+  const badge = { textContent: 'Local' };
+  context.$ = (selector) => (selector === '#dictation-badge' ? badge : null);
+  context.updateDictationStatus({ settings: { writing: 'selected' }, shortcut: {} });
+  assert.equal(badge.textContent, 'Uses writing AI');
+  context.updateDictationStatus({ settings: { writing: 'off' }, shortcut: {} });
+  assert.equal(badge.textContent, 'Local');
   const chosen = context.dictationCards({ settings: { writing: 'selected' }, recent: [], shortcut: {} });
   assert.ok(/<option[^>]*>Your writing model/.test(chosen) || chosen.includes('Your writing model'));
 });
