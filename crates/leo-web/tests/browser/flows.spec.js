@@ -2025,8 +2025,10 @@ test.describe('storage', () => {
     await expect(page.locator('.toast')).toContainText('Emptied the trash');
     expect((await (await page.request.get('/api/trash')).json()).length).toBe(0);
     await expect(page.locator('details.store-area[data-area="notes"] [data-action="storage-act"]')).toHaveCount(0);
+    // A wide screen opens Storage from Settings' sidebar; a phone opens it from the menu at the top level.
+    const openedFrom = (await page.locator('#side').isVisible()) ? /#\/settings$/ : /#\/$/;
     await page.locator('#back').click();
-    await expect(page, 'Back returns to where Storage was opened from').toHaveURL(/#\/$/);
+    await expect(page, 'Back returns to where Storage was opened from').toHaveURL(openedFrom);
   });
 });
 
