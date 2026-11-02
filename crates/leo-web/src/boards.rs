@@ -29,6 +29,10 @@ pub const DEFAULT_COLUMNS: [&str; 3] = ["To do", "In progress", "Done"];
 /// The gap left between neighbouring cards, so most moves rewrite only the moved card.
 const STEP: f64 = 1024.0;
 const MOST_FILE_BYTES: u64 = 256 * 1024;
+/// How many files of one kind a scan reads, tombstones included. Deletes leave a
+/// tombstone file behind (so a backup merge cannot bring the item back), so this
+/// sits far above the live limits; the live limits apply after tombstones are dropped.
+const MOST_FILES: usize = 100_000;
 
 /// One change at a time: a move reads a column's order and then writes it.
 pub static WRITING: Mutex<()> = Mutex::new(());
@@ -259,7 +263,11 @@ fn write_file<T: Line>(chats: &Path, item: &T) -> anyhow::Result<()> {
         "That is too large to save. Shorten its description and try again."
     );
     let path = file_path(chats, T::DIR, &format!("{}.json", item.id()))?;
-    let mut temp = tempfile::NamedTempFile::new_in(&dir)?;
+    // `.<random>.tmp`, which the notes' .gitignore leaves out of the backup.
+    let mut temp = tempfile::Builder::new()
+        .prefix(".")
+        .suffix(".tmp")
+        .tempfile_in(&dir)?;
     temp.write_all(line.as_bytes())?;
     temp.as_file().sync_all()?;
     temp.persist(&path).map_err(|e| e.error)?;
@@ -268,7 +276,7 @@ fn write_file<T: Line>(chats: &Path, item: &T) -> anyhow::Result<()> {
 
 /// Every file of one kind, tombstones included. A file counts only when its
 /// name is its id, so a copied or renamed file cannot pose as another item.
-fn read_all<T: Line>(chats: &Path, most: usize) -> Vec<T> {
+fn read_all<T: Line>(chats: &Path) -> Vec<T> {
     let Ok(dir) = checked_dir(chats, T::DIR) else {
         return Vec::new();
     };
@@ -282,7 +290,7 @@ fn read_all<T: Line>(chats: &Path, most: usize) -> Vec<T> {
             let id = name.strip_suffix(".json")?.to_string();
             (!name.starts_with('.') && valid_id(&id)).then(|| (id, entry.path()))
         })
-        .take(most * 2)
+        .take(MOST_FILES)
         .filter_map(|(id, path)| read_file::<T>(chats, &path).filter(|item| item.id() == id))
         .collect()
 }
@@ -297,7 +305,7 @@ fn load<T: Line>(chats: &Path, id: &str) -> Option<T> {
 
 /// Boards, oldest first, so the tabs keep their places.
 pub fn boards(chats: &Path) -> Vec<Board> {
-    let mut all: Vec<Board> = read_all::<Board>(chats, MOST_BOARDS)
+    let mut all: Vec<Board> = read_all::<Board>(chats)
         .into_iter()
         .filter(|b| !b.deleted)
         .collect();
@@ -315,7 +323,7 @@ pub fn card(chats: &Path, id: &str) -> Option<Card> {
 }
 
 pub fn all_cards(chats: &Path) -> Vec<Card> {
-    read_all::<Card>(chats, MOST_CARDS)
+    read_all::<Card>(chats)
         .into_iter()
         .filter(|c| !c.deleted)
         .collect()
@@ -324,14 +332,21 @@ pub fn all_cards(chats: &Path) -> Vec<Card> {
 /// A board's cards in order. A card whose column is gone (deleted on another
 /// computer) shows in the first column; it is only rewritten when it moves.
 pub fn cards_of(chats: &Path, board: &Board) -> Vec<Card> {
+    cards_in(board, &all_cards(chats))
+}
+
+/// `cards_of` over cards already read, so a caller going through several boards
+/// reads the card files once.
+pub fn cards_in(board: &Board, all: &[Card]) -> Vec<Card> {
     let first = board
         .columns
         .first()
         .map(|c| c.id.clone())
         .unwrap_or_default();
-    let mut cards: Vec<Card> = all_cards(chats)
-        .into_iter()
+    let mut cards: Vec<Card> = all
+        .iter()
         .filter(|c| c.board == board.id)
+        .cloned()
         .map(|mut card| {
             if !board.columns.iter().any(|c| c.id == card.column) {
                 card.column = first.clone();
@@ -602,6 +617,34 @@ mod tests {
         .unwrap();
         assert!(card(&chats, "card-0002").is_none());
         assert!(file.exists());
+    }
+
+    #[test]
+    fn tombstones_never_crowd_out_live_items_and_temp_files_stay_out_of_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let chats = dir.path().join("chats");
+        let now = Utc::now();
+        // More deleted boards than the live limit once allowed files to be scanned.
+        for _ in 0..MOST_BOARDS * 2 + 10 {
+            let mut gone = new_board("Gone", now);
+            gone.deleted = true;
+            put_board(&chats, &gone).unwrap();
+        }
+        let live = new_board("Still here", now);
+        put_board(&chats, &live).unwrap();
+        assert_eq!(boards(&chats).len(), 1);
+        assert_eq!(boards(&chats)[0].id, live.id);
+
+        let names: Vec<String> = std::fs::read_dir(dir.path().join("notes/.leo/boards"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        assert!(
+            names
+                .iter()
+                .all(|n| n.ends_with(".json") && !n.starts_with('.')),
+            "no temporary file is left behind: {names:?}"
+        );
     }
 
     #[test]

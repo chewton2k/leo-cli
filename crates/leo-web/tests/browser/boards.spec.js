@@ -40,9 +40,11 @@ async function boardsFixture(browser, run, { width = 1280, height = 800 } = {}) 
     window.calls=[];
     window.pending=0;
     async function api(url,options={}){window.pending++;try{return await fakeApi(url,options);}finally{window.pending--;}}
+    window.failNext=null;window.slow=0;
     async function fakeApi(url,{method='GET',body}={}){
       window.calls.push(method+' '+url);
-      await new Promise(r=>setTimeout(r,5));
+      await new Promise(r=>setTimeout(r,5+window.slow));
+      if(window.failNext&&method!=='GET'){const e=new Error(window.failNext);window.failNext=null;throw e;}
       let m;
       if(url==='/api/boards'&&method==='GET')return {boards:db.boards.map(b=>({...b,cards:db.cards.filter(c=>c.board===b.id).length}))};
       if(url==='/api/boards'&&method==='POST'){const b={id:'bnew'+(++made)+'00000',name:body.name||'New board',columns:[{id:'kn'+made+'a000000',name:'To do'},{id:'kn'+made+'b000000',name:'In progress'},{id:'kn'+made+'c000000',name:'Done'}]};db.boards.push(b);return structuredClone(b);}
@@ -254,6 +256,54 @@ test('columns are renamed, added, reordered and deleted, and boards are made and
     await expect(page.locator('.kanban-tab')).toHaveCount(3);
     await page.locator('.toast button').click();
     await expect(page.locator('.kanban-tab.on')).toContainText('Job search');
+  });
+});
+
+test('a redraw keeps half-typed names and new cards, a failed delete says so, and queued cards keep their board', async ({ browser }) => {
+  await boardsFixture(browser, async page => {
+    const name = page.locator('[data-kanban-name="kdoing0001"]');
+    await name.click();
+    await name.press('End');
+    await name.pressSequentially(' soon');
+    await page.locator('[data-action="kanban-add-card"][data-col="ktodo00001"]').click();
+    await page.locator('.kanban-composer textarea').fill('Half typed');
+    await page.evaluate(() => kanbanRefresh());
+    await settled(page);
+    await expect(page.locator('.kanban-composer textarea')).toHaveValue('Half typed');
+    await expect(page.locator('.kanban-composer textarea')).toBeFocused();
+    await name.click();
+    await name.press('End');
+    await name.pressSequentially(' now');
+    await page.evaluate(() => kanbanRefresh());
+    await settled(page);
+    await expect(name).toHaveValue('In progress soon now');
+    await expect(name).toBeFocused();
+    expect(await name.evaluate(el => [el.selectionStart, el.value.length])).toEqual([20, 20]);
+    // Leaving the field saved " soon"; Escape drops only what was typed since.
+    await name.press('Escape');
+    await expect(name).toHaveValue('In progress soon');
+    expect(await page.evaluate(() => window.db.boards[0].columns[1].name)).toBe('In progress soon');
+
+    // A column delete that fails keeps the column and does not claim it was deleted.
+    await page.locator('[data-action="kanban-column-menu"][data-col="kdone00001"]').click();
+    await page.evaluate(() => { window.failNext = 'Leo could not save the board.'; });
+    await page.locator('.scrim [data-kanban="delete"]').click();
+    await settled(page);
+    await expect(page.locator('.kanban-col')).toHaveCount(3);
+    const toasts = await page.evaluate(() => window.toasts.map(t => t.message));
+    expect(toasts).toContain('Leo could not save the board.');
+    expect(toasts.some(t => t.startsWith('Deleted'))).toBe(false);
+
+    // A card still saving when another board opens lands on the board it was typed on.
+    await page.evaluate(() => { window.slow = 300; });
+    await page.locator('.kanban-composer textarea').fill('Stays on Work');
+    await page.locator('.kanban-composer textarea').press('Enter');
+    await page.evaluate(() => { location.hash = '#/boards/bhome00001'; });
+    await page.evaluate(() => { window.slow = 0; });
+    await settled(page);
+    await expect(page.locator('.kanban-tab.on')).toContainText('Home');
+    expect(await page.evaluate(() => window.db.cards.find(c => c.title === 'Stays on Work')?.board)).toBe('bwork00001');
+    await expect(page.locator('.kanban-card', { hasText: 'Stays on Work' })).toHaveCount(0);
   });
 });
 

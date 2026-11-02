@@ -324,9 +324,10 @@ fn write_zip_with_limits<W: Write + Seek>(
     }
     let boards = crate::boards::boards(chats_dir);
     if !boards.is_empty() {
+        let all = crate::boards::all_cards(chats_dir);
         let cards: Vec<crate::boards::Card> = boards
             .iter()
-            .flat_map(|board| crate::boards::cards_of(chats_dir, board))
+            .flat_map(|board| crate::boards::cards_in(board, &all))
             .collect();
         add_json(
             &mut zip,

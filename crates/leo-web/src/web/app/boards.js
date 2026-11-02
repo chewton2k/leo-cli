@@ -15,7 +15,7 @@ const KANBAN_ICON = {
   medium: svg('<path d="M6 9.5h12M6 14.5h12"/>'),
   low: svg('<path d="M6 9l6 6 6-6"/>'),
 };
-const kanban = { boards: [], board: null, cards: [], loaded: false, drag: null, suppressClick: false };
+const kanban = { boards: [], board: null, cards: [], loaded: false, drag: null, suppressClick: false, redrawing: false };
 
 function kanbanRemembered() {
   try { return localStorage.getItem(KANBAN_KEY) || ''; } catch (e) { return ''; }
@@ -122,20 +122,41 @@ function drawKanban() {
   const scrolled = row ? row.scrollLeft : 0;
   const active = app.contains(document.activeElement) ? document.activeElement : null;
   const focus = active?.dataset.card ? `[data-card="${CSS.escape(active.dataset.card)}"]` : active?.dataset.kanbanName ? `[data-kanban-name="${CSS.escape(active.dataset.kanbanName)}"]` : null;
-  app.innerHTML = `<div class="kanban-page">
-    <header class="kanban-head">
-      <nav class="kanban-tabs" aria-label="Boards">${kanbanTabsHtml()}</nav>
-      <div class="kanban-title-row">
-        <input class="kanban-title" data-kanban-name="board" value="${esc(board.name)}" maxlength="80" aria-label="Board name" spellcheck="false" autocomplete="off">
-        <button class="icon-btn" data-action="kanban-board-menu" aria-label="Board options" title="Board options">${ICON.more}</button>
-      </div>
-    </header>
-    <div class="kanban-cols">${board.columns.map(kanbanColumnHtml).join('')}${board.columns.length < KANBAN_MOST_COLUMNS ? `<button class="kanban-add-col" data-action="kanban-add-column">${ICON.plus}<span>Add column</span></button>` : ''}</div>
-    <p class="hint kanban-hint">Drag cards between columns or onto another board. Drag a column by its name bar to reorder. With a card selected, ${ON_MAC ? '⌥' : 'Alt'} and the arrow keys move it.</p>
-  </div>`;
+  // A redraw keeps what is being typed: a board or column name, and an open Add card box.
+  const typing = active?.dataset.kanbanName ? { value: active.value, start: active.selectionStart, end: active.selectionEnd } : null;
+  const composers = [...app.querySelectorAll('.kanban-composer')].map((form) => {
+    const text = form.querySelector('textarea');
+    return { column: form.dataset.composer, text: text.value, start: text.selectionStart, end: text.selectionEnd, focus: text === active };
+  });
+  kanban.redrawing = true;
+  try {
+    app.innerHTML = `<div class="kanban-page">
+      <header class="kanban-head">
+        <nav class="kanban-tabs" aria-label="Boards">${kanbanTabsHtml()}</nav>
+        <div class="kanban-title-row">
+          <input class="kanban-title" data-kanban-name="board" value="${esc(board.name)}" maxlength="80" aria-label="Board name" spellcheck="false" autocomplete="off">
+          <button class="icon-btn" data-action="kanban-board-menu" aria-label="Board options" title="Board options">${ICON.more}</button>
+        </div>
+      </header>
+      <div class="kanban-cols">${board.columns.map(kanbanColumnHtml).join('')}${board.columns.length < KANBAN_MOST_COLUMNS ? `<button class="kanban-add-col" data-action="kanban-add-column">${ICON.plus}<span>Add column</span></button>` : ''}</div>
+      <p class="hint kanban-hint">Drag cards between columns or onto another board. Drag a column by its name bar to reorder. With a card selected, ${ON_MAC ? '⌥' : 'Alt'} and the arrow keys move it.</p>
+    </div>`;
+  } finally {
+    kanban.redrawing = false;
+  }
   const next = app.querySelector('.kanban-cols');
   if (next) next.scrollLeft = scrolled;
-  if (focus) app.querySelector(focus)?.focus({ preventScroll: true });
+  for (const open of composers) {
+    if (board.columns.some((c) => c.id === open.column)) kanbanComposer(open.column, open);
+  }
+  const again = focus && app.querySelector(focus);
+  if (again) {
+    if (typing) {
+      again.value = typing.value;
+      if (typing.start !== null) again.setSelectionRange(typing.start, typing.end);
+    }
+    again.focus({ preventScroll: true });
+  }
 }
 
 function kanbanCounts() {
@@ -222,7 +243,9 @@ async function kanbanRename(input) {
 
 document.addEventListener('change', (e) => {
   const input = e.target.closest?.('[data-kanban-name]');
-  if (input && state.view === 'boards') kanbanRename(input).catch(fail);
+  // A redraw removing a field being typed in fires its change first; the typing lives on
+  // in the new field, so that change saves nothing.
+  if (input && !kanban.redrawing && state.view === 'boards') kanbanRename(input).catch(fail);
 });
 
 async function kanbanAddColumn() {
@@ -240,15 +263,18 @@ async function kanbanAddColumn() {
   }
 }
 
+// True when the columns were saved; a failure is shown and the board redrawn as it was.
 async function kanbanSaveColumns(columns, moveTo = null) {
   try {
     await kanbanSaveBoard({ columns: columns.map((c) => ({ id: c.id, name: c.name })), ...(moveTo ? { move_to: moveTo } : {}) });
-    await kanbanRefresh();
   } catch (e) {
     if (e instanceof Locked) throw e;
     toast(e.message, { bad: true });
     drawKanban();
+    return false;
   }
+  await kanbanRefresh();
+  return true;
 }
 
 function kanbanColumnMenu(id) {
@@ -289,7 +315,8 @@ function kanbanColumnMenu(id) {
     } else if (what === 'delete') {
       const target = $('#kanban-move-to', box)?.value || null;
       closeSheet();
-      kanbanSaveColumns(columns.filter((c) => c.id !== id), target).then(() => {
+      kanbanSaveColumns(columns.filter((c) => c.id !== id), target).then((saved) => {
+        if (!saved) return;
         toast(count ? `Deleted “${column.name}” and moved its cards to “${kanbanColumn(target)?.name || 'another column'}”` : `Deleted “${column.name}”`);
       }).catch(fail);
     }
@@ -341,12 +368,15 @@ async function kanbanDeleteBoard(board) {
   go(left.length ? `#/boards/${enc(left[0].id)}` : '#/boards', { replace: true });
 }
 
-function kanbanComposer(columnId) {
+function kanbanComposer(columnId, { text: typed = '', start = null, end = null, focus = true } = {}) {
   const column = app.querySelector(`.kanban-col[data-col="${CSS.escape(columnId)}"]`);
   const button = column?.querySelector('.kanban-add-card');
-  if (!button) return;
+  if (!button || !kanban.board) return;
+  // Queued cards go to the board they were typed on, even if another is open by then.
+  const boardId = kanban.board.id;
   const form = document.createElement('div');
   form.className = 'kanban-composer';
+  form.dataset.composer = columnId;
   form.innerHTML = `<textarea class="set-input" rows="2" maxlength="300" placeholder="What needs doing?" aria-label="New card title"></textarea><div class="kanban-composer-row"><button type="button" class="btn sm primary" data-kanban="add">Add card</button><button type="button" class="btn sm plain" data-kanban="cancel">Cancel</button></div>`;
   button.replaceWith(form);
   const text = form.querySelector('textarea');
@@ -360,14 +390,18 @@ function kanbanComposer(columnId) {
   };
   const post = async (title) => {
     try {
-      const card = await api(`/api/boards/${enc(kanban.board.id)}/cards`, { method: 'POST', body: { title, column: columnId } });
-      if (kanban.board?.id !== card.board || !column.isConnected) return;
+      const card = await api(`/api/boards/${enc(boardId)}/cards`, { method: 'POST', body: { title, column: columnId } });
+      const tab = kanban.boards.find((b) => b.id === boardId);
+      if (kanban.board?.id !== boardId) { if (tab) tab.cards = (tab.cards || 0) + 1; return; }
+      if (kanbanCard(card.id)) return;
       kanban.cards.push(card);
-      column.querySelector('.kanban-cards').insertAdjacentHTML('beforeend', kanbanCardHtml(card));
+      // Look the list up now: a redraw since the card was typed replaces it.
+      app.querySelector(`.kanban-cards[data-col="${CSS.escape(columnId)}"]`)?.insertAdjacentHTML('beforeend', kanbanCardHtml(card));
       kanbanCounts();
     } catch (e) {
       if (e instanceof Locked) throw e;
-      if (form.isConnected && !text.value.trim()) text.value = title;
+      const open = app.querySelector(`.kanban-composer[data-composer="${CSS.escape(columnId)}"] textarea`);
+      if (kanban.board?.id === boardId && open && !open.value.trim()) open.value = title;
       toast(e.message, { bad: true });
     }
   };
@@ -390,9 +424,13 @@ function kanbanComposer(columnId) {
     else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
   });
   form.addEventListener('focusout', (e) => {
-    if (!form.contains(e.relatedTarget) && !text.value.trim() && !waiting) setTimeout(() => { if (!form.contains(document.activeElement)) close(); }, 0);
+    if (!form.contains(e.relatedTarget) && !text.value.trim() && !waiting) setTimeout(() => { if (form.isConnected && !form.contains(document.activeElement)) close(); }, 0);
   });
-  text.focus();
+  text.value = typed;
+  if (focus) {
+    text.focus();
+    if (start !== null) text.setSelectionRange(start, end);
+  }
 }
 
 function kanbanCardSheet(id) {
