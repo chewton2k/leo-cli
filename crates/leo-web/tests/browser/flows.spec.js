@@ -211,8 +211,9 @@ test('the title placeholder sits behind the cursor and comes back when the title
   expect(await title.evaluate((el) => el.innerHTML)).toBe('');
 });
 
-test('a tap on any checkbox ticks it and saves, without opening the line', async ({ page }) => {
-  const body = ['- [ ] dash', '* [ ] star', '+ [ ] plus', '1. [ ] numbered', '- [ ] parent', '  - [ ] nested', '- [x] done', '- [ ]', '-   [ ] wide', '', 'Plain line'].join('\n');
+test('a tap on any checkbox ticks it and saves without moving the note or opening the line', async ({ page }) => {
+  const prefix = 'Reading above the checklist.\n\n'.repeat(100);
+  const body = prefix + ['- [ ] dash', '* [ ] star', '+ [ ] plus', '1. [ ] numbered', '- [ ] parent', '  - [ ] nested', '- [x] done', '- [ ]', '-   [ ] wide', '', 'Plain line'].join('\n');
   const note = await (await page.request.post('/api/notes', { data: { title: `Ticks ${test.info().project.name}`, body } })).json();
   await page.goto(`/#/n/${note.id}`);
   const boxes = page.locator('.doc input[data-box]');
@@ -220,12 +221,16 @@ test('a tap on any checkbox ticks it and saves, without opening the line', async
   for (let i = 0; i < 9; i++) {
     const box = boxes.nth(i);
     const was = await box.isChecked();
+    await box.scrollIntoViewIfNeeded();
+    const before = await page.evaluate(() => scrollY);
     await box.click();
     await expect(boxes.nth(i), `box ${i + 1} toggles`).toBeChecked({ checked: !was });
+    await expect(box).toBeFocused();
+    expect(Math.abs(await page.evaluate(() => scrollY) - before)).toBeLessThanOrEqual(1);
     await expect(page.locator('.doc textarea')).toHaveCount(0);
   }
   await expect.poll(async () => (await (await page.request.get(`/api/notes/${note.id}`)).json()).body, { timeout: 5000 })
-    .toBe(['- [x] dash', '* [x] star', '+ [x] plus', '1. [x] numbered', '- [x] parent', '  - [x] nested', '- [ ] done', '- [x]', '-   [x] wide', '', 'Plain line'].join('\n'));
+    .toBe(prefix + ['- [x] dash', '* [x] star', '+ [x] plus', '1. [x] numbered', '- [x] parent', '  - [x] nested', '- [ ] done', '- [x]', '-   [x] wide', '', 'Plain line'].join('\n'));
   await page.locator('.doc .task-item', { hasText: 'dash' }).locator('span').click();
   await expect(page.locator('.doc textarea')).toHaveCount(1);
 });
@@ -4065,10 +4070,11 @@ test.describe('passages', () => {
     expect((await (await page.request.get(`/api/notes/${note.id}`)).json()).body).toBe('Intro line\n\nA binary heap keeps the minimum at the root.\n\nLast line');
   });
 
-  test('the toolbar asks about the selection too, and says so when nothing is selected', async ({ page }) => {
+  test('the selection shortcut explains when nothing is selected without a bottom Ask button', async ({ page }) => {
     const note = await (await page.request.post('/api/notes', { data: { title: 'Toolbar ask', body: 'Only line here' } })).json();
     await page.goto(`/#/n/${note.id}`);
-    await page.locator('[data-action="ask-selection"]').click();
+    await expect(page.locator('nav.actions [data-action="ask-selection"]')).toHaveCount(0);
+    await page.keyboard.press('ControlOrMeta+Shift+e');
     await expect(page.locator('.toast')).toContainText('Select some text in the note first');
   });
 
@@ -4168,7 +4174,7 @@ test.describe('reading', () => {
     const note = await (await page.request.post('/api/notes', { data: { title: 'Long read', body } })).json();
     await page.goto(`/#/n/${note.id}`);
     await expect(page.locator('#doc .blk').first()).toBeVisible();
-    await page.mouse.move(200, 300);
+    await page.locator('#doc .blk').first().hover();
     await page.mouse.wheel(0, 2400);
     await expect.poll(async () => (await (await page.request.get(`/api/notes/${note.id}/reading`)).json()).anchor, { timeout: 8000 }).not.toBeNull();
     const saved = (await (await page.request.get(`/api/notes/${note.id}/reading`)).json()).anchor;
@@ -5645,9 +5651,9 @@ test('a picture in a note can be resized by dragging its corner, and keeps that 
 
 test('notes read wide by default, and Settings can make them comfortable or full width', async ({ page }) => {
   test.skip(test.info().project.name !== 'desktop', 'widths matter on a wide screen');
-  await page.setViewportSize({ width: 1700, height: 900 });
+  await page.setViewportSize({ width: 2000, height: 900 });
   const note = await (await page.request.post('/api/notes', { data: { title: `Wide ${Date.now().toString(36)}`, body: 'A line that should have room to breathe.' } })).json();
-  const width = async () => { await page.goto(`/#/n/${note.id}`); await expect(page.locator('#doc')).toContainText('room to breathe'); return (await page.locator('main').boundingBox()).width; };
+  const width = async () => { await page.goto(`/#/n/${note.id}`); await expect(page.locator('#doc')).toContainText('room to breathe'); return (await page.locator('.note').boundingBox()).width; };
   expect(await width()).toBeCloseTo(980, -1);
   for (const [choice, check] of [['comfortable', (w) => expect(w).toBeCloseTo(760, -1)], ['full', (w) => expect(w).toBeGreaterThan(1200)], ['wide', (w) => expect(w).toBeCloseTo(980, -1)]]) {
     await page.goto('/#/settings');

@@ -54,10 +54,13 @@ reader, seer, meaning, web, room, speech).
   `#/map[/id]`, `#/calendar`, `#/interviews[/chat]`, `#/record[/dir]`,
   `#/settings[/storage]`), `data-action` delegation (`actions.js`). Every
   page bumps `seq`; a slow load whose `seq` changed draws nothing.
-- Notes read wide (2026-10-19, the user's call): `body.on-note main` uses
+- Notes read wide (2026-10-19, the user's call): `.note-columns > .note` uses
   `--note-width`, 980 px by default; Settings → Appearance → Note width picks
   Comfortable (760 px), Wide or Full width, kept per browser in
   `leo-note-width` and set early by `/theme.js` as `html[data-note-width]`.
+  Width checks measure the reading column; its outer wrapper also reserves the
+  outline gutter. Full width fills the remaining column. Reading tests scroll
+  over a note block, independently of the explorer’s own scroll area.
 - Quick Leo (2026-10-19, the user's request): Cmd/Ctrl+J anywhere (Cmd+L
   belongs to the browser's address bar), the sidebar lightning icon, or the
   phone menu opens one line (`sheets.js` `quickLeo`). It works like Spotlight
@@ -148,6 +151,9 @@ reader, seer, meaning, web, room, speech).
   `version` (FNV-1a); 409 → "<title> (conflict from phone)". `saving.js`
   keeps edits that did not reach leo and retries them on the next load.
   Undo: up to `MOST_UNDO` snapshots per note (typing grouped by pauses).
+  Checkbox clicks update the live input and task style without redrawing the
+  document. Finishing another edit resolves the clicked source line after shifts
+  and preserves the checkbox’s viewport position and focus.
   Cmd/Ctrl+A selects the whole note at once, even from inside one line
   (2026-10-19; it used to take a second press).
 - `markdown.js` escapes first, numbers checkboxes exactly like
@@ -203,7 +209,8 @@ reader, seer, meaning, web, room, speech).
   the copied transcripts (POST `uncombine`).
 - Sidebar (`side.js`, ≥1000 px): a 52 px icon rail holds Leo tools, with
   Trash / Storage / Settings pinned below. Buttons retain accessible names,
-  tooltips and active states. The separate explorer shows nested folders and
+  tooltips and active states, with space between controls and unboxed shortcut
+  hints. The separate explorer shows nested folders and
   individual notes. Folder labels and chevrons toggle their children; note rows
   open notes directly. The selected folder scopes New note, Record and imports;
   library cards and breadcrumbs retain folder navigation. The explorer narrows
@@ -325,7 +332,7 @@ reader, seer, meaning, web, room, speech).
 - Steering: messages sent while Felix works are added after the next tool
   step (`steer.rs`). Esc stops an answer, or closes the panel.
 - Files for Felix (`chat_files`, ≤10 per chat, text only, deleted with the
-  chat), passages (Ask Felix on a selection, ⌘⇧E), Add to note
+  chat), passages (Ask Felix on a selection, ⌘⇧E; no bottom Ask button), Add to note
   (`routes/insert.rs`, version-checked, request ids dedupe double presses),
   Save as note, chat history (`chats.rs`, local naming), cost line
   (`spent`), drawings (Mermaid for flows and charts, SVG otherwise).

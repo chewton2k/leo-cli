@@ -30,3 +30,14 @@ test('late onboarding completion cannot close a newer sheet', async () => {
   await pending;
   assert.equal(closed, 0);
 });
+
+test('the note footer keeps its note tools without the bottom Ask button', () => {
+  const core = fs.readFileSync(path.join(__dirname, '../src/web/app/core.js'), 'utf8');
+  const script = core.slice(core.indexOf('function noteActions('), core.indexOf('async function showNote('));
+  const context = { ON_MAC: true, ICON: new Proxy({}, {get: () => '<svg></svg>'}), esc: text => String(text) };
+  vm.createContext(context);
+  vm.runInContext(script, context);
+  const html = context.noteActions('note-id', true);
+  assert.doesNotMatch(html, /data-action="ask-selection"/);
+  for (const name of ['Graph', 'Transcript', 'Tasks', 'Picture', 'Move', 'PDF', 'Delete']) assert.ok(html.includes('>' + name + '<'));
+});

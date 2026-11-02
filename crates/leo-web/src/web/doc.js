@@ -796,14 +796,23 @@
       }
       const box = boxFor(e);
       if (box) {
-        e.preventDefault();
-        const number = Number(box.dataset.box);
+        if (e.target !== box) e.preventDefault();
+        const line = shifted(Number(box.closest('.blk').dataset.start));
+        const top = box.getBoundingClientRect().top;
+        const wasEditing = Boolean(editing);
         stop();
-        const line = ed.boxLine(lines, number);
-        if (line >= 0) {
+        if (Number.isInteger(line) && line >= 0 && line < lines.length && ed.isBox(lines[line])) {
           lines[line] = ed.toggleBox(lines[line]);
           changed();
-          draw();
+          const input = wasEditing ? container.querySelector(`.blk[data-start="${line}"] input[data-box]`) : box;
+          if (input) {
+            const checked = /^\s*(?:[-*+]|\d+[.)]) +\[x\]/.test(lines[line]);
+            input.checked = checked;
+            input.defaultChecked = checked;
+            input.closest('label.task').classList.toggle('done', checked);
+            input.focus({ preventScroll: true });
+            root.scrollBy(0, input.getBoundingClientRect().top - top);
+          }
         }
         return;
       }

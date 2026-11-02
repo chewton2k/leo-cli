@@ -85,6 +85,10 @@ test('sidebar separates icon actions from the explorer and keeps them reachable 
       const railBox = await rail.boundingBox(), explorerBox = await explorer.boundingBox();
       expect(railBox.width).toBeLessThanOrEqual(60);
       expect(railBox.x+railBox.width).toBeLessThanOrEqual(explorerBox.x+1);
+      const search = await rail.getByRole('button',{name:'Search',exact:true}).boundingBox();
+      const quick = await rail.getByRole('button',{name:'Quick Leo',exact:true}).boundingBox();
+      expect(quick.y-search.y-search.height).toBeGreaterThanOrEqual(6);
+      await expect(rail.locator('kbd')).toHaveCount(0);
       for(const label of ['New note','Notes','Ask Felix','Search','Quick Leo','Record','Note from a file','Calendar','Interview practice','Knowledge graph','Trash','Storage','Settings']) {
         const button = rail.getByRole('button',{name:label,exact:true});
         await expect(button).toBeInViewport();
