@@ -6,7 +6,7 @@ const path = require('node:path');
 const home = process.env.LEO_BROWSER_HOME || fs.mkdtempSync(path.join(os.tmpdir(), 'leo-browser-'));
 process.env.LEO_BROWSER_HOME = home;
 module.exports = defineConfig({
-  testMatch: ['flows.spec.js', 'runner-lifecycle.spec.js', 'source-layout.spec.js', 'editor-layout.spec.js', 'sidebar.spec.js', 'tasks-layout.spec.js', 'problem-chooser.spec.js', 'speech-models.spec.js', 'dictation.spec.js', 'settings.spec.js'],
+  testMatch: ['flows.spec.js', 'runner-lifecycle.spec.js', 'source-layout.spec.js', 'editor-layout.spec.js', 'sidebar.spec.js', 'tasks-layout.spec.js', 'problem-chooser.spec.js', 'speech-models.spec.js', 'dictation.spec.js', 'settings.spec.js', 'boards.spec.js'],
   globalTeardown: './teardown.js',
   workers: 1,
   retries: process.env.CI ? 1 : 0,
@@ -20,7 +20,7 @@ module.exports = defineConfig({
   },
   projects: [
     { name: 'desktop', use: { browserName: 'chromium' } },
-    { name: 'webkit', use: { browserName: 'webkit' }, testMatch: ['settings.spec.js', 'speech-models.spec.js', 'dictation.spec.js', 'editor-layout.spec.js', 'sidebar.spec.js'] },
+    { name: 'webkit', use: { browserName: 'webkit' }, testMatch: ['settings.spec.js', 'speech-models.spec.js', 'dictation.spec.js', 'editor-layout.spec.js', 'sidebar.spec.js', 'boards.spec.js'] },
   ],
   webServer: {
     command: 'node server.js',

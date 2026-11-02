@@ -278,6 +278,52 @@ test('on a wide screen the sidebar reaches every place and can be narrowed', asy
   expect((await side.boundingBox()).width).toBe(full);
 });
 
+test('a board keeps its cards in the columns they were dragged to', async ({ page }) => {
+  await goPlace(page, 'boards');
+  await expect(page).toHaveURL(/#\/boards/);
+  const name = `Semester ${test.info().project.name} ${Date.now()}`;
+  await page.locator('[data-action="kanban-new-board"]').first().click();
+  await page.locator('#kanban-board-name').fill(name);
+  await page.locator('#kanban-board-make').click();
+  await expect(page.locator('.kanban-title')).toHaveValue(name);
+  const columns = page.locator('.kanban-col');
+  await expect(columns).toHaveCount(3);
+  expect(await columns.locator('.kanban-col-name').evaluateAll((inputs) => inputs.map((input) => input.value))).toEqual(['To do', 'In progress', 'Done']);
+
+  await columns.nth(0).locator('[data-action="kanban-add-card"]').click();
+  const composer = page.locator('.kanban-composer textarea');
+  for (const title of ['Lab report', 'Problem set 5']) {
+    await composer.fill(title);
+    await composer.press('Enter');
+  }
+  await expect(columns.nth(0).locator('.kanban-card')).toHaveCount(2);
+  await composer.press('Escape');
+
+  await dragBetween(page, columns.nth(0).locator('.kanban-card', { hasText: 'Lab report' }), columns.nth(1).locator('.kanban-cards'));
+  await expect(columns.nth(1).locator('.kanban-card')).toHaveText(['Lab report']);
+  await expect(page.locator('.kanban-ghost')).toHaveCount(0);
+  await expect(page.locator('.scrim')).toHaveCount(0);
+
+  await columns.nth(0).locator('.kanban-card').click();
+  await page.locator('#kanban-card-sub').fill('Chemistry');
+  await page.locator('#kanban-card-description').fill('Questions 1 to 8');
+  await page.locator('.scrim [data-action="close"]').click();
+  await expect(columns.nth(0).locator('.kanban-card-sub')).toHaveText('Chemistry');
+  await expect(columns.nth(0).locator('.kanban-has-text')).toBeVisible();
+
+  await page.reload();
+  await expect(page.locator('.kanban-title')).toHaveValue(name);
+  await expect(page.locator('.kanban-col').nth(1).locator('.kanban-card-title')).toHaveText(['Lab report']);
+  await expect(page.locator('.kanban-col').nth(0).locator('.kanban-card-title')).toHaveText(['Problem set 5']);
+  await page.locator('.kanban-col').nth(0).locator('.kanban-card').click();
+  await expect(page.locator('#kanban-card-description')).toHaveValue('Questions 1 to 8');
+  await page.keyboard.press('Escape');
+
+  const board = (await (await page.request.get('/api/boards')).json()).boards.find((b) => b.name === name);
+  expect(board.cards).toBe(2);
+  expect((await page.request.delete(`/api/boards/${board.id}`)).status()).toBe(200);
+});
+
 test.describe('editing like Obsidian', () => {
   const body = ['First line here', 'Second **bold** line', '- Third item', 'Fourth line'].join('\n');
   async function open(page, tag) {
@@ -2839,6 +2885,17 @@ test.describe('the kinds of bugs that reached people before', () => {
     await call('POST', '/api/trash/restore', { ids: trashed.ids || [made.id] });
     await call('DELETE', `/api/notes/${made.id}`);
     await call('DELETE', `/api/chats/contract-${tag}`);
+    const board = json(await call('POST', '/api/boards', { name: `Contract ${tag}` }));
+    const card = json(await call('POST', `/api/boards/${board.id}/cards`, { title: 'Contract card' }));
+    await call('PATCH', `/api/cards/${card.id}`, { description: 'Details' });
+    await call('POST', `/api/cards/${card.id}/move`, { column: board.columns[1].id, after: null });
+    await call('PATCH', `/api/boards/${board.id}`, { name: `Contract ${tag} renamed` });
+    await call('GET', '/api/boards');
+    await call('GET', `/api/boards/${board.id}`);
+    await call('DELETE', `/api/cards/${card.id}`);
+    const gone = json(await call('DELETE', `/api/boards/${board.id}`));
+    await call('POST', '/api/boards/restore', gone);
+    await call('DELETE', `/api/boards/${board.id}`);
 
     for (const a of answers) {
       expect(a.status, `${a.what} succeeded`).toBeLessThan(300);
