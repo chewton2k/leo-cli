@@ -1,6 +1,7 @@
 pub(crate) mod activity;
 pub(crate) mod assets;
 pub(crate) mod auth;
+pub(crate) mod boards;
 pub(crate) mod combine;
 pub(crate) mod downloads;
 pub(crate) mod felix;

@@ -179,6 +179,12 @@ pub fn request_microphone(app: &tauri::AppHandle) -> anyhow::Result<()> {
         !leo_services::session::mic::disabled(),
         "Microphone capture is disabled in this session."
     );
+    // macOS shows its dialog only once: after a denial a request does nothing,
+    // so the privacy pane is the only place the user can turn Leo back on.
+    #[cfg(target_os = "macos")]
+    if microphone() == "denied" {
+        return open_macos_privacy("Privacy_Microphone");
+    }
     #[cfg(target_os = "macos")]
     app.run_on_main_thread(|| unsafe {
         use objc2_av_foundation::{AVCaptureDevice, AVMediaTypeAudio};
@@ -198,6 +204,21 @@ pub fn request_accessibility(_app: &tauri::AppHandle) -> anyhow::Result<()> {
     #[cfg(target_os = "macos")]
     tauri::async_runtime::block_on(
         tauri_plugin_macos_permissions::request_accessibility_permission(),
+    );
+    Ok(())
+}
+#[cfg(target_os = "macos")]
+fn open_macos_privacy(pane: &str) -> anyhow::Result<()> {
+    let uri = format!("x-apple.systempreferences:com.apple.preference.security?{pane}");
+    let status = leo_core::children::quiet_command("open")
+        .arg(uri)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    anyhow::ensure!(
+        status.is_ok_and(|status| status.success()),
+        "System Settings could not be opened. Open System Settings → Privacy & Security → Microphone and turn on Leo."
     );
     Ok(())
 }
