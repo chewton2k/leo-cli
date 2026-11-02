@@ -235,6 +235,7 @@ async function render() {
   interviewPage?.codeResize?.disconnect();
   clearTimeout(cal.timer);
   if (!/^#\/n\//.test(location.hash)) closeSource();
+  // Plain groups: tests/wording.rs flags a colon right before "settings" (an old command).
   document.body.classList.toggle('on-settings', /^#\/(settings|trash)(\/|$)/.test(location.hash));
   document.body.classList.toggle('on-calendar', /^#\/calendar/.test(location.hash));
   document.body.classList.toggle('on-boards', /^#\/boards(?:\/|$)/.test(location.hash));
