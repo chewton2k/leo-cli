@@ -38,6 +38,11 @@ async function goPlace(page, action) {
     await page.locator('#menu').click();
     return page.locator(`.sheet [data-action="${action}"]`).click();
   }
+  // Trash and Storage live inside Settings on a wide screen.
+  if (action === 'trash' || action === 'storage') {
+    await page.locator('#side [data-action="settings"]').click();
+    return page.locator(`.settings-nav a[href="#/settings/${action}"]`).click();
+  }
   await page.locator(`#side [data-action="${action}"]`).click();
 }
 
@@ -248,11 +253,21 @@ test('on a wide screen the sidebar reaches every place and can be narrowed', asy
   await expect(side).toBeVisible();
   await expect(page.locator('#menu')).toBeHidden();
   await expect(side.locator('[data-action="home"].side-row')).toHaveAttribute('aria-current', 'page');
-  for (const [action, url] of [['map', /#\/map$/], ['trash', /#\/trash$/], ['storage', /#\/settings\/storage$/], ['settings', /#\/settings$/]]) {
+  for (const [action, url] of [['map', /#\/map$/], ['settings', /#\/settings$/]]) {
     await side.locator(`[data-action="${action}"]`).click();
     await expect(page).toHaveURL(url);
     await expect(side.locator(`[data-action="${action}"]`)).toHaveAttribute('aria-current', 'page');
   }
+  // Trash and Storage moved into Settings' own sidebar; the rail keeps Settings selected there.
+  await expect(side.locator('[data-action="trash"], [data-action="storage"]')).toHaveCount(0);
+  for (const section of ['trash', 'storage']) {
+    await page.locator(`.settings-nav a[href="#/settings/${section}"]`).click();
+    await expect(page).toHaveURL(new RegExp(`#/settings/${section}$`));
+    await expect(page.locator('.settings-nav a[aria-current="page"]')).toHaveAttribute('href', `#/settings/${section}`);
+    await expect(side.locator('[data-action="settings"]')).toHaveAttribute('aria-current', 'page');
+  }
+  await side.locator('[data-action="settings"]').click();
+  await expect(page).toHaveURL(/#\/settings$/);
   await side.locator('[data-action="open-folder"][data-dir="side-course"]').click();
   await expect(side.locator('[data-action="open-folder"][data-dir="side-course"]')).toHaveAttribute('aria-expanded', 'true');
   await expect(page).toHaveURL(/#\/settings$/);
@@ -3707,8 +3722,8 @@ test('dropdowns and nested disclosures share real icons and keep their native co
     return Math.abs(icon.y + icon.height / 2 - box.y - box.height / 2);
   }));
   expect(align.every(offset => offset < 1)).toBe(true);
-  await page.goto('/#/settings/writing');
-  await expect(page.locator('[data-task-card="writing"]')).toBeVisible();
+  await page.goto('/#/settings/backup');
+  await expect(page.locator('select[data-set="auto_push"]')).toBeVisible();
   await inspect();
   await page.goto('/#/settings/storage');
   await expect(page.locator('select[data-keep="trash_days"]')).toBeVisible();
