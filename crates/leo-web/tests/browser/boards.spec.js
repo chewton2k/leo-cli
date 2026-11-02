@@ -61,7 +61,7 @@ async function boardsFixture(browser, run, { width = 1280, height = 800 } = {}) 
       throw new Error('No fake for '+method+' '+url);
     }
     ${read('app/boards.js')}
-    const actions={'kanban-new-board':()=>kanbanNewBoard(),'kanban-board-menu':()=>kanbanBoardMenu(),'kanban-column-menu':el=>kanbanColumnMenu(el.dataset.col),'kanban-add-card':el=>kanbanComposer(el.dataset.col),'kanban-add-column':()=>kanbanAddColumn(),'kanban-open-card':el=>kanbanCardSheet(el.dataset.card),close:()=>closeSheet()};
+    const actions={'kanban-new-board':()=>kanbanNewBoard(),'kanban-board-menu':()=>kanbanBoardMenu(),'kanban-column-menu':el=>kanbanColumnMenu(el.dataset.col),'kanban-add-card':el=>kanbanComposer(el.dataset.col),'kanban-add-column':()=>kanbanAddColumn(),'kanban-open-card':el=>kanbanCardPanel(el.dataset.card),close:()=>closeSheet()};
     document.addEventListener('click',e=>{const el=e.target.closest('[data-action]');if(!el||!actions[el.dataset.action])return;e.preventDefault();Promise.resolve(actions[el.dataset.action](el)).catch(fail);});
     document.addEventListener('keydown',e=>{if(e.key==='Escape'&&$('.scrim'))closeSheet();});
     async function route(){closeSheet(true);const m=location.hash.match(/^#\\/boards\\/?(.*)$/);if(!m){leaveBoards();state={view:'other'};app.innerHTML='<p id="elsewhere">Elsewhere</p>';return;}await showBoards(decodeURIComponent(m[1]));}
@@ -180,7 +180,9 @@ test('cards are added, opened, edited, moved by keyboard and deleted with undo',
     await expect(page.locator('[data-count-col="ktodo00001"]')).toHaveText('4');
 
     await page.locator('[data-card="cessay0001"]').click();
-    const sheet = page.locator('.scrim .kanban-sheet');
+    const sheet = page.locator('#kanban-panel .kanban-sheet');
+    await expect(page.locator('.scrim')).toHaveCount(0);
+    await expect(page.locator('[data-card="cessay0001"]')).toHaveClass(/\bopen\b/);
     await expect(sheet.locator('#kanban-card-title')).toHaveValue('Write essay');
     await expect(sheet.locator('#kanban-card-description')).toHaveValue('Outline first');
     await sheet.locator('#kanban-card-sub').fill('History · draft 2');
@@ -190,7 +192,8 @@ test('cards are added, opened, edited, moved by keyboard and deleted with undo',
     await sheet.locator('#kanban-card-column').selectOption({ label: 'In progress' });
     await expect.poll(() => page.evaluate(() => window.db.cards.find(c => c.id === 'cessay0001'))).toMatchObject({ column: 'kdoing0001', subheading: 'History · draft 2', description: 'Outline first\nThen write', priority: 'medium' });
     await page.keyboard.press('Escape');
-    await expect(page.locator('.scrim')).toHaveCount(0);
+    await expect(page.locator('#kanban-panel')).toBeHidden();
+    await expect(page.locator('[data-card="cessay0001"]')).toBeFocused();
     await expect(page.locator('[data-card="cessay0001"] .kanban-card-sub')).toHaveText('History · draft 2');
     await expect(page.locator('[data-card="cessay0001"] .kanban-priority.medium')).toBeVisible();
 
@@ -204,9 +207,10 @@ test('cards are added, opened, edited, moved by keyboard and deleted with undo',
     await page.keyboard.press('Alt+ArrowUp');
     await expect.poll(() => titles(page, 'kdoing0001')).toEqual(['Write essay', 'Email tutor <b>now</b>']);
     await page.keyboard.press('Enter');
-    await expect(page.locator('.scrim .kanban-sheet')).toBeVisible();
+    await expect(page.locator('#kanban-panel .kanban-sheet')).toBeVisible();
 
-    await page.locator('.scrim [data-kanban="delete"]').click();
+    await page.locator('#kanban-panel [data-kanban="delete"]').click();
+    await expect(page.locator('#kanban-panel')).toBeHidden();
     await expect(page.locator('[data-card="cessay0001"]')).toHaveCount(0);
     await expect(page.locator('.toast')).toContainText('Deleted “Write essay”');
     await page.locator('.toast button').click();

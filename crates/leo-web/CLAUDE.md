@@ -814,8 +814,14 @@ JS and CSS use the `kanban` prefix: `board` already names the interview whiteboa
   open for the next card (adds are queued so fast typing loses nothing), + Add
   column, ⋯ sheets for a column (rename, move left/right, delete moving its cards)
   and the board (rename, add column, delete with a second press, Undo). A card opens
-  a sheet: title, subheading, status, priority (`library-views`), board, description
-  (autosave after 600 ms, on blur, and before Escape/scrim closes it), Delete with Undo.
+  in a side panel beside the board like a note (2026-11-02, the user's call: no modal;
+  `#kanban-panel`, kept across board redraws, a full-screen layer under 760 px): title,
+  subheading, status, priority (`library-views`), board, a borderless description
+  (autosave after 600 ms, on blur, and before Escape or × closes it), Delete with Undo.
+  Columns share one height and fill the width (flex 1, at least 260 px; Add column is a
+  small + tile), cards are roomier, and each column takes a quiet colour from its name
+  (`kanbanTone`: to do blue, in progress amber, done green, blocked red, others by
+  place) shown as a dot, its count and a 3% tint. No help line under the board.
 - Dragging is pointer events, not HTML drag and drop: mouse/pen lift past 5 px,
   touch after a 300 ms hold (a swipe still scrolls). The real card is the dashed
   placeholder moving through the lists; a copy follows the pointer; the board

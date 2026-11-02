@@ -322,7 +322,8 @@ test('a board keeps its cards in the columns they were dragged to', async ({ pag
   await columns.nth(0).locator('.kanban-card').click();
   await page.locator('#kanban-card-sub').fill('Chemistry');
   await page.locator('#kanban-card-description').fill('Questions 1 to 8');
-  await page.locator('.scrim [data-action="close"]').click();
+  await page.locator('#kanban-panel [data-kanban="close"]').click();
+  await expect(page.locator('#kanban-panel')).toBeHidden();
   await expect(columns.nth(0).locator('.kanban-card-sub')).toHaveText('Chemistry');
   await expect(columns.nth(0).locator('.kanban-has-text')).toBeVisible();
 
