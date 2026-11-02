@@ -9,16 +9,18 @@ function showLocked() {
   );
 }
 
-function sheet(html) {
+// `modal` sheets ignore a click on the backdrop (first-launch setup must not
+// vanish from a stray click); Escape and their own buttons still close them.
+function sheet(html, { modal = false } = {}) {
   closeSheet(true);
   const scrim = document.createElement('div');
   scrim.className = 'scrim';
   scrim.innerHTML = `<div class="sheet" role="dialog" aria-modal="true"><div class="grip"></div>${html}</div>`;
   scrim.addEventListener('click', (e) => {
-    if (e.target === scrim) closeSheet();
+    if (e.target === scrim && !modal) closeSheet();
   });
   document.body.appendChild(scrim);
-  swipeToClose(scrim.querySelector('.sheet'));
+  if (!modal) swipeToClose(scrim.querySelector('.sheet'));
   return scrim;
 }
 
@@ -103,6 +105,7 @@ function closeSheet(now = false) {
 const QUICK_PLACES = [
   { name: 'Notes', hash: '#/', icon: 'note' },
   { name: 'Calendar', hash: '#/calendar', icon: 'calendar' },
+  { name: 'Boards', hash: '#/boards', icon: 'board' },
   { name: 'Interview practice', hash: '#/interviews', icon: 'chat' },
   { name: 'Knowledge graph', hash: '#/map', icon: 'map' },
   { name: 'Record', hash: '#/record', icon: 'mic' },
@@ -293,6 +296,7 @@ function menu() {
     <button class="list-row" data-action="new-folder">${ICON.folderPlus}<span class="grow">New folder${here ? ` in ${esc(folderLabel(here))}` : ''}</span></button>
     <button class="list-row" data-action="interviews">${ICON.chat}<span class="grow">Interview practice</span></button>
     <button class="list-row" data-action="calendar">${ICON.calendar}<span class="grow">Calendar</span>${tasksDueBadge()}</button>
+    <button class="list-row" data-action="boards">${ICON.board}<span class="grow">Boards</span></button>
     <button class="list-row" data-action="map">${ICON.map}<span class="grow">Knowledge graph</span></button>
     <button class="list-row" data-action="settings">${ICON.gear}<span class="grow">Settings</span></button>
     <button class="list-row" data-action="trash">${ICON.trash}<span class="grow">Trash</span></button>

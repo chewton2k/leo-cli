@@ -10,7 +10,7 @@ test('Settings sections keep drafts and selections across redraws in both themes
   const fixture = `const app=document.querySelector('#app'), $=selector=>document.querySelector(selector);
     let seq=0,state={view:'folder'};
     const esc=text=>String(text).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-    const ICON=new Proxy({}, {get:()=>''}), chrome=()=>{}, skeleton=()=>'', svg=()=>'', felix={felix:()=>''}, rel=()=>'', toast=()=>{}, fail=e=>{window.errors.push(e.message)};
+    const ICON=new Proxy({}, {get:()=>'<svg></svg>'}), chrome=()=>{}, skeleton=()=>'', svg=paths=>'<svg>'+paths+'</svg>', felix={felix:()=>''}, rel=()=>'', toast=()=>{}, fail=e=>{window.errors.push(e.message)};
     window.errors=[]; window.leoChat={usageRows:()=>[]};
     const page={tasks:[],backup:{remote:null,auto_push:'quit',options:[{id:'quit',label:'On quit'}]}};
     async function api(url) {
@@ -21,10 +21,14 @@ test('Settings sections keep drafts and selections across redraws in both themes
       if(url==='/api/health') return {sections:[{title:'This app',checks:[{name:'Speech model',state:'missing',fix:'Choose a model.',section:'models'}]}]};
       if(url==='/api/app') return {preferences:{onboarding:[true,true,true],automatic_updates:true,install_on_quit:true},version:'1.2.3',updates:{state:'ready',version:'1.2.4'},paths:{}};
       if(url==='/api/storage') return {total:0,total_label:'0 B',areas:[]};
-      if(url==='/api/keep') return {trash_choices:[],chat_choices:[]};
+      if(url==='/api/keep') return {trash_choices:[],chat_choices:[],trash_days:30};
+      if(url==='/api/trash') return [];
       throw new Error(url);
     }
+    const floating=document.createElement('div'), plural=(n,w)=>n+' '+w+(n===1?'':'s'), empty=(icon,title,text)=>'<div class="empty"><h2>'+title+'</h2><p>'+text+'</p></div>';
+    document.addEventListener('click',e=>{const el=e.target.closest('[data-action="segment-pick"]'); if(el) pickSegment(el);});
     ${read('theme.js')}
+    ${read('app/trash.js')}
     ${read('app/settings-navigation.js')}
     ${read('app/settings.js')}
     ${read('app/storage.js')}
@@ -37,7 +41,7 @@ test('Settings sections keep drafts and selections across redraws in both themes
   const server=http.createServer((req,res)=>{
     if(req.url==='/fixture.js') {res.setHeader('Content-Type','text/javascript; charset=utf-8');return res.end(fixture);}
     if(req.url==='/style.css') {res.setHeader('Content-Type','text/css; charset=utf-8');return res.end(css);}
-    res.setHeader('Content-Type','text/html; charset=utf-8');res.end('<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/style.css"></head><body class="on-settings"><div id="crumbs"></div><div id="app-update-banner" hidden></div><main id="app"></main><script src="/fixture.js"></script></body></html>');
+    res.setHeader('Content-Type','text/html; charset=utf-8');res.end('<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/style.css"></head><body class="on-settings"><header class="bar"><div class="bar-row"><nav class="crumbs" id="crumbs"></nav></div></header><div id="app-update-banner" hidden></div><main id="app"></main><script src="/fixture.js"></script></body></html>');
   });
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   try {
@@ -45,14 +49,47 @@ test('Settings sections keep drafts and selections across redraws in both themes
       const page=await browser.newPage({colorScheme:theme,viewport:{width:900,height:850}});
       await page.goto('http://127.0.0.1:'+server.address().port+'/#/settings/backup');
       await expect(page.locator('#backup-repository')).toBeVisible();
-      await expect(page.locator('.settings-nav a')).toHaveCount(9);
-      for(const name of ['Leo','Your notes','This app']) await expect(page.getByText(name,{exact:true})).toBeVisible();
+      await expect(page.locator('.settings-nav a')).toHaveCount(10);
+      for(const name of ['Leo','Your notes','Data','This app']) await expect(page.locator('.settings-group-title',{hasText:name})).toBeVisible();
+      await expect(page.locator('.settings-nav a svg')).toHaveCount(10);
+      await expect(page.getByRole('heading',{level:1,name:'Backup'})).toBeVisible();
+      // The section list is a sidebar pinned to the left edge that stays put while the page scrolls.
+      const pinned=async()=>page.locator('.settings-nav').evaluate(el=>{const box=el.getBoundingClientRect();return [Math.round(box.left),Math.round(box.top)];});
+      const bar=await page.locator('.bar').evaluate(el=>Math.round(el.getBoundingClientRect().bottom));
+      const banner=await page.locator('#app-update-banner').evaluate(el=>Math.round(el.getBoundingClientRect().bottom));
+      expect(await pinned()).toEqual([0,Math.max(bar,banner)]);
+      await page.locator('.settings-section').evaluate(el=>{el.style.minHeight='3000px';scrollTo(0,600);});
+      expect(await pinned()).toEqual([0,bar]);
+      await page.locator('.settings-section').evaluate(el=>{el.style.minHeight='';scrollTo(0,0);});
       await page.locator('#backup-repository').fill('Personal notes 文字');
       await page.locator('#backup-repository').evaluate(el=>{el.focus();el.setSelectionRange(4,8);});
       await page.evaluate(()=>window.audit.redraw());
       await expect(page.locator('#backup-repository')).toBeFocused();
       expect(await page.locator('#backup-repository').evaluate(el=>[el.value,el.selectionStart,el.selectionEnd])).toEqual(['Personal notes 文字',4,8]);
       await page.getByRole('link',{name:'Dictation',exact:true}).click();
+      // Choices of a few options are a segmented control whose pill slides to the pick; drafts survive redraws.
+      const activation=page.getByRole('radiogroup',{name:'Activation'});
+      await expect(activation.getByRole('radio',{name:'Hold or tap'})).toHaveAttribute('aria-checked','true');
+      await activation.getByRole('radio',{name:'Tap',exact:true}).click();
+      await expect(page.locator('[data-dictation="mode"]')).toHaveValue('tap');
+      await expect(activation.getByRole('radio',{name:'Tap',exact:true})).toHaveAttribute('aria-checked','true');
+      await expect(activation).toHaveAttribute('style',/--at: ?2/);
+      const pill=await activation.locator('.segment-pill').evaluate(el=>new Promise(done=>setTimeout(()=>done(el.getBoundingClientRect()),400)));
+      const tap=await activation.getByRole('radio',{name:'Tap',exact:true}).boundingBox();
+      expect(Math.abs(pill.left-tap.x)).toBeLessThan(1.5);
+      expect(Math.abs(pill.width-tap.width)).toBeLessThan(1.5);
+      await page.keyboard.press('ArrowLeft');
+      await expect(page.locator('[data-dictation="mode"]')).toHaveValue('hold');
+      await expect(activation.getByRole('radio',{name:'Hold',exact:true})).toBeFocused();
+      await page.evaluate(()=>window.audit.redraw());
+      await expect(page.locator('[data-dictation="mode"]')).toHaveValue('hold');
+      await expect(page.getByRole('radiogroup',{name:'Activation'}).getByRole('radio',{name:'Hold',exact:true})).toHaveAttribute('aria-checked','true');
+      // On/off settings are switches, never plain checkboxes.
+      const fillers=page.getByRole('switch',{name:'Remove filler words'});
+      await expect(fillers).not.toBeChecked();
+      await fillers.click();
+      await expect(fillers).toBeChecked();
+      expect(await page.locator('.settings input[type="checkbox"]:not(.switch)').count()).toBe(0);
       const words=page.locator('[data-dictation="custom_words"]');
       await words.fill('Marie Curie\n文字');
       await words.evaluate(el=>{el.focus();el.setSelectionRange(2,7);});
@@ -67,7 +104,10 @@ test('Settings sections keep drafts and selections across redraws in both themes
       await expect(page.getByRole('heading',{name:'About Leo'})).toBeVisible();
       await page.getByRole('link',{name:'Storage',exact:true}).click();
       await expect(page.locator('.settings-nav a[aria-current="page"]')).toHaveAttribute('href','#/settings/storage');
-      await expect(page.getByText('Storage and data',{exact:true})).toBeVisible();
+      await expect(page.getByRole('heading',{level:1,name:'Storage'})).toBeVisible();
+      await page.getByRole('link',{name:'Trash',exact:true}).click();
+      await expect(page.locator('.settings-nav a[aria-current="page"]')).toHaveAttribute('href','#/settings/trash');
+      await expect(page.getByText('The trash is empty',{exact:true})).toBeVisible();
       await page.setViewportSize({width:620,height:850});
       expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
       expect(await page.evaluate(()=>window.errors)).toEqual([]);
@@ -76,20 +116,28 @@ test('Settings sections keep drafts and selections across redraws in both themes
   } finally {server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
 });
 
-test('setup groups permissions with live checkmarks, independent grants and a separate model step', async ({ browser }, testInfo) => {
+test('setup groups permissions with live checkmarks, then offers speech models as cards', async ({ browser }, testInfo) => {
   const web = path.resolve(__dirname, '../../src/web');
   const read = name => fs.readFileSync(path.join(web, name), 'utf8');
   const css = read('index.html').match(/<style>([\s\S]*?)<\/style>/)[1];
   const sheets = read('app/sheets.js').split('const QUICK_PLACES')[0];
+  const settings = read('app/settings.js');
+  const speechHelpers = settings.slice(settings.indexOf('function speechBytes('), settings.indexOf('function speechModelRow('));
   const fixture = `const app=document.querySelector('#app'), $=selector=>document.querySelector(selector);
     let seq=0,state={view:'folder'};
-    const LEAVE_MS=180, ICON={check:'<svg aria-hidden="true" viewBox="0 0 24 24"><path d="m5 12 4 4 10-10" fill="none" stroke="currentColor"/></svg>'};
+    const LEAVE_MS=180, ICON={check:'<svg aria-hidden="true" viewBox="0 0 24 24"><path d="m5 12 4 4 10-10" fill="none" stroke="currentColor"/></svg>',mic:'<svg aria-hidden="true" viewBox="0 0 24 24"></svg>',access:'<svg aria-hidden="true" viewBox="0 0 24 24"></svg>'};
     const esc=text=>String(text).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
     window.errors=[]; const fail=e=>window.errors.push(e.message);
     let native, pending=null, rejectStep=null;
-    const calls=[];
+    const calls=[], speechCalls=[];
+    const model=(id,name,recommended,extra={})=>({id,name,description:name+' runs on this computer.',languages:['en'],size:200*1048576,recommended,speed:8,accuracy:94,accuracy_measured:true,benchmark_language:'en',streaming:true,...extra});
+    let speech;
+    ${speechHelpers}
     async function api(url,options={}) {
-      if(url==='/api/speech') return {models:[]};
+      if(url==='/api/speech') {
+        if(options.body) { speechCalls.push(options.body); if(options.body.action==='download') speech.models.find(m=>m.id===options.body.id).progress={state:'downloading',bytes:0,total:200*1048576}; }
+        return structuredClone(speech);
+      }
       if(url!=='/api/app') throw new Error(url);
       const change=options.body;
       if(change) {
@@ -108,16 +156,19 @@ test('setup groups permissions with live checkmarks, independent grants and a se
     document.addEventListener('click',event=>{
       const el=event.target.closest('[data-action]'); if(!el) return;
       if(el.dataset.action==='app-command') appChange({action:el.dataset.appAction}).catch(fail);
-      if(el.dataset.action==='onboarding-next') finishOnboarding(el).catch(fail);
+      const run={'onboarding-next':finishOnboarding,'onboarding-skip':skipOnboarding,'onboarding-back':onboardingBack,'onboarding-pick':pickOnboardingModel,'onboarding-models':showOnboardingModels,'onboarding-model':onboardingModel}[el.dataset.action];
+      if(run) Promise.resolve(run(el)).catch(fail);
     });
     window.audit={
       start(platform='macos',flags=[false,false,false]) {
-        closeSheet(true); calls.length=0; rejectStep=null;
+        closeSheet(true); calls.length=0; speechCalls.length=0; rejectStep=null; onboardingChoice=''; onboardingAll=false;
+        speech={models:[model('base','Base English',true),model('small','Small English',true,{verified:true,downloaded:true}),model('large','Large multilingual',false,{languages:['en','fr']})]};
         native={platform,preferences:{onboarding:flags},permissions:{microphone:'not_requested',accessibility:false},updates:{}};
         desktopApp=structuredClone(native); maybeOnboarding(true);
       },
       grant:async (permission,value)=>{native.permissions[permission]=value; await pollAppStatus(appPollGeneration);},
-      calls:()=>calls, flags:()=>native.preferences.onboarding,
+      calls:()=>calls, speechCalls:()=>speechCalls, flags:()=>native.preferences.onboarding,
+      progress:bytes=>{speech.models[0].progress={state:'downloading',bytes,total:200*1048576};},
       reject:step=>{rejectStep=step;},
       hold:()=>{pending=new Promise(resolve=>window.release=()=>{pending=null;resolve();});},
       replace:()=>{closeSheet(true);sheet('<h3>Another sheet</h3>');}
@@ -134,6 +185,8 @@ test('setup groups permissions with live checkmarks, independent grants and a se
     await page.goto('http://127.0.0.1:'+server.address().port);
     for(const [theme,order] of [['light',['microphone','accessibility']],['dark',['accessibility','microphone']]]) {
       await page.evaluate(theme=>{document.documentElement.dataset.theme=theme;audit.start();},theme);
+      await expect(page.getByRole('list',{name:'Setup steps'})).toBeVisible();
+      await expect(page.locator('[aria-current="step"]')).toContainText('Access');
       await expect(page.getByRole('button',{name:'Allow microphone',exact:true})).toBeVisible();
       await expect(page.getByRole('button',{name:'Allow Accessibility',exact:true})).toBeVisible();
       const next = page.getByRole('button',{name:'Continue',exact:true});
@@ -144,43 +197,92 @@ test('setup groups permissions with live checkmarks, independent grants and a se
         const descriptionWidth = (await row.locator('.grow').boundingBox()).width;
         expect((await button.boundingBox()).height).toBeLessThanOrEqual(40);
         await button.click();
-        await expect(row.locator('[role="status"]')).not.toContainText('Allowed');
+        await expect(row.locator('[role="status"]')).toBeHidden();
         await page.evaluate(permission=>audit.grant(permission,permission==='microphone'?'allowed':true),permission);
         await expect(row.locator('[role="status"]')).toContainText('Allowed');
         await expect(row.locator('[role="status"] svg')).toHaveCount(1);
+        await expect(row).toHaveClass(/allowed/);
         await expect(button).toBeHidden();
         expect(Math.abs((await row.locator('.grow').boundingBox()).width-descriptionWidth)).toBeLessThanOrEqual(1);
+        // The microphone is what Continue needs; Accessibility only adds pasting.
         if(permission===order[0]) {
-          await expect(next).toBeDisabled();
+          if(permission==='microphone') await expect(next).toBeEnabled(); else await expect(next).toBeDisabled();
           await page.screenshot({path:testInfo.outputPath('permissions-'+theme+'.png')});
         }
       }
+      // A stray click on the backdrop must not dismiss setup.
+      await page.mouse.click(4,4);
+      await expect(page.locator('.scrim')).toHaveCount(1);
       await expect(next).toBeEnabled();
       await next.click();
       await expect(page.getByRole('heading',{name:'Choose a speech model'})).toBeVisible();
+      await expect(page.locator('[aria-current="step"]')).toContainText('Speech model');
       expect(await page.evaluate(()=>audit.flags())).toEqual([true,true,false]);
+      // Recommended models arrive as cards; the in-use or recommended one is chosen.
+      const cards = page.locator('.onboarding-model');
+      await expect(cards).toHaveCount(2);
+      await expect(cards.first()).toHaveAttribute('aria-pressed','true');
+      await expect(cards.first().locator('meter')).toHaveCount(2);
+      await expect(page.getByRole('button',{name:'Download · 200 MB'})).toBeVisible();
+      await page.getByRole('button',{name:'All 3',exact:true}).click();
+      await expect(cards).toHaveCount(3);
+      await page.getByRole('button',{name:'Recommended',exact:true}).click();
+      await expect(cards).toHaveCount(2);
+      await cards.nth(1).click();
+      await expect(cards.nth(1)).toHaveAttribute('aria-pressed','true');
+      await expect(cards.first()).toHaveAttribute('aria-pressed','false');
+      await expect(page.getByRole('button',{name:'Use and finish'})).toBeVisible();
+      await cards.first().click();
+      await page.getByRole('button',{name:'Download · 200 MB'}).click();
+      await expect(page.locator('#onboarding-model-progress progress')).toBeVisible();
+      const cancel = page.getByRole('button',{name:'Cancel',exact:true});
+      const cancelHandle = await cancel.elementHandle();
+      await page.evaluate(()=>audit.progress(100*1048576));
+      await expect(page.locator('#onboarding-model-progress progress')).toHaveAttribute('value','50');
+      await expect(cards.first()).toContainText('Downloading 50%');
+      // Polling updates the bar in place, so the Cancel button under the pointer survives.
+      expect(await cancelHandle.evaluate(el=>el.isConnected)).toBe(true);
+      expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+      await page.screenshot({path:testInfo.outputPath('models-'+theme+'.png')});
+      await page.evaluate(()=>{speech.models[0].progress=null;});
+      await page.getByRole('button',{name:'Back',exact:true}).click();
+      await expect(page.getByRole('heading',{name:'Allow access'})).toBeVisible();
+      await next.click();
+      await expect(page.getByRole('heading',{name:'Choose a speech model'})).toBeVisible();
       await page.getByRole('button',{name:'Skip for now'}).click();
       await expect(page.locator('.scrim')).toHaveCount(0);
       expect(await page.evaluate(()=>audit.flags())).toEqual([true,true,true]);
+      expect(await page.evaluate(()=>audit.speechCalls().map(c=>c.action+':'+c.id))).toEqual(['download:base']);
     }
+    // A denied microphone cannot be asked again, so the button goes to System Settings.
+    await page.evaluate(()=>audit.start());
+    await page.evaluate(()=>audit.grant('microphone','denied'));
+    await expect(page.getByRole('button',{name:'Open System Settings for the microphone'})).toBeVisible();
+    await expect(page.locator('[data-onboarding-permission="microphone"] .onboarding-denied')).toBeVisible();
+    await expect(page.getByRole('button',{name:'Continue',exact:true})).toBeDisabled();
+    // Skip setup finishes every step at once.
     await page.evaluate(()=>audit.start('macos',[true,false,false]));
     await expect(page.getByRole('button',{name:'Allow Accessibility',exact:true})).toBeVisible();
-    await page.getByRole('button',{name:'Skip for now'}).click();
-    await expect(page.getByRole('heading',{name:'Choose a speech model'})).toBeVisible();
+    await page.getByRole('button',{name:'Skip setup'}).click();
+    await expect(page.locator('.scrim')).toHaveCount(0);
+    expect(await page.evaluate(()=>audit.flags())).toEqual([true,true,true]);
     await page.evaluate(()=>{audit.start();audit.reject(1);});
-    await page.getByRole('button',{name:'Skip for now'}).click();
+    await page.getByRole('button',{name:'Skip setup'}).click();
     await expect.poll(()=>page.evaluate(()=>window.errors.length)).toBe(1);
     await expect(page.getByRole('button',{name:'Allow Accessibility',exact:true})).toBeVisible();
     await page.evaluate(()=>audit.reject(null));
-    await page.getByRole('button',{name:'Skip for now'}).click();
-    await expect(page.getByRole('heading',{name:'Choose a speech model'})).toBeVisible();
+    await page.getByRole('button',{name:'Skip setup'}).click();
+    await expect(page.locator('.scrim')).toHaveCount(0);
     await page.evaluate(()=>{audit.start();audit.hold();});
-    await page.getByRole('button',{name:'Skip for now'}).click();
+    await page.getByRole('button',{name:'Skip setup'}).click();
     await page.evaluate(()=>{audit.replace();release();});
     await expect(page.getByRole('heading',{name:'Another sheet'})).toBeVisible();
     await page.setViewportSize({width:390,height:844});
     await page.evaluate(()=>audit.start('windows'));
     await expect(page.getByRole('button',{name:'Allow Accessibility',exact:true})).toHaveCount(0);
+    // Windows often cannot say whether the microphone is allowed; that must not block setup.
+    await page.evaluate(()=>audit.grant('microphone','unknown'));
+    await expect(page.getByRole('button',{name:'Continue',exact:true})).toBeEnabled();
     await page.evaluate(()=>audit.grant('microphone','allowed'));
     await expect(page.getByRole('button',{name:'Continue',exact:true})).toBeEnabled();
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);

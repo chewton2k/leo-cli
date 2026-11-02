@@ -5,8 +5,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 function context() {
   const timers = [];
-  const value = { app: { addEventListener() {}, querySelectorAll: () => [] }, esc: text => String(text).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c])), state: { view: 'folder' }, $: () => null, window: {}, document: { activeElement: null }, updateOnboardingPermissions() {}, maybeOnboarding() {}, setTimeout: fn => timers.push(fn), api: async () => ({ preferences: {}, updates: {} }), md: { render: text => String(text).replace(/</g, '&lt;') } };
+  const value = { app: { addEventListener() {}, querySelectorAll: () => [] }, esc: text => String(text).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c])), state: { view: 'folder' }, $: () => null, window: {}, document: { activeElement: null, addEventListener() {} }, updateOnboardingPermissions() {}, maybeOnboarding() {}, setTimeout: fn => timers.push(fn), api: async () => ({ preferences: {}, updates: {} }), md: { render: text => String(text).replace(/</g, '&lt;') } };
   vm.createContext(value);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/web/app/settings-navigation.js'), 'utf8'), value);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/web/app/app-settings.js'), 'utf8'), value);
   return { value, timers };
 }
@@ -25,6 +26,7 @@ test('Updates renders ready, busy and release notes safely with independent defa
   assert.ok(html.includes('Restart to update'));
   assert.ok(html.includes('Finish recording or dictation'));
   assert.ok(html.includes('checked'));
+  assert.equal((html.match(/role="switch"/g) || []).length, 2);
   assert.ok(!html.includes('<script>'));
   assert.ok(html.includes('Accessibility'));
   assert.ok(html.includes('leo update') && html.includes('leo uninstall'));

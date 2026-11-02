@@ -1,0 +1,491 @@
+use std::collections::{HashMap, HashSet};
+
+use axum::extract::{Path, State};
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use axum::Json;
+use chrono::Utc;
+use serde::{Deserialize, Deserializer};
+use serde_json::json;
+
+use crate::boards::{self, Board, Card, ColumnInput, Spot};
+use crate::AppState;
+
+fn present<'de, D, T>(d: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(d).map(Some)
+}
+
+fn error(code: StatusCode, message: &str) -> Response {
+    (code, Json(json!({ "error": message }))).into_response()
+}
+
+fn not_saved() -> Response {
+    error(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "Leo could not save the board. Check that Leo can write to its notes folder, then try again.",
+    )
+}
+
+fn no_board() -> Response {
+    error(StatusCode::NOT_FOUND, "That board is not there any more.")
+}
+
+fn no_card() -> Response {
+    error(StatusCode::NOT_FOUND, "That card is not there any more.")
+}
+
+pub(crate) async fn list_boards(State(state): State<AppState>) -> Response {
+    let all = boards::boards(&state.chats);
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for card in boards::all_cards(&state.chats) {
+        *counts.entry(card.board).or_default() += 1;
+    }
+    let listed: Vec<serde_json::Value> = all
+        .into_iter()
+        .map(|board| {
+            let cards = counts.get(&board.id).copied().unwrap_or(0);
+            let mut value = json!(board);
+            value["cards"] = json!(cards);
+            value
+        })
+        .collect();
+    Json(json!({ "boards": listed })).into_response()
+}
+
+#[derive(Deserialize)]
+pub(crate) struct NewBoard {
+    #[serde(default)]
+    name: String,
+}
+
+pub(crate) async fn create_board(
+    State(state): State<AppState>,
+    Json(body): Json<NewBoard>,
+) -> Response {
+    let name = boards::clean_line(&body.name, boards::MOST_NAME);
+    let _writing = boards::writing();
+    if boards::boards(&state.chats).len() >= boards::MOST_BOARDS {
+        return error(
+            StatusCode::CONFLICT,
+            "Leo keeps up to 100 boards. Delete one you no longer use first.",
+        );
+    }
+    let board = boards::new_board(
+        if name.is_empty() {
+            "New board"
+        } else {
+            name.as_str()
+        },
+        Utc::now(),
+    );
+    if boards::put_board(&state.chats, &board).is_err() {
+        return not_saved();
+    }
+    (StatusCode::CREATED, Json(json!(board))).into_response()
+}
+
+pub(crate) async fn get_board(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    let Some(board) = boards::board(&state.chats, &id) else {
+        return no_board();
+    };
+    let cards = boards::cards_of(&state.chats, &board);
+    Json(json!({ "board": board, "cards": cards })).into_response()
+}
+
+#[derive(Deserialize, Default)]
+pub(crate) struct BoardChange {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    columns: Option<Vec<ColumnInput>>,
+    /// Where the cards of deleted columns go; the first column when missing.
+    #[serde(default)]
+    move_to: Option<String>,
+}
+
+pub(crate) async fn change_board(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(change): Json<BoardChange>,
+) -> Response {
+    let chats = &state.chats;
+    let _writing = boards::writing();
+    let Some(before) = boards::board(chats, &id) else {
+        return no_board();
+    };
+    let mut board = before.clone();
+    if let Some(name) = change.name {
+        let name = boards::clean_line(&name, boards::MOST_NAME);
+        if name.is_empty() {
+            return error(StatusCode::BAD_REQUEST, "Give the board a name.");
+        }
+        board.name = name;
+    }
+    let mut leaving: Option<(String, HashSet<String>)> = None;
+    if let Some(columns) = change.columns {
+        let columns = match boards::clean_columns(columns) {
+            Ok(columns) => columns,
+            Err(message) => return error(StatusCode::BAD_REQUEST, message),
+        };
+        let kept: HashSet<String> = columns.iter().map(|c| c.id.clone()).collect();
+        let removed: HashSet<String> = before
+            .columns
+            .iter()
+            .filter(|c| !kept.contains(&c.id))
+            .map(|c| c.id.clone())
+            .collect();
+        if !removed.is_empty() {
+            let target = match change.move_to {
+                Some(target) if kept.contains(&target) => target,
+                Some(_) => {
+                    return error(
+                        StatusCode::BAD_REQUEST,
+                        "Move the cards to a column that stays.",
+                    )
+                }
+                None => columns[0].id.clone(),
+            };
+            leaving = Some((target, removed));
+        }
+        board.columns = columns;
+    }
+    let cards = boards::cards_of(chats, &before);
+    let now = Utc::now();
+    board.updated_at = now;
+    if boards::put_board(chats, &board).is_err() {
+        return not_saved();
+    }
+    if let Some((target, removed)) = leaving {
+        let moving: Vec<Card> = cards
+            .into_iter()
+            .filter(|c| removed.contains(&c.column))
+            .collect();
+        if boards::append_all(chats, &board, &target, moving, now).is_err() {
+            return not_saved();
+        }
+    }
+    Json(json!(board)).into_response()
+}
+
+pub(crate) async fn delete_board(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    let _writing = boards::writing();
+    let Some(board) = boards::board(&state.chats, &id) else {
+        return no_board();
+    };
+    match boards::remove_board(&state.chats, &board, Utc::now()) {
+        Ok(cards) => Json(json!({ "board": board, "cards": cards })).into_response(),
+        Err(_) => not_saved(),
+    }
+}
+
+#[derive(Deserialize)]
+pub(crate) struct Restore {
+    board: Board,
+    #[serde(default)]
+    cards: Vec<Card>,
+}
+
+/// Undo of a board delete: the board and its cards come back as they were.
+pub(crate) async fn restore_board(
+    State(state): State<AppState>,
+    Json(body): Json<Restore>,
+) -> Response {
+    let chats = &state.chats;
+    let Restore { board, cards } = body;
+    if !boards::valid_id(&board.id) || cards.len() > boards::MOST_CARDS {
+        return error(StatusCode::BAD_REQUEST, "That board cannot be restored.");
+    }
+    let columns = match boards::clean_columns(
+        board
+            .columns
+            .into_iter()
+            .map(|c| ColumnInput {
+                id: Some(c.id),
+                name: c.name,
+            })
+            .collect(),
+    ) {
+        Ok(columns) => columns,
+        Err(message) => return error(StatusCode::BAD_REQUEST, message),
+    };
+    let _writing = boards::writing();
+    if boards::board(chats, &board.id).is_none()
+        && boards::boards(chats).len() >= boards::MOST_BOARDS
+    {
+        return error(
+            StatusCode::CONFLICT,
+            "Leo keeps up to 100 boards. Delete one you no longer use first.",
+        );
+    }
+    let now = Utc::now();
+    let name = boards::clean_line(&board.name, boards::MOST_NAME);
+    let restored = Board {
+        id: board.id,
+        name: if name.is_empty() {
+            "New board".into()
+        } else {
+            name
+        },
+        columns,
+        created_at: board.created_at,
+        updated_at: now,
+        deleted: false,
+    };
+    if boards::put_board(chats, &restored).is_err() {
+        return not_saved();
+    }
+    let first = restored.columns[0].id.clone();
+    for card in cards {
+        if card.board != restored.id || !boards::valid_id(&card.id) {
+            continue;
+        }
+        let Ok(description) = boards::description_of(&card.description) else {
+            continue;
+        };
+        let column = if restored.columns.iter().any(|c| c.id == card.column) {
+            card.column
+        } else {
+            first.clone()
+        };
+        let back = Card {
+            title: boards::clean_line(&card.title, boards::MOST_TITLE),
+            subheading: boards::clean_line(&card.subheading, boards::MOST_SUBHEADING),
+            description,
+            priority: boards::clean_priority(&card.priority),
+            column,
+            rank: if card.rank.is_finite() {
+                card.rank
+            } else {
+                0.0
+            },
+            updated_at: now,
+            deleted: false,
+            ..card
+        };
+        if back.title.is_empty() {
+            continue;
+        }
+        if boards::put_card(chats, &back).is_err() {
+            return not_saved();
+        }
+    }
+    let cards = boards::cards_of(chats, &restored);
+    Json(json!({ "board": restored, "cards": cards })).into_response()
+}
+
+#[derive(Deserialize)]
+pub(crate) struct NewCard {
+    /// Given when Undo brings a deleted card back.
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    column: Option<String>,
+    title: String,
+    #[serde(default)]
+    subheading: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    priority: String,
+    /// Undo puts a card back exactly where it was.
+    #[serde(default)]
+    rank: Option<f64>,
+    /// New cards go to the end of the column unless this is set.
+    #[serde(default)]
+    top: bool,
+}
+
+pub(crate) async fn create_card(
+    State(state): State<AppState>,
+    Path(board_id): Path<String>,
+    Json(body): Json<NewCard>,
+) -> Response {
+    let chats = &state.chats;
+    let title = boards::clean_line(&body.title, boards::MOST_TITLE);
+    if title.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "Give the card a title.");
+    }
+    let description = match boards::description_of(&body.description) {
+        Ok(text) => text,
+        Err(message) => return error(StatusCode::BAD_REQUEST, message),
+    };
+    let id = match body.id {
+        Some(id) if boards::valid_id(&id) && id.starts_with('c') => id,
+        Some(_) => return error(StatusCode::BAD_REQUEST, "That card id is not valid."),
+        None => boards::new_id('c'),
+    };
+    let _writing = boards::writing();
+    let Some(board) = boards::board(chats, &board_id) else {
+        return no_board();
+    };
+    if let Some(existing) = boards::card(chats, &id) {
+        return Json(json!(existing)).into_response();
+    }
+    let column = match body.column {
+        Some(column) if board.columns.iter().any(|c| c.id == column) => column,
+        Some(_) => return error(StatusCode::BAD_REQUEST, "That column is not on this board."),
+        None => board.columns[0].id.clone(),
+    };
+    if boards::all_cards(chats).len() >= boards::MOST_CARDS {
+        return error(
+            StatusCode::CONFLICT,
+            "Leo keeps up to 5,000 cards. Delete finished ones first.",
+        );
+    }
+    let now = Utc::now();
+    let card = Card {
+        id,
+        board: board.id.clone(),
+        column,
+        rank: 0.0,
+        title,
+        subheading: boards::clean_line(&body.subheading, boards::MOST_SUBHEADING),
+        description,
+        priority: boards::clean_priority(&body.priority),
+        created_at: now,
+        updated_at: now,
+        deleted: false,
+    };
+    let saved = match body.rank.filter(|r| r.is_finite()) {
+        Some(rank) => {
+            let card = Card { rank, ..card };
+            boards::put_card(chats, &card).map(|_| card)
+        }
+        None => {
+            let spot = if body.top { Spot::Top } else { Spot::End };
+            boards::settle(chats, &board, card, spot, now)
+        }
+    };
+    match saved {
+        Ok(card) => (StatusCode::CREATED, Json(json!(card))).into_response(),
+        Err(_) => not_saved(),
+    }
+}
+
+#[derive(Deserialize, Default)]
+pub(crate) struct CardChange {
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    subheading: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    priority: Option<String>,
+}
+
+pub(crate) async fn change_card(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(change): Json<CardChange>,
+) -> Response {
+    let chats = &state.chats;
+    let _writing = boards::writing();
+    let Some(mut card) = boards::card(chats, &id) else {
+        return no_card();
+    };
+    if let Some(title) = change.title {
+        let title = boards::clean_line(&title, boards::MOST_TITLE);
+        if title.is_empty() {
+            return error(StatusCode::BAD_REQUEST, "Give the card a title.");
+        }
+        card.title = title;
+    }
+    if let Some(subheading) = change.subheading {
+        card.subheading = boards::clean_line(&subheading, boards::MOST_SUBHEADING);
+    }
+    if let Some(description) = change.description {
+        card.description = match boards::description_of(&description) {
+            Ok(text) => text,
+            Err(message) => return error(StatusCode::BAD_REQUEST, message),
+        };
+    }
+    if let Some(priority) = change.priority {
+        card.priority = boards::clean_priority(&priority);
+    }
+    card.updated_at = Utc::now();
+    if boards::put_card(chats, &card).is_err() {
+        return not_saved();
+    }
+    Json(json!(card)).into_response()
+}
+
+#[derive(Deserialize, Default)]
+pub(crate) struct MoveCard {
+    #[serde(default)]
+    board: Option<String>,
+    #[serde(default)]
+    column: Option<String>,
+    /// Missing: the end of the column. null: the top. An id: just after that card.
+    #[serde(default, deserialize_with = "present")]
+    after: Option<Option<String>>,
+}
+
+pub(crate) async fn move_card(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(change): Json<MoveCard>,
+) -> Response {
+    let chats = &state.chats;
+    let _writing = boards::writing();
+    let Some(mut card) = boards::card(chats, &id) else {
+        return no_card();
+    };
+    let Some(from) = boards::board(chats, &card.board) else {
+        return no_board();
+    };
+    let to = match change.board.as_deref() {
+        Some(other) if other != from.id => match boards::board(chats, other) {
+            Some(board) => board,
+            None => return no_board(),
+        },
+        _ => from.clone(),
+    };
+    let column = match change.column {
+        Some(column) if to.columns.iter().any(|c| c.id == column) => column,
+        Some(_) => return error(StatusCode::BAD_REQUEST, "That column is not on this board."),
+        None if to.id == from.id && to.columns.iter().any(|c| c.id == card.column) => {
+            card.column.clone()
+        }
+        None => {
+            let name = from
+                .columns
+                .iter()
+                .find(|c| c.id == card.column)
+                .map(|c| c.name.as_str());
+            match boards::matching_column(&to, name) {
+                Some(column) => column,
+                None => return no_board(),
+            }
+        }
+    };
+    card.board = to.id.clone();
+    card.column = column;
+    let spot = match &change.after {
+        None => Spot::End,
+        Some(None) => Spot::Top,
+        Some(Some(after)) => Spot::After(after.as_str()),
+    };
+    match boards::settle(chats, &to, card, spot, Utc::now()) {
+        Ok(card) => Json(json!(card)).into_response(),
+        Err(_) => not_saved(),
+    }
+}
+
+pub(crate) async fn delete_card(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    let _writing = boards::writing();
+    let Some(card) = boards::card(&state.chats, &id) else {
+        return no_card();
+    };
+    match boards::remove_card(&state.chats, &card, Utc::now()) {
+        Ok(()) => Json(json!(card)).into_response(),
+        Err(_) => not_saved(),
+    }
+}

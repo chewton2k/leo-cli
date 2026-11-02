@@ -235,8 +235,9 @@ async function render() {
   interviewPage?.codeResize?.disconnect();
   clearTimeout(cal.timer);
   if (!/^#\/n\//.test(location.hash)) closeSource();
-  document.body.classList.toggle('on-settings', /^#\/settings(?:\/|$)/.test(location.hash));
+  document.body.classList.toggle('on-settings', /^#\/(?:settings|trash)(?:\/|$)/.test(location.hash));
   document.body.classList.toggle('on-calendar', /^#\/calendar/.test(location.hash));
+  document.body.classList.toggle('on-boards', /^#\/boards(?:\/|$)/.test(location.hash));
   document.body.classList.toggle('on-interviews', /^#\/interviews(?:\/|$)/.test(location.hash));
   const hash = decodeURI(location.hash || '#/');
   const [, kind, rest = ''] = location.hash.match(/^#\/([a-z]*)\/?(.*)$/) || [null, '', ''];
@@ -249,6 +250,7 @@ async function render() {
   if (kind !== 'map') leaveMap();
   if (kind !== 'n') chat.setContext(null);
   if (kind !== 'record') recorder.leave();
+  if (kind !== 'boards') leaveBoards();
   activity.route = kind;
   drawActivity();
   try {
@@ -259,6 +261,7 @@ async function render() {
     else if (kind === 'trash') await showTrash();
     else if (kind === 'map') await showMap(arg);
     else if (kind === 'calendar') await showCalendar();
+    else if (kind === 'boards') await showBoards(arg);
     else if (kind === 'interviews') await showInterviews(arg);
     else if (kind === 'settings') await showSettings(arg);
     else if (kind === 'record') await showRecord(arg);

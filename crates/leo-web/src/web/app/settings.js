@@ -6,6 +6,8 @@ const TASK_USE = {
 
 async function showSettings(section) {
   section = settingsSection(section);
+  // Trash is a page of notes rather than a setting, so a bare #/settings never reopens it.
+  if (section === 'trash') return showTrash();
   try { localStorage.setItem('leo-settings-section', section); } catch (e) {}
   if (section === 'storage') return showStorage();
   const mine = ++seq;
@@ -180,13 +182,15 @@ function taskCard(t) {
   return `<section class="set-card" data-task-card="${t.task}">
     <header><h3>${TASK_TITLE[t.task]}</h3>${status}</header>
     <p class="hint">${TASK_USE[t.task]}</p>
-    <label class="set-row"><span class="set-label">Provider</span><span class="select-control"><select data-set="provider" data-task="${t.task}">${providers}</select>${ICON.chevron}</span></label>
+    ${t.custom || t.choices.length > 4
+      ? `<label class="set-row"><span class="set-label">Provider</span><span class="select-control"><select data-set="provider" data-task="${t.task}">${providers}</select>${ICON.chevron}</span></label>`
+      : `<div class="set-row"><span class="set-label">Provider</span>${segmented({ label: 'Provider', choices: t.choices.map((c) => [c.id, c.label]), current: t.provider, field: `data-set="provider" data-task="${t.task}"` })}</div>`}
     ${model}${key}${signin}${usage}${note}
     <div class="set-test"><button class="btn plain sm" data-action="test-ai" data-task="${t.task}">Test</button><span class="set-result" id="test-${t.task}"></span></div>
   </section>`;
 }
 
-const THEME_LABELS = { system: 'Match this device', light: 'Light', dark: 'Dark' };
+const THEME_LABELS = { system: 'Match device', light: 'Light', dark: 'Dark' };
 const THEME_ICONS = { system: 'device', light: 'sun', dark: 'moon' };
 
 function themeCard() {
@@ -194,9 +198,9 @@ function themeCard() {
   const felixNow = window.leoTheme.felix();
   return `<section class="set-card">
       <header><h3>Appearance</h3></header>
-      <div class="set-row column"><span class="set-label">Theme</span><div class="choice-cards" role="group" aria-label="Theme">${window.leoTheme.CHOICES.map((choice) => `<button class="choice-card${now === choice ? ' on' : ''}" data-action="theme-pick" data-theme="${choice}" aria-pressed="${now === choice}">${ICON[THEME_ICONS[choice]]}<span>${THEME_LABELS[choice]}</span></button>`).join('')}</div></div>
-      <div class="set-row column"><span class="set-label">Felix</span><div class="choice-cards" role="group" aria-label="Felix">${[['cute', 'Cute'], ['demon', 'Demon']].map(([kind, label]) => `<button class="choice-card felix-choice${felixNow === kind ? ' on' : ''}" data-action="felix-pick" data-felix="${kind}" aria-pressed="${felixNow === kind}">${felix.felix(64, `felix-preview ${kind}-look`)}<span>${label}</span></button>`).join('')}</div></div>
-      <div class="set-row column"><span class="set-label">Note width</span><div class="choice-cards" role="group" aria-label="Note width">${window.leoTheme.WIDTHS.map((width) => `<button class="choice-card${window.leoTheme.noteWidth() === width ? ' on' : ''}" data-action="width-pick" data-width="${width}" aria-pressed="${window.leoTheme.noteWidth() === width}">${svg(WIDTH_ICONS[width])}<span>${WIDTH_LABELS[width]}</span></button>`).join('')}</div></div>
+      <div class="set-row"><span class="set-label">Theme</span>${segmented({ label: 'Theme', action: 'theme-pick', key: 'theme', current: now, choices: window.leoTheme.CHOICES.map((choice) => [choice, THEME_LABELS[choice], ICON[THEME_ICONS[choice]]]) })}</div>
+      <div class="set-row"><span class="set-label">Felix</span>${segmented({ label: 'Felix', action: 'felix-pick', key: 'felix', current: felixNow, choices: [['cute', 'Cute'], ['demon', 'Demon']].map(([kind, label]) => [kind, label, felix.felix(22, `felix-preview ${kind}-look`)]) })}</div>
+      <div class="set-row"><span class="set-label">Note width</span>${segmented({ label: 'Note width', action: 'width-pick', key: 'width', current: window.leoTheme.noteWidth(), choices: window.leoTheme.WIDTHS.map((width) => [width, WIDTH_LABELS[width], svg(WIDTH_ICONS[width])]) })}</div>
       <p class="hint">Kept on this computer. Demon Felix has scary moves of his own, and tickling either one too much has a surprise.</p>
     </section>`;
 }
@@ -208,6 +212,9 @@ function pickTheme(el) {
     button.classList.toggle('on', on);
     button.setAttribute('aria-pressed', String(on));
   }
+  // Callers may pass just { dataset }, so the highlight follows the page's own buttons.
+  const box = document.querySelector('[data-action="theme-pick"]')?.closest('.segmented');
+  if (box) syncSegmented(box);
 }
 
 const WIDTH_LABELS = { comfortable: 'Comfortable', wide: 'Wide', full: 'Full width' };
@@ -224,6 +231,9 @@ function pickWidth(el) {
     button.classList.toggle('on', on);
     button.setAttribute('aria-pressed', String(on));
   }
+  // Callers may pass just { dataset }, so the highlight follows the page's own buttons.
+  const box = document.querySelector('[data-action="width-pick"]')?.closest('.segmented');
+  if (box) syncSegmented(box);
 }
 
 function pickFelix(el) {
@@ -233,6 +243,9 @@ function pickFelix(el) {
     button.classList.toggle('on', on);
     button.setAttribute('aria-pressed', String(on));
   }
+  // Callers may pass just { dataset }, so the highlight follows the page's own buttons.
+  const box = document.querySelector('[data-action="felix-pick"]')?.closest('.segmented');
+  if (box) syncSegmented(box);
 }
 
 function felixUsageCard(page) {
@@ -258,7 +271,7 @@ function backupCard(backup) {
 `;
 }
 function drawSettings(page) {
-  const fields = keepSettingsFields();
+  const fields = keepSettingsFields(), segments = keepSegmented();
   state.settings = page;
   const section = state.section || 'general';
   let content = '';
@@ -271,8 +284,8 @@ function drawSettings(page) {
   else if (section === 'health') content = `<div id="app-health">${healthCards(state.health)}</div>`;
   else if (section === 'updates') content = `<div id="app-updates">${updatesCard(desktopApp)}</div>`;
   else content = '';
-  app.innerHTML = settingsFrame(section, `<div class="settings"><div class="section-title">${esc(settingsTitle(section))}</div>${content}</div>`);
-  restoreSettingsFields(fields);
+  app.innerHTML = settingsFrame(section, `<div class="settings">${content}</div>`);
+  restoreSettingsFields(fields, segments);
 }
 
 async function changeSetting(change) {
@@ -289,7 +302,7 @@ async function changeSetting(change) {
 }
 
 app.addEventListener('change', (e) => {
-  const el = e.target.closest('select[data-set]');
+  const el = e.target.closest('select[data-set],input[data-set]');
   if (!el || state.view !== 'settings') return;
   const change = { set: el.dataset.set, value: el.value };
   if (el.dataset.task) change.task = el.dataset.task;

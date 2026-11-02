@@ -1,4 +1,5 @@
 mod backup;
+mod boards;
 mod browse;
 pub mod calc;
 mod calendar;
@@ -781,6 +782,23 @@ fn router(state: AppState) -> Router {
             axum::routing::patch(routes::tasks::change_task).delete(routes::tasks::delete_task),
         )
         .route("/api/tasks/{id}/ics", get(routes::tasks::task_ics))
+        .route(
+            "/api/boards",
+            get(routes::boards::list_boards).post(routes::boards::create_board),
+        )
+        .route("/api/boards/restore", post(routes::boards::restore_board))
+        .route(
+            "/api/boards/{id}",
+            get(routes::boards::get_board)
+                .patch(routes::boards::change_board)
+                .delete(routes::boards::delete_board),
+        )
+        .route("/api/boards/{id}/cards", post(routes::boards::create_card))
+        .route(
+            "/api/cards/{id}",
+            axum::routing::patch(routes::boards::change_card).delete(routes::boards::delete_card),
+        )
+        .route("/api/cards/{id}/move", post(routes::boards::move_card))
         .route("/api/schedule", get(calendar::schedule))
         .route("/api/search", get(search_notes))
         .route("/api/dirs", get(list_dirs).post(create_dir))

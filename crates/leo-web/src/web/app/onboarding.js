@@ -7,36 +7,76 @@ let onboardingGeneration = 0;
 let onboardingSpeech = null;
 let onboardingChoice = '';
 let onboardingFinishing = false;
+let onboardingBusy = false;
+let onboardingAll = false;
+const ONBOARDING_POLL_MS = 1000;
+const ONBOARDING_STEPS = [['access', 'Access'], ['model', 'Speech model']];
 function onboardingHere(step) { return document.querySelector(`[data-onboarding-step="${step}"]`); }
-function maybeOnboarding(force = false) {
+function onboardingStepper(step) {
+  const at = step === 0 ? 0 : 1;
+  return `<ol class="onboarding-steps" aria-label="Setup steps">${ONBOARDING_STEPS.map(([id, label], index) => `<li class="${index < at ? 'done' : index === at ? 'on' : ''}"${index === at ? ' aria-current="step"' : ''}><span class="onboarding-step-dot">${index < at ? ICON.check : index + 1}</span>${label}</li>`).join('')}</ol>`;
+}
+// What each permission row shows. A denied microphone cannot be asked again on
+// macOS (the system ignores a second request), so its button opens Settings.
+function onboardingPermissionState(permission) {
+  if (permission === 'microphone') {
+    const value = desktopApp?.permissions?.microphone;
+    return value === 'allowed' ? 'allowed' : value === 'denied' ? 'denied' : value === 'unavailable' ? 'unavailable' : 'ask';
+  }
+  return desktopApp?.platform === 'windows' || desktopApp?.permissions?.accessibility === true ? 'allowed' : 'ask';
+}
+// Continue needs the microphone (or a microphone state the system will not
+// report); Accessibility only adds automatic pasting, so it stays optional.
+function onboardingCanContinue() {
+  const microphone = desktopApp?.permissions?.microphone;
+  return microphone === 'allowed' || microphone === 'unavailable' || microphone === 'unknown';
+}
+function onboardingPermissionRow(permission, icon, name, why) {
+  return `<div class="set-row onboarding-permission" data-onboarding-permission="${permission}"><span class="onboarding-icon">${icon}</span><div class="grow"><strong>${name}</strong><p class="hint">${why}</p><p class="hint onboarding-denied" hidden>Leo is turned off in System Settings. Turn it on there, then come back.</p></div><div class="onboarding-permission-action"><button class="btn primary sm" data-action="app-command" data-app-action="${permission}">Allow</button><span role="status" class="set-status" hidden></span></div></div>`;
+}
+function onboardingPermissionsPage() {
+  const windows = desktopApp.platform === 'windows';
+  return `<section class="set-card onboarding-card">${onboardingPermissionRow('microphone', ICON.mic, 'Microphone', 'For dictation and recording. Leo opens it only while you capture speech.')}${windows ? '' : onboardingPermissionRow('accessibility', ICON.access, 'Accessibility', 'Pastes dictated words into the app you are using. Without it, you paste from the clipboard yourself.')}</section>`;
+}
+function maybeOnboarding(force = false, only = null) {
   if (!desktopApp || !desktopApp.preferences || !force && onboardingShown || document.querySelector('.scrim')) return;
-  const step = nextOnboarding(desktopApp.preferences);
+  const step = only ?? nextOnboarding(desktopApp.preferences);
   if (step < 0) return;
   onboardingShown = true;
   const permissions = step === 0;
   const title = permissions ? 'Allow access' : 'Choose a speech model';
-  const description = permissions ? 'Give Leo access for dictation and recording. Each permission is checked here as soon as it is allowed.' : 'Dictation and recording share one local model. Pick a model to download; you can change it later in Settings.';
-  const row = (action, name, why, label) => `<div class="set-row onboarding-permission" data-onboarding-permission="${action}"><div class="grow"><strong>${name}</strong><p class="hint">${why}</p></div><div class="onboarding-permission-action"><button class="btn primary sm" data-action="app-command" data-app-action="${action}">${label}</button><span role="status" class="set-status" hidden></span></div></div>`;
-  const controls = permissions ? `<section class="set-card">${row('microphone', 'Microphone', 'Leo opens your microphone only while you capture speech.', 'Allow microphone')}${desktopApp.platform === 'windows' ? '' : row('accessibility', 'Accessibility', 'Paste dictated words into the app you are using. Without access, you can paste from the clipboard yourself.', 'Allow Accessibility')}</section>` : '<div id="onboarding-models"><p class="hint">Opening the model library…</p></div>';
-  sheet(`<div data-onboarding-step="${step}"><p class="hint">Set up Leo · ${permissions ? 1 : 2} of 2</p><h3>${title}</h3><p>${description}</p>${controls}<p class="hint">You can skip this and finish setup in Health.</p><div class="buttons"><button class="btn plain" data-action="onboarding-next" data-step="${step}">Skip for now</button>${permissions ? `<button class="btn primary" id="onboarding-continue" data-action="onboarding-next" data-step="${step}" disabled>Continue</button>` : ''}</div></div>`);
+  const description = permissions ? 'Leo needs a couple of permissions for dictation and recording. Each one is checked off here as soon as you allow it.' : 'Dictation and recording share one model that runs on this computer, so audio never leaves it. You can change it later in Settings.';
+  const foot = permissions
+    ? `<button class="btn plain" data-action="onboarding-skip">Skip setup</button><button class="btn primary" id="onboarding-continue" data-action="onboarding-next" data-step="0" disabled>Continue</button>`
+    : `<button class="btn plain" data-action="onboarding-back">Back</button><button class="btn plain" data-action="onboarding-next" data-step="2">Skip for now</button>`;
+  const body = permissions ? onboardingPermissionsPage() : '<div id="onboarding-models" class="onboarding-models"><p class="hint">Opening the model library…</p></div>';
+  sheet(`<div class="onboarding" data-onboarding-step="${step}">${onboardingStepper(step)}<h3>${title}</h3><p>${description}</p>${body}<p class="hint onboarding-later">You can finish anything you skip in Settings → Health.</p><div class="buttons onboarding-foot">${foot}</div></div>`, { modal: true });
   updateOnboardingPermissions();
   if (step === 2) loadOnboardingModels(++onboardingGeneration);
 }
 function updateOnboardingPermissions() {
   if (!desktopApp) return;
-  const microphone = desktopApp.permissions?.microphone === 'allowed';
-  const accessibility = desktopApp.platform === 'windows' || desktopApp.permissions?.accessibility === true;
-  for (const [permission, allowed] of [['microphone', microphone], ['accessibility', accessibility]]) {
+  for (const permission of ['microphone', 'accessibility']) {
     const row = document.querySelector(`[data-onboarding-permission="${permission}"]`);
     if (!row) continue;
-    row.querySelector('button').hidden = allowed;
+    const now = onboardingPermissionState(permission);
+    const allowed = now === 'allowed';
+    const button = row.querySelector('button');
+    button.hidden = allowed || now === 'unavailable';
+    const label = now === 'denied' ? 'Open System Settings' : 'Allow';
+    if (button.textContent !== label) button.textContent = label;
+    button.setAttribute('aria-label', now === 'denied' ? `Open System Settings for ${permission === 'microphone' ? 'the microphone' : 'Accessibility'}` : `Allow ${permission === 'microphone' ? 'microphone' : 'Accessibility'}`);
+    row.querySelector('.onboarding-denied').hidden = now !== 'denied';
+    row.classList.toggle('allowed', allowed);
     const status = row.querySelector('[role="status"]');
-    status.hidden = !allowed;
+    status.hidden = !allowed && now !== 'unavailable';
     status.classList.toggle('ok', allowed);
-    if (allowed && !status.firstChild) status.innerHTML = `${ICON.check} Allowed`;
+    status.classList.toggle('missing', now === 'unavailable');
+    const text = allowed ? `${ICON.check} Allowed` : now === 'unavailable' ? 'Off in this session' : '';
+    if (status.dataset.shown !== text) { status.innerHTML = text; status.dataset.shown = text; }
   }
   const next = $('#onboarding-continue');
-  if (next) next.disabled = !microphone || !accessibility || onboardingFinishing;
+  if (next) next.disabled = !onboardingCanContinue() || onboardingFinishing;
 }
 async function finishOnboarding(el) {
   if (onboardingFinishing) return;
@@ -44,42 +84,133 @@ async function finishOnboarding(el) {
   onboardingFinishing = true;
   updateOnboardingPermissions();
   try {
-    for (const index of step < 2 ? [0, 1] : [2]) {
+    for (const index of step < 0 ? [0, 1, 2] : step < 2 ? [0, 1] : [2]) {
       await appChange({ action: 'finish_step', step: index });
-      if (generation !== onboardingGeneration || !onboardingHere(step)) return;
+      if (generation !== onboardingGeneration || !onboardingHere(step < 0 ? 0 : step)) return;
     }
     closeSheet(true);
     maybeOnboarding(true);
   } finally { onboardingFinishing = false; updateOnboardingPermissions(); }
+}
+function skipOnboarding() { return finishOnboarding({ dataset: { step: '-1' } }); }
+function onboardingBack() {
+  if (!onboardingHere(2)) return;
+  onboardingGeneration++;
+  closeSheet(true);
+  maybeOnboarding(true, 0);
 }
 async function loadOnboardingModels(generation) {
   try {
     const view = await api('/api/speech');
     if (generation !== onboardingGeneration || !onboardingHere(2)) return;
     onboardingSpeech = view;
-    if (!onboardingChoice) onboardingChoice = view.selected?.id || view.models[0]?.id || '';
+    const models = view.models || [];
+    if (!models.some((model) => model.id === onboardingChoice)) onboardingChoice = (models.find((model) => model.in_use) || models.find((model) => model.recommended) || models[0])?.id || '';
+    drawOnboardingModels();
+    if (models.some((model) => model.progress?.state === 'downloading')) setTimeout(() => loadOnboardingModels(generation), 700);
+  } catch (e) {
+    if (generation !== onboardingGeneration || !onboardingHere(2)) return;
     const box = $('#onboarding-models');
-    if (box && !box.querySelector('select')) box.innerHTML = `<label class="field">Speech model<span class="select-control"><select id="onboarding-model">${view.models.map((model) => settingsOption(model.id, model.name + ' · ' + speechBytes(model.size), onboardingChoice)).join('')}</select>${ICON.chevron}</span></label><div class="set-row" id="onboarding-model-progress"></div>`;
+    if (box) box.innerHTML = '<p class="set-note warn">The model library could not be opened. Skip for now and choose one in Settings → Speech models.</p>';
+  }
+}
+function onboardingPercent(model) {
+  const progress = model.progress || {};
+  return Math.min(100, Math.floor((progress.bytes || 0) * 100 / Math.max(1, progress.total || model.size)));
+}
+function onboardingModelState(model) {
+  return model.progress?.state === 'downloading' ? `<span class="chip accent">Downloading ${onboardingPercent(model)}%</span>` : model.in_use ? '<span class="chip accent">In use</span>' : model.verified ? '<span class="chip">Downloaded</span>' : '';
+}
+function onboardingModelCard(model) {
+  const on = model.id === onboardingChoice;
+  const names = (model.languages || []).map(speechLanguage);
+  return `<button type="button" class="onboarding-model${on ? ' on' : ''}" data-action="onboarding-pick" data-model="${esc(model.id)}" aria-pressed="${on}"><span class="onboarding-model-head"><b>${esc(model.name)}</b>${model.recommended ? '<span class="chip">Recommended</span>' : ''}<span class="onboarding-model-state">${onboardingModelState(model)}</span></span>${model.description ? `<span class="hint">${esc(model.description)}</span>` : ''}<span class="hint" title="${esc(names.join(', '))}">${esc(names.length === 1 ? names[0] + ' only' : names.length + ' languages')} · ${speechBytes(model.size)}${model.streaming ? ' · Streaming' : ''}</span>${speechRatings(model)}</button>`;
+}
+function drawOnboardingModels() {
+  const box = $('#onboarding-models');
+  const view = onboardingSpeech;
+  if (!box || !view) return;
+  const models = view.models || [];
+  if (!models.length) { box.innerHTML = '<p class="set-note">No speech models are available right now. Skip for now and choose one in Settings → Speech models.</p>'; return; }
+  const recommended = models.filter((model) => model.recommended);
+  const all = onboardingAll || !recommended.length;
+  const shown = all ? models : recommended;
+  const toggle = recommended.length && recommended.length < models.length ? `<div class="library-views model-filters" role="group" aria-label="Which models to show"><button class="btn plain sm${all ? '' : ' on'}" data-action="onboarding-models" data-all="false" aria-pressed="${!all}">Recommended</button><button class="btn plain sm${all ? ' on' : ''}" data-action="onboarding-models" data-all="true" aria-pressed="${all}">All ${models.length}</button></div>` : '';
+  const key = (all ? 'all:' : 'recommended:') + shown.map((model) => model.id).join(',');
+  // Polling during a download only touches the state chips and the progress
+  // bar, so a click is never lost to a button being replaced under the pointer.
+  if (box.dataset.list === key) {
+    for (const model of shown) {
+      const chip = box.querySelector(`.onboarding-model[data-model="${CSS.escape(model.id)}"] .onboarding-model-state`);
+      const html = onboardingModelState(model);
+      if (chip && chip.dataset.shown !== html) { chip.innerHTML = html; chip.dataset.shown = html; }
+    }
     drawOnboardingProgress();
-    if (view.models.some((model) => model.progress?.state === 'downloading')) setTimeout(() => loadOnboardingModels(generation), 700);
-  } catch (e) { if (generation === onboardingGeneration && onboardingHere(2)) { const box = $('#onboarding-models'); if (box) box.textContent = 'Models could not be opened. Skip for now and try Speech models in Settings.'; } }
+    return;
+  }
+  const focused = document.activeElement && box.contains(document.activeElement) ? document.activeElement.dataset.all : null;
+  box.dataset.list = key;
+  box.innerHTML = `${toggle}<div class="onboarding-model-list" role="group" aria-label="Speech models">${shown.map(onboardingModelCard).join('')}</div><div id="onboarding-model-progress" class="onboarding-model-action"></div>`;
+  drawOnboardingProgress();
+  if (focused) box.querySelector(`[data-action="onboarding-models"][data-all="${focused}"]`)?.focus({ preventScroll: true });
 }
 function drawOnboardingProgress() {
   const model = onboardingSpeech?.models.find((model) => model.id === onboardingChoice);
   const box = $('#onboarding-model-progress');
-  if (!model || !box) return;
+  if (!box) return;
+  if (!model) { box.innerHTML = '<span class="grow hint">Choose a model above.</span>'; return; }
   const progress = model.progress;
-  box.innerHTML = progress?.state === 'downloading' ? `<span class="grow hint">${speechBytes(progress.bytes)} of ${speechBytes(progress.total)}</span><button class="btn plain" data-action="onboarding-model" data-verb="cancel">Cancel</button>` : `<span class="grow hint">${model.languages.length === 1 ? esc(speechLanguage(model.languages[0])) : model.languages.length + ' languages'} · ${speechBytes(model.size)}</span><button class="btn primary" data-action="onboarding-model" data-verb="${model.verified ? 'use' : 'download'}">${model.verified ? 'Use and finish' : 'Download'}</button>${progress?.error ? `<p class="set-note warn">${esc(progress.error)}</p>` : ''}`;
+  const busy = onboardingBusy ? ' disabled' : '';
+  if (progress?.state === 'downloading') {
+    const percent = onboardingPercent(model);
+    const text = `Downloading ${model.name} · ${speechBytes(progress.bytes)} of ${speechBytes(progress.total || model.size)}`;
+    const bar = box.querySelector('progress');
+    if (bar && box.dataset.model === model.id) {
+      bar.value = percent;
+      box.querySelector('.onboarding-download .hint').textContent = text;
+      box.querySelector('button').disabled = onboardingBusy;
+      return;
+    }
+    box.dataset.model = model.id;
+    box.innerHTML = `<div class="grow onboarding-download"><span class="hint">${esc(text)}</span><progress value="${percent}" max="100" aria-label="Downloading ${esc(model.name)}"></progress></div><button class="btn plain" data-action="onboarding-model" data-verb="cancel"${busy}>Cancel</button>`;
+    return;
+  }
+  box.dataset.model = '';
+  const error = progress?.error && progress.state !== 'cancelled' ? `<p class="set-note warn">${esc(progress.error)}</p>` : '';
+  const verb = model.verified ? 'use' : 'download';
+  const label = model.verified ? 'Use and finish' : model.downloaded ? 'Download again' : `Download · ${speechBytes(model.size)}`;
+  box.innerHTML = `<span class="grow hint">${model.verified ? `${esc(model.name)} is ready on this computer.` : `${esc(model.name)} downloads once, then works offline.`}</span><button class="btn primary" data-action="onboarding-model" data-verb="${verb}"${busy}>${label}</button>${error}`;
+}
+function pickOnboardingModel(el) {
+  if (!onboardingHere(2) || el.dataset.model === onboardingChoice) return;
+  onboardingChoice = el.dataset.model;
+  for (const card of document.querySelectorAll('.onboarding-model')) {
+    const on = card.dataset.model === onboardingChoice;
+    card.classList.toggle('on', on);
+    card.setAttribute('aria-pressed', String(on));
+  }
+  drawOnboardingProgress();
+}
+function showOnboardingModels(el) {
+  onboardingAll = el.dataset.all === 'true';
+  drawOnboardingModels();
 }
 async function onboardingModel(el) {
   const model = onboardingSpeech?.models.find((model) => model.id === onboardingChoice);
-  if (!model) return;
+  if (!model || onboardingBusy) return;
   const generation = ++onboardingGeneration;
   const verb = el.dataset.verb;
-  const view = await api('/api/speech', { method: 'POST', body: { action: verb, id: model.id, language: model.languages.length === 1 ? model.languages[0] : 'auto' } });
-  if (generation !== onboardingGeneration || !onboardingHere(2)) return;
-  onboardingSpeech = view;
-  if (verb === 'use') { await finishOnboarding({ dataset: { step: '2' } }); return; }
+  onboardingBusy = true;
   drawOnboardingProgress();
-  if (verb === 'download') loadOnboardingModels(generation);
+  try {
+    const view = await api('/api/speech', { method: 'POST', body: { action: verb, id: model.id, language: model.languages.length === 1 ? model.languages[0] : 'auto' } });
+    if (generation !== onboardingGeneration || !onboardingHere(2)) return;
+    onboardingSpeech = view;
+    if (verb === 'use') { onboardingBusy = false; await finishOnboarding({ dataset: { step: '2' } }); return; }
+    drawOnboardingModels();
+    if (verb === 'download') loadOnboardingModels(generation);
+  } finally {
+    onboardingBusy = false;
+    if (onboardingHere(2)) drawOnboardingProgress();
+  }
 }

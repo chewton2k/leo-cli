@@ -316,6 +316,31 @@ fn write_zip_with_limits<W: Write + Seek>(
             &mut packed,
         )?;
     }
+    #[derive(Serialize)]
+    struct BoardExport<'a> {
+        version: u8,
+        boards: &'a [crate::boards::Board],
+        cards: &'a [crate::boards::Card],
+    }
+    let boards = crate::boards::boards(chats_dir);
+    if !boards.is_empty() {
+        let all = crate::boards::all_cards(chats_dir);
+        let cards: Vec<crate::boards::Card> = boards
+            .iter()
+            .flat_map(|board| crate::boards::cards_in(board, &all))
+            .collect();
+        add_json(
+            &mut zip,
+            "leo/boards.json",
+            &BoardExport {
+                version: 1,
+                boards: &boards,
+                cards: &cards,
+            },
+            &mut budget,
+            &mut packed,
+        )?;
+    }
     if parts.trash {
         add_dir(
             &mut zip,

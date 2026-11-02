@@ -498,11 +498,11 @@ pub fn auto_commit(notes_dir: &Path) -> Result<()> {
 /// Files inside the notes directory that are leo's business, not the user's
 /// notes, and so must never be pushed to their remote.
 const GITIGNORE: &str =
-    "*.wav\n*.bak\n.manual-installed\ndirectories.json\n.trash/\n.obsidian/\n.leo/tasks/.*.tmp\n";
+    "*.wav\n*.bak\n.manual-installed\ndirectories.json\n.trash/\n.obsidian/\n.leo/tasks/.*.tmp\n.leo/boards/.*.tmp\n.leo/cards/.*.tmp\n";
 
 /// A note edited on two computers keeps both sides' lines rather than one
 /// side's edit being lost; the user tidies it, instead of it vanishing.
-const GITATTRIBUTES: &str = "*.md merge=union\n.leo/tasks/*.json merge=union\n*.md text eol=lf\n.leo/tasks/*.json text eol=lf\n";
+const GITATTRIBUTES: &str = "*.md merge=union\n.leo/tasks/*.json merge=union\n.leo/boards/*.json merge=union\n.leo/cards/*.json merge=union\n*.md text eol=lf\n.leo/tasks/*.json text eol=lf\n.leo/boards/*.json text eol=lf\n.leo/cards/*.json text eol=lf\n";
 
 /// Bring the repository's own files up to date: the ignore list, the merge
 /// rule for notes, and — for a repository made by an earlier version — no

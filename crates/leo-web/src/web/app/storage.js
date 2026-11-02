@@ -74,7 +74,6 @@ function drawStorage(page) {
   const legend = page.areas.map((a, i) => `<span class="store-key" data-area="${esc(a.id)}"><b style="background:${STORE_COLORS[i % STORE_COLORS.length]}"></b>${esc(a.title)} <span class="store-key-size">${esc(a.size)}</span></span>`).join('');
   const areas = storageAreas(page.areas, open);
   app.innerHTML = settingsFrame('storage', `<div class="settings storage">
-    <div class="section-title">Storage and data</div>
     <section class="set-card store-total">
       <div class="store-big">${esc(page.total_label)}</div>
       <p class="hint">What Leo keeps on the computer running this server, including the application, downloads and saved data. Browser copies are shown separately below. Sizes are estimates for very large or inaccessible folders.</p>
@@ -89,10 +88,10 @@ function drawStorage(page) {
       <header><h3>Export everything</h3></header>
       <p class="hint">A zip of your notes, standalone tasks and the selected data below. Interview practices include frameworks, code, answers, whiteboards, submitted attempts, reviews and schedules. Settings, private calendar links, automatic answer keys and API keys are never included.</p>
       <div class="store-export-parts">
-        <label><input type="checkbox" checked disabled> Notes</label>
-        <label><input type="checkbox" data-export="uploads" checked> Uploaded files</label>
-        <label><input type="checkbox" data-export="chats" checked> Chats and interview practices</label>
-        <label><input type="checkbox" data-export="trash"> Trash</label>
+        <label class="set-row"><span class="grow">Notes</span>${settingsSwitch('disabled', true)}</label>
+        <label class="set-row"><span class="grow">Uploaded files</span>${settingsSwitch('data-export="uploads"', true)}</label>
+        <label class="set-row"><span class="grow">Chats and interview practices</span>${settingsSwitch('data-export="chats"', true)}</label>
+        <label class="set-row"><span class="grow">Trash</span>${settingsSwitch('data-export="trash"', false)}</label>
       </div>
       <a class="btn primary sm" id="export-link" download href="${exportHref()}">Download zip</a>
     </section>

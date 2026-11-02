@@ -29,7 +29,8 @@ function sidePlace() {
   const view = state.view;
   if (view === 'folder' && !state.dir) return 'home';
   if (view === 'folder' || view === 'note' || view === 'new') return `dir:${state.dir || ''}`;
-  if (view === 'storage') return /^#\/settings\/storage(?:\/|$)/.test(location.hash) ? 'storage' : 'settings';
+  // Storage and Trash live inside Settings, so the sidebar shows Settings for them.
+  if (view === 'storage' || view === 'trash') return 'settings';
   return view;
 }
 
@@ -79,13 +80,12 @@ function drawSide() {
         ${sideRow('chat', chat.button(22), 'Ask Felix', { on: chatOpen })}
         ${sideRow('interviews', ICON.chat, 'Interview practice', { on: here === 'interviews' })}
         ${sideRow('calendar', ICON.calendar, 'Calendar', { on: here === 'calendar' })}
+        ${sideRow('boards', ICON.board, 'Boards', { on: here === 'boards', hint: 'Boards · track tasks from To do to Done' })}
         ${sideRow('map', ICON.map, 'Knowledge graph', { on: here === 'map' })}
         ${sideRow('record', ICON.mic, 'Record', { on: here === 'record', attrs: ` data-dir="${esc(actionDir)}"` })}
         ${sideRow('upload', ICON.upload, 'Note from a file', { attrs: ` data-dir="${esc(actionDir)}"` })}
       </nav>
       <nav class="side-foot" aria-label="This app">
-        ${sideRow('trash', ICON.trash, 'Trash', { on: here === 'trash' })}
-        ${sideRow('storage', ICON.storage, 'Storage', { on: here === 'storage' })}
         ${sideRow('settings', ICON.gear, 'Settings', { on: here === 'settings' })}
       </nav>
     </div>

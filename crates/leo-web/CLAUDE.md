@@ -51,7 +51,7 @@ reader, seer, meaning, web, room, speech).
 ## Page architecture
 
 - Hash router (`#/f/dir`, `#/n/id`, `#/new/dir`, `#/search/q`, `#/trash`,
-  `#/map[/id]`, `#/calendar`, `#/interviews[/chat]`, `#/record[/dir]`,
+  `#/map[/id]`, `#/calendar`, `#/boards[/id]`, `#/interviews[/chat]`, `#/record[/dir]`,
   `#/settings[/storage]`), `data-action` delegation (`actions.js`). Every
   page bumps `seq`; a slow load whose `seq` changed draws nothing.
 - Notes read wide (2026-10-19, the user's call): `.note-columns > .note` uses
@@ -106,7 +106,14 @@ reader, seer, meaning, web, room, speech).
   window, so reading positions and paging are unchanged.
 - Reuse what exists: `set-card`, `set-row`, `set-input`, `btn sm|plain|primary|danger`,
   `chip`/`pick-chip`, `sheet()` (swipe-to-close on phones), toasts with Undo,
-  `library-views` segmented control, settings-style `<select>`. Readability:
+  `library-views` segmented control, settings-style `<select>`. Settings
+  controls (`settings-navigation.js`): `settingsSwitch` (an iOS-style switch
+  that stays a real checkbox, `role="switch"`) for every on/off preference,
+  never a bare checkbox; `segmented` (a pill that slides to the pick) for
+  choices of two to four short options, either a hidden `field` input that
+  fires `change` like a `<select>` or `action` buttons with `aria-pressed`;
+  longer or open-ended lists stay `<select>`. Redraws keep the pill where it
+  was and slide it (`keepSegmented`/`restoreSettingsFields`). Readability:
   `flows.spec.js` measures every visible text's contrast in light and dark
   (≥3:1).
   Filled danger buttons, error toasts and chat deletion confirmations reuse
@@ -208,7 +215,8 @@ reader, seer, meaning, web, room, speech).
   “Title”", read_transcript); Undo restores the body and the note and removes
   the copied transcripts (POST `uncombine`).
 - Sidebar (`side.js`, ≥1000 px): a 52 px icon rail holds Leo tools, with
-  Trash / Storage / Settings pinned below. Buttons retain accessible names,
+  Settings pinned below (Trash and Storage live inside Settings since
+  2026-11-02, the user's call; the rail shows Settings for them). Buttons retain accessible names,
   tooltips and active states, with space between controls and unboxed shortcut
   hints. The separate explorer shows nested folders and
   individual notes. Folder labels and chevrons toggle their children; note rows
@@ -768,6 +776,55 @@ the same idle loop.
 - Export adds `tasks.json`; Storage → Restore tasks takes that file and POSTs
   `/api/tasks/import` (ids dedupe; a newer local copy is kept).
 
+## Boards (`boards.rs`, `routes/boards.rs`, `app/boards.js`, 2026-11-02)
+
+Jira-style task boards (the user's call: their own rail icon after Calendar, several
+boards, untimed, standalone cards only). Cards have no dates, so they are not
+calendar tasks and never reach `/api/tasks`, the Tasks panel or Felix's schedule.
+JS and CSS use the `kanban` prefix: `board` already names the interview whiteboard.
+
+- Storage mirrors standalone tasks: `<notes>/.leo/boards/<b…>.json` (name, columns
+  `{id, name}`, 1-12) and `<notes>/.leo/cards/<c…>.json` (board, column, `rank`,
+  title, subheading, description ≤8,000, priority `""|low|medium|high`). One JSON
+  line per save, atomic, nofollow reads, union-merged in `.gitattributes`
+  (`leo_core::sync`), newest `updated_at` wins, deletes are tombstones; a file
+  counts only when its name is its id. One file per card, so two computers editing
+  different cards both keep their edits. Limits: 100 boards, 5,000 cards.
+- Order is `rank` (f64). A move writes only the moved card (midpoint of its new
+  neighbours, `boards::between`) unless the gap is gone, then `settle` renumbers that
+  column. A card whose column was deleted elsewhere shows in the first column and
+  is rewritten only when it moves. One mutex (`boards::writing`) serialises writes.
+- API: GET/POST `/api/boards` (list with `cards` counts; a new board has To do, In
+  progress, Done), GET/PATCH/DELETE `/api/boards/{id}` (PATCH `name`, `columns`
+  `[{id?, name}]` in order; removed columns' cards go to `move_to` or the first
+  column, appended in order; DELETE returns `{board, cards}`), POST
+  `/api/boards/restore` (that body: Undo), POST `/api/boards/{id}/cards` (`id` +
+  `rank` for Undo, else end of `column`, or `top`), PATCH/DELETE `/api/cards/{id}`,
+  POST `/api/cards/{id}/move` `{board?, column?, after?}` (`after` missing = end,
+  null = top, an id = just after it; another board keeps a same-named column, else
+  the first). Export adds `leo/boards.json`.
+- Page: board tabs with counts (a card dropped on a tab moves to that board, with
+  Undo), the name and column names edit in place (Enter saves, Escape reverts),
+  columns are grey lanes of white cards (title, muted subheading, priority arrows,
+  a lines icon when there is a description), + Add card opens a composer that stays
+  open for the next card (adds are queued so fast typing loses nothing), + Add
+  column, ⋯ sheets for a column (rename, move left/right, delete moving its cards)
+  and the board (rename, add column, delete with a second press, Undo). A card opens
+  a sheet: title, subheading, status, priority (`library-views`), board, description
+  (autosave after 600 ms, on blur, and before Escape/scrim closes it), Delete with Undo.
+- Dragging is pointer events, not HTML drag and drop: mouse/pen lift past 5 px,
+  touch after a 300 ms hold (a swipe still scrolls). The real card is the dashed
+  placeholder moving through the lists; a copy follows the pointer; the board
+  scrolls sideways and the page vertically near edges; pointer capture is on `#app`
+  (moving the card in the DOM would drop capture). It ends on pointerup, cancel,
+  lost capture or a move with no button; Escape puts it back; the click after a
+  drop is swallowed; leaving the page mid-drag cancels. Columns drag by their name
+  bar. Keyboard: Enter opens a card, Alt+arrows move it. After a move the board is
+  fetched again so renumbered ranks are known. The Tasks panel hides on Boards.
+- Tests: `src/tests/boards.rs`, unit tests in `boards.rs`, `tests/browser/boards.spec.js`
+  (fixture: real CSS and boards.js over an in-memory API; desktop and webkit) and
+  flows.spec.js (real server: drag, reload, API contract).
+
 ## Settings, Storage, export
 
 - Settings (`SettingsApi`, `leo_host::WebSettings`): one model picker
@@ -1076,14 +1133,29 @@ Nothing becomes a note or sync file. Card polling updates shortcut status and
 history only; fields, drafts, focus and caret survive. Local popup rendering
 and settings helpers have node tests in `dictation.test.js`.
 
-Settings uses Layout A's grouped left navigation at `#/settings/<section>`;
-Storage keeps its controller inside the same frame. Redraws retain field drafts,
+Settings (2026-11-02, the user's call) is a full-height sidebar pinned to the
+left of the content (sticky under the bar, its own scroll), grouped Leo / Your
+notes / Data / This app, each section with an icon and a page heading with a
+one-line description; under 760 px it becomes a sideways-scrolling chip strip
+that centres the current section. Routes stay `#/settings/<section>`; Storage
+and Trash (Data) keep their controllers inside the same frame, `#/trash` still
+works, and a bare `#/settings` never reopens Trash. Redraws retain field drafts,
 focus and selection, including textareas. App polling updates native status and a
-ready-update banner without replacing focused controls. First-launch setup groups
-microphone and macOS Accessibility into one permission page with independently
-polled Allowed checkmarks and a fixed action column, followed by the model page.
-Each page can be skipped; the existing three completion flags remain compatible,
-and late responses cannot dismiss another sheet or page.
+ready-update banner without replacing focused controls. First-launch setup
+(`onboarding.js`, 2026-11-02, the user's request: like other dictation apps) is a
+two-step `modal` sheet (a backdrop click never dismisses it; Escape still does)
+with an Access → Speech model stepper. The Access page lists Microphone and macOS
+Accessibility with icons; each row turns its button into an Allowed checkmark as
+soon as the 1 s poll sees it. Continue needs only the microphone, or a microphone
+state the system cannot report (Windows often says `unknown`; `unavailable` in
+test sessions); Accessibility is optional. A denied microphone shows Open System
+Settings (macOS ignores a second request). Skip setup finishes all three flags.
+The model page shows the catalog as selectable cards (Recommended, or All, with
+the Settings rating meters), preselecting the in-use or first recommended model,
+with one action bar: Download · size, a progress bar with Cancel, or Use and
+finish. Download polling updates chips and the bar in place so a click is never
+lost to a replaced button. Back returns to Access. The existing three completion
+flags remain compatible, and late responses cannot dismiss another sheet or page.
 Speech models show In use, every Downloaded file and filtered All models cards.
 Rows show escaped catalog descriptions, languages, size, streaming support and
 measured accuracy/speed with themed meters; unknown scores stay unmeasured.
