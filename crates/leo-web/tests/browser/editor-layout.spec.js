@@ -202,3 +202,105 @@ test('toggling a bottom task after editing above it changes that task and keeps 
     expect(await page.evaluate(()=>window.doc.source())).toContain('- [x] Final task');
   },{body});
 });
+
+test('opening a heading, list or task line keeps its text and the lines below where they were drawn', async ({ browser }) => {
+  const body = ['# Big heading', '- Bullet item', '- [ ] Task item', 'Plain line', 'Last line'].join('\n');
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    await page.setViewportSize({ width: 1400, height: 900 });
+    await page.goto(url);
+    const firstText = (i) => page.evaluate((i) => {
+      const blk = document.querySelectorAll('#doc .blk')[i];
+      const walker = document.createTreeWalker(blk, NodeFilter.SHOW_TEXT);
+      let node;
+      while ((node = walker.nextNode())) {
+        const at = node.data.search(/\S/);
+        if (at < 0) continue;
+        const range = document.createRange();
+        range.setStart(node, at);
+        range.setEnd(node, at + 1);
+        return range.getBoundingClientRect().left;
+      }
+      return null;
+    }, i);
+    for (const [i, marker] of [[0, '# '], [1, '- '], [2, '- [ ] ']]) {
+      const drawn = await firstText(i);
+      const below = await page.locator('#doc .blk').nth(4).boundingBox();
+      await page.locator('#doc .blk').nth(i).locator('text=/item|heading/').click();
+      const area = page.locator('#doc textarea');
+      await expect(area).toBeFocused();
+      const raw = await area.evaluate((el, marker) => {
+        const style = getComputedStyle(el);
+        const ctx = document.createElement('canvas').getContext('2d');
+        ctx.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+        return { left: el.getBoundingClientRect().left + ctx.measureText(marker).width, size: style.fontSize };
+      }, marker);
+      if (i === 0) expect(raw.size).toBe('22px');
+      else expect(Math.abs(raw.left - drawn)).toBeLessThanOrEqual(3);
+      const after = await page.locator('#doc .blk').nth(4).boundingBox();
+      expect(Math.abs(after.y - below.y)).toBeLessThanOrEqual(2);
+      await page.keyboard.press('Escape');
+      await expect(page.locator('#doc textarea')).toHaveCount(0);
+    }
+  }, { body });
+});
+
+test('a selection dragged out of the edited line keeps going across rendered lines, and copies as Markdown', async ({ browser }) => {
+  const body = ['First line here', 'Second **bold** line', '- Third item', 'Fourth line'].join('\n');
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    await page.setViewportSize({ width: 1400, height: 900 });
+    await page.goto(url);
+    await page.locator('#doc .blk').nth(0).click();
+    const area = page.locator('#doc textarea');
+    await expect(area).toBeFocused();
+    const box = await area.boundingBox();
+    const third = await page.locator('#doc .blk').nth(2).locator('li').boundingBox();
+    const fourth = await page.locator('#doc .blk').nth(3).boundingBox();
+    await page.mouse.move(box.x + 1, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 30, box.y + box.height / 2, { steps: 3 });
+    await page.mouse.move(third.x + third.width - 2, third.y + third.height / 2, { steps: 8 });
+    await page.mouse.up();
+    await expect(page.locator('#doc textarea')).toHaveCount(0);
+    const picked = await page.evaluate(() => getSelection().toString());
+    expect(picked).toContain('First line here');
+    expect(picked).toContain('Third item');
+    expect(picked).not.toContain('Fourth');
+    expect(Math.abs((await page.locator('#doc .blk').nth(3).boundingBox()).y - fourth.y)).toBeLessThanOrEqual(30);
+    const copied = await page.evaluate(() => {
+      const data = new DataTransfer();
+      document.dispatchEvent(new ClipboardEvent('copy', { clipboardData: data, bubbles: true, cancelable: true }));
+      return data.getData('text/plain');
+    });
+    expect(copied).toBe('First line here\nSecond **bold** line\n- Third item');
+    await page.keyboard.press('Backspace');
+    await expect.poll(() => page.evaluate(() => doc.source())).toBe('\nFourth line');
+    await expect(page.locator('#doc textarea')).toBeFocused();
+  }, { body });
+});
+
+test('the outline sits at the right edge as heading ticks, keeping the note centred, and opens on hover', async ({ browser }) => {
+  const body = ['# One', 'Text', '## Two', 'More', '# Three'].join('\n');
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    await page.setViewportSize({ width: 1600, height: 900 });
+    await page.goto(url);
+    const outline = page.locator('.note-outline');
+    await expect(outline).toBeVisible();
+    await expect(outline.locator('.outline-ticks span')).toHaveCount(3);
+    const note = await page.locator('.note').boundingBox();
+    const main = await page.locator('.note-columns').boundingBox();
+    expect(Math.abs((note.x - main.x) - (main.x + main.width - note.x - note.width))).toBeLessThanOrEqual(2);
+    const ticks = await outline.locator('.outline-ticks').boundingBox();
+    expect(ticks.x).toBeGreaterThanOrEqual(note.x + note.width - 1);
+    const nav = page.getByRole('navigation', { name: 'Headings' });
+    expect(await nav.evaluate((el) => getComputedStyle(el).opacity)).toBe('0');
+    await outline.locator('.outline-ticks').hover();
+    await expect.poll(() => nav.evaluate((el) => getComputedStyle(el).opacity)).toBe('1');
+    await nav.getByRole('button', { name: 'Three', exact: true }).click();
+    await expect(page.locator('#doc .blk:focus')).toContainText('Three');
+    await outline.locator('.outline-ticks span').first().click();
+    await expect(page.locator('#doc .blk:focus')).toContainText('One');
+  }, { body });
+});

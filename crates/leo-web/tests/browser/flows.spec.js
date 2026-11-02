@@ -363,18 +363,46 @@ test.describe('editing like Obsidian', () => {
     }, [from, to]);
   }
 
-  test('a dragged selection across lines becomes editable, so Delete removes all of it', async ({ page }) => {
+  test('a dragged selection across lines stays rendered in place, copies as Markdown, and Delete removes all of it', async ({ page }) => {
     test.skip(test.info().project.name !== 'desktop', 'dragging is for a mouse');
     const saved = await open(page, 'drag');
     const first = await page.locator('#doc .blk').nth(0).locator('p').boundingBox();
     const third = await page.locator('#doc .blk').nth(2).locator('li').boundingBox();
+    const fourth = await page.locator('#doc .blk').nth(3).boundingBox();
     await page.mouse.move(first.x + 2, first.y + first.height / 2);
     await page.mouse.down();
     await page.mouse.move(third.x + third.width - 2, third.y + third.height / 2, { steps: 8 });
     await page.mouse.up();
+    await expect(page.locator('#doc textarea.line-edit')).toHaveCount(0);
+    expect(await page.evaluate(() => getSelection().toString())).toContain('Second bold line');
+    expect(await page.locator('#doc .blk').nth(3).boundingBox()).toEqual(fourth);
+    const copied = await page.evaluate(() => {
+      const data = new DataTransfer();
+      document.dispatchEvent(new ClipboardEvent('copy', { clipboardData: data, bubbles: true, cancelable: true }));
+      return data.getData('text/plain');
+    });
+    expect(copied).toContain('Second **bold** line\n- Third item');
+    await page.keyboard.press('Backspace');
+    await expect.poll(saved, { timeout: 5000 }).toBe('\nFourth line');
+  });
+
+  test('dragging out of the line being edited selects across the lines below', async ({ page }) => {
+    test.skip(test.info().project.name !== 'desktop', 'dragging is for a mouse');
+    const saved = await open(page, 'drag-out');
+    await page.locator('#doc .blk').nth(0).click();
     const area = page.locator('#doc textarea.line-edit');
-    await expect(area).toHaveCount(1);
-    expect(await area.evaluate((a) => a.value.slice(a.selectionStart, a.selectionEnd))).toContain('Second **bold** line');
+    await expect(area).toBeFocused();
+    const box = await area.boundingBox();
+    const third = await page.locator('#doc .blk').nth(2).boundingBox();
+    await page.mouse.move(box.x + 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 40, box.y + box.height / 2, { steps: 3 });
+    await page.mouse.move(third.x + third.width - 2, third.y + third.height / 2, { steps: 8 });
+    await page.mouse.up();
+    await expect(page.locator('#doc textarea.line-edit')).toHaveCount(0);
+    const picked = await page.evaluate(() => getSelection().toString());
+    expect(picked).toContain('First line here');
+    expect(picked).toContain('Second bold line');
     await page.keyboard.press('Backspace');
     await expect.poll(saved, { timeout: 5000 }).toBe('\nFourth line');
   });
@@ -397,7 +425,11 @@ test.describe('editing like Obsidian', () => {
     await page.keyboard.down('Shift');
     await page.mouse.click(last.x + last.width - 1, last.y + last.height / 2);
     await page.keyboard.up('Shift');
-    expect(await area.evaluate((a) => a.value.slice(a.selectionStart, a.selectionEnd))).toBe(['Second **bold** line', '- Third item', 'Fourth line'].join('\n'));
+    await expect(area).toHaveCount(0);
+    const picked = await page.evaluate(() => getSelection().toString());
+    expect(picked).toContain('Second bold line');
+    expect(picked).toContain('Fourth line');
+    expect(picked).not.toContain('First line here');
     await page.keyboard.press('Delete');
     await expect.poll(saved, { timeout: 5000 }).toBe('First line here\n');
     await page.keyboard.press('ControlOrMeta+a');
