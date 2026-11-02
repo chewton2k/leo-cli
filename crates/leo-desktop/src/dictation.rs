@@ -2,7 +2,7 @@ use anyhow::{ensure, Context, Result};
 use leo_services::dictation::{
     activation::{Action, Activation},
     generation::Generation,
-    settings::{Popup, Settings},
+    settings::{Popup, Settings, Writing},
     visualizer::Visualizer,
 };
 use leo_services::speech::{
@@ -405,6 +405,14 @@ impl Dictation {
         if text.trim().is_empty() {
             return Ok(None);
         }
+        let text = if settings.writing == Writing::Off {
+            text
+        } else {
+            self.phase(id, "writing");
+            leo_services::dictation::polish::polish(&text, settings.writing, language)
+                .unwrap_or(text)
+        };
+        ensure!(self.generation.current(id), "Dictation cancelled.");
         leo_web::dictation::remember(&leo_core::paths::data_dir()?, &text)?;
         let output = if settings.trailing_space {
             format!("{text} ")

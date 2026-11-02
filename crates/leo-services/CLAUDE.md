@@ -501,7 +501,12 @@ and state updates after acquiring their state lock, so cancel wins stale work.
 
 `dictation/text.rs` applies custom-word fuzzy/phonetic matching at 0.18 before
 language-aware filler rules (on by default), with Unicode-safe punctuation and
-capitalization. There is no writing-AI step. `capture.rs` bounds dictation to
+capitalization. `polish.rs` is the optional AI writing step (`Writing`: off
+by default, `quick` = `ai::quick_outcome`, the cheapest model and effort on the
+user's plan, or `selected` = the Writing AI choice): a tidy-only prompt that
+treats the dictation as text, never instructions, a 30 s deadline, and any
+failure, empty reply or reply over twice the length pastes the unpolished
+text. `capture.rs` bounds dictation to
 300 seconds, closes the input before draining its final queued audio and before
 transcription. `Mic::open_named` opens only the selected input; `microphones`
 enumerates without opening. Desktop chooses the lid-closed alternative.

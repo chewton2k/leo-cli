@@ -18,6 +18,14 @@ pub enum Popup {
     Minimal,
     Off,
 }
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Writing {
+    #[default]
+    Off,
+    Quick,
+    Selected,
+}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Settings {
@@ -32,6 +40,7 @@ pub struct Settings {
     pub sounds: bool,
     pub popup: Popup,
     pub top: bool,
+    pub writing: Writing,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -52,6 +61,7 @@ impl Default for Settings {
             sounds: false,
             popup: Popup::Live,
             top: false,
+            writing: Writing::Off,
         }
     }
 }
@@ -162,5 +172,16 @@ mod recovery_tests {
         assert_eq!(settings, super::Settings::default());
         assert!(problem.is_some());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "not valid json");
+    }
+    #[test]
+    fn ai_writing_is_off_unless_chosen_and_older_files_still_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dictation.json");
+        std::fs::write(&path, r#"{"shortcut":"fn","fillers":false}"#).unwrap();
+        let settings = super::Settings::load(&path).unwrap();
+        assert_eq!(settings.writing, super::Writing::Off);
+        let chosen: super::Settings = serde_json::from_str(r#"{"writing":"quick"}"#).unwrap();
+        assert_eq!(chosen.writing, super::Writing::Quick);
+        assert!(serde_json::from_str::<super::Settings>(r#"{"writing":"loud"}"#).is_err());
     }
 }

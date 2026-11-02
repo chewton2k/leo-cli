@@ -13,6 +13,11 @@ test('dictation controls escape history and preserve explicit text settings', ()
   assert.ok(html.includes('東京'));
   assert.ok(html.includes('data-dictation="custom_words"'));
   assert.ok(html.includes('Lid closed'));
+  assert.ok(html.includes('data-dictation="writing"'));
+  assert.ok(html.includes('Fastest model on your plan'));
+  assert.ok(html.includes('takes a few seconds longer'));
+  const chosen = context.dictationCards({ settings: { writing: 'selected' }, recent: [], shortcut: {} });
+  assert.ok(/<option[^>]*>Your writing model/.test(chosen) || chosen.includes('Your writing model'));
 });
 test('popup live and minimal states keep useful errors and timers', () => {
   const { display } = require('../../leo-desktop/dist/dictation.js');
@@ -20,6 +25,8 @@ test('popup live and minimal states keep useful errors and timers', () => {
   assert.equal(display({ state: 'listening', minimal: true, text: 'hello' }).text, '');
   assert.equal(display({ state: 'error', minimal: true, message: 'Choose a microphone.' }).text, 'Choose a microphone.');
   assert.equal(display({ state: 'loading' }).label, 'Loading model…');
+  assert.equal(display({ state: 'writing', committed: 'hi' }).label, 'Polishing with AI…');
+  assert.equal(display({ state: 'writing', committed: 'hi' }).caret, false);
   assert.equal(display({ state: 'listening', top: true }).top, true);
 });
 test('popup shows committed and tentative words like Handy and keeps them while writing', () => {
