@@ -29,10 +29,6 @@ pub const DEFAULT_COLUMNS: [&str; 3] = ["To do", "In progress", "Done"];
 /// The gap left between neighbouring cards, so most moves rewrite only the moved card.
 const STEP: f64 = 1024.0;
 const MOST_FILE_BYTES: u64 = 256 * 1024;
-/// How many files of one kind a scan reads, tombstones included. Deletes leave a
-/// tombstone file behind (so a backup merge cannot bring the item back), so this
-/// sits far above the live limits; the live limits apply after tombstones are dropped.
-const MOST_FILES: usize = 100_000;
 
 /// One change at a time: a move reads a column's order and then writes it.
 pub static WRITING: Mutex<()> = Mutex::new(());
@@ -276,6 +272,10 @@ fn write_file<T: Line>(chats: &Path, item: &T) -> anyhow::Result<()> {
 
 /// Every file of one kind, tombstones included. A file counts only when its
 /// name is its id, so a copied or renamed file cannot pose as another item.
+/// There is no cap on the scan: deletes leave a tombstone behind (so a backup
+/// merge cannot bring the item back), and a cap counted before tombstones are
+/// dropped could silently hide live items. Each file read is size-bounded, and
+/// the live limits (`MOST_BOARDS`, `MOST_CARDS`) apply after tombstones go.
 fn read_all<T: Line>(chats: &Path) -> Vec<T> {
     let Ok(dir) = checked_dir(chats, T::DIR) else {
         return Vec::new();
@@ -290,7 +290,6 @@ fn read_all<T: Line>(chats: &Path) -> Vec<T> {
             let id = name.strip_suffix(".json")?.to_string();
             (!name.starts_with('.') && valid_id(&id)).then(|| (id, entry.path()))
         })
-        .take(MOST_FILES)
         .filter_map(|(id, path)| read_file::<T>(chats, &path).filter(|item| item.id() == id))
         .collect()
 }
@@ -624,7 +623,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let chats = dir.path().join("chats");
         let now = Utc::now();
-        // More deleted boards than the live limit once allowed files to be scanned.
+        // More deleted boards than an earlier scan cap allowed files to be read.
         for _ in 0..MOST_BOARDS * 2 + 10 {
             let mut gone = new_board("Gone", now);
             gone.deleted = true;
