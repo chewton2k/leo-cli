@@ -59,7 +59,7 @@ reader, seer, meaning, web, room, speech).
   Comfortable (760 px), Wide or Full width, kept per browser in
   `leo-note-width` and set early by `/theme.js` as `html[data-note-width]`.
 - Quick Leo (2026-10-19, the user's request): Cmd/Ctrl+J anywhere (Cmd+L
-  belongs to the browser's address bar), the sidebar row under Search, or the
+  belongs to the browser's address bar), the sidebar lightning icon, or the
   phone menu opens one line (`sheets.js` `quickLeo`). It works like Spotlight
   (2026-10-19, the user's call): no title, modes or buttons, near the top of
   the screen on desktop. `schedule.quickRank` infers the top result from what
@@ -201,12 +201,20 @@ reader, seer, meaning, web, room, speech).
   labelled (`recording::copy_to`, `Archive.from`, "Recording n · from
   “Title”", read_transcript); Undo restores the body and the note and removes
   the copied transcripts (POST `uncombine`).
-- Sidebar (`side.js`, ≥1000 px): places, a Top level row (styled like a
-  folder row, outside the scrolling tree so it is always a drop target), the
-  folder tree (`folderTree`, open state in `leo-side-open`, only `.side-tree`
-  scrolls and keeps its position), Trash / Storage / Settings at the foot,
-  foldable to icons (`leo-side`). Phones use the ⋯ menu (`sheets.js`
-  `menu()`); its Calendar row shows a due badge (overdue + today).
+- Sidebar (`side.js`, ≥1000 px): a 52 px icon rail holds Leo tools, with
+  Trash / Storage / Settings pinned below. Buttons retain accessible names,
+  tooltips and active states. The separate explorer shows nested folders and
+  individual notes. Folder labels and chevrons toggle their children; note rows
+  open notes directly. The selected folder scopes New note, Record and imports;
+  library cards and breadcrumbs retain folder navigation. The explorer narrows
+  below 1200 px to leave room for notes, originals and Felix.
+  Top level stays pinned as a drop target; folder and note rows retain drag data.
+  `leo-side` hides only the explorer, keeping the rail; `leo-side-open` retains
+  expansion. Tree and rail scrolling, focus and note pages survive redraws.
+  Notes use the existing bounded metadata endpoint: 100 per page, four concurrent
+  reads with ten-second aborts, 64 cached folders and 32 automatic visible reads.
+  Further expanded folders offer Show notes. Late reads check page generation and
+  entry identity, and failures offer Try again. Phones keep the existing ⋯ menu.
 - Search (`search.rs`): title words and acronyms, text, graph concepts and
   summaries, then meaning (`vectors.rs`, `CLOSE_ENOUGH`); hits carry `why`.
 - Reading position (`/api/notes/{id}/reading`): saved 2 s after the user
@@ -1022,6 +1030,8 @@ keeping wheel, touch and keyboard scrolling available. The outline gutter is
 reserved before a heading exists, so adding or removing
 the first heading never shifts or narrows the writing column. A narrow pane or
 phone reserves a fixed disclosure row; its expanded outline overlays the note.
+Outline toggles and original-file open/close controls focus explicitly so
+WKWebView preserves keyboard focus when their markup changes.
 Heading jumps keep the URL and reading-position flow; typing refreshes only the
 outline after a pause, preserving the editor and caret. A width observer refits
 the active textarea in place when panes resize, clearing internal scroll so text

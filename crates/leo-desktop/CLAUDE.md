@@ -23,7 +23,9 @@ a test, or leave it unset to see the user's own data.
    the sidebar head; `window.__LEO_APP__ = 'mac'` makes `theme.js` set
    `html[data-app="mac"]`, which hides the sidebar wordmark and makes room for
    the buttons (2026-10-31, the user found the grey title strip ugly). `#bar`
-   and `.side-head` are `data-tauri-drag-region="deep"`.
+   and `.side-head` are `data-tauri-drag-region="deep"`. The icon rail stays
+   visible when the explorer is hidden; compact macOS spacing keeps both the rail
+   toggle and note toolbar clear of the window buttons.
 
 ## Behaviour
 

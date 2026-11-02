@@ -30,8 +30,8 @@ test('documents split notes and keep Felix at the right without losing drafts', 
     document.addEventListener('click', event => {
       const el = event.target.closest('[data-action]'); if (!el) return;
       event.preventDefault();
-      if (el.dataset.action === 'view-original') viewOriginal('sample', 'paper.pdf');
-      if (el.dataset.action === 'source-close') closeSource();
+      if (el.dataset.action === 'view-original') { el.focus({preventScroll:true}); viewOriginal('sample', 'paper.pdf'); }
+      if (el.dataset.action === 'source-close') closeSource(el);
       if (el.dataset.action === 'source-file') openSource('sample', el.dataset.name);
       if (el.dataset.action === 'close') el.closest('.scrim').remove();
     });

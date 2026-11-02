@@ -1,7 +1,12 @@
 const SIDE_KEY = 'leo-side';
 const sideWide = () => Boolean(window.matchMedia && window.matchMedia('(min-width: 1000px)').matches);
-const side = { folders: [], loaded: false, mini: false, open: new Set(), shut: new Set(), here: null, twisted: null };
+const side = { folders: [], loaded: false, mini: false, open: new Set(), shut: new Set(), here: null, target: null, twisted: null, notes: new Map(), pending: [], reading: 0, visible: [], automatic: new Set(), generation: 0 };
 const SIDE_OPEN_KEY = 'leo-side-open';
+const SIDE_NOTES_PAGE = 100;
+const SIDE_NOTES_FOLDERS = 64;
+const SIDE_NOTES_AUTOMATIC = 32;
+const SIDE_NOTES_READS = 4;
+const SIDE_NOTES_TIMEOUT = 10000;
 
 try {
   side.open = new Set(JSON.parse(localStorage.getItem(SIDE_OPEN_KEY) || '[]'));
@@ -15,9 +20,9 @@ document.body.classList.toggle('side-mini', side.mini);
 const shortcutLabel = ON_MAC ? '⌘K' : 'Ctrl K';
 const quickLabel = ON_MAC ? '⌘J' : 'Ctrl J';
 
-function sideRow(action, icon, label, { on = false, attrs = '', count = '' } = {}) {
+function sideRow(action, icon, label, { on = false, attrs = '', count = '', hint = label } = {}) {
   const tail = count === '' ? '' : `<span class="side-count side-label">${esc(String(count))}</span>`;
-  return `<button class="side-row${on ? ' on' : ''}" data-action="${action}"${attrs} title="${esc(label)}"${on ? ' aria-current="page"' : ''}>${icon}<span class="side-label">${esc(label)}</span>${tail}</button>`;
+  return `<button class="side-row${on ? ' on' : ''}" data-action="${action}"${attrs} aria-label="${esc(label)}" title="${esc(hint)}"${on ? ' aria-current="page"' : ''}>${icon}<span class="side-label">${esc(label)}</span>${tail}</button>`;
 }
 
 function sidePlace() {
@@ -38,42 +43,67 @@ function drawSide() {
   const dir = sideHere();
   if (dir !== side.here) {
     side.here = dir;
+    side.target = null;
     side.shut.clear();
     const parts = dir.split('/').filter(Boolean);
-    for (let i = 1; i < parts.length; i++) side.open.add(parts.slice(0, i).join('/'));
+    for (let i = 1; i <= parts.length; i++) side.open.add(parts.slice(0, i).join('/'));
     keepOpenFolders();
   }
-  const folders = folderTree(dir);
+  const actionDir = side.target ?? dir;
+  let folders = folderTree(dir);
+  if (sideWide() && !side.mini) {
+    side.automatic = new Set(side.visible.slice(0, SIDE_NOTES_AUTOMATIC));
+    let queued = false;
+    for (const path of side.automatic) {
+      const entry = side.notes.get(path);
+      if (!entry || entry.seq !== seq) { loadSideNotes(path, entry?.offset || 0); queued = true; }
+    }
+    if (queued) folders = folderTree(dir);
+  }
   const scrolled = box.querySelector('.side-tree');
   const kept = scrolled ? scrolled.scrollTop : 0;
+  const railScroll = box.querySelector('.side-rail-main')?.scrollTop || 0;
+  const active = box.contains(document.activeElement) ? document.activeElement.closest('button[data-action]') : null;
+  const focused = active ? Object.fromEntries(['action', 'dir', 'parent', 'id', 'offset'].filter((key) => key in active.dataset).map((key) => [key, active.dataset[key]])) : null;
   box.innerHTML = `
     <div class="side-head" data-tauri-drag-region="deep">
       <button class="brand side-label" data-action="home">leo</button>
-      <button class="icon-btn side-fold" data-action="side-fold" aria-label="${side.mini ? 'Widen the sidebar' : 'Narrow the sidebar'}" title="${side.mini ? 'Widen the sidebar' : 'Narrow the sidebar'}">${ICON.sidebar}</button>
+      <button class="icon-btn side-fold" data-action="side-fold" aria-label="${side.mini ? 'Show folders' : 'Hide folders'}" title="${side.mini ? 'Show folders' : 'Hide folders'}" aria-expanded="${!side.mini}" aria-controls="side-explorer">${ICON.sidebar}</button>
     </div>
-    <button class="side-new" data-action="new" data-dir="${esc(dir)}" title="New note${dir ? ` in ${esc(folderLabel(dir))}` : ''}">${ICON.plus}<span class="side-label">New note</span></button>
-    <div class="side-finder"><button class="side-search" data-action="side-search" title="Search every note (${shortcutLabel})">${ICON.search}<span class="side-label">Search</span><kbd class="side-label">${shortcutLabel}</kbd></button><button class="side-search side-quick" data-action="quick-leo" aria-label="Quick Leo: ask, remind, find or jot anything (${quickLabel})" title="Quick Leo · ask, remind, find or jot anything (${quickLabel})">${ICON.bolt}</button></div>
-    <nav class="side-nav" aria-label="Places">
-      ${sideRow('home', ICON.note, 'Notes', { on: here === 'home' })}
-      ${sideRow('chat', chat.button(22), 'Ask Felix', { on: chatOpen })}
-      ${sideRow('interviews', ICON.chat, 'Interview practice', { on: here === 'interviews' })}
-      ${sideRow('calendar', ICON.calendar, 'Calendar', { on: here === 'calendar' })}
-      ${sideRow('map', ICON.map, 'Knowledge graph', { on: here === 'map' })}
-      ${sideRow('record', ICON.mic, 'Record', { on: here === 'record', attrs: ` data-dir="${esc(dir)}"` })}
-      ${sideRow('upload', ICON.upload, 'Note from a file')}
-    </nav>
-    <div class="side-group"><span class="side-label">Folders</span><button class="side-add side-label" data-action="new-folder" data-parent="" aria-label="New folder" title="New folder at the top level">${ICON.plus}</button></div>
-    <div class="side-nav side-top"><div class="side-folder side-root${here === 'home' ? ' on' : ''}" style="--depth:0"><span class="side-twist none"></span><button class="side-row" data-action="open-folder" data-dir="" title="Top level"${here === 'home' ? ' aria-current="page"' : ''}>${ICON.folder}<span class="side-label">Top level</span></button></div></div>
-    <nav class="side-nav side-tree" aria-label="Folders" data-drop-dir="">
-      ${folders || '<p class="side-none side-label">Folders you make show up here.</p>'}
-    </nav>
-    <div class="side-foot">
-      ${sideRow('trash', ICON.trash, 'Trash', { on: here === 'trash' })}
-      ${sideRow('storage', ICON.storage, 'Storage', { on: here === 'storage' })}
-      ${sideRow('settings', ICON.gear, 'Settings', { on: here === 'settings' })}
+    <div class="side-rail">
+      <nav class="side-rail-main" aria-label="Leo tools">
+        ${sideRow('new', ICON.plus, 'New note', { attrs: ` data-dir="${esc(actionDir)}"`, hint: actionDir ? `New note in ${folderLabel(actionDir)}` : 'New note' })}
+        ${sideRow('home', ICON.note, 'Notes', { on: ['folder', 'note', 'new'].includes(state.view) })}
+        ${sideRow('side-search', ICON.search, 'Search', { hint: `Search every note (${shortcutLabel})` })}
+        ${sideRow('quick-leo', ICON.bolt, 'Quick Leo', { hint: `Quick Leo · ask, remind, find or jot anything (${quickLabel})` })}
+        ${sideRow('chat', chat.button(22), 'Ask Felix', { on: chatOpen })}
+        ${sideRow('interviews', ICON.chat, 'Interview practice', { on: here === 'interviews' })}
+        ${sideRow('calendar', ICON.calendar, 'Calendar', { on: here === 'calendar' })}
+        ${sideRow('map', ICON.map, 'Knowledge graph', { on: here === 'map' })}
+        ${sideRow('record', ICON.mic, 'Record', { on: here === 'record', attrs: ` data-dir="${esc(actionDir)}"` })}
+        ${sideRow('upload', ICON.upload, 'Note from a file', { attrs: ` data-dir="${esc(actionDir)}"` })}
+      </nav>
+      <nav class="side-foot" aria-label="This app">
+        ${sideRow('trash', ICON.trash, 'Trash', { on: here === 'trash' })}
+        ${sideRow('storage', ICON.storage, 'Storage', { on: here === 'storage' })}
+        ${sideRow('settings', ICON.gear, 'Settings', { on: here === 'settings' })}
+      </nav>
+    </div>
+    <div class="side-explorer" id="side-explorer">
+      <div class="side-group"><span>Folders</span><button class="side-add" data-action="new-folder" data-parent="" aria-label="New folder" title="New folder at the top level">${ICON.plus}</button></div>
+      <div class="side-nav side-top"><div class="side-folder side-root${here === 'home' ? ' on' : ''}" style="--depth:0"><span class="side-twist none"></span><button class="side-row" data-action="open-folder" data-dir="" title="Top level"${here === 'home' ? ' aria-current="page"' : ''}>${ICON.folder}<span class="side-label">Top level</span></button></div></div>
+      <nav class="side-nav side-tree" aria-label="Folders" data-drop-dir="">
+        ${folders || '<p class="side-none">Folders you make show up here.</p>'}
+      </nav>
     </div>`;
   const tree = box.querySelector('.side-tree');
   if (tree) tree.scrollTop = kept;
+  box.querySelector('.side-rail-main').scrollTop = railScroll;
+  if (focused) {
+    const buttons = [...box.querySelectorAll('button[data-action]')];
+    const button = buttons.find((button) => Object.entries(focused).every(([key, value]) => button.dataset[key] === value)) || (focused.action === 'side-notes' && buttons.find((button) => ['side-notes', 'open-folder'].includes(button.dataset.action) && button.dataset.dir === focused.dir));
+    if (button) button.focus({ preventScroll: true });
+  }
 }
 
 function sideHere() {
@@ -91,7 +121,7 @@ function keepOpenFolders() {
 }
 
 function folderTree(here) {
-  const paths = new Set(side.folders.map((d) => d.name));
+  side.visible = [''];
   const children = (parent) => side.folders.filter((d) => {
     const cut = d.name.lastIndexOf('/');
     return (cut < 0 ? '' : d.name.slice(0, cut)) === parent;
@@ -100,21 +130,20 @@ function folderTree(here) {
   const twisted = side.twisted;
   const walk = (parent, depth) => {
     for (const d of children(parent)) {
-      const kids = side.folders.some((k) => k.name.startsWith(`${d.name}/`) && paths.has(k.name));
-      const open = kids && folderShown(d.name);
+      const open = folderShown(d.name);
       const name = d.name.split('/').pop();
       const on = here === d.name;
       const shown = twisted && twisted.path === d.name ? twisted.was : open;
-      const toggle = kids
-        ? `<button class="side-twist${shown ? ' open' : ''}" data-action="side-twist" data-dir="${esc(d.name)}" aria-expanded="${open}" aria-label="${open ? 'Close' : 'Open'} ${esc(name)}">${ICON.chevron}</button>`
-        : '<span class="side-twist none"></span>';
-      rows.push(`<div class="side-folder${on ? ' on' : ''}" style="--depth:${depth}">${toggle}<button class="side-row" data-action="open-folder" data-dir="${esc(d.name)}" draggable="true" title="${esc(d.name)}"${on ? ' aria-current="page"' : ''}>${ICON.folder}<span class="side-label">${esc(name)}</span>${d.notes ? `<span class="side-count side-label">${d.notes}</span>` : ''}</button><button class="side-add side-sub" data-action="new-folder" data-parent="${esc(d.name)}" aria-label="New folder in ${esc(name)}" title="New folder in ${esc(name)}">${ICON.plus}</button></div>`);
+      const toggle = `<button class="side-twist${shown ? ' open' : ''}" data-action="side-twist" data-dir="${esc(d.name)}" aria-expanded="${open}" aria-label="${open ? 'Close' : 'Open'} ${esc(name)}">${ICON.chevron}</button>`;
+      rows.push(`<div class="side-folder${on ? ' on' : ''}" style="--depth:${depth}">${toggle}<button class="side-row" data-action="open-folder" data-dir="${esc(d.name)}" draggable="true" title="${esc(d.name)}" aria-expanded="${open}"${on ? ' aria-current="page"' : ''}>${ICON.folder}<span class="side-label">${esc(name)}</span>${d.notes ? `<span class="side-count side-label">${esc(String(d.notes))}</span>` : ''}</button><button class="side-add side-sub" data-action="new-folder" data-parent="${esc(d.name)}" aria-label="New folder in ${esc(name)}" title="New folder in ${esc(name)}">${ICON.plus}</button></div>`);
       if (open) {
-        rows.push(`<div class="side-kids" data-kids="${esc(d.name)}">`);
+        side.visible.push(d.name);
+        rows.push(`<div class="side-kids" data-kids="${esc(d.name)}" style="--depth:${depth}">`);
         walk(d.name, depth + 1);
         rows.push('</div>');
       }
     }
+    rows.push(sideNoteRows(parent, depth));
   };
   walk('', 0);
   return rows.join('');
@@ -128,7 +157,8 @@ function sideArrow(path) {
   return [...document.querySelectorAll('#side .side-twist')].find((b) => b.dataset.dir === path) || null;
 }
 
-function twistFolder(path) {
+function twistFolder(path, control = null) {
+  if (control) control.focus({ preventScroll: true });
   const was = folderShown(path);
   if (was) {
     side.open.delete(path);
@@ -158,10 +188,19 @@ function twistFolder(path) {
 
 async function loadSideFolders() {
   if (!sideWide() || state.view === 'locked') return drawSide();
+  const mine = seq, generation = ++side.generation;
   try {
-    side.folders = await api('/api/folders');
+    const folders = await api('/api/folders');
+    if (mine !== seq || generation !== side.generation) return;
+    side.folders = folders;
+    if (side.target && !folders.some((folder) => folder.name === side.target)) side.target = null;
     side.loaded = true;
+    for (const [path, entry] of side.notes) {
+      if (path && !folders.some((folder) => folder.name === path)) side.notes.delete(path);
+      else entry.seq = -1;
+    }
   } catch (e) {
+    if (mine !== seq || generation !== side.generation) return;
     if (!side.loaded) side.folders = [];
   }
   drawSide();
@@ -180,4 +219,71 @@ function foldSide() {
 function searchEverywhere() {
   openSearch('');
   $('#search-input').focus();
+}
+
+function openFolder(el) {
+  const path = el.dataset.dir;
+  if (el.closest('#side .side-tree')) {
+    side.target = path;
+    twistFolder(path, el);
+    return;
+  }
+  closeSheet();
+  go(folderHash(path));
+}
+
+function sideNoteRows(path, depth) {
+  const entry = side.notes.get(path);
+  const action = (label, offset = 0) => `<button class="side-note-page" data-action="side-notes" data-dir="${esc(path)}" data-offset="${offset}">${label}</button>`;
+  if (!entry) return `<div class="side-note-status" style="--depth:${depth}">${action('Show notes')}</div>`;
+  const selected = state.view === 'note' ? state.session?.note?.id : null;
+  const rows = entry.items.map((note) => `<button class="side-row side-note${selected === note.id ? ' on' : ''}" data-action="open-note" data-id="${esc(note.id)}" data-from="${esc(path)}" data-title="${esc(note.title)}" draggable="true" style="--depth:${depth}" title="${esc(note.title)}"${selected === note.id ? ' aria-current="page"' : ''}>${ICON.note}<span class="side-label">${esc(note.title || 'Untitled')}</span></button>`).join('');
+  const status = entry.loading ? '<span>Opening notes…</span>' : entry.error ? `Notes could not be opened. ${action('Try again', entry.offset)}` : !entry.items.length && !side.folders.some((folder) => folder.name.startsWith(path ? `${path}/` : '')) ? '<span>Empty folder</span>' : '';
+  const pages = !entry.error ? `${entry.offset ? action('Previous notes', Math.max(0, entry.offset - SIDE_NOTES_PAGE)) : ''}${entry.offset + entry.items.length < entry.total ? action('Next notes', entry.offset + SIDE_NOTES_PAGE) : ''}` : '';
+  return rows + (status || pages ? `<div class="side-note-status" style="--depth:${depth}">${status}${pages}</div>` : '');
+}
+
+function loadSideNotes(path, offset = 0, force = false) {
+  if (path !== '' && !side.folders.some((folder) => folder.name === path)) return;
+  if (!Number.isSafeInteger(offset) || offset < 0) return;
+  const previous = side.notes.get(path);
+  if (previous?.seq === seq && (previous.loading || !force)) return;
+  if (!previous && side.notes.size >= SIDE_NOTES_FOLDERS) {
+    const oldest = [...side.notes.keys()].find((key) => !side.automatic.has(key));
+    side.notes.delete(oldest);
+  }
+  const entry = { items: previous?.items || [], total: previous?.total || 0, offset, loading: true, error: false, seq };
+  side.notes.set(path, entry);
+  side.pending = side.pending.filter((read) => side.notes.get(read.path) === read.entry);
+  side.pending.push({ path, entry });
+  pumpSideNotes();
+  if (force) drawSide();
+}
+
+function pumpSideNotes() {
+  while (side.reading < SIDE_NOTES_READS && side.pending.length) {
+    const read = side.pending.shift();
+    if (side.notes.get(read.path) !== read.entry || read.entry.seq !== seq) continue;
+    side.reading++;
+    readSideNotes(read.path, read.entry).finally(() => { side.reading--; pumpSideNotes(); });
+  }
+}
+
+async function readSideNotes(path, entry) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), SIDE_NOTES_TIMEOUT);
+  try {
+    const query = new URLSearchParams({ dir: path, offset: String(entry.offset), limit: String(SIDE_NOTES_PAGE), brief: 'true', sort: 'title', show: 'all' });
+    const page = await api(`/api/notes?${query}`, { total: true, signal: controller.signal });
+    if (side.notes.get(path) !== entry || entry.seq !== seq) return;
+    if (!Array.isArray(page.items)) throw new Error('Notes could not be opened.');
+    entry.items = page.items.slice(0, SIDE_NOTES_PAGE).filter((note) => typeof note.id === 'string' && typeof note.title === 'string');
+    entry.total = Number.isSafeInteger(page.total) && page.total >= 0 ? page.total : entry.items.length;
+  } catch (e) {
+    if (side.notes.get(path) === entry && entry.seq === seq) entry.error = true;
+  } finally {
+    clearTimeout(timeout);
+    entry.loading = false;
+    if (side.notes.get(path) === entry && entry.seq === seq) drawSide();
+  }
 }

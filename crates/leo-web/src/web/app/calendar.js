@@ -994,8 +994,9 @@ function setSourceWidth(width) {
   sourceSizeLabel();
 }
 
-function closeSource() {
+function closeSource(control = null) {
   if (!source.note) return;
+  if (control) control.focus({ preventScroll: true });
   const restore = sourcePane.contains(document.activeElement) ? source.returnTo : null;
   source.stopResize?.();
   source.seq++;

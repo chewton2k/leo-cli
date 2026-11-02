@@ -83,11 +83,12 @@ const actions = {
   'event-open': (el) => eventSheet(el.dataset.id),
   'note-tasks': () => noteTasksSheet(),
   'tasks-fold': () => toggleTasksWindow(),
-  'source-close': () => closeSource(),
+  'source-close': closeSource,
   'source-file': (el) => openSource(el.dataset.id, el.dataset.name),
   'set-model': (el) => changeSetting({ set: 'model', task: el.dataset.task, value: el.dataset.model }),
   'set-effort': (el) => changeSetting({ set: 'effort', value: el.dataset.effort === 'default' ? '' : el.dataset.effort }),
-  'side-twist': (el) => twistFolder(el.dataset.dir),
+  'side-twist': (el) => twistFolder(el.dataset.dir, el),
+  'side-notes': (el) => loadSideNotes(el.dataset.dir, Number(el.dataset.offset || 0), true),
   'open-title': (el) => openTitle(el.dataset.title || ''),
   'side-search': searchEverywhere,
   'toggle-search': () => {
@@ -121,10 +122,7 @@ const actions = {
   'rec-finish': () => recorder.finishAvailable().catch(fail),
   'rec-recover': (el) => recorder.recover(el.dataset.id).catch(fail),
   close: closeSheet,
-  'open-folder': (el) => {
-    closeSheet();
-    go(folderHash(el.dataset.dir));
-  },
+  'open-folder': openFolder,
   'open-note': (el) => go(noteHash(el.dataset.id)),
   'pin-card': pinCard,
   'library-view': changeLibraryView,
@@ -177,7 +175,10 @@ const actions = {
   'test-ai': testAi,
   'note-map': (el) => go(`#/map/${enc(el.dataset.id)}`),
   'note-picture': () => choosePictures(),
-  'view-original': (el) => viewOriginal(el.dataset.id, el.dataset.name),
+  'view-original': (el) => {
+    el.focus({ preventScroll: true });
+    return viewOriginal(el.dataset.id, el.dataset.name);
+  },
   'viewer-zoom': (el) => setViewerZoom(Number(el.dataset.step) === 0 ? 1 : state.viewerZoom * (Number(el.dataset.step) > 0 ? 1.5 : 1 / 1.5)),
   record: (el) => {
     closeSheet();
@@ -197,7 +198,7 @@ const actions = {
   'rec-discard': (el) => discardRecordingAsk(el),
   'rec-discard-now': (el) => discardRecordingNow(el),
   'rec-again': () => recorder.again(),
-  upload: () => uploadSheet().catch(fail),
+  upload: (el) => uploadSheet(undefined, el.dataset.dir).catch(fail),
   'upload-go': () => uploadGo().catch(fail),
   'upload-drop': (el) => {
     picked.splice(Number(el.dataset.i), 1);

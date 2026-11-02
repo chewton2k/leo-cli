@@ -210,12 +210,13 @@ document.addEventListener('animationend', pageBarLater, true);
 class Offline extends Error {}
 class Locked extends Error {}
 
-async function api(path, { method = 'GET', body, total = false } = {}) {
+async function api(path, { method = 'GET', body, total = false, signal } = {}) {
   let response;
   try {
     response = await fetch(path, {
       method,
       credentials: 'same-origin',
+      signal,
       headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
     });

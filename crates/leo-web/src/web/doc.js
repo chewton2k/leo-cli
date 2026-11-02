@@ -208,6 +208,7 @@
     function outlineGo(e) {
       const toggle = e.target.closest('button[data-fold]');
       if (toggle && outlineNav.contains(toggle)) {
+        toggle.focus({ preventScroll: true });
         const row = outlineRows.find((row) => row.line === Number(toggle.dataset.fold));
         if (row) {
           if (outlineFolded.has(row.key)) outlineFolded.delete(row.key);

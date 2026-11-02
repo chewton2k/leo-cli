@@ -249,8 +249,8 @@ test('on a wide screen the sidebar reaches every place and can be narrowed', asy
     await expect(side.locator(`[data-action="${action}"]`)).toHaveAttribute('aria-current', 'page');
   }
   await side.locator('[data-action="open-folder"][data-dir="side-course"]').click();
-  await expect(page).toHaveURL(/#\/f\/side-course$/);
-  await expect(side.locator('[data-action="open-folder"][data-dir="side-course"]')).toHaveAttribute('aria-current', 'page');
+  await expect(side.locator('[data-action="open-folder"][data-dir="side-course"]')).toHaveAttribute('aria-expanded', 'true');
+  await expect(page).toHaveURL(/#\/settings$/);
   await side.locator('[data-action="chat"]').click();
   await expect(page.locator('#chat')).toBeVisible();
   await expect(side.locator('[data-action="chat"]')).toHaveClass(/\bon\b/);

@@ -281,6 +281,8 @@ Backup setup is explicit, preserves an existing remote and runs outside the stor
 lock. Health uses local doctor checks without microphone or AI requests. First-launch
 setup groups microphone and macOS Accessibility on one page with live checkmarks,
 then offers a speech model; existing completion flags remain compatible.
+Desktop navigation uses an icon rail beside a folder-and-note explorer. Folder
+labels expand the tree; individual note rows open their notes.
 
 Desktop releases contain macOS arm64/x64 DMGs and signed app archives, Windows
 x64 NSIS and a signed latest.json. `scripts/desktop_release.py` validates asset

@@ -7,7 +7,7 @@ const carries = (e, type) => Boolean(e.dataTransfer && [...e.dataTransfer.types]
 const parentOf = (path) => path.split('/').slice(0, -1).join('/');
 const dropTargetOf = (el) => (el && el.closest ? el.closest('[data-action="open-folder"][data-dir], [data-action="home"], [data-drop-dir]') : null);
 const dirOf = (target) => (Object.hasOwn(target.dataset, 'dropDir') ? target.dataset.dropDir : target.dataset.action === 'home' ? '' : target.dataset.dir);
-const noteCardOf = (el) => (el && el.closest ? el.closest('.card[data-id][data-action="open-note"]') : null);
+const noteCardOf = (el) => (el && el.closest ? el.closest('.card[data-id][data-action="open-note"], .side-note[data-id][data-action="open-note"]') : null);
 const combinesWith = (e) => {
   const card = dragging.note && carries(e, NOTE_DRAG) ? noteCardOf(e.target) : null;
   return card && card.dataset.id !== dragging.note.id ? card : null;
@@ -44,7 +44,7 @@ function endDrag() {
 
 document.addEventListener('dragstart', (e) => {
   const from = e.target.closest ? e.target : null;
-  const card = from && from.closest('.card[data-id][draggable="true"]');
+  const card = from && from.closest('.card[data-id][draggable="true"], .side-note[data-id][draggable="true"]');
   const folder = !card && from && from.closest('[data-action="open-folder"][data-dir][draggable="true"]');
   if (card) {
     dragging.note = { id: card.dataset.id, title: card.dataset.title || 'Untitled', dir: card.dataset.from || '' };
