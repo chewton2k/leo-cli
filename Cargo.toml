@@ -41,7 +41,7 @@ image = { version = "=0.25.10", default-features = false, features = ["jpeg", "p
 flate2 = "1"
 url = "2"
 crc32fast = "1"
-zip = { version = "9.0.4", default-features = false, features = ["deflate"] }
+zip = { version = "9.2.2", default-features = false, features = ["deflate"] }
 serde_yaml = "0.9"
 sha2 = "0.10"
 tempfile = "3"
