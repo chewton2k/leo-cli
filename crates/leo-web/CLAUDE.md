@@ -1092,7 +1092,7 @@ checks. Two combines may run at once, with a 15-minute between-request deadline;
 any failed part leaves both source notes unchanged. Review, version checks,
 transcript copies and Undo still apply. Saving admits bounded Unicode JSON bodies.
 
-Notes with Markdown headings have an On this page outline, generated locally from
+Notes with Markdown headings have an outline (its disclosure is an icon and chevron with no "On this page" label; 2026-11-02, the user's call), generated locally from
 editable line blocks (up to 300 headings, excluding code, maths, quotes and tables).
 It uses source-more controls and theme tokens. With 900 px of room (2026-11-02,
 the user's call: notes sit in the middle), the note is centred between two 48 px
