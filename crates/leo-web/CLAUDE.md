@@ -266,6 +266,16 @@ reader, seer, meaning, web, room, speech).
   Study marking can reuse a session when its Read only access key matches.
   Failed sessions fall back with a fresh
   read cache; provider context accounting still bounds each retained session.
+- Idle compaction (2026-11-02, the user's request; usage drained fast): after
+  `COMPACT_IDLE_MS` (10 min, warm.rs `IDLE`) without a message, the page POSTs
+  `/api/chat/compact` with the model history; when at least
+  `COMPACT_LEAST_CHARS` (3,000) lie before the last `chat::COMPACT_KEEP` (4)
+  turns, the server drops that chat's warm session and summarises them in the
+  background (`remember_in_background`, the quick model). `chat::kept_from`
+  starts the next prompt at a summary's end when it covers more than the usual
+  window (hash-checked), so a chat picked up after a pause sends the summary and
+  the last turns instead of every recent turn on a cold cache. The chat on
+  screen is unchanged.
 - Long chats: `turns_for(room)` keeps recent turns verbatim, older ones go in
   `<earlier_in_this_chat>` with a background summary (`MEMORY_EVERY`).
   History carries who wrote each answer, what Felix did, cards and passages,
@@ -293,7 +303,18 @@ reader, seer, meaning, web, room, speech).
   else goes to POST `/api/quiz/mark` (the quick model, `MARK`, JSON verdict
   and feedback). The card then offers Next question and Ask Felix why
   (`q.held`); Felix is only told the result (`heldSay`, "do not repeat it")
-  when the user goes on, or with their next message. If the quick check is
+  when the user goes on, or with their next message. Order (2026-11-02, the
+  user's call: asking why jumped to the next question): Ask Felix why sends
+  `quizSay(..., stay)` (explain, no new question) and the card keeps Next
+  question under the reply; a typed message while a card is held tells the
+  result once (`q.told`), says "do not ask a new practice question unless I ask"
+  and keeps the button; Next question after that sends only "Next question,
+  please." Next question shows as a slim `.msg-next` divider (the `chat-switch`
+  pill), not a user bubble, and a card-only reply draws no empty paragraph.
+  Study's style starts from the open/attached material without being set up,
+  asks for self-contained questions that test one important idea, climbs from
+  understanding to use to transfer, adapts to right/wrong answers, and stops
+  after marking or answering a question about an answer. If the quick check is
   unavailable, Felix marks it as before (a `JUDGE` call when the verdict is
   missing). `quiz_from` shuffles multiple-choice options and refuses a quiz
   whose right option is clearly the longest (`gives_itself_away`). Study sessions: `study_plan` / `end_session`, quizzes

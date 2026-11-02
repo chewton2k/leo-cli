@@ -319,3 +319,20 @@ document.addEventListener('paste', (e) => {
   e.preventDefault();
   uploadSheet(pastedFiles(files));
 });
+
+// The menu bar icon (leo-desktop tray.rs) calls this after showing the window.
+// Record starts a lecture (microphone) or a call right away, like pressing
+// Start on the Record page; one already running is just shown.
+const APP_SETTINGS = ['general', 'updates'];
+window.leoFromApp = async (what, which) => {
+  if (what === 'settings') return go(`#/settings/${APP_SETTINGS.includes(which) ? which : 'general'}`);
+  if (what !== 'record' || !['microphone', 'call'].includes(which)) return;
+  if (recorder.active()) return go('#/record');
+  if (state.view !== 'record') go('#/record');
+  const until = Date.now() + 8000;
+  let kind = null;
+  while (Date.now() < until && !(kind = $(`#rec-box input[name="rec-kind"][value="${which}"]`))) await new Promise((r) => setTimeout(r, 100));
+  if (!kind || kind.disabled || recorder.active()) return;
+  kind.checked = true;
+  recorder.begin().catch(fail);
+};

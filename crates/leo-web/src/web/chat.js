@@ -4,6 +4,8 @@
   const KEY = 'leo-chat-v1';
   const MOST_KEPT = 40;
   const MOST_REFS = 8;
+  const COMPACT_IDLE_MS = 10 * 60 * 1000;
+  const COMPACT_LEAST_TURNS = 8;
   const ACCESS = [
     { id: 'ask', label: 'Ask before changing notes', short: 'Ask first', hint: 'Felix suggests changes and new notes; you apply each one.' },
     { id: 'auto', label: 'Change notes automatically', short: 'Auto', hint: 'Felix makes changes and new notes himself; each one can be undone.' },
@@ -139,8 +141,12 @@
     return Boolean(said) && accepted(quiz).some((a) => plainAnswer(a) === said);
   }
 
-  function quizSay(quiz, given, correct) {
-    const next = 'If we are practising, ask the next question with the quiz tool so it appears as a card; never ask a practice question in plain text. If you keep a score, give it once, at the very end of your reply.';
+  // stay: the user asked about this answer (Ask Felix why), so Felix explains
+  // and stops; the card keeps its Next question button for when they are ready.
+  function quizSay(quiz, given, correct, stay = false) {
+    const next = stay
+      ? 'Only explain this answer: do not ask a new practice question in this reply. I will press Next question when I am ready.'
+      : 'If we are practising, ask the next question with the quiz tool so it appears as a card; never ask a practice question in plain text. If you keep a score, give it once, at the very end of your reply.';
     const right = 'praise me briefly in your own words, then explain why it is right: the idea behind it, and a quick way to see it or remember it next time';
     const lines = [`Quiz answer. Question: ${quiz.question}`, `My answer: ${given}`];
     if (correct === null) {
@@ -155,11 +161,12 @@
   }
 
   function heldSay(quiz, ending) {
-    const verdict = quiz.correct === true ? 'right' : `wrong; the right answer is ${accepted(quiz)[0] || quiz.answer}`;
-    const shown = quiz.feedback ? 'the explanation and feedback' : 'the explanation';
     const then = ending
       ? 'That was the last question of this study session: finish it now with end_session and a short recap.'
       : 'Ask the next question with the quiz tool so it appears as a card, with at most one short sentence before it.';
+    if (quiz.told) return ['Next question, please.', then].join('\n');
+    const verdict = quiz.correct === true ? 'right' : `wrong; the right answer is ${accepted(quiz)[0] || quiz.answer}`;
+    const shown = quiz.feedback ? 'the explanation and feedback' : 'the explanation';
     return [`Quiz answer. Question: ${quiz.question}`, `My answer: ${quiz.given}`, `leo marked it ${verdict}, and already showed me ${shown}, so do not repeat or re-mark it.`, then].join('\n');
   }
 
@@ -984,6 +991,28 @@
       save(storage, state.mode, stored(), state.refs, state.id);
     }
 
+    // Idle compaction: after warm.rs IDLE the warm session and the provider's
+    // prompt cache are cold, so the next message would resend every recent turn
+    // at full price. leo summarises the older part with the cheap model instead
+    // (POST /api/chat/compact); the chat on screen stays exactly as it is.
+    let compactTimer = 0;
+    function stopCompacting() {
+      clearTimeout(compactTimer);
+    }
+    function compactLater() {
+      clearTimeout(compactTimer);
+      const id = state.id;
+      if (id) compactTimer = setTimeout(() => compactNow(id), COMPACT_IDLE_MS);
+    }
+    async function compactNow(id) {
+      if (state.busy || state.id !== id) return;
+      const messages = modelHistory(state.messages.filter((m) => !m.pending));
+      if (messages.length < COMPACT_LEAST_TURNS) return;
+      try {
+        await fetch('/api/chat/compact', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat: id, messages }) });
+      } catch (e) {}
+    }
+
     let upload = Promise.resolve();
     function snapshot() {
       return { id: state.id, mode: state.mode, refs: state.refs, messages: stored() };
@@ -1086,6 +1115,7 @@
       resumeSeq++;
       if (state.busy) state.busy.abort();
       state.id = id;
+      stopCompacting();
       state.messages = [];
       state.refs = [];
       state.files = [];
@@ -1126,6 +1156,7 @@
         return null;
       }
       state.id = chat.id;
+      compactLater();
       state.mode = modeOf(chat.mode);
       state.messages = Array.isArray(chat.messages) ? chat.messages : [];
       state.refs = Array.isArray(chat.refs) ? chat.refs.slice(0, MOST_REFS) : [];
@@ -1479,6 +1510,7 @@
     }
 
     function bubble(m, i) {
+      if (m.role === 'user' && m.next) return '<div class="chat-switch msg-next" role="separator">Next question</div>';
       if (m.role === 'user') {
         const notes = (m.refs || []).map((r) => `<button class="cite" data-chat="open" data-id="${escape(r.id)}">${escape(r.title)}</button>`);
         const cards = Array.isArray(m.cards)
@@ -1517,7 +1549,7 @@
       const parts = timeline(shown, (Array.isArray(m.steps) ? m.steps : []).slice(0, MOST_REPLY_STEPS).map((s) => typeof s === 'string' || !s ? s : { ...s, at: Number.isInteger(s.at) ? s.at - removed : 0 }));
       const body = parts.length ? parts.map((part, k) => part.steps
         ? `<div class="msg-steps">${stepRuns(part.steps).map((run, j, all) => stepLine(run.step, m.pending && k === parts.length - 1 && j === all.length - 1, run.times)).join('')}</div>`
-        : `<div class="prose">${cite(render(part.text), m.sources, escape, m.files).replace(/<input /g, '<input disabled ')}</div>`).join('') : `<div class="prose">${html}</div>`;
+        : `<div class="prose">${cite(render(part.text), m.sources, escape, m.files).replace(/<input /g, '<input disabled ')}</div>`).join('') : html ? `<div class="prose">${html}</div>` : '';
       const offers = (m.proposals || []).map((p, j) => proposalCard(p, i, j)).join('');
       const asks = (m.asks || []).map((a, k) => askCard(a, i, k, m.pending)).join('');
       const quizzes = (m.quizzes || []).map((q, k) => quizCard(q, i, k, m.pending, m.sources)).join('');
@@ -1746,17 +1778,19 @@
         .join('');
       const waiting = hints.some((h) => h.pending);
       const askHint = !done && !pending && !waiting ? `<button type="button" class="quiz-hint-ask" data-chat="quiz-hint" ${where}>${hints.length ? 'Another hint' : 'Get a hint'}</button>` : '';
-      const judged = done && q.correct !== null && q.correct !== undefined && !reply;
+      const marked = done && q.correct !== null && q.correct !== undefined;
+      const judged = marked && !reply;
       const verdict = judged && q.kind !== 'multiple_choice' ? `<div class="quiz-verdict">${q.correct ? 'Right' : 'Not quite'}</div>` : '';
       const feedback = judged && q.feedback ? `<div class="quiz-explain prose">${cite(render(q.feedback), sources, escape)}</div>` : '';
-      const why = `${verdict}${feedback}${judged && q.explain && !(q.feedback && q.kind !== 'multiple_choice') ? `<div class="quiz-explain">${cite(inline(q.explain), sources, escape)}</div>` : ''}${q.held && judged ? `<div class="quiz-next"><button type="button" class="btn primary sm" data-chat="quiz-next" ${where}${state.busy ? ' disabled' : ''}>Next question</button><button type="button" class="btn plain sm" data-chat="quiz-why" ${where}${state.busy ? ' disabled' : ''}>Ask Felix ${q.correct ? 'why' : 'to explain'}</button></div>` : ''}`;
+      const why = `${verdict}${feedback}${judged && q.explain && !(q.feedback && q.kind !== 'multiple_choice') ? `<div class="quiz-explain">${cite(inline(q.explain), sources, escape)}</div>` : ''}`;
+      const onward = q.held && marked && !marking ? `<div class="quiz-next"><button type="button" class="btn primary sm" data-chat="quiz-next" ${where}${state.busy ? ' disabled' : ''}>Next question</button>${reply ? '' : `<button type="button" class="btn plain sm" data-chat="quiz-why" ${where}${state.busy ? ' disabled' : ''}>Ask Felix ${q.correct ? 'why' : 'to explain'}</button>`}</div>` : '';
       const said = reply
         ? (grade(reply.text || '').text
           ? `<div class="quiz-reply prose">${cite(render(grade(reply.text).text), reply.sources || sources, escape, reply.files)}</div>`
           : reply.pending ? '<div class="quiz-reply"><span class="typing"><i></i><i></i><i></i></span></div>' : '')
         : '';
       const tone = q.correct === true ? ' right' : q.correct === false ? ' wrong' : '';
-      return `<div class="quiz-card${done ? ' done' : ''}${marking ? ' marking' : ''}${tone}"><div class="quiz-kind">${escape(QUIZ_KINDS[q.kind] || 'Question')}</div><div class="quiz-q prose">${asked}</div>${hinted}${answer}${askHint}${result}${why}${said}</div>`;
+      return `<div class="quiz-card${done ? ' done' : ''}${marking ? ' marking' : ''}${tone}"><div class="quiz-kind">${escape(QUIZ_KINDS[q.kind] || 'Question')}</div><div class="quiz-q prose">${asked}</div>${hinted}${answer}${askHint}${result}${why}${said}${onward}</div>`;
     }
 
     function askHint(i, k) {
@@ -1826,10 +1860,14 @@
       const m = state.messages[i];
       const q = m && m.quizzes && m.quizzes[k];
       if (!q || !q.held || state.busy) return;
-      q.held = false;
       const quiz = { question: q.question, given: q.given, correct: q.correct, kind: q.kind };
-      if (why) send(q.given, { say: quizSay(q, q.given, q.correct), quiz, card: q, held: true });
-      else send('Next question', { say: heldSay(q, currentSession()?.state === 'finishing'), quiz, held: true });
+      if (why) {
+        if (q.reply) return;
+        send(q.given, { say: quizSay(q, q.given, q.correct, true), quiz, card: q, held: true });
+        return;
+      }
+      q.held = false;
+      send('Next question', { say: heldSay(q, currentSession()?.state === 'finishing'), quiz, held: true, next: true });
     }
 
     async function postSteer(work, m) {
@@ -2178,13 +2216,17 @@
         finally { state.preparingSend = false; if (!prepared) onInterviewReply(id); }
       }
       if (!extra.held) {
-        const held = state.messages.flatMap((m) => (m.quizzes || []).filter((q) => q.held));
+        const held = state.messages.flatMap((m) => (m.quizzes || []).filter((q) => q.held && !q.told));
         if (held.length) {
-          for (const q of held) q.held = false;
+          // The card keeps Next question: a question about the answer ("why?")
+          // is answered, and the next practice question waits for the button.
+          for (const q of held) q.told = true;
           const last = held[held.length - 1];
-          extra = { ...extra, say: [...held.map((q) => heldSay(q, false).split('\n').slice(0, 3).join('\n')), extra.say || question].join('\n'), quiz: extra.quiz || { question: last.question, given: last.given, correct: last.correct, kind: last.kind } };
+          const stay = extra.card ? [] : ['Answer my message. Do not ask a new practice question unless I ask for one.'];
+          extra = { ...extra, say: [...held.map((q) => heldSay(q, false).split('\n').slice(0, 3).join('\n')), ...stay, extra.say || question].join('\n'), quiz: extra.quiz || { question: last.question, given: last.given, correct: last.correct, kind: last.kind } };
         }
       }
+      stopCompacting();
       const card = extra.card || null;
       if (!extra.quiz) {
         const last = [...state.messages].reverse().find((m) => m.role === 'assistant');
@@ -2202,7 +2244,7 @@
         state.selection = null;
         drawRefs();
       }
-      const asked = { role: 'user', text: question, refs: attached, docs: [], files: [], cards: going.map(cardOf), ...(viewing ? { interview: { ...viewing } } : {}), ...(passage ? { selection: passage } : {}), ...(extra.say ? { say: extra.say } : {}), ...(extra.quiz ? { quiz: extra.quiz } : {}) };
+      const asked = { role: 'user', text: question, refs: attached, docs: [], files: [], cards: going.map(cardOf), ...(viewing ? { interview: { ...viewing } } : {}), ...(passage ? { selection: passage } : {}), ...(extra.say ? { say: extra.say } : {}), ...(extra.quiz ? { quiz: extra.quiz } : {}), ...(extra.next ? { next: true } : {}) };
       const settle = (i, doc) => {
         if (!doc) {
           asked.cards[i] = null;
@@ -2391,6 +2433,7 @@
       }
       draw(false);
       remember({ ...thread, messages: thread.messages.slice() });
+      if (thread.id === state.id) compactLater();
       if (thread.id === state.id && !(asked.quiz && asked.quiz.correct !== null && asked.quiz.correct !== undefined)) react(answer);
       awake();
       if (!stopped && left.length && thread.id === state.id) send(left.map((m) => m.text).join('\n\n'));

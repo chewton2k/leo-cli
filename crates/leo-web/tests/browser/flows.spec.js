@@ -2971,7 +2971,7 @@ test.describe('Felix asks, quizzes and listens while he works', () => {
     expect(asked[1].practice, 'a card answer is marked as practice, so it is never nudged into a note change').toBe(true);
     const told = asked[1].messages.at(-1).text;
     expect(told).toContain('Question: What does BFS use?');
-    expect(told).toContain('with the quiz tool');
+    expect(told, 'asking why explains this answer and stops').toContain('do not ask a new practice question');
     expect(told).toContain('My answer: a stack');
     expect(told).toContain('the right answer is a queue');
     expect(told).toContain('why each of the other choices is wrong');
@@ -3049,6 +3049,40 @@ test.describe('Felix asks, quizzes and listens while he works', () => {
     await expect(card.locator('.quiz-hint').first()).toContainText('Set the derivative');
     await expect(card.locator('[data-chat="quiz-hint"]'), 'no more hints once answered').toHaveCount(0);
     expect(asked[3].messages.at(-1).text).toContain('praise me briefly');
+    expect(asked[3].messages.at(-1).text, 'asking why does not jump to the next question').toContain('do not ask a new practice question');
+    await expect(card.locator('[data-chat="quiz-why"]')).toHaveCount(0);
+    await expect(card.locator('[data-chat="quiz-next"]'), 'the explanation leaves Next question for when they are ready').toBeVisible();
+  });
+
+  test('a question typed about a marked answer is answered without moving on', async ({ page }) => {
+    const asked = [];
+    await page.route('**/api/chat', async (route) => {
+      asked.push(route.request().postDataJSON());
+      if (asked.length === 1) return route.fulfill(answerWith([{ sources: [] }, { quiz: { kind: 'multiple_choice', question: 'Which structure does BFS use?', options: ['a queue', 'a stack'], answer: 'a queue', explain: 'Oldest first.' } }, { done: true }]));
+      if (asked.length === 2) return route.fulfill(answerWith([{ sources: [] }, { t: 'A queue hands back the oldest vertex, so levels come out in order.' }, { done: true }]));
+      return route.fulfill(answerWith([{ sources: [] }, { quiz: { kind: 'free_response', question: 'Why does BFS find shortest paths?', options: [], answer: 'Level by level.', explain: '' } }, { done: true }]));
+    });
+    const chat = await openFelix(page);
+    await chat.locator('#chat-input').fill('quiz me');
+    await chat.locator('#chat-input').press('Enter');
+    const card = chat.locator('.quiz-card').first();
+    await card.locator('.quiz-option', { hasText: 'a queue' }).click();
+    await expect(card.locator('[data-chat="quiz-next"]')).toBeVisible();
+    await chat.locator('#chat-input').fill('why a queue and not a stack?');
+    await chat.locator('#chat-input').press('Enter');
+    await expect(chat.locator('.msg.leo').last()).toContainText('levels come out in order');
+    const said = asked[1].messages.at(-1).text;
+    expect(said).toContain('leo marked it right');
+    expect(said).toContain('Do not ask a new practice question unless I ask for one');
+    expect(said).toContain('why a queue and not a stack?');
+    await expect(chat.locator('.quiz-card'), 'no new question until they ask').toHaveCount(1);
+    await card.locator('[data-chat="quiz-next"]').click();
+    await expect(chat.locator('.quiz-card')).toHaveCount(2);
+    const next = asked[2].messages.at(-1).text;
+    expect(next).toContain('Next question, please.');
+    expect(next, 'the result is not told twice').not.toContain('leo marked it');
+    await expect(chat.locator('.msg-next'), 'Next question is a slim divider, not a chat bubble').toHaveCount(1);
+    await expect(chat.locator('.msg.user .bubble', { hasText: 'Next question' })).toHaveCount(0);
   });
 
   test('a fill in the blank and a free answer are marked quickly for what was meant, and Felix explains only when asked', async ({ page }) => {

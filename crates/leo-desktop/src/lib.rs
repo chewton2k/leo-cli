@@ -96,6 +96,10 @@ pub fn run() {
                 .min_inner_size(480.0, 480.0)
                 .visible(!hidden)
                 .initialization_script(PRINT)
+                // Tauri's own file-drop handler swallows the webview's drag events,
+                // which broke every drag in the page (moving notes and folders,
+                // combining notes). The page handles dropped files itself.
+                .disable_drag_drop_handler()
                 .on_navigation(move |url| {
                     if links::stays_inside(url, port) {
                         return true;

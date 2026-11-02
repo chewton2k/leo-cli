@@ -36,6 +36,20 @@ a test, or leave it unset to see the user's own data.
 - `links::stays_inside`: only `http://127.0.0.1|localhost:<port>` and the
   bundled page stay in the window; navigation and new windows elsewhere open in
   the default browser.
+- Menu bar icon (`tray.rs`, 2026-11-02, the user's request): Open Leo, Record a
+  lecture / Record a call (shows the window and calls the page's
+  `window.leoFromApp('record', kind)`, which presses Start for that kind; a
+  running recording is just shown), Copy last dictation (newest row of
+  `leo_web::dictation::recent`, native clipboard), status rows (speech model
+  `Library::selected_name`, writing AI and model plus 5h/7d plan use from
+  `web_settings::writing_status`, AI use since launch `Running::usage_line`),
+  Settings…, Check for updates… (queues a check, opens Updates & about), the
+  version, Quit. A `leo-tray-status` thread refreshes the rows every 20 s (Codex
+  limits every 5 min, since they need its app-server); opening the menu never waits.
+- The window disables Tauri's drag-drop handler (`disable_drag_drop_handler`):
+  left on, it swallows the webview's HTML drag events, so moving notes and
+  folders and combining notes did nothing in the app (2026-11-02). Dropped
+  files reach the page's own handlers (`drag.js`).
 - Downloads save to `~/Downloads` under a free name (`links::download_path`)
   and are revealed when done.
 - `window.print` calls the `print_page` command (the webview's own print).

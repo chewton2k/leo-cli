@@ -187,6 +187,16 @@ impl Library {
         Ok(path)
     }
 
+    /// The chosen model's catalog name, without checking its file (the menu
+    /// bar reads this every few seconds; `selected` hashes the model).
+    pub fn selected_name(&self) -> Option<String> {
+        let selection = self.selection().ok()?;
+        if selection.id.is_empty() {
+            return None;
+        }
+        self.catalog.get(&selection.id).ok().map(|m| m.name.clone())
+    }
+
     pub fn selected(&self) -> Result<Selected> {
         let selection = self.selection()?;
         ensure!(!selection.id.is_empty(), "Choose and download a model in Settings → Speech models. Your audio is kept until one is ready.");

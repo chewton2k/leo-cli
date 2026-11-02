@@ -580,3 +580,83 @@ mod tests {
         assert_eq!(Config::load_from(&path).chat.chain, ["claude_code"]);
     }
 }
+
+/// The writing AI as the menu bar shows it: "Claude Code · claude-opus-5-5",
+/// and its plan's 5 hour and 7 day use when the agent has reported them.
+pub fn writing_status() -> (String, Option<String>) {
+    let cfg = Config::load();
+    let store = secret::default_store();
+    if cfg
+        .provider("codex")
+        .is_some_and(|p| Agent::of(p) == Some(Agent::Codex))
+    {
+        crate::usage::refresh_codex(&cfg);
+    }
+    status_line(
+        choice::selection(&cfg, store.as_ref(), Task::Chat).as_ref(),
+        &crate::usage::load(),
+        chrono::Utc::now(),
+    )
+}
+
+fn status_line(
+    selection: Option<&choice::Selection>,
+    seen: &crate::usage::Seen,
+    now: chrono::DateTime<chrono::Utc>,
+) -> (String, Option<String>) {
+    let Some(selection) = selection else {
+        return ("No writing AI chosen".into(), None);
+    };
+    let name = choice::find(Task::Chat, &selection.provider)
+        .map(|c| c.name)
+        .unwrap_or(selection.provider.as_str());
+    let label = match selection.model.as_deref().filter(|m| !m.is_empty()) {
+        Some(model) => format!("{name} · {model}"),
+        None => name.to_string(),
+    };
+    let limits = seen
+        .get(&selection.provider)
+        .map(|usage| crate::usage::label(usage, now))
+        .filter(|l| !l.is_empty());
+    (label, limits)
+}
+
+#[cfg(test)]
+mod status_tests {
+    use super::*;
+
+    #[test]
+    fn the_menu_names_the_writing_ai_its_model_and_known_limits() {
+        let now = chrono::Utc::now();
+        let selection = choice::Selection {
+            provider: "claude_code".into(),
+            choice: None,
+            model: Some("claude-opus-5-5".into()),
+            ready: true,
+        };
+        let mut seen = crate::usage::Seen::new();
+        assert_eq!(
+            status_line(Some(&selection), &seen, now),
+            ("Claude Code · claude-opus-5-5".into(), None)
+        );
+        seen.insert(
+            "claude_code".into(),
+            crate::usage::Usage {
+                five_hour: Some(crate::usage::Window {
+                    used: 0.12,
+                    resets_at: None,
+                }),
+                seven_day: Some(crate::usage::Window {
+                    used: 0.4,
+                    resets_at: None,
+                }),
+                seen_at: now,
+            },
+        );
+        assert_eq!(
+            status_line(Some(&selection), &seen, now).1.as_deref(),
+            Some("5h: 12%, 7d: 40%")
+        );
+        assert_eq!(status_line(None, &seen, now).0, "No writing AI chosen");
+    }
+}
