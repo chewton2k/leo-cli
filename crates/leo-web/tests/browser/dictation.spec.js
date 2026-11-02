@@ -5,17 +5,17 @@ const http = require('node:http');
 
 test('dictation preferences keep drafts and caret while shortcut and history update', async ({ browser }) => {
   const web = path.resolve(__dirname, '../../src/web');
-  const source = fs.readFileSync(path.join(web, 'app/dictation.js'), 'utf8');
+  const source = fs.readFileSync(path.join(web, 'app/settings-navigation.js'), 'utf8') + fs.readFileSync(path.join(web, 'app/dictation.js'), 'utf8');
   const css = fs.readFileSync(path.join(web, 'index.html'), 'utf8').match(/<style>([\s\S]*?)<\/style>/)[1];
   const initial = () => ({ settings: { shortcut: 'option+space', mode: 'both', custom_words: ['Initial'], fillers: true, popup: 'live', top: false }, microphones: ['External microphone'], shortcut: {}, recent: [{ id: 1, text: '<img src=x onerror=bad()>' }] });
   let view = initial();
   const script = `const app=document.querySelector('#app'),$=s=>document.querySelector(s); let seq=1,state={view:'settings',dictation:${JSON.stringify(view)}};
-    const ICON={chevron:''}; const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const ICON={chevron:''}, svg=p=>'<svg>'+p+'</svg>'; const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     function settingsOption(value,label,current){return '<option value="'+esc(value)+'"'+(value===current?' selected':'')+'>'+esc(label)+'</option>';}
     async function api(url,options={}){const response=await fetch(url,{method:options.method||'GET',headers:{'Content-Type':'application/json'},body:options.body?JSON.stringify(options.body):undefined});return response.json();}
     ${source}
     app.innerHTML=dictationCards(state.dictation);
-    app.addEventListener('click',e=>{const b=e.target.closest('[data-action]');if(!b)return;const actions={'dictation-record':()=>dictationChange({action:'record_shortcut'}),'dictation-save':saveDictation,'dictation-clear':()=>dictationChange({action:'clear'}),'dictation-use-shortcut':useDictationShortcut};if(actions[b.dataset.action])actions[b.dataset.action]();});
+    app.addEventListener('click',e=>{const b=e.target.closest('[data-action]');if(!b)return;const actions={'segment-pick':()=>pickSegment(b),'dictation-record':()=>dictationChange({action:'record_shortcut'}),'dictation-save':saveDictation,'dictation-clear':()=>dictationChange({action:'clear'}),'dictation-use-shortcut':useDictationShortcut};if(actions[b.dataset.action])actions[b.dataset.action]();});
     pollDictation(seq,++dictationGeneration);`;
   const server = http.createServer(async (request, response) => {
     if (request.url === '/api/dictation') {
@@ -52,6 +52,12 @@ test('dictation preferences keep drafts and caret while shortcut and history upd
       await page.getByRole('button', { name: 'Use shortcut', exact: true }).click();
       await expect(page.locator('[data-dictation="shortcut"]')).toHaveValue('fn');
       await expect(words).toHaveValue('Charlton\n東京');
+      await page.getByRole('radiogroup', { name: 'Popup position' }).getByRole('radio', { name: 'Top' }).click();
+      await page.getByRole('radiogroup', { name: 'Activation' }).getByRole('radio', { name: 'Tap', exact: true }).click();
+      await page.getByRole('switch', { name: 'Remove filler words' }).uncheck();
+      await page.getByRole('button', { name: 'Save dictation settings', exact: true }).click();
+      await expect.poll(() => [view.settings.top, view.settings.mode, view.settings.fillers]).toEqual([true, 'tap', false]);
+      await expect(page.getByRole('radiogroup', { name: 'Popup position' }).getByRole('radio', { name: 'Top' })).toHaveAttribute('aria-checked', 'true');
       await page.getByRole('button', { name: 'Clear', exact: true }).click();
       await expect(page.locator('#dictation-recent')).toContainText('Your dictations will appear here.');
       await context.close();

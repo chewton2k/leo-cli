@@ -106,7 +106,14 @@ reader, seer, meaning, web, room, speech).
   window, so reading positions and paging are unchanged.
 - Reuse what exists: `set-card`, `set-row`, `set-input`, `btn sm|plain|primary|danger`,
   `chip`/`pick-chip`, `sheet()` (swipe-to-close on phones), toasts with Undo,
-  `library-views` segmented control, settings-style `<select>`. Readability:
+  `library-views` segmented control, settings-style `<select>`. Settings
+  controls (`settings-navigation.js`): `settingsSwitch` (an iOS-style switch
+  that stays a real checkbox, `role="switch"`) for every on/off preference,
+  never a bare checkbox; `segmented` (a pill that slides to the pick) for
+  choices of two to four short options, either a hidden `field` input that
+  fires `change` like a `<select>` or `action` buttons with `aria-pressed`;
+  longer or open-ended lists stay `<select>`. Redraws keep the pill where it
+  was and slide it (`keepSegmented`/`restoreSettingsFields`). Readability:
   `flows.spec.js` measures every visible text's contrast in light and dark
   (≥3:1).
   Filled danger buttons, error toasts and chat deletion confirmations reuse
@@ -208,7 +215,8 @@ reader, seer, meaning, web, room, speech).
   “Title”", read_transcript); Undo restores the body and the note and removes
   the copied transcripts (POST `uncombine`).
 - Sidebar (`side.js`, ≥1000 px): a 52 px icon rail holds Leo tools, with
-  Trash / Storage / Settings pinned below. Buttons retain accessible names,
+  Settings pinned below (Trash and Storage live inside Settings since
+  2026-11-02, the user's call; the rail shows Settings for them). Buttons retain accessible names,
   tooltips and active states, with space between controls and unboxed shortcut
   hints. The separate explorer shows nested folders and
   individual notes. Folder labels and chevrons toggle their children; note rows
@@ -1125,8 +1133,13 @@ Nothing becomes a note or sync file. Card polling updates shortcut status and
 history only; fields, drafts, focus and caret survive. Local popup rendering
 and settings helpers have node tests in `dictation.test.js`.
 
-Settings uses Layout A's grouped left navigation at `#/settings/<section>`;
-Storage keeps its controller inside the same frame. Redraws retain field drafts,
+Settings (2026-11-02, the user's call) is a full-height sidebar pinned to the
+left of the content (sticky under the bar, its own scroll), grouped Leo / Your
+notes / Data / This app, each section with an icon and a page heading with a
+one-line description; under 760 px it becomes a sideways-scrolling chip strip
+that centres the current section. Routes stay `#/settings/<section>`; Storage
+and Trash (Data) keep their controllers inside the same frame, `#/trash` still
+works, and a bare `#/settings` never reopens Trash. Redraws retain field drafts,
 focus and selection, including textareas. App polling updates native status and a
 ready-update banner without replacing focused controls. First-launch setup
 (`onboarding.js`, 2026-11-02, the user's request: like other dictation apps) is a

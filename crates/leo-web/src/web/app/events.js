@@ -235,7 +235,7 @@ async function render() {
   interviewPage?.codeResize?.disconnect();
   clearTimeout(cal.timer);
   if (!/^#\/n\//.test(location.hash)) closeSource();
-  document.body.classList.toggle('on-settings', /^#\/settings(?:\/|$)/.test(location.hash));
+  document.body.classList.toggle('on-settings', /^#\/(?:settings|trash)(?:\/|$)/.test(location.hash));
   document.body.classList.toggle('on-calendar', /^#\/calendar/.test(location.hash));
   document.body.classList.toggle('on-boards', /^#\/boards(?:\/|$)/.test(location.hash));
   document.body.classList.toggle('on-interviews', /^#\/interviews(?:\/|$)/.test(location.hash));

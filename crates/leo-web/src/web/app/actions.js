@@ -141,6 +141,7 @@ const actions = {
   'pin-card': pinCard,
   'library-view': changeLibraryView,
   'theme-pick': (el) => pickTheme(el),
+  'segment-pick': (el) => pickSegment(el),
   'felix-pick': (el) => pickFelix(el),
   'width-pick': (el) => pickWidth(el),
   'quick-leo': () => quickLeo(),

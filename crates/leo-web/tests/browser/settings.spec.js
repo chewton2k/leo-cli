@@ -10,7 +10,7 @@ test('Settings sections keep drafts and selections across redraws in both themes
   const fixture = `const app=document.querySelector('#app'), $=selector=>document.querySelector(selector);
     let seq=0,state={view:'folder'};
     const esc=text=>String(text).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-    const ICON=new Proxy({}, {get:()=>''}), chrome=()=>{}, skeleton=()=>'', svg=()=>'', felix={felix:()=>''}, rel=()=>'', toast=()=>{}, fail=e=>{window.errors.push(e.message)};
+    const ICON=new Proxy({}, {get:()=>'<svg></svg>'}), chrome=()=>{}, skeleton=()=>'', svg=paths=>'<svg>'+paths+'</svg>', felix={felix:()=>''}, rel=()=>'', toast=()=>{}, fail=e=>{window.errors.push(e.message)};
     window.errors=[]; window.leoChat={usageRows:()=>[]};
     const page={tasks:[],backup:{remote:null,auto_push:'quit',options:[{id:'quit',label:'On quit'}]}};
     async function api(url) {
@@ -21,10 +21,14 @@ test('Settings sections keep drafts and selections across redraws in both themes
       if(url==='/api/health') return {sections:[{title:'This app',checks:[{name:'Speech model',state:'missing',fix:'Choose a model.',section:'models'}]}]};
       if(url==='/api/app') return {preferences:{onboarding:[true,true,true],automatic_updates:true,install_on_quit:true},version:'1.2.3',updates:{state:'ready',version:'1.2.4'},paths:{}};
       if(url==='/api/storage') return {total:0,total_label:'0 B',areas:[]};
-      if(url==='/api/keep') return {trash_choices:[],chat_choices:[]};
+      if(url==='/api/keep') return {trash_choices:[],chat_choices:[],trash_days:30};
+      if(url==='/api/trash') return [];
       throw new Error(url);
     }
+    const floating=document.createElement('div'), plural=(n,w)=>n+' '+w+(n===1?'':'s'), empty=(icon,title,text)=>'<div class="empty"><h2>'+title+'</h2><p>'+text+'</p></div>';
+    document.addEventListener('click',e=>{const el=e.target.closest('[data-action="segment-pick"]'); if(el) pickSegment(el);});
     ${read('theme.js')}
+    ${read('app/trash.js')}
     ${read('app/settings-navigation.js')}
     ${read('app/settings.js')}
     ${read('app/storage.js')}
@@ -37,7 +41,7 @@ test('Settings sections keep drafts and selections across redraws in both themes
   const server=http.createServer((req,res)=>{
     if(req.url==='/fixture.js') {res.setHeader('Content-Type','text/javascript; charset=utf-8');return res.end(fixture);}
     if(req.url==='/style.css') {res.setHeader('Content-Type','text/css; charset=utf-8');return res.end(css);}
-    res.setHeader('Content-Type','text/html; charset=utf-8');res.end('<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/style.css"></head><body class="on-settings"><div id="crumbs"></div><div id="app-update-banner" hidden></div><main id="app"></main><script src="/fixture.js"></script></body></html>');
+    res.setHeader('Content-Type','text/html; charset=utf-8');res.end('<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/style.css"></head><body class="on-settings"><header class="bar"><div class="bar-row"><nav class="crumbs" id="crumbs"></nav></div></header><div id="app-update-banner" hidden></div><main id="app"></main><script src="/fixture.js"></script></body></html>');
   });
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   try {
@@ -45,14 +49,47 @@ test('Settings sections keep drafts and selections across redraws in both themes
       const page=await browser.newPage({colorScheme:theme,viewport:{width:900,height:850}});
       await page.goto('http://127.0.0.1:'+server.address().port+'/#/settings/backup');
       await expect(page.locator('#backup-repository')).toBeVisible();
-      await expect(page.locator('.settings-nav a')).toHaveCount(9);
-      for(const name of ['Leo','Your notes','This app']) await expect(page.getByText(name,{exact:true})).toBeVisible();
+      await expect(page.locator('.settings-nav a')).toHaveCount(10);
+      for(const name of ['Leo','Your notes','Data','This app']) await expect(page.locator('.settings-group-title',{hasText:name})).toBeVisible();
+      await expect(page.locator('.settings-nav a svg')).toHaveCount(10);
+      await expect(page.getByRole('heading',{level:1,name:'Backup'})).toBeVisible();
+      // The section list is a sidebar pinned to the left edge that stays put while the page scrolls.
+      const pinned=async()=>page.locator('.settings-nav').evaluate(el=>{const box=el.getBoundingClientRect();return [Math.round(box.left),Math.round(box.top)];});
+      const bar=await page.locator('.bar').evaluate(el=>Math.round(el.getBoundingClientRect().bottom));
+      const banner=await page.locator('#app-update-banner').evaluate(el=>Math.round(el.getBoundingClientRect().bottom));
+      expect(await pinned()).toEqual([0,Math.max(bar,banner)]);
+      await page.locator('.settings-section').evaluate(el=>{el.style.minHeight='3000px';scrollTo(0,600);});
+      expect(await pinned()).toEqual([0,bar]);
+      await page.locator('.settings-section').evaluate(el=>{el.style.minHeight='';scrollTo(0,0);});
       await page.locator('#backup-repository').fill('Personal notes 文字');
       await page.locator('#backup-repository').evaluate(el=>{el.focus();el.setSelectionRange(4,8);});
       await page.evaluate(()=>window.audit.redraw());
       await expect(page.locator('#backup-repository')).toBeFocused();
       expect(await page.locator('#backup-repository').evaluate(el=>[el.value,el.selectionStart,el.selectionEnd])).toEqual(['Personal notes 文字',4,8]);
       await page.getByRole('link',{name:'Dictation',exact:true}).click();
+      // Choices of a few options are a segmented control whose pill slides to the pick; drafts survive redraws.
+      const activation=page.getByRole('radiogroup',{name:'Activation'});
+      await expect(activation.getByRole('radio',{name:'Hold or tap'})).toHaveAttribute('aria-checked','true');
+      await activation.getByRole('radio',{name:'Tap',exact:true}).click();
+      await expect(page.locator('[data-dictation="mode"]')).toHaveValue('tap');
+      await expect(activation.getByRole('radio',{name:'Tap',exact:true})).toHaveAttribute('aria-checked','true');
+      await expect(activation).toHaveAttribute('style',/--at: ?2/);
+      const pill=await activation.locator('.segment-pill').evaluate(el=>new Promise(done=>setTimeout(()=>done(el.getBoundingClientRect()),400)));
+      const tap=await activation.getByRole('radio',{name:'Tap',exact:true}).boundingBox();
+      expect(Math.abs(pill.left-tap.x)).toBeLessThan(1.5);
+      expect(Math.abs(pill.width-tap.width)).toBeLessThan(1.5);
+      await page.keyboard.press('ArrowLeft');
+      await expect(page.locator('[data-dictation="mode"]')).toHaveValue('hold');
+      await expect(activation.getByRole('radio',{name:'Hold',exact:true})).toBeFocused();
+      await page.evaluate(()=>window.audit.redraw());
+      await expect(page.locator('[data-dictation="mode"]')).toHaveValue('hold');
+      await expect(page.getByRole('radiogroup',{name:'Activation'}).getByRole('radio',{name:'Hold',exact:true})).toHaveAttribute('aria-checked','true');
+      // On/off settings are switches, never plain checkboxes.
+      const fillers=page.getByRole('switch',{name:'Remove filler words'});
+      await expect(fillers).not.toBeChecked();
+      await fillers.click();
+      await expect(fillers).toBeChecked();
+      expect(await page.locator('.settings input[type="checkbox"]:not(.switch)').count()).toBe(0);
       const words=page.locator('[data-dictation="custom_words"]');
       await words.fill('Marie Curie\n文字');
       await words.evaluate(el=>{el.focus();el.setSelectionRange(2,7);});
@@ -67,7 +104,10 @@ test('Settings sections keep drafts and selections across redraws in both themes
       await expect(page.getByRole('heading',{name:'About Leo'})).toBeVisible();
       await page.getByRole('link',{name:'Storage',exact:true}).click();
       await expect(page.locator('.settings-nav a[aria-current="page"]')).toHaveAttribute('href','#/settings/storage');
-      await expect(page.getByText('Storage and data',{exact:true})).toBeVisible();
+      await expect(page.getByRole('heading',{level:1,name:'Storage'})).toBeVisible();
+      await page.getByRole('link',{name:'Trash',exact:true}).click();
+      await expect(page.locator('.settings-nav a[aria-current="page"]')).toHaveAttribute('href','#/settings/trash');
+      await expect(page.getByText('The trash is empty',{exact:true})).toBeVisible();
       await page.setViewportSize({width:620,height:850});
       expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
       expect(await page.evaluate(()=>window.errors)).toEqual([]);

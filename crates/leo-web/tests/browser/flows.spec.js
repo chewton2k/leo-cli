@@ -38,6 +38,11 @@ async function goPlace(page, action) {
     await page.locator('#menu').click();
     return page.locator(`.sheet [data-action="${action}"]`).click();
   }
+  // Trash and Storage live inside Settings on a wide screen.
+  if (action === 'trash' || action === 'storage') {
+    await page.locator('#side [data-action="settings"]').click();
+    return page.locator(`.settings-nav a[href="#/settings/${action}"]`).click();
+  }
   await page.locator(`#side [data-action="${action}"]`).click();
 }
 
@@ -248,11 +253,21 @@ test('on a wide screen the sidebar reaches every place and can be narrowed', asy
   await expect(side).toBeVisible();
   await expect(page.locator('#menu')).toBeHidden();
   await expect(side.locator('[data-action="home"].side-row')).toHaveAttribute('aria-current', 'page');
-  for (const [action, url] of [['map', /#\/map$/], ['trash', /#\/trash$/], ['storage', /#\/settings\/storage$/], ['settings', /#\/settings$/]]) {
+  for (const [action, url] of [['map', /#\/map$/], ['settings', /#\/settings$/]]) {
     await side.locator(`[data-action="${action}"]`).click();
     await expect(page).toHaveURL(url);
     await expect(side.locator(`[data-action="${action}"]`)).toHaveAttribute('aria-current', 'page');
   }
+  // Trash and Storage moved into Settings' own sidebar; the rail keeps Settings selected there.
+  await expect(side.locator('[data-action="trash"], [data-action="storage"]')).toHaveCount(0);
+  for (const section of ['trash', 'storage']) {
+    await page.locator(`.settings-nav a[href="#/settings/${section}"]`).click();
+    await expect(page).toHaveURL(new RegExp(`#/settings/${section}$`));
+    await expect(page.locator('.settings-nav a[aria-current="page"]')).toHaveAttribute('href', `#/settings/${section}`);
+    await expect(side.locator('[data-action="settings"]')).toHaveAttribute('aria-current', 'page');
+  }
+  await side.locator('[data-action="settings"]').click();
+  await expect(page).toHaveURL(/#\/settings$/);
   await side.locator('[data-action="open-folder"][data-dir="side-course"]').click();
   await expect(side.locator('[data-action="open-folder"][data-dir="side-course"]')).toHaveAttribute('aria-expanded', 'true');
   await expect(page).toHaveURL(/#\/settings$/);
@@ -1492,8 +1507,9 @@ test.describe('settings', () => {
     await page.goto('/#/settings/writing');
     const writing = page.locator('[data-task-card="writing"]');
     await expect(writing).toBeVisible();
-    expect(await writing.locator('select[data-set="provider"] option').evaluateAll(options => options.map(option => option.value))).toEqual(['ollama', 'codex', 'claude_code']);
-    await writing.locator('select[data-set="provider"]').selectOption('claude_code');
+    const provider = writing.getByRole('radiogroup', { name: 'Provider' });
+    expect(await provider.getByRole('radio').evaluateAll(options => options.map(option => option.dataset.value))).toEqual(['ollama', 'codex', 'claude_code']);
+    await provider.getByRole('radio', { name: 'Claude Code' }).click();
     await expect(page.locator('.toast')).toContainText('Writing now uses Claude Code');
     await expect(writing.locator('[data-key-input]')).toHaveCount(0);
     await writing.locator('.picker-button').click();
@@ -1510,7 +1526,7 @@ test.describe('settings', () => {
     const bad = await page.request.post('/api/settings', { data: { set: 'provider', task: 'writing', value: 'parakeet' } });
     expect(bad.status()).toBe(400);
     await page.locator('.settings-nav a[href="#/settings/writing"]').click();
-    await writing.locator('select[data-set="provider"]').selectOption('codex');
+    await provider.getByRole('radio', { name: 'Codex' }).click();
     await expect(page.locator('.toast')).toContainText('Writing now uses Codex');
     await writing.locator('.picker-button').click();
     await expect(writing.locator('.pick-chip')).toHaveText(['Low', 'Medium', 'High', 'Extra high']);
@@ -1521,7 +1537,8 @@ test.describe('settings', () => {
     await expect(writing.locator('.picker-menu')).toBeHidden();
     await writing.locator('.picker-button').click();
     await writing.locator('.pick-chip[data-effort="medium"]').click();
-    await writing.locator('select[data-set="provider"]').selectOption('ollama');
+    await provider.getByRole('radio', { name: 'Ollama' }).click();
+    await expect(writing.locator('input[data-set="provider"]')).toHaveValue('ollama');
   });
 });
 
@@ -2054,8 +2071,10 @@ test.describe('storage', () => {
     await expect(page.locator('.toast')).toContainText('Emptied the trash');
     expect((await (await page.request.get('/api/trash')).json()).length).toBe(0);
     await expect(page.locator('details.store-area[data-area="notes"] [data-action="storage-act"]')).toHaveCount(0);
+    // A wide screen opens Storage from Settings' sidebar; a phone opens it from the menu at the top level.
+    const openedFrom = (await page.locator('#side').isVisible()) ? /#\/settings$/ : /#\/$/;
     await page.locator('#back').click();
-    await expect(page, 'Back returns to where Storage was opened from').toHaveURL(/#\/$/);
+    await expect(page, 'Back returns to where Storage was opened from').toHaveURL(openedFrom);
   });
 });
 
@@ -3762,8 +3781,8 @@ test('dropdowns and nested disclosures share real icons and keep their native co
     return Math.abs(icon.y + icon.height / 2 - box.y - box.height / 2);
   }));
   expect(align.every(offset => offset < 1)).toBe(true);
-  await page.goto('/#/settings/writing');
-  await expect(page.locator('[data-task-card="writing"]')).toBeVisible();
+  await page.goto('/#/settings/backup');
+  await expect(page.locator('select[data-set="auto_push"]')).toBeVisible();
   await inspect();
   await page.goto('/#/settings/storage');
   await expect(page.locator('select[data-keep="trash_days"]')).toBeVisible();
