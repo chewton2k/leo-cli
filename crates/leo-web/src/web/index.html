@@ -200,6 +200,7 @@ body.on-library main, body.on-interviews main:not(:has(.interview-practice)) { p
 .library-views [data-action="library-view"] { gap: 8px; }
 .library-views [data-action="library-view"] > span { display: block; line-height: 1; }
 .library-views .on { background: var(--accent-soft); color: var(--accent); }
+.library-views, .segmented, [role="tablist"], .settings-nav, .kanban-tabs, .chat-modes, .interview-cases, #side { -webkit-user-select: none; user-select: none; }
 .library-tools svg { width: 16px; height: 16px; flex: none; }
 .library-choice select { height: 34px; padding: 0 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); font-size: 13.5px; font-weight: 600; cursor: pointer; max-width: 160px; }
 .library-choice select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -928,7 +929,6 @@ html[data-app="mac"] body.side-mini .side-head { justify-content: center; }
 @media (max-width: 599px) { .quick-bar kbd, .quick-row kbd { display: none; } }
 .side-nav { flex: none; display: flex; flex-direction: column; gap: 2px; margin: 0 -4px; padding: 0 4px; }
 .side-group { flex: none; }
-.side-top { flex: none; }
 .side-tree { flex: 1 1 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
 .side-foot { display: flex; flex-direction: column; gap: 2px; padding-top: 8px; border-top: 1px solid var(--line); }
 .side-row {

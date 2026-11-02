@@ -21,7 +21,7 @@ function dictationCards(view) {
   </section><section class="set-card"><header><h3>Recent dictations</h3><button class="btn plain sm" data-action="dictation-clear">Clear</button></header><p class="hint">Last 20, on this computer only.</p><div id="dictation-recent">${dictationRecent(view.recent || [])}</div></section>`;
 }
 function dictationRecent(items) {
-  return items.length ? items.map((item) => `<div class="set-row"><span class="grow">${esc(item.text)}</span><button class="btn plain sm" data-action="dictation-copy" data-id="${esc(item.id)}">Copy</button></div>`).join('') : '<p class="set-note">Your dictations will appear here.</p>';
+  return items.length ? items.map((item) => `<div class="set-row"><span class="grow">${esc(item.text)}</span><button class="btn plain sm" data-action="dictation-copy" data-id="${esc(String(item.id))}">Copy</button></div>`).join('') : '<p class="set-note">Your dictations will appear here.</p>';
 }
 function dictationDraft() {
   const settings = Object.assign({}, state.dictation.settings);

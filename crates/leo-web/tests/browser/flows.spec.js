@@ -3517,7 +3517,7 @@ test('only the folders scroll in the sidebar; the places above and below stay pu
   const before = [await settings.boundingBox(), await record.boundingBox()];
   expect(await tree.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
   await tree.evaluate((el) => { el.scrollTop = el.scrollHeight; });
-  await expect(page.locator('#side .side-top [data-dir=""]')).toBeInViewport();
+  await expect(page.locator('#side .side-group[data-drop-dir=""]')).toBeInViewport();
   await page.mouse.wheel(0, 2000);
   const after = [await settings.boundingBox(), await record.boundingBox()];
   expect(after.map((b) => Math.round(b.y))).toEqual(before.map((b) => Math.round(b.y)));
@@ -3626,8 +3626,8 @@ test('sidebar folders can move to the top level with their contents and Undo', a
   const note = await (await page.request.post('/api/notes', { data: { title: 'Nested folder move', directory: `${from}/Child`, body: 'Keep descendants.' } })).json();
   const where = async () => (await (await page.request.get(`/api/notes/${note.id}`)).json()).directory;
   await page.goto(`/#/f/${encodeURIComponent(from)}`);
-  const target = page.locator('#side [data-action="open-folder"][data-dir=""]');
-  await expect(target).toHaveText('Top level');
+  const target = page.locator('#side .side-group[data-drop-dir=""]');
+  await expect(target).toContainText('Folders');
   await dragBetween(page, page.locator(`#side [data-action="open-folder"][data-dir="${from}"]`), target);
   await expect.poll(where).toBe(`${root}/Child`);
   await expect(page).toHaveURL(new RegExp(`#/f/${encodeURIComponent(root)}$`));
@@ -3641,7 +3641,7 @@ test('sidebar folders can move to the top level with their contents and Undo', a
   const parent = from.split('/')[0];
   for (const [source, into] of [[parent, from], [from, parent], [parent, '']]) {
     const dragged = `#side [data-action="open-folder"][data-dir="${source}"]`;
-    const dropped = `#side [data-action="open-folder"][data-dir="${into}"]`;
+    const dropped = into ? `#side [data-action="open-folder"][data-dir="${into}"]` : '#side .side-group[data-drop-dir=""]';
     await page.dispatchEvent(dragged, 'dragstart', { dataTransfer: transfer });
     await page.dispatchEvent(dropped, 'dragover', { dataTransfer: transfer });
     await expect(page.locator(dropped)).not.toHaveClass(/drop-ok/);

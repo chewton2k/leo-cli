@@ -223,7 +223,11 @@ reader, seer, meaning, web, room, speech).
   open notes directly. The selected folder scopes New note, Record and imports;
   library cards and breadcrumbs retain folder navigation. The explorer narrows
   below 1200 px to leave room for notes, originals and Felix.
-  Top level stays pinned as a drop target; folder and note rows retain drag data.
+  There is no Top level row (2026-11-02, the user's call: the tree already lists
+  top-level notes); the pinned Folders heading is the top-level drop target, and
+  folder and note rows retain drag data. A folder row is highlighted only on its
+  folder page; on a note page only the note's row is. The rail, explorer, tabs and
+  segmented controls are not text-selectable.
   `leo-side` hides only the explorer, keeping the rail; `leo-side-open` retains
   expansion. Tree and rail scrolling, focus and note pages survive redraws.
   Notes use the existing bounded metadata endpoint: 100 per page, four concurrent

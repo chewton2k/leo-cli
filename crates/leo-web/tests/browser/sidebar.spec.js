@@ -101,7 +101,8 @@ test('sidebar separates icon actions from the explorer and keeps them reachable 
       const before = await settings.boundingBox();
       await page.locator('.side-tree').evaluate(el=>el.scrollTop=el.scrollHeight);
       expect(await settings.boundingBox()).toEqual(before);
-      await expect(page.locator('.side-top [data-dir=""]')).toBeInViewport();
+      await expect(page.locator('.side-group[data-drop-dir=""]')).toBeInViewport();
+      await expect(page.locator('#side [data-action="open-folder"][data-dir=""]')).toHaveCount(0);
       await page.locator('.side-tree').evaluate(el=>el.scrollTop=0);
       const course=page.locator('.side-tree .side-row[data-dir="Course"]');
       if(await course.getAttribute('aria-expanded')==='false') await course.click();
@@ -195,6 +196,9 @@ test('explorer loads direct notes, escapes titles, pages large folders and recov
     await expect(page.locator('.side-note[data-id^="personal-"]')).toHaveCount(5);
     await page.evaluate(()=>audit.note('personal-104','Personal'));
     await expect(page.locator('.side-note[data-id="personal-104"]')).toHaveAttribute('aria-current','page');
+    await expect(row('Personal')).not.toHaveAttribute('aria-current','page');
+    await expect(page.locator('#side .side-folder.on')).toHaveCount(0);
+    expect(await row('Personal').evaluate(el=>getComputedStyle(el).userSelect)).toBe('none');
     await page.evaluate(()=>audit.refresh());
     await expect(page.locator('.side-note[data-id="personal-104"]')).toBeVisible();
     await page.locator('[data-action="side-notes"][data-dir="Personal"]').filter({hasText:'Previous'}).click();
@@ -227,6 +231,7 @@ test('explorer notes keep drag data and refuse stale reads with bounded requests
     expect(payload).not.toBe('');
     expect(JSON.parse(payload)).toEqual({id:'course-note',title:'Course overview',dir:'Course'});
     expect(await page.locator('.side-row[data-dir="Personal"]').evaluate(el=>audit.drop(el))).toBe('Personal');
+    expect(await page.locator('.side-group').evaluate(el=>audit.drop(el))).toBe('');
     await page.evaluate(()=>audit.stop());
     await page.evaluate(()=>{audit.rename('Old response');audit.side.notes.delete('Course');audit.hold();audit.draw();});
     await page.evaluate(()=>{audit.rename('Fresh response');audit.route('Course');});
