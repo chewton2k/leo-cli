@@ -170,14 +170,19 @@ test('problem titles are searchable and deletion keeps drafts and offers Undo', 
       expect(await topicMenu.evaluate(el => el.getBoundingClientRect().left)).toBeGreaterThanOrEqual(Math.max(6, main.x));
       await page.keyboard.press('Escape');
     }
-    for (const height of [540, 390]) {
+    for (const [height, buttonTop] of [[540, null], [390, null], [390, 100]]) {
       await page.setViewportSize({ width: 390, height });
+      if (buttonTop !== null) await topicButton.evaluate((button, top) => window.scrollBy(0, button.getBoundingClientRect().top - top), buttonTop);
       await topicButton.click();
       await expect.poll(async () => topicMenu.evaluate(el => el.getBoundingClientRect().bottom)).toBeLessThanOrEqual(height - 6);
       const header = await page.locator('#bar').boundingBox();
       await expect.poll(async () => topicMenu.evaluate(el => el.getBoundingClientRect().top)).toBeGreaterThanOrEqual(header.y + header.height + 6);
       expect(await topicMenu.evaluate(el => el.scrollHeight > el.clientHeight)).toBe(true);
-      if (height === 390) expect(await topicMenu.evaluate(el => el.style.bottom)).not.toBe('auto');
+      await expect.poll(() => topicMenu.evaluate(menu => {
+        const anchor = menu.previousElementSibling.getBoundingClientRect();
+        const box = menu.getBoundingClientRect();
+        return box.bottom <= anchor.top - 5 || box.top >= anchor.bottom + 5;
+      })).toBe(true);
       await topicMenu.locator('[data-interview="topic"][data-none]').click();
       await expect(topicButton).toContainText('No topic');
       await chooser.click();
