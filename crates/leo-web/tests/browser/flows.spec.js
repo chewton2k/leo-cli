@@ -1446,8 +1446,9 @@ test.describe('settings', () => {
     await page.goto('/#/settings/writing');
     const writing = page.locator('[data-task-card="writing"]');
     await expect(writing).toBeVisible();
-    expect(await writing.locator('select[data-set="provider"] option').evaluateAll(options => options.map(option => option.value))).toEqual(['ollama', 'codex', 'claude_code']);
-    await writing.locator('select[data-set="provider"]').selectOption('claude_code');
+    const provider = writing.getByRole('radiogroup', { name: 'Provider' });
+    expect(await provider.getByRole('radio').evaluateAll(options => options.map(option => option.dataset.value))).toEqual(['ollama', 'codex', 'claude_code']);
+    await provider.getByRole('radio', { name: 'Claude Code' }).click();
     await expect(page.locator('.toast')).toContainText('Writing now uses Claude Code');
     await expect(writing.locator('[data-key-input]')).toHaveCount(0);
     await writing.locator('.picker-button').click();
@@ -1464,7 +1465,7 @@ test.describe('settings', () => {
     const bad = await page.request.post('/api/settings', { data: { set: 'provider', task: 'writing', value: 'parakeet' } });
     expect(bad.status()).toBe(400);
     await page.locator('.settings-nav a[href="#/settings/writing"]').click();
-    await writing.locator('select[data-set="provider"]').selectOption('codex');
+    await provider.getByRole('radio', { name: 'Codex' }).click();
     await expect(page.locator('.toast')).toContainText('Writing now uses Codex');
     await writing.locator('.picker-button').click();
     await expect(writing.locator('.pick-chip')).toHaveText(['Low', 'Medium', 'High', 'Extra high']);
@@ -1475,7 +1476,8 @@ test.describe('settings', () => {
     await expect(writing.locator('.picker-menu')).toBeHidden();
     await writing.locator('.picker-button').click();
     await writing.locator('.pick-chip[data-effort="medium"]').click();
-    await writing.locator('select[data-set="provider"]').selectOption('ollama');
+    await provider.getByRole('radio', { name: 'Ollama' }).click();
+    await expect(writing.locator('input[data-set="provider"]')).toHaveValue('ollama');
   });
 });
 

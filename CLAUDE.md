@@ -273,7 +273,7 @@ backend directly. Legacy AGY/Copilot profiles contain private sign-in state, sta
 notes/exports and have metadata-only Storage controls. `.superpowers/` stays local
 and must never be staged or committed.
 
-Settings uses grouped `#/settings/<section>` routes, preserving Storage's route.
+Settings uses grouped `#/settings/<section>` routes in a left sidebar with icons, preserving Storage's route; Trash lives there too (Data), and on/off settings are switches, short choices sliding segmented controls.
 `leo_web::app_settings::AppApi` bridges native preferences, permission requests,
 Health and signed updates; web depends only on core. Core's activity gate holds
 recording, dictation and clipboard restoration leases and excludes installation.

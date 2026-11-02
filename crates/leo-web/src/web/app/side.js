@@ -29,7 +29,8 @@ function sidePlace() {
   const view = state.view;
   if (view === 'folder' && !state.dir) return 'home';
   if (view === 'folder' || view === 'note' || view === 'new') return `dir:${state.dir || ''}`;
-  if (view === 'storage') return /^#\/settings\/storage(?:\/|$)/.test(location.hash) ? 'storage' : 'settings';
+  // Storage and Trash live inside Settings, so the sidebar shows Settings for them.
+  if (view === 'storage' || view === 'trash') return 'settings';
   return view;
 }
 
@@ -84,8 +85,6 @@ function drawSide() {
         ${sideRow('upload', ICON.upload, 'Note from a file', { attrs: ` data-dir="${esc(actionDir)}"` })}
       </nav>
       <nav class="side-foot" aria-label="This app">
-        ${sideRow('trash', ICON.trash, 'Trash', { on: here === 'trash' })}
-        ${sideRow('storage', ICON.storage, 'Storage', { on: here === 'storage' })}
         ${sideRow('settings', ICON.gear, 'Settings', { on: here === 'settings' })}
       </nav>
     </div>

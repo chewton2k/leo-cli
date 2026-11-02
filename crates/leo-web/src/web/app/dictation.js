@@ -3,19 +3,20 @@ function dictationCards(view) {
   const s = view.settings || {}, keys = view.shortcut || {};
   const select = (name, choices) => `<span class="select-control"><select data-dictation="${name}">${choices.map(([value, label]) => settingsOption(value, label, String(s[name] == null ? '' : s[name]))).join('')}</select>${ICON.chevron}</span>`;
   const row = (label, control) => `<label class="set-row"><span class="set-label">${label}</span><span class="set-value">${control}</span></label>`;
-  const toggle = (name, label) => row(label, `<input type="checkbox" data-dictation="${name}"${s[name] ? ' checked' : ''}>`);
+  const toggle = (name, label) => `<label class="set-row"><span class="grow">${label}</span>${settingsSwitch(`data-dictation="${name}"`, s[name])}</label>`;
+  const choice = (name, label, choices) => `<div class="set-row"><span class="set-label">${label}</span>${segmented({ label, choices, current: String(s[name] == null ? choices[0][0] : s[name]), field: `data-dictation="${name}"` })}</div>`;
   const microphones = [['', 'System default']].concat((view.microphones || []).map((name) => [name, name]));
   return `<section class="set-card" id="dictation-preferences"><header><h3>Dictation</h3><span class="set-status">Local</span></header>
     ${view.problem ? `<p class="set-note warn">${esc(view.problem)}</p>` : ''}
     <p class="hint">Speak into any app. Speech stays on this computer; custom words and filler rules run without writing AI.</p>
     <div class="set-row column"><label class="set-line"><span class="set-label">Shortcut</span><input class="set-input" data-dictation="shortcut" value="${esc(s.shortcut || '')}" readonly aria-label="Dictation shortcut"></label><div class="set-line"><button class="btn plain sm" data-action="dictation-record">Record shortcut</button><span id="dictation-shortcut-status" class="hint">${esc(keys.problem || '')}</span><button class="btn plain sm" data-action="dictation-use-shortcut" hidden>Use shortcut</button><button class="btn plain sm" data-action="dictation-resume" hidden>Cancel</button></div></div>
-    ${row('Activation', select('mode', [['both', 'Hold or tap'], ['hold', 'Hold'], ['tap', 'Tap']]))}
+    ${choice('mode', 'Activation', [['both', 'Hold or tap'], ['hold', 'Hold'], ['tap', 'Tap']])}
     ${row('Microphone', select('microphone', microphones))}
     ${row('Lid closed microphone', select('closed_microphone', [['', 'Use regular microphone']].concat(microphones.slice(1))))}
     <label class="set-row column"><span class="set-label">Custom words</span><textarea class="set-input" data-dictation="custom_words" rows="3" placeholder="Names and terms, one per line">${esc((s.custom_words || []).join('\n'))}</textarea><span class="hint">Up to 200 names or terms. Save after editing.</span></label>
     ${toggle('fillers', 'Remove filler words')}${toggle('trailing_space', 'Add trailing space')}${toggle('enter', 'Press Enter after pasting')}${toggle('sounds', 'Start and stop sounds')}
-    ${row('Popup', select('popup', [['live', 'Live'], ['minimal', 'Minimal'], ['off', 'Off']]))}
-    ${row('Popup position', select('top', [['false', 'Bottom centre'], ['true', 'Top centre']]))}
+    ${choice('popup', 'Popup', [['live', 'Live'], ['minimal', 'Minimal'], ['off', 'Off']])}
+    ${choice('top', 'Popup position', [['false', 'Bottom'], ['true', 'Top']])}
     <div class="set-row"><button class="btn plain sm" data-action="dictation-save">Save dictation settings</button><span class="hint" id="dictation-result"></span></div>
   </section><section class="set-card"><header><h3>Recent dictations</h3><button class="btn plain sm" data-action="dictation-clear">Clear</button></header><p class="hint">Last 20, on this computer only.</p><div id="dictation-recent">${dictationRecent(view.recent || [])}</div></section>`;
 }
