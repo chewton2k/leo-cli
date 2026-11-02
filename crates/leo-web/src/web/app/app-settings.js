@@ -53,7 +53,8 @@ async function pollAppStatus(generation) {
     updateAppStatus();
     maybeOnboarding();
   } catch (e) { return; }
-  setTimeout(() => pollAppStatus(generation), 2500);
+  // The permission page checks quickly so a checkmark follows the system dialog.
+  setTimeout(() => pollAppStatus(generation), onboardingHere(0) ? ONBOARDING_POLL_MS : 2500);
 }
 async function setupBackup() {
   const field = $('#backup-repository');
@@ -72,7 +73,6 @@ async function setupBackup() {
 app.addEventListener('change', (event) => {
   const field = event.target.closest('[data-app-pref]');
   if (field) appChange({ action: 'preference', field: field.dataset.appPref, value: field.checked }).catch(fail);
-  if (event.target.id === 'onboarding-model') { onboardingChoice = event.target.value; drawOnboardingProgress(); }
 });
 if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('DOMContentLoaded', () => pollAppStatus(++appPollGeneration), { once: true });
 

@@ -9,16 +9,18 @@ function showLocked() {
   );
 }
 
-function sheet(html) {
+// `modal` sheets ignore a click on the backdrop (first-launch setup must not
+// vanish from a stray click); Escape and their own buttons still close them.
+function sheet(html, { modal = false } = {}) {
   closeSheet(true);
   const scrim = document.createElement('div');
   scrim.className = 'scrim';
   scrim.innerHTML = `<div class="sheet" role="dialog" aria-modal="true"><div class="grip"></div>${html}</div>`;
   scrim.addEventListener('click', (e) => {
-    if (e.target === scrim) closeSheet();
+    if (e.target === scrim && !modal) closeSheet();
   });
   document.body.appendChild(scrim);
-  swipeToClose(scrim.querySelector('.sheet'));
+  if (!modal) swipeToClose(scrim.querySelector('.sheet'));
   return scrim;
 }
 

@@ -76,20 +76,28 @@ test('Settings sections keep drafts and selections across redraws in both themes
   } finally {server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
 });
 
-test('setup groups permissions with live checkmarks, independent grants and a separate model step', async ({ browser }, testInfo) => {
+test('setup groups permissions with live checkmarks, then offers speech models as cards', async ({ browser }, testInfo) => {
   const web = path.resolve(__dirname, '../../src/web');
   const read = name => fs.readFileSync(path.join(web, name), 'utf8');
   const css = read('index.html').match(/<style>([\s\S]*?)<\/style>/)[1];
   const sheets = read('app/sheets.js').split('const QUICK_PLACES')[0];
+  const settings = read('app/settings.js');
+  const speechHelpers = settings.slice(settings.indexOf('function speechBytes('), settings.indexOf('function speechModelRow('));
   const fixture = `const app=document.querySelector('#app'), $=selector=>document.querySelector(selector);
     let seq=0,state={view:'folder'};
-    const LEAVE_MS=180, ICON={check:'<svg aria-hidden="true" viewBox="0 0 24 24"><path d="m5 12 4 4 10-10" fill="none" stroke="currentColor"/></svg>'};
+    const LEAVE_MS=180, ICON={check:'<svg aria-hidden="true" viewBox="0 0 24 24"><path d="m5 12 4 4 10-10" fill="none" stroke="currentColor"/></svg>',mic:'<svg aria-hidden="true" viewBox="0 0 24 24"></svg>',access:'<svg aria-hidden="true" viewBox="0 0 24 24"></svg>'};
     const esc=text=>String(text).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
     window.errors=[]; const fail=e=>window.errors.push(e.message);
     let native, pending=null, rejectStep=null;
-    const calls=[];
+    const calls=[], speechCalls=[];
+    const model=(id,name,recommended,extra={})=>({id,name,description:name+' runs on this computer.',languages:['en'],size:200*1048576,recommended,speed:8,accuracy:94,accuracy_measured:true,benchmark_language:'en',streaming:true,...extra});
+    let speech;
+    ${speechHelpers}
     async function api(url,options={}) {
-      if(url==='/api/speech') return {models:[]};
+      if(url==='/api/speech') {
+        if(options.body) { speechCalls.push(options.body); if(options.body.action==='download') speech.models.find(m=>m.id===options.body.id).progress={state:'downloading',bytes:0,total:200*1048576}; }
+        return structuredClone(speech);
+      }
       if(url!=='/api/app') throw new Error(url);
       const change=options.body;
       if(change) {
@@ -108,16 +116,19 @@ test('setup groups permissions with live checkmarks, independent grants and a se
     document.addEventListener('click',event=>{
       const el=event.target.closest('[data-action]'); if(!el) return;
       if(el.dataset.action==='app-command') appChange({action:el.dataset.appAction}).catch(fail);
-      if(el.dataset.action==='onboarding-next') finishOnboarding(el).catch(fail);
+      const run={'onboarding-next':finishOnboarding,'onboarding-skip':skipOnboarding,'onboarding-back':onboardingBack,'onboarding-pick':pickOnboardingModel,'onboarding-models':showOnboardingModels,'onboarding-model':onboardingModel}[el.dataset.action];
+      if(run) Promise.resolve(run(el)).catch(fail);
     });
     window.audit={
       start(platform='macos',flags=[false,false,false]) {
-        closeSheet(true); calls.length=0; rejectStep=null;
+        closeSheet(true); calls.length=0; speechCalls.length=0; rejectStep=null; onboardingChoice=''; onboardingAll=false;
+        speech={models:[model('base','Base English',true),model('small','Small English',true,{verified:true,downloaded:true}),model('large','Large multilingual',false,{languages:['en','fr']})]};
         native={platform,preferences:{onboarding:flags},permissions:{microphone:'not_requested',accessibility:false},updates:{}};
         desktopApp=structuredClone(native); maybeOnboarding(true);
       },
       grant:async (permission,value)=>{native.permissions[permission]=value; await pollAppStatus(appPollGeneration);},
-      calls:()=>calls, flags:()=>native.preferences.onboarding,
+      calls:()=>calls, speechCalls:()=>speechCalls, flags:()=>native.preferences.onboarding,
+      progress:bytes=>{speech.models[0].progress={state:'downloading',bytes,total:200*1048576};},
       reject:step=>{rejectStep=step;},
       hold:()=>{pending=new Promise(resolve=>window.release=()=>{pending=null;resolve();});},
       replace:()=>{closeSheet(true);sheet('<h3>Another sheet</h3>');}
@@ -134,6 +145,8 @@ test('setup groups permissions with live checkmarks, independent grants and a se
     await page.goto('http://127.0.0.1:'+server.address().port);
     for(const [theme,order] of [['light',['microphone','accessibility']],['dark',['accessibility','microphone']]]) {
       await page.evaluate(theme=>{document.documentElement.dataset.theme=theme;audit.start();},theme);
+      await expect(page.getByRole('list',{name:'Setup steps'})).toBeVisible();
+      await expect(page.locator('[aria-current="step"]')).toContainText('Access');
       await expect(page.getByRole('button',{name:'Allow microphone',exact:true})).toBeVisible();
       await expect(page.getByRole('button',{name:'Allow Accessibility',exact:true})).toBeVisible();
       const next = page.getByRole('button',{name:'Continue',exact:true});
@@ -144,43 +157,92 @@ test('setup groups permissions with live checkmarks, independent grants and a se
         const descriptionWidth = (await row.locator('.grow').boundingBox()).width;
         expect((await button.boundingBox()).height).toBeLessThanOrEqual(40);
         await button.click();
-        await expect(row.locator('[role="status"]')).not.toContainText('Allowed');
+        await expect(row.locator('[role="status"]')).toBeHidden();
         await page.evaluate(permission=>audit.grant(permission,permission==='microphone'?'allowed':true),permission);
         await expect(row.locator('[role="status"]')).toContainText('Allowed');
         await expect(row.locator('[role="status"] svg')).toHaveCount(1);
+        await expect(row).toHaveClass(/allowed/);
         await expect(button).toBeHidden();
         expect(Math.abs((await row.locator('.grow').boundingBox()).width-descriptionWidth)).toBeLessThanOrEqual(1);
+        // The microphone is what Continue needs; Accessibility only adds pasting.
         if(permission===order[0]) {
-          await expect(next).toBeDisabled();
+          if(permission==='microphone') await expect(next).toBeEnabled(); else await expect(next).toBeDisabled();
           await page.screenshot({path:testInfo.outputPath('permissions-'+theme+'.png')});
         }
       }
+      // A stray click on the backdrop must not dismiss setup.
+      await page.mouse.click(4,4);
+      await expect(page.locator('.scrim')).toHaveCount(1);
       await expect(next).toBeEnabled();
       await next.click();
       await expect(page.getByRole('heading',{name:'Choose a speech model'})).toBeVisible();
+      await expect(page.locator('[aria-current="step"]')).toContainText('Speech model');
       expect(await page.evaluate(()=>audit.flags())).toEqual([true,true,false]);
+      // Recommended models arrive as cards; the in-use or recommended one is chosen.
+      const cards = page.locator('.onboarding-model');
+      await expect(cards).toHaveCount(2);
+      await expect(cards.first()).toHaveAttribute('aria-pressed','true');
+      await expect(cards.first().locator('meter')).toHaveCount(2);
+      await expect(page.getByRole('button',{name:'Download · 200 MB'})).toBeVisible();
+      await page.getByRole('button',{name:'All 3',exact:true}).click();
+      await expect(cards).toHaveCount(3);
+      await page.getByRole('button',{name:'Recommended',exact:true}).click();
+      await expect(cards).toHaveCount(2);
+      await cards.nth(1).click();
+      await expect(cards.nth(1)).toHaveAttribute('aria-pressed','true');
+      await expect(cards.first()).toHaveAttribute('aria-pressed','false');
+      await expect(page.getByRole('button',{name:'Use and finish'})).toBeVisible();
+      await cards.first().click();
+      await page.getByRole('button',{name:'Download · 200 MB'}).click();
+      await expect(page.locator('#onboarding-model-progress progress')).toBeVisible();
+      const cancel = page.getByRole('button',{name:'Cancel',exact:true});
+      const cancelHandle = await cancel.elementHandle();
+      await page.evaluate(()=>audit.progress(100*1048576));
+      await expect(page.locator('#onboarding-model-progress progress')).toHaveAttribute('value','50');
+      await expect(cards.first()).toContainText('Downloading 50%');
+      // Polling updates the bar in place, so the Cancel button under the pointer survives.
+      expect(await cancelHandle.evaluate(el=>el.isConnected)).toBe(true);
+      expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+      await page.screenshot({path:testInfo.outputPath('models-'+theme+'.png')});
+      await page.evaluate(()=>{speech.models[0].progress=null;});
+      await page.getByRole('button',{name:'Back',exact:true}).click();
+      await expect(page.getByRole('heading',{name:'Allow access'})).toBeVisible();
+      await next.click();
+      await expect(page.getByRole('heading',{name:'Choose a speech model'})).toBeVisible();
       await page.getByRole('button',{name:'Skip for now'}).click();
       await expect(page.locator('.scrim')).toHaveCount(0);
       expect(await page.evaluate(()=>audit.flags())).toEqual([true,true,true]);
+      expect(await page.evaluate(()=>audit.speechCalls().map(c=>c.action+':'+c.id))).toEqual(['download:base']);
     }
+    // A denied microphone cannot be asked again, so the button goes to System Settings.
+    await page.evaluate(()=>audit.start());
+    await page.evaluate(()=>audit.grant('microphone','denied'));
+    await expect(page.getByRole('button',{name:'Open System Settings for the microphone'})).toBeVisible();
+    await expect(page.locator('[data-onboarding-permission="microphone"] .onboarding-denied')).toBeVisible();
+    await expect(page.getByRole('button',{name:'Continue',exact:true})).toBeDisabled();
+    // Skip setup finishes every step at once.
     await page.evaluate(()=>audit.start('macos',[true,false,false]));
     await expect(page.getByRole('button',{name:'Allow Accessibility',exact:true})).toBeVisible();
-    await page.getByRole('button',{name:'Skip for now'}).click();
-    await expect(page.getByRole('heading',{name:'Choose a speech model'})).toBeVisible();
+    await page.getByRole('button',{name:'Skip setup'}).click();
+    await expect(page.locator('.scrim')).toHaveCount(0);
+    expect(await page.evaluate(()=>audit.flags())).toEqual([true,true,true]);
     await page.evaluate(()=>{audit.start();audit.reject(1);});
-    await page.getByRole('button',{name:'Skip for now'}).click();
+    await page.getByRole('button',{name:'Skip setup'}).click();
     await expect.poll(()=>page.evaluate(()=>window.errors.length)).toBe(1);
     await expect(page.getByRole('button',{name:'Allow Accessibility',exact:true})).toBeVisible();
     await page.evaluate(()=>audit.reject(null));
-    await page.getByRole('button',{name:'Skip for now'}).click();
-    await expect(page.getByRole('heading',{name:'Choose a speech model'})).toBeVisible();
+    await page.getByRole('button',{name:'Skip setup'}).click();
+    await expect(page.locator('.scrim')).toHaveCount(0);
     await page.evaluate(()=>{audit.start();audit.hold();});
-    await page.getByRole('button',{name:'Skip for now'}).click();
+    await page.getByRole('button',{name:'Skip setup'}).click();
     await page.evaluate(()=>{audit.replace();release();});
     await expect(page.getByRole('heading',{name:'Another sheet'})).toBeVisible();
     await page.setViewportSize({width:390,height:844});
     await page.evaluate(()=>audit.start('windows'));
     await expect(page.getByRole('button',{name:'Allow Accessibility',exact:true})).toHaveCount(0);
+    // Windows often cannot say whether the microphone is allowed; that must not block setup.
+    await page.evaluate(()=>audit.grant('microphone','unknown'));
+    await expect(page.getByRole('button',{name:'Continue',exact:true})).toBeEnabled();
     await page.evaluate(()=>audit.grant('microphone','allowed'));
     await expect(page.getByRole('button',{name:'Continue',exact:true})).toBeEnabled();
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
