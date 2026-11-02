@@ -227,6 +227,12 @@ the notes remote.
   title)), no tag column, completion, `--tags`/`--tag` flags, Tags page or chips
   on the web. Tags already in files are kept and still searchable with `#word`
   (Obsidian), and leo's own markers (`manual`, `listen`) stay.
+- Boards (2026-11-02, the user's call): Jira-style task boards on their own
+  rail page (`#/boards`), several boards, untimed cards (title, subheading,
+  description, priority) in custom columns, dragged between columns and boards.
+  Files `<notes>/.leo/boards/*.json` and `.leo/cards/*.json` sync like tasks
+  (union merge, newest line wins); they are not calendar tasks. See
+  crates/leo-web/CLAUDE.md.
 - Keeping: `leo_core::keep` (`<data>/keep.json`, beside notes, not synced):
   `trash_days` (7/30/90/365/None=forever, default 30) drives `tidy_trash`;
   `chat_days` (30/90/365/None, default forever) drives `chats::tidy` in leo-web.

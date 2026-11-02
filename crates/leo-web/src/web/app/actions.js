@@ -23,6 +23,16 @@ const actions = {
     closeSheet();
     go('#/calendar');
   },
+  boards: () => {
+    closeSheet();
+    go('#/boards');
+  },
+  'kanban-new-board': () => kanbanNewBoard(),
+  'kanban-board-menu': () => kanbanBoardMenu(),
+  'kanban-column-menu': (el) => kanbanColumnMenu(el.dataset.col),
+  'kanban-add-card': (el) => kanbanComposer(el.dataset.col),
+  'kanban-add-column': () => kanbanAddColumn(),
+  'kanban-open-card': (el) => kanbanCardSheet(el.dataset.card),
   'cal-pick': (el) => {
     cal.selected = el.dataset.day;
     if (cal.gridOpen && !window.matchMedia('(min-width: 600px)').matches) cal.gridOpen = false;

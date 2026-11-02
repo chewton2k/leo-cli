@@ -818,7 +818,8 @@ function drawTasksWindow() {
   const tasks = tasksWin.tasks || (cal.data && cal.data.tasks) || [];
   const groups = tasksGroups(tasks, true);
   const open = groups.reduce((n, [, list]) => n + list.length, 0);
-  const here = /^#\/calendar/.test(location.hash);
+  // Calendar lists these tasks itself, and on Boards the panel would cover the columns.
+  const here = /^#\/(?:calendar|boards)(?:\/|$)/.test(location.hash);
   tasksBox.hidden = !open || here || state.view === 'locked';
   if (tasksBox.hidden) { fitTasksWindow(); return; }
   const late = groups.find(([name]) => name === 'Overdue');

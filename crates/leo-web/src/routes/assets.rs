@@ -23,6 +23,7 @@ const APP_JS: &str = concat!(
     include_str!("../web/app/sources.js"),
     include_str!("../web/app/passages.js"),
     include_str!("../web/app/calendar.js"),
+    include_str!("../web/app/boards.js"),
     include_str!("../web/app/interviews.js"),
     include_str!("../web/app/actions.js"),
     include_str!("../web/app/events.js"),

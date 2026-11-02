@@ -51,7 +51,7 @@ reader, seer, meaning, web, room, speech).
 ## Page architecture
 
 - Hash router (`#/f/dir`, `#/n/id`, `#/new/dir`, `#/search/q`, `#/trash`,
-  `#/map[/id]`, `#/calendar`, `#/interviews[/chat]`, `#/record[/dir]`,
+  `#/map[/id]`, `#/calendar`, `#/boards[/id]`, `#/interviews[/chat]`, `#/record[/dir]`,
   `#/settings[/storage]`), `data-action` delegation (`actions.js`). Every
   page bumps `seq`; a slow load whose `seq` changed draws nothing.
 - Notes read wide (2026-10-19, the user's call): `.note-columns > .note` uses
@@ -767,6 +767,55 @@ the same idle loop.
   and Undo cancels removal without completing the next repeating occurrence.
 - Export adds `tasks.json`; Storage → Restore tasks takes that file and POSTs
   `/api/tasks/import` (ids dedupe; a newer local copy is kept).
+
+## Boards (`boards.rs`, `routes/boards.rs`, `app/boards.js`, 2026-11-02)
+
+Jira-style task boards (the user's call: their own rail icon after Calendar, several
+boards, untimed, standalone cards only). Cards have no dates, so they are not
+calendar tasks and never reach `/api/tasks`, the Tasks panel or Felix's schedule.
+JS and CSS use the `kanban` prefix: `board` already names the interview whiteboard.
+
+- Storage mirrors standalone tasks: `<notes>/.leo/boards/<b…>.json` (name, columns
+  `{id, name}`, 1-12) and `<notes>/.leo/cards/<c…>.json` (board, column, `rank`,
+  title, subheading, description ≤8,000, priority `""|low|medium|high`). One JSON
+  line per save, atomic, nofollow reads, union-merged in `.gitattributes`
+  (`leo_core::sync`), newest `updated_at` wins, deletes are tombstones; a file
+  counts only when its name is its id. One file per card, so two computers editing
+  different cards both keep their edits. Limits: 100 boards, 5,000 cards.
+- Order is `rank` (f64). A move writes only the moved card (midpoint of its new
+  neighbours, `boards::between`) unless the gap is gone, then `settle` renumbers that
+  column. A card whose column was deleted elsewhere shows in the first column and
+  is rewritten only when it moves. One mutex (`boards::writing`) serialises writes.
+- API: GET/POST `/api/boards` (list with `cards` counts; a new board has To do, In
+  progress, Done), GET/PATCH/DELETE `/api/boards/{id}` (PATCH `name`, `columns`
+  `[{id?, name}]` in order; removed columns' cards go to `move_to` or the first
+  column, appended in order; DELETE returns `{board, cards}`), POST
+  `/api/boards/restore` (that body: Undo), POST `/api/boards/{id}/cards` (`id` +
+  `rank` for Undo, else end of `column`, or `top`), PATCH/DELETE `/api/cards/{id}`,
+  POST `/api/cards/{id}/move` `{board?, column?, after?}` (`after` missing = end,
+  null = top, an id = just after it; another board keeps a same-named column, else
+  the first). Export adds `leo/boards.json`.
+- Page: board tabs with counts (a card dropped on a tab moves to that board, with
+  Undo), the name and column names edit in place (Enter saves, Escape reverts),
+  columns are grey lanes of white cards (title, muted subheading, priority arrows,
+  a lines icon when there is a description), + Add card opens a composer that stays
+  open for the next card (adds are queued so fast typing loses nothing), + Add
+  column, ⋯ sheets for a column (rename, move left/right, delete moving its cards)
+  and the board (rename, add column, delete with a second press, Undo). A card opens
+  a sheet: title, subheading, status, priority (`library-views`), board, description
+  (autosave after 600 ms, on blur, and before Escape/scrim closes it), Delete with Undo.
+- Dragging is pointer events, not HTML drag and drop: mouse/pen lift past 5 px,
+  touch after a 300 ms hold (a swipe still scrolls). The real card is the dashed
+  placeholder moving through the lists; a copy follows the pointer; the board
+  scrolls sideways and the page vertically near edges; pointer capture is on `#app`
+  (moving the card in the DOM would drop capture). It ends on pointerup, cancel,
+  lost capture or a move with no button; Escape puts it back; the click after a
+  drop is swallowed; leaving the page mid-drag cancels. Columns drag by their name
+  bar. Keyboard: Enter opens a card, Alt+arrows move it. After a move the board is
+  fetched again so renumbered ranks are known. The Tasks panel hides on Boards.
+- Tests: `src/tests/boards.rs`, unit tests in `boards.rs`, `tests/browser/boards.spec.js`
+  (fixture: real CSS and boards.js over an in-memory API; desktop and webkit) and
+  flows.spec.js (real server: drag, reload, API contract).
 
 ## Settings, Storage, export
 
