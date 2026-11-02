@@ -1,295 +1,95 @@
 #!/bin/sh
-# Install leo: download the ready-made build for this computer and put it on
-# your PATH for good.
-#
-#
-# Settings (all optional):
-#   LEO_INSTALL_DIR      where to put leo (default: ~/.local/bin)
-#   LEO_INSTALL_ARCHIVE  install from this .tar.gz instead of downloading
 set -eu
-
-REPO="chewton2k/leo-cli"
-BIN_DIR="${LEO_INSTALL_DIR:-$HOME/.local/bin}"
-
-if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-dumb}" != dumb ]; then
-    esc=$(printf '\033')
-    bold="$esc[1m" dim="$esc[2m" green="$esc[32m" red="$esc[31m"
-    cyan="$esc[36m" yellow="$esc[33m" reset="$esc[0m"
-else
-    bold="" dim="" green="" red="" cyan="" yellow="" reset=""
-fi
-case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
-    *UTF-8* | *utf-8* | *UTF8* | *utf8*)
-        ok="✓" bad="✗" arrow="↓" to="→"
-        rule="────────────────────────────────────────────────────"
-        ;;
-    *)
-        ok="ok" bad="x" arrow=">" to="->"
-        rule="----------------------------------------------------"
-        ;;
+REPO=chewton2k/leo-cli
+BIN_DIR=${LEO_INSTALL_DIR:-$HOME/.local/bin}
+APPLICATIONS=${LEO_APPLICATIONS_DIR:-/Applications}
+fail() { printf 'Leo could not be installed: %s\n' "$*" >&2; exit 1; }
+case "$(uname -s)-$(uname -m)" in
+    Darwin-arm64) target=aarch64-apple-darwin ;;
+    Darwin-x86_64) target=x86_64-apple-darwin ;;
+    Linux-*) fail 'Leo is available for macOS and Windows only. Nothing was changed.' ;;
+    *) fail 'Use install.ps1 in PowerShell on Windows, or download Leo for macOS.' ;;
 esac
-
-say() { printf '%s\n' "$*"; }
-step() { printf '  %s%s%s %s\n' "$green" "$ok" "$reset" "$*"; }
-doing() { printf '  %s%s%s %s\n' "$cyan" "$arrow" "$reset" "$*"; }
-fail() {
-    printf '  %s%s %s%s\n' "$red" "$bad" "$*" "$reset" >&2
-    printf '  %sNothing was changed. Help: https://github.com/%s/issues%s\n' "$dim" "$REPO" "$reset" >&2
-    exit 1
+if printf '%s' "$BIN_DIR$APPLICATIONS" | LC_ALL=C grep -q '[[:cntrl:]]'; then fail 'Choose installation folders without control characters.'; fi
+case "$BIN_DIR" in /*) ;; *) fail 'LEO_INSTALL_DIR must be an absolute folder.' ;; esac
+case "$APPLICATIONS" in /*) ;; *) fail 'The applications folder must be absolute.' ;; esac
+work=$(mktemp -d)
+staged=''
+parked=''
+app="$APPLICATIONS/Leo.app"
+cleanup() {
+    if [ -n "$parked" ] && [ -d "$parked" ] && [ ! -e "$app" ]; then mv "$parked" "$app"; fi
+    [ -z "$staged" ] || rm -rf "$staged"
+    rm -rf "$work"
 }
-bar() {
-    awk -v done="$1" -v total="$2" 'BEGIN {
-        mb = 1048576
-        if (total > 0) {
-            p = done / total
-            if (p > 1) p = 1
-            filled = int(p * 30 + 0.5)
-            s = ""
-            for (i = 0; i < 30; i++) s = s (i < filled ? "#" : " ")
-            printf "\r    [%s] %3d%%  %.1f / %.1f MB", s, p * 100, done / mb, total / mb
-        } else {
-            printf "\r    %.1f MB", done / mb
-        }
-    }'
-}
-bytes() {
-    if [ -f "$1" ]; then wc -c <"$1" | tr -d ' '; else echo 0; fi
-}
-fetch() {
-    if [ -t 1 ]; then
-        total=$(curl -fsSLI "$1" 2>/dev/null | awk 'tolower($1) == "content-length:" { n = $2 } END { print n + 0 }') || total=0
-        curl -fsSL "$1" -o "$2" &
-        pid=$!
-        while kill -0 "$pid" 2>/dev/null; do
-            bar "$(bytes "$2")" "$total"
-            sleep 0.1
-        done
-        if ! wait "$pid"; then
-            pid=""
-            printf '\n'
-            return 1
-        fi
-        pid=""
-        got=$(bytes "$2")
-        bar "$got" "$got"
-        printf '\n'
-    else
-        curl -fsSL "$1" -o "$2" || return 1
-    fi
-}
-sha256_of() {
-    if command -v shasum >/dev/null 2>&1; then
-        shasum -a 256 "$1" | cut -d ' ' -f 1
-    elif command -v sha256sum >/dev/null 2>&1; then
-        sha256sum "$1" | cut -d ' ' -f 1
-    fi
-}
-pretty() {
-    case "$1" in
-        "$HOME"/*) printf '~%s' "${1#"$HOME"}" ;;
-        *) printf '%s' "$1" ;;
-    esac
-}
-
-say ""
-say "  ${bold}leo${reset} ${dim}installer${reset}"
-say "  ${dim}notes in your terminal, with AI and recording${reset}"
-say ""
-
-os=$(uname -s)
-arch=$(uname -m)
-case "$os-$arch" in
-    Darwin-arm64) target=aarch64-apple-darwin system="macOS on Apple Silicon" ;;
-    Darwin-x86_64) target=x86_64-apple-darwin system="macOS on Intel" ;;
-    Linux-x86_64) target=x86_64-unknown-linux-gnu system="Linux on x86-64" ;;
-    Linux-aarch64 | Linux-arm64) target=aarch64-unknown-linux-gnu system="Linux on ARM" ;;
-    MINGW* | MSYS* | CYGWIN*) fail "on Windows, install leo from PowerShell instead: irm https://raw.githubusercontent.com/$REPO/main/install.ps1 | iex" ;;
-    *) fail "there is no ready-made build for $os $arch. Build it from source instead: https://github.com/$REPO#1-install-leo" ;;
-esac
-step "Found $system"
-
-tmp=$(mktemp -d)
-pid=""
-trap '[ -n "$pid" ] && kill "$pid" 2>/dev/null; rm -rf "$tmp"' EXIT
+trap cleanup EXIT
 trap 'exit 130' INT TERM
-archive="$tmp/leo.tar.gz"
-
+fetch() { curl --fail --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 900 --max-filesize 1073741824 --retry 2 --output "$2" "$1"; }
+archive="$work/Leo.app.tar.gz"
 if [ -n "${LEO_INSTALL_ARCHIVE:-}" ]; then
     cp "$LEO_INSTALL_ARCHIVE" "$archive"
-    step "Using $(basename "$LEO_INSTALL_ARCHIVE")"
 else
-    command -v curl >/dev/null 2>&1 || fail "curl is needed to download leo"
-
-    tag=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest" 2>/dev/null | sed -n 's|.*/tag/||p') || tag=""
-    if [ -n "$tag" ]; then
-        url="https://github.com/$REPO/releases/download/$tag/leo-$target.tar.gz"
-        doing "Downloading leo $tag"
-    else
-        url="https://github.com/$REPO/releases/latest/download/leo-$target.tar.gz"
-        doing "Downloading leo"
-    fi
-
-    fetch "$url" "$archive" || fail "could not download $url"
-    if [ ! -t 1 ]; then
-        step "Downloaded $(bytes "$archive" | awk '{ printf "%.1f MB", $1 / 1048576 }')"
-    fi
-
-    # Check the download against the published checksum, when there is a tool
-    # to compute one.
-    if curl -fsSL "$url.sha256" -o "$archive.sha256" 2>/dev/null; then
-        expected=$(cut -d ' ' -f 1 <"$archive.sha256")
-        actual=$(sha256_of "$archive")
-        if [ -z "$actual" ]; then
-            say "  ${yellow}!${reset} No checksum tool here, so the download was not checked"
-        elif [ "$expected" = "$actual" ]; then
-            step "Checksum verified"
-        else
-            fail "the download is damaged (checksum mismatch); try again"
-        fi
+    tag=$(curl --fail --silent --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 30 --output /dev/null --write-out '%{url_effective}' "https://github.com/$REPO/releases/latest") || fail 'GitHub did not answer. Check your connection and try again.'
+    tag=${tag##*/}
+    case "$tag" in v[0-9]*.[0-9]*.[0-9]*) ;; *) fail 'The latest release could not be identified. Try again later.' ;; esac
+    url="https://github.com/$REPO/releases/download/$tag/leo-$target.app.tar.gz"
+    fetch "$url" "$archive" || fail 'The app download failed. Check your connection and try again.'
+    fetch "$url.sha256" "$work/checksum" || fail 'The release checksum is missing. Try again after the release is repaired.'
+    expected=$(awk 'NR==1 {print $1}' "$work/checksum")
+    actual=$(shasum -a 256 "$archive" | awk '{print $1}')
+    [ "$expected" = "$actual" ] || fail 'The app download is damaged. Try downloading it again.'
+fi
+[ "$(wc -c < "$archive" | tr -d ' ')" -le 1073741824 ] || fail 'The app archive is too large.'
+tar -tzf "$archive" | LC_ALL=C awk 'NR>10000 || length($0)>2048 || $0 !~ /^Leo[.]app(\/|$)/ || $0 ~ /(^|\/)\.\.?(\/|$)/ || $0 ~ /[[:cntrl:]]/ {bad=1;exit 1} END {exit (bad || NR==0)}' || fail 'The archive contains unsafe paths or too many files.'
+tar -tvzf "$archive" | LC_ALL=C awk 'NR>10000 || $0 !~ /^[-d]/ {bad=1;exit 1} {total+=$5; if(total>4294967296) {bad=1;exit 1}} END {exit (bad || NR==0)}' || fail 'The archive contains links or too much unpacked data.'
+mkdir "$work/unpacked"
+tar -xzf "$archive" -C "$work/unpacked" || fail 'The app could not be unpacked.'
+new="$work/unpacked/Leo.app"
+[ -f "$new/Contents/MacOS/leo" ] && [ -x "$new/Contents/MacOS/leo-app" ] || fail 'The archive is missing the Leo app or terminal command.'
+identifier=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$new/Contents/Info.plist" 2>/dev/null) || fail 'The app information could not be read.'
+[ "$identifier" = io.github.chewton2k.leo ] || fail 'This archive is not the Leo app.'
+codesign --verify --deep --strict "$new" || fail 'The app signature is damaged. Download it again.'
+if pgrep -f "$app/Contents/MacOS/leo-app" >/dev/null 2>&1; then fail 'Quit Leo before installing. Finish any recording or dictation first.'; fi
+[ ! -L "$app" ] || fail 'Leo.app is a link. Remove that link before installing.'
+if [ -e "$app" ]; then
+    old_id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist" 2>/dev/null) || fail 'An existing Leo.app could not be identified. Move it aside first.'
+    [ "$old_id" = io.github.chewton2k.leo ] || fail 'The existing Leo.app belongs to another application. Move it aside first.'
+fi
+mkdir -p "$APPLICATIONS" "$BIN_DIR" || fail 'The installation folder is not writable. Install the disk image from Downloads instead.'
+staged=$(mktemp -d "$APPLICATIONS/.leo-install.XXXXXX")
+ditto "$new" "$staged/Leo.app" || fail 'The app could not be copied. Check free disk space.'
+codesign --verify --deep --strict "$staged/Leo.app" || fail 'The copied app failed its signature check.'
+if [ -e "$app" ]; then parked="$staged/previous.app"; mv "$app" "$parked"; fi
+mv "$staged/Leo.app" "$app" || fail 'The app could not be put in Applications. The previous copy was kept.'
+link="$BIN_DIR/.leo-link.$$"
+ln -s "$app/Contents/MacOS/leo" "$link"
+mv -f "$link" "$BIN_DIR/leo"
+config=${LEO_HOME:-$HOME/Library/Application Support/leo}
+mkdir -p "$config"
+[ ! -L "$config/app-cli-dir" ] || fail 'The saved terminal folder is a link. Remove app-cli-dir from the Leo settings folder.'
+printf '%s\n' "$BIN_DIR" > "$work/app-cli-dir"
+chmod 600 "$work/app-cli-dir"
+record_tmp=$(mktemp "$config/.app-cli-dir.XXXXXX")
+cp "$work/app-cli-dir" "$record_tmp"
+mv -f "$record_tmp" "$config/app-cli-dir"
+if [ -z "${LEO_INSTALL_SKIP_PATH:-}" ]; then
+    quoted=$(printf '%s' "$BIN_DIR" | sed "s/'/'\\\\''/g")
+    line="export PATH='$quoted':\"\$PATH\""
+    shell_name=${SHELL:-sh}
+    case "${shell_name##*/}" in
+        zsh) rc="$HOME/.zshrc" ;;
+        bash) rc="$HOME/.bash_profile" ;;
+        fish) rc="$HOME/.config/fish/config.fish"; line="fish_add_path -- '$quoted'" ;;
+        *) rc="$HOME/.profile" ;;
+    esac
+    if [ -L "$rc" ]; then
+        printf 'Your shell profile is a link. Add %s to PATH there yourself.\n' "$BIN_DIR"
+    elif ! grep -qsFx "$line" "$rc"; then
+        mkdir -p "$(dirname "$rc")"
+        rc_tmp=$(mktemp "$(dirname "$rc")/.leo-path.XXXXXX")
+        if [ -f "$rc" ]; then cp -p "$rc" "$rc_tmp"; fi
+        printf '\n%s\n%s\n' '# Added by the leo installer' "$line" >> "$rc_tmp"
+        mv -f "$rc_tmp" "$rc"
     fi
 fi
-
-tar -xzf "$archive" -C "$tmp" || fail "could not unpack the download"
-[ -f "$tmp/leo" ] || fail "the download does not contain leo"
-
-previous=""
-if [ -x "$BIN_DIR/leo" ]; then
-    previous=$("$BIN_DIR/leo" --version 2>/dev/null | awk '{ print $2 }') || previous=""
-fi
-
-mkdir -p "$BIN_DIR"
-cp "$tmp/leo" "$BIN_DIR/.leo.new"
-chmod 755 "$BIN_DIR/.leo.new"
-mv -f "$BIN_DIR/.leo.new" "$BIN_DIR/leo"
-step "Installed to $(pretty "$BIN_DIR")/leo"
-version=$("$BIN_DIR/leo" --version 2>/dev/null | awk '{ print $2 }') || version=""
-
-if [ -n "${LEO_HOME:-}" ]; then
-    models="$LEO_HOME/models"
-else
-    models="$HOME/.leo/models"
-fi
-model_dir="$models/parakeet-tdt-0.6b-v3-int8"
-model_url="${LEO_INSTALL_MODEL_URL:-https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/2bda32ec70b097a55adaa07d9a7173915b43cc78}"
-model_files="${LEO_INSTALL_MODEL_MANIFEST:-encoder.int8.onnx=acfc2b4456377e15d04f0243af540b7fe7c992f8d898d751cf134c3a55fd2247 decoder.int8.onnx=179e50c43d1a9de79c8a24149a2f9bac6eb5981823f2a2ed88d655b24248db4e joiner.int8.onnx=3164c13fc2821009440d20fcb5fdc78bff28b4db2f8d0f0b329101719c0948b3 tokens.txt=d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d}"
-file_state() {
-    if [ ! -s "$model_dir/$1" ]; then
-        echo missing
-        return
-    fi
-    have=$(sha256_of "$model_dir/$1")
-    if [ -z "$have" ] || [ "$have" = "$2" ]; then
-        echo ready
-    else
-        echo damaged
-    fi
-}
-if [ -z "${LEO_INSTALL_NO_MODEL:-}" ]; then
-    need=""
-    damaged=""
-    for pair in $model_files; do
-        case "$(file_state "${pair%%=*}" "${pair#*=}")" in
-            ready) ;;
-            damaged)
-                need="$need $pair"
-                damaged=1
-                ;;
-            *) need="$need $pair" ;;
-        esac
-    done
-    model_ready=""
-    if [ -z "$need" ]; then
-        model_ready=1
-        step "Speech model ready in $(pretty "$model_dir")"
-    elif ! command -v curl >/dev/null 2>&1; then
-        say "  ${yellow}!${reset} No curl, so the speech model was not downloaded; leo fetches it when it opens"
-    else
-        if [ -n "$damaged" ]; then
-            doing "The speech model is damaged; downloading it again"
-        else
-            doing "Downloading the speech model (Parakeet, 670 MB, once)"
-        fi
-        mkdir -p "$model_dir"
-        model_ready=1
-        for pair in $need; do
-            name=${pair%%=*}
-            sha=${pair#*=}
-            actual=""
-            if fetch "$model_url/$name" "$model_dir/$name.part"; then
-                actual=$(sha256_of "$model_dir/$name.part")
-                if [ -z "$actual" ]; then
-                    actual="$sha"
-                fi
-            fi
-            if [ "$actual" = "$sha" ]; then
-                mv -f "$model_dir/$name.part" "$model_dir/$name"
-            else
-                rm -f "$model_dir/$name.part"
-                model_ready=""
-                break
-            fi
-        done
-        if [ -n "$model_ready" ]; then
-            step "Speech model saved to $(pretty "$model_dir")"
-        else
-            say "  ${yellow}!${reset} Could not download the speech model; leo fetches it when it opens"
-        fi
-    fi
-    rm -f "$models/ggml-base.en.bin"
-fi
-
-# Put the directory on the PATH for every future terminal, in the file this
-# shell reads at startup. Mac terminals start bash as a login shell, which reads
-# ~/.bash_profile rather than ~/.bashrc.
-line="export PATH=\"$BIN_DIR:\$PATH\""
-case "$(basename "${SHELL:-sh}")" in
-    zsh) rc="$HOME/.zshrc" ;;
-    bash)
-        if [ "$os" = Darwin ]; then
-            rc="$HOME/.bash_profile"
-        else
-            rc="$HOME/.bashrc"
-        fi
-        ;;
-    fish)
-        rc="$HOME/.config/fish/config.fish"
-        line="fish_add_path $BIN_DIR"
-        ;;
-    *) rc="$HOME/.profile" ;;
-esac
-
-if [ -n "${LEO_INSTALL_SKIP_PATH:-}" ]; then
-    :
-elif grep -qsF "$BIN_DIR" "$rc"; then
-    step "Already on your PATH in $(pretty "$rc")"
-else
-    mkdir -p "$(dirname "$rc")"
-    printf '\n# Added by the leo installer\n%s\n' "$line" >>"$rc"
-    step "Added $(pretty "$BIN_DIR") to your PATH in $(pretty "$rc")"
-fi
-
-say ""
-say "  ${dim}${rule}${reset}"
-say ""
-if [ -z "$previous" ]; then
-    say "  ${green}${bold}leo ${version} is installed.${reset} Thank you for trying it!"
-elif [ "$previous" = "$version" ]; then
-    say "  ${green}${bold}leo is already up to date (${version}).${reset} Thank you for using it!"
-else
-    say "  ${green}${bold}leo is updated: ${previous} ${to} ${version}.${reset} Thank you for using it!"
-fi
-say ""
-say "  ${bold}Get started${reset}"
-say "    ${cyan}leo${reset}            open your notes"
-say ""
-say "  ${dim}Guide: https://github.com/$REPO#readme${reset}"
-case ":$PATH:" in
-    *":$BIN_DIR:"*) ;;
-    *)
-        if [ -z "${LEO_INSTALL_SKIP_PATH:-}" ]; then
-            say ""
-            say "  ${yellow}Open a new terminal first${reset} (or run: . $(pretty "$rc"))"
-        fi
-        ;;
-esac
-say ""
+printf '\nLeo is installed in %s.\nTerminal command: %s/leo\nOpen Leo in Applications, or type leo. Open a new terminal if needed.\nYour notes stay where they are. Thank you for using Leo!\n' "$app" "$BIN_DIR"
