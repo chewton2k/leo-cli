@@ -226,14 +226,14 @@ pub(crate) fn remember_in_background(
     upto: Vec<chat::Turn>,
     from: usize,
     writer: crate::graph::Writer,
-) {
+) -> bool {
     if !chats::valid_id(&id) {
-        return;
+        return false;
     }
     let Some(guard) = claim_busy(&REMEMBERING, &id) else {
-        return;
+        return false;
     };
-    let _ = std::thread::Builder::new()
+    std::thread::Builder::new()
         .name("leo-chat-memory".into())
         .spawn(move || {
             let _guard = guard;
@@ -252,7 +252,8 @@ pub(crate) fn remember_in_background(
                     );
                 }
             }
-        });
+        })
+        .is_ok()
 }
 
 pub(crate) async fn delete_chat(
@@ -312,8 +313,8 @@ pub(crate) async fn compact_chat(
         if upto <= from || more < COMPACT_LEAST_CHARS {
             return Some(false);
         }
-        warm.forget(&body.chat);
-        remember_in_background(
+        let chat = body.chat.clone();
+        let started = remember_in_background(
             dir,
             body.chat,
             old.filter(|_| from > 0),
@@ -321,7 +322,10 @@ pub(crate) async fn compact_chat(
             from,
             writer,
         );
-        Some(true)
+        if started {
+            warm.forget(&chat);
+        }
+        Some(started)
     })
     .await;
     match started {

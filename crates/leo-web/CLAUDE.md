@@ -309,7 +309,8 @@ reader, seer, meaning, web, room, speech).
   question under the reply; a typed message while a card is held tells the
   result once (`q.told`), says "do not ask a new practice question unless I ask"
   and keeps the button; Next question after that sends only "Next question,
-  please." Next question shows as a slim `.msg-next` divider (the `chat-switch`
+  please." A new question card clears Next question on every told card, so an
+  old button cannot ask a second question later. Next question shows as a slim `.msg-next` divider (the `chat-switch`
   pill), not a user bubble, and a card-only reply draws no empty paragraph.
   Study's style starts from the open/attached material without being set up,
   asks for self-contained questions that test one important idea, climbs from

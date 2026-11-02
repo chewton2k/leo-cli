@@ -1863,6 +1863,7 @@
       const quiz = { question: q.question, given: q.given, correct: q.correct, kind: q.kind };
       if (why) {
         if (q.reply) return;
+        q.told = true;
         send(q.given, { say: quizSay(q, q.given, q.correct, true), quiz, card: q, held: true });
         return;
       }
@@ -2342,6 +2343,8 @@
               if (s && s.state !== 'finished') s.state = 'finished';
             }
             if (e.quiz && typeof e.quiz === 'object' && typeof e.quiz.question === 'string') {
+              // A new question moves the practice on: older cards lose Next question.
+              for (const m of thread.messages) if (m !== answer) for (const q of m.quizzes || []) if (q.told) q.held = false;
               const idea = Number(e.quiz.idea) || 0;
               const s = currentSession();
               if (s && s.state === 'active' && idea) s.asked += 1;

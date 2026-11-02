@@ -44,8 +44,12 @@ a test, or leave it unset to see the user's own data.
   `Library::selected_name`, writing AI and model plus 5h/7d plan use from
   `web_settings::writing_status`, AI use since launch `Running::usage_line`),
   Settings…, Check for updates… (queues a check, opens Updates & about), the
-  version, Quit. A `leo-tray-status` thread refreshes the rows every 20 s (Codex
-  limits every 5 min, since they need its app-server); opening the menu never waits.
+  version, Quit. A `leo-tray-status` thread refreshes the rows every 20 s; Codex
+  limits are asked from its app-server at most every 5 min and only when Codex is
+  the chosen writing AI and its saved use is stale (`writing_status(may_ask)`).
+  Page commands are offered for 5 s (the page may still be loading) and run once
+  per click (`__leoAsked`); copying runs off the main thread. A speech model that
+  is chosen but not on disk reads "(not downloaded)".
 - The window disables Tauri's drag-drop handler (`disable_drag_drop_handler`):
   left on, it swallows the webview's HTML drag events, so moving notes and
   folders and combining notes did nothing in the app (2026-11-02). Dropped

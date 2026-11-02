@@ -583,20 +583,29 @@ mod tests {
 
 /// The writing AI as the menu bar shows it: "Claude Code · claude-opus-5-5",
 /// and its plan's 5 hour and 7 day use when the agent has reported them.
-pub fn writing_status() -> (String, Option<String>) {
+/// Claude Code reports its use with every answer; Codex has to be asked
+/// through its app-server, so `may_ask` lets the caller do that only now and
+/// then, and only when Codex is the chosen writing AI and what is saved is stale.
+pub fn writing_status(may_ask: bool) -> (String, Option<String>) {
     let cfg = Config::load();
     let store = secret::default_store();
-    if cfg
-        .provider("codex")
-        .is_some_and(|p| Agent::of(p) == Some(Agent::Codex))
-    {
-        crate::usage::refresh_codex(&cfg);
+    let selection = choice::selection(&cfg, store.as_ref(), Task::Chat);
+    let now = chrono::Utc::now();
+    let mut seen = crate::usage::load();
+    if let Some(selection) = selection.as_ref() {
+        let codex = cfg
+            .provider(&selection.provider)
+            .and_then(Agent::of)
+            .is_some_and(|agent| agent == Agent::Codex);
+        let stale = seen.get(&selection.provider).is_none_or(|usage| {
+            (now - usage.seen_at).num_seconds() >= crate::usage::STALE_AFTER.as_secs() as i64
+        });
+        if may_ask && codex && stale {
+            crate::usage::refresh_codex(&cfg);
+            seen = crate::usage::load();
+        }
     }
-    status_line(
-        choice::selection(&cfg, store.as_ref(), Task::Chat).as_ref(),
-        &crate::usage::load(),
-        chrono::Utc::now(),
-    )
+    status_line(selection.as_ref(), &seen, now)
 }
 
 fn status_line(

@@ -4,6 +4,7 @@
 //! items whose text a background thread refreshes, so opening the menu never
 //! waits on the disk or an agent.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -19,6 +20,10 @@ const REFRESH: Duration = Duration::from_secs(20);
 /// Codex's limits need an app-server round trip, so they are asked every five
 /// minutes (`usage::STALE_AFTER`), not every refresh.
 const WRITING_EVERY: u32 = 15;
+
+/// A menu command is offered to the page this many times, this far apart.
+const ASK_TRIES: u32 = 10;
+const ASK_GAP: Duration = Duration::from_millis(500);
 
 struct Status {
     speech: MenuItem<Wry>,
@@ -97,42 +102,64 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
 }
 
 /// Shows the window and asks the page to go somewhere (`leoFromApp` in
-/// app/events.js). The arguments are fixed words, never user text.
-fn page(app: &AppHandle, what: &str, which: &str) {
+/// app/events.js). The arguments are fixed words, never user text. The page may
+/// still be loading (first launch, a reload), so the request is tried for a few
+/// seconds and runs at most once (`__leoAsked` remembers each click's number).
+fn page(app: &AppHandle, what: &'static str, which: &'static str) {
+    static CLICKS: AtomicU64 = AtomicU64::new(0);
     crate::show(app);
-    if let Some(window) = app.get_webview_window(crate::MAIN) {
-        let _ = window.eval(format!(
-            "window.leoFromApp && window.leoFromApp('{what}', '{which}')"
-        ));
-    }
+    let click = CLICKS.fetch_add(1, Ordering::Relaxed);
+    let app = app.clone();
+    let script = format!(
+        "(() => {{ const done = window.__leoAsked = window.__leoAsked || {{}}; \
+         if (done[{click}] || !window.leoFromApp) return; done[{click}] = true; \
+         window.leoFromApp('{what}', '{which}'); }})()"
+    );
+    let _ = std::thread::Builder::new()
+        .name("leo-tray-page".into())
+        .spawn(move || {
+            for _ in 0..ASK_TRIES {
+                if let Some(window) = app.get_webview_window(crate::MAIN) {
+                    let _ = window.eval(&script);
+                }
+                std::thread::sleep(ASK_GAP);
+            }
+        });
 }
 
+/// Reads the newest dictation off the main thread, so a busy database never
+/// holds up the menu.
 fn copy_last_dictation(app: &AppHandle) {
-    let last = leo_core::paths::data_dir()
-        .ok()
-        .and_then(|data| leo_web::dictation::recent(&data).ok())
-        .and_then(|rows| rows.into_iter().next())
-        .and_then(|row| row["text"].as_str().map(str::to_string));
-    if let Some(text) = last {
-        let _ = app.clipboard().write_text(text);
-    }
+    let app = app.clone();
+    let _ = std::thread::Builder::new()
+        .name("leo-tray-copy".into())
+        .spawn(move || {
+            let last = leo_core::paths::data_dir()
+                .ok()
+                .and_then(|data| leo_web::dictation::recent(&data).ok())
+                .and_then(|rows| rows.into_iter().next())
+                .and_then(|row| row["text"].as_str().map(str::to_string));
+            if let Some(text) = last {
+                let _ = app.clipboard().write_text(text);
+            }
+        });
 }
 
 fn refresh(app: AppHandle, status: Arc<Status>) {
     let mut round = 0u32;
-    let mut writing = (String::new(), None);
     loop {
         let speech = leo_services::speech::library::library()
             .ok()
             .and_then(|library| library.selected_name())
             .unwrap_or_else(|| "no model chosen".into());
         let _ = status.speech.set_text(format!("Speech: {speech}"));
-        if round % WRITING_EVERY == 0 {
-            writing = leo_services::web_settings::writing_status();
-        }
+        let writing = leo_services::web_settings::writing_status(round % WRITING_EVERY == 0);
         let _ = status.writing.set_text(format!("Writing: {}", writing.0));
         let _ = status.limits.set_text(match &writing.1 {
             Some(limits) => format!("Plan use: {limits}"),
+            None if writing.0 == "No writing AI chosen" => {
+                "Plan use: choose a writing AI in Settings".into()
+            }
             None => "Plan use: shown after the first answer".into(),
         });
         let used = app.try_state::<crate::Engine>().and_then(|engine| {

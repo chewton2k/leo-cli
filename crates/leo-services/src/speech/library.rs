@@ -187,14 +187,25 @@ impl Library {
         Ok(path)
     }
 
-    /// The chosen model's catalog name, without checking its file (the menu
-    /// bar reads this every few seconds; `selected` hashes the model).
+    /// The chosen model's catalog name, marked when its file is not on disk.
+    /// It never hashes the file (the menu bar reads this every few seconds;
+    /// `selected` verifies the model). None when no model is chosen.
     pub fn selected_name(&self) -> Option<String> {
         let selection = self.selection().ok()?;
         if selection.id.is_empty() {
             return None;
         }
-        self.catalog.get(&selection.id).ok().map(|m| m.name.clone())
+        let name = self.catalog.get(&selection.id).ok()?.name.clone();
+        let there = self
+            .model_path(&selection.id)
+            .ok()
+            .and_then(|path| std::fs::symlink_metadata(path).ok())
+            .is_some_and(|meta| meta.is_file());
+        Some(if there {
+            name
+        } else {
+            format!("{name} (not downloaded)")
+        })
     }
 
     pub fn selected(&self) -> Result<Selected> {
