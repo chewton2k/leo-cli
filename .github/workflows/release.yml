@@ -34,6 +34,19 @@ jobs:
           for name in TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD; do
             [ -n "${!name}" ] || { echo "::error::Add the repository Actions secret $name before releasing."; exit 1; }
           done
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+      - uses: pnpm/action-setup@v5
+        with:
+          version: '12.9.1'
+      - name: Install updater signing tools
+        run: pnpm --dir crates/leo-desktop install --frozen-lockfile
+      - name: Validate updater signing before building
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: python3 scripts/validate_updater_signing.py
       - id: next
         name: Next version
         run: |

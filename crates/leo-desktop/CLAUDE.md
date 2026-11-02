@@ -123,3 +123,7 @@ The macOS build script links clang_rt.osx for Metal availability checks and
 weak-links CoreAudio so older supported systems can load the app. Compiler
 runtime discovery uses quiet_command with an 8 KiB output bound and five-second
 deadlines; leo-core is a build dependency for the same child-process rules.
+
+Release preflight signs a disposable probe with the updater key before the
+version bump or native builds. Signer output is suppressed on failure so only
+secret names and corrective steps appear; private values stay in the environment.

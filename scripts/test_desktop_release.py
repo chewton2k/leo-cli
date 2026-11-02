@@ -54,6 +54,40 @@ class ReleaseTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 desktop_release.package(source, output, 'aarch64-apple-darwin')
 
+    def test_signing_preflight_accepts_a_real_signer_result_and_redacts_failures(self):
+        import validate_updater_signing
+        import subprocess
+        env = {'TAURI_SIGNING_PRIVATE_KEY':'private-marker','TAURI_SIGNING_PRIVATE_KEY_PASSWORD':'password-marker'}
+        def valid(command, **options):
+            self.assertEqual(options['env']['TAURI_SIGNING_PRIVATE_KEY_PASSWORD'], 'password-marker')
+            self.assertGreater(options['timeout'], 0)
+            pathlib.Path(command[-1] + '.sig').write_text('public signature')
+            return subprocess.CompletedProcess(command, 0, b'', b'')
+        validate_updater_signing.validate(env, valid)
+        def invalid(command, **options):
+            return subprocess.CompletedProcess(command, 1, b'private-marker', b'password-marker')
+        with self.assertRaises(ValueError) as failed:
+            validate_updater_signing.validate(env, invalid)
+        self.assertIn('TAURI_SIGNING_PRIVATE_KEY_PASSWORD', str(failed.exception))
+        self.assertNotIn('private-marker', str(failed.exception))
+        self.assertNotIn('password-marker', str(failed.exception))
+        def no_signature(command, **options):
+            return subprocess.CompletedProcess(command, 0, b'', b'')
+        with self.assertRaises(ValueError):
+            validate_updater_signing.validate(env, no_signature)
+        with self.assertRaises(ValueError):
+            validate_updater_signing.validate({}, valid)
+        def timed_out(command, **options):
+            raise subprocess.TimeoutExpired(command, options['timeout'])
+        with self.assertRaises(ValueError):
+            validate_updater_signing.validate(env, timed_out)
+
+    def test_updater_signing_is_checked_before_version_bump_and_app_builds(self):
+        workflow = (ROOT / '.github/workflows/release.yml').read_text()
+        version = workflow.split('  version:', 1)[1].split('  bump:', 1)[0]
+        self.assertIn('validate_updater_signing.py', version)
+        self.assertLess(version.index('validate_updater_signing.py'), version.index('Next version'))
+
     def test_macos_target_covers_the_native_cpp_filesystem_requirement(self):
         config = json.loads((ROOT / 'crates/leo-desktop/tauri.conf.json').read_text())
         minimum = config['bundle']['macOS'].get('minimumSystemVersion', '10.13')
