@@ -90,7 +90,8 @@ loopback engine finishes.
 
 `app_settings.rs` serializes atomic private app preferences through a bounded
 actor; native login/tray failures restore the previous file and cached state.
-First-launch microphone, Accessibility and model steps persist independently.
+First-launch microphone, Accessibility and model completion flags persist
+independently; the page groups both permissions before the model choice.
 Permission status checks never open the microphone; requests are explicit.
 Health combines host doctor checks with native permission, model and shortcut
 checks. macOS helper output is bounded, nonblocking and timed out by process group.

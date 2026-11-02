@@ -21,7 +21,7 @@ test('late Settings saves cannot redraw a different page on success or failure',
 });
 test('late onboarding completion cannot close a newer sheet', async () => {
   let finish, closed = 0;
-  const context = { appChange: () => new Promise(resolve => { finish = resolve; }), closeSheet() { closed++; }, document: { querySelector: () => null } };
+  const context = { desktopApp: null, appChange: () => new Promise(resolve => { finish = resolve; }), closeSheet() { closed++; }, document: { querySelector: () => null } };
   vm.createContext(context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/web/app/onboarding.js'), 'utf8'), context);
   context.maybeOnboarding = () => {};

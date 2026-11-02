@@ -252,7 +252,17 @@
     function fit(area) {
       area.style.height = 'auto';
       area.style.height = `${area.scrollHeight}px`;
+      area.scrollTop = 0;
     }
+
+    let editWidth = null;
+    const editResize = root.ResizeObserver ? new ResizeObserver((entries) => {
+      const width = entries[0].contentRect.width;
+      if (width === editWidth) return;
+      editWidth = width;
+      if (editing) fit(editing.area);
+    }) : null;
+    if (editResize) editResize.observe(container);
 
     let kept = { caret: null, picked: null, text: null };
     let told = false;
@@ -866,6 +876,7 @@
         clearTimeout(outlineTimer);
         cancelAnimationFrame(outlineFrame);
         if (outlineResize) outlineResize.disconnect();
+        if (editResize) editResize.disconnect();
         if (outlineNav) outlineNav.removeEventListener('click', outlineGo);
         root.removeEventListener('scroll', outlineScroll);
         root.removeEventListener('resize', outlineScroll);

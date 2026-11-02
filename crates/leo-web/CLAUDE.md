@@ -1018,10 +1018,14 @@ It uses source-more controls and theme tokens. With 900 px of room, the borderle
 320 px rail sits beside the app sidebar, separated from the note by 56 px; note
 width preferences still cap the reading column. Headings stay on one line with
 ellipsis and their full title on hover. The outline hides its scrollbar while
-keeping wheel, touch and keyboard scrolling available. It folds above the note in a narrow pane
-or on a phone.
+keeping wheel, touch and keyboard scrolling available. The outline gutter is
+reserved before a heading exists, so adding or removing
+the first heading never shifts or narrows the writing column. A narrow pane or
+phone reserves a fixed disclosure row; its expanded outline overlays the note.
 Heading jumps keep the URL and reading-position flow; typing refreshes only the
-outline after a pause, preserving the editor and caret. Scroll/resize observers,
+outline after a pause, preserving the editor and caret. A width observer refits
+the active textarea in place when panes resize, clearing internal scroll so text
+and the caret stay visible; it disconnects with the document. Scroll/resize observers,
 frames and timers are released with the document. The outline never prints.
 
 Combine’s chunker and dropped-content recovery share fence recognition: a closing
@@ -1056,8 +1060,11 @@ and settings helpers have node tests in `dictation.test.js`.
 Settings uses Layout A's grouped left navigation at `#/settings/<section>`;
 Storage keeps its controller inside the same frame. Redraws retain field drafts,
 focus and selection, including textareas. App polling updates native status and a
-ready-update banner without replacing focused controls. First-launch sheets have
-three independent skips; late responses cannot dismiss another sheet or page.
+ready-update banner without replacing focused controls. First-launch setup groups
+microphone and macOS Accessibility into one permission page with independently
+polled Allowed checkmarks and a fixed action column, followed by the model page.
+Each page can be skipped; the existing three completion flags remain compatible,
+and late responses cannot dismiss another sheet or page.
 Speech models show In use, every Downloaded file and filtered All models cards.
 Rows show escaped catalog descriptions, languages, size, streaming support and
 measured accuracy/speed with themed meters; unknown scores stay unmeasured.

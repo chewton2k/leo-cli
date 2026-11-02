@@ -1,5 +1,6 @@
 function nextOnboarding(preferences) {
-  return (preferences.onboarding || [false, false, false]).findIndex((done) => !done);
+  const done = preferences.onboarding || [false, false, false];
+  return !done[0] || !done[1] ? 0 : !done[2] ? 2 : -1;
 }
 let onboardingShown = false;
 let onboardingGeneration = 0;
@@ -12,33 +13,44 @@ function maybeOnboarding(force = false) {
   const step = nextOnboarding(desktopApp.preferences);
   if (step < 0) return;
   onboardingShown = true;
-  const titles = ['Your microphone', 'Type into other apps', 'Choose a speech model'];
-  const descriptions = ['Leo opens the microphone only while you capture speech. Allow microphone access when your system asks.', 'Accessibility lets Leo paste your words into the app you are using. You can still dictate without it and paste from the clipboard yourself.', 'Dictation and recording share one local model. Pick a model to download; you can change it later in Settings.'];
-  const action = step === 0 ? 'microphone' : 'accessibility';
-  const controls = step < 2 ? `<button class="btn primary" data-action="app-command" data-app-action="${action}">${step === 0 ? 'Allow microphone' : 'Allow Accessibility'}</button><span class="hint" id="onboarding-permission-status"></span>` : '<div id="onboarding-models"><p class="hint">Opening the model library…</p></div>';
-  sheet(`<div data-onboarding-step="${step}"><p class="hint">Set up Leo · ${step + 1} of 3</p><h3>${titles[step]}</h3><p>${descriptions[step]}</p><div class="buttons">${controls}</div><p class="hint">You can skip this and finish setup in Health.</p><div class="buttons"><button class="btn plain" data-action="onboarding-next" data-step="${step}">Skip for now</button>${step < 2 ? `<button class="btn primary" id="onboarding-continue" data-action="onboarding-next" data-step="${step}" disabled>Continue</button>` : ''}</div></div>`);
+  const permissions = step === 0;
+  const title = permissions ? 'Allow access' : 'Choose a speech model';
+  const description = permissions ? 'Give Leo access for dictation and recording. Each permission is checked here as soon as it is allowed.' : 'Dictation and recording share one local model. Pick a model to download; you can change it later in Settings.';
+  const row = (action, name, why, label) => `<div class="set-row onboarding-permission" data-onboarding-permission="${action}"><div class="grow"><strong>${name}</strong><p class="hint">${why}</p></div><div class="onboarding-permission-action"><button class="btn primary sm" data-action="app-command" data-app-action="${action}">${label}</button><span role="status" class="set-status" hidden></span></div></div>`;
+  const controls = permissions ? `<section class="set-card">${row('microphone', 'Microphone', 'Leo opens your microphone only while you capture speech.', 'Allow microphone')}${desktopApp.platform === 'windows' ? '' : row('accessibility', 'Accessibility', 'Paste dictated words into the app you are using. Without access, you can paste from the clipboard yourself.', 'Allow Accessibility')}</section>` : '<div id="onboarding-models"><p class="hint">Opening the model library…</p></div>';
+  sheet(`<div data-onboarding-step="${step}"><p class="hint">Set up Leo · ${permissions ? 1 : 2} of 2</p><h3>${title}</h3><p>${description}</p>${controls}<p class="hint">You can skip this and finish setup in Health.</p><div class="buttons"><button class="btn plain" data-action="onboarding-next" data-step="${step}">Skip for now</button>${permissions ? `<button class="btn primary" id="onboarding-continue" data-action="onboarding-next" data-step="${step}" disabled>Continue</button>` : ''}</div></div>`);
   updateOnboardingPermissions();
   if (step === 2) loadOnboardingModels(++onboardingGeneration);
 }
 function updateOnboardingPermissions() {
   if (!desktopApp) return;
-  const microphone = Boolean(onboardingHere(0));
-  const ready = microphone ? desktopApp.permissions?.microphone === 'allowed' : desktopApp.permissions?.accessibility === true;
-  const status = $('#onboarding-permission-status');
-  if (status) status.textContent = ready ? 'Allowed' : 'You can allow access or skip for now.';
+  const microphone = desktopApp.permissions?.microphone === 'allowed';
+  const accessibility = desktopApp.platform === 'windows' || desktopApp.permissions?.accessibility === true;
+  for (const [permission, allowed] of [['microphone', microphone], ['accessibility', accessibility]]) {
+    const row = document.querySelector(`[data-onboarding-permission="${permission}"]`);
+    if (!row) continue;
+    row.querySelector('button').hidden = allowed;
+    const status = row.querySelector('[role="status"]');
+    status.hidden = !allowed;
+    status.classList.toggle('ok', allowed);
+    if (allowed && !status.firstChild) status.innerHTML = `${ICON.check} Allowed`;
+  }
   const next = $('#onboarding-continue');
-  if (next) next.disabled = !ready;
+  if (next) next.disabled = !microphone || !accessibility || onboardingFinishing;
 }
 async function finishOnboarding(el) {
   if (onboardingFinishing) return;
   const generation = ++onboardingGeneration, step = Number(el.dataset.step);
   onboardingFinishing = true;
+  updateOnboardingPermissions();
   try {
-    await appChange({ action: 'finish_step', step });
-    if (generation !== onboardingGeneration || !onboardingHere(step)) return;
+    for (const index of step < 2 ? [0, 1] : [2]) {
+      await appChange({ action: 'finish_step', step: index });
+      if (generation !== onboardingGeneration || !onboardingHere(step)) return;
+    }
     closeSheet(true);
     maybeOnboarding(true);
-  } finally { onboardingFinishing = false; }
+  } finally { onboardingFinishing = false; updateOnboardingPermissions(); }
 }
 async function loadOnboardingModels(generation) {
   try {
