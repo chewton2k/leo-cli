@@ -212,7 +212,8 @@ function pickTheme(el) {
     button.classList.toggle('on', on);
     button.setAttribute('aria-pressed', String(on));
   }
-  const box = el.closest('.segmented');
+  // Callers may pass just { dataset }, so the highlight follows the page's own buttons.
+  const box = document.querySelector('[data-action="theme-pick"]')?.closest('.segmented');
   if (box) syncSegmented(box);
 }
 
@@ -230,7 +231,8 @@ function pickWidth(el) {
     button.classList.toggle('on', on);
     button.setAttribute('aria-pressed', String(on));
   }
-  const box = el.closest('.segmented');
+  // Callers may pass just { dataset }, so the highlight follows the page's own buttons.
+  const box = document.querySelector('[data-action="width-pick"]')?.closest('.segmented');
   if (box) syncSegmented(box);
 }
 
@@ -241,7 +243,8 @@ function pickFelix(el) {
     button.classList.toggle('on', on);
     button.setAttribute('aria-pressed', String(on));
   }
-  const box = el.closest('.segmented');
+  // Callers may pass just { dataset }, so the highlight follows the page's own buttons.
+  const box = document.querySelector('[data-action="felix-pick"]')?.closest('.segmented');
   if (box) syncSegmented(box);
 }
 
