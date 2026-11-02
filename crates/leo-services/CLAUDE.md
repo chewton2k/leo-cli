@@ -119,7 +119,11 @@ the current model.
 `speech/engine.rs` admits eight jobs, gives dictation priority between audio
 chunks, and pauses lower-priority work during a dictation reservation. One
 actor owns the supervisor and model. Recording pins it; otherwise idle unload
-is 60 seconds. Model deletion waits behind inference, unloads the worker first,
+is 60 seconds. Stop and updater unload retry a full request channel within one
+five-second deadline shared by enqueue and acknowledgement; ordinary job
+admission stays immediate and bounded. Saturation tests free queue capacity
+explicitly rather than depending on actor-thread scheduling.
+Model deletion waits behind inference, unloads the worker first,
 and refuses deletion of an active recording/dictation model. Long audio uses
 30-second target / 40-second maximum cuts at VAD pauses, then smoothed Earshot
 VAD with onset, pre-roll and hangover. Slow catalog models skip live passes.

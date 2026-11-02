@@ -17,6 +17,7 @@ use super::vad::{
 const QUEUED: usize = 8;
 const IDLE: Duration = Duration::from_secs(60);
 const POLL: Duration = Duration::from_millis(20);
+const CONTROL_LIMIT: Duration = Duration::from_secs(5);
 const ANSWER_LIMIT: Duration = Duration::from_secs(2 * 60 * 60);
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -189,24 +190,62 @@ impl Engine {
     }
 
     pub fn unload_worker(&self) -> Result<()> {
+        let deadline = Instant::now() + CONTROL_LIMIT;
         self.supervisor.cancel();
         let (done, finished) = mpsc::sync_channel(1);
-        self.requests.try_send(Message::Unload(done)).map_err(|_|anyhow::anyhow!("The speech engine is busy. Finish recording or dictation, then try updating again."))?;
+        send_control_before(
+            &self.requests,
+            Message::Unload(done),
+            deadline,
+            std::thread::sleep,
+        )
+        .context(
+            "The speech engine is busy. Finish recording or dictation, then try updating again.",
+        )?;
         finished
-            .recv_timeout(Duration::from_secs(5))
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
             .context("The speech worker did not stop. Try updating again in a moment.")
     }
 
     pub fn stop(&self) -> Result<()> {
+        let deadline = Instant::now() + CONTROL_LIMIT;
         self.stopped.store(true, Ordering::Release);
         self.supervisor.cancel();
         let (done, stopped) = mpsc::sync_channel(1);
-        self.requests.try_send(Message::Stop(done)).map_err(|_| {
-            anyhow::anyhow!("The speech engine is still busy. Try again in a moment.")
-        })?;
+        send_control_before(
+            &self.requests,
+            Message::Stop(done),
+            deadline,
+            std::thread::sleep,
+        )
+        .context("The speech engine is still busy. Try again in a moment.")?;
         stopped
-            .recv_timeout(Duration::from_secs(5))
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
             .context("The speech engine has not stopped yet. Try again in a moment.")
+    }
+}
+
+fn send_control_before<T>(
+    requests: &mpsc::SyncSender<T>,
+    mut message: T,
+    deadline: Instant,
+    mut pause: impl FnMut(Duration),
+) -> Result<()> {
+    loop {
+        ensure!(
+            Instant::now() < deadline,
+            "The speech engine is still busy. Try again in a moment."
+        );
+        match requests.try_send(message) {
+            Ok(()) => return Ok(()),
+            Err(mpsc::TrySendError::Full(waiting)) => {
+                message = waiting;
+                pause(POLL.min(deadline.saturating_duration_since(Instant::now())));
+            }
+            Err(mpsc::TrySendError::Disconnected(_)) => {
+                anyhow::bail!("The speech engine has stopped. Reopen Leo.")
+            }
+        }
     }
 }
 
@@ -415,6 +454,92 @@ fn run(
             }
             Ok(()) => pending.push(job),
         }
+    }
+}
+
+#[cfg(test)]
+mod control_tests {
+    use super::*;
+
+    #[test]
+    fn stop_and_unload_wait_for_capacity_without_losing_queued_work() {
+        for capacity in [1, QUEUED] {
+            for command in ["stop", "unload"] {
+                let (requests, queue) = mpsc::sync_channel(capacity);
+                for _ in 0..capacity {
+                    requests.try_send("queued").unwrap();
+                }
+                let mut pauses = 0;
+                send_control_before(
+                    &requests,
+                    command,
+                    Instant::now() + CONTROL_LIMIT,
+                    |delay| {
+                        assert!(delay <= POLL);
+                        pauses += 1;
+                        assert_eq!(queue.try_recv().unwrap(), "queued");
+                    },
+                )
+                .unwrap();
+                assert_eq!(pauses, 1);
+                for _ in 1..capacity {
+                    assert_eq!(queue.try_recv().unwrap(), "queued");
+                }
+                assert_eq!(queue.try_recv().unwrap(), command);
+            }
+        }
+    }
+
+    #[test]
+    fn an_expired_control_deadline_never_enqueues_a_command() {
+        let (requests, queue) = mpsc::sync_channel(1);
+        let result = send_control_before(&requests, "stop", Instant::now(), |_| {
+            panic!("An expired control must not wait.")
+        });
+        assert!(result.is_err());
+        assert_eq!(queue.try_recv(), Err(mpsc::TryRecvError::Empty));
+    }
+
+    #[test]
+    fn a_control_that_expires_while_waiting_is_not_sent_later() {
+        for delay in [Duration::ZERO, Duration::from_millis(10)] {
+            let (requests, queue) = mpsc::sync_channel(1);
+            requests.try_send("queued").unwrap();
+            let mut paused = false;
+            let deadline = Instant::now() + Duration::from_millis(5);
+            std::thread::sleep(delay);
+            let result = send_control_before(&requests, "stop", deadline, |_| {
+                paused = true;
+                std::thread::sleep(Duration::from_millis(10));
+                assert_eq!(queue.try_recv().unwrap(), "queued");
+            });
+            assert!(result.is_err());
+            assert!(Instant::now() >= deadline);
+            if !paused {
+                assert_eq!(queue.try_recv().unwrap(), "queued");
+            }
+            assert_eq!(queue.try_recv(), Err(mpsc::TryRecvError::Empty));
+        }
+    }
+
+    #[test]
+    fn a_disconnected_engine_does_not_wait_for_control_capacity() {
+        let (requests, queue) = mpsc::sync_channel(1);
+        drop(queue);
+        let result = send_control_before(&requests, "stop", Instant::now() + CONTROL_LIMIT, |_| {
+            panic!("A disconnected engine must not wait.")
+        });
+        assert!(result.unwrap_err().to_string().contains("Reopen Leo"));
+    }
+
+    #[test]
+    fn available_control_capacity_needs_no_wait() {
+        let (requests, queue) = mpsc::sync_channel(1);
+        send_control_before(&requests, "unload", Instant::now() + CONTROL_LIMIT, |_| {
+            panic!("Available control capacity must not wait.")
+        })
+        .unwrap();
+        assert_eq!(queue.try_recv().unwrap(), "unload");
     }
 }
 
