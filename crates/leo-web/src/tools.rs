@@ -228,7 +228,7 @@ pub const SPECS: [Spec; 29] = [
             Param {
                 name: "options",
                 required: false,
-                about: "required for multiple_choice: 2-6 choices separated by |, alike in length and detail (leo shuffles them)",
+                about: "required for multiple_choice: 2-6 choices split by |, alike in length",
             },
             Param {
                 name: "answer",
@@ -238,7 +238,7 @@ pub const SPECS: [Spec; 29] = [
             Param {
                 name: "explain",
                 required: false,
-                about: "required for multiple_choice, shown as they answer: why the right choice is right and why each other is wrong",
+                about: "required for multiple_choice; shown on answering: why it is right, each other wrong",
             },
             Param {
                 name: "idea",
