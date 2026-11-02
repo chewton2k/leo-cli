@@ -794,6 +794,8 @@ the same idle loop.
 - Browser suite: `tests/browser/flows.spec.js` (desktop and phone projects;
   CI retries once, `github` reporter). Every test fails on a page error or a
   programmer-error toast (`guard`). Recording is stubbed; the graph is seeded.
+  Coding editor coverage runs each language in its own test and practice id,
+  keeping the 30-second timeout per language and verifying saved text after reload.
   Draft recovery uses an init-script fetch failure fake that survives reloads
   and page teardown; Playwright routing can release requests during unload.
   `visual.spec.js` screenshot baselines are local only (`pnpm visual`,

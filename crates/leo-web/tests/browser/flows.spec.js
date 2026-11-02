@@ -4552,31 +4552,34 @@ test('Felix code suggestions accept and decline independently, merge current typ
   expect(item.workspace.answer).toContain('left = 99');
 });
 
-test('coding typing pairs brackets, preserves scroll and Undo across every supported language with a default language dropdown', async ({ page }) => {
+const EDITOR_LANGUAGES = ['Python', 'C++', 'Rust', 'Java', 'SQL', 'TypeScript', 'JavaScript', 'Go'];
+
+test('coding language dropdown defaults to Python and offers every supported language', async ({ page }) => {
   await fillTaskPanel(page);
-  const languages = ['Python', 'C++', 'Rust', 'Java', 'SQL', 'TypeScript', 'JavaScript', 'Go'];
-  const id = 'typing-languages-01';
-  let item;
   await page.route('**/api/interviews', route => route.fulfill({ json: [] }));
-  await page.route(`**/api/interviews/${id}`, route => {
-    if (route.request().method() === 'PUT') { const data = route.request().postDataJSON(); item.workspace = data.workspace || item.workspace; item.revision++; }
-    return route.fulfill({ json: item });
-  });
-  await page.route('**/api/interviews/*/key?*', route => route.fulfill({ json: { status: 'unavailable', tests: [], asks: [], rubric: [] } }));
   await page.goto('/#/interviews');
   await page.locator('[data-interview="create"][data-track="coding"]').click();
   const dropdown = page.locator('select#interview-language');
   await expect(dropdown).toHaveValue('Python');
-  expect(await dropdown.locator('option').allTextContents()).toEqual(languages);
+  expect(await dropdown.locator('option').allTextContents()).toEqual(EDITOR_LANGUAGES);
   await expect(dropdown.locator('..').locator(':scope > svg')).toBeVisible();
   await dropdown.selectOption('C++');
   await expect(dropdown).toHaveValue('C++');
   await page.locator('.sheet [data-action="close"]').click();
-  for (const language of languages) {
-    const challenge = { id: 'typing-problem-01', title: 'Typing practice', question: 'Work through this exercise.', minutes: 30, skills: ['Approach'], origin: 'generated', sources: [], coding: { language, starter: '', difficulty: 'easy', examples: [{ input: '1', output: '1' }], constraints: ['Describe the approach.'] } };
-    item = { id, revision: 1, framework: { title: 'Typing', track: 'coding', company: '', role: '', language, style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace: { answer: '', reasoning: '', board: [] }, problems: [], attempts: [], schedule: [] };
+});
+
+for (const [index, language] of EDITOR_LANGUAGES.entries()) {
+  test(`coding typing pairs brackets, preserves scroll, Undo and saves in ${language}`, async ({ page }) => {
+    await fillTaskPanel(page);
+    const id = `typing-languages-${index}`;
+    const challenge = { id: `typing-problem-${index}`, title: 'Typing practice', question: 'Work through this exercise.', minutes: 30, skills: ['Approach'], origin: 'generated', sources: [], coding: { language, starter: '', difficulty: 'easy', examples: [{ input: '1', output: '1' }], constraints: ['Describe the approach.'] } };
+    const item = { id, revision: 1, framework: { title: 'Typing', track: 'coding', company: '', role: '', language, style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge, workspace: { answer: '', reasoning: '', board: [] }, problems: [], attempts: [], schedule: [] };
+    await page.route(`**/api/interviews/${id}`, route => {
+      if (route.request().method() === 'PUT') { const data = route.request().postDataJSON(); item.workspace = data.workspace || item.workspace; item.revision++; }
+      return route.fulfill({ json: item });
+    });
+    await page.route('**/api/interviews/*/key?*', route => route.fulfill({ json: { status: 'unavailable', tests: [], asks: [], rubric: [] } }));
     await page.goto(`/#/interviews/${id}`);
-    await page.reload();
     const area = page.locator('#interview-answer');
     await expect(page.locator('#interview-colors')).toBeVisible();
     if (language === 'Python') {
@@ -4631,28 +4634,30 @@ test('coding typing pairs brackets, preserves scroll and Undo across every suppo
     expect(await area.evaluate(el => el.value.slice(el.selectionStart, el.selectionEnd))).toBe('答😀');
     await expect.poll(() => item.workspace.answer).toBe('[答😀]');
     expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
-  }
-});
-
-test('coding colors and indentation preserve input, Undo, saves and scroll in every common language', async ({ page }) => {
-  await page.emulateMedia({ colorScheme: 'light' });
-  const samples = [['C++', 'int solve() {\nreturn 2;\n}', 3], ['Rust', 'fn solve() -> i32 {\n2\n}', 3], ['Java', 'class Solution {\nint solve() {\nreturn 2;\n}\n}', 3], ['Python', 'def solve():\n  return 2', 2], ['SQL', 'SELECT name\nFROM users\nWHERE id = 2;', 3], ['TypeScript', 'function solve(value: number): number {\nreturn value + 2;\n}', 3], ['JavaScript', 'function solve(value) {\nreturn value + 2;\n}', 3], ['Go', 'package main\nfunc solve() int {\nreturn 2\n}', 3]];
-  const id = 'coding-colors-01';
-  let item;
-  let requests = 0;
-  await page.route(`**/api/interviews/${id}`, async (route) => {
-    if (route.request().method() === 'PUT') {
-      const body = route.request().postDataJSON();
-      if (body.action === 'workspace') item.workspace = body.workspace;
-      item.revision++;
-    }
-    await route.fulfill({ json: item });
+    await expect(page.locator('#interview-save')).toHaveText('Saved');
+    await page.reload();
+    await expect(area).toHaveValue('[答😀]');
   });
-  await page.route('**/api/chat', async (route) => { requests++; await route.fulfill({ status: 500, json: { error: 'No model is needed here.' } }); });
-  for (const [index, [language, code, tabWidth]] of samples.entries()) {
-    item = { id, revision: 1, framework: { title: 'Coding colors', track: 'coding', company: '', role: '', language, style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge: { id: `challenge-colors-${index}`, title: 'Solve the problem', question: 'Solve it.', minutes: 25, skills: ['Approach'], origin: 'generated', sources: [], coding: { language, starter: code, difficulty: 'easy', examples: [{ input: '2', output: '2' }], constraints: ['Be clear.'] } }, workspace: { answer: code, reasoning: '', board: [] }, attempts: [], schedule: [] };
+}
+
+const EDITOR_SAMPLES = [['C++', 'int solve() {\nreturn 2;\n}', 3], ['Rust', 'fn solve() -> i32 {\n2\n}', 3], ['Java', 'class Solution {\nint solve() {\nreturn 2;\n}\n}', 3], ['Python', 'def solve():\n  return 2', 2], ['SQL', 'SELECT name\nFROM users\nWHERE id = 2;', 3], ['TypeScript', 'function solve(value: number): number {\nreturn value + 2;\n}', 3], ['JavaScript', 'function solve(value) {\nreturn value + 2;\n}', 3], ['Go', 'package main\nfunc solve() int {\nreturn 2\n}', 3]];
+
+for (const [index, [language, code, tabWidth]] of EDITOR_SAMPLES.entries()) {
+  test(`coding colors and indentation preserve input, Undo, saves and scroll in ${language}`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'light' });
+    const id = `coding-colors-${index}`;
+    const item = { id, revision: 1, framework: { title: 'Coding colors', track: 'coding', company: '', role: '', language, style: 'coach', date: '', weekly_minutes: 120, skills: ['Approach'], wants: '' }, challenge: { id: `challenge-colors-${index}`, title: 'Solve the problem', question: 'Solve it.', minutes: 25, skills: ['Approach'], origin: 'generated', sources: [], coding: { language, starter: code, difficulty: 'easy', examples: [{ input: '2', output: '2' }], constraints: ['Be clear.'] } }, workspace: { answer: code, reasoning: '', board: [] }, attempts: [], schedule: [] };
+    let requests = 0;
+    await page.route(`**/api/interviews/${id}`, async (route) => {
+      if (route.request().method() === 'PUT') {
+        const body = route.request().postDataJSON();
+        if (body.action === 'workspace') item.workspace = body.workspace;
+        item.revision++;
+      }
+      await route.fulfill({ json: item });
+    });
+    await page.route('**/api/chat', async (route) => { requests++; await route.fulfill({ status: 500, json: { error: 'No model is needed here.' } }); });
     await page.goto(`/#/interviews/${id}`);
-    if (index) await page.reload();
     const area = page.locator('#interview-answer');
     const colors = page.locator('#interview-colors');
     await expect(area).toHaveValue(code);
@@ -4681,12 +4686,17 @@ test('coding colors and indentation preserve input, Undo, saves and scroll in ev
     await expect(area).toBeFocused();
     await expect.poll(() => item.workspace.answer).toBe(long);
     expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
-  }
-  expect(requests).toBe(0);
-  await page.emulateMedia({ forcedColors: 'active' });
-  await expect(page.locator('#interview-colors')).toBeHidden();
-  expect(await page.locator('#interview-answer').evaluate(el => getComputedStyle(el).color)).not.toBe('rgba(0, 0, 0, 0)');
-});
+    await expect(page.locator('#interview-save')).toHaveText('Saved');
+    await page.reload();
+    await expect(area).toHaveValue(long);
+    await expect(colors.locator('.code-keyword').first()).toBeVisible();
+    expect(await colors.textContent()).toBe(long);
+    expect(requests).toBe(0);
+    await page.emulateMedia({ forcedColors: 'active' });
+    await expect(page.locator('#interview-colors')).toBeHidden();
+    expect(await page.locator('#interview-answer').evaluate(el => getComputedStyle(el).color)).not.toBe('rgba(0, 0, 0, 0)');
+  });
+}
 
 test('typing before syntax tools load and a failed load keep the code editable', async ({ page }) => {
   const id = 'coding-lazy-01';
