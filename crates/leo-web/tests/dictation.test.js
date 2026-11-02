@@ -21,6 +21,11 @@ test('dictation controls escape history and preserve explicit text settings', ()
   assert.ok(html.includes('data-dictation="writing"'));
   assert.ok(html.includes('Fastest model on your plan'));
   assert.ok(html.includes('takes a few seconds longer'));
+  assert.ok(html.includes('>Local<'));
+  assert.ok(!html.includes('No writing AI is set up'));
+  const unready = context.dictationCards({ settings: { writing: 'quick' }, writing_ready: false, recent: [], shortcut: {} });
+  assert.ok(unready.includes('No writing AI is set up'));
+  assert.ok(unready.includes('Uses writing AI'));
   const chosen = context.dictationCards({ settings: { writing: 'selected' }, recent: [], shortcut: {} });
   assert.ok(/<option[^>]*>Your writing model/.test(chosen) || chosen.includes('Your writing model'));
 });
@@ -32,6 +37,10 @@ test('popup live and minimal states keep useful errors and timers', () => {
   assert.equal(display({ state: 'loading' }).label, 'Loading model…');
   assert.equal(display({ state: 'writing', committed: 'hi' }).label, 'Polishing with AI…');
   assert.equal(display({ state: 'writing', committed: 'hi' }).caret, false);
+  const notice = display({ state: 'notice', message: 'The writing AI took too long.', committed: 'hi' });
+  assert.equal(notice.label, 'Pasted without AI writing');
+  assert.equal(notice.text, 'The writing AI took too long.');
+  assert.equal(notice.caret, false);
   assert.equal(display({ state: 'listening', top: true }).top, true);
 });
 test('popup shows committed and tentative words like Handy and keeps them while writing', () => {

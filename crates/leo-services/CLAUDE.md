@@ -503,10 +503,14 @@ and state updates after acquiring their state lock, so cancel wins stale work.
 language-aware filler rules (on by default), with Unicode-safe punctuation and
 capitalization. `polish.rs` is the optional AI writing step (`Writing`: off
 by default, `quick` = `ai::quick_outcome`, the cheapest model and effort on the
-user's plan, or `selected` = the Writing AI choice): a tidy-only prompt that
-treats the dictation as text, never instructions, a 30 s deadline, and any
-failure, empty reply or reply over twice the length pastes the unpolished
-text. `capture.rs` bounds dictation to
+user's plan, 12 s, or `selected` = the Writing AI choice, 30 s): a tidy-only
+prompt that treats the dictation as text, never instructions. Replies are only
+unwrapped (code fence, `<dictation>` tags), never run through `clean_reply`,
+which would drop dictated "Sure…" or "Let me know…" lines. A reply must keep
+70% of the dictation's words (characters for unspaced scripts) and add at most
+half new ones, so an answer is refused. The call goes through
+`ChatProvider::complete_until`, so a cancel or the deadline stops an agent CLI
+instead of leaving it running. Every fallback returns a reason the popup shows. `capture.rs` bounds dictation to
 300 seconds, closes the input before draining its final queued audio and before
 transcription. `Mic::open_named` opens only the selected input; `microphones`
 enumerates without opening. Desktop chooses the lid-closed alternative.

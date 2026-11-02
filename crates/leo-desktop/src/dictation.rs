@@ -23,6 +23,12 @@ use tauri::{AppHandle, Emitter};
 const FEED_SAMPLES: usize = 512;
 const SHOWN_CHARS: usize = 25_000;
 
+const NOTICE_FOR: std::time::Duration = std::time::Duration::from_secs(4);
+enum Finish {
+    Done,
+    Problem(String),
+    Notice(String),
+}
 enum Event {
     Input(bool, bool),
     Complete(u64),
@@ -39,6 +45,7 @@ pub struct Dictation {
     generation: Generation,
     revision: AtomicU64,
     capturing: Arc<AtomicBool>,
+    escape: Arc<AtomicBool>,
     stop: Mutex<Option<Arc<AtomicBool>>>,
     tx: mpsc::SyncSender<Event>,
     shortcut: OnceLock<crate::shortcut::Shortcuts>,
@@ -58,6 +65,7 @@ impl Dictation {
             generation: Generation::default(),
             revision: AtomicU64::new(0),
             capturing: Arc::new(AtomicBool::new(false)),
+            escape: Arc::new(AtomicBool::new(false)),
             stop: Mutex::new(None),
             tx,
             shortcut: OnceLock::new(),
@@ -67,7 +75,7 @@ impl Dictation {
             let keys = crate::shortcut::Shortcuts::start(
                 app,
                 settings.shortcut,
-                this.capturing.clone(),
+                this.escape.clone(),
                 Arc::new(move |pressed, cancel| {
                     let _ = input.try_send(Event::Input(pressed, cancel));
                 }),
@@ -109,20 +117,35 @@ impl Dictation {
         state["rev"] = json!(self.revision.fetch_add(1, Ordering::AcqRel) + 1);
         state.clone()
     }
-    fn change(&self, id: u64, apply: impl FnOnce(&mut Value)) {
+    fn change(&self, id: u64, apply: impl FnOnce(&mut Value)) -> bool {
         let view = self.generation.apply(id, &self.state, |state| {
             apply(state);
             self.stamp(state)
         });
+        let changed = view.is_some();
         if let Some(view) = view {
             self.publish(view);
         }
+        changed
     }
-    fn update(&self, id: u64, value: Value) {
-        self.change(id, |state| *state = value);
+    fn update(&self, id: u64, value: Value) -> bool {
+        self.change(id, |state| *state = value)
     }
     fn phase(&self, id: u64, phase: &str) {
         self.change(id, |state| state["state"] = json!(phase));
+    }
+    fn notice(self: &Arc<Self>, id: u64, settings: &Settings, message: &str) {
+        if !self.update(id, json!({"state":"notice","message":message})) {
+            return;
+        }
+        self.show(id, settings);
+        let this = self.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(NOTICE_FOR);
+            if this.update(id, json!({"state":"idle"})) {
+                crate::overlay::hide(&this.app);
+            }
+        });
     }
     fn idle(&self) {
         let view = {
@@ -147,6 +170,7 @@ impl Dictation {
             stop.store(true, Ordering::Release);
         }
         self.capturing.store(false, Ordering::Release);
+        self.escape.store(false, Ordering::Release);
         engine().cancel();
         self.idle();
         let _ = self.tx.try_send(Event::Cancel);
@@ -221,6 +245,7 @@ impl Dictation {
                         stop.store(true, Ordering::Release);
                     }
                     self.capturing.store(false, Ordering::Release);
+                    self.escape.store(false, Ordering::Release);
                     engine().cancel();
                     self.idle();
                 }
@@ -251,6 +276,7 @@ impl Dictation {
         let stop = Arc::new(AtomicBool::new(false));
         *self.stop.lock().unwrap_or_else(|e| e.into_inner()) = Some(stop.clone());
         self.capturing.store(true, Ordering::Release);
+        self.escape.store(true, Ordering::Release);
         self.update(
             id,
             json!({"state":"listening","seconds":0,"levels":[],"committed":"","tentative":""}),
@@ -260,12 +286,14 @@ impl Dictation {
         std::thread::spawn(move || {
             let result = activity.and_then(|_activity| this.capture(id, &settings, &stop));
             if this.generation.current(id) {
+                this.escape.store(false, Ordering::Release);
                 match result {
-                    Ok(Some(message)) => {
+                    Ok(Finish::Problem(message)) => {
                         this.update(id, json!({"state":"error","message":message}));
                         this.show(id, &settings);
                     }
-                    Ok(None) => {
+                    Ok(Finish::Notice(message)) => this.notice(id, &settings, &message),
+                    Ok(Finish::Done) => {
                         this.update(id, json!({"state":"idle"}));
                         crate::overlay::hide(&this.app);
                     }
@@ -284,7 +312,7 @@ impl Dictation {
         id: u64,
         settings: &Settings,
         stop: &AtomicBool,
-    ) -> Result<Option<String>> {
+    ) -> Result<Finish> {
         let _awake = leo_services::session::awake::Awake::recording();
         let _reservation = engine().dictation();
         let selected = library()?.selected()?;
@@ -299,7 +327,7 @@ impl Dictation {
             settings.microphone.clone()
         };
         if stop.load(Ordering::Acquire) {
-            return Ok(None);
+            return Ok(Finish::Done);
         }
         let (mut mic, rx) = if let Ok(path) = std::env::var("LEO_FAKE_AUDIO") {
             let pcm = leo_services::session::wav::read(std::path::Path::new(&path))?;
@@ -403,14 +431,27 @@ impl Dictation {
         );
         let text = leo_services::dictation::text::clean(&text, settings, language);
         if text.trim().is_empty() {
-            return Ok(None);
+            return Ok(Finish::Done);
         }
+        let mut fallback = None;
         let text = if settings.writing == Writing::Off {
             text
         } else {
             self.phase(id, "writing");
-            leo_services::dictation::polish::polish(&text, settings.writing, language)
-                .unwrap_or(text)
+            let this = self.clone();
+            match leo_services::dictation::polish::polish(
+                &text,
+                settings.writing,
+                language,
+                Arc::new(move || !this.generation.current(id)),
+            ) {
+                Ok(polished) => polished,
+                Err(reason) => {
+                    ensure!(self.generation.current(id), "Dictation cancelled.");
+                    fallback = Some(reason);
+                    text
+                }
+            }
         };
         ensure!(self.generation.current(id), "Dictation cancelled.");
         leo_web::dictation::remember(&leo_core::paths::data_dir()?, &text)?;
@@ -429,14 +470,19 @@ impl Dictation {
                 )?;
                 file.write_all(output.as_bytes())?;
                 file.persist(path).map_err(|e| e.error)?;
-                return Ok(None);
+                return Ok(Finish::Done);
             }
         }
-        crate::clipboard::paste(&self.app, &output, settings.enter, {
+        let pasted = crate::clipboard::paste(&self.app, &output, settings.enter, {
             let this = self.clone();
             Arc::new(move || this.generation.current(id))
         })
-        .map_err(anyhow::Error::msg)
+        .map_err(anyhow::Error::msg)?;
+        Ok(match (pasted, fallback) {
+            (Some(message), _) => Finish::Problem(message),
+            (None, Some(reason)) => Finish::Notice(reason.into()),
+            (None, None) => Finish::Done,
+        })
     }
 }
 impl leo_web::dictation::DictationApi for Dictation {
@@ -451,7 +497,7 @@ impl leo_web::dictation::DictationApi for Dictation {
             .clone();
         let microphones = leo_services::session::mic::microphones();
         Ok(
-            json!({"settings":settings,"runtime":runtime,"shortcut":shortcut,"microphones":microphones,"worker_loaded":engine().loaded(),"problem":problem}),
+            json!({"settings":settings,"runtime":runtime,"shortcut":shortcut,"microphones":microphones,"worker_loaded":engine().loaded(),"problem":problem,"writing_ready":leo_services::ai::writing_ready()}),
         )
     }
     fn change(&self, value: Value) -> Result<Value> {

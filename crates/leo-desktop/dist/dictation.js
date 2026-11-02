@@ -2,9 +2,9 @@
   'use strict';
   const BARS = 9;
   function display(state) {
-    const labels = { listening: 'Listening', loading: 'Loading model…', transcribing: 'Writing it out…', writing: 'Polishing with AI…', error: 'Dictation needs a moment', idle: '' };
+    const labels = { listening: 'Listening', loading: 'Loading model…', transcribing: 'Writing it out…', writing: 'Polishing with AI…', notice: 'Pasted without AI writing', error: 'Dictation needs a moment', idle: '' };
     const seconds = Math.max(0, Math.floor(Number(state.seconds) || 0));
-    const error = state.state === 'error';
+    const error = state.state === 'error' || state.state === 'notice';
     const live = !error && !state.minimal;
     const committed = live ? String(state.committed || '') : '';
     const tentative = live ? String(state.tentative || '') : '';

@@ -85,6 +85,18 @@ pub trait ChatProvider {
         sink(&text);
         Ok(text)
     }
+    fn complete_until(
+        &self,
+        req: &ChatRequest,
+        stopped: &dyn Fn() -> bool,
+    ) -> ProviderResult<String> {
+        if stopped() {
+            return Err(crate::ai::error::ProviderError::Fatal(
+                "The answer was stopped.".into(),
+            ));
+        }
+        self.complete(req)
+    }
     /// A cheap, local precondition check: key present, binary on PATH, port
     /// open. Performs no inference and makes no billable call.
     fn available(&self) -> bool;

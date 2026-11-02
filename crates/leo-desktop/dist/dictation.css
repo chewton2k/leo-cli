@@ -18,5 +18,5 @@ body[data-open="true"] #text { display: block; }
 #caret { display: inline-block; width: 2px; height: 1.02em; margin-left: 1px; vertical-align: text-bottom; background: var(--accent); animation: caret 1.05s steps(1) infinite; }
 #caret[hidden] { display: none; }
 @keyframes caret { 50% { opacity: 0; } }
-body[data-state="error"] #text { color: var(--muted); }
+body[data-state="error"] #text, body[data-state="notice"] #text { color: var(--muted); }
 body[data-state="loading"] #dot, body[data-state="transcribing"] #dot, body[data-state="writing"] #dot { background: var(--accent); }

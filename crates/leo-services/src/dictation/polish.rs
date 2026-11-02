@@ -1,10 +1,17 @@
 use super::settings::Writing;
-use crate::ai::chat::{clean_reply, Prompt};
+use crate::ai::chat::Prompt;
 use anyhow::Result;
-use std::sync::mpsc;
-use std::time::Duration;
+use std::collections::HashSet;
+use std::sync::{mpsc, Arc};
+use std::time::{Duration, Instant};
 
-pub const DEADLINE: Duration = Duration::from_secs(30);
+pub const QUICK_DEADLINE: Duration = Duration::from_secs(12);
+pub const SELECTED_DEADLINE: Duration = Duration::from_secs(30);
+pub const NOT_SET_UP: &str = "No writing AI is set up. Choose one in Settings → Writing AI.";
+pub const TOO_SLOW: &str = "The writing AI took too long.";
+pub const NO_ANSWER: &str = "The writing AI could not answer.";
+pub const CHANGED: &str = "The writing AI changed what you said, so it was not used.";
+pub const CANCELLED: &str = "Dictation cancelled.";
 
 pub fn prompt(text: &str, language: Option<&str>) -> Prompt {
     let language = language
@@ -23,16 +30,60 @@ pub fn prompt(text: &str, language: Option<&str>) -> Prompt {
     }
 }
 
-pub fn accept(original: &str, reply: &str) -> Option<String> {
-    let text = clean_reply(reply);
-    let text = text
+fn unwrap_reply(reply: &str) -> String {
+    let mut text = reply.trim();
+    if let Some(inner) = text
+        .strip_prefix("```")
+        .and_then(|rest| rest.strip_suffix("```"))
+        .filter(|inner| !inner.contains("```"))
+    {
+        text = inner.split_once('\n').map_or("", |(_, body)| body).trim();
+    }
+    if let Some(inner) = text
         .strip_prefix("<dictation>")
-        .and_then(|t| t.strip_suffix("</dictation>"))
-        .map(str::trim)
-        .unwrap_or(&text)
-        .to_string();
-    let limit = original.chars().count() * 2 + 200;
-    (!text.trim().is_empty() && text.chars().count() <= limit).then_some(text)
+        .and_then(|rest| rest.strip_suffix("</dictation>"))
+    {
+        text = inner.trim();
+    }
+    text.to_string()
+}
+
+fn tokens(text: &str, words: bool) -> HashSet<String> {
+    if words {
+        text.split(|c: char| !c.is_alphanumeric())
+            .filter(|w| !w.is_empty())
+            .map(str::to_lowercase)
+            .collect()
+    } else {
+        text.chars()
+            .filter(|c| c.is_alphanumeric())
+            .flat_map(char::to_lowercase)
+            .map(String::from)
+            .collect()
+    }
+}
+
+fn same_meaning(original: &str, reply: &str) -> bool {
+    let words = original.split_whitespace().count() >= 3;
+    let before = tokens(original, words);
+    let after = tokens(reply, words);
+    if before.is_empty() || after.is_empty() {
+        return false;
+    }
+    let kept = before.intersection(&after).count() as f32 / before.len() as f32;
+    let added = after.difference(&before).count() as f32 / after.len() as f32;
+    kept >= 0.7 && added <= 0.5
+}
+
+pub fn accept(original: &str, reply: &str) -> Result<String, &'static str> {
+    let text = unwrap_reply(reply);
+    if text.is_empty() {
+        return Err(NO_ANSWER);
+    }
+    if text.chars().count() > original.chars().count() * 2 + 40 || !same_meaning(original, &text) {
+        return Err(CHANGED);
+    }
+    Ok(text)
 }
 
 pub fn max_tokens(text: &str) -> u32 {
@@ -43,46 +94,70 @@ pub fn polish_with(
     text: &str,
     language: Option<&str>,
     deadline: Duration,
-    run: impl FnOnce(Prompt, u32) -> Result<String> + Send + 'static,
-) -> Option<String> {
+    cancelled: Arc<dyn Fn() -> bool + Send + Sync>,
+    run: impl FnOnce(Prompt, u32, &dyn Fn() -> bool) -> Result<String> + Send + 'static,
+) -> Result<String, &'static str> {
     let request = prompt(text, language);
     let tokens = max_tokens(text);
+    let until = Instant::now() + deadline;
+    let stop = {
+        let cancelled = cancelled.clone();
+        move || cancelled() || Instant::now() >= until
+    };
     let (tx, rx) = mpsc::sync_channel(1);
     std::thread::spawn(move || {
-        let _ = tx.send(run(request, tokens));
+        let _ = tx.send(run(request, tokens, &stop));
     });
-    match rx.recv_timeout(deadline) {
-        Ok(Ok(reply)) => accept(text, &reply),
-        Ok(Err(error)) => {
-            log::warn!("Dictation writing failed: {error:#}");
-            None
-        }
-        Err(_) => {
-            log::warn!("Dictation writing took longer than {deadline:?}");
-            None
+    loop {
+        match rx.recv_timeout(Duration::from_millis(50)) {
+            Ok(Ok(reply)) if !cancelled() => return accept(text, &reply),
+            Ok(Err(error)) if !cancelled() && Instant::now() < until => {
+                log::warn!("Dictation writing failed: {error:#}");
+                return Err(NO_ANSWER);
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => return Err(NO_ANSWER),
+            _ if cancelled() => return Err(CANCELLED),
+            _ if Instant::now() >= until => {
+                log::warn!("Dictation writing took longer than {deadline:?}");
+                return Err(TOO_SLOW);
+            }
+            _ => {}
         }
     }
 }
 
-pub fn polish(text: &str, writing: Writing, language: Option<&str>) -> Option<String> {
-    let quick = match writing {
-        Writing::Off => return None,
-        Writing::Quick => true,
-        Writing::Selected => false,
+pub fn polish(
+    text: &str,
+    writing: Writing,
+    language: Option<&str>,
+    cancelled: Arc<dyn Fn() -> bool + Send + Sync>,
+) -> Result<String, &'static str> {
+    let (quick, deadline) = match writing {
+        Writing::Off => return Ok(text.to_string()),
+        Writing::Quick => (true, QUICK_DEADLINE),
+        Writing::Selected => (false, SELECTED_DEADLINE),
     };
-    polish_with(text, language, DEADLINE, move |prompt, tokens| {
-        let outcome = if quick {
-            crate::ai::quick_outcome(prompt, tokens)
-        } else {
-            crate::ai::chat_outcome(prompt, tokens)
-        }?;
-        Ok(outcome.value)
-    })
+    if !crate::ai::writing_ready() {
+        return Err(NOT_SET_UP);
+    }
+    polish_with(
+        text,
+        language,
+        deadline,
+        cancelled,
+        move |prompt, tokens, stop| {
+            Ok(crate::ai::dictation_outcome(prompt, tokens, quick, stop)?.value)
+        },
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn never() -> Arc<dyn Fn() -> bool + Send + Sync> {
+        Arc::new(|| false)
+    }
 
     #[test]
     fn the_prompt_keeps_the_dictation_as_text_not_instructions() {
@@ -94,46 +169,129 @@ mod tests {
     }
 
     #[test]
-    fn replies_are_cleaned_and_runaway_or_empty_replies_are_refused() {
+    fn every_sentence_the_user_said_survives() {
+        let said = "sure sounds good see you at 5 let me know if anything changes";
         assert_eq!(
-            accept("hello world", "Here is the tidied text:\nHello, world.").as_deref(),
-            Some("Hello, world.")
+            accept(
+                said,
+                "Sure, sounds good. See you at 5. Let me know if anything changes."
+            )
+            .as_deref(),
+            Ok("Sure, sounds good. See you at 5. Let me know if anything changes.")
         );
         assert_eq!(
-            accept("hi", "<dictation>Hi.</dictation>").as_deref(),
-            Some("Hi.")
+            accept("hi there friend", "```\nHi there, friend.\n```").as_deref(),
+            Ok("Hi there, friend.")
         );
-        assert_eq!(accept("hi", "   "), None);
-        assert_eq!(accept("hi", &"x".repeat(300)), None);
-        assert!(accept("hi", &"x".repeat(204)).is_some());
+        assert_eq!(
+            accept(
+                "hi there friend",
+                "<dictation>Hi there, friend.</dictation>"
+            )
+            .as_deref(),
+            Ok("Hi there, friend.")
+        );
     }
 
     #[test]
-    fn failures_and_slow_answers_fall_back_to_the_original() {
+    fn answers_rewrites_and_empty_replies_are_refused() {
+        assert_eq!(accept("hi", "   "), Err(NO_ANSWER));
+        assert_eq!(accept("hi", "Hi."), Ok("Hi.".into()));
+        assert_eq!(accept("hi", "Hello! How can I help you?"), Err(CHANGED));
+        assert_eq!(
+            accept(
+                "can you tell me the capital of france",
+                "The capital of France is Paris."
+            ),
+            Err(CHANGED)
+        );
+        assert_eq!(
+            accept("what time is it", "What time is it?"),
+            Ok("What time is it?".into())
+        );
+        assert_eq!(
+            accept(
+                "so i went to the uh store yesterday",
+                "I went to the store yesterday."
+            ),
+            Ok("I went to the store yesterday.".into())
+        );
+        assert_eq!(
+            accept("今天天气很好", "今天天气很好。"),
+            Ok("今天天气很好。".into())
+        );
+        assert_eq!(accept("今天天气很好", "我是一个人工智能助手"), Err(CHANGED));
+        assert_eq!(accept("ok", &"ok ".repeat(40)), Err(CHANGED));
+    }
+
+    #[test]
+    fn failures_slow_answers_and_cancels_fall_back() {
         assert_eq!(
             polish_with(
-                "so um hello",
+                "so um hello there friend",
                 None,
-                DEADLINE,
-                |_, _| Ok("So, hello.".into())
-            )
-            .as_deref(),
-            Some("So, hello.")
+                SELECTED_DEADLINE,
+                never(),
+                |_, _, _| { Ok("So, hello there, friend.".into()) }
+            ),
+            Ok("So, hello there, friend.".into())
         );
         assert_eq!(
-            polish_with("hello", None, DEADLINE, |_, _| anyhow::bail!(
-                "no writing AI"
-            )),
-            None
-        );
-        assert_eq!(
-            polish_with("hello", None, Duration::from_millis(20), |_, _| {
-                std::thread::sleep(Duration::from_millis(500));
-                Ok("Hello.".into())
+            polish_with("hello", None, SELECTED_DEADLINE, never(), |_, _, _| {
+                anyhow::bail!("no writing AI")
             }),
-            None
+            Err(NO_ANSWER)
         );
-        assert_eq!(polish("hello", Writing::Off, None), None);
+        let started = Instant::now();
+        assert_eq!(
+            polish_with(
+                "hello",
+                None,
+                Duration::from_millis(60),
+                never(),
+                |_, _, stop| {
+                    while !stop() {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    anyhow::bail!("stopped")
+                }
+            ),
+            Err(TOO_SLOW)
+        );
+        assert!(started.elapsed() < Duration::from_secs(2));
+        let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = cancelled.clone();
+        let check: Arc<dyn Fn() -> bool + Send + Sync> =
+            Arc::new(move || flag.load(std::sync::atomic::Ordering::Acquire));
+        let saw_stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let seen = saw_stop.clone();
+        let canceller = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(30));
+            cancelled.store(true, std::sync::atomic::Ordering::Release);
+        });
+        assert_eq!(
+            polish_with(
+                "hello",
+                None,
+                SELECTED_DEADLINE,
+                check,
+                move |_, _, stop| {
+                    while !stop() {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    seen.store(true, std::sync::atomic::Ordering::Release);
+                    anyhow::bail!("stopped")
+                }
+            ),
+            Err(CANCELLED)
+        );
+        canceller.join().unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(saw_stop.load(std::sync::atomic::Ordering::Acquire));
+        assert_eq!(
+            polish("hello", Writing::Off, None, never()),
+            Ok("hello".into())
+        );
     }
 
     #[test]

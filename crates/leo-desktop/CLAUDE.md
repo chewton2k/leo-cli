@@ -92,7 +92,10 @@ caret, the text pins to its newest line, and 16 FFT buckets
 (`dictation::visualizer`) drive nine smoothed bars. Streaming models get the
 1650 ms streaming VAD hangover and ~32 ms feeds, so the model hears the tail
 it needs for the last words and their punctuation; text stays visible while
-the final pass runs.
+the final pass runs. With AI writing on, Escape stays registered through the
+polishing step (its own `escape` flag, separate from `capturing`), and a
+fallback shows a four-second "Pasted without AI writing" notice with the
+reason. Settings warns when no writing AI is set up (`writing_ready`).
 Shutdown cancels dictation/shortcuts and stops the speech worker before the
 loopback engine finishes.
 
