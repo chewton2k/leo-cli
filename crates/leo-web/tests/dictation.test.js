@@ -22,3 +22,21 @@ test('popup live and minimal states keep useful errors and timers', () => {
   assert.equal(display({ state: 'loading' }).label, 'Loading model…');
   assert.equal(display({ state: 'listening', top: true }).top, true);
 });
+test('popup shows committed and tentative words like Handy and keeps them while writing', () => {
+  const { display, smooth, height } = require('../../leo-desktop/dist/dictation.js');
+  const live = display({ state: 'listening', committed: 'Hello there.', tentative: 'how are' });
+  assert.equal(live.text, 'Hello there. how are');
+  assert.equal(live.committed, 'Hello there. ');
+  assert.equal(live.caret, true);
+  assert.equal(live.open, true);
+  const writing = display({ state: 'transcribing', committed: 'Hello there.', tentative: '' });
+  assert.equal(writing.text, 'Hello there. ');
+  assert.equal(writing.caret, false);
+  assert.equal(display({ state: 'listening', tentative: 'hi' }).text, 'hi');
+  assert.equal(display({ state: 'listening', minimal: true, committed: 'hi' }).open, false);
+  assert.equal(display({ state: 'listening' }).caret, false);
+  assert.deepEqual(smooth([1, 0], [0, 1]), [0.7, 0.3]);
+  assert.equal(height(0), 3);
+  assert.equal(height(1), 18);
+  assert.equal(height(5), 18);
+});

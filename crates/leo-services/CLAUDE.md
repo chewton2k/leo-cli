@@ -509,7 +509,10 @@ enumerates without opening. Desktop chooses the lid-closed alternative.
 `AudioGate` makes lecture capture wait for an already-playing feedback sound
 and prevents new sounds until that recording ends. It does no I/O under a mutex.
 The engine actor owns streaming dictation too; bounded feeds fall back to the
-retained batch PCM when streaming fails or falls behind. A reservation pauses
+retained batch PCM when streaming fails. Live audio queued while the worker is
+busy is coalesced into the next feed (at most 16,000 samples each) instead of
+abandoning the stream, and the preview callback receives committed and
+tentative text separately. A reservation pauses
 segment/live passes; recording's pin retains the worker through dictation.
 
 Health checks use owned temporary files for notes writability, preserving any

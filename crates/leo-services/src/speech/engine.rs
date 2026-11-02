@@ -8,7 +8,7 @@ use transcribe_cpp::{Backend, RunOptions};
 
 use super::library::Selected;
 use super::protocol::DeviceSelector;
-use super::supervisor::{EngineSupervisor, LoadSpec};
+use super::supervisor::{EngineSupervisor, Fed, LoadSpec};
 use super::vad::{
     frames_for_duration_ms, EarshotVad, SmoothedVad, VadFrame, VoiceActivityDetector,
     VAD_OFFLINE_HANGOVER_MS, VAD_ONSET_MS, VAD_PREFILL_MS,
@@ -41,7 +41,7 @@ enum Message {
     Stream {
         selected: Selected,
         audio: mpsc::Receiver<Option<Vec<f32>>>,
-        text: Box<dyn FnMut(String) + Send>,
+        text: Box<dyn FnMut(String, String) + Send>,
         reply: mpsc::SyncSender<Result<String>>,
     },
     Stop(mpsc::SyncSender<()>),
@@ -150,7 +150,7 @@ impl Engine {
     pub fn stream(
         &self,
         selected: Selected,
-        text: impl FnMut(String) + Send + 'static,
+        text: impl FnMut(String, String) + Send + 'static,
     ) -> Result<DictationStream> {
         ensure!(
             !self.stopped.load(Ordering::Acquire),
@@ -267,6 +267,41 @@ impl DictationStream {
     }
 }
 
+#[derive(Default)]
+struct Heard {
+    queued: Vec<f32>,
+    samples: usize,
+}
+impl Heard {
+    fn take(&mut self, pcm: Vec<f32>) -> Result<()> {
+        self.samples = self.samples.saturating_add(pcm.len());
+        ensure!(
+            self.samples <= 300 * 16_000
+                && pcm.len() <= 16_000
+                && pcm.iter().all(|n| n.is_finite()),
+            "Dictation audio is too long. Start another dictation."
+        );
+        self.queued.extend_from_slice(&pcm);
+        Ok(())
+    }
+    fn send(&mut self, mut feed: impl FnMut(Vec<f32>) -> Fed) -> Result<()> {
+        while !self.queued.is_empty() {
+            let part: Vec<f32> = self.queued.drain(..self.queued.len().min(16_000)).collect();
+            match feed(part) {
+                Fed::Sent => {}
+                Fed::Full(part) => {
+                    self.queued.splice(0..0, part);
+                    return Ok(());
+                }
+                Fed::Lost => {
+                    anyhow::bail!("Live transcription stopped. Finishing from recorded audio.")
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 fn trim(pcm: Vec<f32>) -> Result<Vec<f32>> {
     let detector = EarshotVad::new(0.5)?;
     let frame = detector.frame_samples();
@@ -330,32 +365,42 @@ fn run(
                             Default::default(),
                             move |progress| {
                                 if let Some(snapshot) = progress.text {
-                                    text(snapshot.display());
+                                    text(snapshot.committed, snapshot.tentative);
                                 }
                             },
                         )?;
                         let started = Instant::now();
-                        let mut samples = 0usize;
-                        loop {
+                        let mut heard = Heard::default();
+                        let mut open = true;
+                        while open || !heard.queued.is_empty() {
                             ensure!(
                                 started.elapsed() < Duration::from_secs(310),
                                 "Dictation reached five minutes. Start another dictation."
                             );
-                            match audio.recv_timeout(Duration::from_millis(100)) {
-                                Ok(Some(pcm)) => {
-                                    samples = samples.saturating_add(pcm.len());
-                                    ensure!(
-                                        samples <= 300 * 16_000
-                                            && pcm.len() <= 16_000
-                                            && pcm.iter().all(|n| n.is_finite()),
-                                        "Dictation audio is too long. Start another dictation."
-                                    );
-                                    ensure!(stream.feed(pcm), "Live transcription fell behind. Finishing from recorded audio.");
+                            let wait = if heard.queued.is_empty() {
+                                Duration::from_millis(100)
+                            } else {
+                                POLL
+                            };
+                            if open {
+                                match audio.recv_timeout(wait) {
+                                    Ok(Some(pcm)) => heard.take(pcm)?,
+                                    Ok(None) => open = false,
+                                    Err(mpsc::RecvTimeoutError::Timeout) => {}
+                                    Err(_) => anyhow::bail!("Dictation cancelled."),
                                 }
-                                Ok(None) => break,
-                                Err(mpsc::RecvTimeoutError::Timeout) => {}
-                                Err(_) => anyhow::bail!("Dictation cancelled."),
+                            } else {
+                                std::thread::sleep(wait);
                             }
+                            while open {
+                                match audio.try_recv() {
+                                    Ok(Some(pcm)) => heard.take(pcm)?,
+                                    Ok(None) => open = false,
+                                    Err(mpsc::TryRecvError::Empty) => break,
+                                    Err(_) => anyhow::bail!("Dictation cancelled."),
+                                }
+                            }
+                            heard.send(|part| stream.feed(part))?;
                         }
                         Ok(stream
                             .finalize(false)?
@@ -621,5 +666,74 @@ mod update_tests {
             true
         );
         engine.stop().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod heard_tests {
+    use super::*;
+
+    #[test]
+    fn queued_audio_is_fed_together_in_order() {
+        let mut heard = Heard::default();
+        heard.take(vec![1.0; 300]).unwrap();
+        heard.take(vec![2.0; 200]).unwrap();
+        let mut fed = Vec::new();
+        heard
+            .send(|part| {
+                fed.push(part);
+                Fed::Sent
+            })
+            .unwrap();
+        assert_eq!(fed.len(), 1);
+        assert_eq!(fed[0].len(), 500);
+        assert_eq!(fed[0][299], 1.0);
+        assert_eq!(fed[0][300], 2.0);
+        assert!(heard.queued.is_empty());
+    }
+
+    #[test]
+    fn a_full_engine_keeps_the_audio_for_the_next_feed() {
+        let mut heard = Heard::default();
+        heard.take(vec![1.0; 10_000]).unwrap();
+        heard.take(vec![2.0; 10_000]).unwrap();
+        let mut calls = 0;
+        heard
+            .send(|part| {
+                calls += 1;
+                if calls == 1 {
+                    assert_eq!(part.len(), 16_000);
+                    Fed::Sent
+                } else {
+                    Fed::Full(part)
+                }
+            })
+            .unwrap();
+        assert_eq!(heard.queued, vec![2.0; 4_000]);
+        heard.take(vec![3.0; 100]).unwrap();
+        let mut fed = Vec::new();
+        heard
+            .send(|part| {
+                fed.extend(part);
+                Fed::Sent
+            })
+            .unwrap();
+        assert_eq!(fed.len(), 4_100);
+        assert_eq!(fed[3_999], 2.0);
+        assert_eq!(fed[4_000], 3.0);
+    }
+
+    #[test]
+    fn a_lost_stream_and_oversized_audio_are_refused() {
+        let mut heard = Heard::default();
+        heard.take(vec![0.0; 10]).unwrap();
+        assert!(heard.send(|_| Fed::Lost).is_err());
+        assert!(Heard::default().take(vec![0.0; 16_001]).is_err());
+        assert!(Heard::default().take(vec![f32::NAN]).is_err());
+        let mut long = Heard::default();
+        for _ in 0..300 {
+            long.take(vec![0.0; 16_000]).unwrap();
+        }
+        assert!(long.take(vec![0.0; 1]).is_err());
     }
 }

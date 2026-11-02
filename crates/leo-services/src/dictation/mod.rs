@@ -4,6 +4,7 @@ pub mod capture;
 pub mod generation;
 pub mod settings;
 pub mod text;
+pub mod visualizer;
 
 #[cfg(test)]
 mod tests {

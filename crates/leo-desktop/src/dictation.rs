@@ -3,21 +3,25 @@ use leo_services::dictation::{
     activation::{Action, Activation},
     generation::Generation,
     settings::{Popup, Settings},
+    visualizer::Visualizer,
 };
 use leo_services::speech::{
-    engine::{engine, Priority},
+    engine::{engine, DictationStream, Priority},
     library::library,
 };
 use serde_json::{json, Value};
 use std::{
     path::PathBuf,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc, Arc, Mutex, OnceLock,
     },
     time::Instant,
 };
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
+
+const FEED_SAMPLES: usize = 512;
+const SHOWN_CHARS: usize = 25_000;
 
 enum Event {
     Input(bool, bool),
@@ -33,6 +37,7 @@ pub struct Dictation {
     theme: Mutex<String>,
     problem: Mutex<Option<String>>,
     generation: Generation,
+    revision: AtomicU64,
     capturing: Arc<AtomicBool>,
     stop: Mutex<Option<Arc<AtomicBool>>>,
     tx: mpsc::SyncSender<Event>,
@@ -51,6 +56,7 @@ impl Dictation {
             theme: Mutex::new("system".into()),
             problem: Mutex::new(problem),
             generation: Generation::default(),
+            revision: AtomicU64::new(0),
             capturing: Arc::new(AtomicBool::new(false)),
             stop: Mutex::new(None),
             tx,
@@ -83,15 +89,49 @@ impl Dictation {
     }
     pub fn popup(&self) -> Value {
         let mut value = self.state.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        self.decorate(&mut value);
+        value
+    }
+    fn decorate(&self, value: &mut Value) {
         value["theme"] = json!(self.theme.lock().unwrap_or_else(|e| e.into_inner()).clone());
         let settings = self.preferences();
         value["minimal"] = json!(settings.popup == Popup::Minimal);
         value["top"] = json!(settings.top);
-        value
+    }
+    fn publish(&self, mut view: Value) {
+        if self.preferences().popup == Popup::Off {
+            return;
+        }
+        self.decorate(&mut view);
+        let _ = self.app.emit_to("dictation", "dictation", view);
+    }
+    fn stamp(&self, state: &mut Value) -> Value {
+        state["rev"] = json!(self.revision.fetch_add(1, Ordering::AcqRel) + 1);
+        state.clone()
+    }
+    fn change(&self, id: u64, apply: impl FnOnce(&mut Value)) {
+        let view = self.generation.apply(id, &self.state, |state| {
+            apply(state);
+            self.stamp(state)
+        });
+        if let Some(view) = view {
+            self.publish(view);
+        }
     }
     fn update(&self, id: u64, value: Value) {
-        self.generation
-            .apply(id, &self.state, |state| *state = value);
+        self.change(id, |state| *state = value);
+    }
+    fn phase(&self, id: u64, phase: &str) {
+        self.change(id, |state| state["state"] = json!(phase));
+    }
+    fn idle(&self) {
+        let view = {
+            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            *state = json!({"state":"idle"});
+            self.stamp(&mut state)
+        };
+        self.publish(view);
+        crate::overlay::hide(&self.app);
     }
     fn show(self: &Arc<Self>, id: u64, settings: &Settings) {
         let this = self.clone();
@@ -108,8 +148,7 @@ impl Dictation {
         }
         self.capturing.store(false, Ordering::Release);
         engine().cancel();
-        *self.state.lock().unwrap_or_else(|e| e.into_inner()) = json!({"state":"idle"});
-        crate::overlay::hide(&self.app);
+        self.idle();
         let _ = self.tx.try_send(Event::Cancel);
     }
     pub fn shutdown(&self) {
@@ -158,7 +197,14 @@ impl Dictation {
                             }
                             self.capturing.store(false, Ordering::Release);
                             if let Some(id) = busy {
-                                self.update(id,json!({"state":if engine().loaded() { "transcribing" } else { "loading" }}));
+                                self.phase(
+                                    id,
+                                    if engine().loaded() {
+                                        "transcribing"
+                                    } else {
+                                        "loading"
+                                    },
+                                );
                             }
                             activation.reset();
                         }
@@ -176,8 +222,7 @@ impl Dictation {
                     }
                     self.capturing.store(false, Ordering::Release);
                     engine().cancel();
-                    *self.state.lock().unwrap_or_else(|e| e.into_inner()) = json!({"state":"idle"});
-                    crate::overlay::hide(&self.app);
+                    self.idle();
                 }
                 Event::Complete(id) => {
                     if busy == Some(id) {
@@ -208,7 +253,7 @@ impl Dictation {
         self.capturing.store(true, Ordering::Release);
         self.update(
             id,
-            json!({"state":"listening","seconds":0,"level":0,"text":""}),
+            json!({"state":"listening","seconds":0,"levels":[],"committed":"","tentative":""}),
         );
         self.show(id, &settings);
         let this = self.clone();
@@ -276,9 +321,10 @@ impl Dictation {
         let this = self.clone();
         let mut stream = if selected.streaming {
             engine()
-                .stream(selected.clone(), move |text| {
-                    this.generation.apply(id, &this.state, |state| {
-                        state["text"] = json!(text.chars().take(25_000).collect::<String>());
+                .stream(selected.clone(), move |committed, tentative| {
+                    this.change(id, |state| {
+                        state["committed"] = json!(newest(&committed));
+                        state["tentative"] = json!(newest(&tentative));
                     });
                 })
                 .ok()
@@ -287,22 +333,24 @@ impl Dictation {
         };
         let mut pending = Vec::new();
         let mut speech = StreamingVad::new()?;
+        let mut visualizer = Visualizer::new();
         let pcm = leo_services::dictation::capture::collect(
             &rx,
             stop,
-            |chunk, level, seconds| {
-                self.generation.apply(id, &self.state, |state| {
-                    state["seconds"] = json!(seconds);
-                    state["level"] = json!(level);
-                });
-                if stream.is_some() {
+            |chunk, _, seconds| {
+                if let Some(levels) = visualizer.feed(chunk) {
+                    self.change(id, |state| {
+                        state["seconds"] = json!(seconds);
+                        state["levels"] = json!(levels);
+                    });
+                }
+                if let Some(live) = stream.as_ref() {
                     pending.extend(speech.push(chunk));
-                    while pending.len() >= 8000 {
-                        let part: Vec<f32> = pending.drain(..8000).collect();
-                        if !stream.as_ref().unwrap().feed(part) {
+                    if pending.len() >= FEED_SAMPLES {
+                        if !feed(live, &pending) {
                             stream = None;
-                            break;
                         }
+                        pending.clear();
                     }
                 }
             },
@@ -320,13 +368,17 @@ impl Dictation {
             }
         }
         ensure!(self.generation.current(id), "Dictation cancelled.");
-        self.update(
+        self.phase(
             id,
-            json!({"state":if engine().loaded() {"transcribing"} else {"loading"}}),
+            if engine().loaded() {
+                "transcribing"
+            } else {
+                "loading"
+            },
         );
         crate::audio_feedback::play(settings.sounds, false);
         let transcript = if let Some(stream) = stream {
-            let _ = stream.feed(pending);
+            feed(&stream, &pending);
             stream.finish().ok().filter(|text| !text.trim().is_empty())
         } else {
             None
@@ -453,11 +505,22 @@ impl leo_web::dictation::DictationApi for Dictation {
                     "Choose Light, Dark or Match."
                 );
                 *self.theme.lock().unwrap_or_else(|e| e.into_inner()) = choice.into();
+                let view = self.state.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                self.publish(view);
             }
             _ => anyhow::bail!("Choose an action in Dictation settings."),
         }
         Ok(json!({"ok":true}))
     }
+}
+fn feed(stream: &DictationStream, pcm: &[f32]) -> bool {
+    pcm.chunks(16_000).all(|part| stream.feed(part.to_vec()))
+}
+fn newest(text: &str) -> String {
+    let count = text.chars().count();
+    text.chars()
+        .skip(count.saturating_sub(SHOWN_CHARS))
+        .collect()
 }
 struct StreamingVad {
     vad: leo_services::speech::vad::SmoothedVad,
@@ -473,7 +536,7 @@ impl StreamingVad {
             vad: SmoothedVad::new(
                 Box::new(vad),
                 frames_for_duration_ms(VAD_PREFILL_MS, frame),
-                frames_for_duration_ms(VAD_OFFLINE_HANGOVER_MS, frame),
+                frames_for_duration_ms(VAD_STREAMING_HANGOVER_MS, frame),
                 frames_for_duration_ms(VAD_ONSET_MS, frame),
             ),
             pending: Vec::new(),
