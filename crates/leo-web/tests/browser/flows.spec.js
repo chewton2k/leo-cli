@@ -3891,6 +3891,16 @@ test('dropdowns and nested disclosures share real icons and keep their native co
     expect(await selects.count()).toBeGreaterThan(0);
     const issues = await selects.evaluateAll(els => els.flatMap(el => {
       const wrap = el.closest('.select-control');
+      const menu = wrap && wrap.classList.contains('has-menu') && wrap.querySelector(':scope > .select-menu-button');
+      if (menu) {
+        const name = el.id || el.dataset.set || el.dataset.keep || el.dataset.library;
+        const icon = menu.querySelector('svg')?.getBoundingClientRect();
+        const box = menu.getBoundingClientRect(), under = el.getBoundingClientRect();
+        if (!icon) return [`${name}: menu missing chevron`];
+        if (getComputedStyle(el).opacity !== '0' || getComputedStyle(el).pointerEvents !== 'none') return [`${name}: native select still shown`];
+        if (Math.abs(under.width - box.width) > 1 || Math.abs(under.height - box.height) > 1) return [`${name}: select does not sit under its menu`];
+        return Math.abs(box.y + box.height / 2 - icon.y - icon.height / 2) > 1 || icon.right > box.right - 4 || icon.left < box.left ? [`${name}: misaligned menu chevron`] : [];
+      }
       const arrow = wrap && wrap.querySelector(':scope > svg[aria-hidden="true"]');
       if (!arrow) return [`${el.id || el.dataset.set || el.dataset.keep || el.dataset.library}: missing chevron`];
       const box = el.getBoundingClientRect();
