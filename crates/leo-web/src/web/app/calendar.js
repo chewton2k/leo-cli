@@ -781,7 +781,9 @@ document.addEventListener('pointerdown', (e) => {
     d = { mode: grip ? 'resize' : item.classList.contains('cal-tray-row') ? 'tray' : 'move', id: task.id, on: task.on || null, task, source: item, col, day: item.dataset.day || null, start: span ? span.start : 0, length: Math.max(CAL_SNAP, length), offset: span ? calMinutesIn(col, e.clientY) - span.start : 0 };
   } else if (e.target.classList.contains('cal-col')) {
     const col = e.target;
-    d = { mode: 'create', col, day: col.dataset.day, start: Math.floor(calMinutesIn(col, e.clientY) / CAL_SNAP) * CAL_SNAP };
+    const raw = calMinutesIn(col, e.clientY);
+    const slack = raw % 60 >= 58 ? 2 : 0;
+    d = { mode: 'create', col, day: col.dataset.day, start: Math.min(24 * 60 - CAL_SNAP, Math.floor((raw + slack) / CAL_SNAP) * CAL_SNAP) };
   } else if (e.target.classList.contains('cal-cell') || e.target.classList.contains('cal-allday-cell')) {
     d = { mode: 'cell', day: e.target.dataset.day };
   }
@@ -857,7 +859,29 @@ function calClosePeek() {
 function calPeekRefresh(id) {
   if (!cal.peek || cal.peek.id !== id || cal.peek.kind !== 'task') return;
   const side = $('#cal-side');
-  if (side && !side.contains(document.activeElement)) calPeekTask(side, id, cal.peek.on);
+  if (!side) return;
+  if (!side.contains(document.activeElement)) return calPeekTask(side, id, cal.peek.on);
+  const task = calFind(id);
+  const google = $('#cal-peek-google', side);
+  const acts = $('#cal-peek-acts', side);
+  if (!task || !google || !acts) return;
+  google.textContent = calPeekGoogle(task);
+  acts.innerHTML = calPeekActs(task);
+}
+
+function calOnGoogle(task) {
+  return (cal.data && (cal.data.events || []).find((e) => e.task === task.id)) || null;
+}
+
+function calPeekGoogle(task) {
+  return calOnGoogle(task) ? 'On Google Calendar' : task.sent_at ? 'Opened in Google Calendar' : 'Not added';
+}
+
+function calPeekActs(task) {
+  const leo = task.source === 'leo';
+  return `${task.date && !calOnGoogle(task) ? `<button type="button" class="btn" data-action="task-google" data-id="${esc(task.id)}">${ICON.calendar}<span>Add to Google Calendar</span></button>` : ''}
+      ${task.date ? `<a class="btn plain" href="/api/tasks/${enc(task.id)}/ics" download>Download .ics</a>` : ''}
+      ${leo ? `<button type="button" class="btn plain danger" data-action="task-delete" data-id="${esc(task.id)}">Delete</button>` : task.promoted ? `<button type="button" class="btn plain" data-action="task-delete" data-id="${esc(task.id)}">Stop tracking</button>` : ''}`;
 }
 
 function calPeekBar(where, actions = '') {
@@ -902,7 +926,6 @@ function calPeekTask(side, id, on) {
   const leo = task.source === 'leo';
   const doneNow = taskDoneOn(task, day);
   const dayName = day ? S.fromKey(day).toLocaleDateString(calLocale(), { weekday: 'short', month: 'short', day: 'numeric' }) : '';
-  const onGoogle = (cal.data && (cal.data.events || []).find((e) => e.task === task.id)) || null;
   const scope = (cal.peek && cal.peek.scope) || 'one';
   side.style.setProperty('--tone', `var(${toneOfTask(task)})`);
   side.innerHTML = `${calPeekBar(task.note ? task.note.title || 'Untitled' : 'Task')}
@@ -919,13 +942,9 @@ function calPeekTask(side, id, on) {
     <div class="set-row column"><span class="set-label">Type</span><div class="chips task-kinds" id="cal-peek-kinds">${KIND_ORDER.map((k) => `<button type="button" class="chip pick-chip${task.kind === k ? ' on' : ''}" data-kind="${k}" aria-pressed="${task.kind === k}">${esc(KIND_LABEL[k])}</button>`).join('')}</div></div>
     <textarea class="cal-peek-about" id="cal-peek-about" rows="4" maxlength="4000" placeholder="Add a description…" aria-label="Description">${esc(task.description || '')}</textarea>
     <div class="set-row"><span class="set-label">Note</span><span class="set-value">${task.note ? `<a href="${noteHash(task.note.id)}">${esc(task.note.title || 'Untitled')}</a>` : 'Added in Leo'}</span></div>
-    <div class="set-row"><span class="set-label">Google</span><span class="set-value">${onGoogle ? 'On Google Calendar' : task.sent_at ? 'Opened in Google Calendar' : 'Not added'}</span></div>
+    <div class="set-row"><span class="set-label">Google</span><span class="set-value" id="cal-peek-google">${esc(calPeekGoogle(task))}</span></div>
     ${repeating && Object.keys(task.moved || {}).length ? '<p class="hint">Google gets the weekly days; days you moved here stay in leo and the .ics file.</p>' : ''}
-    <div class="buttons task-acts">
-      ${task.date && !onGoogle ? `<button type="button" class="btn" data-action="task-google" data-id="${esc(task.id)}">${ICON.calendar}<span>Add to Google Calendar</span></button>` : ''}
-      ${task.date ? `<a class="btn plain" href="/api/tasks/${enc(task.id)}/ics" download>Download .ics</a>` : ''}
-      ${leo ? `<button type="button" class="btn plain danger" data-action="task-delete" data-id="${esc(task.id)}">Delete</button>` : task.promoted ? `<button type="button" class="btn plain" data-action="task-delete" data-id="${esc(task.id)}">Stop tracking</button>` : ''}
-    </div>`;
+    <div class="buttons task-acts" id="cal-peek-acts">${calPeekActs(task)}</div>`;
   const saved = $('#cal-peek-saved', side);
   const said = (text) => { if (saved) saved.textContent = text; };
   const patch = async (body) => {
@@ -1273,6 +1292,7 @@ async function addToGoogle(id) {
     if (e instanceof Locked) throw e;
   }
   closeSheet();
+  calPeekRefresh(id);
   toast('Opened in Google Calendar. Press Save there; it shows here as one item once Google updates the calendar link.');
   if (state.view === 'calendar') drawCalendar();
 }

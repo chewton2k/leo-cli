@@ -201,6 +201,11 @@ test('clicking or dragging over empty time writes a task in place, and Escape le
     await settled(page);
     expect(await page.evaluate(() => window.calls.filter(c => c.method === 'POST').at(-1).body)).toMatchObject({ date: '2026-11-07', time: '12:00', end: '13:30' });
 
+    const quarter = await point(page, '2026-11-05', 14 * 60 + 13.5);
+    await page.mouse.click(quarter.x, quarter.y);
+    await expect(input).toHaveAttribute('aria-label', 'New task, 2 – 3 PM');
+    await input.press('Escape');
+
     const later = await point(page, '2026-11-02', 18 * 60);
     await page.mouse.click(later.x, later.y);
     await page.locator('.cal-compose-input').press('Escape');
@@ -267,6 +272,16 @@ test('a task opens beside the calendar, edits save, and Escape closes it', async
     await expect(page.locator('#cal-side.peek .cal-peek-title')).toHaveText('CS 241 lecture');
     await expect(page.locator('#cal-side.peek')).toContainText('DC 1351');
     await expect(page.locator('#cal-side.peek .cal-item, #cal-side.peek input')).toHaveCount(0);
+
+    await page.locator('.cal-name').click();
+    await page.keyboard.press('Escape');
+    await page.locator('.cal-tray-row .cal-open', { hasText: 'Draft essay outline' }).click();
+    await expect(page.locator('#cal-side [data-action="task-google"]')).toHaveCount(0);
+    await page.locator('#cal-peek-date').fill('2026-11-06');
+    await page.locator('#cal-peek-date').dispatchEvent('change');
+    await expect(page.locator('#cal-peek-start')).toBeEnabled();
+    await expect(page.locator('#cal-side [data-action="task-google"]')).toBeVisible();
+    await expect(page.locator('#cal-side a[download]')).toBeVisible();
   });
 });
 
