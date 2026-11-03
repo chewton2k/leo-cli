@@ -906,7 +906,10 @@ the same idle loop.
   600 ms after typing and on blur, note, Google, .ics, Delete; events are
   read-only. Colors follow the event title (`--hue-0..7`) and task kind
   (`TASK_TONES`). "Hide completed" is remembered (`leo-calendar-hide-done`).
-  Add to Google Calendar opens Google's prefilled page (no sign-in). Tests:
+  Add to Google Calendar opens Google's prefilled page (no sign-in).
+  Grid-boundary creation tolerates one CSS pixel of pointer rounding before
+  snapping, and date edits refresh export actions without replacing focused fields.
+  A save resolves the current task snapshot after a calendar refresh. Tests:
   `tests/browser/calendar.spec.js` (real CSS and calendar.js over an in-memory
   API, a fixed 284 px explorer; desktop and webkit), `tests/schedule.test.js`.
 - Tasks panel: in `#dock`, appears when there are open tasks (Overdue / Today /

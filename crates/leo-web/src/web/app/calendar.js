@@ -465,6 +465,14 @@ function calMinutesIn(col, y) {
   return ((y - rect.top) / CAL_HOUR_PX) * 60;
 }
 
+function calStartAt(col, y) {
+  const minutes = calMinutesIn(col, y);
+  const nearest = S.snap(minutes, CAL_SNAP);
+  const tolerance = 60 / CAL_HOUR_PX;
+  const at = Math.abs(minutes - nearest) < tolerance ? nearest : minutes;
+  return Math.max(0, Math.min(24 * 60 - CAL_SNAP, Math.floor(at / CAL_SNAP) * CAL_SNAP));
+}
+
 function calColumnAt(x, y) {
   const cols = $('.cal-cols');
   if (!cols) return null;
@@ -680,6 +688,7 @@ function calBodies(base, task, next, scope) {
 }
 
 async function calSave(base, task, next, scope) {
+  base = calFind(base.id) || base;
   const { body, undo, local } = calBodies(base, task, next, scope);
   const before = JSON.parse(JSON.stringify(base));
   local(base);
@@ -781,7 +790,7 @@ document.addEventListener('pointerdown', (e) => {
     d = { mode: grip ? 'resize' : item.classList.contains('cal-tray-row') ? 'tray' : 'move', id: task.id, on: task.on || null, task, source: item, col, day: item.dataset.day || null, start: span ? span.start : 0, length: Math.max(CAL_SNAP, length), offset: span ? calMinutesIn(col, e.clientY) - span.start : 0 };
   } else if (e.target.classList.contains('cal-col')) {
     const col = e.target;
-    d = { mode: 'create', col, day: col.dataset.day, start: Math.floor(calMinutesIn(col, e.clientY) / CAL_SNAP) * CAL_SNAP };
+    d = { mode: 'create', col, day: col.dataset.day, start: calStartAt(col, e.clientY) };
   } else if (e.target.classList.contains('cal-cell') || e.target.classList.contains('cal-allday-cell')) {
     d = { mode: 'cell', day: e.target.dataset.day };
   }
@@ -857,7 +866,15 @@ function calClosePeek() {
 function calPeekRefresh(id) {
   if (!cal.peek || cal.peek.id !== id || cal.peek.kind !== 'task') return;
   const side = $('#cal-side');
-  if (side && !side.contains(document.activeElement)) calPeekTask(side, id, cal.peek.on);
+  if (!side) return;
+  if (!side.contains(document.activeElement)) return calPeekTask(side, id, cal.peek.on);
+  const task = calFind(id);
+  if (!task) return;
+  const onGoogle = (cal.data && (cal.data.events || []).some((event) => event.task === task.id)) || false;
+  const google = side.querySelector('[data-action="task-google"]');
+  const ics = side.querySelector('[data-cal-ics]');
+  if (google) google.hidden = !task.date || onGoogle;
+  if (ics) ics.hidden = !task.date;
 }
 
 function calPeekBar(where, actions = '') {
@@ -922,8 +939,8 @@ function calPeekTask(side, id, on) {
     <div class="set-row"><span class="set-label">Google</span><span class="set-value">${onGoogle ? 'On Google Calendar' : task.sent_at ? 'Opened in Google Calendar' : 'Not added'}</span></div>
     ${repeating && Object.keys(task.moved || {}).length ? '<p class="hint">Google gets the weekly days; days you moved here stay in leo and the .ics file.</p>' : ''}
     <div class="buttons task-acts">
-      ${task.date && !onGoogle ? `<button type="button" class="btn" data-action="task-google" data-id="${esc(task.id)}">${ICON.calendar}<span>Add to Google Calendar</span></button>` : ''}
-      ${task.date ? `<a class="btn plain" href="/api/tasks/${enc(task.id)}/ics" download>Download .ics</a>` : ''}
+      <button type="button" class="btn" data-action="task-google" data-id="${esc(task.id)}"${!task.date || onGoogle ? ' hidden' : ''}>${ICON.calendar}<span>Add to Google Calendar</span></button>
+      <a class="btn plain" data-cal-ics href="/api/tasks/${enc(task.id)}/ics" download${!task.date ? ' hidden' : ''}>Download .ics</a>
       ${leo ? `<button type="button" class="btn plain danger" data-action="task-delete" data-id="${esc(task.id)}">Delete</button>` : task.promoted ? `<button type="button" class="btn plain" data-action="task-delete" data-id="${esc(task.id)}">Stop tracking</button>` : ''}
     </div>`;
   const saved = $('#cal-peek-saved', side);
