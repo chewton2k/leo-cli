@@ -111,6 +111,11 @@ body {
 }
 button, input, textarea, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
+button, label, summary, [role="button"], [role="tab"], [draggable="true"], .bar, .rail, .actions, .select-bar, .activity-head, .set-label, .kanban-column-head {
+  -webkit-user-select: none; user-select: none;
+}
+input, textarea, [contenteditable="true"], .prose .task > span, .prose, .chat-text, .set-note, .hint { -webkit-user-select: text; user-select: text; }
+a, img { -webkit-user-drag: none; }
 a { color: var(--accent); }
 [hidden] { display: none !important; }
 
@@ -417,6 +422,8 @@ body.on-library main, body.on-interviews main:not(:has(.interview-practice)) { p
 .doc .blk .task-item { touch-action: manipulation; }
 .doc .blk .task input { width: 22px; height: 22px; margin: 2px 4px 0 -4px; padding: 0; }
 .doc .blk .task { gap: 8px; }
+.doc .blk .task > span { min-width: 0; min-height: 1.65em; flex: 1; }
+.doc .blk .task.done .line-edit { text-decoration: inherit; }
 .doc .blk .placeholder { color: var(--faint); }
 .doc .line-edit {
   display: block; width: 100%; margin: 0; padding: 0; border: 0; outline: 0; resize: none; overflow: hidden;

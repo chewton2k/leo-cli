@@ -12,7 +12,7 @@ async function editorFixture(browser, run, { remember = false, body = null } = {
   const passages = read('app/passages.js');
   const source = body ?? (remember ? Array.from({ length: 160 }, (_, i) => `Paragraph number ${i + 1} about reading.`).join('\n\n') : 'An ordinary paragraph.');
   const fixture = `window.doc = leoDoc.mount(document.querySelector('#doc'), {
-    source: ${JSON.stringify(source)}, onChange() {}, outline: document.querySelector('.note-outline')
+    source: new URLSearchParams(location.search).get('body') ?? ${JSON.stringify(source)}, onChange() {}, outline: document.querySelector('.note-outline')
   });
   ${pickWidth}
   window.audit = { pick: width => pickWidth({dataset:{width}}), anchor: () => JSON.parse(localStorage.getItem('fixture-reading') || 'null') };
@@ -233,7 +233,7 @@ test('opening a heading, list or task line keeps its text and the lines below wh
         const style = getComputedStyle(el);
         const ctx = document.createElement('canvas').getContext('2d');
         ctx.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
-        return { left: el.getBoundingClientRect().left + ctx.measureText(marker).width, size: style.fontSize };
+        return { left: el.getBoundingClientRect().left + ctx.measureText(el.closest('li') ? '' : marker).width, size: style.fontSize };
       }, marker);
       if (i === 0) expect(raw.size).toBe('22px');
       else expect(Math.abs(raw.left - drawn)).toBeLessThanOrEqual(3);
@@ -303,4 +303,203 @@ test('the outline sits at the right edge as heading ticks, keeping the note cent
     await outline.locator('.outline-ticks span').first().click();
     await expect(page.locator('#doc .blk:focus')).toContainText('One');
   }, { body });
+});
+
+test('list editing keeps rendered markers, indentation and wrapping while preserving Markdown operations', async ({ browser }) => {
+  const items = ['- # Literal heading marker', '- Bullet 文字', '* Star item', '+ Plus item', '12. Number item', '3) Parenthesis item', '- [ ] Pending item', '* [x] Done item', '2. [ ] Ordered task', '  - Nested item', '    - [ ] Nested task', '- [ ]', '-   [ ] Wide spaces', '- ' + 'Wrapped text '.repeat(30)];
+  const body = items.concat('Following paragraph').join('\n');
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    for (const width of [1400, 390]) {
+      await page.setViewportSize({width, height:900});
+      await page.goto(url);
+      for (let i = 0; i < items.length; i++) {
+        const block = page.locator('#doc .blk').nth(i);
+        await block.scrollIntoViewIfNeeded();
+        const before = await block.boundingBox();
+        const below = await page.locator('#doc .blk').last().boundingBox();
+        const boxCount = await block.locator('input[data-box]').count();
+        const textLeft = await block.evaluate(el => {
+          const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+          const node = walker.nextNode();
+          if (!node) return null;
+          const range = document.createRange();
+          range.selectNodeContents(node);
+          return range.getBoundingClientRect().left;
+        });
+        await block.locator('li').click({position:{x:Math.min(80, before.width / 2),y:10}});
+        const area = block.locator('textarea');
+        await expect(area).toBeFocused();
+        if (textLeft !== null) expect(Math.abs((await area.boundingBox()).x - textLeft)).toBeLessThanOrEqual(1);
+        await expect(block.locator('li')).toHaveCount(1);
+        expect(await area.getAttribute('data-head')).toBeNull();
+        await expect(block.locator('input[data-box]')).toHaveCount(boxCount);
+        await expect(area).toHaveValue(items[i].replace(/^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\](?:\s+|$))?/, ''));
+        expect(Math.abs((await block.boundingBox()).height - before.height), `${width}: ${items[i]}`).toBeLessThanOrEqual(1);
+        expect(Math.abs((await page.locator('#doc .blk').last().boundingBox()).y - below.y)).toBeLessThanOrEqual(1);
+        await page.keyboard.press('Escape');
+        await expect(page.locator('#doc textarea')).toHaveCount(0);
+        expect(await page.evaluate(() => doc.source())).toBe(body);
+      }
+    }
+    await page.goto(url);
+    await page.locator('#doc .task > span').first().click();
+    await page.locator('#doc textarea').fill('Changed task');
+    await page.keyboard.press('End');
+    await page.keyboard.press('Enter');
+    await expect(page.locator('#doc textarea')).toHaveValue('');
+    expect(await page.evaluate(() => doc.source())).toContain('- [ ] Changed task\n- [ ] ');
+    await page.keyboard.insertText('Next task');
+    await page.keyboard.press('Tab');
+    expect(await page.evaluate(() => doc.source())).toContain('  - [ ] Next task');
+    await page.keyboard.press('Shift+Tab');
+    expect(await page.evaluate(() => doc.source())).toContain('\n- [ ] Next task');
+  }, {body});
+});
+
+test('application controls resist highlighting while note content and text fields remain selectable', async ({ browser }) => {
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    await page.goto(url);
+    await page.evaluate(() => {
+      const controls = document.createElement('div');
+      controls.innerHTML = '<button>Action label</button><label>Setting label <input value="Editable text"></label><details open><summary>Disclosure label</summary><p class="hint">Helpful explanation</p></details><a href="#test">Readable link</a><img alt="Picture"><div draggable="true">Movable note</div>';
+      document.body.appendChild(controls);
+      window.controls = controls;
+    });
+    for (const selector of ['button', 'label', 'summary', '[draggable="true"]']) {
+      expect(await page.evaluate(selector => getComputedStyle(controls.querySelector(selector)).userSelect, selector)).toBe('none');
+    }
+    for (const selector of ['input', '.hint']) {
+      expect(await page.evaluate(selector => getComputedStyle(controls.querySelector(selector)).userSelect, selector)).toBe('text');
+    }
+    expect(await page.locator('#doc p').evaluate(el => getComputedStyle(el).userSelect)).not.toBe('none');
+    for (const selector of ['a', 'img']) {
+      expect(await page.evaluate(selector => getComputedStyle(controls.querySelector(selector)).webkitUserDrag, selector)).toBe('none');
+    }
+    const paragraph = page.locator('#doc p');
+    const box = await paragraph.boundingBox();
+    await page.mouse.move(box.x + 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 140, box.y + box.height / 2, {steps:10});
+    await page.mouse.up();
+    expect(await page.evaluate(() => getSelection().toString())).not.toBe('');
+  });
+});
+
+test('select all and undo keep checklists rendered and copy their complete Markdown', async ({ browser }) => {
+  const body = '- [ ] First task\n2. Second item\n- [x] Last task';
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    await page.goto(url);
+    await page.locator('#doc .task > span').first().click();
+    const area = page.locator('#doc textarea');
+    await area.evaluate(el => el.setSelectionRange(2, 7));
+    expect(await page.evaluate(() => doc.selection())).toMatchObject({text:'rst t',from:1,to:1});
+    await page.keyboard.press('ControlOrMeta+a');
+    await expect(area).toHaveCount(0);
+    await expect(page.locator('#doc input[data-box]')).toHaveCount(2);
+    const copy = () => page.evaluate(() => {
+      const data = new DataTransfer();
+      document.dispatchEvent(new ClipboardEvent('copy', {clipboardData:data,bubbles:true,cancelable:true}));
+      return data.getData('text/plain');
+    });
+    expect(await copy()).toBe(body);
+    await page.keyboard.press('Backspace');
+    expect(await page.evaluate(() => doc.source())).toBe('');
+    await page.keyboard.press('ControlOrMeta+z');
+    await expect(area).toHaveCount(0);
+    await expect(page.locator('#doc input[data-box]')).toHaveCount(2);
+    expect(await copy()).toBe(body);
+    await page.keyboard.press('ControlOrMeta+Shift+z');
+    expect(await page.evaluate(() => doc.source())).toBe('');
+  }, {body});
+});
+
+test('list text supports caret clicks, removing formatting, undo and navigation in both directions', async ({ browser }) => {
+  const body = 'Before\n  - [x] Task text\n3. Number text\nAfter';
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    await page.goto(url);
+    const task = page.locator('#doc .blk').nth(1);
+    await task.locator('label > span').click();
+    const area = page.locator('#doc textarea');
+    await area.evaluate(el => el.setSelectionRange(el.value.length, el.value.length));
+    await area.click({position:{x:1,y:10}});
+    expect(await area.evaluate(el => el.selectionStart)).toBe(0);
+    await page.keyboard.insertText('New ');
+    expect(await page.evaluate(() => doc.source())).toContain('  - [x] New Task text');
+    await area.evaluate(el => el.setSelectionRange(0, 0));
+    await page.keyboard.press('Backspace');
+    await expect(area).toHaveValue('New Task text');
+    expect(await page.evaluate(() => doc.source())).toContain('\nNew Task text\n');
+    await page.keyboard.press('ControlOrMeta+z');
+    expect(await page.evaluate(() => doc.source())).toContain('  - [x] New Task text');
+    await page.keyboard.press('Escape');
+    await task.locator('label > span').click();
+    await page.keyboard.press('ArrowDown');
+    await expect(area).toHaveValue('Number text');
+    await page.keyboard.press('ArrowUp');
+    await expect(area).toHaveValue('New Task text');
+    await page.keyboard.press('End');
+    await page.keyboard.insertText('\nPasted continuation');
+    expect(await page.evaluate(() => doc.source())).toContain('  - [x] New Task text\nPasted continuation');
+  }, {body});
+});
+
+test('empty lists exit and a whole single list item can be deleted, cut or replaced', async ({ browser }) => {
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    for (const source of ['- [ ] ', '2. [ ] ', '-   [ ] ', '  - ', '3) ']) {
+      await page.goto(url + '/?body=' + encodeURIComponent(source));
+      await page.locator('#doc .blk').click({position:{x:80,y:10}});
+      await expect(page.locator('#doc textarea')).toBeFocused();
+      expect((await page.locator('#doc textarea').boundingBox()).height).toBeGreaterThan(20);
+      await page.keyboard.press('Enter');
+      expect(await page.evaluate(() => doc.source()), source).toBe('');
+    }
+    for (const source of ['- [ ] Task', '12. Item', '* Bullet']) {
+      for (const action of ['delete', 'cut', 'replace']) {
+        await page.goto(url + '/?body=' + encodeURIComponent(source));
+        await page.locator('#doc .blk').click({position:{x:80,y:10}});
+        await page.keyboard.press('ControlOrMeta+a');
+        if (action === 'cut') {
+          const cut = await page.evaluate(() => {
+            const data = new DataTransfer();
+            document.dispatchEvent(new ClipboardEvent('cut', {clipboardData:data,bubbles:true,cancelable:true}));
+            return data.getData('text/plain');
+          });
+          expect(cut).toBe(source);
+        } else await page.keyboard.press(action === 'delete' ? 'Backspace' : 'X');
+        expect(await page.evaluate(() => doc.source()), `${source}: ${action}`).toBe(action === 'replace' ? 'X' : '');
+      }
+    }
+  });
+});
+
+test('formatted wrapped text and heading prefixes keep their position when focused', async ({ browser }) => {
+  await editorFixture(browser, async (context, url) => {
+    const page = await context.newPage();
+    await page.setViewportSize({width:390,height:900});
+    for (const line of ['- ' + '**word** '.repeat(25), '- [ ] Task ' + '[word](https://example.com) '.repeat(15), '**Bold text** '.repeat(30), ...Array.from({length:6}, (_, i) => '#'.repeat(i + 1) + ' A heading')]) {
+      await page.goto(url + '/?body=' + encodeURIComponent(line + '\nFollowing paragraph'));
+      const block = page.locator('#doc .blk').first();
+      const before = await block.boundingBox();
+      const below = await page.locator('#doc .blk').last().boundingBox();
+      await block.click({position:{x:Math.min(35,before.width / 2),y:10}});
+      const area = page.locator('#doc textarea');
+      await expect(area).toBeFocused();
+      expect(Math.abs((await block.boundingBox()).height - before.height), line).toBeLessThanOrEqual(1);
+      expect(Math.abs((await page.locator('#doc .blk').last().boundingBox()).y - below.y), line).toBeLessThanOrEqual(1);
+      if (line.startsWith('#')) {
+        const rawTextLeft = await area.evaluate((el, prefix) => {
+          const style = getComputedStyle(el);
+          const canvas = document.createElement('canvas').getContext('2d');
+          canvas.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+          return el.getBoundingClientRect().left + canvas.measureText(prefix).width;
+        }, line.match(/^#+ /)[0]);
+        expect(Math.abs(rawTextLeft - before.x)).toBeLessThanOrEqual(2);
+      }
+    }
+  });
 });

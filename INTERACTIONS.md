@@ -1,17 +1,21 @@
 # Stable editing and desktop updates
 
-The desktop window must refuse foreground requests while an update is being
-installed. An explicit restart after installation must return the updated app
-to the foreground, including when it originally started hidden at login.
-Installation failure must release the opening restriction and leave Leo usable.
+The desktop refuses foreground requests while its exclusive update installation
+lease is held. An explicit update restart uses a private atomic one-use marker
+to return the app to the foreground, including after a hidden login launch.
+Installation failure removes the marker and releases the opening restriction.
+Native installer replacement and OS activation still require release smoke tests;
+Windows hands installation to an external NSIS process after Leo exits.
 
-The note editor will keep list markers, numbers and task checkboxes rendered
-while editing their text. The editable text will occupy the same position and
-use the same typography as the rendered line. Markdown remains the saved format;
-selection, copy, cut, indentation and list continuation must preserve it.
+The note editor retains rendered list containers, numbers and task checkboxes
+while editing their text. Markdown prefixes remain in the saved source and all
+selection offsets account for them. On focus, the editor retains the rendered
+text height and scrolls internally for longer inline Markdown; actual input
+resumes normal height fitting. Heading prefixes hang left of their text.
+Select-all and multi-line undo selections keep the document rendered. Replacing
+a selection operates on its complete Markdown range, including list markers.
 
-The page will suppress selection on application controls and native dragging of
-links and images, while retaining selection of readable content and text fields.
-Explicit note/folder drags, board moves, file drops and resize handles remain
-available. Existing editor, event and style modules own these changes; no new
-editor dependency or alternate document model is needed.
+Application controls resist highlighting; readable content and text fields remain
+selectable. Only explicit note/folder sources can start native drags. Link,
+image and selection drags are suppressed; file drops and pointer-driven board
+moves, resizing, whiteboards and graph interaction retain their existing paths.

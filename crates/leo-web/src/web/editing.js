@@ -105,9 +105,18 @@
     return -1;
   }
 
+  function listPrefix(line) {
+    const found = line.match(/^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\](?:\s+|$))?/);
+    return found ? found[0] : '';
+  }
+
   function continueLine(line) {
-    let m = line.match(/^(\s*)([-*+])\s+\[[ xX]\]\s?(.*)$/);
-    if (m) return m[3].trim() ? { prefix: `${m[1]}${m[2]} [ ] `, exit: false } : { prefix: '', exit: true };
+    let m = line.match(/^(\s*)([-*+]|\d+[.)])\s+\[[ xX]\]\s?(.*)$/);
+    if (m) {
+      const number = m[2].match(/^(\d+)([.)])$/);
+      const marker = number ? `${Number(number[1]) + 1}${number[2]}` : m[2];
+      return m[3].trim() ? { prefix: `${m[1]}${marker} [ ] `, exit: false } : { prefix: '', exit: true };
+    }
     m = line.match(/^(\s*)([-*+])\s(.*)$/);
     if (m) return m[3].trim() ? { prefix: `${m[1]}${m[2]} `, exit: false } : { prefix: '', exit: true };
     m = line.match(/^(\s*)(\d+)([.)])\s(.*)$/);
@@ -215,7 +224,7 @@
     });
   }
 
-  const api = { headingTree, headings, setPictureWidth, splitBlocks, boxesBefore, boxLine, continueLine, toggleBox, indent, outdent, rawOffset, isBox, snapshotOf, lineAtOffset, MOST_PASSAGE };
+  const api = { listPrefix, headingTree, headings, setPictureWidth, splitBlocks, boxesBefore, boxLine, continueLine, toggleBox, indent, outdent, rawOffset, isBox, snapshotOf, lineAtOffset, MOST_PASSAGE };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.leoEditing = api;
 })(typeof window !== 'undefined' ? window : globalThis);

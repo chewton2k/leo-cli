@@ -448,8 +448,9 @@ test.describe('editing like Obsidian', () => {
     await expect(page.locator('#doc textarea.line-edit')).toBeFocused();
     await page.keyboard.press('ControlOrMeta+a');
     const area = page.locator('#doc textarea.line-edit');
-    expect(await area.evaluate((a) => a.value.slice(a.selectionStart, a.selectionEnd))).toContain('Fourth line');
-    expect(await area.evaluate((a) => a.value.slice(a.selectionStart, a.selectionEnd))).toContain('First line here');
+    await expect(area).toHaveCount(0);
+    expect(await page.evaluate(() => getSelection().toString())).toContain('Fourth line');
+    expect(await page.evaluate(() => getSelection().toString())).toContain('First line here');
     await page.keyboard.press('Backspace');
     await expect.poll(saved, { timeout: 5000 }).toBe('');
   });
@@ -467,7 +468,8 @@ test.describe('editing like Obsidian', () => {
     await page.keyboard.press('ControlOrMeta+z');
     await expect.poll(saved, { timeout: 5000 }).toBe(body);
     const area = page.locator('#doc textarea.line-edit');
-    expect(await area.evaluate((a) => a.value.slice(a.selectionStart, a.selectionEnd))).toContain('Second **bold** line');
+    await expect(area).toHaveCount(0);
+    expect(await page.evaluate(() => getSelection().toString())).toContain('Second bold line');
     await page.keyboard.press('ControlOrMeta+Shift+z');
     await expect.poll(saved, { timeout: 5000 }).toBe(' item\nFourth line');
     await page.locator('#doc').click({ position: { x: 5, y: 5 } });
