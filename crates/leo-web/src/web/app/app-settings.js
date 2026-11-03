@@ -15,7 +15,7 @@ async function loadHealth() {
   if (mine !== seq || state.view !== 'settings' || state.section !== 'health') return;
   state.health = view;
   const box = $('#app-health');
-  if (box && !box.contains(document.activeElement)) box.innerHTML = healthCards(view);
+  refreshPanel(box, healthCards(view));
 }
 async function appChange(change) {
   const generation = ++appPollGeneration;
@@ -34,11 +34,11 @@ function updateAppStatus() {
   updateUpdateBanner();
   if (state.view === 'settings' && state.section === 'updates') {
     const box = $('#app-updates');
-    if (box && !box.contains(document.activeElement)) box.innerHTML = updatesCard(desktopApp);
+    refreshPanel(box, updatesCard(desktopApp));
   }
   if (state.view === 'settings' && state.section === 'general') {
     const box = $('#app-general');
-    if (box && !box.querySelector('[data-app-pref]')) box.innerHTML = nativeGeneralCard(desktopApp);
+    if (box && !box.querySelector('[data-app-pref]')) refreshPanel(box, nativeGeneralCard(desktopApp));
     const problem = $('#app-preferences-problem');
     if (problem) { problem.hidden = !desktopApp?.problem; problem.textContent = desktopApp?.problem || ''; }
     for (const field of app.querySelectorAll('[data-app-pref]')) field.checked = Boolean(desktopApp?.preferences?.[field.dataset.appPref]);

@@ -66,7 +66,7 @@ function drawSide() {
   const railScroll = box.querySelector('.side-rail-main')?.scrollTop || 0;
   const active = box.contains(document.activeElement) ? document.activeElement.closest('button[data-action]') : null;
   const focused = active ? Object.fromEntries(['action', 'dir', 'parent', 'id', 'offset'].filter((key) => key in active.dataset).map((key) => [key, active.dataset[key]])) : null;
-  box.innerHTML = `
+  refreshPanel(box, `
     <div class="side-head" data-tauri-drag-region="deep">
       <button class="brand side-label" data-action="home">leo</button>
       <button class="icon-btn side-fold" data-action="side-fold" aria-label="${side.mini ? 'Show folders' : 'Hide folders'}" title="${side.mini ? 'Show folders' : 'Hide folders'}" aria-expanded="${!side.mini}" aria-controls="side-explorer">${ICON.sidebar}</button>
@@ -94,7 +94,7 @@ function drawSide() {
       <nav class="side-nav side-tree" aria-label="Folders" data-drop-dir="">
         ${folders || '<p class="side-none">Folders you make show up here.</p>'}
       </nav>
-    </div>`;
+    </div>`);
   const tree = box.querySelector('.side-tree');
   if (tree) tree.scrollTop = kept;
   box.querySelector('.side-rail-main').scrollTop = railScroll;
@@ -134,7 +134,7 @@ function folderTree(here) {
       const on = state.view === 'folder' && here === d.name;
       const shown = twisted && twisted.path === d.name ? twisted.was : open;
       const toggle = `<button class="side-twist${shown ? ' open' : ''}" data-action="side-twist" data-dir="${esc(d.name)}" aria-expanded="${open}" aria-label="${open ? 'Close' : 'Open'} ${esc(name)}">${ICON.chevron}</button>`;
-      rows.push(`<div class="side-folder${on ? ' on' : ''}" style="--depth:${depth}">${toggle}<button class="side-row" data-action="open-folder" data-dir="${esc(d.name)}" draggable="true" title="${esc(d.name)}" aria-expanded="${open}"${on ? ' aria-current="page"' : ''}>${ICON.folder}<span class="side-label">${esc(name)}</span>${d.notes ? `<span class="side-count side-label">${esc(String(d.notes))}</span>` : ''}</button><button class="side-add side-sub" data-action="new-folder" data-parent="${esc(d.name)}" aria-label="New folder in ${esc(name)}" title="New folder in ${esc(name)}">${ICON.plus}</button></div>`);
+      rows.push(`<div data-refresh-key="${esc(d.name)}" class="side-folder${on ? ' on' : ''}" style="--depth:${depth}">${toggle}<button class="side-row" data-action="open-folder" data-dir="${esc(d.name)}" draggable="true" title="${esc(d.name)}" aria-expanded="${open}"${on ? ' aria-current="page"' : ''}>${ICON.folder}<span class="side-label">${esc(name)}</span>${d.notes ? `<span class="side-count side-label">${esc(String(d.notes))}</span>` : ''}</button><button class="side-add side-sub" data-action="new-folder" data-parent="${esc(d.name)}" aria-label="New folder in ${esc(name)}" title="New folder in ${esc(name)}">${ICON.plus}</button></div>`);
       if (open) {
         side.visible.push(d.name);
         rows.push(`<div class="side-kids" data-kids="${esc(d.name)}" style="--depth:${depth}">`);
@@ -237,7 +237,7 @@ function sideNoteRows(path, depth) {
   if (!entry) return `<div class="side-note-status" style="--depth:${depth}">${action('Show notes')}</div>`;
   const selected = state.view === 'note' ? state.session?.note?.id : null;
   const rows = entry.items.map((note) => `<button class="side-row side-note${selected === note.id ? ' on' : ''}" data-action="open-note" data-id="${esc(note.id)}" data-from="${esc(path)}" data-title="${esc(note.title)}" draggable="true" style="--depth:${depth}" title="${esc(note.title)}"${selected === note.id ? ' aria-current="page"' : ''}>${ICON.note}<span class="side-label">${esc(note.title || 'Untitled')}</span></button>`).join('');
-  const status = entry.loading ? '<span>Opening notes…</span>' : entry.error ? `Notes could not be opened. ${action('Try again', entry.offset)}` : !entry.items.length && !side.folders.some((folder) => folder.name.startsWith(path ? `${path}/` : '')) ? '<span>Empty folder</span>' : '';
+  const status = entry.loading && !entry.refreshing ? '<span>Opening notes…</span>' : entry.error ? `Notes could not be opened. ${action('Try again', entry.offset)}` : !entry.items.length && !side.folders.some((folder) => folder.name.startsWith(path ? `${path}/` : '')) ? '<span>Empty folder</span>' : '';
   const pages = !entry.error ? `${entry.offset ? action('Previous notes', Math.max(0, entry.offset - SIDE_NOTES_PAGE)) : ''}${entry.offset + entry.items.length < entry.total ? action('Next notes', entry.offset + SIDE_NOTES_PAGE) : ''}` : '';
   return rows + (status || pages ? `<div class="side-note-status" style="--depth:${depth}">${status}${pages}</div>` : '');
 }
@@ -251,7 +251,7 @@ function loadSideNotes(path, offset = 0, force = false) {
     const oldest = [...side.notes.keys()].find((key) => !side.automatic.has(key));
     side.notes.delete(oldest);
   }
-  const entry = { items: previous?.items || [], total: previous?.total || 0, offset, loading: true, error: false, seq };
+  const entry = { items: previous?.items || [], total: previous?.total || 0, offset, loading: true, refreshing: Boolean(previous?.items.length && previous.offset === offset), error: false, seq };
   side.notes.set(path, entry);
   side.pending = side.pending.filter((read) => side.notes.get(read.path) === read.entry);
   side.pending.push({ path, entry });

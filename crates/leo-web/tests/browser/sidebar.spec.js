@@ -42,6 +42,7 @@ async function sidebarFixture(browser, run) {
       if(broken===dir)throw new Error('Unavailable');
       return result;
     }
+    ${read('app/refresh.js')}
     ${read('app/side.js')}
     ${drag}
     const folderClick=${open};
@@ -269,5 +270,30 @@ test('a stalled explorer read times out and offers a working retry', async ({ br
     await expect(group).toContainText('Opening notes');
     await page.evaluate(()=>release());
     await expect(page.locator('.side-note[data-id="course-note"]')).toBeVisible();
+  });
+});
+
+test('explorer refresh keeps file rows and a click in progress intact', async ({ browser }) => {
+  await sidebarFixture(browser,async(context,url)=>{
+    const page=await context.newPage();
+    await page.goto(url);
+    await page.locator('.side-tree .side-row[data-dir="Course"]').click();
+    const note=page.locator('.side-note[data-id="course-note"]');
+    await expect(note).toBeVisible();
+    const kept=await note.elementHandle();
+    const tree=await page.locator('.side-tree').elementHandle();
+    const point=await note.boundingBox();
+    await page.mouse.move(point.x+point.width/2,point.y+point.height/2);
+    await page.mouse.down();
+    await page.evaluate(()=>audit.refresh());
+    await expect(page.locator('.side-note-status')).not.toContainText(['Opening notes…']);
+    expect(await kept.evaluate(el=>el.isConnected)).toBe(true);
+    expect(await tree.evaluate(el=>el.isConnected)).toBe(true);
+    await page.mouse.up();
+    await expect(page).toHaveURL(/#\/n\/course-note$/);
+    await page.evaluate(()=>{audit.rename('Renamed 文字');return audit.refresh();});
+    await expect(note).toHaveText('Renamed 文字');
+    expect(await kept.evaluate(el=>el.isConnected)).toBe(true);
+    expect(await page.evaluate(()=>window.errors)).toEqual([]);
   });
 });

@@ -15,7 +15,7 @@ async function showSettings(section) {
   chrome({ showBack: true });
   $('#crumbs').innerHTML = '<span class="sep">/</span><button>Settings</button>';
   document.title = 'Settings · leo';
-  app.innerHTML = settingsFrame(section, skeleton(3));
+  refreshPanel(app, settingsFrame(section, skeleton(3)));
   const [page, calendar, speech, dictation] = await Promise.all([api('/api/settings'), api('/api/calendar').catch(() => null), api('/api/speech').catch(() => null), api('/api/dictation').catch(() => null)]);
   if (mine !== seq) return;
   state.calendar = calendar;
@@ -284,7 +284,7 @@ function drawSettings(page) {
   else if (section === 'health') content = `<div id="app-health">${healthCards(state.health)}</div>`;
   else if (section === 'updates') content = `<div id="app-updates">${updatesCard(desktopApp)}</div>`;
   else content = '';
-  app.innerHTML = settingsFrame(section, `<div class="settings">${content}</div>`);
+  refreshPanel(app, settingsFrame(section, `<div class="settings">${content}</div>`));
   restoreSettingsFields(fields, segments);
 }
 
@@ -396,7 +396,7 @@ function speechModelRow(model) {
 function filterSpeech(el) {
   state.speechFilter = el.dataset.filter;
   const box = $('#speech-library');
-  if (box) box.innerHTML = speechCards(state.speech);
+  refreshPanel(box, speechCards(state.speech));
   box?.querySelector(`[data-filter="${CSS.escape(state.speechFilter)}"]`)?.focus({ preventScroll: true });
 }
 
@@ -413,7 +413,7 @@ async function pollSpeech(mine, generation) {
     if (generation !== speechPollGeneration || mine !== seq || state.view !== 'settings') return;
     state.speech = view;
     const box = $('#speech-library');
-    if (box && !box.contains(document.activeElement)) box.innerHTML = speechCards(view);
+    refreshPanel(box, speechCards(view));
   } catch (e) { if (mine !== seq) return; }
   pollSpeech(mine, generation);
 }
@@ -425,7 +425,7 @@ async function speechChange(change) {
   if (generation !== speechPollGeneration || mine !== seq || state.view !== 'settings') return;
   state.speech = view;
   const box = $('#speech-library');
-  if (box) box.innerHTML = speechCards(view);
+  refreshPanel(box, speechCards(view));
   pollSpeech(mine, generation);
 }
 

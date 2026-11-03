@@ -7,6 +7,7 @@ function context() {
   const timers = [];
   const value = { app: { addEventListener() {}, querySelectorAll: () => [] }, esc: text => String(text).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c])), state: { view: 'folder' }, $: () => null, window: {}, document: { activeElement: null, addEventListener() {} }, updateOnboardingPermissions() {}, maybeOnboarding() {}, setTimeout: fn => timers.push(fn), api: async () => ({ preferences: {}, updates: {} }), md: { render: text => String(text).replace(/</g, '&lt;') } };
   vm.createContext(value);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/web/app/refresh.js'), 'utf8'), value);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/web/app/settings-navigation.js'), 'utf8'), value);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/web/app/app-settings.js'), 'utf8'), value);
   return { value, timers };

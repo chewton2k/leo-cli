@@ -48,9 +48,12 @@ function settingsFrame(section, content) {
   return `<div class="settings-layout"><nav class="settings-nav" aria-label="Settings sections">${nav}</nav><div class="settings-section" data-settings-section="${esc(section)}"><header class="settings-head"><h1>${esc(title)}</h1><p>${esc(about)}</p></header>${content}</div></div>`;
 }
 
+const settingsRevealed = new WeakMap();
 function revealSettingsLink() {
   const nav = app.querySelector('.settings-nav'), on = nav?.querySelector('.settings-link.on');
-  if (on && nav.scrollWidth > nav.clientWidth) nav.scrollLeft = on.offsetLeft - (nav.clientWidth - on.offsetWidth) / 2;
+  if (!on || settingsRevealed.get(nav) === on.getAttribute('href')) return;
+  settingsRevealed.set(nav, on.getAttribute('href'));
+  if (nav.scrollWidth > nav.clientWidth) nav.scrollLeft = on.offsetLeft - (nav.clientWidth - on.offsetWidth) / 2;
 }
 
 // An iOS-style switch. It stays a real checkbox, so change handlers, forms and tests keep working.

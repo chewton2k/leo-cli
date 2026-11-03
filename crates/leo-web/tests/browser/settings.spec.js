@@ -3,6 +3,40 @@ const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
 
+test('panel refresh updates controls and keyed rows without resetting native state', async ({ page }) => {
+  await page.setContent('<main id="panel"></main>');
+  await page.addScriptTag({content:fs.readFileSync(path.resolve(__dirname,'../../src/web/app/refresh.js'),'utf8')});
+  const result = await page.evaluate(() => {
+    const box=document.querySelector('#panel');
+    refreshPanel(null,'');
+    refreshPanel(box,'<div data-refresh-key="first"><input id="text" value="before"><textarea id="words">before</textarea><select id="pick"><option value="a" selected>A</option><option value="b">B</option></select><input id="switch" type="checkbox"><input id="file" type="file"><details id="fold"><summary>Details</summary>Keep open</details><button data-action="keep" title="old">Old</button><span id="removed">Remove</span></div><div data-refresh-key="second">Second</div>');
+    const row=box.firstChild, second=box.lastChild, button=box.querySelector('button'), file=box.querySelector('#file');
+    const data=new DataTransfer();data.items.add(new File(['notes'],'fixture.txt'));file.files=data.files;
+    box.querySelector('#fold').open=true;
+    button.focus();
+    refreshPanel(box,'<div data-refresh-key="second">Second updated</div><div data-refresh-key="first"><input id="text" value="after"><textarea id="words">after</textarea><select id="pick"><option value="b" selected>B</option><option value="a">A</option></select><input id="switch" type="checkbox" checked><input id="file" type="file"><details id="fold"><summary>Details</summary>Still open</details><button data-action="keep" disabled>New</button><span id="added">&lt;img src=x&gt;</span></div>');
+    return { rows:box.firstChild===second&&box.lastChild===row,button:box.querySelector('button')===button,file:box.querySelector('#file')===file,fileName:file.files[0].name,text:box.querySelector('#text').value,words:box.querySelector('#words').value,pick:box.querySelector('#pick').value,checked:box.querySelector('#switch').checked,open:box.querySelector('#fold').open,removed:!box.querySelector('#removed'),added:box.querySelector('#added').textContent,image:box.querySelectorAll('img').length,title:button.getAttribute('title'),disabled:button.disabled };
+  });
+  expect(result).toEqual({rows:true,button:true,file:true,fileName:'fixture.txt',text:'after',words:'after',pick:'b',checked:true,open:true,removed:true,added:'<img src=x>',image:0,title:null,disabled:true});
+  await page.evaluate(() => {
+    const box=document.querySelector('#panel');
+    refreshPanel(box,'<button data-action="a">A</button><button data-action="b">B</button>');
+    const active=box.lastChild;active.focus();
+    refreshPanel(box,'<button data-action="b">B changed</button><button data-action="a">A</button>');
+    window.keptButton=active;
+  });
+  await expect(page.getByRole('button',{name:'B changed'})).toBeFocused();
+  expect(await page.evaluate(()=>document.activeElement===window.keptButton)).toBe(true);
+  expect(await page.evaluate(() => {
+    const box=document.querySelector('#panel');
+    refreshPanel(box,'<details data-area="first"><summary>First</summary></details><details data-area="second"><summary>Second</summary></details>');
+    box.firstChild.open=true;
+    const kept=box.lastChild;
+    refreshPanel(box,'<details data-area="second"><summary>Second</summary></details>');
+    return box.firstChild===kept&&!kept.open;
+  })).toBe(true);
+});
+
 test('Settings sections keep drafts and selections across redraws in both themes', async ({ browser }) => {
   const web = path.resolve(__dirname, '../../src/web');
   const read = name => fs.readFileSync(path.join(web, name), 'utf8');
@@ -28,6 +62,7 @@ test('Settings sections keep drafts and selections across redraws in both themes
     const floating=document.createElement('div'), plural=(n,w)=>n+' '+w+(n===1?'':'s'), empty=(icon,title,text)=>'<div class="empty"><h2>'+title+'</h2><p>'+text+'</p></div>';
     document.addEventListener('click',e=>{const el=e.target.closest('[data-action="segment-pick"]'); if(el) pickSegment(el);});
     ${read('theme.js')}
+    ${read('app/refresh.js')}
     ${read('app/trash.js')}
     ${read('app/settings-navigation.js')}
     ${read('app/settings.js')}
@@ -37,7 +72,7 @@ test('Settings sections keep drafts and selections across redraws in both themes
     ${read('app/onboarding.js')}
     const route=()=>showSettings(location.hash.split('/')[2] || 'general').catch(fail);
     window.addEventListener('hashchange',route); route();
-    window.audit={redraw:()=>drawSettings(state.settings)};`;
+    window.audit={redraw:()=>drawSettings(state.settings),status:updateAppStatus,storage:()=>drawStorage(state.storage)};`;
   const server=http.createServer((req,res)=>{
     if(req.url==='/fixture.js') {res.setHeader('Content-Type','text/javascript; charset=utf-8');return res.end(fixture);}
     if(req.url==='/style.css') {res.setHeader('Content-Type','text/css; charset=utf-8');return res.end(css);}
@@ -63,10 +98,16 @@ test('Settings sections keep drafts and selections across redraws in both themes
       await page.locator('.settings-section').evaluate(el=>{el.style.minHeight='';scrollTo(0,0);});
       await page.locator('#backup-repository').fill('Personal notes 文字');
       await page.locator('#backup-repository').evaluate(el=>{el.focus();el.setSelectionRange(4,8);});
+      const keptField = await page.locator('#backup-repository').elementHandle();
+      const keptNav = await page.locator('.settings-nav').elementHandle();
       await page.evaluate(()=>window.audit.redraw());
+      expect(await keptField.evaluate(el=>el.isConnected)).toBe(true);
+      expect(await keptNav.evaluate(el=>el.isConnected)).toBe(true);
       await expect(page.locator('#backup-repository')).toBeFocused();
       expect(await page.locator('#backup-repository').evaluate(el=>[el.value,el.selectionStart,el.selectionEnd])).toEqual(['Personal notes 文字',4,8]);
       await page.getByRole('link',{name:'Dictation',exact:true}).click();
+      await expect(page.getByRole('heading',{level:1,name:'Dictation'})).toBeVisible();
+      expect(await keptNav.evaluate(el=>el.isConnected)).toBe(true);
       // Choices of a few options are a segmented control whose pill slides to the pick; drafts survive redraws.
       const activation=page.getByRole('radiogroup',{name:'Activation'});
       await expect(activation.getByRole('radio',{name:'Hold or tap'})).toHaveAttribute('aria-checked','true');
@@ -102,12 +143,21 @@ test('Settings sections keep drafts and selections across redraws in both themes
       await expect(page.getByText('Choose a model.',{exact:true})).toBeVisible();
       await page.getByRole('link',{name:'Updates & about',exact:true}).click();
       await expect(page.getByRole('heading',{name:'About Leo'})).toBeVisible();
+      const updateCard = await page.locator('#app-updates .set-card').first().elementHandle();
+      await page.evaluate(()=>window.audit.status());
+      expect(await updateCard.evaluate(el=>el.isConnected)).toBe(true);
       await page.getByRole('link',{name:'Storage',exact:true}).click();
       await expect(page.locator('.settings-nav a[aria-current="page"]')).toHaveAttribute('href','#/settings/storage');
       await expect(page.getByRole('heading',{level:1,name:'Storage'})).toBeVisible();
+      const storageBar = await page.locator('.store-bar').elementHandle();
+      await storageBar.evaluate(el=>{window.storageListeners=0;const add=el.addEventListener;el.addEventListener=function(...args){window.storageListeners++;return add.apply(this,args);};});
+      await page.evaluate(()=>{audit.storage();audit.storage();});
+      expect(await storageBar.evaluate(el=>el.isConnected)).toBe(true);
+      expect(await page.evaluate(()=>window.storageListeners)).toBe(0);
       await page.getByRole('link',{name:'Trash',exact:true}).click();
       await expect(page.locator('.settings-nav a[aria-current="page"]')).toHaveAttribute('href','#/settings/trash');
       await expect(page.getByText('The trash is empty',{exact:true})).toBeVisible();
+      expect(await keptNav.evaluate(el=>el.isConnected)).toBe(true);
       await page.setViewportSize({width:620,height:850});
       expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
       expect(await page.evaluate(()=>window.errors)).toEqual([]);

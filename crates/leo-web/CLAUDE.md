@@ -1166,7 +1166,11 @@ that centres the current section. Routes stay `#/settings/<section>`; Storage
 and Trash (Data) keep their controllers inside the same frame, `#/trash` still
 works, and a bare `#/settings` never reopens Trash. Redraws retain field drafts,
 focus and selection, including textareas. App polling updates native status and a
-ready-update banner without replacing focused controls. First-launch setup
+ready-update banner without replacing focused controls. `app/refresh.js` reconciles
+settings and explorer panels by stable keys, retaining native controls, file
+selections and unchanged rows through async updates. Settings navigation is
+retained between sections; its phone strip recentres only when the section changes.
+First-launch setup
 (`onboarding.js`, 2026-11-02, the user's request: like other dictation apps) is a
 two-step `modal` sheet (a backdrop click never dismisses it; Escape still does)
 with an Access → Speech model stepper. The Access page lists Microphone and macOS
