@@ -1302,6 +1302,14 @@ impl ChatProvider for AgentCli {
         self.run(req, &[], sink)
     }
 
+    fn complete_until(
+        &self,
+        req: &ChatRequest,
+        stopped: &dyn Fn() -> bool,
+    ) -> ProviderResult<String> {
+        self.controlled(req, &mut |_| {}, stopped)
+    }
+
     fn complete_with_images(&self, req: &ChatRequest, images: &[Image]) -> ProviderResult<String> {
         self.run(req, images, &mut |_| {})
     }

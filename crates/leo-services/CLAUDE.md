@@ -501,7 +501,19 @@ and state updates after acquiring their state lock, so cancel wins stale work.
 
 `dictation/text.rs` applies custom-word fuzzy/phonetic matching at 0.18 before
 language-aware filler rules (on by default), with Unicode-safe punctuation and
-capitalization. There is no writing-AI step. `capture.rs` bounds dictation to
+capitalization. `polish.rs` is the optional AI writing step (`Writing`: off
+by default, `quick` = `ai::quick_outcome`, the cheapest model and effort on the
+user's plan, 12 s, or `selected` = the Writing AI choice, 30 s): a tidy-only
+prompt that treats the dictation as text, never instructions. Replies are only
+unwrapped (code fence, `<dictation>` tags), never run through `clean_reply`,
+which would drop dictated "Sure…" or "Let me know…" lines. A reply must keep
+70% of the dictation's words (characters for unspaced scripts) and add at most
+half new ones, so an answer is refused, and must keep the same number of
+negations (`not`, `n't`, `never`, `ne`/`pas`, `nicht`…), so a meaning flip is
+refused. Failures are logged without the provider's error text, which can
+contain the dictation. The call goes through
+`ChatProvider::complete_until`, so a cancel or the deadline stops an agent CLI
+instead of leaving it running. Every fallback returns a reason the popup shows. `capture.rs` bounds dictation to
 300 seconds, closes the input before draining its final queued audio and before
 transcription. `Mic::open_named` opens only the selected input; `microphones`
 enumerates without opening. Desktop chooses the lid-closed alternative.
@@ -509,7 +521,10 @@ enumerates without opening. Desktop chooses the lid-closed alternative.
 `AudioGate` makes lecture capture wait for an already-playing feedback sound
 and prevents new sounds until that recording ends. It does no I/O under a mutex.
 The engine actor owns streaming dictation too; bounded feeds fall back to the
-retained batch PCM when streaming fails or falls behind. A reservation pauses
+retained batch PCM when streaming fails. Live audio queued while the worker is
+busy is coalesced into the next feed (at most 16,000 samples each) instead of
+abandoning the stream, and the preview callback receives committed and
+tentative text separately. A reservation pauses
 segment/live passes; recording's pin retains the worker through dictation.
 
 Health checks use owned temporary files for notes writability, preserving any
